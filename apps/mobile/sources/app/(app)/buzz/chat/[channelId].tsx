@@ -98,6 +98,7 @@ import {
   sectionRoomParticipants,
   sectionRoomRoster,
   selectedMentionAgentPubkey,
+  selectedMentionPubkeys,
 } from '@/buzz/room-participants';
 import {
   resolveAgentDisplayIdentity,
@@ -198,11 +199,7 @@ import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
-import {
-  HeaderIdentitySlot,
-  HeaderMetaCaps,
-  HeaderMetaRow,
-} from '@/components/buzz/HeaderLadder';
+import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerEntry,
@@ -372,8 +369,6 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   );
 }
 
-
-
 function SwipeToReply({
   children,
   messageId,
@@ -464,6 +459,7 @@ export default function BuzzChat() {
   // typing so an async roster refresh cannot turn a selected agent into an
   // unaddressed plain Room message.
   const selectedAgentMentionsRef = useRef(new Map<string, string>());
+  const selectedMentionsRef = useRef(new Map<string, string>());
   // When each agent was last told about, so a standing offline condition is
   const sendInFlightRef = useRef(false);
 
@@ -477,7 +473,9 @@ export default function BuzzChat() {
   const [highlightedSlashVerbIndex, setHighlightedSlashVerbIndex] = useState(0);
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null);
   /** Per-agent published command lists (null = read resolved absent/unreadable). */
-  const [agentCommandsByPubkey, setAgentCommandsByPubkey] = useState<Record<string, AgentCommandList | null>>({});
+  const [agentCommandsByPubkey, setAgentCommandsByPubkey] = useState<
+    Record<string, AgentCommandList | null>
+  >({});
   const [sending, setSending] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
@@ -916,8 +914,7 @@ export default function BuzzChat() {
     if (!mentionSlash) return null;
     const needle = mentionSlash.mention.toLowerCase();
     const match = mentionableAgents.find(
-      (agent) =>
-        agent.handle?.toLowerCase() === needle || agent.name.toLowerCase() === needle,
+      (agent) => agent.handle?.toLowerCase() === needle || agent.name.toLowerCase() === needle,
     );
     return match?.pubkey ?? null;
   }, [mentionSlash, mentionableAgents]);
@@ -932,9 +929,9 @@ export default function BuzzChat() {
   // failed read is unknown, never "does not advertise".
   const mentionAgentLacksCommands = Boolean(
     mentionSlash &&
-      mentionSlashAgentPubkey &&
-      agentCommandsByPubkey[mentionSlashAgentPubkey] !== undefined &&
-      (agentCommandsByPubkey[mentionSlashAgentPubkey]?.commands.length ?? 0) === 0,
+    mentionSlashAgentPubkey &&
+    agentCommandsByPubkey[mentionSlashAgentPubkey] !== undefined &&
+    (agentCommandsByPubkey[mentionSlashAgentPubkey]?.commands.length ?? 0) === 0,
   );
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
@@ -993,9 +990,8 @@ export default function BuzzChat() {
   );
   const slashMenuVisible = Boolean(
     composerFocused &&
-      (currentSlashQuery !== null ||
-        (mentionSlash !== null && mentionSlashAgentPubkey !== null)) &&
-      dismissedSlashText !== inputText,
+    (currentSlashQuery !== null || (mentionSlash !== null && mentionSlashAgentPubkey !== null)) &&
+    dismissedSlashText !== inputText,
   );
   const paletteItemCount = mentionAgentCommands.length + slashVerbs.length;
   useEffect(() => {
@@ -1162,30 +1158,36 @@ export default function BuzzChat() {
   // The one corner the pinned line may name: open, not terminal in *any*
   // source, and chosen by how much it is being worked on. `null` for a Room
   // with no live corner, however busy its agent is right now.
-  const pinnedCorner = useMemo(
-    () => {
-      const selected = selectPinnedCorner({
-        signals: cornerSignals,
-        lifecycle: cornerLifecycle,
-        lifecycleLoaded: cornerLifecycleLoaded,
-        permittedCorner,
-      });
-      // A corner this viewer CLOSED never gets the pinned line — the deck's
-      // dropdown and the corners list already hide it, so a gold "view →"
-      // pointing at dismissed work would be the one affordance left leading
-      // into it.
-      if (!selected) return null;
-      return isCornerClosed(
-        closedCornerAt,
-        userPubkey || activeCacheViewer,
-        decodedId,
-        selected.cornerId,
-      )
-        ? null
-        : selected;
-    },
-    [closedCornerAt, cornerLifecycle, cornerLifecycleLoaded, cornerSignals, decodedId, permittedCorner, userPubkey, activeCacheViewer],
-  );
+  const pinnedCorner = useMemo(() => {
+    const selected = selectPinnedCorner({
+      signals: cornerSignals,
+      lifecycle: cornerLifecycle,
+      lifecycleLoaded: cornerLifecycleLoaded,
+      permittedCorner,
+    });
+    // A corner this viewer CLOSED never gets the pinned line — the deck's
+    // dropdown and the corners list already hide it, so a gold "view →"
+    // pointing at dismissed work would be the one affordance left leading
+    // into it.
+    if (!selected) return null;
+    return isCornerClosed(
+      closedCornerAt,
+      userPubkey || activeCacheViewer,
+      decodedId,
+      selected.cornerId,
+    )
+      ? null
+      : selected;
+  }, [
+    closedCornerAt,
+    cornerLifecycle,
+    cornerLifecycleLoaded,
+    cornerSignals,
+    decodedId,
+    permittedCorner,
+    userPubkey,
+    activeCacheViewer,
+  ]);
   const pinnedCornerCard = useMemo(
     () =>
       pinnedCorner
@@ -1209,8 +1211,7 @@ export default function BuzzChat() {
   // its lease), the header badge says STALLED — never "NEEDS HUMAN" waiting
   // on you. Absent = unknown = today's presentation.
   const cornerAgentOffline = useMemo(
-    () =>
-      cornerLifecycle.find((corner) => corner.id === decodedId)?.agentOffline === true,
+    () => cornerLifecycle.find((corner) => corner.id === decodedId)?.agentOffline === true,
     [cornerLifecycle, decodedId],
   );
   // The corner action area's card, from the SAME verdict the deck golds. One
@@ -1276,9 +1277,12 @@ export default function BuzzChat() {
       // This corner's own session, not some other corner's: `sessionState`
       // reads this channel's `agent-turn` events, which is exactly "is this
       // edit session still moving."
-      if (sessionState === 'working') return { label: named(subject, 'active', target), live: true };
-      if (processState === 'waiting-for-slot') return { label: named(subject, 'waiting for a slot', target), live: false };
-      if (processState === 'suspended') return { label: named(subject, 'suspended', target), live: false };
+      if (sessionState === 'working')
+        return { label: named(subject, 'active', target), live: true };
+      if (processState === 'waiting-for-slot')
+        return { label: named(subject, 'waiting for a slot', target), live: false };
+      if (processState === 'suspended')
+        return { label: named(subject, 'suspended', target), live: false };
       if (processState === 'live') return { label: named(subject, 'live', target), live: true };
       if (displayedCornerStatus && isCornerActive(displayedCornerStatus)) {
         return { label: named(subject, 'idle', target), live: false };
@@ -1966,6 +1970,7 @@ export default function BuzzChat() {
         text,
         selectedAgentMentionsRef.current,
       );
+      const mentionedPubkeys = selectedMentionPubkeys(text, selectedMentionsRef.current);
       const mentionedAgent = replyTarget?.isAgent
         ? replyTarget.authorPubkey
         : parentChannelId
@@ -1980,10 +1985,16 @@ export default function BuzzChat() {
             replyTarget.messageId,
             mentionedAgent,
             attachments,
+            mentionedPubkeys,
           )
         : await transport.messageSubmitWithEventId(
             { sessionId: decodedId, text, attachments },
-            mentionedAgent ? { mentionAgent: mentionedAgent } : undefined,
+            mentionedAgent || mentionedPubkeys.length
+              ? {
+                  ...(mentionedAgent ? { mentionAgent: mentionedAgent } : {}),
+                  ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+                }
+              : undefined,
           );
       useBuzzLocalCache
         .getState()
@@ -2080,6 +2091,7 @@ export default function BuzzChat() {
       if (participant.kind === 'agent') {
         selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
       }
+      selectedMentionsRef.current.set(participant.handle, participant.pubkey);
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
       inputTextRef.current = inserted.text;
@@ -2402,9 +2414,7 @@ export default function BuzzChat() {
         setGitHubInstallations(access.installations);
       } catch (error) {
         if (refresh) throw error;
-        setRoomRepoCandidates(
-          await transport.workspaceRoomRepositoryCandidates(activeCommunityId),
-        );
+        setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates(activeCommunityId));
         setGitHubInstallations([]);
       }
     },
@@ -2438,16 +2448,14 @@ export default function BuzzChat() {
     try {
       await runGitHubInstallationSession({
         returnPath: `/buzz/chat/${encodeURIComponent(decodedId)}`,
-        startInstallation: () =>
-          transport.githubInstallationStart(githubInstallationRedirectUri()),
+        startInstallation: () => transport.githubInstallationStart(githubInstallationRedirectUri()),
         openAuthSession: (installationUrl, redirectUri) =>
           WebBrowser.openAuthSessionAsync(
             installationUrl,
             redirectUri,
             authSessionOptions(Platform.OS, redirectUri),
           ),
-        subscribeToUrls: (listener) =>
-          Linking.addEventListener('url', ({ url }) => listener(url)),
+        subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
         subscribeToAppState: (listener) => AppState.addEventListener('change', listener),
         refreshRepositories: () => loadRoomRepoPicker(true),
         onRefreshPhase: handleRepositoryRefreshPhase,
@@ -2511,9 +2519,7 @@ export default function BuzzChat() {
         // granted access). Probe the typed coverage state first: binding now
         // would only dead-end the daemon's token path later.
         if (!input.githubInstallationId) {
-          const access = await transport
-            .githubRepositoryAccess(input.name)
-            .catch(() => undefined);
+          const access = await transport.githubRepositoryAccess(input.name).catch(() => undefined);
           if (access && access.accessible === false && access.reason !== 'revoked') {
             uncoveredOwnersRef.current.add(input.name.split('/')[0]?.toLowerCase() ?? '');
             if (access.installUrl) {
@@ -2556,7 +2562,9 @@ export default function BuzzChat() {
       uncoveredOwnersRef.current.add(fullName.split('/')[0]?.toLowerCase() ?? '');
       if (access?.installUrl) {
         setOwnerGrant({ repository: fullName, installUrl: access.installUrl });
-        void Share.share({ message: ownerGrantShareMessage({ repository: fullName, installUrl: access.installUrl }) });
+        void Share.share({
+          message: ownerGrantShareMessage({ repository: fullName, installUrl: access.installUrl }),
+        });
         return;
       }
       setRoomRepoNotice(
@@ -2668,12 +2676,7 @@ export default function BuzzChat() {
         },
       },
     ]);
-  }, [
-    handleAddGitHubAccount,
-    handleManageGitHubInstallation,
-    roomRepoAccessIssue,
-    transport,
-  ]);
+  }, [handleAddGitHubAccount, handleManageGitHubInstallation, roomRepoAccessIssue, transport]);
 
   const handleStartDirectMessage = useCallback(
     async (option: RoomMemberOption) => {
@@ -2896,7 +2899,15 @@ export default function BuzzChat() {
     // ordinary message instead of dying as a dead end. The daemon visibly
     // marks such text on the other side.
     handleSend();
-  }, [handleSend, highlightedSlashVerbIndex, insertAgentCommand, inputText, mentionAgentCommands, runSlashVerb, slashVerbs]);
+  }, [
+    handleSend,
+    highlightedSlashVerbIndex,
+    insertAgentCommand,
+    inputText,
+    mentionAgentCommands,
+    runSlashVerb,
+    slashVerbs,
+  ]);
 
   const renderItem = useCallback(
     ({ item }: { item: ChatDisplayMessage }) => {
@@ -3207,15 +3218,14 @@ export default function BuzzChat() {
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
-      const replyReference =
-        showReplyReference ? (
-          <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
-            <Text numberOfLines={2} style={styles.replyReferenceText}>
-              ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
-              {referencedTarget?.preview ?? 'Message not loaded'}
-            </Text>
-          </View>
-        ) : null;
+      const replyReference = showReplyReference ? (
+        <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
+          <Text numberOfLines={2} style={styles.replyReferenceText}>
+            ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
+            {referencedTarget?.preview ?? 'Message not loaded'}
+          </Text>
+        </View>
+      ) : null;
 
       // A pasted `git push` dump, stack trace, or npm error wall gets the same
       // treatment as tool telemetry: lifted out of the prose into one ghost
@@ -3737,27 +3747,28 @@ export default function BuzzChat() {
           </View>
         ) : (
           <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            {slashMenuVisible && (() => {
-              const mentionAgent = mentionSlashAgentPubkey
-                ? agentByPubkey.get(mentionSlashAgentPubkey)
-                : undefined;
-              const mentionAgentName = mentionSlashAgentPubkey
-                ? resolveAgentDisplayIdentity(mentionSlashAgentPubkey, mentionAgent).name
-                : undefined;
-              return (
-                <SlashVerbPicker
-                  verbs={slashVerbs}
-                  query={currentSlashQuery ?? mentionSlash?.query ?? ''}
-                  highlightedIndex={highlightedSlashVerbIndex}
-                  onDismiss={dismissSlashMenu}
-                  onSelect={runSlashVerb}
-                  commands={mentionAgentCommands}
-                  agentName={mentionAgentName}
-                  agentLacksCommands={mentionAgentLacksCommands}
-                  onSelectCommand={insertAgentCommand}
-                />
-              );
-            })()}
+            {slashMenuVisible &&
+              (() => {
+                const mentionAgent = mentionSlashAgentPubkey
+                  ? agentByPubkey.get(mentionSlashAgentPubkey)
+                  : undefined;
+                const mentionAgentName = mentionSlashAgentPubkey
+                  ? resolveAgentDisplayIdentity(mentionSlashAgentPubkey, mentionAgent).name
+                  : undefined;
+                return (
+                  <SlashVerbPicker
+                    verbs={slashVerbs}
+                    query={currentSlashQuery ?? mentionSlash?.query ?? ''}
+                    highlightedIndex={highlightedSlashVerbIndex}
+                    onDismiss={dismissSlashMenu}
+                    onSelect={runSlashVerb}
+                    commands={mentionAgentCommands}
+                    agentName={mentionAgentName}
+                    agentLacksCommands={mentionAgentLacksCommands}
+                    onSelectCommand={insertAgentCommand}
+                  />
+                );
+              })()}
             {mentionMenuVisible && (
               <View
                 accessibilityLabel="Mention a Room participant"
@@ -4653,1202 +4664,1202 @@ export default function BuzzChat() {
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  container: {
-    flex: 1,
-    backgroundColor: groknight.bgTerminal,
-  },
-  center: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingText: {
-    ...Typography.mono('semiBold'),
-    marginTop: 12,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
-    color: groknight.textMuted,
-  },
+  return {
+    container: {
+      flex: 1,
+      backgroundColor: groknight.bgTerminal,
+    },
+    center: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    loadingText: {
+      ...Typography.mono('semiBold'),
+      marginTop: 12,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
+      color: groknight.textMuted,
+    },
 
-  // ── Header ──────────────────────────────────────────────────────
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    marginRight: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backText: {
-    ...Typography.default(),
-    fontSize: 22,
-    color: groknight.muted,
-  },
-  cornerBackText: { ...Typography.mono(), color: groknight.textMuted },
-  // The single agent's faceted mark, stated once for the whole corner — the
-  // slot itself is the shared HeaderIdentitySlot primitive.
-  headerCenter: {
-    flex: 1,
-    minHeight: 44,
-    minWidth: 0,
-    justifyContent: 'center',
-  },
-  channelName: {
-    ...Typography.default('semiBold'),
-    fontSize: 20,
-    lineHeight: 24,
-    color: groknight.textPrimary,
-  },
-  // A corner's name is a slug, not a title — set it at label scale so it
-  // reads as an identifier beside the agent's mark rather than a headline.
-  cornerChannelName: {
-    ...Typography.mono('semiBold'),
-    fontSize: 15,
-    lineHeight: 19,
-    letterSpacing: 0.2,
-    color: groknight.textPrimary,
-  },
-  // Stands in for the name until the channel's own read lands, so the header
-  // never has to guess between "Room" and a corner slug.
-  channelNameSkeleton: {
-    width: 132,
-    height: 13,
-    marginVertical: 5,
-    backgroundColor: groknight.bgHover,
-    borderRadius: groknight.radius,
-  },
-  cornerChannelNameSkeleton: { width: 108 },
-  repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
-  cornerHeaderAgent: {
-    ...Typography.mono('semiBold'),
-    flexShrink: 0,
-    color: groknight.textSecondary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.7,
-  },
-  addMembersButton: {
-    width: 44,
-    minHeight: 44,
-    marginLeft: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addMembersGlyph: {
-    ...Typography.default('semiBold'),
-    color: groknight.chrome,
-    fontSize: 24,
-    lineHeight: 28,
-  },
-  roomActionsButton: {
-    minWidth: 44,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roomActionsGlyph: {
-    ...Typography.default('semiBold'),
-    color: groknight.steel,
-    fontSize: 12,
-    lineHeight: 16,
-    letterSpacing: 1.2,
-  },
-  archivedBadge: {
-    backgroundColor: groknight.bgHighlight,
-    borderRadius: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  archivedBadgeText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  // ── Read-only Room roster ──────────────────────────────────────
-  rosterModalRoot: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingBottom: 18,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(5, 5, 6, 0.84)',
-  },
-  rosterModal: {
-    width: '100%',
-    maxWidth: 460,
-    maxHeight: '82%',
-    padding: 16,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
-  },
-  rosterModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  rosterModalHeadingCopy: { flex: 1, minWidth: 0 },
-  rosterModalEyebrow: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.8,
-  },
-  rosterModalTitle: {
-    ...Typography.default('semiBold'),
-    marginTop: 4,
-    color: groknight.textPrimary,
-    fontSize: 19,
-    lineHeight: 24,
-  },
-  rosterModalClose: {
-    width: 44,
-    height: 44,
-    marginTop: -10,
-    marginRight: -10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rosterModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-  rosterContent: { paddingTop: 18, paddingBottom: 4 },
-  rosterSectionLabel: {
-    ...Typography.mono('semiBold'),
-    marginBottom: 7,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.7,
-  },
-  rosterSectionLabelSpaced: { marginTop: 20 },
-  rosterRow: {
-    minHeight: 62,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderTopWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  rosterIdentity: { flex: 1, minWidth: 0 },
-  rosterNameRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rosterName: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-    lineHeight: 17,
-  },
-  rosterHandle: {
-    ...Typography.mono(),
-    marginTop: 2,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-  },
-  rosterKind: {
-    ...Typography.mono('semiBold'),
-    color: groknight.steel,
-    fontSize: 8,
-    lineHeight: 12,
-    letterSpacing: 0.7,
-  },
-  rosterActions: {
-    flexShrink: 0,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
-  rosterRemoveButton: {
-    minHeight: 44,
-    paddingLeft: 12,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
-  rosterRemoveText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.chrome,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.4,
-  },
-  rosterEmpty: {
-    ...Typography.default(),
-    paddingVertical: 28,
-    color: groknight.textMuted,
-    fontSize: 12,
-    textAlign: 'center',
-  },
-  // ── Room lifecycle menu ─────────────────────────────────────────
-  roomActionsModalRoot: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingBottom: 18,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(5, 5, 6, 0.84)',
-  },
-  roomActionsModal: {
-    width: '100%',
-    maxWidth: 460,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
-  },
-  roomActionsModalHeading: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  roomActionsModalCopy: { flex: 1, minWidth: 0 },
-  roomActionsModalEyebrow: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.8,
-  },
-  roomActionsModalTitle: {
-    ...Typography.default('semiBold'),
-    marginTop: 4,
-    color: groknight.textPrimary,
-    fontSize: 19,
-    lineHeight: 24,
-  },
-  roomActionsModalClose: {
-    width: 44,
-    height: 44,
-    marginTop: -10,
-    marginRight: -10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roomActionsModalCloseText: {
-    ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 24,
-  },
-  roomRenameAction: {
-    minHeight: 66,
-    marginTop: 18,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
-  },
-  roomRenameEditor: {
-    marginTop: 18,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
-  },
-  roomRenameLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.7,
-  },
-  roomRenameInput: {
-    ...Typography.default('semiBold'),
-    minHeight: 44,
-    marginTop: 8,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    color: groknight.textPrimary,
-    backgroundColor: groknight.bgRaised,
-    fontSize: 16,
-  },
-  roomRenameControls: {
-    marginTop: 10,
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  roomRenameCancel: {
-    minHeight: 40,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roomRenameCancelText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 10,
-    letterSpacing: 0.6,
-  },
-  roomRenameApply: {
-    minHeight: 40,
-    paddingHorizontal: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.textPrimary,
-    backgroundColor: groknight.textPrimary,
-  },
-  roomRenameApplyDisabled: { opacity: 0.45 },
-  roomRenameApplyText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.bgBase,
-    fontSize: 10,
-    letterSpacing: 0.6,
-  },
-  roomLifecycleAction: {
-    minHeight: 66,
-    marginTop: 18,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
-  },
-  roomLifecycleCopy: { flex: 1, minWidth: 0 },
-  roomLifecycleTitle: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.6,
-  },
-  roomLifecycleHint: {
-    ...Typography.default(),
-    marginTop: 3,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  roomLifecycleGlyph: {
-    ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 17,
-    lineHeight: 22,
-  },
-  // ── Room membership picker ─────────────────────────────────────
-  memberModalRoot: {
-    flex: 1,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(5, 5, 6, 0.84)',
-  },
-  memberModal: {
-    width: '100%',
-    maxWidth: 460,
-    maxHeight: '78%',
-    padding: 16,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
-  },
-  memberModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  memberModalHeadingCopy: { flex: 1, minWidth: 0 },
-  memberModalTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 17,
-    lineHeight: 22,
-  },
-  memberModalClose: {
-    width: 44,
-    height: 44,
-    marginTop: -10,
-    marginRight: -10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  memberModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-  memberPickerContent: { paddingTop: 18, paddingBottom: 4 },
-  memberSectionLabel: {
-    ...Typography.mono('semiBold'),
-    marginBottom: 7,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.7,
-  },
-  memberSectionLabelSpaced: { marginTop: 18 },
-  memberPickerRow: {
-    minHeight: 58,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderTopWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  memberPickerRowPlaced: { opacity: 0.58 },
-  memberPickerIdentity: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  memberPickerCopy: { flex: 1, minWidth: 0 },
-  memberPickerName: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 12,
-  },
-  memberPickerNpub: {
-    ...Typography.mono(),
-    marginTop: 2,
-    color: groknight.textMuted,
-    fontSize: 9,
-  },
-  memberPickerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  memberPickerActionButton: {
-    minHeight: 44,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  memberPickerAction: {
-    ...Typography.mono('semiBold'),
-    color: groknight.chrome,
-    fontSize: 9,
-    letterSpacing: 0.3,
-  },
-  memberPickerEmpty: {
-    ...Typography.default(),
-    paddingVertical: 24,
-    color: groknight.textMuted,
-    fontSize: 12,
-    textAlign: 'center',
-  },
-  membershipError: {
-    marginTop: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  membershipErrorText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
-  },
+    // ── Header ──────────────────────────────────────────────────────
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    backButton: {
+      width: 44,
+      height: 44,
+      marginRight: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backText: {
+      ...Typography.default(),
+      fontSize: 22,
+      color: groknight.muted,
+    },
+    cornerBackText: { ...Typography.mono(), color: groknight.textMuted },
+    // The single agent's faceted mark, stated once for the whole corner — the
+    // slot itself is the shared HeaderIdentitySlot primitive.
+    headerCenter: {
+      flex: 1,
+      minHeight: 44,
+      minWidth: 0,
+      justifyContent: 'center',
+    },
+    channelName: {
+      ...Typography.default('semiBold'),
+      fontSize: 20,
+      lineHeight: 24,
+      color: groknight.textPrimary,
+    },
+    // A corner's name is a slug, not a title — set it at label scale so it
+    // reads as an identifier beside the agent's mark rather than a headline.
+    cornerChannelName: {
+      ...Typography.mono('semiBold'),
+      fontSize: 15,
+      lineHeight: 19,
+      letterSpacing: 0.2,
+      color: groknight.textPrimary,
+    },
+    // Stands in for the name until the channel's own read lands, so the header
+    // never has to guess between "Room" and a corner slug.
+    channelNameSkeleton: {
+      width: 132,
+      height: 13,
+      marginVertical: 5,
+      backgroundColor: groknight.bgHover,
+      borderRadius: groknight.radius,
+    },
+    cornerChannelNameSkeleton: { width: 108 },
+    repoChip: { alignSelf: 'flex-start', marginTop: 2, maxWidth: '100%' },
+    cornerHeaderAgent: {
+      ...Typography.mono('semiBold'),
+      flexShrink: 0,
+      color: groknight.textSecondary,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.7,
+    },
+    addMembersButton: {
+      width: 44,
+      minHeight: 44,
+      marginLeft: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    addMembersGlyph: {
+      ...Typography.default('semiBold'),
+      color: groknight.chrome,
+      fontSize: 24,
+      lineHeight: 28,
+    },
+    roomActionsButton: {
+      minWidth: 44,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roomActionsGlyph: {
+      ...Typography.default('semiBold'),
+      color: groknight.steel,
+      fontSize: 12,
+      lineHeight: 16,
+      letterSpacing: 1.2,
+    },
+    archivedBadge: {
+      backgroundColor: groknight.bgHighlight,
+      borderRadius: 3,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+    },
+    archivedBadgeText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    // ── Read-only Room roster ──────────────────────────────────────
+    rosterModalRoot: {
+      flex: 1,
+      paddingHorizontal: 16,
+      paddingBottom: 18,
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      backgroundColor: 'rgba(5, 5, 6, 0.84)',
+    },
+    rosterModal: {
+      width: '100%',
+      maxWidth: 460,
+      maxHeight: '82%',
+      padding: 16,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgRaised,
+    },
+    rosterModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+    rosterModalHeadingCopy: { flex: 1, minWidth: 0 },
+    rosterModalEyebrow: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.8,
+    },
+    rosterModalTitle: {
+      ...Typography.default('semiBold'),
+      marginTop: 4,
+      color: groknight.textPrimary,
+      fontSize: 19,
+      lineHeight: 24,
+    },
+    rosterModalClose: {
+      width: 44,
+      height: 44,
+      marginTop: -10,
+      marginRight: -10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    rosterModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
+    rosterContent: { paddingTop: 18, paddingBottom: 4 },
+    rosterSectionLabel: {
+      ...Typography.mono('semiBold'),
+      marginBottom: 7,
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.7,
+    },
+    rosterSectionLabelSpaced: { marginTop: 20 },
+    rosterRow: {
+      minHeight: 62,
+      paddingHorizontal: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      borderTopWidth: 1,
+      borderColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    rosterIdentity: { flex: 1, minWidth: 0 },
+    rosterNameRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
+    rosterName: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 13,
+      lineHeight: 17,
+    },
+    rosterHandle: {
+      ...Typography.mono(),
+      marginTop: 2,
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 14,
+    },
+    rosterKind: {
+      ...Typography.mono('semiBold'),
+      color: groknight.steel,
+      fontSize: 8,
+      lineHeight: 12,
+      letterSpacing: 0.7,
+    },
+    rosterActions: {
+      flexShrink: 0,
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+    },
+    rosterRemoveButton: {
+      minHeight: 44,
+      paddingLeft: 12,
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+    },
+    rosterRemoveText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.chrome,
+      fontSize: 9,
+      lineHeight: 13,
+      letterSpacing: 0.4,
+    },
+    rosterEmpty: {
+      ...Typography.default(),
+      paddingVertical: 28,
+      color: groknight.textMuted,
+      fontSize: 12,
+      textAlign: 'center',
+    },
+    // ── Room lifecycle menu ─────────────────────────────────────────
+    roomActionsModalRoot: {
+      flex: 1,
+      paddingHorizontal: 16,
+      paddingBottom: 18,
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      backgroundColor: 'rgba(5, 5, 6, 0.84)',
+    },
+    roomActionsModal: {
+      width: '100%',
+      maxWidth: 460,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgRaised,
+    },
+    roomActionsModalHeading: {
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+    },
+    roomActionsModalCopy: { flex: 1, minWidth: 0 },
+    roomActionsModalEyebrow: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.8,
+    },
+    roomActionsModalTitle: {
+      ...Typography.default('semiBold'),
+      marginTop: 4,
+      color: groknight.textPrimary,
+      fontSize: 19,
+      lineHeight: 24,
+    },
+    roomActionsModalClose: {
+      width: 44,
+      height: 44,
+      marginTop: -10,
+      marginRight: -10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roomActionsModalCloseText: {
+      ...Typography.default(),
+      color: groknight.steel,
+      fontSize: 24,
+    },
+    roomRenameAction: {
+      minHeight: 66,
+      marginTop: 18,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgBase,
+    },
+    roomRenameEditor: {
+      marginTop: 18,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgBase,
+    },
+    roomRenameLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.7,
+    },
+    roomRenameInput: {
+      ...Typography.default('semiBold'),
+      minHeight: 44,
+      marginTop: 8,
+      paddingHorizontal: 10,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      color: groknight.textPrimary,
+      backgroundColor: groknight.bgRaised,
+      fontSize: 16,
+    },
+    roomRenameControls: {
+      marginTop: 10,
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 8,
+    },
+    roomRenameCancel: {
+      minHeight: 40,
+      paddingHorizontal: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roomRenameCancelText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 10,
+      letterSpacing: 0.6,
+    },
+    roomRenameApply: {
+      minHeight: 40,
+      paddingHorizontal: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: groknight.textPrimary,
+      backgroundColor: groknight.textPrimary,
+    },
+    roomRenameApplyDisabled: { opacity: 0.45 },
+    roomRenameApplyText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.bgBase,
+      fontSize: 10,
+      letterSpacing: 0.6,
+    },
+    roomLifecycleAction: {
+      minHeight: 66,
+      marginTop: 18,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgBase,
+    },
+    roomLifecycleCopy: { flex: 1, minWidth: 0 },
+    roomLifecycleTitle: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.6,
+    },
+    roomLifecycleHint: {
+      ...Typography.default(),
+      marginTop: 3,
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    roomLifecycleGlyph: {
+      ...Typography.default(),
+      color: groknight.steel,
+      fontSize: 17,
+      lineHeight: 22,
+    },
+    // ── Room membership picker ─────────────────────────────────────
+    memberModalRoot: {
+      flex: 1,
+      paddingHorizontal: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(5, 5, 6, 0.84)',
+    },
+    memberModal: {
+      width: '100%',
+      maxWidth: 460,
+      maxHeight: '78%',
+      padding: 16,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgRaised,
+    },
+    memberModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+    memberModalHeadingCopy: { flex: 1, minWidth: 0 },
+    memberModalTitle: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 17,
+      lineHeight: 22,
+    },
+    memberModalClose: {
+      width: 44,
+      height: 44,
+      marginTop: -10,
+      marginRight: -10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    memberModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
+    memberPickerContent: { paddingTop: 18, paddingBottom: 4 },
+    memberSectionLabel: {
+      ...Typography.mono('semiBold'),
+      marginBottom: 7,
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.7,
+    },
+    memberSectionLabelSpaced: { marginTop: 18 },
+    memberPickerRow: {
+      minHeight: 58,
+      paddingHorizontal: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderTopWidth: 1,
+      borderColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    memberPickerRowPlaced: { opacity: 0.58 },
+    memberPickerIdentity: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    memberPickerCopy: { flex: 1, minWidth: 0 },
+    memberPickerName: {
+      ...Typography.default('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 12,
+    },
+    memberPickerNpub: {
+      ...Typography.mono(),
+      marginTop: 2,
+      color: groknight.textMuted,
+      fontSize: 9,
+    },
+    memberPickerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    memberPickerActionButton: {
+      minHeight: 44,
+      paddingHorizontal: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    memberPickerAction: {
+      ...Typography.mono('semiBold'),
+      color: groknight.chrome,
+      fontSize: 9,
+      letterSpacing: 0.3,
+    },
+    memberPickerEmpty: {
+      ...Typography.default(),
+      paddingVertical: 24,
+      color: groknight.textMuted,
+      fontSize: 12,
+      textAlign: 'center',
+    },
+    membershipError: {
+      marginTop: 10,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    membershipErrorText: {
+      ...Typography.default('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 11,
+      lineHeight: 16,
+    },
 
-  // ── Message blocks ──────────────────────────────────────────────
-  messageList: {
-    flex: 1,
-  },
-  messageListContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  replySwipeAction: {
-    width: 78,
-    marginBottom: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderLeftWidth: 1,
-    borderLeftColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  replySwipeGlyph: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 17,
-    lineHeight: 20,
-  },
-  replySwipeLabel: {
-    ...Typography.mono('semiBold'),
-    marginTop: 2,
-    color: groknight.textMuted,
-    fontSize: 8,
-    lineHeight: 11,
-    letterSpacing: 0.6,
-  },
-  /* A person reaching back up the transcript quotes what they reached for, on
-   * one dim line and with no rule beside it — the ledger has no delimiters. */
-  replyReference: {
-    minWidth: 0,
-    marginBottom: 5,
-  },
-  replyReferenceText: {
-    ...Typography.mono(),
-    color: groknight.ledgerGhost,
-    fontSize: 11,
-    lineHeight: 17,
-  },
-  /* An attachment hangs off the message that carries it: a row, not a card. */
-  attachmentCard: {
-    minWidth: 0,
-    width: '100%',
-    minHeight: 58,
-    marginTop: 8,
-    paddingVertical: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-  },
-  attachmentThumbnail: {
-    width: 46,
-    height: 46,
-    backgroundColor: groknight.bgHighlight,
-  },
-  attachmentFileGlyph: {
-    width: 46,
-    height: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  attachmentFileGlyphText: {
-    ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 20,
-  },
-  attachmentCopy: { flex: 1, minWidth: 0 },
-  attachmentName: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  attachmentMeta: {
-    ...Typography.mono(),
-    marginTop: 3,
-    color: groknight.textMuted,
-    fontSize: 8,
-    lineHeight: 11,
-  },
-  attachmentOpenGlyph: {
-    ...Typography.default(),
-    width: 22,
-    color: groknight.steel,
-    fontSize: 14,
-    textAlign: 'center',
-  },
+    // ── Message blocks ──────────────────────────────────────────────
+    messageList: {
+      flex: 1,
+    },
+    messageListContent: {
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+    },
+    replySwipeAction: {
+      width: 78,
+      marginBottom: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderLeftWidth: 1,
+      borderLeftColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    replySwipeGlyph: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 17,
+      lineHeight: 20,
+    },
+    replySwipeLabel: {
+      ...Typography.mono('semiBold'),
+      marginTop: 2,
+      color: groknight.textMuted,
+      fontSize: 8,
+      lineHeight: 11,
+      letterSpacing: 0.6,
+    },
+    /* A person reaching back up the transcript quotes what they reached for, on
+     * one dim line and with no rule beside it — the ledger has no delimiters. */
+    replyReference: {
+      minWidth: 0,
+      marginBottom: 5,
+    },
+    replyReferenceText: {
+      ...Typography.mono(),
+      color: groknight.ledgerGhost,
+      fontSize: 11,
+      lineHeight: 17,
+    },
+    /* An attachment hangs off the message that carries it: a row, not a card. */
+    attachmentCard: {
+      minWidth: 0,
+      width: '100%',
+      minHeight: 58,
+      marginTop: 8,
+      paddingVertical: 6,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+    },
+    attachmentThumbnail: {
+      width: 46,
+      height: 46,
+      backgroundColor: groknight.bgHighlight,
+    },
+    attachmentFileGlyph: {
+      width: 46,
+      height: 46,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    attachmentFileGlyphText: {
+      ...Typography.default(),
+      color: groknight.steel,
+      fontSize: 20,
+    },
+    attachmentCopy: { flex: 1, minWidth: 0 },
+    attachmentName: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 12,
+      lineHeight: 16,
+    },
+    attachmentMeta: {
+      ...Typography.mono(),
+      marginTop: 3,
+      color: groknight.textMuted,
+      fontSize: 8,
+      lineHeight: 11,
+    },
+    attachmentOpenGlyph: {
+      ...Typography.default(),
+      width: 22,
+      color: groknight.steel,
+      fontSize: 14,
+      textAlign: 'center',
+    },
 
-  // ── The ledger ─────────────────────────────────────────────────
-  // A turn's whole tool run folds into one line here; the group itself is
-  // pure rhythm, with no rule or fill separating it from the prose around it.
-  // Every other transcript shape lives in components/buzz/Ledger.tsx, which
-  // Rooms and Corners share.
-  activityGroup: {
-    width: '100%',
-    minWidth: 0,
-    marginBottom: 20,
-    paddingRight: LEDGER_MARGINALIA_WIDTH,
-  },
+    // ── The ledger ─────────────────────────────────────────────────
+    // A turn's whole tool run folds into one line here; the group itself is
+    // pure rhythm, with no rule or fill separating it from the prose around it.
+    // Every other transcript shape lives in components/buzz/Ledger.tsx, which
+    // Rooms and Corners share.
+    activityGroup: {
+      width: '100%',
+      minWidth: 0,
+      marginBottom: 20,
+      paddingRight: LEDGER_MARGINALIA_WIDTH,
+    },
 
-  agentPresenceLight: {
-    width: 9,
-    height: 9,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.textSecondary,
-  },
-  agentPresenceOnline: { backgroundColor: groknight.textSecondary },
-  agentPresenceOffline: { backgroundColor: 'transparent' },
-  // ── Merge summary ───────────────────────────────────────────────
-  /* A system row is still a row of the ledger: no rule under it, no frame
-   * around it. It is found by its glyph and by the luminance ladder. */
-  mergeSummaryBubble: {
-    paddingVertical: 6,
-    marginBottom: 22,
-  },
-  mergeSummaryTitle: {
-    ...Typography.mono(),
-    fontSize: 12,
-    lineHeight: 20,
-    color: groknight.ledgerQuiet,
-    marginBottom: 2,
-  },
-  mergeSummaryText: {
-    ...Typography.mono(),
-    fontSize: 12,
-    color: groknight.ledgerQuiet,
-    lineHeight: 18,
-  },
-  mergeSummaryPubkey: {
-    ...Typography.mono(),
-    fontSize: 10,
-    lineHeight: 15,
-    color: groknight.ledgerGhost,
-    marginTop: 3,
-  },
+    agentPresenceLight: {
+      width: 9,
+      height: 9,
+      borderRadius: 3,
+      borderWidth: 1,
+      borderColor: groknight.textSecondary,
+    },
+    agentPresenceOnline: { backgroundColor: groknight.textSecondary },
+    agentPresenceOffline: { backgroundColor: 'transparent' },
+    // ── Merge summary ───────────────────────────────────────────────
+    /* A system row is still a row of the ledger: no rule under it, no frame
+     * around it. It is found by its glyph and by the luminance ladder. */
+    mergeSummaryBubble: {
+      paddingVertical: 6,
+      marginBottom: 22,
+    },
+    mergeSummaryTitle: {
+      ...Typography.mono(),
+      fontSize: 12,
+      lineHeight: 20,
+      color: groknight.ledgerQuiet,
+      marginBottom: 2,
+    },
+    mergeSummaryText: {
+      ...Typography.mono(),
+      fontSize: 12,
+      color: groknight.ledgerQuiet,
+      lineHeight: 18,
+    },
+    mergeSummaryPubkey: {
+      ...Typography.mono(),
+      fontSize: 10,
+      lineHeight: 15,
+      color: groknight.ledgerGhost,
+      marginTop: 3,
+    },
 
-  // ── Archived corner card ───────────────────────────────────────
-  archivedCornerCard: {
-    minWidth: 0,
-    marginBottom: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: groknight.borderQuiet,
-  },
-  archivedCornerHeading: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  archivedCornerTitle: {
-    ...Typography.default(),
-    flex: 1,
-    minWidth: 0,
-    color: groknight.ledgerQuiet,
-    fontSize: 10,
-    lineHeight: 15,
-    letterSpacing: 0.7,
-  },
-  archivedCornerAction: {
-    ...Typography.default(),
-    flexShrink: 0,
-    color: groknight.ledgerGhost,
-    fontSize: 9,
-    lineHeight: 15,
-  },
-  archivedCornerSummary: {
-    ...Typography.default(),
-    marginTop: 7,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
+    // ── Archived corner card ───────────────────────────────────────
+    archivedCornerCard: {
+      minWidth: 0,
+      marginBottom: 20,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: groknight.borderQuiet,
+    },
+    archivedCornerHeading: {
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    archivedCornerTitle: {
+      ...Typography.default(),
+      flex: 1,
+      minWidth: 0,
+      color: groknight.ledgerQuiet,
+      fontSize: 10,
+      lineHeight: 15,
+      letterSpacing: 0.7,
+    },
+    archivedCornerAction: {
+      ...Typography.default(),
+      flexShrink: 0,
+      color: groknight.ledgerGhost,
+      fontSize: 9,
+      lineHeight: 15,
+    },
+    archivedCornerSummary: {
+      ...Typography.default(),
+      marginTop: 7,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
 
-  // ── Archived notice ─────────────────────────────────────────────
-  archivedBubble: {
-    paddingVertical: 8,
-    marginBottom: 20,
-    alignSelf: 'center',
-    maxWidth: '90%',
-  },
-  archivedText: {
-    ...Typography.mono(),
-    fontSize: 11,
-    lineHeight: 16,
-    letterSpacing: 0.8,
-    color: groknight.ledgerQuiet,
-    textAlign: 'center',
-  },
+    // ── Archived notice ─────────────────────────────────────────────
+    archivedBubble: {
+      paddingVertical: 8,
+      marginBottom: 20,
+      alignSelf: 'center',
+      maxWidth: '90%',
+    },
+    archivedText: {
+      ...Typography.mono(),
+      fontSize: 11,
+      lineHeight: 16,
+      letterSpacing: 0.8,
+      color: groknight.ledgerQuiet,
+      textAlign: 'center',
+    },
 
-  // ── Offline notice (client-rendered only) ─────────────────────────
-  systemNoticeBubble: {
-    paddingVertical: 8,
-    marginBottom: 20,
-    alignSelf: 'center',
-    maxWidth: '90%',
-  },
-  systemNoticeText: {
-    ...Typography.ledger(),
-    color: groknight.ledgerQuiet,
-    textAlign: 'center',
-  },
+    // ── Offline notice (client-rendered only) ─────────────────────────
+    systemNoticeBubble: {
+      paddingVertical: 8,
+      marginBottom: 20,
+      alignSelf: 'center',
+      maxWidth: '90%',
+    },
+    systemNoticeText: {
+      ...Typography.ledger(),
+      color: groknight.ledgerQuiet,
+      textAlign: 'center',
+    },
 
-  // ── Approval bar ────────────────────────────────────────────────
-  approvalBar: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: groknight.bgTerminal,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    gap: 8,
-  },
-  approvalInfo: {
-    gap: 4,
-  },
-  prChip: {
-    ...Typography.mono(),
-    fontSize: 12,
-    color: groknight.textPrimary,
-  },
-  approvalBarText: {
-    ...Typography.mono(),
-    fontSize: 11,
-    lineHeight: 16,
-    color: groknight.textSecondary,
-  },
-  approveButton: {
-    minHeight: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 3,
-    paddingHorizontal: 14,
-    borderWidth: 2,
-    borderColor: MERGE_APPROVAL_ACCENT,
-    borderRadius: 3,
-    backgroundColor: MERGE_APPROVAL_ACCENT,
-  },
-  approveButtonText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textInverted,
-    fontSize: 13,
-    lineHeight: 18,
-    letterSpacing: 0.3,
-    textAlign: 'center',
-  },
-  approveButtonSupport: {
-    ...Typography.default('semiBold'),
-    color: groknight.textInverted,
-    fontSize: 8,
-    lineHeight: 12,
-    letterSpacing: 0.45,
-    textAlign: 'center',
-  },
-  approvalPending: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-  },
-  approvalStateText: {
-    ...Typography.mono(),
-    fontSize: 11,
-    color: groknight.textMuted,
-  },
-  approvalSent: {
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  approvalSentText: {
-    ...Typography.mono(),
-    color: groknight.textPrimary,
-    fontSize: 12,
-  },
-  cornerReviewFooter: {
-    paddingTop: 12,
-  },
-  nothingReady: {
-    marginHorizontal: 16,
-    padding: 14,
-    gap: 4,
-  },
-  nothingReadyTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  nothingReadyText: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 16,
-  },
-  // ── Composer ────────────────────────────────────────────────────
-  emptyState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 60,
-  },
-  emptyText: {
-    ...Typography.default(),
-    fontSize: 13,
-    color: groknight.muted,
-  },
-  cornerEmptyText: { ...Typography.mono(), color: groknight.textMuted },
-  olderMessagesLoading: {
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  inputBar: {
-    paddingHorizontal: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgTerminal,
-  },
-  agentOfflineHint: {
-    minWidth: 0,
-    marginBottom: 7,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
-  },
-  agentOfflineHintTitle: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.55,
-  },
-  agentOfflineHintText: {
-    ...Typography.default(),
-    marginTop: 3,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  previewLinkRow: {
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    minWidth: 0,
-  },
-  previewLinkLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 9,
-    lineHeight: 14,
-    letterSpacing: 0.5,
-    flexShrink: 0,
-  },
-  previewLinkUrl: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 14,
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  targetBranchCard: {
-    minWidth: 0,
-    marginBottom: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    gap: 8,
-  },
-  targetBranchTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  targetBranchChange: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 12,
-    lineHeight: 17,
-    letterSpacing: 0.35,
-  },
-  targetBranchBoundary: {
-    ...Typography.default(),
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  targetBranchActions: { flexDirection: 'row', gap: 8 },
-  targetBranchButton: { flex: 1, minWidth: 0 },
-  targetBranchStatus: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 9,
-    lineHeight: 14,
-    letterSpacing: 0.5,
-  },
-  writePermissionCard: {
-    minWidth: 0,
-    marginBottom: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    gap: 10,
-  },
-  writePermissionHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  writePermissionCopy: { flex: 1, minWidth: 0 },
-  writePermissionTitle: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  writePermissionIntent: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: 2,
-  },
-  writePermissionRepository: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 16,
-    letterSpacing: 0.35,
-  },
-  writePermissionBoundary: {
-    ...Typography.default(),
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  writePermissionFailure: {
-    ...Typography.mono(),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    lineHeight: 15,
-  },
-  writePermissionActions: { flexDirection: 'row', gap: 8 },
-  writePermissionButton: { flex: 1, minWidth: 0 },
-  writePermissionStatus: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 9,
-    lineHeight: 14,
-    letterSpacing: 0.5,
-  },
-  mentionMenu: {
-    marginBottom: 6,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    borderRadius: 3,
-    backgroundColor: groknight.bgBase,
-  },
-  mentionMenuLabel: {
-    ...Typography.mono('semiBold'),
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.7,
-  },
-  mentionRow: {
-    minHeight: 46,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-  },
-  mentionRowSelected: {
-    backgroundColor: groknight.selection,
-  },
-  mentionIdentity: {
-    flex: 1,
-    minWidth: 0,
-  },
-  mentionName: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 12,
-    lineHeight: 15,
-  },
-  mentionHandle: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 13,
-  },
-  mentionKind: {
-    ...Typography.mono('semiBold'),
-    color: groknight.faint,
-    fontSize: 8,
-    letterSpacing: 0.5,
-  },
-  mentionOverflow: {
-    ...Typography.mono('semiBold'),
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.4,
-  },
-  replyComposerBanner: {
-    minWidth: 0,
-    minHeight: 48,
-    marginBottom: 6,
-    paddingLeft: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderLeftWidth: 3,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  replyComposerCopy: { flex: 1, minWidth: 0, paddingVertical: 7 },
-  replyComposerLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.35,
-  },
-  replyComposerPreview: {
-    ...Typography.default(),
-    marginTop: 2,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  replyComposerCancel: {
-    width: 44,
-    minHeight: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  replyComposerCancelText: {
-    ...Typography.default(),
-    color: groknight.textSecondary,
-    fontSize: 20,
-  },
-  repoPromptBanner: {
-    minWidth: 0,
-    marginBottom: 6,
-    padding: 10,
-    borderLeftWidth: 3,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  repoPromptTitle: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    letterSpacing: 0.35,
-  },
-  repoPromptHint: {
-    ...Typography.default(),
-    marginTop: 2,
-    color: groknight.textMuted,
-    fontSize: 12,
-  },
-  repoPromptConnect: { minHeight: 40, justifyContent: 'center', marginTop: 6 },
-  repoPromptConnectText: {
-    ...Typography.default('semiBold'),
-    color: groknight.accent,
-    fontSize: 12,
-  },
-  repoPromptDismiss: { alignSelf: 'flex-end', minHeight: 32, justifyContent: 'center' },
-  repoPromptDismissText: {
-    ...Typography.mono(),
-    color: groknight.textSecondary,
-    fontSize: 11,
-  },
-  pendingAttachment: {
-    minWidth: 0,
-    minHeight: 44,
-    marginBottom: 6,
-    paddingLeft: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  pendingAttachmentCopy: { flex: 1, minWidth: 0 },
-  pendingAttachmentName: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  pendingAttachmentMeta: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 8,
-    lineHeight: 11,
-  },
-  pendingAttachmentRemove: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pendingAttachmentRemoveText: {
-    ...Typography.default(),
-    color: groknight.textSecondary,
-    fontSize: 20,
-  },
-  composer: {
-    minHeight: 46,
-    maxHeight: 126,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingVertical: 3,
-    paddingHorizontal: 10,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  composerFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 9 },
-  attachButton: {
-    width: 40,
-    height: 40,
-    marginLeft: -6,
-    marginRight: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  attachButtonText: {
-    ...Typography.default(),
-    color: groknight.textMuted,
-    fontSize: 18,
-    lineHeight: 22,
-  },
-  input: {
-    ...Typography.default(),
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
-    color: groknight.textSecondary,
-    minHeight: 40,
-    maxHeight: 120,
-    paddingVertical: 10,
-    textAlignVertical: 'top',
-  },
-  sendButton: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendButtonDisabled: {
-    backgroundColor: groknight.bgBase,
-  },
-  sendButtonText: {
-    ...Typography.default(),
-    color: groknight.textPrimary,
-    fontSize: 16,
-  },
-  sendButtonTextQuiet: { color: groknight.textDisabled },
-  archivedInputBar: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-    alignItems: 'center',
-  },
-  archivedInputText: {
-    ...Typography.default('italic'),
-    fontSize: 11,
-    color: groknight.muted,
-    fontStyle: 'italic',
-  },
-  cornerArchivedInputText: { ...Typography.mono('italic'), color: groknight.textMuted },
-  });
+    // ── Approval bar ────────────────────────────────────────────────
+    approvalBar: {
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      backgroundColor: groknight.bgTerminal,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+      gap: 8,
+    },
+    approvalInfo: {
+      gap: 4,
+    },
+    prChip: {
+      ...Typography.mono(),
+      fontSize: 12,
+      color: groknight.textPrimary,
+    },
+    approvalBarText: {
+      ...Typography.mono(),
+      fontSize: 11,
+      lineHeight: 16,
+      color: groknight.textSecondary,
+    },
+    approveButton: {
+      minHeight: 64,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 3,
+      paddingHorizontal: 14,
+      borderWidth: 2,
+      borderColor: MERGE_APPROVAL_ACCENT,
+      borderRadius: 3,
+      backgroundColor: MERGE_APPROVAL_ACCENT,
+    },
+    approveButtonText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textInverted,
+      fontSize: 13,
+      lineHeight: 18,
+      letterSpacing: 0.3,
+      textAlign: 'center',
+    },
+    approveButtonSupport: {
+      ...Typography.default('semiBold'),
+      color: groknight.textInverted,
+      fontSize: 8,
+      lineHeight: 12,
+      letterSpacing: 0.45,
+      textAlign: 'center',
+    },
+    approvalPending: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 10,
+    },
+    approvalStateText: {
+      ...Typography.mono(),
+      fontSize: 11,
+      color: groknight.textMuted,
+    },
+    approvalSent: {
+      paddingVertical: 10,
+      alignItems: 'center',
+    },
+    approvalSentText: {
+      ...Typography.mono(),
+      color: groknight.textPrimary,
+      fontSize: 12,
+    },
+    cornerReviewFooter: {
+      paddingTop: 12,
+    },
+    nothingReady: {
+      marginHorizontal: 16,
+      padding: 14,
+      gap: 4,
+    },
+    nothingReadyTitle: {
+      ...Typography.default('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    nothingReadyText: {
+      ...Typography.default(),
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+    },
+    // ── Composer ────────────────────────────────────────────────────
+    emptyState: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingTop: 60,
+    },
+    emptyText: {
+      ...Typography.default(),
+      fontSize: 13,
+      color: groknight.muted,
+    },
+    cornerEmptyText: { ...Typography.mono(), color: groknight.textMuted },
+    olderMessagesLoading: {
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    inputBar: {
+      paddingHorizontal: 8,
+      paddingTop: 8,
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+      backgroundColor: groknight.bgTerminal,
+    },
+    agentOfflineHint: {
+      minWidth: 0,
+      marginBottom: 7,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgBase,
+    },
+    agentOfflineHintTitle: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.55,
+    },
+    agentOfflineHintText: {
+      ...Typography.default(),
+      marginTop: 3,
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    previewLinkRow: {
+      marginTop: 6,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      minWidth: 0,
+    },
+    previewLinkLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 9,
+      lineHeight: 14,
+      letterSpacing: 0.5,
+      flexShrink: 0,
+    },
+    previewLinkUrl: {
+      ...Typography.mono(),
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 14,
+      flexShrink: 1,
+      minWidth: 0,
+    },
+    targetBranchCard: {
+      minWidth: 0,
+      marginBottom: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      gap: 8,
+    },
+    targetBranchTitle: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    targetBranchChange: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 12,
+      lineHeight: 17,
+      letterSpacing: 0.35,
+    },
+    targetBranchBoundary: {
+      ...Typography.default(),
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    targetBranchActions: { flexDirection: 'row', gap: 8 },
+    targetBranchButton: { flex: 1, minWidth: 0 },
+    targetBranchStatus: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 9,
+      lineHeight: 14,
+      letterSpacing: 0.5,
+    },
+    writePermissionCard: {
+      minWidth: 0,
+      marginBottom: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      gap: 10,
+    },
+    writePermissionHeading: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    writePermissionCopy: { flex: 1, minWidth: 0 },
+    writePermissionTitle: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    writePermissionIntent: {
+      ...Typography.default(),
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+      marginTop: 2,
+    },
+    writePermissionRepository: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 11,
+      lineHeight: 16,
+      letterSpacing: 0.35,
+    },
+    writePermissionBoundary: {
+      ...Typography.default(),
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    writePermissionFailure: {
+      ...Typography.mono(),
+      color: groknight.textSecondary,
+      fontSize: 10,
+      lineHeight: 15,
+    },
+    writePermissionActions: { flexDirection: 'row', gap: 8 },
+    writePermissionButton: { flex: 1, minWidth: 0 },
+    writePermissionStatus: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 9,
+      lineHeight: 14,
+      letterSpacing: 0.5,
+    },
+    mentionMenu: {
+      marginBottom: 6,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      borderRadius: 3,
+      backgroundColor: groknight.bgBase,
+    },
+    mentionMenuLabel: {
+      ...Typography.mono('semiBold'),
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.7,
+    },
+    mentionRow: {
+      minHeight: 46,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      paddingHorizontal: 9,
+      paddingVertical: 6,
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+    },
+    mentionRowSelected: {
+      backgroundColor: groknight.selection,
+    },
+    mentionIdentity: {
+      flex: 1,
+      minWidth: 0,
+    },
+    mentionName: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 12,
+      lineHeight: 15,
+    },
+    mentionHandle: {
+      ...Typography.mono(),
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 13,
+    },
+    mentionKind: {
+      ...Typography.mono('semiBold'),
+      color: groknight.faint,
+      fontSize: 8,
+      letterSpacing: 0.5,
+    },
+    mentionOverflow: {
+      ...Typography.mono('semiBold'),
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.4,
+    },
+    replyComposerBanner: {
+      minWidth: 0,
+      minHeight: 48,
+      marginBottom: 6,
+      paddingLeft: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderLeftWidth: 3,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    replyComposerCopy: { flex: 1, minWidth: 0, paddingVertical: 7 },
+    replyComposerLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 9,
+      lineHeight: 13,
+      letterSpacing: 0.35,
+    },
+    replyComposerPreview: {
+      ...Typography.default(),
+      marginTop: 2,
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    replyComposerCancel: {
+      width: 44,
+      minHeight: 46,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    replyComposerCancelText: {
+      ...Typography.default(),
+      color: groknight.textSecondary,
+      fontSize: 20,
+    },
+    repoPromptBanner: {
+      minWidth: 0,
+      marginBottom: 6,
+      padding: 10,
+      borderLeftWidth: 3,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    repoPromptTitle: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 11,
+      letterSpacing: 0.35,
+    },
+    repoPromptHint: {
+      ...Typography.default(),
+      marginTop: 2,
+      color: groknight.textMuted,
+      fontSize: 12,
+    },
+    repoPromptConnect: { minHeight: 40, justifyContent: 'center', marginTop: 6 },
+    repoPromptConnectText: {
+      ...Typography.default('semiBold'),
+      color: groknight.accent,
+      fontSize: 12,
+    },
+    repoPromptDismiss: { alignSelf: 'flex-end', minHeight: 32, justifyContent: 'center' },
+    repoPromptDismissText: {
+      ...Typography.mono(),
+      color: groknight.textSecondary,
+      fontSize: 11,
+    },
+    pendingAttachment: {
+      minWidth: 0,
+      minHeight: 44,
+      marginBottom: 6,
+      paddingLeft: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    pendingAttachmentCopy: { flex: 1, minWidth: 0 },
+    pendingAttachmentName: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    pendingAttachmentMeta: {
+      ...Typography.mono(),
+      color: groknight.textMuted,
+      fontSize: 8,
+      lineHeight: 11,
+    },
+    pendingAttachmentRemove: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    pendingAttachmentRemoveText: {
+      ...Typography.default(),
+      color: groknight.textSecondary,
+      fontSize: 20,
+    },
+    composer: {
+      minHeight: 46,
+      maxHeight: 126,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      paddingVertical: 3,
+      paddingHorizontal: 10,
+      borderRadius: 3,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    composerFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 9 },
+    attachButton: {
+      width: 40,
+      height: 40,
+      marginLeft: -6,
+      marginRight: 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    attachButtonText: {
+      ...Typography.default(),
+      color: groknight.textMuted,
+      fontSize: 18,
+      lineHeight: 22,
+    },
+    input: {
+      ...Typography.default(),
+      flex: 1,
+      fontSize: 14,
+      lineHeight: 20,
+      color: groknight.textSecondary,
+      minHeight: 40,
+      maxHeight: 120,
+      paddingVertical: 10,
+      textAlignVertical: 'top',
+    },
+    sendButton: {
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    sendButtonDisabled: {
+      backgroundColor: groknight.bgBase,
+    },
+    sendButtonText: {
+      ...Typography.default(),
+      color: groknight.textPrimary,
+      fontSize: 16,
+    },
+    sendButtonTextQuiet: { color: groknight.textDisabled },
+    archivedInputBar: {
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 8,
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+      alignItems: 'center',
+    },
+    archivedInputText: {
+      ...Typography.default('italic'),
+      fontSize: 11,
+      color: groknight.muted,
+      fontStyle: 'italic',
+    },
+    cornerArchivedInputText: { ...Typography.mono('italic'), color: groknight.textMuted },
+  };
 });

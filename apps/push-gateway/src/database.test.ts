@@ -77,7 +77,10 @@ describe('DatabaseEventReader', () => {
         COMMUNITY,
         bytes('1'.repeat(64)),
         bytes(AUTHOR),
-        JSON.stringify([['h', MEMBER_ROOM]]),
+        JSON.stringify([
+          ['h', MEMBER_ROOM],
+          ['p', MEMBER],
+        ]),
         bytes('d'.repeat(128)),
         MEMBER_ROOM,
         bytes('2'.repeat(64)),
@@ -125,7 +128,7 @@ describe('DatabaseEventReader', () => {
     expect(metadata[0]?.tags).toContainEqual(['community', COMMUNITY]);
   });
 
-  it('carries a database-fed member message through a notify decision and FCM send', async () => {
+  it('carries a database-fed member mention through a notify decision and FCM send', async () => {
     const registry = await TokenRegistry.load();
     await registry.register(MEMBER, 'fcm-token-member_12345678901234567890');
     const sendEachForMulticast = vi.fn(async () => ({

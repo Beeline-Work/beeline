@@ -57,16 +57,33 @@ case "$cmd" in
     echo "sha256:fakeauthimage0000000000000000000000000000000000000000000000000000"
     ;;
   ps)
+    all=0
+    [ "$1" = "-aq" ] && all=1
     prev=""
     for a in "$@"; do
       if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=push-gateway" && [ -f "$STATE/gateway-running" ]; then
         echo "gwcontainerid"
+      fi
+      if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=auth" && [ -f "$STATE/auth-running" ]; then
+        echo "authcontainerid"
+      fi
+      if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=relay$"; then
+        echo "relaycontainerid"
       fi
       if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=relay-front"; then
         echo "frontcontainerid"
       fi
       prev="$a"
     done
+    ;;
+  inspect)
+    last=""
+    for last in "$@"; do :; done
+    case "$last" in
+      frontcontainerid) echo "running" ;;
+      authcontainerid|gwcontainerid|relaycontainerid) echo "healthy" ;;
+      *) echo "missing fixture container" >&2; exit 1 ;;
+    esac
     ;;
   network)
     ;;
@@ -113,10 +130,16 @@ case "$cmd" in
     case "$*" in
       *"up -d --no-deps auth") ;;
       *"up -d"*)
+        if [ -f "$STATE/fail-compose-once-no-container" ]; then
+          rm "$STATE/fail-compose-once-no-container"
+          echo "Error response from daemon: No such container: stale-id" >&2
+          exit 1
+        fi
         if [ -f "$STATE/fail-compose-up" ]; then
           echo "simulated compose up failure" >&2
           exit 1
         fi
+        touch "$STATE/gateway-running" "$STATE/auth-running"
         ;;
     esac
     ;;
@@ -217,6 +240,7 @@ function runDeploy(opts) {
   write(path.join(proj, '.env'), 'POSTGRES_PASSWORD=real-secret\nREDIS_PASSWORD=real\nBUZZ_S3_ACCESS_KEY=k\nBUZZ_S3_SECRET_KEY=s\n');
   if (opts.gatewayRunning) write(path.join(stateDir, 'gateway-running'), '1');
   if (opts.failComposeUp) write(path.join(stateDir, 'fail-compose-up'), '1');
+  if (opts.failComposeOnceNoContainer) write(path.join(stateDir, 'fail-compose-once-no-container'), '1');
   if (opts.failInstall) write(path.join(stateDir, 'fail-install'), '1');
 
   makeFakeBin(binDir, stateDir);
@@ -263,19 +287,20 @@ function runDeploy(opts) {
   });
 }
 
-test('first rollout installs both config files, runs one full `up -d`, HUP-reloads nginx, and backs up what it replaced', async () => {
+test('first rollout installs both config files, runs one full reconcile through the existing sudo rule, and waits for health', async () => {
   const r = await runDeploy({});
   assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
   assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
   assert.equal(r.readLive('relay-front/nginx.conf'), fs.readFileSync(TRACKED_NGINX, 'utf8'));
 
-  // Exactly one FULL-stack up through sudo; the pre-existing auth-only
-  // recreation (`up -d --no-deps auth`) still happens and is fine.
+  // Exactly one FULL-stack up through sudo. Auth is part of this reconcile,
+  // never raced by a preceding auth-only container replacement.
   const ups = r.dockerLog().split('\n').filter((l) => l.includes('compose ') && l.includes('up -d') && !l.includes('--no-deps auth'));
   assert.equal(ups.length, 1, r.dockerLog());
   assert.ok(ups[0].includes('-p buzz-router-prod'));
-  assert.ok(!ups[0].includes('--no-deps auth'));
-  assert.ok(r.sudoLog().includes('up -d'));
+  assert.ok(ups[0].endsWith('up -d'));
+  assert.equal(r.sudoLog().split('\n').filter((l) => l.includes('--no-deps auth')).length, 0);
+  assert.ok(r.stdout.includes('production stack health verified'));
 
   // nginx HUP reload happened exactly once.
   assert.equal(r.dockerLog().split('\n').filter((l) => l.includes('kill -s HUP')).length, 1);
@@ -288,7 +313,16 @@ test('first rollout installs both config files, runs one full `up -d`, HUP-reloa
   assert.equal(fs.readFileSync(path.join(backupRoot, cfgBaks[0], 'relay-front/nginx.conf'), 'utf8'), PRE_CHANGE_NGINX);
 });
 
-test('a config-unchanged merge is an idempotent no-op: no install, no compose up, no restart', async () => {
+test('a stale-container reconciliation race retries the same full-stack operation once and succeeds', async () => {
+  const r = await runDeploy({ failComposeOnceNoContainer: true });
+  assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+  assert.ok(r.stdout.includes('retrying convergence once'));
+  const ups = r.sudoLog().split('\n').filter((line) => line.endsWith('up -d'));
+  assert.equal(ups.length, 2, r.sudoLog());
+  assert.ok(r.stdout.includes('production stack health verified'));
+});
+
+test('a config-unchanged merge updates auth without reconciling the full stack', async () => {
   const tracked = fs.readFileSync(TRACKED_COMPOSE, 'utf8');
   const r = await runDeploy({
     liveCompose: tracked,
@@ -303,6 +337,7 @@ test('a config-unchanged merge is an idempotent no-op: no install, no compose up
     0,
     r.sudoLog(),
   );
+  assert.equal(r.sudoLog().split('\n').filter((l) => l.includes('--no-deps auth')).length, 1);
   assert.ok(!r.dockerLog().startsWith('kill '), r.dockerLog());
 });
 

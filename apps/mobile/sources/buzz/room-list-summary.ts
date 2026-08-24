@@ -68,7 +68,10 @@ const OBJECT_ID = /\d/;
  * show one that says nothing.
  */
 export function isMachinePreview(text: string): boolean {
-  const tokens = text.trim().split(/\s+/).filter((token) => token.length > 0);
+  const tokens = text
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
   if (tokens.length === 0 || tokens.every((token) => token === '->')) return false;
   return tokens.every(
     (token) =>
@@ -142,6 +145,14 @@ function roomMessage(event: SessionEvent): RoomMessageSummary | null {
   const payload = sessionEventPayload(event);
   if (!payload || typeof payload.content !== 'string') return null;
   if (sessionEventHasTag(event, 't', 'body-control') || sessionEventHasTag(event, 'subchannel')) {
+    return null;
+  }
+  // Land/merge summaries are structural digest sources for a Room update,
+  // never conversational unread copy.
+  if (
+    sessionEventHasTag(event, 't', 'land-summary') ||
+    sessionEventHasTag(event, 't', 'merge-summary')
+  ) {
     return null;
   }
 

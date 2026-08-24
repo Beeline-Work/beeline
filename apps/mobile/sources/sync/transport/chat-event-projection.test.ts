@@ -844,15 +844,14 @@ describe('Buzz Room screen event projection', () => {
       corner: { subchannelId: 'corner-2', status: 'archived' },
     };
 
-    // Live status is state and stays out of both transcripts. The archived
-    // parent card is durable history because its text is the completion
-    // summary Body wrote when it closed the corner.
+    // Every legacy lifecycle card stays out of both transcripts. Room history
+    // now comes from render-time structural updates, not these kind:9 cards.
     expect(
       transcriptMessages([conversation, activity, merge, lifecycle, corner, archivedCorner], false),
-    ).toEqual([conversation, archivedCorner]);
+    ).toEqual([conversation]);
     expect(
       transcriptMessages([conversation, activity, merge, lifecycle, corner, archivedCorner], true),
-    ).toEqual([conversation, merge, lifecycle]);
+    ).toEqual([conversation, lifecycle]);
   });
 
   it('streams a Room reply into one bubble that fills in place and finalizes without a second bubble', () => {

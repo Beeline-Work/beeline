@@ -140,6 +140,8 @@ type BuzzCacheState = PersistedBuzzCache & {
     channelId: string,
     patch: Partial<ChannelCacheEntry>,
   ) => void;
+  /** Move landed work in the Room index without creating unread/message copy. */
+  bumpChannelRecency: (viewerPubkey: string, channelId: string, timestamp: number) => void;
   replaceMessages: (
     viewerPubkey: string,
     channelId: string,
@@ -545,6 +547,33 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
           MAX_CACHED_CHANNELS,
         ),
       };
+    }),
+  bumpChannelRecency: (viewerPubkey, channelId, timestamp) =>
+    set((state) => {
+      let listsChanged = false;
+      const channelLists = Object.fromEntries(
+        Object.entries(state.channelLists).map(([key, entry]) => {
+          if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
+          let entryChanged = false;
+          const channels = entry.channels.map((channel) => {
+            if (channel.id !== channelId || (channel.updatedAt ?? 0) >= timestamp) return channel;
+            entryChanged = true;
+            return { ...channel, updatedAt: timestamp };
+          });
+          if (!entryChanged) return [key, entry];
+          listsChanged = true;
+          return [
+            key,
+            {
+              ...entry,
+              channels: channels.sort(
+                (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+              ),
+            },
+          ];
+        }),
+      );
+      return listsChanged ? { channelLists } : state;
     }),
   replaceMessages: (viewerPubkey, channelId, messages, cursor, summary) =>
     set((state) => {

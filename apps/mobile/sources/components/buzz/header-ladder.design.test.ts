@@ -52,6 +52,23 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(meta![0]).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
   });
 
+  it('keeps the repo and member lines on one left axis in the shared mono token', () => {
+    const repoChip = chatSource.match(/repoChip:\s*\{[^}]*\}/);
+    expect(repoChip, 'missing repo chip alignment style').toBeTruthy();
+    expect(repoChip![0]).toContain("alignSelf: 'flex-start'");
+
+    const memberMeta = chatSource.match(
+      /<HeaderMetaCaps testID="room-header-meta">[\s\S]*?<\/HeaderMetaCaps>/,
+    );
+    expect(memberMeta, 'missing room member metadata').toBeTruthy();
+    expect(memberMeta![0]).toContain('`${formatRoomParticipantTotal(roomParticipantTotal)}  ›`');
+    expect(memberMeta![0]).not.toContain('`  ${formatRoomParticipantTotal(roomParticipantTotal)}');
+
+    const caps = ladderSource.match(/metaCaps:\s*\{[\s\S]*?\n\s*\},/);
+    expect(caps, 'missing shared metadata font token').toBeTruthy();
+    expect(caps![0]).toMatch(/Typography\.mono\(/);
+  });
+
   it('leads the Corner with the agent mark through the same slot', () => {
     const branch = chatSource.indexOf('{isCorner && cornerAgentPubkey && (');
     expect(branch, 'missing the Corner mark branch').toBeGreaterThanOrEqual(0);

@@ -38,6 +38,7 @@ import {
 } from './local-cache-sync';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 import type { SessionEvent } from '@/sync/transport';
+import { reconcileOptimisticMessage } from './reconcileOptimisticMessage';
 
 const viewer = 'viewer';
 
@@ -861,6 +862,70 @@ describe('Buzz local cache', () => {
     expect(
       useBuzzLocalCache.getState().channels[channelCacheKey(viewer, 'room')]?.latestMessage,
     ).toBe('live');
+  });
+
+  it('keeps an own mentioned message that arrives while a cold backfill is in flight', async () => {
+    let finishBackfill!: (events: SessionEvent[]) => void;
+    const sessionEventsBackfill = vi.fn(
+      () =>
+        new Promise<SessionEvent[]>((resolve) => {
+          finishBackfill = resolve;
+        }),
+    );
+
+    const revalidation = revalidateCachedMessages(
+      { sessionEventsBackfill } as never,
+      viewer,
+      'fb264364-5a71-4881-826d-c04f6f779497',
+    );
+    await vi.waitFor(() => expect(sessionEventsBackfill).toHaveBeenCalledOnce());
+
+    const roomId = 'fb264364-5a71-4881-826d-c04f6f779497';
+    const relayId = 'cc0cad0f42b9693abcfcd3e42d3e8011f2a2b3f1b6ce3788c54784f859e9256b';
+    const optimisticId = 'optimistic-1787620118000';
+    const text = '@Ox 1. I approve switching the canon branch of this room to main.';
+    const store = useBuzzLocalCache.getState();
+
+    store.upsertMessages(viewer, roomId, [
+      { id: optimisticId, text, isUser: true, timestamp: 1_787_620_118_000 },
+    ]);
+    expect(
+      useBuzzLocalCache
+        .getState()
+        .channels[channelCacheKey(viewer, roomId)]?.messages?.find(
+          (item) => item.id === optimisticId,
+        ),
+    ).toMatchObject({ text, isUser: true });
+    cacheLiveSessionEvent(viewer, roomId, {
+      type: 'raw',
+      sessionId: roomId,
+      payload: {
+        id: relayId,
+        content: text,
+        pubkey: viewer,
+        createdAt: 1_787_620_118,
+        tags: [
+          ['h', roomId],
+          ['p', 'a3447f1163edeb8dff75a67c3'],
+        ],
+      },
+    });
+    store.updateMessages(viewer, roomId, (current) =>
+      reconcileOptimisticMessage(current, optimisticId, relayId),
+    );
+
+    finishBackfill([event('older-message', 1_787_620_000)]);
+    await revalidation;
+
+    const finalMessages =
+      useBuzzLocalCache.getState().channels[channelCacheKey(viewer, roomId)]?.messages ?? [];
+    expect(finalMessages.find((item) => item.id === relayId)).toMatchObject({
+      text,
+      isUser: true,
+      mentionPubkeys: ['a3447f1163edeb8dff75a67c3'],
+    });
+    expect(finalMessages.some((item) => item.id === optimisticId)).toBe(false);
+    expect(finalMessages.filter((item) => item.text === text)).toHaveLength(1);
   });
 
   it('moves a merged Room by recency without changing its unread message timestamp', () => {

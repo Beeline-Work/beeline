@@ -531,7 +531,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   roomUpdateLine: {
     fontFamily: theme.buzz.proseRegular,
-    fontStyle: 'italic',
+    // Space Grotesk ships without an italic face. Asking React Native for
+    // `fontStyle: 'italic'` can therefore substitute a platform/default face;
+    // keep the committed caption cut and apply the quiet editorial slant
+    // geometrically instead.
+    transform: [{ skewX: '-8deg' }],
     color: theme.buzz.ledgerQuiet,
     fontSize: 12,
     lineHeight: 17,

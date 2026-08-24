@@ -198,16 +198,17 @@ describe('One ledger, both surfaces', () => {
     );
   });
 
-  it('hangs metadata in the right gutter instead of setting it into the flow', () => {
+  it('keeps ordinary metadata in the gutter and centers machine timestamps in their row', () => {
     const marginalia = styleDefinition(ledgerSource, 'marginalia');
     expect(marginalia).toMatch(/position:\s*'absolute'/);
     expect(marginalia).toMatch(/right:\s*0/);
     expect(marginalia).toMatch(/width:\s*LEDGER_MARGINALIA_WIDTH/);
-    // Prose turns carry their stamp inside the byline now; only the folded
-    // tool run keeps the wider margin that hosts the gutter stamp.
-    expect(styleDefinition(chatSource, 'activityGroup')).toMatch(
+    // The compact machine row owns its timestamp so it shares the labels'
+    // baseline; it no longer reserves a second-row marginalia gutter.
+    expect(styleDefinition(chatSource, 'activityGroup')).not.toMatch(
       /paddingRight:\s*LEDGER_MARGINALIA_WIDTH/,
     );
+    expect(styleDefinition(activitySource, 'groupStamp')).toMatch(/lineHeight:\s*18/);
     for (const name of ['marginaliaStamp', 'marginaliaDetail']) {
       expect(styleDefinition(ledgerSource, name)).toMatch(/color:\s*theme\.buzz\.ledgerGhost/);
     }
@@ -452,9 +453,10 @@ describe('Machine noise', () => {
     expect(chatSource).not.toMatch(/\bactivityUpdate:\s*\{/);
   });
 
-  it('uses one-line hairline rows and collapses only runs over three', () => {
-    expect(activitySource).toContain('const GROUP_THRESHOLD = 3');
-    expect(activitySource).toContain('turn.steps.length > GROUP_THRESHOLD');
+  it('uses one-line hairline rows and collapses every machine run', () => {
+    expect(activitySource).not.toContain('GROUP_THRESHOLD');
+    expect(activitySource).toContain('const grouped = turn.steps.length > 0');
+    expect(activitySource).toContain('const showSteps = expanded');
     expect(styleDefinition(activitySource, 'stepRow')).toMatch(/minHeight:\s*44/);
     expect(styleDefinition(activitySource, 'stepRow')).toMatch(
       /borderBottomWidth:\s*StyleSheet\.hairlineWidth/,
@@ -463,6 +465,15 @@ describe('Machine noise', () => {
     expect(activitySource).not.toContain('FAILED');
     expect(activitySource).not.toContain('BlurView');
     expect(activitySource).toContain('<HullActionSheet');
+  });
+
+  it('puts attribution and the tabular timestamp on the collapsed row without an indent gutter', () => {
+    expect(activitySource).toContain("handle?.toUpperCase()");
+    expect(activitySource).toContain('testID="activity-group-stamp"');
+    expect(styleDefinition(activitySource, 'groupRow')).toMatch(/paddingHorizontal:\s*0/);
+    expect(styleDefinition(activitySource, 'groupStamp')).toMatch(/fontVariant:\s*\['tabular-nums'\]/);
+    expect(chatSource).toContain('stamp={ledgerStamp(item.timestamp)}');
+    expect(chatSource).not.toContain('testID={`chat-marginalia-${item.id}`}');
   });
 
   it('keeps the agent’s own prose out of the fold entirely', () => {

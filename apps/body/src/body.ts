@@ -314,11 +314,6 @@ import {
   type CiWatchOptions,
 } from './ci-watch.js';
 import {
-  describeGitHubRepoEvents,
-  runGitHubEventWatcher,
-  type GitHubEventWatcherDeps,
-} from './github-events.js';
-import {
   isReleaseConfirmation,
   releaseBriefing,
   releaseCornerIntent,
@@ -1283,9 +1278,6 @@ export const CI_WATCH_NONE_GRACE_MS = 120_000;
  * kind:9 messages, matching the CI-watch/land-recap precedent, tagged so
  * clients can distinguish them from conversation.
  */
-export const GITHUB_EVENT_TAG = 'github-event';
-/** How long a read of the per-Room activity toggle is trusted. */
-const GITHUB_EVENTS_TOGGLE_TTL_MS = 5 * 60_000;
 /**
  * How long a release proposal stays confirmable. Long enough for a person to
  * read the summary and think; short enough that a "yes" to something else
@@ -1918,18 +1910,27 @@ export const isChannelTaskRequest = isChannelWorkIntent;
  * corner's parent. The bounded channel `name` alone will not do — it cannot
  * carry the fuller objective.
  */
-export function createAgentSubchannel(
+export async function createAgentSubchannel(
   agentIdentity: Identity,
   parentChannelId: string,
   name: string,
+  openingHumanPubkey: string,
   communityId?: string,
   task?: string,
 ): Promise<string> {
-  return createChannel(agentIdentity, name, {
+  if (!openingHumanPubkey || openingHumanPubkey === agentIdentity.publicKey) {
+    throw new Error('a corner requires an opening human distinct from its agent');
+  }
+  const subchannelId = await createChannel(agentIdentity, name, {
     parentChannelId,
     ...(communityId ? { communityId } : {}),
     ...(task ? { extraTags: [['task', task]] } : {}),
   });
+  // The agent owns the create event, so the relay initially projects an
+  // agent-only corner. Add the authenticated human who opened it before the
+  // helper returns; parent-roster mirroring may promote their role later.
+  await setMemberRole(agentIdentity, subchannelId, openingHumanPubkey, 'member');
+  return subchannelId;
 }
 
 /** Quiet window between repeat slash-command notices on one channel. */
@@ -2146,12 +2147,6 @@ export class Body {
    */
   private readonly releaseProposals = new Map<string, PendingReleaseProposal>();
   private generateCornerMetadata?: (prompt: string) => Promise<string>;
-  /** Cached per-Room GitHub activity toggle (room config), short TTL. */
-  private readonly githubEventsEnabledCache = new Map<string, { value: boolean; at: number }>();
-  /** Live repository-event feed loops, so shutdown/dispose can await them. */
-  private readonly githubEventWatchers = new Map<string, Promise<void>>();
-  /** Test seam for the repository-event feed loop. Never set in production. */
-  githubEventsTestDeps?: Partial<GitHubEventWatcherDeps>;
   /** Serialized, coalesced publisher for the corner state record. */
   private readonly cornerStates: CornerStatePublisher;
 
@@ -4191,16 +4186,39 @@ export class Body {
     const fallbackSlug = slugifyCornerTask(fallbackTitle);
     const taskSlug = generated ? slugifyCornerTask(generated.title) || fallbackSlug : fallbackSlug;
     const cornerName = generated?.title ?? fallbackTitle;
+    const openingHumanPubkey = request?.authorPubkey ?? this.bodyIdentity.publicKey;
     const subchannelId = await createAgentSubchannel(
       agentId,
       tlcChannelId,
       cornerName,
+      openingHumanPubkey,
       communityId ?? undefined,
       taskDescription || undefined,
     );
+    // A publish acknowledgement is not membership truth. Do not create the
+    // worktree or launch the coding session until the relay projection proves
+    // the opening human is actually in the corner.
+    try {
+      await waitUntilMember(this.agentClientContext(), subchannelId, openingHumanPubkey);
+    } catch (error) {
+      // The protocol cannot put another member into the immutable create
+      // event. If the required follow-up projection never materializes, make
+      // the corrupt child terminal instead of leaving an active agent-only
+      // corner discoverable in the Room.
+      await archiveChannel(agentId, subchannelId).catch((archiveError) =>
+        console.error(
+          `[body] failed to archive corner ${subchannelId} after its opening human was not projected:`,
+          archiveError,
+        ),
+      );
+      throw error;
+    }
 
     // 2. Mirror parent members: query members of TLC, add each as member of subchannel.
-    const participantPubkeys = await this.mirrorMembers(tlcChannelId, subchannelId);
+    const mirroredParticipantPubkeys = await this.mirrorMembers(tlcChannelId, subchannelId);
+    const participantPubkeys = [
+      ...new Set([...mirroredParticipantPubkeys, openingHumanPubkey]),
+    ];
 
     // 4. Create git worktree + feature branch. Named after the actual task
     // (same slug basis as the corner's own name), with the corner's own
@@ -5335,6 +5353,21 @@ export class Body {
       editPolicy === 'named-repository'
         ? namedRepositoryTargetFromRoomRequest(request.content)
         : undefined;
+    // Receipt belongs to the daemon, not the harness. Publish it before lazy
+    // provisioning can start the ACP process (or spend time rebuilding its
+    // context) so a cold session never looks like a dead daemon. The logical
+    // id is stable before a physical session exists and across reactivation.
+    const receiptSessionId =
+      this.sessions.get(tlcChannelId)?.logicalSessionId ??
+      `${this.agentIdentity.publicKey}:${tlcChannelId}`;
+    await postAgentTurnStatus(
+      tlcChannelId,
+      this.agentIdentity,
+      request.eventId,
+      receiptSessionId,
+      'working',
+      this.presenceGenerations.get(tlcChannelId),
+    );
     let session: AgentSession;
     try {
       session =
@@ -5346,6 +5379,19 @@ export class Body {
         );
       }
     } catch (error) {
+      await postAgentTurnStatus(
+        tlcChannelId,
+        this.agentIdentity,
+        request.eventId,
+        receiptSessionId,
+        'failed',
+        this.presenceGenerations.get(tlcChannelId),
+      ).catch((statusError) =>
+        console.error(
+          '[body] failed to replace Room receipt after session start failure:',
+          statusError,
+        ),
+      );
       if (!(error instanceof ReadOnlyToolsUnavailableError)) throw error;
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'user',
@@ -5426,14 +5472,6 @@ export class Body {
     this.pendingRoomTurns.set(tlcChannelId, turn);
     let promptAttempted = false;
     try {
-      await postAgentTurnStatus(
-        tlcChannelId,
-        this.agentIdentity,
-        request.eventId,
-        session.logicalSessionId ?? session.sessionId,
-        'working',
-        this.presenceGenerations.get(tlcChannelId),
-      );
       promptAttempted = true;
       const promptOptions = {
         channelId: tlcChannelId,
@@ -8499,74 +8537,6 @@ export class Body {
    * only a slow backstop: the subscription is the delivery path and reconnects
    * from the durable per-Room cursor so a dropped socket cannot lose a turn.
    */
-  /** Per-Room toggle for ambient GitHub repository activity. Absent config = ON. */
-  private async roomGitHubEventsEnabled(channelId: string): Promise<boolean> {
-    const cached = this.githubEventsEnabledCache.get(channelId);
-    const nowMs = Date.now();
-    if (cached && nowMs - cached.at < GITHUB_EVENTS_TOGGLE_TTL_MS) return cached.value;
-    let value = true;
-    try {
-      const repository = await getRoomRepository(this.agentClientContext(), channelId);
-      value = repository?.githubEventsEnabled !== false;
-    } catch {
-      // An unreadable room-config never silences the feed: default ON.
-    }
-    this.githubEventsEnabledCache.set(channelId, { value, at: nowMs });
-    return value;
-  }
-
-  /**
-   * Start the ambient GitHub repository-activity feed for one repository Room:
-   * stars, issues, and pull requests on the bound repo, ON by default, posted
-   * as compact agent-voice cards (the CI-watch precedent). Best-effort — the
-   * loop never gates or fails Room serving, and a non-GitHub repository has
-   * no webhook feed to consume at all.
-   */
-  private startRoomGitHubEventsLoop(
-    channelId: string,
-    boundRepo: BoundRepo,
-    signal?: AbortSignal,
-  ): void {
-    if (this.githubEventWatchers.has(channelId)) return;
-    // The canonical binding remote (`git://github.com/o/r`) and a refreshed
-    // remote URL are both parseable; anything else is not a GitHub repo.
-    const remote = boundRepo.remoteUrl ?? boundRepo.truth?.binding.remote;
-    const repoRef = remote ? parseGitHubRemoteUrl(remote) : undefined;
-    if (!repoRef) return;
-    const fullName = `${repoRef.owner}/${repoRef.repo}`;
-    const watcher = runGitHubEventWatcher({
-      roomId: channelId,
-      fullName,
-      identity: this.agentIdentity,
-      baseUrl: this.config.relayBaseUrl,
-      eventsEnabled: () => this.roomGitHubEventsEnabled(channelId),
-      post: (text) =>
-        postAgentMessage(
-          channelId,
-          this.agentIdentity,
-          text,
-          undefined,
-          [],
-          [
-            ['t', GITHUB_EVENT_TAG],
-            ['repo', fullName],
-            ['agent', this.agentIdentity.publicKey],
-          ],
-        ),
-      loadCursor: () => this.durableState.githubEventCursor(channelId),
-      saveCursor: (id) => this.durableState.saveGitHubEventCursor(channelId, id),
-      ...(signal ? { signal } : {}),
-      ...this.githubEventsTestDeps,
-    })
-      .catch((error) => console.error(`[body] GitHub event feed failed for ${channelId}:`, error))
-      .finally(() => {
-        if (this.githubEventWatchers.get(channelId) === watcher) {
-          this.githubEventWatchers.delete(channelId);
-        }
-      });
-    this.githubEventWatchers.set(channelId, watcher);
-  }
-
   /** Run relay-origin gate attempts and project their daemon-owned stages. */
   private async pollMergeGateApprovals(
     mergeGate: DurableMergeGate,
@@ -8964,9 +8934,6 @@ export class Body {
       await this.assertRepositorySafety(tlcChannelId, boundRepo);
       await this.provision(tlcChannelId, boundRepo);
       if (boundRepo.repositoryKey) await this.restoreSubchannels(tlcChannelId, boundRepo);
-      // Ambient GitHub repository activity for this Room (stars/issues/PRs),
-      // best-effort and never gating the push loop below.
-      this.startRoomGitHubEventsLoop(tlcChannelId, boundRepo, opts.signal);
       await this.runRoomPushLoop(tlcChannelId, boundRepo, 'repository', stopPresence, opts, () =>
         this.pollRoomMaintenance(tlcChannelId, undefined, boundRepo, {
           // Same condition the restore above is gated on: no repository key,
@@ -10011,6 +9978,20 @@ export class Body {
           continue;
         }
 
+        // The daemon owns receipt visibility. Refresh the canonical WORKING
+        // lease and publish the thinking indicator before slash-command
+        // marking, conversation reads/context assembly, or lazy ACP
+        // activation can delay visible acknowledgement of this steer.
+        await this.noteCornerTurnStart(info);
+        await postAgentTurnStatus(
+          subchannelId,
+          this.agentIdentity,
+          evt.id,
+          session.logicalSessionId ?? session.sessionId,
+          'working',
+          this.presenceGenerations.get(subchannelId),
+        );
+
         // Forward the member's message into the active run when possible. If
         // the original task ended between polling and delivery, wait for its
         // cleanup and preserve this message as the next ordered prompt.
@@ -10027,9 +10008,6 @@ export class Body {
         // working" notice about the turn currently in flight would be
         // answering this message rather than describing the backend.
         this.noteInboundMessage(subchannelId);
-        // A human message starts a fresh episode: any standing quiet period
-        // and its spent conclude-nudge budget end here.
-        await this.noteCornerTurnStart(info);
         let promptAttempted = false;
         try {
           let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
@@ -10037,14 +10015,6 @@ export class Body {
             // A follow-up starts a checklist, not a new corner. Keep the
             // immutable create-event objective out of ordinary chat.
             await this.startCornerPlan(session, info.taskDescription || evt.content);
-            await postAgentTurnStatus(
-              subchannelId,
-              this.agentIdentity,
-              evt.id,
-              session.logicalSessionId ?? session.sessionId,
-              'working',
-              this.presenceGenerations.get(subchannelId),
-            );
             promptAttempted = true;
             return this.promptAgent(
               session,

@@ -152,9 +152,12 @@ function first(value: string | string[] | undefined): string | undefined {
 export default function BuzzAgents() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const requestedCommunityId = first(
-    useLocalSearchParams<{ communityId?: string | string[] }>().communityId,
-  );
+  const params = useLocalSearchParams<{
+    communityId?: string | string[];
+    action?: string | string[];
+  }>();
+  const requestedCommunityId = first(params.communityId);
+  const requestedAction = first(params.action);
   // Seeded synchronously from the same Workspace roster cache the Room list
   // already warms (`channelLists`), so this screen paints from whatever the
   // app already knows on first frame instead of blocking on a fresh relay
@@ -234,6 +237,7 @@ export default function BuzzAgents() {
   const [customModelText, setCustomModelText] = useState('');
   const pairingBaseline = useRef<Set<string>>(new Set());
   const pairingPending = useRef(false);
+  const requestedActionHandled = useRef(false);
   // The screen paints from the Workspace roster cache, so an owner's admin
   // controls are on screen before the init effect has built a transport. A
   // handler must therefore never read a null transport as "not allowed" —
@@ -496,6 +500,21 @@ export default function BuzzAgents() {
       setWorking(null);
     }
   }, [agents, canManageWorkspace, requireConnection]);
+
+  // The Room-deck compose menu deep-links into the SAME pairing action as the
+  // visible Add agent button. Run it once when the cached or live role says
+  // this viewer may manage the Workspace; no second pairing implementation.
+  useEffect(() => {
+    if (
+      requestedAction !== 'add-agent' ||
+      requestedActionHandled.current ||
+      !canManageWorkspace
+    ) {
+      return;
+    }
+    requestedActionHandled.current = true;
+    void handleAdd();
+  }, [canManageWorkspace, handleAdd, requestedAction]);
 
   const invitePerson = useCallback(async () => {
     if (!canManageWorkspace) return;

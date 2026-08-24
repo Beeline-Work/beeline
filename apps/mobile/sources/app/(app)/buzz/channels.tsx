@@ -45,6 +45,7 @@ import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { loadSuccessionPredecessors } from '@/buzz/succession-chain';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import { formatRoomParticipantTotal, roomParticipantPubkeys } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
@@ -104,6 +105,11 @@ import {
   PixelLoader,
 } from '@/components/buzz/MonoHull';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
+import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
+import {
+  RoomDeckComposeMenu,
+  type RoomDeckComposeAction,
+} from '@/components/buzz/RoomDeckComposeMenu';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 
 /** Relative ages only change on the minute, so the index re-derives them on a
@@ -419,6 +425,8 @@ export default function BuzzChannels() {
   const [error, setError] = useState<string | null>(null);
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [memberPickerVisible, setMemberPickerVisible] = useState(false);
+  const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
   const [channelName, setChannelName] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
   // Optional repo step: leave `pendingRepo` null for a chat-only Room.
@@ -973,6 +981,24 @@ export default function BuzzChannels() {
     [activeCommunityId, identity],
   );
 
+  const handleStartDirectMessage = useCallback(
+    async (member: WorkspaceMemberDisplayItem) => {
+      if (!transport || !activeCommunityId || messagingPubkey) return;
+      setMessagingPubkey(member.peerPubkey);
+      setError(null);
+      try {
+        const result = await transport.resolveDirectMessage(activeCommunityId, member.peerPubkey);
+        setMemberPickerVisible(false);
+        openChannel(result.channelId);
+      } catch (err) {
+        setError(`Could not message ${member.peerName}: ${String(err)}`);
+      } finally {
+        setMessagingPubkey(null);
+      }
+    },
+    [activeCommunityId, messagingPubkey, openChannel, transport],
+  );
+
   const loadRepoPicker = useCallback(
     async (refresh = false) => {
       if (!transport || !activeCommunityId) return;
@@ -1173,6 +1199,19 @@ export default function BuzzChannels() {
       setCreatingInvite(false);
     }
   }, [activeCommunityId, creatingInvite, readyInviteUrl, relayUrl, transport]);
+
+  const handleComposeAction = useCallback(
+    (action: RoomDeckComposeAction) => {
+      runRoomDeckComposeAction(action, {
+        communityId: activeCommunityId,
+        openMessagePicker: () => setMemberPickerVisible(true),
+        openRoomCreator: () => setShowCreateChannel(true),
+        invitePerson: () => void handleInvitePeople(),
+        navigate: (target) => router.push(target as unknown as Href),
+      });
+    },
+    [activeCommunityId, handleInvitePeople],
+  );
 
   /** One renderer for every Room in the deck's two inline piles. */
   const renderRoomEntry = useCallback(
@@ -1596,23 +1635,21 @@ export default function BuzzChannels() {
           refreshing={refreshing}
         />
 
-        {/* The deck's footer: just the brass ＋. The captain removed the
-            search field — a supervision deck holds few rooms, and a phone
-            index never needed filtering. The FAB is the same affordance as
-            the header's ＋ ROOM. */}
-        <View style={[styles.deckFoot, { paddingBottom: 12 + insets.bottom }]}>
+        {/* The deck's footer: the brass compose control, opening the five
+            existing start flows over this same supervision deck. */}
+        <View style={[styles.deckFoot, { paddingBottom: 20 + insets.bottom }]}>
           {!viewerIsAgent && (
-            <TouchableOpacity
-              accessibilityLabel={`Create ${ROOM_LABEL}`}
-              accessibilityRole="button"
-              onPress={() => setShowCreateChannel(true)}
-              style={styles.fab}
-              testID="create-room-fab"
-            >
-              <Text style={styles.fabGlyph}>＋</Text>
-            </TouchableOpacity>
+            <RoomDeckComposeMenu onSelect={handleComposeAction} />
           )}
         </View>
+
+        <DirectMessagePickerSheet
+          busyPubkey={messagingPubkey}
+          members={cachedListEntry.workspaceMembers}
+          onClose={() => setMemberPickerVisible(false)}
+          onMessage={(member) => void handleStartDirectMessage(member)}
+          visible={memberPickerVisible}
+        />
       </View>
     </BuzzCommunityShell>
   );
@@ -1968,24 +2005,6 @@ const styles = StyleSheet.create((theme) => {
     borderTopColor: groknight.border,
     backgroundColor: groknight.bgTerminal,
   },
-  /* The FAB is a box that wraps something the user must find and act on —
-   * the one place DESIGN.md's shape rule admits a filled brass surface. */
-  fab: {
-    width: 44,
-    height: 44,
-    flexShrink: 0,
-    borderRadius: 3,
-    backgroundColor: groknight.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  fabGlyph: {
-    ...Typography.default(),
-    color: groknight.textInverted,
-    fontSize: 22,
-    lineHeight: 26,
-  },
-
   /* ── empty state ─────────────────────────────────────────────────────── */
   emptyContainer: { flexGrow: 1 },
   emptyState: { flex: 1, paddingHorizontal: 26, alignItems: 'center', justifyContent: 'center' },

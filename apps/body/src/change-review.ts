@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { git, publishEvent, type Identity } from '@beeline/gate';
 import {
   CHANGE_REVIEW_EVENT_KIND,
@@ -7,6 +8,12 @@ import {
 import { signEvent } from '@beeline/nostr';
 
 const PATCH_CHUNK_CHARACTERS = 32_000;
+export const MAX_RENDERABLE_PATCH_BYTES = 1_000_000;
+const MAX_GIT_ERROR_BYTES = 16_000;
+
+export type ChangeReviewPatch =
+  | { content: string; patchBytes: number; renderUnavailableReason?: undefined }
+  | { content?: undefined; patchBytes: number; renderUnavailableReason: 'too-large' };
 
 function statusName(code: string): ChangeReviewStatus {
   switch (code.charAt(0)) {
@@ -106,14 +113,22 @@ export function listChangeReviewFiles(
   }));
 }
 
-export function readChangeReviewPatch(
+/**
+ * Stream one file's diff so git output is never subject to child_process's
+ * buffered maxBuffer. Once the review-safe limit is crossed, keep draining
+ * git but discard the patch bytes and return a manifest stub instead.
+ */
+export async function readChangeReviewPatch(
   worktreePath: string,
   base: string,
   tip: string,
   file: Pick<ChangeReviewFile, 'path' | 'previousPath'>,
-): string {
+  maxBytes = MAX_RENDERABLE_PATCH_BYTES,
+): Promise<ChangeReviewPatch> {
   const paths = file.previousPath ? [file.previousPath, file.path] : [file.path];
-  const result = git(worktreePath, [
+  const args = [
+    '-c',
+    'credential.helper=',
     '-c',
     'core.quotePath=false',
     'diff',
@@ -124,9 +139,59 @@ export function readChangeReviewPatch(
     tip,
     '--',
     ...paths,
-  ]);
-  if (!result.ok) throw new Error(`git diff failed for ${file.path}: ${result.stderr}`);
-  return result.stdout;
+  ];
+
+  return await new Promise<ChangeReviewPatch>((resolve, reject) => {
+    const child = spawn('git', args, {
+      cwd: worktreePath,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_NOSYSTEM: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const chunks: Buffer[] = [];
+    const errorChunks: Buffer[] = [];
+    let patchBytes = 0;
+    let errorBytes = 0;
+    let tooLarge = false;
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      patchBytes += chunk.length;
+      if (tooLarge || patchBytes > maxBytes) {
+        tooLarge = true;
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      const remaining = MAX_GIT_ERROR_BYTES - errorBytes;
+      if (remaining <= 0) return;
+      const kept = chunk.subarray(0, remaining);
+      errorChunks.push(kept);
+      errorBytes += kept.length;
+    });
+    child.once('error', (error) => reject(error));
+    child.once('close', (code, signal) => {
+      if (code !== 0) {
+        const detail = Buffer.concat(errorChunks).toString('utf8').trim();
+        reject(
+          new Error(
+            `git diff failed for ${file.path}: ${detail || `git exited ${code ?? signal ?? 'unknown'}`}`,
+          ),
+        );
+        return;
+      }
+      if (tooLarge) {
+        resolve({ patchBytes, renderUnavailableReason: 'too-large' });
+        return;
+      }
+      resolve({ content: Buffer.concat(chunks).toString('utf8'), patchBytes });
+    });
+  });
 }
 
 /** Bound each signed relay event while retaining the full patch. */

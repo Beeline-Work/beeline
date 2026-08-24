@@ -152,6 +152,25 @@ export function harnessHonorsSessionSystemPrompt(agentCommand: string | undefine
 }
 
 /**
+ * Grok's cold ACP turn has a large fixed prefill, while a second prompt on the
+ * same physical session reuses that prefix and streams in a few seconds. Keep
+ * its process warm across an ordinary conversational pause. The scheduler's
+ * hard Room/Workspace capacity still wins and may evict it immediately when a
+ * slot is needed, so this changes idle cleanup rather than the memory bound.
+ *
+ * Measured with Grok CLI 1.0.5 on 2026-08-24: the same Beeline-shaped coding
+ * prompt produced its first relay draft at 12.217s cold and 2.249s warm.
+ */
+export const GROK_WARM_SESSION_IDLE_MS = 30 * 60_000;
+
+/** Per-harness override for the scheduler's ordinary idle retirement window. */
+export function harnessSessionIdleMs(agentCommand: string | undefined): number | undefined {
+  return agentCommand && /(^|[/\\])grok(\.[a-z]+)?$/i.test(agentCommand)
+    ? GROK_WARM_SESSION_IDLE_MS
+    : undefined;
+}
+
+/**
  * pi-acp is the one shipped harness that needs an agent-text control to ask
  * for an edit corner. It executes tools without first sending
  * `session/request_permission`, so there is no native request for Body to

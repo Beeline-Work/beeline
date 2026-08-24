@@ -275,6 +275,7 @@ import {
 } from './session-sandbox.js';
 import {
   harnessHonorsSessionSystemPrompt,
+  harnessSessionIdleMs,
   roomSandboxWarning,
   usesTextCornerRequestFallback,
 } from './harness-capabilities.js';
@@ -2659,7 +2660,11 @@ export class Body {
       ...(input.resumePlan ? { resumePlan: input.resumePlan } : {}),
       activationCount: 0,
     };
+    const sessionIdleMs = harnessSessionIdleMs(
+      this.config.agentCommand ?? this.config.agentBinary,
+    );
     const lifecycle: SessionLifecycle = {
+      ...(sessionIdleMs ? { idleMs: sessionIdleMs } : {}),
       activate: async () => {
         if (client.isAlive && session.sessionId) return session.sessionId;
         // The ACP session cwd is also the child's process cwd, so a harness

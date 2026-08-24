@@ -6,11 +6,25 @@ import { describe, it, expect } from 'vitest';
 import {
   cornerAutonomyModeCandidates,
   enforcesPermissionBoundary,
+  GROK_WARM_SESSION_IDLE_MS,
   harnessEnforcement,
   harnessHonorsSessionSystemPrompt,
+  harnessSessionIdleMs,
   roomSandboxWarning,
   usesTextCornerRequestFallback,
 } from './harness-capabilities.js';
+
+describe('harness session retention', () => {
+  it('keeps only Grok warm beyond the ordinary scheduler idle window', () => {
+    expect(harnessSessionIdleMs('/home/op/.grok/bin/grok')).toBe(
+      GROK_WARM_SESSION_IDLE_MS,
+    );
+    expect(GROK_WARM_SESSION_IDLE_MS).toBe(30 * 60_000);
+    expect(harnessSessionIdleMs('codex-acp')).toBeUndefined();
+    expect(harnessSessionIdleMs('claude-agent-acp')).toBeUndefined();
+    expect(harnessSessionIdleMs('pi-acp')).toBeUndefined();
+  });
+});
 
 describe('session system-prompt delivery', () => {
   it('trusts only the adapter measured to honor session/new systemPrompt', () => {

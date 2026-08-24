@@ -822,6 +822,11 @@ export class WorkspaceSupervisor {
       ...this.baseConfig,
       workspaceRoot,
       agentPrivateRoot: resolve(workspaceRoot, 'agent-private'),
+      // Agent-authored memory is per-(agent, workspace): this daemon's own
+      // runtime storage root is per-agent by construction (`runtime.ts`), and
+      // `agent-memory.ts` adds the Workspace subdirectory. Never under any
+      // Room root — memory outlives Rooms and is shared across them.
+      agentMemoryRoot: resolve(dirname(this.configPath), 'memory'),
       ...(agentHomeRoot ? { agentHomeRoot } : {}),
     };
   }

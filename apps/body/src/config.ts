@@ -80,6 +80,15 @@ export interface BodyConfig {
   /** Durable persona memory/lessons root outside corner worktrees. */
   agentPrivateRoot?: string;
   /**
+   * Durable agent-authored memory root (`agent-memory.ts`), shared across
+   * every Room and corner this agent serves and keyed per Workspace
+   * subdirectory. Per-agent by construction: the daemon resolves it under its
+   * own runtime storage root. Sessions mount it WRITABLE (Rooms included) —
+   * it is agent-private state, never the repository. Unset disables the
+   * feature (standalone/test Bodies).
+   */
+  agentMemoryRoot?: string;
+  /**
    * Absolute path to this daemon's runtime.json, injected by the daemon
    * launcher (`runStoredDaemon`). Corner-session git credential helpers
    * (`corner-read-token.ts`) exec the CLI against it to mint read-only

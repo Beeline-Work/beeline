@@ -92,6 +92,9 @@ import {
   TAG_AGENT,
   TAG_AGENT_MODEL_CATALOG,
   TAG_COMMUNITY,
+  DEFAULT_AGENT_IDENTITY_NAME,
+  deriveAgentDisplayName,
+  fallbackAgentName,
 } from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
@@ -405,6 +408,116 @@ describe('agent identity boundary', () => {
   it('always assigns the agent a key distinct from the operator', () => {
     const body = new Body(config, newIdentity('operator'));
     expect(body.agent.publicKey).not.toBe(body.identity.publicKey);
+  });
+
+  it('mints fresh identities with the Beeline default marker, never the pre-rebrand name', () => {
+    const body = new Body(config);
+    expect(body.agent.name).toBe('beeline-agent');
+    expect(body.identity.name).toBe('beeline-body');
+    // The marker is a placeholder, not a display identity: it resolves to a
+    // stable spoken seed name derived from each agent's OWN pubkey, so two
+    // soul-less agents never share one label.
+    const first = newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
+    const second = newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
+    expect(deriveAgentDisplayName(first.name, first.publicKey)).toBe(
+      fallbackAgentName(first.publicKey),
+    );
+    expect(deriveAgentDisplayName(second.name, second.publicKey)).toBe(
+      fallbackAgentName(second.publicKey),
+    );
+    expect(first.publicKey).not.toBe(second.publicKey);
+    expect(deriveAgentDisplayName(first.name, first.publicKey)).not.toBe(
+      deriveAgentDisplayName(second.name, second.publicKey),
+    );
+  });
+
+  describe('persona delivery to harnesses that drop the session system prompt', () => {
+    it('re-sends a set persona at the top of every turn prompt for codex/pi-class harnesses', async () => {
+      const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+      try {
+        const body = new Body(
+          {
+            ...config,
+            agentCommand: '/usr/local/bin/codex-acp',
+            workspaceRoot: '/tmp/beeline-persona-turn',
+          },
+          newIdentity('persona-operator'),
+          newIdentity('persona-agent'),
+          undefined,
+          { scheduler },
+        );
+        const durable = (body as unknown as { durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)> }).durableState;
+        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(undefined as never);
+        const sessionPrompt = vi.fn().mockResolvedValue({ agentText: 'ok', updates: [] });
+        const session = {
+          channelId: 'persona-room',
+          sessionId: 'persona-session-1',
+          mode: 'readonly' as const,
+          client: { sessionPrompt, sessionCancel: vi.fn() },
+          lifecycle: {
+            activate: vi.fn().mockResolvedValue('persona-session-1'),
+            suspend: vi.fn().mockResolvedValue(undefined),
+          },
+          personaTurnPrefix: [
+            'Human-authored agent persona for this Workspace:',
+            'Name: Clara',
+            'Soul: Steady, practical, and ready to help this Workspace.',
+          ].join('\n'),
+        } as never;
+
+        await Reflect.get(body, 'promptAgent').call(body, session, 'What is my name?', {
+          channelId: 'persona-room',
+          requestId: 'persona-request',
+          originalRequestId: 'persona-request',
+          cause: 'room-message',
+        });
+
+        expect(sessionPrompt).toHaveBeenCalledTimes(1);
+        const wirePrompt = sessionPrompt.mock.calls[0]![1] as string;
+        expect(wirePrompt).toContain('Name: Clara');
+        expect(wirePrompt).toContain("What is my name?");
+        expect(wirePrompt.indexOf('Name: Clara')).toBeLessThan(wirePrompt.indexOf('What is my name?'));
+      } finally {
+        await scheduler.dispose();
+      }
+    });
+
+    it('sends the bare prompt when the session carries no persona prefix', async () => {
+      const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+      try {
+        const body = new Body(
+          { ...config, workspaceRoot: '/tmp/beeline-persona-turn-bare' },
+          newIdentity('bare-operator'),
+          newIdentity('bare-agent'),
+          undefined,
+          { scheduler },
+        );
+        const durable = (body as unknown as { durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)> }).durableState;
+        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(undefined as never);
+        const sessionPrompt = vi.fn().mockResolvedValue({ agentText: 'ok', updates: [] });
+        const session = {
+          channelId: 'bare-room',
+          sessionId: 'bare-session-1',
+          mode: 'readonly' as const,
+          client: { sessionPrompt, sessionCancel: vi.fn() },
+          lifecycle: {
+            activate: vi.fn().mockResolvedValue('bare-session-1'),
+            suspend: vi.fn().mockResolvedValue(undefined),
+          },
+        } as never;
+
+        await Reflect.get(body, 'promptAgent').call(body, session, 'plain question', {
+          channelId: 'bare-room',
+          requestId: 'bare-request',
+          originalRequestId: 'bare-request',
+          cause: 'room-message',
+        });
+
+        expect(sessionPrompt.mock.calls[0]![1]).toBe('plain question');
+      } finally {
+        await scheduler.dispose();
+      }
+    });
   });
 
   describe('OS sandbox wiring', () => {
@@ -6658,6 +6771,106 @@ describe('graceful relay-failure confirmation', () => {
       expect(deliveredSpy).not.toHaveBeenCalledWith('corner-close-fails', closeEvent.id);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('archives the corner when the human TYPES "Close this corner" as an ordinary chat message', async () => {
+    const agent = newIdentity('close-typed-agent');
+    const human = newIdentity('close-typed-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-typed-close-'));
+    try {
+    const body = newBody(agent, workspaceRoot);
+    body.registerSubchannel({
+      subchannelId: 'corner-typed-close',
+      worktreePath: '/tmp/nonexistent-typed-close',
+      featureBranch: 'feature/typed-close',
+      role: agent,
+      session: cornerSession('corner-typed-close'),
+      lastPolledAt: 0,
+      archived: false,
+    });
+    // No `#t=buzz-corner-close` tag — this is the owner's actual action:
+    // plain prose typed into the corner composer.
+    const typedClose = signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [['h', 'corner-typed-close']],
+        content: 'Close this corner.',
+      },
+      human.secretKey,
+    );
+    (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+      .fn()
+      .mockResolvedValue([typedClose]);
+    let archiveCalls = 0;
+    body.archiveSubchannel = async () => {
+      archiveCalls++;
+    };
+
+    await body.pollMembers('corner-typed-close');
+
+    expect(archiveCalls).toBe(1);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not archive on a conversational mention of closing — that stays a real agent turn', async () => {
+    const agent = newIdentity('close-chat-agent');
+    const human = newIdentity('close-chat-human');
+    const steered: string[] = [];
+    const session = cornerSession('corner-close-discussed');
+    (session.client as unknown as {
+      activeRunId: () => string | undefined;
+      sessionSteer: (id: string, prompt: string) => Promise<void>;
+    }).activeRunId = () => 'run-1';
+    (session.client as unknown as {
+      sessionSteer: (id: string, prompt: string) => Promise<void>;
+    }).sessionSteer = async (_id: string, prompt: string) => {
+      steered.push(prompt);
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-close-discussed-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      body.registerSubchannel({
+        subchannelId: 'corner-close-discussed',
+        worktreePath: '/tmp/nonexistent-close-discussed',
+        featureBranch: 'feature/close-discussed',
+        role: agent,
+        session,
+        lastPolledAt: 0,
+        archived: false,
+      });
+      const discussed = signEvent(
+        {
+          pubkey: human.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [['h', 'corner-close-discussed']],
+          content: 'Should we close this corner after the review?',
+        },
+        human.secretKey,
+      );
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+        .fn()
+        .mockResolvedValue([discussed]);
+      let archiveCalls = 0;
+      body.archiveSubchannel = async () => {
+        archiveCalls++;
+      };
+
+      await body.pollMembers('corner-close-discussed');
+
+      expect(archiveCalls).toBe(0);
+      expect(steered.some((prompt) => prompt.includes('close this corner'))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 

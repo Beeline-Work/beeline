@@ -120,6 +120,8 @@ import {
   cornerLifecycleFact,
   resolveCornerLifecycle,
   type CornerLifecycleStatus,
+  DEFAULT_AGENT_IDENTITY_NAME,
+  DEFAULT_BODY_IDENTITY_NAME,
 } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { performBrokeredPush } from './push-broker.js';
@@ -172,7 +174,10 @@ import {
   resolveBeelineCliEntrypoint,
 } from './corner-read-token.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
-import { appendPersonaSessionInstructions } from './persona-instructions.js';
+import {
+  appendPersonaSessionInstructions,
+  personaTurnPrefixForHarness,
+} from './persona-instructions.js';
 import {
   AGENT_PRIVATE_STATE_ENV,
   agentPrivateStateInstructions,
@@ -180,6 +185,12 @@ import {
   projectDirtyStatus,
   type CornerAgentPrivateState,
 } from './agent-private-state.js';
+import {
+  AGENT_MEMORY_ENV,
+  agentMemoryInstructions,
+  prepareAgentMemory,
+  type AgentMemory,
+} from './agent-memory.js';
 import {
   chunkChangeReviewPatch,
   listChangeReviewFiles,
@@ -224,6 +235,7 @@ import {
 } from './corner-isolation.js';
 import { measureSessionReprime } from './session-reprime.js';
 import { readCornerGitResumeState } from './corner-resume.js';
+import { isCornerCloseRequest } from './corner-close-intent.js';
 import {
   completedModelSpend,
   failedModelSpend,
@@ -248,9 +260,11 @@ import {
 import {
   classifyCornerPermission,
   classifyRoomPermission,
+  isAgentMemoryWritePermissionRequest,
   ROOM_READ_ONLY_STEER,
 } from './session-sandbox.js';
 import {
+  harnessHonorsSessionSystemPrompt,
   roomSandboxWarning,
   usesTextCornerRequestFallback,
 } from './harness-capabilities.js';
@@ -310,6 +324,8 @@ export interface AgentSession {
   featureBranch?: string;
   /** Body-owned state mount for persona memory/lessons outside the repository. */
   agentPrivateState?: CornerAgentPrivateState;
+  /** Durable, writable per-(agent, workspace) memory mount (`agent-memory.ts`). */
+  agentMemory?: AgentMemory;
   /** Parent TLC channel ID (subchannels only). */
   parentChannelId?: string;
   /** Unsubscribe from activity projection. */
@@ -336,6 +352,14 @@ export interface AgentSession {
   modelConfigOptions?: AgentModelConfigOption[];
   /** Observable system-prompt size used when ACP omits token accounting. */
   systemPromptChars?: number;
+  /**
+   * Persona text re-sent at the top of EVERY turn prompt, set only for a
+   * harness that drops `session/new`'s `systemPrompt` (see
+   * `harnessHonorsSessionSystemPrompt`). Turn content is the one channel no
+   * adapter can ignore, so it is the delivery floor for the human-authored
+   * soul on harnesses like codex-acp and pi-acp.
+   */
+  personaTurnPrefix?: string;
   resumePlan?: CompactActivityPlan;
   activationCount?: number;
   processState?: 'live' | 'suspended' | 'waiting-for-slot';
@@ -2053,8 +2077,8 @@ export class Body {
     } = {},
   ) {
     this.config = config;
-    this.bodyIdentity = bodyIdentity ?? newIdentity('buzzy-body');
-    this.agentIdentity = agentIdentity ?? newIdentity('buzzy-agent');
+    this.bodyIdentity = bodyIdentity ?? newIdentity(DEFAULT_BODY_IDENTITY_NAME);
+    this.agentIdentity = agentIdentity ?? newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
     this.mergeWorkerIdentity = mergeWorkerIdentity;
     const relayConfig = { baseUrl: config.relayBaseUrl, host: config.relayHost };
     this.agentRelay = createRelayClient(this.agentIdentity, relayConfig);
@@ -2255,6 +2279,25 @@ export class Body {
       return await prepareCornerAgentPrivateState({ root, worktreePath, channelId });
     } catch (error) {
       console.warn(`[body] agent-private state unavailable for ${channelId}:`, error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Prepare this agent's durable memory mount for one Workspace scope
+   * (`agent-memory.ts`). Strictly best-effort: an unusable root degrades to
+   * "no memory" with one advisory line and never blocks the session.
+   */
+  private async sessionMemory(communityId?: string | null): Promise<AgentMemory | undefined> {
+    const root = this.config.agentMemoryRoot;
+    if (!root) return undefined;
+    try {
+      return await prepareAgentMemory({ root, ...(communityId ? { communityId } : {}) });
+    } catch (error) {
+      console.warn(
+        `[body] agent memory unavailable for workspace ${communityId ?? 'none'}:`,
+        error,
+      );
       return undefined;
     }
   }
@@ -2466,6 +2509,12 @@ export class Body {
     resumePlan?: CompactActivityPlan;
     agentPrivateState?: CornerAgentPrivateState;
     /**
+     * Durable per-(agent, workspace) memory mount (`agent-memory.ts`) —
+     * resolved by the caller from the session's Workspace scope. Writable in
+     * BOTH modes: agent-private state, never the repository.
+     */
+    agentMemory?: AgentMemory;
+    /**
      * When set (corner edit sessions on a GitHub-backed repo), the session's
      * git environment gets a read-only credential helper for private-repo
      * fetches — see `corner-read-token.ts`. `roomId` is the PARENT Room id;
@@ -2491,6 +2540,7 @@ export class Body {
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
       ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
       ...(input.agentPrivateState ? { agentPrivateState: input.agentPrivateState } : {}),
+      ...(input.agentMemory ? { agentMemory: input.agentMemory } : {}),
       ...(input.resumePlan ? { resumePlan: input.resumePlan } : {}),
       activationCount: 0,
     };
@@ -2509,16 +2559,23 @@ export class Body {
           ...(input.agentPrivateState
             ? { [AGENT_PRIVATE_STATE_ENV]: input.agentPrivateState.root }
             : {}),
+          ...(input.agentMemory ? { [AGENT_MEMORY_ENV]: input.agentMemory.dir } : {}),
           ...(readTokenEnv ?? {}),
         };
+        // The memory mount is writable in BOTH modes (readonly included) — it
+        // is the one granted host path a read-only Room may write.
+        const grantedWritablePaths = [
+          ...(input.additionalWritablePaths ?? []),
+          ...(input.agentMemory ? [input.agentMemory.dir] : []),
+        ];
         const spawnCommand = this.sessionSpawnCommand(
           {
             mode: input.mode,
             cwd: input.cwd,
             ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
             ...(input.protectedPaths ? { protectedPaths: input.protectedPaths } : {}),
-            ...(input.additionalWritablePaths
-              ? { additionalWritablePaths: input.additionalWritablePaths }
+            ...(grantedWritablePaths.length > 0
+              ? { additionalWritablePaths: grantedWritablePaths }
               : {}),
             channelIdForLog: input.channelId,
           },
@@ -2541,6 +2598,15 @@ export class Body {
               (agent) => agent.pubkey === this.agentIdentity.publicKey,
             )?.soulProfile
           : undefined;
+        // A harness that drops `session/new`'s `systemPrompt` never sees the
+        // persona appended below — measured, not assumed: codex-acp and
+        // pi-acp have no reference to the field at all. For those, re-send
+        // the persona at the top of every turn prompt instead; message
+        // content is the one channel no adapter can ignore.
+        session.personaTurnPrefix = personaTurnPrefixForHarness(
+          profile,
+          this.config.agentCommand ?? this.config.agentBinary,
+        );
         await client.start();
         const transcript = await this.durableState.conversation(input.channelId);
         // BOUNDED. This block goes into the session's SYSTEM PROMPT, which the
@@ -2556,6 +2622,7 @@ export class Body {
         const systemPrompt = [
           appendPersonaSessionInstructions(input.systemPrompt, profile),
           agentPrivateStateInstructions(input.agentPrivateState),
+          agentMemoryInstructions(input.agentMemory),
           '',
           `To share an image or file with the Room, include [[${AGENT_ATTACHMENT_DIRECTIVE}:path]] in your final response.`,
           'The host removes that directive, uploads the file, and sends a link-only attachment card.',
@@ -2973,6 +3040,13 @@ export class Body {
       }, ROOM_AGENT_STALL_NOTICE_MS);
     };
     let result: PromptResult;
+    // Persona delivery floor: a harness that ignores `session/new`'s
+    // `systemPrompt` still receives every turn's message content verbatim,
+    // so the human-authored persona rides there for those harnesses. See
+    // `AgentSession.personaTurnPrefix`.
+    const wirePrompt = session.personaTurnPrefix
+      ? `${session.personaTurnPrefix}\n\n${prompt}`
+      : prompt;
     // Set only at the actual ACP invocation boundary. Scheduler/session
     // activation failures spent no model call and must not appear as one.
     let modelCallStartedAt: string | undefined;
@@ -2988,7 +3062,7 @@ export class Body {
         modelCallStartedAt = new Date().toISOString();
         return session.client.sessionPrompt(
           session.sessionId,
-          prompt,
+          wirePrompt,
           ROOM_AGENT_PROMPT_TIMEOUT_MS,
           (draft || narrator || cornerRequestFilter) &&
             ((_delta, fullText) => {
@@ -3405,6 +3479,7 @@ export class Body {
         }
         this.primeCodegraphIndex(worktreePath);
         const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
+        const restoredCornerMemory = await this.sessionMemory(communityId);
         const cornerFilesystem = this.cornerFilesystemPolicy(
           cornerRepo,
           worktreePath,
@@ -3457,6 +3532,7 @@ export class Body {
             resumeOnFirstActivation: true,
             resumePlan: restoredPlan,
             ...(agentPrivateState ? { agentPrivateState } : {}),
+            ...(restoredCornerMemory ? { agentMemory: restoredCornerMemory } : {}),
             ...(communityId ? { communityId } : {}),
             ...(cornerRepo.truth?.binding.remote?.startsWith('git://github.com/') &&
             agentPrivateState
@@ -3656,7 +3732,7 @@ export class Body {
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     await this.ensureAgentEntity(tlcChannelId);
     const communityId = await this.channelCommunityId(tlcChannelId);
-
+    const roomMemory = await this.sessionMemory(communityId);
     // The boundary remains the exact MCP mount: Beeline's fixed inspection MCP
     // plus explicit creator-only account capabilities. Operator config is never inherited.
     const roomMcpServers = [
@@ -3700,6 +3776,7 @@ export class Body {
         permissionHandler: (permission) =>
           this.handleRoomPermissionRequest(tlcChannelId, permission, editPolicy),
         ...(communityId ? { communityId } : {}),
+        ...(roomMemory ? { agentMemory: roomMemory } : {}),
       });
     } catch (error) {
       if (error instanceof ReadOnlyToolsUnavailableError) throw error;
@@ -3859,6 +3936,7 @@ export class Body {
     // they're ready. Never blocks or fails corner creation.
     this.primeCodegraphIndex(worktreePath);
     const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
+    const cornerMemory = await this.sessionMemory(communityId);
     const cornerFilesystem = this.cornerFilesystemPolicy(
       boundRepo,
       worktreePath,
@@ -3933,6 +4011,7 @@ export class Body {
       resumeObjective: taskDescription || undefined,
       resumeTargetRef: boundRepo.targetBranch ?? 'refs/heads/main',
       ...(agentPrivateState ? { agentPrivateState } : {}),
+      ...(cornerMemory ? { agentMemory: cornerMemory } : {}),
       ...(communityId ? { communityId } : {}),
       ...(boundRepo.truth?.binding.remote?.startsWith('git://github.com/') && agentPrivateState
         ? { gitReadCredential: { roomId: tlcChannelId, stateDir: agentPrivateState.root } }
@@ -5381,6 +5460,13 @@ export class Body {
       this.config.accessPolicy === 'creator' &&
       isExternalMcpPermissionRequest(permission, this.config.externalMcpCapabilities)
     ) {
+      return 'allow';
+    }
+    // Agent-authored memory is writable inside a read-only Room by design
+    // (`agent-memory.ts`): it is agent-private state, not the repository. A
+    // write pinned to the memory dir never reaches the human corner card.
+    const memory = this.sessions.get(tlcChannelId)?.agentMemory;
+    if (memory && isAgentMemoryWritePermissionRequest(permission, memory.dir)) {
       return 'allow';
     }
     const turn = this.pendingRoomTurns.get(tlcChannelId);
@@ -8606,12 +8692,23 @@ export class Body {
         // Close-corner archives the subchannel outright (it also cancels any
         // active turn as part of that teardown) — distinct from a plain
         // cancel, which only stops the current turn and leaves the corner open.
+        // The TAGGED control is not the only way a person asks: "Close this
+        // corner" typed as an ordinary chat message (owner-reported
+        // 2026-08-23) used to be forwarded into the ACP session as
+        // conversation, where the agent — which cannot close its own corner —
+        // could only talk about it, and the corner stayed open and enterable
+        // forever. The strict recognizer routes that explicit imperative to
+        // this same teardown; anything it does not match keeps flowing to the
+        // agent exactly as before.
         // Mirror the ordinary message path below: mark delivered only once
         // the triggered work actually succeeds, and `failed` on the catch
         // path. Marking `delivered` before the archive attempt (the old
         // behavior) makes a partial archive failure permanently
         // un-retryable — even across a restart, since `delivered` persists.
-        if (evt.tags.some((t) => t[0] === 't' && t[1] === CORNER_CLOSE_TAG)) {
+        const cornerCloseRequested =
+          evt.tags.some((t) => t[0] === 't' && t[1] === CORNER_CLOSE_TAG) ||
+          isCornerCloseRequest(evt.content);
+        if (cornerCloseRequested) {
           try {
             await this.archiveSubchannel(subchannelId);
           } catch (closeError) {
@@ -9500,9 +9597,9 @@ export class Body {
     await setMemberRole(this.bodyIdentity, communityId, this.agentIdentity.publicKey, 'member');
     await waitUntilMember(ctx, communityId, this.agentIdentity.publicKey);
     await createAgent(ctx, communityId, {
-      // The default identity name is the generic `buzzy-agent` marker.
+      // The default identity name is the generic `beeline-agent` marker.
       // Registration resolves it deliberately (`deriveAgentDisplayName`):
-      // "Buzzy", not a random-looking pubkey-derived first name.
+      // "Beeline", not a random-looking pubkey-derived first name.
       displayName: this.agentIdentity.name || 'Agent',
     });
   }
@@ -9747,8 +9844,8 @@ export class Body {
       );
       return false;
     }
-    git(worktreePath, ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent']);
-    git(worktreePath, ['config', 'user.email', 'agent@buzzy.local']);
+    git(worktreePath, ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME]);
+    git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
     this.excludeCodegraphFromWorktreeStatus(worktreePath);
     this.seedWorktreeToolchain(worktreePath, repoRoot);
     return true;
@@ -9790,8 +9887,8 @@ export class Body {
         baseRef,
       ]);
       if (!worktreeAdd.ok) throw new Error(`git worktree add failed: ${worktreeAdd.stderr}`);
-      git(worktreePath, ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent']);
-      git(worktreePath, ['config', 'user.email', 'agent@buzzy.local']);
+      git(worktreePath, ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME]);
+      git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
       this.excludeCodegraphFromWorktreeStatus(worktreePath);
       this.seedWorktreeToolchain(worktreePath, boundRepo.localPath);
       return;
@@ -9851,12 +9948,12 @@ export class Body {
 
     // The edit agent commits locally; the body authenticates and pushes the
     // resulting feature tip under the agent identity after the turn completes.
-    spawnSync('git', ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent'], {
+    spawnSync('git', ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME], {
       cwd: worktreePath,
       env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
       encoding: 'utf8',
     });
-    spawnSync('git', ['config', 'user.email', 'agent@buzzy.local'], {
+    spawnSync('git', ['config', 'user.email', 'agent@beeline.local'], {
       cwd: worktreePath,
       env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
       encoding: 'utf8',

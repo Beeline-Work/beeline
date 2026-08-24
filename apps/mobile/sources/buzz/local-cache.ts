@@ -180,6 +180,11 @@ type BuzzCacheState = PersistedBuzzCache & {
    * `removed-rooms.ts`: the purge makes removal immediate, the tombstone is
    * what keeps a later relay refresh from re-materializing the row. */
   removeChannel: (viewerPubkey: string, channelId: string) => void;
+  /** Remove ONE corner from a cached Room row (every list of this viewer).
+   * Pairs with the durable tombstone in `closed-corners.ts`: the purge makes
+   * the close immediate in the deck's count/dropdown; the tombstone keeps a
+   * later lifecycle refresh from re-listing it. */
+  removeCorner: (viewerPubkey: string, roomId: string, cornerId: string) => void;
   clear: () => void;
 };
 
@@ -714,6 +719,29 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
       const channels = { ...state.channels };
       delete channels[channelKey];
       return listsChanged ? { channelLists, channels } : { channels };
+    }),
+  removeCorner: (viewerPubkey, roomId, cornerId) =>
+    set((state) => {
+      let listsChanged = false;
+      const channelLists = Object.fromEntries(
+        Object.entries(state.channelLists).map(([key, entry]) => {
+          if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
+          let entryChanged = false;
+          const channels = entry.channels.map((channel) => {
+            if (channel.id !== roomId || !channel.corners) return channel;
+            const corners = channel.corners.filter((corner) => corner.id !== cornerId);
+            if (corners.length === channel.corners.length) return channel;
+            entryChanged = true;
+            return { ...channel, corners };
+          });
+          if (!entryChanged) return [key, entry];
+          listsChanged = true;
+          return [key, { ...entry, channels }];
+        }),
+      );
+      // Identity-preserved when nothing moved: this runs on every close and
+      // an unchanged snapshot must not re-render the deck.
+      return listsChanged ? { channelLists } : state;
     }),
   clear: () => set(emptyCache()),
 }));

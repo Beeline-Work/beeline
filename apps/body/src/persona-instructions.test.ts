@@ -12,7 +12,7 @@ import {
 } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 import { AcpClient } from './acp.js';
-import { appendPersonaSessionInstructions } from './persona-instructions.js';
+import { appendPersonaSessionInstructions, personaTurnPrefixForHarness } from './persona-instructions.js';
 import { AGENT_PRIVATE_STATE_ENV, agentPrivateStateInstructions } from './agent-private-state.js';
 
 const temporaryDirectories: string[] = [];
@@ -134,5 +134,26 @@ lines.on('line', (line) => {
     expect(await readFile(resolve(privateState, 'memory/chrome-warden.json'), 'utf8')).toContain(
       'keep it green',
     );
+  });
+
+  it('builds a per-turn persona prefix for a harness that drops the session system prompt', () => {
+    const profile = {
+      communityId: '11111111-1111-4111-8111-111111111111',
+      agentPubkey: 'a'.repeat(64),
+      authoredBy: 'b'.repeat(64),
+      name: 'Clara',
+      soul: 'Steady, practical, and ready to help this Workspace.',
+      avatarSeed: 'seed',
+      updatedAt: 1_700_000_000,
+    };
+    // codex-acp and pi-acp ignore `session/new`'s systemPrompt entirely, so
+    // their persona must ride every turn prompt instead — otherwise a set
+    // soul reaches every surface EXCEPT the agent's own prompt.
+    expect(personaTurnPrefixForHarness(profile, '/usr/local/bin/codex-acp')).toContain('Name: Clara');
+    expect(personaTurnPrefixForHarness(profile, 'pi-acp')).toContain('Soul: Steady, practical');
+    // A harness that honors the session prompt already got it there.
+    expect(personaTurnPrefixForHarness(profile, '/usr/local/bin/claude-agent-acp')).toBeUndefined();
+    // No persona set: nothing to deliver on any harness.
+    expect(personaTurnPrefixForHarness(undefined, 'pi-acp')).toBeUndefined();
   });
 });

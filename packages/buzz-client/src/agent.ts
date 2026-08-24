@@ -175,8 +175,9 @@ async function createAgentRecord(
 
   const agentId = options.agentId ?? newUuid();
   // Deliberate naming, not silent masking: an authored name passes through,
-  // the daemon's generic `buzzy-agent` marker becomes "Buzzy", and only a
-  // genuinely absent name takes the deterministic pubkey-derived fallback.
+  // a system-generic marker (`beeline-agent`, legacy `buzzy-agent`) resolves
+  // to the stable pubkey-derived seed name — distinct per agent — and only a
+  // genuinely absent name takes that same deterministic fallback.
   const displayName = deriveAgentDisplayName(
     options.displayName ?? ctx.identity.name,
     ctx.identity.publicKey,

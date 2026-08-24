@@ -29,6 +29,7 @@ import { HullSurface, PixelLoader, CornerGlyph } from '@/components/buzz/MonoHul
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { afterInteractions } from '@/buzz/defer-interaction';
+import { isCornerClosed, useClosedCorners } from '@/buzz/closed-corners';
 import {
   selectChannelList,
   useBuzzLocalCache,
@@ -53,12 +54,22 @@ function seedFromRoomListCache(channelId: string): {
   hasCache: boolean;
 } {
   const state = useBuzzLocalCache.getState();
+  // Imperative read (this is a seed helper, not a component): the closure
+  // tombstone store only ever grows monotonically for a dismissed corner,
+  // so a stale read here cannot resurrect closed work.
+  const closedCornerAt = useClosedCorners.getState().closedAt;
   const entry: ChannelListCacheEntry | undefined = selectChannelList(
     state,
     state.activeViewerPubkey,
   );
   const room = entry?.channels.find((channel) => channel.id === channelId);
-  const corners = room?.corners?.filter((corner) => corner.status !== 'archived') ?? [];
+  // A corner this viewer CLOSED never renders here: not from the cache seed,
+  // not from a fresh relay read (the tombstone outlives both).
+  const viewerKey = state.activeViewerPubkey;
+  const corners =
+    room?.corners?.filter(
+      (corner) => corner.status !== 'archived' && !isCornerClosed(closedCornerAt, viewerKey, channelId, corner.id),
+    ) ?? [];
   return {
     corners: sortCorners(corners),
     roomName: room?.title ?? ROOM_LABEL,
@@ -117,8 +128,19 @@ export default function BuzzCorners() {
         const cornersApplied = cornersRead.then((nextCorners) => {
           // NIP-29's `closed` metadata flag means invite-only, not archived.
           // `listSubchannelLifecycle` only marks an explicit archive as archived,
-          // so keep every live/open corner visible here.
-          setCorners(sortCorners(nextCorners.filter((corner) => corner.status !== 'archived')));
+          // so keep every live/open corner visible here — except one this
+          // viewer CLOSED, whose tombstone hides it regardless of relay state.
+          const closedAt = useClosedCorners.getState().closedAt;
+          const viewerKey = client.identity.publicKey;
+          setCorners(
+            sortCorners(
+              nextCorners.filter(
+                (corner) =>
+                  corner.status !== 'archived' &&
+                  !isCornerClosed(closedAt, viewerKey, decodedId, corner.id),
+              ),
+            ),
+          );
           return nextCorners;
         }, fail('corners'));
 

@@ -12,6 +12,7 @@ import type {
   RepositoryBinding,
   RepositoryRoomResult,
 } from '@beeline/buzz-client';
+import { DEFAULT_AGENT_IDENTITY_NAME, DEFAULT_BODY_IDENTITY_NAME } from '@beeline/buzz-client';
 import { AGENT_KINDS, type AgentCommand, type AgentKind } from './agent-command.js';
 
 const execFileAsync = promisify(execFile);
@@ -1000,8 +1001,8 @@ export async function pairRepositoryAgent(
       version: 2,
       communityId: pairing.communityId,
       pairedBy: pairing.pairedBy,
-      agent: storeIdentity(input.agentIdentity, 'buzzy-agent'),
-      body: storeIdentity(input.bodyIdentity, 'buzzy-body'),
+      agent: storeIdentity(input.agentIdentity, DEFAULT_AGENT_IDENTITY_NAME),
+      body: storeIdentity(input.bodyIdentity, DEFAULT_BODY_IDENTITY_NAME),
       // Empty when pairing with no repository: the supervisor discovers every
       // Room this agent is invited to from relay membership and materializes
       // each Room's own repository on demand (`WorkspaceSupervisor.reconcile`).
@@ -1013,7 +1014,7 @@ export async function pairRepositoryAgent(
                 repo,
                 root: resolve(runtimeRoot, 'rooms', room.channelId),
                 ...(repo.relayRepo && room.mergeWorkerProvisioned
-                  ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'buzzy-merge-worker') }
+                  ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'beeline-merge-worker') }
                   : {}),
                 membershipSince: Math.floor(Date.now() / 1000),
                 discoveredAt: new Date().toISOString(),

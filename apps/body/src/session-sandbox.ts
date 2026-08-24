@@ -303,6 +303,38 @@ export function classifyRoomPermission(request: AcpPermissionRequest): SandboxVe
 }
 
 /**
+ * Is this mutating request exactly a write INTO the agent's own memory
+ * directory (`agent-memory.ts`)? Memory is agent-private state, not the
+ * repository, so a Room session may write it despite the read-only repo —
+ * and the Room handler must therefore ALLOW such a request ahead of the
+ * read-only denial instead of parking it behind a human corner card.
+ *
+ * Fail-closed by construction, same discipline as `isReadOnlyMcpPermissionRequest`:
+ *
+ *  - A request carrying a SHELL payload is never resolved by its text —
+ *    `bash … > memory/MEMORY.md && rm -rf /repo` must not pass because one
+ *    token names the memory dir. Shell writes to memory stay denied; the
+ *    prompt tells the agent to use its file-editing tools.
+ *  - EVERY filesystem path named anywhere in the request must resolve inside
+ *    the memory dir (physically resolved, so a symlink cannot launder the
+ *    target out), and at least one path must be named. A mutating request
+ *    this function cannot pin to the memory dir falls through to the
+ *    ordinary read-only flow.
+ */
+export function isAgentMemoryWritePermissionRequest(
+  request: AcpPermissionRequest,
+  memoryDir: string,
+): boolean {
+  if (!isMutatingPermissionRequest(request)) return false;
+  const kind = request.toolCall?.kind?.toLowerCase();
+  if (kind === 'execute') return false;
+  if (shellCommandFromRawInput(request.toolCall?.kind, request.toolCall?.rawInput)) return false;
+  const targets = permissionTargetPaths(request);
+  if (targets.length === 0) return false;
+  return targets.every((path) => !pathEscapesRoot(path, memoryDir));
+}
+
+/**
  * Corner fallback policy: allow mutations everywhere except the hygiene
  * denylist. Explicit writable roots win over protected parents (the current
  * worktree inside the corners pool, its git common dir inside the canonical

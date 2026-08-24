@@ -51,7 +51,7 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
-import { CornerGlyph, HullDeckMark } from './MonoHull';
+import { CornerGlyph, HullDeckMark, stateCircleDiameter } from './MonoHull';
 
 const originalConsoleError = console.error;
 
@@ -105,13 +105,13 @@ function pulses(renderer: ReactTestRenderer): number {
 }
 
 describe('HullDeckMark — three states, three languages', () => {
-  it('renders the approved 20px Room circles and accessibility-only state word', () => {
+  it('renders the restored 9px Room circles and accessibility-only state word', () => {
     // Working is motion: an animated ring whose top arc carries the accent.
     const working = render('working');
     expect(markStyle(working, (style) => style.borderTopColor === '#b08a4a')).toMatchObject({
-      width: 20,
-      height: 20,
-      borderRadius: 10,
+      width: stateCircleDiameter.room,
+      height: stateCircleDiameter.room,
+      borderRadius: stateCircleDiameter.room / 2,
       borderTopColor: '#b08a4a',
     });
 
@@ -119,16 +119,16 @@ describe('HullDeckMark — three states, three languages', () => {
     const needsYou = render('needs-you');
     expect(markStyle(needsYou, (style) => style.backgroundColor === '#b08a4a')).toMatchObject({
       backgroundColor: '#b08a4a',
-      width: 20,
-      height: 20,
+      width: stateCircleDiameter.room,
+      height: stateCircleDiameter.room,
     });
     expect(pulses(needsYou)).toBeGreaterThan(0);
 
     // Idle is a quiet steel dot — no animation clock at all.
     const idle = render('idle');
     expect(markStyle(idle, (style) => style.borderColor === '#83838d')).toMatchObject({
-      width: 20,
-      height: 20,
+      width: stateCircleDiameter.room,
+      height: stateCircleDiameter.room,
       borderColor: '#83838d',
       backgroundColor: 'transparent',
     });
@@ -176,7 +176,7 @@ describe('HullDeckMark — three states, three languages', () => {
     expect(new Set(shapes).size).toBe(3);
   });
 
-  it('renders the same three circles at the 14px corner scale with no visible label', () => {
+  it('renders the same three circles at the smaller 7px corner scale with no visible label', () => {
     const cases = [
       { status: null, label: 'idle', key: 'borderColor', value: '#83838d' },
       { status: 'live', label: 'working', key: 'borderTopColor', value: '#b08a4a' },
@@ -188,7 +188,11 @@ describe('HullDeckMark — three states, three languages', () => {
         renderer = create(React.createElement(CornerGlyph, { status: item.status }));
       });
       const style = markStyle(renderer, (candidate) => candidate[item.key] === item.value);
-      expect(style).toMatchObject({ width: 14, height: 14, borderRadius: 7 });
+      expect(style).toMatchObject({
+        width: stateCircleDiameter.corner,
+        height: stateCircleDiameter.corner,
+        borderRadius: stateCircleDiameter.corner / 2,
+      });
       expect(renderer.root.findByProps({ accessibilityLabel: item.label })).toBeTruthy();
       expect(renderer.root.findAll((node: any) => node.type === 'Text')).toHaveLength(0);
     }

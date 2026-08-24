@@ -27,7 +27,7 @@ describe('HullDeckMark — one visual language per deck state', () => {
     const ring = styleBlock(source, 'stateCircleWorking');
     expect(ring).toContain('borderColor: groknight.bgTexturePeak');
     expect(ring).toContain('borderTopColor: groknight.accent');
-    expect(ring).toContain('borderWidth: 2');
+    expect(ring).toContain('borderWidth: 1');
     expect(source).toContain('duration: 900');
     expect(source).toContain('borderRadius: diameter / 2');
   });
@@ -54,9 +54,14 @@ describe('HullDeckMark — one visual language per deck state', () => {
     expect(circle).not.toContain('accent');
   });
 
-  it('uses one component at room and corner scales and exposes no visible word', () => {
+  it('restores the compact pre-#419 room scale and keeps corners smaller', () => {
     expect(source).toContain('<StateCircle state={state} scale="room" />');
-    expect(source).toContain("scale === 'room' ? 20 : 14");
+    expect(source).toContain('export const stateCircleDiameter = { room: 9, corner: 7 } as const;');
+    expect(source).toContain('const diameter = stateCircleDiameter[scale];');
+    expect(9).toBeGreaterThan(7);
+  });
+
+  it('exposes state as accessibility metadata, never a visible word', () => {
     expect(source).toContain('accessibilityLabel={state}');
     expect(source).not.toMatch(/>\s*(IDLE|WORKING|NEEDS YOU)\s*</);
   });

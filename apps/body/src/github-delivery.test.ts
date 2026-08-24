@@ -119,7 +119,9 @@ describe('GitHub-origin delivery', () => {
     // capture; only signed kind:9 events are publishes.
     const publishes = events.filter((event) => Array.isArray(event.tags));
     expect(
-      publishes.some((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready')),
+      publishes.some((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+      ),
     ).toBe(false);
     expect(
       publishes.find((event) =>
@@ -259,28 +261,31 @@ describe('a moved target is standing authorization to update the feature branch'
     const { root, remote, worktree, info, body, events, tip, moved, prompts } =
       await approvedCornerWithMovedTarget();
 
-    await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(0);
-    await body.waitForAgentTasks();
+    await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(1);
 
-    // The protected branch stays put; only the feature branch is rewritten.
-    expect(run(root, ['ls-remote', remote, 'refs/heads/main'])).toContain(moved);
-    expect(prompts).toHaveLength(1);
+    // Pure realignment and landing are one deterministic daemon pass. The
+    // suspended harness is never resumed to perform git mechanics.
+    expect(prompts).toHaveLength(0);
     const refreshedTip = run(worktree, ['rev-parse', 'HEAD']);
     expect(refreshedTip).not.toBe(tip);
     expect(run(worktree, ['merge-base', '--is-ancestor', moved, refreshedTip])).toBe('');
     expect(info.mergeTarget?.tip).toBe(refreshedTip);
-    expect(info.humanMergeApproval).toMatchObject({ id: 'signed-human-approval', approvedTip: tip });
+    expect(info.humanMergeApproval).toMatchObject({
+      id: 'signed-human-approval',
+      approvedTip: tip,
+    });
 
-    // Rewritten work gets a new content-addressed review card. The next land
-    // pass uses the one standing approval; no second tap is required.
+    // Rewritten work gets a new content-addressed review card and lands under
+    // the one standing approval without a second timer or tap.
     // Only signed kind:9 publishes count — the attention-transition gate also
     // POSTs /query reads through this capture.
     const ready = events
       .filter((event) => Array.isArray(event.tags))
       .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'));
     expect(ready).toHaveLength(2);
-    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(refreshedTip);
-    await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(1);
+    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(
+      refreshedTip,
+    );
     expect(run(root, ['ls-remote', remote, 'refs/heads/main'])).toContain(refreshedTip);
   });
 
@@ -290,31 +295,31 @@ describe('a moved target is standing authorization to update the feature branch'
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await body.waitForAgentTasks();
 
-    const recovering = events.find((event) =>
-      event.content.includes('realigning') &&
-      event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'realigning'),
+    const recovering = events.find(
+      (event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity') &&
+        event.tags.some((tag) => tag[0] === 'delivery-stage' && tag[1] === 'realigning'),
     );
     expect(recovering).toBeDefined();
-    expect(recovering!.content).toMatch(/approval remains standing/i);
-    // ...and no raw git plumbing reaches the transcript either.
+    expect(recovering!.content).toMatch(/Realigning/);
+    // No raw git plumbing reaches the transcript activity row.
     expect(recovering!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward|\[rejected\]/i);
   });
 
-  it('starts only one synchronization task across overlapping maintenance ticks', async () => {
+  it('performs one daemon realignment and never starts a synchronization session', async () => {
     const { body, events, prompts } = await approvedCornerWithMovedTarget();
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
-    await body.waitForAgentTasks();
-    expect(prompts).toHaveLength(1);
+    expect(prompts).toHaveLength(0);
     const recovering = events
       .filter((event) => Array.isArray(event.tags))
       .filter(
         (event) =>
-          event.content.includes('realigning') &&
-          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'realigning'),
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity') &&
+          event.tags.some((tag) => tag[0] === 'delivery-stage' && tag[1] === 'realigning'),
       );
-    expect(recovering).toHaveLength(1);
+    expect(recovering).toHaveLength(2); // in-progress, then completed
   });
 
   it('keeps the automatic-retry claim for a failure the land poll really does re-attempt', async () => {

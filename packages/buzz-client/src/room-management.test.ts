@@ -7,6 +7,7 @@ import {
   KIND_CHANNEL_MEMBERS,
   KIND_CHANNEL_METADATA,
   KIND_CREATE_GROUP,
+  KIND_DELETE_GROUP,
   KIND_EDIT_METADATA,
   KIND_REMOVE_USER,
   TAG_ROOM_LIFECYCLE,
@@ -20,6 +21,7 @@ function installRelay(options: { parent?: string; communityId?: string } = {}) {
   const members = new Set([member.publicKey]);
   const admins = new Map([[owner.publicKey, 'owner']]);
   let archived = false;
+  let deleted = false;
   const published: NostrEvent[] = [];
   const create = signEvent(
     {
@@ -59,11 +61,13 @@ function installRelay(options: { parent?: string; communityId?: string } = {}) {
         if (event.kind === KIND_EDIT_METADATA) {
           archived = event.tags.some((tag) => tag[0] === 'archived' && tag[1] === 'true');
         }
+        if (event.kind === KIND_DELETE_GROUP) deleted = true;
         return new Response('{"accepted":true}', { status: 200 });
       }
 
       const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
       const kinds = filter.kinds as number[];
+      if (deleted) return new Response('[]');
       if (kinds.includes(KIND_CREATE_GROUP)) return new Response(JSON.stringify([create]));
       if (kinds.includes(KIND_CHANNEL_MEMBERS)) {
         return new Response(
@@ -103,7 +107,7 @@ function installRelay(options: { parent?: string; communityId?: string } = {}) {
       return new Response('[]');
     }),
   );
-  return { members, published };
+  return { members, published, isDeleted: () => deleted };
 }
 
 function client(identity: typeof owner) {
@@ -152,7 +156,7 @@ describe('role-aware Room membership management', () => {
     await ownerClient.archiveRoom(roomId);
     await expect(ownerClient.getChannelMetadata(roomId)).resolves.toMatchObject({ archived: true });
     expect(relay.published.map((event) => event.kind)).toEqual([KIND_EDIT_METADATA]);
-    expect(relay.published[0]?.tags).toContainEqual(['action', 'admin-delete']);
+    expect(relay.published[0]?.tags).toContainEqual(['action', 'admin-archive']);
     expect(
       relay.published.every((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === TAG_ROOM_LIFECYCLE),
@@ -160,12 +164,52 @@ describe('role-aware Room membership management', () => {
     ).toBe(true);
   });
 
+  it('deletes the Room by retracting every list enumeration source', async () => {
+    const relay = installRelay();
+    const ownerClient = client(owner);
+
+    await ownerClient.deleteRoom(roomId);
+
+    expect(relay.isDeleted()).toBe(true);
+    expect(relay.published.map((event) => event.kind)).toEqual([KIND_DELETE_GROUP]);
+    expect(relay.published[0]?.tags).toEqual(
+      expect.arrayContaining([
+        ['h', roomId],
+        ['t', TAG_ROOM_LIFECYCLE],
+        ['action', 'admin-delete'],
+      ]),
+    );
+    // Deck/sidebar enumeration (39001/39002 membership) is gone.
+    await expect(ownerClient.listMyChannels()).resolves.toEqual([]);
+    // Settings/picker enumeration (the channel-scoped 9007 create) is gone.
+    await expect(
+      ownerClient.query([{ kinds: [KIND_CREATE_GROUP], '#h': [roomId], limit: 20 }]),
+    ).resolves.toEqual([]);
+    // No retained 39000 metadata corpse remains either.
+    await expect(ownerClient.getChannelMetadata(roomId)).resolves.toBeNull();
+  });
+
+  it('keeps archive retained and delete owner-only', async () => {
+    const relay = installRelay();
+    const ownerClient = client(owner);
+
+    await ownerClient.archiveRoom(roomId);
+    expect(relay.isDeleted()).toBe(false);
+    await expect(ownerClient.getChannelMetadata(roomId)).resolves.toMatchObject({ archived: true });
+
+    vi.unstubAllGlobals();
+    installRelay();
+    await expect(client(member).deleteRoom(roomId)).rejects.toThrow('only a Room owner');
+  });
+
   it('keeps the lifecycle path off corners and Workspaces', async () => {
     installRelay({ parent: 'parent-room' });
     await expect(client(owner).archiveRoom(roomId)).rejects.toThrow('cannot target a corner');
+    await expect(client(owner).deleteRoom(roomId)).rejects.toThrow('cannot target a corner');
 
     vi.unstubAllGlobals();
     installRelay({ communityId: roomId });
     await expect(client(owner).archiveRoom(roomId)).rejects.toThrow('cannot target a Workspace');
+    await expect(client(owner).deleteRoom(roomId)).rejects.toThrow('cannot target a Workspace');
   });
 });

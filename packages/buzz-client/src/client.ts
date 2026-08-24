@@ -45,6 +45,7 @@ import {
   removeMember,
   removeRoomMember,
   archiveRoom,
+  deleteRoom,
   renameChannel,
   setChannelVisibility,
   listSubchannels,
@@ -292,6 +293,11 @@ export class BuzzClient {
   /** Archive a top-level Room through the explicit human-admin path. */
   archiveRoom(channelId: string): Promise<void> {
     return archiveRoom(this.ctx, channelId);
+  }
+
+  /** Delete a top-level Room and wait for every relay enumeration projection to disappear. */
+  deleteRoom(channelId: string): Promise<void> {
+    return deleteRoom(this.ctx, channelId);
   }
 
   /** Rename a top-level Room through the explicit human-admin path. */

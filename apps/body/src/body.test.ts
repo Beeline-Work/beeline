@@ -3438,6 +3438,52 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(published.at(-1)?.content).toContain("won't retry it without another message");
   });
 
+  it('publishes and then honestly replaces a Room receipt before cold provisioning starts', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-room-instant-receipt',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const order: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        if (event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn')) {
+          order.push(`receipt:${event.tags.find((tag) => tag[0] === 'status')?.[1]}`);
+        }
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    vi.spyOn(body as never, 'provision' as never).mockImplementation((async () => {
+      order.push('spawn');
+      throw new Error('adapter could not start');
+    }) as never);
+    const event = requestEvent([['p', body.agent.publicKey]], undefined, 'Are you alive?');
+
+    await expect(
+      Reflect.get(body, 'replyInRoom').call(
+        body,
+        'cold-room',
+        { repo: 'repo' },
+        {
+          eventId: event.id,
+          authorPubkey: event.pubkey,
+          content: event.content,
+          createdAt: event.created_at,
+        },
+      ),
+    ).rejects.toThrow('adapter could not start');
+
+    expect(order).toEqual(['receipt:working', 'spawn', 'receipt:failed']);
+  });
+
   it('accepts a pi-acp text-only corner request without any permission callback', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
@@ -8873,12 +8919,14 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     );
   }
 
-  function stubPublishing(): NostrEvent[] {
+  function stubPublishing(onPublish?: (event: NostrEvent) => void): NostrEvent[] {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        published.push(event);
+        onPublish?.(event);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
     );
@@ -9118,7 +9166,12 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
   });
 
   it('publishes no queued acknowledgement when the corner has no turn running', async () => {
-    const published = stubPublishing();
+    const order: string[] = [];
+    const published = stubPublishing((event) => {
+      if (event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn')) {
+        order.push(`receipt:${event.tags.find((tag) => tag[0] === 'status')?.[1]}`);
+      }
+    });
     const agent = newIdentity('idle-corner-agent');
     const human = newIdentity('idle-corner-human');
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-idle-'));
@@ -9132,6 +9185,10 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         toolCalls: [],
       }));
       const sessionSteer = vi.fn();
+      const activate = vi.fn(async () => {
+        order.push('spawn');
+        return 'session-idle';
+      });
       const session = {
         channelId: 'corner-idle',
         parentChannelId: 'room-idle',
@@ -9142,6 +9199,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
           sessionCancel: vi.fn(),
           activeRunId: () => undefined,
         },
+        lifecycle: { activate, suspend: vi.fn().mockResolvedValue(undefined) },
       } as never;
       body.registerSubchannel({
         subchannelId: 'corner-idle',
@@ -9162,6 +9220,71 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       expect(sessionSteer).not.toHaveBeenCalled();
       expect(sessionPrompt).toHaveBeenCalledOnce();
       expect(queuedAcks(published)).toHaveLength(0);
+      expect(order.slice(0, 2)).toEqual(['receipt:working', 'spawn']);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('replaces the instant corner receipt when the harness session fails to start', async () => {
+    const order: string[] = [];
+    const published = stubPublishing((event) => {
+      if (event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn')) {
+        order.push(`receipt:${event.tags.find((tag) => tag[0] === 'status')?.[1]}`);
+      }
+    });
+    const agent = newIdentity('failed-start-corner-agent');
+    const human = newIdentity('failed-start-corner-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-failed-start-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const sessionPrompt = vi.fn();
+      const session = {
+        channelId: 'corner-failed-start',
+        parentChannelId: 'room-failed-start',
+        sessionId: 'not-started',
+        logicalSessionId: 'logical-failed-start',
+        client: {
+          sessionPrompt,
+          sessionSteer: vi.fn(),
+          sessionCancel: vi.fn(),
+          activeRunId: () => undefined,
+        },
+        lifecycle: {
+          activate: vi.fn(async () => {
+            order.push('spawn');
+            throw new Error('adapter could not start');
+          }),
+          suspend: vi.fn().mockResolvedValue(undefined),
+        },
+      } as never;
+      body.registerSubchannel({
+        subchannelId: 'corner-failed-start',
+        worktreePath: '/tmp/nonexistent-corner-failed-start',
+        featureBranch: 'feature/failed-start',
+        role: agent,
+        session,
+        lastPolledAt: 0,
+        archived: false,
+      });
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+        .fn()
+        .mockResolvedValue([
+          memberMessage(
+            human,
+            'corner-failed-start',
+            'Finish the merge.',
+            Math.floor(Date.now() / 1000),
+          ),
+        ]);
+
+      expect(await body.pollMembers('corner-failed-start')).toBe(1);
+      expect(sessionPrompt).not.toHaveBeenCalled();
+      expect(order).toEqual(['receipt:working', 'spawn', 'receipt:failed']);
+      const statuses = published
+        .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn'))
+        .map((event) => event.tags.find((tag) => tag[0] === 'status')?.[1]);
+      expect(statuses).toEqual(['working', 'failed']);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

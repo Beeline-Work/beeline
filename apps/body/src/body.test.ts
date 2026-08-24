@@ -3077,32 +3077,17 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(prompt).toContain('Never claim that an action or agent exchange happened');
   });
 
-  it('seeds a corner task prompt with the Room discussion, not just the open command', () => {
+  it('seeds a corner task prompt with only the bounded objective and opening request', () => {
     const prompt = cornerOpenTaskPrompt(
-      [
-        {
-          role: 'user',
-          text: '[Person Milo (@milo) · def456]: can we add retry logic to the sync loop?',
-          eventId: 'discussion-message',
-          at: new Date(0).toISOString(),
-        },
-        {
-          role: 'user',
-          text: '[Person Milo (@milo) · def456]: open a corner',
-          eventId: 'current',
-          at: new Date(1_000).toISOString(),
-        },
-      ],
+      'add retry logic to the sync loop',
       '[Person Milo (@milo) · def456]: open a corner',
-      'current',
     );
 
     expect(prompt).toContain('add retry logic to the sync loop');
+    expect(prompt).toContain('Bounded task objective:');
     expect(prompt).toContain('Message that opened this corner:');
     expect(prompt).toContain('open a corner');
-    // The addressed open-corner event is excluded from the quoted history —
-    // it only appears once, as the current message.
-    expect(prompt.split('open a corner')).toHaveLength(2);
+    expect(prompt).not.toContain('Recent Room transcript');
   });
 
   it('recognizes only a human-addressed conversation command with one known peer agent', () => {
@@ -3436,6 +3421,7 @@ describe('Room conversation and permission-gated work intent', () => {
       worktreePath: '/tmp/agent-corner-worktree',
       featureBranch: 'feature/agent-corner',
       role: body.agent,
+      taskDescription: task,
       session: {
         channelId: 'agent-corner-id',
         sessionId: 'edit-session',
@@ -3650,6 +3636,7 @@ describe('Room conversation and permission-gated work intent', () => {
       worktreePath: '/tmp/worktree',
       featureBranch: 'feature/corner',
       role: body.agent,
+      taskDescription: 'add a FEATURE.md',
       session: {
         channelId: 'corner-id',
         sessionId: 'edit-session',
@@ -3678,7 +3665,7 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(start).toHaveBeenCalledWith(
       info,
       request.content,
-      cornerOpenTaskPrompt([], request.content, request.eventId),
+      cornerOpenTaskPrompt(info.taskDescription, request.content),
       {
         cause: 'corner-opening',
         originalRequestId: request.eventId,
@@ -3688,7 +3675,7 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
-  it('seeds an explicitly opened corner with the preceding Room discussion', async () => {
+  it('seeds an explicitly opened corner with the bounded task objective, not Room chatter', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -3713,8 +3700,8 @@ describe('Room conversation and permission-gated work intent', () => {
     };
     await durableState.appendConversation('parent-channel', {
       role: 'user',
-      text: '[Person Milo (@milo) · def456]: can we add retry logic to the sync loop?',
-      eventId: 'discussion-message',
+      text: '[Person Joy (@joy) · abc123]: unrelated lunch plans are tacos at noon',
+      eventId: 'unrelated-message',
       at: new Date(0).toISOString(),
     });
     const request = {
@@ -3729,6 +3716,7 @@ describe('Room conversation and permission-gated work intent', () => {
       worktreePath: '/tmp/worktree',
       featureBranch: 'feature/corner',
       role: body.agent,
+      taskDescription: 'add retry logic to the sync loop',
       session: {
         channelId: 'corner-id',
         sessionId: 'edit-session',
@@ -3758,6 +3746,8 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(taskInstructions).toContain('add retry logic to the sync loop');
     expect(taskInstructions).toContain('Message that opened this corner:');
     expect(taskInstructions).toContain(request.content);
+    expect(taskInstructions).not.toContain('unrelated lunch plans');
+    expect(taskInstructions).not.toContain('Recent Room transcript');
 
     await rm('/tmp/buzzy-explicit-corner-context-unit', { recursive: true, force: true });
   });
@@ -3930,6 +3920,7 @@ describe('Room conversation and permission-gated work intent', () => {
       worktreePath: '/tmp/worktree',
       featureBranch: 'feature/corner',
       role: body.agent,
+      taskDescription: request.content,
       session: {
         channelId: 'corner-id',
         sessionId: 'edit-session',
@@ -3960,14 +3951,12 @@ describe('Room conversation and permission-gated work intent', () => {
     ).resolves.toBe('reject');
 
     expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
-    // A corner reached through the write-permission escalation is still opened
-    // out of a Room conversation, so its first turn carries that conversation
-    // — the request that triggered it ("go ahead", "yes do it") is just as
-    // likely to omit the task as an explicit open-corner command is.
+    // A corner reached through write-permission escalation gets the same
+    // bounded objective/opening-request brief as an explicitly opened corner.
     expect(start).toHaveBeenCalledWith(
       info,
       request.content,
-      expect.stringContaining('Recent Room transcript (oldest to newest):'),
+      expect.stringContaining('Bounded task objective:'),
       {
         cause: 'corner-opening',
         originalRequestId: request.eventId,
@@ -3975,6 +3964,7 @@ describe('Room conversation and permission-gated work intent', () => {
       },
     );
     expect(start.mock.calls[0]![2]).toContain(request.content);
+    expect(start.mock.calls[0]![2]).not.toContain('Recent Room transcript');
     expect(turn.transitionedToCorner).toBe(true);
     expect(
       published.some(

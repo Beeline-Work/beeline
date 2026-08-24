@@ -5995,10 +5995,12 @@ describe('corner narrative persistence', () => {
         'Applied the requested follow-up tweak.',
         'Ran the suite again; still green.',
       ]);
+      const startPlan = vi.fn(async () => undefined);
       const session = {
         channelId: 'corner-steer',
         sessionId: 'session-steer',
         client: { sessionPrompt, sessionCancel: vi.fn(), activeRunId: () => undefined },
+        activityProjection: { startPlan, completePlan: vi.fn(async () => undefined) },
       } as never;
 
       body.registerSubchannel({
@@ -6009,26 +6011,34 @@ describe('corner narrative persistence', () => {
         session,
         lastPolledAt: 0,
         archived: false,
+        taskDescription: 'Publish the mockup through a Cloudflare tunnel.',
       });
 
-      const followUp = signEvent(
-        {
-          pubkey: human.publicKey,
-          created_at: Math.floor(Date.now() / 1000),
-          kind: 9,
-          tags: [['h', 'corner-steer']],
-          content: 'One more tweak please.',
-        },
-        human.secretKey,
+      const followUps = ['One more tweak please.', '@codex u alive?', 'Keep going.'].map(
+        (content, index) => signEvent(
+          {
+            pubkey: human.publicKey,
+            created_at: Math.floor(Date.now() / 1000) + index,
+            kind: 9,
+            tags: [['h', 'corner-steer']],
+            content,
+          },
+          human.secretKey,
+        ),
       );
       (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
         .fn()
-        .mockResolvedValue([followUp]);
+        .mockResolvedValue(followUps);
 
       const count = await body.pollMembers('corner-steer');
 
-      expect(count).toBe(1);
-      expect(sessionPrompt).toHaveBeenCalledOnce();
+      expect(count).toBe(3);
+      expect(sessionPrompt).toHaveBeenCalledTimes(3);
+      expect(startPlan.mock.calls.map(([objective]) => objective)).toEqual([
+        'Publish the mockup through a Cloudflare tunnel.',
+        'Publish the mockup through a Cloudflare tunnel.',
+        'Publish the mockup through a Cloudflare tunnel.',
+      ]);
       const messages = agentMessages(published);
       expect(
         messages.some((event) => event.content === 'Applied the requested follow-up tweak.'),

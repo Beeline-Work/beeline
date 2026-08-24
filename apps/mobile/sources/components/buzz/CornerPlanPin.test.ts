@@ -113,7 +113,7 @@ describe('CornerPlanPin', () => {
     expect(toggle.props.accessibilityState).toEqual({ expanded: false });
   });
 
-  it("prefers the agent's own plan objective over the corner's opening task", () => {
+  it("keeps the corner's opening objective pinned when later plans carry another objective", () => {
     const renderer = render(
       React.createElement(CornerPlanPin, {
         objective: 'the corner opening task',
@@ -121,7 +121,7 @@ describe('CornerPlanPin', () => {
       }),
     );
     const texts = renderer.root.findAllByType('Text');
-    expect(texts[1].props.children).toBe('the plan objective');
+    expect(texts[1].props.children).toBe('the corner opening task');
   });
 
   it('pulses only the in-progress step, and only it', () => {

@@ -9290,7 +9290,9 @@ export class Body {
         try {
           let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
           const promptNewTurn = async (): Promise<PromptResult & { narrativeFloor?: number }> => {
-            await this.startCornerPlan(session, evt.content);
+            // A follow-up starts a checklist, not a new corner. Keep the
+            // immutable create-event objective out of ordinary chat.
+            await this.startCornerPlan(session, info.taskDescription || evt.content);
             await postAgentTurnStatus(
               subchannelId,
               this.agentIdentity,

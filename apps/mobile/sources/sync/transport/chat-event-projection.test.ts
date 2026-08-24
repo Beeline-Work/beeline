@@ -50,6 +50,23 @@ function displaySequence(events: SessionEvent[]): ChatDisplayMessage[] {
 }
 
 describe('Buzz Room screen event projection', () => {
+  it('keeps the serialized p-tags that make transcript mentions live', () => {
+    expect(
+      projectChatEvent(
+        raw(
+          'mention',
+          '@alan and @codex',
+          [
+            ['p', 'human-alan'],
+            ['p', 'agent-codex'],
+          ],
+          1,
+        ),
+        viewer,
+      ).message,
+    ).toMatchObject({ mentionPubkeys: ['human-alan', 'agent-codex'] });
+  });
+
   it('projects corner process state without a transcript row', () => {
     const event = raw('state', 'waiting', [['t', 'body-control'], ['t', 'corner-session'], ['session', 'logical'], ['agent', agent], ['status', 'waiting-for-slot'], ['sequence', '2']], 1);
     const message = projectChatEvent(event, viewer).message!;

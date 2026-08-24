@@ -87,7 +87,8 @@ function captureEvents(): NostrEvent[] {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      events.push(JSON.parse(String(init?.body)) as NostrEvent);
+      const event = JSON.parse(String(init?.body)) as NostrEvent;
+      if (Array.isArray(event.tags)) events.push(event);
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });
     }),
   );

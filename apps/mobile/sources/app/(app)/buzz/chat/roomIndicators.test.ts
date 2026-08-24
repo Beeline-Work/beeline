@@ -30,7 +30,7 @@ function memoBody(name: string): string {
 }
 
 const TURN_STATE = ['activeAgentTurn', 'sessionState', 'turnProgressLabel'];
-const CORNER_STATE = ['pinnedCorner', 'pinnedCornerCard', 'cornerLifecycle', 'permittedCornerId'];
+const CORNER_STATE = ['pinnedCorner', 'pinnedCornerCard', 'cornerLifecycle'];
 
 describe('the corner line and the turn indicator are independent', () => {
   it('never derives the pinned corner from any turn signal', () => {
@@ -38,15 +38,18 @@ describe('the corner line and the turn indicator are independent', () => {
     // is this corner's own edit session, which is the corner's state. What may
     // never appear is the Room's turn signal.
     expect(memoBody('cornerLiveBar')).not.toContain('activeAgentTurn');
+    expect(memoBody('cornerLiveBar')).not.toContain('agentsOffline');
   });
 
   it('resolves which corner may be pinned outside the screen, from corner state alone', () => {
     const selection = memoBody('pinnedCorner');
     for (const turnState of TURN_STATE) expect(selection).not.toContain(turnState);
     expect(selection).toContain('selectPinnedCorner');
-    // Both sources are consulted, so a corner terminal in either is excluded.
+    // Canonical lifecycle is the only input. Parent kind:9 corner-open/close
+    // history and permission records are explicitly absent.
     expect(selection).toContain('lifecycle: cornerLifecycle');
-    expect(selection).toContain('signals: cornerSignals');
+    expect(selection).not.toContain('cornerSignals');
+    expect(selection).not.toContain('permittedCorner');
   });
 
   it('never derives the turn indicator from any corner signal', () => {

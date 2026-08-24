@@ -4,6 +4,9 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
+const routeParams = vi.hoisted(() => ({
+  current: { communityId: 'workspace-1' } as Record<string, string>,
+}));
 const client = vi.hoisted(() => ({
   listAgents: vi.fn(async () => []),
   communityMembers: vi.fn(),
@@ -36,7 +39,7 @@ vi.mock('react-native-mmkv', () => ({
 }));
 vi.mock('expo-router', () => ({
   router: navigation,
-  useLocalSearchParams: () => ({ communityId: 'workspace-1' }),
+  useLocalSearchParams: () => routeParams.current,
 }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
@@ -111,6 +114,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.clearAllMocks();
+  routeParams.current = { communityId: 'workspace-1' };
   useBuzzLocalCache.getState().clear();
   client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
   client.removeAgent.mockResolvedValue(undefined);
@@ -162,6 +166,19 @@ describe('Members screen', () => {
     expect(renderer.root.findByProps({ testID: 'members-agents-section' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'invite-person' }).props.label).toBe('Invite person');
     expect(renderer.root.findByProps({ testID: 'add-agent' }).props.label).toBe('Add agent');
+  });
+
+  it('runs the existing pairing action from the Room-deck Agent deep link', async () => {
+    routeParams.current = { communityId: 'workspace-1', action: 'add-agent' };
+
+    const renderer = await render();
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+
+    expect(client.createAgentPairingCode).toHaveBeenCalledOnce();
+    expect(client.createAgentPairingCode).toHaveBeenCalledWith('workspace-1');
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Copy pairing command' })).toBeDefined();
   });
 
   it('shows a single identity line: handle over name over a truncated npub', async () => {

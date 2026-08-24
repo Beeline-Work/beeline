@@ -56,7 +56,6 @@ import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
 import { isCornerClosed, useClosedCorners } from '@/buzz/closed-corners';
 import {
   NO_ACTIVITY_PREVIEW,
-  finishedRoomEntries,
   roomListSections,
   type RoomRowPresentation,
 } from '@/buzz/room-list-row';
@@ -180,9 +179,9 @@ async function loadDisplayChannelBasics(
         } satisfies ChannelDisplayItem;
       }),
     );
-    // Top-level Rooms only, archived ones included: a relay-archived Room is
-    // FINISHED deck state, not an invisible one — it reaches the reader only
-    // through the collapsed FINISHED entry at the bottom of the index.
+    // Top-level Rooms only, archived ones included: an archived Room remains
+    // reachable inline in DOESN'T NEED YOU unless its viewer-local removal
+    // tombstone filters it from the deck projection below.
     return rooms.sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
   }
 
@@ -440,9 +439,6 @@ export default function BuzzChannels() {
   const [leavingWorkspaceId, setLeavingWorkspaceId] = useState<string | null>(null);
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
-  /** The collapsed FINISHED entry at the bottom of the deck: one row while
-   * collapsed, the finished Rooms themselves once expanded. */
-  const [showFinishedRooms, setShowFinishedRooms] = useState(false);
   const [ageNow, setAgeNow] = useState(() => Date.now());
   /** Rooms where an agent turn is streaming RIGHT NOW, seen live by this
    * screen's own event subscription. Corner turns are durable relay state
@@ -512,18 +508,49 @@ export default function BuzzChannels() {
       .map((room) => ({
         ...room,
         unreadNew: unreadCountFor(room, identity?.publicKey, readAt),
+        // Owner model 2026-08-23: an unread ROOM message (agent or human) is a
+        // NEEDS YOU trigger on its own. Read off the existing per-Room read
+        // mark against the room's own latest-message summary — corner output
+        // lives in the corner's channel and never feeds this.
+        roomUnread: isRoomUnread(
+          roomReadAt(readAt, viewerKey, room.id),
+          room.latestMessageAt,
+        ),
         corners: (room.corners ?? []).filter(
           (corner) => !isCornerClosed(closedCornerAt, viewerKey, room.id, corner.id),
         ),
       }));
+    // DMs obey the same rule on the same deck — there is no separate DIRECT
+    // pile: an unread DM is NEEDS YOU, a read one is DOESN'T NEED YOU. The DM's
+    // own fields ride along so the row renderer can draw its identity mark.
+    const directEntries = orderedDirectMessages.map((dm) => ({
+      ...dm,
+      title: dm.peerName,
+      corners: [] as ChannelDisplayItem['corners'],
+      archived: false,
+      roomUnread: isRoomUnread(
+        roomReadAt(readAt, viewerKey, dm.id),
+        dm.latestMessageAt,
+      ),
+    }));
     return {
-      sections: roomListSections(visible, authorNames, { now: ageNow }),
-      finished: finishedRoomEntries(visible, authorNames),
+      sections: roomListSections(
+        [...visible, ...directEntries],
+        authorNames,
+        { now: ageNow },
+      ),
     };
-  }, [ageNow, authorNames, cachedListEntry?.viewerPubkey, closedCornerAt, displayChannels, identity?.publicKey, readAt, removedAt]);
-  // One projection, one consumer each: inline tiers vs the collapsed entry.
-  // Kept as separate names so the JSX below stays flat.
-  const finishedRooms = roomSections.finished;
+  }, [
+    ageNow,
+    authorNames,
+    cachedListEntry?.viewerPubkey,
+    closedCornerAt,
+    displayChannels,
+    identity?.publicKey,
+    orderedDirectMessages,
+    readAt,
+    removedAt,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1147,15 +1174,13 @@ export default function BuzzChannels() {
     }
   }, [activeCommunityId, creatingInvite, readyInviteUrl, relayUrl, transport]);
 
-  /** One renderer for every inline tier AND the expanded FINISHED list: the
-   * collapsed entry's rows must be indistinguishable from inline ones. */
+  /** One renderer for every Room in the deck's two inline piles. */
   const renderRoomEntry = useCallback(
     (entry: { item: ChannelDisplayItem; row: RoomRowPresentation }) => {
       const { item, row } = entry;
       // The dropdown lists open corner work, and the CONTROL exists only
-      // for open work too: finished corners (merged/archived) carry no
-      // count and no expansion — the Room itself moves behind the
-      // collapsed FINISHED entry once ALL its work is terminal.
+      // for open work too: finished corners (merged/archived) carry no count
+      // and no expansion, while their Room remains inline in DOESN'T NEED YOU.
       const corners = row.corners;
       const canExpand = corners.length > 0;
       const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
@@ -1304,6 +1329,74 @@ export default function BuzzChannels() {
       );
     },
     [ageNow, expandedRoomId, openChannel],
+  );
+
+  /** One renderer for the deck's DM rows. DMs sit in the SAME two piles as
+   * Rooms — an unread DM is NEEDS YOU (`row.attention`, since a DM has no
+   * corners), a read one is DOESN'T NEED YOU — but their row language is
+   * identity (the peer's faceted mark), never corner state. */
+  const renderDirectEntry = useCallback(
+    (entry: { item: DirectMessageDisplayItem; row: RoomRowPresentation }) => {
+      const dm = entry.item;
+      const row = entry.row;
+      const display = dm.peerAgent
+        ? resolveAgentDisplayIdentity(dm.peerPubkey, dm.peerAgent)
+        : undefined;
+      const unread = row.attention;
+      const age = compactRelativeTime(dm.latestMessageAt ?? dm.updatedAt, ageNow);
+      return (
+        <View style={styles.roomCell} testID={`direct-row-${dm.id}`}>
+          {unread && <View pointerEvents="none" style={styles.attnRail} />}
+          <View style={styles.roomRow}>
+            <TouchableOpacity
+              accessibilityLabel={`Open direct message with ${dm.peerName}${
+                unread ? ', needs your attention' : ''
+              }`}
+              onPress={() => openChannel(dm.id)}
+              style={[styles.roomPrimary, styles.indexRow]}
+              testID={`direct-message-${dm.peerPubkey}`}
+            >
+              <View style={styles.rowMark}>
+                {display ? (
+                  <IdentityMark
+                    kind="agent"
+                    seed={display.avatarSeed ?? dm.peerPubkey}
+                    avatarUrl={display.avatarUrl}
+                    name={display.name}
+                    size={30}
+                  />
+                ) : (
+                  <IdentityMark
+                    kind="human"
+                    seed={dm.peerPubkey}
+                    avatarUrl={dm.avatarUrl}
+                    name={dm.peerName}
+                    size={30}
+                  />
+                )}
+              </View>
+              <View style={styles.rowCopy}>
+                <View style={styles.rowTitleLine}>
+                  <Text numberOfLines={1} style={[styles.rowTitle, !unread && styles.rowTitleRead]}>
+                    {dm.peerName}
+                  </Text>
+                </View>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.rowPreview, unread ? styles.rowPreviewAttention : undefined]}
+                >
+                  {dm.latestMessage ?? NO_ACTIVITY_PREVIEW}
+                </Text>
+              </View>
+            </TouchableOpacity>
+            <View pointerEvents="none" style={styles.rowGutter}>
+              <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
+            </View>
+          </View>
+        </View>
+      );
+    },
+    [ageNow, openChannel],
   );
 
   if (!cachedListEntry) {
@@ -1456,114 +1549,6 @@ export default function BuzzChannels() {
               </Text>
             </View>
           )}
-          ListFooterComponent={
-            orderedDirectMessages.length > 0 || finishedRooms.length > 0 ? (
-              <View style={styles.dmSection}>
-                {/* The collapsed FINISHED entry: one-depth-hidden Rooms —
-                    archived on the relay, or every corner terminal — never
-                    listed inline by any tier. Collapsed it is one header row;
-                    expanded it lists those Rooms through the same row
-                    renderer as every inline tier (the Claude Code mobile
-                    pattern). Hidden entirely when there is nothing finished. */}
-                {finishedRooms.length > 0 && (
-                  <View>
-                    <TouchableOpacity
-                      accessibilityLabel={
-                        showFinishedRooms
-                          ? 'Hide finished rooms'
-                          : `Show ${formatRoomParticipantTotal(finishedRooms.length)} finished ${ROOMS_LABEL.toLowerCase()}`
-                      }
-                      accessibilityRole="button"
-                      accessibilityState={{ expanded: showFinishedRooms }}
-                      onPress={() => setShowFinishedRooms((value) => !value)}
-                      style={styles.indexHeader}
-                      testID="finished-rooms-toggle"
-                    >
-                      <Text style={styles.indexLabel}>
-                        FINISHED · {finishedRooms.length}
-                      </Text>
-                      <Text style={styles.finishedChevron}>
-                        {showFinishedRooms ? '⌃' : '›'}
-                      </Text>
-                    </TouchableOpacity>
-                    {showFinishedRooms &&
-                      finishedRooms.map((entry) => (
-                        <View key={entry.item.id}>{renderRoomEntry(entry)}</View>
-                      ))}
-                  </View>
-                )}
-                <View style={styles.indexHeader}>
-                  <Text style={styles.indexLabel}>DIRECT · {orderedDirectMessages.length}</Text>
-                </View>
-                {orderedDirectMessages.map((dm) => {
-                  const display = dm.peerAgent
-                    ? resolveAgentDisplayIdentity(dm.peerPubkey, dm.peerAgent)
-                    : undefined;
-                  const unread = isRoomUnread(
-                    roomReadAt(readAt, identity?.publicKey, dm.id),
-                    dm.latestMessageAt,
-                  );
-                  const age = compactRelativeTime(dm.latestMessageAt ?? dm.updatedAt, ageNow);
-                  return (
-                    <View key={dm.id} style={styles.roomCell}>
-                      <View style={styles.roomRow}>
-                        <TouchableOpacity
-                          accessibilityLabel={`Open direct message with ${dm.peerName}${
-                            unread ? ', unread' : ''
-                          }`}
-                          onPress={() => openChannel(dm.id)}
-                          style={[styles.roomPrimary, styles.indexRow]}
-                          testID={`direct-message-${dm.peerPubkey}`}
-                        >
-                          <View style={styles.rowMark}>
-                            {display ? (
-                              <IdentityMark
-                                kind="agent"
-                                seed={display.avatarSeed ?? dm.peerPubkey}
-                                avatarUrl={display.avatarUrl}
-                                name={display.name}
-                                size={30}
-                              />
-                            ) : (
-                              <IdentityMark
-                                kind="human"
-                                seed={dm.peerPubkey}
-                                avatarUrl={dm.avatarUrl}
-                                name={dm.peerName}
-                                size={30}
-                              />
-                            )}
-                          </View>
-                          <View style={styles.rowCopy}>
-                            <View style={styles.rowTitleLine}>
-                              <Text
-                                numberOfLines={1}
-                                style={[styles.rowTitle, !unread && styles.rowTitleRead]}
-                              >
-                                {dm.peerName}
-                              </Text>
-                            </View>
-                            <Text
-                              numberOfLines={1}
-                              style={[styles.rowPreview, unread && styles.rowPreviewUnread]}
-                            >
-                              {dm.latestMessage ?? NO_ACTIVITY_PREVIEW}
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
-                        <View pointerEvents="none" style={styles.rowGutter}>
-                          {/* DMs sit outside the deck's three states; their
-                              unread signal is luminance, never the accent. */}
-                          {unread && <Text style={[styles.rowFlag, styles.dmNew]}>NEW</Text>}
-                          <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
-                        </View>
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-            ) : null
-          }
           ListEmptyComponent={
             !hasConversations ? (
               <View style={styles.emptyState}>
@@ -1598,7 +1583,15 @@ export default function BuzzChannels() {
               </View>
             ) : null
           }
-          renderItem={({ item: entry }) => renderRoomEntry(entry)}
+          renderItem={({ item: entry }) => {
+            // Destructure so the `in` check narrows the item itself.
+            const { item, row } = entry;
+            return 'peerName' in item ? (
+              renderDirectEntry({ item, row })
+            ) : (
+              renderRoomEntry({ item, row })
+            );
+          }}
           onRefresh={() => void handleRefresh(true)}
           refreshing={refreshing}
         />
@@ -1789,14 +1782,6 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 14,
     letterSpacing: 1.1,
   },
-  dmSection: { marginTop: 4 },
-  /* The collapsed FINISHED entry's fold chevron — gutter marginalia tier. */
-  finishedChevron: {
-    ...Typography.mono(),
-    color: groknight.ledgerGhost,
-    fontSize: 10,
-    lineHeight: 14,
-  },
   /* The row is a self-sizing flex container: minHeight floor, never a fixed
    * height, and children top-aligned like the mockup's mark/title baseline.
    * The gutter is a sibling column IN FLOW (see ROW_GUTTER_WIDTH), so the
@@ -1849,9 +1834,6 @@ const styles = StyleSheet.create((theme) => {
     lineHeight: 12,
     letterSpacing: 0.8,
   },
-  /* A DM's unread word: luminance, never the accent — DMs sit outside the
-   * deck's three-state language. */
-  dmNew: { color: groknight.textSecondary, textAlign: 'right' },
   /* Always rendered, even when a Room has no timestamp to show, so the mark
    * below it in the gutter never shifts up a line. */
   rowAge: {
@@ -1875,7 +1857,6 @@ const styles = StyleSheet.create((theme) => {
     fontSize: groknight.name === 'ledger' ? 11 : 13,
     lineHeight: groknight.name === 'ledger' ? 15 : 18,
   },
-  rowPreviewUnread: { color: groknight.ledgerBody },
   rowPreviewAttention: { color: groknight.accent },
   roomCell: {
     position: 'relative',

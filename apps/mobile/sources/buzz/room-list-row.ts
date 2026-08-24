@@ -2,7 +2,6 @@ import {
   cornerStatusPresentation,
   cornerSuperState,
   isCornerStalledOffline,
-  isCornerTerminal,
   roomCornerSignal,
   roomListCorners,
   type CornerStatus,
@@ -13,17 +12,18 @@ import { isMachinePreview } from '@/buzz/room-list-summary';
 import { isRetiredAgentStateNotice } from '@/buzz/retired-agent-notices';
 
 /** A row's deck state. Working is a ROW state only (the mark's motion) — the
- * owner's two-tier deck folds working rooms into the IDLE section, so a
- * working room carries no top-level tier of its own. */
+ * owner's two-tier deck folds working rooms into the DOESN'T NEED YOU section,
+ * so a working room carries no top-level tier of its own. */
 export type RoomListZone = 'needs-you' | 'working' | 'idle';
 
-/** The deck's SECTION tiers: NEEDS YOU, then IDLE (everything not waiting on
- * the human). Finished Rooms are reachable only through the collapsed entry. */
+/** The deck's SECTION tiers: NEEDS YOU, then DOESN'T NEED YOU (everything not
+ * waiting on the human — working and finished Rooms included). */
 export type RoomDeckTier = Exclude<RoomListZone, 'working'>;
 
 export const ROOM_LIST_ZONE_LABELS: Record<RoomDeckTier, string> = {
   'needs-you': 'NEEDS YOU',
-  idle: 'IDLE',
+  // Owner rename 2026-08-23: label only — the tier's semantics are unchanged.
+  idle: "DOESN'T NEED YOU",
 };
 
 const ROOM_LIST_TIER_ORDER: readonly RoomDeckTier[] = ['needs-you', 'idle'];
@@ -49,8 +49,8 @@ const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
  * change (`open`), a decision/reply ask (`needs-attention`, or a fresh agent
  * question carried as `awaitingReply`), or a failure-stalled card (`failed`).
  * A merely idle corner — nothing fresh to answer, nothing new to approve — is
- * IDLE deck state, not attention; its nudge/close affordance still lives
- * inside the corner itself.
+ * DOESN'T NEED YOU deck state, not attention; its nudge/close affordance still
+ * lives inside the corner itself.
  *
  * Presence refinement (owner report 2026-08-23): a PROVABLY offline agent's
  * ask/needs-attention card is not waiting on your reply — nobody is there to
@@ -101,28 +101,6 @@ export type RoomRowPill =
  * readable has been said. The screen renders the answer; it does not
  * re-derive it.
  */
-/**
- * A finished Room: archived on the relay, or one whose corner work has all
- * reached a terminal word (`merged`/`archived`). Such a Room holds no live or
- * needs-you state, so the deck hides it behind the collapsed FINISHED entry
- * instead of listing it inline. Two deliberate exclusions: a plain chat Room
- * with no corners is never finished (it has no work to finish), and a `failed`
- * corner never finishes its Room — a failure-stalled card still waits on a
- * person's retry, which is NEEDS YOU state.
- */
-export function roomIsFinished(
-  room: Pick<RoomRowInput, 'archived' | 'corners'>,
-): boolean {
-  if (room.archived) return true;
-  const corners = room.corners ?? [];
-  if (corners.length === 0) return false;
-  // Any unfinished corner — live, worded, or merely stalled (`null`) — keeps
-  // the Room active.
-  if (corners.some((corner) => !isCornerTerminal(corner.status))) return false;
-  // ...and a failure still owes the person an answer.
-  return !corners.some((corner) => corner.status === 'failed');
-}
-
 export type RoomRowPresentation = {
   /**
    * The row's one leading mark glyph. A Room reports corner state when it has
@@ -138,9 +116,9 @@ export type RoomRowPresentation = {
    */
   live: boolean;
   /**
-   * A corner is waiting on a person. The most action-worthy state on the
-   * deck, and the ONLY state that spends the accent: brass dot, brass action
-   * pill, brass activity line.
+   * A corner is waiting on a person, or an unread ROOM message does. The most
+   * action-worthy state on the deck, and the ONLY state that spends the
+   * accent: brass dot, brass action pill, brass activity line.
    */
   attention: boolean;
   /**
@@ -204,6 +182,15 @@ export type RoomRowInput = {
    * `null` means "unread but uncountable" (still shown, without a number).
    */
   unreadNew?: number | null;
+  /**
+   * An unread message exists in the ROOM itself — agent OR human author, per
+   * the owner's model (2026-08-23) — newer than the viewer's read
+   * mark (`isRoomUnread` over the room's own latest-message summary; corners
+   * never feed it, because corner output lives in the corner's channel and is
+   * chatty by nature). This is a NEEDS YOU trigger on its own; once the room is
+   * read it stops being one.
+   */
+  roomUnread?: boolean;
   /**
    * An agent turn is streaming in this Room's own conversation right now —
    * seen live by the index's event subscription. Corner turns arrive through
@@ -311,7 +298,8 @@ export function roomRowPresentation(
   // offline-stalled fact, then finished history.
   const currentCorner = needsYou ?? working ?? stalledOffline ?? finished;
   const turnWorking = Boolean(room.agentTurnWorking) && !needsYou;
-  const zone: RoomListZone = needsYou
+  const unreadHere = Boolean(room.roomUnread);
+  const zone: RoomListZone = needsYou || unreadHere
     ? 'needs-you'
     : working || turnWorking
       ? 'working'
@@ -339,6 +327,7 @@ export function roomRowPresentation(
   const previewFact = clean && speaker ? `${speaker} · ${clean}` : clean;
   const pills: RoomRowPill[] = [];
   if (needsYou) pills.push({ kind: 'status', label: needsYouAction(needsYou.status) });
+  else if (unreadHere) pills.push({ kind: 'status', label: 'READ' });
   if (room.modelLabel) pills.push({ kind: 'model', label: room.modelLabel });
   if (corners.length > 0) {
     pills.push({ kind: 'corner', label: `${corners.length} corner${corners.length === 1 ? '' : 's'} open` });
@@ -361,7 +350,7 @@ export function roomRowPresentation(
         ? '›'
         : '·',
     live: Boolean(working) || turnWorking,
-    attention: Boolean(needsYou),
+    attention: Boolean(needsYou) || unreadHere,
     corners,
     zone,
     meaningfulAt,
@@ -403,27 +392,27 @@ function projectEntries<T extends RoomRowInput>(
 }
 
 /**
- * Build the deck's ACTIVE sections: NEEDS YOU first (rooms with a corner
- * genuinely waiting on the human), then IDLE — every other visible Room,
- * working ones included, newest activity first. Recency headings (TODAY /
- * YESTERDAY / EARLIER) are retired: attention-state and recency were
- * semantically different tiers, so the deck now has exactly two labels, and
- * each row's mark already conveys working vs quiet. Finished Rooms (archived,
- * or all corner work terminal) belong to NO inline section — they surface
- * only through {@link finishedRoomEntries}, which backs the collapsed entry.
+ * Build the deck's EXACTLY TWO sections: NEEDS YOU first (a corner ask/gate,
+ * a live review target, or an unread ROOM/DM message), then DOESN'T NEED YOU —
+ * everything else, working and finished Rooms included, newest activity first.
+ * There is no FINISHED pile (finished Rooms fold in here; their rows still say
+ * landed/archived through their own fact line) and no DIRECT pile (DMs obey the
+ * same unread rule). Recency headings (TODAY / YESTERDAY / EARLIER) are
+ * retired: attention-state and recency were semantically different tiers, so
+ * the deck has exactly two labels, and each row's mark already conveys working
+ * vs quiet.
  *
- * This is deliberately the only Room ordering function the screen consumes
- * for its tiers: lifecycle state, fact text, age, and placement all come from
- * the same projection. (`options.now` remains accepted for call-site
- * stability; zoning no longer depends on wall-clock buckets.)
+ * This is deliberately the only ordering function the screen consumes for its
+ * piles: lifecycle state, fact text, age, and placement all come from the same
+ * projection. (`options.now` remains accepted for call-site stability; zoning
+ * no longer depends on wall-clock buckets.)
  */
 export function roomListSections<T extends RoomRowInput>(
   rooms: readonly T[],
   authorNames: ReadonlyMap<string, string>,
   _options: { now?: number } = {},
 ): RoomListSection<T>[] {
-  const activeRooms = rooms.filter((item) => !roomIsFinished(item));
-  const projected = projectEntries(activeRooms, authorNames);
+  const projected = projectEntries(rooms, authorNames);
   const sections: RoomListSection<T>[] = [];
   for (const tier of ROOM_LIST_TIER_ORDER) {
     const data = projected
@@ -435,19 +424,4 @@ export function roomListSections<T extends RoomRowInput>(
     if (data.length > 0) sections.push({ zone: tier, title: ROOM_LIST_ZONE_LABELS[tier], data });
   }
   return sections;
-}
-
-/**
- * The finished Rooms the deck collapses into one bottom entry — archived on
- * the relay, or every corner terminal — newest first. Never listed inline by
- * any tier; the screen renders them only when that entry is expanded.
- */
-export function finishedRoomEntries<T extends RoomRowInput>(
-  rooms: readonly T[],
-  authorNames: ReadonlyMap<string, string>,
-): Array<RankedEntry<T>> {
-  return projectEntries(
-    rooms.filter((item) => roomIsFinished(item)),
-    authorNames,
-  ).sort(byRecency);
 }

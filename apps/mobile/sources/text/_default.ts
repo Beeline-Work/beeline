@@ -198,6 +198,28 @@ export const en = {
         imageUploadSubtitle: 'Attach images to messages for supported agents to analyze',
     },
 
+    beelineIdentity: {
+        handleCeremonyLabel: 'IDENTITY · HANDLE CEREMONY',
+        handleInvalidTitle: 'HANDLE NOT AVAILABLE',
+        handleInvalidMessage: 'Use 3–30 lowercase letters, numbers, or dashes.',
+        handleTakenTitle: 'HANDLE ALREADY CLAIMED',
+        handleClaimFailedTitle: 'HANDLE NOT CLAIMED',
+        handleTakenMessage: ({ handle }: { handle: string }) => `@${handle} belongs to someone else. Choose another handle.`,
+        handleCeremonyTitle: 'Choose your handle',
+        handleCeremonyBody: 'This name is bound to your key. It becomes your verified Beeline identity everywhere.',
+        handleAccessibility: 'Choose your Beeline handle',
+        handlePlaceholder: 'ada-labs',
+        handleRules: '3–30 · a–z · 0–9 · dash',
+        claimHandle: 'Claim handle',
+        githubLinkedNotice: 'GitHub linked to this key. Your identity and history stayed in place.',
+        githubRenameNotice: ({ handle }: { handle: string }) => `Your verified handle is now @${handle}.`,
+        claimStatusInvalid: 'USE 3-30 LOWERCASE LETTERS, NUMBERS, OR DASHES',
+        hostedHandleClaimBody: 'Claim your verified handle at usebeeline.app, first come first served.',
+        linkGithub: 'Link GitHub to this key',
+        renameOffer: ({ current, github }: { current: string; github: string }) => `Keep @${current}, or use your GitHub handle once: @${github}.`,
+        useGithubHandle: ({ handle }: { handle: string }) => `Use @${handle}`,
+    },
+
     imageUpload: {
         permissionTitle: 'Photo Library Access',
         permissionMessage: 'Allow access to your photo library to attach images to messages.',

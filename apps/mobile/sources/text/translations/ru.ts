@@ -747,6 +747,28 @@ export const ru: TranslationStructure = {
 
 
 
+    beelineIdentity: {
+        handleCeremonyLabel: 'ЛИЧНОСТЬ · ВЫБОР ИМЕНИ',
+        handleInvalidTitle: 'ИМЯ НЕДОСТУПНО',
+        handleInvalidMessage: 'Используйте 3–30 строчных букв, цифр или дефисов.',
+        handleTakenTitle: 'ИМЯ УЖЕ ЗАНЯТО',
+        handleClaimFailedTitle: 'ИМЯ НЕ НАЗНАЧЕНО',
+        handleTakenMessage: ({ handle }: { handle: string }) => `@${handle} принадлежит другому пользователю. Выберите другое имя.`,
+        handleCeremonyTitle: 'Выберите имя',
+        handleCeremonyBody: 'Это имя привязывается к вашему ключу и становится вашей подтверждённой личностью Beeline везде.',
+        handleAccessibility: 'Выберите имя Beeline',
+        handlePlaceholder: 'ada-labs',
+        handleRules: '3–30 · a–z · 0–9 · дефис',
+        claimHandle: 'Назначить имя',
+        githubLinkedNotice: 'GitHub привязан к этому ключу. Ваша личность и история сохранены.',
+        githubRenameNotice: ({ handle }: { handle: string }) => `Ваше подтверждённое имя теперь @${handle}.`,
+        claimStatusInvalid: 'ИСПОЛЬЗУЙТЕ 3-30 СТРОЧНЫХ БУКВ, ЦИФР ИЛИ ДЕФИСОВ',
+        hostedHandleClaimBody: 'Назначьте подтверждённое имя на usebeeline.app: кто первый, того и имя.',
+        linkGithub: 'Привязать GitHub к этому ключу',
+        renameOffer: ({ current, github }: { current: string; github: string }) => `Оставьте @${current} или один раз выберите имя GitHub: @${github}.`,
+        useGithubHandle: ({ handle }: { handle: string }) => `Использовать @${handle}`,
+    },
+
     imageUpload: {
         permissionTitle: 'Доступ к библиотеке фото',
         permissionMessage: 'Разрешите доступ к вашей библиотеке фото, чтобы прикреплять изображения к сообщениям.',

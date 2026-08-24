@@ -747,6 +747,28 @@ export const pl: TranslationStructure = {
 
 
 
+    beelineIdentity: {
+        handleCeremonyLabel: 'TOŻSAMOŚĆ · CEREMONIA NAZWY',
+        handleInvalidTitle: 'NAZWA NIEDOSTĘPNA',
+        handleInvalidMessage: 'Użyj 3–30 małych liter, cyfr lub myślników.',
+        handleTakenTitle: 'NAZWA JEST JUŻ ZAJĘTA',
+        handleClaimFailedTitle: 'NIE PRZYPISANO NAZWY',
+        handleTakenMessage: ({ handle }: { handle: string }) => `@${handle} należy do kogoś innego. Wybierz inną nazwę.`,
+        handleCeremonyTitle: 'Wybierz swoją nazwę',
+        handleCeremonyBody: 'Ta nazwa jest przypisana do Twojego klucza. Staje się wszędzie Twoją zweryfikowaną tożsamością Beeline.',
+        handleAccessibility: 'Wybierz swoją nazwę Beeline',
+        handlePlaceholder: 'ada-labs',
+        handleRules: '3–30 · a–z · 0–9 · myślnik',
+        claimHandle: 'Przypisz nazwę',
+        githubLinkedNotice: 'GitHub został połączony z tym kluczem. Twoja tożsamość i historia pozostały bez zmian.',
+        githubRenameNotice: ({ handle }: { handle: string }) => `Twoja zweryfikowana nazwa to teraz @${handle}.`,
+        claimStatusInvalid: 'UŻYJ 3-30 MAŁYCH LITER, CYFR LUB MYŚLNIKÓW',
+        hostedHandleClaimBody: 'Przypisz zweryfikowaną nazwę w usebeeline.app — kto pierwszy, ten lepszy.',
+        linkGithub: 'Połącz GitHub z tym kluczem',
+        renameOffer: ({ current, github }: { current: string; github: string }) => `Zachowaj @${current} albo jednorazowo użyj nazwy z GitHub: @${github}.`,
+        useGithubHandle: ({ handle }: { handle: string }) => `Użyj @${handle}`,
+    },
+
     imageUpload: {
         permissionTitle: 'Dostęp do biblioteki zdjęć',
         permissionMessage: 'Zezwól na dostęp do biblioteki zdjęć, aby załączać obrazy do wiadomości.',

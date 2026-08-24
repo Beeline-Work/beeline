@@ -191,6 +191,8 @@ export {
   finishOidcBind,
   recoverOidcBind,
   lookupRecovery,
+  lookupManagedIdentity,
+  adoptGitHubHandle,
   fetchIdentityPredecessors,
 } from './oidc-bind.js';
 export type {
@@ -395,6 +397,8 @@ export {
 export {
   parseNip05Identifier,
   normalizeNip05Identifier,
+  normalizeManagedHandle,
+  parseManagedIdentity,
   verifyNip05,
   claimNip05Handle,
   Nip05ClaimError,
@@ -404,6 +408,7 @@ export type {
   Nip05VerificationStatus,
   Nip05VerificationResult,
   Nip05ClaimResult,
+  ManagedIdentity,
 } from './nip05.js';
 
 export { buildMediaUploadAuthorization, uploadMedia } from './media.js';

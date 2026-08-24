@@ -739,6 +739,28 @@ export const ja: TranslationStructure = {
 
 
 
+    beelineIdentity: {
+        handleCeremonyLabel: 'ID · ハンドル設定',
+        handleInvalidTitle: 'ハンドルを使用できません',
+        handleInvalidMessage: '3～30文字の小文字、数字、ハイフンを使用してください。',
+        handleTakenTitle: 'ハンドルは使用済みです',
+        handleClaimFailedTitle: 'ハンドルを取得できませんでした',
+        handleTakenMessage: ({ handle }: { handle: string }) => `@${handle} は他のユーザーが使用しています。別のハンドルを選んでください。`,
+        handleCeremonyTitle: 'ハンドルを選択',
+        handleCeremonyBody: 'この名前は鍵に結び付けられ、どこでも認証済みの Beeline ID になります。',
+        handleAccessibility: 'Beeline ハンドルを選択',
+        handlePlaceholder: 'ada-labs',
+        handleRules: '3–30 · a–z · 0–9 · ハイフン',
+        claimHandle: 'ハンドルを取得',
+        githubLinkedNotice: 'GitHub をこの鍵に連携しました。ID と履歴はそのまま維持されています。',
+        githubRenameNotice: ({ handle }: { handle: string }) => `認証済みハンドルは @${handle} になりました。`,
+        claimStatusInvalid: '3-30文字の小文字、数字、ハイフンを使用',
+        hostedHandleClaimBody: 'usebeeline.app で認証済みハンドルを先着順で取得します。',
+        linkGithub: 'GitHub をこの鍵に連携',
+        renameOffer: ({ current, github }: { current: string; github: string }) => `@${current} を維持するか、GitHub ハンドル @${github} に一度だけ変更できます。`,
+        useGithubHandle: ({ handle }: { handle: string }) => `@${handle} を使用`,
+    },
+
     imageUpload: {
         permissionTitle: 'フォトライブラリへのアクセス',
         permissionMessage: 'メッセージに画像を添付するには、フォトライブラリへのアクセスを許可してください。',

@@ -736,6 +736,28 @@ export const it: TranslationStructure = {
 
 
 
+    beelineIdentity: {
+        handleCeremonyLabel: 'IDENTITÀ · CERIMONIA DELL’HANDLE',
+        handleInvalidTitle: 'HANDLE NON DISPONIBILE',
+        handleInvalidMessage: 'Usa 3–30 lettere minuscole, numeri o trattini.',
+        handleTakenTitle: 'HANDLE GIÀ ASSEGNATO',
+        handleClaimFailedTitle: 'HANDLE NON ASSEGNATO',
+        handleTakenMessage: ({ handle }: { handle: string }) => `@${handle} appartiene a un’altra persona. Scegli un altro handle.`,
+        handleCeremonyTitle: 'Scegli il tuo handle',
+        handleCeremonyBody: 'Questo nome è associato alla tua chiave. Diventa la tua identità Beeline verificata ovunque.',
+        handleAccessibility: 'Scegli il tuo handle Beeline',
+        handlePlaceholder: 'ada-labs',
+        handleRules: '3–30 · a–z · 0–9 · trattino',
+        claimHandle: 'Assegna handle',
+        githubLinkedNotice: 'GitHub è stato collegato a questa chiave. Identità e cronologia sono rimaste invariate.',
+        githubRenameNotice: ({ handle }: { handle: string }) => `Il tuo handle verificato ora è @${handle}.`,
+        claimStatusInvalid: 'USA 3-30 LETTERE MINUSCOLE, NUMERI O TRATTINI',
+        hostedHandleClaimBody: 'Assegna il tuo handle verificato su usebeeline.app, in ordine di richiesta.',
+        linkGithub: 'Collega GitHub a questa chiave',
+        renameOffer: ({ current, github }: { current: string; github: string }) => `Mantieni @${current} oppure usa una volta il tuo handle GitHub: @${github}.`,
+        useGithubHandle: ({ handle }: { handle: string }) => `Usa @${handle}`,
+    },
+
     imageUpload: {
         permissionTitle: 'Accesso alla libreria foto',
         permissionMessage: "Consenti l'accesso alla tua libreria foto per allegare immagini ai messaggi.",

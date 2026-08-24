@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   claimNip05Handle,
   Nip05ClaimError,
+  normalizeManagedHandle,
   normalizeNip05Identifier,
+  parseManagedIdentity,
   parseNip05Identifier,
   verifyNip05,
 } from './nip05.js';
@@ -44,6 +46,40 @@ describe('normalizeNip05Identifier', () => {
 
   it('returns null for an invalid identifier', () => {
     expect(normalizeNip05Identifier('nope')).toBeNull();
+  });
+});
+
+describe('normalizeManagedHandle', () => {
+  it('normalizes the hosted ceremony format and rejects short, underscored, or reserved names', () => {
+    expect(normalizeManagedHandle(' Ada-Labs ')).toBe('ada-labs');
+    expect(normalizeManagedHandle('ab')).toBeNull();
+    expect(normalizeManagedHandle('ada_labs')).toBeNull();
+    expect(normalizeManagedHandle('admin')).toBeNull();
+  });
+});
+
+describe('parseManagedIdentity', () => {
+  it('accepts GitHub-length handles but binds the hosted identifier to that exact handle', () => {
+    const handle = 'a'.repeat(39);
+    expect(
+      parseManagedIdentity({
+        handle,
+        display_name: 'GitHub Person',
+        nip05: `${handle}@usebeeline.app`,
+        source: 'github',
+        github_login: handle,
+        github_rename_available: false,
+      }),
+    ).toMatchObject({ handle, source: 'github' });
+    expect(
+      parseManagedIdentity({
+        handle: 'alice',
+        display_name: 'Alice',
+        nip05: 'mallory@usebeeline.app',
+        source: 'key',
+        github_rename_available: false,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -130,6 +166,13 @@ describe('claimNip05Handle', () => {
         idempotent: false,
         name: 'alice',
         pubkey: identity.publicKey,
+        identity: {
+          handle: 'alice',
+          display_name: 'Alice',
+          nip05: 'alice@usebeeline.app',
+          source: 'key',
+          github_rename_available: false,
+        },
       });
     });
     vi.stubGlobal('fetch', fetchSpy);
@@ -139,6 +182,13 @@ describe('claimNip05Handle', () => {
       idempotent: false,
       name: 'alice',
       pubkey: identity.publicKey,
+      identity: {
+        handle: 'alice',
+        displayName: 'Alice',
+        nip05: 'alice@usebeeline.app',
+        source: 'key',
+        githubRenameAvailable: false,
+      },
     });
   });
 

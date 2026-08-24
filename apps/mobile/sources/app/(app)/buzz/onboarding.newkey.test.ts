@@ -14,6 +14,16 @@ const personName = vi.hoisted(() => ({
   mark: vi.fn(async () => undefined),
   resolve: vi.fn(async () => ({ needsPrompt: false, name: 'Ada', communityId: 'w1' })),
 }));
+const profileClient = vi.hoisted(() => ({
+  getGlobalPersonProfile: vi.fn(async () => null),
+  setGlobalPersonProfile: vi.fn(async (profile: unknown) => profile),
+}));
+const sdk = vi.hoisted(() => ({ lookupManagedIdentity: vi.fn(async () => null) }));
+
+vi.mock('@beeline/buzz-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@beeline/buzz-client')>();
+  return { ...actual, lookupManagedIdentity: sdk.lookupManagedIdentity };
+});
 
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('expo-linking', () => ({ createURL: (p: string) => `beeline://${p}`, addEventListener: vi.fn(() => ({ remove: vi.fn() })) }));
@@ -42,12 +52,13 @@ vi.mock('@/buzz/person-name', () => ({
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ relayUrl: 'https://relay.test' }),
 }));
+vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/push/buzz-push-registration', () => ({
   registerBuzzPushNotifications: vi.fn(async () => undefined),
 }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
-    ensureClient = vi.fn(async () => ({}));
+    ensureClient = vi.fn(async () => profileClient);
   },
 }));
 vi.mock('@/components/buzz/BeelineMark', async () => {
@@ -138,6 +149,11 @@ describe('onboarding — create a new key', () => {
     secureSet.mockClear();
     navigation.replace.mockClear();
     clipboard.mockClear();
+    profileClient.getGlobalPersonProfile.mockClear();
+    profileClient.setGlobalPersonProfile.mockClear();
+    personName.resolve.mockResolvedValue({ needsPrompt: false, name: 'Ada', communityId: 'w1' });
+    sdk.lookupManagedIdentity.mockResolvedValue(null);
+    vi.unstubAllGlobals();
   });
 
   it('offers a create-new-key action beside the existing-key import', async () => {
@@ -200,7 +216,7 @@ describe('onboarding — create a new key', () => {
     expect(one(tree, 'onboarding-new-key-confirm').props.disabled).toBe(false);
   });
 
-  it('persists the shown key and enters the app once confirmed', async () => {
+  it('persists the shown key and opens the handle ceremony once confirmed', async () => {
     const tree = await openNewKeyStep();
     const shownNpub = textOf(tree, 'onboarding-new-key-npub');
     await press(one(tree, 'onboarding-new-key-reveal'));
@@ -216,6 +232,61 @@ describe('onboarding — create a new key', () => {
       loadIdentityFromNsec(shownNsec).publicKey,
     );
     expect(shownNpub).toMatch(/^npub1/);
+    expect(nodes(tree, 'onboarding-handle-ceremony')).toHaveLength(1);
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  it('runs the focused handle ceremony before a first-run key enters Beeline', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL, init?: RequestInit) => {
+        if (init?.method !== 'POST') {
+          return new Response(JSON.stringify({ identity: null }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        const authorization = String(
+          init.headers && (init.headers as Record<string, string>).authorization,
+        );
+        const event = JSON.parse(Buffer.from(authorization.slice('Nostr '.length), 'base64').toString());
+        return new Response(
+          JSON.stringify({
+            claimed: true,
+            idempotent: false,
+            name: 'ada-labs',
+            pubkey: event.pubkey,
+            identity: {
+              handle: 'ada-labs',
+              display_name: 'ada-labs',
+              nip05: 'ada-labs@usebeeline.app',
+              source: 'key',
+              github_rename_available: false,
+            },
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }),
+    );
+
+    const tree = await openNewKeyStep();
+    await press(one(tree, 'onboarding-new-key-reveal'));
+    await press(one(tree, 'onboarding-new-key-confirm'));
+    await press(one(tree, 'onboarding-new-key-enter'));
+
+    expect(nodes(tree, 'onboarding-handle-ceremony')).toHaveLength(1);
+    await act(async () => {
+      one(tree, 'onboarding-handle-input').props.onChangeText('Ada-Labs');
+    });
+    await press(one(tree, 'onboarding-claim-handle'));
+
+    expect(profileClient.setGlobalPersonProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'ada-labs',
+        handle: 'ada-labs',
+        nip05: 'ada-labs@usebeeline.app',
+      }),
+    );
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/channels');
   });
 

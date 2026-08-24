@@ -3,6 +3,7 @@
  *
  * kind:9 stream message with:
  *   ["t", "buzz-merge-approval"], ["repo", …], ["branch", …], ["tip", …]
+ *   and, for new review cards, ["patch-id", …].
  *
  * Crypto is @beeline/nostr signEvent (BIP-340). Do not invent a second format;
  * the gate worker verifies this exact tag binding.
@@ -31,6 +32,7 @@ export function buildMergeApproval(
         ['repo', target.repo],
         ['branch', target.branch],
         ['tip', target.tip],
+        ...(target.patchId ? [['patch-id', target.patchId]] : []),
       ],
       content: `APPROVE merge of ${target.repo} ${target.branch} -> ${target.tip}`,
     },
@@ -40,7 +42,8 @@ export function buildMergeApproval(
 
 /**
  * Return true iff `event` is a valid approval by `trustedReviewer` that binds
- * to EXACTLY `target`. Mirrors gate `verifyApproval` for hermetic tests.
+ * to `target`. Legacy approvals remain exact-tip only. New approvals may also
+ * authorize a rebased tip when both sides name the same stable patch identity.
  */
 export function verifyMergeApproval(
   event: NostrEvent,
@@ -53,6 +56,7 @@ export function verifyMergeApproval(
   if (!verifyEvent(event)) return false;
   if (tagValue(event, 'repo') !== target.repo) return false;
   if (tagValue(event, 'branch') !== target.branch) return false;
-  if (tagValue(event, 'tip') !== target.tip) return false;
-  return true;
+  if (tagValue(event, 'tip') === target.tip) return true;
+  const approvedPatch = tagValue(event, 'patch-id');
+  return Boolean(approvedPatch && target.patchId && approvedPatch === target.patchId);
 }

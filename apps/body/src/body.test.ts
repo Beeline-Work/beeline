@@ -6034,6 +6034,10 @@ describe('corner merge-ready surfaces a real committed change', () => {
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
       );
       expect(readyEvent).toBeDefined();
+      expect(readyEvent!.tags).toContainEqual([
+        'patch-id',
+        expect.stringMatching(/^[0-9a-f]{40}$/),
+      ]);
       const notReadyEvent = published.find((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
       );
@@ -6747,7 +6751,7 @@ describe('a local-only repository lands through the daemon, never through the ag
     }
   });
 
-  it('publishes a plain-language refusal, with no git plumbing, when the local target moved since approval', async () => {
+  it('publishes a plain-language realignment state, with no git plumbing, when the local target moved since approval', async () => {
     const agent = newIdentity('local-land-poll-nonff');
     const reviewer = newIdentity('local-land-reviewer-nonff');
     const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
@@ -6776,12 +6780,14 @@ describe('a local-only repository lands through the daemon, never through the ag
 
       expect(landed).toBe(0);
       expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(moved);
-      const failure = published.find((event) =>
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+      const realigning = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'delivery' && tag[1] === 'realigning'),
       );
-      expect(failure).toBeDefined();
-      expect(failure!.content).toContain('moved on');
-      expect(failure!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward/i);
+      expect(realigning).toBeDefined();
+      expect(realigning!.content).toMatch(/realigning/i);
+      expect(realigning!.content).toMatch(/approval remains standing/i);
+      expect(realigning!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward/i);
+      expect(info.humanMergeApproval?.id).toBe('approval-1');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

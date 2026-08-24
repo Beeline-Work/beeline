@@ -7,15 +7,18 @@
  *   - ["t", "buzz-merge-approval"]      marker for filtering
  *   - ["repo", "<ownerHex>/<repo>"]     which repository
  *   - ["branch", "refs/heads/main"]     which protected target ref
- *   - ["tip", "<40-hex sha>"]           the EXACT commit main may advance to
+ *   - ["tip", "<40-hex sha>"]           reviewed commit at approval time
+ *   - ["patch-id", "<40-hex id>"]       optional stable reviewed-content id
  *
  * The gate is the conjunction the worker checks (see verifyApproval):
  *   1. schnorr signature valid over the event id, AND
  *   2. event.pubkey === the trusted reviewer, AND
- *   3. repo + branch + tip match the merge about to be performed.
- * A grant for merge A therefore cannot authorize merge B: a different branch
- * tip is a different `tip` tag and fails check (3). Note kind:46011 is a Buzz
- * *workflow* kind, deliberately NOT reused here.
+ *   3. repo + branch match, AND
+ *   4. either the tip matches exactly or both sides carry the same independently
+ *      computed patch identity.
+ * A grant for merge A therefore cannot authorize different content. Legacy
+ * approvals have no patch identity and remain exact-tip only. Note kind:46011
+ * is a Buzz *workflow* kind, deliberately NOT reused here.
  */
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { Identity } from './identity.js';
@@ -30,6 +33,8 @@ export interface MergeTarget {
   branch: string;
   /** 40-hex commit the target ref is authorized to advance to. */
   tip: string;
+  /** Stable reviewed-content identity. Omitted by legacy exact-tip clients. */
+  patchId?: string;
 }
 
 /** Build a signed approval binding the reviewer's grant to `target`. */
@@ -49,6 +54,7 @@ export function buildApproval(
         ['repo', target.repo],
         ['branch', target.branch],
         ['tip', target.tip],
+        ...(target.patchId ? [['patch-id', target.patchId]] : []),
       ],
       content: `APPROVE merge of ${target.repo} ${target.branch} -> ${target.tip}`,
     },
@@ -62,7 +68,8 @@ function tagValue(event: NostrEvent, name: string): string | undefined {
 
 /**
  * Return true iff `event` is a valid approval by `trustedReviewer` that binds
- * to EXACTLY `target`. Every clause must hold; any mismatch fails closed.
+ * to `target` by exact tip or stable content identity. Every clause must hold;
+ * a caller that does not independently compute `target.patchId` stays exact-tip.
  */
 export function verifyApproval(
   event: NostrEvent,
@@ -75,6 +82,7 @@ export function verifyApproval(
   if (!verifyEvent(event)) return false; // schnorr sig over the id
   if (tagValue(event, 'repo') !== target.repo) return false;
   if (tagValue(event, 'branch') !== target.branch) return false;
-  if (tagValue(event, 'tip') !== target.tip) return false;
-  return true;
+  if (tagValue(event, 'tip') === target.tip) return true;
+  const approvedPatch = tagValue(event, 'patch-id');
+  return Boolean(approvedPatch && target.patchId && approvedPatch === target.patchId);
 }

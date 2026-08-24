@@ -58,7 +58,7 @@ export const beelineThemes = {
     accent: '#b08a4a',
     humanRail: '#b08a4a',
     agentRail: '#3b3048',
-    radius: 8,
+    radius: 3,
     ledgerBright: '#f0f0f3',
     ledgerBody: '#c9c9d1',
     ledgerQuiet: '#83838d',
@@ -141,7 +141,7 @@ export const beelineThemes = {
     accent: '#d9b166',
     humanRail: '#d9b166',
     agentRail: '#3a2b37',
-    radius: 4,
+    radius: 3,
     ledgerBright: '#f2ede3',
     ledgerBody: '#ddd5c7',
     ledgerQuiet: '#8d8578',
@@ -221,7 +221,7 @@ export const beelineThemes = {
     // No green anywhere in the product (Editorial direction): a green agent
     // rail is replaced with the theme's neutral peak.
     agentRail: '#39334c',
-    radius: 4,
+    radius: 3,
     ledgerBright: '#dfe4ea',
     ledgerBody: '#b3bac4',
     ledgerQuiet: '#7f8997',

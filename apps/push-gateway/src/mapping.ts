@@ -1,4 +1,4 @@
-import { fallbackPersonName, KIND_PUT_USER } from '@beeline/buzz-client';
+import { fallbackPersonName } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 
 const tagValue = (event: NostrEvent, name: string): string | undefined =>
@@ -37,9 +37,10 @@ export interface NotificationFormattingOptions {
   recipientMentioned?: boolean;
 }
 
-const MESSAGE_PREVIEW_LENGTH = 120;
-const CHAT_MESSAGE_MARKERS = new Set(['agent-message', 'buzz-agent-request', 'buzz-attachment']);
+export type PushNotificationType =
+  'mention' | 'direct-message' | 'merge-approval-request' | 'agent-question' | 'agent-attention';
 
+const MESSAGE_PREVIEW_LENGTH = 120;
 function normalizedDisplayText(value: string | undefined, maxLength: number): string | undefined {
   const normalized = value?.trim().replace(/\s+/g, ' ');
   return normalized ? [...normalized].slice(0, maxLength).join('') : undefined;
@@ -54,37 +55,26 @@ export function formatMessagePreview(content: string): string {
 
 /**
  * The app's @mention encoding: the mentioned member's pubkey rides a `p` tag on
- * the kind:9 message (see buzz-client's buildMessage `mentionAgent`). A mention
- * forces delivery past the plain-chat marker gate but never past fixture or
- * persistent-Workspace suppression, and never for the message's own author.
+ * the kind:9 message (see buzz-client's buildMessage `mentionPubkeys`). A
+ * mention qualifies for the quiet default policy but never bypasses fixture or
+ * persistent-Workspace suppression, and never reaches the message's own author.
  */
 export function mentionsMember(event: NostrEvent, recipientPubkey: string): boolean {
   return event.kind === 9 && tagValues(event, 'p').includes(recipientPubkey);
 }
 
-export interface MembershipJoin {
-  channelId: string;
-  joinerPubkey: string;
-  role?: string;
-}
-
-/** A NIP-29 put-user (kind:9000) membership add for one channel. */
-export function membershipJoin(event: NostrEvent): MembershipJoin | null {
-  if (event.kind !== KIND_PUT_USER) return null;
-  const channelId = tagValue(event, 'h');
-  const joinerPubkey = tagValue(event, 'p');
-  if (!channelId || !joinerPubkey) return null;
-  const role = tagValue(event, 'role');
-  return { channelId, joinerPubkey, ...(role ? { role } : {}) };
-}
-
-export function isNotifiableEvent(event: NostrEvent): boolean {
-  if (event.kind !== 9 || !tagValue(event, 'h')) return false;
+/** A new agent-authored fact that changes a corner from working to waiting on a person. */
+export function isWaitingOnHumanEvent(event: NostrEvent): boolean {
+  if (event.kind !== 9) return false;
   const markers = tagValues(event, 't');
-  if (markers.includes('body-control')) {
-    return Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
-  }
-  return markers.every((marker) => CHAT_MESSAGE_MARKERS.has(marker));
+  const mergeReady =
+    markers.includes('body-control') &&
+    Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
+  const needsAttention =
+    tagValue(event, 'display-status') === 'needs-attention' ||
+    tagValue(event, 'status') === 'needs-attention';
+  const agentQuestion = markers.includes('agent-message') && /\?/.test(event.content);
+  return mergeReady || needsAttention || agentQuestion;
 }
 
 const FIXTURE_NAME_PATTERNS = [
@@ -154,9 +144,6 @@ export function mapEventToNotification(
   context: NotificationContext,
   options: NotificationFormattingOptions = {},
 ): PushNotificationPlan | null {
-  // An @mention qualifies even when the plain-chat marker gate would reject the
-  // message's own markers; the gateway has already verified the p-tag recipient.
-  if (!isNotifiableEvent(event) && options.recipientMentioned !== true) return null;
   const channelId = tagValue(event, 'h');
   if (!channelId) return null;
 
@@ -165,6 +152,19 @@ export function mapEventToNotification(
     markers.includes('body-control') &&
     Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
   const mentioned = options.recipientMentioned === true;
+  const question = markers.includes('agent-message') && /\?/.test(event.content);
+  const waitingOnHuman = isWaitingOnHumanEvent(event);
+  if (!mentioned && !context.isDirectMessage && !waitingOnHuman) return null;
+  const attentionTarget = tagValue(event, 'subchannel') ?? channelId;
+  const type: PushNotificationType = isMergeRequest
+    ? 'merge-approval-request'
+    : mentioned
+      ? 'mention'
+      : context.isDirectMessage
+        ? 'direct-message'
+        : question
+          ? 'agent-question'
+          : 'agent-attention';
   const resolvedRoomName = normalizedDisplayText(context.roomName, 80);
   const roomName = resolvedRoomName ?? 'Room';
   const senderName =
@@ -185,35 +185,26 @@ export function mapEventToNotification(
         ? showMessagePreview && preview
           ? `${senderName} mentioned you: ${preview}`
           : `${senderName} mentioned you`
-        : showMessagePreview && preview
-          ? context.isDirectMessage
+        : context.isDirectMessage
+          ? showMessagePreview && preview
             ? preview
-            : `${senderName}: ${preview}`
-          : `New message in ${roomName}`,
+            : `New direct message from ${senderName}`
+          : question
+            ? showMessagePreview && preview
+              ? `${senderName} needs your reply: ${preview}`
+              : `${senderName} needs your reply`
+            : showMessagePreview && preview
+              ? `${senderName} needs your attention: ${preview}`
+              : `${senderName} needs your attention`,
     data: {
-      channelId,
+      channelId: type === 'agent-attention' ? attentionTarget : channelId,
       roomName,
-      type: isMergeRequest ? 'merge-approval-request' : mentioned ? 'mention' : 'channel-activity',
-      ...(isMergeRequest ? { cornerId: channelId } : {}),
+      type,
+      ...(isMergeRequest
+        ? { cornerId: channelId }
+        : type === 'agent-attention' && attentionTarget !== channelId
+          ? { cornerId: attentionTarget }
+          : {}),
     },
-  };
-}
-
-/** "N joined <room>" — one bounded card per kind:9000 join event. */
-export function mapMembershipJoinToNotification(
-  event: NostrEvent,
-  context: NotificationContext,
-  joinerName?: string,
-): PushNotificationPlan | null {
-  const join = membershipJoin(event);
-  if (!join) return null;
-  const resolvedRoomName = normalizedDisplayText(context.roomName, 80);
-  const roomName = resolvedRoomName ?? 'Room';
-  const name = normalizedDisplayText(joinerName, 80) ?? fallbackPersonName(join.joinerPubkey);
-  return {
-    channelId: join.channelId,
-    title: roomTitle(resolvedRoomName) ?? name,
-    body: `${name} joined ${roomName}`,
-    data: { channelId: join.channelId, roomName, type: 'member-join' },
   };
 }

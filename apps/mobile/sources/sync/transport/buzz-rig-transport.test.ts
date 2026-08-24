@@ -429,7 +429,10 @@ describe('Room-scoped agent presence transport', () => {
   it('never writes an `#h` filter on the Workspace presence read', async () => {
     const { readFileSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
-    const source = readFileSync(fileURLToPath(new URL('./buzz-rig-transport.ts', import.meta.url)), 'utf8');
+    const source = readFileSync(
+      fileURLToPath(new URL('./buzz-rig-transport.ts', import.meta.url)),
+      'utf8',
+    );
     const start = source.indexOf('async agentPresenceBackfillForWorkspace');
     const end = source.indexOf('async agentPresenceSubscribeReady');
     const fn = source.slice(start, end);
@@ -616,12 +619,17 @@ describe('Room-scoped Workspace membership', () => {
     (transport as unknown as { client: typeof client }).client = client;
 
     const prepared = await transport.composeMessage(
-      { sessionId: 'room-1', text: '@Brisk Pilot fix the build' },
-      { mentionAgent: 'agent-pubkey' },
+      { sessionId: 'room-1', text: '@Brisk Pilot ask @Alan to fix the build' },
+      { mentionAgent: 'agent-pubkey', mentionPubkeys: ['agent-pubkey', 'human-pubkey'] },
     );
-    expect(client.buildMessage).toHaveBeenCalledWith('room-1', '@Brisk Pilot fix the build', {
-      mentionAgent: 'agent-pubkey',
-    });
+    expect(client.buildMessage).toHaveBeenCalledWith(
+      'room-1',
+      '@Brisk Pilot ask @Alan to fix the build',
+      {
+        mentionAgent: 'agent-pubkey',
+        mentionPubkeys: ['agent-pubkey', 'human-pubkey'],
+      },
+    );
 
     const first = transport.publishPreparedMessage(prepared as never);
     const duplicate = transport.publishPreparedMessage(prepared as never);
@@ -756,33 +764,33 @@ describe('Room→repo transport', () => {
       String(url).endsWith('/auth/capabilities')
         ? new Response(JSON.stringify({ github: true, oidc: true }), { status: 200 })
         : new Response(
-          JSON.stringify({
-            installed: true,
-            installations: [
-              {
-                installationId: 7,
-                accountId: '1',
-                accountLogin: 'acme',
-                accountType: 'Organization',
-                repositorySelection: 'selected',
-                status: 'active',
-                repositoryCount: 1,
-                manageUrl: 'https://github.com/settings/installations/7',
-              },
-            ],
-            repositories: [
-              {
-                id: 42,
-                installationId: 7,
-                name: 'widget',
-                fullName: 'acme/widget',
-                remote: 'https://github.com/acme/widget.git',
-                defaultBranch: 'trunk',
-              },
-            ],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
+            JSON.stringify({
+              installed: true,
+              installations: [
+                {
+                  installationId: 7,
+                  accountId: '1',
+                  accountLogin: 'acme',
+                  accountType: 'Organization',
+                  repositorySelection: 'selected',
+                  status: 'active',
+                  repositoryCount: 1,
+                  manageUrl: 'https://github.com/settings/installations/7',
+                },
+              ],
+              repositories: [
+                {
+                  id: 42,
+                  installationId: 7,
+                  name: 'widget',
+                  fullName: 'acme/widget',
+                  remote: 'https://github.com/acme/widget.git',
+                  defaultBranch: 'trunk',
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
     );
     vi.stubGlobal('fetch', fetchMock);
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
@@ -806,9 +814,12 @@ describe('Room→repo transport', () => {
       vi.fn(async (url: string | URL | Request) =>
         String(url).endsWith('/auth/capabilities')
           ? new Response(JSON.stringify({ github: true, oidc: true }), { status: 200 })
-          : new Response(JSON.stringify({ installed: false, installations: [], repositories: [] }), {
-              status: 200,
-            }),
+          : new Response(
+              JSON.stringify({ installed: false, installations: [], repositories: [] }),
+              {
+                status: 200,
+              },
+            ),
       ),
     );
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
@@ -820,8 +831,8 @@ describe('Room→repo transport', () => {
   it('keeps connected-Room repository discovery when GitHub is dark', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify({ github: false, oidc: true }), { status: 200 }),
+      vi.fn(
+        async () => new Response(JSON.stringify({ github: false, oidc: true }), { status: 200 }),
       ),
     );
     const create = {
@@ -829,22 +840,28 @@ describe('Room→repo transport', () => {
       pubkey: 'b'.repeat(64),
       created_at: 1,
       kind: KIND_CREATE_GROUP,
-      tags: [['h', 'room-a'], [TAG_COMMUNITY, 'workspace-1']],
+      tags: [
+        ['h', 'room-a'],
+        [TAG_COMMUNITY, 'workspace-1'],
+      ],
       content: '',
       sig: 'c'.repeat(128),
     };
     const client = {
       query: vi.fn(async () => [create]),
-      resolveRoomRepository: vi.fn(async () => ({
-        channelId: 'room-a',
-        binding: {
-          key: 'legacy',
-          name: 'legacy/widget',
-          remote: 'git://example.com/legacy/widget',
-          localOnly: false,
-        },
-        source: 'config',
-      }) as RoomRepository),
+      resolveRoomRepository: vi.fn(
+        async () =>
+          ({
+            channelId: 'room-a',
+            binding: {
+              key: 'legacy',
+              name: 'legacy/widget',
+              remote: 'git://example.com/legacy/widget',
+              localOnly: false,
+            },
+            source: 'config',
+          }) as RoomRepository,
+      ),
     };
     const transport = new BuzzRigTransport(identity, 'https://relay.test');
     (transport as unknown as { client: typeof client }).client = client;
@@ -1299,7 +1316,13 @@ describe('Buzz corner lifecycle projection', () => {
         // enough to be inside the liveness window.
         return [
           card,
-          { ...event(id, [['t', 'agent-turn'], ['status', 'working']]), createdAt: NOW_S - 30 },
+          {
+            ...event(id, [
+              ['t', 'agent-turn'],
+              ['status', 'working'],
+            ]),
+            createdAt: NOW_S - 30,
+          },
           { ...event(id, [['t', 'agent-message']]), createdAt: NOW_S - 20 },
           { ...event(id, [['t', 'agent-activity']]), createdAt: NOW_S - 10 },
         ];
@@ -1322,7 +1345,13 @@ describe('Buzz corner lifecycle projection', () => {
       { ...event('c1', [['display-status', 'needs-attention']]), createdAt: NOW_S - 7200 },
       { ...event('c1', [['t', 'agent-message']]), createdAt: NOW_S - 10 },
       // A review announced and then consumed by resumed work — not pending.
-      { ...event('c2', [['t', 'merge-ready'], ['status', 'ready']]), createdAt: NOW_S - 7200 },
+      {
+        ...event('c2', [
+          ['t', 'merge-ready'],
+          ['status', 'ready'],
+        ]),
+        createdAt: NOW_S - 7200,
+      },
       { ...event('c2', [['t', 'agent-turn']]), createdAt: NOW_S - 10 },
     ];
     const client = {
@@ -1379,7 +1408,10 @@ describe('Buzz corner lifecycle projection', () => {
             pubkey: 'f'.repeat(64),
             created_at: 1,
             kind: 9007,
-            tags: [['h', 'ask-corner'], ['name', 'stale-ask']],
+            tags: [
+              ['h', 'ask-corner'],
+              ['name', 'stale-ask'],
+            ],
             content: '',
             sig: 'e'.repeat(128),
           },
@@ -1387,11 +1419,12 @@ describe('Buzz corner lifecycle projection', () => {
       }),
       getChannelMetadata: vi.fn(async () => ({ archived: false })),
       sessionEventsBackfill: vi.fn(async () => [
-        { ...event('ask-corner', [['display-status', 'needs-attention']]), createdAt: NOW_S - 7200 },
         {
-          ...event('ask-corner', [
-            ['t', 'agent-message'],
-          ]),
+          ...event('ask-corner', [['display-status', 'needs-attention']]),
+          createdAt: NOW_S - 7200,
+        },
+        {
+          ...event('ask-corner', [['t', 'agent-message']]),
           createdAt: NOW_S - 3600,
           content: 'Main moved on — which base should I rebase onto?',
         },
@@ -1401,9 +1434,9 @@ describe('Buzz corner lifecycle projection', () => {
     // Dead agent: the last heartbeat is 10 minutes old, far past the 120s
     // lease. Same facts that golded before now read stalled.
     const deadTransport = new BuzzRigTransport(identity, 'https://relay.test');
-    (
-      deadTransport as unknown as { client: ReturnType<typeof makeClient> }
-    ).client = makeClient([presenceEvent('online', NOW_S - 600)]);
+    (deadTransport as unknown as { client: ReturnType<typeof makeClient> }).client = makeClient([
+      presenceEvent('online', NOW_S - 600),
+    ]);
     await expect(deadTransport.listSubchannelLifecycle('dead-room')).resolves.toMatchObject([
       { id: 'ask-corner', status: null, agentOffline: true },
     ]);
@@ -1411,9 +1444,9 @@ describe('Buzz corner lifecycle projection', () => {
     // Live agent: same history, fresh heartbeat — today's behaviour, the
     // worded card keeps its gold needs-you reading.
     const liveTransport = new BuzzRigTransport(identity, 'https://relay.test');
-    (
-      liveTransport as unknown as { client: ReturnType<typeof makeClient> }
-    ).client = makeClient([presenceEvent('online', NOW_S - 10)]);
+    (liveTransport as unknown as { client: ReturnType<typeof makeClient> }).client = makeClient([
+      presenceEvent('online', NOW_S - 10),
+    ]);
     await expect(liveTransport.listSubchannelLifecycle('live-room')).resolves.toMatchObject([
       { id: 'ask-corner', status: 'needs-attention' },
     ]);
@@ -1423,9 +1456,9 @@ describe('Buzz corner lifecycle projection', () => {
     // No presence record at all is UNKNOWN, never offline: the verdict must
     // not flip on a missing signal.
     const unknownTransport = new BuzzRigTransport(identity, 'https://relay.test');
-    (
-      unknownTransport as unknown as { client: ReturnType<typeof makeClient> }
-    ).client = makeClient([]);
+    (unknownTransport as unknown as { client: ReturnType<typeof makeClient> }).client = makeClient(
+      [],
+    );
     await expect(unknownTransport.listSubchannelLifecycle('unknown-room')).resolves.toMatchObject([
       { id: 'ask-corner', status: 'needs-attention' },
     ]);

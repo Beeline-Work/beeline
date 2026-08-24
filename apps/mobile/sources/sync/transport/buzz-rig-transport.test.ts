@@ -11,6 +11,7 @@ import type { SessionEvent as BuzzSessionEvent } from '@beeline/buzz-client';
 import { toRigEvent } from './buzz-event-projection';
 import { BuzzRigTransport } from './buzz-rig-transport';
 import { roomRowPresentation } from '@/buzz/room-list-row';
+import { resolveComposerMentions } from '@/buzz/room-participants';
 import {
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_EVENT_KIND,
@@ -643,6 +644,45 @@ describe('Corner close', () => {
 });
 
 describe('Room-scoped Workspace membership', () => {
+  it.each([
+    { kind: 'human', handle: 'alan', pubkey: 'c'.repeat(64) },
+    { kind: 'agent', handle: 'codex', pubkey: 'd'.repeat(64) },
+  ] as const)(
+    'publishes a serialized p-tag for a recognized $kind member mention',
+    async ({ kind, handle, pubkey }) => {
+      const identity = {
+        publicKey: 'a'.repeat(64),
+        secretKey: new Uint8Array(32).fill(kind === 'human' ? 11 : 12),
+        name: 'operator',
+      } as Identity;
+      const transport = new BuzzRigTransport(identity, `https://${kind}.relay.test`);
+      const client = await transport.ensureClient();
+      const publish = vi
+        .spyOn(client, 'publish')
+        .mockResolvedValue({ status: 200, accepted: true, body: {} });
+      const { pubkeys } = resolveComposerMentions(
+        `Please ask @${handle} to check this`,
+        [{ pubkey, name: handle, handle }],
+        new Map(),
+      );
+
+      const event = await transport.composeMessage(
+        { sessionId: 'room-1', text: `Please ask @${handle} to check this` },
+        {
+          ...(kind === 'agent' ? { mentionAgent: pubkey } : {}),
+          mentionPubkeys: pubkeys,
+        },
+      );
+      await expect(transport.publishPreparedMessage(event)).resolves.toBe(event.id);
+
+      expect(event.kind).toBe(9);
+      expect(event.tags).toContainEqual(['h', 'room-1']);
+      expect(event.tags).toContainEqual(['p', pubkey]);
+      expect(event.tags.filter((tag) => tag[0] === 'p')).toEqual([['p', pubkey]]);
+      expect(publish).toHaveBeenCalledWith(event);
+    },
+  );
+
   it('composes an @-mentioned Room message once and coalesces duplicate publishes by event id', async () => {
     const identity = {
       publicKey: 'a'.repeat(64),

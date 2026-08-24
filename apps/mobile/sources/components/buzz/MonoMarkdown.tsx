@@ -27,7 +27,10 @@ type MentionSpan = MarkdownSpan & { mention?: boolean };
  */
 const MENTION_PATTERN = /@([A-Za-z0-9][A-Za-z0-9_-]*)/g;
 
-export function glossMentions(spans: MarkdownSpan[]): MentionSpan[] {
+export function glossMentions(
+  spans: MarkdownSpan[],
+  liveMentionHandles: ReadonlySet<string> = new Set(),
+): MentionSpan[] {
   const out: MentionSpan[] = [];
   for (const span of spans) {
     if (span.url || span.styles.includes('code')) {
@@ -40,6 +43,8 @@ export function glossMentions(spans: MarkdownSpan[]): MentionSpan[] {
       const at = match.index ?? 0;
       const before = at > 0 ? text[at - 1]! : '';
       if (/[A-Za-z0-9_.-]/.test(before)) continue;
+      const handle = (match[1] ?? '').normalize('NFKC').toLocaleLowerCase();
+      if (!liveMentionHandles.has(handle)) continue;
       if (at > last) out.push({ ...span, text: text.slice(last, at) });
       out.push({ ...span, text: match[0], mention: true });
       last = at + match[0].length;
@@ -72,6 +77,8 @@ type MonoMarkdownProps = {
    * opening the message), it falls back to its own line above the content.
    */
   leadingInline?: React.ReactNode;
+  /** Handles backed by this event's real p-tags and current Room members. */
+  mentionHandles?: readonly string[];
   testID?: string;
 };
 
@@ -94,14 +101,16 @@ function InlineMarkdown({
   spans,
   base,
   onLink,
+  liveMentionHandles,
 }: {
   spans: MarkdownSpan[];
   base: TextStyle;
   onLink: (url: string) => void;
+  liveMentionHandles: ReadonlySet<string>;
 }) {
   // One funnel: every prose block (text, header, list items) renders its spans
   // here, so a mention glosses identically wherever it is spoken.
-  const glossed = glossMentions(spans);
+  const glossed = glossMentions(spans, liveMentionHandles);
   return (
     <>
       {glossed.map((span, index) => (
@@ -131,9 +140,15 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   markdown,
   textStyle,
   leadingInline,
+  mentionHandles,
   testID,
 }: MonoMarkdownProps) {
   const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
+  const liveMentionHandles = useMemo(
+    () =>
+      new Set((mentionHandles ?? []).map((handle) => handle.normalize('NFKC').toLocaleLowerCase())),
+    [mentionHandles],
+  );
   const base = textStyle;
   const onLink = useCallback((url: string) => {
     if (/^https?:\/\//i.test(url)) void Linking.openURL(url);
@@ -161,7 +176,12 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           return (
             <Text key={index} selectable style={[base, blockStyle]}>
               {lead}
-              <InlineMarkdown spans={block.content} base={base} onLink={onLink} />
+              <InlineMarkdown
+                spans={block.content}
+                base={base}
+                onLink={onLink}
+                liveMentionHandles={liveMentionHandles}
+              />
             </Text>
           );
         }
@@ -169,7 +189,12 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           return (
             <Text key={index} selectable style={[base, styles.heading, blockStyle]}>
               {lead}
-              <InlineMarkdown spans={block.content} base={base} onLink={onLink} />
+              <InlineMarkdown
+                spans={block.content}
+                base={base}
+                onLink={onLink}
+                liveMentionHandles={liveMentionHandles}
+              />
             </Text>
           );
         }
@@ -186,7 +211,12 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                   <Text style={styles.listGlyph}>
                     {'number' in item ? `${item.number}. ` : '· '}
                   </Text>
-                  <InlineMarkdown spans={item.spans} base={base} onLink={onLink} />
+                  <InlineMarkdown
+                    spans={item.spans}
+                    base={base}
+                    onLink={onLink}
+                    liveMentionHandles={liveMentionHandles}
+                  />
                 </Text>
               ))}
             </View>

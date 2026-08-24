@@ -95,7 +95,9 @@ import {
   activeMentionAtCursor,
   filterMentionCandidates,
   formatRoomParticipantTotal,
+  cornerHumanMembershipError,
   mentionedAgentPubkey,
+  reportCornerHumanMembershipError,
   replaceActiveMention,
   resolveComposerMentions,
   roomParticipantPubkeys,
@@ -786,35 +788,32 @@ export default function BuzzChat() {
         agent,
       });
     }
+    // `listMembers` is the Room roster authority. Workspace People and Agent
+    // reads only enrich/classify those keys, and can be partial or stale. Any
+    // direct member absent from both secondary reads remains visible as a
+    // person-shaped identity instead of disappearing from the count.
+    for (const member of roomMembers) {
+      if (options.has(member.pubkey)) continue;
+      const shortNpub = shortMemberNpub(member.pubkey);
+      const profileName = personProfileByPubkey.get(member.pubkey)?.name;
+      options.set(member.pubkey, {
+        pubkey: member.pubkey,
+        name: member.pubkey === userPubkey ? 'You' : (profileName ?? shortNpub),
+        handle: profileName
+          ? personHandle(profileName, member.pubkey)
+          : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
+        kind: 'person',
+      });
+    }
     return [...options.values()].sort((a, b) => {
       if (a.pubkey === userPubkey) return -1;
       if (b.pubkey === userPubkey) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [availableAgents, availablePeople, personProfileByPubkey, userPubkey]);
+  }, [availableAgents, availablePeople, personProfileByPubkey, roomMembers, userPubkey]);
   const participantPubkeys = useMemo(
-    () =>
-      roomParticipantPubkeys(
-        roomMemberPubkeys,
-        // Only filter by the Workspace roster once that roster has actually
-        // been read. `availablePeople`/`availableAgents` default to `[]`, and
-        // an empty list is indistinguishable from "nobody here is visible" —
-        // so during the window where the Room's own membership has landed but
-        // the Workspace roster has not (they are independent steps of the
-        // room-entry fan-out), every participant including the reader was
-        // filtered out of the Room's own roster.
-        activeCommunityId && participantsHydrated ? availablePeople : undefined,
-        activeCommunityId && participantsHydrated ? availableAgents : undefined,
-        userPubkey,
-      ),
-    [
-      activeCommunityId,
-      availableAgents,
-      availablePeople,
-      participantsHydrated,
-      roomMemberPubkeys,
-      userPubkey,
-    ],
+    () => roomParticipantPubkeys(roomMemberPubkeys),
+    [roomMemberPubkeys],
   );
   const roomParticipants = useMemo(
     () => memberOptions.filter((option) => participantPubkeys.has(option.pubkey)),
@@ -835,6 +834,14 @@ export default function BuzzChat() {
     () => sectionRoomParticipants(roomParticipants),
     [roomParticipants],
   );
+  const cornerMembershipError =
+    channelKind === 'corner' && participantsHydrated
+      ? cornerHumanMembershipError(roomParticipants)
+      : undefined;
+  useEffect(() => {
+    if (!cornerMembershipError) return;
+    reportCornerHumanMembershipError(decodedId, roomParticipants);
+  }, [cornerMembershipError, decodedId, roomParticipants]);
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
@@ -4192,6 +4199,12 @@ export default function BuzzChat() {
               contentContainerStyle={styles.rosterContent}
               showsVerticalScrollIndicator={false}
             >
+              {cornerMembershipError ? (
+                <View accessibilityRole="alert" style={styles.rosterInvariantError}>
+                  <Text style={styles.rosterInvariantErrorLabel}>MEMBERSHIP ERROR</Text>
+                  <Text style={styles.rosterInvariantErrorText}>{cornerMembershipError}</Text>
+                </View>
+              ) : null}
               {[
                 { key: 'people', label: 'PEOPLE', options: visibleRosterSections.people },
                 { key: 'agents', label: 'AGENTS', options: visibleRosterSections.agents },
@@ -4932,6 +4945,27 @@ const styles = StyleSheet.create((theme) => {
     },
     rosterModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
     rosterContent: { paddingTop: 18, paddingBottom: 4 },
+    rosterInvariantError: {
+      marginBottom: 18,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: groknight.chrome,
+      backgroundColor: groknight.bgBase,
+    },
+    rosterInvariantErrorLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.chrome,
+      fontSize: 9,
+      lineHeight: 13,
+      letterSpacing: 0.7,
+    },
+    rosterInvariantErrorText: {
+      ...Typography.default(),
+      marginTop: 5,
+      color: groknight.textPrimary,
+      fontSize: 12,
+      lineHeight: 17,
+    },
     rosterSectionLabel: {
       ...Typography.mono('semiBold'),
       marginBottom: 7,

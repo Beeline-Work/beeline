@@ -205,7 +205,6 @@ import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerEntry,
   LedgerGhostLine,
-  LedgerMarginalia,
   LedgerSteer,
   type LedgerByline,
 } from '@/components/buzz/Ledger';
@@ -276,12 +275,12 @@ function LedgerActivity({
   message,
   active,
   handle,
-  marginalia,
+  stamp,
 }: {
   message: ChatDisplayMessage;
   active: boolean;
   handle?: string;
-  marginalia?: React.ReactNode;
+  stamp: string;
 }) {
   // A fresh fallback array literal on every render would defeat
   // ActivityTimeline's memoization below (its `items` prop would never be
@@ -295,11 +294,11 @@ function LedgerActivity({
   );
   return (
     <View style={styles.activityGroup} testID="corner-activity">
-      {marginalia}
       <ActivityTimeline
         active={active}
         handle={handle}
         items={activity}
+        stamp={stamp}
         testID="corner-activity-timeline"
       />
     </View>
@@ -3220,16 +3219,6 @@ export default function BuzzChat() {
               ...(speaksAsAgent ? { alive: speakerAlive } : {}),
             },
           };
-      // The folded tool run keeps the wider right margin, so it alone still
-      // hangs a gutter stamp.
-      const marginalia = (
-        <LedgerMarginalia
-          stamp={ledgerStamp(item.timestamp)}
-          detail={null}
-          testID={`chat-marginalia-${item.id}`}
-        />
-      );
-
       // Machine noise collapses the same way on both surfaces: one ghost line,
       // expandable, never a wall of output down the slab.
       if (item.isAgentActivity) {
@@ -3240,8 +3229,8 @@ export default function BuzzChat() {
           <LedgerActivity
             active={item.id === activeActivityId}
             handle={activityHandle}
-            marginalia={marginalia}
             message={item}
+            stamp={ledgerStamp(item.timestamp)}
           />
         );
       }
@@ -5320,7 +5309,6 @@ const styles = StyleSheet.create((theme) => {
       width: '100%',
       minWidth: 0,
       marginBottom: 20,
-      paddingRight: LEDGER_MARGINALIA_WIDTH,
     },
 
     agentPresenceLight: {

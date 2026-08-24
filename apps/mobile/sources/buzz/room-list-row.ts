@@ -1,6 +1,7 @@
 import {
   cornerStatusPresentation,
   cornerSuperState,
+  isCornerStalledOffline,
   isCornerTerminal,
   roomCornerSignal,
   roomListCorners,
@@ -50,8 +51,16 @@ const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
  * A merely idle corner — nothing fresh to answer, nothing new to approve — is
  * IDLE deck state, not attention; its nudge/close affordance still lives
  * inside the corner itself.
+ *
+ * Presence refinement (owner report 2026-08-23): a PROVABLY offline agent's
+ * ask/needs-attention card is not waiting on your reply — nobody is there to
+ * receive it. Gold means something YOU can act on with a live agent or a real
+ * artifact, so an offline-stalled corner leaves NEEDS YOU entirely; only its
+ * reviewable change (`open`) keeps gold, because approving an artifact does
+ * not need the agent awake.
  */
 function needsYouCorner(corner: CornerSummary): boolean {
+  if (isCornerStalledOffline(corner)) return false;
   if (corner.awaitingReply) return true;
   return corner.status !== null && cornerSuperState(corner.status) === 'needs-human';
 }
@@ -227,6 +236,21 @@ function newestNeedsYou(
     )[0];
 }
 
+/** Newest corner whose provably-offline agent left it unfinished and
+ * unactionable — the STALLED fact an honest deck reports without golding it. */
+function newestStalledOffline(
+  corners: readonly CornerSummary[],
+): CornerSummary | undefined {
+  return corners
+    .filter(isCornerStalledOffline)
+    .sort(
+      (a, b) =>
+        cornerTimestamp(b) - cornerTimestamp(a) ||
+        a.name.localeCompare(b.name) ||
+        a.id.localeCompare(b.id),
+    )[0];
+}
+
 /** Newest corner carrying one of the given legacy words. */
 function newestByStatus(
   corners: readonly CornerSummary[],
@@ -255,7 +279,12 @@ function actorName(
 
 function cornerFact(corner: CornerSummary, authorNames: ReadonlyMap<string, string>): string {
   // The state line speaks THE three words; finished keeps its landed flavor,
-  // archived says nothing.
+  // archived says nothing. An offline-stalled corner says so plainly instead
+  // of the lie "Waiting on you" — nobody is waiting on anyone while the agent
+  // is unreachable.
+  if (isCornerStalledOffline(corner)) {
+    return `Agent offline · ${corner.name}`;
+  }
   switch (cornerSuperState(corner.status)) {
     case 'working':
       return `${actorName(corner, authorNames, 'Agent')} working · ${corner.name}`;
@@ -276,8 +305,11 @@ export function roomRowPresentation(
   const corners = roomListCorners(all);
   const needsYou = newestNeedsYou(all);
   const working = newestByStatus(all, LIVE_STATUSES);
+  const stalledOffline = newestStalledOffline(all);
   const finished = newestByStatus(all, FINISHED_STATUSES);
-  const currentCorner = needsYou ?? working ?? finished;
+  // Precedence: what YOU can act on, then live work, then the honest
+  // offline-stalled fact, then finished history.
+  const currentCorner = needsYou ?? working ?? stalledOffline ?? finished;
   const turnWorking = Boolean(room.agentTurnWorking) && !needsYou;
   const zone: RoomListZone = needsYou
     ? 'needs-you'

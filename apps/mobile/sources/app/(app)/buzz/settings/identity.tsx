@@ -11,23 +11,32 @@ import {
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
+import { getRandomBytes } from 'expo-crypto';
 import * as Haptics from 'expo-haptics';
+import * as Linking from 'expo-linking';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as WebBrowser from 'expo-web-browser';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as QRCode from 'qrcode';
 import Svg, { Path, Rect } from 'react-native-svg';
 import {
+  adoptGitHubHandle,
+  buildOidcBindEvent,
   claimNip05Handle,
+  finishOidcBind,
   fallbackPersonName,
   lookupRecovery,
+  lookupManagedIdentity,
   Nip05ClaimError,
   normalizeNip05Identifier,
   normalizePersonHandle,
   normalizePersonName,
   personHandle,
+  startGitHubBind,
   type BuzzClient,
   type Identity,
+  type ManagedIdentity,
 } from '@beeline/buzz-client';
 import {
   getEffectiveRelayUrl,
@@ -63,8 +72,24 @@ import {
 } from '@/push/buzz-push-status';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { authSessionOptions } from '@/auth/auth-session';
+import {
+  clearPendingGitHubSignInState,
+  githubSignInRedirectUri,
+  persistGitHubSignInState,
+  resumeGitHubSignInCallback,
+} from '@/auth/github-auth-session';
+import { waitForAuthCallback } from '@/auth/onboarding-state';
+import { t } from '@/text';
 
 const TYPED_CONFIRMATION = 'EXPORT';
+
+function randomState(): string {
+  return btoa(String.fromCharCode(...getRandomBytes(32)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+}
 
 type ConfirmationMethod = 'checking' | 'biometric' | 'typed';
 
@@ -150,6 +175,9 @@ export default function BuzzIdentitySettings() {
   const [linkedAccount, setLinkedAccount] = useState<
     'checking' | 'connected' | 'not-linked' | 'unavailable'
   >('checking');
+  const [managedIdentity, setManagedIdentity] = useState<ManagedIdentity | null>(null);
+  const [githubWorking, setGitHubWorking] = useState(false);
+  const [githubNotice, setGitHubNotice] = useState<string | null>(null);
   const nip05Status = useVerifiedNip05Status(profilePubkey ?? '', { nip05: savedProfileNip05 });
 
   useEffect(() => {
@@ -196,9 +224,15 @@ export default function BuzzIdentitySettings() {
           setPushPermission(permission);
         }
         try {
-          const links = await lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity);
+          const [links, hostedIdentity] = await Promise.all([
+            lookupRecovery(getBuzzRuntimeConfig().relayUrl, identity),
+            lookupManagedIdentity(getBuzzRuntimeConfig().relayUrl, identity),
+          ]);
           const linked = links.some((link) => link.provider === 'https://github.com');
-          if (!cancelled) setLinkedAccount(linked ? 'connected' : 'not-linked');
+          if (!cancelled) {
+            setManagedIdentity(hostedIdentity);
+            setLinkedAccount(linked ? 'connected' : 'not-linked');
+          }
         } catch {
           if (!cancelled) setLinkedAccount('unavailable');
         }
@@ -305,13 +339,20 @@ export default function BuzzIdentitySettings() {
         profileIdentity,
         requested,
       );
-      const identifier = `${result.name}@usebeeline.app`;
+      const identifier = result.identity.nip05;
+      const nextName = normalizePersonName(savedProfileName) ?? result.identity.displayName;
       await profileClient.setGlobalPersonProfile({
-        name: normalizePersonName(savedProfileName) ?? undefined,
-        handle: normalizePersonHandle(savedProfileHandle) ?? undefined,
+        name: nextName,
+        handle: result.identity.handle,
         avatar: avatarUrl,
         nip05: identifier,
       });
+      await savePreferredPersonName(profileIdentity.publicKey, nextName);
+      setManagedIdentity(result.identity);
+      setProfileName(nextName);
+      setSavedProfileName(nextName);
+      setProfileHandle(result.identity.handle);
+      setSavedProfileHandle(result.identity.handle);
       setProfileNip05(identifier);
       setSavedProfileNip05(identifier);
       setClaimName('');
@@ -334,9 +375,89 @@ export default function BuzzIdentitySettings() {
     claimWorking,
     profileClient,
     profileIdentity,
-    savedProfileHandle,
     savedProfileName,
   ]);
+
+  const applyHostedIdentity = useCallback(
+    async (hosted: ManagedIdentity) => {
+      if (!profileClient || !profilePubkey) return;
+      const nextName = normalizePersonName(savedProfileName) ?? hosted.displayName;
+      await profileClient.setGlobalPersonProfile({
+        name: nextName,
+        handle: hosted.handle,
+        avatar: avatarUrl,
+        nip05: hosted.nip05,
+      });
+      await savePreferredPersonName(profilePubkey, nextName);
+      setProfileName(nextName);
+      setSavedProfileName(nextName);
+      setProfileHandle(hosted.handle);
+      setSavedProfileHandle(hosted.handle);
+      setProfileNip05(hosted.nip05);
+      setSavedProfileNip05(hosted.nip05);
+      setManagedIdentity(hosted);
+    },
+    [avatarUrl, profileClient, profilePubkey, savedProfileName],
+  );
+
+  const connectGitHub = useCallback(async () => {
+    if (!profileIdentity || githubWorking || Platform.OS === 'web') return;
+    setGitHubWorking(true);
+    setGitHubNotice(null);
+    setError(null);
+    try {
+      const state = randomState();
+      const redirectUri = githubSignInRedirectUri();
+      const start = startGitHubBind(getBuzzRuntimeConfig().relayUrl, { redirectUri, state });
+      await persistGitHubSignInState(state);
+      const callbackUrl = await waitForAuthCallback({
+        redirectUri: start.redirectUri,
+        openAuthSession: () =>
+          WebBrowser.openAuthSessionAsync(
+            start.authorizationUrl,
+            start.redirectUri,
+            authSessionOptions(Platform.OS, start.redirectUri),
+          ),
+        subscribeToUrls: (listener) =>
+          Linking.addEventListener('url', ({ url }) => listener(url)),
+      });
+      const challenge = await resumeGitHubSignInCallback(callbackUrl);
+      const event = buildOidcBindEvent(challenge, profileIdentity);
+      const result = await finishOidcBind(getBuzzRuntimeConfig().relayUrl, challenge, event);
+      await clearPendingGitHubSignInState();
+      const hosted =
+        result.identity ??
+        (await lookupManagedIdentity(getBuzzRuntimeConfig().relayUrl, profileIdentity));
+      if (hosted) await applyHostedIdentity(hosted);
+      setLinkedAccount('connected');
+      setGitHubNotice(t('beelineIdentity.githubLinkedNotice'));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (caught) {
+      await clearPendingGitHubSignInState().catch(() => undefined);
+      setError(`Could not link GitHub: ${caught instanceof Error ? caught.message : String(caught)}`);
+    } finally {
+      setGitHubWorking(false);
+    }
+  }, [applyHostedIdentity, githubWorking, profileIdentity]);
+
+  const renameToGitHubHandle = useCallback(async () => {
+    if (!profileIdentity || githubWorking) return;
+    setGitHubWorking(true);
+    setGitHubNotice(null);
+    setError(null);
+    try {
+      const hosted = await adoptGitHubHandle(getBuzzRuntimeConfig().relayUrl, profileIdentity);
+      await applyHostedIdentity(hosted);
+      setGitHubNotice(t('beelineIdentity.githubRenameNotice', { handle: hosted.handle }));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (caught) {
+      setError(
+        `Could not rename your handle: ${caught instanceof Error ? caught.message : String(caught)}`,
+      );
+    } finally {
+      setGitHubWorking(false);
+    }
+  }, [applyHostedIdentity, githubWorking, profileIdentity]);
 
   const applyPushResult = useCallback(
     async (
@@ -527,7 +648,7 @@ export default function BuzzIdentitySettings() {
       : claimStatus === 'taken'
         ? 'ALREADY TAKEN'
         : claimStatus === 'invalid'
-          ? 'USE 1-30 LOWERCASE LETTERS, NUMBERS, DASHES, OR UNDERSCORES'
+          ? t('beelineIdentity.claimStatusInvalid')
           : claimStatus === 'error'
             ? 'COULD NOT CLAIM HANDLE'
             : 'FIRST COME, FIRST SERVED';
@@ -692,10 +813,10 @@ export default function BuzzIdentitySettings() {
             )}
           </View>
         )}
-        <View style={styles.settingsSection} testID="claim-handle-setting">
+        {!managedIdentity && <View style={styles.settingsSection} testID="claim-handle-setting">
           <Text style={styles.sectionLabel}>BEELINE HANDLE</Text>
           <Text style={styles.body}>
-            Claim a free handle at usebeeline.app, first come first served.
+            {t('beelineIdentity.hostedHandleClaimBody')}
           </Text>
           <View style={styles.claimRow}>
             <TextInput
@@ -725,13 +846,13 @@ export default function BuzzIdentitySettings() {
           </View>
           <MonoButton
             disabled={claimWorking || !claimName.trim()}
-            label="Claim handle"
+            label={t('beelineIdentity.claimHandle')}
             loading={claimWorking}
             onPress={() => void claimHandle()}
             style={styles.nameButton}
             testID="identity-claim-handle-button"
           />
-        </View>
+        </View>}
 
         <View style={styles.settingsSection} testID="notifications-setting">
           <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
@@ -776,6 +897,37 @@ export default function BuzzIdentitySettings() {
             </View>
             <Text style={styles.linkedState}>{linkedAccount === 'connected' ? '✓' : '·'}</Text>
           </View>
+          {linkedAccount === 'not-linked' && Platform.OS !== 'web' ? (
+            <MonoButton
+              disabled={githubWorking || !profileIdentity}
+              label={t('beelineIdentity.linkGithub')}
+              loading={githubWorking}
+              onPress={() => void connectGitHub()}
+              style={styles.nameButton}
+              testID="identity-link-github"
+            />
+          ) : null}
+          {managedIdentity?.githubRenameAvailable && managedIdentity.githubLogin ? (
+            <View style={styles.githubRenamePanel} testID="identity-github-rename-offer">
+              <Text style={styles.body}>
+                {t('beelineIdentity.renameOffer', {
+                  current: managedIdentity.handle,
+                  github: managedIdentity.githubLogin,
+                })}
+              </Text>
+              <MonoButton
+                disabled={githubWorking}
+                label={t('beelineIdentity.useGithubHandle', {
+                  handle: managedIdentity.githubLogin,
+                })}
+                loading={githubWorking}
+                onPress={() => void renameToGitHubHandle()}
+                style={styles.nameButton}
+                testID="identity-use-github-handle"
+              />
+            </View>
+          ) : null}
+          {githubNotice ? <Text style={styles.githubNotice}>{githubNotice}</Text> : null}
         </View>
 
         <View style={styles.intro}>
@@ -1100,6 +1252,20 @@ const styles = StyleSheet.create((theme) => {
     ...Typography.mono('semiBold'),
     color: groknight.textSecondary,
     fontSize: 13,
+  },
+  githubRenamePanel: {
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: groknight.border,
+  },
+  githubNotice: {
+    ...Typography.default(),
+    fontFamily: groknight.proseRegular,
+    marginTop: 12,
+    color: groknight.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
   },
   warning: {
     marginTop: 24,

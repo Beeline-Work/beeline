@@ -374,6 +374,8 @@ export interface ChannelFilterOpts {
 export interface MessageSubmitOpts {
   /** When set, adds `#p` mention so buzz-acp can treat it as an agent prompt. */
   mentionAgent?: string;
+  /** People or additional agents explicitly selected with the composer mention picker. */
+  mentionPubkeys?: string[];
   /** Extra tags to attach (each is a full tag array). */
   extraTags?: string[][];
 }
@@ -385,6 +387,8 @@ export interface MergeTarget {
   branch: string;
   /** 40-hex commit the target ref is authorized to advance to. */
   tip: string;
+  /** Stable identity of the reviewed diff. Optional for legacy exact-tip cards. */
+  patchId?: string;
 }
 
 export interface BuzzClientConfig {

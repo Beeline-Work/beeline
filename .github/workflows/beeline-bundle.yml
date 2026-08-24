@@ -62,6 +62,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -126,7 +127,11 @@ jobs:
     # Self-hosted too, so the whole pipeline costs zero paid GitHub minutes.
     runs-on: [self-hosted, beeline-prod-host]
     steps:
+      # Rebasing the publish commit needs history beyond checkout's default
+      # single commit once main advances during the build.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: bundle
@@ -135,21 +140,20 @@ jobs:
       # a same-commit re-run is a true no-op.
       - name: Skip if this commit is already published
         run: |
-          git fetch --depth=1 origin "${GITHUB_REF}"
+          git fetch origin main
           if git show "FETCH_HEAD:relay-stack/web/dl/manifest.json" 2>/dev/null | grep -q '"sourceCommit": "'"${GITHUB_SHA}"'"'; then
             echo "already published by a previous run for ${GITHUB_SHA}"
             echo "SKIP_PUBLISH=true" >> "$GITHUB_ENV"
           fi
         env:
           GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REF: ${{ github.ref }}
       - name: Assemble and publish the bundle set
         if: env.SKIP_PUBLISH != 'true'
         run: node scripts/publish-beeline-dl.mjs --dir bundle
         env:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF: ${{ github.ref }}
-      - name: Commit the published set back to main
+      - name: Commit and publish the bundle set to main
         if: env.SKIP_PUBLISH != 'true'
         run: |
           git config user.name "beeline-bundle-bot"
@@ -161,4 +165,36 @@ jobs:
           fi
           git commit -m "chore(release): publish beeline CLI bundle [beeline-bundle-publish]" \
             -m "sourceCommit: ${GITHUB_SHA}"
-          git push
+          for attempt in 1 2 3; do
+            echo "publish attempt ${attempt}/3"
+            git fetch origin main
+            # The workflow retains a temporary feature-branch trigger. On the
+            # first attempt, move only the generated publish commit onto main,
+            # never the triggering branch's commits. Later attempts already
+            # have that isolated commit based on main.
+            if [ "${attempt}" -eq 1 ]; then
+              rebase_args=(--onto origin/main "${GITHUB_SHA}" HEAD)
+            else
+              rebase_args=(origin/main)
+            fi
+            if ! git rebase "${rebase_args[@]}"; then
+              git rebase --abort || true
+              echo "::error::bundle publish commit conflicts with the latest main"
+              exit 1
+            fi
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "::error::bundle publish push failed after 3 attempts"
+              exit 1
+            fi
+            echo "::warning::bundle publish push was rejected; refreshing main before retry"
+          done
+      # GITHUB_TOKEN pushes do not emit another workflow run. Dispatch the
+      # deploy explicitly after a successful push (or an idempotent re-run
+      # that confirms this source commit is already published).
+      - name: Deploy the published bundle set
+        run: gh workflow run deploy-host.yml --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}

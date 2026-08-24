@@ -19,7 +19,7 @@ function unsignedEvent(kind: number, tags: string[][]): NostrEvent {
 }
 
 describe('NotificationMetadataResolver', () => {
-  it('resolves the latest room metadata and single-word agent soul, then caches both', async () => {
+  it('prefers the durable human-authored soul after its author leaves, then caches it', async () => {
     const agent = createIdentity('legacy name');
     const human = createIdentity('human');
     const roomMetadata = unsignedEvent(39000, [
@@ -73,7 +73,6 @@ describe('NotificationMetadataResolver', () => {
     );
     const memberProjection = unsignedEvent(39002, [
       ['d', COMMUNITY_ID],
-      ['p', human.publicKey],
       ['p', agent.publicKey],
     ]);
     const query = vi.fn(async (filters: Record<string, unknown>[]) => {
@@ -108,6 +107,45 @@ describe('NotificationMetadataResolver', () => {
       senderName: 'Ada',
     });
     expect(query).toHaveBeenCalledTimes(3);
+  });
+
+  it('uses the per-pubkey seed name when an agent has no soul', async () => {
+    const agent = createIdentity('unsouled agent');
+    const roomCreate = unsignedEvent(9007, [
+      ['h', COMMUNITY_ID],
+      ['name', 'Product Engineering'],
+      ['community', COMMUNITY_ID],
+    ]);
+    const agentRecord = signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: 10,
+        kind: 9,
+        tags: [
+          ['h', COMMUNITY_ID],
+          ['t', 'buzz-agent'],
+          ['d', 'agent-1'],
+          ['p', agent.publicKey],
+          ['name', 'beeline-agent'],
+          ['community', COMMUNITY_ID],
+        ],
+        content: JSON.stringify({ displayName: 'beeline-agent' }),
+      },
+      agent.secretKey,
+    );
+    const reader: RelayEventReader = {
+      query: async (filters) =>
+        filters.some((filter) => (filter.kinds as number[]).includes(39000))
+          ? [roomCreate]
+          : [agentRecord],
+      disconnect: () => undefined,
+    };
+    const message = unsignedEvent(9, [['h', COMMUNITY_ID]]);
+    message.pubkey = agent.publicKey;
+
+    const resolved = await new NotificationMetadataResolver().resolve(message, reader);
+    expect(resolved.senderName).toMatch(/^[A-Z][a-z]+$/);
+    expect(resolved.senderName).not.toBe('beeline-agent');
   });
 
   it('uses a verified NIP-01 person name and never exposes an id when room metadata is absent', async () => {

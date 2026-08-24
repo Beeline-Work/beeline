@@ -1,6 +1,6 @@
 /**
- * What tools an ACP session actually gets — and what the daemon must send so
- * that set is only ever Beeline's own.
+ * What tools an ACP session actually gets, including the operator-hosted MCP
+ * servers the owner explicitly made available to every agent on 2026-08-23.
  *
  * `harness-capabilities.ts` answers "can the daemon stop this harness from
  * *writing*". This module answers the separate question "can the daemon stop
@@ -15,9 +15,10 @@
  *
  *   1. **Operator config files.** `~/.claude/settings.json` + `.claude.json`,
  *      project `.mcp.json`, plugins, `$CODEX_HOME/config.toml`'s
- *      `[mcp_servers.*]`. `agent-home.ts` already points a Room's
- *      `CLAUDE_CONFIG_DIR`/`CODEX_HOME` at a Beeline-owned directory, so these
- *      are out of reach for any Room that has its own agent home.
+ *      `[mcp_servers.*]`. `agent-home.ts` points a Room's
+ *      `CLAUDE_CONFIG_DIR`/`CODEX_HOME` at a Beeline-owned directory and copies
+ *      only those MCP declarations into it. They are intentionally reachable;
+ *      unrelated operator settings remain out of reach.
  *   2. **Account-bound cloud connectors.** claude.ai connectors (Claude Code)
  *      and `codex_apps` (Codex). These are fetched from the logged-in account,
  *      NOT from a config file, so relocating the config dir does nothing —
@@ -28,14 +29,13 @@
  * Measured against the installed adapters (see the PR's running proof):
  *
  *   - `claude-agent-acp`: forwards `_meta.claudeCode.options` straight into the
- *     Claude Agent SDK's `query()` options. `strictMcpConfig` maps to the CLI's
- *     `--strict-mcp-config` ("only use MCP servers from --mcp-config, ignoring
- *     all other MCP configurations") and `settings` maps to `--settings`, which
- *     accepts a JSON string and is where `disableClaudeAiConnectors` lands.
- *     Both are sent: strict-mcp-config is the allowlist, and the setting is the
- *     belt for any CLI version that does not count an auto-fetched cloud
- *     connector as an "MCP configuration". Measured: 8 MCP servers / 90 tools
- *     before, 0 MCP servers / 26 built-in tools after.
+ *     Claude Agent SDK's `query()` options. It used to also send
+ *     `strictMcpConfig`, which pins the session to request-wired servers and
+ *     suppresses the copied user config. The 2026-08-23 owner decision instead
+ *     sets `settingSources: ["user"]`: Claude loads the sanitized user-scope
+ *     MCP copy from its isolated home, but never repository `.mcp.json`, local
+ *     settings, plugins, or frontmatter MCP. `disableClaudeAiConnectors` keeps
+ *     account-bound claude.ai cloud connectors off.
  *   - `codex-acp`: has no session-level allowlist. It MERGES the client's
  *     requested servers into whatever `$CODEX_HOME/config.toml` already
  *     declares (`shouldDeduplicateMcpConflicts` drops a requested server whose
@@ -97,14 +97,20 @@ interface ToolScopeProfile {
 }
 
 const CLAUDE_PROFILE: ToolScopeProfile = {
-  enforcement: 'allowlisted',
-  note: 'claude-agent-acp forwards _meta.claudeCode.options to the Claude Agent SDK, so strictMcpConfig + disableClaudeAiConnectors pin the session to the mounted servers',
+  // The owner decision of 2026-08-23 is that agents get every skill + MCP on
+  // the host in every Room/corner (`agent-home.ts` links/copies them into the
+  // isolated home). `settingSources: ['user']` admits that sanitized user copy
+  // while rejecting repository/local/plugin MCP. `strictMcpConfig` cannot be
+  // used because it would reject the user copy too. Account-bound claude.ai
+  // cloud connectors remain off independently.
+  enforcement: 'config-isolated',
+  note: 'claude-agent-acp forwards _meta.claudeCode.options to the Claude Agent SDK; user-only settingSources loads MCP from the isolated CLAUDE_CONFIG_DIR without repository/local settings, while disableClaudeAiConnectors keeps account-bound connectors off',
   sessionMeta: {
     claudeCode: {
       options: {
-        // Only the servers passed on this session/new request. Drops project
-        // .mcp.json, user settings, plugin, and agent-frontmatter MCP.
-        strictMcpConfig: true,
+        // Only the sanitized user config in the isolated CLAUDE_CONFIG_DIR;
+        // never a repository's .mcp.json, local settings, or plugins.
+        settingSources: ['user'],
         // Account-bound claude.ai cloud connectors are not fetched at all.
         settings: JSON.stringify(CLAUDE_TOOL_SCOPE_SETTINGS),
       },
@@ -207,7 +213,7 @@ export function toolScopeWarning(
   if (enforcement === 'config-isolated') {
     parts.push(
       options.isolatedHarnessHome
-        ? "This Room has its own harness home, so the operator's config-file MCP servers are already out of reach."
+        ? "This Room has its own harness home, populated with the operator's explicitly shared skills and copied MCP declarations; unrelated harness settings remain out of reach."
         : 'Set BUZZY_BODY_ROOM_HOME=1 so this Room gets its own harness home.',
     );
   }

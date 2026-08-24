@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
@@ -10,6 +10,7 @@ import {
   roomAgentHomeEnv,
 } from './agent-home.js';
 import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
+import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
 
 const cleanup: string[] = [];
 
@@ -103,5 +104,191 @@ describe('per-room harness state isolation', () => {
     });
 
     expect(stateDirs).toEqual(['/rooms/room-a/agent-private']);
+  });
+});
+
+describe('operator skills + MCP passthrough', () => {
+  const operatorToml = [
+    'model = "gpt-5-codex"',
+    'approval_policy = "never"',
+    'sandbox_mode = "danger-full-access"',
+    '',
+    '[mcp_servers.squire]',
+    'command = "npx"',
+    'args = ["-y", "@trusty-squire/mcp"]',
+  ].join('\n');
+
+  async function operatorHomeWithHarnessConfigs(): Promise<string> {
+    const home = await scratch('beeline-operator-home-');
+    for (const dir of ['.claude/skills', '.codex/skills', '.grok/skills']) {
+      await mkdir(resolve(home, dir), { recursive: true });
+    }
+    await mkdir(resolve(home, '.claude/skills/greet'), { recursive: true });
+    await writeFile(resolve(home, '.claude/skills/greet/SKILL.md'), 'say hi');
+    await writeFile(resolve(home, '.codex/config.toml'), `${operatorToml}\n`);
+    await writeFile(
+      resolve(home, '.claude.json'),
+      JSON.stringify({
+        mcpServers: { files: { command: 'files-mcp', args: [] } },
+        otherTopLevel: 'stays behind',
+      }),
+    );
+    return home;
+  }
+
+  it('links operator skills into every harness home and copies codex MCP config as a REAL file', async () => {
+    const operatorHome = await operatorHomeWithHarnessConfigs();
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    // Skills are symlinked to the operator's own directories.
+    for (const dir of ['claude', 'codex', 'grok']) {
+      const link = resolve(roomRoot, dir, 'skills');
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(realpathSync(link)).toBe(realpathSync(resolve(operatorHome, `.${dir}/skills`)));
+    }
+
+    // The codex MCP config is a COPY carrying only mcp_servers — never a
+    // symlink to the operator's real config.toml (codex-acp MERGES session MCP
+    // servers into it and would corrupt the operator's file), and none of the
+    // operator's model/sandbox/approval settings ride along.
+    const isolatedConfig = resolve(roomRoot, 'codex', 'config.toml');
+    const stats = lstatSync(isolatedConfig);
+    expect(stats.isSymbolicLink()).toBe(false);
+    expect(stats.isFile()).toBe(true);
+    const isolatedText = readFileSync(isolatedConfig, 'utf8');
+    expect(isolatedText).toContain('[mcp_servers.squire]');
+    expect(isolatedText).not.toMatch(/model|approval_policy|sandbox_mode/);
+
+    // Writing through the session cannot reach the operator's real config.
+    await writeFile(isolatedConfig, '[mcp_servers.scribe]\ncommand = "scribe"\n');
+    const operatorText = readFileSync(resolve(operatorHome, '.codex/config.toml'), 'utf8');
+    expect(operatorText).toContain('@trusty-squire/mcp');
+    expect(operatorText).not.toContain('scribe');
+  });
+
+  it('copies claude user-scope MCP servers into the isolated CLAUDE_CONFIG_DIR and grok MCP into GROK_HOME', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await mkdir(resolve(operatorHome, '.grok'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.claude.json'),
+      JSON.stringify({ mcpServers: { files: { command: 'files-mcp' } } }),
+    );
+    await writeFile(
+      resolve(operatorHome, '.grok/config.toml'),
+      ['theme = "dark"', '', '[mcp_servers.tools]', 'command = "tools-mcp"'].join('\n'),
+    );
+
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    const claudeJson = resolve(roomRoot, 'claude', '.claude.json');
+    expect(lstatSync(claudeJson).isSymbolicLink()).toBe(false);
+    const claudeParsed = JSON.parse(readFileSync(claudeJson, 'utf8')) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(Object.keys(claudeParsed.mcpServers)).toEqual(['files']);
+    expect(claudeParsed).not.toHaveProperty('otherTopLevel');
+
+    const grokConfig = readFileSync(resolve(roomRoot, 'grok', 'config.toml'), 'utf8');
+    expect(grokConfig).toContain('[mcp_servers.tools]');
+    expect(grokConfig).not.toContain('theme');
+  });
+
+  it('regenerates the copied MCP configs on every prepare so operator edits reach existing rooms', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    await mkdir(resolve(operatorHome, '.codex/skills'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.codex/config.toml'),
+      '[mcp_servers.one]\ncommand = "one"\n',
+    );
+    await writeFile(
+      resolve(operatorHome, '.claude.json'),
+      JSON.stringify({ mcpServers: { one: { command: 'one' } } }),
+    );
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(true);
+    await writeFile(
+      resolve(operatorHome, '.codex/config.toml'),
+      '[mcp_servers.one]\ncommand = "one"\n[mcp_servers.two]\ncommand = "two"\n',
+    );
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    const regenerated = readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8');
+    expect(regenerated).toContain('[mcp_servers.two]');
+
+    await writeFile(resolve(operatorHome, '.codex/config.toml'), 'model = "gpt-5-codex"\n');
+    await writeFile(resolve(operatorHome, '.claude.json'), JSON.stringify({ mcpServers: {} }));
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    expect(existsSync(resolve(roomRoot, 'codex', 'config.toml'))).toBe(false);
+    expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);
+  });
+
+  it('replaces a session-authored config symlink instead of writing through it', async () => {
+    const operatorHome = await operatorHomeWithHarnessConfigs();
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+    const redirected = resolve(await scratch('beeline-redirected-'), 'config.toml');
+    await writeFile(redirected, 'must stay unchanged\n');
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    await rm(resolve(roomRoot, 'codex', 'config.toml'));
+    await symlink(redirected, resolve(roomRoot, 'codex', 'config.toml'));
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    expect(lstatSync(resolve(roomRoot, 'codex', 'config.toml')).isSymbolicLink()).toBe(false);
+    expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toContain(
+      '[mcp_servers.squire]',
+    );
+    expect(readFileSync(redirected, 'utf8')).toBe('must stay unchanged\n');
+  });
+
+  it('skips cleanly when the operator has no skills or MCP config at all', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+
+    await expect(prepareRoomAgentHome({ root: roomRoot, operatorHome })).resolves.toEqual(
+      roomAgentHomeEnv(roomRoot),
+    );
+    for (const dir of ['claude', 'codex', 'grok']) {
+      expect(existsSync(resolve(roomRoot, dir, 'skills'))).toBe(false);
+      expect(existsSync(resolve(roomRoot, dir, 'config.toml'))).toBe(false);
+    }
+    expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);
+  });
+
+  it('never links a #376 credential mask store into any harness home', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    for (const masked of KNOWN_CREDENTIAL_MASK_PATHS) {
+      const path = resolve(operatorHome, masked);
+      await mkdir(path, { recursive: true }).catch(() => undefined);
+      if (!existsSync(path)) await writeFile(path, 'secret');
+    }
+    await mkdir(resolve(operatorHome, '.codex/skills'), { recursive: true });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    const links: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = resolve(dir, entry.name);
+        if (entry.isSymbolicLink()) links.push(full);
+        else if (entry.isDirectory()) walk(full);
+      }
+    };
+    walk(roomRoot);
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      const target = realpathSync(link);
+      for (const masked of KNOWN_CREDENTIAL_MASK_PATHS) {
+        const maskedPath = resolve(operatorHome, masked.replace(/\/+$/, ''));
+        expect(target === maskedPath || target.startsWith(`${maskedPath}/`)).toBe(false);
+      }
+    }
   });
 });

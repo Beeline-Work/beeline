@@ -12,7 +12,11 @@ import {
 } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 import { AcpClient } from './acp.js';
-import { appendPersonaSessionInstructions, personaTurnPrefixForHarness } from './persona-instructions.js';
+import {
+  appendPersonaSessionInstructions,
+  personaTurnPrefixForHarness,
+  prepareNativePersonaInstructions,
+} from './persona-instructions.js';
 import { AGENT_PRIVATE_STATE_ENV, agentPrivateStateInstructions } from './agent-private-state.js';
 
 const temporaryDirectories: string[] = [];
@@ -155,5 +159,70 @@ lines.on('line', (line) => {
     expect(personaTurnPrefixForHarness(profile, '/usr/local/bin/claude-agent-acp')).toBeUndefined();
     // No persona set: nothing to deliver on any harness.
     expect(personaTurnPrefixForHarness(undefined, 'pi-acp')).toBeUndefined();
+  });
+
+  it('writes codex, claude, and grok personas to their native isolated-home instructions', async () => {
+    const agentHomeRoot = await mkdtemp(resolve(tmpdir(), 'beeline-native-persona-'));
+    temporaryDirectories.push(agentHomeRoot);
+    for (const home of ['codex', 'claude', 'grok']) {
+      await mkdir(resolve(agentHomeRoot, home), { recursive: true });
+    }
+    const profile = {
+      communityId: '11111111-1111-4111-8111-111111111111',
+      agentPubkey: 'a'.repeat(64),
+      authoredBy: 'b'.repeat(64),
+      name: 'Clara',
+      soul: 'Steady, practical, and ready to help this Workspace.',
+      avatarSeed: 'seed',
+      updatedAt: 1_700_000_000,
+    };
+
+    await expect(
+      prepareNativePersonaInstructions({
+        agentHomeRoot,
+        agentCommand: '/usr/local/bin/codex-acp',
+        profile,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      prepareNativePersonaInstructions({
+        agentHomeRoot,
+        agentCommand: '/usr/local/bin/claude-agent-acp',
+        profile,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      prepareNativePersonaInstructions({ agentHomeRoot, agentCommand: 'grok', profile }),
+    ).resolves.toBe(true);
+
+    expect(await readFile(resolve(agentHomeRoot, 'codex/AGENTS.md'), 'utf8')).toContain(
+      'Name: Clara',
+    );
+    expect(await readFile(resolve(agentHomeRoot, 'claude/CLAUDE.md'), 'utf8')).toContain(
+      'Soul: Steady, practical',
+    );
+    expect(await readFile(resolve(agentHomeRoot, 'grok/AGENTS.md'), 'utf8')).toContain(
+      'Name: Clara',
+    );
+  });
+
+  it('suppresses both session and per-turn persona injection after native delivery', () => {
+    const profile = {
+      communityId: '11111111-1111-4111-8111-111111111111',
+      agentPubkey: 'a'.repeat(64),
+      authoredBy: 'b'.repeat(64),
+      name: 'Clara',
+      soul: 'Steady, practical, and ready to help this Workspace.',
+      avatarSeed: 'seed',
+      updatedAt: 1_700_000_000,
+    };
+
+    expect(appendPersonaSessionInstructions('Base boundary.', profile, true)).toBe(
+      'Base boundary.',
+    );
+    expect(personaTurnPrefixForHarness(profile, 'codex-acp', true)).toBeUndefined();
+    expect(personaTurnPrefixForHarness(profile, 'claude-agent-acp', true)).toBeUndefined();
+    expect(personaTurnPrefixForHarness(profile, 'grok', true)).toBeUndefined();
+    expect(personaTurnPrefixForHarness(profile, 'pi-acp', false)).toContain('Name: Clara');
   });
 });

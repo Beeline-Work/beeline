@@ -211,8 +211,8 @@ import {
 } from './attachments.js';
 import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 import {
-  ensureCheckoutToolchainProvisioned,
-  seedCornerNodeModules,
+  cornerToolchainNotice,
+  ensureCornerToolchainProvisioned,
 } from './corner-toolchain.js';
 import {
   authorizedExternalMcpServers,
@@ -2371,16 +2371,9 @@ export class Body {
         return { command, args: [...(args ?? [])] };
       }
       spec.gitCommonDir = gitCommonDir;
-      // Re-seed the worktree's dependency links at spawn time: provisioning of
-      // the canonical checkout may have finished since the worktree was
-      // created, and this is the last cheap point before the agent runs its
-      // first command. A bare common dir (relay-origin repo) has no checkout to
-      // seed from and is skipped by the helper's existence checks.
-      const commonDir = resolve(input.worktreePath ?? input.cwd, gitCommonDir);
-      const sourceCheckout = basename(commonDir) === '.git' ? resolve(commonDir, '..') : undefined;
-      if (input.worktreePath && sourceCheckout) {
-        this.seedWorktreeToolchain(input.worktreePath, sourceCheckout);
-      }
+      // Re-check at spawn time so restored corners and worktrees created by an
+      // older daemon are repaired before the agent runs its first command.
+      if (input.worktreePath) this.provisionWorktreeToolchain(input.worktreePath);
       // Same bind-try-vs-mkdir reasoning as the harness roots above: the merge
       // gate cannot create its own state root on a read-only $HOME, so create
       // it here, in the daemon, before the child is confined. Corner-only: a
@@ -2646,10 +2639,14 @@ export class Body {
         const gitState = resumingCorner && input.resumeTargetRef ? readCornerGitResumeState(input.cwd, input.resumeTargetRef) : undefined;
         const reprime = measureSessionReprime(transcript, undefined, resumingCorner ? { objective: input.resumeObjective, plan: session.resumePlan, changedFiles: gitState?.changedFiles, commits: gitState?.commits } : undefined);
         const restored = reprime.block;
+        const toolchainNotice = input.worktreePath
+          ? cornerToolchainNotice(input.worktreePath)
+          : undefined;
         const systemPrompt = [
           appendPersonaSessionInstructions(input.systemPrompt, profile),
           agentPrivateStateInstructions(input.agentPrivateState),
           agentMemoryInstructions(input.agentMemory),
+          ...(toolchainNotice ? [`Toolchain notice: ${toolchainNotice}`] : []),
           '',
           `To share an image or file with the Room, include [[${AGENT_ATTACHMENT_DIRECTIVE}:path]] in your final response.`,
           'The host removes that directive, uploads the file, and sends a link-only attachment card.',
@@ -9654,25 +9651,12 @@ export class Body {
    * committed. Never throws; a failure just leaves `.codegraph/` visible to
    * `git status`, which is a hygiene issue, not a functional one.
    */
-  /**
-   * Give a fresh corner worktree the repository's dependency tree (see
-   * {@link seedCornerNodeModules}) and kick off a one-time install in the
-   * canonical checkout if it has none yet. Both best-effort and cheap; called
-   * at worktree creation AND at edit-session spawn, because provisioning may
-   * finish between a corner opening and its first turn.
-   */
-  private seedWorktreeToolchain(worktreePath: string, sourceCheckout?: string): void {
-    if (!sourceCheckout || !isAbsolute(sourceCheckout)) return;
+  /** Install a corner-local dependency tree before its edit session starts. */
+  private provisionWorktreeToolchain(worktreePath: string): void {
     try {
-      const seeded = seedCornerNodeModules({ worktreePath, sourceCheckout });
-      if (seeded.linked.length) {
-        console.log(
-          `[body] seeded corner toolchain for ${worktreePath}: ${seeded.linked.join(', ')}`,
-        );
-      }
-      ensureCheckoutToolchainProvisioned(sourceCheckout);
+      ensureCornerToolchainProvisioned(worktreePath);
     } catch (error) {
-      console.warn(`[body] corner toolchain seeding failed for ${worktreePath}:`, error);
+      console.warn(`[body] corner toolchain provisioning failed for ${worktreePath}:`, error);
     }
   }
 
@@ -9870,7 +9854,7 @@ export class Body {
     git(worktreePath, ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME]);
     git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
     this.excludeCodegraphFromWorktreeStatus(worktreePath);
-    this.seedWorktreeToolchain(worktreePath, repoRoot);
+    this.provisionWorktreeToolchain(worktreePath);
     return true;
   }
 
@@ -9913,7 +9897,7 @@ export class Body {
       git(worktreePath, ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME]);
       git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
       this.excludeCodegraphFromWorktreeStatus(worktreePath);
-      this.seedWorktreeToolchain(worktreePath, boundRepo.localPath);
+      this.provisionWorktreeToolchain(worktreePath);
       return;
     }
 
@@ -9982,6 +9966,7 @@ export class Body {
       encoding: 'utf8',
     });
     this.excludeCodegraphFromWorktreeStatus(worktreePath);
+    this.provisionWorktreeToolchain(worktreePath);
   }
 
   /** Remove a git worktree and clean up. */

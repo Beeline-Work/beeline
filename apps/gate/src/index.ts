@@ -72,4 +72,5 @@ export {
   type RoomMergeServiceConfig,
   type RoomMergeCandidate,
   type RoomMergeAttempt,
+  type RoomMergeAttemptStart,
 } from './worker.js';

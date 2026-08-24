@@ -362,7 +362,8 @@ export type ChatEventProjection = {
    * Branch/PR preview deployment for the merge-ready tip, when the repo's host
    * published one. Deliberately NOT a field on `MergeTarget`: that object is
    * the exact signed approval binding (repo/branch/tip) and must not grow a
-   * cosmetic field a reviewer's signature would then be read as covering.
+   * cosmetic field. Authorization comes from the signed corner id plus the
+   * repository and target branch; tip and patch id are visible snapshots.
    */
   previewUrl?: string;
   clearMergeTarget?: boolean;
@@ -380,7 +381,7 @@ export type ChatEventProjection = {
   /** What is actually happening after that failure, straight from the daemon's
    *  `retry` tag — `auto` (the land poll really does re-attempt this same
    *  approval on its own), `realigning` (the corner's agent is rebasing onto
-   *  the moved target and will republish a fresh review), or `blocked`
+   *  the moved target and will republish its current review), or `blocked`
    *  (nothing happens until a person says something). Absent means the daemon
    *  did not say, and a client must then make NO retry claim at all. */
   deliveryRetry?: DeliveryRetryPosture;

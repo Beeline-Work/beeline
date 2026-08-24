@@ -7,7 +7,7 @@
  *   - a feature-branch push is allowed and performed;
  *   - a protected-ref (main) push without a valid owner signature is refused,
  *     before git is ever invoked, with a plain-language reason;
- *   - a protected-ref push WITH a verified exact-tip signature is performed;
+ *   - a protected-ref push WITH a verified corner signature is performed;
  *   - every other destination is refused.
  */
 import { afterEach, describe, expect, it } from 'vitest';
@@ -92,7 +92,9 @@ function approvalFor(input: {
   tip: string;
   branch?: string;
   repo?: string;
+  cornerId?: string;
 }): BrokerApproval {
+  const cornerId = input.cornerId ?? channel;
   const target = {
     repo: input.repo ?? `${reviewer.publicKey}/demo`,
     branch: input.branch ?? 'refs/heads/main',
@@ -100,9 +102,15 @@ function approvalFor(input: {
   };
   // Verify through the same gate verifier Body uses, so the fixture proves
   // the whole artifact path rather than trusting our own shape.
-  const event = buildApproval(reviewer, channel, target);
-  expect(verifyApproval(event, reviewer.publicKey, target)).toBe(true);
-  return { ...target, reviewerPubkey: reviewer.publicKey };
+  const event = buildApproval(reviewer, cornerId, target);
+  expect(verifyApproval(event, reviewer.publicKey, target, cornerId)).toBe(true);
+  return {
+    cornerId,
+    repo: target.repo,
+    branch: target.branch,
+    approvedTip: target.tip,
+    reviewerPubkey: reviewer.publicKey,
+  };
 }
 
 const policy = (featureBranch = 'feature/corner'): PushBrokerPolicy => ({
@@ -156,26 +164,28 @@ describe('evaluateBrokeredPush — decision only', () => {
     }
   });
 
-  it('refuses a main push whose presented approval binds a different tip', () => {
+  it('refuses a main push whose presented approval belongs to a different corner', () => {
     const decision = evaluateBrokeredPush({
       remote: 'origin',
       policy: policy(),
+      cornerId: channel,
       refspecs: [`${'b'.repeat(40)}:refs/heads/main`],
       approval: {
         verified: true,
-        approval: approvalFor({ tip: 'a'.repeat(40) }),
+        approval: approvalFor({ tip: 'a'.repeat(40), cornerId: 'corner-other' }),
       },
     });
     expect(decision.action).toBe('refuse');
   });
 
-  it('honors a valid owner-signed exact-tip approval for the protected push', () => {
+  it('honors a standing corner approval when the protected push advances to a later tip', () => {
     const tip = 'b'.repeat(40);
     const decision = evaluateBrokeredPush({
       remote: 'origin',
       policy: policy(),
+      cornerId: channel,
       refspecs: [`${tip}:refs/heads/main`],
-      approval: { verified: true, approval: approvalFor({ tip }) },
+      approval: { verified: true, approval: approvalFor({ tip: 'a'.repeat(40) }) },
     });
     expect(decision.action).toBe('perform-with-approval');
   });
@@ -238,14 +248,15 @@ describe('performBrokeredPush — against a real repository', () => {
     expect(git(fx.bare, ['rev-parse', 'refs/heads/main'])).toBe(fx.mainTip);
   });
 
-  it('performs a protected landing when the verified approval binds this exact tip', async () => {
+  it('performs a protected landing of the current tip under the standing corner approval', async () => {
     const fx = fixture();
     const result = await performBrokeredPush({
       remote: 'origin',
       refspecs: [`${fx.featureTip}:refs/heads/main`],
       policy: policy(),
+      cornerId: channel,
       extraArgs: ['--follow-tags'],
-      approval: { verified: true, approval: approvalFor({ tip: fx.featureTip }) },
+      approval: { verified: true, approval: approvalFor({ tip: fx.mainTip }) },
       runGit: realGitRunner(fx.worktree),
     });
     expect(result.ok).toBe(true);

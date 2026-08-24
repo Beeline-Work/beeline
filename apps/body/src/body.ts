@@ -752,35 +752,31 @@ export interface SubchannelInfo {
   taskPlan?: CompactActivityPlan;
   /** When this corner was opened, in ms — used to spot a repeated open-a-corner. */
   openedAt?: number;
-  /** Exact target advertised to the human merge gate once work is pushed. */
+  /** Current work tip advertised for this corner's one merge. */
   mergeTarget?: { repo: string; branch: string; tip: string; patchId?: string };
   /** Latest agent-authored completion summary. */
   mergeSummary?: string;
   /** Exact reason from the latest rejected merge-readiness check. Cleared only
    *  after a real review target is published. */
   lastMergeNotReadyReason?: string;
-  /** Signed human approval, verified against this tip by SHA or patch identity. */
+  /** Signed human approval for this corner's one merge into its target branch. */
   humanMergeApproval?: {
     id: string;
     reviewer: string;
-    /** Current tip this approval was content-verified to authorize. */
+    /** Current corner tip that will land under the standing approval. */
     tip: string;
-    /** Tip on the signed card. Differs from `tip` after a pure rebase. */
+    /** Tip visible on the signed card. Differs after any later corner work. */
     approvedTip?: string;
     patchId?: string;
     realigned?: boolean;
   };
-  /** Approval event ids this corner has already answered with an
-   *  `buzz-merge-approval-ack` rejection (stale tip), so the honest reply is
-   *  sent once instead of once per maintenance tick. */
-  rejectedApprovalIds?: Set<string>;
   /** Latest approval-read outage already surfaced for this review tip. The
    *  poll keeps retrying, but the transcript gets one durable reason card
    *  instead of one identical card per maintenance tick. */
   lastApprovalReadFailure?: { tip: string; reason: string };
   /** Approval id + current target tip whose acceptance was confirmed
-   *  published. A pure rebase keeps the approval id but must publish a second,
-   *  explicit realignment receipt for the rewritten target. */
+   *  published. Later work keeps the approval id but publishes a fresh landing
+   *  receipt naming the current tip. */
   ackedApprovalId?: string;
   /**
    * What the human was actually shown for review, captured when merge-ready
@@ -6430,7 +6426,7 @@ export class Body {
       : { reason: `Could not resolve the local target branch ${targetBranch}.` };
   }
 
-  /** Push the agent's feature tip and publish the exact human-approval target. */
+  /** Push the agent's feature tip and publish the corner's current review. */
   private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
     const boundRepo = info.boundRepo;
     if (!boundRepo || info.archived) return false;
@@ -6732,25 +6728,17 @@ export class Body {
     // State machine: an approvable change is waiting on a person.
     this.setCornerState(info, 'waiting-on-human', 'review');
     await this.postParentCornerStatus(info, 'ready', 'Work is ready for review.');
-    // A target-sync turn may have rewritten only commit metadata. Re-read the
-    // durable signed approvals immediately instead of waiting for the next
-    // maintenance tick: matching patch identity publishes the visible
-    // realigned/landing receipt now; changed content publishes re-approve now.
+    // A target-sync or later work turn may have advanced the tip. Re-read the
+    // durable corner approval immediately so the current work can land without
+    // another human tap.
     if (info.humanMergeApproval) await this.findHumanMergeApproval(info);
     return true;
   }
 
   /**
-   * Find a tip- or content-matching approval from a device-held human admin,
-   * never an agent.
-   *
-   * Every verifiable approval addressed to this corner gets a response, not
-   * just the one that matches the current review target: an approval naming
-   * an older tip is answered ONCE with a plain rejection (which tip it named,
-   * which tip is current) so the app's approve panel can resolve instead of
-   * spinning on DELIVERING forever. Silence was the defect: the event sat on
-   * the relay, verified fine against the repo+branch binding, and was skipped
-   * by nothing but a quiet `continue`.
+   * Find a standing approval for this corner + repository + target branch from
+   * a device-held human admin, never an agent. The signed tip and patch id are
+   * review snapshots; ongoing work in the same corner does not spend approval.
    */
   /**
    * Key succession (auth-service answer, no ledger knowledge here): when the
@@ -6897,17 +6885,13 @@ export class Body {
       return undefined;
     }
     info.lastApprovalReadFailure = undefined;
-    // Oldest first so a stale-tip reply goes out before (or alongside) the
-    // acceptance for a newer, matching approval from the same reviewer.
+    // Oldest first: the first still-authoritative approval is the standing
+    // grant for this corner's one merge.
     approvals.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-    const rejectedIds = (info.rejectedApprovalIds ??= new Set<string>());
     for (const approval of approvals) {
       if (!verifyEvent(approval)) continue;
       if (approval.pubkey === this.agentIdentity.publicKey) continue;
-      if (!verifyApproval(approval, approval.pubkey, target)) {
-        await this.rejectStaleTipApproval(info, target, approval, rejectedIds, approvalRelay);
-        continue;
-      }
+      if (!verifyApproval(approval, approval.pubkey, target, info.subchannelId)) continue;
       const authority = await authorizeReviewer({
         pubkey: approval.pubkey,
         relay: approvalRelay,
@@ -6924,7 +6908,10 @@ export class Body {
       }
       const approvedTip = tagValue(approval, 'tip') ?? target.tip;
       const approvedPatchId = tagValue(approval, 'patch-id');
-      const realigned = approvedTip !== target.tip;
+      const tipAdvanced = approvedTip !== target.tip;
+      const realigned = Boolean(
+        tipAdvanced && approvedPatchId && target.patchId && approvedPatchId === target.patchId,
+      );
       info.humanMergeApproval = {
         id: approval.id,
         reviewer: approval.pubkey,
@@ -6945,12 +6932,14 @@ export class Body {
               this.agentIdentity,
               realigned
                 ? `Realigned with ${target.branch.replace(/^refs\/heads\//, '')} — landing ${target.tip.slice(0, 12)} with your existing approval…`
-                : `Approval received — landing ${target.branch.replace(/^refs\/heads\//, '')} at ${target.tip.slice(0, 12)}…`,
+                : tipAdvanced
+                  ? `Approval received — landing the current ${target.branch.replace(/^refs\/heads\//, '')} tip ${target.tip.slice(0, 12)} with your standing corner approval…`
+                  : `Approval received — landing ${target.branch.replace(/^refs\/heads\//, '')} at ${target.tip.slice(0, 12)}…`,
               [
                 ...approvalAckTags(this.agentIdentity.publicKey, approval, target),
                 ['decision', 'accepted'],
                 ['state', realigned ? 'realigned' : 'landing'],
-                ...(realigned ? [['approved-tip', approvedTip]] : []),
+                ...(tipAdvanced ? [['approved-tip', approvedTip]] : []),
               ],
             ),
           {
@@ -6976,73 +6965,6 @@ export class Body {
       return info.humanMergeApproval;
     }
     return undefined;
-  }
-
-  /** Answer (once per event id) an authority-verified approval that binds to
-   *  this repo+branch but names a tip other than the current review target. */
-  private async rejectStaleTipApproval(
-    info: SubchannelInfo,
-    target: NonNullable<SubchannelInfo['mergeTarget']>,
-    approval: NostrEvent,
-    rejectedIds: Set<string>,
-    approvalRelay: RelayReader,
-  ): Promise<void> {
-    if (rejectedIds.has(approval.id)) return;
-    const tags = Object.fromEntries(approval.tags.filter((tag) => tag.length >= 2));
-    if (tags['t'] !== APPROVAL_MARKER) return;
-    if (tags['repo'] && tags['repo'] !== target.repo) return;
-    if (tags['branch'] && tags['branch'] !== target.branch) return;
-    if (!tags['tip'] || tags['tip'] === target.tip) return;
-    const authority = await authorizeReviewer({
-      pubkey: approval.pubkey,
-      relay: approvalRelay,
-      channelId: info.subchannelId,
-      custody: 'device',
-    });
-    if (!authority.authorized) {
-      const viaSuccession = await this.isBindingOwnerSuccessor(
-        approval.pubkey,
-        info,
-        approvalRelay,
-      );
-      if (!viaSuccession) return;
-    }
-    const branch = target.branch.replace(/^refs\/heads\//, '');
-    const approvedPatchId = String(tags['patch-id'] ?? '');
-    const contentChanged = Boolean(
-      approvedPatchId && target.patchId && approvedPatchId !== target.patchId,
-    );
-    const published = await publishCritical(
-      () =>
-        postControlMessage(
-          info.subchannelId,
-          this.agentIdentity,
-          contentChanged
-            ? 'The change moved after your approval (new commits). Review the update and re-approve.'
-            : `That legacy approval named an older ${branch} tip (${String(tags['tip']).slice(0, 12)}), ` +
-                `and ${branch} has moved on to ${target.tip.slice(0, 12)}. Review the update and re-approve.`,
-          [
-            ...approvalAckTags(this.agentIdentity.publicKey, approval, target),
-            ['decision', 'rejected'],
-            ['state', contentChanged ? 'content-changed' : 'tip-moved'],
-            ['rejected-tip', String(tags['tip'])],
-            ...(approvedPatchId ? [['approved-patch-id', approvedPatchId]] : []),
-            ...(target.patchId ? [['patch-id', target.patchId]] : []),
-            ...RECOVERABLE_CORNER_FAILURE_TAGS,
-            ['retry', 'blocked' satisfies DeliveryRetryPosture],
-          ],
-        ),
-      {
-        label: `stale-tip approval rejection for corner ${info.subchannelId}`,
-        onRetry: (attempt, delayMs, error) =>
-          console.error(
-            `[body] stale-tip rejection publish retrying (attempt ${attempt} in ${delayMs}ms):`,
-            error,
-          ),
-      },
-    );
-    if (published) rejectedIds.add(approval.id);
-    if (published) this.noteCornerFailure(info);
   }
 
   /**
@@ -7103,13 +7025,13 @@ export class Body {
     // `--follow-tags` carries any ANNOTATED tag reachable from the approved
     // tip and missing from the remote — which is how a release corner's tag
     // reaches the remote at all. It is scoped by construction: only tags
-    // reachable from the exact tip a human approved, only tags the remote does
+    // reachable from the current corner tip, only tags the remote does
     // not already have, and only annotated ones (a lightweight tag is left
     // behind on purpose, since it carries no authorship of its own).
     //
     // This is THE protected-ref brokered push: the approval was verified by
     // `findHumanMergeApproval` (signature, human-admin authority, and this
-    // repo+branch plus exact-tip or independently computed content binding)
+    // corner + repo + target branch binding)
     // before we got here. The broker receives the resulting current tip and
     // re-checks it against the refspec before using daemon credentials.
     const land = await performBrokeredPush({
@@ -7120,9 +7042,10 @@ export class Body {
       approval: {
         verified: true,
         approval: {
+          cornerId: info.subchannelId,
           repo: target.repo,
           branch: target.branch,
-          tip: target.tip,
+          approvedTip: info.humanMergeApproval?.approvedTip ?? target.tip,
           reviewerPubkey: info.humanMergeApproval?.reviewer ?? '',
         },
       },
@@ -7141,7 +7064,7 @@ export class Body {
    * approved tip is already in that repository's object store; landing is a
    * ref advance, not a transfer. It stays fast-forward-only, which is the
    * local equivalent of the remote path's non-fast-forward rejection: if the
-   * target branch moved since the human approved this exact tip, the change is
+   * target branch moved since this corner was approved, the change is
    * refused rather than force-landed. When the target branch is the one
    * checked out at `localPath`, `merge --ff-only` is used so the operator's
    * working tree and index move with the ref instead of silently reading as
@@ -7192,7 +7115,7 @@ export class Body {
 
   /**
    * Land non-relay work only after a signed human-admin approval verified for
-   * the current tip (directly or by stable patch identity). The agent completion
+   * this corner's merge into its target branch. The agent completion
    * path may push its feature ref, but can never advance the target ref itself.
    *
    * Covers both non-relay shapes: a direct git remote (push the approved tip)
@@ -7369,9 +7292,8 @@ export class Body {
 
   /**
    * A moved target starts standing merge preparation. The signed approval is
-   * retained while the corner realigns: a pure rebase keeps its patch identity
-   * and lands without another tap; a content change spends it and publishes an
-   * explicit re-approve state when the new review target appears.
+   * retained while the corner realigns. Rebase commits and any other ongoing
+   * corner work remain covered until this corner's one merge lands.
    */
   private async blockMovedTarget(
     info: SubchannelInfo,
@@ -7386,8 +7308,8 @@ export class Body {
       ['tip', target.tip],
     ];
     // Stop the land poll re-attempting the old tip. Keep humanMergeApproval:
-    // it is the standing grant whose content identity is checked again after
-    // the target-sync turn publishes the rewritten review.
+    // it is the standing corner grant reused after the target-sync turn
+    // publishes the rewritten review.
     info.mergeTarget = undefined;
     info.lastLandFailure = undefined;
     this.setCornerState(info, 'working');
@@ -7395,7 +7317,7 @@ export class Body {
       info.subchannelId,
       this.agentIdentity,
       `${branch} moved after approval. Beeline is realigning ${info.featureBranch} now. ` +
-        'Your approval remains standing: if the reviewed content is unchanged, it will land automatically; if the content changes, Beeline will explain why and ask you to re-approve.',
+        'Your approval remains standing for this corner, including ongoing work, until it lands.',
       [
         ['t', APPROVAL_ACK_TAG],
         ['status', 'working'],

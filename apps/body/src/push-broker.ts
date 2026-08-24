@@ -16,7 +16,7 @@
  *    BEFORE any credential is used:
  *      - the corner's own feature branch → allowed;
  *      - a protected ref (the landing target) → performed only with a valid
- *        owner-signed exact-tip approval artifact (the same `buzz-merge-approval`
+ *        owner-signed corner approval artifact (the same `buzz-merge-approval`
  *        signature the gate and `findHumanMergeApproval` verify);
  *      - anything else → refused with a plain-language reason.
  *
@@ -50,13 +50,15 @@ export interface PushBrokerPolicy {
   protectedRefs: string[];
 }
 
-/** The verified approval binding a reviewer's grant to exactly one tip. */
+/** The verified approval binding a reviewer's grant to one corner merge. */
 export interface BrokerApproval {
+  /** Corner whose one merge is approved. */
+  cornerId: string;
   repo: string;
   /** Full protected ref the grant names, e.g. `refs/heads/main`. */
   branch: string;
-  /** The EXACT commit the protected ref may advance to. */
-  tip: string;
+  /** Work tip visible when the human approved. Audit metadata, not a pin. */
+  approvedTip: string;
   reviewerPubkey: string;
 }
 
@@ -120,10 +122,12 @@ export interface EvaluateBrokeredPushInput {
   forceArgs?: string[];
   /**
    * The approval artifact state for a protected-ref request. `undefined` or
-   * `{verified:false}` means no valid owner-signed exact-tip approval was
+   * `{verified:false}` means no valid owner-signed corner approval was
    * presented — a protected push is refused.
    */
   approval?: VerifiedBrokerApproval | { verified: false };
+  /** Corner requesting this push. Required for a protected landing. */
+  cornerId?: string;
 }
 
 /**
@@ -180,7 +184,7 @@ export function evaluateBrokeredPush(input: EvaluateBrokeredPushInput): BrokerDe
           'target. Only the corner’s own feature branch may be pushed directly; ask in the Room to open a corner for other work.',
       };
     }
-    // Protected: requires the verified exact-tip artifact binding THIS refspec.
+    // Protected: requires the verified corner artifact binding THIS target.
     const approval = input.approval;
     if (!approval || !approval.verified) {
       return {
@@ -188,7 +192,7 @@ export function evaluateBrokeredPush(input: EvaluateBrokeredPushInput): BrokerDe
         refClass,
         reason:
           `${normalizeBranchRef(refspec.split(':', 2)[1] ?? refspec)} is a protected branch: ` +
-          'landing there requires a signed approval from a human admin binding the exact tip. ' +
+          'landing there requires a signed approval from a human admin for this corner. ' +
           'Publish your change for review instead — the approval flow will land it.',
       };
     }
@@ -196,15 +200,16 @@ export function evaluateBrokeredPush(input: EvaluateBrokeredPushInput): BrokerDe
     const boundTip = src && SHA_40.test(src) ? src : undefined;
     if (
       normalizeBranchRef(approval.approval.branch) !== normalizeBranchRef(dst!) ||
-      !boundTip ||
-      boundTip !== approval.approval.tip
+      !input.cornerId ||
+      approval.approval.cornerId !== input.cornerId ||
+      !boundTip
     ) {
       return {
         action: 'refuse',
         refClass,
         reason:
-          'The presented approval does not bind this exact ref and tip, so it authorizes nothing. ' +
-          'Re-publish the change for review to get a fresh approval card.',
+          'The presented approval does not bind this corner and protected ref, so it authorizes nothing. ' +
+          'Use the approval card in this corner.',
       };
     }
   }
@@ -213,7 +218,7 @@ export function evaluateBrokeredPush(input: EvaluateBrokeredPushInput): BrokerDe
     return {
       action: 'perform-with-approval',
       refClass: 'protected',
-      reason: `protected ref advanced under a verified owner-signed exact-tip approval${reviewer ? ` from ${reviewer.slice(0, 12)}` : ''}`,
+      reason: `protected ref advanced under a verified owner-signed corner approval${reviewer ? ` from ${reviewer.slice(0, 12)}` : ''}`,
     };
   }
   return {
@@ -287,6 +292,7 @@ export async function performBrokeredPush(
     refspecs: input.refspecs,
     remote: input.remote,
     policy: input.policy,
+    ...(input.cornerId ? { cornerId: input.cornerId } : {}),
     ...(forceArgs.length ? { forceArgs } : {}),
     ...(input.approval ? { approval: input.approval } : {}),
   });

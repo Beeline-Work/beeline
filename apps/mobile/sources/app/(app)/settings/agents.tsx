@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
+import { Text } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
@@ -31,7 +31,6 @@ type ExpandedField = {
 type FieldConfig = {
     field: AgentDefaultField;
     title: string;
-    icon: keyof typeof Ionicons.glyphMap;
     options: ModeOption[];
     codeDefaultKey: string | null;
 };
@@ -77,7 +76,7 @@ export default function AgentDefaultsSettingsScreen() {
             onPress={() => updateOverride(agent, field, value)}
             showChevron={false}
             rightElement={selected ? (
-                <Ionicons name="checkmark" size={20} color={theme.colors.header.tint} />
+                <Text style={{ color: theme.buzz.accent, fontFamily: theme.buzz.monoSemibold, fontSize: 17 }}>✓</Text>
             ) : undefined}
         />
     );
@@ -98,7 +97,6 @@ export default function AgentDefaultsSettingsScreen() {
                 <Item
                     title={config.title}
                     detail={detail}
-                    icon={<Ionicons name={config.icon} size={29} color="#5856D6" />}
                     onPress={() => setExpanded(isExpanded ? null : { agent, field: config.field })}
                 />
                 {isExpanded && (
@@ -133,7 +131,6 @@ export default function AgentDefaultsSettingsScreen() {
                 <Item
                     title="Clear Overrides"
                     subtitle="Return every agent to code defaults"
-                    icon={<Ionicons name="refresh-outline" size={29} color="#FF9500" />}
                     onPress={() => setAgentDefaultOverrides({})}
                     disabled={Object.keys(agentDefaultOverrides).length === 0}
                     showChevron={false}
@@ -150,21 +147,18 @@ export default function AgentDefaultsSettingsScreen() {
                     {
                         field: 'permissionMode',
                         title: 'Permission',
-                        icon: 'shield-checkmark-outline',
                         options: permissionOptions,
                         codeDefaultKey: codeDefaults.permissionMode,
                     },
                     ...(modelOptions.length > 0 ? [{
                         field: 'modelMode' as const,
                         title: 'Model',
-                        icon: 'hardware-chip-outline' as const,
                         options: modelOptions,
                         codeDefaultKey: codeDefaults.modelMode,
                     }] : []),
                     ...(effortOptions.length > 0 ? [{
                         field: 'effortLevel' as const,
                         title: 'Effort',
-                        icon: 'speedometer-outline' as const,
                         options: effortOptions,
                         codeDefaultKey: codeDefaults.effortLevel,
                     }] : []),

@@ -1,13 +1,11 @@
 import { Stack } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
-import { Typography } from '@/constants/Typography';
 import { createHeader } from '@/components/navigation/Header';
 import { Platform, View } from 'react-native';
 import { isRunningOnMac } from '@/utils/platform';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
-import { MobileGlassBackdrop } from '@/components/MobileGlass';
 
 export const unstable_settings = {
     initialRouteName: 'index',
@@ -29,7 +27,6 @@ export default function RootLayout() {
                     : theme.colors.groupped.background,
             }}
         >
-            <MobileGlassBackdrop enabled={!isDesktop} />
         <Stack
             initialRouteName='index'
             screenOptions={{
@@ -48,7 +45,7 @@ export default function RootLayout() {
                 headerTintColor: theme.colors.header.tint,
                 headerTitleStyle: {
                     color: theme.colors.header.tint,
-                    ...Typography.default('semiBold'),
+                    fontFamily: theme.buzz.proseSemibold,
                 },
 
             }}
@@ -100,6 +97,13 @@ export default function RootLayout() {
             />
             <Stack.Screen
                 name="buzz/members"
+                options={{
+                    headerShown: false,
+                    statusBarStyle: 'light',
+                }}
+            />
+            <Stack.Screen
+                name="buzz/MembersScreen"
                 options={{
                     headerShown: false,
                     statusBarStyle: 'light',
@@ -179,11 +183,16 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="settings/language"
+                options={{
+                    headerTitle: t('settingsLanguage.title'),
+                }}
+            />
+            <Stack.Screen
                 name="changelog"
                 options={{
-                    headerShown: true,
-                    headerTitle: t('navigation.whatsNew'),
-                    headerBackTitle: t('common.back'),
+                    headerShown: false,
+                    statusBarStyle: 'light',
                 }}
             />
             <Stack.Screen

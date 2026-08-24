@@ -6263,13 +6263,9 @@ export class Body {
     this.runningAgentTasks.set(info.subchannelId, task);
   }
 
-  /**
-   * Best-effort `repo`/`branch`/`tip` tags for a corner-scoped failure
-   * message — `apps/push-gateway/src/mapping.ts`'s `isNotifiableEvent`
-   * requires all three on a `body-control` event to make it push-notifiable.
+  /** Best-effort `repo`/`branch`/`tip` context for a corner-scoped failure.
    * Falls back to whatever subset is actually known rather than fabricating
-   * a value; never throws.
-   */
+   * a value; never throws. */
   private deliveryFailureTags(info: SubchannelInfo): string[][] {
     if (!info.boundRepo) return [];
     const tags: string[][] = [

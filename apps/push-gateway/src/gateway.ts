@@ -1,19 +1,11 @@
 import { createHash } from 'node:crypto';
-import {
-  fallbackPersonName,
-  KIND_AGENT_SOUL,
-  KIND_PUT_USER,
-  TAG_AGENT_SOUL,
-} from '@beeline/buzz-client';
+import { KIND_AGENT_SOUL, TAG_AGENT_SOUL } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging } from 'firebase-admin/messaging';
 import { DeliveryState } from './delivery-state.js';
 import {
-  isNotifiableEvent,
   isSuppressedFixtureNotification,
   mapEventToNotification,
-  mapMembershipJoinToNotification,
-  membershipJoin,
   mentionsMember,
   type PushNotificationPlan,
 } from './mapping.js';
@@ -46,8 +38,6 @@ type PollResult = 'backoff' | 'busy' | 'empty' | 'polled';
 function registeredEventFilters(since: number): Record<string, unknown>[] {
   return [
     { kinds: [9], since, limit: 1_000 },
-    // NIP-29 membership adds — the gateway notifies a Room's owners/admins of joins.
-    { kinds: [KIND_PUT_USER], since, limit: 1_000 },
     { kinds: [KIND_AGENT_SOUL], '#t': [TAG_AGENT_SOUL], since, limit: 1_000 },
   ];
 }
@@ -188,25 +178,18 @@ export class PushGateway {
       this.trace(event, recipientPubkey, 'skip', 'no-channel');
       return;
     }
-    // A member join (kind:9000) and an @mention of this recipient each qualify
-    // beyond plain chat. Mentions force past the marker gate only — fixture and
-    // persistent-Workspace suppression below still apply to them.
-    const join = membershipJoin(event);
-    const mention = !join && mentionsMember(event, recipientPubkey);
-    if (!join && event.kind !== 9) {
-      this.trace(event, recipientPubkey, 'skip', 'not-notifiable-kind');
-      return;
-    }
-    if (!join && !mention && !isNotifiableEvent(event)) {
-      this.trace(event, recipientPubkey, 'skip', 'not-notifiable-markers');
+    const mention = mentionsMember(event, recipientPubkey);
+    if (event.kind !== 9) {
+      this.trace(
+        event,
+        recipientPubkey,
+        'skip',
+        event.kind === 9000 ? 'fatigue-policy-member-join' : 'not-notifiable-kind',
+      );
       return;
     }
     if (recipientPubkey === event.pubkey) {
       this.trace(event, recipientPubkey, 'skip', 'sender-self');
-      return;
-    }
-    if (join && recipientPubkey === join.joinerPubkey) {
-      this.trace(event, recipientPubkey, 'skip', 'member-join-self');
       return;
     }
 
@@ -239,37 +222,11 @@ export class PushGateway {
       this.trace(event, recipientPubkey, 'skip', 'fixture-suppressed');
       return;
     }
-    if (join && (context.isChildChannel || context.isDirectMessage)) {
-      // Corner worktree channels mirror their members on every open; DMs are
-      // two-person immutable rooms. Neither kind of join deserves a card.
-      this.trace(event, recipientPubkey, 'skip', 'member-join-quiet-channel');
-      return;
-    }
-
-    let plan: PushNotificationPlan | null;
-    if (join) {
-      let joinerName: string | undefined;
-      try {
-        joinerName = await this.metadata.resolveMemberName(channelId, join.joinerPubkey, reader);
-      } catch (error) {
-        // A failed name lookup must not lose the join card; fall back to the
-        // deterministic seed name instead of rethrowing past suppression.
-        console.log(
-          `[push] join-name-fallback room=${logValue(channelId)} error=${logValue(
-            error instanceof Error ? error.message.slice(0, 120) : String(error).slice(0, 120),
-          )}`,
-        );
-      }
-      plan = mapMembershipJoinToNotification(
-        event,
-        context,
-        joinerName ?? fallbackPersonName(join.joinerPubkey),
-      );
-    } else {
-      plan = mapEventToNotification(event, context, { recipientMentioned: mention });
-    }
+    const plan: PushNotificationPlan | null = mapEventToNotification(event, context, {
+      recipientMentioned: mention,
+    });
     if (!plan) {
-      this.trace(event, recipientPubkey, 'skip', 'unmapped-notification');
+      this.trace(event, recipientPubkey, 'skip', 'fatigue-policy-ambient');
       return;
     }
 
@@ -294,6 +251,12 @@ export class PushGateway {
       return;
     }
 
+    const androidChannelId =
+      plan.data.type === 'mention'
+        ? 'mentions'
+        : plan.data.type === 'direct-message'
+          ? 'activity'
+          : 'attention';
     let result: BatchResponse;
     try {
       result = await this.messaging.sendEachForMulticast({
@@ -301,9 +264,9 @@ export class PushGateway {
         notification: { title: plan.title, body: plan.body },
         data: plan.data,
         android: {
-          collapseKey: channelId,
+          collapseKey: plan.channelId,
           priority: 'high',
-          notification: { channelId: 'messages', tag: `room:${channelId}` },
+          notification: { channelId: androidChannelId, tag: `room:${plan.channelId}` },
         },
       });
     } catch (error) {

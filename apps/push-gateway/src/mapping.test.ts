@@ -1,11 +1,9 @@
-import { fallbackPersonName } from '@beeline/buzz-client';
 import { describe, expect, it } from 'vitest';
 import type { NostrEvent } from '@beeline/nostr';
 import {
   isSuppressedFixtureNotification,
+  isWaitingOnHumanEvent,
   mapEventToNotification,
-  mapMembershipJoinToNotification,
-  membershipJoin,
   mentionsMember,
 } from './mapping.js';
 
@@ -103,31 +101,13 @@ describe('mapEventToNotification', () => {
     ).toBe(true);
   });
 
-  it('maps a named channel message to a Slack-style title and sender-prefixed preview', () => {
-    const result = mapEventToNotification(
-      event([['h', 'channel-123']], 'just for 2 people please'),
-      {
+  it('suppresses ambient Room chat by default', () => {
+    expect(
+      mapEventToNotification(event([['h', 'channel-123']]), {
         roomName: 'chodeclaw',
         senderName: 'Milo',
-      },
-    );
-
-    expect(result).toEqual({
-      channelId: 'channel-123',
-      title: '#chodeclaw',
-      body: 'Milo: just for 2 people please',
-      data: { channelId: 'channel-123', roomName: 'chodeclaw', type: 'channel-activity' },
-    });
-  });
-
-  it('does not double-prefix a channel name that already starts with #', () => {
-    const result = mapEventToNotification(event([['h', 'channel-123']]), {
-      roomName: '#chodeclaw',
-      senderName: 'Milo',
-    });
-
-    expect(result?.title).toBe('#chodeclaw');
-    expect(result?.body).toBe('Milo: Ship the preview now.');
+      }),
+    ).toBeNull();
   });
 
   it('keeps direct messages person-titled with a plain message body', () => {
@@ -139,14 +119,17 @@ describe('mapEventToNotification', () => {
 
     expect(result?.title).toBe('Milo');
     expect(result?.body).toBe('Ship the preview now.');
+    expect(result?.data.type).toBe('direct-message');
   });
 
   it('falls back to the resolved sender when a channel name or authored sender name is absent', () => {
-    const result = mapEventToNotification(event([['h', 'channel-123']]), {});
+    const result = mapEventToNotification(event([['h', 'channel-123']]), {
+      isDirectMessage: true,
+    });
 
     expect(result?.title).not.toMatch(/^#/);
     expect(result?.title).not.toBe('New message');
-    expect(result?.body).toBe(`${result?.title}: Ship the preview now.`);
+    expect(result?.body).toBe('Ship the preview now.');
     expect(result?.data.roomName).toBe('Room');
   });
 
@@ -154,20 +137,21 @@ describe('mapEventToNotification', () => {
     const result = mapEventToNotification(event([['h', 'channel-123']], 'x'.repeat(121)), {
       roomName: 'Demo channel',
       senderName: 'Ada',
+      isDirectMessage: true,
     });
 
-    expect(result?.body).toBe(`Ada: ${'x'.repeat(119)}…`);
+    expect(result?.body).toBe(`${'x'.repeat(119)}…`);
   });
 
   it('keeps hide-preview policy localized and falls back to the room for an unknown sender', () => {
     const result = mapEventToNotification(
       event([['h', 'channel-123']]),
-      { roomName: 'Demo channel' },
+      { roomName: 'Demo channel', senderName: 'Ada', isDirectMessage: true },
       { showMessagePreview: false },
     );
 
-    expect(result?.title).toBe('#Demo channel');
-    expect(result?.body).toBe('New message in Demo channel');
+    expect(result?.title).toBe('Ada');
+    expect(result?.body).toBe('New direct message from Ada');
   });
 
   it('maps body merge metadata to an approval request', () => {
@@ -186,6 +170,40 @@ describe('mapEventToNotification', () => {
     expect(result?.body).toBe('Review requested in Push work');
     expect(result?.data.type).toBe('merge-approval-request');
     expect(result?.data.cornerId).toBe('channel-123');
+  });
+
+  it('maps a fresh agent question and needs-attention transition to attention', () => {
+    const question = event(
+      [
+        ['h', 'corner-question'],
+        ['t', 'agent-message'],
+      ],
+      'Which target branch should I use?',
+    );
+    expect(isWaitingOnHumanEvent(question)).toBe(true);
+    expect(
+      mapEventToNotification(question, { roomName: 'Question', senderName: 'Codex' }),
+    ).toMatchObject({
+      body: 'Codex needs your reply: Which target branch should I use?',
+      data: { type: 'agent-question', channelId: 'corner-question' },
+    });
+
+    const transition = event([
+      ['h', 'parent-room'],
+      ['t', 'body-control'],
+      ['display-status', 'needs-attention'],
+      ['subchannel', 'corner-waiting'],
+    ]);
+    expect(isWaitingOnHumanEvent(transition)).toBe(true);
+    expect(
+      mapEventToNotification(transition, { roomName: 'Roadmap', senderName: 'Ox' }),
+    ).toMatchObject({
+      data: {
+        type: 'agent-attention',
+        channelId: 'corner-waiting',
+        cornerId: 'corner-waiting',
+      },
+    });
   });
 
   it('ignores activity frames, approval grants, and non-request control events', () => {
@@ -255,7 +273,7 @@ describe('mapEventToNotification', () => {
     ).toBeNull();
   });
 
-  it('keeps known tagged chat messages notifiable', () => {
+  it('keeps ordinary agent narration and attachments in-app only', () => {
     const context = { roomName: 'Room', senderName: 'Joy' };
     expect(
       mapEventToNotification(
@@ -264,8 +282,8 @@ describe('mapEventToNotification', () => {
           ['t', 'agent-message'],
         ]),
         context,
-      )?.title,
-    ).toBe('#Room');
+      ),
+    ).toBeNull();
     expect(
       mapEventToNotification(
         event([
@@ -273,8 +291,8 @@ describe('mapEventToNotification', () => {
           ['t', 'buzz-attachment'],
         ]),
         context,
-      )?.title,
-    ).toBe('#Room');
+      ),
+    ).toBeNull();
   });
 
   it('ignores events without a channel', () => {
@@ -298,7 +316,7 @@ describe('mapEventToNotification', () => {
   });
 });
 
-describe('mention and member-join mapping', () => {
+describe('mention mapping', () => {
   const ROOM_CONTEXT = {
     roomName: 'Roadmap',
     workspaceName: 'Product Engineering',
@@ -324,9 +342,13 @@ describe('mention and member-join mapping', () => {
       ['t', 'agent-message'],
     ]);
     expect(
-      mapEventToNotification(relayEvent, { ...ROOM_CONTEXT, senderName: 'Ada' }, {
-        recipientMentioned: true,
-      }),
+      mapEventToNotification(
+        relayEvent,
+        { ...ROOM_CONTEXT, senderName: 'Ada' },
+        {
+          recipientMentioned: true,
+        },
+      ),
     ).toMatchObject({
       title: '#Roadmap',
       body: 'Ada mentioned you: Ship the preview now.',
@@ -345,51 +367,11 @@ describe('mention and member-join mapping', () => {
     });
   });
 
-  it('keeps plain-chat copy when the message is not a mention', () => {
-    const relayEvent = event([['h', 'room'], ['t', 'agent-message']]);
-    expect(mapEventToNotification(relayEvent, { ...ROOM_CONTEXT, senderName: 'Ada' })).toMatchObject({
-      title: '#Roadmap',
-      body: 'Ada: Ship the preview now.',
-      data: { type: 'channel-activity' },
-    });
-  });
-
-  it('parses a real-shaped NIP-29 join and maps the bounded card', () => {
-    const join = membershipJoin({
-      id: 'a'.repeat(64),
-      pubkey: 'c'.repeat(64),
-      created_at: 1,
-      kind: 9000,
-      tags: [
-        ['h', 'room-1234'],
-        ['p', 'd'.repeat(64)],
-        ['role', 'member'],
-      ],
-      content: '',
-      sig: 'e'.repeat(128),
-    });
-    expect(join).toEqual({ channelId: 'room-1234', joinerPubkey: 'd'.repeat(64), role: 'member' });
-    expect(membershipJoin(event([['h', 'room']]))).toBeNull();
-    expect(membershipJoin({ ...event([['h', 'room']]), kind: 9000 })).toBeNull();
-
-    expect(mapMembershipJoinToNotification({ ...event([]), kind: 9000 }, ROOM_CONTEXT)).toBeNull();
-    expect(
-      mapMembershipJoinToNotification(
-        { ...event([['h', 'room-1234'], ['p', 'd'.repeat(64)], ['role', 'member']]), kind: 9000 },
-        ROOM_CONTEXT,
-        'Nova',
-      ),
-    ).toEqual({
-      channelId: 'room-1234',
-      title: '#Roadmap',
-      body: 'Nova joined Roadmap',
-      data: { channelId: 'room-1234', roomName: 'Roadmap', type: 'member-join' },
-    });
-    // A missing name falls back to the deterministic seed name, never blank.
-    const fallback = mapMembershipJoinToNotification(
-      { ...event([['h', 'room'], ['p', 'd'.repeat(64)]]), kind: 9000 },
-      ROOM_CONTEXT,
-    );
-    expect(fallback?.body).toBe(`${fallbackPersonName('d'.repeat(64))} joined Roadmap`);
+  it('keeps the same plain chat in-app only when the recipient is not mentioned', () => {
+    const relayEvent = event([
+      ['h', 'room'],
+      ['t', 'agent-message'],
+    ]);
+    expect(mapEventToNotification(relayEvent, { ...ROOM_CONTEXT, senderName: 'Ada' })).toBeNull();
   });
 });

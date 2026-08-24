@@ -8,6 +8,7 @@ import {
   mentionedAgentPubkey,
   replaceActiveMention,
   roomParticipantPubkeys,
+  selectedMentionPubkeys,
   sectionRoomParticipants,
   sectionRoomRoster,
 } from './room-participants';
@@ -76,9 +77,10 @@ describe('Room participant presentation', () => {
     // read can outrank.
     const roomMembers = new Set(['captain', 'agent', 'merge-worker']);
 
-    expect([
-      ...roomParticipantPubkeys(roomMembers, [], [{ pubkey: 'agent' }], 'captain'),
-    ]).toEqual(['captain', 'agent']);
+    expect([...roomParticipantPubkeys(roomMembers, [], [{ pubkey: 'agent' }], 'captain')]).toEqual([
+      'captain',
+      'agent',
+    ]);
   });
 
   it('still hides infrastructure keys that merely share the Room', () => {
@@ -95,6 +97,19 @@ describe('Room participant presentation', () => {
     expect(mentionedAgentPubkey('hello @brisk!', agents)).toBe('agent-b');
     expect(mentionedAgentPubkey('hello @brisk-pilot!', agents)).toBe('agent-a');
     expect(mentionedAgentPubkey('email @briskness later', agents)).toBeUndefined();
+  });
+
+  it('keeps every selected person or agent mention that remains in the sent text', () => {
+    const selections = new Map([
+      ['alan', 'human-alan'],
+      ['codex', 'agent-codex'],
+      ['ann', 'human-ann'],
+    ]);
+
+    expect(selectedMentionPubkeys('Ask @alan and @codex, not @annette', selections)).toEqual([
+      'human-alan',
+      'agent-codex',
+    ]);
   });
 
   it('finds a mention at the cursor without treating emails or word-internal @ as mentions', () => {

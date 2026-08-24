@@ -173,7 +173,7 @@ async function fetchApprovals(req: MergeRequest): Promise<NostrEvent[]> {
 
 /**
  * Attempt to land `featureBranch` onto `targetBranch`. Merges + pushes ONLY if
- * a valid reviewer-signed approval binds to the feature tip; otherwise refuses.
+ * a valid reviewer-signed approval binds to this corner and target; otherwise refuses.
  */
 export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
   const owner = req.ownerHex ?? req.worker.publicKey;
@@ -211,7 +211,9 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
   }
 
   const approvals = await fetchApprovals(req);
-  const valid = approvals.find((ev) => verifyApproval(ev, req.trustedReviewer, target));
+  const valid = approvals.find((ev) =>
+    verifyApproval(ev, req.trustedReviewer, target, req.channelId),
+  );
   if (!valid) {
     return {
       merged: false,
@@ -222,7 +224,7 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
     };
   }
 
-  // Approval is valid and binds to the exact tip — perform the merge as owner.
+  // Approval is valid for this corner's merge — land its current feature tip.
   git(work, ['checkout', req.targetBranch]);
   const merge = git(work, ['merge', '--ff-only', `origin/${req.featureBranch}`]);
   if (!merge.ok) {
@@ -320,7 +322,7 @@ export function roomMergeCandidates(
 
 /**
  * Durable dynamic gate. It discovers every agent-authored change from the Room,
- * then delegates each exact-tip approval to the unchanged `attemptMerge`
+ * then delegates each corner-scoped approval to `attemptMerge`
  * enforcement path. No reviewer or feature branch is configured ahead of time.
  */
 export class DurableMergeGate {
@@ -384,7 +386,7 @@ export class DurableMergeGate {
       for (const approval of approvals) {
         if (
           this.terminalApprovalIds.has(approval.id) ||
-          !verifyApproval(approval, approval.pubkey, exactTarget)
+          !verifyApproval(approval, approval.pubkey, exactTarget, candidate.subchannelId)
         ) {
           continue;
         }

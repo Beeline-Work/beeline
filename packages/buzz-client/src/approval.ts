@@ -2,8 +2,8 @@
  * Merge approval builder — same event shape as `@beeline/gate` `buildApproval`.
  *
  * kind:9 stream message with:
- *   ["t", "buzz-merge-approval"], ["repo", …], ["branch", …], ["tip", …]
- *   and, for new review cards, ["patch-id", …].
+ *   ["h", <corner id>], ["t", "buzz-merge-approval"], ["repo", …],
+ *   ["branch", …], plus the tip and patch identity visible when approved.
  *
  * Crypto is @beeline/nostr signEvent (BIP-340). Do not invent a second format;
  * the gate worker verifies this exact tag binding.
@@ -15,7 +15,7 @@ import type { Identity, MergeTarget } from './types.js';
 
 export { TAG_MERGE_APPROVAL as APPROVAL_MARKER };
 
-/** Build a signed approval binding the reviewer's grant to `target`. */
+/** Build a signed approval for this corner's one merge into `target.branch`. */
 export function buildMergeApproval(
   reviewer: Identity,
   channelId: string,
@@ -34,29 +34,32 @@ export function buildMergeApproval(
         ['tip', target.tip],
         ...(target.patchId ? [['patch-id', target.patchId]] : []),
       ],
-      content: `APPROVE merge of ${target.repo} ${target.branch} -> ${target.tip}`,
+      content:
+        `APPROVE this corner's merge of ${target.repo} into ${target.branch}; ` +
+        `covers its ongoing work until it lands (current tip ${target.tip})`,
     },
     reviewer.secretKey,
   );
 }
 
 /**
- * Return true iff `event` is a valid approval by `trustedReviewer` that binds
- * to `target`. Legacy approvals remain exact-tip only. New approvals may also
- * authorize a rebased tip when both sides name the same stable patch identity.
+ * Return true iff `event` is a valid approval by `trustedReviewer` for this
+ * corner's one merge into `target.branch`. The signed tip and patch id record
+ * what was visible at approval time; later commits in the same corner do not
+ * spend the grant.
  */
 export function verifyMergeApproval(
   event: NostrEvent,
   trustedReviewer: string,
   target: MergeTarget,
+  channelId: string,
 ): boolean {
   if (event.kind !== KIND_STREAM_MESSAGE) return false;
   if (tagValue(event, 't') !== TAG_MERGE_APPROVAL) return false;
   if (event.pubkey !== trustedReviewer) return false;
   if (!verifyEvent(event)) return false;
+  if (tagValue(event, 'h') !== channelId) return false;
   if (tagValue(event, 'repo') !== target.repo) return false;
   if (tagValue(event, 'branch') !== target.branch) return false;
-  if (tagValue(event, 'tip') === target.tip) return true;
-  const approvedPatch = tagValue(event, 'patch-id');
-  return Boolean(approvedPatch && target.patchId && approvedPatch === target.patchId);
+  return true;
 }

@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, readFile, realpath, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import {
   AcpClient,
@@ -73,6 +73,7 @@ import {
   type Identity,
   type RelayClient,
   type RelayReader,
+  type GitResult,
 } from '@beeline/gate';
 import {
   createBuzzClient,
@@ -440,6 +441,10 @@ export const ROOM_POLL_FAILURE_BACKOFF_CAP_MS = 30_000;
  * gets cancelled and force-suspended.
  */
 export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 3 * 60_000;
+/** Absolute turn ceiling: activity can extend the idle timer, never this cap. */
+export const ROOM_AGENT_HARD_TIMEOUT_MS = Number(
+  process.env.BUZZY_BODY_TURN_HARD_TIMEOUT_MS ?? String(45 * 60_000),
+);
 
 /**
  * Idle window — driven by the exact same per-update activity signal as
@@ -503,7 +508,9 @@ function probeAdvertisedModelCatalog(config: BodyConfig): Promise<AgentModelConf
 
 /** True only for the exact idle-inactivity timeout `AcpClient.sessionPrompt` raises. */
 export function isAcpPromptStallError(error: unknown): boolean {
-  return /ACP session\/prompt timed out after \d+ms/.test(String(error));
+  return /ACP session\/prompt timed out after \d+ms|ACP turn hard deadline exceeded/.test(
+    String(error),
+  );
 }
 
 /**
@@ -2054,11 +2061,7 @@ export class Body {
     checkpoint: RepositoryTruthCheckpoint,
   ) => Promise<BoundRepo>;
   private syncPairingCheckout?: (repo: BoundRepo, landedTip: string) => Promise<void>;
-  private runRepositoryGit?: (
-    repo: BoundRepo,
-    cwd: string,
-    args: string[],
-  ) => Promise<ReturnType<typeof git>>;
+  private runRepositoryGit?: (repo: BoundRepo, cwd: string, args: string[]) => Promise<GitResult>;
   private repositoryAccessToken?: (repo: BoundRepo) => Promise<string | undefined>;
   /** Binding author's current key after succession (auth-service answer). */
   private resolveBindingOwnerKey?: (repo: BoundRepo) => Promise<string | undefined>;
@@ -2116,11 +2119,7 @@ export class Body {
         checkpoint: RepositoryTruthCheckpoint,
       ) => Promise<BoundRepo>;
       syncPairingCheckout?: (repo: BoundRepo, landedTip: string) => Promise<void>;
-      runRepositoryGit?: (
-        repo: BoundRepo,
-        cwd: string,
-        args: string[],
-      ) => Promise<ReturnType<typeof git>>;
+      runRepositoryGit?: (repo: BoundRepo, cwd: string, args: string[]) => Promise<GitResult>;
       repositoryAccessToken?: (repo: BoundRepo) => Promise<string | undefined>;
       resolveBindingOwnerKey?: (repo: BoundRepo) => Promise<string | undefined>;
       onRoomPollSuccess?: (channelId: string) => void;
@@ -2176,11 +2175,7 @@ export class Body {
 
   /** Remote git authority for this repository. GitHub production bindings are
    * required to come through the supervisor's installation-token callback. */
-  private async remoteGit(
-    repo: BoundRepo,
-    cwd: string,
-    args: string[],
-  ): Promise<ReturnType<typeof git>> {
+  private async remoteGit(repo: BoundRepo, cwd: string, args: string[]): Promise<GitResult> {
     if (repo.ownerHex) {
       return gitAuthed(cwd, this.agentIdentity, repo.ownerHex, repo.repo, args);
     }
@@ -2411,7 +2406,7 @@ export class Body {
    * and spawns unwrapped, leaving `session-sandbox.ts`'s denylist callback as
    * the best-effort backstop for harnesses that send permission requests.
    */
-  private sessionSpawnCommand(
+  private async sessionSpawnCommand(
     input: {
       mode: SessionMode;
       cwd: string;
@@ -2421,7 +2416,7 @@ export class Body {
       channelIdForLog?: string;
     },
     env: Record<string, string>,
-  ): { command: string; args: string[] } {
+  ): Promise<{ command: string; args: string[] }> {
     const command = this.config.agentCommand ?? this.config.agentBinary;
     const args = this.config.agentArgs;
     if (!this.config.bwrapPath) return { command, args: [...(args ?? [])] };
@@ -2453,7 +2448,7 @@ export class Body {
         : {}),
     };
     if (input.mode === 'edit') {
-      const gitCommonDir = resolveGitCommonDir(input.worktreePath ?? input.cwd);
+      const gitCommonDir = await resolveGitCommonDir(input.worktreePath ?? input.cwd);
       if (!gitCommonDir) {
         console.warn(
           `[body] OS sandbox skipped for edit session ${input.channelIdForLog ?? input.cwd}: git common directory unresolved`,
@@ -2463,7 +2458,7 @@ export class Body {
       spec.gitCommonDir = gitCommonDir;
       // Re-check at spawn time so restored corners and worktrees created by an
       // older daemon are repaired before the agent runs its first command.
-      if (input.worktreePath) this.provisionWorktreeToolchain(input.worktreePath);
+      if (input.worktreePath) await this.provisionWorktreeToolchain(input.worktreePath);
       // Same bind-try-vs-mkdir reasoning as the harness roots above: the merge
       // gate cannot create its own state root on a read-only $HOME, so create
       // it here, in the daemon, before the child is confined. Corner-only: a
@@ -2502,7 +2497,7 @@ export class Body {
 
     await mkdir(cwd, { recursive: true });
     const env = await this.sessionAgentEnv();
-    const spawnCommand = this.sessionSpawnCommand(
+    const spawnCommand = await this.sessionSpawnCommand(
       { mode: 'readonly', cwd, channelIdForLog: `${channelId}:corner-metadata` },
       env,
     );
@@ -2656,9 +2651,7 @@ export class Body {
       ...(input.resumePlan ? { resumePlan: input.resumePlan } : {}),
       activationCount: 0,
     };
-    const sessionIdleMs = harnessSessionIdleMs(
-      this.config.agentCommand ?? this.config.agentBinary,
-    );
+    const sessionIdleMs = harnessSessionIdleMs(this.config.agentCommand ?? this.config.agentBinary);
     const lifecycle: SessionLifecycle = {
       ...(sessionIdleMs ? { idleMs: sessionIdleMs } : {}),
       activate: async () => {
@@ -2686,7 +2679,7 @@ export class Body {
           ...(input.agentMemory ? [input.agentMemory.dir] : []),
           ...(workbench ? [workbench.dir] : []),
         ];
-        const spawnCommand = this.sessionSpawnCommand(
+        const spawnCommand = await this.sessionSpawnCommand(
           {
             mode: input.mode,
             cwd: input.cwd,
@@ -2750,7 +2743,7 @@ export class Body {
           (Boolean(input.resumeOnFirstActivation) || (session.activationCount ?? 0) > 0);
         const gitState =
           resumingCorner && input.resumeTargetRef
-            ? readCornerGitResumeState(input.cwd, input.resumeTargetRef)
+            ? await readCornerGitResumeState(input.cwd, input.resumeTargetRef)
             : undefined;
         const reprime = measureSessionReprime(
           transcript,
@@ -3216,7 +3209,7 @@ export class Body {
         stallBaselineSeq = this.inboundMessageSeq.get(turn.channelId) ?? 0;
         armStallTimer();
         modelCallStartedAt = new Date().toISOString();
-        return session.client.sessionPrompt(
+        const promptCall = session.client.sessionPrompt(
           session.sessionId,
           wirePrompt,
           ROOM_AGENT_PROMPT_TIMEOUT_MS,
@@ -3237,6 +3230,20 @@ export class Body {
             }),
           armStallTimer,
         );
+        let hardTimer: NodeJS.Timeout | undefined;
+        const hardDeadline = new Promise<never>((_, reject) => {
+          hardTimer = setTimeout(
+            () =>
+              reject(
+                new Error(`ACP turn hard deadline exceeded after ${ROOM_AGENT_HARD_TIMEOUT_MS}ms`),
+              ),
+            ROOM_AGENT_HARD_TIMEOUT_MS,
+          );
+          hardTimer.unref?.();
+        });
+        return Promise.race([promptCall, hardDeadline]).finally(() => {
+          if (hardTimer) clearTimeout(hardTimer);
+        });
       });
       clearStallTimer();
       // End-of-turn corner-request extraction: the final text may carry the
@@ -3657,7 +3664,7 @@ export class Body {
         this.primeCodegraphIndex(worktreePath);
         const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
         const restoredCornerMemory = await this.sessionMemory(communityId);
-        const cornerFilesystem = this.cornerFilesystemPolicy(
+        const cornerFilesystem = await this.cornerFilesystemPolicy(
           cornerRepo,
           worktreePath,
           agentPrivateState?.root,
@@ -3805,6 +3812,18 @@ export class Body {
             !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)
           ) {
             BODY_RESTART_CONTINUATIONS.add(restartContinuationKey);
+            await postControlMessage(
+              subchannelId,
+              this.agentIdentity,
+              'Resumed automatically after a daemon restart. Existing worktree files, commits, plan, and durable context were loaded before work continued.',
+              [
+                ['status', 'working'],
+                ['restart', 'resumed'],
+                ['request', request.eventId],
+              ],
+            ).catch((error) =>
+              console.error(`[body] corner ${subchannelId} restart-resume note failed:`, error),
+            );
             const originalPrompt = attachmentPrompt(
               request.authorPubkey,
               request.content,
@@ -4111,7 +4130,7 @@ export class Body {
     // Fail closed: the edit session must never launch onto the shared primary
     // checkout. Mirrors firstmate's `validate_spawn_worktree` pre-launch
     // assertion — refuse the corner rather than tangle the protected branch.
-    assertCornerWorktreeIsolated(worktreePath, boundRepo.localPath);
+    await assertCornerWorktreeIsolated(worktreePath, boundRepo.localPath);
 
     // Best-effort, non-blocking: build the codegraph index for this fresh
     // worktree so codegraph MCP tools have something to query as soon as
@@ -4119,7 +4138,7 @@ export class Body {
     this.primeCodegraphIndex(worktreePath);
     const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
     const cornerMemory = await this.sessionMemory(communityId);
-    const cornerFilesystem = this.cornerFilesystemPolicy(
+    const cornerFilesystem = await this.cornerFilesystemPolicy(
       boundRepo,
       worktreePath,
       agentPrivateState?.root,
@@ -5276,7 +5295,7 @@ export class Body {
     // A release turn answers from host-read git facts, and registers the offer
     // it is about to make so a plain "yes" afterwards still means "cut it".
     const releaseContext = releaseIntent
-      ? this.prepareReleaseProposal(tlcChannelId, boundRepo, releaseIntent)
+      ? await this.prepareReleaseProposal(tlcChannelId, boundRepo, releaseIntent)
       : undefined;
     const prompt = releaseContext
       ? [releaseContext, '', sharedPrompt].join('\n')
@@ -5495,14 +5514,14 @@ export class Body {
    * unreleased — the briefing tells the agent to say so and stop, so a "yes"
    * then has nothing to confirm, correctly.
    */
-  private prepareReleaseProposal(
+  private async prepareReleaseProposal(
     tlcChannelId: string,
     boundRepo: BoundRepo | undefined,
     intent: ReleaseRoomIntent,
-  ): string | undefined {
+  ): Promise<string | undefined> {
     const repoPath = boundRepo?.localPath;
     if (!repoPath) return undefined;
-    const work = summarizeUnreleasedWork(
+    const work = await summarizeUnreleasedWork(
       repoPath,
       boundRepo.targetBranch ?? 'refs/heads/main',
       boundRepo.remoteName,
@@ -6250,7 +6269,7 @@ export class Body {
           info.subchannelId,
           this.agentIdentity,
           `Agent task stopped before merge-ready: ${summarizeGitFailure(String(error))}`,
-          [...RECOVERABLE_CORNER_FAILURE_TAGS, ...this.deliveryFailureTags(info)],
+          [...RECOVERABLE_CORNER_FAILURE_TAGS, ...(await this.deliveryFailureTags(info))],
         ).catch(() => undefined);
         await this.postParentCornerStatus(
           info,
@@ -6267,7 +6286,7 @@ export class Body {
   /** Best-effort `repo`/`branch`/`tip` context for a corner-scoped failure.
    * Falls back to whatever subset is actually known rather than fabricating
    * a value; never throws. */
-  private deliveryFailureTags(info: SubchannelInfo): string[][] {
+  private async deliveryFailureTags(info: SubchannelInfo): Promise<string[][]> {
     if (!info.boundRepo) return [];
     const tags: string[][] = [
       ['repo', this.repoId(info.boundRepo)],
@@ -6276,7 +6295,7 @@ export class Body {
     if (info.mergeTarget) {
       tags.push(['tip', info.mergeTarget.tip]);
     } else {
-      const head = git(info.worktreePath, ['rev-parse', 'HEAD']);
+      const head = await git(info.worktreePath, ['rev-parse', 'HEAD']);
       if (head.ok && /^[0-9a-f]{40}$/.test(head.stdout.trim())) {
         tags.push(['tip', head.stdout.trim()]);
       }
@@ -6370,7 +6389,7 @@ export class Body {
     const remoteName = boundRepo.remoteName;
     if (!remoteName) return undefined;
     try {
-      const remote = git(info.worktreePath, ['remote', 'get-url', remoteName]);
+      const remote = await git(info.worktreePath, ['remote', 'get-url', remoteName]);
       if (!remote.ok) return undefined;
       const token = await this.repositoryAccessToken?.(boundRepo);
       return await resolvePreviewUrl({
@@ -6399,7 +6418,7 @@ export class Body {
       // Review against the endpoint landing will PUSH to. Git permits a
       // separate fetch URL (preview tests and real mirrors use one), and
       // checking that endpoint would certify the wrong target branch.
-      const pushUrl = git(info.worktreePath, ['remote', 'get-url', '--push', remote]);
+      const pushUrl = await git(info.worktreePath, ['remote', 'get-url', '--push', remote]);
       const targetRemote = pushUrl.ok && pushUrl.stdout.trim() ? pushUrl.stdout.trim() : remote;
       const targetLs = await this.remoteGit(boundRepo, info.worktreePath, [
         'ls-remote',
@@ -6419,7 +6438,7 @@ export class Body {
         : { reason: `The target branch ${targetBranch} no longer exists on ${remote}.` };
     }
 
-    const localTarget = git(info.worktreePath, ['rev-parse', '--verify', targetBranch]);
+    const localTarget = await git(info.worktreePath, ['rev-parse', '--verify', targetBranch]);
     const tip = localTarget.stdout.trim();
     return localTarget.ok && /^[0-9a-f]{40}$/.test(tip)
       ? { tip }
@@ -6430,7 +6449,7 @@ export class Body {
   private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
     const boundRepo = info.boundRepo;
     if (!boundRepo || info.archived) return false;
-    const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+    const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return false;
 
     const target = {
@@ -6443,7 +6462,7 @@ export class Body {
     const targetIsAncestor = Boolean(
       currentTarget.tip &&
       (currentTarget.tip === tip ||
-        git(info.worktreePath, ['merge-base', '--is-ancestor', currentTarget.tip, tip]).ok),
+        (await git(info.worktreePath, ['merge-base', '--is-ancestor', currentTarget.tip, tip])).ok),
     );
     const targetSyncReason = currentTarget.reason
       ? currentTarget.reason
@@ -6452,15 +6471,12 @@ export class Body {
         : undefined;
     const base = targetIsAncestor
       ? currentTarget.tip!
-      : resolveReviewBaseTip(info.worktreePath, target.branch);
-    const files = listChangeReviewFiles(info.worktreePath, base, tip);
-    target.patchId = reviewPatchId(info.worktreePath, base, tip);
-    const status = git(info.worktreePath, [
-      'status',
-      '--porcelain=v1',
-      '--untracked-files=all',
-      '-z',
-    ]).stdout;
+      : await resolveReviewBaseTip(info.worktreePath, target.branch);
+    const files = await listChangeReviewFiles(info.worktreePath, base, tip);
+    target.patchId = await reviewPatchId(info.worktreePath, base, tip);
+    const status = (
+      await git(info.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all', '-z'])
+    ).stdout;
     const dirtyEntries = projectDirtyStatus(
       info.worktreePath,
       status,
@@ -6473,8 +6489,9 @@ export class Body {
       const withdrawnTarget = info.mergeTarget;
       info.mergeTarget = undefined;
       const commitCount =
-        Number(git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`]).stdout.trim()) ||
-        0;
+        Number(
+          (await git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`])).stdout.trim(),
+        ) || 0;
       const withdrawnDetail = withdrawnTarget
         ? ` The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn.`
         : '';
@@ -6491,11 +6508,11 @@ export class Body {
               .join('\n')
           : files.length > 0 && !target.patchId
             ? 'The reviewed-content identity could not be computed. The review card was not published, so no approval can be misapplied.'
-          : withdrawnTarget
-            ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
-            : commitCount === 0
-              ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
-              : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
+            : withdrawnTarget
+              ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
+              : commitCount === 0
+                ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
+                : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
       info.lastMergeNotReadyReason = detail;
       await postControlMessage(
         info.subchannelId,
@@ -6524,8 +6541,9 @@ export class Body {
       base,
       tip,
       commitCount:
-        Number(git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`]).stdout.trim()) ||
-        0,
+        Number(
+          (await git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`])).stdout.trim(),
+        ) || 0,
       fileCount: files.length,
       files: files.slice(0, 5).map((file) => file.path),
     };
@@ -6540,7 +6558,8 @@ export class Body {
     // push instead of being clobbered.
     const rewritten =
       Boolean(info.pushedFeatureTip) &&
-      !git(info.worktreePath, ['merge-base', '--is-ancestor', info.pushedFeatureTip!, tip]).ok;
+      !(await git(info.worktreePath, ['merge-base', '--is-ancestor', info.pushedFeatureTip!, tip]))
+        .ok;
     const forceArgs = rewritten
       ? [`--force-with-lease=refs/heads/${info.featureBranch}:${info.pushedFeatureTip}`]
       : [];
@@ -6802,10 +6821,7 @@ export class Body {
     const configuredOrigin = this.config.relayBaseUrl.replace(/\/$/, '');
     const configuredHost = this.config.relayHost.toLowerCase();
     const defaultOrigin = DEFAULT_RELAY_BASE_URL;
-    if (
-      configuredOrigin !== defaultOrigin ||
-      !isProductionRelayHost(configuredHost)
-    ) {
+    if (configuredOrigin !== defaultOrigin || !isProductionRelayHost(configuredHost)) {
       const relay = createRelayClient(this.agentIdentity);
       attempts.push({
         relay,
@@ -7076,13 +7092,13 @@ export class Body {
    * linked worktree of THIS repository, so its tags are already in the same ref
    * store the land is advancing. There is nowhere to carry them to.
    */
-  private landInLocalCheckout(
+  private async landInLocalCheckout(
     localPath: string,
     target: NonNullable<SubchannelInfo['mergeTarget']>,
-  ): LandOutcome {
+  ): Promise<LandOutcome> {
     const branch = target.branch.replace(/^refs\/heads\//, '');
     const ref = `refs/heads/${branch}`;
-    const current = git(localPath, ['rev-parse', '--verify', ref]);
+    const current = await git(localPath, ['rev-parse', '--verify', ref]);
     if (!current.ok) {
       return {
         kind: 'failed',
@@ -7091,25 +7107,25 @@ export class Body {
     }
     const targetTip = current.stdout.trim();
     if (targetTip === target.tip) return { kind: 'skip' };
-    if (!git(localPath, ['cat-file', '-e', `${target.tip}^{commit}`]).ok) {
+    if (!(await git(localPath, ['cat-file', '-e', `${target.tip}^{commit}`])).ok) {
       return {
         kind: 'failed',
         reason: 'The approved change is no longer present in this repository.',
       };
     }
     // Fast-forward only — a diverged target is a moved target.
-    if (!git(localPath, ['merge-base', '--is-ancestor', targetTip, target.tip]).ok) {
+    if (!(await git(localPath, ['merge-base', '--is-ancestor', targetTip, target.tip])).ok) {
       return {
         kind: 'failed',
         reason: `The ${branch} branch has moved on since this change was approved — it needs to be rebased before it can land.`,
       };
     }
 
-    const checkedOut = git(localPath, ['symbolic-ref', '--quiet', 'HEAD']).stdout.trim();
+    const checkedOut = (await git(localPath, ['symbolic-ref', '--quiet', 'HEAD'])).stdout.trim();
     const land =
       checkedOut === ref
-        ? git(localPath, ['merge', '--ff-only', target.tip])
-        : git(localPath, ['update-ref', ref, target.tip, targetTip]);
+        ? await git(localPath, ['merge', '--ff-only', target.tip])
+        : await git(localPath, ['update-ref', ref, target.tip, targetTip]);
     return land.ok ? { kind: 'landed' } : { kind: 'failed', reason: land.stderr };
   }
 
@@ -7145,7 +7161,7 @@ export class Body {
         }
         const outcome = currentRemote
           ? await this.landOnDirectRemote(info, currentRemote, target)
-          : this.landInLocalCheckout(currentRepo.localPath!, target);
+          : await this.landInLocalCheckout(currentRepo.localPath!, target);
         return { boundRepo: currentRepo, remote: currentRemote, outcome };
       });
       boundRepo = landing.boundRepo;
@@ -7439,15 +7455,14 @@ export class Body {
     // Where it actually went comes from the same truth object that supplied
     // the session cwd, corner base, and land target. Pairing-root history is
     // intentionally not an agent-visible recap input.
-    const remoteUrl =
-      info.boundRepo?.truth?.remoteUrl ??
-      info.boundRepo?.remoteUrl ??
-      (() => {
-        const remoteName = info.boundRepo?.remoteName;
-        if (!remoteName) return undefined;
-        const remote = git(info.worktreePath, ['remote', 'get-url', remoteName]);
-        return remote.ok ? remote.stdout.trim() : undefined;
-      })();
+    let remoteUrl = info.boundRepo?.truth?.remoteUrl ?? info.boundRepo?.remoteUrl;
+    if (!remoteUrl) {
+      const remoteName = info.boundRepo?.remoteName;
+      if (remoteName) {
+        const remote = await git(info.worktreePath, ['remote', 'get-url', remoteName]);
+        remoteUrl = remote.ok ? remote.stdout.trim() : undefined;
+      }
+    }
     const destination: LandDestination = {
       branch,
       tip: landedTip,
@@ -7520,11 +7535,7 @@ export class Body {
     // Relay-origin repositories are hosted by the Buzz relay and have no
     // GitHub checks to read; a local-only repository has no remote at all.
     if (!parentId || !boundRepo || boundRepo.ownerHex || !boundRepo.remoteName) return;
-    // Read the remote synchronously, before the corner's worktree can be
-    // reaped by the archive that follows this land.
     const repoDir = boundRepo.localPath ?? info.worktreePath;
-    const repoRef = resolveGitHubRepo(repoDir, boundRepo.remoteName);
-    if (!repoRef) return;
     info.ciWatchStarted = true;
 
     const branch = (
@@ -7534,6 +7545,10 @@ export class Body {
     ).replace(/^refs\/heads\//, '');
     const subchannelId = info.subchannelId;
     const watch = (async () => {
+      // The canonical checkout survives corner archive; resolve through the
+      // deadline-bound Git worker without blocking the core loop.
+      const repoRef = await resolveGitHubRepo(repoDir, boundRepo.remoteName!);
+      if (!repoRef) return;
       const token = this.ciWatchOptions.token ?? (await this.repositoryAccessToken?.(boundRepo));
       const conclusion = await watchCommitCi(repoRef, landedTip, {
         pollMs: CI_WATCH_POLL_MS,
@@ -7649,7 +7664,7 @@ export class Body {
         );
         continue;
       }
-      const result = realignWorktreeOntoTarget(other.worktreePath, {
+      const result = await realignWorktreeOntoTarget(other.worktreePath, {
         remoteName: other.boundRepo.remoteName ?? undefined,
         targetBranch,
       });
@@ -7794,7 +7809,7 @@ export class Body {
           .trim()
           .split(/\s+/)[0]
       : boundRepo.localPath
-        ? git(boundRepo.localPath, ['rev-parse', '--verify', target.branch]).stdout.trim()
+        ? (await git(boundRepo.localPath, ['rev-parse', '--verify', target.branch])).stdout.trim()
         : undefined;
     return targetTip === target.tip ? target.tip : undefined;
   }
@@ -8319,7 +8334,7 @@ export class Body {
   }
 
   private async noteCommitWatchFailure(info: SubchannelInfo, error: unknown): Promise<void> {
-    const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+    const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     const previous = info.commitWatchFailure;
     const attempts = previous?.tip === tip ? previous.attempts + 1 : 1;
     info.commitWatchFailure = { tip, attempts };
@@ -8378,7 +8393,7 @@ export class Body {
     // publish half-finished work or race the tail's own verdict.
     if (this.runningAgentTasks.has(info.subchannelId)) return;
     if (info.session.client?.activeRunId?.(info.session.sessionId)) return;
-    const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+    const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return;
     if (info.observedReviewTip === tip || info.mergeTarget?.tip === tip || info.landedTip === tip) {
       return;
@@ -8389,22 +8404,22 @@ export class Body {
     // inside `publishMergeReady` — these are guards, not the verdict. If the
     // local target ref cannot be resolved at all, stay silent: the turn tail
     // remains the authority for shapes this cheap read cannot see.
-    const status = git(info.worktreePath, [
-      'status',
-      '--porcelain=v1',
-      '--untracked-files=all',
-      '-z',
-    ]).stdout;
+    const status = (
+      await git(info.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all', '-z'])
+    ).stdout;
     if (projectDirtyStatus(info.worktreePath, status, info.session.agentPrivateState).length > 0) {
       return;
     }
     const targetBranch = info.boundRepo.targetBranch ?? 'refs/heads/main';
-    const baseTip = git(info.worktreePath, ['rev-parse', '--verify', targetBranch]).stdout.trim();
+    const baseTip = (
+      await git(info.worktreePath, ['rev-parse', '--verify', targetBranch])
+    ).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(baseTip)) return;
-    if (!git(info.worktreePath, ['merge-base', '--is-ancestor', baseTip, tip]).ok) return;
+    if (!(await git(info.worktreePath, ['merge-base', '--is-ancestor', baseTip, tip])).ok) return;
     const ahead =
-      Number(git(info.worktreePath, ['rev-list', '--count', `${baseTip}..${tip}`]).stdout.trim()) ||
-      0;
+      Number(
+        (await git(info.worktreePath, ['rev-list', '--count', `${baseTip}..${tip}`])).stdout.trim(),
+      ) || 0;
     if (ahead === 0) return;
 
     const ready = await this.publishMergeReady(info);
@@ -8672,7 +8687,7 @@ export class Body {
       this.persistConcludeEpisode(info);
       return;
     }
-    if (this.cornerHasUnreviewedCommits(info)) return;
+    if (await this.cornerHasUnreviewedCommits(info)) return;
 
     // State 2 — a fresh unanswered ask. Read the corner's own channel so
     // narrative segments (relay-only) count, not just durable conversation.
@@ -8733,10 +8748,10 @@ export class Body {
   /** Cheap mirror of `observeCornerCommits`' pre-checks: commits beyond the
    *  target branch in a clean tree that no review has covered yet. True means
    *  the commit watch — which ran earlier this same tick — owns the outcome. */
-  private cornerHasUnreviewedCommits(info: SubchannelInfo): boolean {
+  private async cornerHasUnreviewedCommits(info: SubchannelInfo): Promise<boolean> {
     if (!info.boundRepo) return false;
     try {
-      const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+      const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
       if (!/^[0-9a-f]{40}$/.test(tip)) return false;
       if (
         info.observedReviewTip === tip ||
@@ -8745,21 +8760,24 @@ export class Body {
       ) {
         return false;
       }
-      const status = git(info.worktreePath, [
-        'status',
-        '--porcelain=v1',
-        '--untracked-files=all',
-        '-z',
-      ]).stdout;
+      const status = (
+        await git(info.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all', '-z'])
+      ).stdout;
       if (projectDirtyStatus(info.worktreePath, status, info.session.agentPrivateState).length > 0)
         return false;
       const targetBranch = info.boundRepo.targetBranch ?? 'refs/heads/main';
-      const baseTip = git(info.worktreePath, ['rev-parse', '--verify', targetBranch]).stdout.trim();
+      const baseTip = (
+        await git(info.worktreePath, ['rev-parse', '--verify', targetBranch])
+      ).stdout.trim();
       if (!/^[0-9a-f]{40}$/.test(baseTip)) return false;
-      if (!git(info.worktreePath, ['merge-base', '--is-ancestor', baseTip, tip]).ok) return false;
+      if (!(await git(info.worktreePath, ['merge-base', '--is-ancestor', baseTip, tip])).ok) {
+        return false;
+      }
       const ahead =
         Number(
-          git(info.worktreePath, ['rev-list', '--count', `${baseTip}..${tip}`]).stdout.trim(),
+          (
+            await git(info.worktreePath, ['rev-list', '--count', `${baseTip}..${tip}`])
+          ).stdout.trim(),
         ) || 0;
       return ahead > 0;
     } catch {
@@ -8833,7 +8851,7 @@ export class Body {
           info.subchannelId,
           this.agentIdentity,
           `Agent could not be driven to a conclusion: ${summarizeGitFailure(String(error))}`,
-          [...RECOVERABLE_CORNER_FAILURE_TAGS, ...this.deliveryFailureTags(info)],
+          [...RECOVERABLE_CORNER_FAILURE_TAGS, ...(await this.deliveryFailureTags(info))],
         ).catch(() => undefined);
         await this.postParentCornerStatus(
           info,
@@ -8866,8 +8884,6 @@ export class Body {
         console.error(`[body] Room ${channelId} ${label} failed; will retry:`, error);
       }
     };
-    await guarded('stray worktree prune', () => this.pruneStrayCornerWorktrees(boundRepo));
-    await guarded('workbench sweep', () => this.sweepWorkbench());
     // Landing runs BEFORE the corner member poll, and the ordering is
     // load-bearing rather than cosmetic.
     //
@@ -8882,6 +8898,10 @@ export class Body {
     // timeouts, so putting them first costs the member poll nothing.
     await guarded('direct merge approval poll', () => this.pollDirectRemoteApprovals());
     await guarded('merge completion poll', () => this.pollMergeCompletions());
+    // Local cleanup may inspect many worktrees. Keep it behind the bounded
+    // approval path so maintenance cannot delay an already-authorized land.
+    await guarded('stray worktree prune', () => this.pruneStrayCornerWorktrees(boundRepo));
+    await guarded('workbench sweep', () => this.sweepWorkbench());
     // Another agent serving this repository may have landed a merge in this
     // Room; our own corners must follow without being asked (post-merge
     // auto-realign, cross-agent half).
@@ -9234,11 +9254,7 @@ export class Body {
         info.participantPubkeys = [...participantPubkeys];
         const userPrompt = attachmentPrompt(evt.pubkey, evt.content, attachments);
         if (
-          !isChannelAddressedMessage(
-            evt,
-            this.agentIdentity.publicKey,
-            info.participantPubkeys,
-          )
+          !isChannelAddressedMessage(evt, this.agentIdentity.publicKey, info.participantPubkeys)
         ) {
           await this.durableState.appendConversation(subchannelId, {
             role: 'user',
@@ -9866,7 +9882,7 @@ export class Body {
       }
 
       const durableSummary = await this.durableState.latestAgentMessage(subchannelId);
-      const disposition = this.describeAbandonedCornerWork(entry);
+      const disposition = await this.describeAbandonedCornerWork(entry);
       const archiveSummary = [
         cornerArchiveSummary(undefined, durableSummary),
         `Closed without a live agent session because ${entry.reason}.`,
@@ -9917,22 +9933,27 @@ export class Body {
    * a still-present worktree are lost — name the branch that still holds the
    * commits, and say so when there are edits going with the worktree.
    */
-  private describeAbandonedCornerWork(entry: AbandonedCorner): string | undefined {
+  private async describeAbandonedCornerWork(entry: AbandonedCorner): Promise<string | undefined> {
     const branch = entry.featureBranch;
     if (!branch) return undefined;
     const gitDir = entry.boundRepo?.localPath;
-    const branchExists =
-      gitDir && git(gitDir, ['rev-parse', '--verify', `refs/heads/${branch}`]).ok;
+    const branchExists = Boolean(
+      gitDir && (await git(gitDir, ['rev-parse', '--verify', `refs/heads/${branch}`])).ok,
+    );
     // Only a path that is genuinely its own worktree root may be reported on:
     // `git status` in a leftover non-worktree directory walks up to whatever
     // repository encloses it and would report that repository's dirt as this
     // corner's discarded edits.
-    const dirtyPath = this.abandonedCornerWorktreePaths(entry).find((path) => {
-      if (!existsSync(path)) return false;
-      const toplevel = git(path, ['rev-parse', '--show-toplevel']);
-      return toplevel.ok && resolve(toplevel.stdout.trim()) === resolve(path);
-    });
-    const dirty = dirtyPath ? git(dirtyPath, ['status', '--porcelain']).stdout.trim() : '';
+    let dirtyPath: string | undefined;
+    for (const path of this.abandonedCornerWorktreePaths(entry)) {
+      if (!existsSync(path)) continue;
+      const toplevel = await git(path, ['rev-parse', '--show-toplevel']);
+      if (toplevel.ok && resolve(toplevel.stdout.trim()) === resolve(path)) {
+        dirtyPath = path;
+        break;
+      }
+    }
+    const dirty = dirtyPath ? (await git(dirtyPath, ['status', '--porcelain'])).stdout.trim() : '';
     if (!branchExists && !dirty) return undefined;
     const lines: string[] = [];
     if (branchExists) lines.push(`Committed work is kept on branch ${branch}; it was not deleted.`);
@@ -10194,21 +10215,18 @@ export class Body {
    * `git status`, which is a hygiene issue, not a functional one.
    */
   /** Install a corner-local dependency tree before its edit session starts. */
-  private provisionWorktreeToolchain(worktreePath: string): void {
+  private async provisionWorktreeToolchain(worktreePath: string): Promise<void> {
     try {
-      ensureCornerToolchainProvisioned(worktreePath);
+      await ensureCornerToolchainProvisioned(worktreePath);
     } catch (error) {
       console.warn(`[body] corner toolchain provisioning failed for ${worktreePath}:`, error);
     }
   }
 
-  private excludeCodegraphFromWorktreeStatus(worktreePath: string): void {
+  private async excludeCodegraphFromWorktreeStatus(worktreePath: string): Promise<void> {
     try {
-      const gitPath = spawnSync('git', ['rev-parse', '--git-path', 'info/exclude'], {
-        cwd: worktreePath,
-        encoding: 'utf8',
-      });
-      if (gitPath.status !== 0) return;
+      const gitPath = await git(worktreePath, ['rev-parse', '--git-path', 'info/exclude']);
+      if (!gitPath.ok) return;
       const excludeFile = gitPath.stdout.trim();
       if (!excludeFile) return;
       const absolute = isAbsolute(excludeFile) ? excludeFile : resolve(worktreePath, excludeFile);
@@ -10240,11 +10258,41 @@ export class Body {
     try {
       const hasIndex = existsSync(resolve(worktreePath, '.codegraph', 'codegraph.db'));
       const args = hasIndex ? ['sync', worktreePath] : ['init', '-i', worktreePath];
-      const child = spawn(command, args, { stdio: 'ignore' });
+      const child = spawn(command, args, {
+        stdio: 'ignore',
+        detached: process.platform !== 'win32',
+      });
+      let killTimer: NodeJS.Timeout | undefined;
+      let timedOut = false;
+      const signalGroup = (signal: NodeJS.Signals) => {
+        if (!child.pid) return;
+        try {
+          if (process.platform === 'win32') child.kill(signal);
+          else process.kill(-child.pid, signal);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+            console.warn(`[body] codegraph ${args[0]} could not be stopped:`, error);
+          }
+        }
+      };
+      const deadline = setTimeout(
+        () => {
+          timedOut = true;
+          console.warn(`[body] codegraph ${args[0]} exceeded its 10-minute deadline`);
+          signalGroup('SIGTERM');
+          killTimer = setTimeout(() => signalGroup('SIGKILL'), 500);
+        },
+        10 * 60_000,
+      );
+      deadline.unref?.();
       child.on('error', (error) => {
+        clearTimeout(deadline);
+        if (killTimer && !timedOut) clearTimeout(killTimer);
         console.warn(`[body] codegraph ${args[0]} failed to start for ${worktreePath}:`, error);
       });
       child.on('exit', (code) => {
+        clearTimeout(deadline);
+        if (killTimer && !timedOut) clearTimeout(killTimer);
         if (code !== 0) {
           console.warn(`[body] codegraph ${args[0]} exited ${code} for ${worktreePath}`);
         }
@@ -10275,16 +10323,16 @@ export class Body {
    * inside protected parents. Credential paths are included for the ACP
    * fallback as well as being masked entirely by bubblewrap.
    */
-  private cornerFilesystemPolicy(
+  private async cornerFilesystemPolicy(
     boundRepo: BoundRepo,
     worktreePath: string,
     agentPrivateStateRoot?: string,
-  ): {
+  ): Promise<{
     protectedPaths: string[];
     writablePaths: string[];
     additionalWritablePaths: string[];
-  } {
-    const gitCommonDir = resolveGitCommonDir(worktreePath);
+  }> {
+    const gitCommonDir = await resolveGitCommonDir(worktreePath);
     const additionalWritablePaths = agentPrivateStateRoot ? [agentPrivateStateRoot] : [];
     return {
       protectedPaths: [
@@ -10364,7 +10412,8 @@ export class Body {
     if (!repoRoot || !existsSync(repoRoot)) return false;
 
     const ref = `refs/heads/${featureBranch}`;
-    const hasLocal = git(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).ok;
+    const hasLocal = (await git(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]))
+      .ok;
     if (!hasLocal && boundRepo.remoteName) {
       // The branch was pushed when the corner published its review, so the
       // remote is the authority when the local ref is the piece that was lost.
@@ -10375,32 +10424,34 @@ export class Body {
       ]);
       if (!fetch.ok) return false;
     }
-    if (!git(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).ok) return false;
+    if (!(await git(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).ok) {
+      return false;
+    }
 
     // A stale registration for this exact path (the directory went, git's
     // record of it did not) makes `worktree add` refuse; clearing it is
     // administrative and touches no commit.
-    git(repoRoot, ['worktree', 'prune']);
+    await git(repoRoot, ['worktree', 'prune']);
     try {
       mkdirSync(resolve(worktreePath, '..'), { recursive: true });
     } catch {
       return false;
     }
-    const added = git(repoRoot, ['worktree', 'add', worktreePath, featureBranch]);
+    const added = await git(repoRoot, ['worktree', 'add', worktreePath, featureBranch]);
     if (!added.ok) {
       console.warn(
         `[body] could not rebuild corner worktree at ${worktreePath}: ${added.stderr.trim()}`,
       );
       return false;
     }
-    git(worktreePath, [
+    await git(worktreePath, [
       'config',
       'user.name',
       this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME,
     ]);
-    git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
-    this.excludeCodegraphFromWorktreeStatus(worktreePath);
-    this.provisionWorktreeToolchain(worktreePath);
+    await git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
+    await this.excludeCodegraphFromWorktreeStatus(worktreePath);
+    await this.provisionWorktreeToolchain(worktreePath);
     return true;
   }
 
@@ -10426,12 +10477,12 @@ export class Body {
         ? `refs/remotes/${boundRepo.remoteName}/${target}`
         : '';
       const remoteBase = remoteRef
-        ? git(boundRepo.localPath, ['rev-parse', '--verify', remoteRef])
+        ? await git(boundRepo.localPath, ['rev-parse', '--verify', remoteRef])
         : { ok: false };
       const localRef = `refs/heads/${target}`;
-      const localBase = git(boundRepo.localPath, ['rev-parse', '--verify', localRef]);
+      const localBase = await git(boundRepo.localPath, ['rev-parse', '--verify', localRef]);
       const baseRef = remoteBase.ok ? remoteRef : localBase.ok ? localRef : 'HEAD';
-      const worktreeAdd = git(boundRepo.localPath, [
+      const worktreeAdd = await git(boundRepo.localPath, [
         'worktree',
         'add',
         '-b',
@@ -10440,14 +10491,14 @@ export class Body {
         baseRef,
       ]);
       if (!worktreeAdd.ok) throw new Error(`git worktree add failed: ${worktreeAdd.stderr}`);
-      git(worktreePath, [
+      await git(worktreePath, [
         'config',
         'user.name',
         this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME,
       ]);
-      git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
-      this.excludeCodegraphFromWorktreeStatus(worktreePath);
-      this.provisionWorktreeToolchain(worktreePath);
+      await git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
+      await this.excludeCodegraphFromWorktreeStatus(worktreePath);
+      await this.provisionWorktreeToolchain(worktreePath);
       return;
     }
 
@@ -10458,7 +10509,7 @@ export class Body {
 
     // Clone repo as bare if not already present.
     if (!existsSync(gitDir)) {
-      const clone = gitAuthed(
+      const clone = await gitAuthed(
         this.config.workspaceRoot,
         this.agentIdentity,
         boundRepo.ownerHex,
@@ -10471,7 +10522,7 @@ export class Body {
     }
 
     // Fetch latest.
-    const fetch = gitAuthed(gitDir, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
+    const fetch = await gitAuthed(gitDir, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
       'fetch',
       'origin',
     ]);
@@ -10479,8 +10530,8 @@ export class Body {
 
     // A bare clone stores the default branch at refs/heads/main; an existing
     // mirror may instead have refs/remotes/origin/main after fetch.
-    const remoteMain = git(gitDir, ['rev-parse', '--verify', 'refs/remotes/origin/main']);
-    const localMain = git(gitDir, ['rev-parse', '--verify', 'refs/heads/main']);
+    const remoteMain = await git(gitDir, ['rev-parse', '--verify', 'refs/remotes/origin/main']);
+    const localMain = await git(gitDir, ['rev-parse', '--verify', 'refs/heads/main']);
     const baseRef = remoteMain.ok
       ? 'refs/remotes/origin/main'
       : localMain.ok
@@ -10489,38 +10540,29 @@ export class Body {
     if (!baseRef) throw new Error('bound repo has no main branch');
 
     // Create worktree with new branch.
-    const worktreeAdd = spawnSync(
-      'git',
-      ['worktree', 'add', '-b', featureBranch, worktreePath, baseRef],
-      {
-        cwd: gitDir,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
-        encoding: 'utf8',
-      },
-    );
+    const worktreeAdd = await git(gitDir, [
+      'worktree',
+      'add',
+      '-b',
+      featureBranch,
+      worktreePath,
+      baseRef,
+    ]);
 
-    if (worktreeAdd.status !== 0) {
+    if (!worktreeAdd.ok) {
       throw new Error(`git worktree add failed: ${worktreeAdd.stderr}`);
     }
 
     // The edit agent commits locally; the body authenticates and pushes the
     // resulting feature tip under the agent identity after the turn completes.
-    spawnSync(
-      'git',
-      ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME],
-      {
-        cwd: worktreePath,
-        env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
-        encoding: 'utf8',
-      },
-    );
-    spawnSync('git', ['config', 'user.email', 'agent@beeline.local'], {
-      cwd: worktreePath,
-      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
-      encoding: 'utf8',
-    });
-    this.excludeCodegraphFromWorktreeStatus(worktreePath);
-    this.provisionWorktreeToolchain(worktreePath);
+    await git(worktreePath, [
+      'config',
+      'user.name',
+      this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME,
+    ]);
+    await git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
+    await this.excludeCodegraphFromWorktreeStatus(worktreePath);
+    await this.provisionWorktreeToolchain(worktreePath);
   }
 
   /** Remove a git worktree and clean up. */
@@ -10534,7 +10576,7 @@ export class Body {
       ? resolve(this.config.workspaceRoot, `.git-${subchannelId.slice(0, 12)}`)
       : undefined;
     const discoveredCommonDir = existsSync(worktreePath)
-      ? git(worktreePath, ['rev-parse', '--git-common-dir'])
+      ? await git(worktreePath, ['rev-parse', '--git-common-dir'])
       : undefined;
     const registryRoot =
       boundRepo?.localPath ??
@@ -10548,11 +10590,7 @@ export class Body {
     // directory. A plain directory (or a stale registry) legitimately makes
     // this fail, so filesystem removal remains the fallback.
     if (existsSync(worktreePath) && registryRoot) {
-      spawnSync('git', ['worktree', 'remove', '--force', worktreePath], {
-        cwd: registryRoot,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-        encoding: 'utf8',
-      });
+      await git(registryRoot, ['worktree', 'remove', '--force', worktreePath]);
     }
 
     if (existsSync(worktreePath)) {
@@ -10566,12 +10604,8 @@ export class Body {
     // make the repository forget that dead entry now rather than waiting for a
     // later periodic sweep.
     if (registryRoot && existsSync(registryRoot)) {
-      spawnSync('git', ['worktree', 'prune'], {
-        cwd: registryRoot,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-        encoding: 'utf8',
-      });
-      const registered = this.registeredWorktrees(registryRoot);
+      await git(registryRoot, ['worktree', 'prune']);
+      const registered = await this.registeredWorktrees(registryRoot);
       if (!registered) {
         throw new Error(`could not verify corner worktree removal in ${registryRoot}`);
       }
@@ -10607,8 +10641,8 @@ export class Body {
    * deleting every corner worktree the daemon had not personally restored.
    * A probe that did not answer must never be a licence to delete.
    */
-  private registeredWorktrees(checkoutOrGitDir: string): Set<string> | undefined {
-    const result = git(checkoutOrGitDir, ['worktree', 'list', '--porcelain']);
+  private async registeredWorktrees(checkoutOrGitDir: string): Promise<Set<string> | undefined> {
+    const result = await git(checkoutOrGitDir, ['worktree', 'list', '--porcelain']);
     if (!result.ok) return undefined;
     const paths = new Set<string>();
     for (const line of result.stdout.split('\n')) {
@@ -10656,8 +10690,8 @@ export class Body {
       (boundRepo ? resolve(this.config.workspaceRoot, `.git-${boundRepo.repo}`) : undefined);
     if (!worktreeGitDir || !existsSync(worktreeGitDir)) return;
 
-    git(worktreeGitDir, ['worktree', 'prune']);
-    const registered = this.registeredWorktrees(worktreeGitDir);
+    await git(worktreeGitDir, ['worktree', 'prune']);
+    const registered = await this.registeredWorktrees(worktreeGitDir);
     if (!registered) {
       console.warn(
         `[body] corner worktree sweep skipped: could not read the worktree registry at ${worktreeGitDir}`,
@@ -10689,7 +10723,7 @@ export class Body {
       // The dir basename is the subchannel id (see `cornerWorktreePath`).
       const subchannelId = entry.name;
       const dir = resolve(pool, subchannelId);
-      const probe = probeCornerWorktree(dir, resolveTargetRefs(dir, targetCandidates));
+      const probe = await probeCornerWorktree(dir, await resolveTargetRefs(dir, targetCandidates));
       const decision = cornerWorktreeSweepDecision({
         registered: registered.has(dir),
         live: live.has(dir),
@@ -10707,7 +10741,7 @@ export class Body {
       if (decision.action === 'repair') {
         // A real worktree git stopped registering is the shape the old sweep
         // deleted. Re-link it instead, so `restoreSubchannels` can find it.
-        const repair = git(worktreeGitDir, ['worktree', 'repair', dir]);
+        const repair = await git(worktreeGitDir, ['worktree', 'repair', dir]);
         console.log(
           `[body] corner worktree sweep repairing ${dir}: ${decision.reason}` +
             (repair.ok ? '' : ` (repair failed: ${repair.stderr.trim()})`),
@@ -10745,7 +10779,7 @@ export class Body {
             `${dir}: ${decision.reason}`,
         );
         if (decision.action !== 'reap') continue;
-        git(worktreeGitDir, ['worktree', 'remove', '--force', dir]);
+        await git(worktreeGitDir, ['worktree', 'remove', '--force', dir]);
         await rm(dir, { recursive: true, force: true }).catch(() => undefined);
       }
     } finally {

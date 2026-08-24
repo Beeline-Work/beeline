@@ -30,11 +30,11 @@ async function relayReachable(): Promise<boolean> {
   }
 }
 
-function commit(dir: string, file: string, content: string, message: string): void {
+async function commit(dir: string, file: string, content: string, message: string): Promise<void> {
   writeFileSync(join(dir, file), content);
-  const add = git(dir, ['add', '-A']);
+  const add = await git(dir, ['add', '-A']);
   if (!add.ok) throw new Error(`git add failed: ${add.stderr}`);
-  const result = git(dir, ['commit', '-m', message]);
+  const result = await git(dir, ['commit', '-m', message]);
   if (!result.ok) throw new Error(`git commit failed: ${result.stderr}`);
 }
 
@@ -45,7 +45,7 @@ async function waitRepoCloneable(
 ): Promise<void> {
   const url = gitRepoUrl(ownerHex, repo);
   for (let attempt = 0; attempt < 20; attempt++) {
-    if (gitAuthed(tmpdir(), identity, ownerHex, repo, ['ls-remote', url]).ok) return;
+    if ((await gitAuthed(tmpdir(), identity, ownerHex, repo, ['ls-remote', url])).ok) return;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`repo ${ownerHex}/${repo} never became cloneable`);
@@ -89,21 +89,21 @@ const reachable = await relayReachable();
     await waitRepoCloneable(worker, owner, repo);
 
     const seedDir = mkdtempSync(join(tmpdir(), 'buzzy-agent-id-seed-'));
-    git(seedDir, ['init', '-q', '-b', 'main']);
-    commit(seedDir, 'README.md', `# ${repo}\n`, 'initial commit');
-    const seedPush = gitAuthed(seedDir, worker, owner, repo, ['push', url, 'main']);
+    await git(seedDir, ['init', '-q', '-b', 'main']);
+    await commit(seedDir, 'README.md', `# ${repo}\n`, 'initial commit');
+    const seedPush = await gitAuthed(seedDir, worker, owner, repo, ['push', url, 'main']);
     expect(seedPush.ok, seedPush.stderr).toBe(true);
-    const mainBefore = lsRemoteRef(seedDir, worker, owner, repo, 'refs/heads/main');
+    const mainBefore = await lsRemoteRef(seedDir, worker, owner, repo, 'refs/heads/main');
 
     const agentRoot = mkdtempSync(join(tmpdir(), 'buzzy-agent-id-work-'));
-    const clone = gitAuthed(agentRoot, agent, owner, repo, ['clone', url, 'work']);
+    const clone = await gitAuthed(agentRoot, agent, owner, repo, ['clone', url, 'work']);
     expect(clone.ok, clone.stderr).toBe(true);
     const work = join(agentRoot, 'work');
     const branch = `feature/agent-${runId}`;
-    git(work, ['checkout', '-q', '-b', branch]);
-    commit(work, 'AGENT.txt', 'work signed by the agent identity\n', 'agent: feature work');
-    const featureTip = git(work, ['rev-parse', 'HEAD']).stdout.trim();
-    const featurePush = gitAuthed(work, agent, owner, repo, ['push', 'origin', branch]);
+    await git(work, ['checkout', '-q', '-b', branch]);
+    await commit(work, 'AGENT.txt', 'work signed by the agent identity\n', 'agent: feature work');
+    const featureTip = (await git(work, ['rev-parse', 'HEAD'])).stdout.trim();
+    const featurePush = await gitAuthed(work, agent, owner, repo, ['push', 'origin', branch]);
     expect(featurePush.ok, featurePush.stderr).toBe(true);
 
     const target = {
@@ -124,7 +124,7 @@ const reachable = await relayReachable();
     });
     expect(refused.merged).toBe(false);
     expect(refused.reason).toMatch(/registered agent identity; agents can never approve/i);
-    expect(lsRemoteRef(seedDir, worker, owner, repo, 'refs/heads/main')).toBe(mainBefore);
+    expect(await lsRemoteRef(seedDir, worker, owner, repo, 'refs/heads/main')).toBe(mainBefore);
     console.log(`[agent-identity] agent-approval REFUSED — ${refused.reason}`);
 
     await publishEvent(buildApproval(human, channelId, target), human);

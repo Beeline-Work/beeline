@@ -71,7 +71,7 @@ describe('corner worktree isolation', () => {
     expect(worktreePath).toBe(resolve(root, '.beeline-corners', 'proj-buzzy', 'corner-abc'));
   });
 
-  it('(a) an isolated corner worktree resolves to a top-level distinct from the primary', () => {
+  it('(a) an isolated corner worktree resolves to a top-level distinct from the primary', async () => {
     const worktreePath = cornerWorktreePath({
       workspaceRoot: primary,
       sourceCheckout: primary,
@@ -85,17 +85,17 @@ describe('corner worktree isolation', () => {
     expect(realpathSync(top.stdout.trim())).not.toBe(realpathSync(primary));
 
     // The fail-closed assertion accepts it.
-    expect(() => assertCornerWorktreeIsolated(worktreePath, primary)).not.toThrow();
+    await expect(assertCornerWorktreeIsolated(worktreePath, primary)).resolves.toBeUndefined();
   });
 
-  it('(b) a commit in the corner lands on its feature branch, NOT the primary main', () => {
+  it('(b) a commit in the corner lands on its feature branch, NOT the primary main', async () => {
     const worktreePath = cornerWorktreePath({
       workspaceRoot: primary,
       sourceCheckout: primary,
       subchannelId: 'c2',
     });
     addCornerWorktree(primary, worktreePath, 'feature/c2');
-    assertCornerWorktreeIsolated(worktreePath, primary);
+    await assertCornerWorktreeIsolated(worktreePath, primary);
 
     const mainBefore = git(primary, ['rev-parse', 'refs/heads/main']).stdout.trim();
 
@@ -133,14 +133,22 @@ describe('corner worktree isolation', () => {
     expect(files).toContain('review.txt');
   });
 
-  it('(d) two corners open at once each commit to their own branch; primary main is untouched', () => {
+  it('(d) two corners open at once each commit to their own branch; primary main is untouched', async () => {
     const mainBefore = git(primary, ['rev-parse', 'refs/heads/main']).stdout.trim();
-    const wtA = cornerWorktreePath({ workspaceRoot: primary, sourceCheckout: primary, subchannelId: 'A' });
-    const wtB = cornerWorktreePath({ workspaceRoot: primary, sourceCheckout: primary, subchannelId: 'B' });
+    const wtA = cornerWorktreePath({
+      workspaceRoot: primary,
+      sourceCheckout: primary,
+      subchannelId: 'A',
+    });
+    const wtB = cornerWorktreePath({
+      workspaceRoot: primary,
+      sourceCheckout: primary,
+      subchannelId: 'B',
+    });
     addCornerWorktree(primary, wtA, 'feature/A');
     addCornerWorktree(primary, wtB, 'feature/B');
-    assertCornerWorktreeIsolated(wtA, primary);
-    assertCornerWorktreeIsolated(wtB, primary);
+    await assertCornerWorktreeIsolated(wtA, primary);
+    await assertCornerWorktreeIsolated(wtB, primary);
     expect(realpathSync(wtA)).not.toBe(realpathSync(wtB));
 
     spawnSync('bash', ['-c', 'echo a > a.txt'], { cwd: wtA });
@@ -158,13 +166,17 @@ describe('corner worktree isolation', () => {
     expect(git(primary, ['rev-parse', 'refs/heads/main']).stdout.trim()).toBe(mainBefore);
   });
 
-  it('(e) the isolation assertion refuses a root that resolves to the primary checkout', () => {
+  it('(e) the isolation assertion refuses a root that resolves to the primary checkout', async () => {
     // The primary checkout itself is a git toplevel — but it IS the primary.
-    expect(() => assertCornerWorktreeIsolated(primary, primary)).toThrow(CornerIsolationError);
+    await expect(assertCornerWorktreeIsolated(primary, primary)).rejects.toBeInstanceOf(
+      CornerIsolationError,
+    );
     // A non-git directory is refused too (not a worktree at all).
     const notGit = resolve(root, 'not-a-repo');
     spawnSync('mkdir', ['-p', notGit]);
-    expect(() => assertCornerWorktreeIsolated(notGit, primary)).toThrow(CornerIsolationError);
+    await expect(assertCornerWorktreeIsolated(notGit, primary)).rejects.toBeInstanceOf(
+      CornerIsolationError,
+    );
   });
 });
 
@@ -173,11 +185,7 @@ describe('corner cd-guard policy', () => {
   const primary = '/home/op/proj-buzzy';
 
   it('(f) denies the reported command: a persistent cd into the shared checkout before commit', () => {
-    const verdict = classifyCornerCommand(
-      `cd ${primary} && git commit -am wip`,
-      worktree,
-      primary,
-    );
+    const verdict = classifyCornerCommand(`cd ${primary} && git commit -am wip`, worktree, primary);
     expect(verdict.decision).toBe('deny');
     if (verdict.decision === 'deny') expect(verdict.code).toBe('persistent-cd');
   });
@@ -189,9 +197,9 @@ describe('corner cd-guard policy', () => {
   });
 
   it('denies git -C / --git-dir escaping the worktree into the shared checkout', () => {
-    expect(classifyCornerCommand(`git -C ${primary} commit -am x`, worktree, primary).decision).toBe(
-      'deny',
-    );
+    expect(
+      classifyCornerCommand(`git -C ${primary} commit -am x`, worktree, primary).decision,
+    ).toBe('deny');
     expect(classifyCornerCommand('git -C ../../elsewhere status', worktree, primary).decision).toBe(
       'deny',
     );

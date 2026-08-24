@@ -5,7 +5,7 @@ import { readFileSync, existsSync } from 'node:fs';
  * The broad daemon-published agent state-notice feature is DELETED and must
  * stay deleted. Repository join refusal is the one narrow exception: if the
  * daemon never joins, presence alone looks like an ignored mention, so the
- * supervisor publishes one deduplicated, factual retry notice.
+ * Room runtime publishes one deduplicated, factual retry notice.
  *
  * `agent-state-messages.ts` (#231) mapped five real daemon states —
  * relay-disconnected, harness-auth-missing, harness-unavailable,
@@ -39,7 +39,7 @@ import { readFileSync, existsSync } from 'node:fs';
 describe('the daemon-published agent state notices stay deleted', () => {
   const src = (name: string) => readFileSync(new URL(name, import.meta.url), 'utf8');
   const body = src('./body.ts');
-  const supervisor = src('./supervisor.ts');
+  const daemon = `${src('./thin-core.ts')}\n${src('./room-runtime.ts')}`;
   const activity = src('./activity.ts');
   const acp = src('./acp.ts');
 
@@ -73,7 +73,7 @@ describe('the daemon-published agent state notices stay deleted', () => {
       'repoUnavailableNotified',
     ]) {
       expect(body, `body.ts still references ${symbol}`).not.toContain(symbol);
-      expect(supervisor, `supervisor.ts still references ${symbol}`).not.toContain(symbol);
+      expect(daemon, `daemon sources still reference ${symbol}`).not.toContain(symbol);
       expect(acp, `acp.ts still references ${symbol}`).not.toContain(symbol);
     }
   });
@@ -82,7 +82,7 @@ describe('the daemon-published agent state notices stay deleted', () => {
     for (const notice of RETIRED_NOTICES) {
       for (const [name, source] of [
         ['body.ts', body],
-        ['supervisor.ts', supervisor],
+        ['daemon sources', daemon],
         ['activity.ts', activity],
       ] as const) {
         expect(source, `${name} still carries: ${notice}`).not.toContain(notice);
@@ -107,10 +107,10 @@ describe('the daemon-published agent state notices stay deleted', () => {
     expect(reconnectCatch).not.toContain('postControlMessage');
   });
 
-  it('uses one quiet supervisor notice for an unservable repository Room', () => {
-    const reconcile = supervisor.slice(
-      supervisor.indexOf('async reconcile('),
-      supervisor.indexOf('private roomRoot('),
+  it('uses one quiet runtime notice for an unservable repository Room', () => {
+    const reconcile = daemon.slice(
+      daemon.indexOf('async reconcile('),
+      daemon.indexOf('private roomRoot('),
     );
     expect(reconcile.length).toBeGreaterThan(0);
     expect(reconcile).toContain('.messageSubmit(');

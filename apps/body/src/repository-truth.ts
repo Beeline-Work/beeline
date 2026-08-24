@@ -12,7 +12,7 @@ import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { git, gitAuthed, type GitResult, type Identity } from '@beeline/gate';
 import type { RepositoryBinding } from '@beeline/buzz-client';
-import { inspectLocalRepository, type LocalRepositoryBinding } from './runtime.js';
+import { inspectLocalRepositoryBounded, type LocalRepositoryBinding } from './runtime.js';
 
 export type RepositoryTruthCheckpoint = 'room-join' | 'corner-open' | 'land' | 'recap';
 
@@ -148,7 +148,7 @@ export class RepositoryTruthResolver {
     }
     const relay = relayRepo(binding);
     if (relay && this.#options.agent) {
-      return Promise.resolve(gitAuthed(cwd, this.#options.agent, relay.ownerHex, relay.repo, args));
+      return gitAuthed(cwd, this.#options.agent, relay.ownerHex, relay.repo, args);
     }
     if (/^git:\/\/github\.com\//i.test(binding.remote ?? '')) {
       return Promise.resolve({
@@ -158,7 +158,7 @@ export class RepositoryTruthResolver {
         stderr: 'GitHub repository access requires a GitHub App installation token',
       });
     }
-    return Promise.resolve(git(cwd, args));
+    return git(cwd, args);
   }
 
   /** Resolve and synchronize at every lifecycle checkpoint that can read code. */
@@ -173,7 +173,7 @@ export class RepositoryTruthResolver {
       const targetBranch = shortBranch(input.targetBranch || 'main');
       await mkdir(this.#options.repositoriesRoot, { recursive: true, mode: 0o700 });
       if (source !== root && !existsSync(root)) {
-        const cloned = git(this.#options.repositoriesRoot, [
+        const cloned = await git(this.#options.repositoriesRoot, [
           'clone',
           '--no-hardlinks',
           source,
@@ -188,31 +188,37 @@ export class RepositoryTruthResolver {
       if (!existsSync(root)) {
         throw new Error(`canonical local truth is missing for ${input.repository.name}`);
       }
-      const localBranch = git(root, ['rev-parse', '--verify', `refs/heads/${targetBranch}`]);
-      const remoteBranch = git(root, [
+      const localBranch = await git(root, ['rev-parse', '--verify', `refs/heads/${targetBranch}`]);
+      const remoteBranch = await git(root, [
         'rev-parse',
         '--verify',
         `refs/remotes/origin/${targetBranch}`,
       ]);
       const checkout = localBranch.ok
-        ? git(root, ['checkout', '-q', targetBranch])
+        ? await git(root, ['checkout', '-q', targetBranch])
         : remoteBranch.ok
-          ? git(root, ['checkout', '-q', '-B', targetBranch, `refs/remotes/origin/${targetBranch}`])
+          ? await git(root, [
+              'checkout',
+              '-q',
+              '-B',
+              targetBranch,
+              `refs/remotes/origin/${targetBranch}`,
+            ])
           : { ok: false, stderr: `no branch ${targetBranch}` };
       if (!checkout.ok) {
         throw new Error(
           `canonical local truth has no target branch ${targetBranch}: ${checkout.stderr}`,
         );
       }
-      if (git(root, ['remote', 'get-url', 'origin']).ok) {
-        const removed = git(root, ['remote', 'remove', 'origin']);
+      if ((await git(root, ['remote', 'get-url', 'origin'])).ok) {
+        const removed = await git(root, ['remote', 'remove', 'origin']);
         if (!removed.ok) {
           throw new Error(
             `could not detach canonical local truth from pairing checkout: ${removed.stderr}`,
           );
         }
       }
-      const local = inspectLocalRepository(root);
+      const local = await inspectLocalRepositoryBounded(root);
       return {
         kind: 'local',
         binding: input.repository,
@@ -248,13 +254,13 @@ export class RepositoryTruthResolver {
       }
     }
 
-    const local = inspectLocalRepository(root);
+    const local = await inspectLocalRepositoryBounded(root);
     const remoteName = local.remoteName ?? 'origin';
     // A provider rename may change the transport URL. Keep the cache pointed
     // at the current URL; the Room key deliberately stays stable.
-    const currentUrl = git(root, ['remote', 'get-url', remoteName]);
+    const currentUrl = await git(root, ['remote', 'get-url', remoteName]);
     if (!currentUrl.ok || currentUrl.stdout.trim() !== transportUrl) {
-      const setUrl = git(root, ['remote', 'set-url', remoteName, transportUrl]);
+      const setUrl = await git(root, ['remote', 'set-url', remoteName, transportUrl]);
       if (!setUrl.ok)
         throw new Error(`could not refresh ${binding.name} remote URL: ${setUrl.stderr}`);
     }
@@ -269,9 +275,9 @@ export class RepositoryTruthResolver {
     }
     const targetBranch = shortBranch(input.targetBranch || local.targetBranch);
     const remoteRef = `refs/remotes/${remoteName}/${targetBranch}`;
-    const tip = git(root, ['rev-parse', '--verify', `${remoteRef}^{commit}`]);
+    const tip = await git(root, ['rev-parse', '--verify', `${remoteRef}^{commit}`]);
     if (!tip.ok) throw new Error(`remote ${binding.name} has no target branch ${targetBranch}`);
-    const reset = git(root, ['checkout', '-q', '-B', targetBranch, remoteRef]);
+    const reset = await git(root, ['checkout', '-q', '-B', targetBranch, remoteRef]);
     if (!reset.ok)
       throw new Error(`could not reset canonical cache for ${binding.name}: ${reset.stderr}`);
 
@@ -326,17 +332,17 @@ export class RepositoryTruthResolver {
     if (!existsSync(checkout)) return { status: 'refused', reason: 'missing' };
     let local: LocalRepositoryBinding;
     try {
-      local = inspectLocalRepository(checkout);
+      local = await inspectLocalRepositoryBounded(checkout);
     } catch {
       return { status: 'refused', reason: 'not-same-repository' };
     }
     if (local.repository.key !== (truth.pairingRepositoryKey ?? truth.binding.key)) {
       return { status: 'refused', reason: 'not-same-repository' };
     }
-    if (git(checkout, ['status', '--porcelain']).stdout.trim()) {
+    if ((await git(checkout, ['status', '--porcelain'])).stdout.trim()) {
       return { status: 'refused', reason: 'dirty' };
     }
-    const branch = git(checkout, ['branch', '--show-current']).stdout.trim();
+    const branch = (await git(checkout, ['branch', '--show-current'])).stdout.trim();
     if (branch !== truth.targetBranch) return { status: 'refused', reason: 'wrong-branch' };
     const remoteName = local.remoteName ?? truth.remoteName ?? 'origin';
     const fetched =
@@ -347,19 +353,19 @@ export class RepositoryTruthResolver {
             truth.binding,
             truth.roomId,
           )
-        : git(checkout, [
+        : await git(checkout, [
             'fetch',
             '--no-tags',
             truth.checkoutPath,
             `refs/heads/${truth.targetBranch}`,
           ]);
     if (!fetched.ok) return { status: 'refused', reason: 'fetch-failed' };
-    const from = git(checkout, ['rev-parse', 'HEAD']).stdout.trim();
+    const from = (await git(checkout, ['rev-parse', 'HEAD'])).stdout.trim();
     if (from === landedTip) return { status: 'already-current' };
-    if (!git(checkout, ['merge-base', '--is-ancestor', from, landedTip]).ok) {
+    if (!(await git(checkout, ['merge-base', '--is-ancestor', from, landedTip])).ok) {
       return { status: 'refused', reason: 'local-commits' };
     }
-    const advanced = git(checkout, ['merge', '--ff-only', landedTip]);
+    const advanced = await git(checkout, ['merge', '--ff-only', landedTip]);
     if (!advanced.ok) return { status: 'refused', reason: 'local-commits' };
     return { status: 'fast-forwarded', from, to: landedTip };
   }

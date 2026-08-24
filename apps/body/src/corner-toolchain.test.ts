@@ -122,7 +122,7 @@ describe('ensureCornerToolchainProvisioned', () => {
     const { checkout, worktree } = await createWorkspaceFixture();
     expect(existsSync(resolve(worktree, 'node_modules'))).toBe(false);
 
-    const result = ensureCornerToolchainProvisioned(worktree, () => undefined);
+    const result = await ensureCornerToolchainProvisioned(worktree, () => undefined);
 
     expect(result).toEqual({ status: 'ready' });
     expect(existsSync(resolve(worktree, 'node_modules', '.bin', 'tsc'))).toBe(true);
@@ -164,7 +164,7 @@ describe('ensureCornerToolchainProvisioned', () => {
       resolve(checkout, 'packages', 'lib'),
     );
 
-    const result = ensureCornerToolchainProvisioned(worktree, () => undefined);
+    const result = await ensureCornerToolchainProvisioned(worktree, () => undefined);
 
     expect(result).toEqual({ status: 'ready' });
     expect(realpathSync(resolve(worktree, 'node_modules', '@fixture', 'lib'))).toBe(
@@ -175,7 +175,7 @@ describe('ensureCornerToolchainProvisioned', () => {
   it('is a clean no-op for a repository without package.json', async () => {
     const root = await tempRoot('corner-toolchain-no-node-');
     const logs: string[] = [];
-    expect(ensureCornerToolchainProvisioned(root, (line) => logs.push(line))).toEqual({
+    expect(await ensureCornerToolchainProvisioned(root, (line) => logs.push(line))).toEqual({
       status: 'noop',
     });
     expect(toolchainProvisionSteps(root)).toEqual([]);
@@ -188,7 +188,7 @@ describe('ensureCornerToolchainProvisioned', () => {
     await writeFile(resolve(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
     const logs: string[] = [];
 
-    expect(ensureCornerToolchainProvisioned(root, (line) => logs.push(line))).toEqual({
+    expect(await ensureCornerToolchainProvisioned(root, (line) => logs.push(line))).toEqual({
       status: 'noop',
     });
     expect(existsSync(resolve(root, 'node_modules'))).toBe(false);
@@ -199,7 +199,9 @@ describe('ensureCornerToolchainProvisioned', () => {
     const root = await tempRoot('corner-toolchain-unlocked-npm-');
     await writeFile(resolve(root, 'package.json'), '{"private":true}\n');
 
-    expect(ensureCornerToolchainProvisioned(root, () => undefined)).toEqual({ status: 'ready' });
+    expect(await ensureCornerToolchainProvisioned(root, () => undefined)).toEqual({
+      status: 'ready',
+    });
     expect(existsSync(resolve(root, 'package-lock.json'))).toBe(false);
     expect(existsSync(resolve(root, 'node_modules', '.beeline-provisioned'))).toBe(true);
   });
@@ -213,8 +215,8 @@ describe('ensureCornerToolchainProvisioned', () => {
     await writeFile(resolve(root, 'package-lock.json'), '{}\n');
     const logs: string[] = [];
 
-    const first = ensureCornerToolchainProvisioned(root, (line) => logs.push(line));
-    const second = ensureCornerToolchainProvisioned(root, (line) => logs.push(line));
+    const first = await ensureCornerToolchainProvisioned(root, (line) => logs.push(line));
+    const second = await ensureCornerToolchainProvisioned(root, (line) => logs.push(line));
 
     expect(first.status).toBe('failed');
     expect(second).toEqual(first);

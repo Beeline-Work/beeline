@@ -11,7 +11,7 @@
  *
  * The implementation lives in `@beeline/buzz-client` (`archived-channel.ts`)
  * so client-side Room delete/leave paths share the exact same classifier;
- * this module re-exports it for Body's internal consumers. `supervisor.ts`
+ * this module re-exports it for Body's internal consumers. `room-runtime.ts`
  * re-exports it for its Room-quarantine path; `body.ts` consumes it directly
  * (supervisor imports body, so body cannot import supervisor without a cycle).
  */

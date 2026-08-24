@@ -27,8 +27,9 @@ import {
   DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS,
   isDurableRoomJoinFailure,
   isOwnerGrantNeededFailure,
-  WorkspaceSupervisor,
-} from './supervisor.js';
+  ThinDaemonCore,
+} from './thin-core.js';
+import { RoomRuntimeCoordinator } from './room-runtime.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -47,7 +48,7 @@ function storedIdentity(name: string) {
   };
 }
 
-describe('WorkspaceSupervisor removal lease', () => {
+describe('RoomRuntimeCoordinator removal lease', () => {
   it('requires three successful membership reads before returning agent-removed', async () => {
     const agent = storedIdentity('agent');
     const body = storedIdentity('body');
@@ -69,19 +70,18 @@ describe('WorkspaceSupervisor removal lease', () => {
       mcpBinary: '/bin/true',
       createdAt: new Date(0).toISOString(),
     };
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${agent.identity.publicKey}/runtime.json`,
       {} as BodyConfig,
     );
 
-    await expect(supervisor.run({ pollMs: 1 })).resolves.toBe('agent-removed');
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
+    await expect(supervisor.reconcile()).resolves.toBe('not-member');
     expect(mocks.createBuzzClient.mock.results[0]?.value.isMember).toHaveBeenCalledTimes(3);
     expect(supervisor.activeRoomIds()).toEqual([]);
-    // reconcile()'s own per-call client, plus the daemon's one shared relay
-    // socket closed at teardown. This fixture returns the same mock object for
-    // every createBuzzClient() call, so both land on this spy.
-    expect(disconnect).toHaveBeenCalledTimes(4);
+    expect(disconnect).toHaveBeenCalledTimes(3);
   });
 
   it('archives a corroborated removed runtime so its identity can be restored', async () => {
@@ -114,9 +114,11 @@ describe('WorkspaceSupervisor removal lease', () => {
       writeFileSync(resolve(dirname(configPath), 'daemon.pid'), '4242\n');
       const isMember = vi.fn().mockResolvedValue(false);
       mocks.createBuzzClient.mockReturnValue({ isMember, disconnect: vi.fn() });
-      const supervisor = new WorkspaceSupervisor(runtime, configPath, {} as BodyConfig);
+      const supervisor = new RoomRuntimeCoordinator(runtime, configPath, {} as BodyConfig);
 
-      await expect(supervisor.run({ pollMs: 1 })).resolves.toBe('agent-removed');
+      await expect(supervisor.reconcile()).resolves.toBe('unknown');
+      await expect(supervisor.reconcile()).resolves.toBe('unknown');
+      await expect(supervisor.reconcile()).resolves.toBe('not-member');
       expect(isMember).toHaveBeenCalledTimes(3);
 
       await removeAgentRuntime(configPath, runtime.agent.publicKey);
@@ -159,7 +161,7 @@ describe('WorkspaceSupervisor removal lease', () => {
       .mockRejectedValueOnce(new Error('membership projection unavailable'))
       .mockResolvedValue(false);
     mocks.createBuzzClient.mockReturnValue({ isMember, disconnect: vi.fn() });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -197,7 +199,7 @@ describe('WorkspaceSupervisor removal lease', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -225,7 +227,7 @@ describe('WorkspaceSupervisor removal lease', () => {
   });
 });
 
-describe('WorkspaceSupervisor unbound channel policy', () => {
+describe('RoomRuntimeCoordinator unbound channel policy', () => {
   function runtimeWithExistingRepo(): AgentRuntimeRecord {
     const agent = storedIdentity('policy-agent');
     const body = storedIdentity('policy-body');
@@ -270,7 +272,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect,
     });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -317,7 +319,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -352,7 +354,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -367,7 +369,7 @@ describe('WorkspaceSupervisor unbound channel policy', () => {
   });
 });
 
-describe('WorkspaceSupervisor Room watchdog', () => {
+describe('RoomRuntimeCoordinator Room watchdog', () => {
   function runtimeWithRooms(): AgentRuntimeRecord {
     const agent = storedIdentity('watchdog-agent');
     const body = storedIdentity('watchdog-body');
@@ -399,7 +401,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
   it('restarts only a stale Room while its sibling remains served', async () => {
     let now = 100_000;
     const runtime = runtimeWithRooms();
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -444,7 +446,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
   it('does not reset a rate-limited Room while its relay-directed delay is active', async () => {
     let now = 100_000;
     const runtime = runtimeWithRooms();
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -491,7 +493,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect,
     });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -530,7 +532,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       resolve(runtime.supervisorRoot, 'runtime.json'),
       {} as BodyConfig,
@@ -554,7 +556,7 @@ describe('WorkspaceSupervisor Room watchdog', () => {
   });
 });
 
-describe('WorkspaceSupervisor transient relay resilience', () => {
+describe('RoomRuntimeCoordinator transient relay resilience', () => {
   function runtimeMinimal(name: string): AgentRuntimeRecord {
     const agent = storedIdentity(name);
     const body = storedIdentity(`${name}-body`);
@@ -607,24 +609,19 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
       writeFileSync(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
       const isMember = vi.fn().mockRejectedValue(liveNonRetryableHtmlErrorFixture());
       mocks.createBuzzClient.mockReturnValue({ isMember, disconnect: vi.fn() });
-      const supervisor = new WorkspaceSupervisor(runtime, configPath, {} as BodyConfig);
+      const supervisor = new RoomRuntimeCoordinator(runtime, configPath, {} as BodyConfig);
       const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
       await expect(supervisor.reconcile()).resolves.toBe('unknown');
 
-      const controller = new AbortController();
-      const runPromise = supervisor.run({ pollMs: 1, signal: controller.signal });
-      while (isMember.mock.calls.length < 3) {
-        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
-      }
+      await expect(supervisor.reconcile()).resolves.toBe('unknown');
+      await expect(supervisor.reconcile()).resolves.toBe('unknown');
 
       expect(existsSync(configPath)).toBe(true);
       expect(existsSync(resolve(stateRoot, 'deleted-runtimes'))).toBe(false);
       expect(errors.mock.calls.flat().join(' ')).toContain(
         'membership could not be confirmed; keeping runtime and Rooms',
       );
-      controller.abort();
-      await expect(runPromise).resolves.toBe('aborted');
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }
@@ -644,7 +641,7 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect,
     });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new ThinDaemonCore(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -676,7 +673,7 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -703,7 +700,7 @@ describe('WorkspaceSupervisor transient relay resilience', () => {
   });
 });
 
-describe('WorkspaceSupervisor control-plane wake signal', () => {
+describe('ThinDaemonCore control-plane wake signal', () => {
   function runtimeMinimal(name: string): AgentRuntimeRecord {
     const agent = storedIdentity(name);
     const body = storedIdentity(`${name}-body`);
@@ -744,7 +741,7 @@ describe('WorkspaceSupervisor control-plane wake signal', () => {
         return fakeSocket;
       },
     });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new ThinDaemonCore(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -782,7 +779,7 @@ describe('WorkspaceSupervisor control-plane wake signal', () => {
     // a control-plane WS at all; reconcile() must still be driven, just by
     // the heartbeat instead of a push.
     mocks.createBuzzClient.mockReturnValue({ isMember, listMyChannels, disconnect });
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new ThinDaemonCore(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -805,7 +802,7 @@ describe('WorkspaceSupervisor control-plane wake signal', () => {
   });
 });
 
-describe('WorkspaceSupervisor per-room storage and harness isolation', () => {
+describe('RoomRuntimeCoordinator per-room storage and harness isolation', () => {
   const scratchDirs: string[] = [];
   const savedRoomHome = process.env.BUZZY_BODY_ROOM_HOME;
 
@@ -837,10 +834,10 @@ describe('WorkspaceSupervisor per-room storage and harness isolation', () => {
       mcpBinary: '/bin/true',
       createdAt: new Date(0).toISOString(),
     };
-    return new WorkspaceSupervisor(runtime, configPath, {} as BodyConfig);
+    return new RoomRuntimeCoordinator(runtime, configPath, {} as BodyConfig);
   }
 
-  function roomRoot(supervisor: WorkspaceSupervisor, channelId: string, room?: unknown): string {
+  function roomRoot(supervisor: RoomRuntimeCoordinator, channelId: string, room?: unknown): string {
     return (Reflect.get(supervisor, 'roomRoot') as (id: string, record?: unknown) => string).call(
       supervisor,
       channelId,
@@ -848,7 +845,7 @@ describe('WorkspaceSupervisor per-room storage and harness isolation', () => {
     );
   }
 
-  function agentHomeRoot(supervisor: WorkspaceSupervisor, workspaceRoot: string) {
+  function agentHomeRoot(supervisor: RoomRuntimeCoordinator, workspaceRoot: string) {
     return (
       Reflect.get(supervisor, 'roomAgentHomeRoot') as (root: string) => string | undefined
     ).call(supervisor, workspaceRoot);
@@ -907,7 +904,7 @@ describe('WorkspaceSupervisor per-room storage and harness isolation', () => {
   });
 });
 
-describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
+describe('RoomRuntimeCoordinator room owns the repo (Stage 1)', () => {
   function storedId(name: string) {
     return storedIdentity(name).stored;
   }
@@ -931,9 +928,9 @@ describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
   function supervisorFor(
     supervisorRoot: string,
     rooms: RoomRuntimeRecord[] = [],
-  ): WorkspaceSupervisor {
+  ): RoomRuntimeCoordinator {
     const rt = runtime(supervisorRoot, rooms);
-    return new WorkspaceSupervisor(
+    return new RoomRuntimeCoordinator(
       rt,
       `/tmp/beeline/agents/${rt.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1032,12 +1029,20 @@ describe('WorkspaceSupervisor room owns the repo (Stage 1)', () => {
 
 describe('Room join-failure classification', () => {
   it('treats known-durable reasons as durable and transport-shaped failures as transient', () => {
-    expect(isDurableRoomJoinFailure(new Error('invited Room x is local-only on another checkout'))).toBe(true);
-    expect(isDurableRoomJoinFailure(new Error('publishEvent kind=9 failed: HTTP 400 {"error":"invalid: channel is archived"}'))).toBe(true);
+    expect(
+      isDurableRoomJoinFailure(new Error('invited Room x is local-only on another checkout')),
+    ).toBe(true);
+    expect(
+      isDurableRoomJoinFailure(
+        new Error('publishEvent kind=9 failed: HTTP 400 {"error":"invalid: channel is archived"}'),
+      ),
+    ).toBe(true);
     // Everything else retries short: the cost of a wrong guess is one join
     // attempt per pass against an unservable Room; the cost of parking a
     // recoverable Room for ten minutes is an agent that reads as dead.
-    expect(isDurableRoomJoinFailure(new Error('queryEvents failed: HTTP 502 bad gateway'))).toBe(false);
+    expect(isDurableRoomJoinFailure(new Error('queryEvents failed: HTTP 502 bad gateway'))).toBe(
+      false,
+    );
     expect(
       isDurableRoomJoinFailure(
         new OidcBindError('room_repository_unauthorized', 'agent is not authorized', 403),
@@ -1061,7 +1066,7 @@ describe('Room join-failure classification', () => {
   });
 });
 
-describe('WorkspaceSupervisor per-Room discovery isolation', () => {
+describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
   function runtimeNoRooms(name: string): AgentRuntimeRecord {
     const agent = storedIdentity(name);
     const body = storedIdentity(`${name}-body`);
@@ -1125,7 +1130,7 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
   it('skips one unservable Room and still joins every other invited Room', async () => {
     const runtime = runtimeNoRooms('discovery-agent');
     mocks.createBuzzClient.mockReturnValue(discoveryClient(runtime));
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1148,7 +1153,7 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
     const client = discoveryClient(runtime);
     mocks.createBuzzClient.mockReturnValue(client);
     let now = 1_000_000;
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1179,7 +1184,7 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
 
     // Past the retry cadence it is tried again — an operator who fixes the
     // underlying cause is still picked up, just not by polling every 5s.
-    now += DEFAULT_ROOM_DISCOVERY_RETRY_MS + 1;
+    now += Math.ceil(DEFAULT_ROOM_DISCOVERY_RETRY_MS * 1.2) + 1;
     await supervisor.reconcile();
     expect(materialize).toHaveBeenCalledTimes(2);
     expect(client.messageSubmit).toHaveBeenCalledTimes(1);
@@ -1195,7 +1200,7 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
     const client = discoveryClient(runtime);
     mocks.createBuzzClient.mockReturnValue(client);
     let now = 1_000_000;
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1216,7 +1221,8 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
     );
 
     // Past the SHORT cadence it is tried again — not held for ten minutes.
-    now += DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS + 1;
+    // Backoff is intentionally jittered by ±20%; advance beyond its upper bound.
+    now += Math.ceil(DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS * 1.2) + 1;
     await supervisor.reconcile();
     expect(materialize).toHaveBeenCalledTimes(2);
   });
@@ -1228,7 +1234,7 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
       { channelId: 'unservable-room', event: { created_at: 20 } },
     ]);
     mocks.createBuzzClient.mockReturnValue(client);
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1251,7 +1257,7 @@ describe('WorkspaceSupervisor per-Room discovery isolation', () => {
   });
 });
 
-describe('WorkspaceSupervisor archived Room', () => {
+describe('RoomRuntimeCoordinator archived Room', () => {
   function runtimeNoRooms(name: string): AgentRuntimeRecord {
     const agent = storedIdentity(name);
     const body = storedIdentity(`${name}-body`);
@@ -1304,7 +1310,7 @@ describe('WorkspaceSupervisor archived Room', () => {
       channelId === 'dead-room' ? { archived: true } : { archived: false },
     );
     mocks.createBuzzClient.mockReturnValue(client);
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1322,10 +1328,9 @@ describe('WorkspaceSupervisor archived Room', () => {
     await expect(supervisor.reconcile()).resolves.toBe('member');
 
     // The dead Room is never served...
-    const deadStarts = [
-      ...startConversation.mock.calls,
-      ...startRepository.mock.calls,
-    ].filter((call) => call[0] === 'dead-room');
+    const deadStarts = [...startConversation.mock.calls, ...startRepository.mock.calls].filter(
+      (call) => call[0] === 'dead-room',
+    );
     expect(deadStarts).toHaveLength(0);
     // ...the live Room is served on every pass...
     expect(startConversation).toHaveBeenCalledWith('live-room', 'named-repository');
@@ -1335,8 +1340,8 @@ describe('WorkspaceSupervisor archived Room', () => {
     expect(
       client.getChannelMetadata.mock.calls.filter((call) => call[0] === 'dead-room'),
     ).toHaveLength(1);
-    const dropLogs = errors.mock.calls.filter((call) =>
-      String(call[0]).includes('dead-room') && String(call[0]).includes('archived'),
+    const dropLogs = errors.mock.calls.filter(
+      (call) => String(call[0]).includes('dead-room') && String(call[0]).includes('archived'),
     );
     expect(dropLogs).toHaveLength(1);
   });
@@ -1350,7 +1355,7 @@ describe('WorkspaceSupervisor archived Room', () => {
     const runtime = runtimeNoRooms('archived-reactive-agent');
     const client = twoRoomClient(runtime, () => null); // read answers nothing useful
     mocks.createBuzzClient.mockReturnValue(client);
-    const supervisor = new WorkspaceSupervisor(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1377,27 +1382,33 @@ describe('WorkspaceSupervisor archived Room', () => {
     const runtime = runtimeNoRooms('ordinary-quarantine-agent');
     const client = twoRoomClient(runtime, () => ({ archived: false }));
     mocks.createBuzzClient.mockReturnValue(client);
-    const supervisor = new WorkspaceSupervisor(
+    let now = 1_000;
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
+      { now: () => now },
     ) as never as { handleQuarantinedRoom(id: string, error: unknown): void };
 
     supervisor.handleQuarantinedRoom('live-room', new Error('relay socket hang up'));
 
+    // Transport quarantine is short and bounded, but no longer immediate.
     await expect(
       (supervisor as unknown as { reconcile(): Promise<string> }).reconcile(),
     ).resolves.toBe('member');
-    // Not parked: the Room was still read and still offered for serving.
+    expect(client.getChannelMetadata).not.toHaveBeenCalledWith('live-room');
+    now += Math.ceil(DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS * 1.2) + 1;
+    await expect(
+      (supervisor as unknown as { reconcile(): Promise<string> }).reconcile(),
+    ).resolves.toBe('member');
+    // It is offered again after the bounded backoff.
     expect(client.getChannelMetadata).toHaveBeenCalledWith('live-room');
   });
 
   it('classifies only the archived-channel refusal as terminal', async () => {
-    const { isArchivedChannelError } = await import('./supervisor.js');
+    const { isArchivedChannelError } = await import('./thin-core.js');
     expect(isArchivedChannelError(ARCHIVED_QUARANTINE_ERROR)).toBe(true);
-    expect(isArchivedChannelError('HTTP 400 {"error":"invalid: Channel is Archived"}')).toBe(
-      true,
-    );
+    expect(isArchivedChannelError('HTTP 400 {"error":"invalid: Channel is Archived"}')).toBe(true);
     // Retryable codes and unrelated failures stay out.
     expect(isArchivedChannelError(new Error('queryEvents failed: HTTP 429'))).toBe(false);
     expect(isArchivedChannelError(new Error('HTTP 408 request timeout'))).toBe(false);

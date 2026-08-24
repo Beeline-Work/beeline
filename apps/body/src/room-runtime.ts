@@ -5,23 +5,16 @@ import { dirname, resolve } from 'node:path';
 import WebSocket from 'ws';
 import {
   createBuzzClient,
-  KIND_PUT_USER,
-  KIND_REMOVE_USER,
   type RepositoryBinding,
   type RoomRepository,
 } from '@beeline/buzz-client';
-import {
-  git,
-  gitAuthed,
-  type GitResult,
-  type Identity,
-} from '@beeline/gate';
+import { git, gitAuthed, type GitResult, type Identity } from '@beeline/gate';
 import { Body, type BoundRepo } from './body.js';
 import { postAgentMessage } from './activity.js';
 import type { BodyConfig } from './config.js';
 import type { NamedRepositoryTarget } from './repository-target.js';
 import {
-  inspectLocalRepository,
+  inspectLocalRepositoryBounded,
   runtimeIdentity,
   writeRuntimeRecord,
   type AgentRuntimeRecord,
@@ -41,6 +34,7 @@ import {
   resolvePerRoomLiveSessions,
   SessionScheduler,
 } from './session-scheduler.js';
+import { RoomQuarantineStateMachine } from './room-quarantine.js';
 
 interface RunningRoom {
   body: Body;
@@ -98,7 +92,7 @@ function boundRepoFromTruth(truth: RepositoryTruth, room?: RoomRuntimeRecord): B
   };
 }
 
-function reconcileRetryMs(error: unknown, pollMs: number): number {
+export function reconcileRetryMs(error: unknown, pollMs: number): number {
   const match = String(error).match(/retry in\s+(\d+)s/i);
   return match ? Math.max(pollMs, (Number(match[1]) + 1) * 1_000) : pollMs;
 }
@@ -190,6 +184,52 @@ export function isOwnerGrantNeededFailure(error: unknown): boolean {
  * valid-but-incomplete answer immediately after a failed query.
  */
 export const REMOVAL_CONFIRMATION_READS = 3;
+export const ROOM_JOIN_CONCURRENCY = 3;
+export const ROOM_RECONCILE_DEADLINE_MS = 75_000;
+/** Leave one minute for forced cleanup before systemd's 10-minute stop ceiling. */
+export const DEFAULT_DRAIN_DEADLINE_MS = 9 * 60_000;
+
+export async function mapWithConcurrency<T>(
+  values: readonly T[],
+  concurrency: number,
+  visit: (value: T) => Promise<void>,
+): Promise<void> {
+  const queue = [...values];
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, concurrency), queue.length) }, async () => {
+      for (;;) {
+        const value = queue.shift();
+        if (value === undefined) return;
+        await visit(value);
+      }
+    }),
+  );
+}
+
+async function withRoomDeadline<T>(
+  roomId: string,
+  phase: 'classify' | 'join',
+  work: Promise<T>,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Room ${roomId} ${phase} deadline exceeded after ${ROOM_RECONCILE_DEADLINE_MS}ms`,
+          ),
+        ),
+      ROOM_RECONCILE_DEADLINE_MS,
+    );
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /**
  * Effective Workspace membership after transport failures and removal
@@ -210,8 +250,12 @@ async function readWorkspaceMembership(
   }
 }
 
-/** One durable Workspace control plane multiplexing isolated Room bodies. */
-export class WorkspaceSupervisor {
+/**
+ * Bounded Room-runtime leaf used by the thin daemon core. It owns Room state,
+ * Bodies, repository materialization through the Git worker, and quarantine;
+ * it does not own process supervision, READY/WATCHDOG, or update handoff.
+ */
+export class RoomRuntimeCoordinator {
   private runtime: AgentRuntimeRecord;
   private readonly configPath: string;
   private readonly baseConfig: BodyConfig;
@@ -227,12 +271,7 @@ export class WorkspaceSupervisor {
   private readonly repositoryTruth: RepositoryTruthResolver;
   private readonly githubApp: GitHubAppRuntime | undefined;
   private readonly namedRepositoryResolutions = new Map<string, Promise<BoundRepo>>();
-  /**
-   * Rooms whose join failed, keyed by channel id: when to try again, and the
-   * last message logged for them. One unservable Room must cost exactly one
-   * log line and its own retry cadence — never the whole discovery pass.
-   */
-  private readonly roomDiscoveryFailures = new Map<string, { retryAt: number; message: string }>();
+  private readonly quarantine: RoomQuarantineStateMachine;
   /** Rooms whose join failed for a pending owner grant — one "went live" card on success. */
   private readonly pendingOwnerGrantNotice = new Set<string>();
   /**
@@ -247,7 +286,6 @@ export class WorkspaceSupervisor {
    * back through a fresh authoritative answer that says it is NOT archived —
    * never silently, and never by our own retry loop.
    */
-  private readonly archivedRooms = new Map<string, { reason: string; at: number }>();
   private workspaceRemovalConfirmations = 0;
   private readonly roomRemovalConfirmations = new Map<string, number>();
   /** Schedule another short-cadence read while a removal is being confirmed. */
@@ -255,12 +293,19 @@ export class WorkspaceSupervisor {
   private readonly now: () => number;
   private readonly watchdogStaleMs: number;
   private readonly reconcileHeartbeatMs: number;
+  private readonly drainDeadlineMs: number;
 
   constructor(
     runtime: AgentRuntimeRecord,
     configPath: string,
     baseConfig: BodyConfig,
-    options: { now?: () => number; watchdogStaleMs?: number; reconcileHeartbeatMs?: number } = {},
+    options: {
+      now?: () => number;
+      watchdogStaleMs?: number;
+      reconcileHeartbeatMs?: number;
+      drainDeadlineMs?: number;
+      relaySocket?: SharedRelaySocket;
+    } = {},
   ) {
     this.runtime = runtime;
     this.configPath = configPath;
@@ -280,13 +325,15 @@ export class WorkspaceSupervisor {
       idleMs: Number(process.env.BUZZY_BODY_SESSION_IDLE_MS ?? String(5 * 60_000)),
       reserveInteractiveSlot: true,
     });
-    this.relaySocket = new SharedRelaySocket({
-      baseUrl: runtime.relayBaseUrl,
-      ...(runtime.relayHost ? { host: runtime.relayHost } : {}),
-      ...(baseConfig.relayWsUrl ? { wsUrl: baseConfig.relayWsUrl } : {}),
-      identity: this.agent,
-      WebSocketImpl: WebSocket,
-    });
+    this.relaySocket =
+      options.relaySocket ??
+      new SharedRelaySocket({
+        baseUrl: runtime.relayBaseUrl,
+        ...(runtime.relayHost ? { host: runtime.relayHost } : {}),
+        ...(baseConfig.relayWsUrl ? { wsUrl: baseConfig.relayWsUrl } : {}),
+        identity: this.agent,
+        WebSocketImpl: WebSocket,
+      });
     this.githubApp = GitHubAppRuntime.fromEnvironment(process.env, {
       baseUrl: runtime.relayBaseUrl,
       identity: this.agent,
@@ -320,16 +367,47 @@ export class WorkspaceSupervisor {
         : {}),
     });
     this.now = options.now ?? Date.now;
+    this.quarantine = new RoomQuarantineStateMachine({
+      now: this.now,
+      onTransition: (previous, next) => {
+        console.error(
+          `[thin-core] Room ${next.roomId} could not be joined: state ` +
+            `${previous?.kind ?? 'unseen'} -> ${next.kind}: ${next.reason}`,
+        );
+      },
+    });
     this.watchdogStaleMs =
       options.watchdogStaleMs ??
       Number(process.env.BUZZY_BODY_ROOM_WATCHDOG_STALE_MS ?? DEFAULT_ROOM_WATCHDOG_STALE_MS);
     this.reconcileHeartbeatMs =
       options.reconcileHeartbeatMs ??
       Number(process.env.BUZZY_BODY_RECONCILE_HEARTBEAT_MS ?? DEFAULT_RECONCILE_HEARTBEAT_MS);
+    this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
   }
 
   activeRoomIds(): string[] {
     return [...this.running.keys()].sort();
+  }
+
+  activeRoomCount(): number {
+    return this.running.size;
+  }
+
+  needsFastReconcile(): boolean {
+    return this.confirmationPending;
+  }
+
+  reconcileHeartbeatIntervalMs(): number {
+    return this.reconcileHeartbeatMs;
+  }
+
+  async watchdogTick(): Promise<void> {
+    await this.watchdog();
+  }
+
+  async shutdown(): Promise<void> {
+    await this.stopAll();
+    await this.scheduler.dispose();
   }
 
   /**
@@ -356,108 +434,14 @@ export class WorkspaceSupervisor {
   async broadcastDaemonNotice(text: string): Promise<void> {
     await Promise.allSettled(
       [...this.running.entries()].map(([channelId, room]) =>
-        postAgentMessage(channelId, this.agent, text).catch(() => {
+        postAgentMessage(channelId, this.agent, text).catch((error) => {
+          if (isArchivedChannelError(error)) {
+            this.noteArchivedRoom(channelId, 'daemon notice was refused: channel is archived');
+          }
           void room;
         }),
       ),
     );
-  }
-
-  /**
-   * Membership discovery (`reconcile()`) no longer runs on a blind 5s forever
-   * poll. A persistent control-plane WS subscribes once to this agent's own
-   * put/remove-user events (kind 9000/9001, `#p`-filtered — the durable NIP-29
-   * mutation log, not the replaceable 39001/39002 projection, so a removal
-   * event still carries this agent's pubkey even though the *resulting*
-   * projection no longer would) and wakes `reconcile()` on demand instead.
-   * `DEFAULT_RECONCILE_HEARTBEAT_MS` is a long-interval correctness backstop:
-   * `reconcile()` still runs on that cadence even with zero WS activity, so a
-   * socket that never connects, drops, or silently misses a push can never
-   * strand a stale membership set (including a missed removal) indefinitely.
-   * The Room watchdog stays on the tight `pollMs` tick below — it only reads
-   * already-local timestamps, so it costs no relay traffic either way.
-   */
-  async run(
-    opts: { pollMs?: number; signal?: AbortSignal } = {},
-  ): Promise<'aborted' | 'agent-removed'> {
-    const watchdogTickMs = opts.pollMs ?? 5_000;
-    let wake = true; // reconcile once immediately on startup, same as before
-    let nextReconcileAt = 0;
-    let unsubscribeControl: (() => void) | undefined;
-    try {
-      // The control plane is one more subId on the daemon's shared socket, not
-      // its own connection.
-      const candidate = await this.relaySocket.connected();
-      const socket = candidate.socket;
-      if (!socket) throw new Error('control-plane WS connected but exposed no socket');
-      unsubscribeControl = socket.subscribe(
-        [
-          {
-            kinds: [KIND_PUT_USER, KIND_REMOVE_USER],
-            '#p': [this.agent.publicKey],
-            since: Math.floor(this.now() / 1000),
-          },
-        ],
-        () => {
-          wake = true;
-        },
-      );
-    } catch (error) {
-      console.error(
-        `[supervisor] control-plane WS unavailable; relying on the ` +
-          `${this.reconcileHeartbeatMs}ms heartbeat poll:`,
-        error,
-      );
-    }
-    try {
-      while (!opts.signal?.aborted) {
-        let waitMs = watchdogTickMs;
-        if (wake || this.now() >= nextReconcileAt) {
-          wake = false;
-          try {
-            const membership = await this.reconcile();
-            if (membership === 'not-member') return 'agent-removed';
-            nextReconcileAt =
-              this.now() +
-              (membership === 'unknown' || this.confirmationPending
-                ? watchdogTickMs
-                : this.reconcileHeartbeatMs);
-          } catch (error) {
-            // Membership discovery is a control-plane read. A transient relay
-            // error must not tear down every active Room (and therefore restart
-            // their pinned ACP processes). Keep serving the last known set and
-            // honor the relay's advertised backoff before reconciling again.
-            const retryMs = reconcileRetryMs(error, watchdogTickMs);
-            nextReconcileAt = this.now() + retryMs;
-            waitMs = Math.min(waitMs, retryMs);
-            console.error(`[supervisor] discovery failed; retrying in ${retryMs}ms:`, error);
-          }
-        }
-        // Keep Room recovery independent from Workspace discovery: a transient
-        // control-plane read cannot prevent the watchdog from reviving a
-        // stale Room already known to this daemon.
-        await this.watchdog();
-        await new Promise<void>((resolveWait) => {
-          const timer = setTimeout(resolveWait, waitMs);
-          opts.signal?.addEventListener(
-            'abort',
-            () => {
-              clearTimeout(timer);
-              resolveWait();
-            },
-            { once: true },
-          );
-        });
-      }
-      return 'aborted';
-    } finally {
-      unsubscribeControl?.();
-      // Rooms still drain their own REQs over the shared socket, so it can only
-      // be closed once every Body has stopped.
-      await this.stopAll();
-      await this.scheduler.dispose();
-      this.relaySocket.disconnect();
-    }
   }
 
   /**
@@ -472,7 +456,7 @@ export class WorkspaceSupervisor {
     if (this.roomRepositoryUnverified.get(channelId) === reason) return;
     this.roomRepositoryUnverified.set(channelId, reason);
     console.warn(
-      `[supervisor] Room ${channelId} repository could not be confirmed (${reason}); ` +
+      `[thin-core] Room ${channelId} repository could not be confirmed (${reason}); ` +
         'keeping the last confirmed classification rather than treating it as repo-less',
     );
   }
@@ -489,7 +473,7 @@ export class WorkspaceSupervisor {
         () => client.isMember(this.runtime.communityId, this.agent.publicKey),
         (error) =>
           console.error(
-            `[supervisor] Workspace ${this.runtime.communityId} membership could not be ` +
+            `[thin-core] Workspace ${this.runtime.communityId} membership could not be ` +
               'confirmed; keeping runtime and Rooms, then retrying:',
             error,
           ),
@@ -507,14 +491,14 @@ export class WorkspaceSupervisor {
         if (this.workspaceRemovalConfirmations < REMOVAL_CONFIRMATION_READS) {
           this.confirmationPending = true;
           console.warn(
-            `[supervisor] Workspace ${this.runtime.communityId} membership read says agent is ` +
+            `[thin-core] Workspace ${this.runtime.communityId} membership read says agent is ` +
               `absent (${this.workspaceRemovalConfirmations}/${REMOVAL_CONFIRMATION_READS}); ` +
               'keeping runtime and Rooms until successful reads corroborate removal',
           );
           return 'unknown';
         }
         console.log(
-          `[supervisor] agent removal from Workspace ${this.runtime.communityId} corroborated by ` +
+          `[thin-core] agent removal from Workspace ${this.runtime.communityId} corroborated by ` +
             `${REMOVAL_CONFIRMATION_READS} successful reads; draining runtime`,
         );
         return 'not-member';
@@ -522,77 +506,95 @@ export class WorkspaceSupervisor {
       this.workspaceRemovalConfirmations = 0;
       const memberships = await client.listMyChannels();
       const desired = new Map<string, DesiredChannel>();
-      for (const membership of memberships) {
+      await mapWithConcurrency(memberships, ROOM_JOIN_CONCURRENCY, async (membership) => {
         const channelId = membership.channelId;
-        // listMyChannels reads the relay's current member/admin projections.
-        // Known Rooms need no further control-plane queries: disappearing
-        // from this list is the authoritative removal signal.
+        const membershipSince = membership.event.created_at;
         const knownRoom = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
-        if (knownRoom) {
-          const resolution = await client.resolveRoomRepositoryState(channelId);
-          desired.set(channelId, {
-            membershipSince: membership.event.created_at,
-            kind: 'repository',
-            repositoryRoom: knownRoom,
-            ...(resolution.kind === 'repository'
-              ? { roomRepository: resolution.repository }
-              : {}),
-          });
-          if (resolution.kind === 'unverified') {
-            this.noteRoomRepositoryUnverified(channelId, resolution.reason);
+        try {
+          await withRoomDeadline(
+            channelId,
+            'classify',
+            (async () => {
+              // listMyChannels reads the relay's current member/admin
+              // projections. Known Rooms need no further identity queries.
+              if (knownRoom) {
+                const resolution = await client.resolveRoomRepositoryState(channelId);
+                desired.set(channelId, {
+                  membershipSince,
+                  kind: 'repository',
+                  repositoryRoom: knownRoom,
+                  ...(resolution.kind === 'repository'
+                    ? { roomRepository: resolution.repository }
+                    : {}),
+                });
+                if (resolution.kind === 'unverified') {
+                  this.noteRoomRepositoryUnverified(channelId, resolution.reason);
+                }
+                return;
+              }
+              if ((await client.getChannelCommunityId(channelId)) !== this.runtime.communityId)
+                return;
+              if (channelId === this.runtime.communityId) return;
+              if (await client.getParentChannelId(channelId)) return;
+              // The repository belongs to the ROOM, resolved from published
+              // Room state rather than this agent's pairing binding.
+              const resolution = await client.resolveRoomRepositoryState(channelId);
+              if (resolution.kind === 'repository') {
+                const entry: DesiredChannel = {
+                  membershipSince,
+                  kind: 'repository',
+                  roomRepository: resolution.repository,
+                };
+                this.lastRoomClassification.set(channelId, entry);
+                desired.set(channelId, entry);
+                return;
+              }
+              // Preserve the existing tri-state behavior: an unverified read
+              // is never interpreted as "no repository".
+              if (resolution.kind === 'unverified') {
+                const known = this.lastRoomClassification.get(channelId);
+                if (known) desired.set(channelId, { ...known, membershipSince });
+                else if (this.running.has(channelId)) {
+                  desired.set(channelId, { membershipSince, kind: 'named-repository' });
+                }
+                this.noteRoomRepositoryUnverified(channelId, resolution.reason);
+                return;
+              }
+              const dm = await client.getDirectMessage(channelId);
+              const entry: DesiredChannel = {
+                membershipSince,
+                kind:
+                  dm && dm.participants.includes(this.agent.publicKey)
+                    ? 'direct-message'
+                    : 'named-repository',
+              };
+              this.lastRoomClassification.set(channelId, entry);
+              desired.set(channelId, entry);
+            })(),
+          );
+          if (this.quarantine.get(channelId)?.reason.startsWith('classification:')) {
+            this.quarantine.noteSuccess(channelId);
           }
-          continue;
-        }
-        if ((await client.getChannelCommunityId(channelId)) !== this.runtime.communityId) continue;
-        if (channelId === this.runtime.communityId) continue;
-        if (await client.getParentChannelId(channelId)) continue;
-        // The repository belongs to the ROOM, resolved from published Room
-        // state (admin-authored config → immutable genesis binding), not from
-        // this agent's own pairing binding — any agent joining the Room trees
-        // off the same repo.
-        const resolution = await client.resolveRoomRepositoryState(channelId);
-        if (resolution.kind === 'repository') {
-          const entry: DesiredChannel = {
-            membershipSince: membership.event.created_at,
-            kind: 'repository',
-            roomRepository: resolution.repository,
-          };
-          this.lastRoomClassification.set(channelId, entry);
-          desired.set(channelId, entry);
-          continue;
-        }
-        // "Could not confirm" must never become "there isn't one". A Room's
-        // repository config is authorized against the CURRENT admin
-        // projection, and that read comes back empty under relay load — which
-        // used to silently reclassify a live repository Room as a repo-less
-        // one, mid-session, so its own agent then told the admin the Room had
-        // no repository linked. Carry the last confirmed answer instead, and
-        // if there has never been one, leave the Room alone this pass rather
-        // than starting it as something it may not be.
-        if (resolution.kind === 'unverified') {
+        } catch (error) {
+          // A failed Room classification cannot abort the fleet or delete a
+          // running Room. Carry its last confirmed shape while its single
+          // quarantine record applies a short transport backoff.
+          const reason = error instanceof Error ? error.message : String(error);
+          this.quarantine.noteFailure(channelId, new Error(`classification: ${reason}`));
           const known = this.lastRoomClassification.get(channelId);
-          if (known) {
-            desired.set(channelId, { ...known, membershipSince: membership.event.created_at });
-          } else if (this.running.has(channelId)) {
+          if (knownRoom) {
             desired.set(channelId, {
-              membershipSince: membership.event.created_at,
-              kind: 'named-repository',
+              membershipSince,
+              kind: 'repository',
+              repositoryRoom: knownRoom,
             });
+          } else if (known) {
+            desired.set(channelId, { ...known, membershipSince });
+          } else if (this.running.has(channelId)) {
+            desired.set(channelId, { membershipSince, kind: 'named-repository' });
           }
-          this.noteRoomRepositoryUnverified(channelId, resolution.reason);
-          continue;
         }
-        const dm = await client.getDirectMessage(channelId);
-        const entry: DesiredChannel = {
-          membershipSince: membership.event.created_at,
-          kind:
-            dm && dm.participants.includes(this.agent.publicKey)
-              ? 'direct-message'
-              : 'named-repository',
-        };
-        this.lastRoomClassification.set(channelId, entry);
-        desired.set(channelId, entry);
-      }
+      });
 
       for (const channelId of desired.keys()) this.roomRemovalConfirmations.delete(channelId);
       for (const [channelId, running] of [...this.running]) {
@@ -602,7 +604,7 @@ export class WorkspaceSupervisor {
         if (confirmations < REMOVAL_CONFIRMATION_READS) {
           this.confirmationPending = true;
           console.warn(
-            `[supervisor] Room ${channelId} is absent from the successful membership read ` +
+            `[thin-core] Room ${channelId} is absent from the successful membership read ` +
               `(${confirmations}/${REMOVAL_CONFIRMATION_READS}); keeping it running until ` +
               'successful reads corroborate removal',
           );
@@ -614,91 +616,113 @@ export class WorkspaceSupervisor {
         await running.promise.catch(() => undefined);
       }
 
-      for (const [channelId, target] of desired) {
-        if (this.running.has(channelId)) continue;
-        // One Room that cannot be joined is a fact about that Room, not about
-        // discovery. Isolate it here: a throw used to abort the whole pass,
-        // so a single unservable Room (a local-only repo bound on another
-        // checkout is the observed case) both starved every Room behind it in
-        // this loop of its join and pinned discovery to the 5s error backoff
-        // forever.
-        const failure = this.roomDiscoveryFailures.get(channelId);
-        if (failure && this.now() < failure.retryAt) continue;
-        // An archived Room is never served again this process. The in-memory
-        // answer is a cache of the relay's own terminal verdict (see the
-        // quarantine handler and the proactive read below); while it stands,
-        // the Room costs discovery literally nothing — not even the read.
-        if (this.archivedRooms.has(channelId)) continue;
+      await mapWithConcurrency([...desired], ROOM_JOIN_CONCURRENCY, async ([channelId, target]) => {
         try {
-          // Ask the relay BEFORE serving: an archived Room refuses every write
-          // a fresh Body would attempt, so the first serve cycle would only
-          // end in the identical HTTP 400 quarantine. One cheap metadata read
-          // on join turns that loop into a skip.
-          const metadata = await client.getChannelMetadata(channelId).catch(() => null);
-          if (metadata?.archived) {
-            this.noteArchivedRoom(channelId, 'the relay projection reports this Room archived');
-            continue;
-          }
-          if (target.kind === 'repository') {
-            let room = this.runtime.rooms.find((candidate) => candidate.channelId === channelId);
-            if (
-              room &&
-              target.roomRepository &&
-              !sameRepositoryBinding(room.repo.repository, target.roomRepository.binding)
-            ) {
-              const replacement = await this.materializeRoom(
-                channelId,
-                target.membershipSince,
-                target.roomRepository,
-              );
-              replacement.root = room.root;
-              replacement.mergeWorker = room.mergeWorker;
-              const roomIndex = this.runtime.rooms.indexOf(room);
-              this.runtime.rooms[roomIndex] = replacement;
-              room = replacement;
-              await writeRuntimeRecord(this.runtime);
-            }
-            if (!room) {
-              const roomRepository =
-                target.roomRepository ?? (await client.resolveRoomRepository(channelId));
-              if (roomRepository) {
-                // Materialize the ONE shared per-repo-per-host checkout eagerly,
-                // on join — the Room's read-only session reads code from it
-                // (list/read/search/git-log) before any corner is opened.
-                room = await this.materializeRoom(
-                  channelId,
-                  target.membershipSince,
-                  roomRepository,
-                );
-                this.runtime.rooms.push(room);
-                await writeRuntimeRecord(this.runtime);
-              } else {
-                room = target.repositoryRoom;
+          await withRoomDeadline(
+            channelId,
+            'join',
+            (async () => {
+              if (this.running.has(channelId)) return;
+              // One Room that cannot be joined is a fact about that Room, not about
+              // discovery. Isolate it here: a throw used to abort the whole pass,
+              // so a single unservable Room (a local-only repo bound on another
+              // checkout is the observed case) both starved every Room behind it in
+              // this loop of its join and pinned discovery to the 5s error backoff
+              // forever.
+              if (!this.quarantine.mayAttempt(channelId)) return;
+              // An archived Room is never served again this process. The in-memory
+              // answer is a cache of the relay's own terminal verdict (see the
+              // quarantine handler and the proactive read below); while it stands,
+              // the Room costs discovery literally nothing — not even the read.
+              if (this.quarantine.get(channelId)?.kind === 'terminal-inert') return;
+              try {
+                // Ask the relay BEFORE serving: an archived Room refuses every write
+                // a fresh Body would attempt, so the first serve cycle would only
+                // end in the identical HTTP 400 quarantine. One cheap metadata read
+                // on join turns that loop into a skip.
+                const metadata = await client.getChannelMetadata(channelId).catch(() => null);
+                if (metadata?.archived) {
+                  this.noteArchivedRoom(
+                    channelId,
+                    'the relay projection reports this Room archived',
+                  );
+                  return;
+                }
+                if (target.kind === 'repository') {
+                  let room = this.runtime.rooms.find(
+                    (candidate) => candidate.channelId === channelId,
+                  );
+                  if (
+                    room &&
+                    target.roomRepository &&
+                    !sameRepositoryBinding(room.repo.repository, target.roomRepository.binding)
+                  ) {
+                    const replacement = await this.materializeRoom(
+                      channelId,
+                      target.membershipSince,
+                      target.roomRepository,
+                    );
+                    replacement.root = room.root;
+                    replacement.mergeWorker = room.mergeWorker;
+                    const roomIndex = this.runtime.rooms.indexOf(room);
+                    this.runtime.rooms[roomIndex] = replacement;
+                    room = replacement;
+                    await writeRuntimeRecord(this.runtime);
+                  }
+                  if (!room) {
+                    const roomRepository =
+                      target.roomRepository ?? (await client.resolveRoomRepository(channelId));
+                    if (roomRepository) {
+                      // Materialize the ONE shared per-repo-per-host checkout eagerly,
+                      // on join — the Room's read-only session reads code from it
+                      // (list/read/search/git-log) before any corner is opened.
+                      room = await this.materializeRoom(
+                        channelId,
+                        target.membershipSince,
+                        roomRepository,
+                      );
+                      this.runtime.rooms.push(room);
+                      await writeRuntimeRecord(this.runtime);
+                    } else {
+                      room = target.repositoryRoom;
+                    }
+                  }
+                  if (room) await this.startRepositoryRoom(room, channelId);
+                } else {
+                  this.startConversationRoom(channelId, target.kind);
+                }
+                this.quarantine.noteSuccess(channelId);
+              } catch (error) {
+                const discovery = this.noteRoomDiscoveryFailure(channelId, error);
+                if (discovery.announced) {
+                  await client
+                    .messageSubmit(
+                      channelId,
+                      `Agent unavailable: I could not access this Room's repository. ` +
+                        `I will retry automatically in ${discovery.retryLabel}.`,
+                    )
+                    .catch((noticeError: unknown) =>
+                      isArchivedChannelError(noticeError)
+                        ? this.noteArchivedRoom(
+                            channelId,
+                            'join-status notice was refused: channel is archived',
+                          )
+                        : console.warn(
+                            `[thin-core] Room ${channelId} join-status notice could not be sent:`,
+                            noticeError,
+                          ),
+                    );
+                }
               }
-            }
-            if (room) await this.startRepositoryRoom(room, channelId);
-          } else {
-            this.startConversationRoom(channelId, target.kind);
-          }
-          this.roomDiscoveryFailures.delete(channelId);
+            })(),
+          );
         } catch (error) {
-          const discovery = this.noteRoomDiscoveryFailure(channelId, error);
-          if (discovery.announced) {
-            await client
-              .messageSubmit(
-                channelId,
-                `Agent unavailable: I could not access this Room's repository. ` +
-                  `I will retry automatically in ${discovery.retryLabel}.`,
-              )
-              .catch((noticeError: unknown) =>
-                console.warn(
-                  `[supervisor] Room ${channelId} join-status notice could not be sent:`,
-                  noticeError,
-                ),
-              );
-          }
+          // The deadline itself sits outside the join body's catch. Keep it
+          // Room-local too: one exhausted slot must not reject the full
+          // reconcile pass after its siblings have already progressed.
+          this.noteRoomDiscoveryFailure(channelId, error);
         }
-      }
+      });
       return 'member';
     } catch (error) {
       // A partially completed discovery pass cannot count toward consecutive
@@ -717,13 +741,11 @@ export class WorkspaceSupervisor {
    * `archivedRooms` docblock for why it is held rather than forgotten.
    */
   private noteArchivedRoom(channelId: string, reason: string): void {
-    if (this.archivedRooms.has(channelId)) return;
-    this.archivedRooms.set(channelId, { reason, at: this.now() });
-    this.roomDiscoveryFailures.delete(channelId);
-    console.error(
-      `[supervisor] Room ${channelId} is archived on the relay (${reason}); dropping it — ` +
-        'the daemon will not serve or retry it again',
-    );
+    this.quarantine.noteArchived(channelId, reason);
+    // Terminal evidence applies to every path, including best-effort notices
+    // after a Room has started. Quiesce it immediately; its durable state is
+    // left in place for an authoritative re-read after a future restart.
+    this.running.get(channelId)?.controller.abort();
   }
 
   /**
@@ -733,13 +755,10 @@ export class WorkspaceSupervisor {
    */
   private handleQuarantinedRoom(channelId: string, error: unknown): void {
     if (isArchivedChannelError(error)) {
-      this.noteArchivedRoom(
-        channelId,
-        'the relay refused writes to it: channel is archived',
-      );
-      return;
+      this.noteArchivedRoom(channelId, 'the relay refused writes to it: channel is archived');
+    } else {
+      this.quarantine.noteFailure(channelId, error);
     }
-    console.error(`[supervisor] Room ${channelId} quarantined:`, error);
   }
 
   /**
@@ -751,31 +770,28 @@ export class WorkspaceSupervisor {
    * such a window reads as an agent that went dark. The console line is
    * emitted only when the reason changes, either way.
    */
-  private noteRoomDiscoveryFailure(channelId: string, error: unknown): {
+  private noteRoomDiscoveryFailure(
+    channelId: string,
+    error: unknown,
+  ): {
     announced: boolean;
     retryLabel: string;
   } {
     const message = error instanceof Error ? error.message : String(error);
-    const previous = this.roomDiscoveryFailures.get(channelId);
-    const durable = isDurableRoomJoinFailure(error);
-    const retryMs = durable
-      ? DEFAULT_ROOM_DISCOVERY_RETRY_MS
-      : DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS;
-    this.roomDiscoveryFailures.set(channelId, {
-      retryAt: this.now() + retryMs,
-      message,
-    });
+    const previous = this.quarantine.get(channelId);
+    const next = this.quarantine.noteFailure(channelId, error);
     if (isOwnerGrantNeededFailure(error)) {
       this.pendingOwnerGrantNotice.add(channelId);
     }
-    if (previous?.message === message)
+    if (previous?.kind === next.kind && previous.reason === message)
       return { announced: false, retryLabel: '' };
-    const retryLabel = durable ? '10 minutes' : '30 seconds';
-    console.error(
-      `[supervisor] Room ${channelId} could not be joined; skipping it and retrying in ` +
-        `${retryMs}ms:`,
-      error,
-    );
+    const retryMs = Math.max(0, (next.retryAt ?? this.now()) - this.now());
+    const retryLabel =
+      next.kind === 'durable-backoff'
+        ? '10 minutes'
+        : next.kind === 'owner-grant-backoff' && next.confirmations >= 3
+          ? `${Math.max(10, Math.ceil(retryMs / 60_000))} minutes`
+          : '30 seconds';
     return { announced: true, retryLabel };
   }
 
@@ -810,7 +826,7 @@ export class WorkspaceSupervisor {
     try {
       mkdirSync(home, { recursive: true, mode: 0o700 });
     } catch (error) {
-      console.error(`[supervisor] per-room agent home unavailable at ${home}:`, error);
+      console.error(`[thin-core] per-room agent home unavailable at ${home}:`, error);
       return undefined;
     }
     return home;
@@ -892,7 +908,7 @@ export class WorkspaceSupervisor {
       backoffUntil: 0,
       recovering: false,
     });
-    console.log(`[supervisor] serving Room ${channelId} from ${boundRepo.localPath}`);
+    console.log(`[thin-core] serving Room ${channelId} from ${boundRepo.localPath}`);
     // The Room was parked waiting for the repository OWNER to grant Beeline
     // access (shareable install link, typed owner_grant_needed refusal) and
     // the grant has landed — announce it once, through the ordinary
@@ -903,7 +919,11 @@ export class WorkspaceSupervisor {
         channelId,
         this.agent,
         `Beeline access to ${boundRepo.repositoryId ?? boundRepo.repo} is live — this Room's repository link is complete.`,
-      ).catch(() => {});
+      ).catch((error) => {
+        if (isArchivedChannelError(error)) {
+          this.noteArchivedRoom(channelId, 'grant-live notice was refused: channel is archived');
+        }
+      });
     }
   }
 
@@ -944,7 +964,7 @@ export class WorkspaceSupervisor {
       recovering: false,
     });
     console.log(
-      `[supervisor] serving ${kind === 'direct-message' ? 'read-only DM' : 'repo-less Room'} ${channelId}`,
+      `[thin-core] serving ${kind === 'direct-message' ? 'read-only DM' : 'repo-less Room'} ${channelId}`,
     );
   }
 
@@ -976,7 +996,7 @@ export class WorkspaceSupervisor {
     await mkdir(repositories, { recursive: true, mode: 0o700 });
     if (!existsSync(root)) {
       const result = target.relayOwnerHex
-        ? gitAuthed(repositories, this.agent, target.relayOwnerHex, target.repo, [
+        ? await gitAuthed(repositories, this.agent, target.relayOwnerHex, target.repo, [
             'clone',
             `${this.runtime.relayBaseUrl}/git/${target.relayOwnerHex}/${target.repo}`,
             root,
@@ -1000,10 +1020,7 @@ export class WorkspaceSupervisor {
               stderr: 'GitHub App credentials are not configured',
             };
       if (!result.ok) {
-        console.error(
-          `[supervisor] named repository clone failed for ${target.id}:`,
-          result.stderr,
-        );
+        console.error(`[thin-core] named repository clone failed for ${target.id}:`, result.stderr);
         throw new Error(
           `repository ${target.id} could not be cloned or accessed with the available credentials`,
         );
@@ -1012,9 +1029,9 @@ export class WorkspaceSupervisor {
 
     let local: LocalRepositoryBinding;
     try {
-      local = inspectLocalRepository(root);
+      local = await inspectLocalRepositoryBounded(root);
     } catch (error) {
-      console.error(`[supervisor] named repository inspection failed for ${target.id}:`, error);
+      console.error(`[thin-core] named repository inspection failed for ${target.id}:`, error);
       throw new Error(`repository ${target.id} could not be verified after cloning`);
     }
     const matchesTarget = target.relayOwnerHex
@@ -1112,9 +1129,9 @@ export class WorkspaceSupervisor {
     if (!repo.truth) return;
     const result = await this.repositoryTruth.syncPairingCheckout(repo.truth, landedTip);
     if (result.status === 'fast-forwarded') {
-      console.log(`[supervisor] pairing checkout fast-forwarded to ${landedTip.slice(0, 12)}`);
+      console.log(`[thin-core] pairing checkout fast-forwarded to ${landedTip.slice(0, 12)}`);
     } else if (result.status === 'refused') {
-      console.warn(`[supervisor] pairing checkout sync refused: ${result.reason}`);
+      console.warn(`[thin-core] pairing checkout sync refused: ${result.reason}`);
     }
   }
 
@@ -1164,9 +1181,30 @@ export class WorkspaceSupervisor {
   }
 
   private async stopAll(): Promise<void> {
-    const rooms = [...this.running.values()];
-    for (const room of rooms) room.controller.abort();
-    await Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));
+    const rooms = [...this.running.entries()];
+    for (const [, room] of rooms) room.controller.abort();
+    const drained = Promise.all(rooms.map(([, room]) => room.promise.catch(() => undefined)));
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<'deadline'>((resolveDeadline) => {
+      timer = setTimeout(() => resolveDeadline('deadline'), this.drainDeadlineMs);
+      timer.unref?.();
+    });
+    const result = await Promise.race([drained.then(() => 'drained' as const), deadline]);
+    if (timer) clearTimeout(timer);
+    if (result === 'drained') return;
+    console.error(
+      `[thin-core] absolute drain deadline ${this.drainDeadlineMs}ms reached; killing remaining turn children`,
+    );
+    await Promise.allSettled(
+      rooms.map(([channelId, room]) => room.body.forceRecoverRoom(channelId)),
+    );
+    await Promise.race([
+      drained,
+      new Promise<void>((resolveWait) => {
+        const finalTimer = setTimeout(resolveWait, 5_000);
+        finalTimer.unref?.();
+      }),
+    ]);
   }
 
   private notePoll(channelId: string): void {
@@ -1206,7 +1244,7 @@ export class WorkspaceSupervisor {
       if (pollAge <= this.watchdogStaleMs && presenceAge <= this.watchdogStaleMs) continue;
       running.recovering = true;
       console.error(
-        `[supervisor] Room ${channelId} watchdog recovery: ` +
+        `[thin-core] Room ${channelId} watchdog recovery: ` +
           `pollAge=${pollAge}ms presenceAge=${presenceAge}ms presence=${running.presence}`,
       );
       // forceSuspend kills a stuck ACP request; AbortController exits the Room
@@ -1215,7 +1253,7 @@ export class WorkspaceSupervisor {
       await running.body
         .forceRecoverRoom(channelId)
         .catch((error) =>
-          console.error(`[supervisor] Room ${channelId} watchdog ACP cleanup failed:`, error),
+          console.error(`[thin-core] Room ${channelId} watchdog ACP cleanup failed:`, error),
         );
       running.controller.abort();
     }

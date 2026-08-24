@@ -123,26 +123,32 @@ const MAX_SUMMARIZED_COMMITS = 30;
  * canonical checkout is reset to `origin/<target>` and may not hold a local
  * branch of that name at all.
  */
-export function summarizeUnreleasedWork(
+export async function summarizeUnreleasedWork(
   repoPath: string,
   targetBranch: string,
   remoteName?: string,
-): UnreleasedWork | undefined {
+): Promise<UnreleasedWork | undefined> {
   const branch = targetBranch.replace(/^refs\/heads\//, '');
   const candidates = [branch, ...(remoteName ? [`${remoteName}/${branch}`] : []), 'HEAD'];
-  const ref = candidates.find((candidate) => git(repoPath, ['rev-parse', '--verify', `${candidate}^{commit}`]).ok);
+  let ref: string | undefined;
+  for (const candidate of candidates) {
+    if ((await git(repoPath, ['rev-parse', '--verify', `${candidate}^{commit}`])).ok) {
+      ref = candidate;
+      break;
+    }
+  }
   if (!ref) return undefined;
 
-  const described = git(repoPath, ['describe', '--tags', '--abbrev=0', ref]);
+  const described = await git(repoPath, ['describe', '--tags', '--abbrev=0', ref]);
   const lastTag = described.ok ? described.stdout.trim() : undefined;
   const range = lastTag ? `${lastTag}..${ref}` : ref;
 
-  const counted = git(repoPath, ['rev-list', '--count', '--no-merges', range]);
+  const counted = await git(repoPath, ['rev-list', '--count', '--no-merges', range]);
   if (!counted.ok) return undefined;
   const commitCount = Number(counted.stdout.trim());
   if (!Number.isFinite(commitCount)) return undefined;
 
-  const logged = git(repoPath, [
+  const logged = await git(repoPath, [
     'log',
     '--no-merges',
     `--max-count=${MAX_SUMMARIZED_COMMITS}`,
@@ -259,7 +265,7 @@ export function releaseCornerTaskPrompt(brief: ReleaseCornerBrief): string {
     ...(work.truncated ? [`- …and ${work.commitCount - work.commits.length} more`] : []),
     '',
     'Steps:',
-    "1. Find how this repository already does releases — a release script, RELEASING/CONTRIBUTING docs, a CHANGELOG, the version field its tooling reads. Follow that process; do not invent one.",
+    '1. Find how this repository already does releases — a release script, RELEASING/CONTRIBUTING docs, a CHANGELOG, the version field its tooling reads. Follow that process; do not invent one.',
     version
       ? `2. Use the version the person asked for: ${version}.`
       : '2. Choose the next version from the change above and this repository’s own versioning convention, and say in one line why that level (patch / minor / major).',
@@ -269,7 +275,7 @@ export function releaseCornerTaskPrompt(brief: ReleaseCornerBrief): string {
     'Boundaries:',
     '- Do NOT push anything, do not merge, and do not touch the target branch. A human approves the land, and the host pushes the commit and its tag then.',
     '- Do NOT publish to any registry, and do not run anything that would announce the release outside this repository.',
-    "- If this repository has no discernible release process, do not improvise one: say exactly what you looked for and what you found, make no commit, and stop.",
+    '- If this repository has no discernible release process, do not improvise one: say exactly what you looked for and what you found, make no commit, and stop.',
     '',
     'Finish by summarizing what you bumped, what the changelog entry says, and the exact tag name you created.',
   ].join('\n');

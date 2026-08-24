@@ -54,7 +54,10 @@ export interface CornerSweepDecision {
   reason: string;
 }
 
-type GitRunner = (cwd: string, args: string[]) => { ok: boolean; stdout: string; stderr: string };
+type GitRunner = (
+  cwd: string,
+  args: string[],
+) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
 
 /**
  * Look at one corner directory. Fails closed: any git invocation that does not
@@ -64,11 +67,11 @@ type GitRunner = (cwd: string, args: string[]) => { ok: boolean; stdout: string;
  * `targetRef` is the branch the corner would land on. When it cannot be
  * resolved in this worktree the commit count is unknowable, not zero.
  */
-export function probeCornerWorktree(
+export async function probeCornerWorktree(
   dir: string,
   targetRefs: readonly string[],
   run: GitRunner = git,
-): CornerWorktreeProbe {
+): Promise<CornerWorktreeProbe> {
   const path = resolve(dir);
   const empty: CornerWorktreeProbe = {
     isWorktree: false,
@@ -80,7 +83,7 @@ export function probeCornerWorktree(
   // decide, and it is the only shape this module ever calls plain litter.
   if (!existsSync(resolve(path, '.git'))) return empty;
 
-  const top = run(path, ['rev-parse', '--show-toplevel']);
+  const top = await run(path, ['rev-parse', '--show-toplevel']);
   if (!top.ok) return { ...empty, unknown: true };
   if (resolve(top.stdout.trim()) !== path) {
     // A `.git` that resolves somewhere else means this directory is not its own
@@ -89,7 +92,7 @@ export function probeCornerWorktree(
     return { ...empty, unknown: true };
   }
 
-  const status = run(path, ['status', '--porcelain']);
+  const status = await run(path, ['status', '--porcelain']);
   if (!status.ok) return { isWorktree: true, dirty: false, unmergedCommits: 0, unknown: true };
   const dirty = status.stdout.trim().length > 0;
 
@@ -100,7 +103,7 @@ export function probeCornerWorktree(
   // and asking only the freshest would need a fetch this sweep must not do.
   let unmergedCommits: number | undefined;
   for (const ref of targetRefs) {
-    const ahead = run(path, ['rev-list', '--count', `${ref}..HEAD`]);
+    const ahead = await run(path, ['rev-list', '--count', `${ref}..HEAD`]);
     if (!ahead.ok) continue;
     const count = Number.parseInt(ahead.stdout.trim(), 10);
     if (!Number.isFinite(count)) continue;
@@ -121,16 +124,20 @@ export function probeCornerWorktree(
  * of them. An empty result means "unknowable", which `probeCornerWorktree`
  * turns into `unknown` rather than into a commit count of zero.
  */
-export function resolveTargetRefs(
+export async function resolveTargetRefs(
   dir: string,
   candidates: readonly string[],
   run: GitRunner = git,
-): string[] {
-  return candidates.filter(
-    (candidate) =>
+): Promise<string[]> {
+  const resolved = await Promise.all(
+    candidates.map(async (candidate) =>
       Boolean(candidate) &&
-      run(dir, ['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`]).ok,
+      (await run(dir, ['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`])).ok
+        ? candidate
+        : undefined,
+    ),
   );
+  return resolved.filter((candidate): candidate is string => Boolean(candidate));
 }
 
 export interface CornerSweepInput {
@@ -185,7 +192,10 @@ export function cornerWorktreeSweepDecision(input: CornerSweepInput): CornerSwee
     return { action: 'keep', reason: 'the daemon still tracks this corner' };
   }
   if (input.archived === undefined) {
-    return { action: 'ask', reason: 'nothing on disk objects; only the corner’s state is left to check' };
+    return {
+      action: 'ask',
+      reason: 'nothing on disk objects; only the corner’s state is left to check',
+    };
   }
   if (input.archived) return { action: 'reap', reason: 'its corner is archived' };
   return { action: 'keep', reason: 'its corner is not archived' };

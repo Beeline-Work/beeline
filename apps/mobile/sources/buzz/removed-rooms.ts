@@ -3,19 +3,19 @@ import { create } from 'zustand';
 import { useBuzzLocalCache } from './local-cache';
 
 /**
- * Durable local tombstones for Rooms this viewer DELETED or LEFT.
+ * Durable local tombstones for Rooms this viewer LEFT (plus legacy Deletes
+ * from app versions before kind:9008 relay deletion shipped).
  *
  * Why this exists and why it is not a field on the Buzz local cache
- * (`local-cache.ts`): deleting a Room succeeds on the relay, but the Room can
- * keep coming back to the list — an archived Room is deliberately FINISHED deck
- * state, not an invisible one, and in the already-archived case (#396) the
- * leave/remove-member publish is refused by the relay outright, so a refresh's
- * membership read still names this viewer and `loadDisplayChannelBasics`
- * re-materializes the row forever. The reader's own dismissal is LOCAL intent,
- * so it needs LOCAL durable state that survives navigation, refresh, and app
- * restart — exactly like `room-read-state.ts`, and for the same serialization
- * discipline: a tiny synchronous MMKV record written on one user action, never
- * grown into anything a foreground interaction would have to serialize.
+ * (`local-cache.ts`): leaving an already-archived Room can be refused by the
+ * relay (#396), so a refresh's membership read still names this viewer and
+ * `loadDisplayChannelBasics` re-materializes the row forever. The reader's own
+ * dismissal is LOCAL intent, so it needs LOCAL durable state that survives
+ * navigation, refresh, and app restart — exactly like `room-read-state.ts`,
+ * and for the same serialization discipline: a tiny synchronous MMKV record
+ * written on one user action, never grown into anything a foreground
+ * interaction would have to serialize. Existing pre-9008 delete tombstones
+ * remain honored for compatibility.
  *
  * Keyed per `<viewerPubkey>/<roomId>` because removal is per-viewer intent:
  * another identity on the same device has its own membership and its own list.
@@ -88,10 +88,10 @@ export function isRoomRemoved(
 }
 
 /**
- * The ONE local teardown for a Room this viewer just deleted or left: record
- * the durable tombstone AND purge the cached row/transcript immediately.
+ * The local teardown for a Room this viewer just left: record the durable
+ * tombstone AND purge the cached row/transcript immediately.
  *
- * Called from the delete/leave success path (`chat/[channelId].tsx`'s
+ * Called from the leave success path (`chat/[channelId].tsx`'s
  * `handleRoomLifecycle`) BEFORE navigating back to the deck. It runs after the
  * relay operation resolves — which for an already-archived Room (#396) is a
  * deliberate no-op that still resolves — so local removal sticks even when

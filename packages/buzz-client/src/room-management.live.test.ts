@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { signEvent } from '@beeline/nostr';
 import { createBuzzClient } from './client.js';
 import { createIdentity } from './identity.js';
-import { KIND_EDIT_METADATA, KIND_REMOVE_USER, TAG_ROOM_LIFECYCLE } from './kinds.js';
+import {
+  KIND_CREATE_GROUP,
+  KIND_EDIT_METADATA,
+  KIND_REMOVE_USER,
+  TAG_ROOM_LIFECYCLE,
+} from './kinds.js';
 import { DEFAULT_BASE_URL, DEFAULT_HOST, isRelayUp, uniqueMarker } from './live-helpers.js';
 
 const reachable = await isRelayUp();
@@ -78,11 +83,25 @@ describe.runIf(reachable)('live Room membership management', () => {
           tags: expect.arrayContaining([
             ['archived', 'true'],
             ['t', TAG_ROOM_LIFECYCLE],
-            ['action', 'admin-delete'],
+            ['action', 'admin-archive'],
           ]),
         }),
       ]),
     );
+    const deletionRoom = await ownerClient.createChannel(`delete-${runId}`);
+    await ownerClient.addMember(deletionRoom, member.publicKey);
+    await ownerClient.waitUntilMember(deletionRoom, member.publicKey);
+    await expect(memberClient.deleteRoom(deletionRoom)).rejects.toThrow('only a Room owner');
+    await ownerClient.deleteRoom(deletionRoom);
+    expect((await ownerClient.listMyChannels()).map(({ channelId }) => channelId)).not.toContain(
+      deletionRoom,
+    );
+    expect(await ownerClient.getChannelMetadata(deletionRoom)).toBeNull();
+    expect(
+      await ownerClient.query([
+        { kinds: [KIND_CREATE_GROUP], '#h': [deletionRoom], limit: 20 },
+      ]),
+    ).toEqual([]);
     const leaveRoom = await ownerClient.createChannel(`leave-${runId}`);
     await ownerClient.addMember(leaveRoom, member.publicKey);
     await ownerClient.waitUntilMember(leaveRoom, member.publicKey);

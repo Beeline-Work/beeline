@@ -861,7 +861,7 @@ describe('archiveRoom and leaveRoom against an already-archived channel', () => 
     return published;
   }
 
-  it('resolves success when the relay refuses the delete because the channel is already archived', async () => {
+  it('resolves success when the relay refuses archive because the channel is already archived', async () => {
     let attempts = 0;
     const published = stubRelay('already-archived-room', {
       publish: () => {
@@ -887,10 +887,10 @@ describe('archiveRoom and leaveRoom against an already-archived channel', () => 
     await expect(archiveRoom(ctx, 'live-room')).resolves.toBeUndefined();
     expect(published).toHaveLength(1);
     expect(published[0]!.tags).toContainEqual(['t', TAG_ROOM_LIFECYCLE]);
-    expect(published[0]!.tags).toContainEqual(['action', 'admin-delete']);
+    expect(published[0]!.tags).toContainEqual(['action', 'admin-archive']);
   });
 
-  it('still surfaces a genuine publish failure on delete', async () => {
+  it('still surfaces a genuine archive publish failure', async () => {
     stubRelay('broken-room', {
       publish: () =>
         new Response(JSON.stringify({ error: 'invalid: bad signature' }), { status: 400 }),

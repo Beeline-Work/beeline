@@ -175,6 +175,11 @@ type BuzzCacheState = PersistedBuzzCache & {
     corners: CornerSummary[],
   ) => void;
   replaceProfiles: (viewerPubkey: string, communityId: string, profiles: PersonProfile[]) => void;
+  /** Purge a deleted/left Room from every cached list row of this viewer and
+   * drop its transcript cache. Pairs with the durable tombstone in
+   * `removed-rooms.ts`: the purge makes removal immediate, the tombstone is
+   * what keeps a later relay refresh from re-materializing the row. */
+  removeChannel: (viewerPubkey: string, channelId: string) => void;
   clear: () => void;
 };
 
@@ -691,6 +696,24 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
           [...retained, key].map((candidate) => [candidate, updated[candidate]]),
         ),
       };
+    }),
+  removeChannel: (viewerPubkey, channelId) =>
+    set((state) => {
+      let listsChanged = false;
+      const channelLists = Object.fromEntries(
+        Object.entries(state.channelLists).map(([key, entry]) => {
+          if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
+          const channels = entry.channels.filter((channel) => channel.id !== channelId);
+          if (channels.length === entry.channels.length) return [key, entry];
+          listsChanged = true;
+          return [key, { ...entry, channels }];
+        }),
+      );
+      const channelKey = channelCacheKey(viewerPubkey, channelId);
+      if (!listsChanged && !state.channels[channelKey]) return state;
+      const channels = { ...state.channels };
+      delete channels[channelKey];
+      return listsChanged ? { channelLists, channels } : { channels };
     }),
   clear: () => set(emptyCache()),
 }));

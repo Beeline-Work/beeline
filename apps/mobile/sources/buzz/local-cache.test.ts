@@ -946,4 +946,70 @@ describe('Buzz local cache', () => {
       });
     });
   });
+
+  describe('removeChannel purges a deleted Room from the local cache', () => {
+    const seedWithRooms = () => {
+      const now = Date.now();
+      useBuzzLocalCache.getState().setChannelList({
+        viewerPubkey: viewer,
+        communityId: 'workspace',
+        channels: [
+          { id: 'room-a', active: true, title: 'Keep', updatedAt: now },
+          { id: 'room-b', active: false, archived: true, title: 'Gone', updatedAt: now },
+        ],
+        directMessages: [],
+        workspaceMembers: [],
+        communities: [],
+        personalWorkspaceId: null,
+        viewerIsAgent: false,
+        canEditWorkspaceAvatar: false,
+        updatedAt: now,
+        lastAccessedAt: now,
+      });
+      useBuzzLocalCache
+        .getState()
+        .replaceMessages(viewer, 'room-b', [message('m1', 5)], 5);
+    };
+
+    it('drops the row from every list of this viewer and the transcript cache', () => {
+      seedWithRooms();
+      useBuzzLocalCache.getState().removeChannel(viewer, 'room-b');
+      const state = useBuzzLocalCache.getState();
+      expect(state.channelLists[`${viewer}:workspace`]?.channels.map(({ id }) => id)).toEqual([
+        'room-a',
+      ]);
+      expect(state.channels[channelCacheKey(viewer, 'room-b')]).toBeUndefined();
+    });
+
+    it('leaves other viewers and other channels untouched', () => {
+      seedWithRooms();
+      const now = Date.now();
+      useBuzzLocalCache.getState().setChannelList({
+        viewerPubkey: 'other-viewer',
+        communityId: 'workspace',
+        channels: [{ id: 'room-b', active: false, archived: true, title: 'Gone', updatedAt: now }],
+        directMessages: [],
+        workspaceMembers: [],
+        communities: [],
+        personalWorkspaceId: null,
+        viewerIsAgent: false,
+        canEditWorkspaceAvatar: false,
+        updatedAt: now,
+        lastAccessedAt: now,
+      });
+
+      useBuzzLocalCache.getState().removeChannel(viewer, 'room-b');
+
+      const state = useBuzzLocalCache.getState();
+      expect(state.channelLists[`other-viewer:workspace`]?.channels).toHaveLength(1);
+      expect(state.channelLists[`${viewer}:workspace`]?.channels).toHaveLength(1);
+    });
+
+    it('is identity-stable when the channel is already absent', () => {
+      seedWithRooms();
+      const before = useBuzzLocalCache.getState().channelLists;
+      useBuzzLocalCache.getState().removeChannel(viewer, 'room-never-existed');
+      expect(useBuzzLocalCache.getState().channelLists).toBe(before);
+    });
+  });
 });

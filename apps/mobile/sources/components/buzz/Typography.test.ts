@@ -91,6 +91,7 @@ const monoStyles = new Set([
   'memberSectionLabel',
   'rosterModalEyebrow',
   'rosterSectionLabel',
+  'rosterInvariantErrorLabel',
   'rosterHandle',
   'rosterKind',
   'rosterRemoveText',

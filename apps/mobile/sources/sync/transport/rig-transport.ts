@@ -134,6 +134,8 @@ export type ChangedFile = {
   linesAdded?: number;
   linesRemoved?: number;
   isBinary?: boolean;
+  patchBytes?: number;
+  renderUnavailableReason?: 'too-large';
 };
 
 export type MergeActionInput = {

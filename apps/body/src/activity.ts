@@ -1729,38 +1729,49 @@ export function startAgentPresence(
   return Object.assign(stop, { generationId, setStatus });
 }
 
-/** Emit an ordered batch of session updates as one kind:9 channel event. */
+/**
+ * Publish daemon-owned work into the same durable activity stream as ACP tool
+ * updates. Landing is host work, not a synthetic agent turn, but it still
+ * belongs in the transcript's live machine ledger rather than in a second
+ * progress-card vocabulary.
+ */
+export async function postAgentActivityBatch(
+  channelId: string,
+  owner: Identity,
+  batch: ActivityBatch,
+  extraTags: string[][] = [],
+): Promise<void> {
+  const content = JSON.stringify({
+    sessionId: batch.sessionId,
+    update: {
+      sessionUpdate: 'activity_batch',
+      updates: batch.events,
+    },
+    projected: true,
+  });
+
+  const event: NostrEvent = signEvent(
+    {
+      pubkey: owner.publicKey,
+      created_at: Math.floor(Date.now() / 1000),
+      kind: 9,
+      tags: [['h', channelId], ['t', ACTIVITY_TAG], ['session', batch.sessionId], ...extraTags],
+      content,
+    },
+    owner.secretKey,
+  );
+
+  await publishEvent(event, owner);
+}
+
+/** Emit an ordered batch of ACP session updates as one kind:9 channel event. */
 async function emitActivityEvent(
   channelId: string,
   owner: Identity,
   batch: ActivityBatch,
 ): Promise<void> {
   try {
-    const content = JSON.stringify({
-      sessionId: batch.sessionId,
-      update: {
-        sessionUpdate: 'activity_batch',
-        updates: batch.events,
-      },
-      projected: true,
-    });
-
-    const event: NostrEvent = signEvent(
-      {
-        pubkey: owner.publicKey,
-        created_at: Math.floor(Date.now() / 1000),
-        kind: 9,
-        tags: [
-          ['h', channelId],
-          ['t', ACTIVITY_TAG],
-          ['session', batch.sessionId],
-        ],
-        content,
-      },
-      owner.secretKey,
-    );
-
-    await publishEvent(event, owner);
+    await postAgentActivityBatch(channelId, owner, batch);
   } catch (err) {
     // Log but don't crash the body — activity projection is best-effort.
     console.error('[body] activity projection error:', err);

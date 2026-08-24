@@ -115,12 +115,20 @@ keeps the wider right margin and hangs ghosted marginalia there — a fixed-widt
 numbers, verse numbers — there so the centre column stays clean, not there to be
 read.
 
-**Machine noise collapses to one ghost line.** `⋯ <what happened> · tap to
-expand`, dimmest tier, on both surfaces. Two things feed it: a turn's tool run
-(`ActivityTimeline` — commands, inputs, raw output, objective checklists, all of
-it behind that one disclosure), and any wall of git/CLI output an agent pasted
-into its own narration, which `buzz/ledger-text.ts` lifts out of the prose
-around it. A `git push` rejection dump never prints down the slab.
+**Machine steps form a one-line ledger.** `ActivityTimeline` gives every tool
+call and thought one 44pt mono row: restrained kind glyph, verb-object label,
+quiet verdict, an inline distilled failure reason when needed, and a tabular
+duration only when the existing receipt provides one. Runs over three steps
+default to one `6 steps - 2 failed - 48s` disclosure and expand in place; runs
+of three or fewer show their rows directly. Tapping a step opens its complete,
+selectable raw output in `HullActionSheet`, never as inline multiline content.
+There are no tool cards, title/body stacks, or failure chips; brass is spent
+only on the failure cross.
+
+A wall of git/CLI output an agent pasted into its own narration remains a
+separate ghost line, projected by `buzz/ledger-text.ts`; this rendering change
+does not rewrite narrative messages. A `git push` rejection dump never prints
+down the slab.
 
 The unit there is a **run of consecutive machine lines**, not a
 blank-line-delimited block — a dump is usually written directly under the

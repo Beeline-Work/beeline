@@ -5304,9 +5304,10 @@ describe('first-class assistant messages', () => {
       /always implied for every corner and every agent/i,
     );
     expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/without asking the human again/i);
-    // Declaration, new/restored system prompts, opening/follow-up turns, the
-    // automatic moved-target recovery task, and the conclude watch's nudge.
-    expect(source.match(/CORNER_TARGET_SYNC_INSTRUCTION/g)).toHaveLength(7);
+    // Declaration, new/restored system prompts, opening/follow-up turns, and
+    // the conclude watch's nudge. Approved pure realignment is daemon work and
+    // deliberately has no ACP prompt call site.
+    expect(source.match(/CORNER_TARGET_SYNC_INSTRUCTION/g)).toHaveLength(6);
   });
 
   it('strips only a leading Codex skill-budget warning', () => {
@@ -6859,7 +6860,7 @@ describe('a local-only repository lands through the daemon, never through the ag
     }
   });
 
-  it('publishes a plain-language realignment state, with no git plumbing, when the local target moved since approval', async () => {
+  it('realigns and lands locally in one daemon pass when the target moved after approval', async () => {
     const agent = newIdentity('local-land-poll-nonff');
     const reviewer = newIdentity('local-land-reviewer-nonff');
     const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
@@ -6886,14 +6887,15 @@ describe('a local-only repository lands through the daemon, never through the ag
 
       const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
 
-      expect(landed).toBe(0);
-      expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(moved);
+      expect(landed).toBe(1);
+      const landedTip = gitCommand(repoPath, ['rev-parse', 'refs/heads/master']);
+      expect(landedTip).not.toBe(moved);
+      expect(gitCommand(cornerPath, ['merge-base', '--is-ancestor', moved, landedTip])).toBe('');
       const realigning = published.find((event) =>
-        event.tags?.some((tag) => tag[0] === 'delivery' && tag[1] === 'realigning'),
+        event.tags?.some((tag) => tag[0] === 'delivery-stage' && tag[1] === 'realigning'),
       );
       expect(realigning).toBeDefined();
-      expect(realigning!.content).toMatch(/realigning/i);
-      expect(realigning!.content).toMatch(/approval remains standing/i);
+      expect(realigning!.content).toMatch(/Realigning/);
       expect(realigning!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward/i);
       expect(info.humanMergeApproval?.id).toBe('approval-1');
     } finally {
@@ -7276,9 +7278,8 @@ describe('graceful relay-failure confirmation', () => {
     // The raw git rejection dump (the plumbing a human should never see) must
     // never reach the corner transcript — only a plain human summary does.
     expect(cornerFailure!.content).not.toMatch(/git|hint:|\[rejected\]|fetch first/i);
-    expect(cornerFailure!.content).toContain(
-      'The target branch has moved on since this change was prepared',
-    );
+    expect(cornerFailure!.content).toContain("Couldn't realign the approved change");
+    expect(cornerFailure!.content).toContain('does not resolve in this worktree');
     expect(cornerFailure!.tags).toContainEqual(['repo', mergeTarget.repo]);
     expect(cornerFailure!.tags).toContainEqual(['branch', mergeTarget.branch]);
     expect(cornerFailure!.tags).toContainEqual(['tip', mergeTarget.tip]);
@@ -10927,7 +10928,7 @@ describe('harness-independent corner commit watch', () => {
     const maintenance = source.slice(source.indexOf('private async pollRoomMaintenance'));
     const watchStep = maintenance.indexOf("guarded('corner commit watch'");
     const memberPoll = maintenance.indexOf("guarded('corner member poll'");
-    const landPoll = maintenance.indexOf("guarded('direct merge approval poll'");
+    const landPoll = maintenance.indexOf("guarded('merge approval pass'");
     expect(watchStep).toBeGreaterThan(-1);
     expect(memberPoll).toBeGreaterThan(watchStep);
     expect(landPoll).toBeGreaterThan(-1);

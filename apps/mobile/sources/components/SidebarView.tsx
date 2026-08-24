@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHeaderHeight } from '@/utils/responsive';
 import { selectChannelList, useBuzzLocalCache } from '@/buzz/local-cache';
 import { roomListSections } from '@/buzz/room-list-row';
+import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import { ROOM_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
 
 function selectedRoomId(pathname: string): string | null {
@@ -142,6 +143,8 @@ export const SidebarView = React.memo(function SidebarView() {
     const cachedList = useBuzzLocalCache((state) =>
         selectChannelList(state, state.activeViewerPubkey),
     );
+    const readAt = useRoomReadState((state) => state.readAt);
+    const viewerPubkey = useBuzzLocalCache((state) => state.activeViewerPubkey);
     const authorNames = React.useMemo(
         () => new Map(
             (cachedList?.workspaceMembers ?? []).map((member) => [member.peerPubkey, member.peerName]),
@@ -149,8 +152,17 @@ export const SidebarView = React.memo(function SidebarView() {
         [cachedList?.workspaceMembers],
     );
     const sections = React.useMemo(
-        () => roomListSections(cachedList?.channels ?? [], authorNames),
-        [authorNames, cachedList?.channels],
+        () =>
+            roomListSections(
+                (cachedList?.channels ?? []).map((room) => ({
+                    ...room,
+                    // Same unread trigger as the phone deck: an unread ROOM
+                    // message (never corner output) is NEEDS YOU until read.
+                    roomUnread: isRoomUnread(roomReadAt(readAt, viewerPubkey ?? undefined, room.id), room.latestMessageAt),
+                })),
+                authorNames,
+            ),
+        [authorNames, cachedList?.channels, readAt, viewerPubkey],
     );
 
     return (

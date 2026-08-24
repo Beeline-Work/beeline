@@ -2,10 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { CornerSummary, CornerStatus } from './corners';
 import {
-  finishedRoomEntries,
   isRoomAlive,
   NO_ACTIVITY_PREVIEW,
-  roomIsFinished,
   roomListSections,
   roomRowPresentation,
 } from './room-list-row';
@@ -37,10 +35,10 @@ describe('Room row presentation', () => {
     expect(roomRowPresentation({}, NO_NAMES).zone).toBe('idle');
   });
 
-  it('puts only ACTIONABLE corners in NEEDS YOU — a merely idle one is IDLE', () => {
+  it("puts only ACTIONABLE corners in NEEDS YOU — a merely idle one DOESN'T NEED YOU", () => {
     // Owner refinement 2026-08-23: idle-without-finishing (`status: null`, no
     // fresh ask) has nothing for a person to act on, so its Room belongs in
-    // IDLE deck state — not gold.
+    // DOESN'T NEED YOU deck state — not gold.
     const stalled = { ...corner('open'), status: null };
     expect(roomRowPresentation({ corners: [stalled] }, NO_NAMES)).toMatchObject({
       zone: 'idle',
@@ -65,7 +63,7 @@ describe('Room row presentation', () => {
     });
   });
 
-  it('an OFFLINE agent with a stalled corner is never "waiting on you" — IDLE, honestly labelled', () => {
+  it("an OFFLINE agent with a stalled corner is never waiting on you — DOESN'T NEED YOU, honestly labelled", () => {
     // Owner report 2026-08-23: charles/beeline showed NEEDS YOU "Waiting on
     // you" while their agents were DEAD — a stale ask card golded forever
     // because only newer work (which a dead agent cannot produce) clears it.
@@ -101,7 +99,7 @@ describe('Room row presentation', () => {
 
   it('keeps an offline-stalled Room out of the NEEDS YOU tier', () => {
     // The deck-tier contract for the same defect: an offline-stalled room
-    // belongs in IDLE (its row fact says "Agent offline"), never in NEEDS YOU
+    // belongs in DOESN'T NEED YOU (its row fact says "Agent offline"), never in NEEDS YOU
     // "waiting on you" — while a genuinely reviewable Room keeps its gold.
     const sections = roomListSections(
       [
@@ -117,7 +115,10 @@ describe('Room row presentation', () => {
       NO_NAMES,
       { now: NOW },
     );
-    expect(sections.map((section) => section.title)).toEqual(['NEEDS YOU', 'IDLE']);
+    expect(sections.map((section) => section.title)).toEqual([
+      'NEEDS YOU',
+      "DOESN'T NEED YOU",
+    ]);
     expect(sections[0]?.data.map(({ item }) => item.id)).toEqual(['review']);
     expect(sections[1]?.data.map(({ item }) => item.id)).toEqual(['charles']);
     const charlesRow = sections[1]?.data[0]?.row;
@@ -342,7 +343,74 @@ describe('Room row presentation', () => {
     ).toBe('Can you check the API?');
   });
 
-  it('zones the deck into NEEDS YOU then IDLE — working rooms included, finished hidden', () => {
+  it('puts an unread ROOM message in NEEDS YOU, and reading it drops the room back', () => {
+    // Owner model 2026-08-23, trigger 3: an unread person-facing message in
+    // the ROOM itself — agent OR human author — waits on a person all by
+    // itself. `roomUnread` is derived by the caller off the existing read-mark
+    // store (`isRoomUnread` over the room's own latest-message summary).
+    expect(
+      roomRowPresentation({ latestMessage: 'the relay is back up', roomUnread: true }, NO_NAMES),
+    ).toMatchObject({ zone: 'needs-you', attention: true });
+    // Once read, the same room is ordinary deck state again.
+    expect(
+      roomRowPresentation({ latestMessage: 'the relay is back up', roomUnread: false }, NO_NAMES),
+    ).toMatchObject({ zone: 'idle', attention: false });
+    // An unread message outranks a working corner but not a corner decision.
+    expect(
+      roomRowPresentation(
+        { corners: [corner('live')], roomUnread: true },
+        NO_NAMES,
+      ).zone,
+    ).toBe('needs-you');
+    expect(
+      roomRowPresentation(
+        { corners: [corner('needs-attention')], roomUnread: true },
+        NO_NAMES,
+      ).zone,
+    ).toBe('needs-you');
+    // At the deck level the unread room takes the NEEDS YOU section.
+    const sections = roomListSections(
+      [
+        {
+          id: 'unread-room',
+          title: 'Unread room',
+          latestMessage: 'hello',
+          latestMessageAt: TODAY_S,
+          roomUnread: true,
+        },
+        {
+          id: 'read-room',
+          title: 'Read room',
+          latestMessage: 'hello',
+          latestMessageAt: TODAY_S + 1,
+          roomUnread: false,
+        },
+      ],
+      NO_NAMES,
+      { now: NOW },
+    );
+    expect(sections.map((section) => section.title)).toEqual([
+      'NEEDS YOU',
+      "DOESN'T NEED YOU",
+    ]);
+    expect(sections[0]?.data.map(({ item }) => item.id)).toEqual(['unread-room']);
+  });
+
+  it('never lets corner output stand in for a room-level unread trigger', () => {
+    // Corner messages are corner output, not room conversation: a chatty
+    // working corner with nothing unread in the ROOM stays out of NEEDS YOU.
+    expect(
+      roomRowPresentation({ corners: [corner('live')], roomUnread: false }, NO_NAMES).zone,
+    ).toBe('working');
+    expect(
+      roomRowPresentation(
+        { corners: [{ ...corner('open'), status: null }], roomUnread: false },
+        NO_NAMES,
+      ).zone,
+    ).toBe('idle');
+  });
+
+  it("zones the deck into NEEDS YOU then DOESN'T NEED YOU — working and finished rooms included", () => {
     const sections = roomListSections(
       [
         { id: 'quiet-old', title: 'Quiet old', latestMessage: 'old', latestMessageAt: EARLIER_S },
@@ -365,77 +433,104 @@ describe('Room row presentation', () => {
       { now: NOW },
     );
 
-    // Exactly two tiers: attention state first, then everything else active
-    // (working rooms live in IDLE per the owner's two-tier framing — their
-    // row marks already convey working vs quiet). No recency headings.
-    expect(sections.map((section) => section.title)).toEqual(['NEEDS YOU', 'IDLE']);
+    // Exactly two tiers: attention state first, then everything else (working
+    // AND finished rooms live in DOESN'T NEED YOU per the owner's two-pile
+    // model — their row marks and fact lines already convey working vs quiet
+    // vs landed). No recency headings.
+    expect(sections.map((section) => section.title)).toEqual([
+      'NEEDS YOU',
+      "DOESN'T NEED YOU",
+    ]);
     expect(sections[0]?.zone).toBe('needs-you');
     expect(sections[0]?.data.map(({ item }) => item.id)).toEqual(['review-new', 'review-old']);
     expect(sections[1]?.zone).toBe('idle');
-    // Newest activity first inside IDLE; working rooms are ordinary members.
-    // (`live`'s corner activity stamp is older than both quiet rooms' messages.)
+    // Newest activity first inside DOESN'T NEED YOU; working rooms are
+    // ordinary members, and finished ones (landed/archived) fold in here too —
+    // there is no FINISHED pile anymore.
     expect(sections[1]?.data.map(({ item }) => item.id)).toEqual([
+      'archived',
       'quiet-today',
       'quiet-old',
+      'landed',
       'live',
     ]);
 
-    // Finished rooms — archived, or all corner work terminal — belong to NO
-    // inline tier; they surface only through the collapsed entry's data.
-    const finished = finishedRoomEntries(
+    // Finished rooms — archived, or all corner work terminal — are ordinary
+    // members of DOESN'T NEED YOU now: there is no FINISHED pile (owner model
+    // 2026-08-23). They carry no needs-you trigger, so the rules alone place
+    // them; their row still says landed/archived through its own fact line.
+    const sectionsWithFinished = roomListSections(
       [
         { id: 'landed', title: 'Landed', corners: [corner('merged')] },
         { id: 'closed', title: 'Closed', corners: [corner('archived')] },
         { id: 'archived-room', title: 'Archived room', archived: true },
-        { id: 'mixed', title: 'Mixed', corners: [corner('merged'), corner('live')] },
         { id: 'chat-only', title: 'Chat only' },
       ],
       NO_NAMES,
     );
-    // Oldest-activity first here: both corner-finished rooms carry the same
-    // fixture stamp and tie-break by title; the archived room has no stamp.
-    expect(finished.map(({ item }) => item.id)).toEqual([
-      'closed',
-      'landed',
-      'archived-room',
+    expect(sectionsWithFinished.map((section) => section.title)).toEqual([
+      "DOESN'T NEED YOU",
     ]);
+    expect(
+      sectionsWithFinished[0]?.data.map(({ item }) => item.id),
+    ).toEqual(['closed', 'landed', 'archived-room', 'chat-only']);
   });
 
-  it('classifies finished rooms exactly: archived, or every corner terminal', () => {
-    expect(roomIsFinished({})).toBe(false);
-    expect(roomIsFinished({ archived: true })).toBe(true);
-    expect(roomIsFinished({ corners: [corner('merged'), corner('archived')] })).toBe(true);
-    // Any unfinished corner keeps the Room active.
-    expect(roomIsFinished({ corners: [corner('merged'), corner('live')] })).toBe(false);
-    expect(roomIsFinished({ corners: [corner('open')] })).toBe(false);
-    // A stalled corner (`null`) is idle, not terminal.
-    expect(roomIsFinished({ corners: [{ ...corner('open'), status: null }] })).toBe(false);
-  });
-
-  it('omits empty tiers and hides the collapsed entry when nothing is finished', () => {
-    // No needs-you rooms -> the tier is omitted entirely.
+  it('omits empty tiers and never renders a FINISHED or DIRECT pile', () => {
+    // No needs-you entries -> that tier is omitted entirely.
     expect(
       roomListSections([{ id: 'only', latestMessage: 'hello', latestMessageAt: TODAY_S }], NO_NAMES, {
         now: NOW,
       }).map((section) => section.title),
-    ).toEqual(['IDLE']);
+    ).toEqual(["DOESN'T NEED YOU"]);
     // Nothing at all -> no sections.
     expect(roomListSections([], NO_NAMES, { now: NOW })).toEqual([]);
-    // No finished rooms -> an empty collapsed list (the screen hides the row).
-    expect(finishedRoomEntries([{ id: 'only', latestMessage: 'hello' }], NO_NAMES)).toEqual([]);
+    // Exactly two labels exist, and neither is FINISHED nor DIRECT.
+    for (const title of roomListSections(
+      [
+        {
+          id: 'ask',
+          corners: [{ ...corner('open'), status: null, awaitingReply: true }],
+        },
+        { id: 'quiet' },
+        { id: 'dm-read' },
+      ],
+      NO_NAMES,
+    ).map((section) => section.title)) {
+      expect(['NEEDS YOU', "DOESN'T NEED YOU"]).toContain(title);
+    }
   });
 
-  it('reaches archived Rooms only through the finished set, never inline', () => {
-    const rooms = [
-      { id: 'archived', title: 'beeline', archived: true },
-      { id: 'live', title: 'beeline', archived: false },
-    ];
-    const sections = roomListSections(rooms, NO_NAMES);
-
-    // Inline tiers carry only the active duplicate-titled room...
-    expect(sections.flatMap((section) => section.data.map(({ item }) => item.id))).toEqual(['live']);
-    // ...and the archived one exists only in the collapsed entry's data.
-    expect(finishedRoomEntries(rooms, NO_NAMES).map(({ item }) => item.id)).toEqual(['archived']);
+  it('gives DMs the same piles as Rooms: unread is NEEDS YOU, read is not', () => {
+    // A DM has no corners and no work lifecycle — the unread rule is its only
+    // trigger, exactly like a Room's.
+    const unreadDm = { id: 'dm-unread', latestMessage: 'ping', latestMessageAt: TODAY_S, roomUnread: true };
+    expect(roomRowPresentation(unreadDm, NO_NAMES)).toMatchObject({
+      zone: 'needs-you',
+      attention: true,
+    });
+    const readDm = { ...unreadDm, id: 'dm-read', roomUnread: false };
+    expect(roomRowPresentation(readDm, NO_NAMES)).toMatchObject({
+      zone: 'idle',
+      attention: false,
+    });
+    // And on the deck itself, both DMs sort into the same two piles as Rooms,
+    // newest first inside DOESN'T NEED YOU.
+    const sections = roomListSections(
+      [
+        readDm,
+        { id: 'room-quiet', title: 'Quiet room', latestMessageAt: TODAY_S + 5 },
+        unreadDm,
+      ],
+      NO_NAMES,
+      { now: NOW },
+    );
+    expect(sections.map((section) => section.title)).toEqual([
+      'NEEDS YOU',
+      "DOESN'T NEED YOU",
+    ]);
+    expect(sections[0]?.data.map(({ item }) => item.id)).toEqual(['dm-unread']);
+    expect(sections[1]?.data.map(({ item }) => item.id)).toEqual(['room-quiet', 'dm-read']);
   });
 
   it('disambiguates same-name Rooms for both the Room index and cached sidebar', () => {

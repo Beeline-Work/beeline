@@ -40,6 +40,7 @@ import {
 import { authSessionOptions } from '@/auth/auth-session';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
+import { cornerVerdictFromRecord } from '@/sync/transport/corner-state-verdict';
 import {
   type Agent,
   type Community,
@@ -51,6 +52,7 @@ import {
   type GitHubInstallationAccess,
   type AgentCommandList,
   AGENT_PRESENCE_STALE_MS,
+  CORNER_ACTIVITY_FRESHNESS_MS,
   personHandle,
 } from '@beeline/buzz-client';
 import {
@@ -108,7 +110,8 @@ import {
 import { useAgentNameCache, withKnownAgentNames } from '@/buzz/agent-name-cache';
 import {
   cornerName,
-  isCornerActive,
+  currentCornerStatus,
+  roomListCorners,
   resolveCornerLifecycleStatus,
   type CornerStatus,
   type CornerSummary,
@@ -163,8 +166,6 @@ import {
 import {
   cachedChannelKind,
   channelHeaderTitle,
-  cornerProcessState,
-  cornerSessionState,
   changeReviewSummary,
   resolveCornerViewAgentPubkey,
   type ChannelKind,
@@ -539,10 +540,10 @@ export default function BuzzChat() {
   // name is canonical. It is served from `listSubchannelLifecycle`'s shared
   // short-TTL cache, which the Room list has usually already warmed.
   const [cornerLifecycle, setCornerLifecycle] = useState<CornerSummary[]>([]);
+  const [cornerStateNow, setCornerStateNow] = useState(Date.now());
   // "No corner on record" and "the corner list has not answered yet" are
   // different answers, and only the first one may let a freshly permitted
   // corner onto the pinned line — see `selectPinnedCorner`.
-  const [cornerLifecycleLoaded, setCornerLifecycleLoaded] = useState(false);
   // What this corner inherited from the Room it was opened out of: the task
   // the daemon recorded on its create event, and the bounded window of Room
   // conversation that preceded it. Corner-only; a Room never reads it.
@@ -1077,8 +1078,19 @@ export default function BuzzChat() {
   const focusComposer = useCallback(() => {
     requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
-  const sessionState = isCorner ? cornerSessionState(messages) : 'idle';
-  const processState = isCorner ? cornerProcessState(messages) : undefined;
+  const canonicalCorner = isCorner
+    ? cornerLifecycle.find((corner) => corner.id === decodedId)
+    : undefined;
+  const canonicalCornerStatus = canonicalCorner
+    ? currentCornerStatus(canonicalCorner, cornerStateNow)
+    : cornerLifecycleStatus;
+  const sessionState = !isCorner
+    ? 'idle'
+    : canonicalCorner?.machineState === 'working' && canonicalCornerStatus === 'live'
+      ? 'working'
+      : canonicalCorner?.machineState === 'concluded' || canonicalCorner?.machineState === 'closed'
+        ? 'done'
+        : 'idle';
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
@@ -1141,54 +1153,11 @@ export default function BuzzChat() {
     }
     return map;
   }, [visibleMessages]);
-  // A corner that a permission ALLOW opened, before its own lifecycle card has
-  // landed. The pinned live bar needs a destination from the instant the corner
-  // exists, since the inline "corner open" note that used to carry that tap is
-  // gone from the transcript. An ALLOW older than RECENT_ALLOW_CUTOFF_MS is
-  // stale — the corner may have been archived while the card scrolled out of
-  // the transcript window, and there is no sense pointing at a dead channel.
-  const RECENT_ALLOW_CUTOFF_MS = 15 * 60 * 1000;
-  const permittedCorner = useMemo(() => {
-    const message = [...messages]
-      .reverse()
-      .find(
-        (message) =>
-          message.writePermission?.status === 'allowed' && message.writePermission.subchannelId,
-      );
-    const cornerId = message?.writePermission?.subchannelId;
-    if (cornerId && Date.now() - message!.timestamp <= RECENT_ALLOW_CUTOFF_MS) {
-      return { cornerId, timestamp: message!.timestamp };
-    }
-    return undefined;
-  }, [messages]);
-  // Every corner status card this Room's transcript carries, newest per corner
-  // resolved downstream. This is corner state and only corner state — no turn
-  // signal reaches it.
-  const cornerSignals = useMemo(
-    () =>
-      messages.flatMap((message) =>
-        message.corner
-          ? [
-              {
-                subchannelId: message.corner.subchannelId,
-                status: message.corner.status,
-                timestamp: message.timestamp,
-              },
-            ]
-          : [],
-      ),
-    [messages],
-  );
   // The one corner the pinned line may name: open, not terminal in *any*
   // source, and chosen by how much it is being worked on. `null` for a Room
   // with no live corner, however busy its agent is right now.
   const pinnedCorner = useMemo(() => {
-    const selected = selectPinnedCorner({
-      signals: cornerSignals,
-      lifecycle: cornerLifecycle,
-      lifecycleLoaded: cornerLifecycleLoaded,
-      permittedCorner,
-    });
+    const selected = selectPinnedCorner({ lifecycle: cornerLifecycle, now: cornerStateNow });
     // A corner this viewer CLOSED never gets the pinned line — the deck's
     // dropdown and the corners list already hide it, so a gold "view →"
     // pointing at dismissed work would be the one affordance left leading
@@ -1202,16 +1171,7 @@ export default function BuzzChat() {
     )
       ? null
       : selected;
-  }, [
-    closedCornerAt,
-    cornerLifecycle,
-    cornerLifecycleLoaded,
-    cornerSignals,
-    decodedId,
-    permittedCorner,
-    userPubkey,
-    activeCacheViewer,
-  ]);
+  }, [closedCornerAt, cornerLifecycle, cornerStateNow, decodedId, userPubkey, activeCacheViewer]);
   const pinnedCornerCard = useMemo(
     () =>
       pinnedCorner
@@ -1227,21 +1187,15 @@ export default function BuzzChat() {
   // that resolves after mount must never leave this badge showing a stale
   // non-terminal status.
   const displayedCornerStatus = useMemo(
-    () => resolveCornerLifecycleStatus(cornerLifecycleStatus, isArchived),
-    [cornerLifecycleStatus, isArchived],
-  );
-  // This corner's own agent-presence verdict, from the same lifecycle snapshot
-  // the deck uses: a provably offline non-review wait folds to the idle circle.
-  const cornerAgentOffline = useMemo(
-    () => cornerLifecycle.find((corner) => corner.id === decodedId)?.agentOffline === true,
-    [cornerLifecycle, decodedId],
+    () => resolveCornerLifecycleStatus(canonicalCornerStatus, isArchived),
+    [canonicalCornerStatus, isArchived],
   );
   // The corner action area's card, from the SAME verdict the deck golds. One
   // derivation (`corner-attention.ts`); the screen renders the answer and
   // never re-reads raw status tags. This screen IS the corner when isCorner,
   // so only the review branch may render here — the attention card is scoped
   // to non-corner summary surfaces (the deck row and pinned bar already route
-  // needs-you INTO this screen via their own oracle-fed affordances); inside
+  // needs-you INTO this screen via their canonical affordances); inside
   // the corner the state is an accessible-only circle and the ask itself lives
   // in the transcript.
   const cornerAction = useMemo(
@@ -1296,18 +1250,15 @@ export default function BuzzChat() {
       // The branch is the truest name for what a corner is doing; the corner's
       // own slug is the fallback, and both beat an opaque id.
       const target = mergeTarget?.branch ?? headerTitle ?? undefined;
-      // This corner's own session, not some other corner's: `sessionState`
-      // reads this channel's `agent-turn` events, which is exactly "is this
-      // edit session still moving."
+      // This corner's own canonical WORKING lease, not an ACP turn/draft or
+      // some other corner's history. The lease expires at the shared horizon.
       if (sessionState === 'working')
         return { label: named(subject, 'active', target), live: true };
-      if (processState === 'waiting-for-slot')
-        return { label: named(subject, 'waiting for a slot', target), live: false };
-      if (processState === 'suspended')
-        return { label: named(subject, 'suspended', target), live: false };
-      if (processState === 'live') return { label: named(subject, 'live', target), live: true };
-      if (displayedCornerStatus && isCornerActive(displayedCornerStatus)) {
-        return { label: named(subject, 'idle', target), live: false };
+      if (displayedCornerStatus === 'open') {
+        return { label: named(subject, 'ready for review', target), live: false };
+      }
+      if (displayedCornerStatus === 'needs-attention' || displayedCornerStatus === 'failed') {
+        return { label: named(subject, 'needs attention', target), live: false };
       }
       return null;
     }
@@ -1315,10 +1266,9 @@ export default function BuzzChat() {
     // selectPinnedCorner names any open corner — working, waiting on a
     // human, or review-ready — and excludes only a terminal one. The line's
     // mere presence means "open," not "live"; gold and the breathing pulse
-    // are reserved for a corner actually being worked right now. An offline
-    // daemon cannot really be doing that work, so the line hides rather than
-    // lying.
-    if (!pinnedCorner || agentsOffline) return null;
+    // are reserved for a fresh canonical WORKING lease. Presence is displayed
+    // separately and cannot rewrite this lifecycle.
+    if (!pinnedCorner) return null;
     const agentPubkey = resolveCornerCardAgentPubkey(
       pinnedCornerCard?.corner?.agentPubkey,
       pinnedCornerCard?.pubkey,
@@ -1344,7 +1294,6 @@ export default function BuzzChat() {
     };
   }, [
     agentByPubkey,
-    agentsOffline,
     cornerAgentDisplay,
     cornerLifecycle,
     displayedCornerStatus,
@@ -1353,7 +1302,6 @@ export default function BuzzChat() {
     mergeTarget,
     pinnedCorner,
     pinnedCornerCard,
-    processState,
     sessionState,
   ]);
 
@@ -1364,12 +1312,11 @@ export default function BuzzChat() {
    * nothing else — no corner reaches it, exactly as no turn reaches the corner
    * line above.
    *
-   * A Corner uses the same progress line while its own edit turn is working.
-   * The corner bar reports durable corner state; this transient line reports
-   * the unanswered turn, so both can be true without being duplicates.
+   * A Corner uses the same progress line while its canonical WORKING lease is
+   * fresh. Drafts and ACP turns cannot light it independently.
    */
   const turnProgressLabel = useMemo(() => {
-    if (agentsOffline) return null;
+    if (!isCorner && agentsOffline) return null;
     if (isCorner) {
       if (sessionState !== 'working') return null;
       return `${cornerAgentDisplay?.name ?? 'agent'} thinking…`;
@@ -1392,6 +1339,19 @@ export default function BuzzChat() {
     setReviewFiles(null);
     setApprovalError(null);
   }, [mergeTarget?.tip]);
+
+  useEffect(() => {
+    if (canonicalCorner?.machineState !== 'working' || canonicalCorner.stateAt === undefined)
+      return;
+    const deadline = canonicalCorner.stateAt * 1_000 + CORNER_ACTIVITY_FRESHNESS_MS;
+    const delay = deadline - Date.now() + 1;
+    if (delay <= 0) {
+      setCornerStateNow(Date.now());
+      return;
+    }
+    const timer = setTimeout(() => setCornerStateNow(Date.now()), delay);
+    return () => clearTimeout(timer);
+  }, [canonicalCorner?.machineState, canonicalCorner?.stateAt]);
 
   useEffect(() => {
     // Presence only changes at a lease/grace deadline. A five-second clock here
@@ -1503,6 +1463,11 @@ export default function BuzzChat() {
     let unsubscribe: (() => void) | undefined;
     let unsubscribePresence: (() => void) | undefined;
     let unsubscribeDraft: (() => void) | undefined;
+    let unsubscribeCornerState: (() => void) | undefined;
+    // A canonical record owns state, not existence. Only the relay-derived
+    // lifecycle list may admit an id here; otherwise an old WORKING record
+    // for a deleted corner could resurrect the exact ghost this gate closes.
+    const relayExistingCornerIds = new Set<string>();
     let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
     const cancelDeferred: (() => void)[] = [];
     agentPresencesRef.current = {};
@@ -1545,6 +1510,61 @@ export default function BuzzChat() {
         // lazily by the first live subscription, so this is not a round-trip.
         const client = await t.ensureClient();
         if (cancelled) return;
+
+        const applyCanonicalCornerState = (
+          record: Awaited<ReturnType<typeof t.cornerStateBackfill>>[number],
+        ) => {
+          if (cancelled || !relayExistingCornerIds.has(record.cornerId)) return;
+          const verdict = cornerVerdictFromRecord(record, Date.now());
+          const update = (corner: CornerSummary): CornerSummary => {
+            if (corner.id !== record.cornerId) return corner;
+            const { awaitingReply: _oldAwaitingReply, ...rest } = corner;
+            return {
+              ...rest,
+              status: verdict.status,
+              machineState: record.state,
+              ...(record.reason ? { machineReason: record.reason } : {}),
+              stateAt: record.at,
+              ...(verdict.awaitingReply ? { awaitingReply: true } : {}),
+            };
+          };
+          setCornerLifecycle((current) => {
+            return current.some((corner) => corner.id === record.cornerId)
+              ? current.map(update)
+              : current;
+          });
+          if (record.cornerId === decodedId) {
+            setCornerLifecycleStatus(verdict.status);
+            if (record.parentRoomId) {
+              setChannelKind('corner');
+              setParentChannelId(record.parentRoomId);
+            }
+            if (record.state === 'closed' || record.state === 'concluded') setIsArchived(true);
+          }
+          setCornerStateNow(Date.now());
+        };
+
+        let cornerStateDeliveryGeneration = 0;
+        const installCornerStateDelivery = (cornerIds: string[]): Promise<void> => {
+          const ids = [...new Set([...cornerIds, decodedId])];
+          const generation = ++cornerStateDeliveryGeneration;
+          unsubscribeCornerState?.();
+          unsubscribeCornerState = undefined;
+          const subscription = t
+            .cornerStateSubscribeReady(ids, applyCanonicalCornerState)
+            .then((unsubscribe) => {
+              if (cancelled || generation !== cornerStateDeliveryGeneration) {
+                unsubscribe();
+                return;
+              }
+              unsubscribeCornerState = unsubscribe;
+            });
+          const backfill = t.cornerStateBackfill(ids).then((records) => {
+            if (cancelled || generation !== cornerStateDeliveryGeneration) return;
+            records.forEach(applyCanonicalCornerState);
+          });
+          return Promise.all([subscription, backfill]).then(() => undefined);
+        };
 
         // A corner's live agent-activity stream can deliver one raw event per
         // streamed token. Reprojecting + re-sorting the cache on every single
@@ -1601,7 +1621,9 @@ export default function BuzzChat() {
             if (projected.deliveryFailed) {
               setApprovalState((current) => (current === 'merged' ? current : 'failed'));
               setDeliveryRetry(projected.deliveryRetry);
-              setApprovalError(projected.deliveryFailureReason ?? 'The daemon could not land this change.');
+              setApprovalError(
+                projected.deliveryFailureReason ?? 'The daemon could not land this change.',
+              );
             }
             // The daemon's receipt for THIS signed approval: accepted (it is
             // landing the approved tip — stop claiming "delivering", which no
@@ -1851,8 +1873,12 @@ export default function BuzzChat() {
             onMergeNotReadyReason: setMergeNotReadyReason,
             onCornerStatus: setCornerLifecycleStatus,
             onCornerLifecycle: (corners) => {
+              relayExistingCornerIds.clear();
+              corners.forEach((corner) => relayExistingCornerIds.add(corner.id));
               setCornerLifecycle(corners);
-              setCornerLifecycleLoaded(true);
+              void installCornerStateDelivery(corners.map((corner) => corner.id)).catch((error) =>
+                console.warn('Failed to establish canonical corner-state delivery:', error),
+              );
             },
             onCornerBriefing: (briefing) => {
               if (briefing.task) setCornerTask(briefing.task);
@@ -1875,6 +1901,7 @@ export default function BuzzChat() {
       if (unsubscribe) unsubscribe();
       if (unsubscribePresence) unsubscribePresence();
       if (unsubscribeDraft) unsubscribeDraft();
+      if (unsubscribeCornerState) unsubscribeCornerState();
     };
   }, [decodedId, notificationResponseId, applyAgentPresence]);
 
@@ -2642,7 +2669,7 @@ export default function BuzzChat() {
   // actions (delete/leave) above, and skipped when there is nothing to strand.
   const handleSelectRoomRepoCandidate = useCallback(
     (candidate: RepoCandidate) => {
-      const hasOpenCorners = cornerLifecycle.some((corner) => isCornerActive(corner.status));
+      const hasOpenCorners = roomListCorners(cornerLifecycle).length > 0;
       if (roomRepository && hasOpenCorners) {
         Alert.alert(
           `Change ${ROOM_LABEL} repo?`,
@@ -3421,7 +3448,7 @@ export default function BuzzChat() {
                 avatarUrl={cornerAgentDisplay?.avatarUrl}
                 name={cornerAgentDisplay?.name ?? 'Agent'}
                 size={26}
-                alive={sessionState === 'working' || processState === 'live'}
+                alive={sessionState === 'working'}
               />
             </HeaderIdentitySlot>
           )}
@@ -3478,7 +3505,6 @@ export default function BuzzChat() {
                 )}
                 <CornerGlyph
                   status={displayedCornerStatus}
-                  agentOffline={cornerAgentOffline}
                   style={styles.cornerHeaderState}
                   testID="corner-view-status"
                 />
@@ -3688,9 +3714,7 @@ export default function BuzzChat() {
                         style={styles.approveButton}
                         testID="approve-corner"
                       >
-                        <Text style={styles.approveButtonText}>
-                          APPROVE THIS CORNER’S MERGE
-                        </Text>
+                        <Text style={styles.approveButtonText}>APPROVE THIS CORNER’S MERGE</Text>
                         <Text style={styles.approveButtonSupport}>
                           COVERS ITS ONGOING WORK UNTIL IT LANDS
                         </Text>
@@ -3703,7 +3727,9 @@ export default function BuzzChat() {
                     ) : approvalState === 'sent' ? (
                       <View style={styles.approvalSent} testID="approve-corner-sent">
                         <Text style={styles.approvalSentText}>APPROVAL SENT ✓</Text>
-                        <Text style={styles.approvalStateText}>WAITING FOR THE AGENT TO PICK IT UP</Text>
+                        <Text style={styles.approvalStateText}>
+                          WAITING FOR THE AGENT TO PICK IT UP
+                        </Text>
                       </View>
                     ) : approvalState === 'landing' ? (
                       <View style={styles.approvalPending} testID="approve-corner-landing">

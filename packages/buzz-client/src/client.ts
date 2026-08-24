@@ -5,6 +5,7 @@
  */
 import type { NostrEvent } from '@beeline/nostr';
 import { agentPresenceKey } from './agent-presence.js';
+import { cornerStateKey } from './corner-state.js';
 import { buildMergeApproval } from './approval.js';
 import {
   abandonAgentPairing,
@@ -17,7 +18,11 @@ import {
   redeemAgentPairingCode,
   setAgentSoul,
 } from './agent.js';
-import { getAgentModelCatalog, getAgentModelConfig, setAgentModelConfig } from './agent-model-config.js';
+import {
+  getAgentModelCatalog,
+  getAgentModelConfig,
+  setAgentModelConfig,
+} from './agent-model-config.js';
 import { getAgentCommands } from './agent-commands.js';
 import {
   getRoomRepository,
@@ -80,6 +85,7 @@ import { fetchIdentityPredecessors } from './oidc-bind.js';
 import {
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
+  KIND_CORNER_STATE,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
@@ -454,7 +460,12 @@ export class BuzzClient {
     if (self && predecessors && predecessors.length > 0) {
       await migrateSuccessorMemberships(this.ctx, predecessors);
     }
-    const communities = await listCommunities(this.ctx, pubkey, 50, self ? predecessors ?? [] : []);
+    const communities = await listCommunities(
+      this.ctx,
+      pubkey,
+      50,
+      self ? (predecessors ?? []) : [],
+    );
     if (!self) return communities;
     for (const community of communities) {
       await repairCommunityRoomMemberships(this.ctx, community.communityId);
@@ -487,7 +498,11 @@ export class BuzzClient {
   ): Promise<CommunityMember[]> {
     const seeded = opts?.predecessors ?? this.successionPredecessors;
     const predecessors = seeded ?? (await this.loadSuccessionChain());
-    return communityMembers(this.ctx, communityId, predecessors.length ? { predecessors } : undefined);
+    return communityMembers(
+      this.ctx,
+      communityId,
+      predecessors.length ? { predecessors } : undefined,
+    );
   }
 
   /** Once-per-client best-effort predecessor fetch, cached even when empty. */
@@ -633,7 +648,10 @@ export class BuzzClient {
   }
 
   /** The runtime's currently advertised model/effort catalog, if a session has published one. */
-  getAgentModelCatalog(communityId: string, agentPubkey: string): Promise<AgentModelCatalog | null> {
+  getAgentModelCatalog(
+    communityId: string,
+    agentPubkey: string,
+  ): Promise<AgentModelCatalog | null> {
     return getAgentModelCatalog(this.ctx, communityId, agentPubkey);
   }
 
@@ -824,10 +842,7 @@ export class BuzzClient {
   }
 
   /** Subscribe only to this Room's live agent reply draft record. */
-  async agentDraftSubscribe(
-    channelId: string,
-    handler: SessionEventHandler,
-  ): Promise<Unsubscribe> {
+  async agentDraftSubscribe(channelId: string, handler: SessionEventHandler): Promise<Unsubscribe> {
     if (!this.ws?.connected) {
       await this.connect();
     }
@@ -843,6 +858,36 @@ export class BuzzClient {
         const sessionEvent = toSessionEvent(event);
         if (sessionEvent?.channelId === channelId) handler(sessionEvent);
       },
+    );
+  }
+
+  /** Read canonical lifecycle records for the exact corners named by `d`. */
+  cornerStateBackfill(cornerIds: string[]): Promise<NostrEvent[]> {
+    if (cornerIds.length === 0) return Promise.resolve([]);
+    return query(this.ctx, [
+      {
+        kinds: [KIND_CORNER_STATE],
+        '#d': cornerIds.map((id) => cornerStateKey(id)),
+        limit: Math.max(20, cornerIds.length * 5),
+      },
+    ]);
+  }
+
+  /** Subscribe to canonical lifecycle records, never parent history cards. */
+  async cornerStateSubscribe(
+    cornerIds: string[],
+    handler: (event: NostrEvent) => void,
+  ): Promise<Unsubscribe> {
+    if (cornerIds.length === 0) return () => undefined;
+    if (!this.ws?.connected) await this.connect();
+    return this.ws!.subscribe(
+      [
+        {
+          kinds: [KIND_CORNER_STATE],
+          '#d': cornerIds.map((id) => cornerStateKey(id)),
+        },
+      ],
+      handler,
     );
   }
 

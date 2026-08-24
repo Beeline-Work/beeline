@@ -88,7 +88,7 @@ function stylesOfType(renderer: ReactTestRenderer, type: string): Record<string,
 }
 
 describe('the ledger — an agent turn', () => {
-  it('renders a Room update as one italic caption with mono gutter time and a plain digest', () => {
+  it('renders a Room update as a Space Grotesk italic caption with mono gutter time and a plain digest', () => {
     const renderer = render(
       React.createElement(LedgerRoomUpdate, {
         id: 'merged',
@@ -103,17 +103,25 @@ describe('the ledger — an agent turn', () => {
     const digest = renderer.root.findByProps({ testID: 'room-update-digest-merged' });
     expect(line.props.style).toMatchObject({
       fontFamily: 'SpaceGrotesk-Regular',
-      fontStyle: 'italic',
+      transform: [{ skewX: '-8deg' }],
       fontSize: 12,
       color: '#83838d',
     });
-    expect(stamp.props.style.fontFamily).toBe('IBMPlexMono-Regular');
+    expect(line.props.style.fontStyle).toBeUndefined();
+    expect(line.props.style.fontWeight).toBeUndefined();
+    expect(stamp.props.style).toMatchObject({
+      fontFamily: 'IBMPlexMono-Regular',
+      position: 'absolute',
+      right: 0,
+      textAlign: 'right',
+    });
     expect(digest.props.style).toMatchObject({
       fontFamily: 'SpaceGrotesk-Regular',
       fontSize: 13,
       marginLeft: 18,
     });
     expect(digest.props.style.fontStyle).toBeUndefined();
+    expect(digest.props.style.fontWeight).toBeUndefined();
   });
 
   it('can reveal a committed paragraph locally without changing its durable text', () => {

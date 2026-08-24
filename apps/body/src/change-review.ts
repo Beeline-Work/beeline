@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { git, publishEvent, type Identity } from '@beeline/gate';
 import {
   CHANGE_REVIEW_EVENT_KIND,
@@ -34,7 +33,10 @@ function statusName(code: string): ChangeReviewStatus {
   }
 }
 
-export function resolveReviewBaseTip(worktreePath: string, targetBranch: string): string {
+export async function resolveReviewBaseTip(
+  worktreePath: string,
+  targetBranch: string,
+): Promise<string> {
   const branchName = targetBranch.replace(/^refs\/heads\//, '');
   const candidates = [
     `refs/remotes/origin/${branchName}`,
@@ -43,7 +45,7 @@ export function resolveReviewBaseTip(worktreePath: string, targetBranch: string)
     branchName,
   ];
   for (const candidate of candidates) {
-    const result = git(worktreePath, ['merge-base', 'HEAD', candidate]);
+    const result = await git(worktreePath, ['merge-base', 'HEAD', candidate]);
     const tip = result.stdout.trim();
     if (result.ok && /^[0-9a-f]{40}$/.test(tip)) return tip;
   }
@@ -66,15 +68,15 @@ function parseNameStatus(output: string): Array<{
   });
 }
 
-function fileStats(
+async function fileStats(
   worktreePath: string,
   base: string,
   tip: string,
   path: string,
   previousPath?: string,
-): Pick<ChangeReviewFile, 'linesAdded' | 'linesRemoved' | 'isBinary'> {
+): Promise<Pick<ChangeReviewFile, 'linesAdded' | 'linesRemoved' | 'isBinary'>> {
   const paths = previousPath ? [previousPath, path] : [path];
-  const result = git(worktreePath, ['diff', '--numstat', base, tip, '--', ...paths]);
+  const result = await git(worktreePath, ['diff', '--numstat', base, tip, '--', ...paths]);
   if (!result.ok) throw new Error(`git diff --numstat failed for ${path}: ${result.stderr}`);
   let linesAdded = 0;
   let linesRemoved = 0;
@@ -92,12 +94,12 @@ function fileStats(
   return { linesAdded, linesRemoved, ...(isBinary ? { isBinary: true } : {}) };
 }
 
-export function listChangeReviewFiles(
+export async function listChangeReviewFiles(
   worktreePath: string,
   base: string,
   tip: string,
-): ChangeReviewFile[] {
-  const result = git(worktreePath, [
+): Promise<ChangeReviewFile[]> {
+  const result = await git(worktreePath, [
     '-c',
     'core.quotePath=false',
     'diff',
@@ -107,10 +109,12 @@ export function listChangeReviewFiles(
     tip,
   ]);
   if (!result.ok) throw new Error(`git diff --name-status failed: ${result.stderr}`);
-  return parseNameStatus(result.stdout).map((file) => ({
-    ...file,
-    ...fileStats(worktreePath, base, tip, file.path, file.previousPath),
-  }));
+  return Promise.all(
+    parseNameStatus(result.stdout).map(async (file) => ({
+      ...file,
+      ...(await fileStats(worktreePath, base, tip, file.path, file.previousPath)),
+    })),
+  );
 }
 
 /**
@@ -141,57 +145,15 @@ export async function readChangeReviewPatch(
     ...paths,
   ];
 
-  return await new Promise<ChangeReviewPatch>((resolve, reject) => {
-    const child = spawn('git', args, {
-      cwd: worktreePath,
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0',
-        GIT_CONFIG_GLOBAL: '/dev/null',
-        GIT_CONFIG_NOSYSTEM: '1',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const chunks: Buffer[] = [];
-    const errorChunks: Buffer[] = [];
-    let patchBytes = 0;
-    let errorBytes = 0;
-    let tooLarge = false;
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      patchBytes += chunk.length;
-      if (tooLarge || patchBytes > maxBytes) {
-        tooLarge = true;
-        chunks.length = 0;
-        return;
-      }
-      chunks.push(chunk);
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      const remaining = MAX_GIT_ERROR_BYTES - errorBytes;
-      if (remaining <= 0) return;
-      const kept = chunk.subarray(0, remaining);
-      errorChunks.push(kept);
-      errorBytes += kept.length;
-    });
-    child.once('error', (error) => reject(error));
-    child.once('close', (code, signal) => {
-      if (code !== 0) {
-        const detail = Buffer.concat(errorChunks).toString('utf8').trim();
-        reject(
-          new Error(
-            `git diff failed for ${file.path}: ${detail || `git exited ${code ?? signal ?? 'unknown'}`}`,
-          ),
-        );
-        return;
-      }
-      if (tooLarge) {
-        resolve({ patchBytes, renderUnavailableReason: 'too-large' });
-        return;
-      }
-      resolve({ content: Buffer.concat(chunks).toString('utf8'), patchBytes });
-    });
-  });
+  const result = await git(worktreePath, args);
+  if (!result.ok) {
+    throw new Error(
+      `git diff failed for ${file.path}: ${result.stderr.slice(-MAX_GIT_ERROR_BYTES).trim() || `git exited ${result.status ?? 'unknown'}`}`,
+    );
+  }
+  const patchBytes = Buffer.byteLength(result.stdout);
+  if (patchBytes > maxBytes) return { patchBytes, renderUnavailableReason: 'too-large' };
+  return { content: result.stdout, patchBytes };
 }
 
 /** Bound each signed relay event while retaining the full patch. */

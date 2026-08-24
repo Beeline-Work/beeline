@@ -20,7 +20,7 @@ export {
   type ChannelTaskRequest,
   type RoomEditPolicy,
 } from './body.js';
-export { WorkspaceSupervisor } from './supervisor.js';
+export { ThinDaemonCore } from './thin-core.js';
 export {
   NAMED_REPOSITORY_PERMISSION_COMMAND,
   namedRepositoryTargetFromPermission,

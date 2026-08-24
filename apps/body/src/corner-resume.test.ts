@@ -27,7 +27,7 @@ describe('corner resume git state', () => {
     await writeFile(resolve(repo, 'unfinished.ts'), 'export const unfinished = true;\n');
 
     const before = run(repo, ['rev-parse', 'HEAD']);
-    expect(readCornerGitResumeState(repo, 'main')).toEqual({
+    expect(await readCornerGitResumeState(repo, 'main')).toEqual({
       changedFiles: ['committed.ts', 'unfinished.ts'],
       commits: [expect.stringMatching(/^[0-9a-f]+ feat: preserve reasoning$/)],
     });

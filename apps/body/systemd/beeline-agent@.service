@@ -1,0 +1,27 @@
+[Unit]
+Description=Beeline agent %i
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
+[Service]
+Type=notify
+NotifyAccess=all
+Environment=BEELINE_MANAGED_BY_SYSTEMD=1
+ExecStart="%h/.local/bin/beeline" daemon --agent %i
+Restart=always
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=60s
+RestartPreventExitStatus=78
+WatchdogSec=180s
+TimeoutStartSec=90s
+TimeoutStopSec=10min
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

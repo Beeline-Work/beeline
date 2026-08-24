@@ -5,7 +5,7 @@
  * authenticated sockets on the *same* agent pubkey: one per Room push loop
  * (`Body.runRoomPushLoop`), one per Room presence cache
  * (`Body.openChannelPresenceCache`), and one control plane
- * (`WorkspaceSupervisor.run`). Nothing about the protocol needs that —
+ * (`ThinDaemonCore.run`). Nothing about the protocol needs that —
  * `RelayWs` already multiplexes many NIP-01 subscriptions over one socket by
  * subId and already replays every live REQ after a reconnect — so per-key
  * socket growth was pure cost, and a per-key connection cap would have put a

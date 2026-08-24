@@ -49,7 +49,7 @@ afterEach(() => {
 describe('change review git metadata', () => {
   it('lists file status and line totals, then returns a per-file unified patch', async () => {
     const { directory, base, tip } = fixture();
-    const files = listChangeReviewFiles(directory, base, tip);
+    const files = await listChangeReviewFiles(directory, base, tip);
 
     expect(files).toEqual(
       expect.arrayContaining([
@@ -89,7 +89,7 @@ describe('change review git metadata', () => {
     command(directory, ['add', '.']);
     command(directory, ['commit', '-m', 'large vendor and ordinary source']);
     const tip = command(directory, ['rev-parse', 'HEAD']);
-    const files = listChangeReviewFiles(directory, base, tip);
+    const files = await listChangeReviewFiles(directory, base, tip);
 
     const large = await readChangeReviewPatch(
       directory,
@@ -112,9 +112,9 @@ describe('change review git metadata', () => {
     expect(small.content).toContain('+export const stillReviewable = true;');
   });
 
-  it('resolves the merge base and chunks large patches without data loss', () => {
+  it('resolves the merge base and chunks large patches without data loss', async () => {
     const { directory, base } = fixture();
-    expect(resolveReviewBaseTip(directory, 'refs/heads/main')).toBe(base);
+    expect(await resolveReviewBaseTip(directory, 'refs/heads/main')).toBe(base);
 
     const patch = `header\n${'x'.repeat(70_000)}\nfooter`;
     const chunks = chunkChangeReviewPatch(patch);

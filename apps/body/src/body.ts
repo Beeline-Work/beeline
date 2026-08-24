@@ -191,6 +191,7 @@ import {
   AGENT_ATTACHMENT_DIRECTIVE,
   MAX_AGENT_ATTACHMENT_BYTES,
   attachmentPrompt,
+  canonicalizeImageForUpload,
   mimeTypeForName,
   outputCandidates,
   stripAttachmentDirectives,
@@ -3154,7 +3155,12 @@ export class Body {
     try {
       for (const candidate of candidates) {
         try {
-          const bytes = await this.candidateBytes(session, candidate);
+          const rawBytes = await this.candidateBytes(session, candidate);
+          // Agent encoders emit metadata-bearing containers (EXIF, tEXt, tIME,
+          // APPn) that the relay's media store refuses with HTTP 422 — strip
+          // every metadata channel before upload, exactly like the mobile
+          // client does for human-sent attachments.
+          const bytes = canonicalizeImageForUpload(rawBytes, candidate.mimeType);
           const uploaded = await client.uploadMedia(bytes, candidate.mimeType);
           const dim = uploaded.dim?.match(/^(\d+)x(\d+)$/);
           attachments.push({

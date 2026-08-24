@@ -2,6 +2,189 @@ import { extname } from 'node:path';
 import type { AttachmentReference } from '@beeline/buzz-client';
 import type { PromptResult, SessionUpdate } from './acp.js';
 
+const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+const PNG_CRITICAL_CHUNKS = new Set(['IHDR', 'PLTE', 'IDAT', 'IEND']);
+const JPEG_SIGNATURE = new Uint8Array([0xff, 0xd8]);
+
+function readPngChunkLength(bytes: Uint8Array, offset: number): number {
+  return (
+    bytes[offset]! * 0x1000000 +
+    bytes[offset + 1]! * 0x10000 +
+    bytes[offset + 2]! * 0x100 +
+    bytes[offset + 3]!
+  );
+}
+
+function pngChunkName(bytes: Uint8Array, offset: number): string {
+  return String.fromCharCode(
+    bytes[offset + 4]!,
+    bytes[offset + 5]!,
+    bytes[offset + 6]!,
+    bytes[offset + 7]!,
+  );
+}
+
+/**
+ * Relay media storage accepts canonical PNG containers only. Agent encoders
+ * (matplotlib, Pillow, Codex image generation) routinely emit ancillary color,
+ * time, text, and EXIF chunks even though nothing consumes them. Keep the
+ * lossless image chunks and drop every metadata channel.
+ */
+export function canonicalizePng(bytes: Uint8Array): Uint8Array {
+  if (
+    bytes.byteLength < PNG_SIGNATURE.byteLength ||
+    PNG_SIGNATURE.some((value, index) => bytes[index] !== value)
+  ) {
+    throw new Error('Image conversion did not produce a valid PNG image.');
+  }
+
+  const chunks: Uint8Array[] = [bytes.slice(0, PNG_SIGNATURE.byteLength)];
+  let offset = PNG_SIGNATURE.byteLength;
+  let sawHeader = false;
+  let sawImageData = false;
+  let sawEnd = false;
+  while (offset + 12 <= bytes.byteLength) {
+    const length = readPngChunkLength(bytes, offset);
+    const end = offset + 12 + length;
+    if (!Number.isSafeInteger(end) || end > bytes.byteLength) {
+      throw new Error('Image conversion produced a malformed PNG image.');
+    }
+    const name = pngChunkName(bytes, offset);
+    if (name === 'IHDR') sawHeader = true;
+    if (name === 'IDAT') sawImageData = true;
+    if (name === 'IEND') sawEnd = true;
+    if (PNG_CRITICAL_CHUNKS.has(name)) chunks.push(bytes.slice(offset, end));
+    offset = end;
+    if (name === 'IEND') break;
+  }
+  if (!sawHeader || !sawImageData || !sawEnd) {
+    throw new Error('Image conversion produced an incomplete PNG image.');
+  }
+
+  const byteLength = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const canonical = new Uint8Array(byteLength);
+  let writeOffset = 0;
+  for (const chunk of chunks) {
+    canonical.set(chunk, writeOffset);
+    writeOffset += chunk.byteLength;
+  }
+  return canonical;
+}
+
+/**
+ * Keep JPEG rendering data while removing every descriptive metadata channel.
+ * APP0-APP15 and COM markers can carry EXIF, XMP, ICC, Photoshop records,
+ * comments, or thumbnails; a freshly encoded image needs none of them.
+ */
+export function canonicalizeJpeg(bytes: Uint8Array): Uint8Array {
+  if (bytes.byteLength < 2 || bytes[0] !== JPEG_SIGNATURE[0] || bytes[1] !== JPEG_SIGNATURE[1]) {
+    throw new Error('Image conversion did not produce a valid JPEG image.');
+  }
+
+  const parts: Uint8Array[] = [bytes.slice(0, 2)];
+  let offset = 2;
+  let inScan = false;
+  let sawEnd = false;
+  while (offset < bytes.byteLength) {
+    if (inScan && bytes[offset] !== 0xff) {
+      const start = offset;
+      while (offset < bytes.byteLength && bytes[offset] !== 0xff) offset += 1;
+      parts.push(bytes.slice(start, offset));
+      continue;
+    }
+    if (bytes[offset] !== 0xff) {
+      throw new Error('Image conversion produced a malformed JPEG image.');
+    }
+
+    const markerStart = offset;
+    while (offset < bytes.byteLength && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.byteLength) {
+      throw new Error('Image conversion produced a malformed JPEG image.');
+    }
+    const marker = bytes[offset]!;
+    offset += 1;
+
+    if (inScan && marker === 0x00) {
+      parts.push(bytes.slice(markerStart, offset));
+      continue;
+    }
+    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+      parts.push(bytes.slice(markerStart, offset));
+      continue;
+    }
+    if (marker === 0xd9) {
+      if (offset !== bytes.byteLength) {
+        throw new Error('Image conversion produced a malformed JPEG image.');
+      }
+      parts.push(bytes.slice(markerStart, offset));
+      sawEnd = true;
+      break;
+    }
+    if (marker === 0xd8 || offset + 2 > bytes.byteLength) {
+      throw new Error('Image conversion produced a malformed JPEG image.');
+    }
+
+    const length = bytes[offset]! * 0x100 + bytes[offset + 1]!;
+    const segmentEnd = offset + length;
+    if (length < 2 || segmentEnd > bytes.byteLength) {
+      throw new Error('Image conversion produced a malformed JPEG image.');
+    }
+
+    // Remove the whole APPn/COM metadata class fail-closed — the same policy
+    // the mobile client applies to human-sent attachments.
+    const metadata = (marker >= 0xe0 && marker <= 0xef) || marker === 0xfe;
+    if (!metadata) parts.push(bytes.slice(markerStart, segmentEnd));
+    offset = segmentEnd;
+    inScan = marker === 0xda;
+  }
+
+  if (!sawEnd) throw new Error('Image conversion produced an incomplete JPEG image.');
+
+  const byteLength = parts.reduce((total, part) => total + part.byteLength, 0);
+  const canonical = new Uint8Array(byteLength);
+  let writeOffset = 0;
+  for (const part of parts) {
+    canonical.set(part, writeOffset);
+    writeOffset += part.byteLength;
+  }
+  return canonical;
+}
+
+/**
+ * The relay's media store rejects metadata-bearing image containers with HTTP
+ * 422 "media contains metadata or a non-canonical metadata channel". Human-
+ * sent attachments are normalized client-side before upload (see the mobile
+ * app's chat-attachment path); agent-produced files arrive here raw from
+ * whatever encoder wrote them, so strip every metadata channel at this layer.
+ *
+ * Format is taken from the declared MIME type, falling back to magic-byte
+ * sniffing when the agent handed over an unrecognized extension. Returns the
+ * input unchanged when the bytes do not parse as that container — the upload
+ * then decides, exactly as it would have before this normalization existed.
+ */
+export function canonicalizeImageForUpload(bytes: Uint8Array, mimeType?: string): Uint8Array {
+  const declared = mimeType ?? '';
+  try {
+    if (declared === 'image/png' || (!declared.startsWith('image/') && startsWith(bytes, PNG_SIGNATURE)))
+      return canonicalizePng(bytes);
+    if (
+      declared === 'image/jpeg' ||
+      (!declared.startsWith('image/') && startsWith(bytes, JPEG_SIGNATURE))
+    )
+      return canonicalizeJpeg(bytes);
+  } catch {
+    return bytes;
+  }
+  return bytes;
+}
+
+function startsWith(bytes: Uint8Array, signature: Uint8Array): boolean {
+  return (
+    bytes.byteLength >= signature.byteLength &&
+    signature.every((value, index) => bytes[index] === value)
+  );
+}
+
 export const AGENT_ATTACHMENT_DIRECTIVE = 'buzz-attachment';
 export const MAX_AGENT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const MAX_AGENT_ATTACHMENTS_PER_TURN = 8;

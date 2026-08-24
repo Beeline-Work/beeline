@@ -58,8 +58,8 @@ export type CornerSummary = {
   /** The corner's agent is PROVABLY offline past its presence lease (every
    * agent presence record for the Room is outside `isAgentPresenceOnline`'s
    * 120s window), AND that fact changes the reading: the oracle's verdict was
-   * STALLED, not needs-human. An ask held by a dead agent is not waiting on
-   * your reply — it is a stalled session. Absent/undefined = unknown (no
+   * idle, not needs-you. An ask held by a dead agent is not waiting on your
+   * reply — it is a stalled session. Absent/undefined = unknown (no
    * presence read answered, or the agent is online) = behave exactly as
    * today. Only set when a reviewable change is NOT present: `open` corners
    * stay needs-you regardless of presence, because the artifact stands on
@@ -72,10 +72,9 @@ export type CornerSummary = {
 };
 
 /**
- * THE three-word state every Buzz surface renders and golds: working |
- * needs-human | finished. Idle-without-finishing (`null`) is needs-human,
- * plainly — deliberately treated as a failure mode, not a quiet tier.
- * Affordances stay contextual per surface; the STATE is just these words.
+ * Legacy oracle super-state retained only for the staged migration fallback.
+ * New surfaces render `cornerVisualState`, the daemon's exact three-state
+ * vocabulary, instead of treating an unknown/null verdict as attention.
  */
 export function cornerSuperState(
   status: CornerStatus | null,
@@ -100,7 +99,7 @@ export function isCornerActive(status: CornerStatus | null): boolean {
 }
 
 /**
- * A corner whose life is over: it landed, it failed, or it was closed. Nothing
+ * A corner whose life is over: it landed or it was closed. Nothing
  * that reports *current* work may ever name one of these — the pinned corner
  * line above the composer least of all, since it is tappable and a terminal
  * corner is a read-only channel a tap strands the reader in. Written as the
@@ -109,7 +108,7 @@ export function isCornerActive(status: CornerStatus | null): boolean {
  * new terminal one has to be named here to become terminal.
  */
 export function isCornerTerminal(status: CornerStatus | null): boolean {
-  return status === 'merged' || status === 'failed' || status === 'archived';
+  return status === 'merged' || status === 'archived';
 }
 
 export function resolveCornerLifecycleStatus(
@@ -126,25 +125,69 @@ export function cornerName(name: string | undefined, id: string): string {
 }
 
 /**
- * The ONE corner-state glyph family: diamonds. Corners are WORK, not
- * identities — shapes are identity vocabulary (`identity-mark.ts`: △ agent,
- * ○ human, ▢ workspace), so a corner's own glyph may never be an identity
- * shape, and the triangle appears next to a corner ONLY as the acting agent's
- * identity mark. Filled ◆ means live work; hollow ◇ covers every other state
- * — the label carries the word, the fill carries liveness.
+ * The ONE state-glyph family: circles, shared by Rooms and corners. Idle is a
+ * hollow static circle, working is a spinning ring, and needs-you is filled.
+ * The rendered component carries the exact state word only to accessibility.
  */
-const CORNER_GLYPH_LIVE = '◆';
-const CORNER_GLYPH_QUIET = '◇';
+const CORNER_GLYPH_FILLED = '●';
+const CORNER_GLYPH_HOLLOW = '○';
 
-export function cornerGlyphForStatus(status: CornerStatus | null): string {
-  return status === 'live' ? CORNER_GLYPH_LIVE : CORNER_GLYPH_QUIET;
+export type CornerVisualState = 'idle' | 'working' | 'needs-you';
+
+const CORNER_VISUAL_STATE_RANK: Readonly<Record<CornerVisualState, number>> = {
+  idle: 0,
+  working: 1,
+  'needs-you': 2,
+};
+
+/** The one three-state vocabulary rendered by both corners and Rooms. */
+export function cornerVisualState(
+  status: CornerStatus | null,
+  opts?: { awaitingReply?: boolean; agentOffline?: boolean },
+): CornerVisualState {
+  if (isCornerStalledOffline({ status, agentOffline: opts?.agentOffline })) return 'idle';
+  if (status === 'live') return 'working';
+  if (
+    opts?.awaitingReply ||
+    status === 'open' ||
+    status === 'needs-attention' ||
+    status === 'failed'
+  ) {
+    return 'needs-you';
+  }
+  return 'idle';
 }
 
-export { CORNER_GLYPH_LIVE, CORNER_GLYPH_QUIET };
+/** MAX-severity (join) of corner states. Commutative, associative, and
+ * idempotent by construction; Room activity is intentionally not an input. */
+export function roomState(
+  corners: readonly Pick<CornerSummary, 'status' | 'awaitingReply' | 'agentOffline'>[],
+): CornerVisualState {
+  return corners.reduce<CornerVisualState>((current, corner) => {
+    const next = cornerVisualState(corner.status, corner);
+    return CORNER_VISUAL_STATE_RANK[next] > CORNER_VISUAL_STATE_RANK[current] ? next : current;
+  }, 'idle');
+}
+
+export function cornerGlyphForStatus(
+  status: CornerStatus | null,
+  opts?: { awaitingReply?: boolean; agentOffline?: boolean },
+): string {
+  switch (cornerVisualState(status, opts)) {
+    case 'working':
+      return '◌';
+    case 'needs-you':
+      return CORNER_GLYPH_FILLED;
+    case 'idle':
+      return CORNER_GLYPH_HOLLOW;
+  }
+}
+
+export { CORNER_GLYPH_FILLED, CORNER_GLYPH_HOLLOW };
 
 /**
  * A corner whose agent is PROVABLY offline past its presence lease and that
- * holds no actionable artifact: the oracle's STALLED verdict. Such a corner
+ * holds no actionable artifact: the fallback oracle's stalled verdict. Such a corner
  * is never "waiting on you" — gold means something YOU can act on with a live
  * agent or a real artifact, and neither applies here. A reviewable change
  * (`open`) is exactly the real-artifact exception and stays needs-you.
@@ -155,40 +198,38 @@ export function isCornerStalledOffline(
   return (
     corner.agentOffline === true &&
     corner.status !== 'open' &&
+    corner.status !== 'failed' &&
     corner.status !== 'merged' &&
     corner.status !== 'archived'
   );
 }
 
 /**
- * The one glyph/label source — and the STATE WORD is exactly the three-word
- * verdict (`cornerSuperState`), with no sub-reason taxonomy: WORKING,
- * NEEDS HUMAN (idle-without-finishing included, plainly), FINISHED. Which
- * affordance a surface offers inside a needs-human corner (approve card when
- * a live merge target exists, reply focus otherwise, retry, nudge/close) is
- * that surface's contextual choice, not a state word.
+ * The compatibility glyph/label source uses exactly the three visual words:
+ * WORKING, NEEDS YOU, IDLE. Actual screens render `StateCircle` without a
+ * visible label; this string is retained for nonvisual data and migration.
  *
- * The one honest exception is `isCornerStalledOffline`: a provably-offline
- * agent's unfinished corner reads STALLED — agent unreachable — never
- * "NEEDS HUMAN", because nobody is asking the person anything.
+ * A provably-offline agent's unfinished corner projects to the same IDLE state
+ * vocabulary; the separate fact line may still explain that the agent is
+ * offline without inventing another visible status.
  */
 export function cornerStatusPresentation(
   status: CornerStatus | null,
-  opts?: { agentOffline?: boolean },
+  opts?: { awaitingReply?: boolean; agentOffline?: boolean },
 ): {
   glyph: string;
   label: string;
 } {
   if (isCornerStalledOffline({ status, agentOffline: opts?.agentOffline })) {
-    return { glyph: CORNER_GLYPH_QUIET, label: 'STALLED' };
+    return { glyph: CORNER_GLYPH_HOLLOW, label: 'IDLE' };
   }
-  switch (cornerSuperState(status)) {
+  switch (cornerVisualState(status, opts)) {
     case 'working':
-      return { glyph: CORNER_GLYPH_LIVE, label: 'WORKING' };
-    case 'needs-human':
-      return { glyph: CORNER_GLYPH_QUIET, label: 'NEEDS HUMAN' };
-    case 'finished':
-      return { glyph: CORNER_GLYPH_QUIET, label: 'FINISHED' };
+      return { glyph: '◌', label: 'WORKING' };
+    case 'needs-you':
+      return { glyph: CORNER_GLYPH_FILLED, label: 'NEEDS YOU' };
+    case 'idle':
+      return { glyph: CORNER_GLYPH_HOLLOW, label: 'IDLE' };
   }
 }
 
@@ -223,6 +264,7 @@ const ROOM_LIST_WORDED_STATUSES: ReadonlySet<CornerStatus> = new Set<CornerStatu
   'live',
   'needs-attention',
   'open',
+  'failed',
 ]);
 
 export function roomListCorners(corners: readonly CornerSummary[]): CornerSummary[] {
@@ -230,8 +272,7 @@ export function roomListCorners(corners: readonly CornerSummary[]): CornerSummar
   // alike, idle-without-finishing included (its nudge/close affordance lives
   // inside). Only finished corners are excluded.
   return corners.filter(
-    (corner) =>
-      corner.status === null || ROOM_LIST_WORDED_STATUSES.has(corner.status),
+    (corner) => corner.status === null || ROOM_LIST_WORDED_STATUSES.has(corner.status),
   );
 }
 
@@ -241,14 +282,14 @@ export function roomListCorners(corners: readonly CornerSummary[]): CornerSummar
  * glyph can never advertise work the row's own count and dropdown hide.
  */
 export function roomCornerSignal(corners: readonly CornerSummary[]): CornerStatus | null {
-  const listed = roomListCorners(corners);
-  if (listed.length === 0) return null;
-  const leading = listed.reduce((best, corner) =>
-    cornerStatusPrecedenceOrNull(corner.status) < cornerStatusPrecedenceOrNull(best.status)
-      ? corner
-      : best,
-  );
-  return isCornerActive(leading.status) ? leading.status : null;
+  switch (roomState(roomListCorners(corners))) {
+    case 'needs-you':
+      return 'needs-attention';
+    case 'working':
+      return 'live';
+    case 'idle':
+      return null;
+  }
 }
 
 export type CornerActivitySignal = {

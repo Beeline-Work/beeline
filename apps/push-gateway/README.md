@@ -1,13 +1,19 @@
 # @beeline/push-gateway
 
 Android-only FCM gateway for Beeline. It accepts an FCM device registration,
-subscribes to kind-9 channel events on the Buzz relay, resolves current channel
-visibility through ACL-scoped reads, and sends message-preview Firebase notifications
-to registered members other than the event author.
+reads kind-9 channel events through the trusted recipient-scoped relay bridge,
+resolves current channel visibility through the same ACL-scoped reads, and sends
+message-preview Firebase notifications to registered members other than the event
+author.
 
-The WebSocket subscription wakes an ACL-scoped bridge poll. The bridge queries
-with each registered public key (never a secret key), so private-channel reads
-are limited to channels that identity can already access.
+The gateway queries with each registered public key (never a secret key), so
+private-channel reads are limited to channels that identity can already access.
+This feed intentionally does not use a global WebSocket subscription: Buzz stores
+kind-9 messages as channel-scoped events and excludes them from global live fan-out.
+A channel-scoped WebSocket subscription would require the registered person's
+private signing key, which the gateway must never collect. Failed feed reads retry
+with bounded exponential backoff, and one heartbeat per minute reports the observed
+event rate and successful/failed poll counts.
 
 ## Run
 
@@ -23,13 +29,13 @@ The service account file stays outside the repository. Do not log or commit it.
 | `BUZZY_PUSH_SA_FILE`             | —                                      | Firebase service-account path; used when `GOOGLE_APPLICATION_CREDENTIALS` is unset |
 | `GOOGLE_APPLICATION_CREDENTIALS` | —                                      | Standard Google credential path                                                    |
 | `BUZZY_RELAY_URL`                | `http://127.0.0.1:3010`                | ACL-scoped HTTP query origin                                                       |
-| `BUZZY_RELAY_HOST`               | subscription origin host               | Relay tenant authority sent to the private query origin                            |
-| `BUZZY_RELAY_SUBSCRIPTION_URL`   | same as `BUZZY_RELAY_URL`              | Authenticated WebSocket event-wakeup origin                                        |
+| `BUZZY_RELAY_HOST`               | query origin host                      | Relay tenant authority sent to the private query origin                            |
 | `BUZZY_PUSH_HOST`                | `127.0.0.1`                            | Registration HTTP bind host                                                        |
 | `PORT`                           | `8788`                                 | Registration HTTP port (Compose-internal in production)                            |
 | `BUZZY_PUSH_REGISTRY_FILE`       | `.data/registrations.json`             | Local token registry path                                                          |
 | `BUZZY_PUSH_DELIVERY_STATE_FILE` | registry directory + `deliveries.json` | Durable event-id ledger and recipient cursors                                      |
 | `BUZZY_PUSH_POLL_INTERVAL_MS`    | `1500`                                 | ACL-scoped relay poll interval                                                     |
+| `BUZZY_PUSH_FEED_HEARTBEAT_MS`   | `60000`                                | Feed heartbeat interval; production logs normalize its event count to events/min   |
 
 `POST /registrations` accepts
 `{ "pubkey", "token", "platform": "android", "environment": "physical" }`.
@@ -89,7 +95,8 @@ systemd unit, with `~/buzzy-push-gateway/current` pointing at an immutable
 release. To apply a committed gateway update, the operator prepares and builds
 a new release, atomically repoints `current`, then runs
 `systemctl --user restart buzzy-push-gateway.service`. Verify `/push/health` and
-the new decision lines with `journalctl --user -u buzzy-push-gateway.service`.
+the `[push] feed live`, `[push] feed heartbeat`, and decision lines with
+`journalctl --user -u buzzy-push-gateway.service`.
 Preserve the existing `secrets/` and `state/` directories throughout. The
 checked-in Compose deployment remains a separate target topology; do not run
 both pollers against one delivery ledger. See [`deploy/README.md`](deploy/README.md).

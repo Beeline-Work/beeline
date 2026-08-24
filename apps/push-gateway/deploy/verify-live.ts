@@ -15,7 +15,10 @@ import { DeliveryState } from '../src/delivery-state.js';
 import { PushGateway, RegisteredEventPoller, type RelayEventReader } from '../src/gateway.js';
 import { TokenRegistry } from '../src/registry.js';
 
-const publicRelayUrl = process.env.BUZZY_RELAY_SUBSCRIPTION_URL ?? 'https://usebeeline.app';
+const publicRelayUrl =
+  process.env.BUZZY_RELAY_PUBLIC_URL ??
+  process.env.BUZZY_RELAY_SUBSCRIPTION_URL ??
+  'https://usebeeline.app';
 const privateRelayUrl = process.env.BUZZY_RELAY_URL ?? 'http://127.0.0.1:3410';
 const relayHost = process.env.BUZZY_RELAY_HOST ?? 'usebeeline.app';
 

@@ -246,6 +246,24 @@ export function agentActivityText(content: string): string {
     .join('\n');
 }
 
+/**
+ * Legacy bodies published some ACP `session/update` envelopes as ordinary
+ * kind:9 records before the `#t=agent-activity` marker became mandatory. The
+ * payload shape is itself an explicit machine-control envelope: classify it
+ * before the ordinary-chat fallback so its JSON can never become a bubble.
+ */
+function untaggedSessionActivity(content: string): AgentActivityItem[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content) as unknown;
+  } catch {
+    return undefined;
+  }
+  const envelope = asRecord(parsed);
+  if (!stringValue(envelope?.sessionId) || !asRecord(envelope?.update)) return undefined;
+  return agentActivityDetails(content);
+}
+
 /** Preserve raw Nostr tags because the branch-loop UI projects lifecycle from them. */
 export function toRigEvent(ev: BuzzSessionEvent): SessionEvent {
   if (ev.kind === 'agent-activity') {
@@ -523,12 +541,16 @@ export function projectChatEvent(
     };
   }
   const text = eventText(event);
+  const isAgentMessage = sessionEventHasTag(event, 't', 'agent-message');
   // A daemon state notice already on the relay (`retired-agent-notices.ts`).
   // The publisher is deleted, but the events remain and there is no tag to
-  // recognize them by, so the whole sentence is the filter. Dropped before
-  // anything else reads it: these carried a NIP-10 reply-to, so left in place
-  // one of them would also claim a real turn's reconciled bubble id.
-  if (isRetiredAgentStateNotice(text)) return {};
+  // distinguish one retired notice from real agent prose beyond the explicit
+  // `agent-message` marker. Never apply this content filter to an ordinary
+  // human kind:9: a person's words are chat regardless of what sentence they
+  // happen to match. Retired notices carried a NIP-10 reply-to, so dropping
+  // their explicitly agent-authored form here also prevents one from claiming
+  // a real turn's reconciled bubble id.
+  if (isAgentMessage && isRetiredAgentStateNotice(text)) return {};
   const pubkey = eventPubkey(event);
   const subchannelId = sessionEventTagValue(event, 'subchannel');
   const bodyControl = sessionEventHasTag(event, 't', 'body-control') || Boolean(subchannelId);
@@ -861,13 +883,33 @@ export function projectChatEvent(
     };
   }
 
+  // Compatibility floor for raw production history from bodies that omitted
+  // the activity marker. Visible work routes to the folded activity ledger;
+  // metadata-only updates disappear. Neither path can expose the JSON wire
+  // envelope as conversational prose.
+  const legacyActivity = event.type === 'raw' ? untaggedSessionActivity(text) : undefined;
+  if (legacyActivity) {
+    if (!legacyActivity.length) return {};
+    return {
+      message: {
+        id: eventId(event),
+        text: agentActivityText(text),
+        isUser: false,
+        timestamp: eventTimestamp(event),
+        ...(pubkey ? { pubkey } : {}),
+        isAgentActivity: true,
+        activity: legacyActivity,
+        ...(isNew ? { isNew: true } : {}),
+      },
+    };
+  }
+
   // A Room/DM turn's final reply always answers the human's own request
   // event (`replyTo`), the same id Body threads as the draft/turn `request`
   // tag. Reconcile onto the draft's stable bubble id so the final text
   // updates the SAME on-screen bubble in place rather than appending a new
   // one — the raw relay event id survives in `relayId` so reply-threading
   // (which must reference a real signed event) keeps working.
-  const isAgentMessage = sessionEventHasTag(event, 't', 'agent-message');
   const relayId = eventId(event);
   const reconciledId = isAgentMessage && replyToId ? `agent-draft-${replyToId}` : undefined;
 

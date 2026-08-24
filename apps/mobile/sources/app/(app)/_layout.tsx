@@ -106,6 +106,13 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="buzz/MembersScreen"
+                options={{
+                    headerShown: false,
+                    statusBarStyle: 'light',
+                }}
+            />
+            <Stack.Screen
                 name="buzz/settings/index"
                 options={{
                     headerShown: false,

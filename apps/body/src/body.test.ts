@@ -10303,6 +10303,103 @@ describe('harness-independent corner commit watch', () => {
     }
   });
 
+  it('publishes a complete manifest when one single-line diff is multi-megabyte', async () => {
+    const agent = newIdentity('commit-watch-large-diff-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
+    const worktreePath = committedFeatureWorktree();
+    try {
+      writeFileSync(join(worktreePath, 'vendor.min.js'), 'x'.repeat(3_000_000));
+      writeFileSync(join(worktreePath, 'ordinary.ts'), 'export const reviewable = true;\n');
+      gitCommand(worktreePath, ['add', '.']);
+      gitCommand(worktreePath, ['commit', '-m', 'vendor bundle plus ordinary source']);
+      watchInfo(body, agent, worktreePath);
+
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+
+      const manifestEvent = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'change-review-manifest'),
+      );
+      expect(manifestEvent).toBeDefined();
+      const manifest = JSON.parse(manifestEvent!.content) as {
+        files: Array<Record<string, unknown>>;
+      };
+      expect(manifest.files).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: 'vendor.min.js',
+            patchBytes: expect.any(Number),
+            renderUnavailableReason: 'too-large',
+          }),
+          expect.objectContaining({ path: 'ordinary.ts' }),
+        ]),
+      );
+      expect(
+        published.some(
+          (event) =>
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'change-review-file') &&
+            event.tags.some((tag) => tag[0] === 'f' && tag[1] === 'ordinary.ts'),
+        ),
+      ).toBe(true);
+      expect(
+        published.some(
+          (event) =>
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'change-review-file') &&
+            event.tags.some((tag) => tag[0] === 'f' && tag[1] === 'vendor.min.js'),
+        ),
+      ).toBe(false);
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds repeated review-payload failures and publishes an honest terminal state', async () => {
+    const agent = newIdentity('commit-watch-bounded-failure-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const info = watchInfo(body, agent, worktreePath);
+      const publishMergeReady = vi
+        .spyOn(
+          body as unknown as {
+            publishMergeReady(info: SubchannelInfoFixture): Promise<boolean>;
+          },
+          'publishMergeReady',
+        )
+        .mockRejectedValue(new Error('git diff failed for vendor.min.js: ENOBUFS'));
+
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+
+      expect(publishMergeReady).toHaveBeenCalledTimes(3);
+      expect(info.commitWatchFailure).toEqual({
+        tip: gitCommand(worktreePath, ['rev-parse', 'HEAD']),
+        attempts: 3,
+      });
+      expect(info.observedReviewTip).toBe(gitCommand(worktreePath, ['rev-parse', 'HEAD']));
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+        ),
+      ).toBe(true);
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'change-review-manifest'),
+        ),
+      ).toBe(false);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it('does not publish while the worktree still has uncommitted work', async () => {
     const agent = newIdentity('commit-watch-dirty-agent');
     const body = newBody(agent);

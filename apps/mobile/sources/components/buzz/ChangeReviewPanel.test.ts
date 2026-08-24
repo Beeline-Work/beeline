@@ -200,4 +200,47 @@ describe('ChangeReviewPanel', () => {
       );
     expect(texts).toContain('diff truncated — showing 1500 of 2000 lines');
   });
+
+  it('shows an oversized manifest stub without requesting a missing patch', async () => {
+    const transport = {
+      workspaceFilesRead: vi.fn(async () => [
+        {
+          path: 'vendor.min.js',
+          status: 'added',
+          linesAdded: 1,
+          linesRemoved: 0,
+          patchBytes: 3_000_123,
+          renderUnavailableReason: 'too-large' as const,
+        },
+      ]),
+      changedFileRead: vi.fn(async () => null),
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(ChangeReviewPanel, {
+          transport,
+          sessionId: 'change-large',
+          tip: 'e'.repeat(40),
+        }),
+      );
+    });
+    await settle();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'change-review-file-vendor.min.js' }).props.onPress();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(transport.changedFileRead).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ testID: 'change-review-too-large' })).toBeDefined();
+    const texts = renderer.root
+      .findAllByType('Text')
+      .map((node: { props: { children?: unknown } }) =>
+        Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children,
+      );
+    expect(texts).toContain('Diff too large to render');
+    expect(texts).toContain('3.0 MB is included in this change but can’t be shown here.');
+  });
 });

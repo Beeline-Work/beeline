@@ -1,13 +1,11 @@
 /**
  * Corner lifecycle + presentation for every Buzz surface.
  *
- * The DERIVATION lives in exactly one place: `resolveCornerLifecycle` and its
- * supporting vocabulary in `@beeline/buzz-client` (`corner-lifecycle.ts`) —
- * the #360 resolver grown into the canonical oracle. The Room deck row, the
- * deck's expanded corner rows, the pinned room bar, the corner screen's badge
- * and action card, and the daemon itself all consume that one verdict; this
- * module is mobile's single import surface for it plus the presentation
- * helpers (glyphs, labels, ordering) that are view concerns.
+ * Current lifecycle comes only from the daemon-owned kind:30078 corner-state
+ * record, hard-bounded by relay existence. Parent body-control cards, drafts,
+ * ACP turn events, presence, and cached legacy status words are presentation
+ * history, never authority. This module is mobile's single import surface for
+ * canonical-state presentation helpers (glyphs, labels, ordering).
  *
  * Canonical states: `live` (working), `open` (ready-for-review),
  * `needs-attention` (needs-decision), `failed`, `merged`, `archived`; `null`
@@ -28,13 +26,17 @@ export {
   resolveCornerStatusAgainstArchive,
   type CornerLifecycleFact,
   type CornerLifecycleStatus,
+  type CornerMachineState,
   type CornerSuperState,
 } from '@beeline/buzz-client';
 
 import {
   cornerStatusPrecedence,
+  isCornerTerminalState,
   resolveCornerStatusAgainstArchive,
   type CornerLifecycleStatus,
+  CORNER_ACTIVITY_FRESHNESS_MS,
+  type CornerMachineState,
   type CornerSuperState,
 } from '@beeline/buzz-client';
 
@@ -44,26 +46,17 @@ export type CornerSummary = {
   id: string;
   name: string;
   openerPubkey: string;
-  /** The legacy word the transport derived the summary from. `null` means
-   * idle-without-finishing — which may be merely quiet OR a fresh unanswered
-   * agent question; `awaitingReply` distinguishes the two. Surfaces read the
-   * super-state, not this. */
+  /** Compatibility projection of the canonical record. Surfaces must call
+   * `currentCornerStatus`, which refuses this word without machineState. */
   status: CornerStatus | null;
-  /** The corner waits on a person because its agent asked a question that
-   * nothing has superseded while it was still fresh (`resolveCornerState`'s
-   * fresh-ask rule) — the case whose legacy word is `null`. Deck tiering
-   * reads this to keep an asked corner in NEEDS YOU while a merely-idle
-   * stalled corner falls to IDLE. Absent = not an ask-wait. */
+  /** Exact canonical daemon state and its lease timestamp. */
+  machineState?: CornerMachineState;
+  machineReason?: 'review' | 'question' | 'failure';
+  stateAt?: number;
+  /** Canonical WAITING/question projection used for its reply affordance. */
   awaitingReply?: boolean;
-  /** The corner's agent is PROVABLY offline past its presence lease (every
-   * agent presence record for the Room is outside `isAgentPresenceOnline`'s
-   * 120s window), AND that fact changes the reading: the oracle's verdict was
-   * idle, not needs-you. An ask held by a dead agent is not waiting on your
-   * reply — it is a stalled session. Absent/undefined = unknown (no
-   * presence read answered, or the agent is online) = behave exactly as
-   * today. Only set when a reviewable change is NOT present: `open` corners
-   * stay needs-you regardless of presence, because the artifact stands on
-   * its own. */
+  /** Separate presence fact retained for compatibility. It cannot change the
+   * canonical lifecycle returned by `currentCornerStatus`. */
   agentOffline?: boolean;
   createdAt?: number;
   /** Most recent activity timestamp seen for this corner (seconds); used to
@@ -71,10 +64,41 @@ export type CornerSummary = {
   lastActivityAt?: number;
 };
 
+/** Re-evaluate a cached summary at render time so an old WORKING lease dies. */
+export function currentCornerStatus(
+  corner: Pick<CornerSummary, 'status' | 'machineState' | 'machineReason' | 'stateAt'>,
+  now = Date.now(),
+): CornerStatus | null {
+  // A status word without a canonical machine record is legacy projection,
+  // not lifecycle authority. It may name the row but cannot light a surface.
+  if (!corner.machineState) return null;
+  switch (corner.machineState) {
+    case 'open':
+    case 'idle':
+      return null;
+    case 'working':
+      if (
+        corner.stateAt === undefined ||
+        now - corner.stateAt * 1_000 < -CORNER_ACTIVITY_FRESHNESS_MS ||
+        now - corner.stateAt * 1_000 > CORNER_ACTIVITY_FRESHNESS_MS
+      ) {
+        return null;
+      }
+      return 'live';
+    case 'waiting':
+      if (corner.machineReason === 'review') return 'open';
+      if (corner.machineReason === 'failure') return 'failed';
+      return 'needs-attention';
+    case 'concluded':
+      return 'merged';
+    case 'closed':
+      return 'archived';
+  }
+}
+
 /**
- * Legacy oracle super-state retained only for the staged migration fallback.
- * New surfaces render `cornerVisualState`, the daemon's exact three-state
- * vocabulary, instead of treating an unknown/null verdict as attention.
+ * Compatibility super-state for presentation-only callers. Canonical record
+ * selection happens before this helper receives a status.
  */
 export function cornerSuperState(
   status: CornerStatus | null,
@@ -85,15 +109,14 @@ export function cornerSuperState(
   return 'needs-human';
 }
 
-/** Relative precedence that tolerates the oracle's `null` (idle-without-
- * finishing) verdict — it ranks as the least reportable worded state. */
+/** Relative precedence that ranks canonical idle as least reportable. */
 export function cornerStatusPrecedenceOrNull(status: CornerStatus | null): number {
   return status === null ? Number.MAX_SAFE_INTEGER : cornerStatusPrecedence(status);
 }
 
 /** Corners still being actively worked on — the set that deserves a live
  * badge / sort-to-top treatment, as opposed to terminal or paused states.
- * The oracle's `null` (stalled) is not active work. */
+ * Canonical idle is not active work. */
 export function isCornerActive(status: CornerStatus | null): boolean {
   return status === 'live' || status === 'needs-attention';
 }
@@ -140,12 +163,13 @@ const CORNER_VISUAL_STATE_RANK: Readonly<Record<CornerVisualState, number>> = {
   'needs-you': 2,
 };
 
-/** The one three-state vocabulary rendered by both corners and Rooms. */
+/** The one presentation vocabulary rendered by both corners and Rooms. */
 export function cornerVisualState(
   status: CornerStatus | null,
   opts?: { awaitingReply?: boolean; agentOffline?: boolean },
 ): CornerVisualState {
-  if (isCornerStalledOffline({ status, agentOffline: opts?.agentOffline })) return 'idle';
+  // `agentOffline` remains in the compatibility shape, but presence is not a
+  // lifecycle input. It may render beside this state, never rewrite it.
   if (status === 'live') return 'working';
   if (
     opts?.awaitingReply ||
@@ -161,10 +185,15 @@ export function cornerVisualState(
 /** MAX-severity (join) of corner states. Commutative, associative, and
  * idempotent by construction; Room activity is intentionally not an input. */
 export function roomState(
-  corners: readonly Pick<CornerSummary, 'status' | 'awaitingReply' | 'agentOffline'>[],
+  corners: readonly Pick<
+    CornerSummary,
+    'status' | 'machineState' | 'machineReason' | 'stateAt' | 'awaitingReply' | 'agentOffline'
+  >[],
 ): CornerVisualState {
   return corners.reduce<CornerVisualState>((current, corner) => {
-    const next = cornerVisualState(corner.status, corner);
+    const next = cornerVisualState(currentCornerStatus(corner), {
+      awaitingReply: corner.awaitingReply,
+    });
     return CORNER_VISUAL_STATE_RANK[next] > CORNER_VISUAL_STATE_RANK[current] ? next : current;
   }, 'idle');
 }
@@ -186,11 +215,9 @@ export function cornerGlyphForStatus(
 export { CORNER_GLYPH_FILLED, CORNER_GLYPH_HOLLOW };
 
 /**
- * A corner whose agent is PROVABLY offline past its presence lease and that
- * holds no actionable artifact: the fallback oracle's stalled verdict. Such a corner
- * is never "waiting on you" — gold means something YOU can act on with a live
- * agent or a real artifact, and neither applies here. A reviewable change
- * (`open`) is exactly the real-artifact exception and stays needs-you.
+ * Separate diagnostic for a canonically idle corner whose agent is provably
+ * offline. It may explain the quiet state in a fact line; it never promotes or
+ * demotes lifecycle.
  */
 export function isCornerStalledOffline(
   corner: Pick<CornerSummary, 'status' | 'agentOffline'>,
@@ -209,9 +236,8 @@ export function isCornerStalledOffline(
  * WORKING, NEEDS YOU, IDLE. Actual screens render `StateCircle` without a
  * visible label; this string is retained for nonvisual data and migration.
  *
- * A provably-offline agent's unfinished corner projects to the same IDLE state
- * vocabulary; the separate fact line may still explain that the agent is
- * offline without inventing another visible status.
+ * Presence is deliberately ignored here; a separate fact line may explain
+ * that the agent is offline without inventing another lifecycle status.
  */
 export function cornerStatusPresentation(
   status: CornerStatus | null,
@@ -220,9 +246,6 @@ export function cornerStatusPresentation(
   glyph: string;
   label: string;
 } {
-  if (isCornerStalledOffline({ status, agentOffline: opts?.agentOffline })) {
-    return { glyph: CORNER_GLYPH_HOLLOW, label: 'IDLE' };
-  }
   switch (cornerVisualState(status, opts)) {
     case 'working':
       return { glyph: '◌', label: 'WORKING' };
@@ -236,7 +259,8 @@ export function cornerStatusPresentation(
 export function sortCorners(corners: CornerSummary[]): CornerSummary[] {
   return [...corners].sort((a, b) => {
     const statusDelta =
-      cornerStatusPrecedenceOrNull(a.status) - cornerStatusPrecedenceOrNull(b.status);
+      cornerStatusPrecedenceOrNull(currentCornerStatus(a)) -
+      cornerStatusPrecedenceOrNull(currentCornerStatus(b));
     if (statusDelta !== 0) return statusDelta;
     return (
       (b.lastActivityAt ?? b.createdAt ?? 0) - (a.lastActivityAt ?? a.createdAt ?? 0) ||
@@ -271,9 +295,11 @@ export function roomListCorners(corners: readonly CornerSummary[]): CornerSummar
   // The dropdown lists every UNFINISHED corner — working and needs-human
   // alike, idle-without-finishing included (its nudge/close affordance lives
   // inside). Only finished corners are excluded.
-  return corners.filter(
-    (corner) => corner.status === null || ROOM_LIST_WORDED_STATUSES.has(corner.status),
-  );
+  return corners.filter((corner) => {
+    if (!corner.machineState || isCornerTerminalState(corner.machineState)) return false;
+    const status = currentCornerStatus(corner);
+    return status === null || ROOM_LIST_WORDED_STATUSES.has(status);
+  });
 }
 
 /**

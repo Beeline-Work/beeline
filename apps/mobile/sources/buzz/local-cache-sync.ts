@@ -1,4 +1,5 @@
 import type { MergeTarget } from '@beeline/buzz-client';
+import { sortCorners, type CornerSummary } from '@/buzz/corners';
 import { latestRoomMessageSummary, type RoomMessageSummary } from '@/buzz/room-list-summary';
 import {
   getCachedChannel,
@@ -25,6 +26,24 @@ export type MessageSyncResult = {
 
 const inFlightRevalidations = new Map<string, Promise<MessageSyncResult>>();
 const inFlightCornerRevalidations = new Map<string, Promise<void>>();
+
+/**
+ * Refresh the durable per-Room corner cache from relay authority. A fulfilled
+ * empty list is a real answer and evicts local ghosts; a rejected read writes
+ * nothing, so transient relay failures preserve the last confirmed snapshot.
+ */
+export async function refreshRoomCornerCache(
+  transport: Pick<BuzzRigTransport, 'listSubchannelLifecycleForRooms'>,
+  viewerPubkey: string,
+  roomIds: string[],
+): Promise<Map<string, CornerSummary[]>> {
+  const cornersByRoom = await transport.listSubchannelLifecycleForRooms(roomIds);
+  const store = useBuzzLocalCache.getState();
+  for (const roomId of roomIds) {
+    store.replaceRoomCorners(viewerPubkey, roomId, sortCorners(cornersByRoom.get(roomId) ?? []));
+  }
+  return cornersByRoom;
+}
 
 /**
  * A cold channel's initial backfill returns its N most recent matching kind:9
@@ -107,34 +126,12 @@ function projectEvents(events: SessionEvent[], viewerPubkey: string, isNew: bool
 }
 
 /**
- * A `.corner`-tagged control message (posted to a Room when one of its
- * corners changes lifecycle status, e.g. on archive) keeps that Room's own
- * transcript current for free via the precedence-guarded message cache. The
- * Room-list sidebar's corner array is a separate, once-fetched snapshot
- * (`listSubchannelLifecycle`) that never sees these messages on its own —
- * mirror the same signal into it so an archive that lands while the sidebar
- * snapshot is still resident does not keep showing a stale status.
+ * Parent body-control cards are history, never lifecycle authority. They may
+ * invalidate the canonical lifecycle read cache so the next read is prompt,
+ * but must never patch a corner status themselves.
  */
-function applyCornerStatusSignals(
-  viewerPubkey: string,
-  roomId: string,
-  messages: ChatDisplayMessage[],
-): void {
-  let invalidatedLifecycleCache = false;
-  for (const message of messages) {
-    if (message.corner) {
-      useBuzzLocalCache.getState().patchCornerStatus(viewerPubkey, roomId, {
-        ...message.corner,
-        lastActivityAt: message.timestamp,
-      });
-      if (!invalidatedLifecycleCache) {
-        // Same signal as the sidebar patch above: a real status change
-        // should not wait out `listSubchannelLifecycle`'s short-TTL cache.
-        invalidateCornerLifecycleCache(roomId);
-        invalidatedLifecycleCache = true;
-      }
-    }
-  }
+function applyCornerStatusSignals(roomId: string, messages: ChatDisplayMessage[]): void {
+  if (messages.some((message) => message.corner)) invalidateCornerLifecycleCache(roomId);
 }
 
 /** Revalidate only events at/after the persisted cursor; stable ids absorb the inclusive edge. */
@@ -191,7 +188,7 @@ async function performMessageRevalidation(
       ...(projected.mergeTarget !== undefined ? { mergeTarget: projected.mergeTarget } : {}),
     });
   }
-  applyCornerStatusSignals(viewerPubkey, channelId, projected.messages);
+  applyCornerStatusSignals(channelId, projected.messages);
   return {
     entry: getCachedChannel(viewerPubkey, channelId)!,
     mergeTarget: projected.mergeTarget,
@@ -273,7 +270,7 @@ export function cacheLiveSessionEvents(
       ...summary,
       ...(cursor ? { latestEventAt: cursor } : {}),
     });
-    applyCornerStatusSignals(viewerPubkey, channelId, messages);
+    applyCornerStatusSignals(channelId, messages);
   }
   // Rare (archive/merge-target/cursor-only signals): applied per event, in
   // order, same as before batching — this path never touches the message

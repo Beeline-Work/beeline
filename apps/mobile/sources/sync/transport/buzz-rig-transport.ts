@@ -36,6 +36,8 @@ import {
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
+  CHANGE_REVIEW_COMPLETE_TAG,
+  CHANGE_REVIEW_GENERATION_TAG,
   APPROVAL_MARKER,
   KIND_AGENT_PRESENCE,
   KIND_PUT_USER,
@@ -46,7 +48,9 @@ import {
   TAG_COMMUNITY,
   TAG_PARENT,
   TAG_DIRECT_MESSAGE,
+  TAG_AGENT_PRESENCE,
   parseChangeReviewManifest,
+  parseChangeReviewGenerationComplete,
   type BuzzClient,
   type ChannelMetadata,
   type Identity,
@@ -58,13 +62,10 @@ import {
   type AgentModelConfig,
   type AgentModelConfigInput,
   type AgentCommandList,
-  TAG_AGENT_PRESENCE,
   TAG_CORNER_STATE,
   KIND_CORNER_STATE,
   parseCornerStateRecord,
   cornerStateKey,
-  isAgentPresenceOnline,
-  type AgentPresence,
   type RoomRepository,
   type RoomRepositoryResolution,
   type RoomRepositoryInput,
@@ -80,7 +81,7 @@ import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { cornerLifecycleFact, cornerName, type CornerSummary } from '@/buzz/corners';
+import { cornerName, type CornerSummary } from '@/buzz/corners';
 import { projectChatEvent, toRigEvent, type ChatDisplayMessage } from './buzz-event-projection';
 import {
   ROOM_CONTEXT_LIMIT,
@@ -105,76 +106,14 @@ const ROOM_REPOSITORY_MARKER = 'buzz-room-repository';
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
-/** Parse one presence record (kind:30078, `d=agent-presence:<channelId>`,
- * self-signed `agent` tag) off the wire into the shared AgentPresence shape. */
-function presenceFromEvent(event: NostrEvent): AgentPresence | undefined {
-  const status = tagValue(event, 'status');
-  const agentPubkey = tagValue(event, 'agent');
-  if ((status !== 'online' && status !== 'offline') || !agentPubkey) return undefined;
-  return {
-    agentPubkey,
-    status,
-    observedAt: event.created_at < 1_000_000_000_000 ? event.created_at * 1_000 : event.created_at,
-  };
-}
-
-/**
- * Whether every agent that ever served this Room is PROVABLY offline — past
- * `isAgentPresenceOnline`'s lease (120s), which already absorbs brief blips:
- * a heartbeat every 45s means two missed beats still read online. Presence is
- * a SOFT input to the corner oracle, so this must never guess:
- * - any record inside its lease → online (false);
- * - records exist but ALL are outside their lease → true;
- * - NO record at all → unknown (`undefined`) — an old daemon predating
- *   presence, or a relay answer we cannot vouch for, must not flip verdicts.
- */
-function roomAgentsOffline(events: NostrEvent[], now = Date.now()): boolean | undefined {
-  const records = events
-    .map(presenceFromEvent)
-    .filter((record): record is AgentPresence => record !== undefined);
-  if (records.length === 0) return undefined;
-  return !records.some((record) => isAgentPresenceOnline(record, now));
-}
-
-/** One best-effort multi-`#d` presence read across parent Rooms. Filtered by
- * `#d`, never `#h`: kind:30078 replaceable records are indexed by `d` and a
- * `#h` filter matches nothing. A failed read resolves empty — unknown, never
- * a false offline verdict. */
-async function fetchRoomPresence(
-  client: BuzzClient,
-  parentChannelIds: string[],
-): Promise<Map<string, NostrEvent[]>> {
-  if (parentChannelIds.length === 0) return new Map();
-  const events = await client
-    .query([
-      {
-        kinds: [KIND_AGENT_PRESENCE],
-        '#d': parentChannelIds.map((id) => `${TAG_AGENT_PRESENCE}:${id}`),
-        limit: Math.max(200, parentChannelIds.length * 10),
-      },
-    ])
-    .catch(() => [] as NostrEvent[]);
-  const byRoom = new Map<string, NostrEvent[]>();
-  for (const event of events) {
-    const d = tagValue(event, 'd');
-    const prefix = `${TAG_AGENT_PRESENCE}:`;
-    if (!d?.startsWith(prefix)) continue;
-    const roomId = d.slice(prefix.length);
-    const list = byRoom.get(roomId) ?? [];
-    list.push(event);
-    byRoom.set(roomId, list);
-  }
-  return byRoom;
-}
-
 /** One best-effort multi-`#d` read of the daemon-authoritative corner state
  * records across corners. Filtered by `#d`, never `#h` (kind:30078 records
- * are indexed by `d` — the presence lesson). A failed or empty read resolves
- * an empty map: record absence is exactly how the reader falls back. */
+ * are indexed by `d`). A failed or empty read resolves an empty map, which
+ * can only produce canonical idle — never history-derived activity. */
 async function fetchCornerStateRecords(
   client: BuzzClient,
   cornerIds: string[],
-): Promise<Map<string, CornerStateRecord>> {
+): Promise<Map<string, Array<{ record: CornerStateRecord; authorPubkey: string }>>> {
   if (cornerIds.length === 0) return new Map();
   let events: NostrEvent[];
   try {
@@ -188,85 +127,53 @@ async function fetchCornerStateRecords(
   } catch {
     events = [];
   }
-  const byCorner = new Map<string, CornerStateRecord>();
+  const byCorner = new Map<string, Array<{ record: CornerStateRecord; authorPubkey: string }>>();
   for (const event of events) {
     const record = parseCornerStateRecord(event);
-    // Keep the newest record per corner; a relay should only ever hold one
-    // (parameterized-replaceable), but a stale replica answer must not win.
     if (!record) continue;
-    const existing = byCorner.get(record.cornerId);
-    if (!existing || record.at >= existing.at) byCorner.set(record.cornerId, record);
+    const records = byCorner.get(record.cornerId) ?? [];
+    records.push({ record, authorPubkey: event.pubkey });
+    byCorner.set(record.cornerId, records);
   }
   return byCorner;
 }
 
-/** Pure projection shared by the single-Room and cross-Room lifecycle fetchers.
- * Both paths — and therefore the cached snapshot and the warm refetch — MUST
- * derive status through this one function (`resolveCornerLifecycle` is the
- * oracle); a second derivation is how the deck learned to flip working→gold
- * seconds after open. */
+/** Pure projection shared by the single-Room and cross-Room lifecycle fetchers. */
 function cornerSummaryFromEvents(
   id: string,
   creates: NostrEvent[],
   metadata: ChannelMetadata | null,
   events: BuzzSessionEvent[],
-  merged: boolean,
-  /** Room-level agent-presence verdict from {@link roomAgentsOffline}:
-   * `true` only when every presence record for the parent Room is provably
-   * past its lease; `undefined` = unknown = today's behaviour. */
-  agentOffline?: boolean,
-  /** The daemon-authoritative corner state record, when one was fetched.
-   * Fresh records are trusted outright (dumb lookup); absent/stale ones fall
-   * back to the history oracle inside `resolveCornerVerdict`. */
-  stateRecord?: CornerStateRecord,
+  parentRoomLive: boolean,
+  authoredStates: Array<{ record: CornerStateRecord; authorPubkey: string }> = [],
 ): CornerSummary {
   const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
-  // Reduce every event to its lifecycle facts once, then let THE one oracle
-  // (`@beeline/buzz-client`'s corner-lifecycle, re-exported by `buzz/corners`)
-  // decide. Reading the same tags the live Room card uses (`display-status`,
-  // then the coarser wire `status`) keeps this snapshot agreeing with
-  // real-time projection about a corner's status word.
-  const tagOf = (event: BuzzSessionEvent, name: string): string | undefined =>
-    event.event.tags.find((tag) => tag[0] === name)?.[1];
-  const facts = events.map((event) =>
-    cornerLifecycleFact(event.createdAt, {
-      displayStatus: tagOf(event, 'display-status'),
-      status: tagOf(event, 'status'),
-      t: tagOf(event, 't'),
-      // Agent narration content — lets the oracle see a fresh unanswered
-      // question as the actionable artifact it is.
-      text: event.content,
-    }),
-  );
-  // `closed` on a kind:39000 projection is NIP-29 invite-only access, not a
-  // lifecycle state. Only an explicit archived boolean or a corner-scoped
-  // archived status removes a corner from the live list.
-  const archived =
-    metadata?.archived === true || facts.some((fact) => fact.rawStatus === 'archived');
+  // The immutable kind:9007 creator is the lifecycle authority. A different
+  // pubkey can publish the same d text under its own replaceable namespace,
+  // but it cannot speak for this corner.
+  const stateRecord = create
+    ? authoredStates
+        .filter((candidate) => candidate.authorPubkey === create.pubkey)
+        .sort((a, b) => b.record.at - a.record.at)[0]?.record
+    : undefined;
   const lastActivityAt = Math.max(
     create?.created_at ?? 0,
     ...events.map((event) => event.createdAt),
   );
-  // THE reader path: a fresh daemon-published state record is trusted with a
-  // dumb lookup; absence/stale falls back to the history oracle — isolated in
-  // `corner-state-verdict.ts`, the ONE module stage 3 deletes.
-  const newestTranscriptAt = events.reduce((newest, event) => Math.max(newest, event.createdAt), 0);
   const verdict = resolveCornerVerdict({
-    cornerId: id,
     ...(stateRecord !== undefined ? { stateRecord } : {}),
-    newestTranscriptAt,
-    facts,
-    merged,
-    archived,
-    ...(agentOffline !== undefined ? { agentOffline } : {}),
+    channelExists: metadata !== null && metadata.archived !== true,
+    parentRoomLive,
   });
   return {
     id,
     name: cornerName(create ? tagValue(create, 'name') : undefined, id),
     openerPubkey: create?.pubkey ?? '',
     status: verdict.status,
+    ...(verdict.machineState ? { machineState: verdict.machineState } : {}),
+    ...(verdict.machineReason ? { machineReason: verdict.machineReason } : {}),
+    ...(verdict.stateAt !== undefined ? { stateAt: verdict.stateAt } : {}),
     ...(verdict.awaitingReply ? { awaitingReply: true } : {}),
-    ...(verdict.agentOffline ? { agentOffline: true } : {}),
     createdAt: create?.created_at,
     ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
   };
@@ -925,6 +832,53 @@ export class BuzzRigTransport implements RigTransport {
     return unsubscribe;
   }
 
+  /** Current canonical lifecycle records for exact corner ids. */
+  async cornerStateBackfill(cornerIds: string[]): Promise<CornerStateRecord[]> {
+    const client = await this.getClient();
+    const authorities = new Map(
+      await Promise.all(
+        cornerIds.map(async (id) => [id, await this.getChannelCreator(id)] as const),
+      ),
+    );
+    const events = await client.cornerStateBackfill(cornerIds);
+    return events
+      .filter((event) => {
+        const record = parseCornerStateRecord(event);
+        return record !== undefined && authorities.get(record.cornerId) === event.pubkey;
+      })
+      .map(parseCornerStateRecord)
+      .filter((record): record is CornerStateRecord => record !== undefined);
+  }
+
+  /** Live canonical lifecycle delivery. Parent body-control cards never enter. */
+  async cornerStateSubscribeReady(
+    cornerIds: string[],
+    handler: (record: CornerStateRecord) => void,
+  ): Promise<() => void> {
+    const subscriptionKey = `corner-state:${[...cornerIds].sort().join(',')}`;
+    const client = await this.getClient();
+    const authorities = new Map(
+      await Promise.all(
+        cornerIds.map(async (id) => [id, await this.getChannelCreator(id)] as const),
+      ),
+    );
+    const relayUnsubscribe = await client.cornerStateSubscribe(cornerIds, (event) => {
+      const record = parseCornerStateRecord(event);
+      if (record && authorities.get(record.cornerId) === event.pubkey) handler(record);
+    });
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      relayUnsubscribe();
+      if (this.subscriptions.get(subscriptionKey) === stop) {
+        this.subscriptions.delete(subscriptionKey);
+      }
+    };
+    this.subscriptions.set(subscriptionKey, stop);
+    return stop;
+  }
+
   /** The runtime's currently advertised model/effort catalog for an agent, if any session has published one. */
   async agentModelCatalogRead(
     communityId: string,
@@ -1159,16 +1113,18 @@ export class BuzzRigTransport implements RigTransport {
   async changedFileRead(
     sessionId: SessionId,
     path: string,
+    reviewTip?: string,
   ): Promise<{ content: string; isBinary?: boolean } | null> {
     const client = await this.getClient();
     const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
     if (!mergeInfo || !('target' in mergeInfo)) return null;
+    const tip = reviewTip ?? mergeInfo.target.tip;
     const events = await client.query([
       {
         kinds: [CHANGE_REVIEW_EVENT_KIND],
         authors: [mergeInfo.authorPubkey],
         '#t': [CHANGE_REVIEW_FILE_TAG],
-        '#r': [mergeInfo.target.tip],
+        '#r': [tip],
         '#f': [path],
         limit: 500,
       },
@@ -1186,10 +1142,12 @@ export class BuzzRigTransport implements RigTransport {
       (event) =>
         event.pubkey === mergeInfo.authorPubkey &&
         tagValue(event, 'h') === sessionId &&
-        tagValue(event, 'tip') === mergeInfo.target.tip &&
+        tagValue(event, 'tip') === tip &&
         tagValue(event, 'f') === path,
     );
-    if (matching.length === 0) return null;
+    if (matching.length === 0) {
+      throw new Error(`Missing diff chunks for ${path} at ${tip.slice(0, 12)}`);
+    }
     const uniqueChunks = new Map<number, (typeof matching)[number]>();
     for (const event of [...matching].sort(
       (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
@@ -1216,17 +1174,25 @@ export class BuzzRigTransport implements RigTransport {
     };
   }
 
-  async workspaceFilesRead(sessionId: SessionId): Promise<ChangedFile[]> {
+  async workspaceFilesRead(sessionId: SessionId, reviewTip?: string): Promise<ChangedFile[]> {
     const client = await this.getClient();
     const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
     if (!mergeInfo || !('target' in mergeInfo)) return [];
+    const tip = reviewTip ?? mergeInfo.target.tip;
     const events = await client.query([
       {
         kinds: [CHANGE_REVIEW_EVENT_KIND],
         authors: [mergeInfo.authorPubkey],
         '#t': [CHANGE_REVIEW_MANIFEST_TAG],
-        '#r': [mergeInfo.target.tip],
+        '#r': [tip],
         limit: 500,
+      },
+      {
+        kinds: [CHANGE_REVIEW_EVENT_KIND],
+        authors: [mergeInfo.authorPubkey],
+        '#t': [CHANGE_REVIEW_COMPLETE_TAG],
+        '#r': [tip],
+        limit: 10,
       },
       {
         kinds: [9],
@@ -1240,16 +1206,65 @@ export class BuzzRigTransport implements RigTransport {
         (event) =>
           event.pubkey === mergeInfo.authorPubkey &&
           tagValue(event, 'h') === sessionId &&
-          tagValue(event, 'tip') === mergeInfo.target.tip,
+          tagValue(event, 'tip') === tip,
       )
       .sort((a, b) => Number(tagValue(a, 'chunk') ?? 0) - Number(tagValue(b, 'chunk') ?? 0))
       .map((event) => parseChangeReviewManifest(event.content))
       .filter((manifest) => manifest !== null);
     if (manifests.length === 0) {
-      throw new Error('File-diff metadata is unavailable for this corner');
+      throw new Error(`Missing review manifest for ${tip.slice(0, 12)}`);
     }
     const files = manifests.flatMap((manifest) => manifest.files);
-    return [...new Map(files.map((file) => [file.path, file])).values()];
+    const uniqueFiles = [...new Map(files.map((file) => [file.path, file])).values()];
+    const transactional = events.some(
+      (event) =>
+        event.pubkey === mergeInfo.authorPubkey &&
+        tagValue(event, 'h') === sessionId &&
+        tagValue(event, 'tip') === tip &&
+        tagValue(event, 't') === CHANGE_REVIEW_MANIFEST_TAG &&
+        tagValue(event, 'generation') === CHANGE_REVIEW_GENERATION_TAG,
+    );
+    if (transactional) {
+      const completion = events
+        .filter(
+          (event) =>
+            event.pubkey === mergeInfo.authorPubkey &&
+            tagValue(event, 'h') === sessionId &&
+            tagValue(event, 'tip') === tip &&
+            tagValue(event, 't') === CHANGE_REVIEW_COMPLETE_TAG &&
+            tagValue(event, 'generation') === CHANGE_REVIEW_GENERATION_TAG,
+        )
+        .map((event) => parseChangeReviewGenerationComplete(event.content))
+        .find(
+          (candidate) =>
+            candidate !== null &&
+            candidate.tip === tip &&
+            manifests.every(
+              (manifest) => manifest.tip === candidate.tip && manifest.base === candidate.base,
+            ),
+        );
+      if (!completion) {
+        throw new Error(`Missing review completion marker for ${tip.slice(0, 12)}`);
+      }
+      const chunks = events
+        .filter(
+          (event) =>
+            event.pubkey === mergeInfo.authorPubkey &&
+            tagValue(event, 'h') === sessionId &&
+            tagValue(event, 'tip') === tip &&
+            tagValue(event, 't') === CHANGE_REVIEW_MANIFEST_TAG,
+        )
+        .map((event) => Number(tagValue(event, 'chunk') ?? 0));
+      const completeChunks =
+        chunks.length === completion.manifestChunks &&
+        [...chunks].sort((a, b) => a - b).every((chunk, index) => chunk === index);
+      if (!completeChunks || uniqueFiles.length !== completion.fileCount) {
+        throw new Error(
+          `Incomplete review manifest for ${tip.slice(0, 12)}: received ${chunks.length} of ${completion.manifestChunks} manifest chunks and ${uniqueFiles.length} of ${completion.fileCount} files`,
+        );
+      }
+    }
+    return uniqueFiles;
   }
 
   async changedFilesRevert(_sessionId: SessionId, _paths: string[]): Promise<void> {
@@ -1400,26 +1415,8 @@ export class BuzzRigTransport implements RigTransport {
   private async fetchOneRoomLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
     const client = await this.getClient();
     const ids = await client.listSubchannels(parentChannelId);
-    const [parentEvents, presence] = await Promise.all([
-      client.query([
-        {
-          kinds: [9],
-          '#h': [parentChannelId],
-          '#t': ['merge-summary'],
-          limit: 500,
-        },
-      ]),
-      // Best-effort soft input for the oracle's STALLED verdict (see
-      // `fetchRoomPresence`); a failed read is unknown, never offline.
-      fetchRoomPresence(client, [parentChannelId]),
-    ]);
-    const mergedIds = new Set(
-      parentEvents
-        .map((event) => tagValue(event, 'subchannel'))
-        .filter((id): id is string => Boolean(id)),
-    );
-    const agentOffline = roomAgentsOffline(presence.get(parentChannelId) ?? []);
-
+    const parentMetadata = await client.getChannelMetadata(parentChannelId);
+    const parentRoomLive = parentMetadata !== null && parentMetadata.archived !== true;
     const cornerIds = ids;
     const stateRecordsByCorner = await fetchCornerStateRecords(client, cornerIds);
     return Promise.all(
@@ -1434,8 +1431,7 @@ export class BuzzRigTransport implements RigTransport {
           creates,
           metadata,
           events,
-          mergedIds.has(id),
-          agentOffline,
+          parentRoomLive,
           stateRecordsByCorner.get(id),
         );
       }),
@@ -1492,22 +1488,20 @@ export class BuzzRigTransport implements RigTransport {
     );
     const allCornerIds = [...new Set(idsByRoom.flatMap((entry) => entry.ids))];
 
-    // One multi-`#d` read for the daemon-authoritative corner state records,
-    // alongside the create/summary/presence reads below.
+    // One multi-`#d` read for the daemon-authoritative corner state records.
     const stateRecordsByCorner = await fetchCornerStateRecords(client, allCornerIds);
 
-    const [createEvents, mergeSummaryEvents, presenceByRoom] = await Promise.all([
+    const [createEvents, parentMetadataEntries] = await Promise.all([
       allCornerIds.length > 0
         ? client.query([
             { kinds: [9007], '#h': allCornerIds, limit: Math.max(500, allCornerIds.length * 5) },
           ])
         : Promise.resolve([]),
-      client.query([{ kinds: [9], '#h': parentChannelIds, '#t': ['merge-summary'], limit: 500 }]),
-      // Best-effort soft input for the oracle's STALLED verdict — one
-      // multi-`#d` read across every requested Room; a failed read is
-      // unknown, never a false offline verdict.
-      fetchRoomPresence(client, parentChannelIds),
+      Promise.all(
+        parentChannelIds.map(async (id) => [id, await client.getChannelMetadata(id)] as const),
+      ),
     ]);
+    const parentMetadataById = new Map(parentMetadataEntries);
 
     const createsById = new Map<string, NostrEvent[]>();
     for (const event of createEvents) {
@@ -1518,20 +1512,10 @@ export class BuzzRigTransport implements RigTransport {
       createsById.set(id, list);
     }
 
-    const mergedIdsByRoom = new Map<string, Set<string>>();
-    for (const event of mergeSummaryEvents) {
-      const parentChannelId = tagValue(event, 'h');
-      const subchannelId = tagValue(event, 'subchannel');
-      if (!parentChannelId || !subchannelId) continue;
-      const set = mergedIdsByRoom.get(parentChannelId) ?? new Set<string>();
-      set.add(subchannelId);
-      mergedIdsByRoom.set(parentChannelId, set);
-    }
-
     await Promise.all(
       idsByRoom.map(async ({ parentChannelId, ids }) => {
-        const mergedIds = mergedIdsByRoom.get(parentChannelId) ?? new Set<string>();
-        const agentOffline = roomAgentsOffline(presenceByRoom.get(parentChannelId) ?? []);
+        const parentMetadata = parentMetadataById.get(parentChannelId);
+        const parentRoomLive = parentMetadata !== null && parentMetadata?.archived !== true;
         const corners = await Promise.all(
           ids.map(async (id) => {
             const [metadata, events] = await Promise.all([
@@ -1543,8 +1527,7 @@ export class BuzzRigTransport implements RigTransport {
               createsById.get(id) ?? [],
               metadata,
               events,
-              mergedIds.has(id),
-              agentOffline,
+              parentRoomLive,
               stateRecordsByCorner.get(id),
             );
           }),

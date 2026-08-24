@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 
 type SettingsNavigationRowProps = {
-  glyph: string;
+  glyph: React.ReactNode;
   label: string;
   supportingCopy: string;
   onPress: () => void;
@@ -27,9 +27,9 @@ export function SettingsNavigationRow({
       style={styles.row}
       testID={testID}
     >
-      <Text accessibilityElementsHidden style={styles.glyph}>
-        {glyph}
-      </Text>
+      <View accessibilityElementsHidden style={styles.glyphColumn}>
+        {typeof glyph === 'string' ? <Text style={styles.glyph}>{glyph}</Text> : glyph}
+      </View>
       <View style={styles.copy}>
         <Text style={styles.label}>{label}</Text>
         <Text style={styles.supportingCopy}>{supportingCopy}</Text>
@@ -49,10 +49,14 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.buzz.border,
   },
-  glyph: {
-    ...Typography.mono('semiBold'),
+  glyphColumn: {
     width: 30,
     flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  glyph: {
+    ...Typography.mono('semiBold'),
     color: theme.buzz.chrome,
     fontSize: 16,
     lineHeight: 22,

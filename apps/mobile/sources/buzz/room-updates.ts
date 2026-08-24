@@ -288,18 +288,6 @@ export function deriveRoomUpdates(
       objective: tagFrom(create, 'task') ?? tagFrom(create, 'objective') ?? tagFrom(create, 'name'),
     });
 
-    const reported = states.find(
-      ({ state, reason }) => state === 'idle' || (state === 'waiting' && reason === 'review'),
-    )?.event;
-    if (reported) {
-      updates.push({
-        id: `room-update:${reported.id}:reported`,
-        kind: 'corner-reported',
-        timestamp: reported.created_at,
-        cornerId,
-      });
-    }
-
     const landEvents = events
       .filter(
         (candidate) =>
@@ -316,6 +304,21 @@ export function deriveRoomUpdates(
     const digestEvent =
       landEvents.find((candidate) => tagValue(candidate, 't') === 'merge-summary') ??
       landEvents.find((candidate) => mergeDigest(candidate));
+    const reported =
+      states.find(
+        ({ state, reason }) => state === 'idle' || (state === 'waiting' && reason === 'review'),
+      )?.event ??
+      ((latest.state === 'concluded' || latest.state === 'closed') && digestEvent
+        ? digestEvent
+        : undefined);
+    if (reported) {
+      updates.push({
+        id: `room-update:${reported.id}:reported`,
+        kind: 'corner-reported',
+        timestamp: reported.created_at,
+        cornerId,
+      });
+    }
     // The approved merge surface is indivisible: no short SHA or existing
     // summary means no partial “merged” notice. A later backfill/live record
     // will make the complete update appear without generating copy.
@@ -346,7 +349,18 @@ export function deriveRoomUpdates(
     }
   }
 
-  return updates.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+  const lifecycleOrder: Partial<Record<RoomUpdate['kind'], number>> = {
+    'corner-opened': 0,
+    'corner-reported': 1,
+    'corner-merged': 2,
+    'corner-closed': 3,
+  };
+  return updates.sort(
+    (a, b) =>
+      a.timestamp - b.timestamp ||
+      (lifecycleOrder[a.kind] ?? 0) - (lifecycleOrder[b.kind] ?? 0) ||
+      a.id.localeCompare(b.id),
+  );
 }
 
 export function roomUpdateLine(

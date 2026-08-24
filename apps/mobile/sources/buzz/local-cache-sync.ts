@@ -88,6 +88,20 @@ export function sessionEventCursor(event: SessionEvent): number | undefined {
   return typeof payload.created_at === 'number' ? payload.created_at : undefined;
 }
 
+function isLandedRoomEvent(event: SessionEvent): boolean {
+  if (event.type !== 'raw' || !event.payload || typeof event.payload !== 'object') return false;
+  const tags = (event.payload as { tags?: unknown }).tags;
+  if (!Array.isArray(tags)) return false;
+  const has = (name: string, value: string) =>
+    tags.some((tag) => Array.isArray(tag) && tag[0] === name && tag[1] === value);
+  return (
+    has('delivery', 'landed') ||
+    has('t', 'landed') ||
+    has('t', 'land-summary') ||
+    has('t', 'merge-summary')
+  );
+}
+
 function projectEvents(events: SessionEvent[], viewerPubkey: string, isNew: boolean) {
   let messages: ChatDisplayMessage[] = [];
   let mergeTarget: MergeTarget | null | undefined;
@@ -276,6 +290,12 @@ export function cacheLiveSessionEvents(
       ...(projected.mergeTarget ? { mergeTarget: projected.mergeTarget } : {}),
       ...(projected.clearMergeTarget ? { mergeTarget: null } : {}),
     });
+    // Derived Room updates are quiet. Only landed work is allowed to move the
+    // Room in the index, and doing so never changes latestMessageAt (the unread
+    // authority) or invents preview copy.
+    if (eventCursor && isLandedRoomEvent(event)) {
+      useBuzzLocalCache.getState().bumpChannelRecency(viewerPubkey, channelId, eventCursor);
+    }
   }
   return projections;
 }

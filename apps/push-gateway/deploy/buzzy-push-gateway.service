@@ -6,8 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/buzzy-push-gateway/current
-Environment=BUZZY_RELAY_URL=http://127.0.0.1:3410
-Environment=BUZZY_RELAY_HOST=usebeeline.app
+EnvironmentFile=%h/buzzy-push-gateway/secrets/database.env
 Environment=BUZZY_PUSH_HOST=127.0.0.1
 Environment=PORT=8788
 Environment=BUZZY_PUSH_SA_FILE=%h/buzzy-push-gateway/secrets/fcm-service-account.json

@@ -36,16 +36,28 @@ is mounted at runtime and is never copied into the image or repository.
 
 ## Relay access
 
-`BUZZY_RELAY_URL` is the ACL-scoped HTTP feed origin;
-`BUZZY_RELAY_HOST=usebeeline.app` preserves the production tenant host. Buzz
-deliberately does not fan channel-scoped events into global WebSocket
-subscriptions, so the gateway drains this trusted bridge as each registered
-public key instead of collecting users' signing keys. `push-gateway` depends on
-the healthy `relay` service. Deployments with a separate internal query replica
-can override `BUZZY_PUSH_RELAY_URL` without changing the image.
+The gateway reads Buzz's authoritative Postgres rows directly. Candidate queries
+join each row's server-stamped community and channel to the registered recipient's
+active membership. They do not resolve a community from a relay hostname, so an
+alias or domain migration cannot silently point the feed at the wrong tenant.
+The container receives `BUZZY_PUSH_DATABASE_URL` for the internal `postgres:5432`
+service and depends on its health.
 
-After startup, verify both the immediate `[push] feed live mode=acl-query`
-line after its first successful relay read and a recurring
+The current host systemd topology loads the same variable from
+`~/buzzy-push-gateway/secrets/database.env`. The production Postgres service must
+publish `127.0.0.1:5433` (the checked-in production Compose file does); keep the
+database port loopback-only and the credential file mode `0600`.
+
+For a host-systemd rollout, apply and verify the loopback Postgres mapping first,
+write the database environment file, build and repoint the immutable gateway
+release, then run `systemctl --user daemon-reload` and
+`systemctl --user restart buzzy-push-gateway.service`. A failed database probe
+fails startup instead of launching a healthy-looking starved feed. Confirm the
+public health route and inspect `journalctl --user -u buzzy-push-gateway.service`
+for the `postgres-tail` live/heartbeat lines and a real decision before closing.
+
+After startup, verify both the immediate `[push] feed live mode=postgres-tail`
+line after its first successful database read and a recurring
 `[push] feed heartbeat ... eventsPerMinute=N` line. A
 transport failure logs its retry delay; the feed issues a fresh query after
 bounded exponential backoff and returns to the configured poll cadence after

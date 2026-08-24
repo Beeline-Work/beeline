@@ -14,6 +14,10 @@ export interface ChangeReviewFile {
   linesAdded?: number;
   linesRemoved?: number;
   isBinary?: boolean;
+  /** UTF-8 byte size of the generated patch when Body measured it. */
+  patchBytes?: number;
+  /** Why no per-file patch events exist for this manifest entry. */
+  renderUnavailableReason?: 'too-large';
 }
 
 export interface ChangeReviewManifest {
@@ -54,7 +58,11 @@ export function parseChangeReviewManifest(content: string): ChangeReviewManifest
         typeof file.path !== 'string' ||
         !file.path ||
         typeof file.status !== 'string' ||
-        !CHANGE_REVIEW_STATUSES.has(file.status as ChangeReviewStatus)
+        !CHANGE_REVIEW_STATUSES.has(file.status as ChangeReviewStatus) ||
+        (file.patchBytes !== undefined &&
+          (!Number.isSafeInteger(file.patchBytes) || file.patchBytes < 0)) ||
+        (file.renderUnavailableReason !== undefined &&
+          file.renderUnavailableReason !== 'too-large')
       ) {
         return null;
       }

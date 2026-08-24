@@ -40,6 +40,40 @@ describe('Workspace session scheduler', () => {
     expect(suspend).not.toHaveBeenCalled();
     release.resolve(); await Promise.all([first, steer]); await scheduler.dispose();
   });
+
+  it('honors a harness-specific idle window without weakening capacity eviction', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 1_000 });
+    const warmSuspend = vi.fn().mockResolvedValue(undefined);
+    const nextSuspend = vi.fn().mockResolvedValue(undefined);
+    try {
+      await scheduler.run(
+        'grok-room',
+        { activate: async () => 'grok-physical', suspend: warmSuspend, idleMs: 5_000 },
+        async () => undefined,
+      );
+
+      vi.setSystemTime(2_000);
+      await Reflect.get(scheduler, 'sweepIdle').call(scheduler);
+      expect(warmSuspend).not.toHaveBeenCalled();
+      expect(scheduler.generations('grok-room')).toEqual(['grok-physical']);
+
+      // The longer idle window does not reserve a slot. A new channel at the
+      // hard capacity evicts the warm process immediately, exactly as before.
+      await scheduler.run(
+        'next-room',
+        { activate: async () => 'next-physical', suspend: nextSuspend },
+        async () => undefined,
+      );
+      expect(warmSuspend).toHaveBeenCalledOnce();
+      expect(nextSuspend).not.toHaveBeenCalled();
+    } finally {
+      await scheduler.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it('reports waiting, live, and suspended in order', async () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
     const release = deferred(); const states: string[] = [];

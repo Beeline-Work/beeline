@@ -127,6 +127,7 @@ import {
 import { ROOM_READ_ONLY_STEER } from './session-sandbox.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { createCornerRequestFilter, extractCornerRequest } from './corner-request.js';
+import { GROK_WARM_SESSION_IDLE_MS } from './harness-capabilities.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -1036,7 +1037,13 @@ describe('agent identity boundary', () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
     const run = vi.spyOn(scheduler, 'run');
     const body = new Body(
-      { ...config, readonlyMcpCommand: '/buzz-readonly-mcp', readonlyMcpArgs: [] },
+      {
+        ...config,
+        agentCommand: '/usr/local/bin/grok',
+        agentArgs: ['agent', 'stdio'],
+        readonlyMcpCommand: '/buzz-readonly-mcp',
+        readonlyMcpArgs: [],
+      },
       newIdentity('operator'),
       newIdentity('agent'),
       undefined,
@@ -1056,6 +1063,7 @@ describe('agent identity boundary', () => {
     // at startup and immediately evict most of them.
     expect(run).not.toHaveBeenCalled();
     expect(session.sessionId).toBe('');
+    expect(session.lifecycle?.idleMs).toBe(GROK_WARM_SESSION_IDLE_MS);
 
     let activations = 0;
     session.lifecycle = {
@@ -5875,6 +5883,79 @@ describe('corner narrative persistence', () => {
     for (const event of messages) {
       expect(event.tags).toContainEqual(['h', 'corner-1']);
     }
+  });
+
+  it('publishes a Grok message chunk as a live draft before the ACP turn completes', async () => {
+    const published = stubPublishing();
+    const body = new Body(
+      {
+        agentBinary: '/usr/local/bin/grok',
+        agentCommand: '/usr/local/bin/grok',
+        agentArgs: ['agent', 'stdio'],
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/workspace',
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      newIdentity('grok-streaming-agent'),
+    );
+    let releaseTurn!: () => void;
+    const held = new Promise<void>((resolveHeld) => {
+      releaseTurn = resolveHeld;
+    });
+    const sessionPrompt = vi.fn(
+      async (
+        _sessionId: string,
+        _prompt: string,
+        _timeoutMs: number,
+        onChunk?: (delta: string, fullText: string) => void,
+      ) => {
+        onChunk?.('I found the ', 'I found the ');
+        await held;
+        onChunk?.('answer.', 'I found the answer.');
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: 'I found the answer.',
+          toolCalls: [],
+        };
+      },
+    );
+    const session = {
+      channelId: 'grok-room',
+      sessionId: 'grok-session',
+      client: { sessionPrompt, sessionCancel: vi.fn() },
+    } as never;
+
+    let completed = false;
+    const turn = Reflect.get(body, 'promptAgent')
+      .call(body, session, 'inspect this', {
+        channelId: 'grok-room',
+        requestId: 'grok-request',
+        originalRequestId: 'grok-request',
+        cause: 'room-message',
+      })
+      .then(() => {
+        completed = true;
+      });
+
+    await vi.waitFor(
+      () =>
+        expect(
+          published.some((event) =>
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-draft'),
+          ),
+        ).toBe(true),
+      { timeout: 1_500 },
+    );
+    expect(completed).toBe(false);
+    releaseTurn();
+    await turn;
   });
 
   it('falls back to the caller-provided summary instead of throwing when concise reduction empties an otherwise real reply', async () => {

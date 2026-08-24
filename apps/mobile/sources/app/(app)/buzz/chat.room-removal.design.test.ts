@@ -9,11 +9,9 @@ import { describe, expect, it } from 'vitest';
  * WIRING, and the behaviour itself is covered by `removed-rooms.test.ts` and
  * `channels.room-removal.test.ts`.
  *
- * Owner-reported 2026-08-23: deleting a Room succeeded on the relay but the
- * row stayed in the local list forever — delete → navigated out → row
- * persists → tap → navigated out → … The success path must tear the Room out
- * of every local surface before navigating back; a failure must remove
- * nothing.
+ * Delete is an authoritative kind:9008 relay teardown; leave remains a
+ * viewer-local durable dismissal. Both success paths must tear the warm Room
+ * row out before navigating back, while a failure removes nothing.
  */
 const source = readFileSync(path.join(__dirname, 'chat', '[channelId].tsx'), 'utf8');
 
@@ -39,8 +37,16 @@ describe('the Room delete/leave local teardown', () => {
   );
   const thenBranch = handler.slice(handler.indexOf('.then('), handler.indexOf('.catch('));
 
-  it('purges the row and records the durable tombstone on the SUCCESS path', () => {
+  it('uses relay deletion for Delete instead of archive-and-retain', () => {
+    expect(handler).toContain('transport.deleteRoom(decodedId)');
+    expect(handler).not.toContain('transport.archiveRoom(decodedId)');
+    expect(handler).not.toContain('remain stored for future recovery');
+  });
+
+  it('purges both success paths but tombstones only a viewer leave', () => {
+    expect(thenBranch).toContain('useBuzzLocalCache.getState().removeChannel(viewerPubkey, decodedId)');
     expect(thenBranch).toContain('markRoomRemovedAndPurge(viewerPubkey, decodedId)');
+    expect(thenBranch).toMatch(/if \(deleting\)[\s\S]*removeChannel[\s\S]*else[\s\S]*markRoomRemovedAndPurge/);
   });
 
   it('removes nothing locally when the operation failed', () => {
@@ -49,7 +55,7 @@ describe('the Room delete/leave local teardown', () => {
   });
 
   it('tears down BEFORE navigating back to the deck', () => {
-    expect(thenBranch.indexOf('markRoomRemovedAndPurge')).toBeLessThan(
+    expect(thenBranch.indexOf('if (deleting)')).toBeLessThan(
       thenBranch.indexOf('returnToRoomList'),
     );
   });

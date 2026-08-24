@@ -456,7 +456,8 @@ export default function BuzzChannels() {
   const visibleRefreshGeneration = useRef<number | null>(null);
   const readAt = useRoomReadState((state) => state.readAt);
   const markRoomRead = useRoomReadState((state) => state.markRoomRead);
-  // Durable local tombstones: Rooms this viewer deleted/left. The relay may
+  // Durable local tombstones: Rooms this viewer left, plus legacy Deletes
+  // recorded before authoritative kind:9008 deletion shipped. The relay may
   // keep returning an archived Room (its membership projection can still name
   // us after a refused leave), so the deck itself filters these out on every
   // build — cache seed, refresh, and restart alike.

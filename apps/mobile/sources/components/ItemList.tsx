@@ -19,7 +19,7 @@ export interface ItemListProps extends ScrollViewProps {
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.buzz.bgTerminal,
     },
     contentContainer: {
         paddingBottom: Platform.select({ ios: 34, default: 16 }),
@@ -42,7 +42,7 @@ export const ItemList = React.memo<ItemListProps>((props) => {
     const isIOS = Platform.OS === 'ios';
     const isWeb = Platform.OS === 'web';
     
-    const backgroundColor = theme.colors.groupped.background;
+    const backgroundColor = theme.buzz.bgTerminal;
 
     return (
         <ScrollView 
@@ -84,7 +84,7 @@ export const ItemListStatic = React.memo<Omit<ItemListProps, keyof ScrollViewPro
     const isIOS = Platform.OS === 'ios';
     const isWeb = Platform.OS === 'web';
     
-    const backgroundColor = theme.colors.groupped.background;
+    const backgroundColor = theme.buzz.bgTerminal;
 
     return (
         <View 

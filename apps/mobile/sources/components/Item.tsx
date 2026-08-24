@@ -8,8 +8,6 @@ import {
     Platform,
     ActivityIndicator
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -45,19 +43,19 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 16,
-        minHeight: Platform.select({ ios: 44, default: 56 }),
+        paddingHorizontal: 20,
+        minHeight: 56,
     },
     containerWithSubtitle: {
-        paddingVertical: Platform.select({ ios: 11, default: 16 }),
+        paddingVertical: 12,
     },
     containerWithoutSubtitle: {
-        paddingVertical: Platform.select({ ios: 12, default: 16 }),
+        paddingVertical: 12,
     },
     iconContainer: {
-        marginRight: 12,
-        width: Platform.select({ ios: 29, default: 32 }),
-        height: Platform.select({ ios: 29, default: 32 }),
+        marginRight: 14,
+        width: 24,
+        minHeight: 24,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -66,10 +64,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'center',
     },
     title: {
-        ...Typography.default('regular'),
-        fontSize: Platform.select({ ios: 17, default: 16 }),
-        lineHeight: Platform.select({ ios: 22, default: 24 }),
-        letterSpacing: Platform.select({ ios: -0.41, default: 0.15 }),
+        fontFamily: theme.buzz.proseSemibold,
+        fontSize: 16,
+        lineHeight: 22,
     },
     titleNormal: {
         color: theme.colors.text,
@@ -81,12 +78,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         color: theme.colors.textDestructive,
     },
     subtitle: {
-        ...Typography.default('regular'),
-        color: theme.colors.textSecondary,
-        fontSize: Platform.select({ ios: 15, default: 14 }),
-        lineHeight: 20,
-        letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
-        marginTop: Platform.select({ ios: 2, default: 0 }),
+        fontFamily: theme.buzz.proseRegular,
+        color: theme.buzz.textMuted,
+        fontSize: 13,
+        lineHeight: 18,
+        marginTop: 2,
     },
     rightSection: {
         flexDirection: 'row',
@@ -94,14 +90,19 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         marginLeft: 8,
     },
     detail: {
-        ...Typography.default('regular'),
-        color: theme.colors.textSecondary,
-        fontSize: 17,
-        letterSpacing: -0.41,
+        fontFamily: theme.buzz.monoRegular,
+        color: theme.buzz.textMuted,
+        fontSize: 12,
+    },
+    chevron: {
+        fontFamily: theme.buzz.monoRegular,
+        color: theme.buzz.chrome,
+        fontSize: 24,
+        lineHeight: 26,
     },
     divider: {
-        height: Platform.select({ ios: 0.33, default: 0 }),
-        backgroundColor: Platform.select({ web: theme.colors.divider, default: theme.colors.glass.divider }),
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: theme.buzz.border,
     },
     pressablePressed: {
         backgroundColor: theme.colors.surfacePressedOverlay,
@@ -199,7 +200,6 @@ export const Item = React.memo<ItemProps>((props) => {
     
     const isInteractive = handlePress || onLongPress || (copy && !isWeb);
     const showAccessory = isInteractive && showChevron && !rightElement;
-    const chevronSize = (isIOS && !isWeb) ? 17 : 24;
 
     const titleColor = destructive ? styles.titleDestructive : (selected ? styles.titleSelected : styles.titleNormal);
     const containerPadding = subtitle ? styles.containerWithSubtitle : styles.containerWithoutSubtitle;
@@ -261,12 +261,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     )}
                     {rightElement}
                     {showAccessory && (
-                        <Ionicons 
-                            name="chevron-forward" 
-                            size={chevronSize} 
-                            color={theme.colors.groupped.chevron}
-                            style={{ marginLeft: 4 }}
-                        />
+                        <Text style={[styles.chevron, { marginLeft: 4 }]}>›</Text>
                     )}
                 </View>
             </View>
@@ -277,7 +272,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     style={[
                         styles.divider,
                         { 
-                            marginLeft: (isAndroid || isWeb) ? 0 : (dividerInset + (icon || leftElement ? (16 + ((isIOS && !isWeb) ? 29 : 32) + 15) : 16))
+                            marginLeft: (isAndroid || isWeb) ? 0 : (dividerInset + (icon || leftElement ? 55 : 16))
                         }
                     ]}
                 />
@@ -293,7 +288,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 onPressIn={handlePressIn}
                 onPressOut={handlePressOut}
                 disabled={disabled || loading}
-                bubbleScale={1.012}
+                bubbleScale={1}
                 style={[
                     {
                         backgroundColor: 'transparent',

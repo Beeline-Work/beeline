@@ -12,6 +12,8 @@ const itemGroup = readFileSync(new URL('./ItemGroup.tsx', import.meta.url), 'utf
 const itemList = readFileSync(new URL('./ItemList.tsx', import.meta.url), 'utf8');
 const settingSwitch = readFileSync(new URL('./Switch.tsx', import.meta.url), 'utf8');
 const header = readFileSync(new URL('./navigation/Header.tsx', import.meta.url), 'utf8');
+const textSelection = readFileSync(new URL('../app/(app)/text-selection.tsx', import.meta.url), 'utf8');
+const appLayout = readFileSync(new URL('../app/(app)/_layout.tsx', import.meta.url), 'utf8');
 
 describe('legacy settings leaves use the Beeline design contract', () => {
   it('keeps leaf screens free of glass, generic icon packs, and local palette colors', () => {
@@ -46,5 +48,14 @@ describe('legacy settings leaves use the Beeline design contract', () => {
     );
     expect(backButton).not.toMatch(/MobileGlass|Ionicons/);
     expect(backButton).toContain('>‹</Text>');
+  });
+
+  it('reuses the shared navigation and action-sheet idioms on migrated leaves', () => {
+    expect(settings.appearance).toContain('<SettingsNavigationRow');
+    expect(settings.language).toContain('<HullActionSheet');
+    expect(textSelection).toContain('<HullActionSheet');
+    expect(textSelection).not.toMatch(/MobileGlass|Ionicons|@expo\/vector-icons|@\/modal/);
+    expect(appLayout).toContain('name="settings/language"');
+    expect(appLayout).toContain("headerTitle: t('settingsLanguage.title')");
   });
 });

@@ -40,6 +40,7 @@ const reachable = await relayReachable();
       agent,
       parent,
       `agent-sub-${Date.now().toString(36)}`,
+      operator.publicKey,
     );
     const events = await queryEvents(
       [{ kinds: [9007], '#h': [subchannel], limit: 5 }],

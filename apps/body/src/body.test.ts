@@ -8852,10 +8852,12 @@ describe('a corner records the objective it was opened for', () => {
     );
 
     const agent = newIdentity('agent');
+    const human = newIdentity('human');
     await createAgentSubchannel(
       agent,
       'parent-room',
       'add-color-to-code-blocks',
+      human.publicKey,
       undefined,
       'add color to code blocks',
     );
@@ -8864,6 +8866,14 @@ describe('a corner records the objective it was opened for', () => {
     expect(create).toBeDefined();
     expect(create!.tags.find((tag) => tag[0] === 'task')?.[1]).toBe('add color to code blocks');
     expect(create!.tags.find((tag) => tag[0] === 'parent')?.[1]).toBe('parent-room');
+    expect(
+      published.some(
+        (event) =>
+          event.kind === 9000 &&
+          event.tags.some((tag) => tag[0] === 'h' && tag[1] === create!.tags[0]![1]) &&
+          event.tags.some((tag) => tag[0] === 'p' && tag[1] === human.publicKey),
+      ),
+    ).toBe(true);
   });
 
   it('writes no task tag at all when the request named no describable work', async () => {
@@ -8879,10 +8889,23 @@ describe('a corner records the objective it was opened for', () => {
       }),
     );
 
-    await createAgentSubchannel(newIdentity('agent'), 'parent-room', 'corner-parent-', undefined);
+    await createAgentSubchannel(
+      newIdentity('agent'),
+      'parent-room',
+      'corner-parent-',
+      newIdentity('human').publicKey,
+      undefined,
+    );
 
     const create = published.find((event) => event.kind === 9007);
     expect(create!.tags.some((tag) => tag[0] === 'task')).toBe(false);
+  });
+
+  it('refuses to create a normal agent-only corner', async () => {
+    const agent = newIdentity('agent');
+    await expect(
+      createAgentSubchannel(agent, 'parent-room', 'corrupt-corner', agent.publicKey),
+    ).rejects.toThrow('a corner requires an opening human distinct from its agent');
   });
 });
 

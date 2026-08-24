@@ -50,7 +50,9 @@ vi.mock('expo-web-browser', () => ({
 }));
 vi.mock('expo-linking', () => ({ createURL: (path: string) => `beeline://${path}` }));
 vi.mock('@react-navigation/native', () => ({ useFocusEffect: () => undefined }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
+}));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   DEFAULT_RELAY_URL: 'https://relay.test',
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
@@ -152,7 +154,7 @@ vi.mock('react-native', async () => {
           props.renderItem({ item, index }),
         ),
       ),
-      (props.data ?? []).length === 0 ? props.ListEmptyComponent ?? null : null,
+      (props.data ?? []).length === 0 ? (props.ListEmptyComponent ?? null) : null,
       props.ListFooterComponent ?? null,
     ]);
   const SectionList = (props: any) => {
@@ -174,7 +176,7 @@ vi.mock('react-native', async () => {
     return ReactModule.createElement('SectionList', props, [
       props.ListHeaderComponent ?? null,
       ...rows,
-      rows.length === 0 ? props.ListEmptyComponent ?? null : null,
+      rows.length === 0 ? (props.ListEmptyComponent ?? null) : null,
       props.ListFooterComponent ?? null,
     ]);
   };
@@ -192,8 +194,9 @@ vi.mock('react-native', async () => {
   };
 });
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { channelListCacheKey, useBuzzLocalCache } = await import('@/buzz/local-cache');
 const { default: BuzzChannels } = await import('./channels');
@@ -293,7 +296,7 @@ describe('one home surface for every Workspace kind', () => {
     }
     const text = visibleText(tree).join('');
     // Rooms index vocabulary and per-Room previews — not a bare "# name" list.
-    expect(text).toContain("DOESN'T NEED YOU · 2");
+    expect(text).not.toContain("DOESN'T NEED YOU ·");
     expect(text).toContain('Ledger rewrite');
     expect(text).toContain('beebee: pushed the branch');
     expect(text).toContain('＋ ROOM');
@@ -308,7 +311,7 @@ describe('one home surface for every Workspace kind', () => {
       expect(has(tree, id), `shared home is missing ${id}`).toBe(true);
     }
     const text = visibleText(tree).join('');
-    expect(text).toContain("DOESN'T NEED YOU · 2");
+    expect(text).not.toContain("DOESN'T NEED YOU ·");
     expect(text).toContain('＋ ROOM');
     expect(text).toContain('MEMBERS');
   });

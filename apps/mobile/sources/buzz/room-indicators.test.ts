@@ -32,11 +32,9 @@ describe('selectPinnedCorner', () => {
     ).toBeNull();
   });
 
-  it('never pins a merged or failed corner either', () => {
-    for (const status of ['merged', 'failed'] as const) {
-      expect(
-        selectPinnedCorner({ ...base, lifecycle: [corner('done', status)] }),
-      ).toBeNull();
+  it('never pins an immutably terminal merged or archived corner', () => {
+    for (const status of ['merged', 'archived'] as const) {
+      expect(selectPinnedCorner({ ...base, lifecycle: [corner('done', status)] })).toBeNull();
     }
   });
 
@@ -44,9 +42,10 @@ describe('selectPinnedCorner', () => {
     // The line means "open and worth returning to," not "doing work right
     // now" — that over-correction is exactly the bug this widens back out of.
     for (const status of ['open', 'needs-attention'] as const) {
-      expect(
-        selectPinnedCorner({ ...base, lifecycle: [corner('idle', status)] }),
-      ).toEqual({ cornerId: 'idle', status });
+      expect(selectPinnedCorner({ ...base, lifecycle: [corner('idle', status)] })).toEqual({
+        cornerId: 'idle',
+        status,
+      });
     }
   });
 
@@ -132,7 +131,10 @@ describe('selectPinnedCorner', () => {
 
   it('pins a just-permitted corner nobody has a status for yet', () => {
     expect(
-      selectPinnedCorner({ ...base, permittedCorner: { cornerId: 'brand-new', timestamp: Date.now() } }),
+      selectPinnedCorner({
+        ...base,
+        permittedCorner: { cornerId: 'brand-new', timestamp: Date.now() },
+      }),
     ).toEqual({ cornerId: 'brand-new', status: 'live' });
   });
 
@@ -159,7 +161,11 @@ describe('selectPinnedCorner', () => {
     // Before the read lands, "unknown corner" cannot be told from "archived
     // corner", so the line stays dark rather than guessing.
     expect(
-      selectPinnedCorner({ ...base, lifecycleLoaded: false, permittedCorner: { cornerId: 'brand-new', timestamp: Date.now() } }),
+      selectPinnedCorner({
+        ...base,
+        lifecycleLoaded: false,
+        permittedCorner: { cornerId: 'brand-new', timestamp: Date.now() },
+      }),
     ).toBeNull();
   });
 

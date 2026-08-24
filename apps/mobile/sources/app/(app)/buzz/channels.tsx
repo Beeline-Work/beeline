@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  SectionList,
+  FlatList,
   AppState,
   Alert,
   Linking,
@@ -55,12 +55,8 @@ import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
 import { isCornerClosed, useClosedCorners } from '@/buzz/closed-corners';
-import {
-  NO_ACTIVITY_PREVIEW,
-  roomListSections,
-  type RoomRowPresentation,
-} from '@/buzz/room-list-row';
-import { cornerStatusPresentation, sortCorners, type CornerSummary } from '@/buzz/corners';
+import { NO_ACTIVITY_PREVIEW, roomListFeed, type RoomRowPresentation } from '@/buzz/room-list-row';
+import { cornerVisualState, sortCorners, type CornerSummary } from '@/buzz/corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
   CHANGES_LABEL,
@@ -188,7 +184,9 @@ async function loadDisplayChannelBasics(
     // Top-level Rooms only, archived ones included: an archived Room remains
     // reachable inline in DOESN'T NEED YOU unless its viewer-local removal
     // tombstone filters it from the deck projection below.
-    return rooms.sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
+    return rooms.sort(
+      (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+    );
   }
 
   const all = await transport.sessionsRead();
@@ -348,9 +346,7 @@ async function enrichDisplayChannels(
         transport.roomRepositoryState(room.id),
       ]);
       const roomMemberPubkeys =
-        members.status === 'fulfilled'
-          ? members.value.map((member) => member.pubkey)
-          : [];
+        members.status === 'fulfilled' ? members.value.map((member) => member.pubkey) : [];
       return {
         ...room,
         corners: sortCorners(cornersByRoom.get(room.id) ?? []),
@@ -509,45 +505,32 @@ export default function BuzzChannels() {
     if (identity?.publicKey) names.set(identity.publicKey, 'You');
     return names;
   }, [cachedListEntry?.workspaceMembers, identity?.publicKey]);
-  const roomSections = useMemo(() => {
+  const roomFeed = useMemo(() => {
     const viewerKey = identity?.publicKey ?? cachedListEntry?.viewerPubkey;
     const visible = displayChannels
       .filter((room) => !isRoomRemoved(removedAt, viewerKey, room.id))
       .map((room) => ({
         ...room,
         unreadNew: unreadCountFor(room, identity?.publicKey, readAt),
-        // Owner model 2026-08-23: an unread ROOM message (agent or human) is a
-        // NEEDS YOU trigger on its own. Read off the existing per-Room read
-        // mark against the room's own latest-message summary — corner output
-        // lives in the corner's channel and never feeds this.
-        roomUnread: isRoomUnread(
-          roomReadAt(readAt, viewerKey, room.id),
-          room.latestMessageAt,
-        ),
+        // Unread is activity only: it bolds/floats the Room but never changes
+        // the max-of-corners state circle.
+        roomUnread: isRoomUnread(roomReadAt(readAt, viewerKey, room.id), room.latestMessageAt),
+        agentTurnWorking: liveTurnRooms.has(room.id),
+        agentTurnAt: liveTurnRooms.has(room.id) ? Math.floor(ageNow / 1000) : undefined,
         corners: (room.corners ?? []).filter(
           (corner) => !isCornerClosed(closedCornerAt, viewerKey, room.id, corner.id),
         ),
       }));
-    // DMs obey the same rule on the same deck — there is no separate DIRECT
-    // pile: an unread DM is NEEDS YOU, a read one is DOESN'T NEED YOU. The DM's
-    // own fields ride along so the row renderer can draw its identity mark.
+    // DMs share the same recency feed. Their own fields ride along so the row
+    // renderer can draw its identity mark.
     const directEntries = orderedDirectMessages.map((dm) => ({
       ...dm,
       title: dm.peerName,
       corners: [] as ChannelDisplayItem['corners'],
       archived: false,
-      roomUnread: isRoomUnread(
-        roomReadAt(readAt, viewerKey, dm.id),
-        dm.latestMessageAt,
-      ),
+      roomUnread: isRoomUnread(roomReadAt(readAt, viewerKey, dm.id), dm.latestMessageAt),
     }));
-    return {
-      sections: roomListSections(
-        [...visible, ...directEntries],
-        authorNames,
-        { now: ageNow },
-      ),
-    };
+    return roomListFeed([...visible, ...directEntries], authorNames, { now: ageNow });
   }, [
     ageNow,
     authorNames,
@@ -555,6 +538,7 @@ export default function BuzzChannels() {
     closedCornerAt,
     displayChannels,
     identity?.publicKey,
+    liveTurnRooms,
     orderedDirectMessages,
     readAt,
     removedAt,
@@ -735,14 +719,12 @@ export default function BuzzChannels() {
                   setCommunities(remaining);
                   const nextActive =
                     activeCommunityId === communityId
-                      ? remaining[0]?.communityId ?? null
+                      ? (remaining[0]?.communityId ?? null)
                       : activeCommunityId;
                   if (nextActive) {
-                    useBuzzLocalCache
-                      .getState()
-                      .patchChannelList(identity.publicKey, nextActive, {
-                        communities: remaining,
-                      });
+                    useBuzzLocalCache.getState().patchChannelList(identity.publicKey, nextActive, {
+                      communities: remaining,
+                    });
                   }
                   if (activeCommunityId === communityId) {
                     setExpandedRoomId(null);
@@ -753,10 +735,7 @@ export default function BuzzChannels() {
                   }
                 })
                 .catch((err) => {
-                  Alert.alert(
-                    `Could not exit ${community?.name ?? WORKSPACE_LABEL}`,
-                    String(err),
-                  );
+                  Alert.alert(`Could not exit ${community?.name ?? WORKSPACE_LABEL}`, String(err));
                 })
                 .finally(() => setLeavingWorkspaceId(null));
             },
@@ -791,7 +770,9 @@ export default function BuzzChannels() {
           {
             loadPredecessors: async () =>
               loadSuccessionPredecessors(
-                relayUrl && relayUrl !== DEFAULT_RELAY_URL ? relayUrl : await getEffectiveRelayUrl(),
+                relayUrl && relayUrl !== DEFAULT_RELAY_URL
+                  ? relayUrl
+                  : await getEffectiveRelayUrl(),
                 identity,
               ),
           },
@@ -1036,16 +1017,14 @@ export default function BuzzChannels() {
     try {
       await runGitHubInstallationSession({
         returnPath: '/buzz/channels',
-        startInstallation: () =>
-          transport.githubInstallationStart(githubInstallationRedirectUri()),
+        startInstallation: () => transport.githubInstallationStart(githubInstallationRedirectUri()),
         openAuthSession: (installationUrl, redirectUri) =>
           WebBrowser.openAuthSessionAsync(
             installationUrl,
             redirectUri,
             authSessionOptions(Platform.OS, redirectUri),
           ),
-        subscribeToUrls: (listener) =>
-          Linking.addEventListener('url', ({ url }) => listener(url)),
+        subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
         subscribeToAppState: (listener) => AppState.addEventListener('change', listener),
         refreshRepositories: () => loadRepoPicker(true),
         onRefreshPhase: handleRepositoryRefreshPhase,
@@ -1213,7 +1192,7 @@ export default function BuzzChannels() {
     [activeCommunityId, handleInvitePeople],
   );
 
-  /** One renderer for every Room in the deck's two inline piles. */
+  /** One renderer for every Room in the headerless activity feed. */
   const renderRoomEntry = useCallback(
     (entry: { item: ChannelDisplayItem; row: RoomRowPresentation }) => {
       const { item, row } = entry;
@@ -1228,16 +1207,9 @@ export default function BuzzChannels() {
       // One state per row, one visual language each: needs-you (brass),
       // working (motion), idle (steel). The derivation lives in
       // `roomRowPresentation`; this only picks which mark renders.
-      const deckState = row.attention
-        ? 'needs-you'
-        : row.zone === 'working'
-          ? 'working'
-          : 'idle';
+      const deckState = row.state;
       return (
         <View style={styles.roomCell}>
-          {/* The one brass edge on the deck, and only where a person
-              must act — never for mere unread or busy-ness. */}
-          {row.attention && <View pointerEvents="none" style={styles.attnRail} />}
           <View style={styles.roomRow}>
             <BrittlePress
               accessibilityHint={
@@ -1245,17 +1217,14 @@ export default function BuzzChannels() {
               }
               accessibilityLabel={`Open ${title}${
                 row.attention ? ', needs your attention' : ''
-              }${row.live && !row.attention ? ', agent working' : ''}, ${
-                formatRoomParticipantTotal(item.participantCount ?? 0)
-              }${
-                canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''
-              }`}
+              }${row.live && !row.attention ? ', agent working' : ''}, ${formatRoomParticipantTotal(
+                item.participantCount ?? 0,
+              )}${canExpand ? `, ${corners.length} open ${CHANGES_LABEL}` : ''}`}
               contentStyle={styles.indexRow}
               delayLongPress={350}
               onLongPress={
                 canExpand
-                  ? () =>
-                      setExpandedRoomId((current) => (current === item.id ? null : item.id))
+                  ? () => setExpandedRoomId((current) => (current === item.id ? null : item.id))
                   : undefined
               }
               onPress={() => openChannel(item.id)}
@@ -1271,7 +1240,11 @@ export default function BuzzChannels() {
                 <View style={styles.rowTitleLine}>
                   <Text
                     numberOfLines={1}
-                    style={[styles.rowTitle, item.archived && styles.rowTitleArchived]}
+                    style={[
+                      styles.rowTitle,
+                      row.unread && styles.rowTitleUnread,
+                      item.archived && styles.rowTitleArchived,
+                    ]}
                   >
                     {title}
                   </Text>
@@ -1282,10 +1255,7 @@ export default function BuzzChannels() {
                   )}
                   {item.archived && <Text style={styles.rowFlag}>ARCHIVED</Text>}
                 </View>
-                <Text
-                  numberOfLines={1}
-                  style={[styles.rowPreview, row.attention && styles.rowPreviewAttention]}
-                >
+                <Text numberOfLines={1} style={styles.rowPreview}>
                   {row.fact}
                 </Text>
                 {/* The cell carries four things and nothing else: the
@@ -1318,12 +1288,7 @@ export default function BuzzChannels() {
                 >
                   {/* Bare count + fold chevron, no container — the
                       owner's call: the number IS the affordance. */}
-                  <Text
-                    style={[
-                      styles.cornerPeekCount,
-                      corners.length > 0 && row.attention && styles.cornerPeekCountLive,
-                    ]}
-                  >
+                  <Text style={styles.cornerPeekCount}>
                     {corners.length}
                     {'\u2009'}
                     <Text style={styles.cornerPeekChevron}>{expanded ? '⌃' : '⌄'}</Text>
@@ -1336,25 +1301,27 @@ export default function BuzzChannels() {
             <PixelGateReveal style={styles.cornerDropdown}>
               <View style={styles.cornerRail} />
               {corners.map((corner) => {
-                // STALLED, not NEEDS HUMAN — same oracle verdict the deck row
+                // Offline without an artifact folds to idle — same verdict the deck row
                 // golds from; a dead agent's ask is nobody's to answer.
-                const status = cornerStatusPresentation(corner.status, {
-                  agentOffline: corner.agentOffline,
-                });
+                const state = cornerVisualState(corner.status, corner);
                 return (
                   <TouchableOpacity
-                    accessibilityLabel={`Open ${corner.name} ${CORNER_LABEL}, ${status.label}`}
+                    accessibilityLabel={`Open ${corner.name} ${CORNER_LABEL}, ${state}`}
                     key={corner.id}
                     onPress={() =>
                       router.push(cornerHref(corner.id, item.id, corner.name, 'room-list'))
                     }
                     style={styles.cornerRow}
                   >
-                    <CornerGlyph status={corner.status} style={styles.cornerGlyph} />
+                    <CornerGlyph
+                      status={corner.status}
+                      awaitingReply={corner.awaitingReply}
+                      agentOffline={corner.agentOffline}
+                      style={styles.cornerGlyph}
+                    />
                     <Text numberOfLines={1} style={styles.cornerName}>
                       {corner.name}
                     </Text>
-                    <Text style={styles.cornerStatus}>{status.label}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -1370,10 +1337,8 @@ export default function BuzzChannels() {
     [ageNow, expandedRoomId, openChannel],
   );
 
-  /** One renderer for the deck's DM rows. DMs sit in the SAME two piles as
-   * Rooms — an unread DM is NEEDS YOU (`row.attention`, since a DM has no
-   * corners), a read one is DOESN'T NEED YOU — but their row language is
-   * identity (the peer's faceted mark), never corner state. */
+  /** One renderer for the feed's DM rows. Their row language is identity (the
+   * peer's faceted mark), while unread affects title weight only. */
   const renderDirectEntry = useCallback(
     (entry: { item: DirectMessageDisplayItem; row: RoomRowPresentation }) => {
       const dm = entry.item;
@@ -1381,16 +1346,13 @@ export default function BuzzChannels() {
       const display = dm.peerAgent
         ? resolveAgentDisplayIdentity(dm.peerPubkey, dm.peerAgent)
         : undefined;
-      const unread = row.attention;
+      const unread = row.unread;
       const age = compactRelativeTime(dm.latestMessageAt ?? dm.updatedAt, ageNow);
       return (
         <View style={styles.roomCell} testID={`direct-row-${dm.id}`}>
-          {unread && <View pointerEvents="none" style={styles.attnRail} />}
           <View style={styles.roomRow}>
             <TouchableOpacity
-              accessibilityLabel={`Open direct message with ${dm.peerName}${
-                unread ? ', needs your attention' : ''
-              }`}
+              accessibilityLabel={`Open direct message with ${dm.peerName}`}
               onPress={() => openChannel(dm.id)}
               style={[styles.roomPrimary, styles.indexRow]}
               testID={`direct-message-${dm.peerPubkey}`}
@@ -1416,20 +1378,20 @@ export default function BuzzChannels() {
               </View>
               <View style={styles.rowCopy}>
                 <View style={styles.rowTitleLine}>
-                  <Text numberOfLines={1} style={[styles.rowTitle, !unread && styles.rowTitleRead]}>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.rowTitle, unread && styles.rowTitleUnread]}
+                  >
                     {dm.peerName}
                   </Text>
                 </View>
-                <Text
-                  numberOfLines={1}
-                  style={[styles.rowPreview, unread ? styles.rowPreviewAttention : undefined]}
-                >
+                <Text numberOfLines={1} style={styles.rowPreview}>
                   {dm.latestMessage ?? NO_ACTIVITY_PREVIEW}
                 </Text>
               </View>
             </TouchableOpacity>
             <View pointerEvents="none" style={styles.rowGutter}>
-              <Text style={[styles.rowAge, unread && styles.rowAgeUnread]}>{age}</Text>
+              <Text style={styles.rowAge}>{age}</Text>
             </View>
           </View>
         </View>
@@ -1575,19 +1537,11 @@ export default function BuzzChannels() {
           </View>
         )}
 
-        <SectionList
+        <FlatList
           testID="room-list"
-          sections={roomSections.sections}
+          data={roomFeed}
           keyExtractor={(entry) => entry.item.id}
           contentContainerStyle={hasConversations ? styles.listContent : styles.emptyContainer}
-          stickySectionHeadersEnabled={false}
-          renderSectionHeader={({ section }) => (
-            <View style={styles.indexHeader}>
-              <Text style={styles.indexLabel}>
-                {section.title} · {section.data.length}
-              </Text>
-            </View>
-          )}
           ListEmptyComponent={
             !hasConversations ? (
               <View style={styles.emptyState}>
@@ -1625,11 +1579,9 @@ export default function BuzzChannels() {
           renderItem={({ item: entry }) => {
             // Destructure so the `in` check narrows the item itself.
             const { item, row } = entry;
-            return 'peerName' in item ? (
-              renderDirectEntry({ item, row })
-            ) : (
-              renderRoomEntry({ item, row })
-            );
+            return 'peerName' in item
+              ? renderDirectEntry({ item, row })
+              : renderRoomEntry({ item, row });
           }}
           onRefresh={() => void handleRefresh(true)}
           refreshing={refreshing}
@@ -1638,9 +1590,7 @@ export default function BuzzChannels() {
         {/* The deck's footer: the brass compose control, opening the five
             existing start flows over this same supervision deck. */}
         <View style={[styles.deckFoot, { paddingBottom: 20 + insets.bottom }]}>
-          {!viewerIsAgent && (
-            <RoomDeckComposeMenu onSelect={handleComposeAction} />
-          )}
+          {!viewerIsAgent && <RoomDeckComposeMenu onSelect={handleComposeAction} />}
         </View>
 
         <DirectMessagePickerSheet
@@ -1688,348 +1638,305 @@ const ROW_GUTTER_TOP = 14;
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
-  center: { alignItems: 'center', justifyContent: 'center' },
-  loadingText: {
-    ...Typography.mono('semiBold'),
-    marginTop: 12,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
-  },
-  header: {
-    minHeight: 56,
-    paddingLeft: SCREEN_INSET,
-    paddingRight: 6,
-    paddingVertical: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: groknight.bgTerminal,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  headerAction: {
-    minWidth: 44,
-    minHeight: 44,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  /* The Workspace name is the header's anchor; Members and ＋Room read as
-   * quiet named affordances beside it, on the index label's own tier rather
-   * than competing with the name for the top of the ladder. */
-  headerActionText: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.8,
-  },
-  actionPanel: {
-    paddingHorizontal: SCREEN_INSET,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    backgroundColor: groknight.bgTerminal,
-  },
-  panelTitle: {
-    ...Typography.default('semiBold'),
-    marginBottom: 10,
-    color: groknight.textPrimary,
-    fontSize: 15,
-  },
-  inlineForm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  repoRow: {
-    marginTop: 10,
-    minHeight: 40,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  repoRowLabel: {
-    ...Typography.mono(),
-    color: groknight.textMuted,
-    fontSize: 11,
-  },
-  repoRowValue: {
-    ...Typography.mono(),
-    flex: 1,
-    minWidth: 0,
-    textAlign: 'right',
-    color: groknight.textSecondary,
-    fontSize: 12,
-  },
-  repoRowChevron: { ...Typography.default(), color: groknight.chrome, fontSize: 18 },
-  input: {
-    ...Typography.default(),
-    flex: 1,
-    minWidth: 0,
-    minHeight: 46,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    color: groknight.textPrimary,
-    backgroundColor: groknight.bgBase,
-    fontSize: 13,
-  },
-  /* A transient failure is a notice on the slab, not a panel laid over it: one
-   * hairline, the `! ERROR` label, and its own retry button carry it. */
-  errorPanel: {
-    paddingHorizontal: SCREEN_INSET,
-    paddingTop: 12,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  errorLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.8,
-  },
-  errorText: {
-    ...Typography.default(),
-    marginTop: 4,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  errorRetry: { marginTop: 10, alignSelf: 'flex-start' },
-  listContent: { paddingBottom: 24 },
+  return {
+    container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
+    center: { alignItems: 'center', justifyContent: 'center' },
+    loadingText: {
+      ...Typography.mono('semiBold'),
+      marginTop: 12,
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
+    },
+    header: {
+      minHeight: 56,
+      paddingLeft: SCREEN_INSET,
+      paddingRight: 6,
+      paddingVertical: 6,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: groknight.bgTerminal,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    headerAction: {
+      minWidth: 44,
+      minHeight: 44,
+      paddingHorizontal: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    /* The Workspace name is the header's anchor; Members and ＋Room read as
+     * quiet named affordances beside it, on the index label's own tier rather
+     * than competing with the name for the top of the ladder. */
+    headerActionText: {
+      ...Typography.mono(),
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.8,
+    },
+    actionPanel: {
+      paddingHorizontal: SCREEN_INSET,
+      paddingVertical: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+      backgroundColor: groknight.bgTerminal,
+    },
+    panelTitle: {
+      ...Typography.default('semiBold'),
+      marginBottom: 10,
+      color: groknight.textPrimary,
+      fontSize: 15,
+    },
+    inlineForm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    repoRow: {
+      marginTop: 10,
+      minHeight: 40,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    repoRowLabel: {
+      ...Typography.mono(),
+      color: groknight.textMuted,
+      fontSize: 11,
+    },
+    repoRowValue: {
+      ...Typography.mono(),
+      flex: 1,
+      minWidth: 0,
+      textAlign: 'right',
+      color: groknight.textSecondary,
+      fontSize: 12,
+    },
+    repoRowChevron: { ...Typography.default(), color: groknight.chrome, fontSize: 18 },
+    input: {
+      ...Typography.default(),
+      flex: 1,
+      minWidth: 0,
+      minHeight: 46,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 3,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      color: groknight.textPrimary,
+      backgroundColor: groknight.bgBase,
+      fontSize: 13,
+    },
+    /* A transient failure is a notice on the slab, not a panel laid over it: one
+     * hairline, the `! ERROR` label, and its own retry button carry it. */
+    errorPanel: {
+      paddingHorizontal: SCREEN_INSET,
+      paddingTop: 12,
+      paddingBottom: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    errorLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.8,
+    },
+    errorText: {
+      ...Typography.default(),
+      marginTop: 4,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    errorRetry: { marginTop: 10, alignSelf: 'flex-start' },
+    listContent: { paddingBottom: 24 },
 
-  /* ── the index: manifest headings, then boxless rows ─────────────────── */
-  indexHeader: {
-    minHeight: 34,
-    paddingHorizontal: SCREEN_INSET,
-    paddingTop: 14,
-    paddingBottom: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  indexLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 1.1,
-  },
-  /* The row is a self-sizing flex container: minHeight floor, never a fixed
-   * height, and children top-aligned like the mockup's mark/title baseline.
-   * The gutter is a sibling column IN FLOW (see ROW_GUTTER_WIDTH), so the
-   * pressable needs no compensating right padding. */
-  indexRow: {
-    minWidth: 0,
-    minHeight: INDEX_ROW_HEIGHT,
-    paddingLeft: SCREEN_INSET,
-    paddingRight: SCREEN_INSET,
-    paddingVertical: groknight.name === 'ledger' ? 6 : 11,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: ROW_GAP,
-  },
-  /* Fixed-width leading mark column — a flex child, not an overlay. Its box is
-   * the exact height of the name's line and the mark is centered in it, so the
-   * dot/ring/mark lands AT the name's height instead of floating above it. */
-  rowMark: { width: ROW_MARK_WIDTH, height: 21, alignItems: 'center', justifyContent: 'center' },
-  rowCopy: { flex: 1, minWidth: 0 },
-  rowTitleLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-  /* The index reads on three tones and nothing else: the name is the brightest
-   * thing on the row, the activity line sits a step down, and everything the
-   * gutter carries is ghosted. It is the ledger's ladder at index scale, so a
-   * row previews the voice the transcript will show when it is opened. */
-  rowTitle: {
-    ...Typography.default('semiBold'),
-    fontFamily: groknight.proseSemibold,
-    flexShrink: 1,
-    color: groknight.textPrimary,
-    fontSize: 16,
-    lineHeight: 21,
-  },
-  rowTitleRead: { color: groknight.textSecondary },
-  rowTitleArchived: { color: groknight.textMuted },
-  /* The repo name rides the title line's right edge — mono micro-metadata,
-   * exactly what the mockup hangs there; never a second row of its own. */
-  rowRepo: {
-    ...Typography.mono(),
-    marginLeft: 'auto',
-    flexShrink: 0,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 13,
-    letterSpacing: 0.3,
-  },
-  rowFlag: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.8,
-  },
-  /* Always rendered, even when a Room has no timestamp to show, so the mark
-   * below it in the gutter never shifts up a line. */
-  rowAge: {
-    ...Typography.mono(),
-    minHeight: 14,
-    color: groknight.ledgerGhost,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.4,
-  },
-  /* The index keeps weight as an unread signal — it is a scanning surface, not
-   * the inscription. The ledger's no-weight rule governs the transcript. */
-  rowAgeUnread: { ...Typography.mono('semiBold'), color: groknight.ledgerBody },
-  /* The current fact sits one tone below the Room name — except on a needs-you
-   * row, where it takes the accent: the one place brass speaks on this screen. */
-  rowPreview: {
-    ...Typography.default(),
-    fontFamily: groknight.proseRegular,
-    marginTop: 3,
-    color: groknight.ledgerQuiet,
-    fontSize: groknight.name === 'ledger' ? 11 : 13,
-    lineHeight: groknight.name === 'ledger' ? 15 : 18,
-  },
-  rowPreviewAttention: { color: groknight.accent },
-  roomCell: {
-    position: 'relative',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  /* The one brass edge on the deck, gated on `row.attention` at every call
-   * site: an approval-pending or decision-needed Room, never mere unread. */
-  attnRail: {
-    position: 'absolute',
-    zIndex: 1,
-    top: 0,
-    bottom: 0,
-    left: 0,
-    width: 2,
-    backgroundColor: groknight.accent,
-  },
-  roomRow: { position: 'relative', minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
-  roomPrimary: { flex: 1, minWidth: 0 },
-  /* Marginalia, not a third column of content: a fixed-width, right-aligned
-   * IN-FLOW column, and every mark in it ghosted — the same treatment the
-   * transcript gives its timestamps and npub fingerprints. In flow (never
-   * absolute) so it can never paint over the neighbouring row, and so a tall
-   * gutter grows its own row instead of escaping it. */
-  rowGutter: {
-    width: ROW_GUTTER_WIDTH,
-    flexShrink: 0,
-    marginRight: SCREEN_INSET,
-    flexDirection: 'column',
-    alignItems: 'flex-end',
-    paddingTop: ROW_GUTTER_TOP,
-  },
-  cornerPeek: {
-    width: ROW_GUTTER_WIDTH,
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  cornerPeekCount: {
-    ...Typography.mono(),
-    color: groknight.ledgerGhost,
-    fontSize: 12,
-    lineHeight: 15,
-  },
-  cornerPeekChevron: {
-    ...Typography.mono(),
-    color: groknight.ledgerGhost,
-    fontSize: 10,
-    lineHeight: 13,
-  },
-  /* The gutter count takes the accent only when the Room itself is needs-you —
-   * the same brass rule as the rail and the status pill, one gate. */
-  cornerPeekCountLive: { color: groknight.accent },
-  /* ── expanded corners: a hairline rail, not a nested container ────────── */
-  cornerDropdown: {
-    position: 'relative',
-    paddingLeft: SCREEN_INSET + ROW_MARK_WIDTH + ROW_GAP,
-    paddingRight: SCREEN_INSET,
-    paddingBottom: 8,
-  },
-  cornerRail: {
-    position: 'absolute',
-    top: 0,
-    bottom: 18,
-    left: SCREEN_INSET + ROW_MARK_WIDTH / 2,
-    width: 1,
-    backgroundColor: groknight.border,
-  },
-  cornerRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  cornerGlyph: {
-    ...Typography.default('semiBold'),
-    width: 12,
-    color: groknight.steel,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  cornerName: {
-    ...Typography.default(),
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textPrimary,
-    fontSize: 13,
-    lineHeight: 17,
-  },
-  /* A corner's lifecycle word hangs in the same gutter the ages do, at the
-   * same ghosted tier — the dropdown is an index inside an index. */
-  cornerStatus: {
-    ...Typography.mono(),
-    color: groknight.ledgerGhost,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.6,
-  },
-
-  /* ── the deck's footer: one brass ＋ ───────────────────── */
-  deckFoot: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingHorizontal: SCREEN_INSET,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgTerminal,
-  },
-  /* ── empty state ─────────────────────────────────────────────────────── */
-  emptyContainer: { flexGrow: 1 },
-  emptyState: { flex: 1, paddingHorizontal: 26, alignItems: 'center', justifyContent: 'center' },
-  emptyGlyph: {
-    ...Typography.default(),
-    color: groknight.steel,
-    fontSize: 30,
-    lineHeight: 36,
-    textAlign: 'center',
-  },
-  emptyTitle: {
-    ...Typography.default('semiBold'),
-    marginTop: 14,
-    color: groknight.textPrimary,
-    fontSize: 17,
-    textAlign: 'center',
-  },
-  emptySubtitle: {
-    ...Typography.default(),
-    marginTop: 8,
-    color: groknight.textMuted,
-    fontSize: 12,
-    lineHeight: 19,
-    textAlign: 'center',
-  },
-  emptyAction: { marginTop: 20 },
-  });
+    /* ── the index: one headerless feed of boxless rows ──────────────────── */
+    /* The row is a self-sizing flex container: minHeight floor, never a fixed
+     * height, and children top-aligned like the mockup's mark/title baseline.
+     * The gutter is a sibling column IN FLOW (see ROW_GUTTER_WIDTH), so the
+     * pressable needs no compensating right padding. */
+    indexRow: {
+      minWidth: 0,
+      minHeight: INDEX_ROW_HEIGHT,
+      paddingLeft: SCREEN_INSET,
+      paddingRight: SCREEN_INSET,
+      paddingVertical: groknight.name === 'ledger' ? 6 : 11,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: ROW_GAP,
+    },
+    /* Fixed-width leading mark column — a flex child, not an overlay. Its box is
+     * the exact height of the name's line and the mark is centered in it, so the
+     * dot/ring/mark lands AT the name's height instead of floating above it. */
+    rowMark: { width: ROW_MARK_WIDTH, height: 21, alignItems: 'center', justifyContent: 'center' },
+    rowCopy: { flex: 1, minWidth: 0 },
+    rowTitleLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+    /* The index reads on three tones and nothing else: the name is the brightest
+     * thing on the row, the activity line sits a step down, and everything the
+     * gutter carries is ghosted. It is the ledger's ladder at index scale, so a
+     * row previews the voice the transcript will show when it is opened. */
+    rowTitle: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      flexShrink: 1,
+      color: groknight.textPrimary,
+      fontSize: 16,
+      lineHeight: 21,
+    },
+    rowTitleUnread: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+    },
+    rowTitleArchived: { color: groknight.textMuted },
+    /* The repo name rides the title line's right edge — mono micro-metadata,
+     * exactly what the mockup hangs there; never a second row of its own. */
+    rowRepo: {
+      ...Typography.mono(),
+      marginLeft: 'auto',
+      flexShrink: 0,
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 13,
+      letterSpacing: 0.3,
+    },
+    rowFlag: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.8,
+    },
+    /* Always rendered, even when a Room has no timestamp to show, so the mark
+     * below it in the gutter never shifts up a line. */
+    rowAge: {
+      ...Typography.mono(),
+      minHeight: 14,
+      color: groknight.ledgerGhost,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.4,
+    },
+    /* The current fact sits one tone below the Room name — except on a needs-you
+     * row, where it takes the accent: the one place brass speaks on this screen. */
+    rowPreview: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 3,
+      color: groknight.ledgerQuiet,
+      fontSize: groknight.name === 'ledger' ? 11 : 13,
+      lineHeight: groknight.name === 'ledger' ? 15 : 18,
+    },
+    roomCell: {
+      position: 'relative',
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    roomRow: { position: 'relative', minWidth: 0, flexDirection: 'row', alignItems: 'stretch' },
+    roomPrimary: { flex: 1, minWidth: 0 },
+    /* Marginalia, not a third column of content: a fixed-width, right-aligned
+     * IN-FLOW column, and every mark in it ghosted — the same treatment the
+     * transcript gives its timestamps and npub fingerprints. In flow (never
+     * absolute) so it can never paint over the neighbouring row, and so a tall
+     * gutter grows its own row instead of escaping it. */
+    rowGutter: {
+      width: ROW_GUTTER_WIDTH,
+      flexShrink: 0,
+      marginRight: SCREEN_INSET,
+      flexDirection: 'column',
+      alignItems: 'flex-end',
+      paddingTop: ROW_GUTTER_TOP,
+    },
+    cornerPeek: {
+      width: ROW_GUTTER_WIDTH,
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+    },
+    cornerPeekCount: {
+      ...Typography.mono(),
+      color: groknight.ledgerGhost,
+      fontSize: 12,
+      lineHeight: 15,
+    },
+    cornerPeekChevron: {
+      ...Typography.mono(),
+      color: groknight.ledgerGhost,
+      fontSize: 10,
+      lineHeight: 13,
+    },
+    /* ── expanded corners: a hairline rail, not a nested container ────────── */
+    cornerDropdown: {
+      position: 'relative',
+      paddingLeft: SCREEN_INSET + ROW_MARK_WIDTH + ROW_GAP,
+      paddingRight: SCREEN_INSET,
+      paddingBottom: 8,
+    },
+    cornerRail: {
+      position: 'absolute',
+      top: 0,
+      bottom: 18,
+      left: SCREEN_INSET + ROW_MARK_WIDTH / 2,
+      width: 1,
+      backgroundColor: groknight.border,
+    },
+    cornerRow: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    cornerGlyph: {
+      width: 14,
+      height: 14,
+      flexShrink: 0,
+    },
+    cornerName: {
+      ...Typography.default(),
+      flex: 1,
+      minWidth: 0,
+      color: groknight.textPrimary,
+      fontSize: 13,
+      lineHeight: 17,
+    },
+    /* ── the deck's footer: one brass ＋ ───────────────────── */
+    deckFoot: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      paddingHorizontal: SCREEN_INSET,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+      backgroundColor: groknight.bgTerminal,
+    },
+    /* ── empty state ─────────────────────────────────────────────────────── */
+    emptyContainer: { flexGrow: 1 },
+    emptyState: { flex: 1, paddingHorizontal: 26, alignItems: 'center', justifyContent: 'center' },
+    emptyGlyph: {
+      ...Typography.default(),
+      color: groknight.steel,
+      fontSize: 30,
+      lineHeight: 36,
+      textAlign: 'center',
+    },
+    emptyTitle: {
+      ...Typography.default('semiBold'),
+      marginTop: 14,
+      color: groknight.textPrimary,
+      fontSize: 17,
+      textAlign: 'center',
+    },
+    emptySubtitle: {
+      ...Typography.default(),
+      marginTop: 8,
+      color: groknight.textMuted,
+      fontSize: 12,
+      lineHeight: 19,
+      textAlign: 'center',
+    },
+    emptyAction: { marginTop: 20 },
+  };
 });

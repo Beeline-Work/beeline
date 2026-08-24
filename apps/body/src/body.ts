@@ -181,6 +181,12 @@ import {
   type CornerAgentPrivateState,
 } from './agent-private-state.js';
 import {
+  AGENT_MEMORY_ENV,
+  agentMemoryInstructions,
+  prepareAgentMemory,
+  type AgentMemory,
+} from './agent-memory.js';
+import {
   chunkChangeReviewPatch,
   listChangeReviewFiles,
   postChangeReviewMetadata,
@@ -249,6 +255,7 @@ import {
 import {
   classifyCornerPermission,
   classifyRoomPermission,
+  isAgentMemoryWritePermissionRequest,
   ROOM_READ_ONLY_STEER,
 } from './session-sandbox.js';
 import {
@@ -311,6 +318,8 @@ export interface AgentSession {
   featureBranch?: string;
   /** Body-owned state mount for persona memory/lessons outside the repository. */
   agentPrivateState?: CornerAgentPrivateState;
+  /** Durable, writable per-(agent, workspace) memory mount (`agent-memory.ts`). */
+  agentMemory?: AgentMemory;
   /** Parent TLC channel ID (subchannels only). */
   parentChannelId?: string;
   /** Unsubscribe from activity projection. */
@@ -2261,6 +2270,25 @@ export class Body {
   }
 
   /**
+   * Prepare this agent's durable memory mount for one Workspace scope
+   * (`agent-memory.ts`). Strictly best-effort: an unusable root degrades to
+   * "no memory" with one advisory line and never blocks the session.
+   */
+  private async sessionMemory(communityId?: string | null): Promise<AgentMemory | undefined> {
+    const root = this.config.agentMemoryRoot;
+    if (!root) return undefined;
+    try {
+      return await prepareAgentMemory({ root, ...(communityId ? { communityId } : {}) });
+    } catch (error) {
+      console.warn(
+        `[body] agent memory unavailable for workspace ${communityId ?? 'none'}:`,
+        error,
+      );
+      return undefined;
+    }
+  }
+
+  /**
    * The ACP child's spawn command for one session, wrapped in bwrap when the
    * daemon detected a working one at start-up.
    *
@@ -2467,6 +2495,12 @@ export class Body {
     resumePlan?: CompactActivityPlan;
     agentPrivateState?: CornerAgentPrivateState;
     /**
+     * Durable per-(agent, workspace) memory mount (`agent-memory.ts`) —
+     * resolved by the caller from the session's Workspace scope. Writable in
+     * BOTH modes: agent-private state, never the repository.
+     */
+    agentMemory?: AgentMemory;
+    /**
      * When set (corner edit sessions on a GitHub-backed repo), the session's
      * git environment gets a read-only credential helper for private-repo
      * fetches — see `corner-read-token.ts`. `roomId` is the PARENT Room id;
@@ -2492,6 +2526,7 @@ export class Body {
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
       ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
       ...(input.agentPrivateState ? { agentPrivateState: input.agentPrivateState } : {}),
+      ...(input.agentMemory ? { agentMemory: input.agentMemory } : {}),
       ...(input.resumePlan ? { resumePlan: input.resumePlan } : {}),
       activationCount: 0,
     };
@@ -2510,16 +2545,23 @@ export class Body {
           ...(input.agentPrivateState
             ? { [AGENT_PRIVATE_STATE_ENV]: input.agentPrivateState.root }
             : {}),
+          ...(input.agentMemory ? { [AGENT_MEMORY_ENV]: input.agentMemory.dir } : {}),
           ...(readTokenEnv ?? {}),
         };
+        // The memory mount is writable in BOTH modes (readonly included) — it
+        // is the one granted host path a read-only Room may write.
+        const grantedWritablePaths = [
+          ...(input.additionalWritablePaths ?? []),
+          ...(input.agentMemory ? [input.agentMemory.dir] : []),
+        ];
         const spawnCommand = this.sessionSpawnCommand(
           {
             mode: input.mode,
             cwd: input.cwd,
             ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
             ...(input.protectedPaths ? { protectedPaths: input.protectedPaths } : {}),
-            ...(input.additionalWritablePaths
-              ? { additionalWritablePaths: input.additionalWritablePaths }
+            ...(grantedWritablePaths.length > 0
+              ? { additionalWritablePaths: grantedWritablePaths }
               : {}),
             channelIdForLog: input.channelId,
           },
@@ -2557,6 +2599,7 @@ export class Body {
         const systemPrompt = [
           appendPersonaSessionInstructions(input.systemPrompt, profile),
           agentPrivateStateInstructions(input.agentPrivateState),
+          agentMemoryInstructions(input.agentMemory),
           '',
           `To share an image or file with the Room, include [[${AGENT_ATTACHMENT_DIRECTIVE}:path]] in your final response.`,
           'The host removes that directive, uploads the file, and sends a link-only attachment card.',
@@ -3406,6 +3449,7 @@ export class Body {
         }
         this.primeCodegraphIndex(worktreePath);
         const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
+        const restoredCornerMemory = await this.sessionMemory(communityId);
         const cornerFilesystem = this.cornerFilesystemPolicy(
           cornerRepo,
           worktreePath,
@@ -3458,6 +3502,7 @@ export class Body {
             resumeOnFirstActivation: true,
             resumePlan: restoredPlan,
             ...(agentPrivateState ? { agentPrivateState } : {}),
+            ...(restoredCornerMemory ? { agentMemory: restoredCornerMemory } : {}),
             ...(communityId ? { communityId } : {}),
             ...(cornerRepo.truth?.binding.remote?.startsWith('git://github.com/') &&
             agentPrivateState
@@ -3657,7 +3702,7 @@ export class Body {
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     await this.ensureAgentEntity(tlcChannelId);
     const communityId = await this.channelCommunityId(tlcChannelId);
-
+    const roomMemory = await this.sessionMemory(communityId);
     // The boundary remains the exact MCP mount: Beeline's fixed inspection MCP
     // plus explicit creator-only account capabilities. Operator config is never inherited.
     const roomMcpServers = [
@@ -3701,6 +3746,7 @@ export class Body {
         permissionHandler: (permission) =>
           this.handleRoomPermissionRequest(tlcChannelId, permission, editPolicy),
         ...(communityId ? { communityId } : {}),
+        ...(roomMemory ? { agentMemory: roomMemory } : {}),
       });
     } catch (error) {
       if (error instanceof ReadOnlyToolsUnavailableError) throw error;
@@ -3860,6 +3906,7 @@ export class Body {
     // they're ready. Never blocks or fails corner creation.
     this.primeCodegraphIndex(worktreePath);
     const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
+    const cornerMemory = await this.sessionMemory(communityId);
     const cornerFilesystem = this.cornerFilesystemPolicy(
       boundRepo,
       worktreePath,
@@ -3934,6 +3981,7 @@ export class Body {
       resumeObjective: taskDescription || undefined,
       resumeTargetRef: boundRepo.targetBranch ?? 'refs/heads/main',
       ...(agentPrivateState ? { agentPrivateState } : {}),
+      ...(cornerMemory ? { agentMemory: cornerMemory } : {}),
       ...(communityId ? { communityId } : {}),
       ...(boundRepo.truth?.binding.remote?.startsWith('git://github.com/') && agentPrivateState
         ? { gitReadCredential: { roomId: tlcChannelId, stateDir: agentPrivateState.root } }
@@ -5382,6 +5430,13 @@ export class Body {
       this.config.accessPolicy === 'creator' &&
       isExternalMcpPermissionRequest(permission, this.config.externalMcpCapabilities)
     ) {
+      return 'allow';
+    }
+    // Agent-authored memory is writable inside a read-only Room by design
+    // (`agent-memory.ts`): it is agent-private state, not the repository. A
+    // write pinned to the memory dir never reaches the human corner card.
+    const memory = this.sessions.get(tlcChannelId)?.agentMemory;
+    if (memory && isAgentMemoryWritePermissionRequest(permission, memory.dir)) {
       return 'allow';
     }
     const turn = this.pendingRoomTurns.get(tlcChannelId);

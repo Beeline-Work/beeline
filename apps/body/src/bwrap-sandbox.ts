@@ -421,8 +421,11 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
           ...harnessState,
         ]
       : // A Room writes no checkout and no host path — only its own harness
-        // state and the private /tmp. The merge gate is not a Room surface.
-        harnessState,
+        // state, explicitly granted agent-private paths (today exactly the
+        // agent's own memory directory, `agent-memory.ts` — agent-private
+        // state, never the repo), and the private /tmp. The merge gate is not
+        // a Room surface.
+        [...(spec.additionalWritablePaths ?? []), ...harnessState],
   );
   // Everything this session must still see through the /tmp tmpfs, minus what a
   // writable bind already restores. `tmpDir` is never restored read-only: under

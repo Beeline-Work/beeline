@@ -1242,11 +1242,13 @@ describe('agent identity boundary', () => {
     expect(create).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
     expect(body.listSessions()).toEqual([]);
-    expect(published).toHaveLength(1);
-    expect(published[0]).toMatchObject({
+    expect(published).toHaveLength(3);
+    expect(published[0]!.tags).toContainEqual(['status', 'working']);
+    expect(published[1]!.tags).toContainEqual(['status', 'failed']);
+    expect(published[2]).toMatchObject({
       content: expect.stringContaining('Read-only tools unavailable'),
     });
-    expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+    expect(published[2]!.tags).toContainEqual(['t', 'agent-message']);
   });
 
   it('never reuses an edit session as a read-only Room session', async () => {
@@ -1290,8 +1292,10 @@ describe('agent identity boundary', () => {
 
     expect(prompt).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
-    expect(published).toHaveLength(1);
-    expect(published[0]!.content).toContain('Read-only tools unavailable');
+    expect(published).toHaveLength(3);
+    expect(published[0]!.tags).toContainEqual(['status', 'working']);
+    expect(published[1]!.tags).toContainEqual(['status', 'failed']);
+    expect(published[2]!.content).toContain('Read-only tools unavailable');
   });
 
   it('NIP-98-authenticates repository safety reads as the agent', async () => {
@@ -8965,6 +8969,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
   }
 
   it('keeps unaddressed multi-human corner chatter as context for the next mention', async () => {
+    stubPublishing();
     const agent = newIdentity('addressed-corner-agent');
     const firstHuman = newIdentity('addressed-corner-first-human');
     const secondHuman = newIdentity('addressed-corner-second-human');

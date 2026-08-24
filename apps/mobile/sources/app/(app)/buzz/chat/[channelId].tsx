@@ -3536,7 +3536,7 @@ export default function BuzzChat() {
             ) : (
               <HeaderMetaCaps testID="room-header-meta">
                 {participantsHydrated
-                  ? `  ${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
+                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
                   : 'LOADING MEMBERS'}
               </HeaderMetaCaps>
             )}

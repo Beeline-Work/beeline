@@ -1,107 +1,63 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CornerStateRecord } from '@beeline/buzz-client';
-import {
-  cornerStateFallbackCount,
-  cornerVerdictFromRecord,
-  resetCornerStateFallbackTelemetry,
-  resolveCornerVerdict,
-} from './corner-state-verdict';
+import { describe, expect, it } from 'vitest';
+import { CORNER_ACTIVITY_FRESHNESS_MS, type CornerStateRecord } from '@beeline/buzz-client';
+import { cornerVerdictFromRecord, resolveCornerVerdict } from './corner-state-verdict';
 
+const AT = 1_700_000_000;
 const record = (
   state: CornerStateRecord['state'],
   reason?: CornerStateRecord['reason'],
-  at = 100,
-): CornerStateRecord => ({ cornerId: 'corner-1', state, ...(reason ? { reason } : {}), at });
+): CornerStateRecord => ({
+  cornerId: 'corner-1',
+  parentRoomId: 'room-1',
+  state,
+  ...(reason ? { reason } : {}),
+  at: AT,
+});
 
-describe('daemon-authoritative corner verdict', () => {
-  beforeEach(() => resetCornerStateFallbackTelemetry());
-
-  it('maps each fresh daemon state without consulting history', () => {
-    expect(cornerVerdictFromRecord(record('working'))).toEqual({
-      status: 'live',
-      source: 'record',
-    });
-    expect(cornerVerdictFromRecord(record('idle'))).toEqual({
-      status: null,
-      source: 'record',
-    });
-    expect(cornerVerdictFromRecord(record('waiting-on-human', 'review'))).toEqual({
-      status: 'open',
-      source: 'record',
-    });
-    expect(cornerVerdictFromRecord(record('waiting-on-human', 'question'))).toEqual({
-      status: 'needs-attention',
-      awaitingReply: true,
-      source: 'record',
-    });
-    expect(cornerVerdictFromRecord(record('waiting-on-human', 'failure'))).toEqual({
-      status: 'failed',
+describe('canonical corner verdict', () => {
+  it.each([
+    ['open', undefined, null],
+    ['working', undefined, 'live'],
+    ['waiting', 'review', 'open'],
+    ['waiting', 'question', 'needs-attention'],
+    ['waiting', 'failure', 'failed'],
+    ['idle', undefined, null],
+    ['concluded', undefined, 'merged'],
+    ['closed', undefined, 'archived'],
+  ] as const)('maps %s/%s without consulting transcript history', (state, reason, status) => {
+    expect(cornerVerdictFromRecord(record(state, reason), AT * 1_000)).toMatchObject({
+      status,
+      machineState: state,
       source: 'record',
     });
   });
 
-  it('demotes an offline question but keeps artifact-backed waits actionable', () => {
-    expect(cornerVerdictFromRecord(record('waiting-on-human', 'question'), true)).toEqual({
-      status: null,
-      agentOffline: true,
-      source: 'record',
-    });
-    expect(cornerVerdictFromRecord(record('waiting-on-human', 'failure'), true)).toEqual({
-      status: 'failed',
-      source: 'record',
-    });
-    expect(cornerVerdictFromRecord(record('waiting-on-human', 'review'), true)).toEqual({
-      status: 'open',
-      source: 'record',
-    });
-  });
-
-  it('uses a record whose at is at least the newest transcript timestamp', () => {
-    const verdict = resolveCornerVerdict({
-      cornerId: 'corner-1',
-      stateRecord: record('working', undefined, 100),
-      newestTranscriptAt: 100,
-      facts: [{ createdAt: 200, rawStatus: 'failed' }],
-      merged: false,
-      archived: false,
-    });
-    expect(verdict).toEqual({ status: 'live', source: 'record' });
-    expect(cornerStateFallbackCount()).toBe(0);
-  });
-
-  it('falls back for absent and stale records, counting only those fallbacks', () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const base = {
-      cornerId: 'corner-1',
-      newestTranscriptAt: 100,
-      facts: [{ createdAt: 100, rawStatus: 'working' }],
-      merged: false,
-      archived: false,
-      now: 1_000,
-    } as const;
-    expect(resolveCornerVerdict(base).source).toBe('fallback');
+  it('expires a working lease after the 90-second horizon', () => {
     expect(
-      resolveCornerVerdict({ ...base, stateRecord: record('idle', undefined, 99), now: 61_001 })
-        .source,
-    ).toBe('fallback');
-    expect(cornerStateFallbackCount()).toBe(2);
-    expect(log).toHaveBeenCalledTimes(2);
-    resolveCornerVerdict({ ...base, stateRecord: record('idle', undefined, 100) });
-    expect(cornerStateFallbackCount()).toBe(2);
-    log.mockRestore();
+      cornerVerdictFromRecord(record('working'), AT * 1_000 + CORNER_ACTIVITY_FRESHNESS_MS),
+    ).toMatchObject({ status: 'live' });
+    expect(
+      cornerVerdictFromRecord(record('working'), AT * 1_000 + CORNER_ACTIVITY_FRESHNESS_MS + 1),
+    ).toMatchObject({ status: null, machineState: 'working' });
   });
 
-  it('lets immutable terminal truth win without recording a migration fallback', () => {
+  it.each([
+    { channelExists: false, parentRoomLive: true },
+    { channelExists: true, parentRoomLive: false },
+  ])('treats nonexistence as closed even over fresh working state: %o', (existence) => {
     expect(
       resolveCornerVerdict({
-        cornerId: 'corner-1',
+        ...existence,
         stateRecord: record('working'),
-        newestTranscriptAt: 100,
-        facts: [],
-        merged: true,
-        archived: false,
-      }).status,
-    ).toBe('merged');
-    expect(cornerStateFallbackCount()).toBe(0);
+        now: AT * 1_000,
+      }),
+    ).toMatchObject({ status: 'archived', machineState: 'closed', source: 'existence' });
+  });
+
+  it('renders no lifecycle when no canonical record exists', () => {
+    expect(resolveCornerVerdict({ channelExists: true, parentRoomLive: true })).toEqual({
+      status: null,
+      source: 'absent',
+    });
   });
 });

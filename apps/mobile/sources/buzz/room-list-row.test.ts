@@ -8,8 +8,31 @@ import {
   roomRowPresentation,
 } from './room-list-row';
 
-function corner(status: CornerStatus, name = `corner-${status}`): CornerSummary {
-  return { id: `${status}-id`, name, openerPubkey: 'opener', status, lastActivityAt: 10 };
+function corner(status: CornerStatus | null, name = `corner-${status ?? 'idle'}`): CornerSummary {
+  const machine =
+    status === 'live'
+      ? ({ machineState: 'working' } as const)
+      : status === 'open'
+        ? ({ machineState: 'waiting', machineReason: 'review' } as const)
+        : status === 'needs-attention'
+          ? ({ machineState: 'waiting', machineReason: 'question' } as const)
+          : status === 'failed'
+            ? ({ machineState: 'waiting', machineReason: 'failure' } as const)
+            : status === 'merged'
+              ? ({ machineState: 'concluded' } as const)
+              : status === 'archived'
+                ? ({ machineState: 'closed' } as const)
+                : ({ machineState: 'idle' } as const);
+  return {
+    id: `${status ?? 'idle'}-id`,
+    name,
+    openerPubkey: 'opener',
+    status,
+    ...machine,
+    stateAt: Math.floor(Date.now() / 1_000),
+    ...(status === 'needs-attention' ? { awaitingReply: true } : {}),
+    lastActivityAt: 10,
+  };
 }
 
 const NO_NAMES = new Map<string, string>();
@@ -38,7 +61,7 @@ describe('Room row presentation', () => {
     // Owner refinement 2026-08-23: idle-without-finishing (`status: null`, no
     // fresh ask) has nothing for a person to act on, so its Room belongs in
     // DOESN'T NEED YOU deck state — not gold.
-    const stalled = { ...corner('open'), status: null };
+    const stalled = corner(null);
     expect(roomRowPresentation({ corners: [stalled] }, NO_NAMES)).toMatchObject({
       zone: 'idle',
       attention: false,
@@ -51,7 +74,7 @@ describe('Room row presentation', () => {
     // But a fresh unanswered agent ask (`awaitingReply` — the same null word,
     // carried by the transport when the oracle says the ask IS the wait) is
     // exactly what NEEDS YOU exists for, with REPLY as its affordance.
-    const asked = { ...stalled, awaitingReply: true };
+    const asked = corner('needs-attention');
     expect(roomRowPresentation({ corners: [asked] }, NO_NAMES)).toMatchObject({
       zone: 'needs-you',
       attention: true,
@@ -68,20 +91,18 @@ describe('Room row presentation', () => {
     // because only newer work (which a dead agent cannot produce) clears it.
     // The transport carries the oracle's STALLED verdict as `agentOffline`,
     // and the deck answers it: no gold, no action pill, an honest fact line.
-    const stalled = { ...corner('open', 'charles-fix'), status: null, agentOffline: true };
+    const stalled = { ...corner(null, 'charles-fix'), agentOffline: true };
     const row = roomRowPresentation({ corners: [stalled] }, NO_NAMES);
     expect(row).toMatchObject({ zone: 'idle', attention: false, live: false, glyph: '○' });
     expect(row.fact).toBe('Agent offline · charles-fix');
     expect(row.pills.some((pill) => pill.kind === 'status')).toBe(false);
-    // A worded needs-you card next to the offline flag stalls too (defensive
-    // shape — the oracle nulls stalled corners' words, but older caches may
-    // still carry one).
+    // Presence is a separate fact and cannot demote a canonical wait.
     expect(
       roomRowPresentation(
         { corners: [{ ...corner('needs-attention', 'stale-ask'), agentOffline: true }] },
         NO_NAMES,
       ).attention,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('an offline agent WITH a reviewable change still reads needs-you (APPROVE)', () => {
@@ -104,8 +125,7 @@ describe('Room row presentation', () => {
           title: 'Charles',
           corners: [
             {
-              ...corner('open', 'charles-fix'),
-              status: null,
+              ...corner(null, 'charles-fix'),
               agentOffline: true,
               lastActivityAt: 9,
             },
@@ -150,6 +170,36 @@ describe('Room row presentation', () => {
     expect(roomRowPresentation({ agentTurnWorking: false }, NO_NAMES).zone).toBe('idle');
   });
 
+  it('ignores a legacy active word when no canonical working record exists', () => {
+    const controlProjectedGhost: CornerSummary = {
+      id: 'corner-06ac8027',
+      name: 'ghost',
+      openerPubkey: 'agent',
+      // This is the exact word an unmatched parent body-control OPEN card used
+      // to persist forever. Without machineState/stateAt it has no authority.
+      status: 'live',
+    };
+    expect(roomRowPresentation({ corners: [controlProjectedGhost] }, NO_NAMES)).toMatchObject({
+      zone: 'idle',
+      state: 'idle',
+      live: false,
+      attention: false,
+      corners: [],
+    });
+  });
+
+  it('expires a canonical working lease at the shared freshness horizon', () => {
+    const stale = {
+      ...corner('live'),
+      stateAt: Math.floor((NOW - 90_001) / 1_000),
+    };
+    expect(roomRowPresentation({ corners: [stale] }, NO_NAMES)).toMatchObject({
+      zone: 'idle',
+      state: 'idle',
+      live: false,
+    });
+  });
+
   it('marks a Room with a working agent as alive, and an idle one not', () => {
     // Motion is spent here and nowhere else on the index, so this is the
     // single condition the whole working-state rule rests on.
@@ -189,10 +239,7 @@ describe('Room row presentation', () => {
     });
     // A fresh ask waits on a reply too.
     expect(
-      roomRowPresentation(
-        { corners: [{ ...corner('open'), status: null, awaitingReply: true }] },
-        NO_NAMES,
-      ).pills[0],
+      roomRowPresentation({ corners: [corner('needs-attention')] }, NO_NAMES).pills[0],
     ).toEqual({ kind: 'status', label: 'REPLY' });
     // Working and idle rows never carry one — including merely-idle stalls.
     expect(
@@ -201,7 +248,7 @@ describe('Room row presentation', () => {
       ),
     ).toBe(false);
     expect(
-      roomRowPresentation({ corners: [{ ...corner('open'), status: null }] }, NO_NAMES).pills.some(
+      roomRowPresentation({ corners: [corner(null)] }, NO_NAMES).pills.some(
         (pill) => pill.kind === 'status',
       ),
     ).toBe(false);
@@ -315,15 +362,11 @@ describe('Room row presentation', () => {
     // Idle-without-finishing is no longer a needs-you fact — a merely idle
     // corner's Room falls back to its spoken history. Only an ask-wait keeps
     // the "waiting on you" line.
+    expect(roomRowPresentation({ corners: [corner(null, 'login-fix')] }, names).fact).toBe(
+      NO_ACTIVITY_PREVIEW,
+    );
     expect(
-      roomRowPresentation({ corners: [{ ...corner('open', 'login-fix'), status: null }] }, names)
-        .fact,
-    ).toBe(NO_ACTIVITY_PREVIEW);
-    expect(
-      roomRowPresentation(
-        { corners: [{ ...corner('open', 'login-fix'), status: null, awaitingReply: true }] },
-        names,
-      ).fact,
+      roomRowPresentation({ corners: [corner('needs-attention', 'login-fix')] }, names).fact,
     ).toBe('login-fix');
     expect(roomRowPresentation({ corners: [corner('live', 'rebase-main')] }, names).fact).toBe(
       'Lena · rebase-main',

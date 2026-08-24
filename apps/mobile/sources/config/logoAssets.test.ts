@@ -73,6 +73,8 @@ describe('Beeline continuous-line logo assets', () => {
     expect(appConfig).toContain('"icon": "./sources/assets/images/icon-notification.png"');
     expect(appConfig).toContain('image: "./sources/assets/images/splash-android-light.png"');
     expect(appConfig).toContain('image: "./sources/assets/images/splash-android-dark.png"');
+    expect(appConfig).toContain('imageWidth: 150');
+    expect(appConfig).toContain('resizeMode: "contain"');
     expect(appConfig).toContain('backgroundColor: "#14091A"');
     // The opaque aubergine assets and both splash variants must never expose the old field.
     expect(appConfig).not.toContain('#090909');

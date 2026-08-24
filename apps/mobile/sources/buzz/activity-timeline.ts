@@ -34,13 +34,20 @@ export type TurnActivityFile = {
 
 export type TurnActivityAction = {
   id: string;
-  kind: 'tool';
+  kind: 'tool' | 'thought';
   weight: ActionWeight;
   title: string;
+  /** The transcript's compact verb-object copy. Always <= 40 characters. */
+  label: string;
+  /** Settled state projected from the existing activity status. */
+  outcome: 'running' | 'success' | 'failure';
+  /** Existing receipts expose this for thoughts; tools omit it when unknown. */
+  durationMs?: number;
+  toolKind?: string;
   status?: string;
   /**
    * One plain-language line projected from the tool result saying WHY this
-   * failed — `command exited 1: vitest: not found`, never a bare FAILED.
+   * failed — `exit 1: vitest: not found`, never a bare generic status.
    * Set only for failures; rendered in the row, one line, dim.
    */
   reason?: string;
@@ -58,6 +65,8 @@ export type TurnActivity = {
    * brightest tier, full width, and is never collapsed behind a disclosure.
    */
   narration: string[];
+  /** Ordered machine ledger. It is the rendering authority for transcript rows. */
+  steps: TurnActivityAction[];
   /** Calls that executed or mutated, plus every failure: one line each. */
   actions: TurnActivityAction[];
   /** Read-only calls, folded behind the counted note. */
@@ -88,6 +97,7 @@ export type TurnActivity = {
 };
 
 const MAX_ACTION_TITLE = 72;
+export const MAX_LEDGER_LABEL = 40;
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
@@ -148,10 +158,12 @@ function searchTerms(value: string): string | undefined {
 }
 
 function isFailure(item: AgentActivityItem): boolean {
-  return (
-    /(?:failed|error|unavailable|denied)/i.test(item.status ?? '') ||
-    /(?:failed|error|unavailable|not available|cannot|can't)/i.test(item.text ?? '')
-  );
+  const status = item.status ?? '';
+  if (/\b(?:failed|error|unavailable|denied)\b/i.test(status)) return true;
+  // A settled status is the event's authority. Successful output frequently
+  // contains phrases such as "0 errors" and must not be reclassified by copy.
+  if (/\b(?:completed|complete|success|succeeded|passed|done)\b/i.test(status)) return false;
+  return /\b(?:failed|error|unavailable|not available|cannot|can't)\b/i.test(item.text ?? '');
 }
 
 /**
@@ -164,7 +176,8 @@ function isFailure(item: AgentActivityItem): boolean {
  */
 export function failureReason(item: AgentActivityItem): string | undefined {
   const raw = item.output ?? item.text;
-  if (!raw) return undefined;
+  const statusCode = Number(item.status?.match(/(?:exit|code)\s*(\d+)/i)?.[1]);
+  if (!raw) return Number.isFinite(statusCode) ? `exit ${statusCode}` : undefined;
   // Body usually JSON-stringifies the tool result envelope.
   let text = raw;
   let exitCode: number | undefined;
@@ -178,10 +191,21 @@ export function failureReason(item: AgentActivityItem): string | undefined {
   } catch {
     // Plain-text output stays as-is.
   }
-  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  text = text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^\s*at\s+\S+\s*\(/.test(line))
+    .filter((line) => !/^node:internal\//.test(line))
+    .filter((line) => !/(?:ELIFECYCLE|ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL)/i.test(line))
+    .filter((line) => !/^npm (?:ERR!|error) (?:code|command|lifecycle|path|cwd)\b/i.test(line))
+    .filter((line) => !/^Command failed with exit code \d+\.?$/i.test(line));
   const all = lines.join(' \u2014 ');
 
-  const notFound = text.match(/(?:sh:\s*)?\d*:?\s*([\w@./-]+):\s*not found/i);
+  const notFound =
+    text.match(/(?:sh:\s*)?\d*:?\s*([\w@./-]+):\s*not found/i) ??
+    text.match(/(?:^|\n)\s*([\w@./-]+):\s*command not found\b/i);
   if (notFound) return `command not found: ${notFound[1]}`;
   if (/Read-only file system|EROFS/i.test(all)) {
     return 'blocked: that path is read-only outside this corner\u2019s work area';
@@ -196,11 +220,83 @@ export function failureReason(item: AgentActivityItem): string | undefined {
   if (lock) return `git could not write its index (${redactPaths(lock[1])})`;
   const refused = text.match(/fatal:\s*(.+)/i);
   if (refused) return clamp(oneLine(refused[1]), 90);
-  const errorLine = lines.find((line) => /(?:^|\b)(?:error|ERR!|ERROR|Traceback|FATAL|exception)\b/i.test(line));
-  const detail = errorLine ?? (exitCode !== undefined || /exit_code/.test(raw) ? lines.at(-1) : undefined);
-  if (!detail) return undefined;
-  const prefix = exitCode !== undefined ? `command exited ${exitCode}: ` : '';
-  return clamp(prefix + oneLine(detail), 110);
+  const errorLine = lines.find((line) =>
+    /(?:^|\b)(?:error(?:\s+TS\d+)?|ERR!|Traceback|FATAL|exception|cannot|failed:)\b/i.test(line),
+  );
+  const detail = errorLine ?? lines.find((line) => !/^>\s/.test(line));
+  const code = exitCode ?? (Number.isFinite(statusCode) ? statusCode : undefined);
+  if (!detail) return code !== undefined ? `exit ${code}` : undefined;
+  const clean = oneLine(detail).replace(/^(?:npm|pnpm)\s+(?:ERR!|error)\s*/i, '');
+  return clamp(code !== undefined ? `exit ${code}: ${clean}` : clean, 110);
+}
+
+function activityOutcome(item: AgentActivityItem): TurnActivityAction['outcome'] {
+  if (isFailure(item)) return 'failure';
+  if (/(?:in[_ -]?progress|running|pending|started|working)/i.test(item.status ?? '')) {
+    return 'running';
+  }
+  return 'success';
+}
+
+function commandLabel(command: string): string | undefined {
+  const clean = oneLine(command)
+    .replace(/^(?:env\s+\S+=\S+\s+)*/, '')
+    .replace(/^(?:bash|sh|zsh)\s+-[lc]+\s+['"]?/, '')
+    .replace(/["']$/, '');
+  if (/\b(?:typecheck|tsc\b)/i.test(clean)) return 'type checks';
+  if (
+    /\b(?:vitest|jest|mocha|playwright|npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+test)\b/i.test(
+      clean,
+    )
+  )
+    return 'tests';
+  if (/\b(?:eslint|npm\s+(?:run\s+)?lint|pnpm\s+(?:run\s+)?lint)\b/i.test(clean)) return 'lint';
+  if (/\b(?:gradle|npm|pnpm|yarn|bun)\b.*\bbuild\b/i.test(clean)) return 'build';
+  if (/\bgit\s+(?:status|diff|log|show)\b/i.test(clean)) return 'review changes';
+  if (/\bgit\s+commit\b/i.test(clean)) return 'commit changes';
+  const executable = clean.match(/(?:^|&&\s*|;\s*)([\w@./-]+)(?:\s+([^;&|]+))?/);
+  if (!executable) return undefined;
+  const name = executable[1].split('/').at(-1) ?? executable[1];
+  const firstArg = executable[2]?.trim().split(/\s+/)[0];
+  return firstArg && !firstArg.startsWith('-') ? `${name} ${firstArg}` : name;
+}
+
+/** Concise historical-safe verb-object label derived only from existing fields. */
+export function ledgerStepLabel(item: AgentActivityItem): string {
+  const kind = item.toolKind?.toLowerCase();
+  const source = `${item.title} ${item.command ?? ''} ${item.input ?? ''}`;
+  const file = item.files?.[0]?.path.split('/').filter(Boolean).at(-1) ?? firstFileName(source);
+  const genericTitle = /^(?:tool|execute|command|shell|bash|result|output|action)$/i.test(
+    cleanTitle(item.title),
+  );
+  let label: string | undefined;
+  if (kind === 'read' || /^(?:read|open|cat)\b/i.test(item.title)) {
+    label = file ? `read ${file}` : 'read files';
+  } else if (kind === 'search' || /\b(?:search|grep|\brg\b|find)\b/i.test(item.title)) {
+    const terms = searchTerms(item.command ?? item.input ?? item.title);
+    label = terms ? `search ${terms}` : 'search code';
+  } else if (kind === 'fetch') {
+    label = 'fetch web';
+  } else if (['edit', 'write', 'move', 'delete'].includes(kind ?? '')) {
+    const verb = kind === 'write' ? 'write' : kind;
+    label = file ? `${verb} ${file}` : `${verb} files`;
+  }
+  const commandDerived = item.command ? commandLabel(item.command) : undefined;
+  if (
+    !label &&
+    commandDerived &&
+    /^(?:type checks|tests|lint|build|review changes|commit changes)$/.test(commandDerived)
+  ) {
+    label = commandDerived;
+  }
+  if (!label && !genericTitle) {
+    label = cleanTitle(item.title)
+      .replace(/^(?:ran|run|running|completed|reviewed|updated|prepared|committed)\s+/i, '')
+      .replace(/[-_]+/g, ' ')
+      .toLowerCase();
+  }
+  if (!label) label = commandDerived;
+  return clamp(redactPaths(label || 'tool step'), MAX_LEDGER_LABEL);
 }
 
 function failureTitle(item: AgentActivityItem): string {
@@ -237,7 +333,11 @@ function actionTitle(item: AgentActivityItem): string | undefined {
   }
   if (/\bgit\s+(?:status|diff|log|show)\b/i.test(source)) return 'Reviewed the current changes';
   if (/\bgit\s+(?:branch|add|commit|checkout)\b/i.test(source)) return 'Prepared the change';
-  if (/\b(?:npm|pnpm|yarn|bun|node|npx|python|cargo|make|gradle|docker|kubectl|curl|wget|chmod|rm|cp|mv)\b/i.test(source)) {
+  if (
+    /\b(?:npm|pnpm|yarn|bun|node|npx|python|cargo|make|gradle|docker|kubectl|curl|wget|chmod|rm|cp|mv)\b/i.test(
+      source,
+    )
+  ) {
     return 'Completed a project task';
   }
   if (/\b(bash|shell|execute|run)\b/i.test(source)) return 'Completed a project task';
@@ -468,85 +568,144 @@ function liveNoteText(total: number, verbs: ReadonlyMap<string, number>): string
  * never reach the wire.
  */
 export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActivity {
+  type OrderedStep = { kind: 'tool'; id: string } | { kind: 'projected'; step: TurnActivityAction };
+
   const narration: string[] = [];
   const tools = new Map<string, AgentActivityItem>();
+  const ordered: OrderedStep[] = [];
   const wireRollup = new Map<string, number>();
-  // Body cannot ship the folded calls themselves — that's the noise-control
-  // fold, and it stays — but it ships a compact receipt (target + a taste of
-  // the result) per call on the summary event. These become real review-sheet
-  // rows so the sheet has something to show beyond the bare tally.
-  const observations: TurnActivityAction[] = [];
   let plan: AgentActivityItem['plan'];
   let thoughtMs = 0;
   let anonymousIndex = 0;
   let observedIndex = 0;
+  let thoughtIndex = 0;
+  let pendingThought: TurnActivityAction | undefined;
 
   for (const item of items) {
     if (item.plan) plan = item.plan;
-    if (item.kind === 'summary') {
-      for (const [verb, count] of Object.entries(item.rollup ?? {})) {
-        wireRollup.set(verb, (wireRollup.get(verb) ?? 0) + count);
-      }
-      if (item.thoughtMs && item.thoughtMs > 0) thoughtMs += item.thoughtMs;
-      for (const call of item.observed ?? []) {
-        observations.push({
-          id: `observed-${observedIndex++}`,
-          kind: 'tool',
-          weight: 'observation',
-          title: observedCallTitle(call.verb, call.target),
-          ...(call.result ? { output: call.result } : {}),
-        });
-      }
-      continue;
-    }
     if (item.kind === 'output') {
       const prose = item.text?.trim();
       if (prose && narration.at(-1) !== prose) narration.push(prose);
       continue;
     }
+    if (item.kind === 'thinking') {
+      const previous = ordered.at(-1);
+      if (
+        previous?.kind === 'projected' &&
+        previous.step.kind === 'thought' &&
+        !previous.step.durationMs
+      ) {
+        previous.step.output = appendDistinctDetail(previous.step.output, item.text);
+        pendingThought = previous.step;
+      } else {
+        const thought: TurnActivityAction = {
+          id: `thought-${thoughtIndex++}`,
+          kind: 'thought',
+          weight: 'observation',
+          title: 'Thought',
+          label: 'thought',
+          outcome: 'success',
+          ...(item.text ? { output: item.text } : {}),
+        };
+        ordered.push({
+          kind: 'projected',
+          step: thought,
+        });
+        pendingThought = thought;
+      }
+      continue;
+    }
+    if (item.kind === 'summary') {
+      for (const [verb, count] of Object.entries(item.rollup ?? {})) {
+        wireRollup.set(verb, (wireRollup.get(verb) ?? 0) + count);
+      }
+      if (item.thoughtMs && item.thoughtMs > 0) {
+        thoughtMs += item.thoughtMs;
+        if (pendingThought) {
+          pendingThought.durationMs = (pendingThought.durationMs ?? 0) + item.thoughtMs;
+          pendingThought = undefined;
+        } else {
+          ordered.push({
+            kind: 'projected',
+            step: {
+              id: `thought-${thoughtIndex++}`,
+              kind: 'thought',
+              weight: 'observation',
+              title: 'Thought',
+              label: 'thought',
+              outcome: 'success',
+              durationMs: item.thoughtMs,
+            },
+          });
+        }
+      }
+      for (const call of item.observed ?? []) {
+        const title = observedCallTitle(call.verb, call.target);
+        ordered.push({
+          kind: 'projected',
+          step: {
+            id: `observed-${observedIndex++}`,
+            kind: 'tool',
+            weight: 'observation',
+            title,
+            label: clamp(title.toLowerCase(), MAX_LEDGER_LABEL),
+            outcome: 'success',
+            toolKind: call.verb,
+            ...(call.result ? { output: call.result } : {}),
+          },
+        });
+      }
+      // Older transcripts have only the rollup. Keep that historical work
+      // visible without fabricating targets or raw output that never existed.
+      if (!item.observed?.length) {
+        for (const [verb, count] of Object.entries(item.rollup ?? {})) {
+          const label = `${PRESENT_PARTICIPLE[verb] ?? verb} ${count}`;
+          ordered.push({
+            kind: 'projected',
+            step: {
+              id: `summary-${observedIndex++}`,
+              kind: 'tool',
+              weight: 'observation',
+              title: label,
+              label: clamp(label, MAX_LEDGER_LABEL),
+              outcome: 'success',
+              toolKind: verb,
+            },
+          });
+        }
+      }
+      continue;
+    }
     if (item.kind !== 'tool') continue;
-    const key = item.id ?? `anonymous-${anonymousIndex++}`;
-    tools.set(key, mergeToolActivity(tools.get(key), item));
+    const id = item.id ?? `anonymous-${anonymousIndex++}`;
+    if (!tools.has(id)) ordered.push({ kind: 'tool', id });
+    tools.set(id, mergeToolActivity(tools.get(id), item));
   }
 
+  const toolSteps = new Map<string, TurnActivityAction>();
   const actions: TurnActivityAction[] = [];
+  const observations: TurnActivityAction[] = [];
   const localVerbs = new Map<string, number>();
-
   for (const [id, tool] of tools) {
     const weight = actionWeight(tool);
     const title = actionTitle(tool) ?? cleanTitle(tool.title) ?? 'Tool';
     const reason = weight === 'failure' ? failureReason(tool) : undefined;
-    // Keep the tool call as the transcript row and its files as the next level
-    // of the drill-down: tool -> file list -> patch. Flattening files onto the
-    // slab made a multi-file edit indistinguishable from several unrelated
-    // calls and left no way to understand which command produced which diff.
-    if (tool.files?.length) {
-      actions.push({
-        id,
-        kind: 'tool',
-        weight,
-        title,
-        ...(reason ? { reason } : {}),
-        ...(tool.status ? { status: tool.status } : {}),
-        ...(tool.command ? { command: tool.command } : {}),
-        ...(tool.input ? { input: tool.input } : {}),
-        ...((tool.output ?? tool.text) ? { output: tool.output ?? tool.text } : {}),
-        files: tool.files.map((file) => ({ ...file })),
-      });
-      continue;
-    }
-
     const row: TurnActivityAction = {
       id,
       kind: 'tool',
       weight,
       title,
+      label: ledgerStepLabel(tool),
+      outcome: activityOutcome(tool),
       ...(reason ? { reason } : {}),
+      ...(tool.toolKind ? { toolKind: tool.toolKind } : {}),
       ...(tool.status ? { status: tool.status } : {}),
       ...(tool.command ? { command: tool.command } : {}),
       ...(tool.input ? { input: tool.input } : {}),
       ...((tool.output ?? tool.text) ? { output: tool.output ?? tool.text } : {}),
+      ...(tool.files?.length ? { files: tool.files.map((file) => ({ ...file })) } : {}),
     };
+    toolSteps.set(id, row);
     if (weight === 'observation') {
       observations.push(row);
       const verb = observationVerb(tool, title);
@@ -556,14 +715,23 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
     }
   }
 
-  // The note stands for both what arrived as its own (filtered-out) event and
-  // what only ever arrived as a wire tally, so the verbs merge before counting.
+  const steps = ordered.flatMap((entry) => {
+    if (entry.kind === 'projected') return [entry.step];
+    const step = toolSteps.get(entry.id);
+    return step ? [step] : [];
+  });
+  for (const step of steps) {
+    if (step.kind === 'tool' && step.weight === 'observation' && !toolSteps.has(step.id)) {
+      observations.push(step);
+    }
+  }
   const verbs = new Map(localVerbs);
   for (const [verb, count] of wireRollup) verbs.set(verb, (verbs.get(verb) ?? 0) + count);
   const total = [...verbs.values()].reduce((sum, count) => sum + count, 0);
 
   return {
     narration,
+    steps,
     actions,
     observations,
     ...(total ? { note: noteText(total, verbs), liveNote: liveNoteText(total, verbs) } : {}),

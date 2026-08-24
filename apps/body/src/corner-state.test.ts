@@ -39,6 +39,7 @@ function minimalInfo(cornerId: string) {
     session: { parentChannelId: 'room-1' },
     lastPolledAt: 0,
     archived: false,
+    cornerState: { state: 'open' },
   } as unknown as {
     subchannelId: string;
     worktreePath: string;
@@ -70,15 +71,8 @@ describe('corner state record signing', () => {
   });
 
   it('carries the reason tag when one is given', () => {
-    const event = signCornerStateRecord(
-      'room-1',
-      'corner-9',
-      owner,
-      'waiting-on-human',
-      'review',
-      1001,
-    );
-    expect(event.tags).toContainEqual(['state', 'waiting-on-human']);
+    const event = signCornerStateRecord('room-1', 'corner-9', owner, 'waiting', 'review', 1001);
+    expect(event.tags).toContainEqual(['state', 'waiting']);
     expect(event.tags).toContainEqual(['reason', 'review']);
   });
 });
@@ -106,7 +100,7 @@ describe('CornerStatePublisher', () => {
     await publisher.publish({
       parentRoomId: 'r',
       cornerId: 'c',
-      state: 'waiting-on-human',
+      state: 'waiting',
       reason: 'review',
     });
     const stamps = published.map((event) => event.created_at);
@@ -139,14 +133,14 @@ describe('CornerStatePublisher', () => {
     const newest = publisher.publish({
       parentRoomId: 'r',
       cornerId: 'c',
-      state: 'waiting-on-human',
+      state: 'waiting',
       reason: 'review',
     });
     release();
     await Promise.all([first, newest]);
     expect(mocks.publishEvent).toHaveBeenCalledTimes(2);
     const event = mocks.publishEvent.mock.calls[1][0] as NostrEvent;
-    expect(event.tags).toContainEqual(['state', 'waiting-on-human']);
+    expect(event.tags).toContainEqual(['state', 'waiting']);
     expect(event.tags).toContainEqual(['reason', 'review']);
     publisher.stop();
   });
@@ -248,8 +242,8 @@ describe('Body corner state funnel', () => {
 
   it('a reason change is a transition even at the same state word', () => {
     const info = minimalInfo('edge-2');
-    funnel().setCornerState(info, 'waiting-on-human', 'review');
-    funnel().setCornerState(info, 'waiting-on-human', 'question');
+    funnel().setCornerState(info, 'waiting', 'review');
+    funnel().setCornerState(info, 'waiting', 'question');
     expect(publishSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -269,6 +263,27 @@ describe('Body corner state funnel', () => {
     expect(publishSpy).not.toHaveBeenCalled();
   });
 
+  it('does not let a corner turn start until canonical working is durable', async () => {
+    let release!: () => void;
+    publishSpy.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)));
+    const info = minimalInfo('heartbeat-gate');
+    const start = (
+      body as unknown as { noteCornerTurnStart: (value: never) => Promise<void> }
+    ).noteCornerTurnStart(info as never);
+    let settled = false;
+    void start.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(publishSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ cornerId: 'heartbeat-gate', state: 'working' }),
+    );
+    release();
+    await start;
+    expect(settled).toBe(true);
+  });
+
   describe('the failure gate (owner sharpening)', () => {
     it('failure WITH an actionable review target waits on a human', () => {
       const info = minimalInfo('fail-1');
@@ -278,7 +293,7 @@ describe('Body corner state funnel', () => {
       expect(publishSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           cornerId: 'fail-1',
-          state: 'waiting-on-human',
+          state: 'waiting',
           reason: 'failure',
         }),
       );
@@ -301,14 +316,12 @@ describe('Body corner state funnel', () => {
       expect(publishSpy).toHaveBeenCalledWith(
         expect.objectContaining({ cornerId: 'fail-2', state: 'idle' }),
       );
-      expect(publishSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ state: 'waiting-on-human' }),
-      );
+      expect(publishSpy).not.toHaveBeenCalledWith(expect.objectContaining({ state: 'waiting' }));
     });
   });
 
   describe('turn-tail emissions', () => {
-    it('a standing ask publishes waiting-on-human/question', async () => {
+    it('a standing ask publishes waiting/question', async () => {
       const info = minimalInfo('tail-1');
       const queryEvents = vi.fn().mockResolvedValue([
         {
@@ -322,7 +335,7 @@ describe('Body corner state funnel', () => {
       stubRelay(queryEvents);
       await tail().evaluateCornerTailState(info as never, undefined);
       expect(queryEvents).toHaveBeenCalled();
-      expect(info.cornerState).toEqual({ state: 'waiting-on-human', reason: 'question' });
+      expect(info.cornerState).toEqual({ state: 'waiting', reason: 'question' });
     });
 
     it('quiet narration publishes plain idle', async () => {
@@ -360,7 +373,7 @@ describe('Body corner state funnel', () => {
         },
       ]);
       await pending;
-      expect(info.cornerState).toBeUndefined();
+      expect(info.cornerState).toEqual({ state: 'open' });
     });
 
     it('a standing review target short-circuits the tail word', async () => {
@@ -370,14 +383,14 @@ describe('Body corner state funnel', () => {
       stubRelay(queryEvents);
       await tail().evaluateCornerTailState(info as never, undefined);
       expect(queryEvents).not.toHaveBeenCalled();
-      expect(info.cornerState).toBeUndefined();
+      expect(info.cornerState).toEqual({ state: 'open' });
     });
 
     it('an unreadable corner channel keeps the last word standing', async () => {
       const info = minimalInfo('tail-5');
       stubRelay(vi.fn().mockRejectedValue(new Error('relay down')));
       await tail().evaluateCornerTailState(info as never, undefined);
-      expect(info.cornerState).toBeUndefined();
+      expect(info.cornerState).toEqual({ state: 'open' });
     });
   });
 
@@ -387,11 +400,11 @@ describe('Body corner state funnel', () => {
       info.mergeTarget = { repo: 'r', branch: 'refs/heads/main', tip: 'c'.repeat(40) };
       stubRelay(vi.fn().mockResolvedValue([]));
       await tail().seedCornerStateFromRecord(info as never);
-      expect(info.cornerState).toEqual({ state: 'waiting-on-human', reason: 'review' });
+      expect(info.cornerState).toEqual({ state: 'waiting', reason: 'review' });
       expect(publishSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           cornerId: 'seed-1',
-          state: 'waiting-on-human',
+          state: 'waiting',
           reason: 'review',
         }),
       );
@@ -414,11 +427,11 @@ describe('Body corner state funnel', () => {
         ]),
       );
       await tail().seedCornerStateFromRecord(parked as never);
-      expect(parked.cornerState).toEqual({ state: 'waiting-on-human', reason: 'question' });
+      expect(parked.cornerState).toEqual({ state: 'waiting', reason: 'question' });
       expect(publishSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           cornerId: 'seed-2',
-          state: 'waiting-on-human',
+          state: 'waiting',
           reason: 'question',
         }),
       );
@@ -427,6 +440,7 @@ describe('Body corner state funnel', () => {
     it('an unreadable record read degrades to a daemon-owned working default', async () => {
       stubRelay(vi.fn().mockRejectedValue(new Error('relay down')));
       const info = minimalInfo('seed-3');
+      info.cornerState = undefined;
       await tail().seedCornerStateFromRecord(info as never);
       expect(info.cornerState).toEqual({ state: 'working' });
       expect(publishSpy).toHaveBeenCalledWith(
@@ -440,7 +454,7 @@ describe('Body corner state funnel', () => {
       const queryEvents = vi.fn();
       stubRelay(queryEvents);
       const info = minimalInfo('att-1');
-      info.cornerState = { state: 'waiting-on-human', reason: 'failure' };
+      info.cornerState = { state: 'waiting', reason: 'failure' };
       const publishedCard = vi.fn().mockResolvedValue(undefined);
       await (
         body as unknown as {
@@ -463,25 +477,169 @@ describe('Body corner state funnel', () => {
       expect(publishedCard).toHaveBeenCalled();
     });
   });
+
+  describe('existence reconciliation', () => {
+    function trackedCorner(cornerId: string) {
+      const sessionCancel = vi.fn();
+      const stop = vi.fn().mockResolvedValue(undefined);
+      const info = {
+        ...minimalInfo(cornerId),
+        cornerState: { state: 'working' },
+        session: {
+          parentChannelId: 'room-1',
+          sessionId: 'session-1',
+          archived: false,
+          client: { sessionCancel, stop },
+          unsubscribeActivity: vi.fn(),
+          unsubscribeCommands: vi.fn(),
+        },
+      };
+      const internals = body as unknown as {
+        subchannels: Map<string, unknown>;
+        sessions: Map<string, unknown>;
+        readChannelMetadataForCorner: (channelId: string) => Promise<unknown>;
+        retractCornerActivityRecords: (parentId: string, cornerId: string) => Promise<void>;
+        removeWorktree: (...args: unknown[]) => Promise<void>;
+        reconcileCornerExistence: (parentId: string) => Promise<void>;
+      };
+      internals.subchannels.set(cornerId, info);
+      internals.sessions.set(cornerId, info.session);
+      return { info, internals, sessionCancel, stop };
+    }
+
+    it('reproduces the incident: one reconcile closes, cancels, retracts, and reaps a missing corner', async () => {
+      const { internals, sessionCancel, stop } = trackedCorner('corner-06ac8027');
+      vi.spyOn(internals, 'readChannelMetadataForCorner').mockImplementation(async (id) =>
+        id === 'room-1' ? { archived: false } : null,
+      );
+      const retract = vi
+        .spyOn(internals, 'retractCornerActivityRecords')
+        .mockResolvedValue(undefined);
+      const removeWorktree = vi.spyOn(internals, 'removeWorktree').mockResolvedValue(undefined);
+
+      await internals.reconcileCornerExistence('room-1');
+
+      expect(sessionCancel).toHaveBeenCalledWith('session-1');
+      expect(stop).toHaveBeenCalledOnce();
+      expect(publishSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ cornerId: 'corner-06ac8027', state: 'closed' }),
+      );
+      expect(retract).toHaveBeenCalledWith('room-1', 'corner-06ac8027');
+      expect(removeWorktree).toHaveBeenCalledOnce();
+      expect(internals.sessions.has('corner-06ac8027')).toBe(false);
+      expect(internals.subchannels.has('corner-06ac8027')).toBe(false);
+    });
+
+    it('keeps a session only while both child and parent are live', async () => {
+      const { internals, sessionCancel, stop } = trackedCorner('live-corner');
+      vi.spyOn(internals, 'readChannelMetadataForCorner').mockResolvedValue({ archived: false });
+      await internals.reconcileCornerExistence('room-1');
+      expect(sessionCancel).not.toHaveBeenCalled();
+      expect(stop).not.toHaveBeenCalled();
+      expect(internals.sessions.has('live-corner')).toBe(true);
+    });
+
+    it('startup closes terminal records and retracts their leftover replaceables', async () => {
+      const queryEvents = vi.fn().mockResolvedValue([
+        {
+          id: 'terminal-state',
+          tags: [
+            ['d', 'buzz-corner-state:terminal-corner'],
+            ['h', 'room-1'],
+            ['state', 'concluded'],
+            ['at', '100'],
+          ],
+        },
+      ]);
+      stubRelay(queryEvents);
+      const internals = body as unknown as {
+        retractCornerActivityRecords: (parentId: string, cornerId: string) => Promise<void>;
+        sweepTerminalCornerRecords: (
+          parentId: string,
+          client: { getChannelMetadata: (id: string) => Promise<{ archived: boolean } | null> },
+        ) => Promise<Set<string>>;
+      };
+      const retract = vi
+        .spyOn(internals, 'retractCornerActivityRecords')
+        .mockResolvedValue(undefined);
+      const terminal = await internals.sweepTerminalCornerRecords('room-1', {
+        getChannelMetadata: vi
+          .fn()
+          .mockImplementation(async (id: string) =>
+            id === 'room-1' ? { archived: false } : { archived: true },
+          ),
+      });
+
+      expect(terminal).toEqual(new Set(['terminal-corner']));
+      expect(publishSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ cornerId: 'terminal-corner', state: 'closed' }),
+      );
+      expect(retract).toHaveBeenCalledWith('room-1', 'terminal-corner');
+    });
+
+    it('startup reaps the exact no-session ghost named only by a parent corner-open card', async () => {
+      const queryEvents = vi.fn().mockImplementation(async (filters: Array<{ kinds?: number[] }>) =>
+        filters[0]?.kinds?.[0] === 9
+          ? [
+              {
+                id: 'parent-corner-open',
+                tags: [
+                  ['h', 'room-1'],
+                  ['t', 'body-control'],
+                  ['subchannel', 'corner-06ac8027'],
+                  ['status', 'open'],
+                ],
+              },
+            ]
+          : [],
+      );
+      stubRelay(queryEvents);
+      const internals = body as unknown as {
+        retractCornerActivityRecords: (parentId: string, cornerId: string) => Promise<void>;
+        sweepTerminalCornerRecords: (
+          parentId: string,
+          client: { getChannelMetadata: (id: string) => Promise<{ archived: boolean } | null> },
+        ) => Promise<Set<string>>;
+      };
+      const retract = vi
+        .spyOn(internals, 'retractCornerActivityRecords')
+        .mockResolvedValue(undefined);
+
+      const terminal = await internals.sweepTerminalCornerRecords('room-1', {
+        getChannelMetadata: vi
+          .fn()
+          .mockImplementation(async (id: string) =>
+            id === 'room-1' ? { archived: false } : null,
+          ),
+      });
+
+      expect(terminal).toEqual(new Set(['corner-06ac8027']));
+      expect(publishSpy).toHaveBeenCalledWith({
+        parentRoomId: 'room-1',
+        cornerId: 'corner-06ac8027',
+        state: 'closed',
+      });
+      expect(retract).toHaveBeenCalledWith('room-1', 'corner-06ac8027');
+    });
+  });
 });
 
 describe('emission-point wiring (source assertions)', () => {
   const source = readFileSync(join(import.meta.dirname, 'body.ts'), 'utf8');
 
-  it('openSubchannel publishes working', () => {
-    expect(source).toMatch(
-      /this\.subchannels\.set\(subchannelId, info\);\s*\n\s*\/\/ State machine[\s\S]{0,200}setCornerState\(info, 'working'\)/,
-    );
+  it('openSubchannel durably publishes open before working', () => {
+    expect(source).toMatch(/await this\.transitionCornerState\(info, 'open'\)/);
+    expect(source).toMatch(/await this\.transitionCornerState\(info, 'working'\)/);
   });
 
   it('turn start publishes working through noteCornerTurnStart', () => {
     expect(source).toMatch(
-      /private noteCornerTurnStart\(info: SubchannelInfo\): void \{[\s\S]{0,200}setCornerState\(info, 'working'\)/,
+      /private async noteCornerTurnStart\(info: SubchannelInfo\): Promise<void> \{[\s\S]{0,300}await this\.transitionCornerState\(info, 'working'\)/,
     );
   });
 
-  it('publishMergeReady publishes waiting-on-human/review on success', () => {
-    expect(source).toMatch(/setCornerState\(info, 'waiting-on-human', 'review'\)/);
+  it('publishMergeReady publishes waiting/review on success', () => {
+    expect(source).toMatch(/await this\.transitionCornerState\(info, 'waiting', 'review'\)/);
   });
 
   it('every failure site routes through the gated noteCornerFailure funnel', () => {
@@ -489,13 +647,12 @@ describe('emission-point wiring (source assertions)', () => {
     expect(gateSites.length).toBeGreaterThanOrEqual(4);
     // The only direct failure transition is inside the gate itself; emission
     // sites call `noteCornerFailure` rather than bypassing it.
-    expect(source.match(/setCornerState\(info, 'waiting-on-human', 'failure'\)/g)).toHaveLength(1);
+    expect(source.match(/setCornerState\(info, 'waiting', 'failure'\)/g)).toHaveLength(1);
   });
 
-  it('land and archive fold the three-state record to idle while terminal facts stay separate', () => {
-    expect(source).toContain("setCornerState(info, 'idle')");
-    expect(source).toMatch(/cornerId: subchannelId,\s*state: 'idle'/);
-    expect(source).not.toContain("state: 'finished'");
+  it('land concludes and archive closes the canonical machine', () => {
+    expect(source).toContain("transitionCornerState(info, 'concluded')");
+    expect(source).toContain("transitionCornerState(info, 'closed')");
   });
 
   it('the turn tail decides question vs idle via the promoted ask detection', () => {
@@ -505,13 +662,14 @@ describe('emission-point wiring (source assertions)', () => {
 
   it('restart restore seeds the baseline from the record', () => {
     expect(source).toContain('await this.seedCornerStateFromRecord(info, events);');
+    expect(source).toContain('if (terminalCornerIds.has(subchannelId)) continue;');
   });
 
   it('attention suppression is the in-memory compare only — no history re-read remains', () => {
     const fnStart = source.indexOf('private publishAttentionTransition');
     const fnEnd = source.indexOf('private writeParentCornerStatus');
     const fn = source.slice(fnStart, fnEnd);
-    expect(fn).toContain("info.cornerState?.state === 'waiting-on-human'");
+    expect(fn).toContain("info.cornerState?.state === 'waiting'");
     expect(fn).not.toContain('queryEvents');
     expect(fn).not.toContain('standingCornerStatusFromEvents');
     expect(source).not.toContain('standingCornerStatusFromEvents');

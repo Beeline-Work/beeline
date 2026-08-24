@@ -61,14 +61,15 @@ describe('selectRoomContext', () => {
 });
 
 describe('cornerObjectiveLine', () => {
-  it('prefers the plan objective, then the opening task, then the corner name', () => {
+  it('pins the opening task ahead of later plan objectives, then falls back to the corner name', () => {
     expect(
       cornerObjectiveLine({
         planObjective: 'plan says',
         task: 'task says',
         cornerName: 'name-says',
       }),
-    ).toBe('plan says');
+    ).toBe('task says');
+    expect(cornerObjectiveLine({ planObjective: 'plan says', cornerName: 'name-says' })).toBe('plan says');
     expect(cornerObjectiveLine({ task: 'task says', cornerName: 'name-says' })).toBe('task says');
     expect(cornerObjectiveLine({ cornerName: 'add-color-to-code-blocks' })).toBe(
       'add color to code blocks',

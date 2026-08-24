@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import { Body, type SubchannelInfo } from './body.js';
+import { relayQueryResponse } from './relay-test-helper.js';
 import { postAgentMessage } from './activity.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, type Identity, type NostrEvent } from '@beeline/nostr';
@@ -139,7 +140,7 @@ function stubRelayHttp(
     'fetch',
     vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       if (String(input).endsWith('/query')) {
-        return new Response(JSON.stringify(creates), { status: 200 });
+        return relayQueryResponse([...creates, ...published], input, init)!;
       }
       published.push(JSON.parse(String(init?.body)) as NostrEvent);
       if (refusePublishesWith) {
@@ -191,7 +192,12 @@ async function retireSession(fixture: Fixture): Promise<void> {
     channelId: string,
     state: 'live' | 'suspended' | 'waiting-for-slot',
   ) => Promise<void>;
-  await onStateChange.call(fixture.body, fixture.info.session, fixture.info.subchannelId, 'suspended');
+  await onStateChange.call(
+    fixture.body,
+    fixture.info.session,
+    fixture.info.subchannelId,
+    'suspended',
+  );
 }
 
 describe('a landed corner whose agent session is still live', () => {
@@ -283,10 +289,10 @@ describe('a landed corner whose agent session is still live', () => {
 describe('a session-state publish refused by an archived channel', () => {
   it('is an expected terminal no-op — one plain log line, never a thrown error', async () => {
     const fixture = corner();
-    stubRelayHttp(
-      [createCornerCreateEvent(fixture.body.agent, 'corner-channel', 'room-channel')],
-      { status: 400, body: '{"error":"invalid: channel is archived"}' },
-    );
+    stubRelayHttp([createCornerCreateEvent(fixture.body.agent, 'corner-channel', 'room-channel')], {
+      status: 400,
+      body: '{"error":"invalid: channel is archived"}',
+    });
 
     // Archive first (publishes are refused here too, so drive the state the
     // real close leaves behind), then fire the suspended-state publish that
@@ -314,10 +320,10 @@ describe('a session-state publish refused by an archived channel', () => {
 
   it('still reports non-archive refusals as errors', async () => {
     const fixture = corner();
-    stubRelayHttp(
-      [createCornerCreateEvent(fixture.body.agent, 'corner-channel', 'room-channel')],
-      { status: 500, body: 'relay unavailable' },
-    );
+    stubRelayHttp([createCornerCreateEvent(fixture.body.agent, 'corner-channel', 'room-channel')], {
+      status: 500,
+      body: 'relay unavailable',
+    });
 
     fixture.info.session.processState = 'live';
     fixture.info.archived = true;
@@ -345,7 +351,11 @@ function tagsIncludeH(event: NostrEvent, channelId: string): boolean {
 /** The immutable kind:9007 create event that proves a channel is a corner. */
 const CREATE_KIND = 9007;
 
-function createCornerCreateEvent(agent: Identity, subchannelId: string, parentId: string): NostrEvent {
+function createCornerCreateEvent(
+  agent: Identity,
+  subchannelId: string,
+  parentId: string,
+): NostrEvent {
   return signEvent(
     {
       pubkey: agent.publicKey,

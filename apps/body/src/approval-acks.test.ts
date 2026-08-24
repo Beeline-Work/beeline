@@ -23,6 +23,7 @@ import { buildApproval as gateBuildApproval, newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
 import { Body } from './body.js';
 import { APPROVAL_ACK_TAG } from './body.js';
+import { filterRelayEvents } from './relay-test-helper.js';
 
 const KIND_CHANNEL_ADMINS = 39001;
 
@@ -129,6 +130,7 @@ function buildApproval(
 /** Relay stub answering approval scans, admin projections (reviewer is a human
  *  admin), and agent-registry lookups (the reviewer is NOT an agent). */
 function stubAgentRelay(approvals: NostrEvent[], adminPubkeys: string[]) {
+  const published: NostrEvent[] = [];
   const adminProjection = signEvent(
     {
       pubkey: adminPubkeys[0] ?? 'a'.repeat(64),
@@ -148,8 +150,12 @@ function stubAgentRelay(approvals: NostrEvent[], adminPubkeys: string[]) {
         return approvals;
       }
       if (kinds.includes(KIND_CHANNEL_ADMINS)) return [adminProjection];
+      if (kinds.includes(30078)) return filterRelayEvents(published, filters);
       // Agent-identity registry lookup for the reviewer: empty → human.
       return [];
+    },
+    publishEvent: async (event: NostrEvent) => {
+      published.push(event);
     },
   };
 }

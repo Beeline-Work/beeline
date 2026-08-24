@@ -13,8 +13,21 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Body } from './body.js';
+import { relayQueryResponse } from './relay-test-helper.js';
 import { newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
+
+function stubRelay(published: NostrEvent[]): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const queryResponse = relayQueryResponse(published, input, init);
+      if (queryResponse) return queryResponse;
+      published.push(JSON.parse(String(init?.body)) as NostrEvent);
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    }),
+  );
+}
 
 describe('a corner that lands says what it delivered, in the parent Room', () => {
   function gitCommand(cwd: string, args: string[]): string {
@@ -126,13 +139,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     const agent = newIdentity('land-summary-agent');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
@@ -172,13 +179,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     const agent = newIdentity('land-summary-once');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
@@ -202,13 +203,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     const agent = newIdentity('land-summary-fallback');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
@@ -250,13 +245,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     const agent = newIdentity('land-summary-failed');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
@@ -397,13 +386,7 @@ describe('every land path recaps the corner exactly once', () => {
 
   function capturePublishes(): NostrEvent[] {
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     return published;
   }
 

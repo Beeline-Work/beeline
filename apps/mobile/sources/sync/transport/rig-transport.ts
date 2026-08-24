@@ -186,8 +186,9 @@ export interface RigTransport {
   changedFileRead(
     sessionId: SessionId,
     path: string,
+    reviewTip?: string,
   ): Promise<{ content: string; isBinary?: boolean } | null>;
-  workspaceFilesRead(sessionId: SessionId): Promise<ChangedFile[]>;
+  workspaceFilesRead(sessionId: SessionId, reviewTip?: string): Promise<ChangedFile[]>;
   changedFilesRevert(sessionId: SessionId, paths: string[]): Promise<void>;
 
   // --- Merge (parent-owner approve) ---

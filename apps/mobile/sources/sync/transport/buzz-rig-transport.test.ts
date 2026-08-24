@@ -16,6 +16,8 @@ import {
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_MANIFEST_TAG,
+  CHANGE_REVIEW_COMPLETE_TAG,
+  CHANGE_REVIEW_GENERATION_TAG,
   KIND_CREATE_GROUP,
   TAG_COMMUNITY,
   TAG_PARENT,
@@ -1003,8 +1005,11 @@ describe('Buzz change review metadata', () => {
           ),
         ];
       }
+      const markers = new Set(
+        filters.flatMap((filter) => (filter['#t'] as string[] | undefined) ?? []),
+      );
       return events.filter((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === marker),
+        event.tags.some((tag) => tag[0] === 't' && markers.has(tag[1]!)),
       );
     });
     const client = {
@@ -1056,6 +1061,100 @@ describe('Buzz change review metadata', () => {
       '#t': [CHANGE_REVIEW_MANIFEST_TAG],
       '#r': [tip],
     });
+  });
+
+  it('reports a missing manifest when only file chunks have landed', async () => {
+    const patch = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_FILE_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['f', path],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '1'],
+      ],
+      '+partial',
+      'partial-patch',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const { transport } = transportWith([patch]);
+
+    await expect(transport.workspaceFilesRead(channel)).rejects.toThrow(
+      'Missing review manifest for cccccccccccc',
+    );
+  });
+
+  it('rejects a transactional manifest until its completion marker lands', async () => {
+    const manifest = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_MANIFEST_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['base', base],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '1'],
+      ],
+      JSON.stringify({
+        version: 1,
+        base,
+        tip,
+        files: [{ path, status: 'modified', linesAdded: 3, linesRemoved: 1 }],
+      }),
+      'transactional-manifest',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const { transport } = transportWith([manifest]);
+
+    await expect(transport.workspaceFilesRead(channel)).rejects.toThrow(
+      'Missing review completion marker for cccccccccccc',
+    );
+  });
+
+  it('renders a cold transactional generation after its completion marker lands', async () => {
+    const patchId = 'f'.repeat(40);
+    const manifest = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_MANIFEST_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['base', base],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '1'],
+      ],
+      JSON.stringify({
+        version: 1,
+        base,
+        tip,
+        files: [{ path, status: 'modified', linesAdded: 3, linesRemoved: 1 }],
+      }),
+      'complete-manifest',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const complete = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_COMPLETE_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['base', base],
+        ['tip', tip],
+        ['patch-id', patchId],
+      ],
+      JSON.stringify({
+        version: 1,
+        base,
+        tip,
+        patchId,
+        summary: 'Update example',
+        manifestChunks: 1,
+        fileCount: 1,
+      }),
+      'complete-marker',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const { transport } = transportWith([manifest, complete]);
+
+    await expect(transport.workspaceFilesRead(channel)).resolves.toEqual([
+      { path, status: 'modified', linesAdded: 3, linesRemoved: 1 },
+    ]);
   });
 
   it('queries body controls directly so activity bursts cannot hide merge-ready', async () => {

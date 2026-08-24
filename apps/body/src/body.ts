@@ -212,8 +212,8 @@ import {
 } from './attachments.js';
 import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 import {
-  ensureCheckoutToolchainProvisioned,
-  seedCornerNodeModules,
+  cornerToolchainNotice,
+  ensureCornerToolchainProvisioned,
 } from './corner-toolchain.js';
 import {
   authorizedExternalMcpServers,
@@ -848,6 +848,10 @@ export interface SubchannelInfo {
    * re-attempted on the next maintenance tick for the same tip.
    */
   observedReviewTip?: string;
+  /** Bounded failures spent by the commit watch for one exact tip. A new tip
+   *  starts fresh; after the budget is spent the client gets an honest
+   *  merge-not-ready state instead of an infinite retry loop. */
+  commitWatchFailure?: { tip: string; attempts: number };
   /**
    * Quiet-episode state for the conclude watch: the record that a turn ended
    * without any of the four terminal states, how many bounded conclude
@@ -2372,16 +2376,9 @@ export class Body {
         return { command, args: [...(args ?? [])] };
       }
       spec.gitCommonDir = gitCommonDir;
-      // Re-seed the worktree's dependency links at spawn time: provisioning of
-      // the canonical checkout may have finished since the worktree was
-      // created, and this is the last cheap point before the agent runs its
-      // first command. A bare common dir (relay-origin repo) has no checkout to
-      // seed from and is skipped by the helper's existence checks.
-      const commonDir = resolve(input.worktreePath ?? input.cwd, gitCommonDir);
-      const sourceCheckout = basename(commonDir) === '.git' ? resolve(commonDir, '..') : undefined;
-      if (input.worktreePath && sourceCheckout) {
-        this.seedWorktreeToolchain(input.worktreePath, sourceCheckout);
-      }
+      // Re-check at spawn time so restored corners and worktrees created by an
+      // older daemon are repaired before the agent runs its first command.
+      if (input.worktreePath) this.provisionWorktreeToolchain(input.worktreePath);
       // Same bind-try-vs-mkdir reasoning as the harness roots above: the merge
       // gate cannot create its own state root on a read-only $HOME, so create
       // it here, in the daemon, before the child is confined. Corner-only: a
@@ -2652,10 +2649,14 @@ export class Body {
         const gitState = resumingCorner && input.resumeTargetRef ? readCornerGitResumeState(input.cwd, input.resumeTargetRef) : undefined;
         const reprime = measureSessionReprime(transcript, undefined, resumingCorner ? { objective: input.resumeObjective, plan: session.resumePlan, changedFiles: gitState?.changedFiles, commits: gitState?.commits } : undefined);
         const restored = reprime.block;
+        const toolchainNotice = input.worktreePath
+          ? cornerToolchainNotice(input.worktreePath)
+          : undefined;
         const systemPrompt = [
           appendPersonaSessionInstructions(input.systemPrompt, profile, nativePersonaPrepared),
           agentPrivateStateInstructions(input.agentPrivateState),
           agentMemoryInstructions(input.agentMemory),
+          ...(toolchainNotice ? [`Toolchain notice: ${toolchainNotice}`] : []),
           '',
           `To share an image or file with the Room, include [[${AGENT_ATTACHMENT_DIRECTIVE}:path]] in your final response.`,
           'The host removes that directive, uploads the file, and sends a link-only attachment card.',
@@ -6448,8 +6449,17 @@ export class Body {
     // Publish review data before advertising merge readiness. The manifest is
     // small and eager; patches are separate, bounded events fetched per file.
     for (const [fileIndex, file] of files.entries()) {
-      const patch = readChangeReviewPatch(info.worktreePath, base, tip, file);
-      const chunks = chunkChangeReviewPatch(patch);
+      const patch = await readChangeReviewPatch(info.worktreePath, base, tip, file);
+      const reviewFile = file as typeof file & {
+        patchBytes?: number;
+        renderUnavailableReason?: 'too-large';
+      };
+      reviewFile.patchBytes = patch.patchBytes;
+      if (patch.renderUnavailableReason) {
+        reviewFile.renderUnavailableReason = patch.renderUnavailableReason;
+        continue;
+      }
+      const chunks = chunkChangeReviewPatch(patch.content);
       for (const [index, content] of chunks.entries()) {
         await postChangeReviewMetadata(
           info.subchannelId,
@@ -8070,15 +8080,62 @@ export class Body {
       try {
         await this.observeCornerCommits(info);
       } catch (error) {
-        // One corner's failed observation must not starve the corners behind
-        // it; the tip stays unmarked in `observedReviewTip`, so the next tick
-        // retries the same evaluation.
-        console.error(
-          `[body] corner ${info.subchannelId} commit watch failed; will retry:`,
-          error,
-        );
+        await this.noteCommitWatchFailure(info, error);
       }
     }
+  }
+
+  private async noteCommitWatchFailure(info: SubchannelInfo, error: unknown): Promise<void> {
+    const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+    const previous = info.commitWatchFailure;
+    const attempts = previous?.tip === tip ? previous.attempts + 1 : 1;
+    info.commitWatchFailure = { tip, attempts };
+    if (attempts < 3) {
+      console.error(
+        `[body] corner ${info.subchannelId} commit watch failed (attempt ${attempts}/3); will retry:`,
+        error,
+      );
+      return;
+    }
+
+    // A failed payload may have published some replaceable per-file events,
+    // but never its completion manifest (published last). Reusing the same
+    // deterministic coordinates makes a later explicit turn safe to retry;
+    // the watch itself settles this tip so it cannot spin forever.
+    if (/^[0-9a-f]{40}$/.test(tip)) info.observedReviewTip = tip;
+    info.mergeTarget = undefined;
+    const detail = summarizeGitFailure(error instanceof Error ? error.message : String(error));
+    info.lastMergeNotReadyReason = `Review metadata failed after 3 attempts: ${detail}`;
+    console.error(
+      `[body] corner ${info.subchannelId} commit watch failed 3 times; automatic retries stopped for ${tip.slice(0, 12)}:`,
+      error,
+    );
+    await postControlMessage(
+      info.subchannelId,
+      this.agentIdentity,
+      `Couldn't prepare this change for review after 3 attempts: ${detail}. Automatic retries stopped for this commit; the committed work is safe.`,
+      [
+        ['t', 'merge-not-ready'],
+        ['status', 'needs-attention'],
+        ['tip', tip],
+      ],
+    ).catch((publishError) =>
+      console.error(
+        `[body] corner ${info.subchannelId} commit watch failure notice also failed:`,
+        publishError,
+      ),
+    );
+    await this.postParentCornerStatus(
+      info,
+      'needs-attention',
+      'Review data failed to publish. Open corner for details.',
+      [['tip', tip]],
+    ).catch((publishError) =>
+      console.error(
+        `[body] corner ${info.subchannelId} parent review-failure status also failed:`,
+        publishError,
+      ),
+    );
   }
 
   private async observeCornerCommits(info: SubchannelInfo): Promise<void> {
@@ -8128,6 +8185,7 @@ export class Body {
     // once per tick). A throw above skips this line, so transient failures
     // retry next tick.
     info.observedReviewTip = tip;
+    info.commitWatchFailure = undefined;
     console.log(
       `[body] corner ${info.subchannelId} commit watch: ${
         ready ? 'published review' : 'evaluated, not ready'
@@ -9660,25 +9718,12 @@ export class Body {
    * committed. Never throws; a failure just leaves `.codegraph/` visible to
    * `git status`, which is a hygiene issue, not a functional one.
    */
-  /**
-   * Give a fresh corner worktree the repository's dependency tree (see
-   * {@link seedCornerNodeModules}) and kick off a one-time install in the
-   * canonical checkout if it has none yet. Both best-effort and cheap; called
-   * at worktree creation AND at edit-session spawn, because provisioning may
-   * finish between a corner opening and its first turn.
-   */
-  private seedWorktreeToolchain(worktreePath: string, sourceCheckout?: string): void {
-    if (!sourceCheckout || !isAbsolute(sourceCheckout)) return;
+  /** Install a corner-local dependency tree before its edit session starts. */
+  private provisionWorktreeToolchain(worktreePath: string): void {
     try {
-      const seeded = seedCornerNodeModules({ worktreePath, sourceCheckout });
-      if (seeded.linked.length) {
-        console.log(
-          `[body] seeded corner toolchain for ${worktreePath}: ${seeded.linked.join(', ')}`,
-        );
-      }
-      ensureCheckoutToolchainProvisioned(sourceCheckout);
+      ensureCornerToolchainProvisioned(worktreePath);
     } catch (error) {
-      console.warn(`[body] corner toolchain seeding failed for ${worktreePath}:`, error);
+      console.warn(`[body] corner toolchain provisioning failed for ${worktreePath}:`, error);
     }
   }
 
@@ -9876,7 +9921,7 @@ export class Body {
     git(worktreePath, ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME]);
     git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
     this.excludeCodegraphFromWorktreeStatus(worktreePath);
-    this.seedWorktreeToolchain(worktreePath, repoRoot);
+    this.provisionWorktreeToolchain(worktreePath);
     return true;
   }
 
@@ -9919,7 +9964,7 @@ export class Body {
       git(worktreePath, ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME]);
       git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
       this.excludeCodegraphFromWorktreeStatus(worktreePath);
-      this.seedWorktreeToolchain(worktreePath, boundRepo.localPath);
+      this.provisionWorktreeToolchain(worktreePath);
       return;
     }
 
@@ -9988,6 +10033,7 @@ export class Body {
       encoding: 'utf8',
     });
     this.excludeCodegraphFromWorktreeStatus(worktreePath);
+    this.provisionWorktreeToolchain(worktreePath);
   }
 
   /** Remove a git worktree and clean up. */

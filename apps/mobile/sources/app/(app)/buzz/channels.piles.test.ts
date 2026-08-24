@@ -98,6 +98,19 @@ vi.mock('@/components/buzz/RepoPicker', async () => {
   const ReactModule = await import('react');
   return { RepoPicker: (props: any) => ReactModule.createElement('RepoPicker', props) };
 });
+vi.mock('@/components/buzz/RoomDeckComposeMenu', async () => {
+  const ReactModule = await import('react');
+  return {
+    RoomDeckComposeMenu: (props: any) => ReactModule.createElement('RoomDeckComposeMenu', props),
+  };
+});
+vi.mock('@/components/buzz/DirectMessagePickerSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    DirectMessagePickerSheet: (props: any) =>
+      ReactModule.createElement('DirectMessagePickerSheet', props),
+  };
+});
 vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };

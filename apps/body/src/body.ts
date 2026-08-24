@@ -1910,18 +1910,27 @@ export const isChannelTaskRequest = isChannelWorkIntent;
  * corner's parent. The bounded channel `name` alone will not do — it cannot
  * carry the fuller objective.
  */
-export function createAgentSubchannel(
+export async function createAgentSubchannel(
   agentIdentity: Identity,
   parentChannelId: string,
   name: string,
+  openingHumanPubkey: string,
   communityId?: string,
   task?: string,
 ): Promise<string> {
-  return createChannel(agentIdentity, name, {
+  if (!openingHumanPubkey || openingHumanPubkey === agentIdentity.publicKey) {
+    throw new Error('a corner requires an opening human distinct from its agent');
+  }
+  const subchannelId = await createChannel(agentIdentity, name, {
     parentChannelId,
     ...(communityId ? { communityId } : {}),
     ...(task ? { extraTags: [['task', task]] } : {}),
   });
+  // The agent owns the create event, so the relay initially projects an
+  // agent-only corner. Add the authenticated human who opened it before the
+  // helper returns; parent-roster mirroring may promote their role later.
+  await setMemberRole(agentIdentity, subchannelId, openingHumanPubkey, 'member');
+  return subchannelId;
 }
 
 /** Quiet window between repeat slash-command notices on one channel. */
@@ -4177,16 +4186,39 @@ export class Body {
     const fallbackSlug = slugifyCornerTask(fallbackTitle);
     const taskSlug = generated ? slugifyCornerTask(generated.title) || fallbackSlug : fallbackSlug;
     const cornerName = generated?.title ?? fallbackTitle;
+    const openingHumanPubkey = request?.authorPubkey ?? this.bodyIdentity.publicKey;
     const subchannelId = await createAgentSubchannel(
       agentId,
       tlcChannelId,
       cornerName,
+      openingHumanPubkey,
       communityId ?? undefined,
       taskDescription || undefined,
     );
+    // A publish acknowledgement is not membership truth. Do not create the
+    // worktree or launch the coding session until the relay projection proves
+    // the opening human is actually in the corner.
+    try {
+      await waitUntilMember(this.agentClientContext(), subchannelId, openingHumanPubkey);
+    } catch (error) {
+      // The protocol cannot put another member into the immutable create
+      // event. If the required follow-up projection never materializes, make
+      // the corrupt child terminal instead of leaving an active agent-only
+      // corner discoverable in the Room.
+      await archiveChannel(agentId, subchannelId).catch((archiveError) =>
+        console.error(
+          `[body] failed to archive corner ${subchannelId} after its opening human was not projected:`,
+          archiveError,
+        ),
+      );
+      throw error;
+    }
 
     // 2. Mirror parent members: query members of TLC, add each as member of subchannel.
-    const participantPubkeys = await this.mirrorMembers(tlcChannelId, subchannelId);
+    const mirroredParticipantPubkeys = await this.mirrorMembers(tlcChannelId, subchannelId);
+    const participantPubkeys = [
+      ...new Set([...mirroredParticipantPubkeys, openingHumanPubkey]),
+    ];
 
     // 4. Create git worktree + feature branch. Named after the actual task
     // (same slug basis as the corner's own name), with the corner's own

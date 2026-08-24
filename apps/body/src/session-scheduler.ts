@@ -2,6 +2,8 @@ export interface SessionLifecycle {
   activate(): Promise<string>;
   suspend(): Promise<void>;
   onStateChange?(state: SessionProcessState): Promise<void> | void;
+  /** Optional harness-specific idle retention. Capacity/LRU eviction still wins. */
+  idleMs?: number;
 }
 export type SessionProcessState = 'live' | 'suspended' | 'waiting-for-slot';
 
@@ -16,6 +18,8 @@ interface LiveSession {
   roomKey: string;
   /** True between slot reservation and a completed `activate()`. */
   pending: boolean;
+  /** Idle-retirement window chosen by the harness lifecycle. */
+  idleMs: number;
 }
 
 /**
@@ -310,7 +314,11 @@ export class SessionScheduler {
           // cannot race between the full-capacity check and this waiter.
           waitForCapacity = new Promise<void>((resolveWaiter) => this.waiters.push(resolveWaiter));
         } else {
-          reservation = { lifecycle, lastUsedAt: Date.now(), roomKey, pending: true };
+          const idleMs = lifecycle.idleMs ?? this.idleMs;
+          if (!Number.isSafeInteger(idleMs) || idleMs < 1) {
+            throw new Error('session lifecycle idleMs must be a positive integer');
+          }
+          reservation = { lifecycle, lastUsedAt: Date.now(), roomKey, pending: true, idleMs };
           this.live.set(key, reservation);
           this.busy.add(key);
         }
@@ -370,9 +378,15 @@ export class SessionScheduler {
   }
 
   private async sweepIdle(): Promise<void> {
-    const cutoff = Date.now() - this.idleMs;
+    const now = Date.now();
     for (const [key, session] of [...this.live.entries()]) {
-      if (!this.busy.has(key) && !this.tails.has(key) && session.lastUsedAt <= cutoff) await this.suspend(key);
+      if (
+        !this.busy.has(key) &&
+        !this.tails.has(key) &&
+        session.lastUsedAt <= now - session.idleMs
+      ) {
+        await this.suspend(key);
+      }
     }
   }
 

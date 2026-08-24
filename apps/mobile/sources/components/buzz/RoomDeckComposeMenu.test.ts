@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -14,13 +15,6 @@ vi.mock('react-native', async () => {
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
-  };
-});
-
-vi.mock('expo-blur', async () => {
-  const ReactModule = await import('react');
-  return {
-    BlurView: (props: any) => ReactModule.createElement('BlurView', props, props.children),
   };
 });
 
@@ -42,19 +36,10 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
-vi.mock('react-native-svg', async () => {
-  const ReactModule = await import('react');
-  const host = (name: string) => (props: any) =>
-    ReactModule.createElement(name, props, props.children);
-  return {
-    default: host('Svg'),
-    Circle: host('Circle'),
-    Path: host('Path'),
-    Rect: host('Rect'),
-  };
-});
-
 import { RoomDeckComposeMenu } from './RoomDeckComposeMenu';
+
+const source = readFileSync(new URL('./RoomDeckComposeMenu.tsx', import.meta.url), 'utf8');
+const actionSheetSource = readFileSync(new URL('./HullActionSheet.tsx', import.meta.url), 'utf8');
 
 const originalConsoleError = console.error;
 
@@ -87,7 +72,7 @@ function open(renderer: ReactTestRenderer) {
 }
 
 describe('Room deck compose menu', () => {
-  it('morphs the FAB and opens exactly five accessible, one-word rows in order', () => {
+  it('morphs the FAB and opens two named groups with five accessible rows in order', () => {
     const renderer = renderMenu();
     const fab = renderer.root.findByProps({ testID: 'room-deck-compose-fab' });
     expect(fab.props.accessibilityState).toEqual({ expanded: false });
@@ -106,15 +91,22 @@ describe('Room deck compose menu', () => {
     expect(rows).toHaveLength(5);
     expect(rows.map((row) => row.props.accessibilityRole)).toEqual(Array(5).fill('button'));
     expect(rows.map((row) => row.props.accessibilityLabel.split('.')[0])).toEqual(labels);
-    expect(rows.map((row) => row.findAllByType('Text' as any)[0].props.children)).toEqual(labels);
+    expect(rows.map((row) => row.findAllByType('Text' as any)[1].props.children)).toEqual(labels);
+    expect(renderer.root.findByProps({ testID: 'room-deck-compose-group-start' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'room-deck-compose-group-workspace' })).toBeDefined();
+  });
 
-    const sheet = renderer.root.findByProps({ testID: 'room-deck-compose-sheet' });
-    expect(sheet.props.intensity).toBe(46);
-    expect(sheet.props.style[0]).toMatchObject({
-      borderRadius: 20,
-      backgroundColor: 'rgba(31, 17, 38, 0.76)',
-    });
-    expect(renderer.root.findAllByType('BlurView' as any)).toHaveLength(2);
+  it('uses one opaque tokenized hull surface with no BlurView or local radius', () => {
+    expect(source).toContain('<HullActionSheet');
+    expect(source).not.toContain('BlurView');
+    expect(source).not.toContain('expo-blur');
+    expect(source).not.toMatch(/borderRadius:\s*\d/);
+    expect(source).toContain('borderRadius: groknight.radius');
+
+    expect(actionSheetSource).toContain('backgroundColor: theme.buzz.bgRaised');
+    expect(actionSheetSource).toContain('borderRadius: theme.buzz.radius');
+    expect(actionSheetSource).toContain('borderWidth: StyleSheet.hairlineWidth');
+    expect(actionSheetSource).not.toMatch(/rgba?\(/);
   });
 
   it('dismisses from the scrim and the × FAB', () => {

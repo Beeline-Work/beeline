@@ -178,7 +178,10 @@ describe('Members screen', () => {
 
     expect(client.createAgentPairingCode).toHaveBeenCalledOnce();
     expect(client.createAgentPairingCode).toHaveBeenCalledWith('workspace-1');
-    expect(renderer.root.findByProps({ accessibilityLabel: 'Copy pairing command' })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ accessibilityLabel: 'Copy pairing command' }).props.children[0]
+        .props.children,
+    ).toBe('env -u BUZZ_AGENT_KEY -u BUZZ_PRIVATE_KEY beeline pair abc123');
   });
 
   it('shows a single identity line: handle over name over a truncated npub', async () => {

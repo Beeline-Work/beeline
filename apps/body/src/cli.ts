@@ -55,6 +55,7 @@ import {
   findRuntimeConfigPaths,
   identityFromKey,
   migrateRuntimeRecordAccessPolicy,
+  mintAgentIdentityForPairing,
   pairRepositoryAgent,
   readRuntimeRecord,
   removeAgentRuntime,
@@ -169,7 +170,7 @@ never installs packages automatically. Several ready matches require --agent.
 Multiple runtimes in one Workspace: pass one single-use pairing code per agent
 plus a matching --agents list. Each agent gets its own fresh keypair/identity
 and its own daemon — three distinct agents live in one Room, each addressed by
-its own @-mention. Reusing an identity is refused (unset BUZZ_AGENT_KEY).
+its own @-mention. Pairing never reads BUZZ_AGENT_KEY or BUZZ_PRIVATE_KEY.
 
 Repository (optional): a repository belongs to a ROOM, not to an agent.
 Pairing never infers one from the current directory. Without --repo, the agent
@@ -780,6 +781,11 @@ async function runPairCommand(
   try {
     const pairOptions = parsePairOptions(args);
     if (pairOptions.codes.length === 0) usage();
+    if (agentPrivateKey) {
+      console.warn(
+        '[beeline] pair ignores BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY and is minting a fresh agent identity',
+      );
+    }
     const { cwd: pairCwd, repo: pairRepo } = resolvePairRepository(pairOptions.repo);
     const flagModelSelection: { model?: string; effort?: string } | undefined =
       pairOptions.model || pairOptions.effort
@@ -803,12 +809,6 @@ async function runPairCommand(
           `--agents expects one pairing code per agent: got ${codes.length} code(s) for ${kinds.length} agent(s)`,
         );
       }
-      // A pinned key would make every agent share one identity — refuse (S0).
-      if (agentPrivateKey) {
-        throw new Error(
-          'pairing multiple agents mints a fresh identity for each; unset BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY first',
-        );
-      }
       for (let index = 0; index < codes.length; index += 1) {
         const kind = kinds[index]!;
         const selectedAgent = await selectPairAgentCommand({
@@ -822,7 +822,7 @@ async function runPairCommand(
         const result = await pairOneAgent({
           code: codes[index]!,
           selectedAgent,
-          agentIdentity: newIdentity(DEFAULT_AGENT_IDENTITY_NAME),
+          agentIdentity: mintAgentIdentityForPairing(),
           bodyIdentity: newIdentity(DEFAULT_BODY_IDENTITY_NAME),
           cwd: pairCwd,
           repo: pairRepo,
@@ -844,12 +844,9 @@ async function runPairCommand(
     if (pairOptions.codes.length > 1) {
       throw new Error('multiple pairing codes require --agents <kind1,kind2,...>');
     }
-    // A pinned BUZZ_AGENT_KEY already paired on this host is fatal (S0), so
-    // it is checked here — before the agent/model/access questions — rather
-    // than inside `pairRepositoryAgent`, where it would only fire after the
-    // operator had answered all of them. Fresh identities can't collide, so
-    // the --agents form above needs no equivalent check.
-    const agentIdentity = identityFromKey(agentPrivateKey, DEFAULT_AGENT_IDENTITY_NAME);
+    // Pairing always creates one new identity. In particular, the legacy
+    // BUZZ_PRIVATE_KEY used by human clients is never an agent-key fallback.
+    const agentIdentity = mintAgentIdentityForPairing();
     await assertAgentIdentityUnpaired(defaultSupervisorRoot(process.env), agentIdentity.publicKey);
     const selectedAgent = await selectPairAgentCommand({
       explicitKind: pairOptions.singleKind,

@@ -12,7 +12,11 @@ vi.mock('expo-image-manipulator', () => ({
 vi.mock('@/utils/readFileBytes', () => ({ readFileBytes: mocks.readFileBytes }));
 
 import { canonicalizeJpeg } from './avatar-png';
-import { formatAttachmentSize, uploadChatAttachment } from './chat-attachment';
+import {
+  attachmentOpenUrl,
+  formatAttachmentSize,
+  uploadChatAttachment,
+} from './chat-attachment';
 
 function segment(marker: number, payload: number[]): number[] {
   const length = payload.length + 2;
@@ -67,6 +71,26 @@ describe('chat attachment display metadata', () => {
     expect(formatAttachmentSize(1025)).toBe('2 KB');
     expect(formatAttachmentSize(5 * 1024 * 1024)).toBe('5.0 MB');
     expect(formatAttachmentSize(20 * 1024 * 1024)).toBe('20 MB');
+  });
+
+  it('opens active files on the isolated preview URL while leaving images unchanged', () => {
+    expect(
+      attachmentOpenUrl({
+        url: 'https://usebeeline.app/media/hash/report.html',
+        previewUrl: 'https://preview.usebeeline.app/media/hash/report.html',
+        name: 'report.html',
+        mimeType: 'text/html',
+        size: 42,
+      }),
+    ).toBe('https://preview.usebeeline.app/media/hash/report.html');
+    expect(
+      attachmentOpenUrl({
+        url: 'https://usebeeline.app/media/hash/photo.png',
+        name: 'photo.png',
+        mimeType: 'image/png',
+        size: 42,
+      }),
+    ).toBe('https://usebeeline.app/media/hash/photo.png');
   });
 
   it('strips EXIF, ICC, and comment marker channels from JPEG containers', () => {

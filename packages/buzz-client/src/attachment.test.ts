@@ -47,4 +47,19 @@ describe('link-first attachment metadata', () => {
       },
     ]);
   });
+
+  it('round-trips a separate isolated rendering URL without replacing the media URL', () => {
+    const html: AttachmentReference = {
+      url: 'https://usebeeline.app/media/hash/report.html',
+      previewUrl: 'https://preview.usebeeline.app/media/hash/report.html',
+      name: 'report.html',
+      mimeType: 'text/html',
+      size: 42,
+    };
+    const tags = buildAttachmentTags([html]);
+    expect(tags).toContainEqual(
+      expect.arrayContaining(['preview https://preview.usebeeline.app/media/hash/report.html']),
+    );
+    expect(parseAttachmentTags(tags)).toEqual([html]);
+  });
 });

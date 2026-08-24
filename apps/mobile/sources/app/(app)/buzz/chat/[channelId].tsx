@@ -146,6 +146,7 @@ import {
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import {
+  attachmentOpenUrl,
   formatAttachmentSize,
   uploadChatAttachment,
   type PickedChatAttachment,
@@ -331,7 +332,7 @@ const AgentPresenceLight = React.memo(function AgentPresenceLight({
 function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   const image = attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
   const open = () => {
-    void Linking.openURL(attachment.url).catch(() => {
+    void Linking.openURL(attachmentOpenUrl(attachment)).catch(() => {
       Alert.alert('Could not open attachment', 'The file link could not be opened on this device.');
     });
   };

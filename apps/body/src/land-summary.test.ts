@@ -64,11 +64,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     );
   }
 
-  function cornerInfo(
-    agent: ReturnType<typeof newIdentity>,
-    repoPath: string,
-    cornerPath: string,
-  ) {
+  function cornerInfo(agent: ReturnType<typeof newIdentity>, repoPath: string, cornerPath: string) {
     return {
       subchannelId: 'corner-land-summary',
       worktreePath: cornerPath,
@@ -421,14 +417,18 @@ describe('every land path recaps the corner exactly once', () => {
 
   /** Approve the corner's exact tip, as a device-held human admin would. */
   function approve(body: Body, tip: string): void {
-    Reflect.set(body, 'findHumanMergeApproval', async (target: { humanMergeApproval?: unknown }) => {
-      target.humanMergeApproval = {
-        id: 'approval-1',
-        reviewer: newIdentity('land-paths-reviewer').publicKey,
-        tip,
-      };
-      return target.humanMergeApproval;
-    });
+    Reflect.set(
+      body,
+      'findHumanMergeApproval',
+      async (target: { humanMergeApproval?: unknown }) => {
+        target.humanMergeApproval = {
+          id: 'approval-1',
+          reviewer: newIdentity('land-paths-reviewer').publicKey,
+          tip,
+        };
+        return target.humanMergeApproval;
+      },
+    );
     Reflect.set(
       body,
       'promptAgent',
@@ -495,8 +495,10 @@ describe('every land path recaps the corner exactly once', () => {
       await Reflect.get(body, 'publishMergeReady').call(body, info);
       expect(info.mergeTarget).toBeUndefined();
       expect(
-        published.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+        published.some(
+          (event) =>
+            Array.isArray(event.tags) &&
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         ),
       ).toBe(true);
 

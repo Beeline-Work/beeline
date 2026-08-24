@@ -105,7 +105,10 @@ export function textIsAsk(text: string): boolean {
  * standing ask. Daemon-authored control/activity traffic is skipped — it
  * asks nothing and must not mask a real question underneath it.
  */
-export function standingAskFromEvents(events: NostrEventLike[], agentPubkey: string): boolean {
+export function standingAskFromEvents(
+  events: readonly NostrEventLike[],
+  agentPubkey: string,
+): boolean {
   const sorted = [...events].sort(
     (a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id),
   );

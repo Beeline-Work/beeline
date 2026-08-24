@@ -79,6 +79,26 @@ describe('relay invite web front', () => {
     expect(script).toContain('beeline://join/');
   });
 
+  it('isolates active media previews from the authenticated product origin', () => {
+    for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
+      const nginx = repoFile(path);
+      const preview = nginx.slice(nginx.indexOf('server_name preview.usebeeline.app'));
+      expect(nginx).toContain('map $upstream_http_content_type $product_media_disposition');
+      expect(nginx).toContain('add_header Content-Disposition $product_media_disposition always');
+      expect(nginx).toContain('"~^image/(?:png|jpeg|gif|webp)(?:;|$)" ""');
+      expect(preview).toContain('limit_except GET HEAD { deny all; }');
+      expect(preview).toContain('proxy_hide_header Set-Cookie');
+      expect(preview).toContain('proxy_set_header Cookie ""');
+      expect(preview).toContain('sandbox allow-scripts');
+      expect(preview).toContain("default-src 'self' 'unsafe-inline'");
+      expect(preview).toContain("connect-src 'none'");
+      expect(preview).toContain('location / { return 404; }');
+      expect(preview).not.toContain('location /auth/');
+      expect(preview).not.toContain('location /push/');
+    }
+    expect(repoFile('relay-stack/prod/compose.yml')).toContain('beeline-media-preview');
+  });
+
   it('renders one monochrome join action without exposing the invite token', () => {
     const landing = repoFile('relay-stack/web/join/index.html');
     const colors = [...landing.matchAll(/#[0-9a-f]{6}/gi)].map(([color]) => color);

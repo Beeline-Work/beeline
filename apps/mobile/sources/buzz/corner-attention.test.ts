@@ -28,7 +28,7 @@ describe('cornerActionSurface', () => {
     expect(surface.kind).toBe('attention');
     if (surface.kind !== 'attention') return;
     expect(surface.card.status).toBe('needs-attention');
-    expect(surface.card.label).toBe('NEEDS HUMAN');
+    expect(surface.card.label).toBe('NEEDS YOU');
     expect(surface.card.detail).toBe(
       'Main moved on since you approved it. Tell me here if you want this corner brought up to date.',
     );
@@ -42,10 +42,10 @@ describe('cornerActionSurface', () => {
     });
     expect(withReason).toMatchObject({
       kind: 'attention',
-      card: { label: 'NEEDS HUMAN', detail: 'The agent has uncommitted work.' },
+      card: { label: 'NEEDS YOU', detail: 'The agent has uncommitted work.' },
     });
     const bare = cornerActionSurface({ status: 'open', hasMergeTarget: false });
-    expect(bare).toMatchObject({ kind: 'attention', card: { label: 'NEEDS HUMAN' } });
+    expect(bare).toMatchObject({ kind: 'attention', card: { label: 'NEEDS YOU' } });
     expect(bare.kind === 'attention' && 'detail' in bare.card).toBe(false);
   });
 
@@ -93,9 +93,12 @@ describe('cornerActionSurface', () => {
       messages: [agentMessage(`The gate refused the push.\n\nline two   continues\n${long}`, 10)],
     });
     expect(
-      surface.kind === 'attention' && surface.card.detail?.startsWith('The gate refused the push. line two'),
+      surface.kind === 'attention' &&
+        surface.card.detail?.startsWith('The gate refused the push. line two'),
     ).toBe(true);
-    expect(surface.kind === 'attention' && (surface.card.detail?.length ?? 0)).toBeLessThanOrEqual(240);
+    expect(surface.kind === 'attention' && (surface.card.detail?.length ?? 0)).toBeLessThanOrEqual(
+      240,
+    );
   });
 
   it('never chooses retry/progress narration as the attention line, however new it is', () => {

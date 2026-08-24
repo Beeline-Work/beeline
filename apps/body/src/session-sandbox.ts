@@ -8,11 +8,10 @@
  * path on the host, so the only daemon-side boundary left is the ACP
  * `session/request_permission` handler:
  *
- *   - A ROOM session is read-only, full stop. Every write / edit / delete /
- *     move / execute request is denied regardless of path — the human-approved
- *     escalation opens a separate corner session and replays the work there.
- *     Only Beeline's own fixed inspection MCP (`read-only-policy.ts`) is
- *     auto-allowed, and this module never widens that.
+ *   - A ROOM repository is read-only. Mutations are denied unless every named
+ *     target is physically inside one explicit agent-private capability: its
+ *     memory or ephemeral workbench. Shell payloads never qualify for that
+ *     exception. A repository change still escalates into a separate corner.
  *   - A CORNER session is writable by default. Its bubblewrap mount table masks
  *     credentials and overlays only shared worktrees/checkouts and daemon-owned
  *     state read-only. This callback mirrors that denylist for adapters that
@@ -54,11 +53,12 @@ import { shellCommandFromRawInput } from './corner-isolation.js';
  * explicitly closes the search — stop, do not try another tool.
  */
 export const ROOM_READ_ONLY_STEER =
-  'this Room is read-only; open a corner to make changes. ' +
-  'Files, shell commands, and git state cannot be modified from a Room. ' +
+  'this Room repository is read-only; open a corner to make repository changes. ' +
+  'Only the explicitly named agent-private memory and workbench directories are writable here. ' +
+  'Shell commands and git state cannot be modified from a Room. ' +
   'Do not retry with a different tool — every write, edit, move, delete and shell ' +
-  'command is refused here, whichever tool asks. Stop trying to make the change ' +
-  'and tell the person you need a corner opened for it.';
+  'command outside those capabilities is refused here, whichever tool asks. Stop trying to make ' +
+  'the repository change and tell the person you need a corner opened for it.';
 
 export type SandboxDenyCode =
   'room-read-only' | 'path-escape' | 'command-write-escape' | 'persistent-cd' | 'git-escape';
@@ -332,6 +332,24 @@ export function isAgentMemoryWritePermissionRequest(
   const targets = permissionTargetPaths(request);
   if (targets.length === 0) return false;
   return targets.every((path) => !pathEscapesRoot(path, memoryDir));
+}
+
+/**
+ * The workbench twin of the memory capability above. Workbench paths must be
+ * absolute as well as physically confined: a relative `report.html` resolves
+ * against the ACP session cwd (the read-only repository), not the workbench.
+ */
+export function isAgentWorkbenchWritePermissionRequest(
+  request: AcpPermissionRequest,
+  workbenchDir: string,
+): boolean {
+  if (!isMutatingPermissionRequest(request)) return false;
+  const kind = request.toolCall?.kind?.toLowerCase();
+  if (kind === 'execute') return false;
+  if (shellCommandFromRawInput(request.toolCall?.kind, request.toolCall?.rawInput)) return false;
+  const targets = permissionTargetPaths(request);
+  if (targets.length === 0) return false;
+  return targets.every((path) => isAbsolute(path) && !pathEscapesRoot(path, workbenchDir));
 }
 
 /**

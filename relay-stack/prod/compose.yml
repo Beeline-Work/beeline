@@ -149,6 +149,7 @@ services:
       buzzrouter-tunnel:
         aliases:
           - buzz-router-relay
+          - beeline-media-preview
 
   postgres:
     image: postgres:17-alpine

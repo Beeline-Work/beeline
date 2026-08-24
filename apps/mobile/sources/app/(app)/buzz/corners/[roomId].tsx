@@ -12,12 +12,7 @@ import {
   type PersonProfile,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import {
-  cornerStatusPresentation,
-  isCornerActive,
-  sortCorners,
-  type CornerSummary,
-} from '@/buzz/corners';
+import { cornerVisualState, isCornerActive, sortCorners, type CornerSummary } from '@/buzz/corners';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -68,7 +63,9 @@ function seedFromRoomListCache(channelId: string): {
   const viewerKey = state.activeViewerPubkey;
   const corners =
     room?.corners?.filter(
-      (corner) => corner.status !== 'archived' && !isCornerClosed(closedCornerAt, viewerKey, channelId, corner.id),
+      (corner) =>
+        corner.status !== 'archived' &&
+        !isCornerClosed(closedCornerAt, viewerKey, channelId, corner.id),
     ) ?? [];
   return {
     corners: sortCorners(corners),
@@ -180,13 +177,11 @@ export default function BuzzCorners() {
               return;
             }
             await Promise.all([
-              client
-                .listAgents(communityId)
-                .then((agents) => {
-                  // Warm the device-wide agent-name store.
-                  useAgentNameCache.getState().rememberAgents(agents);
-                  setAgents(agents);
-                }, fail('agents')),
+              client.listAgents(communityId).then((agents) => {
+                // Warm the device-wide agent-name store.
+                useAgentNameCache.getState().rememberAgents(agents);
+                setAgents(agents);
+              }, fail('agents')),
               client
                 .getPersonProfile(communityId)
                 .then((profile) => setViewerAvatarUrl(profile?.avatar), fail('viewerProfile')),
@@ -331,12 +326,10 @@ export default function BuzzCorners() {
           refreshing={refreshing}
           onRefresh={() => void handleRefresh()}
           renderItem={({ item }) => {
-            // STALLED, not NEEDS HUMAN: a provably-offline agent's unfinished
+            // Offline without an artifact folds to idle: a provably-offline agent's unfinished
             // corner is nobody's question to answer (same oracle verdict the
             // deck golds from).
-            const status = cornerStatusPresentation(item.status, {
-              agentOffline: item.agentOffline,
-            });
+            const state = cornerVisualState(item.status, item);
             const agent = agents.find((candidate) => candidate.pubkey === item.openerPubkey);
             const personProfile = personProfiles.find(
               (candidate) => candidate.pubkey === item.openerPubkey,
@@ -351,7 +344,7 @@ export default function BuzzCorners() {
               isAgentPresenceOnline(agentPresences[item.openerPubkey], presenceNow);
             return (
               <TouchableOpacity
-                accessibilityLabel={`View corner ${item.name}, ${status.label.toLowerCase()}${
+                accessibilityLabel={`View corner ${item.name}, ${state}${
                   showsPresence ? (online ? ', agent online' : ', agent offline') : ''
                 }`}
                 style={styles.cornerRow}
@@ -388,7 +381,12 @@ export default function BuzzCorners() {
                 </View>
                 <View style={styles.statusBlock}>
                   <View style={styles.statusGlyphRow}>
-                    <CornerGlyph status={item.status} style={styles.statusGlyph} />
+                    <CornerGlyph
+                      status={item.status}
+                      awaitingReply={item.awaitingReply}
+                      agentOffline={item.agentOffline}
+                      style={styles.statusGlyph}
+                    />
                     {showsPresence && (
                       <Text
                         style={[
@@ -400,7 +398,6 @@ export default function BuzzCorners() {
                       </Text>
                     )}
                   </View>
-                  <Text style={styles.statusLabel}>{status.label}</Text>
                 </View>
                 <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>
@@ -423,128 +420,133 @@ export default function BuzzCorners() {
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
-  center: { alignItems: 'center', justifyContent: 'center' },
-  loadingText: {
-    ...Typography.mono('semiBold'),
-    marginTop: 12,
-    color: groknight.textMuted,
-    fontSize: 11,
-    letterSpacing: 0.8,
-  },
-  header: {
-    minHeight: 62,
-    paddingRight: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  backButton: { width: 52, height: 52, alignItems: 'center', justifyContent: 'center' },
-  backText: { ...Typography.default(), color: groknight.muted, fontSize: 22 },
-  headerCopy: { flex: 1, minWidth: 0 },
-  eyebrow: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  title: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 20,
-    lineHeight: 24,
-  },
-  count: {
-    ...Typography.mono('semiBold'),
-    marginLeft: 10,
-    color: groknight.steel,
-    fontSize: 13,
-  },
-  modelPanel: {
-    margin: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgRaised,
-  },
-  modelTitle: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.6,
-  },
-  modelText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 6,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  errorPanel: {
-    marginHorizontal: 12,
-    marginBottom: 8,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-  },
-  errorText: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.textSecondary, fontSize: 12 },
-  cornerRow: {
-    minWidth: 0,
-    minHeight: 64,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  cornerCopy: { flex: 1, minWidth: 0, marginLeft: 10 },
-  cornerName: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 14,
-  },
-  agent: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 4,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-  },
-  statusBlock: { minWidth: 70, marginLeft: 8, alignItems: 'flex-end' },
-  statusGlyphRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  statusGlyph: { ...Typography.default('semiBold'), color: groknight.steel, fontSize: 13 },
-  presenceDot: { ...Typography.default(), fontSize: 8 },
-  presenceOnline: { color: groknight.accent },
-  presenceOffline: { color: groknight.textMuted },
-  statusLabel: {
-    ...Typography.mono('semiBold'),
-    marginTop: 2,
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-  },
-  chevron: { ...Typography.default(), marginLeft: 8, color: groknight.gutter, fontSize: 20 },
-  emptyContainer: { flexGrow: 1 },
-  emptyState: { flex: 1, padding: 24, alignItems: 'center', justifyContent: 'center' },
-  emptyGlyph: { ...Typography.default(), color: groknight.steel, fontSize: 28 },
-  emptyTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    marginTop: 10,
-    color: groknight.textPrimary,
-    fontSize: 16,
-  },
-  emptyText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 6,
-    color: groknight.textMuted,
-    fontSize: 12,
-    lineHeight: 18,
-    textAlign: 'center',
-  },
-  });
+  return {
+    container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
+    center: { alignItems: 'center', justifyContent: 'center' },
+    loadingText: {
+      ...Typography.mono('semiBold'),
+      marginTop: 12,
+      color: groknight.textMuted,
+      fontSize: 11,
+      letterSpacing: 0.8,
+    },
+    header: {
+      minHeight: 62,
+      paddingRight: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    backButton: { width: 52, height: 52, alignItems: 'center', justifyContent: 'center' },
+    backText: { ...Typography.default(), color: groknight.muted, fontSize: 22 },
+    headerCopy: { flex: 1, minWidth: 0 },
+    eyebrow: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    title: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 20,
+      lineHeight: 24,
+    },
+    count: {
+      ...Typography.mono('semiBold'),
+      marginLeft: 10,
+      color: groknight.steel,
+      fontSize: 13,
+    },
+    modelPanel: {
+      margin: 12,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgRaised,
+    },
+    modelTitle: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.6,
+    },
+    modelText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 6,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    errorPanel: {
+      marginHorizontal: 12,
+      marginBottom: 8,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+    },
+    errorText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.textSecondary,
+      fontSize: 12,
+    },
+    cornerRow: {
+      minWidth: 0,
+      minHeight: 64,
+      paddingHorizontal: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    cornerCopy: { flex: 1, minWidth: 0, marginLeft: 10 },
+    cornerName: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 14,
+    },
+    agent: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 4,
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 14,
+    },
+    statusBlock: { width: 14, marginLeft: 8, alignItems: 'flex-end' },
+    statusGlyphRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    statusGlyph: { width: 14, height: 14 },
+    presenceDot: { ...Typography.default(), fontSize: 8 },
+    presenceOnline: { color: groknight.accent },
+    presenceOffline: { color: groknight.textMuted },
+    chevron: { ...Typography.default(), marginLeft: 8, color: groknight.gutter, fontSize: 20 },
+    emptyContainer: { flexGrow: 1 },
+    emptyState: { flex: 1, padding: 24, alignItems: 'center', justifyContent: 'center' },
+    emptyGlyph: { ...Typography.default(), color: groknight.steel, fontSize: 28 },
+    emptyTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      marginTop: 10,
+      color: groknight.textPrimary,
+      fontSize: 16,
+    },
+    emptyText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 6,
+      color: groknight.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+      textAlign: 'center',
+    },
+  };
 });

@@ -12,11 +12,9 @@ const shared = {
   brandMark: brand.mark,
   diffAdded: '#3FB950',
   diffRemoved: '#F85149',
-  // DESIGN.md ("Identity → 4 · A gold ring means alive"): a relay photo
-  // defeats every identity axis at once — shape, signature colour, cypher —
-  // so the photo path in IdentityMark ships GATED OFF. The code stays dark
-  // but intact pending a captain decision on portraits clipped inside the
-  // silhouette; do not flip this back without one.
+  // Human and agent relay photos defeat their identity axes, so their shared
+  // photo gate stays off. Workspace pictures are the explicit exception and
+  // are gated separately in photo-overrides.ts.
   photoIdentityMarksEnabled: false,
 } as const;
 

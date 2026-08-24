@@ -14,7 +14,8 @@ import { prepareCornerAgentPrivateState } from './agent-private-state.js';
 
 const mocks = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
-  realCreateBuzzClient: undefined as unknown as typeof import('@beeline/buzz-client').createBuzzClient,
+  realCreateBuzzClient:
+    undefined as unknown as typeof import('@beeline/buzz-client').createBuzzClient,
 }));
 
 // Most tests here rely on the real createBuzzClient (talking to a stubbed
@@ -113,10 +114,7 @@ import {
   SLASH_COMMAND_NOTICE_TAG,
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
-import {
-  CONCLUDE_NUDGE_SPACING_MS,
-  MAX_CONCLUDE_NUDGES_PER_EPISODE,
-} from './conclude-watch.js';
+import { CONCLUDE_NUDGE_SPACING_MS, MAX_CONCLUDE_NUDGES_PER_EPISODE } from './conclude-watch.js';
 import {
   CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
   CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
@@ -302,7 +300,7 @@ describe('acp', () => {
     }
   });
 
-  it('denies the same adapter\'s captured native write and shell requests', () => {
+  it("denies the same adapter's captured native write and shell requests", () => {
     expect(isReadOnlyMcpPermissionRequest(CLAUDE_ACP_NATIVE_WRITE_PERMISSION)).toBe(false);
     expect(isReadOnlyMcpPermissionRequest(CLAUDE_ACP_NATIVE_BASH_PERMISSION)).toBe(false);
   });
@@ -312,21 +310,25 @@ describe('acp', () => {
     // Claude Code auto-approves its built-in Read so it never reaches the host,
     // but the kind it declares is what a stricter CLI permission config would
     // send, and it is the adapter's word — not the model's — about the tool.
-    expect(
-      isReadOnlyMcpPermissionRequest({ toolCall: CLAUDE_ACP_NATIVE_READ_TOOL_CALL }),
-    ).toBe(true);
+    expect(isReadOnlyMcpPermissionRequest({ toolCall: CLAUDE_ACP_NATIVE_READ_TOOL_CALL })).toBe(
+      true,
+    );
     expect(
       isReadOnlyMcpPermissionRequest({ toolCall: { kind: 'search', title: 'grep "beeline"' } }),
     ).toBe(true);
     // A read of a file whose NAME contains a mutating word is still a read.
     expect(
       isReadOnlyMcpPermissionRequest({
-        toolCall: { kind: 'read', title: 'Read src/write.ts', rawInput: { file_path: 'src/write.ts' } },
+        toolCall: {
+          kind: 'read',
+          title: 'Read src/write.ts',
+          rawInput: { file_path: 'src/write.ts' },
+        },
       }),
     ).toBe(true);
   });
 
-  it('recognizes the inspection toolset across the other adapters\' spellings', () => {
+  it("recognizes the inspection toolset across the other adapters' spellings", () => {
     // codex-acp forwards a real MCP envelope and spells the tool with dots.
     expect(isReadOnlyMcpPermissionRequest(CODEX_ACP_MCP_READ_FILE_PERMISSION)).toBe(true);
     for (const title of [
@@ -448,8 +450,14 @@ describe('agent identity boundary', () => {
           undefined,
           { scheduler },
         );
-        const durable = (body as unknown as { durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)> }).durableState;
-        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(undefined as never);
+        const durable = (
+          body as unknown as {
+            durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)>;
+          }
+        ).durableState;
+        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(
+          undefined as never,
+        );
         const sessionPrompt = vi.fn().mockResolvedValue({ agentText: 'ok', updates: [] });
         const session = {
           channelId: 'persona-room',
@@ -477,8 +485,10 @@ describe('agent identity boundary', () => {
         expect(sessionPrompt).toHaveBeenCalledTimes(1);
         const wirePrompt = sessionPrompt.mock.calls[0]![1] as string;
         expect(wirePrompt).toContain('Name: Clara');
-        expect(wirePrompt).toContain("What is my name?");
-        expect(wirePrompt.indexOf('Name: Clara')).toBeLessThan(wirePrompt.indexOf('What is my name?'));
+        expect(wirePrompt).toContain('What is my name?');
+        expect(wirePrompt.indexOf('Name: Clara')).toBeLessThan(
+          wirePrompt.indexOf('What is my name?'),
+        );
       } finally {
         await scheduler.dispose();
       }
@@ -494,8 +504,14 @@ describe('agent identity boundary', () => {
           undefined,
           { scheduler },
         );
-        const durable = (body as unknown as { durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)> }).durableState;
-        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(undefined as never);
+        const durable = (
+          body as unknown as {
+            durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)>;
+          }
+        ).durableState;
+        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(
+          undefined as never,
+        );
         const sessionPrompt = vi.fn().mockResolvedValue({ agentText: 'ok', updates: [] });
         const session = {
           channelId: 'bare-room',
@@ -795,6 +811,40 @@ describe('agent identity boundary', () => {
   });
 
   describe('Room sessions cannot write or execute at all', () => {
+    it('allows only a path-pinned file write in the Room workbench while repo writes stay refused', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'buzzy-room-workbench-permission-'));
+      const workbench = join(root, 'agent-private', 'workbench');
+      mkdirSync(workbench, { recursive: true });
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      Reflect.get(body, 'sessions').set('room-1', { workbench: { dir: workbench } });
+      const durable = Reflect.get(body, 'durableState');
+      vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(undefined as never);
+      const handle = Reflect.get(body, 'handleRoomPermissionRequest').bind(body);
+
+      try {
+        await expect(
+          handle('room-1', {
+            toolCall: {
+              kind: 'edit',
+              title: 'Write preview',
+              rawInput: { file_path: join(workbench, 'preview.html') },
+            },
+          }),
+        ).resolves.toBe('allow');
+        await expect(
+          handle('room-1', {
+            toolCall: {
+              kind: 'edit',
+              title: 'Write repo',
+              rawInput: { file_path: '/home/op/proj-buzzy/README.md' },
+            },
+          }),
+        ).resolves.toBe('reject');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
     it('denies a write and a shell command, and records the corner steer', async () => {
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
       const appended: Array<{ role: string; text: string }> = [];
@@ -954,7 +1004,9 @@ describe('agent identity boundary', () => {
       );
       for (const body of [creatorBody, everyoneBody]) {
         const durable = (body as unknown as { durableState: unknown }).durableState;
-        vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(undefined as never);
+        vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(
+          undefined as never,
+        );
       }
 
       await expect(
@@ -1395,7 +1447,12 @@ describe('agent presence', () => {
     // the newest record is always within the 120s lease.
     const newest = records.at(-1)!;
     expect(newest.status).toBe('online');
-    expect(isAgentPresenceOnline({ agentPubkey: agent.publicKey, status: 'online', observedAt: newest.created_at * 1_000 }, Date.now())).toBe(true);
+    expect(
+      isAgentPresenceOnline(
+        { agentPubkey: agent.publicKey, status: 'online', observedAt: newest.created_at * 1_000 },
+        Date.now(),
+      ),
+    ).toBe(true);
     await newPresence();
     vi.useRealTimers();
   });
@@ -1818,7 +1875,15 @@ describe('Room poll resilience', () => {
     const presence = { setStatus };
     const loop = (
       Reflect.get(body, 'runRoomPushLoop') as (...args: unknown[]) => Promise<void>
-    ).call(body, 'ws-reconnect-room', undefined, 'named-repository', presence, { signal: abort.signal }, async () => undefined);
+    ).call(
+      body,
+      'ws-reconnect-room',
+      undefined,
+      'named-repository',
+      presence,
+      { signal: abort.signal },
+      async () => undefined,
+    );
 
     try {
       await waitFor(() => subscribeCount === 1, 'initial subscribe');
@@ -1832,7 +1897,9 @@ describe('Room poll resilience', () => {
       // backoff), re-subscribe the REQ, and re-announce presence so Rooms see
       // the agent come back.
       await waitFor(() => subscribeCount >= 2, 're-subscribe after drop');
-      expect(setStatus.mock.calls.filter((call) => call[0] === 'online').length).toBeGreaterThanOrEqual(2);
+      expect(
+        setStatus.mock.calls.filter((call) => call[0] === 'online').length,
+      ).toBeGreaterThanOrEqual(2);
 
       // An event that arrives only AFTER the reconnection is delivered.
       latest!({ event: { id: 'post-reconnect' } as NostrEvent });
@@ -1919,7 +1986,15 @@ describe('Room poll resilience', () => {
     const setStatus = vi.fn().mockResolvedValue(undefined);
     const loop = (
       Reflect.get(body, 'runRoomPushLoop') as (...args: unknown[]) => Promise<void>
-    ).call(body, 'ws-race-room', undefined, 'named-repository', { setStatus }, { signal: abort.signal }, async () => undefined);
+    ).call(
+      body,
+      'ws-race-room',
+      undefined,
+      'named-repository',
+      { setStatus },
+      { signal: abort.signal },
+      async () => undefined,
+    );
 
     try {
       await waitFor(() => subscribeCount === 1, 'initial subscribe');
@@ -2244,7 +2319,9 @@ describe('Room poll resilience', () => {
           new Promise<never>((_resolve, reject) =>
             setTimeout(
               () =>
-                reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms of inactivity`)),
+                reject(
+                  new Error(`ACP session/prompt timed out after ${timeoutMs}ms of inactivity`),
+                ),
               timeoutMs,
             ),
           ),
@@ -2272,9 +2349,9 @@ describe('Room poll resilience', () => {
 
       // Still under the (much shorter) notice threshold: no notice yet.
       await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS - 1);
-      expect(
-        published.some((event) => event.content.includes('taking longer than usual')),
-      ).toBe(false);
+      expect(published.some((event) => event.content.includes('taking longer than usual'))).toBe(
+        false,
+      );
 
       // Crossing the notice threshold surfaces the stall well before the
       // full ROOM_AGENT_PROMPT_TIMEOUT_MS idle-cancel window elapses.
@@ -2371,9 +2448,9 @@ describe('Room poll resilience', () => {
       await vi.advanceTimersByTimeAsync(15_000 * 5 + 5);
       const result = (await prompt) as { agentText: string };
       expect(result.agentText).toBe('done');
-      expect(
-        published.some((event) => event.content?.includes('taking longer than usual')),
-      ).toBe(false);
+      expect(published.some((event) => event.content?.includes('taking longer than usual'))).toBe(
+        false,
+      );
       await scheduler.dispose();
     } finally {
       vi.useRealTimers();
@@ -2433,7 +2510,9 @@ describe('Room poll resilience', () => {
           new Promise<never>((_resolve, reject) =>
             setTimeout(
               () =>
-                reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms of inactivity`)),
+                reject(
+                  new Error(`ACP session/prompt timed out after ${timeoutMs}ms of inactivity`),
+                ),
               timeoutMs,
             ),
           ),
@@ -2752,7 +2831,9 @@ describe('a restart-caused session pause is never published as agent trouble', (
   }
 
   const cornerSessionEvents = (published: NostrEvent[]) =>
-    published.filter((event) => event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'corner-session'));
+    published.filter((event) =>
+      event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'corner-session'),
+    );
 
   it("a session's FIRST suspended state is silent bookkeeping; the first real transition publishes", async () => {
     const agent = newIdentity('initial-state-agent');
@@ -2822,11 +2903,13 @@ describe('a restart-caused session pause is never published as agent trouble', (
             onStateChangeCalls.push(state);
             // Mirror the production wiring: the lifecycle reports through the
             // Body-owned hook, which owns both tracking and publication.
-            await (Reflect.get(body, 'onCornerSessionStateChange') as (
-              s: unknown,
-              c: string,
-              st: 'live' | 'suspended' | 'waiting-for-slot',
-            ) => Promise<void>).call(body, session, 'corner-shutdown', state);
+            await (
+              Reflect.get(body, 'onCornerSessionStateChange') as (
+                s: unknown,
+                c: string,
+                st: 'live' | 'suspended' | 'waiting-for-slot',
+              ) => Promise<void>
+            ).call(body, session, 'corner-shutdown', state);
           },
         },
       } as never;
@@ -3824,8 +3907,20 @@ describe('Room conversation and permission-gated work intent', () => {
     // and the HTTP backstop poll fired right after subscribe (runRoomPushLoop)
     // both observe the mention before either has finished handling it.
     await Promise.all([
-      processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [event], roomParticipants),
-      processChannelRequestEvents('parent-channel', { repo: 'repo' }, 'repository', [event], roomParticipants),
+      processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        roomParticipants,
+      ),
+      processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        roomParticipants,
+      ),
     ]);
 
     expect(open).toHaveBeenCalledTimes(1);
@@ -3834,7 +3929,7 @@ describe('Room conversation and permission-gated work intent', () => {
     await rm('/tmp/buzzy-corner-dedup-unit', { recursive: true, force: true });
   });
 
-  it("never retries a stalled backend without a new user message", async () => {
+  it('never retries a stalled backend without a new user message', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -3853,7 +3948,9 @@ describe('Room conversation and permission-gated work intent', () => {
     const sessionPromptSpy = vi
       .spyOn(client, 'sessionPrompt')
       .mockRejectedValue(
-        new Error(`ACP session/prompt timed out after ${ROOM_AGENT_PROMPT_TIMEOUT_MS}ms of inactivity`),
+        new Error(
+          `ACP session/prompt timed out after ${ROOM_AGENT_PROMPT_TIMEOUT_MS}ms of inactivity`,
+        ),
       );
     body.registerSession({
       channelId: 'parent-channel',
@@ -5159,9 +5256,7 @@ describe('first-class assistant messages', () => {
     expect(summary).toContain("I'll take a look at the README first.");
     expect(published).toHaveLength(2);
     expect(
-      published.filter((event) =>
-        event.content.includes("I'll take a look at the README first."),
-      ),
+      published.filter((event) => event.content.includes("I'll take a look at the README first.")),
     ).toHaveLength(1);
   });
 
@@ -5450,6 +5545,77 @@ describe('first-class assistant messages', () => {
     expect(serialized).not.toContain(fileBytes);
     expect(serialized).not.toContain('base64');
   });
+
+  it('uploads an allowlisted Room workbench file, publishes its isolated preview URL, and refuses a disallowed type', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buzzy-room-workbench-output-'));
+    const repository = join(root, 'repository');
+    const workbench = join(root, 'agent-private', 'workbench');
+    mkdirSync(repository, { recursive: true });
+    mkdirSync(workbench, { recursive: true });
+    const htmlPath = join(workbench, 'report.html');
+    const executablePath = join(workbench, 'payload.exe');
+    await writeFile(htmlPath, '<!doctype html><title>Workbench report</title>');
+    await writeFile(executablePath, 'not allowed');
+    const agent = newIdentity('agent-workbench-upload');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        expect(String(input)).toBe('https://usebeeline.app/upload');
+        const bytes = new Uint8Array(await new Response(init?.body).arrayBuffer());
+        const hash = new Headers(init?.headers).get('X-SHA-256');
+        return new Response(
+          JSON.stringify({
+            url: 'https://usebeeline.app/media/hash/report.html',
+            sha256: hash,
+            size: bytes.byteLength,
+            type: new Headers(init?.headers).get('Content-Type'),
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: repository,
+        relayBaseUrl: 'https://usebeeline.app',
+        relayHost: 'usebeeline.app',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://usebeeline.app',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+
+    try {
+      const result = await Reflect.get(body, 'uploadAgentOutputs').call(
+        body,
+        { cwd: repository, workbench: { dir: workbench } },
+        {
+          agentText:
+            `Ready. [[buzz-attachment:${htmlPath}]] ` +
+            `[[buzz-attachment:${executablePath}]]`,
+          updates: [],
+        },
+      );
+      expect(result.attachments).toEqual([
+        expect.objectContaining({
+          url: 'https://usebeeline.app/media/hash/report.html',
+          previewUrl: 'https://preview.usebeeline.app/media/hash/report.html',
+          name: 'report.html',
+          mimeType: 'text/html',
+        }),
+      ]);
+      expect(result.errors).toEqual([
+        'payload.exe: file type application/octet-stream is not allowed for agent attachments',
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('corner display names', () => {
@@ -5487,9 +5653,7 @@ describe('corner display names', () => {
   });
 
   it('leaves a message with no corner-open imperative untouched (the agent-originated write-request flow)', () => {
-    expect(cornerNameForIntent('add color to code blocks', 'room-id')).toBe(
-      'Add Color Code',
-    );
+    expect(cornerNameForIntent('add color to code blocks', 'room-id')).toBe('Add Color Code');
   });
 
   it('names the task even when the request opens with an @mention or conversational scaffolding', () => {
@@ -5502,7 +5666,10 @@ describe('corner display names', () => {
       ['@lena spin up a corner and refactor the parser', 'Refactor The Parser'],
       ['hey @lena, can you open a new corner to update the changelog', 'Update The Changelog'],
       ["@lena let's add dark mode to settings", 'Add Dark Mode'],
-      ['@lena start working on syntax highlighting in a new corner', 'Implement Syntax Highlighting'],
+      [
+        '@lena start working on syntax highlighting in a new corner',
+        'Implement Syntax Highlighting',
+      ],
     ];
     for (const [request, slug] of cases) {
       expect([request, cornerNameForIntent(request, 'room-id')]).toEqual([request, slug]);
@@ -5526,9 +5693,9 @@ describe('corner display names', () => {
   });
 
   it('taskDescriptionFromCornerRequest strips only the corner-open imperative, keeping the rest of the sentence intact', () => {
-    expect(
-      taskDescriptionFromCornerRequest('open a corner and add color to code blocks'),
-    ).toBe('add color to code blocks');
+    expect(taskDescriptionFromCornerRequest('open a corner and add color to code blocks')).toBe(
+      'add color to code blocks',
+    );
     expect(taskDescriptionFromCornerRequest('Fix OAuth callback + retry state')).toBe(
       'Fix OAuth callback + retry state',
     );
@@ -6234,21 +6401,31 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(prompts.slice(1).every((prompt) => prompt.includes('STUCK.txt'))).toBe(true);
       expect(prompts.at(-1)).toContain('Stop trying to make this corner merge-ready');
       expect(
-        published.filter((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+        published.filter(
+          (event) =>
+            Array.isArray(event.tags) &&
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         ),
       ).toHaveLength(3);
       expect(
-        published.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        published.some(
+          (event) =>
+            Array.isArray(event.tags) &&
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
         ),
       ).toBe(false);
       expect(info.mergeTarget).toBeUndefined();
       expect(
-        published.some((event) => event.content.includes('Approve the change-review panel')),
+        published.some(
+          (event) =>
+            typeof event.content === 'string' &&
+            event.content.includes('Approve the change-review panel'),
+        ),
       ).toBe(false);
-      const blocker = published.find((event) =>
-        event.content.includes('I stopped after 3 merge-gate rejections'),
+      const blocker = published.find(
+        (event) =>
+          typeof event.content === 'string' &&
+          event.content.includes('I stopped after 3 merge-gate rejections'),
       );
       expect(blocker?.content).toContain('STUCK.txt');
       expect(blocker?.content).toContain('nothing to approve');
@@ -6270,7 +6447,12 @@ describe('a local-only repository lands through the daemon, never through the ag
    * `localOnly`), plus a linked corner worktree holding one committed change —
    * the shape the dogfood hit, where the approval had nothing to push to.
    */
-  function localOnlyRepoWithCorner(): { root: string; repoPath: string; cornerPath: string; tip: string } {
+  function localOnlyRepoWithCorner(): {
+    root: string;
+    repoPath: string;
+    cornerPath: string;
+    tip: string;
+  } {
     const root = mkdtempSync(join(tmpdir(), 'buzzy-local-land-'));
     const repoPath = join(root, 'repo');
     const cornerPath = join(root, 'corner');
@@ -6419,13 +6601,9 @@ describe('a local-only repository lands through the daemon, never through the ag
           // so authorizeReviewer refuses on role — the succession path must
           // be what accepts this approval.
           const isApprovalRead = filters.some(
-            (filter) =>
-              Array.isArray(filter['#t']) && filter['#t'].includes('buzz-merge-approval'),
+            (filter) => Array.isArray(filter['#t']) && filter['#t'].includes('buzz-merge-approval'),
           );
-          return new Response(
-            JSON.stringify(isApprovalRead ? [approval] : []),
-            { status: 200 },
-          );
+          return new Response(JSON.stringify(isApprovalRead ? [approval] : []), { status: 200 });
         }
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
@@ -6487,8 +6665,7 @@ describe('a local-only repository lands through the daemon, never through the ag
         if (String(input).endsWith('/query')) {
           const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
           const isApprovalRead = filters.some(
-            (filter) =>
-              Array.isArray(filter['#t']) && filter['#t'].includes('buzz-merge-approval'),
+            (filter) => Array.isArray(filter['#t']) && filter['#t'].includes('buzz-merge-approval'),
           );
           return new Response(JSON.stringify(isApprovalRead ? [approval] : []), { status: 200 });
         }
@@ -6754,7 +6931,10 @@ describe('graceful relay-failure confirmation', () => {
           pubkey: human.publicKey,
           created_at: Math.floor(Date.now() / 1000),
           kind: 9,
-          tags: [['h', 'corner-close-fails'], ['t', CORNER_CLOSE_TAG]],
+          tags: [
+            ['h', 'corner-close-fails'],
+            ['t', CORNER_CLOSE_TAG],
+          ],
           content: 'Close this corner.',
         },
         human.secretKey,
@@ -6790,39 +6970,39 @@ describe('graceful relay-failure confirmation', () => {
     const human = newIdentity('close-typed-human');
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-typed-close-'));
     try {
-    const body = newBody(agent, workspaceRoot);
-    body.registerSubchannel({
-      subchannelId: 'corner-typed-close',
-      worktreePath: '/tmp/nonexistent-typed-close',
-      featureBranch: 'feature/typed-close',
-      role: agent,
-      session: cornerSession('corner-typed-close'),
-      lastPolledAt: 0,
-      archived: false,
-    });
-    // No `#t=buzz-corner-close` tag — this is the owner's actual action:
-    // plain prose typed into the corner composer.
-    const typedClose = signEvent(
-      {
-        pubkey: human.publicKey,
-        created_at: Math.floor(Date.now() / 1000),
-        kind: 9,
-        tags: [['h', 'corner-typed-close']],
-        content: 'Close this corner.',
-      },
-      human.secretKey,
-    );
-    (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
-      .fn()
-      .mockResolvedValue([typedClose]);
-    let archiveCalls = 0;
-    body.archiveSubchannel = async () => {
-      archiveCalls++;
-    };
+      const body = newBody(agent, workspaceRoot);
+      body.registerSubchannel({
+        subchannelId: 'corner-typed-close',
+        worktreePath: '/tmp/nonexistent-typed-close',
+        featureBranch: 'feature/typed-close',
+        role: agent,
+        session: cornerSession('corner-typed-close'),
+        lastPolledAt: 0,
+        archived: false,
+      });
+      // No `#t=buzz-corner-close` tag — this is the owner's actual action:
+      // plain prose typed into the corner composer.
+      const typedClose = signEvent(
+        {
+          pubkey: human.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [['h', 'corner-typed-close']],
+          content: 'Close this corner.',
+        },
+        human.secretKey,
+      );
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+        .fn()
+        .mockResolvedValue([typedClose]);
+      let archiveCalls = 0;
+      body.archiveSubchannel = async () => {
+        archiveCalls++;
+      };
 
-    await body.pollMembers('corner-typed-close');
+      await body.pollMembers('corner-typed-close');
 
-    expect(archiveCalls).toBe(1);
+      expect(archiveCalls).toBe(1);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -6833,13 +7013,17 @@ describe('graceful relay-failure confirmation', () => {
     const human = newIdentity('close-chat-human');
     const steered: string[] = [];
     const session = cornerSession('corner-close-discussed');
-    (session.client as unknown as {
-      activeRunId: () => string | undefined;
-      sessionSteer: (id: string, prompt: string) => Promise<void>;
-    }).activeRunId = () => 'run-1';
-    (session.client as unknown as {
-      sessionSteer: (id: string, prompt: string) => Promise<void>;
-    }).sessionSteer = async (_id: string, prompt: string) => {
+    (
+      session.client as unknown as {
+        activeRunId: () => string | undefined;
+        sessionSteer: (id: string, prompt: string) => Promise<void>;
+      }
+    ).activeRunId = () => 'run-1';
+    (
+      session.client as unknown as {
+        sessionSteer: (id: string, prompt: string) => Promise<void>;
+      }
+    ).sessionSteer = async (_id: string, prompt: string) => {
       steered.push(prompt);
     };
     vi.stubGlobal(
@@ -7020,7 +7204,7 @@ describe('user-facing failure text stays free of git/tool plumbing', () => {
       'git worktree add failed:',
       '! [rejected]        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -> main (fetch first)',
       "error: failed to push some refs to 'https://relay.example/git/ownerhex/project'",
-      "hint: Updates were rejected because the remote contains work that you do",
+      'hint: Updates were rejected because the remote contains work that you do',
       "hint: not have locally. See the 'Note about fast-forwards' in 'git push --help'.",
     ].join('\n');
 
@@ -7117,9 +7301,9 @@ describe('per-agent access policy', () => {
   }
 
   function drive(body: Body) {
-    return (Reflect.get(body, 'processChannelRequestEvents') as (...a: unknown[]) => Promise<number>).bind(
-      body,
-    );
+    return (
+      Reflect.get(body, 'processChannelRequestEvents') as (...a: unknown[]) => Promise<number>
+    ).bind(body);
   }
 
   afterEach(() => {
@@ -7131,25 +7315,31 @@ describe('per-agent access policy', () => {
       baseConfig({ accessPolicy: 'creator', accessOwnerPubkey: owner.publicKey }),
     );
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    const reply = vi
-      .spyOn(body as never, 'replyInRoom' as never)
-      .mockResolvedValue(true as never);
+    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue(true as never);
     const published = withCapturedPublishes();
     const process = drive(body);
     const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
 
     // A non-permitted stranger never drives the backend; it gets one refusal.
-    await process('parent-channel', { repo: 'repo' }, 'repository', [
-      addressed(stranger, body.agent.publicKey, '1'),
-    ], participants);
+    await process(
+      'parent-channel',
+      { repo: 'repo' },
+      'repository',
+      [addressed(stranger, body.agent.publicKey, '1')],
+      participants,
+    );
     expect(reply).not.toHaveBeenCalled();
     expect(refusals(published)).toHaveLength(1);
     expect(refusals(published)[0]!.content).toContain('wildling');
 
     // The owner is permitted and reaches the ordinary reply path, no refusal.
-    await process('parent-channel', { repo: 'repo' }, 'repository', [
-      addressed(owner, body.agent.publicKey, '2'),
-    ], participants);
+    await process(
+      'parent-channel',
+      { repo: 'repo' },
+      'repository',
+      [addressed(owner, body.agent.publicKey, '2')],
+      participants,
+    );
     expect(reply).toHaveBeenCalledTimes(1);
     expect(refusals(published)).toHaveLength(1);
   });
@@ -7159,16 +7349,18 @@ describe('per-agent access policy', () => {
       baseConfig({ accessPolicy: 'everyone', accessOwnerPubkey: owner.publicKey }),
     );
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    const reply = vi
-      .spyOn(body as never, 'replyInRoom' as never)
-      .mockResolvedValue(true as never);
+    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue(true as never);
     const published = withCapturedPublishes();
     const process = drive(body);
     const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
 
-    await process('parent-channel', { repo: 'repo' }, 'repository', [
-      addressed(stranger, body.agent.publicKey, '1'),
-    ], participants);
+    await process(
+      'parent-channel',
+      { repo: 'repo' },
+      'repository',
+      [addressed(stranger, body.agent.publicKey, '1')],
+      participants,
+    );
     expect(reply).toHaveBeenCalledTimes(1);
     expect(refusals(published)).toHaveLength(0);
   });
@@ -7176,16 +7368,18 @@ describe('per-agent access policy', () => {
   it('defaults to everyone when no policy is configured (unchanged behaviour)', async () => {
     const body = new Body(baseConfig({}));
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    const reply = vi
-      .spyOn(body as never, 'replyInRoom' as never)
-      .mockResolvedValue(true as never);
+    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue(true as never);
     withCapturedPublishes();
     const process = drive(body);
     const participants = [stranger.publicKey, body.agent.publicKey];
 
-    await process('parent-channel', { repo: 'repo' }, 'repository', [
-      addressed(stranger, body.agent.publicKey, '1'),
-    ], participants);
+    await process(
+      'parent-channel',
+      { repo: 'repo' },
+      'repository',
+      [addressed(stranger, body.agent.publicKey, '1')],
+      participants,
+    );
     expect(reply).toHaveBeenCalledTimes(1);
   });
 
@@ -7201,10 +7395,16 @@ describe('per-agent access policy', () => {
 
     // Two distinct addressed messages from the same non-permitted sender yield
     // exactly one refusal — the second is suppressed within the window.
-    await process('parent-channel', { repo: 'repo' }, 'repository', [
-      addressed(stranger, body.agent.publicKey, '1'),
-      addressed(stranger, body.agent.publicKey, '2'),
-    ], participants);
+    await process(
+      'parent-channel',
+      { repo: 'repo' },
+      'repository',
+      [
+        addressed(stranger, body.agent.publicKey, '1'),
+        addressed(stranger, body.agent.publicKey, '2'),
+      ],
+      participants,
+    );
     expect(refusals(published)).toHaveLength(1);
   });
 });
@@ -7350,7 +7550,10 @@ describe('per-agent model/effort persistence', () => {
     // A human chose sonnet/high before this session (re)activation — simulates
     // a selection made while the session was suspended, surviving reopen.
     await setAgentModelConfig(
-      { http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner }, identity: owner },
+      {
+        http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner },
+        identity: owner,
+      },
       communityId,
       body.agent.publicKey,
       { model: 'sonnet', effort: 'high' },
@@ -7378,11 +7581,15 @@ describe('per-agent model/effort persistence', () => {
       (event) => event.kind === KIND_AGENT_MODEL_CATALOG && event.pubkey === body.agent.publicKey,
     );
     expect(catalogEvents).toHaveLength(1);
-    const catalogContent = JSON.parse(catalogEvents[0]!.content) as { options: Array<{ category: string }> };
+    const catalogContent = JSON.parse(catalogEvents[0]!.content) as {
+      options: Array<{ category: string }>;
+    };
     expect(catalogContent.options.map((option) => option.category)).toEqual(['model', 'effort']);
-    expect((session as { modelConfigOptions?: Array<{ category: string }> }).modelConfigOptions?.map(
-      (option) => option.category,
-    )).toEqual(['model', 'effort']);
+    expect(
+      (session as { modelConfigOptions?: Array<{ category: string }> }).modelConfigOptions?.map(
+        (option) => option.category,
+      ),
+    ).toEqual(['model', 'effort']);
   });
 
   it('never calls setConfigOption for mode, even with no persisted selection at all', async () => {
@@ -7438,7 +7645,10 @@ describe('per-agent model/effort persistence', () => {
     stubRelay(body, published);
 
     await setAgentModelConfig(
-      { http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner }, identity: owner },
+      {
+        http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner },
+        identity: owner,
+      },
       communityId,
       body.agent.publicKey,
       { model: 'sonnet', effort: 'low' },
@@ -7492,8 +7702,12 @@ describe('per-agent model/effort persistence', () => {
     };
     // The harness advertised currentValue 'default' for both axes; the
     // published snapshot must name what the agent will actually run with.
-    expect(content.options.find((option) => option.category === 'model')?.currentValue).toBe('sonnet');
-    expect(content.options.find((option) => option.category === 'effort')?.currentValue).toBe('low');
+    expect(content.options.find((option) => option.category === 'model')?.currentValue).toBe(
+      'sonnet',
+    );
+    expect(content.options.find((option) => option.category === 'effort')?.currentValue).toBe(
+      'low',
+    );
     expect(content.selection).toEqual({ model: 'sonnet', effort: 'low' });
   });
 
@@ -7543,7 +7757,10 @@ describe('per-agent model/effort persistence', () => {
     stubRelay(body, published);
 
     await setAgentModelConfig(
-      { http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner }, identity: owner },
+      {
+        http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner },
+        identity: owner,
+      },
       communityId,
       body.agent.publicKey,
       { model: 'sonnet', effort: 'low' },
@@ -7649,7 +7866,11 @@ describe('room owns the repo (Stage 1)', () => {
     mkdirSync(strayDir, { recursive: true });
     await writeFile(join(strayDir, 'leftover.txt'), 'litter');
 
-    const body = new Body({ ...config, workspaceRoot: root }, newIdentity('operator'), newIdentity('agent'));
+    const body = new Body(
+      { ...config, workspaceRoot: root },
+      newIdentity('operator'),
+      newIdentity('agent'),
+    );
     // Register the live corner so the prune must preserve it.
     Reflect.get(body, 'subchannels').set('live-corner', { worktreePath: liveDir });
 
@@ -7814,7 +8035,9 @@ describe('closing a corner with no live session', () => {
 
       const prepareBody = () => {
         const body = newBody(agent, workspaceRoot);
-        vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(undefined as never);
+        vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(
+          undefined as never,
+        );
         Reflect.set(body, 'agentRelay', {
           queryEvents: vi.fn(async (filters: Array<Record<string, unknown>>) => {
             const filter = filters[0] ?? {};
@@ -7978,10 +8201,8 @@ describe('closing a corner with no live session', () => {
     }
   });
 
-  /** A needs-attention parent card is only ever a state TRANSITION: when THE
-   * oracle says the verdict already stands, restating it would carry no new
-   * fact — just a fresh timestamp, which is what let every restart re-gold
-   * parked corners while their agents were actively working. */
+  /** A needs-attention parent card is only ever a state TRANSITION, compared
+   * against the daemon's in-memory state record baseline. */
   it('suppresses a restated needs-attention card but publishes a real transition', async () => {
     const agent = newIdentity('attention-transition-agent');
     const workspaceRoot = '/workspace';
@@ -8011,6 +8232,7 @@ describe('closing a corner with no live session', () => {
       subchannelId: 'corner-restated',
       featureBranch: 'feature/restated',
       session: { sessionId: 's1', parentChannelId: 'room-restated' },
+      cornerState: { state: 'waiting-on-human', reason: 'failure' },
     } as never;
     await Reflect.get(body, 'postParentCornerStatus').call(
       body,
@@ -8022,6 +8244,7 @@ describe('closing a corner with no live session', () => {
 
     // A real transition — the corner was live before — publishes.
     standing = [];
+    (info as unknown as { cornerState: { state: string } }).cornerState = { state: 'working' };
     await Reflect.get(body, 'postParentCornerStatus').call(
       body,
       info,
@@ -8032,7 +8255,8 @@ describe('closing a corner with no live session', () => {
     expect(published[0]!.tags).toContainEqual(['display-status', 'needs-attention']);
     expect(published[0]!.tags).toContainEqual(['subchannel', 'corner-restated']);
 
-    // An unreadable history fails OPEN: publishing beats one suppressed truth.
+    // Relay history is no longer consulted: a non-waiting in-memory state
+    // publishes even when the read client is unavailable.
     Reflect.set(body, 'agentRelay', {
       queryEvents: vi.fn(async () => {
         throw new Error('relay down');
@@ -8136,9 +8360,7 @@ describe('closing a corner with no live session', () => {
       // First restart: the corner is told, once.
       await restore.call(body, 'room-norepo', undefined);
       const cards = () =>
-        published.filter((event) =>
-          event.content.startsWith(CORNER_APPROVED_REPO_UNRESTORABLE),
-        );
+        published.filter((event) => event.content.startsWith(CORNER_APPROVED_REPO_UNRESTORABLE));
       expect(cards()).toHaveLength(1);
       expect(body.getAbandonedCorners().get('corner-norepo')?.reason).toContain(
         'approved repository',
@@ -8184,7 +8406,8 @@ describe('closing a corner with no live session', () => {
       // The corner itself is archived on the relay (kind:9002 archived=true).
       const archiveCommand = published.find(
         (event) =>
-          event.kind === 9002 && event.tags.some((tag) => tag[0] === 'archived' && tag[1] === 'true'),
+          event.kind === 9002 &&
+          event.tags.some((tag) => tag[0] === 'archived' && tag[1] === 'true'),
       );
       expect(archiveCommand).toBeDefined();
       expect(archiveCommand!.tags).toContainEqual(['h', 'corner-dead']);
@@ -8332,13 +8555,13 @@ describe('closing a corner with no live session', () => {
   });
 
   it('refuses to archive a channel the relay does not link to this Room, even when it is on the abandoned list', () => {
-    expect(() =>
-      assertRelayCornerArchiveTarget('corner', 'room', 'room'),
-    ).not.toThrow();
+    expect(() => assertRelayCornerArchiveTarget('corner', 'room', 'room')).not.toThrow();
     // A top-level Room or Workspace has no parent link at all.
     expect(() => assertRelayCornerArchiveTarget('room', null, 'room')).toThrow('non-corner');
     // A self-referencing link is not a parent.
-    expect(() => assertRelayCornerArchiveTarget('corner', 'corner', 'corner')).toThrow('non-corner');
+    expect(() => assertRelayCornerArchiveTarget('corner', 'corner', 'corner')).toThrow(
+      'non-corner',
+    );
     // A corner belonging to some other Room is not this Body's to archive.
     expect(() => assertRelayCornerArchiveTarget('corner', 'other-room', 'room')).toThrow(
       'non-corner',
@@ -8369,11 +8592,9 @@ describe('closing a corner with no live session', () => {
       writeFileSync(join(sourcePath, 'README.md'), 'kept on the branch\n');
       spawnSync('git', ['add', 'README.md'], { cwd: sourcePath });
       spawnSync('git', ['commit', '-q', '-m', 'seed'], { cwd: sourcePath });
-      spawnSync(
-        'git',
-        ['worktree', 'add', '-q', '-b', 'feature/wedged', worktreePath, 'main'],
-        { cwd: sourcePath },
-      );
+      spawnSync('git', ['worktree', 'add', '-q', '-b', 'feature/wedged', worktreePath, 'main'], {
+        cwd: sourcePath,
+      });
       writeFileSync(join(worktreePath, 'corner.txt'), 'corner commit survives cleanup\n');
       spawnSync('git', ['add', 'corner.txt'], { cwd: worktreePath });
       spawnSync('git', ['commit', '-q', '-m', 'corner work'], { cwd: worktreePath });
@@ -8437,7 +8658,7 @@ describe('closing a corner with no live session', () => {
   });
 });
 
-describe("a corner records the objective it was opened for", () => {
+describe('a corner records the objective it was opened for', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("writes the human's own task onto the corner's immutable create event", async () => {
@@ -8646,59 +8867,59 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     const human = newIdentity('queue-human');
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-queue-'));
     try {
-    const body = newBody(agent, workspaceRoot);
+      const body = newBody(agent, workspaceRoot);
 
-    const prompts: string[] = [];
-    const sessionPrompt = vi.fn(async (_sessionId: string, prompt: string) => {
-      prompts.push(prompt);
-      return { stopReason: 'end_turn', updates: [], agentText: 'ok', toolCalls: [] };
-    });
-    // The shape every shipped harness actually has: a run is in flight, and
-    // there is no live-steering channel to inject into.
-    const sessionSteer = vi
-      .fn()
-      .mockRejectedValue(new Error('ACP session corner-queue has no active run to steer'));
-    const session = {
-      channelId: 'corner-queue',
-      sessionId: 'session-queue',
-      client: { sessionPrompt, sessionSteer, sessionCancel: vi.fn(), activeRunId: () => 'run-1' },
-    } as never;
+      const prompts: string[] = [];
+      const sessionPrompt = vi.fn(async (_sessionId: string, prompt: string) => {
+        prompts.push(prompt);
+        return { stopReason: 'end_turn', updates: [], agentText: 'ok', toolCalls: [] };
+      });
+      // The shape every shipped harness actually has: a run is in flight, and
+      // there is no live-steering channel to inject into.
+      const sessionSteer = vi
+        .fn()
+        .mockRejectedValue(new Error('ACP session corner-queue has no active run to steer'));
+      const session = {
+        channelId: 'corner-queue',
+        sessionId: 'session-queue',
+        client: { sessionPrompt, sessionSteer, sessionCancel: vi.fn(), activeRunId: () => 'run-1' },
+      } as never;
 
-    body.registerSubchannel({
-      subchannelId: 'corner-queue',
-      worktreePath: '/tmp/nonexistent-corner-queue',
-      featureBranch: 'feature/queue',
-      role: agent,
-      session,
-      lastPolledAt: 0,
-      archived: false,
-    });
+      body.registerSubchannel({
+        subchannelId: 'corner-queue',
+        worktreePath: '/tmp/nonexistent-corner-queue',
+        featureBranch: 'feature/queue',
+        role: agent,
+        session,
+        lastPolledAt: 0,
+        archived: false,
+      });
 
-    const now = Math.floor(Date.now() / 1000);
-    const first = memberMessage(human, 'corner-queue', 'First: fix the mobile layout.', now);
-    const second = memberMessage(human, 'corner-queue', 'Second: and the empty state.', now + 1);
-    (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
-      .fn()
-      .mockResolvedValue([first, second]);
+      const now = Math.floor(Date.now() / 1000);
+      const first = memberMessage(human, 'corner-queue', 'First: fix the mobile layout.', now);
+      const second = memberMessage(human, 'corner-queue', 'Second: and the empty state.', now + 1);
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+        .fn()
+        .mockResolvedValue([first, second]);
 
-    const count = await body.pollMembers('corner-queue');
+      const count = await body.pollMembers('corner-queue');
 
-    // Both steers were delivered — none lost — and in the order they were sent.
-    expect(count).toBe(2);
-    expect(sessionSteer).toHaveBeenCalledTimes(2);
-    expect(prompts).toHaveLength(2);
-    expect(prompts[0]).toContain('First: fix the mobile layout.');
-    expect(prompts[1]).toContain('Second: and the empty state.');
+      // Both steers were delivered — none lost — and in the order they were sent.
+      expect(count).toBe(2);
+      expect(sessionSteer).toHaveBeenCalledTimes(2);
+      expect(prompts).toHaveLength(2);
+      expect(prompts[0]).toContain('First: fix the mobile layout.');
+      expect(prompts[1]).toContain('Second: and the empty state.');
 
-    // One quiet acknowledgement for the burst, not one per message and not a
-    // fabricated agent reply.
-    const acks = queuedAcks(published);
-    expect(acks).toHaveLength(1);
-    expect(acks[0]!.tags).toContainEqual(['h', 'corner-queue']);
-    expect(acks[0]!.tags).toContainEqual(['t', 'body-control']);
-    expect(acks[0]!.tags).toContainEqual(['status', 'queued']);
-    expect(acks[0]!.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message')).toBe(false);
-    expect(acks[0]!.content).toContain('queued');
+      // One quiet acknowledgement for the burst, not one per message and not a
+      // fabricated agent reply.
+      const acks = queuedAcks(published);
+      expect(acks).toHaveLength(1);
+      expect(acks[0]!.tags).toContainEqual(['h', 'corner-queue']);
+      expect(acks[0]!.tags).toContainEqual(['t', 'body-control']);
+      expect(acks[0]!.tags).toContainEqual(['status', 'queued']);
+      expect(acks[0]!.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message')).toBe(false);
+      expect(acks[0]!.content).toContain('queued');
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -9235,12 +9456,14 @@ describe('a corner belongs to the agent that opened it', () => {
   it('classifies a relay refusal as non-retryable only when a retry genuinely cannot help', () => {
     expect(
       isNonRetryableRelayError(
-        new Error('publishEvent kind=9002 failed: HTTP 400 {"error":"invalid: actor not authorized"}'),
+        new Error(
+          'publishEvent kind=9002 failed: HTTP 400 {"error":"invalid: actor not authorized"}',
+        ),
       ),
     ).toBe(true);
-    expect(isNonRetryableRelayError(new Error('publishEvent kind=9002 failed: HTTP 403 nope'))).toBe(
-      true,
-    );
+    expect(
+      isNonRetryableRelayError(new Error('publishEvent kind=9002 failed: HTTP 403 nope')),
+    ).toBe(true);
     // "Later" answers, and everything transient, stay retryable.
     expect(isNonRetryableRelayError(new Error('HTTP 429 rate limited, retry in 12s'))).toBe(false);
     expect(isNonRetryableRelayError(new Error('HTTP 408 request timeout'))).toBe(false);
@@ -9517,7 +9740,7 @@ describe('a corner that fell out of local tracking is still closable', () => {
     }
   });
 
-  it('still sees a close older than the corner\'s own durable delivery cursor', async () => {
+  it("still sees a close older than the corner's own durable delivery cursor", async () => {
     const agent = newIdentity('untracked-cursor-agent');
     const human = newIdentity('untracked-cursor-human');
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-untracked-cursor-'));
@@ -9640,7 +9863,6 @@ describe('moved-target land refusals are classified, and recaps stay readable', 
     expect(summary).not.toContain('a'.repeat(40));
     expect(summary).toContain(`Landed at ${'a'.repeat(7)}.`);
   });
-
 });
 
 describe('the Room target branch changes by admin confirm, never by the agent', () => {
@@ -9718,7 +9940,10 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
                 pubkey: admin.publicKey,
                 created_at: 1_700_000_000,
                 kind: KIND_CHANNEL_ADMINS,
-                tags: [['d', channelId], ['p', admin.publicKey, '', 'admin']],
+                tags: [
+                  ['d', channelId],
+                  ['p', admin.publicKey, '', 'admin'],
+                ],
                 content: '',
               },
               admin.secretKey,
@@ -9807,12 +10032,11 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     const open = vi.spyOn(body, 'openSubchannel');
 
     await expect(
-      reply(
-        body,
-        roomId,
-        'from now on land changes to a branch called staging instead of master',
-        { repo: 'buzzy', repositoryKey, targetBranch: 'refs/heads/master' },
-      ),
+      reply(body, roomId, 'from now on land changes to a branch called staging instead of master', {
+        repo: 'buzzy',
+        repositoryKey,
+        targetBranch: 'refs/heads/master',
+      }),
     ).resolves.toBe(false);
 
     expect(open).not.toHaveBeenCalled();
@@ -9831,9 +10055,7 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     }
 
     function armTurn(body: Body, overrides: Record<string, unknown> = {}): void {
-      (
-        Reflect.get(body, 'pendingRoomTurns') as Map<string, Record<string, unknown>>
-      ).set(roomId, {
+      (Reflect.get(body, 'pendingRoomTurns') as Map<string, Record<string, unknown>>).set(roomId, {
         request: {
           eventId: 'target-branch-request',
           authorPubkey: admin.publicKey,
@@ -10005,7 +10227,7 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     );
     expect(cornerBoundRepo).toHaveBeenCalledWith(roomId, roomRepo);
     await expect(
-      (cornerBoundRepo.mock.results[0]!.value as Promise<{ targetBranch?: string }>),
+      cornerBoundRepo.mock.results[0]!.value as Promise<{ targetBranch?: string }>,
     ).resolves.toMatchObject({ targetBranch: 'refs/heads/staging' });
     rmSync(workspaceRoot, { recursive: true, force: true });
   });
@@ -10052,7 +10274,10 @@ describe('an unrecognized slash command is marked, never silently executed', () 
         pubkey: human.publicKey,
         created_at: createdAt,
         kind: 9,
-        tags: [['h', 'parent-channel'], ['p', newIdentity('slash-agent').publicKey]],
+        tags: [
+          ['h', 'parent-channel'],
+          ['p', newIdentity('slash-agent').publicKey],
+        ],
         content,
       },
       human.secretKey,
@@ -10253,7 +10478,12 @@ describe('agent command list publishing (composer palette source of truth)', () 
     expect(commandEvents).toHaveLength(1);
     expect(commandEvents[0]!.pubkey).toBe(agentIdentity.publicKey);
     const tags = commandEvents[0]!.tags as string[][];
-    expect(tags).toEqual(expect.arrayContaining([['t', 'buzz-agent-commands'], ['h', communityId]]));
+    expect(tags).toEqual(
+      expect.arrayContaining([
+        ['t', 'buzz-agent-commands'],
+        ['h', communityId],
+      ]),
+    );
     expect(JSON.parse(commandEvents[0]!.content)).toEqual({
       commands: [{ name: 'loop', description: 'Loop' }],
     });
@@ -10554,7 +10784,10 @@ describe('harness-independent corner commit watch', () => {
     const worktreePath = committedFeatureWorktree();
     try {
       const tip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
-      watchInfo(body, agent, worktreePath, { landedTip: tip, mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip } });
+      watchInfo(body, agent, worktreePath, {
+        landedTip: tip,
+        mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip },
+      });
 
       await Reflect.get(body, 'pollCornerCommitWatch').call(body);
 
@@ -10670,14 +10903,12 @@ describe('never-idle conclude watch', () => {
       };
       vi.spyOn(durableState, 'saveConcludeEpisode').mockResolvedValue(undefined);
     }
-    const promptAgent = vi
-      .spyOn(body as never, 'promptAgent' as never)
-      .mockResolvedValue({
-        agentText: 'pure narration, nothing concluded',
-        updates: [],
-        toolCalls: [],
-        stopReason: 'end_turn',
-      } as never);
+    const promptAgent = vi.spyOn(body as never, 'promptAgent' as never).mockResolvedValue({
+      agentText: 'pure narration, nothing concluded',
+      updates: [],
+      toolCalls: [],
+      stopReason: 'end_turn',
+    } as never);
     const finishGate = vi
       .spyOn(body as never, 'finishCornerTurnAgainstMergeGate' as never)
       .mockResolvedValue(ready as never);

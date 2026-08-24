@@ -431,18 +431,18 @@ describe('the sweep decision itself', () => {
 });
 
 describe('probing a corner directory', () => {
-  it('reports unlanded commits against the real target ref', () => {
+  it('reports unlanded commits against the real target ref', async () => {
     const fixture = corner();
-    const refs = resolveTargetRefs(fixture.worktree, ['refs/heads/main']);
+    const refs = await resolveTargetRefs(fixture.worktree, ['refs/heads/main']);
     expect(refs).toEqual(['refs/heads/main']);
-    const probe = probeCornerWorktree(fixture.worktree, refs);
+    const probe = await probeCornerWorktree(fixture.worktree, refs);
     expect(probe).toMatchObject({ isWorktree: true, dirty: false, unknown: false });
     expect(probe.unmergedCommits).toBe(1);
   });
 
-  it('is unknown, never clean, when the target ref cannot be resolved', () => {
+  it('is unknown, never clean, when the target ref cannot be resolved', async () => {
     const fixture = corner();
-    expect(probeCornerWorktree(fixture.worktree, []).unknown).toBe(true);
+    expect((await probeCornerWorktree(fixture.worktree, [])).unknown).toBe(true);
   });
 });
 

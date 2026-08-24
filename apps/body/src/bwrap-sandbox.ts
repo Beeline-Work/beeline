@@ -159,6 +159,7 @@
  * corner callbacks can enforce the denylist only for harnesses that still ask.
  */
 import { spawnSync } from 'node:child_process';
+import { git } from '@beeline/gate';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
@@ -521,12 +522,10 @@ export function wrapAgentCommand(input: {
  * session entirely, since a corner that can edit but never commit is worse than
  * an unwrapped one.
  */
-export function resolveGitCommonDir(worktreePath: string): string | undefined {
-  const result = spawnSync('git', ['-C', worktreePath, 'rev-parse', '--git-common-dir'], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) return undefined;
-  const raw = (result.stdout ?? '').trim();
+export async function resolveGitCommonDir(worktreePath: string): Promise<string | undefined> {
+  const result = await git(worktreePath, ['rev-parse', '--git-common-dir']);
+  if (!result.ok) return undefined;
+  const raw = result.stdout.trim();
   if (!raw) return undefined;
   return resolve(worktreePath, raw);
 }

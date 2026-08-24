@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { spawn, spawnSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { decodeNsec, getPublicKey } from '@beeline/nostr';
-import { newIdentity, type Identity } from '@beeline/gate';
+import { git as runBoundedGit, newIdentity, type Identity } from '@beeline/gate';
 import type {
   RedeemAgentPairingResult,
   RepositoryBinding,
@@ -49,9 +49,9 @@ export interface AgentRuntimeRecord {
   pairedBy: string;
   agent: StoredIdentity;
   body: StoredIdentity;
-  /** Repository Rooms currently known to this Workspace supervisor. */
+  /** Repository Rooms currently known to this Workspace daemon. */
   rooms: RoomRuntimeRecord[];
-  /** Git common dir that owns the one machine-local supervisor record. */
+  /** Git common dir that owns the one machine-local daemon record. */
   supervisorRoot: string;
   relayBaseUrl: string;
   relayHost?: string;
@@ -175,6 +175,7 @@ function git(cwd: string, args: string[]): string | null {
     cwd,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
     encoding: 'utf8',
+    timeout: 10_000,
   });
   return result.status === 0 ? (result.stdout ?? '').trim() : null;
 }
@@ -299,6 +300,76 @@ export function tryInspectLocalRepository(cwd: string): LocalRepositoryBinding |
  */
 export function inspectLocalRepository(cwd: string): LocalRepositoryBinding {
   const binding = tryInspectLocalRepository(cwd);
+  if (!binding) {
+    throw new Error(`not a git repository; pass --repo <path> to specify one (checked: ${cwd})`);
+  }
+  return binding;
+}
+
+async function boundedGitText(cwd: string, args: string[]): Promise<string | null> {
+  const result = await runBoundedGit(cwd, args);
+  return result.ok ? result.stdout.trim() : null;
+}
+
+/**
+ * Daemon-safe repository inspection. Unlike the synchronous CLI convenience
+ * above, every git lookup crosses the disposable JSON worker boundary.
+ */
+export async function tryInspectLocalRepositoryBounded(
+  cwd: string,
+): Promise<LocalRepositoryBinding | null> {
+  const root = await boundedGitText(cwd, ['rev-parse', '--show-toplevel']);
+  if (!root) return null;
+  const [absoluteCommon, configuredTarget, remoteHead, currentBranch, hasMain, remoteUrl] =
+    await Promise.all([
+      boundedGitText(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']),
+      boundedGitText(root, ['config', '--get', 'beeline.targetBranch']),
+      boundedGitText(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']),
+      boundedGitText(root, ['branch', '--show-current']),
+      boundedGitText(root, ['show-ref', '--verify', '--quiet', 'refs/heads/main']),
+      boundedGitText(root, ['remote', 'get-url', 'origin']),
+    ]);
+  const common =
+    absoluteCommon ?? (await boundedGitText(root, ['rev-parse', '--git-common-dir'])) ?? '.git';
+  const gitCommonDir = resolve(root, common);
+  const targetBranch = (
+    configuredTarget ||
+    remoteHead?.replace(/^origin\//, '') ||
+    (hasMain !== null ? 'main' : currentBranch || 'main')
+  ).replace(/^refs\/heads\//, '');
+
+  if (!remoteUrl) {
+    const name = basename(root);
+    return {
+      root,
+      gitCommonDir,
+      targetBranch,
+      repository: {
+        key: sha256(`local:${gitCommonDir}`),
+        name,
+        localOnly: true,
+      },
+    };
+  }
+
+  const canonicalRemote = canonicalizeOrigin(remoteUrl, root);
+  return {
+    root,
+    gitCommonDir,
+    remoteName: 'origin',
+    targetBranch,
+    repository: {
+      key: sha256(`remote:${canonicalRemote}`),
+      name: nameFromCanonicalRemote(canonicalRemote, basename(root)),
+      remote: canonicalRemote,
+      localOnly: false,
+    },
+    ...(relayRepoFromOrigin(remoteUrl) ? { relayRepo: relayRepoFromOrigin(remoteUrl) } : {}),
+  };
+}
+
+export async function inspectLocalRepositoryBounded(cwd: string): Promise<LocalRepositoryBinding> {
+  const binding = await tryInspectLocalRepositoryBounded(cwd);
   if (!binding) {
     throw new Error(`not a git repository; pass --repo <path> to specify one (checked: ${cwd})`);
   }
@@ -594,9 +665,7 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
     (parsed.sandbox !== undefined && !isSandboxPolicy(parsed.sandbox)) ||
     (parsed.sandboxMaskPaths !== undefined &&
       (!Array.isArray(parsed.sandboxMaskPaths) ||
-        parsed.sandboxMaskPaths.some(
-          (path) => typeof path !== 'string' || !path.trim(),
-        ))) ||
+        parsed.sandboxMaskPaths.some((path) => typeof path !== 'string' || !path.trim()))) ||
     (parsed.modelSelection !== undefined &&
       (typeof parsed.modelSelection !== 'object' ||
         parsed.modelSelection === null ||
@@ -817,7 +886,9 @@ async function daemonIsThisRuntime(pid: number, configPath: string): Promise<boo
     try {
       const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command=']);
       const command = stdout.trim();
-      return command.includes(' daemon ') && command.includes('--config') && command.includes(wanted);
+      return (
+        command.includes(' daemon ') && command.includes('--config') && command.includes(wanted)
+      );
     } catch {
       return false;
     }
@@ -826,9 +897,9 @@ async function daemonIsThisRuntime(pid: number, configPath: string): Promise<boo
   const processConfigPath = argumentsForPid[configFlag + 1];
   return Boolean(
     configFlag >= 1 &&
-      argumentsForPid[configFlag - 1] === 'daemon' &&
-      processConfigPath &&
-      resolve(processConfigPath) === wanted,
+    argumentsForPid[configFlag - 1] === 'daemon' &&
+    processConfigPath &&
+    resolve(processConfigPath) === wanted,
   );
 }
 
@@ -876,7 +947,12 @@ export async function stopRuntimeDaemon(
 
 export async function launchRuntimeDaemon(
   configPath: string,
-  opts: { entrypoint?: string; execArgv?: string[]; env?: NodeJS.ProcessEnv; foreground?: boolean } = {},
+  opts: {
+    entrypoint?: string;
+    execArgv?: string[];
+    env?: NodeJS.ProcessEnv;
+    foreground?: boolean;
+  } = {},
 ): Promise<number> {
   const directory = dirname(configPath);
   const logPath = resolve(directory, 'daemon.log');
@@ -1014,7 +1090,7 @@ export async function pairRepositoryAgent(
       body: storeIdentity(input.bodyIdentity, DEFAULT_BODY_IDENTITY_NAME),
       // Empty when pairing with no repository: the supervisor discovers every
       // Room this agent is invited to from relay membership and materializes
-      // each Room's own repository on demand (`WorkspaceSupervisor.reconcile`).
+      // each Room's own repository on demand (`RoomRuntimeCoordinator.reconcile`).
       rooms:
         repo && room
           ? [
@@ -1023,7 +1099,9 @@ export async function pairRepositoryAgent(
                 repo,
                 root: resolve(runtimeRoot, 'rooms', room.channelId),
                 ...(repo.relayRepo && room.mergeWorkerProvisioned
-                  ? { mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'beeline-merge-worker') }
+                  ? {
+                      mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'beeline-merge-worker'),
+                    }
                   : {}),
                 membershipSince: Math.floor(Date.now() / 1000),
                 discoveredAt: new Date().toISOString(),

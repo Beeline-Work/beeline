@@ -46,11 +46,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function commit(dir: string, file: string, content: string, msg: string): void {
+async function commit(dir: string, file: string, content: string, msg: string): Promise<void> {
   writeFileSync(join(dir, file), content);
-  const add = git(dir, ['add', '-A']);
+  const add = await git(dir, ['add', '-A']);
   if (!add.ok) throw new Error(`git add failed: ${add.stderr}`);
-  const c = git(dir, ['commit', '-m', msg]);
+  const c = await git(dir, ['commit', '-m', msg]);
   if (!c.ok) throw new Error(`git commit failed: ${c.stderr}`);
 }
 
@@ -61,7 +61,7 @@ async function waitRepoCloneable(
 ): Promise<void> {
   const url = gitRepoUrl(ownerHex, repo);
   for (let i = 0; i < 20; i++) {
-    const r = gitAuthed(tmpdir(), identity, ownerHex, repo, ['ls-remote', url]);
+    const r = await gitAuthed(tmpdir(), identity, ownerHex, repo, ['ls-remote', url]);
     if (r.ok) return;
     await sleep(500);
   }
@@ -105,13 +105,13 @@ async function provisionFresh(opts: {
   await waitRepoCloneable(worker, owner, repo);
 
   const seedDir = mkdtempSync(join(tmpdir(), 'buzzy-live-seed-'));
-  git(seedDir, ['init', '-q', '-b', 'main']);
-  commit(seedDir, 'README.md', `# ${repo}\n`, 'initial commit');
-  const seedPush = gitAuthed(seedDir, worker, owner, repo, ['push', url, 'main']);
+  await git(seedDir, ['init', '-q', '-b', 'main']);
+  await commit(seedDir, 'README.md', `# ${repo}\n`, 'initial commit');
+  const seedPush = await gitAuthed(seedDir, worker, owner, repo, ['push', url, 'main']);
   if (!seedPush.ok) {
     throw new Error(`owner seed push failed: ${seedPush.stderr}`);
   }
-  const baseMain = lsRemoteRef(seedDir, worker, owner, repo, 'refs/heads/main');
+  const baseMain = await lsRemoteRef(seedDir, worker, owner, repo, 'refs/heads/main');
   if (!baseMain || !/^[0-9a-f]{40}$/.test(baseMain)) {
     throw new Error(`could not resolve seeded main tip: ${baseMain}`);
   }
@@ -130,36 +130,22 @@ const reachable = await relayReachable();
     const p = await provisionFresh({ prefix: 'live-feat', agentRole: 'member' });
 
     const agentRoot = mkdtempSync(join(tmpdir(), 'buzzy-live-agent-'));
-    const cloneRes = gitAuthed(agentRoot, p.agent, p.owner, p.repo, [
-      'clone',
-      p.url,
-      'work',
-    ]);
+    const cloneRes = await gitAuthed(agentRoot, p.agent, p.owner, p.repo, ['clone', p.url, 'work']);
     expect(cloneRes.ok, cloneRes.stderr).toBe(true);
 
     const work = join(agentRoot, 'work');
     const branch = 'feature/live-change';
-    git(work, ['checkout', '-q', '-b', branch]);
-    commit(work, 'CHANGE.txt', 'agent feature change\n', 'agent: feature change');
+    await git(work, ['checkout', '-q', '-b', branch]);
+    await commit(work, 'CHANGE.txt', 'agent feature change\n', 'agent: feature change');
 
-    const pushFeature = gitAuthed(work, p.agent, p.owner, p.repo, [
-      'push',
-      'origin',
-      branch,
-    ]);
+    const pushFeature = await gitAuthed(work, p.agent, p.owner, p.repo, ['push', 'origin', branch]);
     expect(
       pushFeature.ok && !/rejected|denied|forbidden/i.test(pushFeature.stderr),
       `feature push should be allowed: ${pushFeature.stderr}`,
     ).toBe(true);
 
-    const remoteFeature = lsRemoteRef(
-      work,
-      p.agent,
-      p.owner,
-      p.repo,
-      `refs/heads/${branch}`,
-    );
-    const localTip = git(work, ['rev-parse', 'HEAD']).stdout.trim();
+    const remoteFeature = await lsRemoteRef(work, p.agent, p.owner, p.repo, `refs/heads/${branch}`);
+    const localTip = (await git(work, ['rev-parse', 'HEAD'])).stdout.trim();
     expect(remoteFeature).toBe(localTip);
   }, 60_000);
 
@@ -167,30 +153,20 @@ const reachable = await relayReachable();
     const p = await provisionFresh({ prefix: 'live-main', agentRole: 'member' });
 
     const agentRoot = mkdtempSync(join(tmpdir(), 'buzzy-live-agent-'));
-    const cloneRes = gitAuthed(agentRoot, p.agent, p.owner, p.repo, [
-      'clone',
-      p.url,
-      'work',
-    ]);
+    const cloneRes = await gitAuthed(agentRoot, p.agent, p.owner, p.repo, ['clone', p.url, 'work']);
     expect(cloneRes.ok, cloneRes.stderr).toBe(true);
     const work = join(agentRoot, 'work');
 
     // Build a commit the agent will try to force onto main.
     const branch = 'feature/evil-main';
-    git(work, ['checkout', '-q', '-b', branch]);
-    commit(work, 'EVIL.txt', 'should never land on main\n', 'agent: evil main push');
+    await git(work, ['checkout', '-q', '-b', branch]);
+    await commit(work, 'EVIL.txt', 'should never land on main\n', 'agent: evil main push');
 
-    const mainBefore = lsRemoteRef(
-      p.seedDir,
-      p.worker,
-      p.owner,
-      p.repo,
-      'refs/heads/main',
-    );
+    const mainBefore = await lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
     expect(mainBefore).toBe(p.baseMain);
 
     // THE critical assertion: relay refuses the push.
-    const pushMain = gitAuthed(work, p.agent, p.owner, p.repo, [
+    const pushMain = await gitAuthed(work, p.agent, p.owner, p.repo, [
       'push',
       'origin',
       'HEAD:main',
@@ -205,16 +181,13 @@ const reachable = await relayReachable();
       `expected relay rejection, got ok=${pushMain.ok} stderr=${pushMain.stderr} stdout=${pushMain.stdout}`,
     ).toBe(true);
     // Always log the remote error so the PR transcript shows the real refusal.
-    console.log('[live] relay refusal stderr:', pushMain.stderr.trim().split('\n').slice(-4).join(' | '));
+    console.log(
+      '[live] relay refusal stderr:',
+      pushMain.stderr.trim().split('\n').slice(-4).join(' | '),
+    );
 
     // Assert on state, not the ack (spec gotcha): main tip must be byte-identical.
-    const mainAfter = lsRemoteRef(
-      p.seedDir,
-      p.worker,
-      p.owner,
-      p.repo,
-      'refs/heads/main',
-    );
+    const mainAfter = await lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
     expect(mainAfter).toBe(mainBefore);
     expect(mainAfter).toBe(p.baseMain);
   }, 60_000);

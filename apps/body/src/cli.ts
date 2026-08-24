@@ -16,7 +16,7 @@
  */
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readdir, readFile, unlink } from 'node:fs/promises';
+import { readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { stdin, stdout } from 'node:process';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
@@ -38,7 +38,7 @@ import { withSpinner } from './clack-support.js';
 import { readOperatorMcpServers } from './operator-mcp.js';
 import { Body } from './body.js';
 import { runCornerGitCredentialCommand } from './corner-git-credential.js';
-import { WorkspaceSupervisor } from './supervisor.js';
+import { ThinDaemonCore } from './thin-core.js';
 import {
   assertAgentNotPushAllowed,
   createRelayClient,
@@ -54,6 +54,7 @@ import {
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   identityFromKey,
+  launchRuntimeDaemon,
   migrateRuntimeRecordAccessPolicy,
   mintAgentIdentityForPairing,
   pairRepositoryAgent,
@@ -61,7 +62,9 @@ import {
   removeAgentRuntime,
   resolveRuntimeConfigPath,
   runtimeAgentCommand,
+  runtimeDaemonPid,
   runtimeIdentity,
+  stopRuntimeDaemon,
   tryInspectLocalRepository,
   type AgentRuntimeRecord,
   type LocalRepositoryBinding,
@@ -77,18 +80,27 @@ import {
 } from './external-mcp-capabilities.js';
 import { DurableBodyState } from './durable-state.js';
 import {
-  SelfUpdateManager,
   activeReleaseId,
   beelineInstallLayout,
-  clearPendingUpdate,
-  confirmPendingUpdate,
   describeIdentity,
   readInstalledBundleIdentity,
   readPendingUpdate,
-  relaunchPreviousReleaseAfterFailedUpdate,
   repairInstallForwarders,
   settlePendingUpdateOnStart,
 } from './self-update.js';
+import {
+  DELIBERATE_REMOVAL_EXIT_STATUS,
+  SystemdNotifier,
+  disableAgentService,
+  installAgentService,
+} from './systemd.js';
+import {
+  ManagedUpdateHandoff,
+  proveLoadedReleaseReady,
+  readUpdateHandoff,
+  rollbackFailedSuccessor,
+  runManagedUpdateWorker,
+} from './managed-update.js';
 import {
   dailyAgentSpend,
   dailyRestartReprimes,
@@ -114,6 +126,7 @@ ${pc.dim('Usage:')}
                                             this repo's (or, outside a repo, this
                                             host's) durable agent
   beeline start --agent <agent-pubkey>      Same, from anywhere (no repo needed)
+  beeline stop --agent <agent-pubkey>       Stop and disable the supervised agent
   beeline relay set <url> [--agent <pubkey>|--all]
                                             Repoint stored runtime(s) and restart cleanly
   beeline update [--check|--status|--rollback|--force]
@@ -219,6 +232,11 @@ Examples:
 `);
 }
 
+function stableBeelineEntrypoint(): string {
+  const layout = beelineInstallLayout(process.env);
+  return layout ? resolve(layout.binDir, 'beeline') : resolve(process.argv[1]!);
+}
+
 interface PairOptions {
   codes: string[];
   kinds?: AgentKind[];
@@ -279,12 +297,14 @@ function parsePairOptions(args: string[]): PairOptions {
     else if (token === '--model') model = value;
     else if (token === '--effort') effort = value;
     else if (token === '--mcp') {
-      const capabilities = value.split(',').map((entry) => entry.trim()).filter(Boolean);
+      const capabilities = value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
       const invalid = capabilities.find((capability) => !isExternalMcpCapability(capability));
       if (invalid) throw new Error(`--mcp must contain only squire (got: ${invalid})`);
       externalMcpCapabilities = capabilities as ExternalMcpCapability[];
-    }
-    else if (token === '--access') {
+    } else if (token === '--access') {
       if (!isAgentAccessPolicy(value)) {
         throw new Error(`--access must be one of everyone|creator (got: ${value})`);
       }
@@ -380,30 +400,35 @@ async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
     baseUrl: runtime.relayBaseUrl,
     host: new URL(runtime.relayBaseUrl).host,
   });
-  for (const room of runtime.rooms) {
-    if (!room.repo.relayRepo) continue;
-    await assertAgentNotPushAllowed({
-      ownerHex: room.repo.relayRepo.ownerHex,
-      repo: room.repo.relayRepo.repo,
-      agentPubkey: runtime.agent.publicKey,
-      protectedRef: `refs/heads/${room.repo.targetBranch}`,
-      relay,
-    });
-  }
-}
-
-async function waitToRestart(signal: AbortSignal): Promise<void> {
-  await new Promise<void>((resolveWait) => {
-    const timer = setTimeout(resolveWait, 2_000);
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        resolveWait();
-      },
-      { once: true },
-    );
-  });
+  await Promise.all(
+    runtime.rooms.map(async (room) => {
+      if (!room.repo.relayRepo) return;
+      try {
+        await assertAgentNotPushAllowed({
+          ownerHex: room.repo.relayRepo.ownerHex,
+          repo: room.repo.relayRepo.repo,
+          agentPubkey: runtime.agent.publicKey,
+          protectedRef: `refs/heads/${room.repo.targetBranch}`,
+          relay,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        // A definitive policy violation is fatal. Relay availability is not a
+        // verdict: the push broker and credential boundary still fail closed,
+        // while READY must remain independent from network health so an outage
+        // cannot turn systemd into a kill loop. Run every Room concurrently so
+        // the bounded relay retry policy is paid once, never N times.
+        if (detail.startsWith('provisioning check failed:')) throw error;
+        if (!/relay|queryEvents|HTTP|fetch|network|timed? out|ECONN|socket/i.test(detail)) {
+          throw error;
+        }
+        console.warn(
+          `[thin-core] startup push-policy read degraded for Room ${room.channelId}; ` +
+            `continuing behind the fail-closed push broker: ${detail}`,
+        );
+      }
+    }),
+  );
 }
 
 async function runStoredDaemon(pathOrPointer: string): Promise<void> {
@@ -420,6 +445,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // This assertion deliberately sits outside the retry loop: unsafe branch
   // policy is a fatal startup error, not a transient Room-loop failure.
   await assertRuntimeSafe(runtime);
+  await writeFile(resolve(dirname(configPath), 'daemon.pid'), `${process.pid}\n`, { mode: 0o600 });
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     BUZZ_AGENT_BIN: agent.command,
@@ -465,119 +491,117 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // BUZZY_BODY_SANDBOX_MASK env var is already folded into `config` by
   // loadBodyConfig. Both are unioned at spawn time in Body.sessionSpawnCommand.
   if (runtime.sandboxMaskPaths?.length) {
-    config.sandboxMaskPaths = [
-      ...(config.sandboxMaskPaths ?? []),
-      ...runtime.sandboxMaskPaths,
-    ];
+    config.sandboxMaskPaths = [...(config.sandboxMaskPaths ?? []), ...runtime.sandboxMaskPaths];
   }
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 
-  // --- Self-update (see self-update.ts) -------------------------------------
-  // The daemon heals itself: it checks the published manifest on a cadence,
-  // stages + verifies a newer bundle, waits for agent work to finish (the
-  // busy gate), swaps atomically, and hands the process over. A pending
-  // update that never proves itself healthy is rolled back to the previous
-  // release — at startup (stale journal) or on a fatal supervisor failure
-  // inside the confirm window.
+  // The service manager, never this process, owns resurrection and handoff.
   const runtimeDir = dirname(configPath);
   const layout = beelineInstallLayout(process.env);
-  let selfUpdate: SelfUpdateManager | undefined;
-  let supervisorRef: WorkspaceSupervisor | undefined;
-  let confirmTimer: NodeJS.Timeout | undefined;
+  const notifier = new SystemdNotifier();
+  let loadedRelease: string | undefined;
+  let update: ManagedUpdateHandoff | undefined;
+  let pendingSuccessor = false;
   if (layout) {
     const settle = await settlePendingUpdateOnStart(layout);
-    let pendingReleaseId: string | undefined;
+    const handoff = await readUpdateHandoff(runtimeDir);
     if (settle.kind === 'rolled-back') {
+      await unlink(resolve(runtimeDir, 'update-handoff.json')).catch(() => undefined);
       console.error(
         `[body] self-update ROLLED BACK: bundle ${describeIdentity(settle.record.to)} never confirmed healthy; ` +
           `restored ${settle.record.previousReleaseId ?? 'previous release'}`,
       );
+      throw new Error('stale unconfirmed release rolled back; supervisor must restart');
     } else if (settle.kind === 'pending') {
-      // Arm the unconfirmed state: a fatal supervisor failure inside the
-      // confirm window must roll back to the previous release and relaunch
-      // it, not crash-loop forever on a bundle that cannot boot. This covers
-      // BOTH restart origins — this daemon's own apply AND an externally
-      // flipped anchor adopted by the anchor-drift check.
-      pendingReleaseId = settle.record.releaseId;
-      const remaining = Math.max(1_000, settle.confirmAt - Date.now());
-      confirmTimer = setTimeout(() => {
-        void confirmPendingUpdate(layout).then((confirmed) => {
-          if (confirmed) {
-            console.log('[body] self-update: new bundle confirmed healthy; rollback journal cleared');
-            selfUpdate?.markUpdateConfirmed();
-          }
-        });
-      }, remaining);
-      confirmTimer.unref?.();
+      pendingSuccessor = true;
     }
-    selfUpdate = new SelfUpdateManager({
-      layout,
-      watchRuntimeDirs: [runtimeDir],
-      isIdle: () => supervisorRef?.isWorkspaceIdle() ?? true,
-      notify: (text) => supervisorRef?.broadcastDaemonNotice(text) ?? Promise.resolve(),
-      requestRestart: () => controller.abort(),
-      ...(pendingReleaseId ? { pendingUnconfirmedReleaseId: pendingReleaseId } : {}),
-    });
-    selfUpdate.start();
+    loadedRelease = await activeReleaseId(layout);
+    if (handoff && settle.kind === 'none' && handoff.desiredRelease !== loadedRelease) {
+      // Another daemon already confirmed a later globally-active release.
+      // This instance's older per-runtime request is superseded, not a reason
+      // to crash-loop on an anchor the shared coordinator has accepted.
+      await unlink(resolve(runtimeDir, 'update-handoff.json')).catch(() => undefined);
+    } else if (handoff) {
+      pendingSuccessor = true;
+    }
+    update = await ManagedUpdateHandoff.create(layout, runtimeDir);
   }
 
   console.log(
-    `[buzz] Workspace supervisor ${runtime.communityId} starting with ${runtime.rooms.length} Room binding(s)`,
+    `[buzz] thin daemon core ${runtime.communityId} starting with ${runtime.rooms.length} Room binding(s)`,
   );
   console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
   console.log(`[body] ${sandbox.advisory}`);
 
+  let ready = false;
   try {
-    while (!controller.signal.aborted) {
-      const supervisor = new WorkspaceSupervisor(runtime, configPath, config);
-      supervisorRef = supervisor;
-      selfUpdate?.attachSupervisor(supervisor);
-      try {
-        const result = await supervisor.run({ signal: controller.signal });
-        if (result === 'agent-removed') {
+    const core = new ThinDaemonCore(runtime, configPath, config);
+    const result = await core.run({
+      signal: controller.signal,
+      onEstablished: async () => {
+        if (layout && pendingSuccessor) {
+          const pending = await readPendingUpdate(layout);
+          const handoff = await readUpdateHandoff(runtimeDir);
+          const desiredRelease = handoff?.desiredRelease ?? pending?.releaseId;
+          if (!desiredRelease || !loadedRelease || desiredRelease !== loadedRelease) {
+            throw new Error(
+              `successor loaded release ${loadedRelease ?? 'unknown'}, not the pending desired release`,
+            );
+          }
+        }
+        await notifier.ready(`ready; loaded_release=${loadedRelease ?? 'development'}`);
+        if (layout && pendingSuccessor) {
+          if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease))) {
+            throw new Error(
+              `successor loaded release ${loadedRelease ?? 'unknown'}, not the pending desired release`,
+            );
+          }
+          pendingSuccessor = false;
+          console.log(`[thin-core] successor READY on exact release ${loadedRelease}`);
+        }
+        ready = true;
+      },
+      onProgress: async (status) => {
+        // The watchdog heartbeat is coupled to this completed progress tick.
+        await notifier.progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`);
+        if (await update?.check()) {
+          await notifier.stopping('desired release changed; intake quiesced, draining');
           controller.abort();
-          const archivedRuntime = await removeAgentRuntime(
-            configPath,
-            runtime.agent.publicKey,
-            runtime.rooms.map((room) => room.repo.gitCommonDir),
-          );
-          console.log(
-            `[buzz] agent ${runtime.agent.publicKey} removed; runtime archived at ${archivedRuntime}`,
-          );
         }
-      } catch (error) {
-        if (controller.signal.aborted) throw error;
-        // A fatal failure while a freshly-applied update is still inside its
-        // confirm window is exactly the "bad publish bricked the daemon"
-        // case: restore the previous bundle and hand the process over to it.
-        if (selfUpdate?.hasUnconfirmedUpdate()) {
-          const journal = await readPendingUpdate(layout!);
-          const message = `Beeline self-update to ${describeIdentity(journal?.to)} failed to start; rolling back to ${journal?.previousReleaseId ?? 'the previous bundle'}.`;
-          console.error(`[body] ${message}`);
-          await selfUpdate.notifyRooms(message);
-          await relaunchPreviousReleaseAfterFailedUpdate(layout!, configPath, {
-            logger: (line) => console.error(line),
-          });
-          selfUpdate.markUpdateConfirmed();
-          return;
-        }
-        console.error('[buzz] Workspace supervisor stopped; retrying:', error);
-        await waitToRestart(controller.signal);
+      },
+    });
+    if (result === 'agent-removed') {
+      controller.abort();
+      const archivedRuntime = await removeAgentRuntime(
+        configPath,
+        runtime.agent.publicKey,
+        runtime.rooms.map((room) => room.repo.gitCommonDir),
+      );
+      if (process.env.BEELINE_MANAGED_BY_SYSTEMD === '1') {
+        await disableAgentService(runtime.agent.publicKey, { stop: false }).catch((error) =>
+          console.error('[thin-core] could not disable deliberately removed unit:', error),
+        );
       }
+      process.exitCode = DELIBERATE_REMOVAL_EXIT_STATUS;
+      console.log(
+        `[buzz] agent ${runtime.agent.publicKey} removed; runtime archived at ${archivedRuntime}`,
+      );
     }
-    // The update manager swapped the bundle while we ran and asked for a
-    // handover: launch the replacement from the ACTIVE bundle and exit.
-    if (selfUpdate?.restartPending) {
-      const pid = await selfUpdate.launchReplacement(configPath);
-      console.log(`[body] self-update: handed over to updated daemon (pid ${pid})`);
-      return;
+  } catch (error) {
+    if (
+      layout &&
+      pendingSuccessor &&
+      !ready &&
+      (await rollbackFailedSuccessor(layout, runtimeDir))
+    ) {
+      console.error('[thin-core] successor failed before READY; previous release restored once');
     }
+    throw error;
   } finally {
-    selfUpdate?.dispose();
-    if (confirmTimer) clearTimeout(confirmTimer);
+    await notifier.stopping('daemon stopped').catch(() => undefined);
     // Only clear the pid file while it still names THIS process — a
     // self-update handover has already written the replacement's pid there.
     const pidPath = resolve(dirname(configPath), 'daemon.pid');
@@ -722,6 +746,14 @@ async function pairOneAgent(input: {
               host: new URL(relayBaseUrl).host,
             }),
           });
+        },
+        launch: async (configPath) => {
+          const stored = await readRuntimeRecord(configPath);
+          return process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0'
+            ? installAgentService(stored.agent.publicKey, {
+                entrypoint: stableBeelineEntrypoint(),
+              })
+            : launchRuntimeDaemon(configPath);
         },
       },
     );
@@ -891,11 +923,24 @@ async function startRuntime(
   configPath: string,
   spinnerHandle?: ReturnType<typeof clack.spinner>,
 ): Promise<void> {
-  const report = (text: string) => (spinnerHandle ? spinnerHandle.message(text) : console.log(text));
+  const report = (text: string) =>
+    spinnerHandle ? spinnerHandle.message(text) : console.log(text);
   const runtime = await readRuntimeRecord(configPath);
   const selectedAgent = runtimeAgentCommand(runtime);
   await assertRuntimeSafe(runtime);
   report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
+  if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
+    const existingPid = await runtimeDaemonPid(configPath);
+    if (existingPid) {
+      report(`[buzz] agent daemon is running (pid ${existingPid}); draining it before supervision`);
+      await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
+    }
+    const pid = await installAgentService(runtime.agent.publicKey, {
+      entrypoint: stableBeelineEntrypoint(),
+    });
+    report(`[buzz] agent daemon supervised by systemd (pid ${pid})`);
+    return;
+  }
   await startStoredRuntime(configPath, { report });
 }
 
@@ -906,7 +951,9 @@ async function runtimeSpendStatePaths(
   const paths = new Set<string>();
   const runtimeRoot = dirname(configPath);
   for (const room of runtime.rooms) {
-    paths.add(resolve(room.root ?? resolve(runtimeRoot, 'rooms', room.channelId), 'body-state.json'));
+    paths.add(
+      resolve(room.root ?? resolve(runtimeRoot, 'rooms', room.channelId), 'body-state.json'),
+    );
   }
   const roomsRoot = resolve(runtimeRoot, 'rooms');
   const entries = await readdir(roomsRoot, { withFileTypes: true }).catch(() => []);
@@ -961,6 +1008,14 @@ async function main(): Promise<void> {
   const command = args[0];
   if (command === '--help' || command === '-h') usage(0);
 
+  if (command === 'managed-update-worker') {
+    if (process.env.BEELINE_INTERNAL_UPDATE_WORKER !== '1') {
+      throw new Error('managed-update-worker is an internal command');
+    }
+    console.log(JSON.stringify(await runManagedUpdateWorker()));
+    return;
+  }
+
   // Heal <prefix>/bin forwarders left broken by pre-contract installs (see
   // self-update.ts, "THE CONTRACT"): a daemon that survived the layout drift
   // starts through node directly, so it — and every CLI command run on a
@@ -989,7 +1044,9 @@ async function main(): Promise<void> {
     if (layout) {
       const identity = await readInstalledBundleIdentity(layout);
       const active = await activeReleaseId(layout);
-      console.log(`${pc.dim('installed bundle:')} ${describeIdentity(identity)}${active ? ` (release ${active})` : ''}`);
+      console.log(
+        `${pc.dim('installed bundle:')} ${describeIdentity(identity)}${active ? ` (release ${active})` : ''}`,
+      );
     }
     console.log(`${pc.dim('[body] agent binary:')} ${config.agentCommand ?? config.agentBinary}`);
     console.log(`${pc.dim('[body] mcp binary:')} ${config.mcpBinary}`);
@@ -999,8 +1056,14 @@ async function main(): Promise<void> {
 
   if (command === 'daemon') {
     const configFlag = args.indexOf('--config');
-    const configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
-    if (!configPath) throw new Error('daemon requires --config <runtime.json>');
+    const agentFlag = args.indexOf('--agent');
+    let configPath = configFlag >= 0 ? args[configFlag + 1] : undefined;
+    const agentPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
+    if (!configPath && agentPubkey) {
+      const configs = await findAgentRuntimeConfigPaths(process.env, process.cwd());
+      configPath = configs.find((candidate) => dirname(candidate).endsWith(agentPubkey));
+    }
+    if (!configPath) throw new Error('daemon requires --config <runtime.json> or --agent <pubkey>');
     await runStoredDaemon(resolve(configPath));
     return;
   }
@@ -1090,6 +1153,23 @@ async function main(): Promise<void> {
     if (interactiveUi) {
       clack.outro(pc.green(unique.length > 1 ? 'All agents started.' : 'Done.'));
     }
+    return;
+  }
+
+  if (command === 'stop') {
+    const agentFlag = args.indexOf('--agent');
+    const agentPubkey = agentFlag >= 0 ? args[agentFlag + 1] : args[1];
+    if (!agentPubkey) throw new Error('stop requires --agent <pubkey>');
+    const configs = await findAgentRuntimeConfigPaths(process.env, process.cwd());
+    const configPath = configs.find((candidate) => dirname(candidate).endsWith(agentPubkey));
+    if (!configPath) throw new Error(`no stored runtime found for agent ${agentPubkey}`);
+    const runtime = await readRuntimeRecord(configPath);
+    if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
+      await disableAgentService(runtime.agent.publicKey);
+    } else {
+      await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
+    }
+    console.log(`[buzz] agent ${runtime.agent.publicKey} disabled; graceful stop requested`);
     return;
   }
 
@@ -1212,7 +1292,17 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
+  // Cover failures before runStoredDaemon reaches its core-level try/catch
+  // (runtime migration, safety/config parsing, sandbox detection). A pending
+  // release that cannot reach READY rolls back once; systemd starts the
+  // restored anchor. Worker/interactive command failures never touch it.
+  if (process.argv[2] === 'daemon') {
+    const layout = beelineInstallLayout(process.env);
+    if (layout && (await rollbackFailedSuccessor(layout).catch(() => false))) {
+      console.error('[thin-core] successor failed during startup; previous release restored once');
+    }
+  }
   // `daemon` is never a human at a keyboard — always the plain, full-detail
   // form (stack included) regardless of whether a TTY happens to be attached.
   const interactiveUi = process.argv[2] !== 'daemon' && Boolean(stdin.isTTY && stdout.isTTY);

@@ -8,6 +8,7 @@ import {
 import type { RemoteRepositoryIdentity } from './repository-truth.js';
 
 const API_VERSION = '2022-11-28';
+export const DEFAULT_GITHUB_APP_REQUEST_TIMEOUT_MS = 15_000;
 
 interface CachedToken {
   token: string;
@@ -19,6 +20,7 @@ export interface GitHubAppRuntimeConfig {
   privateKey: string;
   apiBaseUrl?: string;
   now?: () => number;
+  requestTimeoutMs?: number;
 }
 
 export interface GitHubTokenBrokerConfig {
@@ -42,11 +44,13 @@ export class GitHubAppRuntime {
     CachedToken & { installationId: number; fullName: string }
   >();
   readonly #bindingOwnerKeys = new Map<string, string | undefined>();
+  readonly #requestTimeoutMs: number;
 
   constructor(config: GitHubAppRuntimeConfig | GitHubTokenBrokerConfig) {
     if ('identity' in config) {
       this.#broker = config;
       this.#now = Date.now;
+      this.#requestTimeoutMs = DEFAULT_GITHUB_APP_REQUEST_TIMEOUT_MS;
       return;
     }
     if (!/^\d+$/.test(config.appId) || !config.privateKey.trim()) {
@@ -56,8 +60,10 @@ export class GitHubAppRuntime {
       appId: config.appId,
       privateKey: config.privateKey.replace(/\\n/g, '\n'),
       apiBaseUrl: config.apiBaseUrl ?? 'https://api.github.com',
+      requestTimeoutMs: config.requestTimeoutMs ?? DEFAULT_GITHUB_APP_REQUEST_TIMEOUT_MS,
     };
     this.#now = config.now ?? Date.now;
+    this.#requestTimeoutMs = this.#config.requestTimeoutMs;
   }
 
   static fromEnvironment(
@@ -93,6 +99,7 @@ export class GitHubAppRuntime {
   ): Promise<Record<string, unknown>> {
     const response = await fetch(`${this.#config?.apiBaseUrl ?? 'https://api.github.com'}${path}`, {
       method,
+      signal: AbortSignal.timeout(this.#requestTimeoutMs),
       headers: {
         accept: 'application/vnd.github+json',
         authorization: `Bearer ${token}`,

@@ -145,11 +145,11 @@ export async function authorizeReviewer(
 }
 
 /** Clone the repo fresh as the worker and return the checkout path. */
-function cloneFresh(req: MergeRequest): string {
+async function cloneFresh(req: MergeRequest): Promise<string> {
   const owner = req.ownerHex ?? req.worker.publicKey;
   const dir = mkdtempSync(join(tmpdir(), 'buzzy-worker-'));
   const url = gitRepoUrl(owner, req.repo);
-  const res = gitAuthed(dir, req.worker, owner, req.repo, ['clone', url, 'work']);
+  const res = await gitAuthed(dir, req.worker, owner, req.repo, ['clone', url, 'work']);
   if (!res.ok) {
     throw new Error(`worker clone failed: ${res.stderr}`);
   }
@@ -159,16 +159,14 @@ function cloneFresh(req: MergeRequest): string {
 /** Fetch the approvals the reviewer posted for this repo/channel. */
 async function fetchApprovals(req: MergeRequest): Promise<NostrEvent[]> {
   const relay = req.relay ?? createRelayClient(req.worker);
-  return relay.queryEvents(
-    [
-      {
-        kinds: [KIND_STREAM_MESSAGE],
-        authors: [req.trustedReviewer],
-        '#h': [req.channelId],
-        '#t': [APPROVAL_MARKER],
-      },
-    ],
-  );
+  return relay.queryEvents([
+    {
+      kinds: [KIND_STREAM_MESSAGE],
+      authors: [req.trustedReviewer],
+      '#h': [req.channelId],
+      '#t': [APPROVAL_MARKER],
+    },
+  ]);
 }
 
 /**
@@ -178,10 +176,12 @@ async function fetchApprovals(req: MergeRequest): Promise<NostrEvent[]> {
 export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
   const owner = req.ownerHex ?? req.worker.publicKey;
   const targetRef = `refs/heads/${req.targetBranch}`;
-  const work = cloneFresh(req);
+  const work = await cloneFresh(req);
 
-  const featureTip = git(work, ['rev-parse', `origin/${req.featureBranch}`]).stdout.trim();
-  const targetTipBefore = git(work, ['rev-parse', `origin/${req.targetBranch}`]).stdout.trim();
+  const featureTip = (await git(work, ['rev-parse', `origin/${req.featureBranch}`])).stdout.trim();
+  const targetTipBefore = (
+    await git(work, ['rev-parse', `origin/${req.targetBranch}`])
+  ).stdout.trim();
   if (!/^[0-9a-f]{40}$/.test(featureTip)) {
     return {
       merged: false,
@@ -225,8 +225,8 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
   }
 
   // Approval is valid for this corner's merge — land its current feature tip.
-  git(work, ['checkout', req.targetBranch]);
-  const merge = git(work, ['merge', '--ff-only', `origin/${req.featureBranch}`]);
+  await git(work, ['checkout', req.targetBranch]);
+  const merge = await git(work, ['merge', '--ff-only', `origin/${req.featureBranch}`]);
   if (!merge.ok) {
     return {
       merged: false,
@@ -235,7 +235,11 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
       targetTipBefore,
     };
   }
-  const push = gitAuthed(work, req.worker, owner, req.repo, ['push', 'origin', req.targetBranch]);
+  const push = await gitAuthed(work, req.worker, owner, req.repo, [
+    'push',
+    'origin',
+    req.targetBranch,
+  ]);
   if (!push.ok || /\brejected\b|denied|forbidden/i.test(push.stderr)) {
     return {
       merged: false,
@@ -245,7 +249,7 @@ export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
     };
   }
 
-  const targetTipAfter = lsRemoteRef(work, req.worker, owner, req.repo, targetRef);
+  const targetTipAfter = await lsRemoteRef(work, req.worker, owner, req.repo, targetRef);
   return {
     merged: targetTipAfter === featureTip,
     reason: targetTipAfter === featureTip ? 'merged' : `post-push tip mismatch: ${targetTipAfter}`,
@@ -334,16 +338,14 @@ export class DurableMergeGate {
   }
 
   async poll(): Promise<RoomMergeAttempt[]> {
-    const roomEvents = await this.relay.queryEvents(
-      [
-        {
-          kinds: [KIND_STREAM_MESSAGE],
-          '#h': [this.config.channelId],
-          '#t': ['body-control'],
-          limit: 500,
-        },
-      ],
-    );
+    const roomEvents = await this.relay.queryEvents([
+      {
+        kinds: [KIND_STREAM_MESSAGE],
+        '#h': [this.config.channelId],
+        '#t': ['body-control'],
+        limit: 500,
+      },
+    ]);
     const candidates = roomMergeCandidates(roomEvents, this.config);
     const attempts: RoomMergeAttempt[] = [];
     const targetRef = fullTargetRef(this.config.targetBranch);
@@ -355,7 +357,7 @@ export class DurableMergeGate {
         continue;
       }
       const featureRef = `refs/heads/${candidate.featureBranch}`;
-      const featureTip = lsRemoteRef(
+      const featureTip = await lsRemoteRef(
         tmpdir(),
         this.config.worker,
         this.config.ownerHex,
@@ -363,7 +365,7 @@ export class DurableMergeGate {
         featureRef,
       );
       if (!featureTip) continue;
-      const targetTip = lsRemoteRef(
+      const targetTip = await lsRemoteRef(
         tmpdir(),
         this.config.worker,
         this.config.ownerHex,
@@ -372,16 +374,14 @@ export class DurableMergeGate {
       );
       if (targetTip === featureTip) continue;
 
-      const approvals = await this.relay.queryEvents(
-        [
-          {
-            kinds: [KIND_STREAM_MESSAGE],
-            '#h': [candidate.subchannelId],
-            '#t': [APPROVAL_MARKER],
-            limit: 100,
-          },
-        ],
-      );
+      const approvals = await this.relay.queryEvents([
+        {
+          kinds: [KIND_STREAM_MESSAGE],
+          '#h': [candidate.subchannelId],
+          '#t': [APPROVAL_MARKER],
+          limit: 100,
+        },
+      ]);
       const exactTarget: MergeTarget = { repo: targetRepo, branch: targetRef, tip: featureTip };
       for (const approval of approvals) {
         if (
@@ -390,17 +390,19 @@ export class DurableMergeGate {
         ) {
           continue;
         }
-        const outcome = await serializeRepoLanding(targetRepo, () => attemptMerge({
-          worker: this.config.worker,
-          ownerHex: this.config.ownerHex,
-          trustedReviewer: approval.pubkey,
-          trustedReviewerCustody: 'device',
-          repo: this.config.repo,
-          channelId: candidate.subchannelId,
-          targetBranch: shortTargetBranch(this.config.targetBranch),
-          featureBranch: candidate.featureBranch,
-          relay: this.relay,
-        }));
+        const outcome = await serializeRepoLanding(targetRepo, () =>
+          attemptMerge({
+            worker: this.config.worker,
+            ownerHex: this.config.ownerHex,
+            trustedReviewer: approval.pubkey,
+            trustedReviewerCustody: 'device',
+            repo: this.config.repo,
+            channelId: candidate.subchannelId,
+            targetBranch: shortTargetBranch(this.config.targetBranch),
+            featureBranch: candidate.featureBranch,
+            relay: this.relay,
+          }),
+        );
         attempts.push({
           candidate,
           approvalId: approval.id,

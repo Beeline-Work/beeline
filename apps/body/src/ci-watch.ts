@@ -17,7 +17,7 @@
  *     (this commit has no CI at all) and `pending` (still running when the
  *     watch budget ran out) are not, because neither is news.
  */
-import { spawnSync } from 'node:child_process';
+import { git } from '@beeline/gate';
 
 export interface GitHubRepoRef {
   owner: string;
@@ -67,14 +67,13 @@ export function parseGitHubRemoteUrl(url: string): GitHubRepoRef | undefined {
 }
 
 /** The GitHub identity of a checkout's remote, or `undefined` for anything else. */
-export function resolveGitHubRepo(cwd: string, remoteName: string): GitHubRepoRef | undefined {
-  const result = spawnSync('git', ['remote', 'get-url', remoteName], {
-    cwd,
-    encoding: 'utf8',
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-  });
-  if (result.status !== 0) return undefined;
-  return parseGitHubRemoteUrl(result.stdout ?? '');
+export async function resolveGitHubRepo(
+  cwd: string,
+  remoteName: string,
+): Promise<GitHubRepoRef | undefined> {
+  const result = await git(cwd, ['remote', 'get-url', remoteName]);
+  if (!result.ok) return undefined;
+  return parseGitHubRemoteUrl(result.stdout);
 }
 
 export interface CiStatusReadOptions {

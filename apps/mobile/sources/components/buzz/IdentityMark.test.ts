@@ -316,13 +316,32 @@ describe('one mark, everywhere', () => {
     expect(groknight.photoIdentityMarksEnabled).toBe(false);
   });
 
-  it('renders generated marks for users and workspaces even when a photo is stored', () => {
-    // Photo-override darkflight (owner decision, 2026-08-23): stored photos are
-    // inert data. A mark renders unconditionally for every kind, never the
-    // relay image behind it.
+  it('renders a Workspace picture and falls back to its generated mark', () => {
+    const withPicture = render(
+      React.createElement(IdentityMark, {
+        seed: WORKSPACE,
+        kind: 'workspace',
+        avatarUrl: 'https://example.test/workspace.png',
+        name: 'Hull',
+      }),
+    );
+    expect(withPicture.root.findAllByType('Image')).toHaveLength(1);
+    expect(withPicture.root.findAllByType('Rect')).toHaveLength(0);
+
+    act(() => withPicture.root.findByType('Image').props.onError());
+    expect(withPicture.root.findAllByType('Image')).toHaveLength(0);
+    expect(withPicture.root.findAllByType('Rect').length).toBeGreaterThan(0);
+
+    const withoutPicture = render(
+      React.createElement(IdentityMark, { seed: WORKSPACE, kind: 'workspace', name: 'Hull' }),
+    );
+    expect(withoutPicture.root.findAllByType('Image')).toHaveLength(0);
+    expect(withoutPicture.root.findAllByType('Rect').length).toBeGreaterThan(0);
+  });
+
+  it('keeps stored human and agent photos inert', () => {
     const kinds = [
       { kind: 'human' as const, shape: 'Circle' },
-      { kind: 'workspace' as const, shape: 'Rect' },
       { kind: 'agent' as const, shape: 'Polygon' },
     ];
     for (const { kind, shape } of kinds) {

@@ -22,7 +22,7 @@ import {
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
-import { PHOTO_OVERRIDES_ENABLED } from '@/buzz/photo-overrides';
+import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
@@ -172,7 +172,7 @@ export default function WorkspaceSettings() {
   }, [client, communityId, workspaceName]);
 
   const changeWorkspacePicture = useCallback(async () => {
-    if (!client || !communityId) return;
+    if (!client || !communityId || !canManageWorkspace) return;
     setWorkingKey('picture');
     setError(null);
     try {
@@ -185,10 +185,10 @@ export default function WorkspaceSettings() {
     } finally {
       setWorkingKey(null);
     }
-  }, [client, communityId]);
+  }, [canManageWorkspace, client, communityId]);
 
   const resetWorkspacePicture = useCallback(async () => {
-    if (!client || !communityId) return;
+    if (!client || !communityId || !canManageWorkspace) return;
     setWorkingKey('picture');
     setError(null);
     try {
@@ -199,7 +199,7 @@ export default function WorkspaceSettings() {
     } finally {
       setWorkingKey(null);
     }
-  }, [client, communityId]);
+  }, [canManageWorkspace, client, communityId]);
 
   const changeWorkspaceVisibility = useCallback(
     async (visibility: Community['visibility']) => {
@@ -275,10 +275,7 @@ export default function WorkspaceSettings() {
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.section} testID="workspace-overview-settings">
             <Text style={styles.sectionLabel}>WORKSPACE</Text>
-            {/* Photo-override darkflight: the Picture block (redundant
-                'Picture'/'Set picture' labels included) renders nothing while
-                PHOTO_OVERRIDES_ENABLED is false. The handlers stay intact. */}
-            {PHOTO_OVERRIDES_ENABLED && (
+            {WORKSPACE_PICTURES_ENABLED && (
             <View style={styles.workspaceIdentityRow}>
               <IdentityMark
                 kind="workspace"
@@ -305,6 +302,7 @@ export default function WorkspaceSettings() {
                       disabled={workingKey === 'picture'}
                       onPress={() => void resetWorkspacePicture()}
                       style={styles.textButton}
+                      testID="workspace-picture-clear"
                     >
                       <Text style={styles.textButtonLabel}>Use generated mark</Text>
                     </TouchableOpacity>

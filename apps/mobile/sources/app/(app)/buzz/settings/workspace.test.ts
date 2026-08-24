@@ -8,6 +8,7 @@ const auth = vi.hoisted(() => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) })),
 }));
+const avatarUpload = vi.hoisted(() => ({ pickAndUploadAvatar: vi.fn() }));
 const client = vi.hoisted(() => ({
   getCommunity: vi.fn(),
   getChannelMetadata: vi.fn(),
@@ -18,6 +19,7 @@ const client = vi.hoisted(() => ({
   listCommunityInvites: vi.fn(async () => []),
   query: vi.fn(async () => []),
   addMember: vi.fn(async () => undefined),
+  setCommunityAvatar: vi.fn(),
   waitUntilMemberRole: vi.fn(async () => undefined),
 }));
 
@@ -30,7 +32,7 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 vi.mock('@/auth/buzz-identity-storage', () => auth);
-vi.mock('@/buzz/avatar-upload', () => ({ pickAndUploadAvatar: vi.fn() }));
+vi.mock('@/buzz/avatar-upload', () => avatarUpload);
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
@@ -93,6 +95,7 @@ beforeEach(() => {
   client.query.mockResolvedValue([]);
   client.getChannelMetadata.mockResolvedValue(undefined);
   client.getChannelRole.mockResolvedValue('owner');
+  avatarUpload.pickAndUploadAvatar.mockResolvedValue(null);
 });
 
 function roomCreate(id: string, name: string, createdAt: number) {
@@ -142,30 +145,70 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'channel-visibility-settings' })).toBeDefined();
   });
 
-  it('darkflights the picture block, even for an owner with a stored photo', async () => {
-    // Photo-override darkflight (owner decision, 2026-08-23): identity marks
-    // are the only avatars. The Picture block — redundant 'Picture'/'Set
-    // picture' labels included — renders nothing, and stored photos summon no
-    // setting back.
+  it('lets a Workspace manager set a canonical uploaded picture', async () => {
     client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
+    const original = {
+      communityId: 'workspace-1',
+      name: 'Hull',
+      visibility: 'invite-only',
+      ownerPubkey: 'b'.repeat(64),
+    };
+    const pictureUrl = 'https://example.test/media/canonical.png';
+    client.getCommunity.mockResolvedValue(original);
+    avatarUpload.pickAndUploadAvatar.mockResolvedValue(pictureUrl);
+    client.setCommunityAvatar.mockResolvedValue({ ...original, avatar: pictureUrl });
+    const renderer = await render();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'workspace-picture-change' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(avatarUpload.pickAndUploadAvatar).toHaveBeenCalledWith(client);
+    expect(client.setCommunityAvatar).toHaveBeenCalledWith('workspace-1', pictureUrl);
+    expect(renderer.root.findByType('IdentityMark').props.avatarUrl).toBe(pictureUrl);
+    expect(renderer.root.findByProps({ testID: 'workspace-picture-clear' })).toBeDefined();
+  });
+
+  it('lets a Workspace admin clear its picture back to the generated mark', async () => {
+    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'admin' }]);
+    const original = {
+      communityId: 'workspace-1',
+      name: 'Hull',
+      visibility: 'invite-only',
+      ownerPubkey: 'b'.repeat(64),
+      avatar: 'https://example.test/media/hull.png',
+    };
+    client.getCommunity.mockResolvedValue(original);
+    client.setCommunityAvatar.mockResolvedValue({ ...original, avatar: undefined });
+    const renderer = await render();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'workspace-picture-clear' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(client.setCommunityAvatar).toHaveBeenCalledWith('workspace-1', '');
+    expect(renderer.root.findByType('IdentityMark').props.avatarUrl).toBeUndefined();
+    expect(renderer.root.findAllByProps({ testID: 'workspace-picture-clear' })).toHaveLength(0);
+  });
+
+  it('shows no Workspace picture actions to a normal member', async () => {
+    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'member' }]);
     client.getCommunity.mockResolvedValue({
       communityId: 'workspace-1',
       name: 'Hull',
       visibility: 'invite-only',
       ownerPubkey: 'b'.repeat(64),
-      avatar: 'https://example.test/hull.png',
+      avatar: 'https://example.test/media/hull.png',
     });
     const renderer = await render();
 
-    expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'workspace-settings-denied' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'workspace-picture-change' })).toHaveLength(0);
-    const text = renderer.root
-      .findAllByType('Text')
-      .map((node: any) => (typeof node.props.children === 'string' ? node.props.children : ''))
-      .join(' ');
-    expect(text).not.toContain('Picture');
-    expect(text).not.toContain('Set picture');
-    expect(text).not.toContain('Use generated mark');
+    expect(renderer.root.findAllByProps({ testID: 'workspace-picture-clear' })).toHaveLength(0);
+    expect(avatarUpload.pickAndUploadAvatar).not.toHaveBeenCalled();
+    expect(client.setCommunityAvatar).not.toHaveBeenCalled();
   });
 
   it('opens the unified Members page', async () => {

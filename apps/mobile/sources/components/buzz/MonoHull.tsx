@@ -303,6 +303,14 @@ function LoaderCell({
 export type HullDeckState = 'needs-you' | 'working' | 'idle';
 
 /**
+ * #419 unified the Room and corner treatments but accidentally promoted their
+ * geometry to 20px/14px. Keep the unified vocabulary at the compact deck scale:
+ * the Room mark restores the former 9px attention-dot footprint, and a corner
+ * stays subordinate at 7px.
+ */
+export const stateCircleDiameter = { room: 9, corner: 7 } as const;
+
+/**
  * The one state glyph used at BOTH hierarchy levels: hollow grey circle when
  * idle, grey ring with a rotating brass top arc while working, and a gently
  * pulsing filled brass circle when it needs you. The word exists only as
@@ -350,7 +358,7 @@ export function StateCircle({
     );
   }, [rotation, reducedMotion, state]);
 
-  const diameter = scale === 'room' ? 20 : 14;
+  const diameter = stateCircleDiameter[scale];
   const geometry = { width: diameter, height: diameter, borderRadius: diameter / 2 };
   const mark =
     state === 'working' ? (
@@ -816,12 +824,12 @@ const styles = StyleSheet.create((theme) => {
       borderColor: groknight.accent,
     },
     stateCircleIdle: {
-      borderWidth: 2,
+      borderWidth: 1,
       borderColor: groknight.steel,
       backgroundColor: 'transparent',
     },
     stateCircleWorking: {
-      borderWidth: 2,
+      borderWidth: 1,
       borderColor: groknight.bgTexturePeak,
       borderTopColor: groknight.accent,
       backgroundColor: 'transparent',

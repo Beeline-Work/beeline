@@ -210,6 +210,17 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).not.toContain('attnRail');
   });
 
+  it('keeps corner circles smaller than room circles without changing title alignment', () => {
+    const cornerGlyph = styleBlock(source, 'cornerGlyph');
+    expect(cornerGlyph).toContain('width: 7');
+    expect(cornerGlyph).toContain('height: 7');
+
+    const rowMark = styleBlock(source, 'rowMark');
+    expect(rowMark).toContain('height: 21');
+    expect(rowMark).toContain("alignItems: 'center'");
+    expect(rowMark).toContain("justifyContent: 'center'");
+  });
+
   it('shows the projected current fact, never raw plumbing or a placeholder id', () => {
     // The projection chooses lifecycle truth first and a sanitized message
     // only as its fallback; the row renders that answer directly.

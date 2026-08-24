@@ -506,7 +506,6 @@ export default function BuzzChat() {
   // before this existed, a missed archive event or silent daemon left the
   // spinner up forever. Cleared whenever the panel reopens for a new review.
   const [approvalAcked, setApprovalAcked] = useState(false);
-  const [approvalNeedsReapprove, setApprovalNeedsReapprove] = useState(false);
   const [landedApprovalTip, setLandedApprovalTip] = useState<string | null>(null);
   // The daemon's own posture after a failed land. This screen used to hard-code
   // "RETRYING AUTOMATICALLY", which is false for a land the daemon has stopped
@@ -1597,20 +1596,16 @@ export default function BuzzChat() {
             if (projected.approvalAck?.decision === 'accepted') {
               setApprovalAcked(true);
               setApprovalError(null);
-              setApprovalNeedsReapprove(false);
             } else if (projected.approvalAck?.decision === 'rejected') {
               setApprovalAcked(false);
               setDeliveryRetry(undefined);
-              setApprovalNeedsReapprove(true);
               setApprovalError(
-                projected.message?.text ??
-                  'The change moved after your approval (new commits). Review the update and re-approve.',
+                projected.message?.text ?? 'The daemon rejected this corner approval.',
               );
             }
             if (projected.deliveryLanded) {
               setLandedApprovalTip(projected.landedTip ?? mergeTargetTipRef.current);
               setApprovalError(null);
-              setApprovalNeedsReapprove(false);
             }
             applyAgentPresence(projected.agentPresence);
           }
@@ -3662,10 +3657,10 @@ export default function BuzzChat() {
                         testID="approve-corner"
                       >
                         <Text style={styles.approveButtonText}>
-                          APPROVE & MERGE {cornerAgentDisplay?.name ?? 'AGENT'}’S CHANGE
+                          APPROVE THIS CORNER’S MERGE
                         </Text>
                         <Text style={styles.approveButtonSupport}>
-                          APPROVAL APPLIES ONLY TO THIS REVIEWED CHANGE
+                          COVERS ITS ONGOING WORK UNTIL IT LANDS
                         </Text>
                       </TouchableOpacity>
                     ) : approvalState === 'sending' ? (
@@ -3710,16 +3705,6 @@ export default function BuzzChat() {
                                 ? '⚠ COULDN’T LAND · WAITING ON YOU'
                                 : '⚠ DELIVERY FAILED · SEE THE CORNER FOR DETAILS'}
                         </Text>
-                        {approvalNeedsReapprove ? (
-                          <TouchableOpacity
-                            accessibilityRole="button"
-                            onPress={handleApprove}
-                            style={styles.approveButton}
-                            testID="reapprove-corner"
-                          >
-                            <Text style={styles.approveButtonText}>RE-APPROVE UPDATED CHANGE</Text>
-                          </TouchableOpacity>
-                        ) : null}
                       </View>
                     ) : (
                       <View style={styles.approvalSent}>

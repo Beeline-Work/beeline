@@ -193,7 +193,7 @@ export class GitHubAppRuntime {
   /**
    * The Room binding author's CURRENT device key after succession (from the
    * auth service's room-token answer), or undefined when unknown. The daemon
-   * accepts an exact-tip merge approval signed by this key as owner-signed
+   * accepts a corner-scoped merge approval signed by this key as owner-signed
    * without ever consulting the succession ledger itself.
    */
   async bindingOwnerKey(binding: RepositoryBinding, roomId?: string): Promise<string | undefined> {

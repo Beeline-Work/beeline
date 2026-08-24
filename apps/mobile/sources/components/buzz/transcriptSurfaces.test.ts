@@ -704,12 +704,17 @@ describe('The merge approval card exposes every durable state', () => {
     expect(chatSource).toContain('approvalTimeoutMessage()');
   });
 
-  it('keeps the concrete daemon failure and offers re-approval only when required', () => {
+  it('keeps the concrete daemon failure without inventing a re-approval path', () => {
     expect(chatSource).toContain('projected.deliveryFailureReason');
     expect(chatSource).toContain('projected.message?.text');
-    expect(chatSource).toContain('approvalNeedsReapprove');
-    expect(chatSource).toContain('RE-APPROVE UPDATED CHANGE');
-    expect(chatSource).toContain('testID="reapprove-corner"');
+    expect(chatSource).not.toContain('approvalNeedsReapprove');
+    expect(chatSource).not.toContain('RE-APPROVE UPDATED CHANGE');
+  });
+
+  it('states that approval covers this corner’s ongoing work until it lands', () => {
+    expect(chatSource).toContain('APPROVE THIS CORNER’S MERGE');
+    expect(chatSource).toContain('COVERS ITS ONGOING WORK UNTIL IT LANDS');
+    expect(chatSource).not.toContain('APPROVAL APPLIES ONLY TO THIS REVIEWED CHANGE');
   });
 
   it('binds the terminal success card to the landed SHA', () => {

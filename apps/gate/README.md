@@ -61,7 +61,7 @@ The two tests the product spec mandates under
    (agent = member) and **fails** when the agent is deliberately mis-granted
    admin.
 3. A registered agent key is deliberately configured as channel admin and
-   trusted reviewer; its exact-tip approval is **refused by identity**, then a
+   trusted reviewer; its corner approval is **refused by identity**, then a
    human admin approval for the same feature tip is accepted.
 
 ```sh

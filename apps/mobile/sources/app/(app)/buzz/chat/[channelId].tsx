@@ -108,7 +108,6 @@ import {
 import { useAgentNameCache, withKnownAgentNames } from '@/buzz/agent-name-cache';
 import {
   cornerName,
-  cornerStatusPresentation,
   isCornerActive,
   resolveCornerLifecycleStatus,
   type CornerStatus,
@@ -148,6 +147,7 @@ import {
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import {
+  attachmentOpenUrl,
   formatAttachmentSize,
   uploadChatAttachment,
   type PickedChatAttachment,
@@ -212,6 +212,7 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
 import {
+  CornerGlyph,
   HullSurface,
   MonoButton,
   NewMessageMaterialize,
@@ -332,7 +333,7 @@ const AgentPresenceLight = React.memo(function AgentPresenceLight({
 function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   const image = attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
   const open = () => {
-    void Linking.openURL(attachment.url).catch(() => {
+    void Linking.openURL(attachmentOpenUrl(attachment)).catch(() => {
       Alert.alert('Could not open attachment', 'The file link could not be opened on this device.');
     });
   };
@@ -1207,9 +1208,7 @@ export default function BuzzChat() {
     [cornerLifecycleStatus, isArchived],
   );
   // This corner's own agent-presence verdict, from the same lifecycle snapshot
-  // the deck golds: when the oracle says STALLED (agent provably offline past
-  // its lease), the header badge says STALLED — never "NEEDS HUMAN" waiting
-  // on you. Absent = unknown = today's presentation.
+  // the deck uses: a provably offline non-review wait folds to the idle circle.
   const cornerAgentOffline = useMemo(
     () => cornerLifecycle.find((corner) => corner.id === decodedId)?.agentOffline === true,
     [cornerLifecycle, decodedId],
@@ -1220,8 +1219,8 @@ export default function BuzzChat() {
   // so only the review branch may render here — the attention card is scoped
   // to non-corner summary surfaces (the deck row and pinned bar already route
   // needs-you INTO this screen via their own oracle-fed affordances); inside
-  // the corner the state word lives in the header badge and the ask itself
-  // lives in the transcript.
+  // the corner the state is an accessible-only circle and the ask itself lives
+  // in the transcript.
   const cornerAction = useMemo(
     () =>
       cornerActionSurface({
@@ -3428,28 +3427,20 @@ export default function BuzzChat() {
                 {cornerAgentPubkey && (
                   <AgentPresenceLight online={cornerAgentOnline} testID="corner-header-presence" />
                 )}
-                <HeaderMetaCaps testID="corner-view-status">
-                  {/*
-                    Same canonical status word as the Room-list dropdown, the
-                    Room chat card, and the standalone Corners list.
-                  */}
-                  {displayedCornerStatus || cornerAgentOffline
-                    ? `·  ${(() => {
-                        const p = cornerStatusPresentation(displayedCornerStatus, {
-                          agentOffline: cornerAgentOffline,
-                        });
-                        return `${p.glyph} ${p.label}`;
-                      })()}`
-                    : '·  …'}
-                  {participantsHydrated
-                    ? `  ·  ${formatRoomParticipantTotal(roomParticipantTotal)}`
-                    : ''}
+                <CornerGlyph
+                  status={displayedCornerStatus}
+                  agentOffline={cornerAgentOffline}
+                  style={styles.cornerHeaderState}
+                  testID="corner-view-status"
+                />
+                <HeaderMetaCaps>
+                  {participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : ''}
                 </HeaderMetaCaps>
               </HeaderMetaRow>
             ) : (
               <HeaderMetaCaps testID="room-header-meta">
                 {participantsHydrated
-                  ? `${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
+                  ? `  ${formatRoomParticipantTotal(roomParticipantTotal)}  ›`
                   : 'LOADING MEMBERS'}
               </HeaderMetaCaps>
             )}
@@ -4747,6 +4738,7 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 14,
       letterSpacing: 0.7,
     },
+    cornerHeaderState: { width: 14, height: 14, marginHorizontal: 4 },
     addMembersButton: {
       width: 44,
       minHeight: 44,

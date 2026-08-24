@@ -39,3 +39,24 @@ over the private `buzz-net` network. It bind-mounts the durable registry and
 delivery state from `/home/lunchbox/buzzy-push-gateway/state/`. The retired
 `buzzy-push-gateway.service` must remain disabled; see
 `apps/push-gateway/deploy/README.md` for the one-time cutover checks.
+
+## Preview-origin operator provisioning
+
+The tracked stack exposes `preview.usebeeline.app` through the
+`beeline-media-preview` alias on the existing `buzzrouter-tunnel` network, but
+it deliberately does not create DNS records or certificates. Before enabling
+HTML attachment cards in production, the operator must:
+
+1. Create a proxied DNS CNAME `preview.usebeeline.app` pointing at the deployed
+   Cloudflare Tunnel target (`<tunnel-id>.cfargotunnel.com`).
+2. Add the tunnel public-hostname/ingress route for
+   `preview.usebeeline.app` to `http://beeline-media-preview:3000` on the
+   `buzzrouter-tunnel` Docker network.
+3. Provision/verify an edge TLS certificate whose SAN includes
+   `preview.usebeeline.app` (Cloudflare Universal SSL is sufficient when the
+   record is proxied). TLS terminates at the edge; do not fabricate or mount a
+   certificate in `relay-front`.
+4. Verify the origin boundary after deploy: an HTML `/media/...` URL renders
+   with the sandbox CSP on `https://preview.usebeeline.app`, while the same
+   path on `https://usebeeline.app` returns `Content-Disposition: attachment`;
+   PNG/JPEG/GIF/WebP remain inline on the product origin.

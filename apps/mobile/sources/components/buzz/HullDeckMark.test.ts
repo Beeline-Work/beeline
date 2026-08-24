@@ -7,9 +7,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  * The supervision deck's leading mark carries its state in three visual
  * languages — needs-you = solid brass (pulsing), working = motion (spinner),
  * idle = quiet steel. The load-bearing contract tested here is the REDUCED
- * MOTION path: with animation off, the three states must still be
- * distinguishable from shape and fill alone (hollow ring / solid brass dot /
- * small steel dot), and no animation clock may mount.
+ * MOTION path: with animation off, the three states stay distinguishable as
+ * hollow ring / solid brass circle / static working ring.
  */
 const reanimated = vi.hoisted(() => ({ reducedMotion: false }));
 
@@ -52,7 +51,7 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
-import { HullDeckMark } from './MonoHull';
+import { CornerGlyph, HullDeckMark } from './MonoHull';
 
 const originalConsoleError = console.error;
 
@@ -81,15 +80,23 @@ function render(state: 'needs-you' | 'working' | 'idle'): ReactTestRenderer {
 }
 
 /** The innermost styled leaf of the mark. */
-function markStyle(renderer: ReactTestRenderer): Record<string, unknown> {
+function markStyles(renderer: ReactTestRenderer): Record<string, unknown>[] {
   const leaves = renderer.root.findAll(
     (node: any) =>
       (node.type === 'View' || node.type === 'AnimatedView') &&
       node.props?.style !== undefined &&
       node !== renderer.root,
   );
-  const last = leaves.at(-1)!;
-  return Object.assign({}, ...( [last.props.style].flat().filter(Boolean) as object[] ));
+  return leaves.map((leaf: any) =>
+    Object.assign({}, ...([leaf.props.style].flat().filter(Boolean) as object[])),
+  );
+}
+
+function markStyle(
+  renderer: ReactTestRenderer,
+  predicate: (style: Record<string, unknown>) => boolean,
+): Record<string, unknown> {
+  return markStyles(renderer).find(predicate) ?? {};
 }
 
 /** The breathing wrapper `HullLivePulse` mounts, and only it. */
@@ -98,24 +105,42 @@ function pulses(renderer: ReactTestRenderer): number {
 }
 
 describe('HullDeckMark — three states, three languages', () => {
-  it('renders a spinning ring for working, a pulsing brass dot for needs-you, steel for idle', () => {
+  it('renders the approved 20px Room circles and accessibility-only state word', () => {
     // Working is motion: an animated ring whose top arc carries the accent.
     const working = render('working');
-    expect(markStyle(working)).toMatchObject({ borderTopColor: '#b08a4a' });
+    expect(markStyle(working, (style) => style.borderTopColor === '#b08a4a')).toMatchObject({
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      borderTopColor: '#b08a4a',
+    });
 
     // Needs-you is the one solid brass dot, breathing on the live clock.
     const needsYou = render('needs-you');
-    expect(markStyle(needsYou)).toMatchObject({
+    expect(markStyle(needsYou, (style) => style.backgroundColor === '#b08a4a')).toMatchObject({
       backgroundColor: '#b08a4a',
-      width: 9,
-      height: 9,
+      width: 20,
+      height: 20,
     });
     expect(pulses(needsYou)).toBeGreaterThan(0);
 
     // Idle is a quiet steel dot — no animation clock at all.
     const idle = render('idle');
-    expect(markStyle(idle)).toMatchObject({ backgroundColor: '#3b3048' });
+    expect(markStyle(idle, (style) => style.borderColor === '#83838d')).toMatchObject({
+      width: 20,
+      height: 20,
+      borderColor: '#83838d',
+      backgroundColor: 'transparent',
+    });
     expect(pulses(idle)).toBe(0);
+    for (const [state, renderer] of [
+      ['working', working],
+      ['needs-you', needsYou],
+      ['idle', idle],
+    ] as const) {
+      expect(renderer.root.findByProps({ accessibilityLabel: state })).toBeTruthy();
+      expect(renderer.root.findAll((node: any) => node.type === 'Text')).toHaveLength(0);
+    }
   });
 
   it('keeps the three states distinguishable under reduced motion, with no clocks mounted', () => {
@@ -124,26 +149,48 @@ describe('HullDeckMark — three states, three languages', () => {
     // Working falls back to a HOLLOW static ring — distinct by shape/fill
     // from both filled dots, without any rotation.
     const working = render('working');
-    expect(markStyle(working)).toMatchObject({ borderColor: '#83838d' });
-    expect(markStyle(working)).not.toHaveProperty('borderTopColor', '#b08a4a');
-    expect(pulses(working)).toBe(0);
+    const workingStyle = markStyle(working, (style) => style.borderColor === '#83838d');
+    expect(workingStyle).toMatchObject({ borderColor: '#83838d' });
+    expect(workingStyle).not.toHaveProperty('borderTopColor', '#b08a4a');
 
     // Needs-you holds the SOLID brass dot, pulse frozen (no breathing wrapper).
     const needsYou = render('needs-you');
-    expect(markStyle(needsYou)).toMatchObject({ backgroundColor: '#b08a4a' });
+    expect(markStyle(needsYou, (style) => style.backgroundColor === '#b08a4a')).toMatchObject({
+      backgroundColor: '#b08a4a',
+    });
     expect(pulses(needsYou)).toBe(0);
 
     // Idle stays the small steel dot.
     const idle = render('idle');
-    expect(markStyle(idle)).toMatchObject({ backgroundColor: '#3b3048' });
+    expect(markStyle(idle, (style) => style.borderColor === '#83838d')).toMatchObject({
+      borderColor: '#83838d',
+    });
     expect(pulses(idle)).toBe(0);
 
     // And the three reduced-motion marks really are three different shapes:
     const shapes = [
-      JSON.stringify(markStyle(working)),
-      JSON.stringify(markStyle(needsYou)),
-      JSON.stringify(markStyle(idle)),
+      JSON.stringify(workingStyle),
+      JSON.stringify(markStyle(needsYou, (style) => style.backgroundColor === '#b08a4a')),
+      JSON.stringify(markStyle(idle, (style) => style.borderColor === '#83838d')),
     ];
     expect(new Set(shapes).size).toBe(3);
+  });
+
+  it('renders the same three circles at the 14px corner scale with no visible label', () => {
+    const cases = [
+      { status: null, label: 'idle', key: 'borderColor', value: '#83838d' },
+      { status: 'live', label: 'working', key: 'borderTopColor', value: '#b08a4a' },
+      { status: 'open', label: 'needs-you', key: 'backgroundColor', value: '#b08a4a' },
+    ] as const;
+    for (const item of cases) {
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(React.createElement(CornerGlyph, { status: item.status }));
+      });
+      const style = markStyle(renderer, (candidate) => candidate[item.key] === item.value);
+      expect(style).toMatchObject({ width: 14, height: 14, borderRadius: 7 });
+      expect(renderer.root.findByProps({ accessibilityLabel: item.label })).toBeTruthy();
+      expect(renderer.root.findAll((node: any) => node.type === 'Text')).toHaveLength(0);
+    }
   });
 });

@@ -1,34 +1,23 @@
 import {
   cornerStatusPresentation,
   cornerSuperState,
+  cornerVisualState,
   isCornerStalledOffline,
   roomCornerSignal,
   roomListCorners,
+  roomState,
   type CornerStatus,
   type CornerSummary,
   type CornerSuperState,
+  type CornerVisualState,
 } from '@/buzz/corners';
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import { isRetiredAgentStateNotice } from '@/buzz/retired-agent-notices';
 
-/** A row's deck state. Working is a ROW state only (the mark's motion) — the
- * owner's two-tier deck folds working rooms into the DOESN'T NEED YOU section,
- * so a working room carries no top-level tier of its own. */
+/** The one state vocabulary used by both row projection and circle rendering. */
 export type RoomListZone = 'needs-you' | 'working' | 'idle';
 
-/** The deck's SECTION tiers: NEEDS YOU, then DOESN'T NEED YOU (everything not
- * waiting on the human — working and finished Rooms included). */
-export type RoomDeckTier = Exclude<RoomListZone, 'working'>;
-
-export const ROOM_LIST_ZONE_LABELS: Record<RoomDeckTier, string> = {
-  'needs-you': 'NEEDS YOU',
-  // Owner rename 2026-08-23: label only — the tier's semantics are unchanged.
-  idle: "DOESN'T NEED YOU",
-};
-
-const ROOM_LIST_TIER_ORDER: readonly RoomDeckTier[] = ['needs-you', 'idle'];
-// Gold is THE three-word verdict's needs-human state — but only its
-// ACTIONABLE half reaches the NEEDS YOU tier (see `needsYouCorner`).
+// Gold is the exact needs-you state, only when a person can act now.
 // Affordance words per legacy word stay contextual (approve card / reply /
 // retry).
 function needsYouAction(status: CornerStatus | null): string {
@@ -44,25 +33,23 @@ const LIVE_STATUSES: ReadonlySet<CornerStatus> = new Set(['live']);
 const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
 
 /**
- * Whether this corner puts its Room in the NEEDS YOU tier. Owner refinement:
- * NEEDS YOU is for corners a person can act on RIGHT NOW — a review-ready
+ * Whether this corner puts its Room in the pinned needs-you cluster. It is for
+ * corners a person can act on RIGHT NOW — a review-ready
  * change (`open`), a decision/reply ask (`needs-attention`, or a fresh agent
  * question carried as `awaitingReply`), or a failure-stalled card (`failed`).
  * A merely idle corner — nothing fresh to answer, nothing new to approve — is
- * DOESN'T NEED YOU deck state, not attention; its nudge/close affordance still
+ * idle state, not attention; its nudge/close affordance still
  * lives inside the corner itself.
  *
  * Presence refinement (owner report 2026-08-23): a PROVABLY offline agent's
  * ask/needs-attention card is not waiting on your reply — nobody is there to
  * receive it. Gold means something YOU can act on with a live agent or a real
- * artifact, so an offline-stalled corner leaves NEEDS YOU entirely; only its
+ * artifact, so an offline-stalled corner leaves needs-you entirely; only its
  * reviewable change (`open`) keeps gold, because approving an artifact does
  * not need the agent awake.
  */
 function needsYouCorner(corner: CornerSummary): boolean {
-  if (isCornerStalledOffline(corner)) return false;
-  if (corner.awaitingReply) return true;
-  return corner.status !== null && cornerSuperState(corner.status) === 'needs-human';
+  return cornerVisualState(corner.status, corner) === 'needs-you';
 }
 
 /**
@@ -102,6 +89,10 @@ export type RoomRowPill =
  * re-derive it.
  */
 export type RoomRowPresentation = {
+  /** MAX-severity rollup of corner states. Room activity never changes it. */
+  state: CornerVisualState;
+  /** Unread activity affects title weight and recency only, never state. */
+  unread: boolean;
   /**
    * The row's one leading mark glyph. A Room reports corner state when it has
    * reportable corner work (`cornerStatusPresentation` stays the single source
@@ -116,20 +107,17 @@ export type RoomRowPresentation = {
    */
   live: boolean;
   /**
-   * A corner is waiting on a person, or an unread ROOM message does. The most
-   * action-worthy state on the deck, and the ONLY state that spends the
-   * accent: brass dot, brass action pill, brass activity line.
+   * A corner is waiting on a person. Unread activity is deliberately separate.
    */
   attention: boolean;
   /**
    * The corners the count reports and the dropdown lists — the same set, from
    * the same filter, so the number can never advertise work that expanding
-   * hides. Terminal corners (`merged`, `archived`) and `failed` ones are
-   * excluded outright: finished work is represented NOWHERE in navigation
-   * (no count, no expansion, no pinned bar) per the owner's model — its
-   * history stays reachable only through the transcript's landed/closed
-   * references. A Room whose corners have all finished therefore carries no
-   * corner affordance at all.
+   * hides. Terminal corners (`merged`, `archived`) are excluded outright:
+   * finished work is represented NOWHERE in navigation (no count, no
+   * expansion, no pinned bar) per the owner's model — its history stays
+   * reachable only through the transcript's landed/closed references.
+   * Artifact-backed failures remain listed and actionable.
    */
   corners: CornerSummary[];
   /** Which of the three scan zones this Room belongs to. */
@@ -154,8 +142,8 @@ export const NO_ACTIVITY_PREVIEW = 'Nothing said yet';
 
 /**
  * A Room is *alive* when an agent is working in one of its corners right now.
- * The single condition the index spends motion on, exported so the section
- * heading's LIVE count and the rows it heads can never disagree about it.
+ * The single condition the index spends motion on, exported so every
+ * consumer agrees about live corner work.
  */
 export function isRoomAlive(corners: readonly CornerSummary[] | undefined): boolean {
   return roomCornerSignal(corners ?? []) === 'live';
@@ -186,9 +174,7 @@ export type RoomRowInput = {
    * An unread message exists in the ROOM itself — agent OR human author, per
    * the owner's model (2026-08-23) — newer than the viewer's read
    * mark (`isRoomUnread` over the room's own latest-message summary; corners
-   * never feed it, because corner output lives in the corner's channel and is
-   * chatty by nature). This is a NEEDS YOU trigger on its own; once the room is
-   * read it stops being one.
+   * never feed it). It bolds and floats the row but never changes state.
    */
   roomUnread?: boolean;
   /**
@@ -197,22 +183,15 @@ export type RoomRowInput = {
    * `corners`; this carries the read-only conversational turn.
    */
   agentTurnWorking?: boolean;
-};
-
-export type RoomListSection<T extends RoomRowInput> = {
-  /** One of the two deck tiers — never `'working'`, which is a row state only. */
-  zone: RoomDeckTier;
-  title: string;
-  data: Array<{ item: T; row: RoomRowPresentation }>;
+  /** Timestamp of the newest live Room turn event, in unix seconds. */
+  agentTurnAt?: number;
 };
 
 function cornerTimestamp(corner: CornerSummary): number {
   return corner.lastActivityAt ?? corner.createdAt ?? 0;
 }
 
-function newestNeedsYou(
-  corners: readonly CornerSummary[],
-): CornerSummary | undefined {
+function newestNeedsYou(corners: readonly CornerSummary[]): CornerSummary | undefined {
   return corners
     .filter(needsYouCorner)
     .sort(
@@ -225,9 +204,7 @@ function newestNeedsYou(
 
 /** Newest corner whose provably-offline agent left it unfinished and
  * unactionable — the STALLED fact an honest deck reports without golding it. */
-function newestStalledOffline(
-  corners: readonly CornerSummary[],
-): CornerSummary | undefined {
+function newestStalledOffline(corners: readonly CornerSummary[]): CornerSummary | undefined {
   return corners
     .filter(isCornerStalledOffline)
     .sort(
@@ -265,18 +242,17 @@ function actorName(
 }
 
 function cornerFact(corner: CornerSummary, authorNames: ReadonlyMap<string, string>): string {
-  // The state line speaks THE three words; finished keeps its landed flavor,
-  // archived says nothing. An offline-stalled corner says so plainly instead
-  // of the lie "Waiting on you" — nobody is waiting on anyone while the agent
-  // is unreachable.
+  // The state circle already carries idle/working/needs-you. The fact line is
+  // narrative only, never a second visible status label. Offline remains an
+  // explicit preserved fact because it explains why a wait was demoted.
   if (isCornerStalledOffline(corner)) {
     return `Agent offline · ${corner.name}`;
   }
   switch (cornerSuperState(corner.status)) {
     case 'working':
-      return `${actorName(corner, authorNames, 'Agent')} working · ${corner.name}`;
+      return `${actorName(corner, authorNames, 'Agent')} · ${corner.name}`;
     case 'needs-human':
-      return `Waiting on you · ${corner.name}`;
+      return corner.name;
     case 'finished':
       return corner.status === 'merged'
         ? `${actorName(corner, authorNames, 'Change')} · landed · ${corner.name}`
@@ -297,26 +273,21 @@ export function roomRowPresentation(
   // Precedence: what YOU can act on, then live work, then the honest
   // offline-stalled fact, then finished history.
   const currentCorner = needsYou ?? working ?? stalledOffline ?? finished;
-  const turnWorking = Boolean(room.agentTurnWorking) && !needsYou;
-  const unreadHere = Boolean(room.roomUnread);
-  const zone: RoomListZone = needsYou || unreadHere
-    ? 'needs-you'
-    : working || turnWorking
-      ? 'working'
-      : 'idle';
+  const unreadHere = Boolean(room.roomUnread || room.agentTurnWorking);
+  const state = roomState(all);
+  const zone: RoomListZone = state;
   // The stored preview was sanitized when it was written; this is the floor
   // for one written by an older build and still sitting in the local cache.
   const stored = room.latestMessage?.trim();
   const clean =
-    stored && !isMachinePreview(stored) && !isRetiredAgentStateNotice(stored)
-      ? stored
-      : undefined;
+    stored && !isMachinePreview(stored) && !isRetiredAgentStateNotice(stored) ? stored : undefined;
   const messageAt = room.latestMessageAt ?? (clean ? room.updatedAt : undefined) ?? 0;
   const meaningfulAt = Math.max(
     messageAt,
     ...all
       .filter((corner) => MEANINGFUL_CORNER_SUPERSTATES.has(cornerSuperState(corner.status)))
       .map(cornerTimestamp),
+    room.agentTurnAt ?? 0,
     room.createdAt ?? 0,
   );
   // The deck attributes idle previews with the same roster the lifecycle facts
@@ -327,10 +298,12 @@ export function roomRowPresentation(
   const previewFact = clean && speaker ? `${speaker} · ${clean}` : clean;
   const pills: RoomRowPill[] = [];
   if (needsYou) pills.push({ kind: 'status', label: needsYouAction(needsYou.status) });
-  else if (unreadHere) pills.push({ kind: 'status', label: 'READ' });
   if (room.modelLabel) pills.push({ kind: 'model', label: room.modelLabel });
   if (corners.length > 0) {
-    pills.push({ kind: 'corner', label: `${corners.length} corner${corners.length === 1 ? '' : 's'} open` });
+    pills.push({
+      kind: 'corner',
+      label: `${corners.length} corner${corners.length === 1 ? '' : 's'} open`,
+    });
   }
   if ((room.participantCount ?? 0) > 0) {
     pills.push({ kind: 'people', label: `${room.participantCount} here` });
@@ -344,13 +317,15 @@ export function roomRowPresentation(
     pills.push({ kind: 'unread', label: `${room.unreadNew} new` });
   }
   return {
-    glyph: currentCorner
-      ? cornerStatusPresentation(currentCorner.status).glyph
-      : clean
-        ? '›'
-        : '·',
-    live: Boolean(working) || turnWorking,
-    attention: Boolean(needsYou) || unreadHere,
+    state,
+    unread: unreadHere,
+    glyph: cornerStatusPresentation(
+      state === 'working' ? 'live' : state === 'needs-you' ? 'needs-attention' : null,
+    ).glyph,
+    // Useful non-visual fact for live counts; the rendered Room state remains
+    // the single max-severity `state` above, so needs-you still wins visually.
+    live: Boolean(working),
+    attention: state === 'needs-you',
     corners,
     zone,
     meaningfulAt,
@@ -364,10 +339,7 @@ export function roomRowPresentation(
 type RankedEntry<T extends RoomRowInput> = { item: T; row: RoomRowPresentation };
 
 function byRecency<T extends RoomRowInput>(a: RankedEntry<T>, b: RankedEntry<T>): number {
-  return (
-    b.row.meaningfulAt - a.row.meaningfulAt ||
-    (a.item.title ?? a.item.id ?? '').localeCompare(b.item.title ?? b.item.id ?? '')
-  );
+  return b.row.meaningfulAt - a.row.meaningfulAt;
 }
 
 function projectEntries<T extends RoomRowInput>(
@@ -392,36 +364,23 @@ function projectEntries<T extends RoomRowInput>(
 }
 
 /**
- * Build the deck's EXACTLY TWO sections: NEEDS YOU first (a corner ask/gate,
- * a live review target, or an unread ROOM/DM message), then DOESN'T NEED YOU —
- * everything else, working and finished Rooms included, newest activity first.
- * There is no FINISHED pile (finished Rooms fold in here; their rows still say
- * landed/archived through their own fact line) and no DIRECT pile (DMs obey the
- * same unread rule). Recency headings (TODAY / YESTERDAY / EARLIER) are
- * retired: attention-state and recency were semantically different tiers, so
- * the deck has exactly two labels, and each row's mark already conveys working
- * vs quiet.
+ * Build the one headerless feed. Needs-you Rooms cluster first; each cluster
+ * is newest-activity first. Unread and live Room turns affect recency/weight,
+ * never state. Native stable sort preserves source order for exact ties.
  *
  * This is deliberately the only ordering function the screen consumes for its
- * piles: lifecycle state, fact text, age, and placement all come from the same
+ * feed: lifecycle state, fact text, age, and placement all come from the same
  * projection. (`options.now` remains accepted for call-site stability; zoning
  * no longer depends on wall-clock buckets.)
  */
-export function roomListSections<T extends RoomRowInput>(
+export function roomListFeed<T extends RoomRowInput>(
   rooms: readonly T[],
   authorNames: ReadonlyMap<string, string>,
   _options: { now?: number } = {},
-): RoomListSection<T>[] {
-  const projected = projectEntries(rooms, authorNames);
-  const sections: RoomListSection<T>[] = [];
-  for (const tier of ROOM_LIST_TIER_ORDER) {
-    const data = projected
-      .filter(
-        (entry) =>
-          entry.row.zone === tier || (tier === 'idle' && entry.row.zone === 'working'),
-      )
-      .sort(byRecency);
-    if (data.length > 0) sections.push({ zone: tier, title: ROOM_LIST_ZONE_LABELS[tier], data });
-  }
-  return sections;
+): Array<RankedEntry<T>> {
+  return projectEntries(rooms, authorNames).sort((a, b) => {
+    const attentionDelta =
+      Number(b.row.state === 'needs-you') - Number(a.row.state === 'needs-you');
+    return attentionDelta || byRecency(a, b);
+  });
 }

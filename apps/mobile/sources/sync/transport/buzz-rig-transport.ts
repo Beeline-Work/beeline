@@ -55,6 +55,9 @@ import {
   type AgentModelConfigInput,
   type AgentCommandList,
   TAG_AGENT_PRESENCE,
+  KIND_CORNER_STATE,
+  parseCornerStateRecord,
+  cornerStateKey,
   isAgentPresenceOnline,
   type AgentPresence,
   type RoomRepository,
@@ -72,13 +75,7 @@ import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import {
-  cornerLifecycleFact,
-  cornerName,
-  resolveCornerLifecycle,
-  resolveCornerState,
-  type CornerSummary,
-} from '@/buzz/corners';
+import { cornerLifecycleFact, cornerName, type CornerSummary } from '@/buzz/corners';
 import { projectChatEvent, toRigEvent, type ChatDisplayMessage } from './buzz-event-projection';
 import {
   ROOM_CONTEXT_LIMIT,
@@ -90,6 +87,8 @@ import {
   getCachedCornerLifecycle,
   setCachedCornerLifecycle,
 } from './corner-lifecycle-cache';
+import { resolveCornerVerdict } from './corner-state-verdict';
+import type { CornerStateRecord } from '@beeline/buzz-client';
 
 export { invalidateCornerLifecycleCache } from './corner-lifecycle-cache';
 
@@ -162,6 +161,39 @@ async function fetchRoomPresence(
   return byRoom;
 }
 
+/** One best-effort multi-`#d` read of the daemon-authoritative corner state
+ * records across corners. Filtered by `#d`, never `#h` (kind:30078 records
+ * are indexed by `d` — the presence lesson). A failed or empty read resolves
+ * an empty map: record absence is exactly how the reader falls back. */
+async function fetchCornerStateRecords(
+  client: BuzzClient,
+  cornerIds: string[],
+): Promise<Map<string, CornerStateRecord>> {
+  if (cornerIds.length === 0) return new Map();
+  let events: NostrEvent[];
+  try {
+    events = await client.query([
+      {
+        kinds: [KIND_CORNER_STATE],
+        '#d': cornerIds.map((id) => cornerStateKey(id)),
+        limit: Math.max(200, cornerIds.length * 5),
+      },
+    ]);
+  } catch {
+    events = [];
+  }
+  const byCorner = new Map<string, CornerStateRecord>();
+  for (const event of events) {
+    const record = parseCornerStateRecord(event);
+    // Keep the newest record per corner; a relay should only ever hold one
+    // (parameterized-replaceable), but a stale replica answer must not win.
+    if (!record) continue;
+    const existing = byCorner.get(record.cornerId);
+    if (!existing || record.at >= existing.at) byCorner.set(record.cornerId, record);
+  }
+  return byCorner;
+}
+
 /** Pure projection shared by the single-Room and cross-Room lifecycle fetchers.
  * Both paths — and therefore the cached snapshot and the warm refetch — MUST
  * derive status through this one function (`resolveCornerLifecycle` is the
@@ -177,6 +209,10 @@ function cornerSummaryFromEvents(
    * `true` only when every presence record for the parent Room is provably
    * past its lease; `undefined` = unknown = today's behaviour. */
   agentOffline?: boolean,
+  /** The daemon-authoritative corner state record, when one was fetched.
+   * Fresh records are trusted outright (dumb lookup); absent/stale ones fall
+   * back to the history oracle inside `resolveCornerVerdict`. */
+  stateRecord?: CornerStateRecord,
 ): CornerSummary {
   const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
   // Reduce every event to its lifecycle facts once, then let THE one oracle
@@ -205,35 +241,26 @@ function cornerSummaryFromEvents(
     create?.created_at ?? 0,
     ...events.map((event) => event.createdAt),
   );
-  const oracleOptions = {
+  // THE reader path: a fresh daemon-published state record is trusted with a
+  // dumb lookup; absence/stale falls back to the history oracle — isolated in
+  // `corner-state-verdict.ts`, the ONE module stage 3 deletes.
+  const newestTranscriptAt = events.reduce((newest, event) => Math.max(newest, event.createdAt), 0);
+  const verdict = resolveCornerVerdict({
+    cornerId: id,
+    ...(stateRecord !== undefined ? { stateRecord } : {}),
+    newestTranscriptAt,
+    facts,
     merged,
     archived,
-    ...(agentOffline ? { agentOffline: true } : {}),
-  };
-  const status = resolveCornerLifecycle(facts, oracleOptions);
-  // A `null` word hides WHICH needs-human case holds: a fresh unanswered agent
-  // ask (a person must reply) or a merely idle stalled corner (nobody must).
-  // The owner's deck tiers split them — asked corners stay in NEEDS YOU,
-  // merely-idle ones fall to IDLE — so re-run the oracle with the ask window
-  // closed: only a corner the ask itself is holding in needs-human flips to
-  // working without it. No second derivation of the ask rule; just the same
-  // oracle, twice.
-  const awaitingReply =
-    status === null &&
-    resolveCornerState(facts, oracleOptions) === 'needs-human' &&
-    resolveCornerState(facts, { ...oracleOptions, askFreshWindowMs: 0 }) === 'working';
-  // The soft presence input only reaches the summary when it actually changed
-  // the verdict to STALLED — an offline agent holding a reviewable change
-  // (`open`) stays needs-you and carries no offline flag.
-  const stalledOffline =
-    agentOffline === true && resolveCornerState(facts, oracleOptions) === 'stalled';
+    ...(agentOffline !== undefined ? { agentOffline } : {}),
+  });
   return {
     id,
     name: cornerName(create ? tagValue(create, 'name') : undefined, id),
     openerPubkey: create?.pubkey ?? '',
-    status,
-    ...(awaitingReply ? { awaitingReply } : {}),
-    ...(stalledOffline ? { agentOffline: true } : {}),
+    status: verdict.status,
+    ...(verdict.awaitingReply ? { awaitingReply: true } : {}),
+    ...(verdict.agentOffline ? { agentOffline: true } : {}),
     createdAt: create?.created_at,
     ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
   };
@@ -1218,6 +1245,8 @@ export class BuzzRigTransport implements RigTransport {
     );
     const agentOffline = roomAgentsOffline(presence.get(parentChannelId) ?? []);
 
+    const cornerIds = ids;
+    const stateRecordsByCorner = await fetchCornerStateRecords(client, cornerIds);
     return Promise.all(
       ids.map(async (id) => {
         const [creates, metadata, events] = await Promise.all([
@@ -1232,6 +1261,7 @@ export class BuzzRigTransport implements RigTransport {
           events,
           mergedIds.has(id),
           agentOffline,
+          stateRecordsByCorner.get(id),
         );
       }),
     );
@@ -1287,6 +1317,10 @@ export class BuzzRigTransport implements RigTransport {
     );
     const allCornerIds = [...new Set(idsByRoom.flatMap((entry) => entry.ids))];
 
+    // One multi-`#d` read for the daemon-authoritative corner state records,
+    // alongside the create/summary/presence reads below.
+    const stateRecordsByCorner = await fetchCornerStateRecords(client, allCornerIds);
+
     const [createEvents, mergeSummaryEvents, presenceByRoom] = await Promise.all([
       allCornerIds.length > 0
         ? client.query([
@@ -1336,6 +1370,7 @@ export class BuzzRigTransport implements RigTransport {
               events,
               mergedIds.has(id),
               agentOffline,
+              stateRecordsByCorner.get(id),
             );
           }),
         );

@@ -32,7 +32,7 @@ const PRE_CHANGE_COMPOSE = fs.readFileSync(TRACKED_COMPOSE, 'utf8')
   .replace('beeline-push-gateway:production', 'beeline-push-gateway:OLD')
   .replace(/# nginx resolves proxy_pass upstreams[\s\S]*?condition: service_healthy\n/, '');
 const PRE_CHANGE_NGINX = fs.readFileSync(TRACKED_NGINX, 'utf8')
-  .replace('http://push-gateway:8788/', 'http://push-host:8788/');
+  .replace('http://172.20.0.1:8788/', 'http://push-host:8788/');
 
 function mkdtemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'beeline-deploy-test.'));

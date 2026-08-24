@@ -107,6 +107,7 @@ export {
   TAG_COMMUNITY_INVITE,
   TAG_DIRECT_MESSAGE,
   TAG_ROOM_LIFECYCLE,
+  TAG_CORNER_STATE,
 } from './kinds.js';
 
 export {
@@ -136,6 +137,16 @@ export {
   type CornerSuperState,
   type CornerVerdict,
 } from './corner-lifecycle.js';
+
+export {
+  KIND_CORNER_STATE,
+  cornerStateKey,
+  isCornerStateRecordCurrent,
+  parseCornerStateRecord,
+  type CornerMachineReason,
+  type CornerMachineState,
+  type CornerStateRecord,
+} from './corner-state.js';
 
 export {
   tagValue,

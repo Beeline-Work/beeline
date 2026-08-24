@@ -276,6 +276,33 @@ describe('projectActivity granularity', () => {
     expect(JSON.stringify(plans)).not.toContain('Verify and summarize the result');
   });
 
+  it('keeps the opening objective write-once across later turns and plan updates', async () => {
+    const projection = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+
+    await projection.startPlan('Publish the mockup through a Cloudflare tunnel.');
+    await projection.startPlan('@codex u alive?');
+    emit({
+      sessionUpdate: 'plan',
+      objective: 'Replace the objective with this follow-up',
+      entries: [{ content: 'Answer the follow-up', status: 'in_progress' }],
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    projection();
+
+    const plans = published.flatMap((event) => {
+      const content = JSON.parse(event.content) as {
+        update: { updates: Array<{ plan?: { objective?: string } }> };
+      };
+      return content.update.updates.flatMap((update) => (update.plan ? [update.plan] : []));
+    });
+    expect(plans).toHaveLength(3);
+    expect(plans.map((plan) => plan.objective)).toEqual([
+      'Publish the mockup through a Cloudflare tunnel.',
+      'Publish the mockup through a Cloudflare tunnel.',
+      'Publish the mockup through a Cloudflare tunnel.',
+    ]);
+  });
+
   it('publishes different task-authored plans for two different corner transcripts', async () => {
     const authProjection = projectActivity(
       client as unknown as AcpClient,

@@ -804,6 +804,9 @@ export function projectActivity(
   // `thoughtMs` uses. Only a *changed* plan rides along, so a 10-step
   // checklist is not re-sent on every 5s batch.
   let currentPlan: CompactActivityPlan | undefined;
+  // The objective names the corner, not its current turn. Seed it once from
+  // daemon-owned opening metadata; follow-ups and harness plans cannot edit it.
+  let pinnedObjective: string | undefined;
   let publishedPlanKey = '';
   let publishTail: Promise<void> = Promise.resolve();
   const publishBatch = (events: Record<string, unknown>[]): Promise<void> => {
@@ -965,7 +968,10 @@ export function projectActivity(
       objectValue(sanitized.toolCall),
     );
     if (updatePlan?.items.length) {
-      currentPlan = updatePlan;
+      currentPlan = {
+        ...(pinnedObjective ? { objective: pinnedObjective } : {}),
+        items: updatePlan.items,
+      };
     }
     trackToolCall(sanitized, toolCallKinds);
     const toolCallId = typeof sanitized.toolCallId === 'string' ? sanitized.toolCallId : undefined;
@@ -985,16 +991,17 @@ export function projectActivity(
   controller.startPlan = async (objective: string, authoredPlan?: CompactActivityPlan) => {
     const compactAuthoredPlan = authoredPlan ? activityPlan(authoredPlan) : undefined;
     const distilled = safePlanObjective(objective);
+    pinnedObjective ??= distilled ?? compactAuthoredPlan?.objective;
     currentPlan = compactAuthoredPlan?.items.length
       ? {
-          ...(distilled
-            ? { objective: distilled }
+          ...(pinnedObjective
+            ? { objective: pinnedObjective }
             : compactAuthoredPlan.objective
               ? { objective: compactAuthoredPlan.objective }
               : {}),
           items: compactAuthoredPlan.items,
         }
-      : fallbackPlan(objective);
+      : fallbackPlan(pinnedObjective ?? objective);
     await publishPlan(currentPlan);
   };
   controller.completePlan = async () => {

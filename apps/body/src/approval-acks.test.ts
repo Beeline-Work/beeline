@@ -114,6 +114,7 @@ function cornerInfo(
 function buildApproval(
   reviewer: ReturnType<typeof newIdentity>,
   tip: string,
+  patchId?: string,
 ): NostrEvent {
   // The canonical builder (same wire shape mobile signs), so the daemon's own
   // `verifyApproval` accepts it exactly as it does in production.
@@ -121,6 +122,7 @@ function buildApproval(
     repo: 'local/local-key',
     branch: 'refs/heads/master',
     tip,
+    ...(patchId ? { patchId } : {}),
   });
 }
 
@@ -192,6 +194,7 @@ describe('approval consumption acknowledges the human', () => {
       expect(acks[0]!.tags).toContainEqual(['approval', approval.id]);
       expect(acks[0]!.tags).toContainEqual(['h', 'corner-ack']);
       expect(acks[0]!.content).toContain('Approval received');
+      expect(info.cornerState).toEqual({ state: 'working' });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -275,6 +278,188 @@ describe('approval consumption acknowledges the human', () => {
           event.tags.some((tag) => tag[0] === 'approval' && tag[1] === approval.id),
         ),
       ).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back from a tenant-drift 404 to the working shipped relay authority', async () => {
+    const agent = newIdentity('ack-agent-tenant-fallback');
+    const reviewer = newIdentity('ack-reviewer-tenant-fallback');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const approval = buildApproval(reviewer, tip);
+    const published: NostrEvent[] = [];
+    const fallbackRelay = stubAgentRelay([approval], [reviewer.publicKey]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+          return new Response(JSON.stringify(await fallbackRelay.queryEvents(filters)), {
+            status: 200,
+          });
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = cornerInfo(agent, repoPath, cornerPath, tip);
+      body.registerSubchannel(info as never);
+      const primary = stubAgentRelay([], [reviewer.publicKey]);
+      Reflect.set(body, 'agentRelay', {
+        ...primary,
+        queryEvents: async (filters: Record<string, unknown>[]) => {
+          if ((filters[0]?.['#t'] as string[] | undefined)?.includes('buzz-merge-approval')) {
+            throw new Error(
+              'queryEvents failed: HTTP 404 relay: no community is configured for this host',
+            );
+          }
+          return primary.queryEvents(filters);
+        },
+      });
+
+      const found = await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
+
+      expect(found?.id).toBe(approval.id);
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 'decision' && tag[1] === 'accepted'),
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces an approval-read outage once and auto-honors the standing grant on recovery', async () => {
+    const agent = newIdentity('ack-agent-tenant-recovery');
+    const reviewer = newIdentity('ack-reviewer-tenant-recovery');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const approval = buildApproval(reviewer, tip);
+    const published: NostrEvent[] = [];
+    let fallbackReads = 0;
+    const fallbackRelay = stubAgentRelay([approval], [reviewer.publicKey]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          fallbackReads++;
+          if (fallbackReads <= 2) {
+            return new Response('relay: no community is configured for this host', { status: 404 });
+          }
+          const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+          return new Response(JSON.stringify(await fallbackRelay.queryEvents(filters)), {
+            status: 200,
+          });
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = cornerInfo(agent, repoPath, cornerPath, tip);
+      body.registerSubchannel(info as never);
+      const primary = stubAgentRelay([], [reviewer.publicKey]);
+      Reflect.set(body, 'agentRelay', {
+        ...primary,
+        queryEvents: async (filters: Record<string, unknown>[]) => {
+          if ((filters[0]?.['#t'] as string[] | undefined)?.includes('buzz-merge-approval')) {
+            throw new Error(
+              'queryEvents failed: HTTP 404 relay: no community is configured for this host',
+            );
+          }
+          return primary.queryEvents(filters);
+        },
+      });
+
+      await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
+      await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
+      expect(info.cornerState).toEqual({ state: 'working' });
+      Reflect.set(body, 'realignCornersForRepo', async () => 0);
+      const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
+
+      const failures = published.filter((event) =>
+        event.tags.some((tag) => tag[0] === 'delivery' && tag[1] === 'approval-read-failed'),
+      );
+      expect(failures).toHaveLength(1);
+      expect(failures[0]!.content).toContain('no community is configured for this host');
+      expect(failures[0]!.content).toContain('honor it automatically');
+      expect(landed).toBe(1);
+      expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
+      expect(info.lastApprovalReadFailure).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('realigns a pure rebase and lands with the existing content-addressed approval', async () => {
+    const agent = newIdentity('ack-agent-realigned');
+    const reviewer = newIdentity('ack-reviewer-realigned');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const approvedTip = 'a'.repeat(40);
+    const patchId = 'c'.repeat(40);
+    const approval = buildApproval(reviewer, approvedTip, patchId);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = cornerInfo(agent, repoPath, cornerPath, tip);
+      info.mergeTarget = { ...info.mergeTarget, patchId };
+      body.registerSubchannel(info as never);
+      Reflect.set(body, 'agentRelay', stubAgentRelay([approval], [reviewer.publicKey]));
+
+      const found = await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
+
+      expect(found).toMatchObject({ id: approval.id, tip, approvedTip, patchId, realigned: true });
+      const ack = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'state' && tag[1] === 'realigned'),
+      );
+      expect(ack?.content).toContain('existing approval');
+      expect(ack?.tags).toContainEqual(['approved-tip', approvedTip]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('spends the approval when realignment changes content and requires re-approval', async () => {
+    const agent = newIdentity('ack-agent-content-changed');
+    const reviewer = newIdentity('ack-reviewer-content-changed');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const approval = buildApproval(reviewer, 'a'.repeat(40), 'c'.repeat(40));
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = cornerInfo(agent, repoPath, cornerPath, tip);
+      info.mergeTarget = { ...info.mergeTarget, patchId: 'd'.repeat(40) };
+      body.registerSubchannel(info as never);
+      Reflect.set(body, 'agentRelay', stubAgentRelay([approval], [reviewer.publicKey]));
+
+      await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
+
+      const rejection = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 'state' && tag[1] === 'content-changed'),
+      );
+      expect(rejection?.content).toBe(
+        'The change moved after your approval (new commits). Review the update and re-approve.',
+      );
+      expect(rejection?.tags).toContainEqual(['decision', 'rejected']);
+      expect(info.cornerState).toEqual({ state: 'waiting-on-human', reason: 'failure' });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -13,28 +13,38 @@ import {
 } from './approval-state';
 
 describe('nextApprovalState', () => {
-  it('stays in delivering on an acceptance ack — the ack narrows the claim, the land resolves it', () => {
+  it('moves from sent to landing when the daemon acknowledges the approval', () => {
     expect(
-      nextApprovalState('delivering', { approvalAck: { decision: 'accepted' } }),
-    ).toBe('delivering');
+      nextApprovalState('sent', { approvalAck: { decision: 'accepted', state: 'landing' } }),
+    ).toBe('landing');
+  });
+
+  it('shows that a pure rebase is landing with the existing approval', () => {
+    expect(
+      nextApprovalState('landing', {
+        approvalAck: { decision: 'accepted', state: 'realigned' },
+      }),
+    ).toBe('realigning');
   });
 
   it('fails on a rejection ack — a stale-tip answer must reach the panel', () => {
     expect(
-      nextApprovalState('delivering', { approvalAck: { decision: 'rejected' } }),
+      nextApprovalState('sent', {
+        approvalAck: { decision: 'rejected', state: 'content-changed' },
+      }),
     ).toBe('failed');
   });
 
   it('resolves to merged on the landed delivery card', () => {
-    expect(nextApprovalState('delivering', { deliveryLanded: true })).toBe('merged');
+    expect(nextApprovalState('landing', { deliveryLanded: true })).toBe('merged');
   });
 
   it('resolves to merged when the corner archives (the pre-existing path)', () => {
-    expect(nextApprovalState('delivering', { archiveChannel: true })).toBe('merged');
+    expect(nextApprovalState('landing', { archiveChannel: true })).toBe('merged');
   });
 
   it('fails on the delivery-failure card', () => {
-    expect(nextApprovalState('delivering', { deliveryFailed: true })).toBe('failed');
+    expect(nextApprovalState('landing', { deliveryFailed: true })).toBe('failed');
   });
 
   it('never leaves merged — a terminal outcome is sticky', () => {
@@ -42,12 +52,12 @@ describe('nextApprovalState', () => {
     expect(nextApprovalState('merged', { approvalAck: { decision: 'rejected' } })).toBe('merged');
   });
 
-  it('does nothing from none — no panel is open', () => {
-    expect(nextApprovalState('none', { deliveryLanded: true })).toBe('none');
+  it('reconstructs a terminal land from durable events after hydration', () => {
+    expect(nextApprovalState('none', { deliveryLanded: true })).toBe('merged');
   });
 
-  it('keeps delivering when nothing relevant arrives', () => {
-    expect(nextApprovalState('delivering', {})).toBe('delivering');
+  it('keeps sent when nothing relevant arrives', () => {
+    expect(nextApprovalState('sent', {})).toBe('sent');
   });
 });
 
@@ -56,13 +66,13 @@ describe('the honest timeout', () => {
     // The daemon consumes approvals on its maintenance poll; worst case is
     // roughly one minute. The timeout must exceed that so an ordinary,
     // healthy land never trips it.
-    expect(APPROVAL_ACK_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+    expect(APPROVAL_ACK_TIMEOUT_MS).toBe(60_000);
   });
 
   it('says what is actually known: nothing confirmed, approval not lost', () => {
     const message = approvalTimeoutMessage();
-    expect(message).toMatch(/No acknowledgement/i);
-    expect(message).toMatch(/safe on/);
+    expect(message).toMatch(/has not picked up/i);
+    expect(message).toMatch(/safe/i);
     expect(message).not.toMatch(/\bfailed\b/i);
   });
 });

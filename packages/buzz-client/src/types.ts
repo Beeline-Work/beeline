@@ -385,6 +385,8 @@ export interface MergeTarget {
   branch: string;
   /** 40-hex commit the target ref is authorized to advance to. */
   tip: string;
+  /** Stable identity of the reviewed diff. Optional for legacy exact-tip cards. */
+  patchId?: string;
 }
 
 export interface BuzzClientConfig {

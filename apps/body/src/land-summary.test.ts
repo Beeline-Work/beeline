@@ -288,13 +288,14 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
             event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
         ),
       ).toHaveLength(0);
-      // A moved target self-heals: maintenance reports it as an AUTOMATIC
-      // recovery and hands the corner its own target-sync model turn.
+      // A moved target self-heals: maintenance reports the explicit
+      // realignment phase, preserves the approval, and hands the corner its
+      // own target-sync model turn.
       const recovering = published.find(
         (event) =>
           Array.isArray(event.tags) &&
-          event.content.startsWith("Couldn't land this change") &&
-          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'auto'),
+          event.content.includes('approval remains standing') &&
+          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'realigning'),
       );
       expect(recovering).toBeDefined();
       expect(Reflect.get(body, 'promptAgent')).toHaveBeenCalled();

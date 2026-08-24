@@ -47,6 +47,40 @@ describe('buildMergeApproval / verifyMergeApproval', () => {
     expect(verifyMergeApproval(ev, reviewer.publicKey, target)).toBe(false);
   });
 
+  it('keeps a content-addressed approval valid across a pure rebase', () => {
+    const patchId = 'c'.repeat(40);
+    const ev = buildMergeApproval(reviewer, channel, { ...target, patchId });
+    expect(
+      verifyMergeApproval(ev, reviewer.publicKey, {
+        ...target,
+        tip: 'b'.repeat(40),
+        patchId,
+      }),
+    ).toBe(true);
+  });
+
+  it('spends a content-addressed approval when the reviewed diff changes', () => {
+    const ev = buildMergeApproval(reviewer, channel, { ...target, patchId: 'c'.repeat(40) });
+    expect(
+      verifyMergeApproval(ev, reviewer.publicKey, {
+        ...target,
+        tip: 'b'.repeat(40),
+        patchId: 'd'.repeat(40),
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps legacy approvals exact-tip only', () => {
+    const ev = buildMergeApproval(reviewer, channel, target);
+    expect(
+      verifyMergeApproval(ev, reviewer.publicKey, {
+        ...target,
+        tip: 'b'.repeat(40),
+        patchId: 'c'.repeat(40),
+      }),
+    ).toBe(false);
+  });
+
   it('rejects a grant bound to a different branch', () => {
     const ev = buildMergeApproval(reviewer, channel, {
       ...target,

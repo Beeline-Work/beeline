@@ -449,11 +449,76 @@ describe('Buzz Room screen event projection', () => {
 
     const projection = projectChatEvent(event, viewer);
     expect(projection.deliveryFailed).toBe(true);
+    expect(projection.deliveryFailureReason).toContain('Feature push failed');
     expect(projection.message).toMatchObject({
       id: 'push-failed',
       text: 'Feature push failed; merge approval is not available. connection refused',
     });
     expect(displaySequence([event])).toHaveLength(1);
+  });
+
+  it('projects the content identity that makes a review approval survive a pure rebase', () => {
+    const patchId = 'c'.repeat(40);
+    const projection = projectChatEvent(
+      raw(
+        'merge-ready-content-addressed',
+        'Work is ready for human merge approval.',
+        [
+          ['t', 'body-control'],
+          ['t', 'merge-ready'],
+          ['repo', 'ownerhex/project'],
+          ['branch', 'refs/heads/main'],
+          ['tip', 'a'.repeat(40)],
+          ['patch-id', patchId],
+        ],
+        10,
+      ),
+      viewer,
+    );
+
+    expect(projection.mergeTarget).toEqual({
+      repo: 'ownerhex/project',
+      branch: 'refs/heads/main',
+      tip: 'a'.repeat(40),
+      patchId,
+    });
+  });
+
+  it('projects durable landing and realignment transitions onto the approval card', () => {
+    const realigned = projectChatEvent(
+      raw(
+        'approval-realigned',
+        'Realigned — landing with your existing approval.',
+        [
+          ['t', 'body-control'],
+          ['t', 'buzz-merge-approval-ack'],
+          ['approval', 'approval-1'],
+          ['decision', 'accepted'],
+          ['state', 'realigned'],
+          ['tip', 'b'.repeat(40)],
+        ],
+        11,
+      ),
+      viewer,
+    );
+    const landed = projectChatEvent(
+      raw(
+        'approval-landed',
+        'Human-approved work landed.',
+        [
+          ['t', 'body-control'],
+          ['t', 'landed'],
+          ['delivery', 'landed'],
+          ['tip', 'b'.repeat(40)],
+        ],
+        12,
+      ),
+      viewer,
+    );
+
+    expect(realigned.approvalAck).toMatchObject({ decision: 'accepted', state: 'realigned' });
+    expect(landed).toMatchObject({ deliveryLanded: true, landedTip: 'b'.repeat(40) });
+    expect(landed.message?.text).toContain('landed');
   });
 
   it('carries the daemon’s own retry posture, and invents none when the daemon did not say', () => {

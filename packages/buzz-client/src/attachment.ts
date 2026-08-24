@@ -4,6 +4,8 @@ export const ATTACHMENT_FILENAME_TAG = 'attachment';
 
 export interface AttachmentReference {
   url: string;
+  /** Isolated, cookie-less rendering URL for active/browser-rendered files. */
+  previewUrl?: string;
   name: string;
   mimeType: string;
   size: number;
@@ -54,6 +56,7 @@ export function normalizeAttachmentReference(
   const size = cleanSize(value.size);
   if (!url || !name || !mimeType || size === undefined) return null;
   const thumbnailUrl = value.thumbnailUrl ? httpUrl(value.thumbnailUrl) : undefined;
+  const previewUrl = value.previewUrl ? httpUrl(value.previewUrl) : undefined;
   const sha256 = value.sha256?.toLowerCase();
   const width = cleanSize(value.width ?? 0);
   const height = cleanSize(value.height ?? 0);
@@ -62,6 +65,7 @@ export function normalizeAttachmentReference(
     name,
     mimeType,
     size,
+    ...(previewUrl ? { previewUrl } : {}),
     ...(sha256 && /^[0-9a-f]{64}$/.test(sha256) ? { sha256 } : {}),
     ...(thumbnailUrl ? { thumbnailUrl } : {}),
     ...(value.width !== undefined && width !== undefined && width > 0 ? { width } : {}),
@@ -78,6 +82,7 @@ export function buildAttachmentTag(reference: AttachmentReference): string[] {
     `url ${attachment.url}`,
     `m ${attachment.mimeType}`,
     `size ${attachment.size}`,
+    ...(attachment.previewUrl ? [`preview ${attachment.previewUrl}`] : []),
     ...(attachment.sha256 ? [`x ${attachment.sha256}`] : []),
     ...(attachment.thumbnailUrl ? [`thumb ${attachment.thumbnailUrl}`] : []),
     ...(attachment.width && attachment.height
@@ -134,6 +139,7 @@ export function parseAttachmentTags(tags: readonly string[][]): AttachmentRefere
       mimeType: fields.get('m') ?? '',
       size: Number(fields.get('size')),
       ...(fields.get('x') ? { sha256: fields.get('x') } : {}),
+      ...(fields.get('preview') ? { previewUrl: fields.get('preview') } : {}),
       ...(fields.get('thumb') ? { thumbnailUrl: fields.get('thumb') } : {}),
       ...(dim ? { width: Number(dim[1]), height: Number(dim[2]) } : {}),
     });

@@ -88,6 +88,11 @@ export class ThinDaemonCore {
     return this.roomRuntime.isWorkspaceIdle();
   }
 
+  /** Apply the persisted update handoff deadline before abort starts draining. */
+  setDrainDeadlineAt(deadlineAt: number): void {
+    this.roomRuntime.setDrainDeadlineAt(deadlineAt);
+  }
+
   /**
    * READY is requested before any relay attempt. WATCHDOG/STATUS is requested
    * only after both bounded reconciliation and the local Room watchdog finish.

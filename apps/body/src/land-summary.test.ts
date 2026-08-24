@@ -246,7 +246,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     }
   });
 
-  it('posts no recap for a land that failed', async () => {
+  it('posts no recap for a moved-target realignment that conflicts', async () => {
     const agent = newIdentity('land-summary-failed');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
@@ -273,8 +273,8 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       await Reflect.get(body, 'publishMergeReady').call(body, info);
       // master moves on after the human approved this exact tip: the land is
       // refused, so nothing landed and nothing may be reported as landed.
-      writeFileSync(join(repoPath, 'OTHER.md'), 'someone else landed first\n');
-      gitCommand(repoPath, ['add', 'OTHER.md']);
+      writeFileSync(join(repoPath, 'README.md'), '# Someone else changed this line\n');
+      gitCommand(repoPath, ['add', 'README.md']);
       gitCommand(repoPath, ['commit', '-m', 'target moved on']);
 
       await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
@@ -288,17 +288,16 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
             event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
         ),
       ).toHaveLength(0);
-      // A moved target self-heals: maintenance reports the explicit
-      // realignment phase, preserves the approval, and hands the corner its
-      // own target-sync model turn.
+      // A conflicting realignment reports the concrete daemon-owned stage and
+      // never wakes the harness to attempt an indeterminate repair.
       const recovering = published.find(
         (event) =>
           Array.isArray(event.tags) &&
-          event.content.includes('approval remains standing') &&
-          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'realigning'),
+          event.tags.some((tag) => tag[0] === 'delivery-stage' && tag[1] === 'realigning') &&
+          event.content.includes('"status":"failed"'),
       );
       expect(recovering).toBeDefined();
-      expect(Reflect.get(body, 'promptAgent')).toHaveBeenCalled();
+      expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

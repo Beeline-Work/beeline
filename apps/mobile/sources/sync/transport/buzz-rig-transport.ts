@@ -979,8 +979,8 @@ export class BuzzRigTransport implements RigTransport {
   }
 
   /**
-   * Toggle whether this Room receives GitHub repository activity (stars,
-   * issues, pull requests on its bound repo). Same admin authority and
+   * Toggle whether this Room receives GitHub repository activity (pushes,
+   * pull requests, issues, CI, and reviews). Same admin authority and
    * carry-forward shape as the target-branch change above; absent/`undefined`
    * reads as enabled — the shipped default is ON.
    */

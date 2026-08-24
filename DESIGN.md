@@ -109,20 +109,23 @@ The two surfaces differ here, and only here, because they genuinely differ:
 - **A Room holds several voices, so each run opens with its full byline** —
   name, quiet `agent` role tag where applicable, stamp.
 
-**Prose turns carry their stamp inside the byline.** Only the folded tool run
-keeps the wider right margin and hangs ghosted marginalia there — a fixed-width
-24h stamp, absolutely positioned so it can never reflow the prose. Editor line
-numbers, verse numbers — there so the centre column stays clean, not there to be
-read.
+**Prose turns carry their stamp inside the byline.** A folded machine run keeps
+its fixed-width 24h stamp in the same row as its labels, pinned to the right edge
+with tabular numerals. The middle summary truncates before the stamp moves or
+wraps. The disclosure starts at the transcript content edge with no extra indent
+gutter.
 
-**Machine steps form a one-line ledger.** `ActivityTimeline` gives every tool
-call and thought one 44pt mono row: restrained kind glyph, verb-object label,
-quiet verdict, an inline distilled failure reason when needed, and a tabular
-duration only when the existing receipt provides one. Runs over three steps
-default to one `6 steps - 2 failed - 48s` disclosure and expand in place; runs
-of three or fewer show their rows directly. Tapping a step opens its complete,
-selectable raw output in `HullActionSheet`, never as inline multiline content.
-There are no tool cards, title/body stacks, or failure chips; brass is spent
+**Machine steps form a one-line ledger.** Every run of agent machine work,
+including a single file edit, landing stage, or thought receipt, defaults to one
+compact mono disclosure: attribution, distinct step labels, thought duration
+when known, and the right-edge stamp all share one baseline. File edits are
+ordinary machine steps, never a separate file card or title block; real user
+attachments keep their attachment rows. Expanding reveals every tool call and
+thought as the existing 44pt row with its restrained kind glyph, verb-object
+label, quiet verdict, inline distilled failure reason when needed, and tabular
+duration when supplied. Tapping a step opens its complete, selectable raw output
+in `HullActionSheet`, never as inline multiline content. There are no tool
+counters, file-count badges, title/body stacks, or failure chips; brass is spent
 only on the failure cross.
 
 A wall of git/CLI output an agent pasted into its own narration remains a

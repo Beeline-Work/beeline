@@ -18,13 +18,12 @@ import {
 } from './corners';
 
 describe('the offline-stalled presentation (agent provably offline)', () => {
-  it('stays inside the exact three-state vocabulary for an offline corner', () => {
+  it('keeps presence separate from canonical lifecycle presentation', () => {
     expect(cornerStatusPresentation(null, { agentOffline: true }).label).toBe('IDLE');
-    // Defensive shape: a worded needs-you card next to the offline flag
-    // stalls too — the oracle nulls stalled corners' words, but older caches
-    // may still carry one.
-    expect(cornerStatusPresentation('needs-attention', { agentOffline: true }).label).toBe('IDLE');
-    // The quiet glyph: nothing here is live work.
+    expect(cornerStatusPresentation('needs-attention', { agentOffline: true }).label).toBe(
+      'NEEDS YOU',
+    );
+    expect(cornerStatusPresentation('live', { agentOffline: true }).label).toBe('WORKING');
     expect(cornerStatusPresentation(null, { agentOffline: true }).glyph).toBe('○');
   });
 
@@ -141,13 +140,42 @@ describe('resolveCornerLifecycle (attention lifecycle, one oracle)', () => {
 });
 
 describe('corner navigation model', () => {
+  const canonical = (status: CornerSummary['status']) => ({
+    ...(status === 'live'
+      ? { machineState: 'working' as const }
+      : status === 'open'
+        ? { machineState: 'waiting' as const, machineReason: 'review' as const }
+        : status === 'needs-attention'
+          ? { machineState: 'waiting' as const, machineReason: 'question' as const }
+          : status === 'failed'
+            ? { machineState: 'waiting' as const, machineReason: 'failure' as const }
+            : status === 'merged'
+              ? { machineState: 'concluded' as const }
+              : status === 'archived'
+                ? { machineState: 'closed' as const }
+                : { machineState: 'idle' as const }),
+    stateAt: Math.floor(Date.now() / 1_000),
+  });
+  const summary = (
+    id: string,
+    name: string,
+    status: CornerSummary['status'],
+    createdAt?: number,
+  ): CornerSummary => ({
+    id,
+    name,
+    openerPubkey: 'a',
+    status,
+    ...canonical(status),
+    ...(createdAt !== undefined ? { createdAt } : {}),
+  });
   const corners: CornerSummary[] = [
-    { id: 'archived', name: 'old', openerPubkey: 'a', status: 'archived', createdAt: 4 },
-    { id: 'open', name: 'ready', openerPubkey: 'a', status: 'open', createdAt: 2 },
-    { id: 'live-new', name: 'new', openerPubkey: 'a', status: 'live', createdAt: 3 },
-    { id: 'live-old', name: 'older', openerPubkey: 'a', status: 'live', createdAt: 1 },
-    { id: 'stuck', name: 'stuck', openerPubkey: 'a', status: 'needs-attention', createdAt: 5 },
-    { id: 'broken', name: 'broken', openerPubkey: 'a', status: 'failed', createdAt: 6 },
+    summary('archived', 'old', 'archived', 4),
+    summary('open', 'ready', 'open', 2),
+    summary('live-new', 'new', 'live', 3),
+    summary('live-old', 'older', 'live', 1),
+    summary('stuck', 'stuck', 'needs-attention', 5),
+    summary('broken', 'broken', 'failed', 6),
   ];
 
   it('keeps active corners first in the room-scoped corner list', () => {
@@ -186,6 +214,7 @@ describe('corner navigation model', () => {
       name: status,
       openerPubkey: 'a',
       status,
+      ...canonical(status),
       createdAt: 1,
     });
     expect(
@@ -200,8 +229,8 @@ describe('corner navigation model', () => {
       expect(roomCornerSignal(corners)).toBe('needs-attention');
       expect(
         roomCornerSignal([
-          { id: 'stuck', name: 'stuck', openerPubkey: 'a', status: 'needs-attention' },
-          { id: 'open', name: 'open', openerPubkey: 'a', status: 'open' },
+          summary('stuck', 'stuck', 'needs-attention'),
+          summary('open', 'open', 'open'),
         ]),
       ).toBe('needs-attention');
     });
@@ -209,17 +238,15 @@ describe('corner navigation model', () => {
     it('reports needs-you for actionable failure and ignores immutable terminals', () => {
       expect(
         roomCornerSignal([
-          { id: 'broken', name: 'broken', openerPubkey: 'a', status: 'failed' },
-          { id: 'gone', name: 'gone', openerPubkey: 'a', status: 'archived' },
-          { id: 'landed', name: 'landed', openerPubkey: 'a', status: 'merged' },
+          summary('broken', 'broken', 'failed'),
+          summary('gone', 'gone', 'archived'),
+          summary('landed', 'landed', 'merged'),
         ]),
       ).toBe('needs-attention');
     });
 
     it('reports needs-you for an open review and nothing for no corners', () => {
-      expect(
-        roomCornerSignal([{ id: 'open', name: 'open', openerPubkey: 'a', status: 'open' }]),
-      ).toBe('needs-attention');
+      expect(roomCornerSignal([summary('open', 'open', 'open')])).toBe('needs-attention');
       expect(roomCornerSignal([])).toBeNull();
     });
   });
@@ -230,6 +257,7 @@ describe('corner navigation model', () => {
       name: 'stale',
       openerPubkey: 'a',
       status: 'live',
+      ...canonical('live'),
       createdAt: 100,
       lastActivityAt: 1,
     };
@@ -238,6 +266,7 @@ describe('corner navigation model', () => {
       name: 'busy',
       openerPubkey: 'a',
       status: 'live',
+      ...canonical('live'),
       createdAt: 1,
       lastActivityAt: 100,
     };
@@ -261,19 +290,9 @@ describe('corner navigation model', () => {
   });
 
   it('rolls Room state up as an order-independent max over corner states', () => {
-    const idle = { id: 'i', name: 'idle', openerPubkey: 'a', status: null } satisfies CornerSummary;
-    const working = {
-      id: 'w',
-      name: 'working',
-      openerPubkey: 'a',
-      status: 'live',
-    } satisfies CornerSummary;
-    const needs = {
-      id: 'n',
-      name: 'needs',
-      openerPubkey: 'a',
-      status: 'open',
-    } satisfies CornerSummary;
+    const idle = summary('i', 'idle', null);
+    const working = summary('w', 'working', 'live');
+    const needs = summary('n', 'needs', 'open');
 
     expect(roomState([idle, working, needs])).toBe('needs-you');
     expect(roomState([idle, working])).toBe('working');

@@ -1,4 +1,5 @@
 import type { MergeTarget } from '@beeline/buzz-client';
+import { sortCorners, type CornerSummary } from '@/buzz/corners';
 import { latestRoomMessageSummary, type RoomMessageSummary } from '@/buzz/room-list-summary';
 import {
   getCachedChannel,
@@ -27,6 +28,24 @@ const inFlightRevalidations = new Map<string, Promise<MessageSyncResult>>();
 const inFlightCornerRevalidations = new Map<string, Promise<void>>();
 
 /**
+ * Refresh the durable per-Room corner cache from relay authority. A fulfilled
+ * empty list is a real answer and evicts local ghosts; a rejected read writes
+ * nothing, so transient relay failures preserve the last confirmed snapshot.
+ */
+export async function refreshRoomCornerCache(
+  transport: Pick<BuzzRigTransport, 'listSubchannelLifecycleForRooms'>,
+  viewerPubkey: string,
+  roomIds: string[],
+): Promise<Map<string, CornerSummary[]>> {
+  const cornersByRoom = await transport.listSubchannelLifecycleForRooms(roomIds);
+  const store = useBuzzLocalCache.getState();
+  for (const roomId of roomIds) {
+    store.replaceRoomCorners(viewerPubkey, roomId, sortCorners(cornersByRoom.get(roomId) ?? []));
+  }
+  return cornersByRoom;
+}
+
+/**
  * A cold channel's initial backfill returns its N most recent matching kind:9
  * events, per standard Nostr REQ `limit` semantics — there is no relay query
  * that returns "the first N" directly. Every channel interleaves narration
@@ -41,10 +60,7 @@ const inFlightCornerRevalidations = new Map<string, Promise<void>>();
  */
 const COLD_BACKFILL_LIMIT = 200;
 
-function isNewerRoomMessage(
-  candidate: RoomMessageSummary,
-  cached?: ChannelCacheEntry,
-): boolean {
+function isNewerRoomMessage(candidate: RoomMessageSummary, cached?: ChannelCacheEntry): boolean {
   const cachedTimestamp = cached?.latestMessageAt;
   if (cachedTimestamp === undefined) return true;
   if (candidate.timestamp !== cachedTimestamp) return candidate.timestamp > cachedTimestamp;
@@ -72,6 +88,20 @@ export function sessionEventCursor(event: SessionEvent): number | undefined {
   return typeof payload.created_at === 'number' ? payload.created_at : undefined;
 }
 
+function isLandedRoomEvent(event: SessionEvent): boolean {
+  if (event.type !== 'raw' || !event.payload || typeof event.payload !== 'object') return false;
+  const tags = (event.payload as { tags?: unknown }).tags;
+  if (!Array.isArray(tags)) return false;
+  const has = (name: string, value: string) =>
+    tags.some((tag) => Array.isArray(tag) && tag[0] === name && tag[1] === value);
+  return (
+    has('delivery', 'landed') ||
+    has('t', 'landed') ||
+    has('t', 'land-summary') ||
+    has('t', 'merge-summary')
+  );
+}
+
 function projectEvents(events: SessionEvent[], viewerPubkey: string, isNew: boolean) {
   let messages: ChatDisplayMessage[] = [];
   let mergeTarget: MergeTarget | null | undefined;
@@ -96,34 +126,12 @@ function projectEvents(events: SessionEvent[], viewerPubkey: string, isNew: bool
 }
 
 /**
- * A `.corner`-tagged control message (posted to a Room when one of its
- * corners changes lifecycle status, e.g. on archive) keeps that Room's own
- * transcript current for free via the precedence-guarded message cache. The
- * Room-list sidebar's corner array is a separate, once-fetched snapshot
- * (`listSubchannelLifecycle`) that never sees these messages on its own —
- * mirror the same signal into it so an archive that lands while the sidebar
- * snapshot is still resident does not keep showing a stale status.
+ * Parent body-control cards are history, never lifecycle authority. They may
+ * invalidate the canonical lifecycle read cache so the next read is prompt,
+ * but must never patch a corner status themselves.
  */
-function applyCornerStatusSignals(
-  viewerPubkey: string,
-  roomId: string,
-  messages: ChatDisplayMessage[],
-): void {
-  let invalidatedLifecycleCache = false;
-  for (const message of messages) {
-    if (message.corner) {
-      useBuzzLocalCache.getState().patchCornerStatus(viewerPubkey, roomId, {
-        ...message.corner,
-        lastActivityAt: message.timestamp,
-      });
-      if (!invalidatedLifecycleCache) {
-        // Same signal as the sidebar patch above: a real status change
-        // should not wait out `listSubchannelLifecycle`'s short-TTL cache.
-        invalidateCornerLifecycleCache(roomId);
-        invalidatedLifecycleCache = true;
-      }
-    }
-  }
+function applyCornerStatusSignals(roomId: string, messages: ChatDisplayMessage[]): void {
+  if (messages.some((message) => message.corner)) invalidateCornerLifecycleCache(roomId);
 }
 
 /** Revalidate only events at/after the persisted cursor; stable ids absorb the inclusive edge. */
@@ -138,7 +146,9 @@ async function performMessageRevalidation(
   // in the Room. Keep requesting a bounded full snapshot until at least one
   // message has actually been observed.
   const warm =
-    (cached?.messages?.length ?? 0) > 0 && cached?.cursor !== undefined && cached.backfilled === true;
+    (cached?.messages?.length ?? 0) > 0 &&
+    cached?.cursor !== undefined &&
+    cached.backfilled === true;
   const fetchStartedAt = Math.floor(Date.now() / 1000);
   const events = await transport.sessionEventsBackfill(
     channelId,
@@ -178,7 +188,7 @@ async function performMessageRevalidation(
       ...(projected.mergeTarget !== undefined ? { mergeTarget: projected.mergeTarget } : {}),
     });
   }
-  applyCornerStatusSignals(viewerPubkey, channelId, projected.messages);
+  applyCornerStatusSignals(channelId, projected.messages);
   return {
     entry: getCachedChannel(viewerPubkey, channelId)!,
     mergeTarget: projected.mergeTarget,
@@ -260,7 +270,7 @@ export function cacheLiveSessionEvents(
       ...summary,
       ...(cursor ? { latestEventAt: cursor } : {}),
     });
-    applyCornerStatusSignals(viewerPubkey, channelId, messages);
+    applyCornerStatusSignals(channelId, messages);
   }
   // Rare (archive/merge-target/cursor-only signals): applied per event, in
   // order, same as before batching — this path never touches the message
@@ -280,6 +290,12 @@ export function cacheLiveSessionEvents(
       ...(projected.mergeTarget ? { mergeTarget: projected.mergeTarget } : {}),
       ...(projected.clearMergeTarget ? { mergeTarget: null } : {}),
     });
+    // Derived Room updates are quiet. Only landed work is allowed to move the
+    // Room in the index, and doing so never changes latestMessageAt (the unread
+    // authority) or invents preview copy.
+    if (eventCursor && isLandedRoomEvent(event)) {
+      useBuzzLocalCache.getState().bumpChannelRecency(viewerPubkey, channelId, eventCursor);
+    }
   }
   return projections;
 }

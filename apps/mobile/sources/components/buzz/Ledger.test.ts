@@ -22,7 +22,14 @@ vi.mock('react-native-reanimated', () => ({
   useReducedMotion: () => false,
 }));
 
-import { LedgerEntry, LedgerGhostLine, LedgerMarginalia, LedgerSteer, typewriterFrame } from './Ledger';
+import {
+  LedgerEntry,
+  LedgerGhostLine,
+  LedgerMarginalia,
+  LedgerRoomUpdate,
+  LedgerSteer,
+  typewriterFrame,
+} from './Ledger';
 import { markMessageRevealed, resetMessageReveals } from '@/buzz/message-reveal';
 
 const originalConsoleError = console.error;
@@ -81,6 +88,34 @@ function stylesOfType(renderer: ReactTestRenderer, type: string): Record<string,
 }
 
 describe('the ledger — an agent turn', () => {
+  it('renders a Room update as one italic caption with mono gutter time and a plain digest', () => {
+    const renderer = render(
+      React.createElement(LedgerRoomUpdate, {
+        id: 'merged',
+        line: '⌗ merged → main @ 12345678',
+        stamp: '16:41',
+        digest: 'Added derived relay updates and regression coverage.',
+      }),
+    );
+
+    const line = renderer.root.findByProps({ testID: 'room-update-line-merged' });
+    const stamp = renderer.root.findByProps({ testID: 'room-update-stamp-merged' });
+    const digest = renderer.root.findByProps({ testID: 'room-update-digest-merged' });
+    expect(line.props.style).toMatchObject({
+      fontFamily: 'SpaceGrotesk-Regular',
+      fontStyle: 'italic',
+      fontSize: 12,
+      color: '#83838d',
+    });
+    expect(stamp.props.style.fontFamily).toBe('IBMPlexMono-Regular');
+    expect(digest.props.style).toMatchObject({
+      fontFamily: 'SpaceGrotesk-Regular',
+      fontSize: 13,
+      marginLeft: 18,
+    });
+    expect(digest.props.style.fontStyle).toBeUndefined();
+  });
+
   it('can reveal a committed paragraph locally without changing its durable text', () => {
     const paragraph = 'The relay committed this whole paragraph at once.';
     expect(typewriterFrame(paragraph, 0)).toBe('');
@@ -159,8 +194,12 @@ describe('the ledger — an agent turn', () => {
         bodyTestID: 'body',
       }),
     );
-    const opensRow = opens.root.findByProps({ testID: 'chat-message-a' }).props.style.filter(Boolean);
-    expect(opensRow.some((style: Record<string, unknown>) => style.borderBottomWidth === 1)).toBe(true);
+    const opensRow = opens.root
+      .findByProps({ testID: 'chat-message-a' })
+      .props.style.filter(Boolean);
+    expect(opensRow.some((style: Record<string, unknown>) => style.borderBottomWidth === 1)).toBe(
+      true,
+    );
 
     const continued = render(
       React.createElement(LedgerEntry, {
@@ -174,7 +213,9 @@ describe('the ledger — an agent turn', () => {
     const continuedRow = continued.root
       .findByProps({ testID: 'chat-message-b' })
       .props.style.filter(Boolean);
-    expect(continuedRow.every((style: Record<string, unknown>) => !style.borderBottomWidth)).toBe(true);
+    expect(continuedRow.every((style: Record<string, unknown>) => !style.borderBottomWidth)).toBe(
+      true,
+    );
 
     // Still boxless: no frame, no fill, no radius on the repeating row.
     for (const style of [...opensRow, ...continuedRow]) {
@@ -326,7 +367,10 @@ describe('the ledger — a human turn is plain body text', () => {
       renderer.root
         .findByProps({ testID: `chat-message-${id}` })
         .props.style.filter(Boolean)
-        .reduce((total: number, style: Record<string, number>) => total + (style.marginBottom ?? 0), 0);
+        .reduce(
+          (total: number, style: Record<string, number>) => total + (style.marginBottom ?? 0),
+          0,
+        );
 
     // `marginBottom` is the gap that lands *above* a row: the transcript list
     // is inverted. A continuation keeps flowing; a new run opens a stanza.

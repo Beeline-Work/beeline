@@ -108,7 +108,7 @@ describe('Room→repo settings change', () => {
       'const handleSelectRoomRepoCandidate = useCallback(',
       'handleSelectRoomRepoCandidate',
     );
-    expect(handler).toContain('isCornerActive');
+    expect(handler).toContain('roomListCorners(cornerLifecycle)');
     expect(handler).toContain('Alert.alert');
     expect(handler).toContain('roomRepository && hasOpenCorners');
   });

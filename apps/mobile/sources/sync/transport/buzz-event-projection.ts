@@ -169,7 +169,9 @@ export function agentActivityDetails(content: string): AgentActivityItem[] {
     const observed = compactObserved(update.observed);
     const text = readTextContent(update.content) ?? stringValue(update.text);
     const thoughtMs =
-      typeof update.thoughtMs === 'number' && Number.isFinite(update.thoughtMs) && update.thoughtMs > 0
+      typeof update.thoughtMs === 'number' &&
+      Number.isFinite(update.thoughtMs) &&
+      update.thoughtMs > 0
         ? update.thoughtMs
         : undefined;
     // The agent's plan rides this receipt rather than an event of its own —
@@ -287,6 +289,7 @@ export type ChatDisplayMessage = {
   isUser: boolean;
   timestamp: number;
   pubkey?: string;
+  /** Legacy cache shape; new merge history renders only through roomUpdate. */
   isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
   /**
@@ -320,6 +323,8 @@ export type ChatDisplayMessage = {
   /** NIP-10 event id of the message this conversational message replies to. */
   replyToId?: string;
   isNew?: boolean;
+  /** Client-derived structural Room state. Never a kind:9 chat message. */
+  roomUpdate?: { digest?: string };
   corner?: {
     subchannelId: string;
     agentPubkey?: string;
@@ -331,7 +336,12 @@ export type ChatDisplayMessage = {
     status: AgentTurnStatus;
     generationId?: string;
   };
-  cornerProcess?: { sessionId: string; agentPubkey: string; state: CornerProcessState; sequence: number };
+  cornerProcess?: {
+    sessionId: string;
+    agentPubkey: string;
+    state: CornerProcessState;
+    sequence: number;
+  };
   /**
    * A daemon-published proposal to repoint this Room's landing target. The
    * agent may only ever *propose* — the binding itself is republished under a
@@ -478,7 +488,9 @@ function eventId(event: SessionEvent): string {
 }
 
 function cornerStatus(event: SessionEvent): CornerStatus | undefined {
-  return mapRawCornerStatusTag(sessionEventTagValue(event, 'display-status') ?? sessionEventTagValue(event, 'status'));
+  return mapRawCornerStatusTag(
+    sessionEventTagValue(event, 'display-status') ?? sessionEventTagValue(event, 'status'),
+  );
 }
 
 /** One display projection for both initial backfill and live subscription events. */
@@ -522,18 +534,21 @@ export function projectChatEvent(
   const bodyControl = sessionEventHasTag(event, 't', 'body-control') || Boolean(subchannelId);
   const status = cornerStatus(event);
   const isMergeSummary = sessionEventHasTag(event, 't', 'merge-summary');
+  const isLandSummary = sessionEventHasTag(event, 't', 'land-summary');
   const isArchived = sessionEventHasTag(event, 'status', 'archived');
   // A corner's own delivery-failure notices (push/land/merge-gate failures)
   // are posted directly on the corner's own channel with no `subchannel`
   // tag — distinct from a `subchannel && status` parent-Room status card
   // (checked first below) and from the archive notice above.
-  const isDeliveryFailure = bodyControl && !subchannelId && sessionEventHasTag(event, 'status', 'failed');
+  const isDeliveryFailure =
+    bodyControl && !subchannelId && sessionEventHasTag(event, 'status', 'failed');
   // The daemon's quiet "your message is queued behind the running turn"
   // acknowledgement (`apps/body/src/activity.ts`'s `postSteerQueuedNotice`).
   // Deliberately NOT an `#t=agent-message`: it is a receipt for the human's
   // own input, not the agent speaking, so it renders as a system line and
   // never joins the agent's attributed voice run.
-  const isSteerQueued = bodyControl && !subchannelId && sessionEventHasTag(event, 't', 'steer-queued');
+  const isSteerQueued =
+    bodyControl && !subchannelId && sessionEventHasTag(event, 't', 'steer-queued');
   // The daemon's receipt for a signed merge approval: `decision=accepted`
   // (landing now) or `rejected` with the plain reason. Rendered as a system
   // line — it is a receipt about the human's own input, never agent speech.
@@ -589,7 +604,27 @@ export function projectChatEvent(
     const agentPubkey = sessionEventTagValue(event, 'agent') ?? pubkey;
     const state = sessionEventTagValue(event, 'status');
     const sequence = Number(sessionEventTagValue(event, 'sequence') ?? '0');
-    if (sessionId && agentPubkey && (state === 'live' || state === 'suspended' || state === 'waiting-for-slot')) return { message: { id: `corner-session-${sessionId}`, text, isUser: false, timestamp: eventTimestamp(event), pubkey: agentPubkey, cornerProcess: { sessionId, agentPubkey, state, sequence: Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : 0 }, ...(isNew ? { isNew: true } : {}) } };
+    if (
+      sessionId &&
+      agentPubkey &&
+      (state === 'live' || state === 'suspended' || state === 'waiting-for-slot')
+    )
+      return {
+        message: {
+          id: `corner-session-${sessionId}`,
+          text,
+          isUser: false,
+          timestamp: eventTimestamp(event),
+          pubkey: agentPubkey,
+          cornerProcess: {
+            sessionId,
+            agentPubkey,
+            state,
+            sequence: Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : 0,
+          },
+          ...(isNew ? { isNew: true } : {}),
+        },
+      };
     return {};
   }
   if (isAgentTurn) {
@@ -666,21 +701,10 @@ export function projectChatEvent(
   }
   if (event.type === 'assistant_delta' && !text.trim()) return {};
 
-  if (isMergeSummary) {
-    return {
-      ...(mergeTarget ? { mergeTarget } : {}),
-      ...(previewUrl ? { previewUrl } : {}),
-      message: {
-        id: eventId(event),
-        text,
-        isUser: false,
-        timestamp: eventTimestamp(event),
-        ...(pubkey ? { pubkey } : {}),
-        isMergeSummary: true,
-        ...(isNew ? { isNew: true } : {}),
-      },
-    };
-  }
+  // Legacy merge cards and the prose land recap are digest sources for the
+  // render-time Room update projection. Neither gets a second transcript
+  // surface of its own.
+  if (isMergeSummary || isLandSummary) return {};
 
   if (bodyControl) {
     const clearMergeTarget = sessionEventHasTag(event, 't', 'merge-not-ready');
@@ -703,7 +727,7 @@ export function projectChatEvent(
             from,
             to,
             ...(repo ? { repository: repo } : {}),
-            ...(sessionEventTagValue(event, 'agent') ?? pubkey
+            ...((sessionEventTagValue(event, 'agent') ?? pubkey)
               ? { agentPubkey: sessionEventTagValue(event, 'agent') ?? pubkey }
               : {}),
             ...(sessionEventTagValue(event, 'requester')
@@ -916,19 +940,22 @@ export function transcriptMessages(
       activityRunOpen = false;
       continue;
     }
-    if (message.cornerProcess) { activityRunOpen = false; continue; }
-    // Live corner status is state and never spends a transcript row. An
-    // archived parent-Room card is the one exception: Body replaces its stable
-    // id with the bounded completion summary, so it is durable conversational
-    // history rather than a stale status snapshot.
-    if (message.corner) {
+    if (message.cornerProcess) {
       activityRunOpen = false;
-      if (!isCorner && message.corner.status === 'archived') {
-        transcript.push({ ...message });
-      }
       continue;
     }
-    if (!isCorner && (message.isMergeSummary || message.isArchivedNotice)) {
+    // Corner status is state and never spends a conversational transcript row.
+    // Durable history is rendered from the canonical corner-state record as a
+    // Room update, including its existing digest when the corner landed.
+    if (message.corner) {
+      activityRunOpen = false;
+      continue;
+    }
+    if (message.isMergeSummary) {
+      activityRunOpen = false;
+      continue;
+    }
+    if (!isCorner && message.isArchivedNotice) {
       activityRunOpen = false;
       continue;
     }
@@ -1042,7 +1069,12 @@ export function upsertChatMessages(
     ) {
       continue;
     }
-    if (existing?.cornerProcess && message.cornerProcess && message.cornerProcess.sequence < existing.cornerProcess.sequence) continue;
+    if (
+      existing?.cornerProcess &&
+      message.cornerProcess &&
+      message.cornerProcess.sequence < existing.cornerProcess.sequence
+    )
+      continue;
     if (existing?.writePermission && message.writePermission) {
       if (
         WRITE_PERMISSION_STATUS_ORDER[message.writePermission.status] <

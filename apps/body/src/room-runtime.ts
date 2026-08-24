@@ -291,6 +291,7 @@ export class RoomRuntimeCoordinator {
   private readonly watchdogStaleMs: number;
   private readonly reconcileHeartbeatMs: number;
   private readonly drainDeadlineMs: number;
+  private drainDeadlineAt: number | undefined;
 
   constructor(
     runtime: AgentRuntimeRecord,
@@ -405,6 +406,12 @@ export class RoomRuntimeCoordinator {
   async shutdown(): Promise<void> {
     await this.stopAll();
     await this.scheduler.dispose();
+  }
+
+  /** Tighten shutdown to a handoff's persisted wall-clock deadline. */
+  setDrainDeadlineAt(deadlineAt: number): void {
+    if (!Number.isFinite(deadlineAt)) return;
+    this.drainDeadlineAt = Math.min(this.drainDeadlineAt ?? Number.POSITIVE_INFINITY, deadlineAt);
   }
 
   /**
@@ -1142,16 +1149,22 @@ export class RoomRuntimeCoordinator {
     const rooms = [...this.running.entries()];
     for (const [, room] of rooms) room.controller.abort();
     const drained = Promise.all(rooms.map(([, room]) => room.promise.catch(() => undefined)));
+    const startedAt = this.now();
+    const deadlineAt = Math.min(
+      startedAt + this.drainDeadlineMs,
+      this.drainDeadlineAt ?? Number.POSITIVE_INFINITY,
+    );
+    const remainingMs = Math.max(0, deadlineAt - startedAt);
     let timer: NodeJS.Timeout | undefined;
     const deadline = new Promise<'deadline'>((resolveDeadline) => {
-      timer = setTimeout(() => resolveDeadline('deadline'), this.drainDeadlineMs);
-      timer.unref?.();
+      timer = setTimeout(() => resolveDeadline('deadline'), remainingMs);
     });
     const result = await Promise.race([drained.then(() => 'drained' as const), deadline]);
     if (timer) clearTimeout(timer);
     if (result === 'drained') return;
     console.error(
-      `[thin-core] absolute drain deadline ${this.drainDeadlineMs}ms reached; killing remaining turn children`,
+      `[thin-core] absolute drain deadline ${new Date(deadlineAt).toISOString()} reached; ` +
+        'killing remaining turn children',
     );
     await Promise.allSettled(
       rooms.map(([channelId, room]) => room.body.forceRecoverRoom(channelId)),
@@ -1159,8 +1172,7 @@ export class RoomRuntimeCoordinator {
     await Promise.race([
       drained,
       new Promise<void>((resolveWait) => {
-        const finalTimer = setTimeout(resolveWait, 5_000);
-        finalTimer.unref?.();
+        setTimeout(resolveWait, 5_000);
       }),
     ]);
   }

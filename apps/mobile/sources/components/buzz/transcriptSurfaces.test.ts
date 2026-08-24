@@ -11,10 +11,7 @@ const activitySource = readFileSync(new URL('./ActivityTimeline.tsx', import.met
 const emptyLedgerSource = readFileSync(new URL('./EmptyLedgerState.tsx', import.meta.url), 'utf8');
 // Enter-room hydration lives here, not inline in the screen: every read is
 // fanned out concurrently so none can be held hostage by another.
-const roomEntrySource = readFileSync(
-  new URL('../../buzz/room-entry.ts', import.meta.url),
-  'utf8',
-);
+const roomEntrySource = readFileSync(new URL('../../buzz/room-entry.ts', import.meta.url), 'utf8');
 
 function styleDefinition(source: string, name: string): string {
   const start = source.indexOf(`  ${name}: {`);
@@ -52,11 +49,17 @@ describe('Empty ledger contract', () => {
     expect(chatSource).toContain('variant={emptyLedgerVariant}');
     expect(chatSource).toContain('objective={isCorner ? cornerObjective : undefined}');
     expect(chatSource).toContain('onPress={focusComposer}');
-    expect(chatSource).toMatch(/const focusComposer = useCallback\([\s\S]{0,120}composerRef\.current\?\.focus/);
+    expect(chatSource).toMatch(
+      /const focusComposer = useCallback\([\s\S]{0,120}composerRef\.current\?\.focus/,
+    );
     expect(chatSource).not.toContain('No messages yet');
 
-    expect(emptyLedgerSource).toContain("export type EmptyLedgerVariant = 'room' | 'corner' | 'dm'");
-    expect(emptyLedgerSource).toContain('Start with the work, question, or decision this Room is for.');
+    expect(emptyLedgerSource).toContain(
+      "export type EmptyLedgerVariant = 'room' | 'corner' | 'dm'",
+    );
+    expect(emptyLedgerSource).toContain(
+      'Start with the work, question, or decision this Room is for.',
+    );
     expect(emptyLedgerSource).toContain('Ready for a steering message');
     expect(emptyLedgerSource).toContain('Send ${person} the first message.');
     expect(styleDefinition(emptyLedgerSource, 'title')).toMatch(/fontSize:\s*16/);
@@ -135,8 +138,11 @@ describe('One ledger, both surfaces', () => {
     expect(ledgerSource).not.toMatch(/steerRule/);
 
     // A system row in the flow is separated the same way — never framed off.
-    for (const name of ['mergeSummaryBubble', 'replyReference']) {
-      expect(styleDefinition(chatSource, name), `${name} must not draw an edge`).not.toMatch(
+    for (const [source, name] of [
+      [ledgerSource, 'roomUpdate'],
+      [chatSource, 'replyReference'],
+    ] as const) {
+      expect(styleDefinition(source, name), `${name} must not draw an edge`).not.toMatch(
         /border(?:Top|Bottom|Left|Right)?(?:Width|Color)/,
       );
     }
@@ -181,7 +187,9 @@ describe('One ledger, both surfaces', () => {
     expect(steer).toMatch(/fontFamily:\s*theme\.buzz\.proseRegular/);
     expect(steer).toMatch(/color:\s*theme\.buzz\.ledgerBright/);
     expect(styleDefinition(ledgerSource, 'bylineText')).toMatch(/Typography\.mono\(/);
-    expect(styleDefinition(markdownSource, 'bold')).toMatch(/fontFamily:\s*theme\.buzz\.proseSemibold/);
+    expect(styleDefinition(markdownSource, 'bold')).toMatch(
+      /fontFamily:\s*theme\.buzz\.proseSemibold/,
+    );
     expect(ledgerSource).toContain('splitLeadSentence(bodyText)');
     expect(ledgerSource).not.toMatch(/#[0-9a-fA-F]{3,8}/);
     // And the lead split belongs to agent turns alone: a steer never takes it.
@@ -217,7 +225,6 @@ describe('The obsidian slab', () => {
     'archivedBubble',
     'attachmentCard',
     'attachmentFileGlyph',
-    'mergeSummaryBubble',
     'replyReference',
   ];
 
@@ -228,6 +235,8 @@ describe('The obsidian slab', () => {
       expect(block, `${name} must not have a radius`).not.toMatch(/borderRadius/);
       expect(block, `${name} must not fill its own surface`).not.toMatch(/backgroundColor/);
     }
+    const update = styleDefinition(ledgerSource, 'roomUpdate');
+    expect(update).not.toMatch(/borderWidth|borderRadius|backgroundColor/);
   });
 
   it('leaves no bordered status banner anywhere in the transcript flow', () => {
@@ -264,19 +273,18 @@ describe('The obsidian slab', () => {
   });
 
   it('separates a system row with air, not with an edge', () => {
-    // A merge summary is the ledger's remaining interruption, and the ledger has
-    // no delimiters at all — so it is set apart by its own margin and nothing
-    // else. (The corner card that used to sit here is gone entirely: a corner's
-    // status is state, and state lives in the pinned line above the composer.)
-    const card = styleDefinition(chatSource, 'mergeSummaryBubble');
-    expect(card).not.toMatch(/border/);
-    expect(Number(card.match(/marginBottom:\s*(\d+)/)![1])).toBeGreaterThanOrEqual(20);
+    // A Room update is the ledger's remaining interruption: air, no edge.
+    const update = styleDefinition(ledgerSource, 'roomUpdate');
+    expect(update).not.toMatch(/border/);
+    expect(Number(update.match(/marginBottom:\s*(\d+)/)![1])).toBeGreaterThan(0);
   });
 
   it('gives the transcript chrome no surface of its own', () => {
     // A textured HullSurface header read as a plate laid over the slab. The
     // sheets and the merge-approval panel still earn one; the header does not.
-    expect(chatSource).not.toMatch(/<HullSurface\s*\n?\s*strength="quiet"\s*\n?\s*style=\{\[styles\.header/);
+    expect(chatSource).not.toMatch(
+      /<HullSurface\s*\n?\s*strength="quiet"\s*\n?\s*style=\{\[styles\.header/,
+    );
     expect(styleDefinition(chatSource, 'header')).toMatch(/hairlineDivider|borderBottom/);
   });
 
@@ -315,7 +323,7 @@ describe('Speaker identity', () => {
     expect(branch).not.toMatch(/name: isCorner \? undefined/);
     expect(branch).not.toContain('const isCornerAgent');
     expect(branch).toContain("name: isSelfSteer ? 'You' : voiceName");
-    expect(branch).toContain('role: speaksAsAgent ? \'agent\' : undefined');
+    expect(branch).toContain("role: speaksAsAgent ? 'agent' : undefined");
     // The corner header still names its administering agent in the top bar.
     expect(chatSource).toMatch(
       /isCorner && cornerAgentPubkey && \([\s\S]{0,400}testID="corner-header-agent"[\s\S]{0,400}<IdentityMark/,
@@ -324,7 +332,9 @@ describe('Speaker identity', () => {
   });
 
   it('repeats no byline for a continued run, on either surface', () => {
-    expect(ledgerBranch()).toContain('const byline: LedgerByline | undefined = attributionContinued');
+    expect(ledgerBranch()).toContain(
+      'const byline: LedgerByline | undefined = attributionContinued',
+    );
     expect(ledgerBranch()).toMatch(/attributionContinued\s*\n\s*\? undefined/);
   });
 
@@ -334,9 +344,7 @@ describe('Speaker identity', () => {
     // rendered bare. The screen must tell the shared attribution helper which
     // rows are machine noise, so prose re-announces across them.
     expect(chatSource).toContain('continuedSpeakerIds');
-    expect(chatSource).toMatch(
-      /isMachine:\s*message\.isAgentActivity/,
-    );
+    expect(chatSource).toMatch(/isMachine:\s*message\.isAgentActivity/);
   });
 
   it('leads every byline with the speaker’s EXISTING identity mark, not a new one', () => {
@@ -381,7 +389,9 @@ describe('Speaker identity', () => {
     // One identity everywhere: the transcript folds the device-wide agent-name
     // cache under its own roster, so a Room whose own read is stale or absent
     // still renders the name the agent was given in any other Workspace.
-    expect(chatSource).toContain('withKnownAgentNames(knownAgentNames, channelCache?.availableAgents ?? [])');
+    expect(chatSource).toContain(
+      'withKnownAgentNames(knownAgentNames, channelCache?.availableAgents ?? [])',
+    );
 
     // ...and only the roster widens. Membership, roles, and profile writes are
     // authority-adjacent and stay on the channel's own community.
@@ -392,7 +402,9 @@ describe('Speaker identity', () => {
     expect(roomEntrySource).not.toMatch(/communityMembers\(gapFiller/);
     expect(roomEntrySource).not.toMatch(/listPersonProfiles\(\s*\n?\s*gapFiller/);
     expect(chatSource).not.toMatch(/replaceProfiles\([^)]*rosterCommunityId/);
-    expect(chatSource).not.toMatch(/saveActiveCommunityId\(identity\.publicKey, rosterCommunityId\)/);
+    expect(chatSource).not.toMatch(
+      /saveActiveCommunityId\(identity\.publicKey, rosterCommunityId\)/,
+    );
 
     // The one resolver, everywhere the transcript names an agent — gated on
     // `participantsHydrated` so a pending roster read shows a neutral
@@ -497,8 +509,8 @@ describe('Machine noise', () => {
 
     // ...and every LIVE corner note it replaced is gone from the transcript
     // scroll. The archived replacement is intentionally retained below as a
-    // bounded completion record.
-    expect(chatSource).toMatch(/if \(item\.corner\.status !== 'archived'\) return null;/);
+    // structural Room update.
+    expect(chatSource).toMatch(/if \(item\.corner\) \{\s*return null;\s*\}/);
     expect(chatSource).toMatch(
       /if \(permission\.status === 'allowed' && permission\.subchannelId\) return null;/,
     );
@@ -511,14 +523,17 @@ describe('Machine noise', () => {
     // a dead record, and duplicated the pinned indicator while they were at
     // it. A corner's status is state: it belongs to the pinned line above the
     // composer while it is active, and to the Room's corners view once it is
-    // not. The archived summary is a completion record, not live status.
+    // not. Terminal history is derived from canonical state as a Room update.
     const branch = chatSource.slice(
       chatSource.indexOf('      if (item.corner) {'),
-      chatSource.indexOf('      // ── Merge summary ──'),
+      chatSource.indexOf(
+        '      // ── Archived notice',
+        chatSource.indexOf('      if (item.corner) {'),
+      ),
     );
-    expect(branch).toContain("item.corner.status !== 'archived'");
+    expect(branch).toContain('return null');
     expect(branch).not.toMatch(/cornerStatusPresentation|presentation\.(?:glyph|label)/);
-    expect(branch).toContain('archived-corner-summary');
+    expect(branch).not.toContain('archived-corner-summary');
     // ...and the styles that drew it are gone with it, not left behind dead.
     for (const name of ['cornerStatusCard', 'cornerStatusLabel', 'cornerPresenceDot']) {
       expect(chatSource, `${name} should have been removed`).not.toContain(`  ${name}: {`);
@@ -559,7 +574,9 @@ describe('Machine noise', () => {
     // Gated on `!isSelfSteer`, never on `isAgent` — `isAgent` depends on the
     // roster and goes false exactly where a Corner needs this most, which is
     // how a full push-rejection dump reached the slab.
-    expect(branch).toContain('const ledgerText = isSelfSteer ? undefined : splitLedgerText(item.text)');
+    expect(branch).toContain(
+      'const ledgerText = isSelfSteer ? undefined : splitLedgerText(item.text)',
+    );
     expect(branch).not.toMatch(/isAgent \? splitLedgerText/);
     expect(branch).toMatch(/<LedgerGhostLine[\s\S]{0,200}lines of tool output/);
     expect(branch).toMatch(/bodyText=\{ledgerText \? ledgerText\.prose : item\.text\}/);
@@ -599,24 +616,26 @@ describe('Machine noise', () => {
     // One activity-folding loop, not a corner branch plus a room filter.
     expect(fn).not.toMatch(/if \(isCorner\) \{/);
     expect(fn).toMatch(/activityRunOpen/);
-    // A Room still refuses a Corner's own lifecycle cards...
-    expect(fn).toMatch(/!isCorner && \(message\.isMergeSummary \|\| message\.isArchivedNotice\)/);
-    // Live status stays out of the transcript, but the archived replacement
-    // carries the agent's durable completion summary into the parent Room.
-    expect(fn).toMatch(/if \(!isCorner && message\.corner\.status === 'archived'\)/);
-    expect(fn).toContain('transcript.push({ ...message })');
+    // Every legacy kind:9 lifecycle card stays out; structural roomUpdate
+    // entries pass through this same loop as ordinary chronological rows.
+    expect(fn).toMatch(/if \(message\.corner\)/);
+    expect(fn).toMatch(/if \(message\.isMergeSummary\)/);
+    expect(fn).toMatch(/!isCorner && message\.isArchivedNotice/);
+    expect(fn).toContain('transcript.push({');
   });
 });
 
 describe('Archived corner record', () => {
-  it('keeps the archived completion summary as a tappable Room card', () => {
+  it('retires the archived card in favor of the structural closed update', () => {
     const branchStart = chatSource.indexOf('      if (item.corner) {');
     expect(branchStart).toBeGreaterThanOrEqual(0);
-    const branch = chatSource.slice(branchStart, chatSource.indexOf('// ── Merge summary', branchStart));
-    expect(branch).toContain("item.corner.status !== 'archived'");
-    expect(branch).toContain('archived-corner-summary');
-    expect(branch).toContain('{summary}');
-    expect(branch).toContain('openCorner(item.corner!.subchannelId)');
+    const branch = chatSource.slice(
+      branchStart,
+      chatSource.indexOf('// ── Archived notice', branchStart),
+    );
+    expect(branch).toContain('return null');
+    expect(chatSource).not.toContain('archived-corner-summary');
+    expect(chatSource).toContain('<LedgerRoomUpdate');
   });
 });
 
@@ -636,7 +655,9 @@ describe('Corner header identity', () => {
     // every other enter-room read and committed the moment each one lands —
     // never batched behind the transcript backfill, the empty-room retry, or a
     // subscription handshake.
-    expect(roomEntrySource).toMatch(/const parentIdRead = transport\.getParentChannelId\(channelId\)/);
+    expect(roomEntrySource).toMatch(
+      /const parentIdRead = transport\.getParentChannelId\(channelId\)/,
+    );
     expect(roomEntrySource).toMatch(/const metadataRead = client\.getChannelMetadata\(channelId\)/);
     expect(roomEntrySource).toMatch(/step\('roomName', metadataRead,/);
     expect(roomEntrySource).toMatch(/step\('parentChannelId', parentIdRead,/);
@@ -644,7 +665,9 @@ describe('Corner header identity', () => {
     expect(roomEntrySource.match(/client\.getChannelMetadata\(/g)?.length).toBe(1);
     expect(roomEntrySource.match(/transport\.getParentChannelId\(/g)?.length).toBe(1);
     // The screen commits the channel's own name and kind straight off them.
-    expect(chatSource).toMatch(/onRoomName: \(name\) => \{[\s\S]{0,120}setResolvedChannelName\(name\)/);
+    expect(chatSource).toMatch(
+      /onRoomName: \(name\) => \{[\s\S]{0,120}setResolvedChannelName\(name\)/,
+    );
     expect(chatSource).toMatch(
       /onParentChannelId: \(parentId\) => \{[\s\S]{0,160}setChannelKind\(parentId \? 'corner' : 'room'\)/,
     );
@@ -663,11 +686,14 @@ describe('Leaving a corner', () => {
   it('cannot open the corner it is already showing', () => {
     expect(chatSource).toMatch(/openCorner[\s\S]{0,200}subchannelId === decodedId\) return/);
     // Every corner push goes through openCorner, so each one carries its parent.
-    expect(chatSource).not.toMatch(/router\.push\(`\/buzz\/chat\/\$\{encodeURIComponent\(item\.corner/);
-    expect(chatSource).not.toMatch(/router\.push\(`\/buzz\/chat\/\$\{encodeURIComponent\(tappableCornerId/);
+    expect(chatSource).not.toMatch(
+      /router\.push\(`\/buzz\/chat\/\$\{encodeURIComponent\(item\.corner/,
+    );
+    expect(chatSource).not.toMatch(
+      /router\.push\(`\/buzz\/chat\/\$\{encodeURIComponent\(tappableCornerId/,
+    );
   });
 });
-
 
 describe('The corner review footer never claims a retry the daemon is not making', () => {
   /** The `approvalState === 'failed'` branch of the review panel. */
@@ -749,7 +775,9 @@ describe('The merge approval card exposes every durable state', () => {
 
   it('binds the terminal success card to the landed SHA', () => {
     expect(chatSource).toContain('setLandedApprovalTip(projected.landedTip');
-    expect(chatSource).toContain('LANDED AT {(landedApprovalTip ?? mergeTarget?.tip ?? \'\').slice(0, 12)} ✓');
+    expect(chatSource).toContain(
+      "LANDED AT {(landedApprovalTip ?? mergeTarget?.tip ?? '').slice(0, 12)} ✓",
+    );
   });
 });
 
@@ -766,7 +794,9 @@ describe('The change-ready review card', () => {
 
   it('never guesses a file count before the manifest lands', () => {
     // "not loaded yet" and "nothing changed" are different answers.
-    expect(chatSource).toContain("reviewFiles === null\n                          ? 'PREPARING YOUR REVIEW'");
+    expect(chatSource).toContain(
+      "reviewFiles === null\n                          ? 'PREPARING YOUR REVIEW'",
+    );
   });
 });
 

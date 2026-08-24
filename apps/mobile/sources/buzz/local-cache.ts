@@ -11,7 +11,12 @@ import type {
   PersonProfile,
   RoomRepositoryResolution,
 } from '@beeline/buzz-client';
-import { cornerStatusPrecedence, cornerStatusPrecedenceOrNull, type CornerStatus, type CornerSummary } from '@/buzz/corners';
+import {
+  cornerStatusPrecedence,
+  cornerStatusPrecedenceOrNull,
+  type CornerStatus,
+  type CornerSummary,
+} from '@/buzz/corners';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 import { isRetiredAgentStateNotice } from './retired-agent-notices';
 import { upsertChatMessages } from '@/sync/transport/buzz-event-projection';
@@ -140,6 +145,8 @@ type BuzzCacheState = PersistedBuzzCache & {
     channelId: string,
     patch: Partial<ChannelCacheEntry>,
   ) => void;
+  /** Move landed work in the Room index without creating unread/message copy. */
+  bumpChannelRecency: (viewerPubkey: string, channelId: string, timestamp: number) => void;
   replaceMessages: (
     viewerPubkey: string,
     channelId: string,
@@ -169,11 +176,7 @@ type BuzzCacheState = PersistedBuzzCache & {
   ) => void;
   /** Replace the complete lifecycle snapshot for a Room after a live signal
    * reveals a corner that was absent from the list's earlier snapshot. */
-  replaceRoomCorners: (
-    viewerPubkey: string,
-    roomId: string,
-    corners: CornerSummary[],
-  ) => void;
+  replaceRoomCorners: (viewerPubkey: string, roomId: string, corners: CornerSummary[]) => void;
   replaceProfiles: (viewerPubkey: string, communityId: string, profiles: PersonProfile[]) => void;
   /** Purge a deleted/left Room from every cached list row of this viewer and
    * drop its transcript cache. Pairs with the durable tombstone in
@@ -202,9 +205,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function recordOfEntries(value: unknown): Record<string, Record<string, unknown>> {
   if (!isRecord(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => isRecord(entry)),
-  ) as Record<string, Record<string, unknown>>;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => isRecord(entry))) as Record<
+    string,
+    Record<string, unknown>
+  >;
 }
 
 function recordOfArrays(value: unknown): Record<string, unknown[]> {
@@ -291,7 +295,8 @@ function loadCache(): PersistedBuzzCache {
     const parsed: unknown = JSON.parse(serialized);
     if (!isRecord(parsed)) throw new Error('Invalid Buzz local cache');
     return {
-      activeViewerPubkey: typeof parsed.activeViewerPubkey === 'string' ? parsed.activeViewerPubkey : null,
+      activeViewerPubkey:
+        typeof parsed.activeViewerPubkey === 'string' ? parsed.activeViewerPubkey : null,
       activeListKeyByViewer: Object.fromEntries(
         Object.entries(parsed.activeListKeyByViewer ?? {}).filter(
           ([, value]) => typeof value === 'string',
@@ -502,8 +507,7 @@ function updateListCornerStatus(
         const corners = channel.corners.map((existing) => {
           if (
             existing.id !== corner.subchannelId ||
-            cornerStatusPrecedence(corner.status) <
-              cornerStatusPrecedenceOrNull(existing.status)
+            cornerStatusPrecedence(corner.status) < cornerStatusPrecedenceOrNull(existing.status)
           ) {
             return existing;
           }
@@ -563,12 +567,7 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
     }),
   patchCornerStatus: (viewerPubkey, roomId, corner) =>
     set((state) => {
-      const channelLists = updateListCornerStatus(
-        state.channelLists,
-        viewerPubkey,
-        roomId,
-        corner,
-      );
+      const channelLists = updateListCornerStatus(state.channelLists, viewerPubkey, roomId, corner);
       // No status moved: skip the write entirely rather than notifying every
       // subscriber with an identical snapshot.
       return channelLists === state.channelLists ? state : { channelLists };
@@ -611,6 +610,33 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
           MAX_CACHED_CHANNELS,
         ),
       };
+    }),
+  bumpChannelRecency: (viewerPubkey, channelId, timestamp) =>
+    set((state) => {
+      let listsChanged = false;
+      const channelLists = Object.fromEntries(
+        Object.entries(state.channelLists).map(([key, entry]) => {
+          if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
+          let entryChanged = false;
+          const channels = entry.channels.map((channel) => {
+            if (channel.id !== channelId || (channel.updatedAt ?? 0) >= timestamp) return channel;
+            entryChanged = true;
+            return { ...channel, updatedAt: timestamp };
+          });
+          if (!entryChanged) return [key, entry];
+          listsChanged = true;
+          return [
+            key,
+            {
+              ...entry,
+              channels: channels.sort(
+                (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+              ),
+            },
+          ];
+        }),
+      );
+      return listsChanged ? { channelLists } : state;
     }),
   replaceMessages: (viewerPubkey, channelId, messages, cursor, summary) =>
     set((state) => {

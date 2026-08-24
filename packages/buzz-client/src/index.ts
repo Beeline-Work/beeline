@@ -319,6 +319,7 @@ export {
 
 export {
   MAX_AGENT_COMMANDS,
+  agentCommandsKey,
   parseAgentCommandEntries,
   parseAgentCommands,
   publishAgentCommands,

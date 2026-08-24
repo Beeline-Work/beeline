@@ -4,11 +4,9 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Photo-override darkflight (owner decision, 2026-08-23): identity marks are
-// the ONLY avatars on the product surface. Every picture-setting UI gates on
-// PHOTO_OVERRIDES_ENABLED; these tests pin both halves — no surface renders a
-// picture affordance while the flag ships false, and the flag itself stays
-// honest about what it gates.
+// Person/agent photo-override darkflight (owner decision, 2026-08-23): their
+// identity marks remain their only avatars. Workspace pictures are controlled
+// separately and must not revive these surfaces.
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const client = vi.hoisted(() => ({
@@ -196,11 +194,10 @@ describe('photo-override darkflight on the settings surfaces', () => {
     expect(PHOTO_OVERRIDES_ENABLED).toBe(false);
   });
 
-  it('gates every picture-setting surface in source', () => {
+  it('gates every human and agent picture-setting surface in source', () => {
     const root = new URL('../../../../../', import.meta.url).pathname;
     const surfaces = [
       'sources/app/(app)/buzz/settings/identity.tsx',
-      'sources/app/(app)/buzz/settings/workspace.tsx',
       'sources/app/(app)/buzz/MembersScreen.tsx',
     ];
     for (const relative of surfaces) {

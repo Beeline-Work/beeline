@@ -9,6 +9,7 @@ import {
   type IdentityKind,
   type IdentityPalette,
 } from '@/buzz/identity-mark';
+import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { HullLivePulse } from './MonoHull';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -201,8 +202,12 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
   const { theme } = useUnistyles();
   const groknight = theme.buzz;
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
+  // Workspace pictures are the sole photo exception. Human and agent relay
+  // photos stay inert even when an untyped/stale caller supplies avatarUrl.
   const showRelayAvatar =
-    groknight.photoIdentityMarksEnabled && Boolean(avatarUrl && failedAvatar !== avatarUrl);
+    WORKSPACE_PICTURES_ENABLED &&
+    kind === 'workspace' &&
+    Boolean(avatarUrl && failedAvatar !== avatarUrl);
   const { palette, fillState, cells, rotation } = identityMarkGeometry(seed, kind);
   // Below the cypher floor the colour and the silhouette *are* the identity,
   // so the mark goes solid rather than muddy.

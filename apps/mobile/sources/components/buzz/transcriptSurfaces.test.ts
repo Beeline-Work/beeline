@@ -138,8 +138,11 @@ describe('One ledger, both surfaces', () => {
     expect(ledgerSource).not.toMatch(/steerRule/);
 
     // A system row in the flow is separated the same way — never framed off.
-    for (const name of ['mergeSummaryBubble', 'replyReference']) {
-      expect(styleDefinition(chatSource, name), `${name} must not draw an edge`).not.toMatch(
+    for (const [source, name] of [
+      [ledgerSource, 'roomUpdate'],
+      [chatSource, 'replyReference'],
+    ] as const) {
+      expect(styleDefinition(source, name), `${name} must not draw an edge`).not.toMatch(
         /border(?:Top|Bottom|Left|Right)?(?:Width|Color)/,
       );
     }
@@ -223,7 +226,6 @@ describe('The obsidian slab', () => {
     'archivedBubble',
     'attachmentCard',
     'attachmentFileGlyph',
-    'mergeSummaryBubble',
     'replyReference',
   ];
 
@@ -234,6 +236,8 @@ describe('The obsidian slab', () => {
       expect(block, `${name} must not have a radius`).not.toMatch(/borderRadius/);
       expect(block, `${name} must not fill its own surface`).not.toMatch(/backgroundColor/);
     }
+    const update = styleDefinition(ledgerSource, 'roomUpdate');
+    expect(update).not.toMatch(/borderWidth|borderRadius|backgroundColor/);
   });
 
   it('leaves no bordered status banner anywhere in the transcript flow', () => {
@@ -270,13 +274,10 @@ describe('The obsidian slab', () => {
   });
 
   it('separates a system row with air, not with an edge', () => {
-    // A merge summary is the ledger's remaining interruption, and the ledger has
-    // no delimiters at all — so it is set apart by its own margin and nothing
-    // else. (The corner card that used to sit here is gone entirely: a corner's
-    // status is state, and state lives in the pinned line above the composer.)
-    const card = styleDefinition(chatSource, 'mergeSummaryBubble');
-    expect(card).not.toMatch(/border/);
-    expect(Number(card.match(/marginBottom:\s*(\d+)/)![1])).toBeGreaterThanOrEqual(20);
+    // A Room update is the ledger's remaining interruption: air, no edge.
+    const update = styleDefinition(ledgerSource, 'roomUpdate');
+    expect(update).not.toMatch(/border/);
+    expect(Number(update.match(/marginBottom:\s*(\d+)/)![1])).toBeGreaterThan(0);
   });
 
   it('gives the transcript chrome no surface of its own', () => {
@@ -511,8 +512,8 @@ describe('Machine noise', () => {
 
     // ...and every LIVE corner note it replaced is gone from the transcript
     // scroll. The archived replacement is intentionally retained below as a
-    // bounded completion record.
-    expect(chatSource).toMatch(/if \(item\.corner\.status !== 'archived'\) return null;/);
+    // structural Room update.
+    expect(chatSource).toMatch(/if \(item\.corner\) \{\s*return null;\s*\}/);
     expect(chatSource).toMatch(
       /if \(permission\.status === 'allowed' && permission\.subchannelId\) return null;/,
     );
@@ -525,14 +526,17 @@ describe('Machine noise', () => {
     // a dead record, and duplicated the pinned indicator while they were at
     // it. A corner's status is state: it belongs to the pinned line above the
     // composer while it is active, and to the Room's corners view once it is
-    // not. The archived summary is a completion record, not live status.
+    // not. Terminal history is derived from canonical state as a Room update.
     const branch = chatSource.slice(
       chatSource.indexOf('      if (item.corner) {'),
-      chatSource.indexOf('      // ── Merge summary ──'),
+      chatSource.indexOf(
+        '      // ── Archived notice',
+        chatSource.indexOf('      if (item.corner) {'),
+      ),
     );
-    expect(branch).toContain("item.corner.status !== 'archived'");
+    expect(branch).toContain('return null');
     expect(branch).not.toMatch(/cornerStatusPresentation|presentation\.(?:glyph|label)/);
-    expect(branch).toContain('archived-corner-summary');
+    expect(branch).not.toContain('archived-corner-summary');
     // ...and the styles that drew it are gone with it, not left behind dead.
     for (const name of ['cornerStatusCard', 'cornerStatusLabel', 'cornerPresenceDot']) {
       expect(chatSource, `${name} should have been removed`).not.toContain(`  ${name}: {`);
@@ -615,27 +619,26 @@ describe('Machine noise', () => {
     // One activity-folding loop, not a corner branch plus a room filter.
     expect(fn).not.toMatch(/if \(isCorner\) \{/);
     expect(fn).toMatch(/activityRunOpen/);
-    // A Room still refuses a Corner's own lifecycle cards...
-    expect(fn).toMatch(/!isCorner && \(message\.isMergeSummary \|\| message\.isArchivedNotice\)/);
-    // Live status stays out of the transcript, but the archived replacement
-    // carries the agent's durable completion summary into the parent Room.
-    expect(fn).toMatch(/if \(!isCorner && message\.corner\.status === 'archived'\)/);
-    expect(fn).toContain('transcript.push({ ...message })');
+    // Every legacy kind:9 lifecycle card stays out; structural roomUpdate
+    // entries pass through this same loop as ordinary chronological rows.
+    expect(fn).toMatch(/if \(message\.corner\)/);
+    expect(fn).toMatch(/if \(message\.isMergeSummary\)/);
+    expect(fn).toMatch(/!isCorner && message\.isArchivedNotice/);
+    expect(fn).toContain('transcript.push({');
   });
 });
 
 describe('Archived corner record', () => {
-  it('keeps the archived completion summary as a tappable Room card', () => {
+  it('retires the archived card in favor of the structural closed update', () => {
     const branchStart = chatSource.indexOf('      if (item.corner) {');
     expect(branchStart).toBeGreaterThanOrEqual(0);
     const branch = chatSource.slice(
       branchStart,
-      chatSource.indexOf('// ── Merge summary', branchStart),
+      chatSource.indexOf('// ── Archived notice', branchStart),
     );
-    expect(branch).toContain("item.corner.status !== 'archived'");
-    expect(branch).toContain('archived-corner-summary');
-    expect(branch).toContain('{summary}');
-    expect(branch).toContain('openCorner(item.corner!.subchannelId)');
+    expect(branch).toContain('return null');
+    expect(chatSource).not.toContain('archived-corner-summary');
+    expect(chatSource).toContain('<LedgerRoomUpdate');
   });
 });
 

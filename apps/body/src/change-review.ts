@@ -1,4 +1,4 @@
-import { git, publishEvent, type Identity } from '@beeline/gate';
+import { git, publishEvent, type Identity, type RelayClient } from '@beeline/gate';
 import {
   CHANGE_REVIEW_EVENT_KIND,
   type ChangeReviewFile,
@@ -173,18 +173,18 @@ export async function postChangeReviewMetadata(
   coordinate: string,
   content: string,
   extraTags: string[][],
+  relay?: Pick<RelayClient, 'publishEvent'>,
 ): Promise<void> {
-  await publishEvent(
-    signEvent(
-      {
-        pubkey: owner.publicKey,
-        created_at: Math.floor(Date.now() / 1000),
-        kind: CHANGE_REVIEW_EVENT_KIND,
-        tags: [['h', channelId], ['d', coordinate], ...extraTags],
-        content,
-      },
-      owner.secretKey,
-    ),
-    owner,
+  const event = signEvent(
+    {
+      pubkey: owner.publicKey,
+      created_at: Math.floor(Date.now() / 1000),
+      kind: CHANGE_REVIEW_EVENT_KIND,
+      tags: [['h', channelId], ['d', coordinate], ...extraTags],
+      content,
+    },
+    owner.secretKey,
   );
+  if (relay) await relay.publishEvent(event);
+  else await publishEvent(event, owner);
 }

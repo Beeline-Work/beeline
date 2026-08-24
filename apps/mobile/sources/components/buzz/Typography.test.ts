@@ -49,6 +49,7 @@ const monoStyles = new Set([
   'sectionLabel',
   'statusLabel',
   'presenceLabel',
+  'roomUpdateStamp',
   'secretText',
   'workRequestBadge',
   'archivedBadgeText',

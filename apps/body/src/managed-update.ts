@@ -7,6 +7,7 @@ import {
   confirmPendingUpdate,
   readInstalledBundleIdentity,
   readPendingUpdate,
+  readUpdateState,
   rollbackToPreviousRelease,
   SelfUpdateManager,
   writePendingUpdateFixture,
@@ -14,13 +15,14 @@ import {
   type PendingUpdateRecord,
 } from './self-update.js';
 
-export const UPDATE_DRAIN_DEADLINE_MS = 9 * 60_000;
-const UPDATE_WORKER_DEADLINE_MS = 15 * 60_000;
-// Must exceed the worker's absolute deadline: a legitimate 10-minute archive
+export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
+export const DEFAULT_UPDATE_INTERVAL_MS = 30_000;
+export const UPDATE_DRAIN_DEADLINE_MS = UPDATE_CONVERGENCE_SLO_MS - 60_000;
+const UPDATE_WORKER_DEADLINE_MS = UPDATE_DRAIN_DEADLINE_MS;
+// Must exceed the worker's absolute deadline: a legitimate long archive
 // download must never be mistaken for a dead owner by another agent daemon.
 const LOCK_STALE_MS = UPDATE_WORKER_DEADLINE_MS + 5 * 60_000;
-const DEFAULT_UPDATE_INITIAL_DELAY_MS = 2 * 60_000;
-const DEFAULT_UPDATE_INTERVAL_MS = 6 * 60 * 60_000;
+const DEFAULT_UPDATE_INITIAL_DELAY_MS = 0;
 
 export interface UpdateHandoffRecord {
   version: 1;
@@ -78,7 +80,9 @@ export class ManagedUpdateHandoff {
   readonly #now: () => number;
   readonly #env: NodeJS.ProcessEnv;
   readonly #runUpdateWorker: () => Promise<void>;
+  readonly #drainDeadlineMs: number;
   #nextUpdateCheckAt: number;
+  #updateCycleDeadlineAt: number | undefined;
   #worker: Promise<void> | undefined;
   #requested = false;
 
@@ -89,6 +93,7 @@ export class ManagedUpdateHandoff {
     now?: () => number;
     env?: NodeJS.ProcessEnv;
     runUpdateWorker?: () => Promise<void>;
+    drainDeadlineMs?: number;
   }) {
     this.#layout = options.layout;
     this.#runtimeDir = options.runtimeDir;
@@ -96,6 +101,7 @@ export class ManagedUpdateHandoff {
     this.#now = options.now ?? Date.now;
     this.#env = options.env ?? process.env;
     this.#runUpdateWorker = options.runUpdateWorker ?? runManagedUpdateWorkerProcess;
+    this.#drainDeadlineMs = options.drainDeadlineMs ?? UPDATE_DRAIN_DEADLINE_MS;
     this.#nextUpdateCheckAt =
       this.#now() +
       numberEnv(this.#env, 'BEELINE_UPDATE_INITIAL_DELAY_MS', DEFAULT_UPDATE_INITIAL_DELAY_MS);
@@ -105,7 +111,11 @@ export class ManagedUpdateHandoff {
     layout: BeelineInstallLayout,
     runtimeDir: string,
     now: () => number = Date.now,
-    options: { env?: NodeJS.ProcessEnv; runUpdateWorker?: () => Promise<void> } = {},
+    options: {
+      env?: NodeJS.ProcessEnv;
+      runUpdateWorker?: () => Promise<void>;
+      drainDeadlineMs?: number;
+    } = {},
   ): Promise<ManagedUpdateHandoff> {
     return new ManagedUpdateHandoff({
       layout,
@@ -143,6 +153,7 @@ export class ManagedUpdateHandoff {
     this.#nextUpdateCheckAt =
       now + numberEnv(this.#env, 'BEELINE_UPDATE_INTERVAL_MS', DEFAULT_UPDATE_INTERVAL_MS);
     if (!this.#worker) {
+      this.#updateCycleDeadlineAt = now + this.#drainDeadlineMs;
       // Never await archive/network work from the progress callback: doing so
       // would freeze WATCHDOG ticks during a healthy but slow update. The core
       // observes the worker's atomic anchor change on a later completed tick.
@@ -150,6 +161,16 @@ export class ManagedUpdateHandoff {
         // Another daemon may have applied the update while this one waited.
         const current = await activeReleaseId(this.#layout).catch(() => undefined);
         if (current && current !== this.#loadedRelease) return;
+        // All daemons sharing this install start together. Keep the short SLO
+        // cadence without making each one fetch the same manifest: the first
+        // lock holder records the install-scoped check and the rest reuse it.
+        const state = await readUpdateState(this.#layout);
+        const interval = numberEnv(
+          this.#env,
+          'BEELINE_UPDATE_INTERVAL_MS',
+          DEFAULT_UPDATE_INTERVAL_MS,
+        );
+        if (state.lastCheckAt !== undefined && now - state.lastCheckAt < interval) return;
         await this.#runUpdateWorker();
       })
         .catch((error) => {
@@ -166,12 +187,16 @@ export class ManagedUpdateHandoff {
 
   async #journalDrift(desiredRelease: string): Promise<boolean> {
     const requestedAt = this.#now();
+    const drainDeadlineAt = Math.min(
+      requestedAt + this.#drainDeadlineMs,
+      this.#updateCycleDeadlineAt ?? Number.POSITIVE_INFINITY,
+    );
     const handoff: UpdateHandoffRecord = {
       version: 1,
       loadedRelease: this.#loadedRelease!,
       desiredRelease,
       requestedAt,
-      drainDeadlineAt: requestedAt + UPDATE_DRAIN_DEADLINE_MS,
+      drainDeadlineAt,
     };
     await withInstallLock(this.#layout, async () => {
       const pending = await readPendingUpdate(this.#layout);
@@ -200,6 +225,10 @@ export class ManagedUpdateHandoff {
       );
     });
     this.#requested = true;
+    console.log(
+      `[thin-core] update handoff armed: loaded release ${this.#loadedRelease} -> ` +
+        `${desiredRelease}; absolute drain deadline ${new Date(drainDeadlineAt).toISOString()}`,
+    );
     return true;
   }
 }

@@ -1,7 +1,42 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const reviewCache = vi.hoisted(() => {
+  const records = new Map<string, any>();
+  const key = (sessionId: string, tip: string) => `${sessionId}:${tip}`;
+  return {
+    records,
+    readCachedReviewGeneration: vi.fn((sessionId: string, tip: string) =>
+      records.get(key(sessionId, tip)),
+    ),
+    readLatestCachedReviewGeneration: vi.fn(
+      (sessionId: string, excludingTip?: string) =>
+        [...records.values()]
+          .filter((record) => record.sessionId === sessionId && record.tip !== excludingTip)
+          .sort((a, b) => b.completedAt - a.completedAt)[0],
+    ),
+    cacheCompleteReviewManifest: vi.fn((sessionId: string, tip: string, files: unknown[]) => {
+      const previous = records.get(key(sessionId, tip));
+      const record = {
+        sessionId,
+        tip,
+        files,
+        patches: previous?.patches ?? {},
+        completedAt: Date.now(),
+      };
+      records.set(key(sessionId, tip), record);
+      return record;
+    }),
+    cacheReviewPatch: vi.fn((sessionId: string, tip: string, path: string, patch: unknown) => {
+      const record = records.get(key(sessionId, tip));
+      if (record) record.patches[path] = patch;
+    }),
+  };
+});
+
+vi.mock('@/buzz/change-review-cache', () => reviewCache);
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -46,7 +81,11 @@ vi.mock('./MonoHull', async () => {
   };
 });
 
-import { ChangeReviewPanel, withChangeReviewTimeout } from './ChangeReviewPanel';
+import {
+  ChangeReviewPanel,
+  retryChangeReviewRead,
+  withChangeReviewTimeout,
+} from './ChangeReviewPanel';
 import { darkTheme } from '@/theme';
 
 const diffColors = darkTheme.colors.diff;
@@ -66,6 +105,11 @@ beforeAll(() => {
 
 afterAll(() => vi.restoreAllMocks());
 
+beforeEach(() => {
+  reviewCache.records.clear();
+  vi.clearAllMocks();
+});
+
 async function settle() {
   await act(async () => {
     await Promise.resolve();
@@ -77,6 +121,146 @@ describe('ChangeReviewPanel', () => {
   it('turns a stalled file manifest read into a retryable timeout', async () => {
     await expect(withChangeReviewTimeout(new Promise<never>(() => undefined), 1)).rejects.toThrow(
       'Timed out while loading file diffs.',
+    );
+  });
+
+  it('retries relay reads with backoff and returns the first complete generation', async () => {
+    const operation = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(new Error('Missing review manifest'))
+      .mockRejectedValueOnce(new Error('Missing review completion marker'))
+      .mockResolvedValue('complete');
+
+    await expect(retryChangeReviewRead(operation, [0, 0])).resolves.toBe('complete');
+    expect(operation).toHaveBeenCalledTimes(3);
+  });
+
+  it('shows the previous complete generation while newer changes are preparing', async () => {
+    const previousTip = 'a'.repeat(40);
+    reviewCache.records.set(`change-cached:${previousTip}`, {
+      sessionId: 'change-cached',
+      tip: previousTip,
+      files: [{ path: 'src/previous.ts', status: 'modified', linesAdded: 1, linesRemoved: 0 }],
+      patches: {},
+      completedAt: 1,
+    });
+    const transport = {
+      workspaceFilesRead: vi.fn(async () => {
+        throw new Error('Missing review manifest for bbbbbbbbbbbb');
+      }),
+      changedFileRead: vi.fn(async () => null),
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(ChangeReviewPanel, {
+          transport,
+          sessionId: 'change-cached',
+          tip: 'b'.repeat(40),
+        }),
+      );
+    });
+    await settle();
+
+    expect(renderer.root.findByProps({ testID: 'change-review-files' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'change-review-preparing-newer' })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: 'change-review-file-src/previous.ts' }),
+    ).toBeDefined();
+    expect(() => renderer.root.findByProps({ testID: 'change-review-error' })).toThrow();
+    const detail = renderer.root
+      .findAllByType('Text')
+      .map((node: { props: { children?: unknown } }) => node.props.children)
+      .filter((value): value is string => typeof value === 'string');
+    expect(detail).toContain('Missing review manifest for bbbbbbbbbbbb');
+  });
+
+  it('keeps a successfully rendered cached patch when its refresh loses chunks', async () => {
+    const cachedTip = 'f'.repeat(40);
+    reviewCache.records.set(`change-patch-cache:${cachedTip}`, {
+      sessionId: 'change-patch-cache',
+      tip: cachedTip,
+      files: [{ path: 'src/cached.ts', status: 'modified', linesAdded: 1, linesRemoved: 1 }],
+      patches: { 'src/cached.ts': { content: '@@ -1 +1 @@\n-old\n+new' } },
+      completedAt: 1,
+    });
+    const transport = {
+      workspaceFilesRead: vi.fn(async () => [
+        { path: 'src/cached.ts', status: 'modified', linesAdded: 1, linesRemoved: 1 },
+      ]),
+      changedFileRead: vi.fn(async () => {
+        throw new Error('Incomplete diff for src/cached.ts: received 1 of 2 chunks');
+      }),
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(ChangeReviewPanel, {
+          transport,
+          sessionId: 'change-patch-cache',
+          tip: cachedTip,
+        }),
+      );
+    });
+    await settle();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'change-review-file-src/cached.ts' }).props.onPress();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(renderer.root.findByProps({ testID: 'change-review-diff' })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: 'change-review-patch-cache-warning' }),
+    ).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'change-review-line-1' }).props.children).toBe(
+      '-old',
+    );
+  });
+
+  it('retries a missing patch read and keeps the missing-chunks detail visible until recovery', async () => {
+    const transport = {
+      workspaceFilesRead: vi.fn(async () => [
+        { path: 'src/retry.ts', status: 'modified', linesAdded: 1, linesRemoved: 1 },
+      ]),
+      changedFileRead: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Missing diff chunks for src/retry.ts at aaaaaaaaaaaa'))
+        .mockResolvedValue({ content: '@@ -1 +1 @@\n-old\n+new' }),
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(ChangeReviewPanel, {
+          transport,
+          sessionId: 'change-patch-retry',
+          tip: 'a'.repeat(40),
+        }),
+      );
+    });
+    await settle();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'change-review-file-src/retry.ts' }).props.onPress();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(renderer.root.findByProps({ testID: 'change-review-patch-retry' })).toBeDefined();
+    expect(
+      renderer.root
+        .findAllByType('Text')
+        .map((node: { props: { children?: unknown } }) => node.props.children),
+    ).toContain('Missing diff chunks for src/retry.ts at aaaaaaaaaaaa');
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'change-review-patch-retry' }).props.onPress();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(transport.changedFileRead).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findByProps({ testID: 'change-review-line-1' }).props.children).toBe(
+      '-old',
     );
   });
 
@@ -111,7 +295,11 @@ describe('ChangeReviewPanel', () => {
     });
     await settle();
 
-    expect(transport.changedFileRead).toHaveBeenCalledWith('change-1', 'src/example.ts');
+    expect(transport.changedFileRead).toHaveBeenCalledWith(
+      'change-1',
+      'src/example.ts',
+      'c'.repeat(40),
+    );
     expect(renderer.root.findByProps({ testID: 'change-review-diff' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'change-review-line-2' }).props.children).toBe(
       '-old',
@@ -160,8 +348,13 @@ describe('ChangeReviewPanel', () => {
     expect(addedStyle.color).not.toBe(removedStyle.color);
     expect(addedStyle.backgroundColor).toBe(diffColors.addedBg);
     expect(removedStyle.backgroundColor).toBe(diffColors.removedBg);
-    expect(new Set([headerStyle.backgroundColor, removedStyle.backgroundColor, addedStyle.backgroundColor]).size)
-      .toBeGreaterThan(1);
+    expect(
+      new Set([
+        headerStyle.backgroundColor,
+        removedStyle.backgroundColor,
+        addedStyle.backgroundColor,
+      ]).size,
+    ).toBeGreaterThan(1);
   });
 
   it('caps rendered diff lines and shows a truncation footer for a huge diff', async () => {

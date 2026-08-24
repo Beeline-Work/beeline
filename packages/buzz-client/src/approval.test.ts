@@ -29,25 +29,25 @@ describe('buildMergeApproval / verifyMergeApproval', () => {
 
   it('accepts a valid reviewer approval bound to the exact target', () => {
     const ev = buildMergeApproval(reviewer, channel, target);
-    expect(verifyMergeApproval(ev, reviewer.publicKey, target)).toBe(true);
+    expect(verifyMergeApproval(ev, reviewer.publicKey, target, channel)).toBe(true);
   });
 
   it('rejects a forged approval signed by someone other than the reviewer', () => {
     const ev = buildMergeApproval(attacker, channel, target);
-    expect(verifyMergeApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyMergeApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 
   it('rejects a tampered signature (content mutated after signing)', () => {
     const ev = { ...buildMergeApproval(reviewer, channel, target), content: 'APPROVE everything' };
-    expect(verifyMergeApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyMergeApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 
-  it('rejects a grant bound to a different tip (replay onto another merge)', () => {
+  it('keeps the corner approval valid when ongoing work advances the tip', () => {
     const ev = buildMergeApproval(reviewer, channel, { ...target, tip: 'b'.repeat(40) });
-    expect(verifyMergeApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyMergeApproval(ev, reviewer.publicKey, target, channel)).toBe(true);
   });
 
-  it('keeps a content-addressed approval valid across a pure rebase', () => {
+  it('keeps the corner approval valid across a pure rebase', () => {
     const patchId = 'c'.repeat(40);
     const ev = buildMergeApproval(reviewer, channel, { ...target, patchId });
     expect(
@@ -55,30 +55,35 @@ describe('buildMergeApproval / verifyMergeApproval', () => {
         ...target,
         tip: 'b'.repeat(40),
         patchId,
-      }),
+      }, channel),
     ).toBe(true);
   });
 
-  it('spends a content-addressed approval when the reviewed diff changes', () => {
+  it('keeps approval standing when ongoing work changes the reviewed diff', () => {
     const ev = buildMergeApproval(reviewer, channel, { ...target, patchId: 'c'.repeat(40) });
     expect(
       verifyMergeApproval(ev, reviewer.publicKey, {
         ...target,
         tip: 'b'.repeat(40),
         patchId: 'd'.repeat(40),
-      }),
-    ).toBe(false);
+      }, channel),
+    ).toBe(true);
   });
 
-  it('keeps legacy approvals exact-tip only', () => {
+  it('keeps legacy approvals standing for the same corner', () => {
     const ev = buildMergeApproval(reviewer, channel, target);
     expect(
       verifyMergeApproval(ev, reviewer.publicKey, {
         ...target,
         tip: 'b'.repeat(40),
         patchId: 'c'.repeat(40),
-      }),
-    ).toBe(false);
+      }, channel),
+    ).toBe(true);
+  });
+
+  it('rejects an otherwise matching approval from a different corner', () => {
+    const ev = buildMergeApproval(reviewer, 'corner-other', target);
+    expect(verifyMergeApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 
   it('rejects a grant bound to a different branch', () => {
@@ -86,7 +91,7 @@ describe('buildMergeApproval / verifyMergeApproval', () => {
       ...target,
       branch: 'refs/heads/release',
     });
-    expect(verifyMergeApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyMergeApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 
   it('rejects a grant bound to a different repo', () => {
@@ -94,6 +99,6 @@ describe('buildMergeApproval / verifyMergeApproval', () => {
       ...target,
       repo: `${attacker.publicKey}/demo`,
     });
-    expect(verifyMergeApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyMergeApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 });

@@ -78,7 +78,7 @@ export interface GitHubRoomInstallationToken {
   /**
    * The Room binding author's CURRENT device key after key succession
    * (absent when the auth service has no succession ledger entry). A daemon
-   * may treat an exact-tip merge approval signed by this key as owner-signed.
+   * may treat a corner-scoped merge approval signed by this key as owner-signed.
    */
   authorizedBy?: string;
 }

@@ -11,25 +11,25 @@ const target: MergeTarget = {
   tip: 'a'.repeat(40),
 };
 
-describe('verifyApproval — the exact-binding gate', () => {
+describe('verifyApproval — the corner-binding gate', () => {
   it('accepts a valid reviewer approval bound to the exact target', () => {
     const ev = buildApproval(reviewer, channel, target);
-    expect(verifyApproval(ev, reviewer.publicKey, target)).toBe(true);
+    expect(verifyApproval(ev, reviewer.publicKey, target, channel)).toBe(true);
   });
 
   it('rejects a forged approval signed by someone other than the reviewer', () => {
     const ev = buildApproval(attacker, channel, target);
-    expect(verifyApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 
   it('rejects a tampered signature (content mutated after signing)', () => {
     const ev = { ...buildApproval(reviewer, channel, target), content: 'APPROVE everything' };
-    expect(verifyApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 
-  it('rejects a grant bound to a different tip (replay onto another merge)', () => {
+  it('keeps the corner approval valid when ongoing work advances the tip', () => {
     const ev = buildApproval(reviewer, channel, { ...target, tip: 'b'.repeat(40) });
-    expect(verifyApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyApproval(ev, reviewer.publicKey, target, channel)).toBe(true);
   });
 
   it('accepts the same reviewed patch after a pure rebase', () => {
@@ -40,28 +40,33 @@ describe('verifyApproval — the exact-binding gate', () => {
         ...target,
         tip: 'b'.repeat(40),
         patchId,
-      }),
+      }, channel),
     ).toBe(true);
   });
 
-  it('rejects a rebased tip whose reviewed patch changed', () => {
+  it('keeps approval standing when ongoing work changes the reviewed patch', () => {
     const ev = buildApproval(reviewer, channel, { ...target, patchId: 'c'.repeat(40) });
     expect(
       verifyApproval(ev, reviewer.publicKey, {
         ...target,
         tip: 'b'.repeat(40),
         patchId: 'd'.repeat(40),
-      }),
-    ).toBe(false);
+      }, channel),
+    ).toBe(true);
+  });
+
+  it('rejects an otherwise matching approval from a different corner', () => {
+    const ev = buildApproval(reviewer, 'corner-other', target);
+    expect(verifyApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 
   it('rejects a grant bound to a different branch', () => {
     const ev = buildApproval(reviewer, channel, { ...target, branch: 'refs/heads/release' });
-    expect(verifyApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 
   it('rejects a grant bound to a different repo', () => {
     const ev = buildApproval(reviewer, channel, { ...target, repo: `${attacker.publicKey}/demo` });
-    expect(verifyApproval(ev, reviewer.publicKey, target)).toBe(false);
+    expect(verifyApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
   });
 });

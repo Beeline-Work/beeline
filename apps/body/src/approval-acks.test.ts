@@ -8,9 +8,9 @@
  *
  *   - a matching approval is consumed AND acknowledged (`decision=accepted`),
  *     exactly once per approval id;
- *   - an authority-verified approval naming a STALE tip is rejected once,
- *     with the plain reason (which old tip, which current tip) and no git
- *     plumbing;
+ *   - an authority-verified approval remains standing for this corner when
+ *     later commits move its work tip;
+ *   - an approval from another corner is never accepted;
  *   - the end-to-end land path still works with the ack in place.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -200,9 +200,58 @@ describe('approval consumption acknowledges the human', () => {
     }
   });
 
-  it('rejects a stale-tip approval immediately, plainly, and only once', async () => {
+  it('keeps approval standing when the same corner adds commits B and C, then lands tip C', async () => {
     const agent = newIdentity('ack-agent-stale');
     const reviewer = newIdentity('ack-reviewer-stale');
+    const { root, repoPath, cornerPath, tip: approvedTip } = localOnlyRepoWithCorner();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const approval = buildApproval(reviewer, approvedTip, 'c'.repeat(40));
+
+      writeFileSync(join(cornerPath, 'B.txt'), 'commit B\n');
+      gitCommand(cornerPath, ['add', 'B.txt']);
+      gitCommand(cornerPath, ['commit', '-m', 'add commit B']);
+      writeFileSync(join(cornerPath, 'C.txt'), 'commit C\n');
+      gitCommand(cornerPath, ['add', 'C.txt']);
+      gitCommand(cornerPath, ['commit', '-m', 'add commit C']);
+      const currentTip = gitCommand(cornerPath, ['rev-parse', 'HEAD']);
+
+      const info = cornerInfo(agent, repoPath, cornerPath, currentTip);
+      info.mergeTarget = { ...info.mergeTarget, patchId: 'd'.repeat(40) };
+      body.registerSubchannel(info as never);
+      Reflect.set(body, 'agentRelay', stubAgentRelay([approval], [reviewer.publicKey]));
+      Reflect.set(body, 'realignCornersForRepo', async () => 0);
+
+      const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
+
+      expect(landed).toBe(1);
+      expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(currentTip);
+      expect(info.humanMergeApproval).toMatchObject({
+        id: approval.id,
+        approvedTip,
+        tip: currentTip,
+      });
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 'decision' && tag[1] === 'rejected'),
+        ),
+      ).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not accept an approval signed for a different corner', async () => {
+    const agent = newIdentity('ack-agent-other-corner');
+    const reviewer = newIdentity('ack-reviewer-other-corner');
     const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
     const published: NostrEvent[] = [];
     vi.stubGlobal(
@@ -216,25 +265,21 @@ describe('approval consumption acknowledges the human', () => {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath, tip);
       body.registerSubchannel(info as never);
-      const staleTip = 'a'.repeat(40);
-      const stale = buildApproval(reviewer, staleTip);
-      Reflect.set(body, 'agentRelay', stubAgentRelay([stale], [reviewer.publicKey]));
-
-      const find = Reflect.get(body, 'findHumanMergeApproval').bind(body);
-      const found = await find(info);
-      expect(found).toBeUndefined();
-      await find(info);
-
-      const rejections = published.filter((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_ACK_TAG),
+      const otherCornerApproval = gateBuildApproval(reviewer, 'corner-other', {
+        repo: 'local/local-key',
+        branch: 'refs/heads/master',
+        tip,
+      });
+      Reflect.set(
+        body,
+        'agentRelay',
+        stubAgentRelay([otherCornerApproval], [reviewer.publicKey]),
       );
-      expect(rejections.length).toBe(1);
-      const rejection = rejections[0]!;
-      expect(rejection.tags).toContainEqual(['decision', 'rejected']);
-      expect(rejection.tags).toContainEqual(['rejected-tip', staleTip]);
-      expect(rejection.content).toContain(staleTip.slice(0, 12));
-      expect(rejection.content).toContain(tip.slice(0, 12));
-      expect(rejection.content.toLowerCase()).not.toMatch(/\bgit\b|non-fast-forward|hint:/);
+
+      const found = await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
+
+      expect(found).toBeUndefined();
+      expect(published).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -395,7 +440,7 @@ describe('approval consumption acknowledges the human', () => {
     }
   });
 
-  it('realigns a pure rebase and lands with the existing content-addressed approval', async () => {
+  it('realigns a pure rebase and lands with the existing corner approval', async () => {
     const agent = newIdentity('ack-agent-realigned');
     const reviewer = newIdentity('ack-reviewer-realigned');
     const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
@@ -430,7 +475,7 @@ describe('approval consumption acknowledges the human', () => {
     }
   });
 
-  it('spends the approval when realignment changes content and requires re-approval', async () => {
+  it('keeps the corner approval standing when later work changes the patch', async () => {
     const agent = newIdentity('ack-agent-content-changed');
     const reviewer = newIdentity('ack-reviewer-content-changed');
     const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
@@ -450,16 +495,19 @@ describe('approval consumption acknowledges the human', () => {
       body.registerSubchannel(info as never);
       Reflect.set(body, 'agentRelay', stubAgentRelay([approval], [reviewer.publicKey]));
 
-      await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
+      const found = await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
 
-      const rejection = published.find((event) =>
-        event.tags.some((tag) => tag[0] === 'state' && tag[1] === 'content-changed'),
-      );
-      expect(rejection?.content).toBe(
-        'The change moved after your approval (new commits). Review the update and re-approve.',
-      );
-      expect(rejection?.tags).toContainEqual(['decision', 'rejected']);
-      expect(info.cornerState).toEqual({ state: 'waiting-on-human', reason: 'failure' });
+      expect(found).toMatchObject({
+        id: approval.id,
+        approvedTip: 'a'.repeat(40),
+        tip,
+      });
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 'decision' && tag[1] === 'rejected'),
+        ),
+      ).toBe(false);
+      expect(info.cornerState).toEqual({ state: 'working' });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

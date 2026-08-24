@@ -6,9 +6,8 @@
  *   2. Worker polls before any approval published → refuse; publish valid
  *      approval afterwards → merges. Assert `main` unchanged before, changed
  *      after.
- *   3. Approval replay / wrong-target: (a) different repo, (b) same repo
- *      different tip (second commit pushed after approval signed), (c) replay
- *      the same approval after main already moved → refuse each.
+ *   3. Approval scope: (a) different repo refuses, (b) later commits in the
+ *      same corner remain covered, (c) another corner cannot reuse the grant.
  *
  * Reuses provisionFresh from push-rights.live.test.ts (same pattern) and the
  * attemptMerge + buildApproval + verifyApproval infrastructure.
@@ -358,7 +357,7 @@ const reachable = await relayReachable();
   );
 
   it(
-    '3b. stale-tip approval (second commit pushed after signing) is REFUSED',
+    '3b. approval at tip A lands tip C after ongoing commits in the same corner',
     async () => {
       const p = await provisionFresh('fm3b');
       const branch = 'feature/fm3b-stale-tip';
@@ -388,7 +387,8 @@ const reachable = await relayReachable();
       const pushSecond = gitAuthed(work, p.agent, p.owner, p.repo, ['push', 'origin', branch]);
       expect(pushSecond.ok, pushSecond.stderr).toBe(true);
 
-      // The approval binds to firstTip, NOT secondTip. Worker must refuse.
+      // The approval binds to the corner, repo, and target branch. Its tip is
+      // the review-time snapshot; the worker lands the corner's current tip.
       const outcome = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
@@ -399,80 +399,50 @@ const reachable = await relayReachable();
         featureBranch: branch,
       });
 
-      expect(outcome.merged).toBe(false);
-      expect(outcome.reason).toMatch(/no valid approval/i);
-      // The worker's featureTip should now be the second tip.
+      expect(outcome.merged).toBe(true);
       expect(outcome.featureTip).toBe(secondTip);
 
       const mainAfter = lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
-      expect(mainAfter).toBe(p.baseMain);
+      expect(mainAfter).toBe(secondTip);
     },
     120_000,
   );
 
   it(
-    '3c. replaying same approval after main advanced is REFUSED (tip mismatch)',
+    '3c. a different corner cannot reuse the approval',
     async () => {
-      // Use a single channel+repo for two sequential merges to test replay.
       const p = await provisionFresh('fm3c');
-      const branch1 = 'feature/fm3c-first';
-      const branch2 = 'feature/fm3c-second';
-
-      // First merge: push feature 1, approve, land it.
-      const { featureTip: tip1 } = await pushFeatureBranch(
-        p.agent, p.owner, p.repo, p.url, branch1,
+      const branch = 'feature/fm3c-cross-corner';
+      const { featureTip } = await pushFeatureBranch(
+        p.agent, p.owner, p.repo, p.url, branch,
       );
-
-      const target1 = {
+      const target = {
         repo: `${p.owner}/${p.repo}`,
         branch: 'refs/heads/main',
-        tip: tip1,
+        tip: featureTip,
       };
-      const approval1 = buildApproval(p.reviewer, p.channelId, target1);
-      await publishEvent(approval1, p.reviewer);
+      await publishEvent(buildApproval(p.reviewer, p.channelId, target), p.reviewer);
       await sleep(500);
 
-      const merge1 = await attemptMerge({
-        worker: p.worker,
-        trustedReviewer: p.reviewer.publicKey,
-        trustedReviewerCustody: 'device',
-        repo: p.repo,
-        channelId: p.channelId,
-        targetBranch: 'main',
-        featureBranch: branch1,
-      });
-      expect(merge1.merged).toBe(true);
-
-      const mainAfter1 = lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
-      expect(mainAfter1).toBe(tip1);
-
-      // Now push feature 2 (new branch from updated main).
-      const { featureTip: tip2 } = await pushFeatureBranch(
-        p.agent, p.owner, p.repo, p.url, branch2,
-      );
-
-      // Try to use the OLD approval (approval1) for the new feature branch.
-      // approval1 binds to `tip1`, not `tip2` — must refuse.
-      // We also try replaying with branch2's target but tip1 — wrong tip.
-      // However, the replay attack is: the stored approval1 is found and
-      // bound to tip1, but the worker is trying to land tip2. So the
-      // approval doesn't match the feature tip.
+      const otherCornerId = await createChannel(p.worker, 'fm3c-other-corner');
+      await setMemberRole(p.worker, otherCornerId, p.reviewer.publicKey, 'admin');
+      await setMemberRole(p.worker, otherCornerId, p.agent.publicKey, 'member');
       const replayOutcome = await attemptMerge({
         worker: p.worker,
         trustedReviewer: p.reviewer.publicKey,
         trustedReviewerCustody: 'device',
         repo: p.repo,
-        channelId: p.channelId,
+        channelId: otherCornerId,
         targetBranch: 'main',
-        featureBranch: branch2,
+        featureBranch: branch,
       });
 
       expect(replayOutcome.merged).toBe(false);
       expect(replayOutcome.reason).toMatch(/no valid approval/i);
-      expect(replayOutcome.featureTip).toBe(tip2);
+      expect(replayOutcome.featureTip).toBe(featureTip);
 
       const mainAfterReplay = lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
-      expect(mainAfterReplay).toBe(tip1);
+      expect(mainAfterReplay).toBe(p.baseMain);
     },
     120_000,
   );

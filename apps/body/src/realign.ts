@@ -12,9 +12,9 @@
  *   - a corner that would conflict (or that holds uncommitted work an
  *     automatic rebase must not mix into) ANNOUNCES that plainly instead of
  *     silently diverging;
- *   - a corner with a live review target (`mergeTarget` set) is left
- *     strictly alone — rebasing it would rewrite the exact tip a human's
- *     signed approval binds to.
+ *   - a corner with a live review target (`mergeTarget` set) is left alone;
+ *     its own target-move path coordinates the rebase and visible landing
+ *     state under that corner's standing approval.
  *
  * Pure git mechanics live here; policy (which corners, which repo, what to
  * publish) stays in `body.ts`.

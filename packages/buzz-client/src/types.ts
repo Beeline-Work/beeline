@@ -385,9 +385,9 @@ export interface MergeTarget {
   repo: string;
   /** Full target ref, e.g. `refs/heads/main`. */
   branch: string;
-  /** 40-hex commit the target ref is authorized to advance to. */
+  /** 40-hex work tip visible when this merge target was published. */
   tip: string;
-  /** Stable identity of the reviewed diff. Optional for legacy exact-tip cards. */
+  /** Stable identity of the visible reviewed diff. */
   patchId?: string;
 }
 

@@ -811,6 +811,40 @@ describe('agent identity boundary', () => {
   });
 
   describe('Room sessions cannot write or execute at all', () => {
+    it('allows only a path-pinned file write in the Room workbench while repo writes stay refused', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'buzzy-room-workbench-permission-'));
+      const workbench = join(root, 'agent-private', 'workbench');
+      mkdirSync(workbench, { recursive: true });
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      Reflect.get(body, 'sessions').set('room-1', { workbench: { dir: workbench } });
+      const durable = Reflect.get(body, 'durableState');
+      vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(undefined as never);
+      const handle = Reflect.get(body, 'handleRoomPermissionRequest').bind(body);
+
+      try {
+        await expect(
+          handle('room-1', {
+            toolCall: {
+              kind: 'edit',
+              title: 'Write preview',
+              rawInput: { file_path: join(workbench, 'preview.html') },
+            },
+          }),
+        ).resolves.toBe('allow');
+        await expect(
+          handle('room-1', {
+            toolCall: {
+              kind: 'edit',
+              title: 'Write repo',
+              rawInput: { file_path: '/home/op/proj-buzzy/README.md' },
+            },
+          }),
+        ).resolves.toBe('reject');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
     it('denies a write and a shell command, and records the corner steer', async () => {
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
       const appended: Array<{ role: string; text: string }> = [];
@@ -5510,6 +5544,77 @@ describe('first-class assistant messages', () => {
     expect(serialized).toContain('https://relay.example/media/mushroom-thumb.jpg');
     expect(serialized).not.toContain(fileBytes);
     expect(serialized).not.toContain('base64');
+  });
+
+  it('uploads an allowlisted Room workbench file, publishes its isolated preview URL, and refuses a disallowed type', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buzzy-room-workbench-output-'));
+    const repository = join(root, 'repository');
+    const workbench = join(root, 'agent-private', 'workbench');
+    mkdirSync(repository, { recursive: true });
+    mkdirSync(workbench, { recursive: true });
+    const htmlPath = join(workbench, 'report.html');
+    const executablePath = join(workbench, 'payload.exe');
+    await writeFile(htmlPath, '<!doctype html><title>Workbench report</title>');
+    await writeFile(executablePath, 'not allowed');
+    const agent = newIdentity('agent-workbench-upload');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        expect(String(input)).toBe('https://usebeeline.app/upload');
+        const bytes = new Uint8Array(await new Response(init?.body).arrayBuffer());
+        const hash = new Headers(init?.headers).get('X-SHA-256');
+        return new Response(
+          JSON.stringify({
+            url: 'https://usebeeline.app/media/hash/report.html',
+            sha256: hash,
+            size: bytes.byteLength,
+            type: new Headers(init?.headers).get('Content-Type'),
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: repository,
+        relayBaseUrl: 'https://usebeeline.app',
+        relayHost: 'usebeeline.app',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://usebeeline.app',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      agent,
+    );
+
+    try {
+      const result = await Reflect.get(body, 'uploadAgentOutputs').call(
+        body,
+        { cwd: repository, workbench: { dir: workbench } },
+        {
+          agentText:
+            `Ready. [[buzz-attachment:${htmlPath}]] ` +
+            `[[buzz-attachment:${executablePath}]]`,
+          updates: [],
+        },
+      );
+      expect(result.attachments).toEqual([
+        expect.objectContaining({
+          url: 'https://usebeeline.app/media/hash/report.html',
+          previewUrl: 'https://preview.usebeeline.app/media/hash/report.html',
+          name: 'report.html',
+          mimeType: 'text/html',
+        }),
+      ]);
+      expect(result.errors).toEqual([
+        'payload.exe: file type application/octet-stream is not allowed for agent attachments',
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

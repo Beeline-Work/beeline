@@ -256,4 +256,30 @@ describe('NotificationMetadataResolver', () => {
       new NotificationMetadataResolver().resolve(unsignedEvent(9, [['h', COMMUNITY_ID]]), reader),
     ).resolves.toMatchObject({ persistentWorkspaceRoom: false });
   });
+
+  it('does not reuse room metadata across database community scopes', async () => {
+    const resolver = new NotificationMetadataResolver();
+    const scopedReader = (scopeKey: string, roomName: string): RelayEventReader => ({
+      scopeKey,
+      query: async (filters) =>
+        filters.some((filter) => (filter.kinds as number[]).includes(39000))
+          ? [
+              unsignedEvent(9007, [
+                ['h', ROOM_ID],
+                ['name', roomName],
+                ['community', ROOM_ID],
+              ]),
+            ]
+          : [],
+      disconnect: () => undefined,
+    });
+    const message = unsignedEvent(9, [['h', ROOM_ID]]);
+
+    await expect(
+      resolver.resolve(message, scopedReader('tenant-a', 'Alpha')),
+    ).resolves.toMatchObject({ roomName: 'Alpha' });
+    await expect(
+      resolver.resolve(message, scopedReader('tenant-b', 'Beta')),
+    ).resolves.toMatchObject({ roomName: 'Beta' });
+  });
 });

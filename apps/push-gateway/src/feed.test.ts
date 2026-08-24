@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe('PushEventFeed', () => {
-  it('receives a kind-9 event from the trusted recipient-scoped feed', async () => {
+  it('receives a kind-9 event from the Postgres member-scoped feed', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(105_000);
     const registry = await TokenRegistry.load();
@@ -59,12 +59,14 @@ describe('PushEventFeed', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(handled).toEqual([messageEvent()]);
-    expect(logs[0]).toContain('feed started mode=acl-query');
-    expect(logs).toContainEqual(expect.stringContaining('feed live mode=acl-query firstSuccess='));
+    expect(logs[0]).toContain('feed started mode=postgres-tail');
+    expect(logs).toContainEqual(
+      expect.stringContaining('feed live mode=postgres-tail firstSuccess='),
+    );
 
     await vi.advanceTimersByTimeAsync(60_000);
     expect(logs).toContainEqual(
-      expect.stringContaining('feed heartbeat mode=acl-query eventsPerMinute=1'),
+      expect.stringContaining('feed heartbeat mode=postgres-tail eventsPerMinute=1'),
     );
     feed.stop();
   });
@@ -73,10 +75,10 @@ describe('PushEventFeed', () => {
     vi.useFakeTimers();
     const pollNext = vi
       .fn<() => Promise<'polled'>>()
-      .mockRejectedValueOnce(new Error('relay transport dropped'))
-      .mockRejectedValueOnce(new Error('relay transport dropped'))
-      .mockRejectedValueOnce(new Error('relay transport dropped'))
-      .mockRejectedValueOnce(new Error('relay transport dropped'))
+      .mockRejectedValueOnce(new Error('database transport dropped'))
+      .mockRejectedValueOnce(new Error('database transport dropped'))
+      .mockRejectedValueOnce(new Error('database transport dropped'))
+      .mockRejectedValueOnce(new Error('database transport dropped'))
       .mockResolvedValue('polled');
     const errors: string[] = [];
     const feed = new PushEventFeed(
@@ -92,7 +94,7 @@ describe('PushEventFeed', () => {
     await flushPromises();
     expect(pollNext).toHaveBeenCalledOnce();
     expect(errors).toEqual([
-      expect.stringContaining('error=relay%20transport%20dropped retryMs=1000'),
+      expect.stringContaining('error=database%20transport%20dropped retryMs=1000'),
     ]);
 
     await vi.advanceTimersByTimeAsync(1_000);

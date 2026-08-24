@@ -84,7 +84,10 @@ import {
   newerAgentPresence,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
+  CHANGE_REVIEW_COMPLETE_TAG,
+  CHANGE_REVIEW_GENERATION_TAG,
   CHANGE_REVIEW_VERSION,
+  CHANGE_REVIEW_EVENT_KIND,
   KIND_AGENT_PRESENCE,
   TAG_AGENT_PRESENCE,
   WRITE_PERMISSION_REQUEST_TAG,
@@ -128,6 +131,7 @@ import {
   type CornerMachineReason,
   type CornerMachineState,
   type CornerStateRecord,
+  type ChangeReviewFile,
   DEFAULT_RELAY_BASE_URL,
   isProductionRelayHost,
 } from '@beeline/buzz-client';
@@ -767,6 +771,12 @@ export interface SubchannelInfo {
   mergeTarget?: { repo: string; branch: string; tip: string; patchId?: string };
   /** Latest agent-authored completion summary. */
   mergeSummary?: string;
+  /** Exact tip whose complete review generation was read back from the relay. */
+  reviewGenerationVerifiedTip?: string;
+  /** Deterministic change summary carried by the complete review generation. */
+  reviewGenerationSummary?: string;
+  /** Exact tip whose merge-ready control record includes that review summary. */
+  mergeReadySummaryPublishedTip?: string;
   /** Exact reason from the latest rejected merge-readiness check. Cleared only
    *  after a real review target is published. */
   lastMergeNotReadyReason?: string;
@@ -1234,6 +1244,19 @@ export const LANDED_TAG = 'landed';
 export const APPROVAL_ACK_TAG = 'buzz-merge-approval-ack';
 /** Deterministic host recap posted to the PARENT Room when a corner's work lands. */
 export const LAND_SUMMARY_TAG = 'land-summary';
+
+type ChangeReviewPayloadUnit = {
+  coordinate: string;
+  content: string;
+  tags: string[][];
+};
+
+type ChangeReviewGeneration = {
+  summary: string;
+  fileUnits: ChangeReviewPayloadUnit[];
+  manifestUnits: ChangeReviewPayloadUnit[];
+  completeUnit: ChangeReviewPayloadUnit;
+};
 /**
  * The one post-land CI verdict, threaded to the land recap above. Published
  * only when CI actually decided — see `Body.watchLandedCommitCi`.
@@ -3807,6 +3830,7 @@ export class Body {
                       tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
                     tip,
                   },
+                  ...(tagValue(ready!, 'summary') ? { mergeReadySummaryPublishedTip: tip } : {}),
                 }
               : {}),
             ...(concludeRecord ? { conclude: concludeRecord } : {}),
@@ -3819,6 +3843,19 @@ export class Body {
           // target stays waiting-on-human/review). Edge suppression across a
           // restart depends on this baseline being accurate.
           await this.seedCornerStateFromRecord(info, events);
+          if (tip && ready?.tags.some((tag) => tag[0] === 't' && tag[1] === MERGE_READY_TAG)) {
+            // A card restored from the relay is not proof that its separately
+            // stored review generation survived. Verify and repair it now;
+            // a transient failure remains eligible for the commit-watch retry.
+            try {
+              await this.publishMergeReady(info);
+            } catch (error) {
+              console.error(
+                `[body] restored corner ${subchannelId} review repair failed; maintenance will retry:`,
+                error,
+              );
+            }
+          }
           // The original human request remains the authority for unfinished
           // commissioned work. Resume it once for this daemon process, never
           // re-run the opening prompt from scratch and never loop from a
@@ -6479,6 +6516,189 @@ export class Body {
       : { reason: `Could not resolve the local target branch ${targetBranch}.` };
   }
 
+  /** Build the exact durable payload whose final record commits one review generation. */
+  private async buildChangeReviewGeneration(
+    info: SubchannelInfo,
+    base: string,
+    tip: string,
+    patchId: string,
+    inputFiles: ChangeReviewFile[],
+  ): Promise<ChangeReviewGeneration> {
+    const files = inputFiles.map((file) => ({ ...file }));
+    const fileUnits: ChangeReviewPayloadUnit[] = [];
+    for (const [fileIndex, file] of files.entries()) {
+      const patch = await readChangeReviewPatch(info.worktreePath, base, tip, file);
+      file.patchBytes = patch.patchBytes;
+      if (patch.renderUnavailableReason) {
+        file.renderUnavailableReason = patch.renderUnavailableReason;
+        continue;
+      }
+      const chunks = chunkChangeReviewPatch(patch.content);
+      for (const [index, content] of chunks.entries()) {
+        fileUnits.push({
+          coordinate: `${info.subchannelId}:${tip}:file:${fileIndex}:${index}`,
+          content,
+          tags: [
+            ['t', CHANGE_REVIEW_FILE_TAG],
+            ['generation', CHANGE_REVIEW_GENERATION_TAG],
+            ['f', file.path],
+            ['r', tip],
+            ['base', base],
+            ['tip', tip],
+            ['patch-id', patchId],
+            ['chunk', String(index)],
+            ['chunks', String(chunks.length)],
+            ...(file.isBinary ? [['binary', 'true']] : []),
+          ],
+        });
+      }
+    }
+
+    const manifestChunks = Math.max(1, Math.ceil(files.length / 100));
+    const manifestUnits = Array.from({ length: manifestChunks }, (_, index) => ({
+      coordinate: `${info.subchannelId}:${tip}:manifest:${index}`,
+      content: JSON.stringify({
+        version: CHANGE_REVIEW_VERSION,
+        base,
+        tip,
+        files: files.slice(index * 100, (index + 1) * 100),
+      }),
+      tags: [
+        ['t', CHANGE_REVIEW_MANIFEST_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['r', tip],
+        ['base', base],
+        ['tip', tip],
+        ['patch-id', patchId],
+        ['chunk', String(index)],
+        ['chunks', String(manifestChunks)],
+      ],
+    }));
+    const subject = await git(info.worktreePath, ['log', '-1', '--format=%s', `${base}..${tip}`]);
+    const namedFiles = files.slice(0, 2).map((file) => file.path);
+    const fileFallback = `Changed ${namedFiles.join(', ')}${files.length > 2 ? ` +${files.length - 2} more` : ''}`;
+    const summary = subject.ok && subject.stdout.trim() ? subject.stdout.trim() : fileFallback;
+    const completeUnit: ChangeReviewPayloadUnit = {
+      coordinate: `${info.subchannelId}:${tip}:complete`,
+      content: JSON.stringify({
+        version: CHANGE_REVIEW_VERSION,
+        base,
+        tip,
+        patchId,
+        summary,
+        manifestChunks,
+        fileCount: files.length,
+      }),
+      tags: [
+        ['t', CHANGE_REVIEW_COMPLETE_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['r', tip],
+        ['base', base],
+        ['tip', tip],
+        ['patch-id', patchId],
+      ],
+    };
+    return { summary, fileUnits, manifestUnits, completeUnit };
+  }
+
+  private reviewPayloadUnitPresent(unit: ChangeReviewPayloadUnit, events: NostrEvent[]): boolean {
+    return events.some(
+      (event) =>
+        tagValue(event, 'd') === unit.coordinate &&
+        event.content === unit.content &&
+        unit.tags.every(([name, value]) =>
+          event.tags.some((tag) => tag[0] === name && tag[1] === value),
+        ),
+    );
+  }
+
+  /** Read the configured relay authority and name every absent generation record. */
+  private async missingChangeReviewUnits(
+    info: SubchannelInfo,
+    tip: string,
+    generation: ChangeReviewGeneration,
+  ): Promise<ChangeReviewPayloadUnit[]> {
+    const events = (
+      await this.agentRelay.queryEvents([
+        {
+          kinds: [CHANGE_REVIEW_EVENT_KIND],
+          authors: [this.agentIdentity.publicKey],
+          '#h': [info.subchannelId],
+          '#r': [tip],
+          limit: 10_000,
+        },
+      ])
+    ).filter(
+      (event) =>
+        event.pubkey === this.agentIdentity.publicKey &&
+        tagValue(event, 'h') === info.subchannelId &&
+        tagValue(event, 'tip') === tip,
+    );
+    return [...generation.fileUnits, ...generation.manifestUnits, generation.completeUnit].filter(
+      (unit) => !this.reviewPayloadUnitPresent(unit, events),
+    );
+  }
+
+  private async publishChangeReviewUnit(
+    info: SubchannelInfo,
+    unit: ChangeReviewPayloadUnit,
+  ): Promise<void> {
+    await postChangeReviewMetadata(
+      info.subchannelId,
+      this.agentIdentity,
+      unit.coordinate,
+      unit.content,
+      unit.tags,
+      this.agentRelay,
+    );
+  }
+
+  /**
+   * Repair one generation idempotently and read it back before it can be advertised.
+   * File chunks land first, manifest shards second, and the completion record last.
+   */
+  private async ensureChangeReviewGeneration(
+    info: SubchannelInfo,
+    base: string,
+    tip: string,
+    patchId: string,
+    files: ChangeReviewFile[],
+  ): Promise<ChangeReviewGeneration> {
+    const generation = await this.buildChangeReviewGeneration(info, base, tip, patchId, files);
+    if (info.reviewGenerationVerifiedTip === tip) return generation;
+
+    let missing = await this.missingChangeReviewUnits(info, tip, generation);
+    const missingCoordinates = new Set(missing.map((unit) => unit.coordinate));
+    for (const unit of generation.fileUnits) {
+      if (missingCoordinates.has(unit.coordinate)) await this.publishChangeReviewUnit(info, unit);
+    }
+    for (const unit of generation.manifestUnits) {
+      if (missingCoordinates.has(unit.coordinate)) await this.publishChangeReviewUnit(info, unit);
+    }
+    // Re-publish the commit marker after any repair, even if an older copy was
+    // readable. Its ordering is the transaction: no repaired shard may land
+    // after the newest complete record.
+    if (missing.length > 0) await this.publishChangeReviewUnit(info, generation.completeUnit);
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      missing = await this.missingChangeReviewUnits(info, tip, generation);
+      if (missing.length === 0) {
+        info.reviewGenerationVerifiedTip = tip;
+        info.reviewGenerationSummary = generation.summary;
+        return generation;
+      }
+      if (attempt < 3) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 200 * 2 ** attempt));
+      }
+    }
+    throw new Error(
+      `review generation ${tip.slice(0, 12)} is incomplete on the relay; missing ${missing
+        .slice(0, 5)
+        .map((unit) => unit.coordinate)
+        .join(', ')}${missing.length > 5 ? ` (+${missing.length - 5} more)` : ''}`,
+    );
+  }
+
   /** Push the agent's feature tip and publish the corner's current review. */
   private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
     const boundRepo = info.boundRepo;
@@ -6581,7 +6801,18 @@ export class Body {
       fileCount: files.length,
       files: files.slice(0, 5).map((file) => file.path),
     };
-    if (info.mergeTarget?.tip === tip) return true;
+    const existingReviewTarget = info.mergeTarget?.tip === tip;
+    let reviewGeneration: ChangeReviewGeneration | undefined;
+    if (existingReviewTarget) {
+      reviewGeneration = await this.ensureChangeReviewGeneration(
+        info,
+        base,
+        tip,
+        target.patchId!,
+        files,
+      );
+      if (info.mergeReadySummaryPublishedTip === tip) return true;
+    }
 
     // A human-commissioned rebase can rewrite this corner's feature history,
     // so the next publish is not a fast-forward of the ref this corner last
@@ -6600,19 +6831,21 @@ export class Body {
     // The feature-branch publish is a brokered push: classified (this corner's
     // own branch → allowed), audited, then performed by the daemon with its
     // own credentials. A refusal never reaches git at all.
-    const push = boundRepo.remoteName
-      ? await performBrokeredPush({
-          remote: boundRepo.remoteName,
-          refspecs: [
-            `${boundRepo.ownerHex ? info.featureBranch : tip}:refs/heads/${info.featureBranch}`,
-          ],
-          policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
-          ...(forceArgs.length ? { extraArgs: forceArgs } : {}),
-          cornerId: info.subchannelId,
-          sessionId: info.session.logicalSessionId ?? info.session.sessionId,
-          runGit: async (args) => await this.remoteGit(boundRepo!, info.worktreePath, args),
-        })
-      : { ok: true as const, status: 0, stdout: '', stderr: '' };
+    const push = existingReviewTarget
+      ? { ok: true as const, status: 0, stdout: '', stderr: '' }
+      : boundRepo.remoteName
+        ? await performBrokeredPush({
+            remote: boundRepo.remoteName,
+            refspecs: [
+              `${boundRepo.ownerHex ? info.featureBranch : tip}:refs/heads/${info.featureBranch}`,
+            ],
+            policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
+            ...(forceArgs.length ? { extraArgs: forceArgs } : {}),
+            cornerId: info.subchannelId,
+            sessionId: info.session.logicalSessionId ?? info.session.sessionId,
+            runGit: async (args) => await this.remoteGit(boundRepo!, info.worktreePath, args),
+          })
+        : { ok: true as const, status: 0, stdout: '', stderr: '' };
     if (!push.ok) {
       // State machine: delivery failed. Gated on whether a published,
       // actionable review target actually stands — otherwise idle, never gold.
@@ -6636,63 +6869,18 @@ export class Body {
       );
       return false;
     }
-    info.pushedFeatureTip = tip;
+    if (!existingReviewTarget) info.pushedFeatureTip = tip;
 
-    // Publish review data before advertising merge readiness. The manifest is
-    // small and eager; patches are separate, bounded events fetched per file.
-    for (const [fileIndex, file] of files.entries()) {
-      const patch = await readChangeReviewPatch(info.worktreePath, base, tip, file);
-      const reviewFile = file as typeof file & {
-        patchBytes?: number;
-        renderUnavailableReason?: 'too-large';
-      };
-      reviewFile.patchBytes = patch.patchBytes;
-      if (patch.renderUnavailableReason) {
-        reviewFile.renderUnavailableReason = patch.renderUnavailableReason;
-        continue;
-      }
-      const chunks = chunkChangeReviewPatch(patch.content);
-      for (const [index, content] of chunks.entries()) {
-        await postChangeReviewMetadata(
-          info.subchannelId,
-          this.agentIdentity,
-          `${info.subchannelId}:${tip}:file:${fileIndex}:${index}`,
-          content,
-          [
-            ['t', CHANGE_REVIEW_FILE_TAG],
-            ['f', file.path],
-            ['r', tip],
-            ['base', base],
-            ['tip', tip],
-            ['patch-id', target.patchId!],
-            ['chunk', String(index)],
-            ['chunks', String(chunks.length)],
-            ...(file.isBinary ? [['binary', 'true']] : []),
-          ],
-        );
-      }
-    }
-    for (let index = 0; index < Math.max(1, Math.ceil(files.length / 100)); index++) {
-      await postChangeReviewMetadata(
-        info.subchannelId,
-        this.agentIdentity,
-        `${info.subchannelId}:${tip}:manifest:${index}`,
-        JSON.stringify({
-          version: CHANGE_REVIEW_VERSION,
-          base,
-          tip,
-          files: files.slice(index * 100, (index + 1) * 100),
-        }),
-        [
-          ['t', CHANGE_REVIEW_MANIFEST_TAG],
-          ['r', tip],
-          ['base', base],
-          ['tip', tip],
-          ['patch-id', target.patchId],
-          ['chunk', String(index)],
-        ],
-      );
-    }
+    // The complete marker is written and read back only after every file
+    // chunk and manifest shard is readable from this daemon's configured
+    // relay. Any failure throws here, before the merge-ready card exists.
+    reviewGeneration ??= await this.ensureChangeReviewGeneration(
+      info,
+      base,
+      tip,
+      target.patchId!,
+      files,
+    );
 
     // Branch/PR preview deployments only exist because of the push above, so
     // this is the earliest the URL can be known. Strictly best-effort: no
@@ -6728,6 +6916,7 @@ export class Body {
             ['feature', info.featureBranch],
             ['tip', target.tip],
             ['patch-id', target.patchId!],
+            ['summary', reviewGeneration.summary],
             ['agent', this.agentIdentity.publicKey],
             ...(previewUrl ? [['preview', previewUrl]] : []),
           ],
@@ -6775,6 +6964,7 @@ export class Body {
       return false;
     }
     info.mergeTarget = target;
+    info.mergeReadySummaryPublishedTip = tip;
     // A fresh review is a fresh land attempt: whatever the previous tip could
     // not do is no longer the standing condition being reported.
     info.lastLandFailure = undefined;
@@ -8721,6 +8911,13 @@ export class Body {
     const previous = info.commitWatchFailure;
     const attempts = previous?.tip === tip ? previous.attempts + 1 : 1;
     info.commitWatchFailure = { tip, attempts };
+    if (info.mergeTarget?.tip === tip && info.reviewGenerationVerifiedTip !== tip) {
+      console.error(
+        `[body] corner ${info.subchannelId} review repair failed (attempt ${attempts}); will keep retrying because a merge-ready card is already visible:`,
+        error,
+      );
+      return;
+    }
     if (attempts < 3) {
       console.error(
         `[body] corner ${info.subchannelId} commit watch failed (attempt ${attempts}/3); will retry:`,
@@ -8778,7 +8975,11 @@ export class Body {
     if (info.session.client?.activeRunId?.(info.session.sessionId)) return;
     const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return;
-    if (info.observedReviewTip === tip || info.mergeTarget?.tip === tip || info.landedTip === tip) {
+    if (
+      info.observedReviewTip === tip ||
+      (info.mergeTarget?.tip === tip && info.reviewGenerationVerifiedTip === tip) ||
+      info.landedTip === tip
+    ) {
       return;
     }
 
@@ -10229,9 +10430,7 @@ export class Body {
         ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
         workspaceRoot: this.config.workspaceRoot,
         ...(entry.boundRepo.localPath ? { sourceCheckout: entry.boundRepo.localPath } : {}),
-        ...(entry.boundRepo.repositoryKey
-          ? { repositoryKey: entry.boundRepo.repositoryKey }
-          : {}),
+        ...(entry.boundRepo.repositoryKey ? { repositoryKey: entry.boundRepo.repositoryKey } : {}),
         subchannelId: entry.subchannelId,
       });
       if (unsafeSibling) paths.add(unsafeSibling);
@@ -10589,15 +10788,12 @@ export class Body {
           }
         }
       };
-      const deadline = setTimeout(
-        () => {
-          timedOut = true;
-          console.warn(`[body] codegraph ${args[0]} exceeded its 10-minute deadline`);
-          signalGroup('SIGTERM');
-          killTimer = setTimeout(() => signalGroup('SIGKILL'), 500);
-        },
-        10 * 60_000,
-      );
+      const deadline = setTimeout(() => {
+        timedOut = true;
+        console.warn(`[body] codegraph ${args[0]} exceeded its 10-minute deadline`);
+        signalGroup('SIGTERM');
+        killTimer = setTimeout(() => signalGroup('SIGKILL'), 500);
+      }, 10 * 60_000);
       deadline.unref?.();
       child.on('error', (error) => {
         clearTimeout(deadline);

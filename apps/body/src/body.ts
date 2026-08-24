@@ -8505,14 +8505,17 @@ export class Body {
     // driven by this same per-tick visit, instead of leaving the corner
     // permanently stuck once `info.archived` is true.
     if (info.archived) {
-      if (!info.archiveCompleted) {
-        await this.archiveSubchannel(subchannelId).catch((error) =>
-          console.error(
-            `[body] retrying incomplete archive of ${subchannelId}; will retry:`,
-            error,
-          ),
-        );
-      }
+      // `archiveCompleted` means the relay projection is terminal; it does not
+      // mean the local worktree was successfully reaped. Keep driving the
+      // idempotent close until `archiveSubchannel` removes this entry from the
+      // map, otherwise one filesystem failure leaves a closed corner's whole
+      // worktree behind forever.
+      await this.archiveSubchannel(subchannelId).catch((error) =>
+        console.error(
+          `[body] retrying incomplete archive cleanup of ${subchannelId}; will retry:`,
+          error,
+        ),
+      );
       return 0;
     }
 
@@ -8931,8 +8934,10 @@ export class Body {
       // After this call, the relay rejects any further events on this channel.
       // New subchannels are agent-owned. `role` preserves compatibility for
       // externally registered historical sessions created by another owner.
-      await archiveChannel(info.role, subchannelId);
-      info.archiveCompleted = true;
+      if (!info.archiveCompleted) {
+        await archiveChannel(info.role, subchannelId);
+        info.archiveCompleted = true;
+      }
 
       // Remove the worktree only once the relay durably knows this corner is
       // archived. Removing it earlier (the old order) meant a failure in any
@@ -9261,8 +9266,6 @@ export class Body {
           path,
           entry.featureBranch ?? '',
           entry.boundRepo,
-        ).catch((error) =>
-          console.error(`[body] abandoned corner ${subchannelId} worktree reap failed:`, error),
         );
       }
       this.abandonedCorners.delete(subchannelId);
@@ -9880,32 +9883,61 @@ export class Body {
     _featureBranch: string,
     boundRepo?: BoundRepo,
   ): Promise<void> {
-    const gitDir = worktreePath.includes('.worktrees')
+    const legacyGitDir = worktreePath.includes('.worktrees')
       ? resolve(this.config.workspaceRoot, `.git-${subchannelId.slice(0, 12)}`)
       : undefined;
+    const discoveredCommonDir = existsSync(worktreePath)
+      ? git(worktreePath, ['rev-parse', '--git-common-dir'])
+      : undefined;
+    const registryRoot =
+      boundRepo?.localPath ??
+      (boundRepo?.ownerHex
+        ? resolve(this.config.workspaceRoot, `.git-${boundRepo.repo}`)
+        : discoveredCommonDir?.ok
+          ? resolve(worktreePath, discoveredCommonDir.stdout.trim())
+          : undefined);
 
-    // Try to prune worktree.
-    if (existsSync(worktreePath)) {
+    // Ask git first so its linked-worktree registry is cleaned along with the
+    // directory. A plain directory (or a stale registry) legitimately makes
+    // this fail, so filesystem removal remains the fallback.
+    if (existsSync(worktreePath) && registryRoot) {
       spawnSync('git', ['worktree', 'remove', '--force', worktreePath], {
-        cwd: boundRepo?.localPath ?? this.config.workspaceRoot,
+        cwd: registryRoot,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
         encoding: 'utf8',
       });
     }
 
-    // Remove worktree directory if it still exists.
-    try {
+    if (existsSync(worktreePath)) {
       await rm(worktreePath, { recursive: true, force: true });
-    } catch {
-      /* ignore */
+    }
+    if (existsSync(worktreePath)) {
+      throw new Error(`corner worktree still exists after removal: ${worktreePath}`);
     }
 
-    if (gitDir && existsSync(gitDir)) {
-      try {
-        await rm(gitDir, { recursive: true, force: true });
-      } catch {
-        /* ignore */
+    // If the filesystem fallback handled a worktree whose registry was stale,
+    // make the repository forget that dead entry now rather than waiting for a
+    // later periodic sweep.
+    if (registryRoot && existsSync(registryRoot)) {
+      spawnSync('git', ['worktree', 'prune'], {
+        cwd: registryRoot,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        encoding: 'utf8',
+      });
+      const registered = this.registeredWorktrees(registryRoot);
+      if (!registered) {
+        throw new Error(`could not verify corner worktree removal in ${registryRoot}`);
       }
+      if (registered.has(resolve(worktreePath))) {
+        throw new Error(`git still registers corner worktree after removal: ${worktreePath}`);
+      }
+    }
+
+    if (legacyGitDir && existsSync(legacyGitDir)) {
+      await rm(legacyGitDir, { recursive: true, force: true });
+    }
+    if (legacyGitDir && existsSync(legacyGitDir)) {
+      throw new Error(`corner git directory still exists after removal: ${legacyGitDir}`);
     }
   }
 

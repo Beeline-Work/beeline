@@ -6586,7 +6586,7 @@ describe('graceful relay-failure confirmation', () => {
     };
   }
 
-  it('retries a close that was requested but never durably completed, instead of leaving the corner permanently stuck', async () => {
+  it('retries cleanup after relay archival, instead of leaving the corner worktree permanently stuck', async () => {
     const agent = newIdentity('archive-retry-agent');
     const body = newBody(agent);
     body.registerSubchannel({
@@ -6597,7 +6597,7 @@ describe('graceful relay-failure confirmation', () => {
       session: cornerSession('corner-incomplete-close'),
       lastPolledAt: 0,
       archived: true,
-      archiveCompleted: false,
+      archiveCompleted: true,
     });
     let archiveCalls = 0;
     body.archiveSubchannel = async () => {
@@ -6607,30 +6607,6 @@ describe('graceful relay-failure confirmation', () => {
     const count = await body.pollMembers('corner-incomplete-close');
 
     expect(archiveCalls).toBe(1);
-    expect(count).toBe(0);
-  });
-
-  it('does not re-attempt an archive that already durably completed', async () => {
-    const agent = newIdentity('archive-complete-agent');
-    const body = newBody(agent);
-    body.registerSubchannel({
-      subchannelId: 'corner-complete-close',
-      worktreePath: '/tmp/nonexistent-complete-close',
-      featureBranch: 'feature/complete-close',
-      role: agent,
-      session: cornerSession('corner-complete-close'),
-      lastPolledAt: 0,
-      archived: true,
-      archiveCompleted: true,
-    });
-    let archiveCalls = 0;
-    body.archiveSubchannel = async () => {
-      archiveCalls++;
-    };
-
-    const count = await body.pollMembers('corner-complete-close');
-
-    expect(archiveCalls).toBe(0);
     expect(count).toBe(0);
   });
 
@@ -8260,11 +8236,34 @@ describe('closing a corner with no live session', () => {
     const agent = newIdentity('wedged-session-agent');
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-wedged-session-'));
     try {
+      const sourcePath = join(workspaceRoot, 'source');
+      const worktreePath = join(workspaceRoot, 'corner-wedged');
+      mkdirSync(sourcePath, { recursive: true });
+      spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: sourcePath });
+      spawnSync('git', ['config', 'user.name', 'Close Test'], { cwd: sourcePath });
+      spawnSync('git', ['config', 'user.email', 'close@test.invalid'], { cwd: sourcePath });
+      writeFileSync(join(sourcePath, 'README.md'), 'kept on the branch\n');
+      spawnSync('git', ['add', 'README.md'], { cwd: sourcePath });
+      spawnSync('git', ['commit', '-q', '-m', 'seed'], { cwd: sourcePath });
+      spawnSync(
+        'git',
+        ['worktree', 'add', '-q', '-b', 'feature/wedged', worktreePath, 'main'],
+        { cwd: sourcePath },
+      );
+      writeFileSync(join(worktreePath, 'corner.txt'), 'corner commit survives cleanup\n');
+      spawnSync('git', ['add', 'corner.txt'], { cwd: worktreePath });
+      spawnSync('git', ['commit', '-q', '-m', 'corner work'], { cwd: worktreePath });
+
       const body = newBody(agent, workspaceRoot);
       body.registerSubchannel({
         subchannelId: 'corner-wedged',
-        worktreePath: join(workspaceRoot, 'gone'),
+        worktreePath,
         featureBranch: 'feature/wedged',
+        boundRepo: {
+          repo: 'test',
+          localPath: sourcePath,
+          targetBranch: 'refs/heads/main',
+        },
         role: agent,
         session: {
           channelId: 'corner-wedged',
@@ -8296,6 +8295,18 @@ describe('closing a corner with no live session', () => {
         ),
       ).toBe(true);
       expect(body.getSubchannels().has('corner-wedged')).toBe(false);
+      expect(existsSync(worktreePath)).toBe(false);
+      expect(
+        spawnSync('git', ['rev-parse', '--verify', 'refs/heads/feature/wedged'], {
+          cwd: sourcePath,
+        }).status,
+      ).toBe(0);
+      expect(
+        spawnSync('git', ['worktree', 'list', '--porcelain'], {
+          cwd: sourcePath,
+          encoding: 'utf8',
+        }).stdout,
+      ).not.toContain(worktreePath);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

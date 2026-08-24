@@ -74,8 +74,10 @@ export function roomReadAt(
 }
 
 /**
- * A Room is unread when its newest person-facing message is newer than the
- * read mark. A Room that has never been opened is *not* unread on that basis
+ * A Room is unread when its newest retained room-level message is newer than
+ * the read mark. The author may be an agent or a human; corner-channel output
+ * never feeds the Room summary. A Room that has never been opened is *not*
+ * unread on that basis
  * alone — an untouched Workspace would otherwise light up every row at once,
  * which teaches the reader to ignore the signal. The first open records the
  * mark; everything after it is genuinely new.

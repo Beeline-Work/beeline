@@ -618,7 +618,7 @@ liveDescribe('the wrapper enforces Room read-only and the corner hygiene denylis
     expect(existsSync(resolve(gateRoot, 'from-room'))).toBe(false);
   });
 
-  it('a corner can commit, because its git common directory is writable', () => {
+  it('a corner can commit, because its git common directory is writable', async () => {
     const repo = resolve(root, 'gitrepo');
     spawnSync('git', ['init', '-q', '-b', 'main', repo]);
     spawnSync('git', ['-C', repo, 'config', 'user.email', 'proof@example.com']);

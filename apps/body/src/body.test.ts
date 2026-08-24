@@ -698,7 +698,7 @@ describe('agent identity boundary', () => {
       expect(path).toBe('/home/op/.beeline-corners/proj-buzzy/corner-xyz');
     });
 
-    it('builds the corner denylist from every shared and daemon-owned root', () => {
+    it('builds the corner denylist from every shared and daemon-owned root', async () => {
       const body = new Body(
         {
           ...config,
@@ -708,17 +708,17 @@ describe('agent identity boundary', () => {
         },
         newIdentity('operator'),
       );
-      const policy = (
+      const policy = await (
         body as unknown as {
           cornerFilesystemPolicy(
             repo: { repo: string; localPath: string },
             worktree: string,
             agentPrivate?: string,
-          ): {
+          ): Promise<{
             protectedPaths: string[];
             writablePaths: string[];
             additionalWritablePaths: string[];
-          };
+          }>;
         }
       ).cornerFilesystemPolicy(
         { repo: 'proj-buzzy', localPath: '/home/op/proj-buzzy' },

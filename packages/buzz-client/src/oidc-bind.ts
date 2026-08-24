@@ -1,5 +1,6 @@
 import { nip98AuthHeader, signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { Identity } from './types.js';
+import { parseManagedIdentity, type ManagedIdentity } from './nip05.js';
 
 export const OIDC_BIND_PROTOCOL = 1 as const;
 export const OIDC_BIND_KIND = 24_250 as const;
@@ -114,12 +115,14 @@ export interface OidcBindResult {
   linked: true;
   idempotent: boolean;
   pubkey: string;
+  identity?: ManagedIdentity;
 }
 
 export interface OidcRecoveryResult {
   linked: true;
   replaced: boolean;
   pubkey: string;
+  identity?: ManagedIdentity;
 }
 
 export interface OidcIdentityLink {
@@ -487,7 +490,8 @@ export async function finishOidcBind(
     typeof body.idempotent !== 'boolean' ||
     typeof body.pubkey !== 'string' ||
     !HEX_KEY_RE.test(body.pubkey) ||
-    body.pubkey !== event.pubkey
+    body.pubkey !== event.pubkey ||
+    (body.identity !== undefined && !parseManagedIdentity(body.identity))
   ) {
     throw new OidcBindError(
       'invalid_response',
@@ -495,7 +499,12 @@ export async function finishOidcBind(
       response.status,
     );
   }
-  return body as unknown as OidcBindResult;
+  return {
+    linked: true,
+    idempotent: body.idempotent as boolean,
+    pubkey: body.pubkey as string,
+    ...(body.identity ? { identity: parseManagedIdentity(body.identity)! } : {}),
+  };
 }
 
 /**
@@ -534,7 +543,8 @@ export async function recoverOidcBind(
     typeof body.replaced !== 'boolean' ||
     typeof body.pubkey !== 'string' ||
     !HEX_KEY_RE.test(body.pubkey) ||
-    body.pubkey !== event.pubkey
+    body.pubkey !== event.pubkey ||
+    (body.identity !== undefined && !parseManagedIdentity(body.identity))
   ) {
     throw new OidcBindError(
       'invalid_response',
@@ -542,7 +552,87 @@ export async function recoverOidcBind(
       response.status,
     );
   }
-  return body as unknown as OidcRecoveryResult;
+  return {
+    linked: true,
+    replaced: body.replaced as boolean,
+    pubkey: body.pubkey as string,
+    ...(body.identity ? { identity: parseManagedIdentity(body.identity)! } : {}),
+  };
+}
+
+/** Read the canonical hosted handle assigned to the key on this device. */
+export async function lookupManagedIdentity(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+): Promise<ManagedIdentity | null> {
+  if (!HEX_KEY_RE.test(identity.publicKey))
+    throw new OidcBindError('invalid_identity', 'invalid public key');
+  const url = endpoint(baseUrl, `/auth/identity/${identity.publicKey}`).toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
+      },
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (body.identity === null) return null;
+  const managed = parseManagedIdentity(body.identity);
+  if (!managed) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid managed identity',
+      response.status,
+    );
+  }
+  return managed;
+}
+
+/** Consume the single rename to the verified GitHub login after an in-place link. */
+export async function adoptGitHubHandle(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+): Promise<ManagedIdentity> {
+  if (!HEX_KEY_RE.test(identity.publicKey))
+    throw new OidcBindError('invalid_identity', 'invalid public key');
+  const url = endpoint(
+    baseUrl,
+    `/auth/identity/${identity.publicKey}/github-handle`,
+  ).toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ confirm_rename: true }),
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  const managed = parseManagedIdentity(body.identity);
+  if (body.renamed !== true || !managed) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid handle rename',
+      response.status,
+    );
+  }
+  return managed;
 }
 
 /** Authenticated, tenant-scoped link lookup for a key already held on this device. */

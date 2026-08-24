@@ -6,6 +6,62 @@ const NIP05_DOMAIN_RE =
   /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 const NIP05_MAX_LENGTH = 255;
 const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/;
+const MANAGED_HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
+const HOSTED_HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
+const MANAGED_HANDLE_BLOCKLIST = new Set(['admin', 'support', 'beeline']);
+
+export interface ManagedIdentity {
+  handle: string;
+  displayName: string;
+  nip05: string;
+  source: 'key' | 'github';
+  githubLogin?: string;
+  githubRenameAvailable: boolean;
+}
+
+/** Normalize a key-only ceremony handle, or return null when it violates the hosted rules. */
+export function normalizeManagedHandle(value: string): string | null {
+  const handle = value.trim().toLowerCase();
+  return MANAGED_HANDLE_RE.test(handle) && !MANAGED_HANDLE_BLOCKLIST.has(handle) ? handle : null;
+}
+
+export function parseManagedIdentity(value: unknown): ManagedIdentity | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.handle !== 'string' ||
+    typeof record.display_name !== 'string' ||
+    typeof record.nip05 !== 'string' ||
+    (record.source !== 'key' && record.source !== 'github') ||
+    typeof record.github_rename_available !== 'boolean' ||
+    (record.github_login !== undefined && typeof record.github_login !== 'string')
+  ) {
+    return null;
+  }
+  const normalizedNip05 = normalizeNip05Identifier(record.nip05);
+  const validHandle =
+    record.source === 'key'
+      ? normalizeManagedHandle(record.handle) === record.handle
+      : HOSTED_HANDLE_RE.test(record.handle);
+  if (
+    !validHandle ||
+    !record.display_name.trim() ||
+    record.display_name.length > 60 ||
+    !normalizedNip05 ||
+    normalizedNip05 !== `${record.handle}@usebeeline.app` ||
+    (typeof record.github_login === 'string' && !HOSTED_HANDLE_RE.test(record.github_login))
+  ) {
+    return null;
+  }
+  return {
+    handle: record.handle,
+    displayName: record.display_name,
+    nip05: record.nip05,
+    source: record.source,
+    ...(typeof record.github_login === 'string' ? { githubLogin: record.github_login } : {}),
+    githubRenameAvailable: record.github_rename_available,
+  };
+}
 
 export interface ParsedNip05 {
   local: string;
@@ -109,6 +165,7 @@ export interface Nip05ClaimResult {
   idempotent: boolean;
   name: string;
   pubkey: string;
+  identity: ManagedIdentity;
 }
 
 async function claimResponseBody(response: Response): Promise<Record<string, unknown>> {
@@ -172,7 +229,8 @@ export async function claimNip05Handle(
     typeof body.name !== 'string' ||
     typeof body.pubkey !== 'string' ||
     !HEX_PUBKEY_RE.test(body.pubkey) ||
-    body.pubkey !== identity.publicKey
+    body.pubkey !== identity.publicKey ||
+    !parseManagedIdentity(body.identity)
   ) {
     throw new Nip05ClaimError(
       'invalid_response',
@@ -180,5 +238,11 @@ export async function claimNip05Handle(
       response.status,
     );
   }
-  return body as unknown as Nip05ClaimResult;
+  return {
+    claimed: true,
+    idempotent: body.idempotent as boolean,
+    name: body.name as string,
+    pubkey: body.pubkey as string,
+    identity: parseManagedIdentity(body.identity)!,
+  };
 }

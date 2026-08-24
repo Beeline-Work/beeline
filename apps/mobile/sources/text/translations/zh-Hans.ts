@@ -739,6 +739,28 @@ export const zhHans: TranslationStructure = {
 
 
 
+    beelineIdentity: {
+        handleCeremonyLabel: '身份 · 用户名仪式',
+        handleInvalidTitle: '用户名不可用',
+        handleInvalidMessage: '请使用 3–30 个小写字母、数字或连字符。',
+        handleTakenTitle: '用户名已被占用',
+        handleClaimFailedTitle: '用户名未领取',
+        handleTakenMessage: ({ handle }: { handle: string }) => `@${handle} 已属于其他人。请选择其他用户名。`,
+        handleCeremonyTitle: '选择你的用户名',
+        handleCeremonyBody: '此名称会绑定到你的密钥，并成为你在各处经过验证的 Beeline 身份。',
+        handleAccessibility: '选择你的 Beeline 用户名',
+        handlePlaceholder: 'ada-labs',
+        handleRules: '3–30 · a–z · 0–9 · 连字符',
+        claimHandle: '领取用户名',
+        githubLinkedNotice: 'GitHub 已关联到此密钥。你的身份和历史记录保持不变。',
+        githubRenameNotice: ({ handle }: { handle: string }) => `你经过验证的用户名现在是 @${handle}。`,
+        claimStatusInvalid: '请使用 3-30 个小写字母、数字或连字符',
+        hostedHandleClaimBody: '在 usebeeline.app 领取你的验证用户名，先到先得。',
+        linkGithub: '将 GitHub 关联到此密钥',
+        renameOffer: ({ current, github }: { current: string; github: string }) => `保留 @${current}，或一次性改用你的 GitHub 用户名：@${github}。`,
+        useGithubHandle: ({ handle }: { handle: string }) => `使用 @${handle}`,
+    },
+
     imageUpload: {
         permissionTitle: '访问照片库',
         permissionMessage: '允许访问您的照片库以在消息中附加图片。',

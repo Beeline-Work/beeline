@@ -737,6 +737,28 @@ export const ca: TranslationStructure = {
 
 
 
+    beelineIdentity: {
+        handleCeremonyLabel: 'IDENTITAT · CERIMÒNIA DEL HANDLE',
+        handleInvalidTitle: 'HANDLE NO DISPONIBLE',
+        handleInvalidMessage: 'Fes servir de 3 a 30 lletres minúscules, números o guions.',
+        handleTakenTitle: 'HANDLE JA RECLAMAT',
+        handleClaimFailedTitle: 'HANDLE NO RECLAMAT',
+        handleTakenMessage: ({ handle }: { handle: string }) => `@${handle} pertany a una altra persona. Tria un altre handle.`,
+        handleCeremonyTitle: 'Tria el teu handle',
+        handleCeremonyBody: 'Aquest nom queda vinculat a la teva clau. Serà la teva identitat Beeline verificada arreu.',
+        handleAccessibility: 'Tria el teu handle de Beeline',
+        handlePlaceholder: 'ada-labs',
+        handleRules: '3–30 · a–z · 0–9 · guió',
+        claimHandle: 'Reclama el handle',
+        githubLinkedNotice: 'GitHub s’ha vinculat a aquesta clau. La teva identitat i historial es mantenen.',
+        githubRenameNotice: ({ handle }: { handle: string }) => `El teu handle verificat ara és @${handle}.`,
+        claimStatusInvalid: 'FES SERVIR 3-30 LLETRES MINÚSCULES, NÚMEROS O GUIONS',
+        hostedHandleClaimBody: 'Reclama el teu handle verificat a usebeeline.app per ordre d’arribada.',
+        linkGithub: 'Vincula GitHub a aquesta clau',
+        renameOffer: ({ current, github }: { current: string; github: string }) => `Conserva @${current} o fes servir una vegada el teu handle de GitHub: @${github}.`,
+        useGithubHandle: ({ handle }: { handle: string }) => `Fes servir @${handle}`,
+    },
+
     imageUpload: {
         permissionTitle: 'Accés a la biblioteca de fotos',
         permissionMessage: "Permet l'accés a la teva biblioteca de fotos per adjuntar imatges als missatges.",

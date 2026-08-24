@@ -847,6 +847,10 @@ export interface SubchannelInfo {
    * re-attempted on the next maintenance tick for the same tip.
    */
   observedReviewTip?: string;
+  /** Bounded failures spent by the commit watch for one exact tip. A new tip
+   *  starts fresh; after the budget is spent the client gets an honest
+   *  merge-not-ready state instead of an infinite retry loop. */
+  commitWatchFailure?: { tip: string; attempts: number };
   /**
    * Quiet-episode state for the conclude watch: the record that a turn ended
    * without any of the four terminal states, how many bounded conclude
@@ -6435,8 +6439,17 @@ export class Body {
     // Publish review data before advertising merge readiness. The manifest is
     // small and eager; patches are separate, bounded events fetched per file.
     for (const [fileIndex, file] of files.entries()) {
-      const patch = readChangeReviewPatch(info.worktreePath, base, tip, file);
-      const chunks = chunkChangeReviewPatch(patch);
+      const patch = await readChangeReviewPatch(info.worktreePath, base, tip, file);
+      const reviewFile = file as typeof file & {
+        patchBytes?: number;
+        renderUnavailableReason?: 'too-large';
+      };
+      reviewFile.patchBytes = patch.patchBytes;
+      if (patch.renderUnavailableReason) {
+        reviewFile.renderUnavailableReason = patch.renderUnavailableReason;
+        continue;
+      }
+      const chunks = chunkChangeReviewPatch(patch.content);
       for (const [index, content] of chunks.entries()) {
         await postChangeReviewMetadata(
           info.subchannelId,
@@ -8057,15 +8070,62 @@ export class Body {
       try {
         await this.observeCornerCommits(info);
       } catch (error) {
-        // One corner's failed observation must not starve the corners behind
-        // it; the tip stays unmarked in `observedReviewTip`, so the next tick
-        // retries the same evaluation.
-        console.error(
-          `[body] corner ${info.subchannelId} commit watch failed; will retry:`,
-          error,
-        );
+        await this.noteCommitWatchFailure(info, error);
       }
     }
+  }
+
+  private async noteCommitWatchFailure(info: SubchannelInfo, error: unknown): Promise<void> {
+    const tip = git(info.worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+    const previous = info.commitWatchFailure;
+    const attempts = previous?.tip === tip ? previous.attempts + 1 : 1;
+    info.commitWatchFailure = { tip, attempts };
+    if (attempts < 3) {
+      console.error(
+        `[body] corner ${info.subchannelId} commit watch failed (attempt ${attempts}/3); will retry:`,
+        error,
+      );
+      return;
+    }
+
+    // A failed payload may have published some replaceable per-file events,
+    // but never its completion manifest (published last). Reusing the same
+    // deterministic coordinates makes a later explicit turn safe to retry;
+    // the watch itself settles this tip so it cannot spin forever.
+    if (/^[0-9a-f]{40}$/.test(tip)) info.observedReviewTip = tip;
+    info.mergeTarget = undefined;
+    const detail = summarizeGitFailure(error instanceof Error ? error.message : String(error));
+    info.lastMergeNotReadyReason = `Review metadata failed after 3 attempts: ${detail}`;
+    console.error(
+      `[body] corner ${info.subchannelId} commit watch failed 3 times; automatic retries stopped for ${tip.slice(0, 12)}:`,
+      error,
+    );
+    await postControlMessage(
+      info.subchannelId,
+      this.agentIdentity,
+      `Couldn't prepare this change for review after 3 attempts: ${detail}. Automatic retries stopped for this commit; the committed work is safe.`,
+      [
+        ['t', 'merge-not-ready'],
+        ['status', 'needs-attention'],
+        ['tip', tip],
+      ],
+    ).catch((publishError) =>
+      console.error(
+        `[body] corner ${info.subchannelId} commit watch failure notice also failed:`,
+        publishError,
+      ),
+    );
+    await this.postParentCornerStatus(
+      info,
+      'needs-attention',
+      'Review data failed to publish. Open corner for details.',
+      [['tip', tip]],
+    ).catch((publishError) =>
+      console.error(
+        `[body] corner ${info.subchannelId} parent review-failure status also failed:`,
+        publishError,
+      ),
+    );
   }
 
   private async observeCornerCommits(info: SubchannelInfo): Promise<void> {
@@ -8115,6 +8175,7 @@ export class Body {
     // once per tick). A throw above skips this line, so transient failures
     // retry next tick.
     info.observedReviewTip = tip;
+    info.commitWatchFailure = undefined;
     console.log(
       `[body] corner ${info.subchannelId} commit watch: ${
         ready ? 'published review' : 'evaluated, not ready'

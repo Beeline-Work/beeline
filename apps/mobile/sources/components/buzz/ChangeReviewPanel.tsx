@@ -99,6 +99,12 @@ const DIFF_MIN_CONTENT_WIDTH_PX = 320;
  * up memory. */
 const DIFF_MAX_RENDERED_LINES = 1500;
 
+function formattedBytes(bytes?: number): string {
+  if (bytes === undefined) return 'This file diff';
+  if (bytes < 1_000_000) return `${Math.ceil(bytes / 1000)} KB`;
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
 export function ChangeReviewPanel({
   transport,
   sessionId,
@@ -145,6 +151,10 @@ export function ChangeReviewPanel({
       setPatch(null);
       setIsBinary(Boolean(file.isBinary));
       setPatchError(null);
+      if (file.renderUnavailableReason === 'too-large') {
+        setLoadingPatch(false);
+        return;
+      }
       setLoadingPatch(true);
       try {
         const result = await transport.changedFileRead(sessionId, file.path);
@@ -230,6 +240,14 @@ export function ChangeReviewPanel({
             <Text style={styles.errorTitle}>! CHANGE UNAVAILABLE</Text>
             <Text style={styles.mutedText} numberOfLines={2}>
               We couldn’t load this file change. Try again from the file list.
+            </Text>
+          </View>
+        ) : selected.renderUnavailableReason === 'too-large' ? (
+          <View style={styles.diffLoading} testID="change-review-too-large">
+            <Text style={styles.binaryTitle}>Diff too large to render</Text>
+            <Text style={styles.mutedText}>
+              {formattedBytes(selected.patchBytes)} is included in this change but can’t be shown
+              here.
             </Text>
           </View>
         ) : isBinary ? (
@@ -320,7 +338,9 @@ export function ChangeReviewPanel({
                   </Text>
                 )}
               </View>
-              {item.isBinary ? (
+              {item.renderUnavailableReason === 'too-large' ? (
+                <Text style={styles.fileStats}>too large</Text>
+              ) : item.isBinary ? (
                 <Text style={styles.fileStats}>binary</Text>
               ) : (
                 <Text style={styles.fileStats}>

@@ -26,6 +26,7 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
+import type { NostrEvent } from '@beeline/nostr';
 import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -180,6 +181,7 @@ import { isNearChatBottom } from '@/buzz/chat-scroll';
 import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
 import { mentionKeyboardAction } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
+import { deriveRoomUpdates, roomUpdateLine } from '@/buzz/room-updates';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   presenceWithMessageLiveness,
@@ -207,6 +209,7 @@ import {
   LedgerEntry,
   LedgerGhostLine,
   LedgerMarginalia,
+  LedgerRoomUpdate,
   LedgerSteer,
   type LedgerByline,
 } from '@/components/buzz/Ledger';
@@ -645,6 +648,7 @@ export default function BuzzChat() {
   // Older pages loaded on demand via "scroll up" pagination. Kept out of the
   // shared cache (which bounds to the recent tail) and merged in only here.
   const [olderMessages, setOlderMessages] = useState<ChatDisplayMessage[]>([]);
+  const [roomUpdateEvents, setRoomUpdateEvents] = useState<NostrEvent[]>([]);
   const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_MESSAGE_WINDOW);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const hasMoreHistoryRef = useRef(true);
@@ -1110,9 +1114,32 @@ export default function BuzzChat() {
       presenceReconnectGrace[cornerAgentPubkey],
     ),
   );
+  const derivedRoomUpdateMessages = useMemo<ChatDisplayMessage[]>(() => {
+    if (isCorner || isDirectMessage) return [];
+    const updates = deriveRoomUpdates(decodedId, roomUpdateEvents, new Set(agentByPubkey.keys()));
+    const identityName = (pubkey: string) => {
+      const agent = agentByPubkey.get(pubkey);
+      if (agent) return resolveAgentDisplayIdentity(pubkey, agent).name;
+      return personIdentityLabel(personProfileByPubkey.get(pubkey), pubkey);
+    };
+    return updates.map((update) => ({
+      id: update.id,
+      text: roomUpdateLine(update, identityName),
+      isUser: false,
+      timestamp: update.timestamp,
+      roomUpdate: { ...(update.digest ? { digest: update.digest } : {}) },
+    }));
+  }, [
+    agentByPubkey,
+    decodedId,
+    isCorner,
+    isDirectMessage,
+    personProfileByPubkey,
+    roomUpdateEvents,
+  ]);
   const visibleMessages = useMemo(
-    () => transcriptMessages(messages, isCorner),
-    [isCorner, messages],
+    () => transcriptMessages(upsertChatMessages(messages, derivedRoomUpdateMessages), isCorner),
+    [derivedRoomUpdateMessages, isCorner, messages],
   );
   // Attribution is per run, not per entry: only the first entry of a voice's
   // run carries its mark and name (see `buzz/ledger-attribution.ts`). Corners
@@ -1463,6 +1490,7 @@ export default function BuzzChat() {
     let unsubscribe: (() => void) | undefined;
     let unsubscribePresence: (() => void) | undefined;
     let unsubscribeDraft: (() => void) | undefined;
+    let unsubscribeRoomUpdates: (() => void) | undefined;
     let unsubscribeCornerState: (() => void) | undefined;
     // A canonical record owns state, not existence. Only the relay-derived
     // lifecycle list may admit an id here; otherwise an old WORKING record
@@ -1477,6 +1505,7 @@ export default function BuzzChat() {
     setPresenceResolved(false);
     hasMoreHistoryRef.current = true;
     setOlderMessages([]);
+    setRoomUpdateEvents([]);
     setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
 
     // The screen is already painted from the local cache by the time this
@@ -1792,7 +1821,45 @@ export default function BuzzChat() {
                 const draftEvents = await t.agentDraftBackfill(decodedId);
                 if (!cancelled) draftEvents.forEach(handleLiveMessage);
               })();
-          await Promise.all([installMessages, installPresence, installDraft]);
+          const installRoomUpdates = parentChannelId
+            ? Promise.resolve()
+            : (async () => {
+                const mergeRoomUpdateEvents = (incoming: NostrEvent[]) => {
+                  if (cancelled || incoming.length === 0) return;
+                  setRoomUpdateEvents((current) => [
+                    ...new Map(
+                      [...current, ...incoming].map((event) => [event.id, event]),
+                    ).values(),
+                  ]);
+                };
+                const handleRoomUpdateEvent = (event: NostrEvent) => {
+                  mergeRoomUpdateEvents([event]);
+                  if (event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-corner-state')) {
+                    void t
+                      .roomUpdateEventsBackfill(decodedId)
+                      .then(mergeRoomUpdateEvents)
+                      .catch((error) =>
+                        console.warn(`Failed to refresh Room updates for ${decodedId}:`, error),
+                      );
+                  }
+                };
+                try {
+                  const stop = await t.roomUpdateEventsSubscribeReady(
+                    decodedId,
+                    handleRoomUpdateEvent,
+                  );
+                  if (cancelled) {
+                    stop();
+                    return;
+                  }
+                  unsubscribeRoomUpdates = stop;
+                } catch (error) {
+                  console.warn(`Failed to establish Room update delivery for ${decodedId}:`, error);
+                }
+                const historical = await t.roomUpdateEventsBackfill(decodedId);
+                mergeRoomUpdateEvents(historical);
+              })();
+          await Promise.all([installMessages, installPresence, installDraft, installRoomUpdates]);
         };
 
         await hydrateRoomEntry(
@@ -1901,6 +1968,7 @@ export default function BuzzChat() {
       if (unsubscribe) unsubscribe();
       if (unsubscribePresence) unsubscribePresence();
       if (unsubscribeDraft) unsubscribeDraft();
+      if (unsubscribeRoomUpdates) unsubscribeRoomUpdates();
       if (unsubscribeCornerState) unsubscribeCornerState();
     };
   }, [decodedId, notificationResponseId, applyAgentPresence]);
@@ -2979,6 +3047,17 @@ export default function BuzzChat() {
 
   const renderItem = useCallback(
     ({ item }: { item: ChatDisplayMessage }) => {
+      if (item.roomUpdate) {
+        return (
+          <LedgerRoomUpdate
+            id={item.id}
+            line={item.text}
+            stamp={ledgerStamp(item.timestamp)}
+            digest={item.roomUpdate.digest}
+          />
+        );
+      }
+
       if (item.writePermission) {
         const permission = item.writePermission;
         const permissionAgent = agentByPubkey.get(permission.agentPubkey);
@@ -3111,54 +3190,7 @@ export default function BuzzChat() {
       }
 
       if (item.corner) {
-        // Live status is state and belongs in the pinned corner bar. Archive
-        // is different: it is the durable end of the work, and Body replaces
-        // this stable card id with the agent's bounded completion summary.
-        // Keep that one terminal card in the Room so "what set out / what
-        // landed" survives after the corner becomes read-only.
-        if (item.corner.status !== 'archived') return null;
-        const summary = item.text.trim();
-        return (
-          <TouchableOpacity
-            accessibilityLabel={`Archived ${CORNER_LABEL}. ${summary}. View details`}
-            accessibilityRole="button"
-            onPress={() => openCorner(item.corner!.subchannelId)}
-            testID={`archived-corner-card-${item.corner.subchannelId}`}
-          >
-            <HullSurface strength="quiet" style={styles.archivedCornerCard}>
-              <View style={styles.archivedCornerHeading}>
-                <Text style={styles.archivedCornerTitle}>
-                  □ {CORNER_LABEL.toUpperCase()} ARCHIVED
-                </Text>
-                <Text style={styles.archivedCornerAction}>VIEW ›</Text>
-              </View>
-              {summary ? (
-                <Text style={styles.archivedCornerSummary} testID="archived-corner-summary">
-                  {summary}
-                </Text>
-              ) : null}
-            </HullSurface>
-          </TouchableOpacity>
-        );
-      }
-
-      // ── Merge summary ────────────────────────────────────────────
-      if (item.isMergeSummary) {
-        const mergeAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
-        const mergeDisplay = mergeAgent
-          ? resolveAgentDisplayIdentity(item.pubkey!, mergeAgent)
-          : null;
-        return (
-          <View style={styles.mergeSummaryBubble}>
-            <Text style={styles.mergeSummaryTitle}>✓ {CORNER_LABEL} merged</Text>
-            <Text style={styles.mergeSummaryText}>{item.text}</Text>
-            {item.pubkey && (
-              <Text style={styles.mergeSummaryPubkey}>
-                {mergeDisplay?.name ?? shortMemberNpub(item.pubkey)}
-              </Text>
-            )}
-          </View>
-        );
+        return null;
       }
 
       // ── Archived notice ──────────────────────────────────────────
@@ -5358,73 +5390,6 @@ const styles = StyleSheet.create((theme) => {
     },
     agentPresenceOnline: { backgroundColor: groknight.textSecondary },
     agentPresenceOffline: { backgroundColor: 'transparent' },
-    // ── Merge summary ───────────────────────────────────────────────
-    /* A system row is still a row of the ledger: no rule under it, no frame
-     * around it. It is found by its glyph and by the luminance ladder. */
-    mergeSummaryBubble: {
-      paddingVertical: 6,
-      marginBottom: 22,
-    },
-    mergeSummaryTitle: {
-      ...Typography.mono(),
-      fontSize: 12,
-      lineHeight: 20,
-      color: groknight.ledgerQuiet,
-      marginBottom: 2,
-    },
-    mergeSummaryText: {
-      ...Typography.mono(),
-      fontSize: 12,
-      color: groknight.ledgerQuiet,
-      lineHeight: 18,
-    },
-    mergeSummaryPubkey: {
-      ...Typography.mono(),
-      fontSize: 10,
-      lineHeight: 15,
-      color: groknight.ledgerGhost,
-      marginTop: 3,
-    },
-
-    // ── Archived corner card ───────────────────────────────────────
-    archivedCornerCard: {
-      minWidth: 0,
-      marginBottom: 20,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderWidth: 1,
-      borderColor: groknight.borderQuiet,
-    },
-    archivedCornerHeading: {
-      minWidth: 0,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-    },
-    archivedCornerTitle: {
-      ...Typography.default(),
-      flex: 1,
-      minWidth: 0,
-      color: groknight.ledgerQuiet,
-      fontSize: 10,
-      lineHeight: 15,
-      letterSpacing: 0.7,
-    },
-    archivedCornerAction: {
-      ...Typography.default(),
-      flexShrink: 0,
-      color: groknight.ledgerGhost,
-      fontSize: 9,
-      lineHeight: 15,
-    },
-    archivedCornerSummary: {
-      ...Typography.default(),
-      marginTop: 7,
-      color: groknight.textSecondary,
-      fontSize: 12,
-      lineHeight: 18,
-    },
-
     // ── Archived notice ─────────────────────────────────────────────
     archivedBubble: {
       paddingVertical: 8,

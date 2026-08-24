@@ -40,7 +40,11 @@ import {
   CHANGE_REVIEW_GENERATION_TAG,
   APPROVAL_MARKER,
   KIND_AGENT_PRESENCE,
+  KIND_PUT_USER,
+  KIND_REMOVE_USER,
+  KIND_EDIT_METADATA,
   KIND_CREATE_GROUP,
+  KIND_STREAM_MESSAGE,
   TAG_COMMUNITY,
   TAG_PARENT,
   TAG_DIRECT_MESSAGE,
@@ -58,6 +62,7 @@ import {
   type AgentModelConfig,
   type AgentModelConfigInput,
   type AgentCommandList,
+  TAG_CORNER_STATE,
   KIND_CORNER_STATE,
   parseCornerStateRecord,
   cornerStateKey,
@@ -97,6 +102,7 @@ export { invalidateCornerLifecycleCache } from './corner-lifecycle-cache';
  *  burst of corner status cards and activity batches right before the corner
  *  opened cannot crowd out the conversation underneath them. */
 const ROOM_CONTEXT_SCAN_LIMIT = 80;
+const ROOM_REPOSITORY_MARKER = 'buzz-room-repository';
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
@@ -521,6 +527,151 @@ export class BuzzRigTransport implements RigTransport {
       since: opts?.afterSeq,
     });
     return buzzEvents.map(toRigEvent);
+  }
+
+  /**
+   * Read every relay record needed to derive a Room's quiet state-change
+   * transcript. The returned records are structure, not new chat messages:
+   * membership/metadata/repository history plus the canonical per-corner
+   * lifecycle records and existing land summaries used only for digest copy.
+   */
+  async roomUpdateEventsBackfill(roomId: string): Promise<NostrEvent[]> {
+    const client = await this.getClient();
+    const cornerIds = await client.listSubchannels(roomId);
+    const [roomCreate, roomMutations, repository, cornerStates, cornerCreates, landContext] =
+      await Promise.all([
+        client.query([{ kinds: [KIND_CREATE_GROUP], '#h': [roomId], limit: 10 }]),
+        client.query([
+          {
+            kinds: [KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA],
+            '#h': [roomId],
+            limit: 2_000,
+          },
+        ]),
+        client.query([
+          {
+            kinds: [KIND_CORNER_STATE],
+            '#d': [`${ROOM_REPOSITORY_MARKER}:${roomId}`],
+            limit: 100,
+          },
+        ]),
+        cornerIds.length
+          ? client.query([
+              {
+                kinds: [KIND_CORNER_STATE],
+                '#d': cornerIds.map((cornerId) => cornerStateKey(cornerId)),
+                limit: Math.max(100, cornerIds.length * 20),
+              },
+            ])
+          : Promise.resolve([]),
+        cornerIds.length
+          ? client.query([
+              { kinds: [KIND_CREATE_GROUP], '#h': cornerIds, limit: cornerIds.length * 5 },
+            ])
+          : Promise.resolve([]),
+        client.query([
+          {
+            kinds: [KIND_STREAM_MESSAGE],
+            '#h': [roomId],
+            '#t': ['landed', 'land-summary', 'merge-summary'],
+            limit: 500,
+          },
+        ]),
+      ]);
+    return [
+      ...new Map(
+        [
+          ...roomCreate,
+          ...roomMutations,
+          ...repository,
+          ...cornerStates,
+          ...cornerCreates,
+          ...landContext,
+        ].map((event) => [event.id, event]),
+      ).values(),
+    ].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+  }
+
+  /** Live structural delivery. It reuses the Room socket and emits no writes. */
+  async roomUpdateEventsSubscribeReady(
+    roomId: string,
+    handler: (event: NostrEvent) => void,
+  ): Promise<() => void> {
+    const subscriptionKey = `room-updates:${roomId}`;
+    const client = await this.getClient();
+    const cornerIds = new Set(await client.listSubchannels(roomId));
+    const stops: Array<() => void> = [];
+    const relayUnsubscribe = await client.sessionEventsSubscribe(
+      roomId,
+      (event) => {
+        const raw = event.event;
+        const marker = tagValue(raw, 't');
+        if (
+          raw.kind === KIND_STREAM_MESSAGE &&
+          !['landed', 'land-summary', 'merge-summary'].includes(marker ?? '')
+        ) {
+          return;
+        }
+        handler(raw);
+      },
+      {
+        kinds: [KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA, KIND_STREAM_MESSAGE],
+      },
+    );
+    stops.push(relayUnsubscribe);
+
+    // Kind:30078 is indexed by `d`, not the Room's `h`. Keep its live path on
+    // exact repository/corner keys, mirroring the canonical corner-state
+    // reader. A child create dynamically installs the new key; the create is
+    // also handed to the renderer as the immutable objective/authority fact.
+    await client.connect();
+    const socket = client.socket;
+    if (!socket) throw new Error('Room update socket unavailable after connect');
+    const subscribeCorner = (cornerId: string) => {
+      if (cornerIds.has(cornerId)) return;
+      cornerIds.add(cornerId);
+      stops.push(
+        socket.subscribe(
+          [{ kinds: [KIND_CORNER_STATE], '#d': [cornerStateKey(cornerId)] }],
+          handler,
+        ),
+      );
+    };
+    const initialCornerIds = [...cornerIds];
+    cornerIds.clear();
+    initialCornerIds.forEach(subscribeCorner);
+    stops.push(
+      socket.subscribe(
+        [
+          {
+            kinds: [KIND_CORNER_STATE],
+            '#d': [`${ROOM_REPOSITORY_MARKER}:${roomId}`],
+          },
+        ],
+        (event) => {
+          if (tagValue(event, 't') === ROOM_REPOSITORY_MARKER) handler(event);
+        },
+      ),
+    );
+    stops.push(
+      socket.subscribe([{ kinds: [KIND_CREATE_GROUP], [`#${TAG_PARENT}`]: [roomId] }], (event) => {
+        const cornerId = tagValue(event, 'h');
+        if (!cornerId) return;
+        handler(event);
+        subscribeCorner(cornerId);
+      }),
+    );
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      stops.splice(0).forEach((unsubscribe) => unsubscribe());
+      if (this.subscriptions.get(subscriptionKey) === stop) {
+        this.subscriptions.delete(subscriptionKey);
+      }
+    };
+    this.subscriptions.set(subscriptionKey, stop);
+    return stop;
   }
 
   /** Read the current parameterized-replaceable presence record(s) for a Room. */

@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import { Body, CI_RESULT_TAG, LAND_SUMMARY_TAG, LANDED_TAG, type SubchannelInfo } from './body.js';
+import { relayQueryResponse } from './relay-test-helper.js';
 import type { NostrEvent } from '@beeline/nostr';
 
 const cleanup: string[] = [];
@@ -132,7 +133,9 @@ function captureEvents(): NostrEvent[] {
   const events: NostrEvent[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const queryResponse = relayQueryResponse(events, input, init);
+      if (queryResponse) return queryResponse;
       const event = JSON.parse(String(init?.body)) as NostrEvent;
       if (Array.isArray(event.tags)) events.push(event);
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });

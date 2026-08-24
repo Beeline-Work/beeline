@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials, type BodyConfig } from './config.js';
 import { prepareCornerAgentPrivateState } from './agent-private-state.js';
+import { relayQueryResponse } from './relay-test-helper.js';
 
 const mocks = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
@@ -82,6 +83,8 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
+  CHANGE_REVIEW_FILE_TAG,
+  CHANGE_REVIEW_MANIFEST_TAG,
   setAgentModelConfig,
   AGENT_PRESENCE_HEARTBEAT_MS,
   AGENT_PRESENCE_STALE_MS,
@@ -6097,17 +6100,45 @@ describe('corner merge-ready surfaces a real committed change', () => {
     );
   }
 
-  it('publishes merge-ready for a corner turn that committed a real change to a clean tree', async () => {
-    const agent = newIdentity('merge-ready-agent');
-    const body = newBody(agent);
+  function stubPublishing(): NostrEvent[] {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          const filters = JSON.parse(String(init?.body)) as Array<Record<string, unknown>>;
+          const matches = published.filter((event) =>
+            filters.some((filter) => {
+              if (Array.isArray(filter.kinds) && !(filter.kinds as number[]).includes(event.kind)) {
+                return false;
+              }
+              if (
+                Array.isArray(filter.authors) &&
+                !(filter.authors as string[]).includes(event.pubkey)
+              ) {
+                return false;
+              }
+              return Object.entries(filter).every(([key, values]) => {
+                if (!key.startsWith('#') || !Array.isArray(values)) return true;
+                return event.tags.some(
+                  (tag) => tag[0] === key.slice(1) && (values as string[]).includes(tag[1]!),
+                );
+              });
+            }),
+          );
+          return new Response(JSON.stringify(matches), { status: 200 });
+        }
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
     );
+    return published;
+  }
+
+  it('publishes merge-ready for a corner turn that committed a real change to a clean tree', async () => {
+    const agent = newIdentity('merge-ready-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
     const worktreePath = committedFeatureWorktree();
     try {
       const info = {
@@ -6149,14 +6180,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
   it('publishes merge-ready when the only worktree dirt is the Body-owned private-state link', async () => {
     const agent = newIdentity('merge-ready-private-state-agent');
     const body = newBody(agent);
-    const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    const published = stubPublishing();
     const worktreePath = committedFeatureWorktree();
     const privateState = mkdtempSync(join(tmpdir(), 'buzzy-agent-private-'));
     try {
@@ -6208,14 +6232,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
   it('does not mistake a project-owned memory path for agent-private state', async () => {
     const agent = newIdentity('merge-not-ready-project-memory-agent');
     const body = newBody(agent);
-    const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    const published = stubPublishing();
     const worktreePath = committedFeatureWorktree();
     try {
       mkdirSync(join(worktreePath, 'memory'), { recursive: true });
@@ -6251,14 +6268,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
   it('publishes a non-empty reason when the worktree still has uncommitted work, for the mobile review panel to show', async () => {
     const agent = newIdentity('merge-not-ready-agent');
     const body = newBody(agent);
-    const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    const published = stubPublishing();
     const worktreePath = committedFeatureWorktree();
     try {
       // A project-owned lessons path is still real project content, not persona
@@ -6296,14 +6306,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
 
   it('distinguishes no committed change, an empty committed diff, and a withdrawn stale target', async () => {
     const agent = newIdentity('merge-not-ready-reasons-agent');
-    const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    const published = stubPublishing();
     const paths = [
       committedFeatureWorktree(),
       committedFeatureWorktree(),
@@ -6372,7 +6375,9 @@ describe('corner merge-ready surfaces a real committed change', () => {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const queryResponse = relayQueryResponse(published, input, init);
+        if (queryResponse) return queryResponse;
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
@@ -6867,7 +6872,9 @@ describe('a local-only repository lands through the daemon, never through the ag
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const queryResponse = relayQueryResponse(published, input, init);
+        if (queryResponse) return queryResponse;
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
@@ -10671,12 +10678,38 @@ describe('harness-independent corner commit watch', () => {
     );
   }
 
-  function stubPublishing(): NostrEvent[] {
+  function stubPublishing(options: { failManifestOnce?: boolean } = {}): NostrEvent[] {
     const published: NostrEvent[] = [];
+    let failManifest = options.failManifestOnce === true;
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          const filters = JSON.parse(String(init?.body)) as Array<Record<string, unknown>>;
+          const matches = published.filter((event) =>
+            filters.some((filter) =>
+              Object.entries(filter).every(([key, values]) => {
+                if (key === 'kinds' && Array.isArray(values)) return values.includes(event.kind);
+                if (key === 'authors' && Array.isArray(values))
+                  return values.includes(event.pubkey);
+                if (!key.startsWith('#') || !Array.isArray(values)) return true;
+                return event.tags.some(
+                  (tag) => tag[0] === key.slice(1) && (values as string[]).includes(tag[1]!),
+                );
+              }),
+            ),
+          );
+          return new Response(JSON.stringify(matches), { status: 200 });
+        }
+        const event = JSON.parse(String(init?.body)) as NostrEvent;
+        if (
+          failManifest &&
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_MANIFEST_TAG)
+        ) {
+          failManifest = false;
+          return new Response(JSON.stringify({ error: 'manifest refused once' }), { status: 400 });
+        }
+        published.push(event);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
     );
@@ -10791,6 +10824,67 @@ describe('harness-independent corner commit watch', () => {
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
         ),
       ).toBe(true);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks merge-ready on a partial generation and repairs a restored card without human action', async () => {
+    const agent = newIdentity('commit-watch-review-repair-agent');
+    const firstBody = newBody(agent);
+    const published = stubPublishing({ failManifestOnce: true });
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const firstInfo = watchInfo(firstBody, agent, worktreePath);
+      await expect(
+        Reflect.get(firstBody, 'publishMergeReady').call(firstBody, firstInfo),
+      ).rejects.toThrow('manifest refused once');
+
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_FILE_TAG),
+        ),
+      ).toBe(true);
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_MANIFEST_TAG),
+        ),
+      ).toBe(false);
+      expect(
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        ),
+      ).toBe(false);
+
+      const tip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+      const restoredBody = newBody(agent);
+      const restoredInfo = watchInfo(restoredBody, agent, worktreePath, {
+        mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip },
+      });
+      await expect(
+        Reflect.get(restoredBody, 'publishMergeReady').call(restoredBody, restoredInfo),
+      ).resolves.toBe(true);
+
+      const manifest = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_MANIFEST_TAG),
+      );
+      const complete = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'change-review-complete'),
+      );
+      expect(manifest).toBeDefined();
+      expect(complete).toBeDefined();
+      expect(JSON.parse(complete!.content)).toMatchObject({
+        tip,
+        summary: 'committed without a completed turn',
+        manifestChunks: 1,
+        fileCount: 1,
+      });
+      expect(
+        published.find((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        )?.tags,
+      ).toContainEqual(['summary', 'committed without a completed turn']);
+      expect(restoredInfo.reviewGenerationVerifiedTip).toBe(tip);
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }

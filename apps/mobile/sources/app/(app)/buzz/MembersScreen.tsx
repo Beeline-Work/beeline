@@ -45,6 +45,7 @@ import { HullWaveSignal, MonoButton, PixelLoader } from '@/components/buzz/MonoH
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 
 const INSTALL_COMMAND = 'curl -fsSL https://usebeeline.app/install | sh';
+const PAIR_COMMAND_PREFIX = 'env -u BUZZ_AGENT_KEY -u BUZZ_PRIVATE_KEY beeline pair';
 
 /**
  * Axes offered when the agent has published NO catalog yet (its session has
@@ -491,7 +492,7 @@ export default function BuzzAgents() {
       pairingPending.current = true;
       const client = await ready.ensureClient();
       const pairing = await client.createAgentPairingCode(workspaceId);
-      setPairCommand(`beeline pair ${pairing.code}`);
+      setPairCommand(`${PAIR_COMMAND_PREFIX} ${pairing.code}`);
       setPairExpiresAt(pairing.expiresAt);
     } catch (caught) {
       pairingPending.current = false;

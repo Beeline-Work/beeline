@@ -14,6 +14,10 @@ const railSource = readFileSync(
   path.join(__dirname, '../../../components/buzz/CommunityRail.tsx'),
   'utf8',
 );
+const composeSource = readFileSync(
+  path.join(__dirname, '../../../components/buzz/RoomDeckComposeMenu.tsx'),
+  'utf8',
+);
 
 function styleBlock(text: string, name: string): string {
   const start = text.indexOf(`  ${name}: {`);
@@ -118,13 +122,11 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(accentStyles.sort()).toEqual([
       'attnRail',
       'cornerPeekCountLive',
-      'fab',
       'rowPreviewAttention',
     ]);
-    // Every accent style on a ROW is gated by the derived needs-you flag (the
-    // FAB is an action surface, `indexSignalCount`/`cornerPeekCountLive` are
-    // the heading's LIVE count and the dropdown's live count). The expansion
-    // rows' live glyph color lives in MonoHull's shared CornerGlyph.
+    // Every accent style on a ROW is gated by the derived needs-you flag. The
+    // compose FAB's brand brass lives in its isolated owner-approved overlay,
+    // not in this row-style inventory.
     expect(source).toContain("row.attention && <View pointerEvents=\"none\" style={styles.attnRail} />");
     expect(source).toContain('row.attention && styles.rowPreviewAttention');
     expect(source).toContain('row.attention && styles.cornerPeekCountLive');
@@ -290,7 +292,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).not.toContain('styles.rowUnread');
   });
 
-  it('closes the deck with just the brass FAB — the search field stays gone', () => {
+  it('closes the deck with just the brass compose FAB — the search field stays gone', () => {
     // Captain's call: a supervision deck holds few rooms, so search was dead
     // weight. The field, its state, its filter helper, and its style must not
     // come back — and nothing else in the index may grow a second filter.
@@ -298,11 +300,14 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).not.toContain('searchField');
     expect(source).not.toContain('matchesSearch');
     expect(source).not.toMatch(/searchQuery|setSearchQuery/);
-    // The FAB stays wired and opens the same create panel as the header
-    // affordance.
-    expect(source).toContain('testID="create-room-fab"');
-    expect(source).toContain('onPress={() => setShowCreateChannel(true)}');
-    expect(styleBlock(source, 'fab')).toMatch(/(?:width|minHeight): 44/);
+    // The owner-approved compose component owns the only footer control and
+    // its five real-flow actions; Room still opens this screen's existing
+    // create panel through the audited dispatch switch.
+    expect(source).toContain('<RoomDeckComposeMenu onSelect={handleComposeAction} />');
+    expect(composeSource).toContain('testID="room-deck-compose-fab"');
+    expect(composeSource).toContain("width: 56");
+    expect(composeSource).toContain("backgroundColor: brand.mark");
+    expect(source).toContain('openRoomCreator: () => setShowCreateChannel(true)');
   });
 
   it("renders exactly two piles — NEEDS YOU and DOESN'T NEED YOU — and nothing else", () => {

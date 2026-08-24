@@ -2,7 +2,7 @@
  * Deleted/left Rooms stay deleted locally (owner-reported 2026-08-23).
  *
  * Deleting a Room succeeds on the relay, but an archived Room is deliberately
- * FINISHED deck state and — in the already-archived case (#396) — the leave
+ * DOESN'T NEED YOU deck state and — in the already-archived case (#396) — the leave
  * publish is refused outright, so the membership projection can keep naming us
  * and every refresh re-materialized the row forever: delete → navigated out →
  * row persists → tap → navigated out → … The durable per-viewer tombstone in
@@ -316,23 +316,19 @@ describe('deleted Rooms stay deleted locally', () => {
     // No tappable row for the removed Room; the other Room is untouched.
     expect(findAllByTestId(tree, `room-${DELETED}`)).toHaveLength(0);
     expect(findAllByTestId(tree, `room-${KEPT}`)).toHaveLength(1);
-    // And nothing leaks into the collapsed FINISHED entry either.
+    // And the retired FINISHED-pile control cannot leak it either.
     expect(findAllByTestId(tree, 'finished-rooms-toggle')).toHaveLength(0);
   });
 
-  it('without a tombstone the same archived Room is still FINISHED deck state', async () => {
+  it("without a tombstone the same archived Room stays inline in DOESN'T NEED YOU", async () => {
     seedLocalCache();
     mockRelayStillReturnsBothRooms();
 
     const tree = await renderAndWaitForRefresh();
 
-    // Archived-but-not-removed Rooms stay visible through the collapsed
-    // FINISHED entry — this fix hides only explicit local removals.
-    const toggle = findAllByTestId(tree, 'finished-rooms-toggle');
-    expect(toggle.length).toBeGreaterThan(0);
-    await act(async () => {
-      toggle[0].props.onPress?.();
-    });
+    // Archived-but-not-removed Rooms remain directly visible in the uniform
+    // two-pile deck — this fix hides only explicit local removals.
+    expect(findAllByTestId(tree, 'finished-rooms-toggle')).toHaveLength(0);
     expect(findAllByTestId(tree, `room-${DELETED}`).length).toBeGreaterThan(0);
   });
 });

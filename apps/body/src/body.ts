@@ -314,11 +314,6 @@ import {
   type CiWatchOptions,
 } from './ci-watch.js';
 import {
-  describeGitHubRepoEvents,
-  runGitHubEventWatcher,
-  type GitHubEventWatcherDeps,
-} from './github-events.js';
-import {
   isReleaseConfirmation,
   releaseBriefing,
   releaseCornerIntent,
@@ -1283,9 +1278,6 @@ export const CI_WATCH_NONE_GRACE_MS = 120_000;
  * kind:9 messages, matching the CI-watch/land-recap precedent, tagged so
  * clients can distinguish them from conversation.
  */
-export const GITHUB_EVENT_TAG = 'github-event';
-/** How long a read of the per-Room activity toggle is trusted. */
-const GITHUB_EVENTS_TOGGLE_TTL_MS = 5 * 60_000;
 /**
  * How long a release proposal stays confirmable. Long enough for a person to
  * read the summary and think; short enough that a "yes" to something else
@@ -2146,12 +2138,6 @@ export class Body {
    */
   private readonly releaseProposals = new Map<string, PendingReleaseProposal>();
   private generateCornerMetadata?: (prompt: string) => Promise<string>;
-  /** Cached per-Room GitHub activity toggle (room config), short TTL. */
-  private readonly githubEventsEnabledCache = new Map<string, { value: boolean; at: number }>();
-  /** Live repository-event feed loops, so shutdown/dispose can await them. */
-  private readonly githubEventWatchers = new Map<string, Promise<void>>();
-  /** Test seam for the repository-event feed loop. Never set in production. */
-  githubEventsTestDeps?: Partial<GitHubEventWatcherDeps>;
   /** Serialized, coalesced publisher for the corner state record. */
   private readonly cornerStates: CornerStatePublisher;
 
@@ -8499,74 +8485,6 @@ export class Body {
    * only a slow backstop: the subscription is the delivery path and reconnects
    * from the durable per-Room cursor so a dropped socket cannot lose a turn.
    */
-  /** Per-Room toggle for ambient GitHub repository activity. Absent config = ON. */
-  private async roomGitHubEventsEnabled(channelId: string): Promise<boolean> {
-    const cached = this.githubEventsEnabledCache.get(channelId);
-    const nowMs = Date.now();
-    if (cached && nowMs - cached.at < GITHUB_EVENTS_TOGGLE_TTL_MS) return cached.value;
-    let value = true;
-    try {
-      const repository = await getRoomRepository(this.agentClientContext(), channelId);
-      value = repository?.githubEventsEnabled !== false;
-    } catch {
-      // An unreadable room-config never silences the feed: default ON.
-    }
-    this.githubEventsEnabledCache.set(channelId, { value, at: nowMs });
-    return value;
-  }
-
-  /**
-   * Start the ambient GitHub repository-activity feed for one repository Room:
-   * stars, issues, and pull requests on the bound repo, ON by default, posted
-   * as compact agent-voice cards (the CI-watch precedent). Best-effort — the
-   * loop never gates or fails Room serving, and a non-GitHub repository has
-   * no webhook feed to consume at all.
-   */
-  private startRoomGitHubEventsLoop(
-    channelId: string,
-    boundRepo: BoundRepo,
-    signal?: AbortSignal,
-  ): void {
-    if (this.githubEventWatchers.has(channelId)) return;
-    // The canonical binding remote (`git://github.com/o/r`) and a refreshed
-    // remote URL are both parseable; anything else is not a GitHub repo.
-    const remote = boundRepo.remoteUrl ?? boundRepo.truth?.binding.remote;
-    const repoRef = remote ? parseGitHubRemoteUrl(remote) : undefined;
-    if (!repoRef) return;
-    const fullName = `${repoRef.owner}/${repoRef.repo}`;
-    const watcher = runGitHubEventWatcher({
-      roomId: channelId,
-      fullName,
-      identity: this.agentIdentity,
-      baseUrl: this.config.relayBaseUrl,
-      eventsEnabled: () => this.roomGitHubEventsEnabled(channelId),
-      post: (text) =>
-        postAgentMessage(
-          channelId,
-          this.agentIdentity,
-          text,
-          undefined,
-          [],
-          [
-            ['t', GITHUB_EVENT_TAG],
-            ['repo', fullName],
-            ['agent', this.agentIdentity.publicKey],
-          ],
-        ),
-      loadCursor: () => this.durableState.githubEventCursor(channelId),
-      saveCursor: (id) => this.durableState.saveGitHubEventCursor(channelId, id),
-      ...(signal ? { signal } : {}),
-      ...this.githubEventsTestDeps,
-    })
-      .catch((error) => console.error(`[body] GitHub event feed failed for ${channelId}:`, error))
-      .finally(() => {
-        if (this.githubEventWatchers.get(channelId) === watcher) {
-          this.githubEventWatchers.delete(channelId);
-        }
-      });
-    this.githubEventWatchers.set(channelId, watcher);
-  }
-
   /** Run relay-origin gate attempts and project their daemon-owned stages. */
   private async pollMergeGateApprovals(
     mergeGate: DurableMergeGate,
@@ -8964,9 +8882,6 @@ export class Body {
       await this.assertRepositorySafety(tlcChannelId, boundRepo);
       await this.provision(tlcChannelId, boundRepo);
       if (boundRepo.repositoryKey) await this.restoreSubchannels(tlcChannelId, boundRepo);
-      // Ambient GitHub repository activity for this Room (stars/issues/PRs),
-      // best-effort and never gating the push loop below.
-      this.startRoomGitHubEventsLoop(tlcChannelId, boundRepo, opts.signal);
       await this.runRoomPushLoop(tlcChannelId, boundRepo, 'repository', stopPresence, opts, () =>
         this.pollRoomMaintenance(tlcChannelId, undefined, boundRepo, {
           // Same condition the restore above is gated on: no repository key,

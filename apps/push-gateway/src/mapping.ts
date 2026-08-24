@@ -67,6 +67,9 @@ export function mentionsMember(event: NostrEvent, recipientPubkey: string): bool
 export function isWaitingOnHumanEvent(event: NostrEvent): boolean {
   if (event.kind !== 9) return false;
   const markers = tagValues(event, 't');
+  // Repository activity is ambient Room content even when an issue title or
+  // review comment happens to contain a question mark. It never pages a phone.
+  if (markers.includes('github-event')) return false;
   const mergeReady =
     markers.includes('body-control') &&
     Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
@@ -148,6 +151,7 @@ export function mapEventToNotification(
   if (!channelId) return null;
 
   const markers = tagValues(event, 't');
+  if (markers.includes('github-event')) return null;
   const isMergeRequest =
     markers.includes('body-control') &&
     Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));

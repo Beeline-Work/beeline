@@ -1,216 +1,336 @@
-/**
- * GitHub repository activity, delivered into the Rooms bound to that repo.
- *
- * The hop: a verified webhook lands on the auth service (the only inbound-
- * reachable piece), which stores it durably per repository. Room daemons
- * connect only OUTWARD — to the relay and to the auth service — so each served
- * Room long-polls `/auth/github/room-events` from this loop. The endpoint's
- * authority is the same one that mints Room installation tokens: current relay
- * truth must show this agent inside a Room whose admin-authored binding names
- * the repository, so private repository activity can never reach a Room whose
- * members should not see it.
- *
- * Delivery properties, all deliberate:
- *   - ON by default for stars, issues, and pull requests; an admin can turn
- *     the feed off per Room via the room-repository config record
- *     (`githubEventsEnabled`, carried by `setRoomGitHubEvents`). While off,
- *     nothing is fetched; on re-enable, anything inside retention arrives late.
- *   - A daemon that was offline when an event arrived catches up from its
- *     persisted cursor — delivered late, never silently skipped.
- *   - Duplicate deliveries are collapsed twice: the auth service stores at
- *     most one row per `x-github-delivery`, and the cursor advances only after
- *     the Room card actually published.
- *   - A busy repository cannot drown a Room: events fetched together post as
- *     ONE compact card capped at MAX_CARD_LINES, with an overflow count.
- *
- * The loop is entirely best-effort: it never throws into its caller, backs off
- * with jitter on failure, and stops permanently (one console line) if the
- * relay's auth service does not expose the feed at all.
- */
-import { getGitHubRoomEvents, type Identity } from '@beeline/buzz-client';
+/** GitHub Events API ingestion normalized behind one source-neutral shape. */
 
-/** One stored repository event as released by the auth service. */
-export interface GitHubRepoEvent {
-  id: number;
-  type: string;
+export type RepositoryEventType = 'push' | 'pull-request' | 'issue' | 'ci' | 'review-comment';
+
+export interface RepositoryEvent {
+  source: 'github-poll';
+  id: string;
+  repository: string;
+  type: RepositoryEventType;
   action: string;
   actor: string;
+  actorType?: string;
+  occurredAt: string;
   summary: string;
-  received_at?: string;
-  number?: number;
-  title?: string;
   url?: string;
+  branch?: string;
 }
 
-/** Max event lines in one Room card before the rest collapse into a count. */
+export interface GitHubRepositoryTarget {
+  owner: string;
+  repo: string;
+  installationId?: number;
+  roomId: string;
+}
+
+export interface RepositoryEventPageResult {
+  /** Newest raw event id currently visible for the repository. */
+  head: string;
+  /** Raw ids traversed since the prior cursor, including filtered noise. */
+  sourceEventIds: string[];
+  events: RepositoryEvent[];
+}
+
+export interface RepositoryEventSource {
+  read(
+    target: GitHubRepositoryTarget,
+    cursor: string | undefined,
+    options?: { coldLimit?: number; signal?: AbortSignal },
+  ): Promise<RepositoryEventPageResult>;
+}
+
+type JsonRecord = Record<string, unknown>;
+
+export const GITHUB_EVENT_TAG = 'github-event';
+export const GITHUB_EVENT_HEALTH_TAG = 'github-event-health';
 export const MAX_CARD_LINES = 10;
+export const DEFAULT_GITHUB_EVENTS_REQUEST_TIMEOUT_MS = 15_000;
+const MAX_PAGES = 10;
+const PAGE_SIZE = 100;
+
+function record(value: unknown): JsonRecord | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : undefined;
+}
+
+function string(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function integer(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : undefined;
+}
+
+function httpsUrl(value: unknown): string | undefined {
+  const candidate = string(value);
+  return candidate && /^https:\/\/[^\s]+$/i.test(candidate) ? candidate : undefined;
+}
+
+function branchFromRef(value: unknown): string | undefined {
+  return string(value)?.replace(/^refs\/heads\//, '');
+}
+
+function repoName(raw: JsonRecord): string | undefined {
+  return string(record(raw.repo)?.name);
+}
+
+function actor(raw: JsonRecord): { login: string; type?: string } | undefined {
+  const value = record(raw.actor);
+  const login = string(value?.login);
+  if (!login) return undefined;
+  const type = string(value?.type);
+  return { login, ...(type ? { type } : {}) };
+}
+
+function baseEvent(raw: JsonRecord):
+  | (Pick<RepositoryEvent, 'source' | 'id' | 'repository' | 'actor' | 'occurredAt'> & {
+      actorType?: string;
+    })
+  | undefined {
+  const id = string(raw.id);
+  const repository = repoName(raw);
+  const who = actor(raw);
+  const occurredAt = string(raw.created_at);
+  if (!id || !repository || !who || !occurredAt) return undefined;
+  return {
+    source: 'github-poll',
+    id,
+    repository,
+    actor: who.login,
+    occurredAt,
+    ...(who.type ? { actorType: who.type } : {}),
+  };
+}
 
 /**
- * The compact ambient card for a batch of stored repository events, or
- * `undefined` when there is nothing to say. Matches the CI-watch precedent:
- * plain one-line facts, no plumbing. One event carries its link; a batch is
- * one card of bare lines so a burst lands as one readable notice, not a flood.
+ * Normalize the exact quiet event set shipped by the service. Everything else
+ * advances the source cursor silently so it cannot reappear on a later poll.
  */
-export function describeGitHubRepoEvents(events: readonly GitHubRepoEvent[]): string | undefined {
-  if (events.length === 0) return undefined;
-  const lines = events.slice(0, MAX_CARD_LINES).map((event) =>
-    // A lone event gets its link; a batch stays compact without them.
-    events.length === 1 && event.url ? `${event.summary}\n${event.url}` : event.summary,
+export function normalizeGitHubEvent(value: unknown): RepositoryEvent | undefined {
+  const raw = record(value);
+  if (!raw) return undefined;
+  const base = baseEvent(raw);
+  const type = string(raw.type);
+  const payload = record(raw.payload);
+  if (!base || !type || !payload) return undefined;
+
+  if (type === 'PushEvent') {
+    const branch = branchFromRef(payload.ref);
+    if (!branch) return undefined;
+    const commits = Array.isArray(payload.commits) ? payload.commits.length : 0;
+    const count = commits > 0 ? commits : (integer(payload.size) ?? 0);
+    const url = httpsUrl(record(raw.repo)?.url)?.replace('api.github.com/repos/', 'github.com/');
+    return {
+      ...base,
+      type: 'push',
+      action: 'pushed',
+      branch,
+      summary: `${base.actor} pushed ${count} commit${count === 1 ? '' : 's'} to ${base.repository}:${branch}`,
+      ...(url ? { url } : {}),
+    };
+  }
+
+  if (type === 'PullRequestEvent') {
+    const action = string(payload.action);
+    if (action !== 'opened' && action !== 'closed' && action !== 'reopened') return undefined;
+    const pull = record(payload.pull_request);
+    const number = integer(payload.number) ?? integer(pull?.number);
+    const title = string(pull?.title);
+    if (number === undefined || !title) return undefined;
+    const verb = action === 'closed' && pull?.merged === true ? 'merged' : action;
+    return {
+      ...base,
+      type: 'pull-request',
+      action: verb,
+      summary: `${base.actor} ${verb} pull request #${number} in ${base.repository}: ${title}`,
+      ...(httpsUrl(pull?.html_url) ? { url: httpsUrl(pull?.html_url) } : {}),
+    };
+  }
+
+  if (type === 'IssuesEvent') {
+    const action = string(payload.action);
+    if (action !== 'opened' && action !== 'closed' && action !== 'reopened') return undefined;
+    const issue = record(payload.issue);
+    const number = integer(issue?.number);
+    const title = string(issue?.title);
+    if (number === undefined || !title || issue?.pull_request) return undefined;
+    return {
+      ...base,
+      type: 'issue',
+      action,
+      summary: `${base.actor} ${action} issue #${number} in ${base.repository}: ${title}`,
+      ...(httpsUrl(issue?.html_url) ? { url: httpsUrl(issue?.html_url) } : {}),
+    };
+  }
+
+  if (type === 'PullRequestReviewCommentEvent') {
+    if (string(payload.action) !== 'created') return undefined;
+    const pull = record(payload.pull_request);
+    const comment = record(payload.comment);
+    const number = integer(pull?.number);
+    const title = string(pull?.title);
+    if (number === undefined || !title) return undefined;
+    return {
+      ...base,
+      type: 'review-comment',
+      action: 'created',
+      summary: `${base.actor} commented on pull request #${number} in ${base.repository}: ${title}`,
+      ...(httpsUrl(comment?.html_url) ? { url: httpsUrl(comment?.html_url) } : {}),
+    };
+  }
+
+  if (type === 'WorkflowRunEvent') {
+    if (string(payload.action) !== 'completed') return undefined;
+    const workflow = record(payload.workflow_run);
+    const conclusion = string(workflow?.conclusion);
+    const name = string(workflow?.name) ?? 'Workflow';
+    if (!conclusion) return undefined;
+    const branch = string(workflow?.head_branch);
+    return {
+      ...base,
+      type: 'ci',
+      action: conclusion,
+      summary: `${name} concluded ${conclusion} on ${base.repository}${branch ? `:${branch}` : ''}`,
+      ...(branch ? { branch } : {}),
+      ...(httpsUrl(workflow?.html_url) ? { url: httpsUrl(workflow?.html_url) } : {}),
+    };
+  }
+
+  if (type === 'CheckRunEvent') {
+    if (string(payload.action) !== 'completed') return undefined;
+    const check = record(payload.check_run);
+    const conclusion = string(check?.conclusion);
+    const name = string(check?.name) ?? 'Check';
+    if (!conclusion) return undefined;
+    return {
+      ...base,
+      type: 'ci',
+      action: conclusion,
+      summary: `${name} concluded ${conclusion} on ${base.repository}`,
+      ...(httpsUrl(check?.html_url) ? { url: httpsUrl(check?.html_url) } : {}),
+    };
+  }
+
+  return undefined;
+}
+
+/** Bot branch pushes are plumbing; human pushes and bot target-branch pushes remain visible. */
+export function isMutedRepositoryEvent(
+  event: RepositoryEvent,
+  targetBranches: ReadonlySet<string>,
+): boolean {
+  return (
+    event.type === 'push' &&
+    event.actorType?.toLowerCase() === 'bot' &&
+    Boolean(event.branch && !targetBranches.has(event.branch))
   );
+}
+
+export function describeRepositoryEvents(events: readonly RepositoryEvent[]): string | undefined {
+  if (events.length === 0) return undefined;
+  const lines = events
+    .slice(0, MAX_CARD_LINES)
+    .map((event) =>
+      events.length === 1 && event.url ? `${event.summary}\n${event.url}` : event.summary,
+    );
   if (events.length > MAX_CARD_LINES) {
     lines.push(`… and ${events.length - MAX_CARD_LINES} more repository updates`);
   }
   return lines.join('\n');
 }
 
-const RETRYABLE_POST_ATTEMPTS = 3;
-
-export interface GitHubEventWatcherDeps {
-  roomId: string;
-  /** Resolved `owner/repo` for this Room's bound GitHub repository. */
-  fullName: string;
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>;
-  /** Auth-service base URL (in production, the relay origin serving /auth). */
-  baseUrl: string;
-  /** Per-Room toggle; absent config means enabled. */
-  eventsEnabled: () => Promise<boolean>;
-  /** Publish the composed card into the Room. */
-  post: (text: string) => Promise<void>;
-  loadCursor: () => Promise<number | undefined>;
-  saveCursor: (id: number) => Promise<void>;
-  signal?: AbortSignal;
-  now?: () => number;
-  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
-  fetchEvents?: typeof getGitHubRoomEvents;
+function boundedSignal(parent: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return parent ? AbortSignal.any([parent, timeout]) : timeout;
 }
 
-function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(finish, ms);
-    timer.unref?.();
-    function finish(): void {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', finish);
-      resolve();
-    }
-    signal?.addEventListener('abort', finish, { once: true });
-  });
-}
+/** GitHub REST source. A future webhook source implements RepositoryEventSource instead. */
+export class GitHubEventsApiSource implements RepositoryEventSource {
+  constructor(
+    private readonly tokenFor: (target: GitHubRepositoryTarget) => Promise<string>,
+    private readonly options: {
+      apiBaseUrl?: string;
+      requestTimeoutMs?: number;
+      fetch?: typeof fetch;
+    } = {},
+  ) {}
 
-/** +/-25% jitter, matching RoomPollBackoff's convention. */
-function jitter(ms: number): number {
-  return Math.round(ms * (0.75 + Math.random() * 0.5));
-}
-
-const POLL_WAIT_MS = 25_000;
-const RETRY_RETRY_DELAY_MS = 1_000;
-const TOGGLE_RECHECK_MS = 5 * 60_000;
-const ERROR_BACKOFF_BASE_MS = 5_000;
-const ERROR_BACKOFF_MAX_MS = 5 * 60_000;
-
-/**
- * Run one Room's repository-event feed until aborted. Never throws: every
- * failure is backed off and retried, except a permanently unavailable feed,
- * which logs once and ends the loop.
- */
-export async function runGitHubEventWatcher(deps: GitHubEventWatcherDeps): Promise<void> {
-  const fetchEvents = deps.fetchEvents ?? getGitHubRoomEvents;
-  const sleep = deps.sleep ?? defaultSleep;
-  const now = deps.now ?? Date.now;
-  let backoffMs = ERROR_BACKOFF_BASE_MS;
-  let loggedUnavailable = false;
-  let pendingBatch: GitHubRepoEvent[] = [];
-  let pendingAttempts = 0;
-
-  while (!deps.signal?.aborted) {
-    try {
-      // While the toggle is OFF nothing is fetched and the cursor is frozen:
-      // re-enabling later resumes exactly where the feed stopped, bounded by
-      // server-side retention.
-      if (!(await deps.eventsEnabled())) {
-        await sleep(TOGGLE_RECHECK_MS, deps.signal);
-        continue;
-      }
-
-      if (pendingBatch.length > 0) {
-        // Retry an unpublished batch before fetching more, so ordering holds.
-        pendingAttempts += 1;
-        if (pendingAttempts > RETRYABLE_POST_ATTEMPTS) {
-          console.error(
-            `[body] GitHub events: dropping ${pendingBatch.length} undeliverable event(s) for Room ${deps.roomId} after ${pendingAttempts - 1} attempts`,
-          );
-          await deps.saveCursor(pendingBatch[pendingBatch.length - 1]!.id);
-          pendingBatch = [];
-          pendingAttempts = 0;
-          continue;
-        }
-        const text = describeGitHubRepoEvents(pendingBatch);
-        if (text) {
-          try {
-            await deps.post(text);
-          } catch (error) {
-            // Stay on the bounded-retry path below; never leak into the
-            // generic backoff handler, which would stall the feed.
-            console.error(
-              `[body] GitHub events: posting to Room ${deps.roomId} failed (will retry):`,
-              error,
-            );
-            await sleep(RETRY_RETRY_DELAY_MS, deps.signal);
-            continue;
-          }
-        }
-        await deps.saveCursor(pendingBatch[pendingBatch.length - 1]!.id);
-        pendingBatch = [];
-        pendingAttempts = 0;
-        continue;
-      }
-
-      let cursor = await deps.loadCursor();
-      const bootstrapping = cursor === undefined;
-      if (bootstrapping) {
-        // First contact: start from NOW rather than replaying retained history
-        // into a Room that never asked for old news. Offline catch-up applies
-        // to daemons that have served the Room before (they have a cursor).
-        const bootstrap = await fetchEvents(deps.baseUrl, deps.identity, deps.roomId);
-        await deps.saveCursor(bootstrap.cursor);
-        cursor = bootstrap.cursor;
-      }
-
-      const result = await fetchEvents(deps.baseUrl, deps.identity, deps.roomId, {
-        since: cursor,
-        waitMs: POLL_WAIT_MS,
-      });
-      if (result.events.length > 0) {
-        const text = describeGitHubRepoEvents(result.events);
-        if (text) {
-          try {
-            await deps.post(text);
-          } catch (error) {
-            pendingBatch = result.events;
-            pendingAttempts = 1;
-            console.error(
-              `[body] GitHub events: posting to Room ${deps.roomId} failed (will retry):`,
-              error,
-            );
-            continue;
-          }
-        }
-        await deps.saveCursor(result.cursor);
-      }
-      backoffMs = ERROR_BACKOFF_BASE_MS;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!loggedUnavailable && /404|unavailable/.test(message)) {
-        // This relay's auth service predates the feed. Not an error the
-        // operator can act on by waiting — say so once, then stop polling.
-        loggedUnavailable = true;
-        console.error(
-          `[body] GitHub events: feed unavailable for Room ${deps.roomId}; stopping (${message})`,
+  async read(
+    target: GitHubRepositoryTarget,
+    cursor: string | undefined,
+    options: { coldLimit?: number; signal?: AbortSignal } = {},
+  ): Promise<RepositoryEventPageResult> {
+    const timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_GITHUB_EVENTS_REQUEST_TIMEOUT_MS;
+    const token = await Promise.race([
+      this.tokenFor(target),
+      new Promise<never>((_, reject) => {
+        const timer = setTimeout(
+          () =>
+            reject(new Error(`GitHub installation token deadline exceeded after ${timeoutMs}ms`)),
+          timeoutMs,
         );
-        return;
+        timer.unref?.();
+      }),
+    ]);
+    const fetchImpl = this.options.fetch ?? fetch;
+    // One deadline covers the complete paginated read. Creating a fresh
+    // timeout per page would let an old cursor consume MAX_PAGES * timeoutMs
+    // and could outrun the service watchdog even though every individual HTTP
+    // request looked bounded.
+    const requestSignal = boundedSignal(options.signal, timeoutMs);
+    const rawNew: unknown[] = [];
+    const sourceEventIds: string[] = [];
+    let head = cursor ?? '';
+    let foundCursor = false;
+
+    for (let page = 1; page <= MAX_PAGES && !foundCursor; page += 1) {
+      const url =
+        `${this.options.apiBaseUrl ?? 'https://api.github.com'}/repos/` +
+        `${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/events` +
+        `?per_page=${PAGE_SIZE}&page=${page}`;
+      const response = await fetchImpl(url, {
+        signal: requestSignal,
+        headers: {
+          accept: 'application/vnd.github+json',
+          authorization: `Bearer ${token}`,
+          'x-github-api-version': '2022-11-28',
+          'user-agent': 'beeline-events',
+        },
+      });
+      const body = (await response.json().catch(() => undefined)) as unknown;
+      if (!response.ok || !Array.isArray(body)) {
+        throw new Error(`GitHub events request failed: HTTP ${response.status}`);
       }
-      await sleep(jitter(backoffMs), deps.signal);
-      backoffMs = Math.min(ERROR_BACKOFF_MAX_MS, backoffMs * 2);
+      if (page === 1) head = string(record(body[0])?.id) ?? cursor ?? '';
+      for (const item of body) {
+        const id = string(record(item)?.id);
+        if (!id) continue;
+        if (cursor && id === cursor) {
+          foundCursor = true;
+          break;
+        }
+        rawNew.push(item);
+        sourceEventIds.push(id);
+        if (!cursor && rawNew.length >= (options.coldLimit ?? 20)) {
+          foundCursor = true;
+          break;
+        }
+      }
+      if (body.length < PAGE_SIZE) break;
     }
+
+    // When an old cursor fell outside GitHub's retained window, cap the catch-up
+    // just like cold start. Cursor advancement makes the truncation permanent.
+    const limit = options.coldLimit ?? 20;
+    const boundedRaw = cursor && !foundCursor ? rawNew.slice(0, limit) : rawNew;
+    const boundedIds = cursor && !foundCursor ? sourceEventIds.slice(0, limit) : sourceEventIds;
+    return {
+      head,
+      sourceEventIds: boundedIds,
+      events: boundedRaw
+        .map(normalizeGitHubEvent)
+        .filter((event): event is RepositoryEvent => event !== undefined),
+    };
   }
 }

@@ -393,8 +393,8 @@ export async function setRoomTargetBranch(
 }
 
 /**
- * Toggle whether this Room receives GitHub repository activity (stars, issues,
- * and pull requests on its bound repository). Same authority and carry-forward
+ * Toggle whether this Room receives GitHub repository activity (pushes, pull
+ * requests, issues, CI, and reviews). Same authority and carry-forward
  * shape as {@link setRoomTargetBranch}: an admin's key republishes the current
  * binding with only the flag new, and readers re-check authorship on every
  * read. Absent/`undefined` means enabled — the shipped default is ON.

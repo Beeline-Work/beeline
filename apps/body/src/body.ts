@@ -1966,7 +1966,6 @@ export class Body {
   private runningAgentTasks = new Map<string, Promise<void>>();
   private scheduler: SessionScheduler;
   private ownsScheduler: boolean;
-  /** Memoized per-room harness env; prepared on this Room's first activation. */
   private durableState: DurableBodyState;
   private agentRelay: RelayClient;
   private mergeWorkerRelay?: RelayClient;

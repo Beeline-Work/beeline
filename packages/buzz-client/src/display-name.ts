@@ -127,13 +127,25 @@ export function isSingleWordAgentName(value: string): boolean {
 
 export const AGENT_NAME_MAX_LENGTH = 32;
 
+/** Neutral default identity name for a freshly minted agent (no soul set). */
+export const DEFAULT_AGENT_IDENTITY_NAME = 'beeline-agent';
+
+/** Neutral default identity name for the daemon's operator-side body key. */
+export const DEFAULT_BODY_IDENTITY_NAME = 'beeline-body';
+
 /**
- * Generic identity names the system itself mints (`newIdentity('buzzy-agent')`,
- * the daemon's `|| 'Agent'` guard). They are placeholders, never operator
- * choices: publishing them verbatim or masking them with a pubkey-derived
- * first name both misrepresent the agent. See `deriveAgentDisplayName`.
+ * Generic identity names the system itself mints (`newIdentity(
+ * DEFAULT_AGENT_IDENTITY_NAME)`, the daemon's `|| 'Agent'` guard), including
+ * the pre-Beeline-rebrand marker kept so identities paired before the rename
+ * are still classified as system placeholders rather than authored names.
+ * They are placeholders, never operator choices and never SHARED: each one
+ * resolves to a stable spoken name derived from that agent's own pubkey
+ * (`fallbackAgentName`/`fallbackPersonName`, the same seed-name pool people
+ * get), so a Workspace of soul-less agents still shows distinct identities.
+ * A human-authored soul overlay overrides wherever one exists. See
+ * `deriveAgentDisplayName`.
  */
-const SYSTEM_AGENT_NAMES = new Set(['agent', 'buzzy-agent']);
+const SYSTEM_AGENT_NAMES = new Set(['agent', 'beeline-agent', 'buzzy-agent']);
 
 /**
  * A reasonable authored agent name: spoken words separated by spaces or
@@ -157,9 +169,10 @@ function normalizeAuthoredAgentName(value: string): string {
 
 /**
  * Preserve a reasonable authored agent name — one spoken word ("Ada") or a
- * compound an operator actually chose ("Quiet Keeper", "ox-prime"). Only a
+ * compound an operator actually chose ("Quiet Keeper", "ox-prime"). A
  * system-generic marker or a genuinely unusable value falls back to the
- * deterministic pubkey-derived first name.
+ * deterministic pubkey-derived first name, which keeps every agent's default
+ * identity DISTINCT (two freshly paired agents never share one label).
  */
 export function resolveAgentName(value: string | undefined, pubkey: string): string {
   const authored = value?.trim();
@@ -174,25 +187,16 @@ export function resolveAgentName(value: string | undefined, pubkey: string): str
 }
 
 /**
- * Writer-side display name for a freshly registered agent identity.
+ * Display name for a freshly registered agent identity.
  *
- * The daemon mints its identities as `buzzy-agent`; registering that verbatim
- * used to fail the old single-word rule and be silently replaced by a
- * random-looking first name from the fallback pool ("Pia"), with nothing on
- * any surface signalling it was generated. This resolves the base name
- * deliberately instead:
  * - an authored, reasonable name passes through untouched;
- * - the generic `buzzy-agent` marker becomes "Buzzy" — stable, traceable to
- *   the actual base name, and clearly not a human first name;
- * - no name at all (or the bare "Agent" guard) falls back explicitly to the
- *   deterministic pool, which then is the intended choice rather than masking.
+ * - any system-generic marker (`beeline-agent`, the pre-rebrand
+ *   `buzzy-agent`, the bare `"Agent"` guard) resolves to the stable,
+ *   pubkey-derived seed name — distinct per agent, never one shared label;
+ * - no name at all takes that same deterministic pool.
  */
 export function deriveAgentDisplayName(value: string | undefined | null, pubkey: string): string {
-  const authored = value?.trim();
-  if (!authored) return fallbackAgentName(pubkey);
-  const lower = authored.toLowerCase();
-  if (lower === 'buzzy-agent') return 'Buzzy';
-  return resolveAgentName(authored, pubkey);
+  return resolveAgentName(value ?? undefined, pubkey);
 }
 
 export function agentHandle(name: string, pubkey: string): string {

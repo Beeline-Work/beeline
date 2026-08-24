@@ -135,7 +135,7 @@ export async function listMcpToolNames(spec: McpServerSpec, timeoutMs = 15_000):
     await request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'buzzy-body', version: '0.0.0' },
+      clientInfo: { name: 'beeline-body', version: '0.0.0' },
     });
     notify('notifications/initialized', {});
     const listed = await request('tools/list', {});
@@ -275,7 +275,7 @@ export async function callMcpTool(
     await request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'buzzy-body', version: '0.0.0' },
+      clientInfo: { name: 'beeline-body', version: '0.0.0' },
     });
     notify('notifications/initialized', {});
     const result = await request('tools/call', {

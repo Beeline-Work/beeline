@@ -120,6 +120,8 @@ import {
   cornerLifecycleFact,
   resolveCornerLifecycle,
   type CornerLifecycleStatus,
+  DEFAULT_AGENT_IDENTITY_NAME,
+  DEFAULT_BODY_IDENTITY_NAME,
 } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { performBrokeredPush } from './push-broker.js';
@@ -172,7 +174,10 @@ import {
   resolveBeelineCliEntrypoint,
 } from './corner-read-token.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
-import { appendPersonaSessionInstructions } from './persona-instructions.js';
+import {
+  appendPersonaSessionInstructions,
+  personaTurnPrefixForHarness,
+} from './persona-instructions.js';
 import {
   AGENT_PRIVATE_STATE_ENV,
   agentPrivateStateInstructions,
@@ -259,6 +264,7 @@ import {
   ROOM_READ_ONLY_STEER,
 } from './session-sandbox.js';
 import {
+  harnessHonorsSessionSystemPrompt,
   roomSandboxWarning,
   usesTextCornerRequestFallback,
 } from './harness-capabilities.js';
@@ -346,6 +352,14 @@ export interface AgentSession {
   modelConfigOptions?: AgentModelConfigOption[];
   /** Observable system-prompt size used when ACP omits token accounting. */
   systemPromptChars?: number;
+  /**
+   * Persona text re-sent at the top of EVERY turn prompt, set only for a
+   * harness that drops `session/new`'s `systemPrompt` (see
+   * `harnessHonorsSessionSystemPrompt`). Turn content is the one channel no
+   * adapter can ignore, so it is the delivery floor for the human-authored
+   * soul on harnesses like codex-acp and pi-acp.
+   */
+  personaTurnPrefix?: string;
   resumePlan?: CompactActivityPlan;
   activationCount?: number;
   processState?: 'live' | 'suspended' | 'waiting-for-slot';
@@ -2063,8 +2077,8 @@ export class Body {
     } = {},
   ) {
     this.config = config;
-    this.bodyIdentity = bodyIdentity ?? newIdentity('buzzy-body');
-    this.agentIdentity = agentIdentity ?? newIdentity('buzzy-agent');
+    this.bodyIdentity = bodyIdentity ?? newIdentity(DEFAULT_BODY_IDENTITY_NAME);
+    this.agentIdentity = agentIdentity ?? newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
     this.mergeWorkerIdentity = mergeWorkerIdentity;
     const relayConfig = { baseUrl: config.relayBaseUrl, host: config.relayHost };
     this.agentRelay = createRelayClient(this.agentIdentity, relayConfig);
@@ -2584,6 +2598,15 @@ export class Body {
               (agent) => agent.pubkey === this.agentIdentity.publicKey,
             )?.soulProfile
           : undefined;
+        // A harness that drops `session/new`'s `systemPrompt` never sees the
+        // persona appended below — measured, not assumed: codex-acp and
+        // pi-acp have no reference to the field at all. For those, re-send
+        // the persona at the top of every turn prompt instead; message
+        // content is the one channel no adapter can ignore.
+        session.personaTurnPrefix = personaTurnPrefixForHarness(
+          profile,
+          this.config.agentCommand ?? this.config.agentBinary,
+        );
         await client.start();
         const transcript = await this.durableState.conversation(input.channelId);
         // BOUNDED. This block goes into the session's SYSTEM PROMPT, which the
@@ -3017,6 +3040,13 @@ export class Body {
       }, ROOM_AGENT_STALL_NOTICE_MS);
     };
     let result: PromptResult;
+    // Persona delivery floor: a harness that ignores `session/new`'s
+    // `systemPrompt` still receives every turn's message content verbatim,
+    // so the human-authored persona rides there for those harnesses. See
+    // `AgentSession.personaTurnPrefix`.
+    const wirePrompt = session.personaTurnPrefix
+      ? `${session.personaTurnPrefix}\n\n${prompt}`
+      : prompt;
     // Set only at the actual ACP invocation boundary. Scheduler/session
     // activation failures spent no model call and must not appear as one.
     let modelCallStartedAt: string | undefined;
@@ -3032,7 +3062,7 @@ export class Body {
         modelCallStartedAt = new Date().toISOString();
         return session.client.sessionPrompt(
           session.sessionId,
-          prompt,
+          wirePrompt,
           ROOM_AGENT_PROMPT_TIMEOUT_MS,
           (draft || narrator || cornerRequestFilter) &&
             ((_delta, fullText) => {
@@ -9567,9 +9597,9 @@ export class Body {
     await setMemberRole(this.bodyIdentity, communityId, this.agentIdentity.publicKey, 'member');
     await waitUntilMember(ctx, communityId, this.agentIdentity.publicKey);
     await createAgent(ctx, communityId, {
-      // The default identity name is the generic `buzzy-agent` marker.
+      // The default identity name is the generic `beeline-agent` marker.
       // Registration resolves it deliberately (`deriveAgentDisplayName`):
-      // "Buzzy", not a random-looking pubkey-derived first name.
+      // "Beeline", not a random-looking pubkey-derived first name.
       displayName: this.agentIdentity.name || 'Agent',
     });
   }
@@ -9814,8 +9844,8 @@ export class Body {
       );
       return false;
     }
-    git(worktreePath, ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent']);
-    git(worktreePath, ['config', 'user.email', 'agent@buzzy.local']);
+    git(worktreePath, ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME]);
+    git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
     this.excludeCodegraphFromWorktreeStatus(worktreePath);
     this.seedWorktreeToolchain(worktreePath, repoRoot);
     return true;
@@ -9857,8 +9887,8 @@ export class Body {
         baseRef,
       ]);
       if (!worktreeAdd.ok) throw new Error(`git worktree add failed: ${worktreeAdd.stderr}`);
-      git(worktreePath, ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent']);
-      git(worktreePath, ['config', 'user.email', 'agent@buzzy.local']);
+      git(worktreePath, ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME]);
+      git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
       this.excludeCodegraphFromWorktreeStatus(worktreePath);
       this.seedWorktreeToolchain(worktreePath, boundRepo.localPath);
       return;
@@ -9918,12 +9948,12 @@ export class Body {
 
     // The edit agent commits locally; the body authenticates and pushes the
     // resulting feature tip under the agent identity after the turn completes.
-    spawnSync('git', ['config', 'user.name', this.agentIdentity.name || 'buzzy-agent'], {
+    spawnSync('git', ['config', 'user.name', this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME], {
       cwd: worktreePath,
       env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
       encoding: 'utf8',
     });
-    spawnSync('git', ['config', 'user.email', 'agent@buzzy.local'], {
+    spawnSync('git', ['config', 'user.email', 'agent@beeline.local'], {
       cwd: worktreePath,
       env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
       encoding: 'utf8',

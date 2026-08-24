@@ -2337,7 +2337,7 @@ export default function BuzzChat() {
     Alert.alert(
       deleting ? `Delete ${displayRoomName}?` : `Leave ${displayRoomName}?`,
       deleting
-        ? `This ${ROOM_LABEL} will disappear from the workspace list. Its messages and room data remain stored for future recovery.`
+        ? `This ${ROOM_LABEL} and its workspace data will be permanently deleted.`
         : `You will lose access to this ${ROOM_LABEL}. Other members will keep their access.`,
       [
         { text: 'Cancel', style: 'cancel' },
@@ -2348,17 +2348,22 @@ export default function BuzzChat() {
             setRoomLifecycleBusy(true);
             setMembershipError(null);
             const operation = deleting
-              ? transport.archiveRoom(decodedId)
+              ? transport.deleteRoom(decodedId)
               : transport.leaveRoom(decodedId);
             void operation
               .then(() => {
-                // Durable local removal, two layers (see removed-rooms.ts):
-                // the tombstone keeps a later refresh that still returns this
-                // Room — the already-archived case, where #396 makes the
-                // publish a deliberate no-op — from re-materializing the row,
-                // and the purge drops it from the deck immediately.
+                // Delete is authoritative relay teardown (kind:9008 retracts
+                // the Room's discovery projections); only leave needs a local
+                // durable dismissal. Both paths purge the warm cache before
+                // navigating so no stale row flashes on the next frame.
                 const viewerPubkey = useBuzzLocalCache.getState().activeViewerPubkey;
-                if (viewerPubkey) markRoomRemovedAndPurge(viewerPubkey, decodedId);
+                if (viewerPubkey) {
+                  if (deleting) {
+                    useBuzzLocalCache.getState().removeChannel(viewerPubkey, decodedId);
+                  } else {
+                    markRoomRemovedAndPurge(viewerPubkey, decodedId);
+                  }
+                }
                 void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 returnToRoomList();
               })
@@ -4467,7 +4472,7 @@ export default function BuzzChat() {
                   <Text style={styles.roomLifecycleTitle}>
                     {roomLifecycleBusy ? 'DELETING…' : `DELETE ${ROOM_LABEL.toUpperCase()}`}
                   </Text>
-                  <Text style={styles.roomLifecycleHint}>Archive; relay data is retained.</Text>
+                  <Text style={styles.roomLifecycleHint}>Permanently remove this Room.</Text>
                 </View>
                 <Text style={styles.roomLifecycleGlyph}>□</Text>
               </TouchableOpacity>

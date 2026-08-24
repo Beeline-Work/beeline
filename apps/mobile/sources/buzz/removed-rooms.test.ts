@@ -77,7 +77,7 @@ describe('Room removal tombstones', () => {
     expect(isRoomRemoved(removedAt, viewer, 'room-0')).toBe(false);
   });
 
-  describe('markRoomRemovedAndPurge (the delete/leave success path)', () => {
+  describe('markRoomRemovedAndPurge (the leave/legacy-delete success path)', () => {
     beforeEach(() => {
       useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
     });

@@ -22,9 +22,9 @@ describe('Room management capabilities', () => {
     expect(canManageRoomRepository(null)).toBe(false);
   });
 
-  it('shows delete to owners/admins and leave only to normal members', () => {
+  it('shows delete only to owners and leave only to normal members', () => {
     expect(roomLifecycleAction('owner')).toBe('delete');
-    expect(roomLifecycleAction('admin')).toBe('delete');
+    expect(roomLifecycleAction('admin')).toBeNull();
     expect(roomLifecycleAction('member')).toBe('leave');
     expect(roomLifecycleAction(null)).toBeNull();
   });

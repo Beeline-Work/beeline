@@ -15,6 +15,9 @@ export const KIND_EDIT_METADATA = 9002;
 /** NIP-29: create group/channel. */
 export const KIND_CREATE_GROUP = 9007;
 
+/** NIP-29: delete group/channel and retract its live discovery projections. */
+export const KIND_DELETE_GROUP = 9008;
+
 /** Channel metadata replaceable. */
 export const KIND_CHANNEL_METADATA = 39000;
 

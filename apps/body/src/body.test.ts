@@ -48,6 +48,7 @@ import {
   CORNER_TURN_SUMMARY_INSTRUCTION,
   CORNER_TURN_SUMMARY_MAX_CHARS,
   cornerNameForIntent,
+  slugifyCornerTask,
   createAgentSubchannel,
   cornerOpenTaskPrompt,
   taskDescriptionFromCornerRequest,
@@ -92,6 +93,9 @@ import {
   TAG_AGENT,
   TAG_AGENT_MODEL_CATALOG,
   TAG_COMMUNITY,
+  DEFAULT_AGENT_IDENTITY_NAME,
+  deriveAgentDisplayName,
+  fallbackAgentName,
 } from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
@@ -405,6 +409,116 @@ describe('agent identity boundary', () => {
   it('always assigns the agent a key distinct from the operator', () => {
     const body = new Body(config, newIdentity('operator'));
     expect(body.agent.publicKey).not.toBe(body.identity.publicKey);
+  });
+
+  it('mints fresh identities with the Beeline default marker, never the pre-rebrand name', () => {
+    const body = new Body(config);
+    expect(body.agent.name).toBe('beeline-agent');
+    expect(body.identity.name).toBe('beeline-body');
+    // The marker is a placeholder, not a display identity: it resolves to a
+    // stable spoken seed name derived from each agent's OWN pubkey, so two
+    // soul-less agents never share one label.
+    const first = newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
+    const second = newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
+    expect(deriveAgentDisplayName(first.name, first.publicKey)).toBe(
+      fallbackAgentName(first.publicKey),
+    );
+    expect(deriveAgentDisplayName(second.name, second.publicKey)).toBe(
+      fallbackAgentName(second.publicKey),
+    );
+    expect(first.publicKey).not.toBe(second.publicKey);
+    expect(deriveAgentDisplayName(first.name, first.publicKey)).not.toBe(
+      deriveAgentDisplayName(second.name, second.publicKey),
+    );
+  });
+
+  describe('persona delivery to harnesses that drop the session system prompt', () => {
+    it('re-sends a set persona at the top of every turn prompt for codex/pi-class harnesses', async () => {
+      const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+      try {
+        const body = new Body(
+          {
+            ...config,
+            agentCommand: '/usr/local/bin/codex-acp',
+            workspaceRoot: '/tmp/beeline-persona-turn',
+          },
+          newIdentity('persona-operator'),
+          newIdentity('persona-agent'),
+          undefined,
+          { scheduler },
+        );
+        const durable = (body as unknown as { durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)> }).durableState;
+        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(undefined as never);
+        const sessionPrompt = vi.fn().mockResolvedValue({ agentText: 'ok', updates: [] });
+        const session = {
+          channelId: 'persona-room',
+          sessionId: 'persona-session-1',
+          mode: 'readonly' as const,
+          client: { sessionPrompt, sessionCancel: vi.fn() },
+          lifecycle: {
+            activate: vi.fn().mockResolvedValue('persona-session-1'),
+            suspend: vi.fn().mockResolvedValue(undefined),
+          },
+          personaTurnPrefix: [
+            'Human-authored agent persona for this Workspace:',
+            'Name: Clara',
+            'Soul: Steady, practical, and ready to help this Workspace.',
+          ].join('\n'),
+        } as never;
+
+        await Reflect.get(body, 'promptAgent').call(body, session, 'What is my name?', {
+          channelId: 'persona-room',
+          requestId: 'persona-request',
+          originalRequestId: 'persona-request',
+          cause: 'room-message',
+        });
+
+        expect(sessionPrompt).toHaveBeenCalledTimes(1);
+        const wirePrompt = sessionPrompt.mock.calls[0]![1] as string;
+        expect(wirePrompt).toContain('Name: Clara');
+        expect(wirePrompt).toContain("What is my name?");
+        expect(wirePrompt.indexOf('Name: Clara')).toBeLessThan(wirePrompt.indexOf('What is my name?'));
+      } finally {
+        await scheduler.dispose();
+      }
+    });
+
+    it('sends the bare prompt when the session carries no persona prefix', async () => {
+      const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+      try {
+        const body = new Body(
+          { ...config, workspaceRoot: '/tmp/beeline-persona-turn-bare' },
+          newIdentity('bare-operator'),
+          newIdentity('bare-agent'),
+          undefined,
+          { scheduler },
+        );
+        const durable = (body as unknown as { durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)> }).durableState;
+        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(undefined as never);
+        const sessionPrompt = vi.fn().mockResolvedValue({ agentText: 'ok', updates: [] });
+        const session = {
+          channelId: 'bare-room',
+          sessionId: 'bare-session-1',
+          mode: 'readonly' as const,
+          client: { sessionPrompt, sessionCancel: vi.fn() },
+          lifecycle: {
+            activate: vi.fn().mockResolvedValue('bare-session-1'),
+            suspend: vi.fn().mockResolvedValue(undefined),
+          },
+        } as never;
+
+        await Reflect.get(body, 'promptAgent').call(body, session, 'plain question', {
+          channelId: 'bare-room',
+          requestId: 'bare-request',
+          originalRequestId: 'bare-request',
+          cause: 'room-message',
+        });
+
+        expect(sessionPrompt.mock.calls[0]![1]).toBe('plain question');
+      } finally {
+        await scheduler.dispose();
+      }
+    });
   });
 
   describe('OS sandbox wiring', () => {
@@ -5328,56 +5442,56 @@ describe('first-class assistant messages', () => {
 });
 
 describe('corner display names', () => {
-  it('turns the human request into a compact Slack-style corner name', () => {
+  it('turns the human request into a three-word verb-first corner name', () => {
     expect(cornerNameForIntent('Fix OAuth callback + retry state', 'room-id')).toBe(
-      'fix-oauth-callback-retry-state',
+      'Fix OAuth Callback',
     );
   });
 
-  it('uses a corner fallback without exposing the subchannel noun', () => {
-    expect(cornerNameForIntent('  ', '12345678-abcd')).toBe('corner-12345678');
+  it('uses a grammatical fallback when no task is available', () => {
+    expect(cornerNameForIntent('  ', '12345678-abcd')).toBe('Implement Corner Work');
   });
 
   it('derives the name from the actual task, not the "open a corner" verb that opened it', () => {
     expect(cornerNameForIntent('open a corner and add color to code blocks', 'room-id')).toBe(
-      'add-color-to-code-blocks',
+      'Add Color Code',
     );
     expect(cornerNameForIntent('open the corner and add color to code blocks', 'room-id')).toBe(
-      'add-color-to-code-blocks',
+      'Add Color Code',
     );
     expect(cornerNameForIntent('please open a new corner to fix the flaky test', 'room-id')).toBe(
-      'fix-the-flaky-test',
+      'Fix The Flaky',
     );
   });
 
   it('strips a trailing "...in a new corner" mention just as well as a leading one', () => {
     expect(
       cornerNameForIntent('start working on syntax highlighting in a new corner', 'room-id'),
-    ).toBe('syntax-highlighting');
+    ).toBe('Implement Syntax Highlighting');
   });
 
-  it('falls back to the collision-safe short suffix when the request is only the imperative itself', () => {
-    expect(cornerNameForIntent('open a corner', 'room-id')).toBe('corner-room-id');
-    expect(cornerNameForIntent('open up a new corner', 'room-id')).toBe('corner-room-id');
+  it('uses the grammatical fallback when the request is only the imperative itself', () => {
+    expect(cornerNameForIntent('open a corner', 'room-id')).toBe('Implement Corner Work');
+    expect(cornerNameForIntent('open up a new corner', 'room-id')).toBe('Implement Corner Work');
   });
 
   it('leaves a message with no corner-open imperative untouched (the agent-originated write-request flow)', () => {
     expect(cornerNameForIntent('add color to code blocks', 'room-id')).toBe(
-      'add-color-to-code-blocks',
+      'Add Color Code',
     );
   });
 
   it('names the task even when the request opens with an @mention or conversational scaffolding', () => {
     const cases: [string, string][] = [
       // The dogfooded regression: the mention plus the imperative ate the name.
-      ['@lena open a corner and add a haiku to README.md', 'add-a-haiku-to-readme-md'],
-      ['@lena go fix the login bug', 'fix-the-login-bug'],
-      ['@lena, please open a corner and fix the flaky test', 'fix-the-flaky-test'],
-      ['@lena make a corner for the sidebar redesign', 'the-sidebar-redesign'],
-      ['@lena spin up a corner and refactor the parser', 'refactor-the-parser'],
-      ['hey @lena, can you open a new corner to update the changelog', 'update-the-changelog'],
-      ["@lena let's add dark mode to settings", 'add-dark-mode-to-settings'],
-      ['@lena start working on syntax highlighting in a new corner', 'syntax-highlighting'],
+      ['@lena open a corner and add a haiku to README.md', 'Add Haiku README.md'],
+      ['@lena go fix the login bug', 'Fix The Login'],
+      ['@lena, please open a corner and fix the flaky test', 'Fix The Flaky'],
+      ['@lena make a corner for the sidebar redesign', 'Implement The Sidebar'],
+      ['@lena spin up a corner and refactor the parser', 'Refactor The Parser'],
+      ['hey @lena, can you open a new corner to update the changelog', 'Update The Changelog'],
+      ["@lena let's add dark mode to settings", 'Add Dark Mode'],
+      ['@lena start working on syntax highlighting in a new corner', 'Implement Syntax Highlighting'],
     ];
     for (const [request, slug] of cases) {
       expect([request, cornerNameForIntent(request, 'room-id')]).toEqual([request, slug]);
@@ -5385,19 +5499,18 @@ describe('corner display names', () => {
   });
 
   it('falls back to the generic corner name when the request names no work at all', () => {
-    expect(cornerNameForIntent('@lena go', 'room-id')).toBe('corner-room-id');
-    expect(cornerNameForIntent('@lena open a corner', 'room-id')).toBe('corner-room-id');
-    expect(cornerNameForIntent('@lena ok do it', 'room-id')).toBe('corner-room-id');
+    expect(cornerNameForIntent('@lena go', 'room-id')).toBe('Implement Corner Work');
+    expect(cornerNameForIntent('@lena open a corner', 'room-id')).toBe('Implement Corner Work');
+    expect(cornerNameForIntent('@lena ok do it', 'room-id')).toBe('Implement Corner Work');
   });
 
   it('taskSlugForCornerIntent is the same task-descriptive basis openSubchannel uses for both the corner name and the feature branch', () => {
-    // cornerNameForIntent(intent, parentId) === taskSlugForCornerIntent(intent)
-    // whenever a real task slug exists — the corner-id fallback only kicks in
-    // when the slug is empty, which is exactly what `openSubchannel` needs to
-    // decide whether to fold the slug into the git branch name.
+    // The display name and branch slug share one formatted semantic stem.
     const intent = 'open a corner and add color to code blocks';
-    expect(taskSlugForCornerIntent(intent)).toBe('add-color-to-code-blocks');
-    expect(cornerNameForIntent(intent, 'room-id')).toBe(taskSlugForCornerIntent(intent));
+    expect(taskSlugForCornerIntent(intent)).toBe('add-color-code');
+    expect(slugifyCornerTask(cornerNameForIntent(intent, 'room-id'))).toBe(
+      taskSlugForCornerIntent(intent),
+    );
     expect(taskSlugForCornerIntent('open a corner')).toBe('');
   });
 

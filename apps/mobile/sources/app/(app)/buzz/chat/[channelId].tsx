@@ -76,6 +76,7 @@ import {
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
+import { markRoomRemovedAndPurge } from '@/buzz/removed-rooms';
 import { latestCornerPlan } from '@/buzz/activity-timeline';
 import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
 import { hydrateRoomEntry } from '@/buzz/room-entry';
@@ -2282,6 +2283,13 @@ export default function BuzzChat() {
               : transport.leaveRoom(decodedId);
             void operation
               .then(() => {
+                // Durable local removal, two layers (see removed-rooms.ts):
+                // the tombstone keeps a later refresh that still returns this
+                // Room — the already-archived case, where #396 makes the
+                // publish a deliberate no-op — from re-materializing the row,
+                // and the purge drops it from the deck immediately.
+                const viewerPubkey = useBuzzLocalCache.getState().activeViewerPubkey;
+                if (viewerPubkey) markRoomRemovedAndPurge(viewerPubkey, decodedId);
                 void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 returnToRoomList();
               })

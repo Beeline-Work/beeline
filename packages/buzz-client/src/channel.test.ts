@@ -53,11 +53,11 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('listChannelsForPubkey', () => {
   it('discovers both member and admin rooms without duplicates', async () => {
-    let filter: Record<string, unknown> | undefined;
+    const filters: Record<string, unknown>[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0];
+        filters.push(...(JSON.parse(String(init?.body)) as Record<string, unknown>[]));
         return new Response(
           JSON.stringify([
             projection(KIND_CHANNEL_MEMBERS, 'member-room'),
@@ -71,8 +71,11 @@ describe('listChannelsForPubkey', () => {
 
     const channels = await listChannelsForPubkey(ctx, identity.publicKey);
 
-    expect(filter?.kinds).toEqual([KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS]);
-    expect(filter?.['#p']).toEqual([identity.publicKey]);
+    const membershipFilter = filters.find((filter) =>
+      (filter.kinds as number[] | undefined)?.includes(KIND_CHANNEL_MEMBERS),
+    );
+    expect(membershipFilter?.kinds).toEqual([KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS]);
+    expect(membershipFilter?.['#p']).toEqual([identity.publicKey]);
     expect(channels.map(({ channelId }) => channelId)).toEqual(['member-room', 'admin-room']);
   });
 

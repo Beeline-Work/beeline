@@ -167,7 +167,12 @@ describe('buildTurnActivity', () => {
     // Body drops reads/searches to stay under relay quotas and publishes just
     // their counts on the summary event, so this is the *only* source for them.
     const turn = buildTurnActivity([
-      { kind: 'summary', title: 'Summary', text: 'Edited stats.py', rollup: { read: 41, searched: 12 } },
+      {
+        kind: 'summary',
+        title: 'Summary',
+        text: 'Edited stats.py',
+        rollup: { read: 41, searched: 12 },
+      },
       { kind: 'tool', id: 'read-1', title: 'Read file', toolKind: 'read' },
     ]);
 
@@ -286,7 +291,9 @@ describe('buildTurnActivity', () => {
 
 describe('latestCornerPlan', () => {
   it('returns undefined when no message has published a plan (no empty pin)', () => {
-    expect(latestCornerPlan([{ activity: [{ kind: 'output', title: 'Update', text: 'hi' }] }])).toBeUndefined();
+    expect(
+      latestCornerPlan([{ activity: [{ kind: 'output', title: 'Update', text: 'hi' }] }]),
+    ).toBeUndefined();
     expect(latestCornerPlan([])).toBeUndefined();
   });
 
@@ -353,7 +360,10 @@ describe('failure reasons', () => {
   // Output shapes lifted verbatim from the live failure corpus (2026-08-23):
   // body ships the tool result as a JSON envelope on the same wire record.
   const wireOutput = (formatted: string, exitCode?: number) =>
-    JSON.stringify({ formatted_output: formatted, ...(exitCode !== undefined ? { exit_code: exitCode } : {}) });
+    JSON.stringify({
+      formatted_output: formatted,
+      ...(exitCode !== undefined ? { exit_code: exitCode } : {}),
+    });
 
   it('names the missing command instead of a bare FAILED', () => {
     const turn = buildTurnActivity([
@@ -371,6 +381,21 @@ describe('failure reasons', () => {
       weight: 'failure',
       reason: 'command not found: vitest',
     });
+  });
+
+  it('recognizes the alternate shell command-not-found shape', () => {
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'f1b',
+        title: 'fast gate',
+        toolKind: 'execute',
+        status: 'failed',
+        command: 'pnpm fast-gate',
+        output: wireOutput('pnpm: command not found', 127),
+      },
+    ]);
+    expect(turn.steps[0]?.reason).toBe('command not found: pnpm');
   });
 
   it('says a read-only path was blocked, not just that something failed', () => {
@@ -404,7 +429,7 @@ describe('failure reasons', () => {
         ),
       },
     ]);
-    expect(turn.actions[0]?.reason).toBe("missing dependency: @beeline/buzz-client");
+    expect(turn.actions[0]?.reason).toBe('missing dependency: @beeline/buzz-client');
   });
 
   it('falls back to the first error line with the exit code', () => {
@@ -421,7 +446,7 @@ describe('failure reasons', () => {
         ),
       },
     ]);
-    expect(turn.actions[0]?.reason).toContain('exited 127');
+    expect(turn.actions[0]?.reason).toBe('exit 127');
   });
 
   it('derives the reason at the projection level, from the real activity_batch envelope', () => {
@@ -437,7 +462,10 @@ describe('failure reasons', () => {
             kind: 'execute',
             status: 'failed',
             command: 'git commit -m "fix"',
-            output: wireOutput("fatal: Unable to create '/r/.git/index.lock': Read-only file system", 128),
+            output: wireOutput(
+              "fatal: Unable to create '/r/.git/index.lock': Read-only file system",
+              128,
+            ),
           },
         ],
       },
@@ -451,8 +479,117 @@ describe('failure reasons', () => {
 
   it('leaves successful actions without a reason', () => {
     const turn = buildTurnActivity([
-      { kind: 'tool', id: 'ok', title: 'Run tests', toolKind: 'execute', status: 'completed', output: '12 passed' },
+      {
+        kind: 'tool',
+        id: 'ok',
+        title: 'Run tests',
+        toolKind: 'execute',
+        status: 'completed',
+        output: '12 passed',
+      },
     ]);
     expect(turn.actions[0]?.reason).toBeUndefined();
+  });
+
+  it('honors a completed status when successful output says zero errors', () => {
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'zero-errors',
+        title: 'Run typecheck',
+        toolKind: 'execute',
+        status: 'completed',
+        output: 'TypeScript found 0 errors.',
+      },
+    ]);
+
+    expect(turn.steps[0]?.outcome).toBe('success');
+    expect(turn.steps[0]?.reason).toBeUndefined();
+  });
+
+  it('strips ANSI, lifecycle wrappers, and stack noise before choosing the diagnostic line', () => {
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'wrapped',
+        title: 'fast gate',
+        toolKind: 'execute',
+        status: 'failed',
+        output:
+          '\u001b[31mERR_PNPM_RECURSIVE_RUN_FIRST_FAIL\u001b[0m\n' +
+          'npm error code 1\n' +
+          'src/gateway.ts(4,2): error TS2322: Type string is not assignable to number\n' +
+          '    at run (/repo/node_modules/tool.js:1:1)\n' +
+          'ELIFECYCLE Command failed',
+      },
+    ]);
+
+    expect(turn.steps[0]?.reason).toBe(
+      'src/gateway.ts(4,2): error TS2322: Type string is not assignable to number',
+    );
+  });
+});
+
+describe('one-line ledger projection', () => {
+  it('keeps tool order while terminal updates replace their running state', () => {
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'a',
+        title: 'execute',
+        toolKind: 'execute',
+        command: 'npm run typecheck',
+        status: 'in_progress',
+      },
+      {
+        kind: 'tool',
+        id: 'b',
+        title: 'Read file',
+        toolKind: 'read',
+        input: '/repo/src/gateway.ts',
+        status: 'completed',
+      },
+      {
+        kind: 'tool',
+        id: 'a',
+        title: 'execute',
+        toolKind: 'execute',
+        command: 'npm run typecheck',
+        status: 'completed',
+        output: 'clean',
+      },
+    ]);
+
+    expect(turn.steps.map((step) => [step.id, step.label, step.outcome])).toEqual([
+      ['a', 'type checks', 'success'],
+      ['b', 'read gateway.ts', 'success'],
+    ]);
+  });
+
+  it('caps every derived label at forty characters', () => {
+    const turn = buildTurnActivity([
+      {
+        kind: 'tool',
+        id: 'long',
+        title: 'Reviewing an extremely verbose generated integration surface for compatibility',
+      },
+    ]);
+    expect(turn.steps[0]?.label.length).toBeLessThanOrEqual(40);
+  });
+
+  it('projects historical thought receipts as normal timed ledger steps', () => {
+    const turn = buildTurnActivity([
+      { kind: 'thinking', title: 'Thinking', text: 'Reasoning text when available' },
+      { kind: 'summary', title: 'Summary', thoughtMs: 51_000 },
+    ]);
+    expect(turn.steps).toMatchObject([
+      {
+        kind: 'thought',
+        label: 'thought',
+        outcome: 'success',
+        durationMs: 51_000,
+        output: 'Reasoning text when available',
+      },
+    ]);
   });
 });

@@ -51,6 +51,7 @@ import {
   slugifyCornerTask,
   createAgentSubchannel,
   cornerOpenTaskPrompt,
+  cornerTurnPrompt,
   taskDescriptionFromCornerRequest,
   taskSlugForCornerIntent,
   isChannelAddressedMessage,
@@ -3077,6 +3078,26 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(prompt).toContain('Never claim that an action or agent exchange happened');
   });
 
+  it.each([
+    ['Room', roomTurnPrompt],
+    ['corner', cornerTurnPrompt],
+  ] as const)('quotes only the six newest %s shared-context messages', (_surface, turnPrompt) => {
+    const transcript = Array.from({ length: 8 }, (_, index) => ({
+      role: 'user',
+      text: `[Person ${index}]: context-${index}`,
+      eventId: `context-${index}`,
+      at: new Date(index * 1_000).toISOString(),
+    }));
+
+    const prompt = turnPrompt(transcript, '[Person current]: answer this', 'current');
+
+    expect(prompt).not.toContain('context-0');
+    expect(prompt).not.toContain('context-1');
+    for (let index = 2; index < 8; index++) {
+      expect(prompt).toContain(`context-${index}`);
+    }
+  });
+
   it('seeds a corner task prompt with only the bounded objective and opening request', () => {
     const prompt = cornerOpenTaskPrompt(
       'add retry logic to the sync loop',
@@ -5714,7 +5735,7 @@ describe('corner narrative persistence', () => {
     expect(conciseCornerTurnSummary('```\nconsole.log("fixed");\n```')).toBe('');
   });
 
-  it('narrates a follow-up corner turn started fresh (no active run) the same as the primary turn', async () => {
+  it('preserves an untagged solo-human corner turn started fresh (no active run)', async () => {
     const published = stubPublishing();
     const agent = newIdentity('steer-narration-agent');
     const human = newIdentity('steer-human');
@@ -8542,6 +8563,82 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       human.secretKey,
     );
   }
+
+  it('keeps unaddressed multi-human corner chatter as context for the next mention', async () => {
+    const agent = newIdentity('addressed-corner-agent');
+    const firstHuman = newIdentity('addressed-corner-first-human');
+    const secondHuman = newIdentity('addressed-corner-second-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-addressing-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const sessionSteer = vi.fn().mockResolvedValue(undefined);
+      const session = {
+        channelId: 'corner-addressing',
+        sessionId: 'session-addressing',
+        client: {
+          sessionSteer,
+          sessionCancel: vi.fn(),
+          activeRunId: () => 'run-1',
+        },
+      } as never;
+      body.registerSubchannel({
+        subchannelId: 'corner-addressing',
+        worktreePath: '/tmp/nonexistent-corner-addressing',
+        featureBranch: 'feature/addressing',
+        role: agent,
+        session,
+        lastPolledAt: 0,
+        archived: false,
+        participantPubkeys: [agent.publicKey, firstHuman.publicKey, secondHuman.publicKey],
+      });
+      const now = Math.floor(Date.now() / 1_000);
+      const chatter = memberMessage(
+        firstHuman,
+        'corner-addressing',
+        'Lunch is at noon.',
+        now,
+      );
+      const mention = signEvent(
+        {
+          pubkey: secondHuman.publicKey,
+          created_at: now + 1,
+          kind: 9,
+          tags: [
+            ['h', 'corner-addressing'],
+            ['p', agent.publicKey],
+          ],
+          content: '@agent should we change the retry policy?',
+        },
+        secondHuman.secretKey,
+      );
+      const queryEvents = vi
+        .fn()
+        .mockResolvedValueOnce([chatter])
+        .mockResolvedValueOnce([mention]);
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = queryEvents;
+      const durableState = Reflect.get(body, 'durableState') as {
+        conversation: (channelId: string) => Promise<{ eventId?: string; text: string }[]>;
+        delivered: (channelId: string, eventId: string) => Promise<void>;
+      };
+      const delivered = vi.spyOn(durableState, 'delivered');
+
+      expect(await body.pollMembers('corner-addressing')).toBe(0);
+      expect(sessionSteer).not.toHaveBeenCalled();
+      expect(await durableState.conversation('corner-addressing')).toEqual(
+        expect.arrayContaining([expect.objectContaining({ eventId: chatter.id })]),
+      );
+      expect(delivered).toHaveBeenCalledWith('corner-addressing', chatter.id);
+
+      expect(await body.pollMembers('corner-addressing')).toBe(1);
+      expect(sessionSteer).toHaveBeenCalledOnce();
+      const addressedPrompt = sessionSteer.mock.calls[0]![1] as string;
+      expect(addressedPrompt).toContain('Lunch is at noon.');
+      expect(addressedPrompt).toContain('@agent should we change the retry policy?');
+      expect(addressedPrompt).toContain('context only');
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 
   it('queues mid-turn corner steers as ordered next prompts instead of dropping them', async () => {
     const published = stubPublishing();

@@ -107,10 +107,10 @@ describe('the daemon-published agent state notices stay deleted', () => {
     expect(reconnectCatch).not.toContain('postControlMessage');
   });
 
-  it('uses one quiet supervisor notice for an unservable repository Room', () => {
-    const reconcile = supervisor.slice(
-      supervisor.indexOf('async reconcile('),
-      supervisor.indexOf('private roomRoot('),
+  it('uses one quiet runtime notice for an unservable repository Room', () => {
+    const reconcile = daemon.slice(
+      daemon.indexOf('async reconcile('),
+      daemon.indexOf('private roomRoot('),
     );
     expect(reconcile.length).toBeGreaterThan(0);
     expect(reconcile).toContain('.messageSubmit(');

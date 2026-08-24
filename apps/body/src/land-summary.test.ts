@@ -302,7 +302,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 /**

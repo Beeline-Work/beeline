@@ -5,7 +5,9 @@ import { readFileSync, existsSync } from 'node:fs';
  * The broad daemon-published agent state-notice feature is DELETED and must
  * stay deleted. Repository join refusal is the one narrow exception: if the
  * daemon never joins, presence alone looks like an ignored mention, so the
- * Room runtime publishes one deduplicated, factual retry notice.
+ * Room runtime publishes one deduplicated, factual retry notice. Routine
+ * update, restart, join-success, and self-update progress belong in status
+ * records and logs, never Room chat.
  *
  * `agent-state-messages.ts` (#231) mapped five real daemon states —
  * relay-disconnected, harness-auth-missing, harness-unavailable,
@@ -90,6 +92,18 @@ describe('the daemon-published agent state notices stay deleted', () => {
     }
   });
 
+  it('keeps routine update, restart, and join-success chatter out of Room chat', () => {
+    const selfUpdate = src('./self-update.ts');
+    for (const symbol of ['notifyRooms', 'broadcastDaemonNotice', 'pendingOwnerGrantNotice']) {
+      expect(`${selfUpdate}\n${daemon}`, `daemon sources still reference ${symbol}`).not.toContain(
+        symbol,
+      );
+    }
+    expect(daemon).not.toContain("this Room's repository link is complete");
+    expect(selfUpdate).not.toContain('postAgentMessage');
+    expect(selfUpdate).not.toContain('postControlMessage');
+  });
+
   /**
    * The reconnect loop is where the wall came from, so this asserts the shape
    * and not just the string: whatever that catch block grows later, it reports
@@ -119,5 +133,6 @@ describe('the daemon-published agent state notices stay deleted', () => {
     expect(reconcile).toContain('I will retry automatically in ${discovery.retryLabel}.');
     expect(reconcile).toContain("'10 minutes'");
     expect(reconcile).not.toContain("I can't get to this room's repo");
+    expect(reconcile.match(/\.messageSubmit\(/g)).toHaveLength(1);
   });
 });

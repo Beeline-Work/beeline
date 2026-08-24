@@ -55,7 +55,11 @@ The installed template uses `Type=notify`, `Restart=always`, a 5–60 second
 restart backoff, start limiting, `WatchdogSec=180s`, `TimeoutStopSec=10min`,
 `KillMode=control-group`, and `RestartPreventExitStatus=78`. `NotifyAccess=all`
 allows the bounded `systemd-notify` helper child to deliver the main process's
-notifications.
+notifications. Installation requires Node.js 20.11 or newer and records the
+installing CLI's absolute Node directory first in the unit's `PATH`, so a system
+Node version does not replace the operator-selected fnm/nvm runtime. A manual
+systemd PATH drop-in is no longer needed; the next `beeline start` or
+`beeline pair` regenerates the template with the pinned runtime.
 
 ## One-time host migration after merge and deploy
 

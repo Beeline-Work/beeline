@@ -2,6 +2,9 @@ export type MentionableAgent = { pubkey: string; name: string; handle?: string }
 type RoomRosterMember = { pubkey: string };
 type RoomParticipant = RoomRosterMember & { kind: 'person' | 'agent' };
 
+export const CORNER_WITHOUT_HUMAN_ERROR =
+  'Membership error: this corner has no person. A corner must include the human who opened it.';
+
 export type MentionCandidate = {
   name: string;
   handle: string;
@@ -82,41 +85,11 @@ export function replaceActiveMention(
   };
 }
 
-/**
- * Resolve person-facing Room participants from direct Room membership.
- * Workspace Rooms exclude infrastructure-only keys that have Room authority
- * but are neither a Workspace person nor a registered Agent.
- */
+/** Direct Room membership is the roster authority; secondary identity reads only classify it. */
 export function roomParticipantPubkeys(
   roomMemberPubkeys: ReadonlySet<string>,
-  workspacePeople?: readonly RoomRosterMember[],
-  workspaceAgents?: readonly RoomRosterMember[],
-  /**
-   * The person reading the screen. They are in this Room — they are reading and
-   * writing in it — so no Workspace roster read is allowed to conclude
-   * otherwise.
-   *
-   * The visibility filter exists to hide infrastructure keys that hold Room
-   * authority without being a person or a registered agent, and it decides
-   * that by asking whether the key appears in the Workspace's people/agents
-   * lists. Those lists are a separate relay read: slow, partial or failed, and
-   * the filter quietly removes whoever is missing from them — which is how the
-   * captain came to be absent from the roster of their own Room. Being the
-   * viewer is direct evidence no roster can outrank.
-   */
-  viewerPubkey?: string,
 ): Set<string> {
-  if (!workspacePeople && !workspaceAgents) return new Set(roomMemberPubkeys);
-
-  const visiblePubkeys = new Set([
-    ...(workspacePeople ?? []).map((member) => member.pubkey),
-    ...(workspaceAgents ?? []).map((agent) => agent.pubkey),
-  ]);
-  return new Set(
-    [...roomMemberPubkeys].filter(
-      (pubkey) => visiblePubkeys.has(pubkey) || (Boolean(viewerPubkey) && pubkey === viewerPubkey),
-    ),
-  );
+  return new Set(roomMemberPubkeys);
 }
 
 /** Keep one Workspace roster, ordered as current Room members followed by addable members. */
@@ -143,6 +116,26 @@ export function sectionRoomParticipants<T extends RoomParticipant>(
     people: participants.filter((participant) => participant.kind === 'person'),
     agents: participants.filter((participant) => participant.kind === 'agent'),
   };
+}
+
+/** A corner without a directly resolved person is corrupt, not a normal agent-only roster. */
+export function cornerHumanMembershipError(
+  participants: readonly RoomParticipant[],
+): string | undefined {
+  return participants.some((participant) => participant.kind === 'person')
+    ? undefined
+    : CORNER_WITHOUT_HUMAN_ERROR;
+}
+
+/** Log the invariant violation once from a lifecycle-aware UI effect and return its visible copy. */
+export function reportCornerHumanMembershipError(
+  channelId: string,
+  participants: readonly RoomParticipant[],
+  log: (message: string) => void = console.error,
+): string | undefined {
+  const error = cornerHumanMembershipError(participants);
+  if (error) log(`[mobile] corner ${channelId}: ${error}`);
+  return error;
 }
 
 /** Slack-style participant copy: five names at most, with overflow folded into the fifth slot. */

@@ -318,8 +318,7 @@ async function enrichDisplayChannels(
   const cachedCornersByRoom = new Map(
     cachedChannels.map((room) => [room.id, room.corners ?? []] as const),
   );
-  const [workspacePeople, workspaceAgents, cornersByRoom] = await Promise.all([
-    activeCommunityId ? client.communityMembers(activeCommunityId) : Promise.resolve(undefined),
+  const [workspaceAgents, cornersByRoom] = await Promise.all([
     activeCommunityId ? client.listAgents(activeCommunityId) : Promise.resolve(undefined),
     // One cross-Room batched fetch for every Room's corners instead of one
     // call graph per Room.
@@ -380,8 +379,7 @@ async function enrichDisplayChannels(
             : (room.createdAt ?? room.updatedAt),
         participantCount:
           members.status === 'fulfilled'
-            ? roomParticipantPubkeys(new Set(roomMemberPubkeys), workspacePeople, workspaceAgents)
-                .size
+            ? roomParticipantPubkeys(new Set(roomMemberPubkeys)).size
             : 0,
         repoName: mergedRepoName(
           room.repoName,

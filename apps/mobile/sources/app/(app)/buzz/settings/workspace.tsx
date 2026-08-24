@@ -29,6 +29,7 @@ import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buz
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { SettingsNavigationRow } from '@/components/buzz/SettingsNavigationRow';
+import { RoomGlyph } from '@/components/buzz/RoomGlyph';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -408,7 +409,7 @@ export default function WorkspaceSettings() {
           <View style={styles.section} testID="channel-visibility-settings">
             <Text style={styles.sectionLabel}>{ROOM_LABEL.toUpperCase()} VISIBILITY</Text>
             <SettingsNavigationRow
-              glyph="⌑"
+              glyph={<RoomGlyph color={theme.buzz.chrome} size={18} />}
               label={`${ROOM_LABEL}s`}
               supportingCopy="Create, rename, archive, and manage participants."
               onPress={() =>
@@ -421,7 +422,9 @@ export default function WorkspaceSettings() {
               const nextVisibility = room.visibility === 'public' ? 'invite-only' : 'public';
               return (
                 <View key={room.id} style={styles.roomRow}>
-                  <Text accessibilityElementsHidden style={styles.roomMark}>⌑</Text>
+                  <View accessibilityElementsHidden style={styles.roomMark}>
+                    <RoomGlyph color={theme.buzz.chrome} size={18} />
+                  </View>
                   <View style={styles.roomCopy}>
                     <TouchableOpacity
                       accessibilityLabel={`Open ${ROOM_LABEL} ${room.name}`}
@@ -645,13 +648,10 @@ const styles = StyleSheet.create((theme) => {
     borderTopColor: groknight.border,
   },
   roomMark: {
-    ...Typography.mono('semiBold'),
     width: 30,
     flexShrink: 0,
-    color: groknight.chrome,
-    fontSize: 15,
-    lineHeight: 21,
-    textAlign: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   roomCopy: { flex: 1, minWidth: 0, paddingHorizontal: 10 },
   roomLink: { minHeight: 44, justifyContent: 'center' },

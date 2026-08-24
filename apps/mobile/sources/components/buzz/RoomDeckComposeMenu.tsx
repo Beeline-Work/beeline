@@ -9,8 +9,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
+import Svg, { Circle, Path, Polygon, Rect } from 'react-native-svg';
 import brand from '@/buzz/brand.json';
 import { HullActionSheet } from '@/components/buzz/HullActionSheet';
+import { RoomGlyph } from '@/components/buzz/RoomGlyph';
 import { Typography } from '@/constants/Typography';
 
 export type RoomDeckComposeAction = 'message' | 'room' | 'invite' | 'agent' | 'join';
@@ -25,33 +27,17 @@ type ComposeOption = {
   description: string;
 };
 
-const COMPOSE_GROUPS: readonly { label: string; options: readonly ComposeOption[] }[] = [
-  {
-    label: 'START',
-    options: [
-      { action: 'message', label: 'Message', description: 'Direct message a person' },
-      { action: 'room', label: 'Room', description: 'New room in this workspace' },
-    ],
-  },
-  {
-    label: 'WORKSPACE',
-    options: [
-      { action: 'invite', label: 'Invite', description: 'Bring a person into the workspace' },
-      { action: 'agent', label: 'Agent', description: 'Seat an agent here' },
-      { action: 'join', label: 'Join', description: 'Paste a Workspace invite' },
-    ],
-  },
+const COMPOSE_OPTIONS: readonly ComposeOption[] = [
+  { action: 'message', label: 'Message', description: 'Direct message a person' },
+  { action: 'room', label: 'Room', description: 'New room in this workspace' },
+  { action: 'invite', label: 'Invite', description: 'Bring a person into the workspace' },
+  { action: 'agent', label: 'Agent', description: 'Seat an agent here' },
+  { action: 'join', label: 'Join', description: 'Paste a Workspace invite' },
 ] as const;
 
-const ACTION_GLYPHS: Record<RoomDeckComposeAction, string> = {
-  message: '○',
-  room: '⌑',
-  invite: '○',
-  agent: '△',
-  join: '▢',
-};
-
 const GLYPH_ROTATION_MS = 180;
+const GLYPH_SIZE = 24;
+const GLYPH_STROKE_WIDTH = 1.25;
 
 /**
  * Flat hull compose affordance for the Room deck. The open copy of the FAB
@@ -110,35 +96,28 @@ export function RoomDeckComposeMenu({ onSelect }: RoomDeckComposeMenuProps) {
               style={[styles.sheet, { bottom: 88 + insets.bottom }]}
               testID="room-deck-compose-sheet"
             >
-              {COMPOSE_GROUPS.map((group, groupIndex) => (
-                <View
-                  key={group.label}
-                  style={[styles.group, groupIndex > 0 && styles.groupSpacing]}
-                  testID={`room-deck-compose-group-${group.label.toLowerCase()}`}
-                >
-                  <Text style={styles.groupLabel}>{group.label}</Text>
-                  {group.options.map((option) => (
-                    <TouchableOpacity
-                      accessibilityLabel={`${option.label}. ${option.description}`}
-                      accessibilityRole="button"
-                      key={option.action}
-                      onPress={() => choose(option.action)}
-                      style={styles.option}
-                      testID={`room-deck-compose-${option.action}`}
-                    >
-                      <View style={styles.glyphColumn}>
-                        <ComposeGlyph action={option.action} />
-                      </View>
-                      <View style={styles.optionCopy}>
-                        <Text style={styles.optionLabel}>{option.label}</Text>
-                        <Text numberOfLines={1} style={styles.optionDescription}>
-                          {option.description}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ))}
+              <View style={styles.optionList} testID="room-deck-compose-options">
+                {COMPOSE_OPTIONS.map((option) => (
+                  <TouchableOpacity
+                    accessibilityLabel={`${option.label}. ${option.description}`}
+                    accessibilityRole="button"
+                    key={option.action}
+                    onPress={() => choose(option.action)}
+                    style={styles.option}
+                    testID={`room-deck-compose-${option.action}`}
+                  >
+                    <View style={styles.glyphColumn}>
+                      <ComposeGlyph action={option.action} />
+                    </View>
+                    <View style={styles.optionCopy}>
+                      <Text style={styles.optionLabel}>{option.label}</Text>
+                      <Text numberOfLines={1} style={styles.optionDescription}>
+                        {option.description}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </HullActionSheet>
 
             <TouchableOpacity
@@ -162,7 +141,49 @@ export function RoomDeckComposeMenu({ onSelect }: RoomDeckComposeMenuProps) {
 }
 
 function ComposeGlyph({ action }: { action: RoomDeckComposeAction }) {
-  return <Text style={styles.glyph}>{ACTION_GLYPHS[action]}</Text>;
+  if (action === 'room') {
+    return <RoomGlyph size={GLYPH_SIZE} testID="room-deck-compose-glyph-room" />;
+  }
+
+  const common = {
+    fill: 'none',
+    stroke: brand.mark,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    strokeWidth: GLYPH_STROKE_WIDTH,
+  };
+
+  return (
+    <Svg
+      accessibilityElementsHidden
+      focusable={false}
+      height={GLYPH_SIZE}
+      testID={`room-deck-compose-glyph-${action}`}
+      viewBox="0 0 24 24"
+      width={GLYPH_SIZE}
+    >
+      {action === 'message' && (
+        <>
+          <Rect {...common} x="3.5" y="5.5" width="17" height="13" rx="0.75" />
+          <Path {...common} d="M4 7l8 6 8-6" />
+        </>
+      )}
+      {action === 'invite' && (
+        <Path
+          {...common}
+          d="M5 19c-1-3.6.1-6.4 3.2-7.8 3.2-1.4 6.3.2 6.3 3 0 2.7-3 4.4-5.9 3-2.8-1.4-3-5.2-.9-7.8 2.3-2.9 7-2.5 9.8-5.3.8-.8 1.3-1.6 1.5-2.1"
+        />
+      )}
+      {action === 'agent' && <Polygon {...common} points="12 4.5 20 19.5 4 19.5" />}
+      {action === 'join' && (
+        <>
+          <Path {...common} d="M5 20V4h13v16" />
+          <Path {...common} d="M8 20V6.5L16 5v15Z" />
+          <Circle {...common} cx="13.8" cy="12.7" r="0.45" />
+        </>
+      )}
+    </Svg>
+  );
 }
 
 const styles = StyleSheet.create((theme) => {
@@ -178,17 +199,7 @@ const styles = StyleSheet.create((theme) => {
       alignSelf: 'center',
       paddingVertical: 8,
     },
-    group: { paddingHorizontal: 8 },
-    groupSpacing: { marginTop: 12 },
-    groupLabel: {
-      ...Typography.mono('semiBold'),
-      height: 22,
-      paddingHorizontal: 44,
-      color: groknight.textMuted,
-      fontSize: 9,
-      lineHeight: 22,
-      letterSpacing: 0.8,
-    },
+    optionList: { paddingHorizontal: 8 },
     option: {
       minHeight: 68,
       paddingHorizontal: 8,
@@ -201,12 +212,6 @@ const styles = StyleSheet.create((theme) => {
       flexShrink: 0,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    glyph: {
-      ...Typography.mono('semiBold'),
-      color: brand.mark,
-      fontSize: 20,
-      lineHeight: 24,
     },
     optionCopy: { flex: 1, minWidth: 0 },
     optionLabel: {

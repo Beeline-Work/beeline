@@ -52,6 +52,7 @@ import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
+import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
 import {
   NO_ACTIVITY_PREVIEW,
   finishedRoomEntries,
@@ -454,6 +455,11 @@ export default function BuzzChannels() {
   const visibleRefreshGeneration = useRef<number | null>(null);
   const readAt = useRoomReadState((state) => state.readAt);
   const markRoomRead = useRoomReadState((state) => state.markRoomRead);
+  // Durable local tombstones: Rooms this viewer deleted/left. The relay may
+  // keep returning an archived Room (its membership projection can still name
+  // us after a refused leave), so the deck itself filters these out on every
+  // build — cache seed, refresh, and restart alike.
+  const removedAt = useRemovedRooms((state) => state.removedAt);
   // The Room the reader just left. Marking read on the way *back* — not on the
   // way in — is what keeps a message you sent, or one that arrived while you
   // were looking at it, from lighting the row up as unread on return.
@@ -495,15 +501,18 @@ export default function BuzzChannels() {
     return names;
   }, [cachedListEntry?.workspaceMembers, identity?.publicKey]);
   const roomSections = useMemo(() => {
-    const visible = displayChannels.map((room) => ({
-      ...room,
-      unreadNew: unreadCountFor(room, identity?.publicKey, readAt),
-    }));
+    const viewerKey = identity?.publicKey ?? cachedListEntry?.viewerPubkey;
+    const visible = displayChannels
+      .filter((room) => !isRoomRemoved(removedAt, viewerKey, room.id))
+      .map((room) => ({
+        ...room,
+        unreadNew: unreadCountFor(room, identity?.publicKey, readAt),
+      }));
     return {
       sections: roomListSections(visible, authorNames, { now: ageNow }),
       finished: finishedRoomEntries(visible, authorNames),
     };
-  }, [ageNow, authorNames, displayChannels, identity?.publicKey, readAt]);
+  }, [ageNow, authorNames, cachedListEntry?.viewerPubkey, displayChannels, identity?.publicKey, readAt, removedAt]);
   // One projection, one consumer each: inline tiers vs the collapsed entry.
   // Kept as separate names so the JSX below stays flat.
   const finishedRooms = roomSections.finished;

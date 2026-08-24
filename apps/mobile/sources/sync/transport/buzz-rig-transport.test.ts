@@ -205,6 +205,51 @@ describe('Buzz branch-loop event projection', () => {
 });
 
 describe('Buzz transport bootstrap', () => {
+  it('resolves an agent command record through the Room workspace root', async () => {
+    const identity = {
+      publicKey: 'd'.repeat(64),
+      secretKey: new Uint8Array(32).fill(4),
+      name: 'operator',
+    } as Identity;
+    const commandList = {
+      communityId: 'workspace-root',
+      agentPubkey: 'agent-pubkey',
+      commands: [{ name: 'review', description: 'Review the diff' }],
+      updatedAt: 42,
+      raw: {
+        tags: [['d', 'workspace-root:agent-pubkey']],
+      },
+    };
+    const client = {
+      getChannelCommunityId: vi.fn(async () => 'workspace-root'),
+      getAgentCommands: vi.fn(async () => commandList),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.agentCommandsRead('room-id', 'agent-pubkey')).resolves.toBe(commandList);
+    expect(client.getChannelCommunityId).toHaveBeenCalledWith('room-id');
+    expect(client.getAgentCommands).toHaveBeenCalledWith('workspace-root', 'agent-pubkey');
+  });
+
+  it('does not turn a failed Workspace-scope read into a missing command record', async () => {
+    const identity = {
+      publicKey: 'd'.repeat(64),
+      secretKey: new Uint8Array(32).fill(4),
+      name: 'operator',
+    } as Identity;
+    const error = new Error('relay unavailable');
+    const client = {
+      getChannelCommunityId: vi.fn(async () => Promise.reject(error)),
+      getAgentCommands: vi.fn(),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.agentCommandsRead('room-id', 'agent-pubkey')).rejects.toBe(error);
+    expect(client.getAgentCommands).not.toHaveBeenCalled();
+  });
+
   it('publishes replies with NIP-10 linkage and an explicit Agent address', async () => {
     const identity = {
       publicKey: 'd'.repeat(64),

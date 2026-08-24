@@ -48,6 +48,8 @@ export interface MergeRequest {
   featureBranch: string;
   /** Authenticated relay reader; defaults to one bound to `worker`. */
   relay?: RelayReader;
+  /** Signed approvals delivered live before the relay query projection caught up. */
+  approvalEvents?: readonly NostrEvent[];
 }
 
 export interface MergeOutcome {
@@ -159,7 +161,7 @@ async function cloneFresh(req: MergeRequest): Promise<string> {
 /** Fetch the approvals the reviewer posted for this repo/channel. */
 async function fetchApprovals(req: MergeRequest): Promise<NostrEvent[]> {
   const relay = req.relay ?? createRelayClient(req.worker);
-  return relay.queryEvents([
+  const queried = await relay.queryEvents([
     {
       kinds: [KIND_STREAM_MESSAGE],
       authors: [req.trustedReviewer],
@@ -167,6 +169,9 @@ async function fetchApprovals(req: MergeRequest): Promise<NostrEvent[]> {
       '#t': [APPROVAL_MARKER],
     },
   ]);
+  const approvals = new Map(queried.map((event) => [event.id, event]));
+  for (const event of req.approvalEvents ?? []) approvals.set(event.id, event);
+  return [...approvals.values()];
 }
 
 /**
@@ -283,6 +288,12 @@ export interface RoomMergeAttempt {
   outcome: MergeOutcome;
 }
 
+export interface RoomMergeAttemptStart {
+  candidate: RoomMergeCandidate;
+  approvalId: string;
+  reviewer: string;
+}
+
 function tagValue(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
 }
@@ -337,7 +348,10 @@ export class DurableMergeGate {
     this.relay = config.relay ?? createRelayClient(config.worker);
   }
 
-  async poll(): Promise<RoomMergeAttempt[]> {
+  async poll(
+    pushedApprovals: readonly NostrEvent[] = [],
+    hooks: { onAttemptStart?: (attempt: RoomMergeAttemptStart) => Promise<void> | void } = {},
+  ): Promise<RoomMergeAttempt[]> {
     const roomEvents = await this.relay.queryEvents([
       {
         kinds: [KIND_STREAM_MESSAGE],
@@ -374,7 +388,7 @@ export class DurableMergeGate {
       );
       if (targetTip === featureTip) continue;
 
-      const approvals = await this.relay.queryEvents([
+      const queriedApprovals = await this.relay.queryEvents([
         {
           kinds: [KIND_STREAM_MESSAGE],
           '#h': [candidate.subchannelId],
@@ -382,6 +396,9 @@ export class DurableMergeGate {
           limit: 100,
         },
       ]);
+      const approvalsById = new Map(queriedApprovals.map((event) => [event.id, event]));
+      for (const event of pushedApprovals) approvalsById.set(event.id, event);
+      const approvals = [...approvalsById.values()];
       const exactTarget: MergeTarget = { repo: targetRepo, branch: targetRef, tip: featureTip };
       for (const approval of approvals) {
         if (
@@ -390,6 +407,11 @@ export class DurableMergeGate {
         ) {
           continue;
         }
+        await hooks.onAttemptStart?.({
+          candidate,
+          approvalId: approval.id,
+          reviewer: approval.pubkey,
+        });
         const outcome = await serializeRepoLanding(targetRepo, () =>
           attemptMerge({
             worker: this.config.worker,
@@ -401,6 +423,7 @@ export class DurableMergeGate {
             targetBranch: shortTargetBranch(this.config.targetBranch),
             featureBranch: candidate.featureBranch,
             relay: this.relay,
+            approvalEvents: [approval],
           }),
         );
         attempts.push({

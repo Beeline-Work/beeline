@@ -23,6 +23,7 @@ import { buildApproval as gateBuildApproval, newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
 import { Body } from './body.js';
 import { APPROVAL_ACK_TAG } from './body.js';
+import { filterRelayEvents } from './relay-test-helper.js';
 
 const KIND_CHANNEL_ADMINS = 39001;
 
@@ -129,15 +130,13 @@ function buildApproval(
 /** Relay stub answering approval scans, admin projections (reviewer is a human
  *  admin), and agent-registry lookups (the reviewer is NOT an agent). */
 function stubAgentRelay(approvals: NostrEvent[], adminPubkeys: string[]) {
+  const published: NostrEvent[] = [];
   const adminProjection = signEvent(
     {
       pubkey: adminPubkeys[0] ?? 'a'.repeat(64),
       created_at: Math.floor(Date.now() / 1000),
       kind: KIND_CHANNEL_ADMINS,
-      tags: [
-        ['d', 'corner-ack'],
-        ...adminPubkeys.map((pubkey) => ['p', pubkey, 'admin']),
-      ],
+      tags: [['d', 'corner-ack'], ...adminPubkeys.map((pubkey) => ['p', pubkey, 'admin'])],
       content: '',
     },
     // The projection's own signature is not verified by resolveChannelRole.
@@ -151,8 +150,12 @@ function stubAgentRelay(approvals: NostrEvent[], adminPubkeys: string[]) {
         return approvals;
       }
       if (kinds.includes(KIND_CHANNEL_ADMINS)) return [adminProjection];
+      if (kinds.includes(30078)) return filterRelayEvents(published, filters);
       // Agent-identity registry lookup for the reviewer: empty → human.
       return [];
+    },
+    publishEvent: async (event: NostrEvent) => {
+      published.push(event);
     },
   };
 }
@@ -169,8 +172,14 @@ describe('approval consumption acknowledges the human', () => {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const body = JSON.parse(String(init?.body)) as NostrEvent;
+        if (url.includes('/query') || body.kind !== 9 || !Array.isArray(body.tags)) {
+          return new Response(JSON.stringify([]), { status: 200 });
+        }
+        published.push(body);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
     );
@@ -270,11 +279,7 @@ describe('approval consumption acknowledges the human', () => {
         branch: 'refs/heads/master',
         tip,
       });
-      Reflect.set(
-        body,
-        'agentRelay',
-        stubAgentRelay([otherCornerApproval], [reviewer.publicKey]),
-      );
+      Reflect.set(body, 'agentRelay', stubAgentRelay([otherCornerApproval], [reviewer.publicKey]));
 
       const found = await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
 
@@ -510,6 +515,155 @@ describe('approval consumption acknowledges the human', () => {
       expect(info.cornerState).toEqual({ state: 'working' });
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('event-driven approval pickup', () => {
+  async function readyCorner(options: { suspended?: boolean } = {}) {
+    const agent = newIdentity(`wake-agent-${options.suspended ? 'suspended' : 'live'}`);
+    const reviewer = newIdentity(`wake-reviewer-${options.suspended ? 'suspended' : 'live'}`);
+    const fixture = localOnlyRepoWithCorner();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const body = newBody(agent, join(fixture.root, 'state.json'));
+    const info = cornerInfo(agent, fixture.repoPath, fixture.cornerPath, fixture.tip);
+    info.mergeTarget = undefined as never;
+    if (options.suspended) info.session.processState = 'suspended';
+    body.registerSubchannel(info as never);
+    const approvals: NostrEvent[] = [];
+    Reflect.set(body, 'agentRelay', stubAgentRelay(approvals, [reviewer.publicKey]));
+    await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
+    const approval = buildApproval(reviewer, fixture.tip, info.mergeTarget?.patchId);
+    return { ...fixture, body, info, approval, approvals, published };
+  }
+
+  function activityStages(events: NostrEvent[]): string[] {
+    return events
+      .filter((event) => event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity'))
+      .map((event) => event.tags.find((tag) => tag[0] === 'delivery-stage')?.[1])
+      .filter((stage): stage is string => Boolean(stage));
+  }
+
+  it('lands from the pushed corner approval and publishes the ack without a maintenance sleep', async () => {
+    const fixture = await readyCorner();
+    const handlers = new Map<string, (event: { event: NostrEvent }) => void>();
+    const subscriptions = new Map<string, () => void>();
+    const mergeGate = { poll: vi.fn(async () => []) };
+    Reflect.set(
+      fixture.body,
+      'pollMergeCompletions',
+      vi.fn(async () => undefined),
+    );
+    const client = {
+      sessionEventsSubscribe: vi.fn(
+        async (
+          channelId: string,
+          handler: typeof handlers extends Map<string, infer H> ? H : never,
+        ) => {
+          handlers.set(channelId, handler);
+          return () => handlers.delete(channelId);
+        },
+      ),
+    };
+    try {
+      await Reflect.get(fixture.body, 'syncCornerApprovalSubscriptions').call(
+        fixture.body,
+        'room-ack',
+        client,
+        mergeGate,
+        subscriptions,
+      );
+      expect(handlers.has('corner-ack')).toBe(true);
+
+      handlers.get('corner-ack')!({ event: fixture.approval });
+
+      await vi.waitFor(
+        () => {
+          expect(
+            fixture.published.some((event) =>
+              event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_ACK_TAG),
+            ),
+          ).toBe(true);
+          expect(activityStages(fixture.published)).toContain('approval-received');
+        },
+        { timeout: 2_000 },
+      );
+      await vi.waitFor(() => expect(fixture.info.landedTip).toBe(fixture.tip), { timeout: 10_000 });
+      await vi.waitFor(
+        () => expect(Reflect.get(fixture.body, 'approvalLandingPasses').size).toBe(0),
+        { timeout: 5_000 },
+      );
+      expect(
+        fixture.published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_ACK_TAG),
+        ),
+      ).toBe(true);
+      expect(activityStages(fixture.published)).toEqual(
+        expect.arrayContaining(['approval-received', 'running-gate', 'pushing', 'landed']),
+      );
+      expect(mergeGate.poll).toHaveBeenCalledWith([fixture.approval], expect.any(Object));
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('lands identically while the harness session is suspended', async () => {
+    const fixture = await readyCorner({ suspended: true });
+    const prompt = vi.spyOn(fixture.body as never, 'promptAgent' as never);
+    const handlers = new Map<string, (event: { event: NostrEvent }) => void>();
+    const subscriptions = new Map<string, () => void>();
+    const client = {
+      sessionEventsSubscribe: vi.fn(
+        async (channelId: string, handler: (event: { event: NostrEvent }) => void) => {
+          handlers.set(channelId, handler);
+          return () => handlers.delete(channelId);
+        },
+      ),
+    };
+    try {
+      await Reflect.get(fixture.body, 'syncCornerApprovalSubscriptions').call(
+        fixture.body,
+        'room-ack',
+        client,
+        undefined,
+        subscriptions,
+      );
+      handlers.get('corner-ack')!({ event: fixture.approval });
+
+      await vi.waitFor(
+        () => expect(activityStages(fixture.published)).toContain('approval-received'),
+        { timeout: 2_000 },
+      );
+      await vi.waitFor(() => expect(fixture.info.landedTip).toBe(fixture.tip), { timeout: 10_000 });
+      await vi.waitFor(
+        () => expect(Reflect.get(fixture.body, 'approvalLandingPasses').size).toBe(0),
+        { timeout: 5_000 },
+      );
+      expect(prompt).not.toHaveBeenCalled();
+      expect(activityStages(fixture.published)).toContain('landed');
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('still recovers a missed WS event through the maintenance approval pass', async () => {
+    const fixture = await readyCorner();
+    try {
+      fixture.approvals.push(fixture.approval);
+
+      await Reflect.get(fixture.body, 'runApprovalLandingPass').call(fixture.body, 'room-ack');
+
+      expect(fixture.info.landedTip).toBe(fixture.tip);
+      expect(activityStages(fixture.published)).toContain('approval-received');
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 });

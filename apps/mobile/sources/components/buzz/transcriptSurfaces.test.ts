@@ -436,7 +436,7 @@ describe('Speaker identity', () => {
 });
 
 describe('Machine noise', () => {
-  it('folds a turn’s tool output into one collapsible line on both surfaces', () => {
+  it('renders one shared tool ledger on both surfaces', () => {
     // The `parentChannelId` gate is gone: a Room collapses telemetry the same
     // way a Corner does, rather than showing it raw or hiding it entirely.
     expect(chatSource).not.toMatch(/item\.isAgentActivity && parentChannelId/);
@@ -452,15 +452,17 @@ describe('Machine noise', () => {
     expect(chatSource).not.toMatch(/\bactivityUpdate:\s*\{/);
   });
 
-  it('folds the read-only calls into one counted note — dimmest tier, no box', () => {
-    // One note per turn, verb-counted. Not one collapsed line per call, and
-    // never a wall: the fold is what buys the reading column its quiet.
-    expect(activitySource).toMatch(/⋯ \{showHandle && handle/);
-    expect(styleDefinition(activitySource, 'noteText')).toMatch(/color:\s*groknight\.ledgerGhost/);
-    expect(styleDefinition(activitySource, 'noteRow')).not.toMatch(/border|backgroundColor/);
-    // The bordered node that used to sit beside the summary is gone.
-    expect(activitySource).not.toMatch(/\bnode:\s*\{/);
-    expect(activitySource).not.toMatch(/activeNode/);
+  it('uses one-line hairline rows and collapses only runs over three', () => {
+    expect(activitySource).toContain('const GROUP_THRESHOLD = 3');
+    expect(activitySource).toContain('turn.steps.length > GROUP_THRESHOLD');
+    expect(styleDefinition(activitySource, 'stepRow')).toMatch(/minHeight:\s*44/);
+    expect(styleDefinition(activitySource, 'stepRow')).toMatch(
+      /borderBottomWidth:\s*StyleSheet\.hairlineWidth/,
+    );
+    expect(styleDefinition(activitySource, 'stepLabel')).toMatch(/Typography\.mono\(\)/);
+    expect(activitySource).not.toContain('FAILED');
+    expect(activitySource).not.toContain('BlurView');
+    expect(activitySource).toContain('<HullActionSheet');
   });
 
   it('keeps the agent’s own prose out of the fold entirely', () => {
@@ -477,20 +479,10 @@ describe('Machine noise', () => {
     expect(narration).toMatch(/width:\s*'100%'/);
     expect(narration).not.toMatch(/textShadow/);
     expect(narration).not.toMatch(/paddingLeft/);
-    // Mechanism, by contrast, is indented and quiet.
-    expect(styleDefinition(activitySource, 'mechanismRow')).toMatch(/paddingLeft:\s*12/);
-    expect(styleDefinition(activitySource, 'mechanismLabel')).toMatch(
-      /color:\s*groknight\.ledgerQuiet/,
-    );
-    // ...and the escalation above it is luminance, never hue: a mutation lifts
-    // one step, a failure lifts all the way, and gold stays spent on live state.
-    expect(styleDefinition(activitySource, 'mechanismLabelLifted')).toMatch(
-      /color:\s*groknight\.ledgerBody/,
-    );
-    expect(styleDefinition(activitySource, 'mechanismLabelFailed')).toMatch(
-      /color:\s*groknight\.ledgerBright/,
-    );
-    expect(activitySource).not.toMatch(/mechanismLabel\w*: \{[^}]*groknight\.accent/);
+    // Machine steps stay quiet and mono; brass is reserved for the failure mark.
+    expect(styleDefinition(activitySource, 'stepLabel')).toMatch(/color:\s*groknight\.ledgerQuiet/);
+    expect(styleDefinition(activitySource, 'verdictFailed')).toMatch(/color:\s*groknight\.accent/);
+    expect(styleDefinition(activitySource, 'stepReason')).not.toMatch(/groknight\.accent/);
   });
 
   it('pins the corner indicator above the composer instead of inscribing it', () => {

@@ -16,6 +16,8 @@ import {
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_MANIFEST_TAG,
+  CHANGE_REVIEW_COMPLETE_TAG,
+  CHANGE_REVIEW_GENERATION_TAG,
   KIND_CREATE_GROUP,
   TAG_COMMUNITY,
   TAG_PARENT,
@@ -1095,8 +1097,11 @@ describe('Buzz change review metadata', () => {
           ),
         ];
       }
+      const markers = new Set(
+        filters.flatMap((filter) => (filter['#t'] as string[] | undefined) ?? []),
+      );
       return events.filter((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === marker),
+        event.tags.some((tag) => tag[0] === 't' && markers.has(tag[1]!)),
       );
     });
     const client = {
@@ -1148,6 +1153,100 @@ describe('Buzz change review metadata', () => {
       '#t': [CHANGE_REVIEW_MANIFEST_TAG],
       '#r': [tip],
     });
+  });
+
+  it('reports a missing manifest when only file chunks have landed', async () => {
+    const patch = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_FILE_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['f', path],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '1'],
+      ],
+      '+partial',
+      'partial-patch',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const { transport } = transportWith([patch]);
+
+    await expect(transport.workspaceFilesRead(channel)).rejects.toThrow(
+      'Missing review manifest for cccccccccccc',
+    );
+  });
+
+  it('rejects a transactional manifest until its completion marker lands', async () => {
+    const manifest = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_MANIFEST_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['base', base],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '1'],
+      ],
+      JSON.stringify({
+        version: 1,
+        base,
+        tip,
+        files: [{ path, status: 'modified', linesAdded: 3, linesRemoved: 1 }],
+      }),
+      'transactional-manifest',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const { transport } = transportWith([manifest]);
+
+    await expect(transport.workspaceFilesRead(channel)).rejects.toThrow(
+      'Missing review completion marker for cccccccccccc',
+    );
+  });
+
+  it('renders a cold transactional generation after its completion marker lands', async () => {
+    const patchId = 'f'.repeat(40);
+    const manifest = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_MANIFEST_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['base', base],
+        ['tip', tip],
+        ['chunk', '0'],
+        ['chunks', '1'],
+      ],
+      JSON.stringify({
+        version: 1,
+        base,
+        tip,
+        files: [{ path, status: 'modified', linesAdded: 3, linesRemoved: 1 }],
+      }),
+      'complete-manifest',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const complete = rawEvent(
+      [
+        ['t', CHANGE_REVIEW_COMPLETE_TAG],
+        ['generation', CHANGE_REVIEW_GENERATION_TAG],
+        ['base', base],
+        ['tip', tip],
+        ['patch-id', patchId],
+      ],
+      JSON.stringify({
+        version: 1,
+        base,
+        tip,
+        patchId,
+        summary: 'Update example',
+        manifestChunks: 1,
+        fileCount: 1,
+      }),
+      'complete-marker',
+      CHANGE_REVIEW_EVENT_KIND,
+    );
+    const { transport } = transportWith([manifest, complete]);
+
+    await expect(transport.workspaceFilesRead(channel)).resolves.toEqual([
+      { path, status: 'modified', linesAdded: 3, linesRemoved: 1 },
+    ]);
   });
 
   it('queries body controls directly so activity bursts cannot hide merge-ready', async () => {
@@ -1358,20 +1457,64 @@ describe('Buzz corner lifecycle projection', () => {
     };
   }
 
+  function stateEvent(
+    cornerId: string,
+    state: 'working' | 'waiting' | 'idle' | 'concluded' | 'closed',
+    reason?: 'review' | 'question' | 'failure',
+    authorPubkey = 'f'.repeat(64),
+    at = NOW_S,
+  ) {
+    return {
+      id: `state-${cornerId}-${state}-${at}`,
+      pubkey: authorPubkey,
+      created_at: at,
+      kind: 30078,
+      tags: [
+        ['d', `buzz-corner-state:${cornerId}`],
+        ['h', 'room'],
+        ['t', 'buzz-corner-state'],
+        ['state', state],
+        ...(reason ? [['reason', reason]] : []),
+        ['at', String(at)],
+      ],
+      content: '',
+      sig: 'e'.repeat(128),
+    };
+  }
+
+  function cornerCreateEvent(cornerId: string, authorPubkey = 'f'.repeat(64)) {
+    return {
+      id: `create-${cornerId}`,
+      pubkey: authorPubkey,
+      created_at: 1,
+      kind: 9007,
+      tags: [
+        ['h', cornerId],
+        ['name', `${cornerId}-corner`],
+      ],
+      content: '',
+      sig: 'e'.repeat(128),
+    };
+  }
+
   it('distinguishes live, review-open, merged, and archived corners', async () => {
     const ids = ['live', 'open', 'merged', 'archived', 'invite-only'];
     const client = {
       listSubchannels: vi.fn(async () => ids),
       query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
-        const id = (filters[0]?.['#h'] as string[])[0]!;
-        if ((filters[0]?.kinds as number[])[0] === 9) {
-          return [
-            event('room', [
-              ['t', 'merge-summary'],
-              ['subchannel', 'merged'],
-            ]).event,
-          ];
+        if ((filters[0]?.kinds as number[])[0] === 30078) {
+          const states = {
+            live: ['working', undefined],
+            open: ['waiting', 'review'],
+            merged: ['concluded', undefined],
+            archived: ['closed', undefined],
+            'invite-only': ['working', undefined],
+          } as const;
+          return ids.map((id) =>
+            stateEvent(id, states[id]![0], states[id]![1], `${id[0]}`.repeat(64)),
+          );
         }
+        const id = (filters[0]?.['#h'] as string[])[0]!;
         return [
           {
             id: `create-${id}`,
@@ -1417,21 +1560,24 @@ describe('Buzz corner lifecycle projection', () => {
       { id: 'invite-only', name: 'invite-only-corner', status: 'live' },
     ]);
     expect(client.query).toHaveBeenCalledWith([
-      expect.objectContaining({ '#h': ['room'], '#t': ['merge-summary'], limit: 500 }),
+      expect.objectContaining({
+        '#d': ids.map((id) => `buzz-corner-state:${id}`),
+        kinds: [30078],
+      }),
     ]);
   });
 
-  it('lets a newer status outrank a merge-ready the corner has moved past', async () => {
-    // Read off the captain's live Room: three corners published a review, then
-    // failed on a later restart, and all three still reported `open` — which is
-    // not terminal, so they kept their place in the Room's pinned corner strip
-    // permanently. A merge-ready is an announcement about one moment, not a
-    // standing state; it may only speak while nothing newer has.
+  it('ignores transcript status history and reads only canonical waits', async () => {
     const ids = ['stale-review', 'still-ready'];
     const client = {
       listSubchannels: vi.fn(async () => ids),
       query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
-        if ((filters[0]?.kinds as number[])[0] === 9) return [];
+        if ((filters[0]?.kinds as number[])[0] === 30078) {
+          return [
+            stateEvent('stale-review', 'waiting', 'failure'),
+            stateEvent('still-ready', 'waiting', 'review'),
+          ];
+        }
         const id = (filters[0]?.['#h'] as string[])[0]!;
         return [
           {
@@ -1471,16 +1617,46 @@ describe('Buzz corner lifecycle projection', () => {
     ]);
   });
 
-  it('resolves an old needs-decision once the corner has worked since, and keeps a live one gold', async () => {
-    // The owner's 2026-08-23 screenshots: two rooms painted `working` from the
-    // cached snapshot, then flipped to hours-old gate-outage attention facts
-    // (~3s after open) when warm revalidation re-derived the corners. A
-    // needs-you card is an announcement about one moment — agent work after it
-    // means the moment passed.
+  it('ignores a newer lifecycle record not authored by the immutable corner creator', async () => {
+    const creator = 'f'.repeat(64);
+    const attacker = '9'.repeat(64);
+    const client = {
+      listSubchannels: vi.fn(async () => ['owned-corner']),
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        if ((filters[0]?.kinds as number[])[0] === 30078) {
+          return [
+            stateEvent('owned-corner', 'waiting', 'question', creator),
+            stateEvent('owned-corner', 'working', undefined, attacker, NOW_S + 30),
+          ];
+        }
+        return [cornerCreateEvent('owned-corner', creator)];
+      }),
+      getChannelMetadata: vi.fn(async () => ({ archived: false })),
+      sessionEventsBackfill: vi.fn(async () => []),
+    };
+    const transport = new BuzzRigTransport(identity, 'https://relay.test');
+    (transport as unknown as { client: typeof client }).client = client;
+
+    await expect(transport.listSubchannelLifecycle('authority-room')).resolves.toMatchObject([
+      { id: 'owned-corner', status: 'needs-attention', machineState: 'waiting' },
+    ]);
+  });
+
+  it('does not let old needs-decision history override canonical working', async () => {
     const ids = ['resolved-decision', 'pending-decision'];
     const client = {
       listSubchannels: vi.fn(async () => ids),
-      query: vi.fn(async () => []),
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        if ((filters[0]?.kinds as number[])[0] === 30078) {
+          return [
+            stateEvent('resolved-decision', 'working'),
+            stateEvent('pending-decision', 'waiting', 'question'),
+          ];
+        }
+        return ((filters[0]?.['#h'] as string[] | undefined) ?? []).map((id) =>
+          cornerCreateEvent(id),
+        );
+      }),
       getChannelMetadata: vi.fn(async () => ({ archived: false })),
       sessionEventsBackfill: vi.fn(async (id: string) => {
         const card = {
@@ -1514,10 +1690,7 @@ describe('Buzz corner lifecycle projection', () => {
     ]);
   });
 
-  it('classifies identically on cold cache and warm refetch over unchanged history', async () => {
-    // ONE oracle: the cached snapshot and the warm revalidation are both
-    // derivations of the same relay history, so the row presentation they feed
-    // must agree — no visible working→needs-you flip seconds after open.
+  it('classifies identically on cold cache and warm refetch from one canonical record', async () => {
     const backfill = [
       { ...event('c1', [['display-status', 'needs-attention']]), createdAt: NOW_S - 7200 },
       { ...event('c1', [['t', 'agent-message']]), createdAt: NOW_S - 10 },
@@ -1533,7 +1706,14 @@ describe('Buzz corner lifecycle projection', () => {
     ];
     const client = {
       listSubchannels: vi.fn(async () => ['c1', 'c2']),
-      query: vi.fn(async () => []),
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        if ((filters[0]?.kinds as number[])[0] === 30078) {
+          return [stateEvent('c1', 'working'), stateEvent('c2', 'working')];
+        }
+        return ((filters[0]?.['#h'] as string[] | undefined) ?? []).map((id) =>
+          cornerCreateEvent(id),
+        );
+      }),
       getChannelMetadata: vi.fn(async () => ({ archived: false })),
       sessionEventsBackfill: vi.fn(async () => backfill),
     };
@@ -1554,12 +1734,7 @@ describe('Buzz corner lifecycle projection', () => {
     expect(coldRow.attention).toBe(false);
   });
 
-  it('reads Room presence so a dead-agent stale ask reads STALLED, not needs-you', async () => {
-    // The owner's real shape: a corner holding an ask card, its daemon dead.
-    // The transport feeds the oracle a SOFT presence input (one multi-`#d`
-    // read per fetch); only when every record is provably past its lease does
-    // the summary carry `agentOffline` — and then the ask is STALLED, never
-    // "waiting on you".
+  it('never lets presence promote or demote canonical corner state', async () => {
     const presenceEvent = (status: 'online' | 'offline', createdAt = NOW_S) => ({
       id: `presence-${status}`,
       pubkey: 'd'.repeat(64),
@@ -1577,7 +1752,7 @@ describe('Buzz corner lifecycle projection', () => {
       listSubchannels: vi.fn(async () => ['ask-corner']),
       query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
         const kinds = filters[0]?.kinds as number[] | undefined;
-        if (kinds?.[0] === 30078) return presence;
+        if (kinds?.[0] === 30078) return [stateEvent('ask-corner', 'waiting', 'question')];
         if (kinds?.[0] === 9) return [];
         return [
           {
@@ -1608,18 +1783,14 @@ describe('Buzz corner lifecycle projection', () => {
       ]),
     });
 
-    // Dead agent: the last heartbeat is 10 minutes old, far past the 120s
-    // lease. Same facts that golded before now read stalled.
     const deadTransport = new BuzzRigTransport(identity, 'https://relay.test');
     (deadTransport as unknown as { client: ReturnType<typeof makeClient> }).client = makeClient([
       presenceEvent('online', NOW_S - 600),
     ]);
     await expect(deadTransport.listSubchannelLifecycle('dead-room')).resolves.toMatchObject([
-      { id: 'ask-corner', status: null, agentOffline: true },
+      { id: 'ask-corner', status: 'needs-attention', machineState: 'waiting' },
     ]);
 
-    // Live agent: same history, fresh heartbeat — today's behaviour, the
-    // worded card keeps its gold needs-you reading.
     const liveTransport = new BuzzRigTransport(identity, 'https://relay.test');
     (liveTransport as unknown as { client: ReturnType<typeof makeClient> }).client = makeClient([
       presenceEvent('online', NOW_S - 10),
@@ -1630,8 +1801,6 @@ describe('Buzz corner lifecycle projection', () => {
     const liveSummary = await liveTransport.listSubchannelLifecycle('live-room');
     expect(liveSummary[0]?.agentOffline).toBeUndefined();
 
-    // No presence record at all is UNKNOWN, never offline: the verdict must
-    // not flip on a missing signal.
     const unknownTransport = new BuzzRigTransport(identity, 'https://relay.test');
     (unknownTransport as unknown as { client: ReturnType<typeof makeClient> }).client = makeClient(
       [],
@@ -1666,7 +1835,7 @@ describe('Buzz cross-Room corner lifecycle batching', () => {
     };
   }
 
-  it('issues one multi-#h create query and one multi-#h merge-summary query across Rooms, and warms the per-Room cache', async () => {
+  it('issues one multi-#h create query and one multi-d canonical-state query, and warms the per-Room cache', async () => {
     const cornersByRoom: Record<string, string[]> = {
       'batch-room-a': ['batch-corner-a1', 'batch-corner-a2'],
       'batch-room-b': ['batch-corner-b1'],
@@ -1677,6 +1846,24 @@ describe('Buzz cross-Room corner lifecycle batching', () => {
         const filter = filters[0]!;
         if ((filter.kinds as number[])[0] === 9007) {
           return (filter['#h'] as string[]).map((id) => createEvent(id));
+        }
+        if ((filter.kinds as number[])[0] === 30078) {
+          return (filter['#d'] as string[]).map((d) => {
+            const id = d.slice('buzz-corner-state:'.length);
+            return {
+              id: `state-${id}`,
+              pubkey: 'b'.repeat(64),
+              created_at: 1_700_000_000,
+              kind: 30078,
+              tags: [
+                ['d', d],
+                ['state', 'working'],
+                ['at', '1700000000'],
+              ],
+              content: '',
+              sig: 'e'.repeat(128),
+            };
+          });
         }
         return [];
       }),
@@ -1701,11 +1888,17 @@ describe('Buzz cross-Room corner lifecycle batching', () => {
     expect(createCalls[0]![0]![0]!['#h']).toEqual(
       expect.arrayContaining(['batch-corner-a1', 'batch-corner-a2', 'batch-corner-b1']),
     );
-    const mergeSummaryCalls = client.query.mock.calls.filter(
-      ([filters]) => (filters[0]?.kinds as number[] | undefined)?.[0] === 9,
+    const stateCalls = client.query.mock.calls.filter(
+      ([filters]) => (filters[0]?.kinds as number[] | undefined)?.[0] === 30078,
     );
-    expect(mergeSummaryCalls).toHaveLength(1);
-    expect(mergeSummaryCalls[0]![0]![0]!['#h']).toEqual(['batch-room-a', 'batch-room-b']);
+    expect(stateCalls).toHaveLength(1);
+    expect(stateCalls[0]![0]![0]!['#d']).toEqual(
+      expect.arrayContaining([
+        'buzz-corner-state:batch-corner-a1',
+        'buzz-corner-state:batch-corner-a2',
+        'buzz-corner-state:batch-corner-b1',
+      ]),
+    );
 
     // The batched fetch also warms the single-Room cache used by
     // `listSubchannelLifecycle` (the 2 other call sites): a follow-up call

@@ -175,10 +175,11 @@ describe('room updates', () => {
 
     expect(updates.map((update) => roomUpdateLine(update, () => ''))).toEqual([
       '⌗ corner opened — Ship the timeline',
+      '⌗ corner reported back',
       '⌗ merged → main @ abcdef01',
       '⌗ corner closed',
     ]);
-    expect(updates[1]?.digest).toBe('Added the derived timeline without new relay writes.');
+    expect(updates[2]?.digest).toBe('Added the derived timeline without new relay writes.');
   });
 
   it('derives changed Room facts without repeating unchanged metadata', () => {

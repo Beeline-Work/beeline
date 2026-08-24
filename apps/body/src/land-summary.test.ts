@@ -13,8 +13,21 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Body } from './body.js';
+import { relayQueryResponse } from './relay-test-helper.js';
 import { newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
+
+function stubRelay(published: NostrEvent[]): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const queryResponse = relayQueryResponse(published, input, init);
+      if (queryResponse) return queryResponse;
+      published.push(JSON.parse(String(init?.body)) as NostrEvent);
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    }),
+  );
+}
 
 describe('a corner that lands says what it delivered, in the parent Room', () => {
   function gitCommand(cwd: string, args: string[]): string {
@@ -126,13 +139,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     const agent = newIdentity('land-summary-agent');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
@@ -172,13 +179,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     const agent = newIdentity('land-summary-once');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
@@ -202,13 +203,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     const agent = newIdentity('land-summary-fallback');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
@@ -246,17 +241,11 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     }
   });
 
-  it('posts no recap for a land that failed', async () => {
+  it('posts no recap for a moved-target realignment that conflicts', async () => {
     const agent = newIdentity('land-summary-failed');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
@@ -273,8 +262,8 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       await Reflect.get(body, 'publishMergeReady').call(body, info);
       // master moves on after the human approved this exact tip: the land is
       // refused, so nothing landed and nothing may be reported as landed.
-      writeFileSync(join(repoPath, 'OTHER.md'), 'someone else landed first\n');
-      gitCommand(repoPath, ['add', 'OTHER.md']);
+      writeFileSync(join(repoPath, 'README.md'), '# Someone else changed this line\n');
+      gitCommand(repoPath, ['add', 'README.md']);
       gitCommand(repoPath, ['commit', '-m', 'target moved on']);
 
       await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
@@ -288,17 +277,16 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
             event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
         ),
       ).toHaveLength(0);
-      // A moved target self-heals: maintenance reports the explicit
-      // realignment phase, preserves the approval, and hands the corner its
-      // own target-sync model turn.
+      // A conflicting realignment reports the concrete daemon-owned stage and
+      // never wakes the harness to attempt an indeterminate repair.
       const recovering = published.find(
         (event) =>
           Array.isArray(event.tags) &&
-          event.content.includes('approval remains standing') &&
-          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'realigning'),
+          event.tags.some((tag) => tag[0] === 'delivery-stage' && tag[1] === 'realigning') &&
+          event.content.includes('"status":"failed"'),
       );
       expect(recovering).toBeDefined();
-      expect(Reflect.get(body, 'promptAgent')).toHaveBeenCalled();
+      expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -398,13 +386,7 @@ describe('every land path recaps the corner exactly once', () => {
 
   function capturePublishes(): NostrEvent[] {
     const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
+    stubRelay(published);
     return published;
   }
 

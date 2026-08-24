@@ -22,6 +22,7 @@ function raw(id: string, content: string, tags: string[][], createdAt: number): 
 
 /** A live `#t=agent-draft` (kind 30078) delivery, shaped like the real relay event. */
 function draft(id: string, text: string, requestId: string, createdAt: number): SessionEvent {
+  const freshCreatedAt = createdAt < 1_000_000_000 ? Math.floor(Date.now() / 1_000) : createdAt;
   return {
     type: 'raw',
     sessionId: 'room',
@@ -29,7 +30,7 @@ function draft(id: string, text: string, requestId: string, createdAt: number): 
       id,
       content: text,
       pubkey: agent,
-      createdAt,
+      createdAt: freshCreatedAt,
       tags: [
         ['h', 'room'],
         ['d', 'agent-draft:room'],

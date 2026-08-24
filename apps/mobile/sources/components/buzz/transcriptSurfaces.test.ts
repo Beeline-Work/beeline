@@ -535,12 +535,19 @@ describe('Machine noise', () => {
     expect(branch).toMatch(/bodyText=\{ledgerText \? ledgerText\.prose : item\.text\}/);
   });
 
-  it('deletes the reply echo from an agent turn', () => {
+  it('shows an agent reply reference only when its target is not adjacent', () => {
     const branch = ledgerBranch();
-    // Body threads every Room/DM reply to the request above it, so the quote
-    // was always redundant. A person's deliberate reply still keeps its quote.
-    expect(branch).toMatch(/!speaksAsAgent && item\.replyToId \? visibleMessageById/);
-    expect(branch).toMatch(/replyReference =\s*\n?\s*!speaksAsAgent && item\.replyToId \?/);
+    // The helper preserves the quiet linear request → reply pair while exposing
+    // a queued reply's real NIP-10 target. Human reply behavior stays unchanged.
+    expect(branch).toContain('shouldShowReplyReference({');
+    expect(branch).toContain(
+      'immediatelyPrecedingMessage: immediatelyPrecedingVisibleMessageById.get(item.id)',
+    );
+    expect(branch).toMatch(
+      /showReplyReference && item\.replyToId \? visibleMessageById\.get\(item\.replyToId\)/,
+    );
+    expect(branch).toMatch(/replyReference =\s*\n?\s*showReplyReference \?/);
+    expect(branch).toMatch(/<LedgerEntry[\s\S]{0,1000}replyReference=\{replyReference\}/);
   });
 
   it('decodes percent escapes before anything renders them', () => {

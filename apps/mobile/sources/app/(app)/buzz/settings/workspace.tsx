@@ -1,11 +1,13 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
+  Alert,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,7 +27,8 @@ import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
-import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
+import { MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
+import { SettingsNavigationRow } from '@/components/buzz/SettingsNavigationRow';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -35,7 +38,20 @@ type WorkspaceRoomSetting = {
   name: string;
   visibility: 'public' | 'invite-only';
   canManage: boolean;
+  createdAt: number;
 };
+
+const ROOM_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+
+function roomCreatedQualifier(createdAt: number): string {
+  const created = new Date(createdAt * 1_000);
+  return `Created ${ROOM_DATE_FORMATTER.format(created)} · ${created.toISOString().slice(11, 19)} UTC`;
+}
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -71,6 +87,7 @@ async function loadWorkspaceRooms(
             ? 'invite-only'
             : 'public'),
         canManage: isWorkspaceManagerRole(role),
+        createdAt: create.created_at,
       } satisfies WorkspaceRoomSetting;
     }),
   );
@@ -240,6 +257,18 @@ export default function WorkspaceSettings() {
     [client],
   );
 
+  const showRoomDetails = useCallback((room: WorkspaceRoomSetting) => {
+    Alert.alert(room.name, room.id, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: `Copy ${ROOM_LABEL} ID`,
+        onPress: () => {
+          void Clipboard.setStringAsync(room.id);
+        },
+      },
+    ]);
+  }, []);
+
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -250,7 +279,7 @@ export default function WorkspaceSettings() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <HullSurface strength="quiet" style={styles.header}>
+      <View style={styles.header}>
         <TouchableOpacity accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}>
           <Text style={styles.backText}>‹</Text>
         </TouchableOpacity>
@@ -260,7 +289,7 @@ export default function WorkspaceSettings() {
             {community?.name ?? WORKSPACE_LABEL}
           </Text>
         </View>
-      </HullSurface>
+      </View>
 
       {!canManageWorkspace ? (
         <View style={styles.denied} testID="workspace-settings-denied">
@@ -363,51 +392,67 @@ export default function WorkspaceSettings() {
             <Text style={styles.sectionLabel}>
               {MEMBERS_GLYPH} {MEMBERS_LABEL.toUpperCase()}
             </Text>
-            <Text style={styles.sectionBody}>
-              Invite people, connect agents, and manage member roles in one place.
-            </Text>
-            <MonoButton
-              label={`${MEMBERS_GLYPH} OPEN ${MEMBERS_LABEL.toUpperCase()}`}
+            <SettingsNavigationRow
+              glyph={MEMBERS_GLYPH}
+              label={MEMBERS_LABEL}
+              supportingCopy="Invite people, connect agents, and manage roles."
               onPress={() =>
                 router.push(
                   { pathname: '/buzz/members', params: { communityId } } as unknown as Href,
                 )
               }
-              style={styles.primaryAction}
               testID="open-members"
             />
           </View>
 
           <View style={styles.section} testID="channel-visibility-settings">
-            <Text style={styles.sectionLabel}>CHANNEL VISIBILITY</Text>
-            <Text style={styles.sectionBody}>
-              Creation, rename, archive, and participant controls stay in Rooms.
-            </Text>
-            <View style={styles.linkRow}>
-              <TouchableOpacity
-                onPress={() =>
-                  router.push({ pathname: '/buzz/channels', params: { communityId } } as Href)
-                }
-                style={styles.textButton}
-              >
-                <Text style={styles.textButtonLabel}>OPEN ROOMS</Text>
-              </TouchableOpacity>
-            </View>
+            <Text style={styles.sectionLabel}>{ROOM_LABEL.toUpperCase()} VISIBILITY</Text>
+            <SettingsNavigationRow
+              glyph="⌑"
+              label={`${ROOM_LABEL}s`}
+              supportingCopy="Create, rename, archive, and manage participants."
+              onPress={() =>
+                router.push({ pathname: '/buzz/channels', params: { communityId } } as Href)
+              }
+              testID="open-rooms"
+            />
             {rooms.map((room) => {
               const duplicateName = duplicateRoomNames.has(room.name.trim().toLocaleLowerCase());
+              const nextVisibility = room.visibility === 'public' ? 'invite-only' : 'public';
               return (
                 <View key={room.id} style={styles.roomRow}>
+                  <Text accessibilityElementsHidden style={styles.roomMark}>⌑</Text>
+                  <View style={styles.roomCopy}>
+                    <TouchableOpacity
+                      accessibilityLabel={`Open ${ROOM_LABEL} ${room.name}`}
+                      accessibilityRole="button"
+                      onPress={() =>
+                        router.push(`/buzz/chat/${encodeURIComponent(room.id)}` as Href)
+                      }
+                      style={styles.roomLink}
+                    >
+                      <Text numberOfLines={1} style={styles.roomName}>{room.name}</Text>
+                    </TouchableOpacity>
+                    {duplicateName && (
+                      <View style={styles.roomQualifierRow}>
+                        <Text numberOfLines={1} style={styles.roomQualifier}>
+                          {roomCreatedQualifier(room.createdAt)}
+                        </Text>
+                        <TouchableOpacity
+                          accessibilityLabel={`View details for ${ROOM_LABEL} ${room.name}`}
+                          accessibilityRole="button"
+                          onPress={() => showRoomDetails(room)}
+                          style={styles.roomDetailsButton}
+                          testID={`room-details-${room.id}`}
+                        >
+                          <Text style={styles.roomDetailsText}>DETAILS</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
                   <TouchableOpacity
-                    onPress={() => router.push(`/buzz/chat/${encodeURIComponent(room.id)}` as Href)}
-                    style={styles.roomCopy}
-                  >
-                    <Text numberOfLines={1} style={styles.roomName}># {room.name}</Text>
-                    {duplicateName && <Text style={styles.roomMeta}>ID {room.id.slice(0, 8)}</Text>}
-                    <Text style={styles.roomMeta}>
-                      {room.canManage ? 'Tap visibility to change' : 'Room owner controls visibility'}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
+                    accessibilityLabel={`Make ${room.name} ${nextVisibility}`}
+                    accessibilityRole="button"
                     accessibilityState={{ disabled: !room.canManage }}
                     disabled={!room.canManage || workingKey === `room-${room.id}`}
                     onPress={() => void changeRoomVisibility(room)}
@@ -496,7 +541,7 @@ const styles = StyleSheet.create((theme) => {
     paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 3,
+    borderRadius: groknight.radius,
     color: groknight.textPrimary,
     backgroundColor: groknight.bgBase,
     fontSize: 14,
@@ -517,7 +562,7 @@ const styles = StyleSheet.create((theme) => {
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 3,
+    borderRadius: groknight.radius,
     backgroundColor: groknight.bgBase,
   },
   segmentSelected: { borderColor: groknight.selectedBorder, backgroundColor: groknight.bgHighlight },
@@ -536,7 +581,7 @@ const styles = StyleSheet.create((theme) => {
     marginTop: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 3,
+    borderRadius: groknight.radius,
     backgroundColor: groknight.actionFill,
   },
   compactActionText: {
@@ -568,7 +613,7 @@ const styles = StyleSheet.create((theme) => {
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: groknight.border,
-    borderRadius: 3,
+    borderRadius: groknight.radius,
   },
   roleButtonSelected: { borderColor: groknight.selectedBorder, backgroundColor: groknight.bgHighlight },
   roleText: { ...Typography.mono('semiBold'), color: groknight.textMuted, fontSize: 8 },
@@ -592,28 +637,56 @@ const styles = StyleSheet.create((theme) => {
     letterSpacing: 0.5,
   },
   inviteMeta: { ...Typography.default(), fontFamily: groknight.proseRegular, marginTop: 4, color: groknight.textMuted, fontSize: 10 },
-  linkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   roomRow: {
     minHeight: 66,
-    paddingHorizontal: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
     borderTopWidth: 1,
     borderTopColor: groknight.border,
-    backgroundColor: groknight.bgBase,
   },
-  roomCopy: { flex: 1, minWidth: 0, minHeight: 56, justifyContent: 'center' },
+  roomMark: {
+    ...Typography.mono('semiBold'),
+    width: 30,
+    flexShrink: 0,
+    color: groknight.chrome,
+    fontSize: 15,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  roomCopy: { flex: 1, minWidth: 0, paddingHorizontal: 10 },
+  roomLink: { minHeight: 44, justifyContent: 'center' },
   roomName: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.textPrimary, fontSize: 13 },
-  roomMeta: { ...Typography.default(), fontFamily: groknight.proseRegular, marginTop: 3, color: groknight.textMuted, fontSize: 9 },
+  roomQualifierRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center' },
+  roomQualifier: {
+    ...Typography.default(),
+    fontFamily: groknight.proseRegular,
+    flex: 1,
+    minWidth: 0,
+    color: groknight.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  roomDetailsButton: {
+    minWidth: 54,
+    minHeight: 44,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  roomDetailsText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 8,
+    letterSpacing: 0.5,
+  },
   visibilityButton: {
-    minHeight: 36,
+    minWidth: 88,
+    minHeight: 44,
     paddingHorizontal: 9,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: groknight.borderStrong,
-    borderRadius: 3,
+    borderRadius: groknight.radius,
   },
   disabledButton: { opacity: 0.45 },
   visibilityButtonText: {

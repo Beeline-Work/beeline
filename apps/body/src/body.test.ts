@@ -6661,6 +6661,106 @@ describe('graceful relay-failure confirmation', () => {
     }
   });
 
+  it('archives the corner when the human TYPES "Close this corner" as an ordinary chat message', async () => {
+    const agent = newIdentity('close-typed-agent');
+    const human = newIdentity('close-typed-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-typed-close-'));
+    try {
+    const body = newBody(agent, workspaceRoot);
+    body.registerSubchannel({
+      subchannelId: 'corner-typed-close',
+      worktreePath: '/tmp/nonexistent-typed-close',
+      featureBranch: 'feature/typed-close',
+      role: agent,
+      session: cornerSession('corner-typed-close'),
+      lastPolledAt: 0,
+      archived: false,
+    });
+    // No `#t=buzz-corner-close` tag — this is the owner's actual action:
+    // plain prose typed into the corner composer.
+    const typedClose = signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [['h', 'corner-typed-close']],
+        content: 'Close this corner.',
+      },
+      human.secretKey,
+    );
+    (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+      .fn()
+      .mockResolvedValue([typedClose]);
+    let archiveCalls = 0;
+    body.archiveSubchannel = async () => {
+      archiveCalls++;
+    };
+
+    await body.pollMembers('corner-typed-close');
+
+    expect(archiveCalls).toBe(1);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not archive on a conversational mention of closing — that stays a real agent turn', async () => {
+    const agent = newIdentity('close-chat-agent');
+    const human = newIdentity('close-chat-human');
+    const steered: string[] = [];
+    const session = cornerSession('corner-close-discussed');
+    (session.client as unknown as {
+      activeRunId: () => string | undefined;
+      sessionSteer: (id: string, prompt: string) => Promise<void>;
+    }).activeRunId = () => 'run-1';
+    (session.client as unknown as {
+      sessionSteer: (id: string, prompt: string) => Promise<void>;
+    }).sessionSteer = async (_id: string, prompt: string) => {
+      steered.push(prompt);
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-close-discussed-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      body.registerSubchannel({
+        subchannelId: 'corner-close-discussed',
+        worktreePath: '/tmp/nonexistent-close-discussed',
+        featureBranch: 'feature/close-discussed',
+        role: agent,
+        session,
+        lastPolledAt: 0,
+        archived: false,
+      });
+      const discussed = signEvent(
+        {
+          pubkey: human.publicKey,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          tags: [['h', 'corner-close-discussed']],
+          content: 'Should we close this corner after the review?',
+        },
+        human.secretKey,
+      );
+      (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
+        .fn()
+        .mockResolvedValue([discussed]);
+      let archiveCalls = 0;
+      body.archiveSubchannel = async () => {
+        archiveCalls++;
+      };
+
+      await body.pollMembers('corner-close-discussed');
+
+      expect(archiveCalls).toBe(0);
+      expect(steered.some((prompt) => prompt.includes('close this corner'))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('publishes a DurableMergeGate refusal instead of only logging it, so the corner is not silently stuck on "sent" forever', async () => {
     const agent = newIdentity('mergegate-agent');
     const body = new Body(

@@ -53,6 +53,7 @@ import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
+import { isCornerClosed, useClosedCorners } from '@/buzz/closed-corners';
 import {
   NO_ACTIVITY_PREVIEW,
   roomListSections,
@@ -456,6 +457,10 @@ export default function BuzzChannels() {
   // us after a refused leave), so the deck itself filters these out on every
   // build — cache seed, refresh, and restart alike.
   const removedAt = useRemovedRooms((state) => state.removedAt);
+  // Closed-corner tombstones (#corner-close): a corner this viewer dismissed
+  // leaves the deck's counts and dropdowns on the frame the close lands,
+  // not a daemon maintenance tick later.
+  const closedCornerAt = useClosedCorners((state) => state.closedAt);
   // The Room the reader just left. Marking read on the way *back* — not on the
   // way in — is what keeps a message you sent, or one that arrived while you
   // were looking at it, from lighting the row up as unread on return.
@@ -511,6 +516,9 @@ export default function BuzzChannels() {
           roomReadAt(readAt, viewerKey, room.id),
           room.latestMessageAt,
         ),
+        corners: (room.corners ?? []).filter(
+          (corner) => !isCornerClosed(closedCornerAt, viewerKey, room.id, corner.id),
+        ),
       }));
     // DMs obey the same rule on the same deck — there is no separate DIRECT
     // pile: an unread DM is NEEDS YOU, a read one is DOESN'T NEED YOU. The DM's
@@ -536,13 +544,13 @@ export default function BuzzChannels() {
     ageNow,
     authorNames,
     cachedListEntry?.viewerPubkey,
+    closedCornerAt,
     displayChannels,
     identity?.publicKey,
     orderedDirectMessages,
     readAt,
     removedAt,
   ]);
-  // One projection, one consumer: the deck's exactly two piles.
 
   useEffect(() => {
     let cancelled = false;

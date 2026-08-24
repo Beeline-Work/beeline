@@ -49,9 +49,9 @@ export const CornerPlanPin = React.memo(function CornerPlanPin({
 }) {
   const [objectiveExpanded, setObjectiveExpanded] = React.useState(false);
   const items = plan?.items ?? [];
-  // The agent's own plan objective wins when it has one; otherwise the line
-  // the corner was opened with.
-  const headline = plan?.objective ?? objective;
+  // The create-event objective is write-once. Plan objective only supports
+  // legacy corners whose immutable task metadata is absent.
+  const headline = objective ?? plan?.objective;
   if (!headline && !items.length) return null;
   return (
     <View style={styles.pin} testID={testID}>

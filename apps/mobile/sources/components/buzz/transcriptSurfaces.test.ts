@@ -685,6 +685,39 @@ describe('The corner review footer never claims a retry the daemon is not making
   });
 });
 
+describe('The merge approval card exposes every durable state', () => {
+  it('acknowledges the tap locally before the daemon answers', () => {
+    expect(chatSource).toContain("setApprovalState('sent')");
+    expect(chatSource).toContain('APPROVAL SENT ✓');
+    expect(chatSource).toContain('WAITING FOR THE AGENT TO PICK IT UP');
+  });
+
+  it('distinguishes landing from realignment with the standing approval', () => {
+    expect(chatSource).toContain('APPROVAL RECEIVED — LANDING…');
+    expect(chatSource).toContain('REALIGNED — LANDING WITH YOUR EXISTING APPROVAL…');
+    expect(chatSource).toContain('testID="approve-corner-realigned"');
+  });
+
+  it('surfaces the one-minute no-ack timeout instead of hanging', () => {
+    expect(chatSource).toContain("current === 'sent' ? 'timeout' : current");
+    expect(chatSource).toContain('THE AGENT HASN’T PICKED IT UP YET · OFFLINE?');
+    expect(chatSource).toContain('approvalTimeoutMessage()');
+  });
+
+  it('keeps the concrete daemon failure and offers re-approval only when required', () => {
+    expect(chatSource).toContain('projected.deliveryFailureReason');
+    expect(chatSource).toContain('projected.message?.text');
+    expect(chatSource).toContain('approvalNeedsReapprove');
+    expect(chatSource).toContain('RE-APPROVE UPDATED CHANGE');
+    expect(chatSource).toContain('testID="reapprove-corner"');
+  });
+
+  it('binds the terminal success card to the landed SHA', () => {
+    expect(chatSource).toContain('setLandedApprovalTip(projected.landedTip');
+    expect(chatSource).toContain('LANDED AT {(landedApprovalTip ?? mergeTarget?.tip ?? \'\').slice(0, 12)} ✓');
+  });
+});
+
 describe('The change-ready review card', () => {
   it('describes the change, never re-prints the turn narration', () => {
     // The card sat directly above the diff and rendered the corner's last

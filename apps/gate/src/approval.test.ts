@@ -32,6 +32,29 @@ describe('verifyApproval — the exact-binding gate', () => {
     expect(verifyApproval(ev, reviewer.publicKey, target)).toBe(false);
   });
 
+  it('accepts the same reviewed patch after a pure rebase', () => {
+    const patchId = 'c'.repeat(40);
+    const ev = buildApproval(reviewer, channel, { ...target, patchId });
+    expect(
+      verifyApproval(ev, reviewer.publicKey, {
+        ...target,
+        tip: 'b'.repeat(40),
+        patchId,
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects a rebased tip whose reviewed patch changed', () => {
+    const ev = buildApproval(reviewer, channel, { ...target, patchId: 'c'.repeat(40) });
+    expect(
+      verifyApproval(ev, reviewer.publicKey, {
+        ...target,
+        tip: 'b'.repeat(40),
+        patchId: 'd'.repeat(40),
+      }),
+    ).toBe(false);
+  });
+
   it('rejects a grant bound to a different branch', () => {
     const ev = buildApproval(reviewer, channel, { ...target, branch: 'refs/heads/release' });
     expect(verifyApproval(ev, reviewer.publicKey, target)).toBe(false);

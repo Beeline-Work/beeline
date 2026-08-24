@@ -375,6 +375,8 @@ export type ChatEventProjection = {
    *  are posted directly on this corner's own channel, not a parent Room
    *  status card). */
   deliveryFailed?: boolean;
+  /** Plain daemon-authored failure reason shown on the approval card. */
+  deliveryFailureReason?: string;
   /** What is actually happening after that failure, straight from the daemon's
    *  `retry` tag — `auto` (the land poll really does re-attempt this same
    *  approval on its own), `realigning` (the corner's agent is rebasing onto
@@ -390,6 +392,7 @@ export type ChatEventProjection = {
   approvalAck?: {
     approvalId: string;
     decision: 'accepted' | 'rejected';
+    state?: 'landing' | 'realigning' | 'realigned' | 'content-changed' | 'tip-moved';
     tip?: string;
     rejectedTip?: string;
   };
@@ -397,6 +400,7 @@ export type ChatEventProjection = {
    *  = `landed` tag). Resolves DELIVERING to success even if the corner's
    *  archive notice was missed live. */
   deliveryLanded?: boolean;
+  landedTip?: string;
   agentPresence?: AgentPresence;
 };
 
@@ -545,8 +549,12 @@ export function projectChatEvent(
   const repo = sessionEventTagValue(event, 'repo');
   const branch = sessionEventTagValue(event, 'branch');
   const tip = sessionEventTagValue(event, 'tip');
+  const patchId = sessionEventTagValue(event, 'patch-id');
   const isMergeReady = sessionEventHasTag(event, 't', 'merge-ready');
-  const mergeTarget = isMergeReady && repo && branch && tip ? { repo, branch, tip } : undefined;
+  const mergeTarget =
+    isMergeReady && repo && branch && tip
+      ? { repo, branch, tip, ...(patchId ? { patchId } : {}) }
+      : undefined;
   // Only ever an https link the daemon read off the repo host; anything else
   // is dropped rather than rendered as a tappable row.
   const previewCandidate = sessionEventTagValue(event, 'preview');
@@ -751,6 +759,15 @@ export function projectChatEvent(
         approvalAck: {
           approvalId,
           decision,
+          ...(['landing', 'realigning', 'realigned', 'content-changed', 'tip-moved'].includes(
+            sessionEventTagValue(event, 'state') ?? '',
+          )
+            ? {
+                state: sessionEventTagValue(event, 'state') as NonNullable<
+                  ChatEventProjection['approvalAck']
+                >['state'],
+              }
+            : {}),
           ...(tip ? { tip } : {}),
           ...(sessionEventTagValue(event, 'rejected-tip')
             ? { rejectedTip: sessionEventTagValue(event, 'rejected-tip')! }
@@ -776,6 +793,7 @@ export function projectChatEvent(
         ...(mergeTarget ? { mergeTarget } : {}),
         ...(previewUrl ? { previewUrl } : {}),
         deliveryFailed: true,
+        deliveryFailureReason: text,
         ...(deliveryRetry ? { deliveryRetry } : {}),
         message: {
           id: eventId(event),
@@ -792,7 +810,20 @@ export function projectChatEvent(
       ...(previewUrl ? { previewUrl } : {}),
       ...(clearMergeTarget ? { clearMergeTarget: true } : {}),
       ...(isArchived && !subchannelId ? { archiveChannel: true } : {}),
-      ...(deliveryLanded ? { deliveryLanded: true } : {}),
+      ...(deliveryLanded ? { deliveryLanded: true, ...(tip ? { landedTip: tip } : {}) } : {}),
+      ...(deliveryLanded
+        ? {
+            message: {
+              id: eventId(event),
+              text,
+              isUser: false,
+              timestamp: eventTimestamp(event),
+              ...(pubkey ? { pubkey } : {}),
+              isSystemNotice: true,
+              ...(isNew ? { isNew: true } : {}),
+            },
+          }
+        : {}),
     };
   }
 

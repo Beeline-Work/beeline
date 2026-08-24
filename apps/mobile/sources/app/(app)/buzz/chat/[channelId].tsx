@@ -94,11 +94,11 @@ import {
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
   replaceActiveMention,
+  resolveComposerMentions,
   roomParticipantPubkeys,
   sectionRoomParticipants,
   sectionRoomRoster,
   selectedMentionAgentPubkey,
-  selectedMentionPubkeys,
 } from '@/buzz/room-participants';
 import {
   resolveAgentDisplayIdentity,
@@ -199,6 +199,7 @@ import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
+import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import {
   LEDGER_MARGINALIA_WIDTH,
@@ -1064,6 +1065,19 @@ export default function BuzzChat() {
   // render the skeleton) from a resolved name. A DM is resolved as soon as its
   // peer is known, which the cached roster usually already answers.
   const displayHeaderTitle = dmPeerPubkey ? displayRoomName : headerTitle;
+  const emptyLedgerVariant: EmptyLedgerVariant = isCorner
+    ? 'corner'
+    : isDirectMessage
+      ? 'dm'
+      : 'room';
+  const composerPlaceholder = isCorner
+    ? `Steer this ${CORNER_LABEL}…`
+    : isDirectMessage
+      ? `Message ${displayRoomName}…`
+      : `Start this ${ROOM_LABEL}…`;
+  const focusComposer = useCallback(() => {
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
   const sessionState = isCorner ? cornerSessionState(messages) : 'idle';
   const processState = isCorner ? cornerProcessState(messages) : undefined;
   const cornerAgentPubkey = useMemo(
@@ -1954,6 +1968,11 @@ export default function BuzzChat() {
       return;
     }
     const text = replyTarget ? replyMessageText(rawText, replyTarget) : rawText;
+    const mentionedPubkeys = resolveComposerMentions(
+      text,
+      roomParticipants,
+      selectedMentionsRef.current,
+    ).pubkeys;
 
     sendInFlightRef.current = true;
     setSending(true);
@@ -1975,6 +1994,7 @@ export default function BuzzChat() {
           isUser: true,
           timestamp: Date.now(),
           pubkey: userPubkey,
+          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
           ...(replyTarget ? { replyToId: replyTarget.messageId } : {}),
           ...(attachments.length ? { attachments } : {}),
         },
@@ -1987,7 +2007,6 @@ export default function BuzzChat() {
         text,
         selectedAgentMentionsRef.current,
       );
-      const mentionedPubkeys = selectedMentionPubkeys(text, selectedMentionsRef.current);
       const mentionedAgent = replyTarget?.isAgent
         ? replyTarget.authorPubkey
         : parentChannelId
@@ -2036,6 +2055,7 @@ export default function BuzzChat() {
     userPubkey,
     parentChannelId,
     mentionableAgents,
+    roomParticipants,
     cacheViewerPubkey,
     replyTarget,
     agentsOffline,
@@ -3263,6 +3283,10 @@ export default function BuzzChat() {
           testID={`chat-machine-noise-${item.id}`}
         />
       ) : null;
+      const taggedMentionPubkeys = new Set(item.mentionPubkeys ?? []);
+      const mentionHandles = roomParticipants
+        .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
+        .map((participant) => participant.handle);
 
       return (
         <SwipeToReply
@@ -3282,6 +3306,7 @@ export default function BuzzChat() {
                 continued={attributionContinued}
                 byline={byline}
                 bodyText={item.text}
+                mentionHandles={mentionHandles}
                 bodyTestID={`chat-message-text-${item.id}`}
                 replyReference={replyReference}
                 attachments={attachmentElements}
@@ -3298,6 +3323,7 @@ export default function BuzzChat() {
                 // registry) lives inside `LedgerEntry`.
                 typewriter={speaksAsAgent && Boolean(item.isNew)}
                 bodyText={ledgerText ? ledgerText.prose : item.text}
+                mentionHandles={mentionHandles}
                 bodyTestID={`chat-message-text-${item.id}`}
                 replyReference={replyReference}
                 machineNoise={machineNoise}
@@ -3322,6 +3348,7 @@ export default function BuzzChat() {
       personProfileByPubkey,
       cacheViewerPubkey,
       roomRepository,
+      roomParticipants,
       targetBranchActionId,
       targetBranchNotice,
       viewerChannelRole,
@@ -3539,11 +3566,14 @@ export default function BuzzChat() {
         <FlatList
           testID="chat-messages"
           ref={flatListRef}
-          inverted
+          inverted={invertedMessages.length > 0}
           data={invertedMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
-          contentContainerStyle={styles.messageListContent}
+          contentContainerStyle={[
+            styles.messageListContent,
+            invertedMessages.length === 0 && styles.messageListContentEmpty,
+          ]}
           maintainVisibleContentPosition={{
             // Anchor on the second-newest row (index 1), not the newest.
             // The newest slot gets replaced on every send (optimistic id ->
@@ -3566,9 +3596,12 @@ export default function BuzzChat() {
           onEndReachedThreshold={0.5}
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Text style={[styles.emptyText, isCorner && styles.cornerEmptyText]}>
-                No messages yet
-              </Text>
+              <EmptyLedgerState
+                variant={emptyLedgerVariant}
+                name={isDirectMessage ? displayRoomName : undefined}
+                objective={isCorner ? cornerObjective : undefined}
+                onPress={focusComposer}
+              />
             </View>
           }
           ListFooterComponent={
@@ -4033,7 +4066,7 @@ export default function BuzzChat() {
                       : nextSelection,
                   );
                 }}
-                placeholder="Message"
+                placeholder={composerPlaceholder}
                 placeholderTextColor={theme.buzz.dim}
                 multiline
                 numberOfLines={1}
@@ -4799,7 +4832,7 @@ const styles = StyleSheet.create((theme) => {
     },
     archivedBadge: {
       backgroundColor: groknight.bgHighlight,
-      borderRadius: 3,
+      borderRadius: groknight.radius,
       paddingHorizontal: 6,
       paddingVertical: 2,
     },
@@ -5192,6 +5225,9 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: 12,
       paddingVertical: 12,
     },
+    messageListContentEmpty: {
+      flexGrow: 1,
+    },
     replySwipeAction: {
       width: 78,
       marginBottom: 8,
@@ -5291,7 +5327,7 @@ const styles = StyleSheet.create((theme) => {
     agentPresenceLight: {
       width: 9,
       height: 9,
-      borderRadius: 3,
+      borderRadius: groknight.radius,
       borderWidth: 1,
       borderColor: groknight.textSecondary,
     },
@@ -5424,7 +5460,7 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: 14,
       borderWidth: 2,
       borderColor: MERGE_APPROVAL_ACCENT,
-      borderRadius: 3,
+      borderRadius: groknight.radius,
       backgroundColor: MERGE_APPROVAL_ACCENT,
     },
     approveButtonText: {
@@ -5486,17 +5522,8 @@ const styles = StyleSheet.create((theme) => {
     },
     // ── Composer ────────────────────────────────────────────────────
     emptyState: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingTop: 60,
+      flexGrow: 1,
     },
-    emptyText: {
-      ...Typography.default(),
-      fontSize: 13,
-      color: groknight.muted,
-    },
-    cornerEmptyText: { ...Typography.mono(), color: groknight.textMuted },
     olderMessagesLoading: {
       paddingVertical: 12,
       alignItems: 'center',
@@ -5652,7 +5679,7 @@ const styles = StyleSheet.create((theme) => {
       overflow: 'hidden',
       borderWidth: 1,
       borderColor: groknight.borderStrong,
-      borderRadius: 3,
+      borderRadius: groknight.radius,
       backgroundColor: groknight.bgBase,
     },
     mentionMenuLabel: {
@@ -5823,7 +5850,7 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'flex-end',
       paddingVertical: 3,
       paddingHorizontal: 10,
-      borderRadius: 3,
+      borderRadius: groknight.radius,
       borderWidth: 1,
       borderColor: groknight.border,
       backgroundColor: groknight.bgBase,

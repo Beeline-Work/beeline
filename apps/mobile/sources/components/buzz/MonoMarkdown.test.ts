@@ -117,12 +117,8 @@ describe('MonoMarkdown lists', () => {
     expect(text).toContain('second bullet item text');
 
     const groups = topLevelTextGroups(renderer.toJSON());
-    expect(groups.some((g) => g.includes('·') && g.includes('first bullet item text'))).toBe(
-      true,
-    );
-    expect(groups.some((g) => g.includes('·') && g.includes('second bullet item text'))).toBe(
-      true,
-    );
+    expect(groups.some((g) => g.includes('·') && g.includes('first bullet item text'))).toBe(true);
+    expect(groups.some((g) => g.includes('·') && g.includes('second bullet item text'))).toBe(true);
   });
 });
 
@@ -173,8 +169,10 @@ import type { MarkdownSpan } from '@/components/markdown/parseMarkdown';
 const plain = (text: string): MarkdownSpan => ({ styles: [], text, url: null });
 
 describe('glossMentions — a tagged handle splits into its own span', () => {
+  const live = (handle: string) => new Set([handle]);
+
   it('marks a bare @handle as a mention', () => {
-    const spans = glossMentions([plain('ask @beebee about the relay')]);
+    const spans = glossMentions([plain('ask @beebee about the relay')], live('beebee'));
     expect(spans).toEqual([
       { styles: [], text: 'ask ', url: null },
       { styles: [], text: '@beebee', url: null, mention: true },
@@ -183,36 +181,47 @@ describe('glossMentions — a tagged handle splits into its own span', () => {
   });
 
   it('keeps the whole handle token, including dashes and underscores', () => {
-    const spans = glossMentions([plain('@lilac-odd_heron speaks')]);
+    const spans = glossMentions([plain('@lilac-odd_heron speaks')], live('lilac-odd_heron'));
     expect(spans).toHaveLength(2);
     expect(spans[0]).toMatchObject({ text: '@lilac-odd_heron', mention: true });
   });
 
   it('glosses a mention at the very start and very end of the text', () => {
-    expect(glossMentions([plain('@beebee')])).toEqual([
+    expect(glossMentions([plain('@beebee')], live('beebee'))).toEqual([
       { styles: [], text: '@beebee', url: null, mention: true },
     ]);
-    expect(glossMentions([plain('ping @beebee')])).toEqual([
+    expect(glossMentions([plain('ping @beebee')], live('beebee'))).toEqual([
       { styles: [], text: 'ping ', url: null },
       { styles: [], text: '@beebee', url: null, mention: true },
     ]);
   });
 
   it('never glosses inside an email address', () => {
-    expect(glossMentions([plain('mail user@example.com today')])).toEqual([
+    expect(glossMentions([plain('mail user@example.com today')], live('example'))).toEqual([
       plain('mail user@example.com today'),
     ]);
   });
 
   it('never glosses inside code spans or links — machine text is not an address', () => {
-    const code = glossMentions([{ styles: ['code'], text: 'run @deploy now', url: null }]);
+    const code = glossMentions(
+      [{ styles: ['code'], text: 'run @deploy now', url: null }],
+      live('deploy'),
+    );
     expect(code).toEqual([{ styles: ['code'], text: 'run @deploy now', url: null }]);
-    const link = glossMentions([{ styles: [], text: 'see @beebee', url: 'https://x.dev' }]);
+    const link = glossMentions(
+      [{ styles: [], text: 'see @beebee', url: 'https://x.dev' }],
+      live('beebee'),
+    );
     expect(link).toEqual([{ styles: [], text: 'see @beebee', url: 'https://x.dev' }]);
   });
 
   it('passes untouched prose through unchanged (same object)', () => {
     const span = plain('no mentions here');
     expect(glossMentions([span])).toEqual([span]);
+  });
+
+  it('keeps an unresolved @token ordinary instead of showing a false live mention', () => {
+    const span = plain('ask @unknown about the relay');
+    expect(glossMentions([span], live('alan'))).toEqual([span]);
   });
 });

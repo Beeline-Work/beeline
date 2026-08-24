@@ -248,7 +248,8 @@ machine identities, known Room bindings, repo roots, and daemon state live under
 `<git-common-dir>/beeline/agents/<agent-pubkey>/` with mode `0600`. `pair`
 always generates a fresh agent key there; it never reads `BUZZ_AGENT_KEY` or
 the legacy human `BUZZ_PRIVATE_KEY`. Under systemd the daemon runs in the
-foreground and is restarted by the user unit. A restart rediscovers Rooms, restores corner
+foreground and is restarted by the user unit. A restart rediscovers Rooms,
+restores corner
 worktrees and durable inboxes, replays only the capped recent conversation into
 fresh ACP processes, and resumes each unfinished human-commissioned corner at
 most once in that daemon process. Recaps, moved-target handling, idle ticks, and

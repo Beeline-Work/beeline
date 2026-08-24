@@ -141,8 +141,14 @@ export {
 
 export {
   KIND_CORNER_STATE,
+  CORNER_ACTIVITY_FRESHNESS_MS,
+  agentDraftKey,
+  assertCornerStateTransition,
+  canTransitionCornerState,
   cornerStateKey,
   isCornerStateRecordCurrent,
+  isCornerStateRecordFresh,
+  isCornerTerminalState,
   parseCornerStateRecord,
   type CornerMachineReason,
   type CornerMachineState,

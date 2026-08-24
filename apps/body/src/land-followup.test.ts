@@ -136,7 +136,8 @@ function captureEvents(): NostrEvent[] {
     vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const queryResponse = relayQueryResponse(events, input, init);
       if (queryResponse) return queryResponse;
-      events.push(JSON.parse(String(init?.body)) as NostrEvent);
+      const event = JSON.parse(String(init?.body)) as NostrEvent;
+      if (Array.isArray(event.tags)) events.push(event);
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });
     }),
   );

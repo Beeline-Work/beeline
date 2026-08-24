@@ -69,6 +69,10 @@ vi.mock('@/buzz/person-name', () => ({
 vi.mock('@/buzz/community-invite', () => ({ createCommunityInviteUrl: vi.fn(async () => 'x') }));
 vi.mock('@/buzz/local-cache-sync', () => ({
   cacheLiveSessionEvents: vi.fn(),
+  refreshRoomCornerCache: vi.fn(
+    async (transport: any, _viewerPubkey: string, roomIds: string[]) =>
+      transport.listSubchannelLifecycleForRooms(roomIds),
+  ),
   revalidateCachedMessages: vi.fn(async () => undefined),
 }));
 vi.mock('@/buzz/defer-interaction', () => ({ afterInteractions: () => () => undefined }));
@@ -235,13 +239,32 @@ vi.mock('react-native', async () => {
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { channelListCacheKey, useBuzzLocalCache } = await import('@/buzz/local-cache');
+const { useBuzzLocalCache } = await import('@/buzz/local-cache');
 const { default: BuzzChannels } = await import('./channels');
 
 const VIEWER = 'a'.repeat(64);
 
 function corner(id: string, name: string, status: string) {
-  return { id: id.padEnd(64, '0'), name, status };
+  const machine =
+    status === 'live'
+      ? { machineState: 'working' }
+      : status === 'open'
+        ? { machineState: 'waiting', machineReason: 'review' }
+        : status === 'needs-attention'
+          ? { machineState: 'waiting', machineReason: 'question' }
+          : status === 'failed'
+            ? { machineState: 'waiting', machineReason: 'failure' }
+            : status === 'merged'
+              ? { machineState: 'concluded' }
+              : { machineState: 'closed' };
+  return {
+    id: id.padEnd(64, '0'),
+    name,
+    openerPubkey: 'agent',
+    status,
+    ...machine,
+    stateAt: Math.floor(Date.now() / 1_000),
+  };
 }
 
 function seedWorkspace() {
@@ -378,4 +401,5 @@ describe('room-list corner dropdown', () => {
     expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(0);
     expect(findAllByTestId(tree, 'room-all-corners-room-1')).toHaveLength(0);
   });
+
 });

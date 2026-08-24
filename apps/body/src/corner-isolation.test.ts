@@ -9,9 +9,9 @@
  * @jest-environment node
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
@@ -20,7 +20,14 @@ import {
   assertCornerWorktreeIsolated,
   classifyCornerCommand,
   cornerWorktreePath,
+  legacySiblingCornerWorktreePath,
+  migrateCornerWorktreePath,
 } from './corner-isolation.js';
+import {
+  cornerDirectoryName,
+  isShellSafePathSegment,
+  repositoryDirectoryName,
+} from './repository-path.js';
 
 function git(cwd: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
   const res = spawnSync('git', args, {
@@ -69,6 +76,92 @@ describe('corner worktree isolation', () => {
     expect(worktreePath.startsWith(resolve(primary) + '/')).toBe(false);
     // A hidden sibling grouped by repo name.
     expect(worktreePath).toBe(resolve(root, '.beeline-corners', 'proj-buzzy', 'corner-abc'));
+  });
+
+  it('never generates a repository or corner pool segment that can split PATH or shell words', () => {
+    for (const repositoryKey of [
+      'github:1330313701',
+      'repository with spaces',
+      'repository\nwith-newline',
+    ]) {
+      const repositoryDirectory = repositoryDirectoryName(repositoryKey);
+      const worktreePath = cornerWorktreePath({
+        workspaceRoot: resolve(root, 'workspace'),
+        sourceCheckout: resolve(root, 'repositories', repositoryKey),
+        subchannelId: 'corner-abc',
+      });
+      const generatedPool = basename(dirname(worktreePath));
+
+      expect(isShellSafePathSegment(repositoryDirectory)).toBe(true);
+      expect(isShellSafePathSegment(generatedPool)).toBe(true);
+      expect(repositoryDirectory).not.toMatch(/[:\s]/);
+      expect(generatedPool).not.toMatch(/[:\s]/);
+    }
+    for (const channelId of ['corner:unsafe', 'corner with spaces', 'corner\nwith-newline']) {
+      expect(isShellSafePathSegment(cornerDirectoryName(channelId))).toBe(true);
+      expect(
+        basename(
+          cornerWorktreePath({
+            workspaceRoot: resolve(root, 'workspace'),
+            sourceCheckout: primary,
+            subchannelId: channelId,
+          }),
+        ),
+      ).not.toMatch(/[:\s]/);
+    }
+  });
+
+  it('keeps a pnpm-style local-bin PATH entry intact in a corner-shaped path', async () => {
+    const worktreePath = cornerWorktreePath({
+      workspaceRoot: resolve(root, 'workspace'),
+      sourceCheckout: resolve(root, 'repositories', 'github:1330313701'),
+      subchannelId: 'corner-abc',
+    });
+    const bin = resolve(worktreePath, 'node_modules', '.bin');
+    const probe = resolve(bin, 'path-probe');
+    await mkdir(bin, { recursive: true });
+    await writeFile(probe, '#!/bin/sh\nprintf "local bin reached\\n"\n');
+    await chmod(probe, 0o755);
+
+    const result = spawnSync('sh', ['-c', 'command -v path-probe && path-probe'], {
+      cwd: worktreePath,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`${probe}\nlocal bin reached\n`);
+  });
+
+  it('moves an inactive unsafe corner when its replacement session starts', async () => {
+    const legacyPath = resolve(root, '.beeline-corners', 'github:1330313701', 'corner-old');
+    const currentPath = cornerWorktreePath({
+      workspaceRoot: resolve(root, 'workspace'),
+      sourceCheckout: resolve(root, 'github:1330313701'),
+      subchannelId: 'corner-old',
+    });
+    addCornerWorktree(primary, legacyPath, 'feature/corner-old');
+
+    await expect(migrateCornerWorktreePath(primary, legacyPath, currentPath)).resolves.toBe(true);
+    expect(git(currentPath, ['rev-parse', '--show-toplevel']).stdout.trim()).toBe(currentPath);
+    expect(git(primary, ['worktree', 'list', '--porcelain']).stdout).toContain(
+      `worktree ${currentPath}`,
+    );
+  });
+
+  it('finds the unsafe corner pool after its repository checkout has migrated', () => {
+    const safeCheckout = resolve(
+      root,
+      'repositories',
+      repositoryDirectoryName('github:1330313701'),
+    );
+    expect(
+      legacySiblingCornerWorktreePath({
+        workspaceRoot: resolve(root, 'workspace'),
+        sourceCheckout: safeCheckout,
+        repositoryKey: 'github:1330313701',
+        subchannelId: 'corner-old',
+      }),
+    ).toBe(resolve(root, 'repositories', '.beeline-corners', 'github:1330313701', 'corner-old'));
   });
 
   it('(a) an isolated corner worktree resolves to a top-level distinct from the primary', async () => {

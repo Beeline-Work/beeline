@@ -73,6 +73,7 @@ import {
 import { runRelayCommand } from './relay-command.js';
 import { startStoredRuntime } from './start-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
+import { migrateLegacyRepositoryPaths } from './repository-truth.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import {
   isExternalMcpCapability,
@@ -440,7 +441,10 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // access policies gets an explicit `accessPolicy: 'everyone'` stamped on it,
   // so flipping DEFAULT_ACCESS_POLICY to owner-only never re-gates an
   // already-paired agent. A record with any explicit policy is untouched.
-  const { runtime } = await migrateRuntimeRecordAccessPolicy(configPath);
+  const accessMigration = await migrateRuntimeRecordAccessPolicy(configPath);
+  const { runtime } = await migrateLegacyRepositoryPaths(accessMigration.runtime, {
+    log: console.log,
+  });
   const agent = runtimeAgentCommand(runtime);
   // This assertion deliberately sits outside the retry loop: unsafe branch
   // policy is a fatal startup error, not a transient Room-loop failure.

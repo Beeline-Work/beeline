@@ -15,10 +15,9 @@ export const CHANGES_LABEL = `${CORNER_LABEL}s`;
  * under three different words ("PEOPLE", "Members", "MEMBERS") and only one of
  * them carried a glyph at all.
  *
- * It must stay visually distinct from `cornerStatusPresentation`'s lifecycle
- * glyphs (the diamond family `◆ ◇`, `buzz/corners.ts`): a diamond on this
- * surface means live corner work, never people. `members-glyph.test.ts` holds
- * both halves of that rule.
+ * It must stay visually distinct from the state-circle family in
+ * `buzz/corners.ts`; this mark names a destination, never lifecycle state.
+ * `members-glyph.test.ts` holds both halves of that rule.
  */
 export const MEMBERS_GLYPH = '⌬';
 export const MEMBERS_LABEL = 'Members';

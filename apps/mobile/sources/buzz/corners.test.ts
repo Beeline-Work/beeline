@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cornerName,
   cornerStatusPresentation,
+  cornerVisualState,
   isCornerActive,
   isCornerStalledOffline,
   isCornerTerminal,
@@ -9,6 +10,7 @@ import {
   resolveCornerLifecycle,
   resolveCornerLifecycleStatus,
   roomCornerSignal,
+  roomState,
   roomListCorners,
   sortCorners,
   type CornerLifecycleFact,
@@ -16,37 +18,29 @@ import {
 } from './corners';
 
 describe('the offline-stalled presentation (agent provably offline)', () => {
-  it('reads STALLED, never NEEDS HUMAN, for an offline agent\'s unfinished corner', () => {
-    expect(
-      cornerStatusPresentation(null, { agentOffline: true }).label,
-    ).toBe('STALLED');
+  it('stays inside the exact three-state vocabulary for an offline corner', () => {
+    expect(cornerStatusPresentation(null, { agentOffline: true }).label).toBe('IDLE');
     // Defensive shape: a worded needs-you card next to the offline flag
     // stalls too — the oracle nulls stalled corners' words, but older caches
     // may still carry one.
-    expect(
-      cornerStatusPresentation('needs-attention', { agentOffline: true }).label,
-    ).toBe('STALLED');
+    expect(cornerStatusPresentation('needs-attention', { agentOffline: true }).label).toBe('IDLE');
     // The quiet glyph: nothing here is live work.
-    expect(cornerStatusPresentation(null, { agentOffline: true }).glyph).toBe('◇');
+    expect(cornerStatusPresentation(null, { agentOffline: true }).glyph).toBe('○');
   });
 
-  it('keeps today\'s reading for online/unknown agents and for real artifacts', () => {
-    // Unknown presence behaves exactly as before.
-    expect(cornerStatusPresentation(null).label).toBe('NEEDS HUMAN');
-    expect(cornerStatusPresentation('needs-attention').label).toBe('NEEDS HUMAN');
+  it("keeps today's reading for online/unknown agents and for real artifacts", () => {
+    expect(cornerStatusPresentation(null).label).toBe('IDLE');
+    expect(cornerStatusPresentation('needs-attention').label).toBe('NEEDS YOU');
     // A reviewable change stays actionable regardless of presence.
-    expect(
-      cornerStatusPresentation('open', { agentOffline: true }).label,
-    ).toBe('NEEDS HUMAN');
-    // Terminal words are untouched.
-    expect(
-      cornerStatusPresentation('archived', { agentOffline: true }).label,
-    ).toBe('FINISHED');
+    expect(cornerStatusPresentation('open', { agentOffline: true }).label).toBe('NEEDS YOU');
+    expect(cornerStatusPresentation('failed', { agentOffline: true }).label).toBe('NEEDS YOU');
+    // Terminal words fold to idle; immutable metadata still hides them.
+    expect(cornerStatusPresentation('archived', { agentOffline: true }).label).toBe('IDLE');
   });
 
-  it('defines the stalled predicate once, with the review-artifact exception', () => {
+  it('defines the stalled predicate once, with artifact-backed exceptions', () => {
     expect(isCornerStalledOffline({ status: null, agentOffline: true })).toBe(true);
-    expect(isCornerStalledOffline({ status: 'failed', agentOffline: true })).toBe(true);
+    expect(isCornerStalledOffline({ status: 'failed', agentOffline: true })).toBe(false);
     expect(isCornerStalledOffline({ status: 'open', agentOffline: true })).toBe(false);
     expect(isCornerStalledOffline({ status: null })).toBe(false);
     expect(isCornerStalledOffline({ status: 'archived', agentOffline: true })).toBe(false);
@@ -112,9 +106,9 @@ describe('resolveCornerLifecycle (attention lifecycle, one oracle)', () => {
       'live',
     );
     // A second failure newer than the work speaks again.
-    expect(
-      resolveCornerLifecycle([status('failed', 100), work(200), status('failed', 300)]),
-    ).toBe('failed');
+    expect(resolveCornerLifecycle([status('failed', 100), work(200), status('failed', 300)])).toBe(
+      'failed',
+    );
   });
 
   it('never resurrects a merged or archived corner, whatever came after', () => {
@@ -134,8 +128,13 @@ describe('resolveCornerLifecycle (attention lifecycle, one oracle)', () => {
     // that still holds the old card, one where busy corners evicted it — must
     // answer identically, or the deck flips between cold cache and warm
     // refetch. This is the cold/warm parity property.
-    const fullWindow: CornerLifecycleFact[] = [status('needs-attention', 100), ...Array.from({ length: 49 }, (_, i) => work(200 + i))];
-    const evictedWindow: CornerLifecycleFact[] = Array.from({ length: 50 }, (_, i) => work(200 + i));
+    const fullWindow: CornerLifecycleFact[] = [
+      status('needs-attention', 100),
+      ...Array.from({ length: 49 }, (_, i) => work(200 + i)),
+    ];
+    const evictedWindow: CornerLifecycleFact[] = Array.from({ length: 50 }, (_, i) =>
+      work(200 + i),
+    );
     expect(resolveCornerLifecycle(fullWindow, { now: 248 * 1000 + 500 })).toBe('live');
     expect(resolveCornerLifecycle(evictedWindow, { now: 248 * 1000 + 500 })).toBe('live');
   });
@@ -162,17 +161,17 @@ describe('corner navigation model', () => {
     ]);
   });
 
-  it('lists only open and actively-worked corners in the Room-list dropdown', () => {
-    // The dropdown is a live-work shortcut, so `merged`, `archived`, and
-    // `failed` corners are excluded outright rather than shown dimmed — a Room
-    // row's count must equal exactly what expanding it reveals.
+  it('lists every unfinished corner in the Room-list dropdown', () => {
+    // A failed status is emitted only for an actionable review artifact, so it
+    // remains visible; only immutable merged/archived facts leave the list.
     expect(roomListCorners(corners).map((corner) => corner.id)).toEqual([
       'open',
       'live-new',
       'live-old',
       'stuck',
+      'broken',
     ]);
-    expect(roomListCorners(corners).map((corner) => corner.status)).not.toContain('failed');
+    expect(roomListCorners(corners).map((corner) => corner.status)).toContain('failed');
     expect(roomListCorners(corners).map((corner) => corner.status)).not.toContain('archived');
     expect(roomListCorners(corners).map((corner) => corner.status)).not.toContain('merged');
     // The excluded corners are filtered for display only; the Room's own corner
@@ -181,7 +180,7 @@ describe('corner navigation model', () => {
     expect(corners.some((corner) => corner.status === 'failed')).toBe(true);
   });
 
-  it('excludes every terminal and failed status from the dropdown by name', () => {
+  it('excludes only immutable terminal statuses from the dropdown by name', () => {
     const one = (status: CornerSummary['status']): CornerSummary => ({
       id: status,
       name: status,
@@ -193,12 +192,12 @@ describe('corner navigation model', () => {
       roomListCorners(
         (['live', 'needs-attention', 'open', 'failed', 'merged', 'archived'] as const).map(one),
       ).map((corner) => corner.status),
-    ).toEqual(['live', 'needs-attention', 'open']);
+    ).toEqual(['live', 'needs-attention', 'open', 'failed']);
   });
 
   describe('roomCornerSignal', () => {
     it('reports the highest-precedence actively-worked corner', () => {
-      expect(roomCornerSignal(corners)).toBe('live');
+      expect(roomCornerSignal(corners)).toBe('needs-attention');
       expect(
         roomCornerSignal([
           { id: 'stuck', name: 'stuck', openerPubkey: 'a', status: 'needs-attention' },
@@ -207,21 +206,20 @@ describe('corner navigation model', () => {
       ).toBe('needs-attention');
     });
 
-    it('reports nothing for corners the dropdown does not list', () => {
-      // A Room row must never advertise work its own count and dropdown hide.
+    it('reports needs-you for actionable failure and ignores immutable terminals', () => {
       expect(
         roomCornerSignal([
           { id: 'broken', name: 'broken', openerPubkey: 'a', status: 'failed' },
           { id: 'gone', name: 'gone', openerPubkey: 'a', status: 'archived' },
           { id: 'landed', name: 'landed', openerPubkey: 'a', status: 'merged' },
         ]),
-      ).toBeNull();
+      ).toBe('needs-attention');
     });
 
-    it('reports nothing for a merely open corner or no corners at all', () => {
+    it('reports needs-you for an open review and nothing for no corners', () => {
       expect(
         roomCornerSignal([{ id: 'open', name: 'open', openerPubkey: 'a', status: 'open' }]),
-      ).toBeNull();
+      ).toBe('needs-attention');
       expect(roomCornerSignal([])).toBeNull();
     });
   });
@@ -251,18 +249,38 @@ describe('corner navigation model', () => {
     expect(cornerName('  #Auth callback  ', 'unused')).toBe('Auth-callback');
   });
 
-  it('uses the one diamond family for every corner glyph — corners are WORK, never identities', () => {
-    // Shapes are identity vocabulary (△ agent, ○ human, ▢ workspace); a
-    // corner's own glyph is always a diamond: filled ◆ while live, hollow ◇
-    // otherwise. The label carries the state word.
-    // THE three-word state vocabulary — no sub-reason words anywhere.
-    expect(cornerStatusPresentation('live')).toEqual({ glyph: '◆', label: 'WORKING' });
-    for (const word of ['needs-attention', 'open', 'failed', null] as const) {
-      expect(cornerStatusPresentation(word)).toEqual({ glyph: '◇', label: 'NEEDS HUMAN' });
+  it('uses the one circle family and exact three-state accessibility vocabulary', () => {
+    expect(cornerStatusPresentation('live')).toEqual({ glyph: '◌', label: 'WORKING' });
+    for (const word of ['needs-attention', 'open', 'failed'] as const) {
+      expect(cornerStatusPresentation(word)).toEqual({ glyph: '●', label: 'NEEDS YOU' });
     }
+    expect(cornerStatusPresentation(null)).toEqual({ glyph: '○', label: 'IDLE' });
     for (const word of ['merged', 'archived'] as const) {
-      expect(cornerStatusPresentation(word)).toEqual({ glyph: '◇', label: 'FINISHED' });
+      expect(cornerStatusPresentation(word)).toEqual({ glyph: '○', label: 'IDLE' });
     }
+  });
+
+  it('rolls Room state up as an order-independent max over corner states', () => {
+    const idle = { id: 'i', name: 'idle', openerPubkey: 'a', status: null } satisfies CornerSummary;
+    const working = {
+      id: 'w',
+      name: 'working',
+      openerPubkey: 'a',
+      status: 'live',
+    } satisfies CornerSummary;
+    const needs = {
+      id: 'n',
+      name: 'needs',
+      openerPubkey: 'a',
+      status: 'open',
+    } satisfies CornerSummary;
+
+    expect(roomState([idle, working, needs])).toBe('needs-you');
+    expect(roomState([idle, working])).toBe('working');
+    expect(roomState([idle, { ...idle, id: 'i2' }])).toBe('idle');
+    expect(roomState([needs, idle, working])).toBe(roomState([working, needs, idle]));
+    expect(roomState([working, working])).toBe(cornerVisualState('live'));
+    expect(roomState([idle])).toBe('idle');
   });
 
   it('collapses every raw wire status onto the one canonical model', () => {
@@ -290,9 +308,9 @@ describe('corner navigation model', () => {
     expect(isCornerActive('archived')).toBe(false);
   });
 
-  it('names exactly the three terminal statuses', () => {
+  it('names only immutable merged and archived facts as terminal', () => {
     expect(isCornerTerminal('merged')).toBe(true);
-    expect(isCornerTerminal('failed')).toBe(true);
+    expect(isCornerTerminal('failed')).toBe(false);
     expect(isCornerTerminal('archived')).toBe(true);
     expect(isCornerTerminal('live')).toBe(false);
     expect(isCornerTerminal('needs-attention')).toBe(false);

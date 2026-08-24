@@ -94,11 +94,11 @@ import {
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
   replaceActiveMention,
+  resolveComposerMentions,
   roomParticipantPubkeys,
   sectionRoomParticipants,
   sectionRoomRoster,
   selectedMentionAgentPubkey,
-  selectedMentionPubkeys,
 } from '@/buzz/room-participants';
 import {
   resolveAgentDisplayIdentity,
@@ -1954,6 +1954,11 @@ export default function BuzzChat() {
       return;
     }
     const text = replyTarget ? replyMessageText(rawText, replyTarget) : rawText;
+    const mentionedPubkeys = resolveComposerMentions(
+      text,
+      roomParticipants,
+      selectedMentionsRef.current,
+    ).pubkeys;
 
     sendInFlightRef.current = true;
     setSending(true);
@@ -1975,6 +1980,7 @@ export default function BuzzChat() {
           isUser: true,
           timestamp: Date.now(),
           pubkey: userPubkey,
+          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
           ...(replyTarget ? { replyToId: replyTarget.messageId } : {}),
           ...(attachments.length ? { attachments } : {}),
         },
@@ -1987,7 +1993,6 @@ export default function BuzzChat() {
         text,
         selectedAgentMentionsRef.current,
       );
-      const mentionedPubkeys = selectedMentionPubkeys(text, selectedMentionsRef.current);
       const mentionedAgent = replyTarget?.isAgent
         ? replyTarget.authorPubkey
         : parentChannelId
@@ -2036,6 +2041,7 @@ export default function BuzzChat() {
     userPubkey,
     parentChannelId,
     mentionableAgents,
+    roomParticipants,
     cacheViewerPubkey,
     replyTarget,
     agentsOffline,
@@ -3263,6 +3269,10 @@ export default function BuzzChat() {
           testID={`chat-machine-noise-${item.id}`}
         />
       ) : null;
+      const taggedMentionPubkeys = new Set(item.mentionPubkeys ?? []);
+      const mentionHandles = roomParticipants
+        .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
+        .map((participant) => participant.handle);
 
       return (
         <SwipeToReply
@@ -3282,6 +3292,7 @@ export default function BuzzChat() {
                 continued={attributionContinued}
                 byline={byline}
                 bodyText={item.text}
+                mentionHandles={mentionHandles}
                 bodyTestID={`chat-message-text-${item.id}`}
                 replyReference={replyReference}
                 attachments={attachmentElements}
@@ -3298,6 +3309,7 @@ export default function BuzzChat() {
                 // registry) lives inside `LedgerEntry`.
                 typewriter={speaksAsAgent && Boolean(item.isNew)}
                 bodyText={ledgerText ? ledgerText.prose : item.text}
+                mentionHandles={mentionHandles}
                 bodyTestID={`chat-message-text-${item.id}`}
                 replyReference={replyReference}
                 machineNoise={machineNoise}
@@ -3322,6 +3334,7 @@ export default function BuzzChat() {
       personProfileByPubkey,
       cacheViewerPubkey,
       roomRepository,
+      roomParticipants,
       targetBranchActionId,
       targetBranchNotice,
       viewerChannelRole,

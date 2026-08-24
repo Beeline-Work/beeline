@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   agentHandle,
+  DEFAULT_AGENT_IDENTITY_NAME,
   deriveAgentDisplayName,
   fallbackAgentName,
   fallbackPersonName,
@@ -49,14 +50,31 @@ describe('agent presentation names', () => {
     expect(isReasonableAgentName('h4x0r')).toBe(false);
   });
 
-  it('derives a deliberate default from the daemon generic marker, never a masked first name', () => {
-    // The daemon mints `buzzy-agent`; that becomes the traceable "Buzzy".
-    expect(deriveAgentDisplayName('buzzy-agent', 'agent')).toBe('Buzzy');
-    // The bare "Agent" guard is a placeholder too: explicit deterministic pool.
+  it('derives a distinct pubkey seed name from every system marker, never one shared label', () => {
+    // The daemon mints `beeline-agent` (the Beeline-rebrand default); that is
+    // a placeholder which resolves to this agent's own stable seed name.
+    expect(DEFAULT_AGENT_IDENTITY_NAME).toBe('beeline-agent');
+    expect(deriveAgentDisplayName('beeline-agent', 'agent')).toBe(fallbackAgentName('agent'));
+    // The pre-rebrand `buzzy-agent` marker is classified the same way.
+    expect(deriveAgentDisplayName('buzzy-agent', 'agent')).toBe(fallbackAgentName('agent'));
+    // The bare "Agent" guard is a placeholder too.
     expect(deriveAgentDisplayName('Agent', 'agent')).toBe(fallbackAgentName('agent'));
     expect(deriveAgentDisplayName(undefined, 'agent')).toBe(fallbackAgentName('agent'));
     // An authored name — single word or compound — passes through untouched.
     expect(deriveAgentDisplayName('Patch', 'agent')).toBe('Patch');
     expect(deriveAgentDisplayName('Quiet Keeper', 'agent')).toBe('Quiet Keeper');
+  });
+
+  it('never gives two agents the same default identity', () => {
+    const first = '11'.repeat(32);
+    const second = '22'.repeat(32);
+    expect(first).not.toBe(second);
+    const firstName = deriveAgentDisplayName(DEFAULT_AGENT_IDENTITY_NAME, first);
+    const secondName = deriveAgentDisplayName(DEFAULT_AGENT_IDENTITY_NAME, second);
+    // Both resolve to real spoken seed names, and they differ per pubkey —
+    // the shared "buzzy-agent"/"Buzzy" label is gone.
+    expect(firstName).toMatch(/^\p{Lu}\p{Ll}+$/u);
+    expect(secondName).toMatch(/^\p{Lu}\p{Ll}+$/u);
+    expect(firstName).not.toBe(secondName);
   });
 });

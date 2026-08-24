@@ -147,11 +147,13 @@ describe('thin-core swap compatibility', () => {
     };
     mocks.createBuzzClient.mockReturnValue(client);
     const core = new ThinDaemonCore(loaded, configPath, {} as BodyConfig) as unknown as {
-      roomRoot(id: string, room?: unknown): string;
-      resolveServingRepo(room: unknown): Promise<unknown>;
+      roomRuntime: {
+        roomRoot(id: string, room?: unknown): string;
+        resolveServingRepo(room: unknown): Promise<unknown>;
+      };
       run(options: unknown): Promise<string>;
     };
-    core.resolveServingRepo = vi.fn(async () => ({
+    core.roomRuntime.resolveServingRepo = vi.fn(async () => ({
       repo: 'repo',
       targetBranch: 'refs/heads/main',
       localPath: runtime.rooms[0]!.repo.root,
@@ -159,7 +161,7 @@ describe('thin-core swap compatibility', () => {
       localOnly: true,
     }));
 
-    expect(core.roomRoot('room-1', loaded.rooms[0])).toBe(roomRoot);
+    expect(core.roomRuntime.roomRoot('room-1', loaded.rooms[0])).toBe(roomRoot);
     const controller = new AbortController();
     let established = false;
     expect(

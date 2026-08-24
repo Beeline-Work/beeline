@@ -5,16 +5,15 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { newIdentity } from '@beeline/gate';
-import {
-  DEFAULT_ACCESS_POLICY,
-  isSenderPermitted,
-} from './access-policy.js';
+import { DEFAULT_ACCESS_POLICY, isSenderPermitted } from './access-policy.js';
 import {
   canonicalizeOrigin,
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   inspectLocalRepository,
+  identityFromKey,
   migrateRuntimeRecordAccessPolicy,
+  mintAgentIdentityForPairing,
   normalizeRelayBaseUrl,
   pairRepositoryAgent,
   tryInspectLocalRepository,
@@ -56,6 +55,16 @@ afterEach(async () => {
 });
 
 describe('repository binding', () => {
+  it('mints every paired agent independently of a human identity on the device', () => {
+    const human = identityFromKey('11'.repeat(32), 'human');
+    const firstAgent = mintAgentIdentityForPairing();
+    const secondAgent = mintAgentIdentityForPairing();
+
+    expect(firstAgent.publicKey).not.toBe(human.publicKey);
+    expect(secondAgent.publicKey).not.toBe(human.publicKey);
+    expect(secondAgent.publicKey).not.toBe(firstAgent.publicKey);
+  });
+
   it('normalizes credentialed HTTPS and SSH clones to the same remote identity', () => {
     expect(canonicalizeOrigin('https://token@example.com/Acme/widget.git', '/tmp/repo')).toBe(
       'git://example.com/Acme/widget',
@@ -763,9 +772,7 @@ describe('multi-identity guard (S0) + access policy', () => {
     const root = await repository('https://example.com/team/project.git');
     const supervisorRoot = await stateRoot();
     const result = await pairAgent(root, supervisorRoot);
-    expect(
-      (await readRuntimeRecord(result.configPath)).sandboxMaskPaths,
-    ).toBeUndefined();
+    expect((await readRuntimeRecord(result.configPath)).sandboxMaskPaths).toBeUndefined();
 
     const raw = JSON.parse(await readFile(result.configPath, 'utf8')) as Record<string, unknown>;
     raw.sandboxMaskPaths = ['/srv/operator-secrets', '~/.env-backups'];
@@ -975,7 +982,10 @@ describe('runtime root migration', () => {
       }),
     );
 
-    const configs = await findAgentRuntimeConfigPaths({ XDG_STATE_HOME: supervisorRoot }, supervisorRoot);
+    const configs = await findAgentRuntimeConfigPaths(
+      { XDG_STATE_HOME: supervisorRoot },
+      supervisorRoot,
+    );
     expect(new Set(configs)).toEqual(new Set([stateRuntime.configPath, legacyPath]));
   });
 
@@ -1061,9 +1071,7 @@ describe('a pair run that fails after redemption', () => {
     expect([...relay.members]).toEqual([]);
     // Nothing half-written on disk either.
     expect(
-      existsSync(
-        resolve(supervisorRoot, 'beeline', 'agents', agent.publicKey, 'runtime.json'),
-      ),
+      existsSync(resolve(supervisorRoot, 'beeline', 'agents', agent.publicKey, 'runtime.json')),
     ).toBe(false);
   });
 

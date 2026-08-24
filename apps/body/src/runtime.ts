@@ -49,9 +49,9 @@ export interface AgentRuntimeRecord {
   pairedBy: string;
   agent: StoredIdentity;
   body: StoredIdentity;
-  /** Repository Rooms currently known to this Workspace supervisor. */
+  /** Repository Rooms currently known to this Workspace daemon. */
   rooms: RoomRuntimeRecord[];
-  /** Git common dir that owns the one machine-local supervisor record. */
+  /** Git common dir that owns the one machine-local daemon record. */
   supervisorRoot: string;
   relayBaseUrl: string;
   relayHost?: string;
@@ -385,6 +385,15 @@ export function identityFromKey(value: string | undefined, name: string): Identi
   return { name, secretKey, publicKey: getPublicKey(secretKey) };
 }
 
+/**
+ * The only identity factory allowed on the `beeline pair` path. It accepts no
+ * key material by design, so an ambient human `BUZZ_PRIVATE_KEY` can never be
+ * mistaken for the new agent again.
+ */
+export function mintAgentIdentityForPairing(): Identity {
+  return newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
+}
+
 function storeIdentity(identity: Identity, defaultName: string): StoredIdentity {
   return {
     name: identity.name ?? defaultName,
@@ -443,7 +452,7 @@ export async function assertAgentIdentityUnpaired(
   throw new Error(
     `agent identity ${agentPubkey} is already paired on this host; ` +
       'every agent needs its own fresh keypair. Restart the existing one with ' +
-      '`beeline start --agent <pubkey>`, or unset BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY to mint a new identity.',
+      '`beeline start --agent <pubkey>`, or run the Members-page pairing command to mint a new identity.',
   );
 }
 
@@ -1081,7 +1090,7 @@ export async function pairRepositoryAgent(
       body: storeIdentity(input.bodyIdentity, DEFAULT_BODY_IDENTITY_NAME),
       // Empty when pairing with no repository: the supervisor discovers every
       // Room this agent is invited to from relay membership and materializes
-      // each Room's own repository on demand (`ThinDaemonCore.reconcile`).
+      // each Room's own repository on demand (`RoomRuntimeCoordinator.reconcile`).
       rooms:
         repo && room
           ? [

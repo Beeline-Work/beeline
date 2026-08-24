@@ -29,6 +29,7 @@ import {
   isOwnerGrantNeededFailure,
   ThinDaemonCore,
 } from './thin-core.js';
+import { RoomRuntimeCoordinator } from './room-runtime.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -47,7 +48,7 @@ function storedIdentity(name: string) {
   };
 }
 
-describe('ThinDaemonCore removal lease', () => {
+describe('RoomRuntimeCoordinator removal lease', () => {
   it('requires three successful membership reads before returning agent-removed', async () => {
     const agent = storedIdentity('agent');
     const body = storedIdentity('body');
@@ -69,19 +70,18 @@ describe('ThinDaemonCore removal lease', () => {
       mcpBinary: '/bin/true',
       createdAt: new Date(0).toISOString(),
     };
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${agent.identity.publicKey}/runtime.json`,
       {} as BodyConfig,
     );
 
-    await expect(supervisor.run({ pollMs: 1 })).resolves.toBe('agent-removed');
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
+    await expect(supervisor.reconcile()).resolves.toBe('unknown');
+    await expect(supervisor.reconcile()).resolves.toBe('not-member');
     expect(mocks.createBuzzClient.mock.results[0]?.value.isMember).toHaveBeenCalledTimes(3);
     expect(supervisor.activeRoomIds()).toEqual([]);
-    // reconcile()'s own per-call client, plus the daemon's one shared relay
-    // socket closed at teardown. This fixture returns the same mock object for
-    // every createBuzzClient() call, so both land on this spy.
-    expect(disconnect).toHaveBeenCalledTimes(4);
+    expect(disconnect).toHaveBeenCalledTimes(3);
   });
 
   it('archives a corroborated removed runtime so its identity can be restored', async () => {
@@ -114,9 +114,11 @@ describe('ThinDaemonCore removal lease', () => {
       writeFileSync(resolve(dirname(configPath), 'daemon.pid'), '4242\n');
       const isMember = vi.fn().mockResolvedValue(false);
       mocks.createBuzzClient.mockReturnValue({ isMember, disconnect: vi.fn() });
-      const supervisor = new ThinDaemonCore(runtime, configPath, {} as BodyConfig);
+      const supervisor = new RoomRuntimeCoordinator(runtime, configPath, {} as BodyConfig);
 
-      await expect(supervisor.run({ pollMs: 1 })).resolves.toBe('agent-removed');
+      await expect(supervisor.reconcile()).resolves.toBe('unknown');
+      await expect(supervisor.reconcile()).resolves.toBe('unknown');
+      await expect(supervisor.reconcile()).resolves.toBe('not-member');
       expect(isMember).toHaveBeenCalledTimes(3);
 
       await removeAgentRuntime(configPath, runtime.agent.publicKey);
@@ -159,7 +161,7 @@ describe('ThinDaemonCore removal lease', () => {
       .mockRejectedValueOnce(new Error('membership projection unavailable'))
       .mockResolvedValue(false);
     mocks.createBuzzClient.mockReturnValue({ isMember, disconnect: vi.fn() });
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -197,7 +199,7 @@ describe('ThinDaemonCore removal lease', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -225,7 +227,7 @@ describe('ThinDaemonCore removal lease', () => {
   });
 });
 
-describe('ThinDaemonCore unbound channel policy', () => {
+describe('RoomRuntimeCoordinator unbound channel policy', () => {
   function runtimeWithExistingRepo(): AgentRuntimeRecord {
     const agent = storedIdentity('policy-agent');
     const body = storedIdentity('policy-body');
@@ -270,7 +272,7 @@ describe('ThinDaemonCore unbound channel policy', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect,
     });
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -317,7 +319,7 @@ describe('ThinDaemonCore unbound channel policy', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -352,7 +354,7 @@ describe('ThinDaemonCore unbound channel policy', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -367,7 +369,7 @@ describe('ThinDaemonCore unbound channel policy', () => {
   });
 });
 
-describe('ThinDaemonCore Room watchdog', () => {
+describe('RoomRuntimeCoordinator Room watchdog', () => {
   function runtimeWithRooms(): AgentRuntimeRecord {
     const agent = storedIdentity('watchdog-agent');
     const body = storedIdentity('watchdog-body');
@@ -399,7 +401,7 @@ describe('ThinDaemonCore Room watchdog', () => {
   it('restarts only a stale Room while its sibling remains served', async () => {
     let now = 100_000;
     const runtime = runtimeWithRooms();
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -444,7 +446,7 @@ describe('ThinDaemonCore Room watchdog', () => {
   it('does not reset a rate-limited Room while its relay-directed delay is active', async () => {
     let now = 100_000;
     const runtime = runtimeWithRooms();
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -491,7 +493,7 @@ describe('ThinDaemonCore Room watchdog', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect,
     });
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -530,7 +532,7 @@ describe('ThinDaemonCore Room watchdog', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       resolve(runtime.supervisorRoot, 'runtime.json'),
       {} as BodyConfig,
@@ -554,7 +556,7 @@ describe('ThinDaemonCore Room watchdog', () => {
   });
 });
 
-describe('ThinDaemonCore transient relay resilience', () => {
+describe('RoomRuntimeCoordinator transient relay resilience', () => {
   function runtimeMinimal(name: string): AgentRuntimeRecord {
     const agent = storedIdentity(name);
     const body = storedIdentity(`${name}-body`);
@@ -607,24 +609,19 @@ describe('ThinDaemonCore transient relay resilience', () => {
       writeFileSync(configPath, `${JSON.stringify(runtime)}\n`, { mode: 0o600 });
       const isMember = vi.fn().mockRejectedValue(liveNonRetryableHtmlErrorFixture());
       mocks.createBuzzClient.mockReturnValue({ isMember, disconnect: vi.fn() });
-      const supervisor = new ThinDaemonCore(runtime, configPath, {} as BodyConfig);
+      const supervisor = new RoomRuntimeCoordinator(runtime, configPath, {} as BodyConfig);
       const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
       await expect(supervisor.reconcile()).resolves.toBe('unknown');
 
-      const controller = new AbortController();
-      const runPromise = supervisor.run({ pollMs: 1, signal: controller.signal });
-      while (isMember.mock.calls.length < 3) {
-        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
-      }
+      await expect(supervisor.reconcile()).resolves.toBe('unknown');
+      await expect(supervisor.reconcile()).resolves.toBe('unknown');
 
       expect(existsSync(configPath)).toBe(true);
       expect(existsSync(resolve(stateRoot, 'deleted-runtimes'))).toBe(false);
       expect(errors.mock.calls.flat().join(' ')).toContain(
         'membership could not be confirmed; keeping runtime and Rooms',
       );
-      controller.abort();
-      await expect(runPromise).resolves.toBe('aborted');
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }
@@ -676,7 +673,7 @@ describe('ThinDaemonCore transient relay resilience', () => {
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     });
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -805,7 +802,7 @@ describe('ThinDaemonCore control-plane wake signal', () => {
   });
 });
 
-describe('ThinDaemonCore per-room storage and harness isolation', () => {
+describe('RoomRuntimeCoordinator per-room storage and harness isolation', () => {
   const scratchDirs: string[] = [];
   const savedRoomHome = process.env.BUZZY_BODY_ROOM_HOME;
 
@@ -837,10 +834,10 @@ describe('ThinDaemonCore per-room storage and harness isolation', () => {
       mcpBinary: '/bin/true',
       createdAt: new Date(0).toISOString(),
     };
-    return new ThinDaemonCore(runtime, configPath, {} as BodyConfig);
+    return new RoomRuntimeCoordinator(runtime, configPath, {} as BodyConfig);
   }
 
-  function roomRoot(supervisor: ThinDaemonCore, channelId: string, room?: unknown): string {
+  function roomRoot(supervisor: RoomRuntimeCoordinator, channelId: string, room?: unknown): string {
     return (Reflect.get(supervisor, 'roomRoot') as (id: string, record?: unknown) => string).call(
       supervisor,
       channelId,
@@ -848,7 +845,7 @@ describe('ThinDaemonCore per-room storage and harness isolation', () => {
     );
   }
 
-  function agentHomeRoot(supervisor: ThinDaemonCore, workspaceRoot: string) {
+  function agentHomeRoot(supervisor: RoomRuntimeCoordinator, workspaceRoot: string) {
     return (
       Reflect.get(supervisor, 'roomAgentHomeRoot') as (root: string) => string | undefined
     ).call(supervisor, workspaceRoot);
@@ -907,7 +904,7 @@ describe('ThinDaemonCore per-room storage and harness isolation', () => {
   });
 });
 
-describe('ThinDaemonCore room owns the repo (Stage 1)', () => {
+describe('RoomRuntimeCoordinator room owns the repo (Stage 1)', () => {
   function storedId(name: string) {
     return storedIdentity(name).stored;
   }
@@ -928,9 +925,12 @@ describe('ThinDaemonCore room owns the repo (Stage 1)', () => {
     };
   }
 
-  function supervisorFor(supervisorRoot: string, rooms: RoomRuntimeRecord[] = []): ThinDaemonCore {
+  function supervisorFor(
+    supervisorRoot: string,
+    rooms: RoomRuntimeRecord[] = [],
+  ): RoomRuntimeCoordinator {
     const rt = runtime(supervisorRoot, rooms);
-    return new ThinDaemonCore(
+    return new RoomRuntimeCoordinator(
       rt,
       `/tmp/beeline/agents/${rt.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1066,7 +1066,7 @@ describe('Room join-failure classification', () => {
   });
 });
 
-describe('ThinDaemonCore per-Room discovery isolation', () => {
+describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
   function runtimeNoRooms(name: string): AgentRuntimeRecord {
     const agent = storedIdentity(name);
     const body = storedIdentity(`${name}-body`);
@@ -1130,7 +1130,7 @@ describe('ThinDaemonCore per-Room discovery isolation', () => {
   it('skips one unservable Room and still joins every other invited Room', async () => {
     const runtime = runtimeNoRooms('discovery-agent');
     mocks.createBuzzClient.mockReturnValue(discoveryClient(runtime));
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1153,7 +1153,7 @@ describe('ThinDaemonCore per-Room discovery isolation', () => {
     const client = discoveryClient(runtime);
     mocks.createBuzzClient.mockReturnValue(client);
     let now = 1_000_000;
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1200,7 +1200,7 @@ describe('ThinDaemonCore per-Room discovery isolation', () => {
     const client = discoveryClient(runtime);
     mocks.createBuzzClient.mockReturnValue(client);
     let now = 1_000_000;
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1234,7 +1234,7 @@ describe('ThinDaemonCore per-Room discovery isolation', () => {
       { channelId: 'unservable-room', event: { created_at: 20 } },
     ]);
     mocks.createBuzzClient.mockReturnValue(client);
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1257,7 +1257,7 @@ describe('ThinDaemonCore per-Room discovery isolation', () => {
   });
 });
 
-describe('ThinDaemonCore archived Room', () => {
+describe('RoomRuntimeCoordinator archived Room', () => {
   function runtimeNoRooms(name: string): AgentRuntimeRecord {
     const agent = storedIdentity(name);
     const body = storedIdentity(`${name}-body`);
@@ -1310,7 +1310,7 @@ describe('ThinDaemonCore archived Room', () => {
       channelId === 'dead-room' ? { archived: true } : { archived: false },
     );
     mocks.createBuzzClient.mockReturnValue(client);
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1355,7 +1355,7 @@ describe('ThinDaemonCore archived Room', () => {
     const runtime = runtimeNoRooms('archived-reactive-agent');
     const client = twoRoomClient(runtime, () => null); // read answers nothing useful
     mocks.createBuzzClient.mockReturnValue(client);
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
@@ -1383,7 +1383,7 @@ describe('ThinDaemonCore archived Room', () => {
     const client = twoRoomClient(runtime, () => ({ archived: false }));
     mocks.createBuzzClient.mockReturnValue(client);
     let now = 1_000;
-    const supervisor = new ThinDaemonCore(
+    const supervisor = new RoomRuntimeCoordinator(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,

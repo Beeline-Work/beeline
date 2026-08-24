@@ -13,6 +13,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => ({
 }));
 
 import { mapWithConcurrency, ThinDaemonCore } from './thin-core.js';
+import { RoomRuntimeCoordinator } from './room-runtime.js';
 
 function stored(name: string) {
   const identity = newIdentity(name);
@@ -93,7 +94,7 @@ describe('ThinDaemonCore', () => {
     });
     const controller = new AbortController();
     const forceRecoverRoom = vi.fn(async () => finishRoom());
-    const core = new ThinDaemonCore(
+    const core = new RoomRuntimeCoordinator(
       runtime(),
       '/tmp/beeline-thin-core-test/runtime.json',
       {} as BodyConfig,

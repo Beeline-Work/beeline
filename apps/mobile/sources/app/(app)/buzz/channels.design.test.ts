@@ -236,7 +236,8 @@ describe('Room list — Grok Mono Hull invariants', () => {
   });
 
   it('attributes lifecycle facts with the same identity waterfall the rest of the app uses', () => {
-    expect(source).toContain('roomListSections(visible, authorNames, { now: ageNow })');
+    expect(source).toContain('roomListSections(');
+    expect(source).toContain('[...visible, ...directEntries]');
     expect(source).toContain("names.set(identity.publicKey, 'You')");
   });
 
@@ -304,15 +305,16 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(styleBlock(source, 'fab')).toMatch(/(?:width|minHeight): 44/);
   });
 
-  it('renders exactly two inline tiers plus the collapsed FINISHED entry', () => {
+  it("renders exactly two piles — NEEDS YOU and DOESN'T NEED YOU — and nothing else", () => {
     // Owner spec 2026-08-23: attention-state and recency were semantically
     // different tiers; the deck has exactly TWO section labels — NEEDS YOU
-    // (actionable corner work) then IDLE (every other visible Room, working
-    // ones included; the row marks already convey working vs quiet). No
-    // recency headings, no third top-level tier. The labels themselves are
-    // pinned by room-list-row.test.ts against the projection; this screen
-    // must render them verbatim from that one source, never re-derive a
-    // vocabulary of its own.
+    // (actionable corner work or an unread ROOM/DM message) then DOESN'T NEED
+    // YOU (every other entry — working AND finished Rooms included; the row
+    // marks already convey working vs quiet). No recency headings, no third
+    // top-level tier, no collapsed FINISHED pile, no DIRECT pile. The labels
+    // themselves are pinned by room-list-row.test.ts against the projection;
+    // this screen must render them verbatim from that one source, never
+    // re-derive a vocabulary of its own.
     expect(source).toContain("from '@/buzz/room-list-row'");
     expect(source).toContain('{section.title} · {section.data.length}');
     expect(source).toContain('<SectionList');
@@ -322,14 +324,14 @@ describe('Room list — Grok Mono Hull invariants', () => {
     for (const retired of ["'WORKING'", "'TODAY'", "'YESTERDAY'", "'EARLIER'"]) {
       expect(source, `${retired} must not come back as a tier label`).not.toContain(retired);
     }
-    // Finished Rooms are one-depth-hidden: a single collapsed header row at
-    // the bottom that expands to the finished list — never rendered inline by
-    // any tier.
-    expect(source).toContain('FINISHED ·');
-    expect(source).toContain('testID="finished-rooms-toggle"');
-    expect(source).toContain('accessibilityState={{ expanded: showFinishedRooms }}');
-    expect(source).toContain('showFinishedRooms &&');
-    expect(source).toContain('renderRoomEntry(entry)');
+    // The FINISHED collapse is deleted: finished Rooms render inline like any
+    // other quiet Room, and the DIRECT footer is gone — DMs obey the same
+    // unread rule inside the two piles.
+    expect(source).not.toContain('FINISHED ·');
+    expect(source).not.toContain('finished-rooms-toggle');
+    expect(source).not.toContain('showFinishedRooms');
+    expect(source).not.toContain('DIRECT ·');
+    expect(source).not.toContain('ListFooterComponent');
   });
 
   it('keeps the expansion as the only in-index corner list — no duplicate route link', () => {

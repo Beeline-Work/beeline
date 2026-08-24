@@ -424,9 +424,13 @@ export {
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_FILE_TAG,
+  CHANGE_REVIEW_COMPLETE_TAG,
+  CHANGE_REVIEW_GENERATION_TAG,
   CHANGE_REVIEW_VERSION,
   parseChangeReviewManifest,
+  parseChangeReviewGenerationComplete,
   type ChangeReviewFile,
+  type ChangeReviewGenerationComplete,
   type ChangeReviewManifest,
   type ChangeReviewStatus,
 } from './change-review.js';

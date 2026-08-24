@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { AcpClient } from './acp.js';
 import { Body, LANDED_TAG, type SubchannelInfo } from './body.js';
+import { relayQueryResponse } from './relay-test-helper.js';
 import type { NostrEvent } from '@beeline/nostr';
 
 const cleanup: string[] = [];
@@ -86,7 +87,9 @@ function captureEvents(): NostrEvent[] {
   const events: NostrEvent[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const queryResponse = relayQueryResponse(events, input, init);
+      if (queryResponse) return queryResponse;
       events.push(JSON.parse(String(init?.body)) as NostrEvent);
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });
     }),
@@ -397,6 +400,8 @@ describe('preview deployment URL on the review card', () => {
             { status: 200, headers: { 'content-type': 'application/json' } },
           );
         }
+        const queryResponse = relayQueryResponse(events, input, init);
+        if (queryResponse) return queryResponse;
         events.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
@@ -423,6 +428,8 @@ describe('preview deployment URL on the review card', () => {
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         if (String(input).startsWith('https://api.github.com/')) throw new Error('rate limited');
+        const queryResponse = relayQueryResponse(events, input, init);
+        if (queryResponse) return queryResponse;
         events.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),

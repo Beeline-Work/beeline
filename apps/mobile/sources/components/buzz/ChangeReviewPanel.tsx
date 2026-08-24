@@ -5,6 +5,12 @@ import type { ChangedFile } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { BrittlePress, HullSurface, PixelLoader } from '@/components/buzz/MonoHull';
 import { darkTheme } from '@/theme';
+import {
+  cacheCompleteReviewManifest,
+  cacheReviewPatch,
+  readCachedReviewGeneration,
+  readLatestCachedReviewGeneration,
+} from '@/buzz/change-review-cache';
 
 /** Buzz UI is a fixed dark theme (groknight), so the diff pulls the dark
  * variant of the legacy diff colors directly rather than through the
@@ -12,10 +18,11 @@ import { darkTheme } from '@/theme';
 const diffColors = darkTheme.colors.diff;
 
 export interface ChangeReviewReader {
-  workspaceFilesRead(sessionId: string): Promise<ChangedFile[]>;
+  workspaceFilesRead(sessionId: string, reviewTip?: string): Promise<ChangedFile[]>;
   changedFileRead(
     sessionId: string,
     path: string,
+    reviewTip?: string,
   ): Promise<{ content: string; isBinary?: boolean } | null>;
 }
 
@@ -40,6 +47,29 @@ export function withChangeReviewTimeout<T>(
   return Promise.race([operation, deadline]).finally(() => {
     if (timeout) clearTimeout(timeout);
   });
+}
+
+/** The explicit Retry action makes three fresh reads with bounded backoff. */
+export async function retryChangeReviewRead<T>(
+  operation: () => Promise<T>,
+  delaysMs: readonly number[] = [250, 750],
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= delaysMs.length; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt < delaysMs.length) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, delaysMs[attempt]));
+      }
+    }
+  }
+  throw lastError;
+}
+
+function errorDetail(error: unknown): string {
+  return error instanceof Error ? error.message : String(error).replace(/^Error:\s*/, '');
 }
 
 function statusLetter(status?: string): string {
@@ -111,8 +141,12 @@ export function ChangeReviewPanel({
   tip,
   onFilesLoaded,
 }: ChangeReviewPanelProps) {
-  const [files, setFiles] = useState<ChangedFile[]>([]);
-  const [loadingFiles, setLoadingFiles] = useState(true);
+  const cachedAtMount = useRef(
+    readCachedReviewGeneration(sessionId, tip) ?? readLatestCachedReviewGeneration(sessionId, tip),
+  ).current;
+  const [files, setFiles] = useState<ChangedFile[]>(cachedAtMount?.files ?? []);
+  const [displayedTip, setDisplayedTip] = useState<string | null>(cachedAtMount?.tip ?? null);
+  const [loadingFiles, setLoadingFiles] = useState(!cachedAtMount);
   const [filesError, setFilesError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ChangedFile | null>(null);
   const [patch, setPatch] = useState<string | null>(null);
@@ -121,54 +155,94 @@ export function ChangeReviewPanel({
   const [patchError, setPatchError] = useState<string | null>(null);
   const requestNumber = useRef(0);
   const filesRequestNumber = useRef(0);
+  const displayedTipRef = useRef<string | null>(cachedAtMount?.tip ?? null);
+  const displayedSessionIdRef = useRef<string | null>(cachedAtMount?.sessionId ?? null);
+  const hasDisplayedFilesRef = useRef(Boolean(cachedAtMount));
 
-  const loadFiles = useCallback(async () => {
-    const request = ++filesRequestNumber.current;
-    setLoadingFiles(true);
-    setFilesError(null);
-    setSelected(null);
-    setPatch(null);
-    try {
-      const nextFiles = await withChangeReviewTimeout(transport.workspaceFilesRead(sessionId));
-      if (request !== filesRequestNumber.current) return;
-      setFiles(nextFiles);
-      onFilesLoaded?.(nextFiles);
-    } catch (error) {
-      if (request === filesRequestNumber.current) setFilesError(String(error));
-    } finally {
-      if (request === filesRequestNumber.current) setLoadingFiles(false);
-    }
-  }, [onFilesLoaded, sessionId, tip, transport]);
+  const loadFiles = useCallback(
+    async (withBackoff = false) => {
+      const request = ++filesRequestNumber.current;
+      if (!hasDisplayedFilesRef.current) setLoadingFiles(true);
+      setFilesError(null);
+      try {
+        const read = () => withChangeReviewTimeout(transport.workspaceFilesRead(sessionId, tip));
+        const nextFiles = await (withBackoff ? retryChangeReviewRead(read) : read());
+        if (request !== filesRequestNumber.current) return;
+        cacheCompleteReviewManifest(sessionId, tip, nextFiles);
+        if (displayedTipRef.current !== tip) {
+          requestNumber.current += 1;
+          setSelected(null);
+          setPatch(null);
+          setPatchError(null);
+        }
+        displayedSessionIdRef.current = sessionId;
+        displayedTipRef.current = tip;
+        hasDisplayedFilesRef.current = true;
+        setDisplayedTip(tip);
+        setFiles(nextFiles);
+        onFilesLoaded?.(nextFiles);
+      } catch (error) {
+        if (request === filesRequestNumber.current) setFilesError(errorDetail(error));
+      } finally {
+        if (request === filesRequestNumber.current) setLoadingFiles(false);
+      }
+    },
+    [onFilesLoaded, sessionId, tip, transport],
+  );
 
   useEffect(() => {
+    const cached =
+      readCachedReviewGeneration(sessionId, tip) ??
+      readLatestCachedReviewGeneration(sessionId, tip);
+    if (cached) {
+      displayedSessionIdRef.current = sessionId;
+      displayedTipRef.current = cached.tip;
+      hasDisplayedFilesRef.current = true;
+      setDisplayedTip(cached.tip);
+      setFiles(cached.files);
+      onFilesLoaded?.(cached.files);
+    } else if (
+      displayedSessionIdRef.current !== sessionId ||
+      (displayedTipRef.current && displayedTipRef.current !== tip)
+    ) {
+      displayedSessionIdRef.current = null;
+      displayedTipRef.current = null;
+      hasDisplayedFilesRef.current = false;
+      setDisplayedTip(null);
+      setFiles([]);
+    }
     void loadFiles();
   }, [loadFiles]);
 
   const openFile = useCallback(
-    async (file: ChangedFile) => {
+    async (file: ChangedFile, withBackoff = false) => {
       const request = ++requestNumber.current;
+      const reviewTip = displayedTipRef.current ?? tip;
+      const cached = readCachedReviewGeneration(sessionId, reviewTip)?.patches[file.path];
       setSelected(file);
-      setPatch(null);
-      setIsBinary(Boolean(file.isBinary));
+      setPatch(cached?.content ?? null);
+      setIsBinary(Boolean(cached?.isBinary ?? file.isBinary));
       setPatchError(null);
       if (file.renderUnavailableReason === 'too-large') {
         setLoadingPatch(false);
         return;
       }
-      setLoadingPatch(true);
+      setLoadingPatch(!cached);
       try {
-        const result = await transport.changedFileRead(sessionId, file.path);
+        const read = () => transport.changedFileRead(sessionId, file.path, reviewTip);
+        const result = await (withBackoff ? retryChangeReviewRead(read) : read());
         if (request !== requestNumber.current) return;
-        if (!result) throw new Error('Diff metadata is unavailable for this file');
+        if (!result) throw new Error(`Missing diff chunks for ${file.path}`);
+        cacheReviewPatch(sessionId, reviewTip, file.path, result);
         setPatch(result.content);
         setIsBinary(Boolean(result.isBinary));
       } catch (error) {
-        if (request === requestNumber.current) setPatchError(String(error));
+        if (request === requestNumber.current) setPatchError(errorDetail(error));
       } finally {
         if (request === requestNumber.current) setLoadingPatch(false);
       }
     },
-    [transport, sessionId],
+    [transport, sessionId, tip],
   );
 
   const lines = useMemo(() => patch?.split('\n') ?? [], [patch]);
@@ -181,7 +255,7 @@ export function ChangeReviewPanel({
   const totalAdded = files.reduce((sum, file) => sum + (file.linesAdded ?? 0), 0);
   const totalRemoved = files.reduce((sum, file) => sum + (file.linesRemoved ?? 0), 0);
 
-  if (loadingFiles) {
+  if (loadingFiles && files.length === 0) {
     return (
       <HullSurface strength="raised" style={styles.loading} testID="change-review-loading">
         <PixelLoader compact />
@@ -190,15 +264,15 @@ export function ChangeReviewPanel({
     );
   }
 
-  if (filesError) {
+  if (filesError && files.length === 0) {
     return (
       <HullSurface strength="raised" style={styles.errorState} testID="change-review-error">
         <Text style={styles.errorTitle}>! CHANGES UNAVAILABLE</Text>
-        <Text style={styles.mutedText} numberOfLines={2}>
-          We couldn’t load these changes. Try again.
+        <Text style={styles.mutedText} numberOfLines={3} testID="change-review-error-detail">
+          {filesError}
         </Text>
         <TouchableOpacity
-          onPress={loadFiles}
+          onPress={() => void loadFiles(true)}
           style={styles.retryButton}
           testID="change-review-retry"
         >
@@ -230,17 +304,29 @@ export function ChangeReviewPanel({
             +{selected.linesAdded ?? 0} −{selected.linesRemoved ?? 0}
           </Text>
         </View>
+        {patchError && patch !== null ? (
+          <Text style={styles.preparingText} testID="change-review-patch-cache-warning">
+            SAVED DIFF SHOWN · {patchError}
+          </Text>
+        ) : null}
         {loadingPatch ? (
           <View style={styles.diffLoading}>
             <PixelLoader compact />
             <Text style={styles.mutedText}>LOADING CHANGE</Text>
           </View>
-        ) : patchError ? (
+        ) : patchError && patch === null ? (
           <View style={styles.diffLoading}>
             <Text style={styles.errorTitle}>! CHANGE UNAVAILABLE</Text>
-            <Text style={styles.mutedText} numberOfLines={2}>
-              We couldn’t load this file change. Try again from the file list.
+            <Text style={styles.mutedText} numberOfLines={3}>
+              {patchError}
             </Text>
+            <TouchableOpacity
+              onPress={() => void openFile(selected, true)}
+              style={styles.retryButton}
+              testID="change-review-patch-retry"
+            >
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
           </View>
         ) : selected.renderUnavailableReason === 'too-large' ? (
           <View style={styles.diffLoading} testID="change-review-too-large">
@@ -304,6 +390,29 @@ export function ChangeReviewPanel({
 
   return (
     <HullSurface strength="code" style={styles.panel} testID="change-review-files">
+      {displayedTip !== tip ? (
+        <View style={styles.preparingRow} testID="change-review-preparing-newer">
+          <Text style={styles.preparingText}>NEWER CHANGES PREPARING…</Text>
+          {filesError ? (
+            <Text style={styles.preparingDetail} numberOfLines={2}>
+              {filesError}
+            </Text>
+          ) : null}
+          <TouchableOpacity onPress={() => void loadFiles(true)} style={styles.preparingRetry}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : filesError ? (
+        <View style={styles.preparingRow} testID="change-review-refresh-warning">
+          <Text style={styles.preparingText}>SAVED CHANGES SHOWN</Text>
+          <Text style={styles.preparingDetail} numberOfLines={2}>
+            {filesError}
+          </Text>
+          <TouchableOpacity onPress={() => void loadFiles(true)} style={styles.preparingRetry}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
       <View style={styles.summaryRow}>
         <Text style={styles.summaryTitle}>
           {files.length} {files.length === 1 ? 'file' : 'files'}
@@ -404,6 +513,26 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.textPrimary,
     fontSize: 11,
   },
+  preparingRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.buzz.border,
+    gap: 2,
+  },
+  preparingText: {
+    ...Typography.mono('semiBold'),
+    color: theme.buzz.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  preparingDetail: {
+    ...Typography.mono(),
+    color: theme.buzz.textMuted,
+    fontSize: 9,
+    lineHeight: 13,
+  },
+  preparingRetry: { minHeight: 28, alignSelf: 'flex-start', justifyContent: 'center' },
   summaryRow: {
     minHeight: 38,
     paddingHorizontal: 10,

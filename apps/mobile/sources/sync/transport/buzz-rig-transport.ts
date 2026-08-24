@@ -36,6 +36,8 @@ import {
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
+  CHANGE_REVIEW_COMPLETE_TAG,
+  CHANGE_REVIEW_GENERATION_TAG,
   APPROVAL_MARKER,
   KIND_AGENT_PRESENCE,
   KIND_CREATE_GROUP,
@@ -43,6 +45,7 @@ import {
   TAG_PARENT,
   TAG_DIRECT_MESSAGE,
   parseChangeReviewManifest,
+  parseChangeReviewGenerationComplete,
   type BuzzClient,
   type ChannelMetadata,
   type Identity,
@@ -1008,16 +1011,18 @@ export class BuzzRigTransport implements RigTransport {
   async changedFileRead(
     sessionId: SessionId,
     path: string,
+    reviewTip?: string,
   ): Promise<{ content: string; isBinary?: boolean } | null> {
     const client = await this.getClient();
     const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
     if (!mergeInfo || !('target' in mergeInfo)) return null;
+    const tip = reviewTip ?? mergeInfo.target.tip;
     const events = await client.query([
       {
         kinds: [CHANGE_REVIEW_EVENT_KIND],
         authors: [mergeInfo.authorPubkey],
         '#t': [CHANGE_REVIEW_FILE_TAG],
-        '#r': [mergeInfo.target.tip],
+        '#r': [tip],
         '#f': [path],
         limit: 500,
       },
@@ -1035,10 +1040,12 @@ export class BuzzRigTransport implements RigTransport {
       (event) =>
         event.pubkey === mergeInfo.authorPubkey &&
         tagValue(event, 'h') === sessionId &&
-        tagValue(event, 'tip') === mergeInfo.target.tip &&
+        tagValue(event, 'tip') === tip &&
         tagValue(event, 'f') === path,
     );
-    if (matching.length === 0) return null;
+    if (matching.length === 0) {
+      throw new Error(`Missing diff chunks for ${path} at ${tip.slice(0, 12)}`);
+    }
     const uniqueChunks = new Map<number, (typeof matching)[number]>();
     for (const event of [...matching].sort(
       (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
@@ -1065,17 +1072,25 @@ export class BuzzRigTransport implements RigTransport {
     };
   }
 
-  async workspaceFilesRead(sessionId: SessionId): Promise<ChangedFile[]> {
+  async workspaceFilesRead(sessionId: SessionId, reviewTip?: string): Promise<ChangedFile[]> {
     const client = await this.getClient();
     const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
     if (!mergeInfo || !('target' in mergeInfo)) return [];
+    const tip = reviewTip ?? mergeInfo.target.tip;
     const events = await client.query([
       {
         kinds: [CHANGE_REVIEW_EVENT_KIND],
         authors: [mergeInfo.authorPubkey],
         '#t': [CHANGE_REVIEW_MANIFEST_TAG],
-        '#r': [mergeInfo.target.tip],
+        '#r': [tip],
         limit: 500,
+      },
+      {
+        kinds: [CHANGE_REVIEW_EVENT_KIND],
+        authors: [mergeInfo.authorPubkey],
+        '#t': [CHANGE_REVIEW_COMPLETE_TAG],
+        '#r': [tip],
+        limit: 10,
       },
       {
         kinds: [9],
@@ -1089,16 +1104,65 @@ export class BuzzRigTransport implements RigTransport {
         (event) =>
           event.pubkey === mergeInfo.authorPubkey &&
           tagValue(event, 'h') === sessionId &&
-          tagValue(event, 'tip') === mergeInfo.target.tip,
+          tagValue(event, 'tip') === tip,
       )
       .sort((a, b) => Number(tagValue(a, 'chunk') ?? 0) - Number(tagValue(b, 'chunk') ?? 0))
       .map((event) => parseChangeReviewManifest(event.content))
       .filter((manifest) => manifest !== null);
     if (manifests.length === 0) {
-      throw new Error('File-diff metadata is unavailable for this corner');
+      throw new Error(`Missing review manifest for ${tip.slice(0, 12)}`);
     }
     const files = manifests.flatMap((manifest) => manifest.files);
-    return [...new Map(files.map((file) => [file.path, file])).values()];
+    const uniqueFiles = [...new Map(files.map((file) => [file.path, file])).values()];
+    const transactional = events.some(
+      (event) =>
+        event.pubkey === mergeInfo.authorPubkey &&
+        tagValue(event, 'h') === sessionId &&
+        tagValue(event, 'tip') === tip &&
+        tagValue(event, 't') === CHANGE_REVIEW_MANIFEST_TAG &&
+        tagValue(event, 'generation') === CHANGE_REVIEW_GENERATION_TAG,
+    );
+    if (transactional) {
+      const completion = events
+        .filter(
+          (event) =>
+            event.pubkey === mergeInfo.authorPubkey &&
+            tagValue(event, 'h') === sessionId &&
+            tagValue(event, 'tip') === tip &&
+            tagValue(event, 't') === CHANGE_REVIEW_COMPLETE_TAG &&
+            tagValue(event, 'generation') === CHANGE_REVIEW_GENERATION_TAG,
+        )
+        .map((event) => parseChangeReviewGenerationComplete(event.content))
+        .find(
+          (candidate) =>
+            candidate !== null &&
+            candidate.tip === tip &&
+            manifests.every(
+              (manifest) => manifest.tip === candidate.tip && manifest.base === candidate.base,
+            ),
+        );
+      if (!completion) {
+        throw new Error(`Missing review completion marker for ${tip.slice(0, 12)}`);
+      }
+      const chunks = events
+        .filter(
+          (event) =>
+            event.pubkey === mergeInfo.authorPubkey &&
+            tagValue(event, 'h') === sessionId &&
+            tagValue(event, 'tip') === tip &&
+            tagValue(event, 't') === CHANGE_REVIEW_MANIFEST_TAG,
+        )
+        .map((event) => Number(tagValue(event, 'chunk') ?? 0));
+      const completeChunks =
+        chunks.length === completion.manifestChunks &&
+        [...chunks].sort((a, b) => a - b).every((chunk, index) => chunk === index);
+      if (!completeChunks || uniqueFiles.length !== completion.fileCount) {
+        throw new Error(
+          `Incomplete review manifest for ${tip.slice(0, 12)}: received ${chunks.length} of ${completion.manifestChunks} manifest chunks and ${uniqueFiles.length} of ${completion.fileCount} files`,
+        );
+      }
+    }
+    return uniqueFiles;
   }
 
   async changedFilesRevert(_sessionId: SessionId, _paths: string[]): Promise<void> {

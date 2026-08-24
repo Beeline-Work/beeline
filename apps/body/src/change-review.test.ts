@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   chunkChangeReviewPatch,
   listChangeReviewFiles,
+  MAX_RENDERABLE_PATCH_BYTES,
   readChangeReviewPatch,
   resolveReviewBaseTip,
 } from './change-review.js';
@@ -46,7 +47,7 @@ afterEach(() => {
 });
 
 describe('change review git metadata', () => {
-  it('lists file status and line totals, then returns a per-file unified patch', () => {
+  it('lists file status and line totals, then returns a per-file unified patch', async () => {
     const { directory, base, tip } = fixture();
     const files = listChangeReviewFiles(directory, base, tip);
 
@@ -73,11 +74,42 @@ describe('change review git metadata', () => {
     );
 
     const readme = files.find((file) => file.path === 'README.md')!;
-    const patch = readChangeReviewPatch(directory, base, tip, readme);
-    expect(patch).toContain('diff --git a/README.md b/README.md');
-    expect(patch).toContain('-# Before');
-    expect(patch).toContain('+# After');
-    expect(patch).toContain('+New line');
+    const patch = await readChangeReviewPatch(directory, base, tip, readme);
+    expect(patch.content).toContain('diff --git a/README.md b/README.md');
+    expect(patch.content).toContain('-# Before');
+    expect(patch.content).toContain('+# After');
+    expect(patch.content).toContain('+New line');
+    expect(patch.patchBytes).toBe(Buffer.byteLength(patch.content!));
+  });
+
+  it('streams a multi-megabyte single-line diff into a too-large stub', async () => {
+    const { directory, base } = fixture();
+    writeFileSync(resolve(directory, 'vendor.min.js'), 'x'.repeat(3_000_000));
+    writeFileSync(resolve(directory, 'small.ts'), 'export const stillReviewable = true;\n');
+    command(directory, ['add', '.']);
+    command(directory, ['commit', '-m', 'large vendor and ordinary source']);
+    const tip = command(directory, ['rev-parse', 'HEAD']);
+    const files = listChangeReviewFiles(directory, base, tip);
+
+    const large = await readChangeReviewPatch(
+      directory,
+      base,
+      tip,
+      files.find((file) => file.path === 'vendor.min.js')!,
+    );
+    const small = await readChangeReviewPatch(
+      directory,
+      base,
+      tip,
+      files.find((file) => file.path === 'small.ts')!,
+    );
+
+    expect(large).toEqual({
+      patchBytes: expect.any(Number),
+      renderUnavailableReason: 'too-large',
+    });
+    expect(large.patchBytes).toBeGreaterThan(MAX_RENDERABLE_PATCH_BYTES);
+    expect(small.content).toContain('+export const stillReviewable = true;');
   });
 
   it('resolves the merge base and chunks large patches without data loss', () => {

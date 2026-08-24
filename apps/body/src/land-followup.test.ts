@@ -267,6 +267,9 @@ describe('the CI report that follows a land', () => {
       replyTo?: string,
     ) => void;
     watch.call(fixture.body, fixture.info, fixture.tip, replyTo);
+    await Promise.allSettled([
+      ...(Reflect.get(fixture.body, 'pendingCiWatches') as Set<Promise<void>>),
+    ]);
     await fixture.body.dispose();
   }
 
@@ -366,6 +369,9 @@ describe('the CI report that follows a land', () => {
     watch.call(fixture.body, fixture.info, fixture.tip, 'recap-event');
     watch.call(fixture.body, fixture.info, fixture.tip, 'recap-event');
     watch.call(fixture.body, fixture.info, fixture.tip, 'recap-event');
+    await Promise.allSettled([
+      ...(Reflect.get(fixture.body, 'pendingCiWatches') as Set<Promise<void>>),
+    ]);
     await fixture.body.dispose();
 
     expect(tagged(events, CI_RESULT_TAG)).toHaveLength(1);

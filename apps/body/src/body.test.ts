@@ -561,12 +561,12 @@ describe('agent identity boundary', () => {
           additionalWritablePaths?: string[];
         },
         env: Record<string, string>,
-      ): { command: string; args: string[] };
+      ): Promise<{ command: string; args: string[] }>;
     };
 
-    it('spawns a Room child with a read-only filesystem and no writable bind', () => {
+    it('spawns a Room child with a read-only filesystem and no writable bind', async () => {
       const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
-      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+      const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
         { mode: 'readonly', cwd: '/srv/checkout' },
         { CLAUDE_CONFIG_DIR: '/srv/rooms/r1/agent-home/claude' },
       );
@@ -584,9 +584,9 @@ describe('agent identity boundary', () => {
       expect(spawn.args.slice(-1)).toEqual(['/nonexistent']);
     });
 
-    it('spawns a corner child with its worktree and git dir writable', () => {
+    it('spawns a corner child with its worktree and git dir writable', async () => {
       const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
-      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+      const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
         {
           mode: 'edit',
           cwd: repoRoot,
@@ -617,7 +617,7 @@ describe('agent identity boundary', () => {
       expect(binds).toContain(join(homedir(), '.no-mistakes'));
     });
 
-    it('masks operator credential stores out of a session instead of leaving them read-only', () => {
+    it('masks operator credential stores out of a session instead of leaving them read-only', async () => {
       // Acceptance: a session's filesystem must contain NO readable operator
       // credential store. The whole-home ro-bind makes them read-only, which
       // is not enough — a readable gh token can push main out-of-band — so
@@ -634,7 +634,7 @@ describe('agent identity boundary', () => {
         },
         newIdentity('operator'),
       );
-      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+      const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
         { mode: 'readonly', cwd: '/srv/checkout' },
         {},
       );
@@ -660,9 +660,9 @@ describe('agent identity boundary', () => {
       }
     });
 
-    it('spawns the bare command when no bwrap was detected at daemon start', () => {
+    it('spawns the bare command when no bwrap was detected at daemon start', async () => {
       const body = new Body(config, newIdentity('operator'));
-      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+      const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
         { mode: 'edit', cwd: repoRoot, worktreePath: repoRoot },
         {},
       );
@@ -670,9 +670,9 @@ describe('agent identity boundary', () => {
       expect(spawn).toEqual({ command: '/nonexistent', args: [] });
     });
 
-    it('fails open rather than sandboxing a corner it cannot resolve a git dir for', () => {
+    it('fails open rather than sandboxing a corner it cannot resolve a git dir for', async () => {
       const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
-      const spawn = (body as unknown as SpawnProbe).sessionSpawnCommand(
+      const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
         // Not a git repository: a wrapped session here could edit but never
         // commit, which is worse than an unwrapped one.
         { mode: 'edit', cwd: notARepo, worktreePath: notARepo },
@@ -819,7 +819,9 @@ describe('agent identity boundary', () => {
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
       Reflect.get(body, 'sessions').set('room-1', { workbench: { dir: workbench } });
       const durable = Reflect.get(body, 'durableState');
-      vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(undefined as never);
+      vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(
+        undefined as never,
+      );
       const handle = Reflect.get(body, 'handleRoomPermissionRequest').bind(body);
 
       try {
@@ -5604,8 +5606,7 @@ describe('first-class assistant messages', () => {
         { cwd: repository, workbench: { dir: workbench } },
         {
           agentText:
-            `Ready. [[buzz-attachment:${htmlPath}]] ` +
-            `[[buzz-attachment:${executablePath}]]`,
+            `Ready. [[buzz-attachment:${htmlPath}]] ` + `[[buzz-attachment:${executablePath}]]`,
           updates: [],
         },
       );
@@ -6606,12 +6607,12 @@ describe('a local-only repository lands through the daemon, never through the ag
     };
   }
 
-  it('fast-forwards the checked-out target branch, moving the working tree with it', () => {
+  it('fast-forwards the checked-out target branch, moving the working tree with it', async () => {
     const agent = newIdentity('local-land-ff');
     const { root, repoPath, tip } = localOnlyRepoWithCorner();
     try {
       const body = newBody(agent, join(root, 'state.json'));
-      const outcome = Reflect.get(body, 'landInLocalCheckout').call(body, repoPath, {
+      const outcome = await Reflect.get(body, 'landInLocalCheckout').call(body, repoPath, {
         repo: 'local/local-key',
         branch: 'refs/heads/master',
         tip,
@@ -6626,13 +6627,13 @@ describe('a local-only repository lands through the daemon, never through the ag
     }
   });
 
-  it('advances a target branch that is not the one checked out', () => {
+  it('advances a target branch that is not the one checked out', async () => {
     const agent = newIdentity('local-land-ref');
     const { root, repoPath, tip } = localOnlyRepoWithCorner();
     try {
       gitCommand(repoPath, ['checkout', '-q', '-b', 'scratch']);
       const body = newBody(agent, join(root, 'state.json'));
-      const outcome = Reflect.get(body, 'landInLocalCheckout').call(body, repoPath, {
+      const outcome = await Reflect.get(body, 'landInLocalCheckout').call(body, repoPath, {
         repo: 'local/local-key',
         branch: 'refs/heads/master',
         tip,
@@ -6645,7 +6646,7 @@ describe('a local-only repository lands through the daemon, never through the ag
     }
   });
 
-  it('refuses a non-fast-forward land, exactly like the remote path rejects a moved target', () => {
+  it('refuses a non-fast-forward land, exactly like the remote path rejects a moved target', async () => {
     const agent = newIdentity('local-land-nonff');
     const { root, repoPath, tip } = localOnlyRepoWithCorner();
     try {
@@ -6655,7 +6656,7 @@ describe('a local-only repository lands through the daemon, never through the ag
       const moved = gitCommand(repoPath, ['rev-parse', 'refs/heads/master']);
       const body = newBody(agent, join(root, 'state.json'));
 
-      const outcome = Reflect.get(body, 'landInLocalCheckout').call(body, repoPath, {
+      const outcome = await Reflect.get(body, 'landInLocalCheckout').call(body, repoPath, {
         repo: 'local/local-key',
         branch: 'refs/heads/master',
         tip,
@@ -6817,14 +6818,14 @@ describe('a local-only repository lands through the daemon, never through the ag
       expect(landed).toBe(1);
       expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
       const landedEvent = published.find((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landed'),
+        event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landed'),
       );
       expect(landedEvent).toBeDefined();
       expect(landedEvent!.tags).toContainEqual(['delivery', 'landed']);
       const parentStatus = published.find(
         (event) =>
-          event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-local-land') &&
-          event.tags.some((tag) => tag[0] === 'delivery' && tag[1] === 'landed'),
+          event.tags?.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-local-land') &&
+          event.tags?.some((tag) => tag[0] === 'delivery' && tag[1] === 'landed'),
       );
       expect(parentStatus).toBeDefined();
     } finally {
@@ -6862,7 +6863,7 @@ describe('a local-only repository lands through the daemon, never through the ag
       expect(landed).toBe(0);
       expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(moved);
       const realigning = published.find((event) =>
-        event.tags.some((tag) => tag[0] === 'delivery' && tag[1] === 'realigning'),
+        event.tags?.some((tag) => tag[0] === 'delivery' && tag[1] === 'realigning'),
       );
       expect(realigning).toBeDefined();
       expect(realigning!.content).toMatch(/realigning/i);
@@ -8900,12 +8901,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         participantPubkeys: [agent.publicKey, firstHuman.publicKey, secondHuman.publicKey],
       });
       const now = Math.floor(Date.now() / 1_000);
-      const chatter = memberMessage(
-        firstHuman,
-        'corner-addressing',
-        'Lunch is at noon.',
-        now,
-      );
+      const chatter = memberMessage(firstHuman, 'corner-addressing', 'Lunch is at noon.', now);
       const mention = signEvent(
         {
           pubkey: secondHuman.publicKey,
@@ -8919,10 +8915,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         },
         secondHuman.secretKey,
       );
-      const queryEvents = vi
-        .fn()
-        .mockResolvedValueOnce([chatter])
-        .mockResolvedValueOnce([mention]);
+      const queryEvents = vi.fn().mockResolvedValueOnce([chatter]).mockResolvedValueOnce([mention]);
       (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = queryEvents;
       const durableState = Reflect.get(body, 'durableState') as {
         conversation: (channelId: string) => Promise<{ eventId?: string; text: string }[]>;

@@ -62,10 +62,7 @@
  * the fix for that; keep all five consumers agreeing or amend them together.
  */
 import { createHash } from 'node:crypto';
-import {
-  constants as fsConstants,
-  type Dirent,
-} from 'node:fs';
+import { constants as fsConstants, type Dirent } from 'node:fs';
 import {
   access,
   chmod,
@@ -144,7 +141,9 @@ function anchorLayout(rawLibDir: string): BeelineInstallLayout {
   };
 }
 
-export function beelineInstallLayout(env: NodeJS.ProcessEnv = process.env): BeelineInstallLayout | undefined {
+export function beelineInstallLayout(
+  env: NodeJS.ProcessEnv = process.env,
+): BeelineInstallLayout | undefined {
   const raw = env.BEELINE_LIB_DIR?.trim();
   if (!raw) return undefined;
   return anchorLayout(raw);
@@ -154,7 +153,8 @@ export function beelineInstallLayout(env: NodeJS.ProcessEnv = process.env): Beel
 export function hostPlatformKey(): string {
   const os = process.platform === 'linux' ? 'linux' : process.platform === 'darwin' ? 'darwin' : '';
   const arch = process.arch === 'x64' ? 'x64' : process.arch === 'arm64' ? 'arm64' : '';
-  if (!os || !arch) throw new Error(`no Beeline bundle exists for ${process.platform}-${process.arch}`);
+  if (!os || !arch)
+    throw new Error(`no Beeline bundle exists for ${process.platform}-${process.arch}`);
   return `${os}-${arch}`;
 }
 
@@ -200,7 +200,12 @@ async function readBundleJson(bundleDir: string): Promise<InstalledBundleIdentit
 export interface UpdateStateFile {
   lastCheckAt?: number;
   lastCheckResult?: string;
-  lastApplied?: { releaseId: string; previousReleaseId?: string; identity: InstalledBundleIdentity; at: number };
+  lastApplied?: {
+    releaseId: string;
+    previousReleaseId?: string;
+    identity: InstalledBundleIdentity;
+    at: number;
+  };
   lastRollback?: { releaseId: string; toReleaseId: string; reason: string; at: number };
 }
 
@@ -220,7 +225,10 @@ export async function readUpdateState(layout: BeelineInstallLayout): Promise<Upd
   }
 }
 
-export async function writeUpdateState(layout: BeelineInstallLayout, state: UpdateStateFile): Promise<void> {
+export async function writeUpdateState(
+  layout: BeelineInstallLayout,
+  state: UpdateStateFile,
+): Promise<void> {
   await mkdir(join(layout.releasesRoot, '.state'), { recursive: true });
   await writeFile(updateStatePath(layout), `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
@@ -318,7 +326,11 @@ async function sha256File(path: string): Promise<string> {
   });
 }
 
-function run(command: string, args: string[], timeoutMs: number): Promise<{ status: number | null; stderr: string }> {
+function run(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{ status: number | null; stderr: string }> {
   return new Promise((resolveRun) => {
     const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
@@ -383,7 +395,9 @@ export async function stageRelease(
 ): Promise<string> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const log = opts.logger ?? ((line: string) => console.log(`[body] self-update: ${line}`));
-  const releaseId = sanitizeReleaseId(published.commit ?? published.version ?? `release-${Date.now()}`);
+  const releaseId = sanitizeReleaseId(
+    published.commit ?? published.version ?? `release-${Date.now()}`,
+  );
   const releaseDir = join(layout.releasesRoot, releaseId);
 
   // Already staged and verified? Reuse it — a retry after a busy-deferred
@@ -424,15 +438,21 @@ export async function stageRelease(
     await writeFile(tempArchive, Buffer.concat(chunks), { mode: 0o600 });
 
     // Path-traversal guard, mirroring the installer.
-    const entries = (await new Promise<string>((resolveList, rejectList) => {
-      const child = spawn('tar', ['-tzf', tempArchive], { stdio: ['ignore', 'pipe', 'inherit'] });
-      let out = '';
-      child.stdout?.on('data', (chunk: Buffer) => {
-        out += chunk.toString('utf8');
-      });
-      child.once('error', rejectList);
-      child.once('exit', (status) => (status === 0 ? resolveList(out) : rejectList(new Error('tar -tzf failed'))));
-    })).split('\n').filter(Boolean);
+    const entries = (
+      await new Promise<string>((resolveList, rejectList) => {
+        const child = spawn('tar', ['-tzf', tempArchive], { stdio: ['ignore', 'pipe', 'inherit'] });
+        let out = '';
+        child.stdout?.on('data', (chunk: Buffer) => {
+          out += chunk.toString('utf8');
+        });
+        child.once('error', rejectList);
+        child.once('exit', (status) =>
+          status === 0 ? resolveList(out) : rejectList(new Error('tar -tzf failed')),
+        );
+      })
+    )
+      .split('\n')
+      .filter(Boolean);
     for (const entry of entries) {
       if (entry.startsWith('/') || entry.split('/').includes('..')) {
         throw new Error(`unsafe path in published bundle: ${entry}`);
@@ -453,7 +473,11 @@ export async function stageRelease(
     // Smoke-test the new cli BEFORE it can become active: a bundle that cannot
     // even answer --version must never win the symlink.
     if (opts.smokeTestCli !== false) {
-      const probe = await run(process.execPath, [join(releaseDir, BUNDLE_ENTRYPOINT), '--version'], 60_000);
+      const probe = await run(
+        process.execPath,
+        [join(releaseDir, BUNDLE_ENTRYPOINT), '--version'],
+        60_000,
+      );
       if (probe.status !== 0) {
         throw new Error(
           `staged bundle failed its startup smoke test (--version exited ${probe.status})${probe.stderr ? `: ${probe.stderr.trim()}` : ''}`,
@@ -614,7 +638,10 @@ export async function normalizeLegacyBundleShape(bundleDir: string): Promise<voi
  * (`<prefix>/lib/beeline/bin/<tool>` — through the anchor, never a resolved
  * release path). Used by activation and by repairInstallForwarders.
  */
-async function writeBinForwarders(layout: BeelineInstallLayout, activeBundleRoot: string): Promise<void> {
+async function writeBinForwarders(
+  layout: BeelineInstallLayout,
+  activeBundleRoot: string,
+): Promise<void> {
   for (const tool of FORWARDER_TOOLS) {
     const target = join(activeBundleRoot, 'bin', tool);
     try {
@@ -696,9 +723,13 @@ export function pendingUpdatePath(layout: BeelineInstallLayout): string {
   return join(layout.releasesRoot, '.state', 'pending-update.json');
 }
 
-export async function readPendingUpdate(layout: BeelineInstallLayout): Promise<PendingUpdateRecord | undefined> {
+export async function readPendingUpdate(
+  layout: BeelineInstallLayout,
+): Promise<PendingUpdateRecord | undefined> {
   try {
-    const raw = JSON.parse(await readFile(pendingUpdatePath(layout), 'utf8')) as PendingUpdateRecord;
+    const raw = JSON.parse(
+      await readFile(pendingUpdatePath(layout), 'utf8'),
+    ) as PendingUpdateRecord;
     if (typeof raw.appliedAt !== 'number' || typeof raw.releaseId !== 'string') return undefined;
     return raw;
   } catch {
@@ -706,7 +737,10 @@ export async function readPendingUpdate(layout: BeelineInstallLayout): Promise<P
   }
 }
 
-async function writePendingUpdate(layout: BeelineInstallLayout, record: PendingUpdateRecord): Promise<void> {
+async function writePendingUpdate(
+  layout: BeelineInstallLayout,
+  record: PendingUpdateRecord,
+): Promise<void> {
   await mkdir(join(layout.releasesRoot, '.state'), { recursive: true });
   await writeFile(pendingUpdatePath(layout), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
 }
@@ -813,7 +847,8 @@ export async function relaunchPreviousReleaseAfterFailedUpdate(
     },
   }).catch(() => undefined);
   const previousDir = join(layout.releasesRoot, journal.previousReleaseId);
-  const entrypoint = (await resolveBundleEntrypoint(previousDir)) ?? join(previousDir, BUNDLE_ENTRYPOINT);
+  const entrypoint =
+    (await resolveBundleEntrypoint(previousDir)) ?? join(previousDir, BUNDLE_ENTRYPOINT);
   const foreground = process.env.BEELINE_DAEMON_BACKGROUND !== '1';
   const pid = await launchRuntimeDaemon(configPath, { entrypoint, foreground });
   log(
@@ -905,7 +940,10 @@ export function describeIdentity(identity: InstalledBundleIdentity | undefined):
 
 export class SelfUpdateManager {
   private readonly options: Required<
-    Pick<SelfUpdateManagerOptions, 'layout' | 'tickMs' | 'checkIntervalMs' | 'initialDelayMs' | 'idleTimeoutMs' | 'idlePollMs'>
+    Pick<
+      SelfUpdateManagerOptions,
+      'layout' | 'tickMs' | 'checkIntervalMs' | 'initialDelayMs' | 'idleTimeoutMs' | 'idlePollMs'
+    >
   > & { watchRuntimeDirs: string[]; env: NodeJS.ProcessEnv; now: () => number };
   private readonly isIdle: () => boolean;
   private readonly notifyFn: (text: string) => Promise<void> | void;
@@ -928,7 +966,8 @@ export class SelfUpdateManager {
   /** Set once a newer bundle is LIVE and the process should hand over. */
   restartPending = false;
   private unconfirmedReleaseId: string | undefined;
-  private attachedSupervisor: { isWorkspaceIdle(): boolean; broadcastDaemonNotice(text: string): Promise<void> } | undefined;
+  private attachedSupervisor:
+    { isWorkspaceIdle(): boolean; broadcastDaemonNotice(text: string): Promise<void> } | undefined;
 
   constructor(options: SelfUpdateManagerOptions) {
     const env = options.env ?? process.env;
@@ -942,9 +981,12 @@ export class SelfUpdateManager {
       layout: options.layout,
       watchRuntimeDirs: options.watchRuntimeDirs ?? [],
       tickMs: options.tickMs ?? numberEnv('BEELINE_UPDATE_TICK_MS', 60_000),
-      checkIntervalMs: options.checkIntervalMs ?? numberEnv('BEELINE_UPDATE_INTERVAL_MS', 6 * 60 * 60_000),
-      initialDelayMs: options.initialDelayMs ?? numberEnv('BEELINE_UPDATE_INITIAL_DELAY_MS', 2 * 60_000),
-      idleTimeoutMs: options.idleTimeoutMs ?? numberEnv('BEELINE_UPDATE_IDLE_TIMEOUT_MS', 30 * 60_000),
+      checkIntervalMs:
+        options.checkIntervalMs ?? numberEnv('BEELINE_UPDATE_INTERVAL_MS', 6 * 60 * 60_000),
+      initialDelayMs:
+        options.initialDelayMs ?? numberEnv('BEELINE_UPDATE_INITIAL_DELAY_MS', 2 * 60_000),
+      idleTimeoutMs:
+        options.idleTimeoutMs ?? numberEnv('BEELINE_UPDATE_IDLE_TIMEOUT_MS', 30 * 60_000),
       idlePollMs: options.idlePollMs ?? 5_000,
       env,
       now: options.now ?? Date.now,
@@ -958,9 +1000,11 @@ export class SelfUpdateManager {
     this.log = options.logger ?? ((line: string) => console.log(line));
   }
 
-  /** Wire the current WorkspaceSupervisor instance (recreated each run loop). */
+  /** Wire the current daemon core instance (recreated each run loop). */
   attachSupervisor(
-    supervisor: { isWorkspaceIdle(): boolean; broadcastDaemonNotice(text: string): Promise<void> } | undefined,
+    supervisor:
+      | { isWorkspaceIdle(): boolean; broadcastDaemonNotice(text: string): Promise<void> }
+      | undefined,
   ): void {
     this.attachedSupervisor = supervisor;
   }
@@ -1001,7 +1045,9 @@ export class SelfUpdateManager {
     this.loadedReleaseIdPromise ??= (async () => {
       const id = await activeReleaseId(this.options.layout).catch(() => undefined);
       if (id) {
-        this.loadedIdentity = await readInstalledBundleIdentity(this.options.layout).catch(() => undefined);
+        this.loadedIdentity = await readInstalledBundleIdentity(this.options.layout).catch(
+          () => undefined,
+        );
       }
       return id;
     })();
@@ -1076,12 +1122,16 @@ export class SelfUpdateManager {
     // Same busy gate as apply(): never interrupt a turn, corner, or intake.
     if (this.busy()) {
       if (!this.driftDeferredNotice) {
-        this.log('[body] self-update: the install anchor changed while agent work is running; the restart waits until the daemon is idle');
+        this.log(
+          '[body] self-update: the install anchor changed while agent work is running; the restart waits until the daemon is idle',
+        );
         this.driftDeferredNotice = true;
       }
       const idle = await this.waitForIdle();
       if (!idle) {
-        this.log('[body] self-update: still busy after the idle wait; deferring the drift restart to the next tick');
+        this.log(
+          '[body] self-update: still busy after the idle wait; deferring the drift restart to the next tick',
+        );
         return false;
       }
     }
@@ -1164,12 +1214,17 @@ export class SelfUpdateManager {
     try {
       await this.checkAndApply({ force: forced });
     } catch (error) {
-      this.log(`[body] self-update check failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.log(
+        `[body] self-update check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       const state = await readUpdateState(this.options.layout);
       await writeUpdateState(this.options.layout, {
         ...state,
         lastCheckAt: now,
-        lastCheckResult: `failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300),
+        lastCheckResult: `failed: ${error instanceof Error ? error.message : String(error)}`.slice(
+          0,
+          300,
+        ),
       }).catch(() => undefined);
     } finally {
       this.applying = false;
@@ -1210,7 +1265,9 @@ export class SelfUpdateManager {
 
     if (verdict.kind === 'current') return;
     if (verdict.kind === 'indeterminate') {
-      this.log('[body] self-update: skipping automatic apply; run `beeline update --force` to apply anyway');
+      this.log(
+        '[body] self-update: skipping automatic apply; run `beeline update --force` to apply anyway',
+      );
       return;
     }
 
@@ -1240,12 +1297,16 @@ export class SelfUpdateManager {
     // Busy gate: never interrupt a turn, a corner, or intake mid-flight.
     if (this.busy()) {
       if (!this.deferredBusyNotice) {
-        this.log('[body] self-update: agent work is running; the restart waits until the daemon is idle');
+        this.log(
+          '[body] self-update: agent work is running; the restart waits until the daemon is idle',
+        );
         this.deferredBusyNotice = true;
       }
       const idle = await this.waitForIdle();
       if (!idle) {
-        this.log('[body] self-update: still busy after the idle wait; deferring the restart to the next tick (staged bundle kept)');
+        this.log(
+          '[body] self-update: still busy after the idle wait; deferring the restart to the next tick (staged bundle kept)',
+        );
         return;
       }
     }
@@ -1290,7 +1351,9 @@ export class SelfUpdateManager {
     for (;;) {
       if (!this.busy()) return true;
       if (this.options.now() >= deadline) return false;
-      await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(this.options.idlePollMs, 250)));
+      await new Promise((resolveWait) =>
+        setTimeout(resolveWait, Math.min(this.options.idlePollMs, 250)),
+      );
     }
   }
 }

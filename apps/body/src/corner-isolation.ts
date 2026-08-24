@@ -116,10 +116,18 @@ function realPathOrRaw(path: string): string {
 export function assertCornerWorktreeIsolated(
   worktreePath: string,
   primaryCheckout?: string,
-  runGit: (cwd: string, args: string[]) => GitResult = git,
-): void {
+  runGit: (cwd: string, args: string[]) => Promise<GitResult> = git,
+): Promise<void> {
+  return assertCornerWorktreeIsolatedAsync(worktreePath, primaryCheckout, runGit);
+}
+
+async function assertCornerWorktreeIsolatedAsync(
+  worktreePath: string,
+  primaryCheckout: string | undefined,
+  runGit: (cwd: string, args: string[]) => Promise<GitResult>,
+): Promise<void> {
   const worktreeReal = realPathOrRaw(worktreePath);
-  const toplevel = runGit(worktreePath, ['rev-parse', '--show-toplevel']);
+  const toplevel = await runGit(worktreePath, ['rev-parse', '--show-toplevel']);
   const toplevelReal = toplevel.ok ? realPathOrRaw(toplevel.stdout.trim()) : '';
   const primaryReal = primaryCheckout ? realPathOrRaw(primaryCheckout) : undefined;
 
@@ -149,8 +157,7 @@ export function assertCornerWorktreeIsolated(
 export type CornerCommandCode = 'persistent-cd' | 'git-escape';
 
 export type CornerCommandVerdict =
-  | { decision: 'allow' }
-  | { decision: 'deny'; code: CornerCommandCode; reason: string };
+  { decision: 'allow' } | { decision: 'deny'; code: CornerCommandCode; reason: string };
 
 const ALLOW: CornerCommandVerdict = { decision: 'allow' };
 

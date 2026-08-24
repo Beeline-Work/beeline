@@ -13,11 +13,14 @@ function lines(value: string): string[] {
 }
 
 /** Read-only, bounded git facts for a newly reactivated corner process. */
-export function readCornerGitResumeState(cwd: string, targetRef: string): CornerGitResumeState {
-  const mergeBase = git(cwd, ['merge-base', targetRef, 'HEAD']);
+export async function readCornerGitResumeState(
+  cwd: string,
+  targetRef: string,
+): Promise<CornerGitResumeState> {
+  const mergeBase = await git(cwd, ['merge-base', targetRef, 'HEAD']);
   const base = mergeBase.ok ? mergeBase.stdout.trim() : targetRef;
-  const committedFiles = git(cwd, ['diff', '--name-only', `${base}...HEAD`]);
-  const status = git(cwd, ['status', '--porcelain']);
+  const committedFiles = await git(cwd, ['diff', '--name-only', `${base}...HEAD`]);
+  const status = await git(cwd, ['status', '--porcelain']);
   const dirtyFiles = status.ok
     ? status.stdout
         .split('\n')
@@ -29,7 +32,7 @@ export function readCornerGitResumeState(cwd: string, targetRef: string): Corner
             .trim(),
         )
     : [];
-  const log = git(cwd, ['log', '--format=%h %s', '-n', '12', `${base}..HEAD`]);
+  const log = await git(cwd, ['log', '--format=%h %s', '-n', '12', `${base}..HEAD`]);
   return {
     changedFiles: [
       ...new Set([...(committedFiles.ok ? lines(committedFiles.stdout) : []), ...dirtyFiles]),

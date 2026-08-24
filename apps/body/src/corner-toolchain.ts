@@ -17,7 +17,7 @@
  */
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
 export interface ProvisionStep {
   label: string;
@@ -117,7 +117,64 @@ export function toolchainProvisionSteps(worktreeRoot: string): ProvisionStep[] {
   return steps;
 }
 
-function lastDiagnostic(result: ReturnType<typeof spawnSync>): string {
+interface CommandResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+}
+
+async function runProvisionCommand(cwd: string, args: string[]): Promise<CommandResult> {
+  const child = spawn('npm', args, {
+    cwd,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    detached: process.platform !== 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  const append = (current: string, chunk: Buffer): string =>
+    `${current}${chunk.toString('utf8')}`.slice(-2 * 1024 * 1024);
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout = append(stdout, chunk);
+  });
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr = append(stderr, chunk);
+  });
+  let timedOut = false;
+  const terminate = (signal: NodeJS.Signals) => {
+    if (!child.pid) return;
+    try {
+      if (process.platform === 'win32') child.kill(signal);
+      else process.kill(-child.pid, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    }
+  };
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    terminate('SIGTERM');
+    const kill = setTimeout(() => terminate('SIGKILL'), 500);
+    kill.unref?.();
+  }, PROVISION_TIMEOUT_MS);
+  deadline.unref?.();
+  return new Promise((resolveResult) => {
+    child.once('error', (error) => {
+      clearTimeout(deadline);
+      resolveResult({ status: null, stdout, stderr, error });
+    });
+    child.once('close', (status) => {
+      clearTimeout(deadline);
+      resolveResult({
+        status,
+        stdout,
+        stderr: `${stderr}${timedOut ? '\nprovisioning deadline exceeded' : ''}`,
+      });
+    });
+  });
+}
+
+function lastDiagnostic(result: CommandResult): string {
   const output = `${result.stderr ?? ''}\n${result.stdout ?? ''}`
     .split('\n')
     .map((line) => line.trim())
@@ -133,10 +190,10 @@ function lastDiagnostic(result: ReturnType<typeof spawnSync>): string {
  * Failures never abort corner creation and are reported only once per daemon
  * process; the returned notice tells the agent exactly which command to retry.
  */
-export function ensureCornerToolchainProvisioned(
+export async function ensureCornerToolchainProvisioned(
   worktreeRoot: string,
   log?: (line: string) => void,
-): ToolchainProvisionResult {
+): Promise<ToolchainProvisionResult> {
   const key = resolve(worktreeRoot);
   const existing = provisionRuns.get(key);
   if (existing) return existing;
@@ -148,12 +205,7 @@ export function ensureCornerToolchainProvisioned(
   for (const step of steps) {
     const cwd = step.cwd ? resolve(key, step.cwd) : key;
     say(`toolchain provisioning ${step.label} in ${key}`);
-    const result = spawnSync('npm', step.args, {
-      cwd,
-      encoding: 'utf8',
-      timeout: PROVISION_TIMEOUT_MS,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    });
+    const result = await runProvisionCommand(cwd, step.args);
     if (result.status !== 0) {
       const command = `npm ${step.args.join(' ')}`;
       const message =

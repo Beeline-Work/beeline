@@ -34,6 +34,7 @@ import {
   parseUpdateManifest,
   resolveManifestUrl,
 } from './self-update-manifest.js';
+import { withInstallLock } from './managed-update.js';
 
 function updateUsage(): void {
   console.log(`
@@ -130,9 +131,10 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
 
   const layout = requireLayout();
   const manifestUrlFlag = args.indexOf('--manifest-url');
-  const manifestUrl = manifestUrlFlag >= 0 && args[manifestUrlFlag + 1]
-    ? args[manifestUrlFlag + 1]!
-    : resolveManifestUrl(process.env);
+  const manifestUrl =
+    manifestUrlFlag >= 0 && args[manifestUrlFlag + 1]
+      ? args[manifestUrlFlag + 1]!
+      : resolveManifestUrl(process.env);
   const checkOnly = args.includes('--check');
   const force = args.includes('--force');
   const rollback = args.includes('--rollback');
@@ -141,7 +143,7 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
     const state = await readUpdateState(layout);
     const previous = state.lastApplied?.previousReleaseId;
     if (!previous) throw new Error('no previous release recorded to roll back to');
-    await rollbackToPreviousRelease(layout, previous);
+    await withInstallLock(layout, () => rollbackToPreviousRelease(layout, previous));
     console.log(`[beeline] rolled back to release ${previous}.`);
     const running = await queueRestartOnRunningDaemons();
     console.log(
@@ -199,10 +201,12 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
     isIdle: () => true,
     restartHandover: false,
   });
-  await manager.checkAndApply({ force: true });
+  await withInstallLock(layout, () => manager.checkAndApply({ force: true }));
   console.log('[beeline] bundle applied (sha256 verified, previous release kept for rollback).');
   const running = await queueRestartOnRunningDaemons();
   if (running === 0) {
-    console.log('[beeline] no running daemon found; the new bundle is used on the next `beeline start`.');
+    console.log(
+      '[beeline] no running daemon found; the new bundle is used on the next `beeline start`.',
+    );
   }
 }

@@ -8,9 +8,10 @@ by projecting agent activity into the relay channel.
 
 ```
 ┌──────────────────────── Body machine ────────────────────────┐
-│ Workspace supervisor (one paired agent identity)             │
-│   ├── Room A Body ──► isolated Room/corner ACP processes     │
-│   ├── Room B Body ──► isolated Room/corner ACP processes     │
+│ Thin daemon core (one paired agent identity)                  │
+│   ├── one persistent relay socket + deterministic routing    │
+│   ├── Room A Body ──► killable Room/corner ACP processes     │
+│   ├── Room B Body ──► killable Room/corner ACP processes     │
 │   └── bounded scheduler + durable per-channel inbox          │
 │                │                                             │
 │                ├── read mode MCP ──► buzz-readonly-mcp       │
@@ -36,10 +37,12 @@ by projecting agent activity into the relay channel.
   the worktree**. Either an explicit open-a-corner command or a human member's
   ALLOW response creates this session. ALLOW replays the concrete request;
   DENY leaves the Room read-only.
-- **Workspace supervisor:** one `beeline pair` creates one durable agent
+- **Thin daemon core:** one `beeline pair` creates one durable agent
   identity. Humans explicitly invite that existing identity to repository Rooms;
-  the supervisor discovers current role projections and starts or drains an
-  isolated `Body` for each Room.
+  the core discovers current role projections with bounded three-Room
+  concurrency and starts or drains an isolated `Body` for each Room. It never
+  runs Git in-process: out-of-turn repository work is a deadline-bound JSON
+  worker whose entire process group is killed on timeout.
 - **Session isolation and scheduling:** every Room and corner has a stable
   `(agent, channel)` logical session and its own ACP process/history. A shared
   scheduler caps live processes, serializes turns per channel, and idles LRU
@@ -80,24 +83,24 @@ by projecting agent activity into the relay channel.
 
 ## Configuration (env vars)
 
-| Variable                            | Required | Default                 | Description                                                                                      |
-| ----------------------------------- | -------- | ----------------------- | ------------------------------------------------------------------------------------------------ |
-| `BUZZ_AGENT_BIN`                    | No       | explicit reference only | Reference `buzz-agent` override                                                                  |
-| `BUZZ_DEV_MCP_BIN`                  | No       | auto-detect             | Path to `buzz-dev-mcp` binary                                                                    |
-| `BUZZ_READONLY_MCP_BIN`             | No       | bundled/auto-detect     | Path to Beeline's inspection-only MCP                                                            |
-| `BUZZY_RELAY_HOST`                  | No       | `usebeeline.app`        | Relay HTTP/WS host (`relay.buzzrouter.com` remains an accepted alias)                            |
-| `BUZZY_RELAY_SCHEME`                | No       | `https`                 | Relay scheme                                                                                     |
-| `BUZZY_BODY_WORKSPACE`              | No       | `./body-workspace`      | Agent workspace root                                                                             |
-| `BUZZY_BODY_LLM_FILE`               | No       | —                       | Path to LLM credentials env file                                                                 |
-| `BUZZY_BODY_MAX_SESSIONS`           | No       | dynamic                 | Optional fixed Workspace-wide live ACP process ceiling                                           |
+| Variable                            | Required | Default                 | Description                                                                                                                                                                                                                                          |
+| ----------------------------------- | -------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BUZZ_AGENT_BIN`                    | No       | explicit reference only | Reference `buzz-agent` override                                                                                                                                                                                                                      |
+| `BUZZ_DEV_MCP_BIN`                  | No       | auto-detect             | Path to `buzz-dev-mcp` binary                                                                                                                                                                                                                        |
+| `BUZZ_READONLY_MCP_BIN`             | No       | bundled/auto-detect     | Path to Beeline's inspection-only MCP                                                                                                                                                                                                                |
+| `BUZZY_RELAY_HOST`                  | No       | `usebeeline.app`        | Relay HTTP/WS host (`relay.buzzrouter.com` remains an accepted alias)                                                                                                                                                                                |
+| `BUZZY_RELAY_SCHEME`                | No       | `https`                 | Relay scheme                                                                                                                                                                                                                                         |
+| `BUZZY_BODY_WORKSPACE`              | No       | `./body-workspace`      | Agent workspace root                                                                                                                                                                                                                                 |
+| `BUZZY_BODY_LLM_FILE`               | No       | —                       | Path to LLM credentials env file                                                                                                                                                                                                                     |
+| `BUZZY_BODY_MAX_SESSIONS`           | No       | dynamic                 | Optional fixed Workspace-wide live ACP process ceiling                                                                                                                                                                                               |
 | `BUZZY_BODY_MAX_SESSIONS_PER_ROOM`  | No       | `10`                    | Per-Room live ACP ceiling; invalid values use 10. Higher values add resident-process RAM (typically hundreds of MB each) and can reach provider concurrency limits/HTTP 429 sooner; token spend is unchanged because queued corners do the same work |
-| `BUZZY_BODY_MAX_SESSIONS_FLOOR`     | No       | `4`                     | Minimum dynamic Workspace ceiling; actual ceiling is `max(floor, per-room × active Rooms)`       |
-| `BUZZY_BODY_SESSION_IDLE_MS`        | No       | `300000`                | Idle time before process suspension                                                              |
-| `BUZZ_BODY_KEY`                     | No       | auto                    | Body operator Nostr nsec/hex                                                                     |
-| `BUZZ_AGENT_KEY`                    | No       | generated at pair       | Existing agent Nostr nsec/hex                                                                    |
-| `BUZZY_BODY_AUTO_APPROVE`           | No       | `1`                     | Auto-approve permissions inside edit corners only                                                |
-| `BUZZY_BODY_SANDBOX`                | No       | `bwrap`                 | `off` disables the bubblewrap OS sandbox for ACP children (overrides `runtime.json`'s `sandbox`) |
-| `BUZZY_BODY_SYNC_OPERATOR_CHECKOUT` | No       | `0`                     | `1` opts into clean, same-branch, fast-forward-only post-land pairing-checkout sync              |
+| `BUZZY_BODY_MAX_SESSIONS_FLOOR`     | No       | `4`                     | Minimum dynamic Workspace ceiling; actual ceiling is `max(floor, per-room × active Rooms)`                                                                                                                                                           |
+| `BUZZY_BODY_SESSION_IDLE_MS`        | No       | `300000`                | Idle time before process suspension                                                                                                                                                                                                                  |
+| `BUZZ_BODY_KEY`                     | No       | auto                    | Body operator Nostr nsec/hex                                                                                                                                                                                                                         |
+| `BUZZ_AGENT_KEY`                    | No       | generated at pair       | Existing agent Nostr nsec/hex                                                                                                                                                                                                                        |
+| `BUZZY_BODY_AUTO_APPROVE`           | No       | `1`                     | Auto-approve permissions inside edit corners only                                                                                                                                                                                                    |
+| `BUZZY_BODY_SANDBOX`                | No       | `bwrap`                 | `off` disables the bubblewrap OS sandbox for ACP children (overrides `runtime.json`'s `sandbox`)                                                                                                                                                     |
+| `BUZZY_BODY_SYNC_OPERATOR_CHECKOUT` | No       | `0`                     | `1` opts into clean, same-branch, fast-forward-only post-land pairing-checkout sync                                                                                                                                                                  |
 
 For a remote-backed Room, origin is truth and the checkout under the supervisor
 repository cache is disposable. The daemon fetches that remote at Room join,
@@ -188,6 +191,9 @@ beeline pair BUZZ-XXXX-XXXX --agent custom \
 
 # Restart a previously-paired agent after a machine/process restart.
 beeline start
+
+# Stop and disable one supervised agent.
+beeline stop --agent <full-agent-pubkey>
 
 # Explicitly migrate stored runtime(s) without re-pairing. Identities, Rooms,
 # and worktrees stay intact; each selected daemon stops and restarts cleanly.

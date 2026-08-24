@@ -46,6 +46,7 @@ vi.mock('@/buzz/person-name', () => ({
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ relayUrl: 'https://relay.test' }),
 }));
+vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/push/buzz-push-registration', () => ({
   registerBuzzPushNotifications: vi.fn(async () => undefined),
 }));

@@ -71,6 +71,8 @@ export interface GitHubIdentity {
   audience: string;
   subject: string;
   login: string;
+  /** Human-facing GitHub profile name. Login remains the canonical handle. */
+  displayName?: string;
   /** Server-side credential used to prove installation membership and create personal repos. */
   accessToken: string;
 }
@@ -130,6 +132,7 @@ export class GitHubOAuthClient {
     );
     const id = typeof userBody.id === 'number' ? userBody.id : NaN;
     const login = typeof userBody.login === 'string' ? userBody.login : '';
+    const displayName = typeof userBody.name === 'string' ? userBody.name.trim() : '';
     if (!Number.isSafeInteger(id) || id <= 0 || !login)
       throw new Error('GitHub user response is invalid');
     return {
@@ -137,6 +140,7 @@ export class GitHubOAuthClient {
       audience: this.config.clientId,
       subject: String(id),
       login,
+      ...(displayName ? { displayName } : {}),
       accessToken,
     };
   }

@@ -99,6 +99,20 @@ describe('relay invite web front', () => {
     expect(repoFile('relay-stack/prod/compose.yml')).toContain('beeline-media-preview');
   });
 
+  it('routes hosted NIP-05 claims and resolution through auth in every stack', () => {
+    for (const path of ['relay-stack/nginx.conf', 'relay-stack/prod/nginx.conf']) {
+      const nginx = repoFile(path);
+      expect(nginx).toContain('location /nip05/');
+      expect(nginx).toContain('location = /.well-known/nostr.json');
+      const claimRoute = nginx.match(/location \/nip05\/ \{[\s\S]*?\n    \}/)?.[0];
+      const resolutionRoute = nginx.match(
+        /location = \/\.well-known\/nostr\.json \{[\s\S]*?\n    \}/,
+      )?.[0];
+      expect(claimRoute).toContain('proxy_pass http://auth:8789');
+      expect(resolutionRoute).toContain('proxy_pass http://auth:8789');
+    }
+  });
+
   it('renders one monochrome join action without exposing the invite token', () => {
     const landing = repoFile('relay-stack/web/join/index.html');
     const colors = [...landing.matchAll(/#[0-9a-f]{6}/gi)].map(([color]) => color);

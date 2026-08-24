@@ -11,10 +11,7 @@ const activitySource = readFileSync(new URL('./ActivityTimeline.tsx', import.met
 const emptyLedgerSource = readFileSync(new URL('./EmptyLedgerState.tsx', import.meta.url), 'utf8');
 // Enter-room hydration lives here, not inline in the screen: every read is
 // fanned out concurrently so none can be held hostage by another.
-const roomEntrySource = readFileSync(
-  new URL('../../buzz/room-entry.ts', import.meta.url),
-  'utf8',
-);
+const roomEntrySource = readFileSync(new URL('../../buzz/room-entry.ts', import.meta.url), 'utf8');
 
 function styleDefinition(source: string, name: string): string {
   const start = source.indexOf(`  ${name}: {`);
@@ -52,11 +49,17 @@ describe('Empty ledger contract', () => {
     expect(chatSource).toContain('variant={emptyLedgerVariant}');
     expect(chatSource).toContain('objective={isCorner ? cornerObjective : undefined}');
     expect(chatSource).toContain('onPress={focusComposer}');
-    expect(chatSource).toMatch(/const focusComposer = useCallback\([\s\S]{0,120}composerRef\.current\?\.focus/);
+    expect(chatSource).toMatch(
+      /const focusComposer = useCallback\([\s\S]{0,120}composerRef\.current\?\.focus/,
+    );
     expect(chatSource).not.toContain('No messages yet');
 
-    expect(emptyLedgerSource).toContain("export type EmptyLedgerVariant = 'room' | 'corner' | 'dm'");
-    expect(emptyLedgerSource).toContain('Start with the work, question, or decision this Room is for.');
+    expect(emptyLedgerSource).toContain(
+      "export type EmptyLedgerVariant = 'room' | 'corner' | 'dm'",
+    );
+    expect(emptyLedgerSource).toContain(
+      'Start with the work, question, or decision this Room is for.',
+    );
     expect(emptyLedgerSource).toContain('Ready for a steering message');
     expect(emptyLedgerSource).toContain('Send ${person} the first message.');
     expect(styleDefinition(emptyLedgerSource, 'title')).toMatch(/fontSize:\s*16/);
@@ -181,7 +184,9 @@ describe('One ledger, both surfaces', () => {
     expect(steer).toMatch(/fontFamily:\s*theme\.buzz\.proseRegular/);
     expect(steer).toMatch(/color:\s*theme\.buzz\.ledgerBright/);
     expect(styleDefinition(ledgerSource, 'bylineText')).toMatch(/Typography\.mono\(/);
-    expect(styleDefinition(markdownSource, 'bold')).toMatch(/fontFamily:\s*theme\.buzz\.proseSemibold/);
+    expect(styleDefinition(markdownSource, 'bold')).toMatch(
+      /fontFamily:\s*theme\.buzz\.proseSemibold/,
+    );
     expect(ledgerSource).toContain('splitLeadSentence(bodyText)');
     expect(ledgerSource).not.toMatch(/#[0-9a-fA-F]{3,8}/);
     // And the lead split belongs to agent turns alone: a steer never takes it.
@@ -276,7 +281,9 @@ describe('The obsidian slab', () => {
   it('gives the transcript chrome no surface of its own', () => {
     // A textured HullSurface header read as a plate laid over the slab. The
     // sheets and the merge-approval panel still earn one; the header does not.
-    expect(chatSource).not.toMatch(/<HullSurface\s*\n?\s*strength="quiet"\s*\n?\s*style=\{\[styles\.header/);
+    expect(chatSource).not.toMatch(
+      /<HullSurface\s*\n?\s*strength="quiet"\s*\n?\s*style=\{\[styles\.header/,
+    );
     expect(styleDefinition(chatSource, 'header')).toMatch(/hairlineDivider|borderBottom/);
   });
 
@@ -315,7 +322,7 @@ describe('Speaker identity', () => {
     expect(branch).not.toMatch(/name: isCorner \? undefined/);
     expect(branch).not.toContain('const isCornerAgent');
     expect(branch).toContain("name: isSelfSteer ? 'You' : voiceName");
-    expect(branch).toContain('role: speaksAsAgent ? \'agent\' : undefined');
+    expect(branch).toContain("role: speaksAsAgent ? 'agent' : undefined");
     // The corner header still names its administering agent in the top bar.
     expect(chatSource).toMatch(
       /isCorner && cornerAgentPubkey && \([\s\S]{0,400}testID="corner-header-agent"[\s\S]{0,400}<IdentityMark/,
@@ -324,7 +331,9 @@ describe('Speaker identity', () => {
   });
 
   it('repeats no byline for a continued run, on either surface', () => {
-    expect(ledgerBranch()).toContain('const byline: LedgerByline | undefined = attributionContinued');
+    expect(ledgerBranch()).toContain(
+      'const byline: LedgerByline | undefined = attributionContinued',
+    );
     expect(ledgerBranch()).toMatch(/attributionContinued\s*\n\s*\? undefined/);
   });
 
@@ -334,9 +343,7 @@ describe('Speaker identity', () => {
     // rendered bare. The screen must tell the shared attribution helper which
     // rows are machine noise, so prose re-announces across them.
     expect(chatSource).toContain('continuedSpeakerIds');
-    expect(chatSource).toMatch(
-      /isMachine:\s*message\.isAgentActivity/,
-    );
+    expect(chatSource).toMatch(/isMachine:\s*message\.isAgentActivity/);
   });
 
   it('leads every byline with the speaker’s EXISTING identity mark, not a new one', () => {
@@ -381,7 +388,9 @@ describe('Speaker identity', () => {
     // One identity everywhere: the transcript folds the device-wide agent-name
     // cache under its own roster, so a Room whose own read is stale or absent
     // still renders the name the agent was given in any other Workspace.
-    expect(chatSource).toContain('withKnownAgentNames(knownAgentNames, channelCache?.availableAgents ?? [])');
+    expect(chatSource).toContain(
+      'withKnownAgentNames(knownAgentNames, channelCache?.availableAgents ?? [])',
+    );
 
     // ...and only the roster widens. Membership, roles, and profile writes are
     // authority-adjacent and stay on the channel's own community.
@@ -392,7 +401,9 @@ describe('Speaker identity', () => {
     expect(roomEntrySource).not.toMatch(/communityMembers\(gapFiller/);
     expect(roomEntrySource).not.toMatch(/listPersonProfiles\(\s*\n?\s*gapFiller/);
     expect(chatSource).not.toMatch(/replaceProfiles\([^)]*rosterCommunityId/);
-    expect(chatSource).not.toMatch(/saveActiveCommunityId\(identity\.publicKey, rosterCommunityId\)/);
+    expect(chatSource).not.toMatch(
+      /saveActiveCommunityId\(identity\.publicKey, rosterCommunityId\)/,
+    );
 
     // The one resolver, everywhere the transcript names an agent — gated on
     // `participantsHydrated` so a pending roster read shows a neutral
@@ -424,7 +435,7 @@ describe('Speaker identity', () => {
 });
 
 describe('Machine noise', () => {
-  it('folds a turn’s tool output into one collapsible line on both surfaces', () => {
+  it('renders one shared tool ledger on both surfaces', () => {
     // The `parentChannelId` gate is gone: a Room collapses telemetry the same
     // way a Corner does, rather than showing it raw or hiding it entirely.
     expect(chatSource).not.toMatch(/item\.isAgentActivity && parentChannelId/);
@@ -440,15 +451,17 @@ describe('Machine noise', () => {
     expect(chatSource).not.toMatch(/\bactivityUpdate:\s*\{/);
   });
 
-  it('folds the read-only calls into one counted note — dimmest tier, no box', () => {
-    // One note per turn, verb-counted. Not one collapsed line per call, and
-    // never a wall: the fold is what buys the reading column its quiet.
-    expect(activitySource).toMatch(/⋯ \{showHandle && handle/);
-    expect(styleDefinition(activitySource, 'noteText')).toMatch(/color:\s*groknight\.ledgerGhost/);
-    expect(styleDefinition(activitySource, 'noteRow')).not.toMatch(/border|backgroundColor/);
-    // The bordered node that used to sit beside the summary is gone.
-    expect(activitySource).not.toMatch(/\bnode:\s*\{/);
-    expect(activitySource).not.toMatch(/activeNode/);
+  it('uses one-line hairline rows and collapses only runs over three', () => {
+    expect(activitySource).toContain('const GROUP_THRESHOLD = 3');
+    expect(activitySource).toContain('turn.steps.length > GROUP_THRESHOLD');
+    expect(styleDefinition(activitySource, 'stepRow')).toMatch(/minHeight:\s*44/);
+    expect(styleDefinition(activitySource, 'stepRow')).toMatch(
+      /borderBottomWidth:\s*StyleSheet\.hairlineWidth/,
+    );
+    expect(styleDefinition(activitySource, 'stepLabel')).toMatch(/Typography\.mono\(\)/);
+    expect(activitySource).not.toContain('FAILED');
+    expect(activitySource).not.toContain('BlurView');
+    expect(activitySource).toContain('<HullActionSheet');
   });
 
   it('keeps the agent’s own prose out of the fold entirely', () => {
@@ -465,20 +478,10 @@ describe('Machine noise', () => {
     expect(narration).toMatch(/width:\s*'100%'/);
     expect(narration).not.toMatch(/textShadow/);
     expect(narration).not.toMatch(/paddingLeft/);
-    // Mechanism, by contrast, is indented and quiet.
-    expect(styleDefinition(activitySource, 'mechanismRow')).toMatch(/paddingLeft:\s*12/);
-    expect(styleDefinition(activitySource, 'mechanismLabel')).toMatch(
-      /color:\s*groknight\.ledgerQuiet/,
-    );
-    // ...and the escalation above it is luminance, never hue: a mutation lifts
-    // one step, a failure lifts all the way, and gold stays spent on live state.
-    expect(styleDefinition(activitySource, 'mechanismLabelLifted')).toMatch(
-      /color:\s*groknight\.ledgerBody/,
-    );
-    expect(styleDefinition(activitySource, 'mechanismLabelFailed')).toMatch(
-      /color:\s*groknight\.ledgerBright/,
-    );
-    expect(activitySource).not.toMatch(/mechanismLabel\w*: \{[^}]*groknight\.accent/);
+    // Machine steps stay quiet and mono; brass is reserved for the failure mark.
+    expect(styleDefinition(activitySource, 'stepLabel')).toMatch(/color:\s*groknight\.ledgerQuiet/);
+    expect(styleDefinition(activitySource, 'verdictFailed')).toMatch(/color:\s*groknight\.accent/);
+    expect(styleDefinition(activitySource, 'stepReason')).not.toMatch(/groknight\.accent/);
   });
 
   it('pins the corner indicator above the composer instead of inscribing it', () => {
@@ -559,7 +562,9 @@ describe('Machine noise', () => {
     // Gated on `!isSelfSteer`, never on `isAgent` — `isAgent` depends on the
     // roster and goes false exactly where a Corner needs this most, which is
     // how a full push-rejection dump reached the slab.
-    expect(branch).toContain('const ledgerText = isSelfSteer ? undefined : splitLedgerText(item.text)');
+    expect(branch).toContain(
+      'const ledgerText = isSelfSteer ? undefined : splitLedgerText(item.text)',
+    );
     expect(branch).not.toMatch(/isAgent \? splitLedgerText/);
     expect(branch).toMatch(/<LedgerGhostLine[\s\S]{0,200}lines of tool output/);
     expect(branch).toMatch(/bodyText=\{ledgerText \? ledgerText\.prose : item\.text\}/);
@@ -612,7 +617,10 @@ describe('Archived corner record', () => {
   it('keeps the archived completion summary as a tappable Room card', () => {
     const branchStart = chatSource.indexOf('      if (item.corner) {');
     expect(branchStart).toBeGreaterThanOrEqual(0);
-    const branch = chatSource.slice(branchStart, chatSource.indexOf('// ── Merge summary', branchStart));
+    const branch = chatSource.slice(
+      branchStart,
+      chatSource.indexOf('// ── Merge summary', branchStart),
+    );
     expect(branch).toContain("item.corner.status !== 'archived'");
     expect(branch).toContain('archived-corner-summary');
     expect(branch).toContain('{summary}');
@@ -636,7 +644,9 @@ describe('Corner header identity', () => {
     // every other enter-room read and committed the moment each one lands —
     // never batched behind the transcript backfill, the empty-room retry, or a
     // subscription handshake.
-    expect(roomEntrySource).toMatch(/const parentIdRead = transport\.getParentChannelId\(channelId\)/);
+    expect(roomEntrySource).toMatch(
+      /const parentIdRead = transport\.getParentChannelId\(channelId\)/,
+    );
     expect(roomEntrySource).toMatch(/const metadataRead = client\.getChannelMetadata\(channelId\)/);
     expect(roomEntrySource).toMatch(/step\('roomName', metadataRead,/);
     expect(roomEntrySource).toMatch(/step\('parentChannelId', parentIdRead,/);
@@ -644,7 +654,9 @@ describe('Corner header identity', () => {
     expect(roomEntrySource.match(/client\.getChannelMetadata\(/g)?.length).toBe(1);
     expect(roomEntrySource.match(/transport\.getParentChannelId\(/g)?.length).toBe(1);
     // The screen commits the channel's own name and kind straight off them.
-    expect(chatSource).toMatch(/onRoomName: \(name\) => \{[\s\S]{0,120}setResolvedChannelName\(name\)/);
+    expect(chatSource).toMatch(
+      /onRoomName: \(name\) => \{[\s\S]{0,120}setResolvedChannelName\(name\)/,
+    );
     expect(chatSource).toMatch(
       /onParentChannelId: \(parentId\) => \{[\s\S]{0,160}setChannelKind\(parentId \? 'corner' : 'room'\)/,
     );
@@ -663,11 +675,14 @@ describe('Leaving a corner', () => {
   it('cannot open the corner it is already showing', () => {
     expect(chatSource).toMatch(/openCorner[\s\S]{0,200}subchannelId === decodedId\) return/);
     // Every corner push goes through openCorner, so each one carries its parent.
-    expect(chatSource).not.toMatch(/router\.push\(`\/buzz\/chat\/\$\{encodeURIComponent\(item\.corner/);
-    expect(chatSource).not.toMatch(/router\.push\(`\/buzz\/chat\/\$\{encodeURIComponent\(tappableCornerId/);
+    expect(chatSource).not.toMatch(
+      /router\.push\(`\/buzz\/chat\/\$\{encodeURIComponent\(item\.corner/,
+    );
+    expect(chatSource).not.toMatch(
+      /router\.push\(`\/buzz\/chat\/\$\{encodeURIComponent\(tappableCornerId/,
+    );
   });
 });
-
 
 describe('The corner review footer never claims a retry the daemon is not making', () => {
   /** The `approvalState === 'failed'` branch of the review panel. */
@@ -749,7 +764,9 @@ describe('The merge approval card exposes every durable state', () => {
 
   it('binds the terminal success card to the landed SHA', () => {
     expect(chatSource).toContain('setLandedApprovalTip(projected.landedTip');
-    expect(chatSource).toContain('LANDED AT {(landedApprovalTip ?? mergeTarget?.tip ?? \'\').slice(0, 12)} ✓');
+    expect(chatSource).toContain(
+      "LANDED AT {(landedApprovalTip ?? mergeTarget?.tip ?? '').slice(0, 12)} ✓",
+    );
   });
 });
 
@@ -766,7 +783,9 @@ describe('The change-ready review card', () => {
 
   it('never guesses a file count before the manifest lands', () => {
     // "not loaded yet" and "nothing changed" are different answers.
-    expect(chatSource).toContain("reviewFiles === null\n                          ? 'PREPARING YOUR REVIEW'");
+    expect(chatSource).toContain(
+      "reviewFiles === null\n                          ? 'PREPARING YOUR REVIEW'",
+    );
   });
 });
 

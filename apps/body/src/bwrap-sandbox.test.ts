@@ -629,7 +629,7 @@ liveDescribe('the wrapper enforces Room read-only and the corner hygiene denylis
     const linked = resolve(root, 'linked');
     spawnSync('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'feature', linked]);
 
-    const gitCommonDir = resolveGitCommonDir(linked);
+    const gitCommonDir = await resolveGitCommonDir(linked);
     expect(gitCommonDir).toBe(resolve(repo, '.git'));
 
     const committed = runWrapped(

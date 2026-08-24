@@ -35,9 +35,9 @@ afterEach(() => {
 });
 
 describe('reviewPatchId', () => {
-  it('survives a pure rebase while the commit SHA changes', () => {
+  it('survives a pure rebase while the commit SHA changes', async () => {
     const { root, base, reviewed } = fixture();
-    const before = reviewPatchId(root, base, reviewed);
+    const before = await reviewPatchId(root, base, reviewed);
     git(root, ['checkout', '-q', 'main']);
     writeFileSync(join(root, 'other.txt'), 'new target work\n');
     git(root, ['add', '.']);
@@ -48,15 +48,15 @@ describe('reviewPatchId', () => {
     const rebased = git(root, ['rev-parse', 'HEAD']);
 
     expect(rebased).not.toBe(reviewed);
-    expect(reviewPatchId(root, movedBase, rebased)).toBe(before);
+    expect(await reviewPatchId(root, movedBase, rebased)).toBe(before);
   });
 
-  it('changes when the reviewed content changes', () => {
+  it('changes when the reviewed content changes', async () => {
     const { root, base, reviewed } = fixture();
-    const before = reviewPatchId(root, base, reviewed);
+    const before = await reviewPatchId(root, base, reviewed);
     writeFileSync(join(root, 'note.txt'), 'base\nmaterially different content\n');
     git(root, ['commit', '-qam', 'change reviewed content']);
 
-    expect(reviewPatchId(root, base, git(root, ['rev-parse', 'HEAD']))).not.toBe(before);
+    expect(await reviewPatchId(root, base, git(root, ['rev-parse', 'HEAD']))).not.toBe(before);
   });
 });

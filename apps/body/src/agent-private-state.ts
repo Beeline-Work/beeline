@@ -1,7 +1,7 @@
 import { appendFile, lstat, mkdir, readFile, realpath, symlink } from 'node:fs/promises';
 import { lstatSync, realpathSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { git } from '@beeline/gate';
 
 /** Session env var naming the durable state a persona owns outside the repository. */
 export const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
@@ -35,12 +35,8 @@ async function pointsTo(path: string, target: string): Promise<boolean> {
  * verifies the link independently in case this best-effort exclude fails.
  */
 async function excludeBodyOwnedLink(worktreePath: string, name: string): Promise<void> {
-  const resolved = spawnSync(
-    'git',
-    ['-C', worktreePath, 'rev-parse', '--git-path', 'info/exclude'],
-    { encoding: 'utf8' },
-  );
-  if (resolved.status !== 0) return;
+  const resolved = await git(worktreePath, ['rev-parse', '--git-path', 'info/exclude']);
+  if (!resolved.ok) return;
   const rawExcludePath = resolved.stdout.trim();
   if (!rawExcludePath) return;
   const excludePath = isAbsolute(rawExcludePath)

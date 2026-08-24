@@ -6,6 +6,29 @@ import { GitHubAppRuntime } from './github-app.js';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('daemon GitHub App runtime', () => {
+  it('aborts a direct GitHub App request at its hard deadline', async () => {
+    const pair = await generateKeyPair('RS256');
+    const privateKey = await exportPKCS8(pair.privateKey);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+              once: true,
+            });
+          }),
+      ),
+    );
+    const runtime = new GitHubAppRuntime({
+      appId: '123',
+      privateKey,
+      requestTimeoutMs: 10,
+    });
+
+    await expect(runtime.installationToken(77)).rejects.toMatchObject({ name: 'TimeoutError' });
+  });
+
   it('uses and caches short-lived installation tokens to follow repository renames', async () => {
     const pair = await generateKeyPair('RS256');
     const privateKey = await exportPKCS8(pair.privateKey);

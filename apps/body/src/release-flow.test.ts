@@ -123,8 +123,8 @@ describe('confirming a proposal', () => {
 });
 
 describe('reading what is unreleased out of git', () => {
-  it('counts and names the commits since the newest tag', () => {
-    const work = summarizeUnreleasedWork(taggedRepo(), 'refs/heads/main');
+  it('counts and names the commits since the newest tag', async () => {
+    const work = await summarizeUnreleasedWork(taggedRepo(), 'refs/heads/main');
     expect(work).toMatchObject({ branch: 'main', lastTag: 'v1.1.0', commitCount: 3 });
     expect(work?.commits).toEqual([
       'tidy the docs',
@@ -134,14 +134,14 @@ describe('reading what is unreleased out of git', () => {
     expect(work?.truncated).toBe(false);
   });
 
-  it('reports zero rather than the whole history when the tag is the tip', () => {
+  it('reports zero rather than the whole history when the tag is the tip', async () => {
     const root = taggedRepo();
     git(root, ['tag', '-a', 'v1.2.0', '-m', 'v1.2.0']);
-    const work = summarizeUnreleasedWork(root, 'refs/heads/main');
+    const work = await summarizeUnreleasedWork(root, 'refs/heads/main');
     expect(work).toMatchObject({ lastTag: 'v1.2.0', commitCount: 0, commits: [] });
   });
 
-  it('handles a repository that has never been tagged', () => {
+  it('handles a repository that has never been tagged', async () => {
     const root = mkdtempSync(join(tmpdir(), 'beeline-release-untagged-'));
     cleanup.push(root);
     git(root, ['init', '-q', '-b', 'main', '.']);
@@ -151,27 +151,27 @@ describe('reading what is unreleased out of git', () => {
     git(root, ['add', '.']);
     git(root, ['commit', '-qm', 'first']);
 
-    const work = summarizeUnreleasedWork(root, 'refs/heads/main');
+    const work = await summarizeUnreleasedWork(root, 'refs/heads/main');
     expect(work).toMatchObject({ commitCount: 1, commits: ['first'] });
     expect(work?.lastTag).toBeUndefined();
   });
 
-  it('falls back to the remote-tracking branch a canonical checkout actually has', () => {
+  it('falls back to the remote-tracking branch a canonical checkout actually has', async () => {
     const root = taggedRepo();
     // A canonical checkout is reset to origin/<target>; it need not hold a
     // local branch of that name at all.
     git(root, ['branch', '-m', 'main', 'trunk']);
     git(root, ['update-ref', 'refs/remotes/origin/main', 'trunk']);
-    expect(summarizeUnreleasedWork(root, 'refs/heads/main', 'origin')).toMatchObject({
+    expect(await summarizeUnreleasedWork(root, 'refs/heads/main', 'origin')).toMatchObject({
       branch: 'main',
       commitCount: 3,
     });
   });
 
-  it('answers undefined for a path that is not a usable repository', () => {
+  it('answers undefined for a path that is not a usable repository', async () => {
     const root = mkdtempSync(join(tmpdir(), 'beeline-release-empty-'));
     cleanup.push(root);
-    expect(summarizeUnreleasedWork(root, 'refs/heads/main')).toBeUndefined();
+    expect(await summarizeUnreleasedWork(root, 'refs/heads/main')).toBeUndefined();
   });
 });
 
@@ -194,7 +194,10 @@ describe('what the Room agent and the corner are told', () => {
   });
 
   it('tells the agent to say so and stop when nothing is unreleased', () => {
-    const briefing = releaseBriefing({ ...work, commitCount: 0, commits: [] }, { kind: 'unreleased' });
+    const briefing = releaseBriefing(
+      { ...work, commitCount: 0, commits: [] },
+      { kind: 'unreleased' },
+    );
     expect(briefing).toContain('There is nothing unreleased.');
     expect(briefing).toContain('Do not offer a corner');
     expect(briefing).not.toContain('offer, in one sentence, to open a corner');

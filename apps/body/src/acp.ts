@@ -17,13 +17,24 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { SessionMode } from './config.js';
 import { cornerAutonomyModeCandidates } from './harness-capabilities.js';
-import {
-  harnessReadsMetaSystemPrompt,
-  sessionToolScopeMeta,
-} from './harness-tool-scope.js';
+import { harnessReadsMetaSystemPrompt, sessionToolScopeMeta } from './harness-tool-scope.js';
 
 /** Bound on the stderr tail kept for an exit-failure error message. */
 const STDERR_TAIL_MAX_CHARS = 2_000;
+
+function killChildProcessGroup(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+): void {
+  if (!child.pid) return;
+  try {
+    if (process.platform === 'win32') child.kill(signal);
+    else process.kill(-child.pid, signal);
+  } catch (error) {
+    // The harness may have exited between the liveness check and the signal.
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+}
 
 export interface McpServerWire {
   name: string;
@@ -92,7 +103,11 @@ export function parseAvailableCommands(value: unknown): AcpAvailableCommand[] {
     const input = record.input as { hint?: unknown } | undefined;
     const hintRaw = input && typeof input.hint === 'string' ? input.hint : undefined;
     const inputHint = hintRaw && hintRaw.trim() ? hintRaw.trim().slice(0, 120) : undefined;
-    result.push({ name: rawName, ...(description ? { description } : {}), ...(inputHint ? { inputHint } : {}) });
+    result.push({
+      name: rawName,
+      ...(description ? { description } : {}),
+      ...(inputHint ? { inputHint } : {}),
+    });
     if (result.length >= 200) break;
   }
   return result;
@@ -169,12 +184,7 @@ function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
       lastWasText = false;
       continue;
     }
-    if (
-      !lastWasText &&
-      text &&
-      !/\s$/.test(text) &&
-      !CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)
-    ) {
+    if (!lastWasText && text && !/\s$/.test(text) && !CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)) {
       text += '\n\n';
     }
     text += delta;
@@ -287,6 +297,10 @@ export class AcpClient extends EventEmitter {
       // a real boundary, not a decorative one layered over a full inherit.
       env: this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv,
       ...(this.agentCwd ? { cwd: this.agentCwd } : {}),
+      // The harness and every tool it spawns share a disposable process
+      // group. A hard turn deadline can therefore retire the whole tree,
+      // never just the ACP parent while a shell/compiler keeps running.
+      detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.alive = true;
@@ -348,6 +362,8 @@ export class AcpClient extends EventEmitter {
 
   async stop(): Promise<void> {
     if (!this.alive) return;
+    const child = this.child;
+    if (!child) return;
     try {
       // Send shutdown if child is still alive.
       if (this.child?.stdin.writable) {
@@ -359,13 +375,13 @@ export class AcpClient extends EventEmitter {
     // Give it time to flush.
     await new Promise<void>((r) => setTimeout(r, 300));
     try {
-      this.child?.kill('SIGTERM');
+      killChildProcessGroup(child, 'SIGTERM');
     } catch {
       /* ignore */
     }
     await new Promise<void>((r) => setTimeout(r, 500));
     try {
-      this.child?.kill('SIGKILL');
+      killChildProcessGroup(child, 'SIGKILL');
     } catch {
       /* ignore */
     }

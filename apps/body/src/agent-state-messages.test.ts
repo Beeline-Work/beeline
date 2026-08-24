@@ -39,7 +39,7 @@ import { readFileSync, existsSync } from 'node:fs';
 describe('the daemon-published agent state notices stay deleted', () => {
   const src = (name: string) => readFileSync(new URL(name, import.meta.url), 'utf8');
   const body = src('./body.ts');
-  const supervisor = src('./supervisor.ts');
+  const supervisor = src('./thin-core.ts');
   const activity = src('./activity.ts');
   const acp = src('./acp.ts');
 
@@ -82,7 +82,7 @@ describe('the daemon-published agent state notices stay deleted', () => {
     for (const notice of RETIRED_NOTICES) {
       for (const [name, source] of [
         ['body.ts', body],
-        ['supervisor.ts', supervisor],
+        ['thin-core.ts', supervisor],
         ['activity.ts', activity],
       ] as const) {
         expect(source, `${name} still carries: ${notice}`).not.toContain(notice);

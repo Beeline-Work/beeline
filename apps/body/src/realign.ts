@@ -22,12 +22,7 @@
 
 import { git } from '@beeline/gate';
 
-export type CornerRealignStatus =
-  | 'up-to-date'
-  | 'rebased'
-  | 'conflict'
-  | 'dirty'
-  | 'error';
+export type CornerRealignStatus = 'up-to-date' | 'rebased' | 'conflict' | 'dirty' | 'error';
 
 export interface CornerRealignResult {
   status: CornerRealignStatus;
@@ -47,15 +42,15 @@ const shortSha = (sha: string | undefined): string =>
  * repository (no remote) shares its ref store with the corner's linked
  * worktree, so the just-landed ref is already visible here.
  */
-export function realignWorktreeOntoTarget(
+export async function realignWorktreeOntoTarget(
   worktreePath: string,
   opts: { remoteName?: string; targetBranch: string },
-): CornerRealignResult {
+): Promise<CornerRealignResult> {
   const branch = opts.targetBranch.replace(/^refs\/heads\//, '');
   const upstream = opts.remoteName ? `${opts.remoteName}/${branch}` : branch;
 
   if (opts.remoteName) {
-    const fetched = git(worktreePath, ['fetch', '--prune', opts.remoteName]);
+    const fetched = await git(worktreePath, ['fetch', '--prune', opts.remoteName]);
     if (!fetched.ok) {
       return {
         status: 'error',
@@ -63,20 +58,20 @@ export function realignWorktreeOntoTarget(
       };
     }
   }
-  if (!git(worktreePath, ['rev-parse', '--verify', '--quiet', upstream]).ok) {
+  if (!(await git(worktreePath, ['rev-parse', '--verify', '--quiet', upstream])).ok) {
     return { status: 'error', detail: `${upstream} does not resolve in this worktree` };
   }
 
-  const head = git(worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+  const head = (await git(worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
   if (!/^[0-9a-f]{40}$/.test(head)) {
     return { status: 'error', detail: 'worktree HEAD could not be read' };
   }
-  if (git(worktreePath, ['merge-base', '--is-ancestor', upstream, head]).ok) {
+  if ((await git(worktreePath, ['merge-base', '--is-ancestor', upstream, head])).ok) {
     return { status: 'up-to-date', previousTip: head };
   }
 
   // Never mix uncommitted work into an automatic rebase.
-  const status = git(worktreePath, ['status', '--porcelain=v1']);
+  const status = await git(worktreePath, ['status', '--porcelain=v1']);
   if (!status.ok || status.stdout.trim().length > 0) {
     return {
       status: 'dirty',
@@ -87,13 +82,13 @@ export function realignWorktreeOntoTarget(
     };
   }
 
-  const rebase = git(worktreePath, ['rebase', upstream]);
+  const rebase = await git(worktreePath, ['rebase', upstream]);
   if (rebase.ok) {
-    const newTip = git(worktreePath, ['rev-parse', 'HEAD']).stdout.trim();
+    const newTip = (await git(worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     return { status: 'rebased', previousTip: head, detail: newTip };
   }
   // A conflicted rebase must leave the corner exactly where it was.
-  git(worktreePath, ['rebase', '--abort']);
+  await git(worktreePath, ['rebase', '--abort']);
   return {
     status: 'conflict',
     previousTip: head,

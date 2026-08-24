@@ -62,13 +62,13 @@ describe('recognizing a GitHub remote', () => {
     }
   });
 
-  it('resolves a real checkout by its configured remote, and only that remote', () => {
+  it('resolves a real checkout by its configured remote, and only that remote', async () => {
     const github = repoWithRemote('git@github.com:acme/widgets.git');
-    expect(resolveGitHubRepo(github, 'origin')).toEqual({ owner: 'acme', repo: 'widgets' });
-    expect(resolveGitHubRepo(github, 'upstream')).toBeUndefined();
+    expect(await resolveGitHubRepo(github, 'origin')).toEqual({ owner: 'acme', repo: 'widgets' });
+    expect(await resolveGitHubRepo(github, 'upstream')).toBeUndefined();
 
     const local = repoWithRemote('/srv/mirrors/widgets.git');
-    expect(resolveGitHubRepo(local, 'origin')).toBeUndefined();
+    expect(await resolveGitHubRepo(local, 'origin')).toBeUndefined();
   });
 });
 

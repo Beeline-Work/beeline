@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { git } from '@beeline/gate';
 
 const PATCH_ID = /^[0-9a-f]{40}$/;
 
@@ -10,21 +10,23 @@ const PATCH_ID = /^[0-9a-f]{40}$/;
  * when the corner is rebased onto a newer target, while any actual content
  * edit produces a different identity.
  */
-export function reviewPatchId(cwd: string, base: string, tip: string): string | undefined {
-  const diff = spawnSync(
-    'git',
-    ['diff', '--binary', '--full-index', '--no-ext-diff', `${base}..${tip}`],
-    { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
-  );
-  if (diff.status !== 0 || !diff.stdout) return undefined;
-
-  const patch = spawnSync('git', ['patch-id', '--stable'], {
+export async function reviewPatchId(
+  cwd: string,
+  base: string,
+  tip: string,
+): Promise<string | undefined> {
+  const diff = await git(
     cwd,
-    encoding: 'utf8',
-    input: diff.stdout,
-    maxBuffer: 64 * 1024 * 1024,
+    ['diff', '--binary', '--full-index', '--no-ext-diff', `${base}..${tip}`],
+    { maxOutputBytes: 64 * 1024 * 1024 },
+  );
+  if (!diff.ok || !diff.stdout || diff.truncated) return undefined;
+
+  const patch = await git(cwd, ['patch-id', '--stable'], {
+    stdin: diff.stdout,
+    maxOutputBytes: 1024,
   });
-  if (patch.status !== 0) return undefined;
+  if (!patch.ok || patch.truncated) return undefined;
   const id = patch.stdout.trim().split(/\s+/)[0];
   return id && PATCH_ID.test(id) ? id : undefined;
 }

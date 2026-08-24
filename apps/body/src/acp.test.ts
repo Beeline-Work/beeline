@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
@@ -472,6 +472,36 @@ lines.on('line', (line) => {
   return binary;
 }
 
+async function fakeDescendantAgent(pidFile: string): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-descendant-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-descendant-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+
+const descendant = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], {
+  stdio: 'ignore',
+});
+writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  }
+  // Ignore shutdown so AcpClient must kill the process group.
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 async function fakeAuthFailingAgent(): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-authfail-'));
   temporaryDirectories.push(directory);
@@ -488,6 +518,31 @@ process.exit(1);
 }
 
 describe('AcpClient live steering', () => {
+  it.runIf(process.platform !== 'win32')('kills the harness and all tool descendants', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-pid-'));
+    temporaryDirectories.push(directory);
+    const pidFile = resolve(directory, 'descendant.pid');
+    const client = new AcpClient({
+      agentBinary: await fakeDescendantAgent(pidFile),
+      agentEnv: {},
+    });
+    await client.start();
+    const descendantPid = Number(await readFile(pidFile, 'utf8'));
+
+    await client.stop();
+
+    await expect
+      .poll(() => {
+        try {
+          process.kill(descendantPid, 0);
+          return false;
+        } catch (error) {
+          return (error as NodeJS.ErrnoException).code === 'ESRCH';
+        }
+      })
+      .toBe(true);
+  });
+
   it('lets the host intercept and reject a mutating permission request', async () => {
     const requests: unknown[] = [];
     const client = new AcpClient({
@@ -705,7 +760,6 @@ describe('AcpClient live steering', () => {
     }
   });
 });
-
 
 describe('AcpClient failure reporting', () => {
   it('names the configured harness, not the OS sandbox wrapper, when the child dies', async () => {

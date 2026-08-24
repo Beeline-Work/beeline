@@ -105,30 +105,32 @@ afterEach(() => {
 });
 
 describe('realignWorktreeOntoTarget', () => {
-  it('rebases a clean corner onto the new target tip via its remote', () => {
+  it('rebases a clean corner onto the new target tip via its remote', async () => {
     const { root, cornerPath, advanceMain, featureTip } = repoWithCorner();
     try {
       const before = featureTip();
       const newTip = advanceMain('main moves on');
-      const result = realignWorktreeOntoTarget(cornerPath, {
+      const result = await realignWorktreeOntoTarget(cornerPath, {
         remoteName: 'origin',
         targetBranch: 'refs/heads/master',
       });
       expect(result.status).toBe('rebased');
       expect(result.previousTip).toBe(before);
       // The corner's branch now sits on top of the new main.
-      expect(g(cornerPath, ['merge-base', '--is-ancestor', newTip, 'HEAD']) !== undefined).toBe(true);
+      expect(g(cornerPath, ['merge-base', '--is-ancestor', newTip, 'HEAD']) !== undefined).toBe(
+        true,
+      );
       expect(g(cornerPath, ['rev-parse', 'HEAD'])).not.toBe(before);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('reports up-to-date without touching an already-current corner', () => {
+  it('reports up-to-date without touching an already-current corner', async () => {
     const { root, cornerPath, featureTip } = repoWithCorner();
     try {
       const before = featureTip();
-      const result = realignWorktreeOntoTarget(cornerPath, {
+      const result = await realignWorktreeOntoTarget(cornerPath, {
         remoteName: 'origin',
         targetBranch: 'refs/heads/master',
       });
@@ -139,12 +141,12 @@ describe('realignWorktreeOntoTarget', () => {
     }
   });
 
-  it('announces instead of diverging when the rebase conflicts, leaving the corner untouched', () => {
+  it('announces instead of diverging when the rebase conflicts, leaving the corner untouched', async () => {
     const { root, cornerPath, advanceMain, featureTip } = repoWithCorner({ conflict: true });
     try {
       advanceMain('main rewrites the same file');
       const before = featureTip();
-      const result = realignWorktreeOntoTarget(cornerPath, {
+      const result = await realignWorktreeOntoTarget(cornerPath, {
         remoteName: 'origin',
         targetBranch: 'refs/heads/master',
       });
@@ -161,11 +163,11 @@ describe('realignWorktreeOntoTarget', () => {
     }
   });
 
-  it('refuses to mix uncommitted work into an automatic rebase, and says so', () => {
+  it('refuses to mix uncommitted work into an automatic rebase, and says so', async () => {
     const { root, cornerPath, advanceMain } = repoWithCorner({ dirty: true });
     try {
       advanceMain('main moves while corner is dirty');
-      const result = realignWorktreeOntoTarget(cornerPath, {
+      const result = await realignWorktreeOntoTarget(cornerPath, {
         remoteName: 'origin',
         targetBranch: 'refs/heads/master',
       });
@@ -295,7 +297,11 @@ describe('Body realigns corners after a land', () => {
         }),
       );
 
-      await Reflect.get(body, 'realignCornersForRepo').call(body, 'remote/repo-key', 'refs/heads/master');
+      await Reflect.get(body, 'realignCornersForRepo').call(
+        body,
+        'remote/repo-key',
+        'refs/heads/master',
+      );
 
       const announcements = published.filter((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'corner-realign'),
@@ -336,8 +342,16 @@ describe('Body realigns corners after a land', () => {
         r: unknown,
         t: string,
       ) => Promise<void>;
-      await hook.call(body, { repositoryKey: 'repo-key', targetBranch: 'refs/heads/master' }, 'c'.repeat(40));
-      await hook.call(body, { repositoryKey: 'repo-key', targetBranch: 'refs/heads/master' }, 'c'.repeat(40));
+      await hook.call(
+        body,
+        { repositoryKey: 'repo-key', targetBranch: 'refs/heads/master' },
+        'c'.repeat(40),
+      );
+      await hook.call(
+        body,
+        { repositoryKey: 'repo-key', targetBranch: 'refs/heads/master' },
+        'c'.repeat(40),
+      );
       expect(calls).toBe(1);
     } finally {
       rmSync(repo.root, { recursive: true, force: true });

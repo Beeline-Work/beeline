@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
 import { ItemList } from '@/components/ItemList';
@@ -7,7 +6,7 @@ import { useRouter } from 'expo-router';
 import * as Localization from 'expo-localization';
 import { StyleSheet, useUnistyles, UnistylesRuntime } from 'react-native-unistyles';
 import { Switch } from '@/components/Switch';
-import { Platform, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { editorialTheme, ledgerTheme, obsidianTheme } from '@/theme';
 import { beelineThemes } from '@/buzz/groknight';
@@ -17,13 +16,12 @@ import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
 import {
     normalizeUserMessageBubbleColor,
     resolveUserMessageBubbleColor,
-    resolveUserMessageBubbleGlassColor,
     USER_MESSAGE_BUBBLE_COLORS,
     type UserMessageBubbleColor,
 } from '@/utils/userMessageBubbleColor';
 import * as React from 'react';
-import { MobileGlassSurface } from '@/components/MobileGlass';
 import { AnimatedCollapsible } from '@/components/AnimatedOverlay';
+import { SettingsNavigationRow } from '@/components/buzz/SettingsNavigationRow';
 
 const appThemes = {
     obsidian: obsidianTheme,
@@ -66,14 +64,14 @@ const getSessionStatusDisplayLabel = (mode: SessionStatusBarDisplay): string => 
     }
 };
 
-const getSessionStatusDisplayIcon = (mode: SessionStatusBarDisplay): React.ComponentProps<typeof Ionicons>['name'] => {
+const getSessionStatusDisplayGlyph = (mode: SessionStatusBarDisplay): string => {
     switch (mode) {
         case 'hidden':
-            return 'eye-off-outline';
+            return '—';
         case 'above':
-            return 'chevron-up-outline';
+            return '↑';
         case 'below':
-            return 'chevron-down-outline';
+            return '↓';
     }
 };
 
@@ -81,24 +79,20 @@ function BubbleColorPreview({ color }: { color: UserMessageBubbleColor }) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const palette = resolveUserMessageBubbleColor(color, theme.dark);
-    const glassPalette = resolveUserMessageBubbleGlassColor(color, theme.dark);
-    const glassEnabled = Platform.OS !== 'web';
 
     return (
-        <MobileGlassSurface
-            enabled={glassEnabled}
-            tintColor={glassEnabled ? glassPalette.tint : undefined}
+        <View
             style={[
                 styles.bubblePreview,
                 {
-                    backgroundColor: glassEnabled ? glassPalette.background : palette.background,
-                    borderColor: glassEnabled ? glassPalette.border : palette.border,
+                    backgroundColor: palette.background,
+                    borderColor: palette.border,
                 },
             ]}
         >
             <View style={[styles.bubblePreviewLine, { backgroundColor: palette.indicator, width: 18 }]} />
             <View style={[styles.bubblePreviewLine, { backgroundColor: palette.indicator, width: 26 }]} />
-        </MobileGlassSurface>
+        </View>
     );
 }
 
@@ -107,7 +101,6 @@ function BubbleColorDropdownValue(props: {
     label: string;
     expanded: boolean;
 }) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
 
     return (
@@ -116,11 +109,7 @@ function BubbleColorDropdownValue(props: {
             <Text style={styles.dropdownValueText} numberOfLines={1}>
                 {props.label}
             </Text>
-            <Ionicons
-                name={props.expanded ? 'chevron-up' : 'chevron-down'}
-                size={18}
-                color={theme.colors.groupped.chevron}
-            />
+            <Text style={styles.dropdownGlyph}>{props.expanded ? '⌃' : '⌄'}</Text>
         </View>
     );
 }
@@ -129,7 +118,6 @@ function StatusDisplayDropdownValue(props: {
     mode: SessionStatusBarDisplay;
     expanded: boolean;
 }) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
 
     return (
@@ -137,11 +125,7 @@ function StatusDisplayDropdownValue(props: {
             <Text style={styles.dropdownValueText} numberOfLines={1}>
                 {getSessionStatusDisplayLabel(props.mode)}
             </Text>
-            <Ionicons
-                name={props.expanded ? 'chevron-up' : 'chevron-down'}
-                size={18}
-                color={theme.colors.groupped.chevron}
-            />
+            <Text style={styles.dropdownGlyph}>{props.expanded ? '⌃' : '⌄'}</Text>
         </View>
     );
 }
@@ -151,7 +135,6 @@ function StatusDisplayOption(props: {
     selected: boolean;
     onPress: () => void;
 }) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
 
     return (
@@ -163,16 +146,14 @@ function StatusDisplayOption(props: {
                 pressed && styles.statusPlacementOptionPressed,
             ]}
         >
-            <Ionicons
-                name={getSessionStatusDisplayIcon(props.mode)}
-                size={20}
-                color={props.selected ? theme.colors.status.connecting : theme.colors.textSecondary}
-            />
+            <Text style={[styles.optionGlyph, props.selected && styles.optionGlyphSelected]}>
+                {getSessionStatusDisplayGlyph(props.mode)}
+            </Text>
             <Text style={styles.statusPlacementOptionText} numberOfLines={1}>
                 {getSessionStatusDisplayLabel(props.mode)}
             </Text>
             {props.selected ? (
-                <Ionicons name="checkmark-circle" size={20} color={theme.colors.status.connecting} />
+                <Text style={styles.optionCheck}>✓</Text>
             ) : (
                 <View style={styles.bubbleColorOptionCheckPlaceholder} />
             )}
@@ -185,7 +166,6 @@ function BubbleColorOption(props: {
     selected: boolean;
     onPress: () => void;
 }) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
 
     return (
@@ -202,7 +182,7 @@ function BubbleColorOption(props: {
                 {getUserMessageBubbleColorLabel(props.color)}
             </Text>
             {props.selected ? (
-                <Ionicons name="checkmark-circle" size={20} color={theme.colors.status.connecting} />
+                <Text style={styles.optionCheck}>✓</Text>
             ) : (
                 <View style={styles.bubbleColorOptionCheckPlaceholder} />
             )}
@@ -230,7 +210,6 @@ export default function AppearanceSettingsScreen() {
     const [bubbleColorDropdownOpen, setBubbleColorDropdownOpen] = React.useState(false);
     
     const displayBubbleColor = normalizeUserMessageBubbleColor(userMessageBubbleColor);
-    const displayBubblePalette = resolveUserMessageBubbleColor(displayBubbleColor, theme.dark);
     const displayBubbleColorLabel = getUserMessageBubbleColorLabel(displayBubbleColor);
     const applySessionStatusDisplay = React.useCallback((mode: SessionStatusBarDisplay) => {
         setSessionStatusBarDisplay(mode);
@@ -264,13 +243,6 @@ export default function AppearanceSettingsScreen() {
                             key={name}
                             title={option.label}
                             subtitle={option.description}
-                            icon={(
-                                <Ionicons
-                                    name={name === 'obsidian' ? 'moon-outline' : name === 'editorial' ? 'book-outline' : 'reorder-four-outline'}
-                                    size={27}
-                                    color={selected ? theme.colors.status.connecting : theme.colors.textSecondary}
-                                />
-                            )}
                             detail={selected ? 'Selected' : undefined}
                             showDivider={index < THEME_PREFERENCES.length - 1}
                             onPress={() => {
@@ -283,12 +255,17 @@ export default function AppearanceSettingsScreen() {
             </ItemGroup>
 
             {/* Language Settings */}
-            <ItemGroup title={t('settingsLanguage.title')} footer={t('settingsLanguage.description')}>
-                <Item
-                    title={t('settingsLanguage.currentLanguage')}
-                    icon={<Ionicons name="language-outline" size={29} color="#007AFF" />}
-                    detail={getLanguageDisplayText()}
+            <ItemGroup
+                title={t('settingsLanguage.title')}
+                footer={t('settingsLanguage.description')}
+                containerStyle={stylesheet.navigationGroup}
+            >
+                <SettingsNavigationRow
+                    glyph="Aa"
+                    label={t('settingsLanguage.currentLanguage')}
+                    supportingCopy={getLanguageDisplayText()}
                     onPress={() => router.push('/settings/language')}
+                    testID="language-settings-link"
                 />
             </ItemGroup>
 
@@ -296,7 +273,6 @@ export default function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.sessionStatusBar')}
                     subtitle={t('settingsAppearance.sessionStatusBarDescription')}
-                    icon={<Ionicons name="stats-chart-outline" size={29} color={theme.colors.status.connecting} />}
                     rightElement={
                         <StatusDisplayDropdownValue
                             mode={sessionStatusBarDisplay}
@@ -324,7 +300,6 @@ export default function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.usageLimitShowRemaining')}
                     subtitle={t('settingsAppearance.usageLimitShowRemainingDescription')}
-                    icon={<Ionicons name="speedometer-outline" size={29} color={theme.colors.status.connecting} />}
                     rightElement={
                         <Switch
                             value={usageLimitShowRemaining}
@@ -335,7 +310,6 @@ export default function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.userMessageBubbleColor')}
                     subtitle={t('settingsAppearance.userMessageBubbleColorDescription')}
-                    icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={displayBubblePalette.indicator} />}
                     rightElement={
                         <BubbleColorDropdownValue
                             color={displayBubbleColor}
@@ -366,32 +340,11 @@ export default function AppearanceSettingsScreen() {
                 )}
             </ItemGroup>
 
-            {/* Text Settings */}
-            {/* <ItemGroup title="Text" footer="Adjust text size and font preferences">
-                <Item
-                    title="Text Size"
-                    subtitle="Make text larger or smaller"
-                    icon={<Ionicons name="text-outline" size={29} color="#FF9500" />}
-                    detail="Default"
-                    onPress={() => { }}
-                    disabled
-                />
-                <Item
-                    title="Font"
-                    subtitle="Choose your preferred font"
-                    icon={<Ionicons name="text-outline" size={29} color="#FF9500" />}
-                    detail="System"
-                    onPress={() => { }}
-                    disabled
-                />
-            </ItemGroup> */}
-
             {/* Display Settings */}
             <ItemGroup title={t('settingsAppearance.display')} footer={t('settingsAppearance.displayDescription')}>
                 <Item
                     title={t('settingsAppearance.compactToolCalls')}
                     subtitle={t('settingsAppearance.compactToolCallsDescription')}
-                    icon={<Ionicons name="contract-outline" size={29} color="#5856D6" />}
                     rightElement={
                         <Switch
                             value={compactToolCalls}
@@ -402,7 +355,6 @@ export default function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.inlineToolCalls')}
                     subtitle={t('settingsAppearance.inlineToolCallsDescription')}
-                    icon={<Ionicons name="code-slash-outline" size={29} color="#5856D6" />}
                     rightElement={
                         <Switch
                             value={viewInline}
@@ -413,7 +365,6 @@ export default function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.expandTodoLists')}
                     subtitle={t('settingsAppearance.expandTodoListsDescription')}
-                    icon={<Ionicons name="checkmark-done-outline" size={29} color="#5856D6" />}
                     rightElement={
                         <Switch
                             value={expandTodos}
@@ -424,7 +375,6 @@ export default function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.showLineNumbersInDiffs')}
                     subtitle={t('settingsAppearance.showLineNumbersInDiffsDescription')}
-                    icon={<Ionicons name="list-outline" size={29} color="#5856D6" />}
                     rightElement={
                         <Switch
                             value={showLineNumbers}
@@ -435,7 +385,6 @@ export default function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.showLineNumbersInToolViews')}
                     subtitle={t('settingsAppearance.showLineNumbersInToolViewsDescription')}
-                    icon={<Ionicons name="code-working-outline" size={29} color="#5856D6" />}
                     rightElement={
                         <Switch
                             value={showLineNumbersInToolViews}
@@ -446,7 +395,6 @@ export default function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.wrapLinesInDiffs')}
                     subtitle={t('settingsAppearance.wrapLinesInDiffsDescription')}
-                    icon={<Ionicons name="return-down-forward-outline" size={29} color="#5856D6" />}
                     rightElement={
                         <Switch
                             value={wrapLinesInDiffs}
@@ -457,14 +405,12 @@ export default function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.diffStyle')}
                     subtitle={t('settingsAppearance.diffStyleDescription')}
-                    icon={<Ionicons name="git-compare-outline" size={29} color="#5856D6" />}
                     detail={diffStyle === 'split' ? t('settingsAppearance.diffStyleOptions.split') : t('settingsAppearance.diffStyleOptions.unified')}
                     onPress={() => setDiffStyle(diffStyle === 'unified' ? 'split' : 'unified')}
                 />
                 <Item
                     title={t('settingsAppearance.alwaysShowContextSize')}
                     subtitle={t('settingsAppearance.alwaysShowContextSizeDescription')}
-                    icon={<Ionicons name="analytics-outline" size={29} color="#5856D6" />}
                     rightElement={
                         <Switch
                             value={alwaysShowContextSize}
@@ -472,36 +418,15 @@ export default function AppearanceSettingsScreen() {
                         />
                     }
                 />
-                {/* <Item
-                    title="Show Avatars"
-                    subtitle="Display user and assistant avatars"
-                    icon={<Ionicons name="person-circle-outline" size={29} color="#5856D6" />}
-                    disabled
-                    rightElement={
-                        <Switch
-                            value={true}
-                            disabled
-                        />
-                    }
-                /> */}
             </ItemGroup>
-
-            {/* Colors */}
-            {/* <ItemGroup title="Colors" footer="Customize accent colors and highlights">
-                <Item
-                    title="Accent Color"
-                    subtitle="Choose your accent color"
-                    icon={<Ionicons name="color-palette-outline" size={29} color="#FF3B30" />}
-                    detail="Blue"
-                    onPress={() => { }}
-                    disabled
-                />
-            </ItemGroup> */}
         </ItemList>
     );
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+    navigationGroup: {
+        borderTopWidth: 0,
+    },
     dropdownValue: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -509,9 +434,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: 184,
     },
     dropdownValueText: {
-        color: theme.colors.textSecondary,
-        fontSize: 15,
+        color: theme.buzz.textMuted,
+        fontFamily: theme.buzz.monoRegular,
+        fontSize: 12,
         flexShrink: 1,
+    },
+    dropdownGlyph: {
+        color: theme.buzz.chrome,
+        fontFamily: theme.buzz.monoRegular,
+        fontSize: 16,
     },
     bubbleColorDropdown: {
         paddingVertical: 6,
@@ -527,15 +458,31 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 16,
     },
     statusPlacementOptionSelected: {
-        backgroundColor: Platform.select({ web: theme.colors.surfaceSelected, default: theme.colors.glass.backgroundSubtle }),
+        backgroundColor: theme.buzz.bgHighlight,
     },
     statusPlacementOptionPressed: {
-        backgroundColor: Platform.select({ web: theme.colors.surfacePressedOverlay, default: theme.colors.glass.backgroundStrong }),
+        backgroundColor: theme.buzz.bgPressed,
     },
     statusPlacementOptionText: {
-        color: theme.colors.text,
+        color: theme.buzz.textPrimary,
+        fontFamily: theme.buzz.proseRegular,
         fontSize: 16,
         flex: 1,
+    },
+    optionGlyph: {
+        width: 20,
+        color: theme.buzz.chrome,
+        fontFamily: theme.buzz.monoRegular,
+        fontSize: 16,
+        textAlign: 'center',
+    },
+    optionGlyphSelected: {
+        color: theme.buzz.accent,
+    },
+    optionCheck: {
+        color: theme.buzz.accent,
+        fontFamily: theme.buzz.monoSemibold,
+        fontSize: 17,
     },
     bubbleColorOption: {
         minHeight: 48,
@@ -545,13 +492,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 16,
     },
     bubbleColorOptionSelected: {
-        backgroundColor: Platform.select({ web: theme.colors.surfaceSelected, default: theme.colors.glass.backgroundSubtle }),
+        backgroundColor: theme.buzz.bgHighlight,
     },
     bubbleColorOptionPressed: {
-        backgroundColor: Platform.select({ web: theme.colors.surfacePressedOverlay, default: theme.colors.glass.backgroundStrong }),
+        backgroundColor: theme.buzz.bgPressed,
     },
     bubbleColorOptionText: {
-        color: theme.colors.text,
+        color: theme.buzz.textPrimary,
+        fontFamily: theme.buzz.proseRegular,
         fontSize: 16,
         flex: 1,
     },
@@ -562,8 +510,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     bubblePreview: {
         width: 46,
         height: 28,
-        borderRadius: 14,
-        borderWidth: 1,
+        borderRadius: theme.buzz.radius,
+        borderWidth: StyleSheet.hairlineWidth,
         alignItems: 'flex-end',
         justifyContent: 'center',
         gap: 4,
@@ -572,6 +520,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     bubblePreviewLine: {
         height: 3,
-        borderRadius: 999,
+        borderRadius: theme.buzz.radius,
     },
 }));

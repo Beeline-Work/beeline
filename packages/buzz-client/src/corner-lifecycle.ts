@@ -103,7 +103,7 @@ export const CORNER_ASK_FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
  *    what makes the answer stable under the relay's newest-N backfill window:
  *    a window that still holds the old card resolves it against the newer
  *    work, and a window that evicted the card finds no unresolved word either.
- * 4. THE VERDICT is exactly one of three super-states (`resolveCornerState`),
+ * 4. THE VERDICT is exactly one of four super-states (`resolveCornerState`),
  *    with NO sub-reason taxonomy — surfaces choose affordances contextually:
  *    - WORKING — recent agent work within the liveness window
  *      (`CORNER_WORK_LIVENESS_WINDOW_MS`); liveness must be VERIFIABLE, so an
@@ -112,12 +112,17 @@ export const CORNER_ASK_FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
  *      INCLUDING idle-without-finishing (deliberately a failure mode, golded
  *      plainly like every other needs-human state). A fresh unanswered agent
  *      ask also reads needs-human: the person IS what the corner waits on.
+ *    - STALLED — same unfinished shapes as NEEDS-HUMAN, but the agent is
+ *      PROVABLY offline past its presence lease (the soft `agentOffline`
+ *      input): a dead agent cannot be waiting on your reply, and nothing here
+ *      is actionable until it comes back — EXCEPT a reviewable change, which
+ *      still reads NEEDS-HUMAN because the artifact stands on its own.
  *    - FINISHED — merged/archived.
  *
  * No facts at all resolves to WORKING: a corner whose history nobody holds is
  * one that was just opened and whose first card is still in flight.
  */
-export type CornerSuperState = 'working' | 'needs-human' | 'finished';
+export type CornerSuperState = 'working' | 'needs-human' | 'stalled' | 'finished';
 
 /** How long a corner's last agent work signal counts as "working right now".
  * Deliberately generous (a long turn can pause between activity batches) but
@@ -136,6 +141,15 @@ export function resolveCornerState(
     now?: number;
     askFreshWindowMs?: number;
     workLivenessWindowMs?: number;
+    /** SOFT presence input: the agent's presence record(s) are provably past
+     * their lease (every agent serving this Room offline per
+     * `isAgentPresenceOnline`'s lease). Absent/undefined means UNKNOWN and
+     * behaves exactly as today — brief blips inside the lease never flip a
+     * verdict, only sustained offline does. When true, an ask or standing
+     * needs-you card reads `stalled` (agent unreachable), never
+     * "waiting on you"; a reviewable change STILL reads needs-human because
+     * the artifact does not need a live agent to be actionable. */
+    agentOffline?: boolean;
   } = {},
 ): CornerVerdict {
   if (options.merged || options.archived) return 'finished';
@@ -184,6 +198,18 @@ export function resolveCornerState(
     (mergeReadyAt !== undefined &&
       (latestStatus === undefined || mergeReadyAt >= latestStatus.createdAt));
   const status: CornerLifecycleStatus = reviewReady ? 'open' : (mapped ?? 'live');
+  // SOFT presence input, evaluated before anything else can speak: when the
+  // agent is PROVABLY offline past its lease, no unfinished state here is a
+  // live human-directed wait. The owner-reported defect (2026-08-23): charles/
+  // beeline showed NEEDS YOU "Waiting on you" forever because the only thing
+  // that clears an ask — newer work — can never come from a dead agent, and
+  // never-idle (#389) drives only LIVE agents. A dead agent's ask is not a
+  // question aimed at you right now; it is a stalled session. Only a real
+  // ARTIFACT survives: a reviewable change still reads needs-human regardless
+  // of presence, because approving it does not need the agent awake.
+  if (options.agentOffline) {
+    return reviewReady ? NEEDS_HUMAN : 'stalled';
+  }
   // The moment whose word is standing: a status card when one exists, else the
   // merge-ready announcement itself.
   const standingAt = latestStatus?.createdAt ?? (reviewReady ? mergeReadyAt : undefined);
@@ -247,6 +273,9 @@ export function resolveCornerLifecycle(
     now?: number;
     askFreshWindowMs?: number;
     workLivenessWindowMs?: number;
+    /** Same soft presence input as `resolveCornerState`; a STALLED verdict
+     * has no legacy word and maps to `null`. */
+    agentOffline?: boolean;
   } = {},
 ): CornerLifecycleStatus | null {
   const verdict = resolveCornerState(facts, options);
@@ -271,6 +300,10 @@ export function resolveCornerLifecycle(
   // needs-human: preserve the old word where one exists so legacy surfaces
   // keep their affordance routing; idle-without-finishing (stalled) maps to
   // `null` and is re-golded as needs-human by mobile's `cornerSuperState`.
+  // The presence-driven STALLED verdict has no legacy word either — it maps
+  // to `null` too, carrying its distinct semantics through the summary's
+  // `agentOffline` flag rather than inventing a fourth wire word.
+  if (verdict === 'stalled') return null;
   let latestWord: CornerLifecycleStatus | undefined;
   let latestWordAt = -1;
   let mergeReadyAt = -1;

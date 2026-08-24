@@ -3,6 +3,7 @@ import {
   cornerName,
   cornerStatusPresentation,
   isCornerActive,
+  isCornerStalledOffline,
   isCornerTerminal,
   mapRawCornerStatusTag,
   resolveCornerLifecycle,
@@ -13,6 +14,44 @@ import {
   type CornerLifecycleFact,
   type CornerSummary,
 } from './corners';
+
+describe('the offline-stalled presentation (agent provably offline)', () => {
+  it('reads STALLED, never NEEDS HUMAN, for an offline agent\'s unfinished corner', () => {
+    expect(
+      cornerStatusPresentation(null, { agentOffline: true }).label,
+    ).toBe('STALLED');
+    // Defensive shape: a worded needs-you card next to the offline flag
+    // stalls too — the oracle nulls stalled corners' words, but older caches
+    // may still carry one.
+    expect(
+      cornerStatusPresentation('needs-attention', { agentOffline: true }).label,
+    ).toBe('STALLED');
+    // The quiet glyph: nothing here is live work.
+    expect(cornerStatusPresentation(null, { agentOffline: true }).glyph).toBe('◇');
+  });
+
+  it('keeps today\'s reading for online/unknown agents and for real artifacts', () => {
+    // Unknown presence behaves exactly as before.
+    expect(cornerStatusPresentation(null).label).toBe('NEEDS HUMAN');
+    expect(cornerStatusPresentation('needs-attention').label).toBe('NEEDS HUMAN');
+    // A reviewable change stays actionable regardless of presence.
+    expect(
+      cornerStatusPresentation('open', { agentOffline: true }).label,
+    ).toBe('NEEDS HUMAN');
+    // Terminal words are untouched.
+    expect(
+      cornerStatusPresentation('archived', { agentOffline: true }).label,
+    ).toBe('FINISHED');
+  });
+
+  it('defines the stalled predicate once, with the review-artifact exception', () => {
+    expect(isCornerStalledOffline({ status: null, agentOffline: true })).toBe(true);
+    expect(isCornerStalledOffline({ status: 'failed', agentOffline: true })).toBe(true);
+    expect(isCornerStalledOffline({ status: 'open', agentOffline: true })).toBe(false);
+    expect(isCornerStalledOffline({ status: null })).toBe(false);
+    expect(isCornerStalledOffline({ status: 'archived', agentOffline: true })).toBe(false);
+  });
+});
 
 describe('resolveCornerLifecycle (attention lifecycle, one oracle)', () => {
   const status = (raw: string, createdAt: number): CornerLifecycleFact => ({

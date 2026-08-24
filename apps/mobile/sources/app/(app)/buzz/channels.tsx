@@ -1255,7 +1255,11 @@ export default function BuzzChannels() {
             <PixelGateReveal style={styles.cornerDropdown}>
               <View style={styles.cornerRail} />
               {corners.map((corner) => {
-                const status = cornerStatusPresentation(corner.status);
+                // STALLED, not NEEDS HUMAN — same oracle verdict the deck row
+                // golds from; a dead agent's ask is nobody's to answer.
+                const status = cornerStatusPresentation(corner.status, {
+                  agentOffline: corner.agentOffline,
+                });
                 return (
                   <TouchableOpacity
                     accessibilityLabel={`Open ${corner.name} ${CORNER_LABEL}, ${status.label}`}

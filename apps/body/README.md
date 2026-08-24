@@ -97,7 +97,7 @@ by projecting agent activity into the relay channel.
 | `BUZZY_BODY_MAX_SESSIONS_FLOOR`     | No       | `4`                     | Minimum dynamic Workspace ceiling; actual ceiling is `max(floor, per-room × active Rooms)`                                                                                                                                                           |
 | `BUZZY_BODY_SESSION_IDLE_MS`        | No       | `300000`                | Idle time before process suspension                                                                                                                                                                                                                  |
 | `BUZZ_BODY_KEY`                     | No       | auto                    | Body operator Nostr nsec/hex                                                                                                                                                                                                                         |
-| `BUZZ_AGENT_KEY`                    | No       | generated at pair       | Existing agent Nostr nsec/hex                                                                                                                                                                                                                        |
+| `BUZZ_AGENT_KEY`                    | No       | —                       | Legacy provision/start override; `beeline pair` ignores it and always mints a fresh identity                                                                                                                                                         |
 | `BUZZY_BODY_AUTO_APPROVE`           | No       | `1`                     | Auto-approve permissions inside edit corners only                                                                                                                                                                                                    |
 | `BUZZY_BODY_SANDBOX`                | No       | `bwrap`                 | `off` disables the bubblewrap OS sandbox for ACP children (overrides `runtime.json`'s `sandbox`)                                                                                                                                                     |
 | `BUZZY_BODY_SYNC_OPERATOR_CHECKOUT` | No       | `0`                     | `1` opts into clean, same-branch, fast-forward-only post-land pairing-checkout sync                                                                                                                                                                  |
@@ -244,11 +244,11 @@ plain member. The worker discovers every change opened in that Room and lands a
 feature tip only after an approval for that corner from a human admin; agent-signed
 approvals remain refused. Both pairing and daemon/`serve` startup assert that the
 agent cannot push the protected branch and exit fatally on unsafe policy. The
-machine identities, known Room bindings, repo roots, and supervisor state live under
-`<git-common-dir>/beeline/agents/<agent-pubkey>/` with mode `0600`. If
-`BUZZ_AGENT_KEY` is absent, `pair` generates the agent key there. The daemon is
-detached from the invoking terminal, retries transient loop failures, and can be
-relaunched with `beeline start`. A restart rediscovers Rooms, restores corner
+machine identities, known Room bindings, repo roots, and daemon state live under
+`<git-common-dir>/beeline/agents/<agent-pubkey>/` with mode `0600`. `pair`
+always generates a fresh agent key there; it never reads `BUZZ_AGENT_KEY` or
+the legacy human `BUZZ_PRIVATE_KEY`. Under systemd the daemon runs in the
+foreground and is restarted by the user unit. A restart rediscovers Rooms, restores corner
 worktrees and durable inboxes, replays only the capped recent conversation into
 fresh ACP processes, and resumes each unfinished human-commissioned corner at
 most once in that daemon process. Recaps, moved-target handling, idle ticks, and

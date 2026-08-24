@@ -1,10 +1,9 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { getPublicKey } from '@beeline/nostr';
 
 const bodyDirectory = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = resolve(bodyDirectory, 'src/cli.ts');
@@ -138,28 +137,21 @@ describe('beeline pair — repository resolution', () => {
     expect(stderr).not.toMatch(/\n\s+at /);
   });
 
-  it('refuses an already-paired pinned identity up front, before selecting an agent', async () => {
-    // The multi-identity guard (S0) is fatal, so it must fire before the
-    // interactive agent/model/access questions rather than after them. A
-    // pre-existing runtime.json at this pubkey is exactly that condition;
-    // `--agent custom` with a command that does not exist would fail agent
-    // selection first if the guard ran later than it does.
+  it('ignores an ambient human key and reaches pairing with a fresh agent identity', async () => {
     const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
     const stateHome = await tmpDir('beeline-pair-cli-state-');
-    // A fixed 32-byte key so the derived pubkey is stable for the fixture.
-    const agentKey = '11'.repeat(32);
-    const pubkey = getPublicKey(Uint8Array.from(Buffer.from(agentKey, 'hex')));
-    const runtimeDir = resolve(stateHome, 'beeline', 'agents', pubkey);
-    await mkdir(runtimeDir, { recursive: true });
-    await writeFile(resolve(runtimeDir, 'runtime.json'), '{}\n');
+    const agent = await fakeModelAgent();
+    const humanKey = '11'.repeat(32);
 
     const { status, stderr } = runPair(
-      ['BUZZ-ABCD-EFGH', '--agent', 'custom', '--agent-command', '/nonexistent/agent-binary'],
-      { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome, BUZZ_AGENT_KEY: agentKey } },
+      ['not-a-real-code', '--agent', 'custom', '--agent-command', agent],
+      { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome, BUZZ_PRIVATE_KEY: humanKey } },
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('is already paired on this host');
+    expect(stderr).toContain('ignores BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY');
+    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).not.toContain('already paired on this host');
     expect(stderr).not.toMatch(/\n\s+at /);
   });
 

@@ -1,13 +1,11 @@
 /**
- * The deck's tier zoning and its collapsed FINISHED entry: behavior contract.
+ * The deck's EXACTLY TWO piles: behavior contract.
  *
- * Owner spec 2026-08-23: exactly two inline tiers — NEEDS YOU (a corner
- * genuinely waiting on the person: review-ready, decision/reply ask, or
- * failure card) and IDLE (every other visible Room, working ones included;
- * row marks already convey working vs quiet). Finished Rooms — archived on
- * the relay, or all corner work terminal — never render inline: they hide
- * behind ONE collapsed header row that expands to the finished list, and the
- * entry disappears entirely when nothing is finished.
+ * Owner spec 2026-08-23 (two-pile refinement): NEEDS YOU — a corner ask/gate,
+ * a live review target, or an unread ROOM/DM message; and DOESN'T NEED YOU —
+ * everything else, working AND finished Rooms included. There is no collapsed
+ * FINISHED entry (finished Rooms render inline like any other quiet Room) and
+ * no DIRECT pile (DMs obey the same unread rule).
  *
  * Render assertions on the real screen, not source greps.
  */
@@ -171,6 +169,7 @@ vi.mock('react-native', async () => {
   true;
 
 const { channelListCacheKey, useBuzzLocalCache } = await import('@/buzz/local-cache');
+const { useRoomReadState } = await import('@/buzz/room-read-state');
 const { default: BuzzChannels } = await import('./channels');
 
 const VIEWER = 'a'.repeat(64);
@@ -245,14 +244,15 @@ async function press(node: any) {
   });
 }
 
-describe('room-list tier zoning and the collapsed FINISHED entry', () => {
+describe("the deck's exactly two piles", () => {
   beforeEach(() => {
     mmkvValues.clear();
     navigation.push.mockClear();
     useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
+    useRoomReadState.setState({ readAt: {} });
   });
 
-  it('zones actionable rooms into NEEDS YOU and everything else into IDLE', async () => {
+  it("zones actionable rooms into NEEDS YOU and everything else into DOESN'T NEED YOU", async () => {
     seedRooms([
       {
         id: 'review-room',
@@ -268,14 +268,14 @@ describe('room-list tier zoning and the collapsed FINISHED entry', () => {
     ]);
     const tree = await render();
 
-    const labels = ['NEEDS YOU · 1', 'IDLE · 2'];
+    const labels = ['NEEDS YOU · 1', "DOESN'T NEED YOU · 2"];
     const joined = visibleTextOf(tree);
     for (const label of labels) {
       expect(joined, `missing tier header ${label}`).toContain(label);
     }
   });
 
-  it('keeps an asked-but-stalled corner in NEEDS YOU and a merely idle one in IDLE', async () => {
+  it("keeps an asked-but-stalled corner in NEEDS YOU and a merely idle one in DOESN'T NEED YOU", async () => {
     seedRooms([
       {
         id: 'asked-room',
@@ -291,10 +291,44 @@ describe('room-list tier zoning and the collapsed FINISHED entry', () => {
     const tree = await render();
     const joined = visibleTextOf(tree);
     expect(joined).toContain('NEEDS YOU · 1');
-    expect(joined).toContain('IDLE · 1');
+    expect(joined).toContain("DOESN'T NEED YOU · 1");
   });
 
-  it('hides finished Rooms behind one collapsed entry, never inline', async () => {
+  it("moves an unread Room message into NEEDS YOU, then back after the viewer reads it", async () => {
+    seedRooms([
+      {
+        id: 'room-message',
+        title: 'Room message',
+        latestMessage: 'fresh room-level message',
+        latestMessageAt: 9_000,
+      },
+    ]);
+    useRoomReadState.setState({
+      readAt: { [`${VIEWER}/room-message`]: 1_000 },
+    });
+    const tree = await render();
+
+    expect(visibleTextOf(tree)).toContain('NEEDS YOU · 1');
+    expect(visibleTextOf(tree)).not.toContain("DOESN'T NEED YOU ·");
+    expect(findByAclPrefix(tree, 'Open Room message')[0].props.accessibilityLabel).toContain(
+      'needs your attention',
+    );
+
+    // Exercise the real read-state action the screen uses on return from the
+    // Room. The same row must immediately fall into the quiet pile when no
+    // corner gate or review target remains.
+    await act(async () => {
+      useRoomReadState.getState().markRoomRead(VIEWER, 'room-message', 9_000);
+    });
+
+    expect(visibleTextOf(tree)).not.toContain('NEEDS YOU ·');
+    expect(visibleTextOf(tree)).toContain("DOESN'T NEED YOU · 1");
+    expect(findByAclPrefix(tree, 'Open Room message')[0].props.accessibilityLabel).not.toContain(
+      'needs your attention',
+    );
+  });
+
+  it("renders finished Rooms INLINE as ordinary members of DOESN'T NEED YOU", async () => {
     seedRooms([
       {
         id: 'landed-room',
@@ -306,35 +340,79 @@ describe('room-list tier zoning and the collapsed FINISHED entry', () => {
     ]);
     const tree = await render();
 
-    // Collapsed by default: one header row, zero finished rows inline.
-    expect(findAllByTestId(tree, 'finished-rooms-toggle')).toHaveLength(1);
-    expect(visibleTextOf(tree)).toContain('FINISHED · 2');
-    expect(findByAclPrefix(tree, 'Open Landed room')).toHaveLength(0);
-    expect(findByAclPrefix(tree, 'Open Closed room')).toHaveLength(0);
-    // The active room is untouched inline.
-    expect(findByAclPrefix(tree, 'Open Active room')).toHaveLength(1);
-
-    // Expand: the finished list renders through the same row renderer...
-    await press(findAllByTestId(tree, 'finished-rooms-toggle')[0]);
+    // No collapsed FINISHED pile exists at all: no toggle, no header word.
+    expect(findAllByTestId(tree, 'finished-rooms-toggle')).toHaveLength(0);
+    expect(visibleTextOf(tree)).not.toContain('FINISHED');
+    // Finished rows render inline through the same renderer as every other
+    // Room — reachable directly, no expansion step.
     expect(findByAclPrefix(tree, 'Open Landed room')).toHaveLength(1);
     expect(findByAclPrefix(tree, 'Open Closed room')).toHaveLength(1);
+    expect(visibleTextOf(tree)).toContain("DOESN'T NEED YOU · 3");
+    expect(visibleTextOf(tree)).not.toContain('NEEDS YOU ·');
 
-    // ...and tapping one navigates into the Room itself.
+    // Tapping one navigates into the Room itself.
     await press(findByAclPrefix(tree, 'Open Landed room')[0]);
     expect(navigation.push).toHaveBeenCalledTimes(1);
     expect(String(navigation.push.mock.calls[0][0])).toContain('landed-room');
-
-    // Collapse again: the rows go away.
-    await press(findAllByTestId(tree, 'finished-rooms-toggle')[0]);
-    expect(findByAclPrefix(tree, 'Open Landed room')).toHaveLength(0);
   });
 
-  it('hides the collapsed entry entirely when nothing is finished', async () => {
-    seedRooms([{ id: 'only-room', title: 'Only room' }]);
+  it("puts an unread DM in NEEDS YOU and a read one in DOESN'T NEED YOU — no DIRECT pile", async () => {
+    seedRooms([]);
+    const existing = useBuzzLocalCache.getState().channelLists;
+    const key = Object.keys(existing)[0];
+    const entry = existing[key!];
+    useBuzzLocalCache.setState({
+      channelLists: {
+        ...existing,
+        [key!]: {
+          ...entry!,
+          directMessages: [
+            {
+              id: 'dm-read-id',
+              peerPubkey: 'b'.repeat(64),
+              peerName: 'Read Peer',
+              peerKind: 'person' as const,
+              latestMessage: 'earlier hello',
+              latestMessageAt: 2_000,
+              updatedAt: 2_000,
+            },
+            {
+              id: 'dm-unread-id',
+              peerPubkey: 'c'.repeat(64),
+              peerName: 'New Peer',
+              peerKind: 'person' as const,
+              latestMessage: 'fresh ping',
+              latestMessageAt: 9_000,
+              updatedAt: 9_000,
+            },
+          ],
+        },
+      },
+    });
+    // Seed the read marks directly into the store: the unread DM has an older
+    // mark than its newest message; the read DM's mark is past its newest.
+    useRoomReadState.setState({
+      readAt: {
+        [`${VIEWER}/dm-read-id`]: 5_000,
+        [`${VIEWER}/dm-unread-id`]: 1_000,
+      },
+    });
     const tree = await render();
 
-    expect(findAllByTestId(tree, 'finished-rooms-toggle')).toHaveLength(0);
-    expect(visibleTextOf(tree)).not.toContain('FINISHED');
+    const joined = visibleTextOf(tree);
+    // No DIRECT header exists; both DMs live in the same two piles as Rooms.
+    expect(joined).not.toContain('DIRECT ·');
+    expect(joined).toContain('NEEDS YOU · 1');
+    expect(joined).toContain("DOESN'T NEED YOU · 1");
+    // The unread DM is the pile's occupant; the read DM sits below.
+    expect(findByAclPrefix(tree, 'Open direct message with New Peer')).toHaveLength(1);
+    expect(findByAclPrefix(tree, 'Open direct message with Read Peer')).toHaveLength(1);
+    expect(findByAclPrefix(tree, 'Open direct message with New Peer')[0].props.accessibilityLabel).toContain(
+      'needs your attention',
+    );
+    expect(
+      findByAclPrefix(tree, 'Open direct message with Read Peer')[0].props.accessibilityLabel,
+    ).not.toContain('needs your attention');
   });
 });
 

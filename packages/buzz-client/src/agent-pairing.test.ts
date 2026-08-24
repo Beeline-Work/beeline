@@ -68,6 +68,101 @@ function filterFrom(init?: RequestInit): Record<string, unknown> {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('agent pairing and soul overlays', () => {
+  it("refuses to redeem the installer's pairing code under that same human key", async () => {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', owner.publicKey],
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_ADMINS, [
+              ['d', communityId],
+              ['p', owner.publicKey, 'owner'],
+            ]),
+          ]);
+        }
+        if (kind === KIND_STREAM_MESSAGE) {
+          const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
+          return jsonResponse(
+            published.filter(
+              (event) =>
+                event.kind === KIND_STREAM_MESSAGE &&
+                requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
+            ),
+          );
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    const pairing = await createAgentPairingCode(ctx(owner), communityId, 600);
+    await expect(redeemAgentPairingCode(ctx(owner), pairing.code)).rejects.toThrow(
+      "cannot pair the installer's human identity as its own agent",
+    );
+    expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(false);
+  });
+
+  it('refuses to turn any existing human Workspace member into the paired agent', async () => {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', owner.publicKey],
+              ['p', outsider.publicKey],
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
+        if (kind === KIND_STREAM_MESSAGE) {
+          const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
+          return jsonResponse(
+            published.filter(
+              (event) =>
+                requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
+            ),
+          );
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    const pairing = await createAgentPairingCode(ctx(owner), communityId, 600);
+    await expect(redeemAgentPairingCode(ctx(outsider), pairing.code)).rejects.toThrow(
+      'cannot pair existing human Workspace member',
+    );
+    expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(false);
+  });
+
   it('redeems a short-lived code under the agent identity and is idempotent for that key', async () => {
     const published: NostrEvent[] = [];
     let agentIsMember = false;
@@ -136,6 +231,7 @@ describe('agent pairing and soul overlays', () => {
 
   it('joins a member-authored replaceable soul overlay without changing identity authority', async () => {
     const published: NostrEvent[] = [];
+    let agentHasHumanProfile = false;
     const agentRecord = signEvent(
       {
         pubkey: agentIdentity.publicKey,
@@ -179,6 +275,20 @@ describe('agent pairing and soul overlays', () => {
           return jsonResponse(
             !authors || authors.includes(agentRecord.pubkey) ? [agentRecord] : [],
           );
+        }
+        if (kind === 0 && agentHasHumanProfile) {
+          return jsonResponse([
+            signEvent(
+              {
+                pubkey: agentIdentity.publicKey,
+                created_at: 1_700_000_001,
+                kind: 0,
+                tags: [],
+                content: JSON.stringify({ name: 'human', display_name: 'Human' }),
+              },
+              agentIdentity.secretKey,
+            ),
+          ]);
         }
         if (kind === KIND_AGENT_SOUL) return jsonResponse(published.filter((e) => e.kind === kind));
         return jsonResponse([]);
@@ -245,7 +355,8 @@ describe('agent pairing and soul overlays', () => {
         pubkey: agentIdentity.publicKey,
         displayName: 'Ada',
         avatar: 'https://relay.test/media/ada.jpg',
-        personality: 'Keeps the suite green and refactors mercilessly. Keep the test suite green and refactor mercilessly.',
+        personality:
+          'Keeps the suite green and refactors mercilessly. Keep the test suite green and refactor mercilessly.',
         soulProfile: {
           authoredBy: owner.publicKey,
           soul: 'Keeps the suite green and refactors mercilessly. Keep the test suite green and refactor mercilessly.',
@@ -270,6 +381,15 @@ describe('agent pairing and soul overlays', () => {
       avatarSeed: agentIdentity.publicKey,
     });
     expect(compoundNameProfile.name).toBe('Quiet Keeper');
+
+    agentHasHumanProfile = true;
+    await expect(
+      setAgentSoul(ctx(), communityId, agentIdentity.publicKey, {
+        name: 'Never Human',
+        soul: 'This write must not attach agent metadata to a human key.',
+        avatarSeed: agentIdentity.publicKey,
+      }),
+    ).rejects.toThrow('already has a kind:0 profile');
   });
 
   it('migrates legacy personality and intent into one soul without losing either text', () => {

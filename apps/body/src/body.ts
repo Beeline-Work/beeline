@@ -202,12 +202,21 @@ import {
   MAX_AGENT_ATTACHMENT_BYTES,
   attachmentPrompt,
   canonicalizeImageForUpload,
-  mimeTypeForName,
+  isAllowedAgentAttachmentMimeType,
   outputCandidates,
+  previewUrlForAgentAttachment,
   stripAttachmentDirectives,
   type AgentOutputCandidate,
   type RoomAuthorAttribution,
 } from './attachments.js';
+import {
+  WORKBENCH_ENV,
+  WORKBENCH_SWEEP_INTERVAL_MS,
+  prepareSessionWorkbench,
+  sweepSessionWorkbench,
+  workbenchInstructions,
+  type SessionWorkbench,
+} from './workbench.js';
 import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
 import { cornerToolchainNotice, ensureCornerToolchainProvisioned } from './corner-toolchain.js';
 import {
@@ -257,6 +266,7 @@ import {
   classifyCornerPermission,
   classifyRoomPermission,
   isAgentMemoryWritePermissionRequest,
+  isAgentWorkbenchWritePermissionRequest,
   ROOM_READ_ONLY_STEER,
 } from './session-sandbox.js';
 import {
@@ -324,6 +334,8 @@ export interface AgentSession {
   agentPrivateState?: CornerAgentPrivateState;
   /** Durable, writable per-(agent, workspace) memory mount (`agent-memory.ts`). */
   agentMemory?: AgentMemory;
+  /** Ephemeral writable scratch shared by this Room instance and its corners. */
+  workbench?: SessionWorkbench;
   /** Parent TLC channel ID (subchannels only). */
   parentChannelId?: string;
   /** Unsubscribe from activity projection. */
@@ -1980,6 +1992,10 @@ export class Body {
   private requestCursors = new Map<string, number>();
   /** Throttle for the periodic stray-corner-worktree prune (per Body). */
   private lastWorktreePruneAt = 0;
+  /** Throttle/cache for the bounded TTL/size sweep of this Room's workbench. */
+  private lastWorkbenchSweepAt = 0;
+  private workbench?: SessionWorkbench;
+  private workbenchPreparation?: Promise<SessionWorkbench | undefined>;
   private runningAgentTasks = new Map<string, Promise<void>>();
   private scheduler: SessionScheduler;
   private ownsScheduler: boolean;
@@ -2327,6 +2343,43 @@ export class Body {
     }
   }
 
+  /** Prepare the ephemeral scratch capability shared by this Room and its corners. */
+  private sessionWorkbench(): Promise<SessionWorkbench | undefined> {
+    if (this.workbench) return Promise.resolve(this.workbench);
+    if (this.workbenchPreparation) return this.workbenchPreparation;
+    const root = this.config.agentPrivateRoot;
+    if (!root) return Promise.resolve(undefined);
+    this.workbenchPreparation = prepareSessionWorkbench(root)
+      .then((workbench) => {
+        this.workbench = workbench;
+        return workbench;
+      })
+      .catch((error) => {
+        console.warn(`[body] workbench unavailable under ${root}:`, error);
+        return undefined;
+      })
+      .finally(() => {
+        this.workbenchPreparation = undefined;
+      });
+    return this.workbenchPreparation;
+  }
+
+  /** Maintenance-owned, bounded TTL and approximate size-cap enforcement. */
+  private async sweepWorkbench(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastWorkbenchSweepAt < WORKBENCH_SWEEP_INTERVAL_MS) return;
+    this.lastWorkbenchSweepAt = now;
+    const workbench = await this.sessionWorkbench();
+    if (!workbench) return;
+    const result = await sweepSessionWorkbench(workbench, { now });
+    if (result.deletedFiles > 0) {
+      console.log(
+        `[body] workbench sweep removed ${result.deletedFiles} file(s); ` +
+          `${result.bytesBefore} -> ${result.bytesAfter} bytes${result.truncated ? ' (bounded scan continues next tick)' : ''}`,
+      );
+    }
+  }
+
   /**
    * The ACP child's spawn command for one session, wrapped in bwrap when the
    * daemon detected a working one at start-up.
@@ -2563,6 +2616,7 @@ export class Body {
      */
     gitReadCredential?: { roomId: string; stateDir: string };
   }): Promise<AgentSession> {
+    const workbench = await this.sessionWorkbench();
     let client = new AcpClient({
       agentCommand: this.config.agentCommand ?? this.config.agentBinary,
       agentArgs: this.config.agentArgs,
@@ -2582,6 +2636,7 @@ export class Body {
       ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
       ...(input.agentPrivateState ? { agentPrivateState: input.agentPrivateState } : {}),
       ...(input.agentMemory ? { agentMemory: input.agentMemory } : {}),
+      ...(workbench ? { workbench } : {}),
       ...(input.resumePlan ? { resumePlan: input.resumePlan } : {}),
       activationCount: 0,
     };
@@ -2601,6 +2656,7 @@ export class Body {
             ? { [AGENT_PRIVATE_STATE_ENV]: input.agentPrivateState.root }
             : {}),
           ...(input.agentMemory ? { [AGENT_MEMORY_ENV]: input.agentMemory.dir } : {}),
+          ...(workbench ? { [WORKBENCH_ENV]: workbench.dir } : {}),
           ...(readTokenEnv ?? {}),
         };
         // The memory mount is writable in BOTH modes (readonly included) — it
@@ -2608,6 +2664,7 @@ export class Body {
         const grantedWritablePaths = [
           ...(input.additionalWritablePaths ?? []),
           ...(input.agentMemory ? [input.agentMemory.dir] : []),
+          ...(workbench ? [workbench.dir] : []),
         ];
         const spawnCommand = this.sessionSpawnCommand(
           {
@@ -2648,11 +2705,18 @@ export class Body {
           agentCommand: this.config.agentCommand ?? this.config.agentBinary,
           profile,
         });
-        session.personaTurnPrefix = personaTurnPrefixForHarness(
-          profile,
-          this.config.agentCommand ?? this.config.agentBinary,
-          nativePersonaPrepared,
-        );
+        const agentCommand = this.config.agentCommand ?? this.config.agentBinary;
+        session.personaTurnPrefix = [
+          personaTurnPrefixForHarness(profile, agentCommand, nativePersonaPrepared),
+          // Codex/pi ignore session/new's systemPrompt. The workbench boundary
+          // must still reach every turn because it names the only writable
+          // Room capability and prevents scratch work from conscripting a corner.
+          ...(harnessHonorsSessionSystemPrompt(agentCommand)
+            ? []
+            : [workbenchInstructions(workbench, input.mode)]),
+        ]
+          .filter(Boolean)
+          .join('\n\n');
         await client.start();
         const transcript = await this.durableState.conversation(input.channelId);
         // BOUNDED. This block goes into the session's SYSTEM PROMPT, which the
@@ -2688,6 +2752,7 @@ export class Body {
           appendPersonaSessionInstructions(input.systemPrompt, profile, nativePersonaPrepared),
           agentPrivateStateInstructions(input.agentPrivateState),
           agentMemoryInstructions(input.agentMemory),
+          workbenchInstructions(workbench, input.mode),
           ...(toolchainNotice ? [`Toolchain notice: ${toolchainNotice}`] : []),
           '',
           `To share an image or file with the Room, include [[${AGENT_ATTACHMENT_DIRECTIVE}:path]] in your final response.`,
@@ -3258,13 +3323,20 @@ export class Body {
         const sessionCwd = await realpath(
           session.cwd ?? session.worktreePath ?? this.config.workspaceRoot,
         );
+        const allowedRoots = [
+          sessionCwd,
+          ...(session.workbench ? [await realpath(session.workbench.dir)] : []),
+        ];
         const resolvedPath = await realpath(
           isAbsolute(candidate.path)
             ? resolve(candidate.path)
             : resolve(sessionCwd, candidate.path),
         );
-        const pathWithinSession = relative(sessionCwd, resolvedPath);
-        if (!pathWithinSession.startsWith('..') && !isAbsolute(pathWithinSession)) {
+        const withinAllowedRoot = allowedRoots.some((root) => {
+          const pathWithinRoot = relative(root, resolvedPath);
+          return !pathWithinRoot.startsWith('..') && !isAbsolute(pathWithinRoot);
+        });
+        if (withinAllowedRoot) {
           const details = await stat(resolvedPath);
           if (!details.isFile()) throw new Error(`${candidate.name} is not a regular file`);
           if (details.size > MAX_AGENT_ATTACHMENT_BYTES)
@@ -3280,7 +3352,7 @@ export class Body {
         throw new Error(`${candidate.name} exceeds the 25 MB attachment limit`);
       return candidate.bytes;
     }
-    throw new Error(`${candidate.name} is outside the agent session directory`);
+    throw new Error(`${candidate.name} is outside the agent session and workbench directories`);
   }
 
   /** Upload agent-produced outputs through the same authenticated media client as mobile. */
@@ -3300,6 +3372,9 @@ export class Body {
     try {
       for (const candidate of candidates) {
         try {
+          if (!isAllowedAgentAttachmentMimeType(candidate.mimeType)) {
+            throw new Error(`file type ${candidate.mimeType} is not allowed for agent attachments`);
+          }
           const rawBytes = await this.candidateBytes(session, candidate);
           // Agent encoders emit metadata-bearing containers (EXIF, tEXt, tIME,
           // APPn) that the relay's media store refuses with HTTP 422 — strip
@@ -3308,10 +3383,13 @@ export class Body {
           const bytes = canonicalizeImageForUpload(rawBytes, candidate.mimeType);
           const uploaded = await client.uploadMedia(bytes, candidate.mimeType);
           const dim = uploaded.dim?.match(/^(\d+)x(\d+)$/);
+          const uploadedMimeType = uploaded.type ?? candidate.mimeType;
+          const previewUrl = previewUrlForAgentAttachment(uploaded.url, uploadedMimeType);
           attachments.push({
             url: uploaded.url,
+            ...(previewUrl ? { previewUrl } : {}),
             name: basename(candidate.name),
-            mimeType: uploaded.type ?? candidate.mimeType ?? mimeTypeForName(candidate.name),
+            mimeType: uploadedMimeType,
             size: uploaded.size,
             sha256: uploaded.sha256,
             ...(uploaded.thumb ? { thumbnailUrl: uploaded.thumb } : {}),
@@ -3843,9 +3921,9 @@ export class Body {
           'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
           'Those inspection tools are non-mutating and do not require human approval.',
           'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
-          'You CANNOT create, edit, or delete files until the host grants a human-approved edit session.',
-          `The host DENIES every write, edit, delete, move, and shell/execute request in this Room, whatever path it names: ${ROOM_READ_ONLY_STEER}`,
-          'Never attempt to reach outside this session by absolute path, and never run builds, tests, formatters, or git commands here.',
+          'You CANNOT create, edit, or delete repository files until the host grants a human-approved edit session. The separately named workbench and memory directories are the only writable exceptions.',
+          `The host DENIES repository writes and every shell/execute request in this Room: ${ROOM_READ_ONLY_STEER}`,
+          'Never reach outside the repository by absolute path except for the exact workbench and memory paths announced by the host, and never run builds, tests, formatters, or git commands here.',
           'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never attempt editing unless the host prompt explicitly allows an edit-corner request.',
           'Never claim that an action, tool result, peer reply, or agent exchange happened unless the host-provided transcript or tool result shows it actually happened.',
           ...roomEditPolicyInstructions(
@@ -5545,6 +5623,11 @@ export class Body {
     // write pinned to the memory dir never reaches the human corner card.
     const memory = this.sessions.get(tlcChannelId)?.agentMemory;
     if (memory && isAgentMemoryWritePermissionRequest(permission, memory.dir)) {
+      return 'allow';
+    }
+    // Ephemeral scratch is the second and only other writable Room capability.
+    const workbench = this.sessions.get(tlcChannelId)?.workbench;
+    if (workbench && isAgentWorkbenchWritePermissionRequest(permission, workbench.dir)) {
       return 'allow';
     }
     const turn = this.pendingRoomTurns.get(tlcChannelId);
@@ -8693,6 +8776,7 @@ export class Body {
       }
     };
     await guarded('stray worktree prune', () => this.pruneStrayCornerWorktrees(boundRepo));
+    await guarded('workbench sweep', () => this.sweepWorkbench());
     // Landing runs BEFORE the corner member poll, and the ordering is
     // load-bearing rather than cosmetic.
     //

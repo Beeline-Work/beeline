@@ -22,6 +22,11 @@ export function formatAttachmentSize(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
 }
 
+/** Active file cards use the isolated renderer; ordinary files keep their media URL. */
+export function attachmentOpenUrl(attachment: AttachmentReference): string {
+  return attachment.previewUrl ?? attachment.url;
+}
+
 function replaceExtension(name: string, extension: string): string {
   const dot = name.lastIndexOf('.');
   return `${dot > 0 ? name.slice(0, dot) : name}.${extension}`;

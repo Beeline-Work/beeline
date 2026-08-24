@@ -5,6 +5,10 @@ import {
   attachmentPrompt,
   canonicalizeImageForUpload,
   generatedImageCandidates,
+  isAllowedAgentAttachmentMimeType,
+  isPreviewAttachmentMimeType,
+  mimeTypeForName,
+  previewUrlForAgentAttachment,
   sanitizeActivityUpdate,
   stripAttachmentDirectives,
 } from './attachments.js';
@@ -58,6 +62,41 @@ describe('Body attachment boundary', () => {
     const sanitized = JSON.stringify(sanitizeActivityUpdate(update.update));
     expect(sanitized).not.toContain(data);
     expect(sanitized).toContain('binary omitted');
+  });
+
+  it.each([
+    ['preview.png', 'image/png', false],
+    ['preview.jpg', 'image/jpeg', false],
+    ['preview.jpeg', 'image/jpeg', false],
+    ['preview.gif', 'image/gif', false],
+    ['preview.webp', 'image/webp', false],
+    ['preview.svg', 'image/svg+xml', true],
+    ['preview.html', 'text/html', true],
+    ['preview.htm', 'text/html', true],
+    ['notes.txt', 'text/plain', true],
+    ['notes.md', 'text/markdown', true],
+    ['data.csv', 'text/csv', true],
+    ['data.json', 'application/json', true],
+    ['document.pdf', 'application/pdf', true],
+    ['bundle.zip', 'application/zip', false],
+  ])('allowlists %s as %s (preview=%s)', (name, mimeType, preview) => {
+    expect(mimeTypeForName(name)).toBe(mimeType);
+    expect(isAllowedAgentAttachmentMimeType(mimeType)).toBe(true);
+    expect(isPreviewAttachmentMimeType(mimeType)).toBe(preview);
+  });
+
+  it('refuses unlisted executable/archive types and derives only production preview URLs', () => {
+    expect(isAllowedAgentAttachmentMimeType(mimeTypeForName('payload.exe'))).toBe(false);
+    expect(isAllowedAgentAttachmentMimeType('application/x-tar')).toBe(false);
+    expect(
+      previewUrlForAgentAttachment('https://usebeeline.app/media/sha/report.html', 'text/html'),
+    ).toBe('https://preview.usebeeline.app/media/sha/report.html');
+    expect(
+      previewUrlForAgentAttachment('https://usebeeline.app/media/sha/photo.png', 'image/png'),
+    ).toBeUndefined();
+    expect(
+      previewUrlForAgentAttachment('https://relay.example/media/sha/report.html', 'text/html'),
+    ).toBeUndefined();
   });
 });
 

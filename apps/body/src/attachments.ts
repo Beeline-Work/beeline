@@ -189,6 +189,64 @@ export const AGENT_ATTACHMENT_DIRECTIVE = 'buzz-attachment';
 export const MAX_AGENT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const MAX_AGENT_ATTACHMENTS_PER_TURN = 8;
 
+/** Exact file types an agent may publish from its worktree or workbench. */
+export const AGENT_ATTACHMENT_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+  'text/html',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+  'application/pdf',
+  'application/zip',
+]);
+
+const PREVIEW_ATTACHMENT_MIME_TYPES = new Set([
+  'image/svg+xml',
+  'text/html',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+  'application/pdf',
+]);
+
+export function isAllowedAgentAttachmentMimeType(mimeType: string): boolean {
+  return AGENT_ATTACHMENT_MIME_TYPES.has(mimeType.toLowerCase());
+}
+
+/**
+ * Renderable, active-content-capable files must open on the cookie-less
+ * preview origin. Raster images stay on the canonical media URL; zip files
+ * keep platform-default download handling.
+ */
+export function isPreviewAttachmentMimeType(mimeType: string): boolean {
+  return PREVIEW_ATTACHMENT_MIME_TYPES.has(mimeType.toLowerCase());
+}
+
+/** Official preview origin for production relay aliases; custom relays stay unchanged. */
+export function previewUrlForAgentAttachment(
+  mediaUrl: string,
+  mimeType: string,
+): string | undefined {
+  if (!isPreviewAttachmentMimeType(mimeType)) return undefined;
+  try {
+    const url = new URL(mediaUrl);
+    if (!url.pathname.startsWith('/media/')) return undefined;
+    if (!['usebeeline.app', 'relay.usebeeline.app', 'relay.buzzrouter.com'].includes(url.hostname))
+      return undefined;
+    url.protocol = 'https:';
+    url.host = 'preview.usebeeline.app';
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export interface AgentOutputCandidate {
   name: string;
   mimeType: string;
@@ -299,6 +357,8 @@ export function mimeTypeForName(name: string): string {
         '.gif': 'image/gif',
         '.webp': 'image/webp',
         '.svg': 'image/svg+xml',
+        '.html': 'text/html',
+        '.htm': 'text/html',
         '.pdf': 'application/pdf',
         '.txt': 'text/plain',
         '.md': 'text/markdown',

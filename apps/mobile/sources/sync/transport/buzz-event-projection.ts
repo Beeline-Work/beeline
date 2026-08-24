@@ -315,6 +315,8 @@ export type ChatDisplayMessage = {
   relayId?: string;
   activity?: AgentActivityItem[];
   attachments?: AttachmentReference[];
+  /** Pubkeys explicitly addressed by this event's Nostr p-tags. */
+  mentionPubkeys?: string[];
   /** NIP-10 event id of the message this conversational message replies to. */
   replyToId?: string;
   isNew?: boolean;
@@ -571,6 +573,13 @@ export function projectChatEvent(
   const isAgentTurn = sessionEventHasTag(event, 't', 'agent-turn');
   const isCornerSession = sessionEventHasTag(event, 't', 'corner-session');
   const attachments = parseAttachmentTags(sessionEventTags(event));
+  const mentionPubkeys = [
+    ...new Set(
+      sessionEventTags(event)
+        .filter((tag) => tag[0] === 'p' && tag[1])
+        .map((tag) => tag[1]!),
+    ),
+  ];
   const replyToId = sessionEventTags(event).find(
     (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply',
   )?.[1];
@@ -852,6 +861,7 @@ export function projectChatEvent(
       ...(event.type === 'assistant_delta' ? { isAgentActivity: true } : {}),
       ...(eventActivity(event)?.length ? { activity: eventActivity(event) } : {}),
       ...(attachments.length ? { attachments } : {}),
+      ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
       ...(replyToId ? { replyToId } : {}),
       ...(isNew ? { isNew: true } : {}),
     },

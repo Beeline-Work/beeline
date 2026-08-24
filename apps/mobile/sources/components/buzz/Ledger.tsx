@@ -84,6 +84,8 @@ type LedgerBodyProps = {
   /** A just-committed agent paragraph can reveal locally, even though the
    * relay publishes it atomically. */
   typewriter?: boolean;
+  /** Handles backed by this message's real p-tags and current Room members. */
+  mentionHandles?: readonly string[];
 };
 
 const TYPEWRITER_TICK_MS = 20;
@@ -116,6 +118,7 @@ function TypewriterMarkdown({
   textStyle,
   testID,
   revealId,
+  mentionHandles,
 }: {
   markdown: string;
   textStyle: React.ComponentProps<typeof MonoMarkdown>['textStyle'];
@@ -127,6 +130,7 @@ function TypewriterMarkdown({
    *  already-seen text.
    */
   revealId?: string;
+  mentionHandles?: readonly string[];
 }) {
   const reducedMotion = useReducedMotion();
   // Decided ONCE per mounted instance (same contract as `NewMessageMaterialize`):
@@ -171,6 +175,7 @@ function TypewriterMarkdown({
   return (
     <MonoMarkdown
       markdown={typewriterFrame(markdown, visibleCharacters)}
+      mentionHandles={mentionHandles}
       testID={testID}
       textStyle={textStyle}
     />
@@ -279,6 +284,7 @@ export function LedgerEntry({
   attachments,
   machineNoise,
   typewriter = false,
+  mentionHandles,
 }: Omit<LedgerBodyProps, 'marginalia'> & { luminous?: boolean }) {
   const [leadText, remainingText] = bodyText && !continued && luminous
     ? splitLeadSentence(bodyText)
@@ -297,6 +303,7 @@ export function LedgerEntry({
       {leadText ? (
         <MonoMarkdown
           markdown={leadText}
+          mentionHandles={mentionHandles}
           testID={remainingText ? `${bodyTestID}-lead` : bodyTestID}
           textStyle={styles.ledgerLead}
         />
@@ -308,9 +315,15 @@ export function LedgerEntry({
             testID={bodyTestID}
             textStyle={bodyTextStyle}
             revealId={itemId}
+            mentionHandles={mentionHandles}
           />
         ) : (
-          <MonoMarkdown markdown={remainingText} testID={bodyTestID} textStyle={bodyTextStyle} />
+          <MonoMarkdown
+            markdown={remainingText}
+            mentionHandles={mentionHandles}
+            testID={bodyTestID}
+            textStyle={bodyTextStyle}
+          />
         )
       ) : null}
       {machineNoise}
@@ -336,6 +349,7 @@ export function LedgerSteer({
   continued = false,
   replyReference,
   attachments,
+  mentionHandles,
 }: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter'>) {
   // Deliberately NO lead split here: a human message never takes the
   // emphasized lead treatment. Weight, size, and tone are exactly the agent
@@ -347,7 +361,14 @@ export function LedgerSteer({
     >
       {byline ? <Byline byline={byline} /> : null}
       {replyReference}
-      {bodyText ? <MonoMarkdown markdown={bodyText} textStyle={styles.steerText} testID={bodyTestID} /> : null}
+      {bodyText ? (
+        <MonoMarkdown
+          markdown={bodyText}
+          mentionHandles={mentionHandles}
+          textStyle={styles.steerText}
+          testID={bodyTestID}
+        />
+      ) : null}
       {attachments}
     </View>
   );

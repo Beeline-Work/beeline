@@ -334,6 +334,8 @@ export {
 
 export {
   AGENT_NAME_MAX_LENGTH,
+  DEFAULT_AGENT_IDENTITY_NAME,
+  DEFAULT_BODY_IDENTITY_NAME,
   deriveAgentDisplayName,
   fallbackAgentName,
   fallbackPersonName,

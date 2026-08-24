@@ -7,9 +7,30 @@ import {
   cornerAutonomyModeCandidates,
   enforcesPermissionBoundary,
   harnessEnforcement,
+  harnessHonorsSessionSystemPrompt,
   roomSandboxWarning,
   usesTextCornerRequestFallback,
 } from './harness-capabilities.js';
+
+describe('session system-prompt delivery', () => {
+  it('trusts only the adapter measured to honor session/new systemPrompt', () => {
+    // claude-agent-acp ignores the top-level field but reads `_meta.systemPrompt`,
+    // which AcpClient.sessionNew sends for exactly this case.
+    expect(harnessHonorsSessionSystemPrompt('/usr/local/bin/claude-agent-acp')).toBe(true);
+    expect(harnessHonorsSessionSystemPrompt('claude-code-acp')).toBe(true);
+  });
+
+  it('fails toward per-turn persona delivery for every other harness', () => {
+    // Measured: neither dist references `systemPrompt` at all — both silently
+    // dropped the whole Beeline session prompt (persona included).
+    expect(harnessHonorsSessionSystemPrompt('/usr/local/bin/codex-acp')).toBe(false);
+    expect(harnessHonorsSessionSystemPrompt('pi-acp')).toBe(false);
+    // Unverified harnesses must not be assumed to deliver either.
+    expect(harnessHonorsSessionSystemPrompt('grok')).toBe(false);
+    expect(harnessHonorsSessionSystemPrompt('some-unknown-acp')).toBe(false);
+    expect(harnessHonorsSessionSystemPrompt(undefined)).toBe(false);
+  });
+});
 
 describe('corner autonomy modes', () => {
   it("uses each shipped adapter's no-prompt contract", () => {

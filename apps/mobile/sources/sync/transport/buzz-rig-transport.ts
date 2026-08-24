@@ -346,20 +346,53 @@ export class BuzzRigTransport implements RigTransport {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
     const [replyTarget] = await client.query([{ ids: [replyToId], limit: 1 }]);
+
+    // Buzz validates a NIP-10 parent against the parent event's persisted
+    // channel association. Compatibility-era agent/control events can still
+    // appear in a transcript without their own `h` tag; referencing one
+    // directly makes the relay reject the otherwise-valid reply with
+    // "parent event has no channel association". In that case, thread from
+    // the nearest channel-associated ancestor instead. If there is no safe
+    // ancestor, publish the conversational response without a forged parent.
+    let effectiveReplyTarget =
+      replyTarget?.tags.some((tag) => tag[0] === 'h' && tag[1] === channelId)
+        ? replyTarget
+        : undefined;
+    if (replyTarget && !effectiveReplyTarget) {
+      const ancestorIds = [
+        replyTarget.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply')?.[1],
+        replyTarget.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'root')?.[1],
+      ].filter((id, index, ids): id is string => Boolean(id) && ids.indexOf(id) === index);
+      if (ancestorIds.length) {
+        const ancestors = await client.query([{ ids: ancestorIds, limit: ancestorIds.length }]);
+        effectiveReplyTarget = ancestorIds
+          .map((id) => ancestors.find((event) => event.id === id))
+          .find((event) =>
+            event?.tags.some((tag) => tag[0] === 'h' && tag[1] === channelId),
+          );
+      }
+    }
+    const effectiveReplyToId = effectiveReplyTarget?.id;
     const replyRootId =
-      replyTarget?.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'root')?.[1] ??
-      replyTarget?.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply')?.[1] ??
-      replyToId;
-    const event = await client.messageSubmit(channelId, text, {
+      effectiveReplyTarget?.tags.find(
+        (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'root',
+      )?.[1] ??
+      effectiveReplyTarget?.tags.find(
+        (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply',
+      )?.[1] ??
+      effectiveReplyToId;
+    const event = client.buildMessage(channelId, text, {
       ...(mentionAgent ? { mentionAgent } : {}),
       ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
       extraTags: [
-        ...(replyRootId !== replyToId ? [['e', replyRootId, '', 'root']] : []),
-        ['e', replyToId, '', 'reply'],
+        ...(replyRootId && effectiveReplyToId && replyRootId !== effectiveReplyToId
+          ? [['e', replyRootId, '', 'root']]
+          : []),
+        ...(effectiveReplyToId ? [['e', effectiveReplyToId, '', 'reply']] : []),
         ...attachmentTags,
       ],
     });
-    return event.id;
+    return this.publishPreparedMessage(event);
   }
 
   /** Respond to the agent's first mutating-tool request in a Room. */

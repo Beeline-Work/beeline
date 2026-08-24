@@ -30,6 +30,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Body } from './body.js';
+import { relayQueryResponse } from './relay-test-helper.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 
@@ -128,7 +129,7 @@ describe('a landed corner is recapped even when the relay or the session misbeha
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         if (String(input).endsWith('/query')) {
-          return new Response(JSON.stringify(queryResults), { status: 200 });
+          return relayQueryResponse([...queryResults, ...published], input, init)!;
         }
         const event = JSON.parse(String(init?.body)) as NostrEvent;
         if (refuse?.(event)) {
@@ -153,14 +154,18 @@ describe('a landed corner is recapped even when the relay or the session misbeha
 
   /** Approve the corner's exact tip, as a device-held human admin would. */
   function approve(body: Body, tip: string, recap: string): void {
-    Reflect.set(body, 'findHumanMergeApproval', async (target: { humanMergeApproval?: unknown }) => {
-      target.humanMergeApproval = {
-        id: 'approval-1',
-        reviewer: newIdentity('land-recap-reviewer').publicKey,
-        tip,
-      };
-      return target.humanMergeApproval;
-    });
+    Reflect.set(
+      body,
+      'findHumanMergeApproval',
+      async (target: { humanMergeApproval?: unknown }) => {
+        target.humanMergeApproval = {
+          id: 'approval-1',
+          reviewer: newIdentity('land-recap-reviewer').publicKey,
+          tip,
+        };
+        return target.humanMergeApproval;
+      },
+    );
     Reflect.set(body, 'promptAgent', async () => ({ agentText: recap, updates: [] }));
   }
 
@@ -277,15 +282,17 @@ describe('a landed corner is recapped even when the relay or the session misbeha
       },
       agent.secretKey,
     );
-    const published = capturePublishes((event) => {
-      if (!hasTag(event, 't', 'land-summary') || refusals <= 0) return false;
-      refusals--;
-      return true;
-    }, [create]);
+    const published = capturePublishes(
+      (event) => {
+        if (!hasTag(event, 't', 'land-summary') || refusals <= 0) return false;
+        refusals--;
+        return true;
+      },
+      [create],
+    );
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
-      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => [create]) });
       Reflect.set(body, 'removeWorktree', async () => undefined);
       body.registerSubchannel({
         ...info,

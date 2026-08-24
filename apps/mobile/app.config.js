@@ -229,6 +229,8 @@ export default {
                     },
                     android: {
                         image: "./sources/assets/images/splash-android-light.png",
+                        imageWidth: 150,
+                        resizeMode: "contain",
                         backgroundColor: "#14091A",
                         dark: {
                             image: "./sources/assets/images/splash-android-dark.png",

@@ -12,6 +12,7 @@ function draft(
     sessionId?: string;
     requestId?: string;
     agentTag?: string;
+    status?: string;
   } = {},
 ): SessionEvent {
   return {
@@ -29,6 +30,7 @@ function draft(
         ['agent', overrides.agentTag ?? overrides.pubkey ?? agent],
         ['session', overrides.sessionId ?? 'session-1'],
         ['request', overrides.requestId ?? 'request-1'],
+        ...(overrides.status ? [['status', overrides.status]] : []),
       ],
     },
   };
@@ -36,13 +38,23 @@ function draft(
 
 describe('mobile agent draft projection', () => {
   it('projects the accumulated draft text and correlating turn ids', () => {
-    expect(agentDraftFromSessionEvent(draft('Hello wor', 1_700_000_000))).toEqual({
+    expect(
+      agentDraftFromSessionEvent(draft('Hello wor', 1_700_000_000), 1_700_000_000_000),
+    ).toEqual({
       requestId: 'request-1',
       sessionId: 'session-1',
       agentPubkey: agent,
       text: 'Hello wor',
       observedAt: 1_700_000_000_000,
     });
+  });
+
+  it('rejects stale drafts and the terminal replacement tombstone', () => {
+    const event = draft('old ghost', 1_700_000_000);
+    expect(agentDraftFromSessionEvent(event, 1_700_090_001)).toBeUndefined();
+    expect(
+      agentDraftFromSessionEvent(draft('', 1_700_000_000, { status: 'closed' }), 1_700_000_000_000),
+    ).toBeUndefined();
   });
 
   it('rejects a draft whose agent tag does not match the signing pubkey', () => {

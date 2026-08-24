@@ -11,7 +11,7 @@ import type {
   PersonProfile,
   RoomRepositoryResolution,
 } from '@beeline/buzz-client';
-import { cornerStatusPrecedence, cornerStatusPrecedenceOrNull, type CornerStatus, type CornerSummary } from '@/buzz/corners';
+import type { CornerSummary } from '@/buzz/corners';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 import { isRetiredAgentStateNotice } from './retired-agent-notices';
 import { upsertChatMessages } from '@/sync/transport/buzz-event-projection';
@@ -140,6 +140,8 @@ type BuzzCacheState = PersistedBuzzCache & {
     channelId: string,
     patch: Partial<ChannelCacheEntry>,
   ) => void;
+  /** Move landed work in the Room index without creating unread/message copy. */
+  bumpChannelRecency: (viewerPubkey: string, channelId: string, timestamp: number) => void;
   replaceMessages: (
     viewerPubkey: string,
     channelId: string,
@@ -159,21 +161,9 @@ type BuzzCacheState = PersistedBuzzCache & {
     channelId: string,
     update: (messages: ChatDisplayMessage[]) => ChatDisplayMessage[],
   ) => void;
-  /** Keep an already-listed room-list corner card's lifecycle and meaningful
-   * event time current without waiting for a full list reload. Never fabricates
-   * a new corner entry and never walks status or activity backwards. */
-  patchCornerStatus: (
-    viewerPubkey: string,
-    roomId: string,
-    corner: { subchannelId: string; status: CornerStatus; lastActivityAt?: number },
-  ) => void;
-  /** Replace the complete lifecycle snapshot for a Room after a live signal
-   * reveals a corner that was absent from the list's earlier snapshot. */
-  replaceRoomCorners: (
-    viewerPubkey: string,
-    roomId: string,
-    corners: CornerSummary[],
-  ) => void;
+  /** Replace the complete authoritative lifecycle snapshot for a Room.
+   * An empty successful refresh evicts every persisted corner for that Room. */
+  replaceRoomCorners: (viewerPubkey: string, roomId: string, corners: CornerSummary[]) => void;
   replaceProfiles: (viewerPubkey: string, communityId: string, profiles: PersonProfile[]) => void;
   /** Purge a deleted/left Room from every cached list row of this viewer and
    * drop its transcript cache. Pairs with the durable tombstone in
@@ -202,9 +192,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function recordOfEntries(value: unknown): Record<string, Record<string, unknown>> {
   if (!isRecord(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => isRecord(entry)),
-  ) as Record<string, Record<string, unknown>>;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => isRecord(entry))) as Record<
+    string,
+    Record<string, unknown>
+  >;
 }
 
 function recordOfArrays(value: unknown): Record<string, unknown[]> {
@@ -220,7 +211,22 @@ function restoreChannelLists(value: unknown): Record<string, ChannelListCacheEnt
       key,
       {
         ...entry,
-        channels: Array.isArray(entry.channels) ? entry.channels : [],
+        channels: Array.isArray(entry.channels)
+          ? entry.channels.map((channel) => {
+              if (!isRecord(channel) || !Array.isArray(channel.corners)) return channel;
+              // Older OTAs cached lifecycle words derived from parent kind:9
+              // control history. Keep only rows carrying the canonical record
+              // fields; relay revalidation repopulates the rest without a
+              // first-frame ghost active pill.
+              const corners = channel.corners.filter(
+                (corner) =>
+                  isRecord(corner) &&
+                  typeof corner.machineState === 'string' &&
+                  typeof corner.stateAt === 'number',
+              );
+              return { ...channel, corners };
+            })
+          : [],
         directMessages: Array.isArray(entry.directMessages) ? entry.directMessages : [],
         workspaceMembers: Array.isArray(entry.workspaceMembers) ? entry.workspaceMembers : [],
         communities: Array.isArray(entry.communities) ? entry.communities : [],
@@ -291,7 +297,8 @@ function loadCache(): PersistedBuzzCache {
     const parsed: unknown = JSON.parse(serialized);
     if (!isRecord(parsed)) throw new Error('Invalid Buzz local cache');
     return {
-      activeViewerPubkey: typeof parsed.activeViewerPubkey === 'string' ? parsed.activeViewerPubkey : null,
+      activeViewerPubkey:
+        typeof parsed.activeViewerPubkey === 'string' ? parsed.activeViewerPubkey : null,
       activeListKeyByViewer: Object.fromEntries(
         Object.entries(parsed.activeListKeyByViewer ?? {}).filter(
           ([, value]) => typeof value === 'string',
@@ -475,65 +482,6 @@ function updateListSummaries(
   return listsChanged ? next : lists;
 }
 
-/**
- * The room-list corner array (`ChannelDisplayItem.corners`) is fetched once
- * per `channels.tsx` load/focus via `listSubchannelLifecycle`; a corner that
- * gets archived while that snapshot is still resident (e.g. the app stays
- * foregrounded) would otherwise keep showing its pre-archive status until the
- * next full reload. Only ever updates an already-listed corner in place —
- * never fabricates one from a bare status signal — and never walks its
- * status or activity time backwards (same precedence guard used for chat
- * message cards).
- */
-function updateListCornerStatus(
-  lists: Record<string, ChannelListCacheEntry>,
-  viewerPubkey: string,
-  roomId: string,
-  corner: { subchannelId: string; status: CornerStatus; lastActivityAt?: number },
-): Record<string, ChannelListCacheEntry> {
-  let listsChanged = false;
-  const next = Object.fromEntries(
-    Object.entries(lists).map(([key, entry]) => {
-      if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
-      let entryChanged = false;
-      const channels = entry.channels.map((channel) => {
-        if (channel.id !== roomId || !channel.corners) return channel;
-        let changed = false;
-        const corners = channel.corners.map((existing) => {
-          if (
-            existing.id !== corner.subchannelId ||
-            cornerStatusPrecedence(corner.status) <
-              cornerStatusPrecedenceOrNull(existing.status)
-          ) {
-            return existing;
-          }
-          const statusChanged = existing.status !== corner.status;
-          const activityChanged =
-            corner.lastActivityAt !== undefined &&
-            corner.lastActivityAt > (existing.lastActivityAt ?? existing.createdAt ?? 0);
-          if (!statusChanged && !activityChanged) return existing;
-          changed = true;
-          return {
-            ...existing,
-            status: corner.status,
-            ...(activityChanged ? { lastActivityAt: corner.lastActivityAt } : {}),
-          };
-        });
-        if (!changed) return channel;
-        entryChanged = true;
-        return { ...channel, corners };
-      });
-      if (!entryChanged) return [key, entry];
-      listsChanged = true;
-      return [key, { ...entry, channels }];
-    }),
-  );
-  // Identity-preserved when nothing moved: this runs once per `.corner`
-  // signal on every live batch and every revalidation, and a new map object
-  // re-renders the room list whether or not a status actually changed.
-  return listsChanged ? next : lists;
-}
-
 const initial = loadCache();
 
 export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
@@ -560,18 +508,6 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
           [key]: { ...current, ...patch, updatedAt: now, lastAccessedAt: now },
         },
       };
-    }),
-  patchCornerStatus: (viewerPubkey, roomId, corner) =>
-    set((state) => {
-      const channelLists = updateListCornerStatus(
-        state.channelLists,
-        viewerPubkey,
-        roomId,
-        corner,
-      );
-      // No status moved: skip the write entirely rather than notifying every
-      // subscriber with an identical snapshot.
-      return channelLists === state.channelLists ? state : { channelLists };
     }),
   replaceRoomCorners: (viewerPubkey, roomId, corners) =>
     set((state) => {
@@ -611,6 +547,33 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
           MAX_CACHED_CHANNELS,
         ),
       };
+    }),
+  bumpChannelRecency: (viewerPubkey, channelId, timestamp) =>
+    set((state) => {
+      let listsChanged = false;
+      const channelLists = Object.fromEntries(
+        Object.entries(state.channelLists).map(([key, entry]) => {
+          if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
+          let entryChanged = false;
+          const channels = entry.channels.map((channel) => {
+            if (channel.id !== channelId || (channel.updatedAt ?? 0) >= timestamp) return channel;
+            entryChanged = true;
+            return { ...channel, updatedAt: timestamp };
+          });
+          if (!entryChanged) return [key, entry];
+          listsChanged = true;
+          return [
+            key,
+            {
+              ...entry,
+              channels: channels.sort(
+                (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+              ),
+            },
+          ];
+        }),
+      );
+      return listsChanged ? { channelLists } : state;
     }),
   replaceMessages: (viewerPubkey, channelId, messages, cursor, summary) =>
     set((state) => {

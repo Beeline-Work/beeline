@@ -88,10 +88,6 @@ export class ThinDaemonCore {
     return this.roomRuntime.isWorkspaceIdle();
   }
 
-  broadcastDaemonNotice(text: string): Promise<void> {
-    return this.roomRuntime.broadcastDaemonNotice(text);
-  }
-
   /**
    * READY is requested before any relay attempt. WATCHDOG/STATUS is requested
    * only after both bounded reconciliation and the local Room watchdog finish.

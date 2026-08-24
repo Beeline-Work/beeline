@@ -277,7 +277,6 @@ describe('self-update end to end against a local fixture manifest', () => {
     await writeFile(configPath, '{}');
 
     let idle = false;
-    const notices: string[] = [];
     let restartRequested = false;
     const manager = new SelfUpdateManager({
       layout,
@@ -288,9 +287,6 @@ describe('self-update end to end against a local fixture manifest', () => {
       idleTimeoutMs: 400,
       idlePollMs: 20,
       isIdle: () => idle,
-      notify: (text) => {
-        notices.push(text);
-      },
       requestRestart: () => {
         restartRequested = true;
       },
@@ -317,11 +313,11 @@ describe('self-update end to end against a local fixture manifest', () => {
     // Previous bundle preserved for rollback.
     expect(existsSync(join(layout.releasesRoot, 'c1alpha', 'lib', 'beeline', 'beeline-cli.mjs'))).toBe(true);
 
-    // Rollback journal + Room-visible notice through the existing message path.
+    // The rollback journal is durable operational state. A successful update
+    // and restart must not publish anything into Room chat.
     const pending = await readPendingUpdate(layout);
     expect(pending?.releaseId).toBe(v2.commit);
     expect(pending?.previousReleaseId).toBe('c1alpha');
-    expect(notices.join("\n")).toContain("the daemon is restarting now");
 
     // Identity now reads from the INSTALLED bundle itself.
     expect(await readInstalledBundleIdentity(layout)).toEqual({ commit: v2.commit, version: v2.version });
@@ -429,7 +425,6 @@ describe('self-update end to end against a local fixture manifest', () => {
       idleTimeoutMs: 10_000,
       idlePollMs: 20,
       isIdle: () => true,
-      notify: () => undefined,
       requestRestart: () => {
         restarted = true;
       },
@@ -475,9 +470,8 @@ describe('anchor-drift restart (a running daemon picks up an externally swapped 
   function makeManager(
     layout: BeelineInstallLayout,
     opts: Partial<ConstructorParameters<typeof SelfUpdateManager>[0]> & { idle: () => boolean },
-  ): { manager: SelfUpdateManager; logs: string[]; notices: string[]; restartRequested: () => boolean } {
+  ): { manager: SelfUpdateManager; logs: string[]; restartRequested: () => boolean } {
     const logs: string[] = [];
-    const notices: string[] = [];
     let requested = false;
     const manager = new SelfUpdateManager({
       layout,
@@ -487,16 +481,13 @@ describe('anchor-drift restart (a running daemon picks up an externally swapped 
       idleTimeoutMs: 400,
       idlePollMs: 20,
       isIdle: opts.idle,
-      notify: (text) => {
-        notices.push(text);
-      },
       requestRestart: () => {
         requested = true;
       },
       logger: (line) => logs.push(line),
       ...opts,
     });
-    return { manager, logs, notices, restartRequested: () => requested };
+    return { manager, logs, restartRequested: () => requested };
   }
 
   async function waitDaemonStarted(runtimeDir: string): Promise<{ pid: number; commit?: string; entrypoint: string }> {
@@ -516,7 +507,7 @@ describe('anchor-drift restart (a running daemon picks up an externally swapped 
     await mkdir(runtimeDir, { recursive: true });
     const configPath = join(runtimeDir, 'runtime.json');
     await writeFile(configPath, '{}');
-    const { manager, logs, notices, restartRequested } = makeManager(layout, { idle: () => true });
+    const { manager, logs, restartRequested } = makeManager(layout, { idle: () => true });
 
     // First tick captures what THIS process loaded from; nothing moves.
     await manager.tickOnce();
@@ -544,7 +535,6 @@ describe('anchor-drift restart (a running daemon picks up an externally swapped 
     expect(pending?.releaseId).toBe(newR.id);
     expect(pending?.previousReleaseId).toBe(oldR.id);
     expect(pending?.from).toEqual({ commit: oldR.commit, version: oldR.version });
-    expect(notices.join('\n')).toContain('restarting now');
 
     // Handover exec target must resolve through the CURRENT anchor.
     const pid = await manager.launchReplacement(configPath);

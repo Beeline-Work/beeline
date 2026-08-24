@@ -8,7 +8,7 @@ export function normalizedRoomRole(member: ChannelMember | undefined): ChannelRo
 }
 
 export function roomLifecycleAction(role: ChannelRole | null): RoomLifecycleAction {
-  if (role === 'owner' || role === 'admin') return 'delete';
+  if (role === 'owner') return 'delete';
   return role === 'member' ? 'leave' : null;
 }
 

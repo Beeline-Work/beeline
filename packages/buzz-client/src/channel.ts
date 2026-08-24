@@ -11,6 +11,7 @@ import {
   KIND_CHANNEL_MEMBERS,
   KIND_CHANNEL_METADATA,
   KIND_CREATE_GROUP,
+  KIND_DELETE_GROUP,
   KIND_EDIT_METADATA,
   KIND_PUT_USER,
   KIND_REMOVE_USER,
@@ -497,14 +498,48 @@ export async function waitUntilRoomArchived(
 }
 
 /**
+ * Wait until a deleted Room is absent from every relay enumeration source.
+ *
+ * The deck discovers Rooms through the viewer's 39001/39002 projection, while
+ * Workspace Settings discovers them through the channel-scoped 9007 create
+ * event. A successful kind:9008 is not complete until both are gone and the
+ * 39000 metadata projection has also been retracted.
+ */
+export async function waitUntilRoomDeleted(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  opts?: { timeoutMs?: number; intervalMs?: number },
+): Promise<void> {
+  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const intervalMs = opts?.intervalMs ?? 300;
+  const ok = await waitForRelayProjection(
+    ctx,
+    channelId,
+    [KIND_DELETE_GROUP, KIND_CHANNEL_METADATA, KIND_CHANNEL_ADMINS, KIND_CHANNEL_MEMBERS],
+    async () => {
+      const creates = await query(ctx, [
+        { kinds: [KIND_CREATE_GROUP], '#h': [channelId], limit: 20 },
+      ]);
+      if (creates.some((event) => tagValue(event, 'h') === channelId)) return false;
+      if ((await getChannelMetadata(ctx, channelId)) !== null) return false;
+      const memberships = await listChannelsForPubkey(ctx, ctx.identity.publicKey, 500);
+      return !memberships.some((membership) => membership.channelId === channelId);
+    },
+    { timeoutMs, intervalMs },
+  );
+  if (ok) return;
+  throw new Error(`Room ${channelId} remained enumerable after deletion for ${timeoutMs}ms`);
+}
+
+/**
  * Explicit owner/admin Room archive path.
  * This is intentionally separate from Gate's corner-only archive writer.
  * Relay data is retained; recovery projection/UI is a separate follow-up.
  *
- * Deleting an ALREADY-archived Room is success, not error: the relay refuses
+ * Archiving an ALREADY-archived Room is success, not error: the relay refuses
  * every further kind:9002 on an archived channel with HTTP 400
- * "channel is archived", which would otherwise make the delete button
- * permanently broken for exactly the Rooms a user most wants gone. The
+ * "channel is archived", which would otherwise make an archive retry fail
+ * despite the desired retained terminal state already being present. The
  * archived-channel refusal is the proof the Room already sits in the desired
  * terminal state, so it resolves instead of surfacing; any other failure
  * (network, a different 4xx) still throws honestly.
@@ -517,7 +552,7 @@ export async function archiveRoom(ctx: ChannelOpsContext, channelId: string): Pr
     ['h', channelId],
     ['archived', 'true'],
     ['t', TAG_ROOM_LIFECYCLE],
-    ['action', 'admin-delete'],
+    ['action', 'admin-archive'],
   ]);
   try {
     await publishEvent(ctx.http, event);
@@ -526,6 +561,29 @@ export async function archiveRoom(ctx: ChannelOpsContext, channelId: string): Pr
     throw error;
   }
   await waitUntilRoomArchived(ctx, channelId);
+}
+
+/**
+ * Permanently remove a top-level Room from the relay's live channel set.
+ *
+ * NIP-29 kind:9008 is the durable delete command. Buzz soft-deletes the
+ * channel row for auditability and retracts its 39000/39001/39002 discovery
+ * events, so every reader stops enumerating the Room without a UI filter.
+ * This is owner-only at the relay; archiveRoom remains the retained-data path.
+ */
+export async function deleteRoom(ctx: ChannelOpsContext, channelId: string): Promise<void> {
+  await assertTopLevelRoom(ctx, channelId);
+  const role = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
+  if (role !== 'owner') throw new Error('only a Room owner can delete it');
+  await publishEvent(
+    ctx.http,
+    sign(ctx.identity, KIND_DELETE_GROUP, [
+      ['h', channelId],
+      ['t', TAG_ROOM_LIFECYCLE],
+      ['action', 'admin-delete'],
+    ]),
+  );
+  await waitUntilRoomDeleted(ctx, channelId);
 }
 
 /** Rename a top-level Room through the current owner/admin metadata path. */

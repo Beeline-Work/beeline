@@ -514,6 +514,12 @@ export class BuzzRigTransport implements RigTransport {
     await client.archiveRoom(channelId);
   }
 
+  /** Delete a Room and wait until the relay retracts every discovery projection. */
+  async deleteRoom(channelId: string): Promise<void> {
+    const client = await this.getClient();
+    await client.deleteRoom(channelId);
+  }
+
   /**
    * Leave a Workspace as the signed-in member. The SDK drops this identity's
    * top-level Room memberships first (best-effort), then publishes the

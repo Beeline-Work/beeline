@@ -30,3 +30,12 @@ deploy goes through fixed-argument passwordless sudo rules. The exact lines
 required are documented in the header of `scripts/deploy-relay-host.sh`; if a
 rule is missing the deploy fails loudly at that step rather than working
 around it.
+
+## Push gateway topology
+
+Production has one gateway. `relay-front` sends `/push/` to
+`push-gateway:8788`; that container accepts registrations and tails Postgres
+over the private `buzz-net` network. It bind-mounts the durable registry and
+delivery state from `/home/lunchbox/buzzy-push-gateway/state/`. The retired
+`buzzy-push-gateway.service` must remain disabled; see
+`apps/push-gateway/deploy/README.md` for the one-time cutover checks.

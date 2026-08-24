@@ -200,8 +200,7 @@ function cornerSummaryFromEvents(
   // lifecycle state. Only an explicit archived boolean or a corner-scoped
   // archived status removes a corner from the live list.
   const archived =
-    metadata?.archived === true ||
-    facts.some((fact) => fact.rawStatus === 'archived');
+    metadata?.archived === true || facts.some((fact) => fact.rawStatus === 'archived');
   const lastActivityAt = Math.max(
     create?.created_at ?? 0,
     ...events.map((event) => event.createdAt),
@@ -345,12 +344,13 @@ export class BuzzRigTransport implements RigTransport {
   /** Compose one signed message. Retries must publish this returned event unchanged. */
   async composeMessage(
     input: MessageSubmitInput,
-    opts?: { mentionAgent?: string },
+    opts?: { mentionAgent?: string; mentionPubkeys?: string[] },
   ): Promise<NostrEvent> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(input.attachments ?? []);
     return client.buildMessage(input.sessionId, input.text, {
       ...(opts?.mentionAgent ? { mentionAgent: opts.mentionAgent } : {}),
+      ...(opts?.mentionPubkeys?.length ? { mentionPubkeys: opts.mentionPubkeys } : {}),
       ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
     });
   }
@@ -375,7 +375,7 @@ export class BuzzRigTransport implements RigTransport {
   /** Submit a message and return the stable signed event id for optimistic UI reconciliation. */
   async messageSubmitWithEventId(
     input: MessageSubmitInput,
-    opts?: { mentionAgent?: string; event?: NostrEvent },
+    opts?: { mentionAgent?: string; mentionPubkeys?: string[]; event?: NostrEvent },
   ): Promise<string> {
     const event = opts?.event ?? (await this.composeMessage(input, opts));
     return this.publishPreparedMessage(event);
@@ -401,6 +401,7 @@ export class BuzzRigTransport implements RigTransport {
     replyToId: string,
     mentionAgent?: string,
     attachments: AttachmentReference[] = [],
+    mentionPubkeys: string[] = [],
   ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
@@ -411,6 +412,7 @@ export class BuzzRigTransport implements RigTransport {
       replyToId;
     const event = await client.messageSubmit(channelId, text, {
       ...(mentionAgent ? { mentionAgent } : {}),
+      ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
       extraTags: [
         ...(replyRootId !== replyToId ? [['e', replyRootId, '', 'root']] : []),
         ['e', replyToId, '', 'reply'],

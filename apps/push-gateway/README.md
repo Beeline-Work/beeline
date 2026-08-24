@@ -3,8 +3,16 @@
 Android-only FCM gateway for Beeline. It accepts an FCM device registration,
 tails kind-9 channel events from Buzz's authoritative Postgres database,
 resolves notification metadata from the same community-scoped rows, and sends
-message-preview Firebase notifications to registered members other than the event
-author.
+Firebase notifications to registered members other than the event author.
+
+The default policy is intentionally quiet: a recipient gets a push only for an
+explicit `p`-tag mention, a direct message, or an agent's transition to
+waiting-on-human (a question, needs-attention card, or merge-review request).
+Ordinary human/agent chat, agent narration, activity frames, and member joins
+stay in-app. Every candidate still emits a decision trace, including the exact
+fatigue-policy skip reason. Android separates `mentions`, `attention`, and
+`activity` (direct-message) channels so each class can be tuned in system
+settings.
 
 Every feed query joins the event's server-stamped `community_id` and channel to an
 active `channel_members` row for the registered recipient. The gateway never trusts
@@ -79,25 +87,20 @@ BUZZY_RELAY_HOST=relay.buzzrouter.com \
 
 ## Notification content and deployment
 
-Message notifications show the relay event's trimmed text and the cached display
-names resolved from recipient-authorized database rows. This means
-message text is intentionally visible on the Android lock screen. The preview
-policy is localized in `mapping.ts` so a future per-device hide-preview setting
-can select the generic form without changing relay lookup or delivery code.
+Eligible notifications show the relay event's trimmed text and cached display
+names resolved from recipient-authorized database rows. Agent soul names take
+precedence over deterministic seed fallbacks. Message text is intentionally
+visible on the Android lock screen; the preview policy is localized in
+`mapping.ts` so a future per-device hide-preview setting can select the generic
+form without changing relay lookup or delivery code.
 
 Changes under this service require a push-gateway redeploy. Changes to the
 Android notification channel label require a new APK; the application label is
 already Beeline.
 
-The live production host currently runs `buzzy-push-gateway.service` as a user
-systemd unit, with `~/buzzy-push-gateway/current` pointing at an immutable
-release. To apply a committed gateway update, the operator prepares and builds
-a new release, writes `secrets/database.env` as mode `0600` with
-`BUZZY_PUSH_DATABASE_URL=postgres://...@127.0.0.1:5433/buzz`, atomically repoints
-`current`, then runs `systemctl --user daemon-reload` followed by
-`systemctl --user restart buzzy-push-gateway.service`. Verify `/push/health` and
-the `[push] feed live`, `[push] feed heartbeat`, and decision lines with
-`journalctl --user -u buzzy-push-gateway.service`.
-Preserve the existing `secrets/` and `state/` directories throughout. The
-checked-in Compose deployment remains a separate target topology; do not run
-both pollers against one delivery ledger. See [`deploy/README.md`](deploy/README.md).
+Production runs the gateway as `push-gateway` in `relay-stack/prod/compose.yml`.
+The tracked relay-front proxies `/push/` to that service on the Compose network,
+and the deploy workflow builds the image and waits for service health before
+public verification. Preserve the existing `secrets/` and `state/` directories;
+the one-time legacy systemd retirement and persistence checks are documented in
+[`deploy/README.md`](deploy/README.md).

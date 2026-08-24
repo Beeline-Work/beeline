@@ -374,6 +374,8 @@ export interface ChannelFilterOpts {
 export interface MessageSubmitOpts {
   /** When set, adds `#p` mention so buzz-acp can treat it as an agent prompt. */
   mentionAgent?: string;
+  /** People or additional agents explicitly selected with the composer mention picker. */
+  mentionPubkeys?: string[];
   /** Extra tags to attach (each is a full tag array). */
   extraTags?: string[][];
 }

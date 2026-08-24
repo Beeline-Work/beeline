@@ -13,8 +13,9 @@
 #      manifest). Whole-tree, never a subset: the stale hand-deployed
 #      install.sh bug came from a deploy path that copied some files and not
 #      others.
-#   2. apps/auth Dockerfile -> beeline-auth:production -> `docker compose up`
-#      for the auth service only.
+#   2. apps/auth Dockerfile -> beeline-auth:production. The container is
+#      recreated once below: by the full stack reconciliation when config
+#      changes, otherwise by an auth-only reconciliation.
 #   3. the TRACKED production stack config (relay-stack/prod/{compose.yml,
 #      nginx.conf}) -> /home/lunchbox/buzz-router-relay-prod/{compose.yml,
 #      relay-front/nginx.conf}, followed by `docker compose up -d` for the
@@ -151,15 +152,6 @@ diff -r --brief "$STAGE/web" "$WEBROOT" >/dev/null || {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Recreate the auth container from the new image (auth service only).
-# ---------------------------------------------------------------------------
-log "recreating auth container"
-sudo -n /usr/bin/docker compose -p buzz-router-prod \
-  --env-file "$PROJECT_DIR/.env" \
-  -f "$PROJECT_DIR/compose.yml" up -d --no-deps auth \
-  || { sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" -f "$PROJECT_DIR/compose.yml" up -d --no-deps auth 2>&1 | tail -20; die "compose up auth failed"; }
-
-# ---------------------------------------------------------------------------
 # 4b. Roll out the TRACKED production stack config (compose.yml + nginx.conf).
 #     relay-stack/{compose.yml,nginx.conf} are the ISOLATED gate stack
 #     (name: buzzy-gate); production is tracked under relay-stack/prod/.
@@ -273,7 +265,81 @@ converge_stack_runtime() {
   reload_relay_front_nginx || true
 }
 
+# Wait without changing the fixed sudo command shape. All services with an
+# application healthcheck must be healthy, and relay-front (which deliberately
+# has no healthcheck) must be running. This closes the gap where `up -d`
+# returned while auth still served 502s during run 32684876277.
+wait_for_stack_ready() {
+  local attempt service expected cid actual all_ready
+  for attempt in $(seq 1 36); do
+    all_ready=1
+    for service in auth push-gateway relay relay-front; do
+      expected=healthy
+      [ "$service" = "relay-front" ] && expected=running
+      cid=$(docker ps -aq \
+        --filter label=com.docker.compose.project=buzz-router-prod \
+        --filter label=com.docker.compose.service="$service" | head -1)
+      if [ -z "$cid" ]; then
+        all_ready=0
+        continue
+      fi
+      actual=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || true)
+      [ "$actual" = "$expected" ] || all_ready=0
+    done
+    if [ "$all_ready" = 1 ]; then
+      log "production stack health verified"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "!! production stack did not become healthy within 180s" >&2
+  for service in auth push-gateway relay relay-front; do
+    cid=$(docker ps -aq \
+      --filter label=com.docker.compose.project=buzz-router-prod \
+      --filter label=com.docker.compose.service="$service" | head -1)
+    [ -z "$cid" ] || docker inspect --format "$service: status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" "$cid" >&2 || true
+  done
+  return 1
+}
+
+reconcile_full_stack() {
+  local compose_log=$STAGE/stack-up.log
+  if sudo -n /usr/bin/docker compose -p buzz-router-prod \
+      --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d \
+      >"$compose_log" 2>&1; then
+    wait_for_stack_ready
+    return
+  fi
+
+  # Docker can report a stale container id if another just-finished deployment
+  # removed it between Compose's plan and apply (run 32684880925). A second
+  # identical reconciliation is safe and convergent; other failures remain
+  # immediately actionable and are not retried blindly.
+  if grep -q 'No such container' "$compose_log"; then
+    log "compose observed a concurrently removed container; retrying convergence once"
+    sleep 2
+    if sudo -n /usr/bin/docker compose -p buzz-router-prod \
+        --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d \
+        >>"$compose_log" 2>&1; then
+      wait_for_stack_ready
+      return
+    fi
+  fi
+
+  tail -20 "$compose_log" >&2
+  return 1
+}
+
+recreate_auth_only() {
+  log "recreating auth container"
+  sudo -n /usr/bin/docker compose -p buzz-router-prod \
+    --env-file "$PROJECT_DIR/.env" \
+    -f "$LIVE_COMPOSE" up -d --no-deps auth \
+    || { sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d --no-deps auth 2>&1 | tail -20; return 1; }
+}
+
 if [ "$COMPOSE_CHANGED" = 0 ] && [ "$NGINX_CHANGED" = 0 ] && [ -n "$GATEWAY_RUNNING" ]; then
+  recreate_auth_only || die "compose up auth failed"
   log "production stack unchanged — nothing to roll out"
 else
   mkdir -p "$STACK_STAGE_DIR" "$BACKUP_ROOT/config-$TS/relay-front"
@@ -292,9 +358,14 @@ else
     # with a zero-downtime HUP reload instead of any container churn.
     if [ "$COMPOSE_CHANGED" = 1 ] || [ -z "$GATEWAY_RUNNING" ]; then
       log "applying production stack (docker compose up -d)"
-      sudo -n /usr/bin/docker compose -p buzz-router-prod \
-        --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d \
-        >$STAGE/stack-up.log 2>&1 || { tail -20 $STAGE/stack-up.log >&2; ok=0; }
+      # One reconciliation owns auth + gateway + front, followed by an
+      # explicit container-health gate. The former auth-only `up` immediately
+      # followed by a full `up` raced the same auth container: run 32684876277
+      # served auth 502s for the whole public-verification budget, and the next
+      # run observed Docker removing a container underneath Compose.
+      reconcile_full_stack || ok=0
+    else
+      recreate_auth_only || ok=0
     fi
     if [ "$ok" = 1 ] && [ "$NGINX_CHANGED" = 1 ]; then reload_relay_front_nginx || ok=0; fi
   fi

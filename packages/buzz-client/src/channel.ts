@@ -858,7 +858,9 @@ export function buildMessage(
   opts?: MessageSubmitOpts & { agentActivity?: boolean },
 ): NostrEvent {
   const tags: string[][] = [['h', channelId]];
-  if (opts?.mentionAgent) tags.push(['p', opts.mentionAgent]);
+  const mentionedPubkeys = new Set(opts?.mentionPubkeys ?? []);
+  if (opts?.mentionAgent) mentionedPubkeys.add(opts.mentionAgent);
+  for (const pubkey of mentionedPubkeys) tags.push(['p', pubkey]);
   if (opts?.agentActivity) tags.push(['t', TAG_AGENT_ACTIVITY]);
   if (opts?.extraTags) tags.push(...opts.extraTags);
   return sign(ctx.identity, KIND_STREAM_MESSAGE, tags, text);

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile);
 export const DELIBERATE_REMOVAL_EXIT_STATUS = 78;
 export const SYSTEMD_UNIT_NAME = 'beeline-agent@.service';
 export const SYSTEMD_COMMAND_TIMEOUT_MS = 15_000;
+export const MINIMUM_SYSTEMD_NODE_VERSION = '20.11.0';
 /** Unit stop ceiling plus a small window for the successor to enter active. */
 export const SYSTEMD_RESTART_WAIT_MS = 10 * 60_000 + 30_000;
 
@@ -20,7 +21,15 @@ function systemdQuote(value: string): string {
 /** The portable supervision contract, rendered as a systemd user template. */
 export function agentServiceUnit(
   entrypoint = resolve(homedir(), '.local', 'bin', 'beeline'),
+  nodePath = process.execPath,
+  inheritedPath = process.env.PATH ?? '',
 ): string {
+  if (!isAbsolute(nodePath)) throw new Error('systemd Node path must be absolute');
+  const nodeDir = dirname(nodePath);
+  const path = [
+    nodeDir,
+    ...inheritedPath.split(delimiter).filter((part) => part && part !== nodeDir),
+  ].join(delimiter);
   return `[Unit]
 Description=Beeline agent %i
 After=network-online.target
@@ -32,6 +41,7 @@ StartLimitBurst=10
 Type=notify
 NotifyAccess=all
 Environment=BEELINE_MANAGED_BY_SYSTEMD=1
+Environment=${systemdQuote(`PATH=${path}`)}
 ExecStart=${systemdQuote(entrypoint)} daemon --agent %i
 Restart=always
 RestartSec=5s
@@ -49,6 +59,23 @@ PrivateTmp=yes
 [Install]
 WantedBy=default.target
 `;
+}
+
+function assertSupportedNodeVersion(version: string): void {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
+  const [major, minor, patch] = match?.slice(1, 4).map(Number) ?? [];
+  const supported =
+    major !== undefined &&
+    minor !== undefined &&
+    patch !== undefined &&
+    (major > 20 || (major === 20 && minor >= 11));
+  if (!supported) {
+    throw new Error(
+      `Cannot install the Beeline systemd service with Node.js ${version}; ` +
+        `Node.js ${MINIMUM_SYSTEMD_NODE_VERSION} or newer is required. ` +
+        'Run beeline again using a supported Node installation (for example, activate your fnm/nvm version first).',
+    );
+  }
 }
 
 export function systemdUserUnitPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -76,11 +103,19 @@ export async function installAgentService(
     run?: SystemdRunner;
     start?: boolean;
     waitTimeoutMs?: number;
+    nodePath?: string;
+    nodeVersion?: string;
   } = {},
 ): Promise<number> {
   if (!/^[0-9a-f]{64}$/i.test(publicKey)) throw new Error('agent public key must be 64 hex');
+  const nodePath = options.nodePath ?? process.execPath;
+  assertSupportedNodeVersion(options.nodeVersion ?? process.versions.node);
   const path = systemdUserUnitPath(options.env);
-  const content = agentServiceUnit(options.entrypoint);
+  const content = agentServiceUnit(
+    options.entrypoint,
+    nodePath,
+    options.env?.PATH ?? process.env.PATH,
+  );
   const existing = await readFile(path, 'utf8').catch(() => '');
   if (existing !== content) {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });

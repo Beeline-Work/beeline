@@ -17,7 +17,11 @@ afterEach(async () => {
 
 describe('systemd supervision contract', () => {
   it('renders notify readiness, progress watchdog, bounded stop and deliberate-removal policy', () => {
-    const unit = agentServiceUnit('/opt/beeline/bin/beeline');
+    const unit = agentServiceUnit(
+      '/opt/beeline/bin/beeline',
+      '/home/operator/.local/share/fnm/node-versions/v24.0.0/installation/bin/node',
+      '/usr/local/bin:/usr/bin',
+    );
     expect(unit).toContain('Type=notify');
     expect(unit).toContain('Environment=BEELINE_MANAGED_BY_SYSTEMD=1');
     expect(unit).toContain('Restart=always');
@@ -25,6 +29,10 @@ describe('systemd supervision contract', () => {
     expect(unit).toContain('WatchdogSec=180s');
     expect(unit).toContain('TimeoutStopSec=10min');
     expect(unit).toContain('KillMode=control-group');
+    expect(unit).toContain(
+      'Environment="PATH=/home/operator/.local/share/fnm/node-versions/v24.0.0/installation/bin:/usr/local/bin:/usr/bin"',
+    );
+    expect(unit).toContain('ExecStart="/opt/beeline/bin/beeline" daemon --agent %i');
   });
 
   it('installs, enables, starts, and returns the supervised main pid', async () => {
@@ -42,8 +50,10 @@ describe('systemd supervision contract', () => {
     });
     const pubkey = 'a'.repeat(64);
     const pid = await installAgentService(pubkey, {
-      env: { XDG_CONFIG_HOME: root },
       entrypoint: '/opt/beeline/bin/beeline',
+      nodePath: '/opt/fnm/node-v24/bin/node',
+      nodeVersion: '24.1.0',
+      env: { XDG_CONFIG_HOME: root, PATH: '/usr/bin:/bin' },
       run,
     });
 
@@ -68,8 +78,20 @@ describe('systemd supervision contract', () => {
       ],
     ]);
     expect(await readFile(join(root, 'systemd/user/beeline-agent@.service'), 'utf8')).toContain(
-      'ExecStart="/opt/beeline/bin/beeline" daemon --agent %i',
+      'Environment="PATH=/opt/fnm/node-v24/bin:/usr/bin:/bin"',
     );
+  });
+
+  it('refuses installation below the supported Node floor before touching systemd', async () => {
+    const run = vi.fn(async () => ({ stdout: '' }));
+    await expect(
+      installAgentService('d'.repeat(64), {
+        nodePath: '/usr/bin/node',
+        nodeVersion: '18.20.8',
+        run,
+      }),
+    ).rejects.toThrow(/Node\.js 20\.11\.0 or newer.*activate your fnm\/nvm version/i);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('waits for an already-running unit to publish a replacement MainPID', async () => {

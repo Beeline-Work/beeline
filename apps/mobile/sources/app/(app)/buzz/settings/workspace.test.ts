@@ -56,6 +56,10 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/RoomGlyph', async () => {
+  const ReactModule = await import('react');
+  return { RoomGlyph: (props: any) => ReactModule.createElement('RoomGlyph', props) };
+});
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>

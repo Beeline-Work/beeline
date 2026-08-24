@@ -84,6 +84,7 @@ import { hydrateRoomEntry } from '@/buzz/room-entry';
 import { groknight } from '@/buzz/groknight';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { splitLedgerText } from '@/buzz/ledger-text';
+import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -1110,6 +1111,13 @@ export default function BuzzChat() {
     for (const message of visibleMessages) {
       map.set(message.id, message);
       if (message.relayId) map.set(message.relayId, message);
+    }
+    return map;
+  }, [visibleMessages]);
+  const immediatelyPrecedingVisibleMessageById = useMemo(() => {
+    const map = new Map<string, ChatDisplayMessage>();
+    for (let index = 1; index < visibleMessages.length; index += 1) {
+      map.set(visibleMessages[index].id, visibleMessages[index - 1]);
     }
     return map;
   }, [visibleMessages]);
@@ -3186,18 +3194,21 @@ export default function BuzzChat() {
         );
       }
 
-      // The reply echo is deleted from agent turns: Body threads every Room/DM
-      // reply to the request that triggered it, so the quoted text was always
-      // the message directly above — pure noise on a linear log. A person's own
-      // reply is a deliberate reach back up the transcript, so it keeps its
-      // quote.
+      // Adjacent request → agent reply pairs stay quiet. A queued agent reply can
+      // land after newer visible turns, so it keeps the quote that identifies its
+      // actual NIP-10 target. Human replies retain their existing quote behavior.
+      const showReplyReference = shouldShowReplyReference({
+        replyToId: item.replyToId,
+        speaksAsAgent,
+        immediatelyPrecedingMessage: immediatelyPrecedingVisibleMessageById.get(item.id),
+      });
       const referencedMessage =
-        !speaksAsAgent && item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
+        showReplyReference && item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
       const replyReference =
-        !speaksAsAgent && item.replyToId ? (
+        showReplyReference ? (
           <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
             <Text numberOfLines={2} style={styles.replyReferenceText}>
               ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
@@ -3256,6 +3267,7 @@ export default function BuzzChat() {
                 typewriter={speaksAsAgent && Boolean(item.isNew)}
                 bodyText={ledgerText ? ledgerText.prose : item.text}
                 bodyTestID={`chat-message-text-${item.id}`}
+                replyReference={replyReference}
                 machineNoise={machineNoise}
                 attachments={attachmentElements}
               />
@@ -3270,6 +3282,7 @@ export default function BuzzChat() {
       continuedAttributionIds,
       handleWritePermission,
       handleConfirmTargetBranch,
+      immediatelyPrecedingVisibleMessageById,
       isCorner,
       parentChannelId,
       participantsHydrated,

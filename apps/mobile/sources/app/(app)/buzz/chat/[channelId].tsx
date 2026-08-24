@@ -98,6 +98,7 @@ import {
   sectionRoomParticipants,
   sectionRoomRoster,
   selectedMentionAgentPubkey,
+  selectedMentionPubkeys,
 } from '@/buzz/room-participants';
 import {
   resolveAgentDisplayIdentity,
@@ -460,6 +461,7 @@ export default function BuzzChat() {
   // typing so an async roster refresh cannot turn a selected agent into an
   // unaddressed plain Room message.
   const selectedAgentMentionsRef = useRef(new Map<string, string>());
+  const selectedMentionsRef = useRef(new Map<string, string>());
   // When each agent was last told about, so a standing offline condition is
   const sendInFlightRef = useRef(false);
 
@@ -1980,6 +1982,7 @@ export default function BuzzChat() {
         text,
         selectedAgentMentionsRef.current,
       );
+      const mentionedPubkeys = selectedMentionPubkeys(text, selectedMentionsRef.current);
       const mentionedAgent = replyTarget?.isAgent
         ? replyTarget.authorPubkey
         : parentChannelId
@@ -1994,10 +1997,16 @@ export default function BuzzChat() {
             replyTarget.messageId,
             mentionedAgent,
             attachments,
+            mentionedPubkeys,
           )
         : await transport.messageSubmitWithEventId(
             { sessionId: decodedId, text, attachments },
-            mentionedAgent ? { mentionAgent: mentionedAgent } : undefined,
+            mentionedAgent || mentionedPubkeys.length
+              ? {
+                  ...(mentionedAgent ? { mentionAgent: mentionedAgent } : {}),
+                  ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+                }
+              : undefined,
           );
       useBuzzLocalCache
         .getState()
@@ -2094,6 +2103,7 @@ export default function BuzzChat() {
       if (participant.kind === 'agent') {
         selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
       }
+      selectedMentionsRef.current.set(participant.handle, participant.pubkey);
       const nextSelection = { start: inserted.cursor, end: inserted.cursor };
       const completedMention = activeMentionAtCursor(inserted.text, inserted.cursor);
       inputTextRef.current = inserted.text;

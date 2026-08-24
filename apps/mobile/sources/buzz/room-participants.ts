@@ -168,6 +168,33 @@ export function selectedMentionAgentPubkey(
     })?.[1];
 }
 
+/** Resolve every picker-selected mention whose handle is still present in the sent text. */
+export function selectedMentionPubkeys(
+  text: string,
+  selections: ReadonlyMap<string, string>,
+): string[] {
+  const normalized = text.normalize('NFKC').toLocaleLowerCase();
+  const pubkeyOffsets = new Map<string, number>();
+  for (const [handle, pubkey] of [...selections.entries()].sort(
+    ([left], [right]) => right.length - left.length,
+  )) {
+    const mention = `@${handle.normalize('NFKC').toLocaleLowerCase()}`;
+    let offset = normalized.indexOf(mention);
+    while (offset >= 0) {
+      const trailing = normalized[offset + mention.length];
+      if (trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing)) {
+        const existing = pubkeyOffsets.get(pubkey);
+        if (existing === undefined || offset < existing) pubkeyOffsets.set(pubkey, offset);
+        break;
+      }
+      offset = normalized.indexOf(mention, offset + mention.length);
+    }
+  }
+  return [...pubkeyOffsets.entries()]
+    .sort(([, left], [, right]) => left - right)
+    .map(([pubkey]) => pubkey);
+}
+
 /** Resolve the first visible @Agent name into the member pubkey written to the Nostr p-tag. */
 export function mentionedAgentPubkey(text: string, agents: MentionableAgent[]): string | undefined {
   const normalized = text.normalize('NFKC').toLocaleLowerCase();

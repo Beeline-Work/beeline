@@ -1,7 +1,5 @@
 import {
   KIND_AGENT_SOUL,
-  KIND_CHANNEL_ADMINS,
-  KIND_CHANNEL_MEMBERS,
   KIND_CHANNEL_METADATA,
   KIND_CREATE_GROUP,
   KIND_PERSON_PROFILE,
@@ -114,23 +112,6 @@ function jsonObject(content: string): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
-}
-
-function currentCommunityMembers(events: NostrEvent[], communityId: string): Set<string> {
-  const members = new Set<string>();
-  for (const kind of [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS]) {
-    const projection = latest(
-      events.filter(
-        (event) =>
-          event.kind === kind &&
-          (tagValue(event, 'd') === communityId || tagValue(event, 'h') === communityId),
-      ),
-    );
-    for (const tag of projection?.tags ?? []) {
-      if (tag[0] === 'p' && tag[1]) members.add(tag[1]);
-    }
-  }
-  return members;
 }
 
 function personName(
@@ -328,11 +309,6 @@ export class NotificationMetadataResolver {
           limit: 5,
         },
         {
-          kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-          '#d': [communityId],
-          limit: 10,
-        },
-        {
           kinds: [KIND_STREAM_MESSAGE],
           '#h': [communityId],
           '#t': [TAG_AGENT],
@@ -347,9 +323,6 @@ export class NotificationMetadataResolver {
       .sort((left, right) => right.createdAt - left.createdAt);
     const agent = agentRecords[0];
     if (agent) {
-      const communityMembers = communityId
-        ? currentCommunityMembers(events, communityId)
-        : new Set<string>();
       const agentAuthors = new Set(
         events
           .map((event) => parseAgent(event))
@@ -363,13 +336,15 @@ export class NotificationMetadataResolver {
             profile &&
             profile.agentPubkey === pubkey &&
             (!communityId ||
-              (profile.communityId === communityId &&
-                communityMembers.has(profile.authoredBy) &&
-                !agentAuthors.has(profile.authoredBy))),
+              (profile.communityId === communityId && !agentAuthors.has(profile.authoredBy))),
           );
         }),
       );
       const soulProfile = soul ? parseAgentSoul(soul) : null;
+      // A soul remains the assigned display name after its human author rotates
+      // or leaves. The relay accepted it while that signer was a member, and a
+      // removed key cannot publish a replacement; requiring CURRENT membership
+      // made durable Codex/Ox/Clara assignments fall back to seed names.
       return resolveAgentName(soulProfile?.name ?? agent.displayName, pubkey);
     }
     return personName(events, pubkey, communityId) ?? fallbackPersonName(pubkey);

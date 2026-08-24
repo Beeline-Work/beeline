@@ -126,6 +126,32 @@ export function enforcesPermissionBoundary(agentCommand: string | undefined): bo
 }
 
 /**
+ * Does this harness honor ACP `session/new`'s top-level `systemPrompt` field?
+ *
+ * Measured against the installed adapters, not assumed from the protocol:
+ *  - `claude-agent-acp` ignores the top-level field but honors
+ *    `_meta.systemPrompt`, which `AcpClient.sessionNew` sends for exactly this
+ *    case (`harnessReadsMetaSystemPrompt`) — so its sessions DO carry the
+ *    Beeline prompt.
+ *  - `codex-acp` and `pi-acp` have no reference to `systemPrompt` anywhere in
+ *    their distributions: both silently drop the entire Beeline session prompt
+ *    (persona, read-only steer, attachment directive). This was the confirmed
+ *    break behind agents still introducing themselves with the default
+ *    identity while a soul overlay was published for them.
+ *  - everything else (grok, buzz-agent, custom commands) is unverified.
+ *
+ * Callers use a `false` answer to ALSO deliver per-turn content that every
+ * harness receives (turn prompts cannot be dropped by an adapter), so an
+ * unverified harness must fail toward `false` — never assume delivery that
+ * was not measured.
+ */
+export function harnessHonorsSessionSystemPrompt(agentCommand: string | undefined): boolean {
+  return Boolean(
+    agentCommand && /(^|[/\\])claude-(agent|code)-acp(\.[a-z]+)?$/i.test(agentCommand),
+  );
+}
+
+/**
  * pi-acp is the one shipped harness that needs an agent-text control to ask
  * for an edit corner. It executes tools without first sending
  * `session/request_permission`, so there is no native request for Body to

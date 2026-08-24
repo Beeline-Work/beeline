@@ -16,12 +16,42 @@
  * files are symlinked back into the isolated state dir so a login made once
  * keeps working in every Room, and a token refresh written through the link is
  * visible to every other Room.
+ *
+ * **Skills + MCP passthrough (owner decision 2026-08-23).** The operator's
+ * skills directories are symlinked into each harness home and the operator's
+ * MCP server declarations are COPIED into it, so every Room/corner session has
+ * every skill and MCP server the host offers — without them a harness boots
+ * with a login but nothing to advertise over ACP. Two shapes, deliberately:
+ * skills are LINKED (read-only reference data; edits through the link would be
+ * the operator's own business anyway) while MCP config is COPIED — codex-acp
+ * MERGES session MCP servers into `$CODEX_HOME/config.toml`, so a symlink
+ * there would let a session write into the operator's real config. Only MCP
+ * declarations pass through: model/sandbox/approval settings stay out because
+ * they fight the daemon's own agent-mode flags. This does NOT touch the #376
+ * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
+ * `~/.git-credentials`) are never linked, and an MCP server that needs a
+ * secret continues to get it its own way (e.g. Trusty Squire's vault).
+ *
+ * `pi` needs none of this: it never reads the `mcpServers` it is handed and
+ * loads the operator's global `~/.pi/agent` extensions/skills from `$HOME`
+ * itself, which is never overridden here.
  */
-import { existsSync } from 'node:fs';
-import { mkdir, symlink } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readlink,
+  rename,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
+import { extractTomlSections } from './toml-section.js';
 
 /**
  * Credential files shared back into an isolated harness state directory,
@@ -41,6 +71,36 @@ const SHARED_CREDENTIALS: Array<{
   // Grok relocates ~/.grok via GROK_HOME; auth.json holds its login (same
   // shape as codex).
   { dir: 'grok', source: '.grok/auth.json', target: 'auth.json' },
+];
+
+/**
+ * Operator skills directories shared (linked) into an isolated harness home,
+ * keyed by the state directory the harness was pointed at. A missing source
+ * dir is skipped, not fatal — not every host has every harness installed.
+ */
+const SHARED_SKILLS: Array<{ dir: 'claude' | 'codex' | 'grok'; source: string }> = [
+  { dir: 'claude', source: '.claude/skills' },
+  { dir: 'codex', source: '.codex/skills' },
+  { dir: 'grok', source: '.grok/skills' },
+];
+
+/**
+ * Harness MCP declarations copied from the operator's real home into the
+ * isolated home, per that harness's own layout:
+ *
+ *   - `codex` / `grok`: only the `[mcp_servers.*]` tables of the harness's
+ *     `config.toml` are carried over, as a REAL file (never a symlink — see
+ *     the module comment).
+ *   - `claude`: Claude Code's user-scope MCP lives under the top-level
+ *     `mcpServers` key of `~/.claude.json`; the same object is written as a
+ *     minimal `.claude.json` inside the isolated `CLAUDE_CONFIG_DIR`.
+ *
+ * Everything else in those files (models, sandbox modes, approval policy)
+ * deliberately stays behind.
+ */
+const HARNESS_MCP_CONFIGS = [
+  { dir: 'codex' as const, toml: '.codex/config.toml' },
+  { dir: 'grok' as const, toml: '.grok/config.toml' },
 ];
 
 /** Subdirectories created under a room-instance's agent home. */
@@ -83,7 +143,135 @@ export async function prepareRoomAgentHome(
     await symlink(source, target).catch(() => undefined);
   }
 
+  await provisionOperatorSkillsAndMcp(root, operatorHome).catch((error) => {
+    console.warn(`[body] operator skills/MCP passthrough incomplete for ${root}:`, error);
+  });
+
   return roomAgentHomeEnv(root);
+}
+
+/**
+ * Link the operator's skills dirs into each harness home and copy the
+ * operator's MCP declarations into it. Best-effort end to end: a missing
+ * source is the common case (not every host has every harness), and any
+ * failure degrades to a session with fewer skills rather than failing the
+ * Room. Unlike credentials, the MCP copies are REGENERATED on every prepare
+ * call so a daemon restart picks up operator config edits; the skills links
+ * are repaired when they point somewhere else.
+ */
+async function provisionOperatorSkillsAndMcp(
+  root: string,
+  operatorHome: string,
+): Promise<void> {
+  for (const skills of SHARED_SKILLS) {
+    const source = resolve(operatorHome, skills.source);
+    const target = resolve(root, skills.dir, 'skills');
+    await linkOperatorDir(source, target).catch((error) => {
+      console.warn(`[body] operator skills unavailable at ${target}:`, error);
+    });
+  }
+
+  for (const config of HARNESS_MCP_CONFIGS) {
+    try {
+      const source = resolve(operatorHome, config.toml);
+      const target = resolve(root, config.dir, 'config.toml');
+      const section = existsSync(source)
+        ? extractTomlSections(readFileSync(source, 'utf8'), ['mcp_servers'])
+        : undefined;
+      // Regeneration is also deletion: if the operator removes the config or
+      // its last MCP table, do not leave stale servers active in a Room.
+      if (!section) {
+        await unlink(target).catch(() => undefined);
+        continue;
+      }
+      await writeIsolatedHarnessFile(target, section);
+    } catch (error) {
+      console.warn(`[body] operator MCP passthrough failed for ${config.dir}:`, error);
+    }
+  }
+
+  try {
+    const claudeJson = resolve(operatorHome, '.claude.json');
+    const claudeTarget = resolve(root, 'claude', '.claude.json');
+    const mcpServers = existsSync(claudeJson)
+      ? readClaudeUserScopeMcpServers(claudeJson)
+      : undefined;
+    if (mcpServers && Object.keys(mcpServers).length > 0) {
+      await writeIsolatedHarnessFile(
+        claudeTarget,
+        `${JSON.stringify({ mcpServers }, null, 2)}\n`,
+      );
+    } else {
+      await unlink(claudeTarget).catch(() => undefined);
+    }
+  } catch (error) {
+    console.warn('[body] operator MCP passthrough failed for claude:', error);
+  }
+}
+
+function readClaudeUserScopeMcpServers(path: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    if (parsed && typeof parsed.mcpServers === 'object' && parsed.mcpServers !== null) {
+      return parsed.mcpServers as Record<string, unknown>;
+    }
+  } catch {
+    // Malformed operator config: skip rather than fail the Room.
+  }
+  return undefined;
+}
+
+async function linkOperatorDir(source: string, target: string): Promise<void> {
+  if (!existsSync(source)) {
+    const existing = await lstat(target).catch(() => undefined);
+    if (existing?.isSymbolicLink()) await unlink(target).catch(() => undefined);
+    return;
+  }
+  let stats: Awaited<ReturnType<typeof lstat>>;
+  try {
+    stats = await lstat(target);
+  } catch {
+    // Target absent: create the link.
+    await symlink(source, target).catch(() => undefined);
+    return;
+  }
+  if (!stats.isSymbolicLink()) return; // Never replace real data with a link.
+  const current = await readlinkSafe(target);
+  if (current && resolve(dirname(target), current) === source) return;
+  // Repair a stale link left by an earlier layout.
+  await unlink(target).catch(() => undefined);
+  await symlink(source, target).catch(() => undefined);
+}
+
+/**
+ * Replace one generated harness file without ever following a symlink already
+ * occupying the target. A session can write its isolated state directory, so
+ * plain `writeFile(target)` would let a stale/malicious symlink redirect the
+ * daemon's next regeneration into another file. The temporary file is private
+ * from creation and `rename` replaces the directory entry itself.
+ */
+export async function writeIsolatedHarnessFile(path: string, content: string): Promise<void> {
+  const parent = dirname(path);
+  const parentStats = await lstat(parent);
+  if (!parentStats.isDirectory() || parentStats.isSymbolicLink()) {
+    throw new Error(`isolated harness parent is not a real directory: ${parent}`);
+  }
+  const temporary = resolve(parent, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, content, { mode: 0o600, flag: 'wx' });
+    await chmod(temporary, 0o600);
+    await rename(temporary, path);
+  } finally {
+    await unlink(temporary).catch(() => undefined);
+  }
+}
+
+async function readlinkSafe(path: string): Promise<string | undefined> {
+  try {
+    return await readlink(path);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

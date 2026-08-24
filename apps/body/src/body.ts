@@ -296,7 +296,9 @@ import {
 } from './release-flow.js';
 import {
   cornerMetadataPrompt,
+  cornerMetadataRepairPrompt,
   parseCornerMetadata,
+  cornerTitleFromTask,
   type CornerMetadata,
 } from './corner-metadata.js';
 
@@ -1672,7 +1674,8 @@ export function taskDescriptionFromCornerRequest(content: string): string {
  *  carried no describable task (see `taskDescriptionFromCornerRequest`). */
 export function taskSlugForCornerIntent(intent: string | undefined): string {
   if (!intent) return '';
-  return slugifyCornerTask(taskDescriptionFromCornerRequest(intent));
+  const task = taskDescriptionFromCornerRequest(intent);
+  return task ? slugifyCornerTask(cornerTitleFromTask(task)) : '';
 }
 
 /** Slug half of {@link taskSlugForCornerIntent}, over an ALREADY distilled
@@ -1689,8 +1692,9 @@ export function slugifyCornerTask(task: string): string {
     .replace(/-+$/g, '');
 }
 
-export function cornerNameForIntent(intent: string | undefined, parentChannelId: string): string {
-  return taskSlugForCornerIntent(intent) || `corner-${parentChannelId.slice(0, 8)}`;
+export function cornerNameForIntent(intent: string | undefined, _parentChannelId: string): string {
+  const task = intent ? taskDescriptionFromCornerRequest(intent) : '';
+  return cornerTitleFromTask(task);
 }
 
 /**
@@ -2394,7 +2398,9 @@ export class Body {
   ): Promise<CornerMetadata | undefined> {
     const prompt = cornerMetadataPrompt(request.content, conversation);
     if (this.generateCornerMetadata) {
-      return parseCornerMetadata(await this.generateCornerMetadata(prompt));
+      const first = parseCornerMetadata(await this.generateCornerMetadata(prompt));
+      if (first) return first;
+      return parseCornerMetadata(await this.generateCornerMetadata(cornerMetadataRepairPrompt()));
     }
 
     await mkdir(cwd, { recursive: true });
@@ -2449,7 +2455,28 @@ export class Body {
         }),
       );
       if (result.toolCalls.length > 0) return undefined;
-      return parseCornerMetadata(result.agentText);
+      const parsed = parseCornerMetadata(result.agentText);
+      if (parsed) return parsed;
+      const repairPrompt = cornerMetadataRepairPrompt();
+      const repairStartedAt = new Date().toISOString();
+      const repair = await client.sessionPrompt(created.sessionId, repairPrompt, 30_000);
+      await this.durableState.recordModelTurn(
+        completedModelSpend({
+          result: repair,
+          prompt: repairPrompt,
+          systemPromptChars: systemPrompt.length,
+          attribution: {
+            requestId: request.eventId,
+            originalRequestId: request.eventId,
+            cause: 'corner-metadata',
+          },
+          agentPubkey: this.agentIdentity.publicKey,
+          channelId,
+          startedAt: repairStartedAt,
+        }),
+      );
+      if (repair.toolCalls.length > 0) return undefined;
+      return parseCornerMetadata(repair.agentText);
     } catch (error) {
       await this.durableState
         .recordModelTurn(
@@ -3864,14 +3891,10 @@ export class Body {
           items: generated.plan.items,
         }
       : undefined;
-    const fallbackSlug = statedTask
-      ? taskSlugForCornerIntent(intent)
-      : slugifyCornerTask(taskDescription);
+    const fallbackTitle = cornerTitleFromTask(statedTask || taskDescription);
+    const fallbackSlug = slugifyCornerTask(fallbackTitle);
     const taskSlug = generated ? slugifyCornerTask(generated.title) || fallbackSlug : fallbackSlug;
-    const fallbackCornerName = statedTask
-      ? cornerNameForIntent(intent, tlcChannelId)
-      : taskSlug || `corner-${tlcChannelId.slice(0, 8)}`;
-    const cornerName = generated?.title ?? fallbackCornerName;
+    const cornerName = generated?.title ?? fallbackTitle;
     const subchannelId = await createAgentSubchannel(
       agentId,
       tlcChannelId,

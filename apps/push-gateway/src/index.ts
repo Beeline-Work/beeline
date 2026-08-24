@@ -1,8 +1,9 @@
 import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
-import { createBuzzClient, createIdentity, queryEvents } from '@beeline/buzz-client';
+import { queryEvents } from '@beeline/buzz-client';
 import { loadPushGatewayConfig } from './config.js';
 import { DeliveryState } from './delivery-state.js';
+import { PushEventFeed } from './feed.js';
 import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { TokenRegistry } from './registry.js';
 import { createRegistrationServer } from './server.js';
@@ -25,14 +26,10 @@ async function main(): Promise<void> {
     });
   const registry = await TokenRegistry.load(config.registryFile);
   const deliveryState = await DeliveryState.load(config.deliveryStateFile);
-  const relayClient = createBuzzClient({
-    baseUrl: config.subscriptionRelayUrl,
-    identity: createIdentity('push-gateway'),
-  });
-  await relayClient.connect();
 
   const gateway = new PushGateway(registry, getMessaging(firebaseApp), deliveryState);
   const relayHttp = { baseUrl: config.queryRelayUrl, host: config.relayHost };
+  let feed: PushEventFeed;
   const poller = new RegisteredEventPoller(
     registry,
     (pubkey) => ({
@@ -42,27 +39,18 @@ async function main(): Promise<void> {
       query: (filters) => queryEvents(relayHttp, filters, pubkey),
       disconnect: () => undefined,
     }),
-    (event, recipientPubkey, reader) => gateway.handleRelayEvent(event, recipientPubkey, reader),
+    (event, recipientPubkey, reader) => {
+      feed.noteEvent();
+      return gateway.handleRelayEvent(event, recipientPubkey, reader);
+    },
     deliveryState,
     Date.now,
   );
-
-  const pollRegisteredEvent = (): void => {
-    void poller.pollNext().catch((error) => {
-      console.error(
-        '[push] relay event poll failed:',
-        error instanceof Error ? error.message : String(error),
-      );
-    });
-  };
-
-  const unsubscribe = relayClient.socket!.subscribe(
-    [{ kinds: [9], since: Math.floor(Date.now() / 1000) }],
-    pollRegisteredEvent,
-    { subId: 'buzzy-push-events' },
-  );
-  const pollTimer = setInterval(pollRegisteredEvent, config.pollIntervalMs);
-  pollRegisteredEvent();
+  feed = new PushEventFeed(poller, {
+    pollIntervalMs: config.pollIntervalMs,
+    heartbeatIntervalMs: config.feedHeartbeatIntervalMs,
+  });
+  feed.start();
 
   const server = createRegistrationServer(registry, {
     sendTest: (pubkey) => gateway.sendTestNotification(pubkey),
@@ -70,15 +58,12 @@ async function main(): Promise<void> {
   server.listen(config.port, config.host, () => {
     console.log(
       `[push] gateway listening on http://${config.host}:${config.port}; ` +
-        `queryRelay=${config.queryRelayUrl}; subscriptionRelay=${config.subscriptionRelayUrl}; ` +
-        `devices=${registry.tokenCount}`,
+        `queryRelay=${config.queryRelayUrl}; feed=acl-query; devices=${registry.tokenCount}`,
     );
   });
 
   const shutdown = () => {
-    clearInterval(pollTimer);
-    unsubscribe();
-    relayClient.disconnect();
+    feed.stop();
     server.close();
   };
   process.once('SIGINT', shutdown);

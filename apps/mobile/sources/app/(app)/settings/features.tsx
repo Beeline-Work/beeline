@@ -1,5 +1,4 @@
 import { Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
 import { ItemList } from '@/components/ItemList';
@@ -30,7 +29,6 @@ export default function FeaturesSettingsScreen() {
                 <Item
                     title="File Diffs Sidebar"
                     subtitle="Show git changes next to the chat on desktop"
-                    icon={<Ionicons name="git-branch-outline" size={29} color="#5AC8FA" />}
                     rightElement={
                         <Switch
                             value={fileDiffsSidebar}
@@ -42,7 +40,6 @@ export default function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.groupToolCalls')}
                     subtitle={t('settingsFeatures.groupToolCallsSubtitle')}
-                    icon={<Ionicons name="layers-outline" size={29} color="#AF52DE" />}
                     rightElement={
                         <Switch
                             value={groupToolCalls}
@@ -54,7 +51,6 @@ export default function FeaturesSettingsScreen() {
                 <Item
                     title="Sort by Recent Activity"
                     subtitle="Order the session list by last activity instead of creation date"
-                    icon={<Ionicons name="swap-vertical-outline" size={29} color="#FF9500" />}
                     rightElement={
                         <Switch
                             value={sortSessionsByActivity}
@@ -73,7 +69,6 @@ export default function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.experimentalFeatures')}
                     subtitle={experiments ? t('settingsFeatures.experimentalFeaturesEnabled') : t('settingsFeatures.experimentalFeaturesDisabled')}
-                    icon={<Ionicons name="flask-outline" size={29} color="#5856D6" />}
                     rightElement={
                         <Switch
                             value={experiments}
@@ -85,7 +80,6 @@ export default function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.markdownCopyV2')}
                     subtitle={t('settingsFeatures.markdownCopyV2Subtitle')}
-                    icon={<Ionicons name="text-outline" size={29} color="#34C759" />}
                     rightElement={
                         <Switch
                             value={markdownCopyV2}
@@ -97,7 +91,6 @@ export default function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.hideInactiveSessions')}
                     subtitle={t('settingsFeatures.hideInactiveSessionsSubtitle')}
-                    icon={<Ionicons name="eye-off-outline" size={29} color="#FF9500" />}
                     rightElement={
                         <Switch
                             value={hideInactiveSessions}
@@ -109,7 +102,6 @@ export default function FeaturesSettingsScreen() {
                 <Item
                     title="Resume Session"
                     subtitle="Resume disconnected Claude Code and Codex sessions via the machine daemon"
-                    icon={<Ionicons name="play-circle-outline" size={29} color="#30D158" />}
                     rightElement={
                         <Switch
                             value={expResumeSession}
@@ -121,7 +113,6 @@ export default function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.imageUpload')}
                     subtitle={t('settingsFeatures.imageUploadSubtitle')}
-                    icon={<Ionicons name="image-outline" size={29} color="#FF2D55" />}
                     rightElement={
                         <Switch
                             value={expImageUpload}
@@ -140,7 +131,6 @@ export default function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.disableAnalytics')}
                     subtitle={analyticsOptOut ? t('settingsFeatures.analyticsDisabled') : t('settingsFeatures.analyticsEnabled')}
-                    icon={<Ionicons name="analytics-outline" size={29} color="#FF3B30" />}
                     rightElement={
                         <Switch
                             value={analyticsOptOut}
@@ -160,7 +150,6 @@ export default function FeaturesSettingsScreen() {
                     <Item
                         title={t('settingsFeatures.enterToSend')}
                         subtitle={agentInputEnterToSend ? t('settingsFeatures.enterToSendEnabled') : t('settingsFeatures.enterToSendDisabled')}
-                        icon={<Ionicons name="return-down-forward-outline" size={29} color="#007AFF" />}
                         rightElement={
                             <Switch
                                 value={agentInputEnterToSend}
@@ -172,7 +161,6 @@ export default function FeaturesSettingsScreen() {
                     <Item
                         title={t('settingsFeatures.commandPalette')}
                         subtitle={commandPaletteEnabled ? t('settingsFeatures.commandPaletteEnabled') : t('settingsFeatures.commandPaletteDisabled')}
-                        icon={<Ionicons name="keypad-outline" size={29} color="#007AFF" />}
                         rightElement={
                             <Switch
                                 value={commandPaletteEnabled}

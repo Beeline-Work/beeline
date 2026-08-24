@@ -1,5 +1,5 @@
 import React from 'react';
-import { Ionicons } from '@expo/vector-icons';
+import { Text } from 'react-native';
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
 import { ItemList } from '@/components/ItemList';
@@ -82,18 +82,9 @@ export default function LanguageSettingsScreen() {
                         key={option.key}
                         title={option.title}
                         subtitle={option.subtitle}
-                        icon={<Ionicons 
-                            name="language-outline" 
-                            size={29} 
-                            color="#007AFF" 
-                        />}
                         rightElement={
                             currentSelection === option.key ? (
-                                <Ionicons 
-                                    name="checkmark" 
-                                    size={20} 
-                                    color="#007AFF" 
-                                />
+                                <Text style={{ color: theme.buzz.accent, fontFamily: theme.buzz.monoSemibold, fontSize: 17 }}>✓</Text>
                             ) : null
                         }
                         onPress={() => handleLanguageChange(option.key)}

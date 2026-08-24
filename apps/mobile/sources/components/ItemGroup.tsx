@@ -4,10 +4,8 @@ import {
     Text,
     StyleProp,
     ViewStyle,
-    TextStyle,
-    Platform
+    TextStyle
 } from 'react-native';
-import { Typography } from '@/constants/Typography';
 import { layout } from './layout';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -35,49 +33,40 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         width: '100%',
         maxWidth: layout.maxWidth,
-        paddingHorizontal: Platform.select({ ios: 0, default: 4 }),
+        paddingHorizontal: 0,
     },
     header: {
-        paddingTop: Platform.select({ ios: 35, default: 16 }),
-        paddingBottom: Platform.select({ ios: 6, default: 8 }),
-        paddingHorizontal: Platform.select({ ios: 32, default: 24 }),
+        paddingTop: 24,
+        paddingBottom: 8,
+        paddingHorizontal: 20,
     },
     headerNoTitle: {
-        paddingTop: Platform.select({ ios: 20, default: 16 }),
+        paddingTop: 12,
     },
     headerText: {
-        ...Typography.default('regular'),
-        color: theme.colors.groupped.sectionTitle,
-        fontSize: Platform.select({ ios: 13, default: 14 }),
-        lineHeight: Platform.select({ ios: 18, default: 20 }),
-        letterSpacing: Platform.select({ ios: -0.08, default: 0.1 }),
+        fontFamily: theme.buzz.monoSemibold,
+        color: theme.buzz.chrome,
+        fontSize: 11,
+        lineHeight: 16,
+        letterSpacing: 1.1,
         textTransform: 'uppercase',
-        fontWeight: Platform.select({ ios: 'normal', default: '500' }),
     },
     contentContainer: {
-        backgroundColor: theme.colors.surface,
-        marginHorizontal: Platform.select({ ios: 16, default: 12 }),
-        borderRadius: Platform.select({ web: 16, default: 14 }),
-        borderWidth: Platform.select({ web: 0, default: StyleSheet.hairlineWidth }),
-        borderColor: theme.colors.divider,
-        overflow: 'hidden',
-        shadowColor: Platform.select({ web: theme.colors.shadow.color, default: 'transparent' }),
-        shadowOffset: { width: 0, height: 0.33 },
-        shadowOpacity: Platform.select({ web: theme.colors.shadow.opacity, default: 0 }),
-        shadowRadius: 0,
-        elevation: Platform.select({ web: 1, default: 0 }),
+        backgroundColor: 'transparent',
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.buzz.border,
     },
     footer: {
-        paddingTop: Platform.select({ ios: 6, default: 8 }),
-        paddingBottom: Platform.select({ ios: 8, default: 16 }),
-        paddingHorizontal: Platform.select({ ios: 32, default: 24 }),
+        paddingTop: 8,
+        paddingBottom: 4,
+        paddingHorizontal: 20,
     },
     footerText: {
-        ...Typography.default('regular'),
-        color: theme.colors.groupped.sectionTitle,
-        fontSize: Platform.select({ ios: 13, default: 14 }),
-        lineHeight: Platform.select({ ios: 18, default: 20 }),
-        letterSpacing: Platform.select({ ios: -0.08, default: 0 }),
+        fontFamily: theme.buzz.proseRegular,
+        color: theme.buzz.textMuted,
+        fontSize: 12,
+        lineHeight: 18,
     },
 }));
 

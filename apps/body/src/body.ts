@@ -5321,6 +5321,21 @@ export class Body {
       editPolicy === 'named-repository'
         ? namedRepositoryTargetFromRoomRequest(request.content)
         : undefined;
+    // Receipt belongs to the daemon, not the harness. Publish it before lazy
+    // provisioning can start the ACP process (or spend time rebuilding its
+    // context) so a cold session never looks like a dead daemon. The logical
+    // id is stable before a physical session exists and across reactivation.
+    const receiptSessionId =
+      this.sessions.get(tlcChannelId)?.logicalSessionId ??
+      `${this.agentIdentity.publicKey}:${tlcChannelId}`;
+    await postAgentTurnStatus(
+      tlcChannelId,
+      this.agentIdentity,
+      request.eventId,
+      receiptSessionId,
+      'working',
+      this.presenceGenerations.get(tlcChannelId),
+    );
     let session: AgentSession;
     try {
       session =
@@ -5332,6 +5347,19 @@ export class Body {
         );
       }
     } catch (error) {
+      await postAgentTurnStatus(
+        tlcChannelId,
+        this.agentIdentity,
+        request.eventId,
+        receiptSessionId,
+        'failed',
+        this.presenceGenerations.get(tlcChannelId),
+      ).catch((statusError) =>
+        console.error(
+          '[body] failed to replace Room receipt after session start failure:',
+          statusError,
+        ),
+      );
       if (!(error instanceof ReadOnlyToolsUnavailableError)) throw error;
       await this.durableState.appendConversation(tlcChannelId, {
         role: 'user',
@@ -5412,14 +5440,6 @@ export class Body {
     this.pendingRoomTurns.set(tlcChannelId, turn);
     let promptAttempted = false;
     try {
-      await postAgentTurnStatus(
-        tlcChannelId,
-        this.agentIdentity,
-        request.eventId,
-        session.logicalSessionId ?? session.sessionId,
-        'working',
-        this.presenceGenerations.get(tlcChannelId),
-      );
       promptAttempted = true;
       const promptOptions = {
         channelId: tlcChannelId,
@@ -9926,6 +9946,20 @@ export class Body {
           continue;
         }
 
+        // The daemon owns receipt visibility. Refresh the canonical WORKING
+        // lease and publish the thinking indicator before slash-command
+        // marking, conversation reads/context assembly, or lazy ACP
+        // activation can delay visible acknowledgement of this steer.
+        await this.noteCornerTurnStart(info);
+        await postAgentTurnStatus(
+          subchannelId,
+          this.agentIdentity,
+          evt.id,
+          session.logicalSessionId ?? session.sessionId,
+          'working',
+          this.presenceGenerations.get(subchannelId),
+        );
+
         // Forward the member's message into the active run when possible. If
         // the original task ended between polling and delivery, wait for its
         // cleanup and preserve this message as the next ordered prompt.
@@ -9942,9 +9976,6 @@ export class Body {
         // working" notice about the turn currently in flight would be
         // answering this message rather than describing the backend.
         this.noteInboundMessage(subchannelId);
-        // A human message starts a fresh episode: any standing quiet period
-        // and its spent conclude-nudge budget end here.
-        await this.noteCornerTurnStart(info);
         let promptAttempted = false;
         try {
           let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
@@ -9952,14 +9983,6 @@ export class Body {
             // A follow-up starts a checklist, not a new corner. Keep the
             // immutable create-event objective out of ordinary chat.
             await this.startCornerPlan(session, info.taskDescription || evt.content);
-            await postAgentTurnStatus(
-              subchannelId,
-              this.agentIdentity,
-              evt.id,
-              session.logicalSessionId ?? session.sessionId,
-              'working',
-              this.presenceGenerations.get(subchannelId),
-            );
             promptAttempted = true;
             return this.promptAgent(
               session,

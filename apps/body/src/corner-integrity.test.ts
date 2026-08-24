@@ -470,6 +470,9 @@ describe('an approved change lands even while a corner is mid-turn', () => {
       }) as never,
     );
     vi.spyOn(fixture.body as never, 'pollMergeCompletions' as never).mockResolvedValue(0 as never);
+    vi.spyOn(fixture.body as never, 'reconcileCornerExistence' as never).mockResolvedValue(
+      undefined as never,
+    );
     vi.spyOn(fixture.body as never, 'pollAbandonedCornerCloses' as never).mockResolvedValue(
       undefined as never,
     );

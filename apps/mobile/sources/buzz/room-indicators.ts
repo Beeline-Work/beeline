@@ -1,8 +1,6 @@
 import {
-  cornerStatusPrecedence,
   isCornerTerminal,
-  mergeCornerStatuses,
-  type CornerActivitySignal,
+  currentCornerStatus,
   type CornerStatus,
   type CornerSummary,
 } from './corners';
@@ -17,17 +15,13 @@ import {
  *   channel (`postAgentTurnStatus`, `apps/body/src/body.ts`). It is transient,
  *   it names no corner, and it is nothing to tap.
  *
- *   **A corner is open.** A child edit channel exists and has not landed,
- *   failed, or closed. Wire signal: the corner's own status card, published to
- *   the *parent* Room with a `subchannel` tag (`postParentCornerStatus`, plus
- *   the `status=archived` close notice), and the relay-read lifecycle list.
+ *   **A corner is active.** A child edit channel exists and its canonical
+ *   parameterized-replaceable state record says `working` within the freshness
+ *   horizon. Parent-Room kind:9 body-control `corner-open` / `corner-close`
+ *   messages are transcript history only and are never lifecycle authority.
  *
- * The daemon has always published these as two unrelated streams. The client
- * used to fold the first into the second — so a plain question lit the pinned
- * gold corner line, pointed at whatever corner was last on record, archived or
- * not, and let the reader tap into a read-only channel. `selectPinnedCorner`
- * takes corner state and nothing else; the turn indicator takes turn state and
- * nothing else; neither can see the other's input.
+ * `selectPinnedCorner` takes canonical corner state and nothing else; the turn
+ * indicator and transcript control messages cannot promote a corner into it.
  */
 export type PinnedCorner = {
   cornerId: string;
@@ -35,20 +29,9 @@ export type PinnedCorner = {
 };
 
 export type PinnedCornerInput = {
-  /** Live corner status cards projected from this Room's transcript. */
-  signals: readonly CornerActivitySignal[];
-  /** The relay-read lifecycle snapshot for this Room's corners. */
+  /** Canonical daemon lifecycle snapshots for relay-existing corners. */
   lifecycle: readonly CornerSummary[];
-  /** False until `listSubchannelLifecycle` has actually answered. */
-  lifecycleLoaded: boolean;
-  /**
-   * A corner a write-permission ALLOW just opened, which may still have no
-   * status card and no lifecycle row of its own. Honoured only when *neither*
-   * source knows the corner yet, AND the ALLOW event is recent — a stale ALLOW
-   * whose lifecycle cards scrolled out of the capped-recent window must not
-   * resurrect an archived corner.
-   */
-  permittedCorner?: { cornerId: string; timestamp: number };
+  now?: number;
 };
 
 /**
@@ -83,31 +66,16 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   const seenAt = new Map<string, number>();
 
   for (const corner of input.lifecycle) {
-    // Idle-without-finishing (`null`) IS needs-human under THE three-word
-    // verdict — pinnable, on the quiet tier like every non-working state.
-    status.set(
+    // A transcript-derived `status` without the canonical machine record is
+    // not lifecycle authority. In particular, a parent kind:9 corner-open
+    // control message can remain in history forever and must never pin itself.
+    if (!corner.machineState) continue;
+    const canonical = currentCornerStatus(corner, input.now);
+    if (canonical !== null) status.set(corner.id, canonical);
+    seenAt.set(
       corner.id,
-      mergeCornerStatuses(status.get(corner.id), corner.status ?? 'needs-attention')!,
+      Math.max(seenAt.get(corner.id) ?? 0, corner.lastActivityAt ?? corner.createdAt ?? 0),
     );
-    seenAt.set(corner.id, Math.max(seenAt.get(corner.id) ?? 0, corner.lastActivityAt ?? corner.createdAt ?? 0));
-  }
-  for (const signal of input.signals) {
-    status.set(signal.subchannelId, mergeCornerStatuses(status.get(signal.subchannelId), signal.status)!);
-    seenAt.set(signal.subchannelId, Math.max(seenAt.get(signal.subchannelId) ?? 0, signal.timestamp));
-  }
-
-  // A corner nobody has any record of yet is one that was permitted moments
-  // ago and whose `starting` card is still in flight. Reporting it as `live`
-  // is the honest reading, and it is only reachable once the lifecycle list
-  // has answered — before that, "unknown" cannot be told from "archived".
-  // A stale ALLOW whose cards have scrolled out of the window must not
-  // resurrect an archived corner: the caller already filtered by recency.
-  if (
-    input.permittedCorner?.cornerId &&
-    input.lifecycleLoaded &&
-    !status.has(input.permittedCorner.cornerId)
-  ) {
-    return { cornerId: input.permittedCorner.cornerId, status: 'live' };
   }
 
   const candidates = [...status.entries()]

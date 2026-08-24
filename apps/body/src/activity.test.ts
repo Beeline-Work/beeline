@@ -27,11 +27,13 @@ import {
   AGENT_MESSAGE_TAG,
   buildAgentMessage,
   postAgentMessage,
+  retractAgentDraft,
+  retractAgentPresence,
   postAgentStallNotice,
   postSteerQueuedNotice,
   STEER_QUEUED_TAG,
 } from './activity.js';
-import { KIND_AGENT_DRAFT, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
+import { KIND_AGENT_DRAFT, KIND_AGENT_PRESENCE, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
 
 const published = mocks.published;
 
@@ -71,7 +73,12 @@ describe('projectActivity granularity', () => {
   }
 
   it('suppresses MCP, shell output, and reasoning while projecting an inspectable edit milestone', async () => {
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     // Reasoning / planning noise, including the bare ACP names sent by some agents.
     emit({ sessionUpdate: 'agent_thought_chunk', content: 'Let me think about this…' });
@@ -83,7 +90,11 @@ describe('projectActivity granularity', () => {
       toolCall('codegraph-1', {
         kind: 'execute',
         title: 'mcp.codegraph.codegraph_context',
-        rawInput: { server: 'codegraph', tool: 'codegraph_context', arguments: { query: 'activity' } },
+        rawInput: {
+          server: 'codegraph',
+          tool: 'codegraph_context',
+          arguments: { query: 'activity' },
+        },
       }),
     );
     emit(
@@ -109,10 +120,21 @@ describe('projectActivity granularity', () => {
         rawInput: { command: 'rg -n "activity_batch" apps/body/src' },
       }),
     );
-    emit(toolCallUpdate('shell-2', { status: 'completed', output: 'apps/body/src/activity.ts:activity_batch' }));
+    emit(
+      toolCallUpdate('shell-2', {
+        status: 'completed',
+        output: 'apps/body/src/activity.ts:activity_batch',
+      }),
+    );
 
     // The one load-bearing edit.
-    emit(toolCall('edit-1', { kind: 'edit', title: 'str_replace', rawInput: { path: 'src/activity.ts' } }));
+    emit(
+      toolCall('edit-1', {
+        kind: 'edit',
+        title: 'str_replace',
+        rawInput: { path: 'src/activity.ts' },
+      }),
+    );
     emit(toolCallUpdate('edit-1', { status: 'completed' }));
 
     await vi.advanceTimersByTimeAsync(5_000);
@@ -148,8 +170,16 @@ describe('projectActivity granularity', () => {
     const observed = (updates[1] as { observed: Array<Record<string, unknown>> }).observed;
     expect(observed).toEqual([
       { verb: 'searched', target: 'grep for TODO' },
-      { verb: 'ran', target: "sed -n '1,140p' apps/body/src/activity.ts", result: 'const rawOutput = true;' },
-      { verb: 'ran', target: 'rg -n "activity_batch" apps/body/src', result: 'apps/body/src/activity.ts:activity_batch' },
+      {
+        verb: 'ran',
+        target: "sed -n '1,140p' apps/body/src/activity.ts",
+        result: 'const rawOutput = true;',
+      },
+      {
+        verb: 'ran',
+        target: 'rg -n "activity_batch" apps/body/src',
+        result: 'apps/body/src/activity.ts:activity_batch',
+      },
     ]);
     const projection = JSON.stringify(content);
     // MCP internals and raw reasoning content stay implementation detail even
@@ -162,7 +192,12 @@ describe('projectActivity granularity', () => {
   });
 
   it('surfaces a failed test suite as an inspectable blocker with its command and output', async () => {
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     emit(
       toolCall('test-err', {
@@ -202,7 +237,12 @@ describe('projectActivity granularity', () => {
     // The plan is the only source for the corner's pinned objective panel, and
     // it reaches the wire on the `activity_summary` event that a batch already
     // sends — never on a wire of its own. ACP's own `plan` update shape.
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     emit({
       sessionUpdate: 'plan',
@@ -241,17 +281,21 @@ describe('projectActivity granularity', () => {
     // This is the first agent-activity event of the corner turn. No ACP plan
     // update is emitted anywhere in this proof: it models claude/deepseek
     // adapters that do not volunteer one.
-    await projection.startPlan(`  **Fix** the corner checklist\nwithout echoing ${'x'.repeat(300)}  `);
+    await projection.startPlan(
+      `  **Fix** the corner checklist\nwithout echoing ${'x'.repeat(300)}  `,
+    );
 
     emit(toolCall('search-plan', { kind: 'search', title: 'search_text' }));
     emit(toolCallUpdate('search-plan', { status: 'completed' }));
     await vi.advanceTimersByTimeAsync(5_000);
 
-    emit(toolCall('test-plan', {
-      kind: 'execute',
-      title: 'shell',
-      rawInput: { command: 'npm test -- --run' },
-    }));
+    emit(
+      toolCall('test-plan', {
+        kind: 'execute',
+        title: 'shell',
+        rawInput: { command: 'npm test -- --run' },
+      }),
+    );
     emit(toolCallUpdate('test-plan', { status: 'completed', output: '12 passed' }));
     await vi.advanceTimersByTimeAsync(5_000);
     await projection.completePlan();
@@ -365,7 +409,12 @@ describe('projectActivity granularity', () => {
   it('re-sends the plan only when it actually changed', async () => {
     // A ten-step checklist re-sent on every 5s batch is exactly the kind of
     // per-pubkey relay-quota pressure the activity fold exists to avoid.
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     emit({ sessionUpdate: 'plan', entries: [{ content: 'Step one', status: 'in_progress' }] });
     await vi.advanceTimersByTimeAsync(5_000);
@@ -398,7 +447,12 @@ describe('projectActivity granularity', () => {
     // Not every harness sends ACP's `plan` update — some model the same thing
     // as a tool call, which `isMajorUpdate` correctly refuses to project as a
     // milestone. The plan still has to reach the objective panel.
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     emit(
       toolCall('plan-1', {
@@ -436,7 +490,12 @@ describe('projectActivity granularity', () => {
   });
 
   it('publishes a bare tally, not silence, when a batch only observed', async () => {
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     emit({ sessionUpdate: 'agent_thought_chunk', content: 'inspecting the code' });
     emit(toolCall('search-only', { kind: 'search', title: 'search_text' }));
@@ -467,14 +526,22 @@ describe('projectActivity granularity', () => {
   });
 
   it('collapses a reasoning stretch to a bare elapsed receipt, never its content', async () => {
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     // grok Build shows a live `Thinking…` block for the whole stretch and then
     // collapses it to `Thought for 5.8s` the instant the answer lands. Only
     // the second half is affordable here: reasoning text is unbounded and
     // would blow the per-pubkey quota, so the span rides the summary event
     // that is published anyway and the content never leaves the daemon.
-    emit({ sessionUpdate: 'agent_thought_chunk', content: 'the median bug is the even-length case' });
+    emit({
+      sessionUpdate: 'agent_thought_chunk',
+      content: 'the median bug is the even-length case',
+    });
     await vi.advanceTimersByTimeAsync(2_000);
     emit({ sessionUpdate: 'agent_thought_chunk', content: 'and mean([]) divides by zero' });
     emit(toolCall('read-1', { kind: 'read', title: 'read_file' }));
@@ -500,7 +567,12 @@ describe('projectActivity granularity', () => {
   });
 
   it('carries one reasoning span across batches instead of reporting it per window', async () => {
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     // A think that outlasts the 5s batch window used to have no way to be
     // reported at all. It must not become one receipt per window either: the
@@ -531,7 +603,12 @@ describe('projectActivity granularity', () => {
   });
 
   it('omits the receipt for a think too short to be worth reporting', async () => {
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     emit({ sessionUpdate: 'agent_thought_chunk', content: 'a' });
     await vi.advanceTimersByTimeAsync(100);
@@ -549,7 +626,12 @@ describe('projectActivity granularity', () => {
   });
 
   it('never counts a published milestone as an anonymous observational call', async () => {
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     // The major branch clears this call's tracked kind/command once it has been
     // published, so anything re-classifying the same event afterwards sees an
@@ -576,10 +658,23 @@ describe('projectActivity granularity', () => {
   });
 
   it('attaches a compact per-call receipt for folded calls, not just their tally', async () => {
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
-    emit(toolCall('read-detail', { kind: 'read', title: 'read_file', rawInput: { path: 'src/foo.ts' } }));
-    emit(toolCallUpdate('read-detail', { status: 'completed', output: 'export function foo() {}' }));
+    emit(
+      toolCall('read-detail', {
+        kind: 'read',
+        title: 'read_file',
+        rawInput: { path: 'src/foo.ts' },
+      }),
+    );
+    emit(
+      toolCallUpdate('read-detail', { status: 'completed', output: 'export function foo() {}' }),
+    );
 
     await vi.advanceTimersByTimeAsync(5_000);
     unsubscribe();
@@ -600,10 +695,21 @@ describe('projectActivity granularity', () => {
   });
 
   it('truncates a folded call receipt and caps how many a batch carries', async () => {
-    const unsubscribe = projectActivity(client as unknown as AcpClient, channelId, owner, sessionId);
+    const unsubscribe = projectActivity(
+      client as unknown as AcpClient,
+      channelId,
+      owner,
+      sessionId,
+    );
 
     // A receipt long enough to need truncation.
-    emit(toolCall('read-long', { kind: 'read', title: 'read_file', rawInput: { path: 'src/long.ts' } }));
+    emit(
+      toolCall('read-long', {
+        kind: 'read',
+        title: 'read_file',
+        rawInput: { path: 'src/long.ts' },
+      }),
+    );
     emit(toolCallUpdate('read-long', { status: 'completed', output: 'x'.repeat(500) }));
 
     // More folded calls than the per-batch cap.
@@ -885,7 +991,9 @@ describe('nextNarrativeSegment', () => {
 
   it('falls back to a sentence boundary once a single paragraph runs past the ceiling', () => {
     const sentence = 'This keeps going without a paragraph break. ';
-    const fullText = sentence.repeat(Math.ceil((NARRATIVE_SEGMENT_MAX_CHARS + 20) / sentence.length));
+    const fullText = sentence.repeat(
+      Math.ceil((NARRATIVE_SEGMENT_MAX_CHARS + 20) / sentence.length),
+    );
     const segment = nextNarrativeSegment(fullText, 0);
     expect(segment).toBeDefined();
     expect(segment!.consumed).toBeLessThanOrEqual(NARRATIVE_SEGMENT_MAX_CHARS);
@@ -913,9 +1021,7 @@ describe('createNarrativeCommitter', () => {
     await flush();
     expect(published).toHaveLength(0); // still one growing paragraph, nothing to commit yet
 
-    narrator.onChunk(
-      "I'll start by reproducing the bug.\n\nFound it in the parser, fixing now.",
-    );
+    narrator.onChunk("I'll start by reproducing the bug.\n\nFound it in the parser, fixing now.");
     await flush();
     expect(published).toHaveLength(1);
     expect(published[0]!.content).toBe("I'll start by reproducing the bug.");
@@ -962,14 +1068,16 @@ describe('createNarrativeCommitter', () => {
     // remove the boilerplate line, not the real narration after it.
     const narrator = createNarrativeCommitter(channelId, owner);
     const warning = 'Notice: Tool descriptions were shortened because of the context budget limit.';
-    narrator.onChunk(`${warning}\nCodex can still access every tool.\n\nReproducing the bug now.\n\n`);
+    narrator.onChunk(
+      `${warning}\nCodex can still access every tool.\n\nReproducing the bug now.\n\n`,
+    );
     await narrator.finish();
 
     expect(published).toHaveLength(1);
     expect(published[0]!.content).toBe('Reproducing the bug now.');
   });
 
-  it('never publishes pi-acp\'s quiet-mode version-update banner', async () => {
+  it("never publishes pi-acp's quiet-mode version-update banner", async () => {
     const narrator = createNarrativeCommitter(channelId, owner);
     const banner =
       'New version available: v0.84.2 (installed v0.83.0). Run: `npm i -g @earendil-works/pi-coding-agent`';
@@ -1225,6 +1333,39 @@ describe('createNarrativeCommitter', () => {
   });
 });
 
+describe('terminal corner activity replacements', () => {
+  beforeEach(() => {
+    published.length = 0;
+  });
+
+  it('overwrites draft and presence on their one existing d-key in a live parent scope', async () => {
+    const owner = newIdentity('terminal-activity-agent');
+    await retractAgentDraft('dead-corner', 'parent-room', owner, 101);
+    await retractAgentPresence('dead-corner', 'parent-room', owner, 102);
+
+    expect(published).toHaveLength(2);
+    expect(published[0]).toMatchObject({ kind: KIND_AGENT_DRAFT, created_at: 101, content: '' });
+    expect(published[0]!.tags).toEqual(
+      expect.arrayContaining([
+        ['d', 'agent-draft:dead-corner'],
+        ['h', 'parent-room'],
+        ['status', 'closed'],
+        ['corner', 'dead-corner'],
+      ]),
+    );
+    expect(published[1]).toMatchObject({ kind: KIND_AGENT_PRESENCE, created_at: 102 });
+    expect(published[1]!.tags).toEqual(
+      expect.arrayContaining([
+        ['d', 'agent-presence:dead-corner'],
+        ['h', 'parent-room'],
+        ['status', 'offline'],
+        ['terminal', 'closed'],
+        ['corner', 'dead-corner'],
+      ]),
+    );
+  });
+});
+
 describe('postSteerQueuedNotice', () => {
   beforeEach(() => {
     published.length = 0;
@@ -1269,15 +1410,7 @@ describe('postAgentStallNotice', () => {
     const owner = newIdentity('stall-thread-agent');
     const replyTo = 'nested-request';
     const replyRoot = 'room-thread-root';
-    const normalReply = buildAgentMessage(
-      'room-9',
-      owner,
-      'Finished.',
-      replyTo,
-      [],
-      [],
-      replyRoot,
-    );
+    const normalReply = buildAgentMessage('room-9', owner, 'Finished.', replyTo, [], [], replyRoot);
 
     await postAgentStallNotice('room-9', owner, replyTo, replyRoot);
 

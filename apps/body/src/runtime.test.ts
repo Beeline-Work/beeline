@@ -14,7 +14,9 @@ import {
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   inspectLocalRepository,
+  identityFromKey,
   migrateRuntimeRecordAccessPolicy,
+  mintAgentIdentityForPairing,
   normalizeRelayBaseUrl,
   pairRepositoryAgent,
   tryInspectLocalRepository,
@@ -56,6 +58,16 @@ afterEach(async () => {
 });
 
 describe('repository binding', () => {
+  it('mints every paired agent independently of a human identity on the device', () => {
+    const human = identityFromKey('11'.repeat(32), 'human');
+    const firstAgent = mintAgentIdentityForPairing();
+    const secondAgent = mintAgentIdentityForPairing();
+
+    expect(firstAgent.publicKey).not.toBe(human.publicKey);
+    expect(secondAgent.publicKey).not.toBe(human.publicKey);
+    expect(secondAgent.publicKey).not.toBe(firstAgent.publicKey);
+  });
+
   it('normalizes credentialed HTTPS and SSH clones to the same remote identity', () => {
     expect(canonicalizeOrigin('https://token@example.com/Acme/widget.git', '/tmp/repo')).toBe(
       'git://example.com/Acme/widget',

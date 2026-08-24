@@ -87,7 +87,7 @@ function deliveryKey(event: NostrEvent, type: string): string {
  * The relay applies one quota to this daemon. A full registry scan every tick
  * exhausts that quota and repeatedly aborts on the first identity. Round-robin
  * polling bounds the request rate, advances past failures, and preserves a
- * separate cursor for each ACL-scoped reader.
+ * separate cursor for each member-scoped reader.
  */
 export class RegisteredEventPoller {
   private cursor = 0;
@@ -129,7 +129,7 @@ export class RegisteredEventPoller {
       for (const event of events) {
         newestCreatedAt = Math.max(newestCreatedAt, event.created_at);
         if (this.deliveryState.isBehindCursor(recipientPubkey, event.created_at)) continue;
-        await this.handleEvent(event, recipientPubkey, reader);
+        await this.handleEvent(event, recipientPubkey, reader.forEvent?.(event) ?? reader);
       }
       await this.deliveryState.advanceCursor(recipientPubkey, newestCreatedAt);
       return 'polled';
@@ -210,8 +210,8 @@ export class PushGateway {
       return;
     }
 
-    // The relay query was performed as this registered identity, so visibility
-    // is the membership/ACL decision. Deliver only to that reader's devices.
+    // The database feed admitted this row through the registered identity's
+    // active channel membership. Deliver only to that recipient's devices.
     const tokens = this.registry.tokensForPubkeys([recipientPubkey]);
     if (tokens.length === 0) {
       this.trace(event, recipientPubkey, 'skip', 'no-devices');
@@ -260,7 +260,11 @@ export class PushGateway {
           )}`,
         );
       }
-      plan = mapMembershipJoinToNotification(event, context, joinerName ?? fallbackPersonName(join.joinerPubkey));
+      plan = mapMembershipJoinToNotification(
+        event,
+        context,
+        joinerName ?? fallbackPersonName(join.joinerPubkey),
+      );
     } else {
       plan = mapEventToNotification(event, context, { recipientMentioned: mention });
     }

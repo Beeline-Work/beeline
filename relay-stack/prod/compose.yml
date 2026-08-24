@@ -99,8 +99,7 @@ services:
       NODE_ENV: production
       PORT: "8788"
       BUZZY_PUSH_HOST: 0.0.0.0
-      BUZZY_RELAY_URL: ${BUZZY_PUSH_RELAY_URL:-http://relay:3000}
-      BUZZY_RELAY_HOST: ${BUZZY_RELAY_HOST:-usebeeline.app}
+      BUZZY_PUSH_DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
       BUZZY_PUSH_SA_FILE: /run/secrets/buzzy-fcm-service-account.json
       BUZZY_PUSH_REGISTRY_FILE: /var/lib/buzzy-push/registrations.json
       BUZZY_PUSH_DELIVERY_STATE_FILE: /var/lib/buzzy-push/deliveries.json
@@ -108,7 +107,7 @@ services:
       - ${BUZZY_PUSH_SA_HOST_FILE:-/home/lunchbox/buzzy-push-gateway/secrets/fcm-service-account.json}:/run/secrets/buzzy-fcm-service-account.json:ro
       - ${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}:/var/lib/buzzy-push
     depends_on:
-      relay:
+      postgres:
         condition: service_healthy
     healthcheck:
       test:
@@ -160,6 +159,10 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - buzz-postgres-data:/var/lib/postgresql/data
+    ports:
+      # The live gateway is currently a host user-service. Keep its DB path
+      # loopback-only; the container topology uses the internal `postgres` DNS.
+      - "127.0.0.1:${BUZZ_POSTGRES_HOST_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s

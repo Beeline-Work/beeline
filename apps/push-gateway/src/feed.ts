@@ -1,5 +1,3 @@
-import type { RegisteredEventPoller } from './gateway.js';
-
 export interface PushEventFeedOptions {
   pollIntervalMs: number;
   heartbeatIntervalMs?: number;
@@ -13,13 +11,7 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
 const DEFAULT_RETRY_MAX_MS = 30_000;
 
 /**
- * Continuously drains the trusted, recipient-scoped relay query bridge.
- *
- * Buzz deliberately excludes channel-scoped events from global WebSocket
- * subscriptions. A gateway-wide `{kinds:[9]}` REQ therefore cannot wake for
- * Room messages, even after successful NIP-42 authentication. The trusted
- * query bridge is the only feed that can read as each registered recipient
- * without collecting their signing keys or weakening Room membership ACLs.
+ * Continuously drains the authoritative Postgres event feed.
  *
  * Polls are self-scheduled so a slow read can never overlap the next tick. A
  * failed read reconnects by issuing a fresh request after bounded exponential
@@ -43,7 +35,7 @@ export class PushEventFeed {
   private readonly error: (message: string) => void;
 
   constructor(
-    private readonly poller: Pick<RegisteredEventPoller, 'pollNext'>,
+    private readonly poller: { pollNext(): Promise<unknown> },
     private readonly options: PushEventFeedOptions,
   ) {
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
@@ -57,7 +49,7 @@ export class PushEventFeed {
     if (!this.stopped) return;
     this.stopped = false;
     this.log(
-      `[push] feed started mode=acl-query intervalMs=${this.options.pollIntervalMs} heartbeatMs=${this.heartbeatIntervalMs}`,
+      `[push] feed started mode=postgres-tail intervalMs=${this.options.pollIntervalMs} heartbeatMs=${this.heartbeatIntervalMs}`,
     );
     this.heartbeatTimer = setInterval(() => this.reportHeartbeat(), this.heartbeatIntervalMs);
     this.heartbeatTimer.unref?.();
@@ -88,7 +80,7 @@ export class PushEventFeed {
         if (!this.reportedLive) {
           this.reportedLive = true;
           this.log(
-            `[push] feed live mode=acl-query firstSuccess=${new Date(this.lastSuccessAt).toISOString()}`,
+            `[push] feed live mode=postgres-tail firstSuccess=${new Date(this.lastSuccessAt).toISOString()}`,
           );
         }
       }
@@ -98,7 +90,7 @@ export class PushEventFeed {
       delayMs = Math.min(this.options.pollIntervalMs * 2 ** exponent, this.retryMaxMs);
       this.consecutiveFailures += 1;
       this.error(
-        `[push] feed query failed error=${encodeURIComponent(
+        `[push] feed database query failed error=${encodeURIComponent(
           caught instanceof Error ? caught.message : String(caught),
         )} retryMs=${delayMs}`,
       );
@@ -113,7 +105,7 @@ export class PushEventFeed {
     const eventsPerMinute = Math.round((events * 60_000) / this.heartbeatIntervalMs);
     const lastSuccess = this.lastSuccessAt ? new Date(this.lastSuccessAt).toISOString() : 'never';
     this.log(
-      `[push] feed heartbeat mode=acl-query eventsPerMinute=${eventsPerMinute} events=${events} successfulPolls=${this.successfulPolls} failedPolls=${this.failedPolls} lastSuccess=${lastSuccess}`,
+      `[push] feed heartbeat mode=postgres-tail eventsPerMinute=${eventsPerMinute} events=${events} successfulPolls=${this.successfulPolls} failedPolls=${this.failedPolls} lastSuccess=${lastSuccess}`,
     );
     this.eventsSinceHeartbeat = 0;
     this.successfulPolls = 0;

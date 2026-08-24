@@ -44,6 +44,8 @@ import {
   stripAgentReplyPreamble,
   createDraftStreamer,
   createNarrativeCommitter,
+  retractAgentDraft,
+  retractAgentPresence,
   relayRetryAfterMs,
   latestActivityPlanFromEvents,
   type ActivityProjectionController,
@@ -86,6 +88,8 @@ import {
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_VERSION,
   KIND_AGENT_PRESENCE,
+  KIND_AGENT_DRAFT,
+  TAG_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
   WRITE_PERMISSION_REQUEST_TAG,
   WRITE_PERMISSION_RESPONSE_TAG,
@@ -121,8 +125,13 @@ import {
   isBeelineSlashCommand,
   beelineSlashCommandList,
   cornerStateKey,
+  agentDraftKey,
+  agentPresenceKey,
+  assertCornerStateTransition,
+  isCornerTerminalState,
   parseCornerStateRecord,
   KIND_CORNER_STATE,
+  TAG_CORNER_STATE,
   DEFAULT_AGENT_IDENTITY_NAME,
   DEFAULT_BODY_IDENTITY_NAME,
   type CornerMachineReason,
@@ -868,6 +877,9 @@ export interface SubchannelInfo {
    * which archives as soon as neither reports activity.
    */
   archiveWhenSessionRetires?: boolean;
+  /** Relay existence failed authoritatively. Cleanup retries use the missing-
+   * channel reap path rather than trying to archive a channel that is gone. */
+  missingFromRelay?: boolean;
   /**
    * Newest feature-branch tip the harness-independent commit watch has already
    * evaluated through `publishMergeReady`.
@@ -897,9 +909,9 @@ export interface SubchannelInfo {
    */
   conclude?: ConcludeEpisode;
   /**
-   * The daemon-authoritative three-state machine verdict this daemon last
-   * published for this corner (`working` / `waiting-on-human`+reason /
-   * `idle`). This in-memory copy is BOTH the edge-trigger
+   * The daemon-authoritative lifecycle state this daemon last
+   * published for this corner (`open` / `working` / `waiting`+reason /
+   * `idle` / `concluded` / `closed`). This in-memory copy is BOTH the edge-trigger
    * baseline — an unchanged state is never republished, the #369
    * transition-only discipline — and what `publishAttentionTransition`
    * compares against, replacing that function's relay history re-read. It is
@@ -3537,6 +3549,7 @@ export class Body {
       identity: this.agentIdentity,
     });
     try {
+      const terminalCornerIds = await this.sweepTerminalCornerRecords(parentChannelId, client);
       const communityId = await this.channelCommunityId(parentChannelId);
       const ids = await client.listSubchannels(parentChannelId);
       const parentEvents = await this.agentRelay.queryEvents([
@@ -3544,6 +3557,10 @@ export class Body {
       ]);
       for (const subchannelId of ids) {
         if (this.subchannels.has(subchannelId)) continue;
+        // Startup sweep has already closed this durable actor. Never create an
+        // ACP session merely because its child projection has not disappeared
+        // from a cached list yet.
+        if (terminalCornerIds.has(subchannelId)) continue;
         if ((await client.getChannelMetadata(subchannelId))?.archived) continue;
         // `listSubchannels` lists every child of the Room, whoever opened it.
         // In a multi-agent Room that includes corners another agent created
@@ -3816,7 +3833,7 @@ export class Body {
           this.abandonedCorners.delete(subchannelId);
           // Seed the state-machine baseline from the corner's own state record
           // and re-assert any derivable current state (a restored review
-          // target stays waiting-on-human/review). Edge suppression across a
+          // target stays waiting/review). Edge suppression across a
           // restart depends on this baseline being accurate.
           await this.seedCornerStateFromRecord(info, events);
           // The original human request remains the authority for unfinished
@@ -4279,8 +4296,10 @@ export class Body {
     };
 
     this.subchannels.set(subchannelId, info);
-    // State machine: a corner that just opened is working on its task.
-    this.setCornerState(info, 'working');
+    // Canonical lifecycle starts at OPEN, then moves to WORKING once the
+    // session actor is registered. Both writes are replaceable and serialized.
+    await this.transitionCornerState(info, 'open');
+    await this.transitionCornerState(info, 'working');
 
     const repoId = this.repoId(boundRepo);
     const targetBranch = boundRepo.targetBranch ?? 'refs/heads/main';
@@ -6216,7 +6235,7 @@ export class Body {
       try {
         // A human-opened (or daemon-restarted) task starts fresh: any standing
         // quiet episode and its spent nudge budget end here.
-        this.noteCornerTurnStart(info);
+        await this.noteCornerTurnStart(info);
         await this.postParentCornerStatus(info, 'working', `Agent is working on: ${prompt}`);
         await postAgentTurnStatus(
           info.subchannelId,
@@ -6361,7 +6380,7 @@ export class Body {
    * in `info.cornerState` (seeded from the state record at restore, updated by
    * every emission point) — when it already says the corner waits on a person,
    * a second identical card would carry no new fact. This used to re-read the
-   * corner's whole channel history and re-run the oracle on every
+   * corner's whole channel history and re-derive lifecycle on every
    * needs-attention card; the in-memory compare answers the same question with
    * no relay round-trip and cannot disagree with what this process published.
    */
@@ -6374,7 +6393,7 @@ export class Body {
         info.attentionNarrativePending = false;
       });
     }
-    if (info.cornerState?.state === 'waiting-on-human') {
+    if (info.cornerState?.state === 'waiting') {
       console.log(
         `[body] corner ${info.subchannelId}: needs-attention already standing (${info.cornerState.reason ?? 'no reason'}); suppressed restatement`,
       );
@@ -6779,7 +6798,7 @@ export class Body {
     // not do is no longer the standing condition being reported.
     info.lastLandFailure = undefined;
     // State machine: an approvable change is waiting on a person.
-    this.setCornerState(info, 'waiting-on-human', 'review');
+    await this.transitionCornerState(info, 'waiting', 'review');
     await this.postParentCornerStatus(info, 'ready', 'Work is ready for review.');
     // A target-sync or later work turn may have advanced the tip. Re-read the
     // durable corner approval immediately so the current work can land without
@@ -6956,9 +6975,9 @@ export class Body {
         info.lastApprovalReadFailure.reason !== reason
       ) {
         // This is an automatic retry, not a question for the owner. Compose
-        // with the durable three-state model as working so the deck never
+        // with the durable lifecycle model as working so the deck never
         // falsely golds a corner whose daemon is recovering on its own.
-        this.setCornerState(info, 'working');
+        await this.transitionCornerState(info, 'working');
         const surfaced = await publishCritical(
           () =>
             postControlMessage(
@@ -7036,9 +7055,9 @@ export class Body {
         ...(approvedPatchId ? { patchId: approvedPatchId } : {}),
         ...(realigned ? { realigned: true } : {}),
       };
-      // Approval custody moves the corner out of waiting-on-human even when
+      // Approval custody moves the corner out of waiting even when
       // the detailed receipt needs a relay retry: landing is daemon work now.
-      this.setCornerState(info, 'working');
+      await this.transitionCornerState(info, 'working');
       const ackKey = `${approval.id}:${target.tip}`;
       if (info.ackedApprovalId !== ackKey) {
         const acked = await publishCritical(
@@ -7456,7 +7475,7 @@ export class Body {
   ): Promise<boolean> {
     const branch = target.branch.replace(/^refs\/heads\//, '');
     const approvalId = info.humanMergeApproval?.id ?? target.tip;
-    this.setCornerState(info, 'working');
+    await this.transitionCornerState(info, 'working');
     await this.postLandingStage(info, 'realigning', {
       title: 'Realigning',
       status: 'in_progress',
@@ -7734,10 +7753,9 @@ export class Body {
    * half may hold up the teardown that follows a land.
    */
   private async recapLandedCorner(info: SubchannelInfo, landedTip: string): Promise<void> {
-    // State machine: terminal facts still come from the immutable land/archive
-    // records. The replaceable three-state word folds the corner to idle so it
-    // can never keep its Room in NEEDS YOU while teardown completes.
-    if (!info.archived) this.setCornerState(info, 'idle');
+    // A proven land is a canonical terminal conclusion. The later archive
+    // advances this to CLOSED after the session retires and cleanup completes.
+    if (!info.archived) await this.transitionCornerState(info, 'concluded');
     // Post-merge auto-realign: the instant a land is confirmed, every OTHER
     // open corner bound to this repository is brought up to date without its
     // human having to ask each agent. Fire-and-forget — realign work must
@@ -8104,6 +8122,185 @@ export class Body {
         `[body] deferred archive of landed corner ${subchannelId} failed; will retry:`,
         error,
       );
+    }
+  }
+
+  /** One authoritative metadata read seam, overrideable by focused tests. */
+  private readChannelMetadataForCorner(channelId: string) {
+    return getChannelMetadata(this.agentClientContext(), channelId);
+  }
+
+  /**
+   * Overwrite the two replaceable activity records a dead corner can leave
+   * behind. The replacement timestamps are advanced past the newest records
+   * we can read, so even a same-second stream or a clock-skewed predecessor is
+   * deterministically superseded.
+   */
+  private async retractCornerActivityRecords(
+    parentRoomId: string,
+    cornerId: string,
+  ): Promise<void> {
+    const events = await this.agentRelay.queryEvents([
+      {
+        kinds: [KIND_AGENT_DRAFT, KIND_AGENT_PRESENCE],
+        '#d': [agentDraftKey(cornerId), agentPresenceKey(cornerId)],
+        authors: [this.agentIdentity.publicKey],
+        limit: 20,
+      },
+    ]);
+    const floor = events.reduce(
+      (newest, event) => Math.max(newest, event.created_at),
+      Math.floor(Date.now() / 1_000),
+    );
+    await retractAgentDraft(cornerId, parentRoomId, this.agentIdentity, floor + 1);
+    await retractAgentPresence(cornerId, parentRoomId, this.agentIdentity, floor + 2);
+  }
+
+  /**
+   * Startup hygiene and crash recovery for records that have no live actor.
+   * A missing/archived child or dead parent advances the canonical record to
+   * CLOSED; an already-terminal record still gets its draft/presence sweep.
+   */
+  private async sweepTerminalCornerRecords(
+    parentRoomId: string,
+    client: ReturnType<typeof createBuzzClient>,
+  ): Promise<Set<string>> {
+    const [records, parentControls] = await Promise.all([
+      this.agentRelay.queryEvents([
+        {
+          kinds: [KIND_CORNER_STATE],
+          authors: [this.agentIdentity.publicKey],
+          '#t': [TAG_CORNER_STATE],
+          limit: 5_000,
+        },
+      ]),
+      // Migration hygiene for the incident's exact no-session shape: older
+      // daemons left only a durable corner-open card in the parent Room. That
+      // card is never state authority, but its subchannel id lets startup find
+      // and terminally replace pre-state-machine draft/presence ghosts.
+      this.agentRelay.queryEvents([
+        {
+          kinds: [9],
+          authors: [this.agentIdentity.publicKey],
+          '#h': [parentRoomId],
+          '#t': ['body-control'],
+          limit: 5_000,
+        },
+      ]),
+    ]);
+    const newest = new Map<string, CornerStateRecord>();
+    for (const event of records) {
+      if (tagValue(event, 'h') !== parentRoomId) continue;
+      const record = parseCornerStateRecord(event);
+      if (!record) continue;
+      const current = newest.get(record.cornerId);
+      if (!current || record.at >= current.at) newest.set(record.cornerId, record);
+    }
+    const candidateCornerIds = new Set(newest.keys());
+    for (const event of parentControls) {
+      const cornerId = tagValue(event, 'subchannel');
+      if (cornerId) candidateCornerIds.add(cornerId);
+    }
+    if (candidateCornerIds.size === 0) return new Set();
+    const terminalCornerIds = new Set<string>();
+    const parentMetadata = await client.getChannelMetadata(parentRoomId);
+    for (const cornerId of candidateCornerIds) {
+      const record = newest.get(cornerId);
+      const childMetadata = await client.getChannelMetadata(cornerId);
+      const exists =
+        parentMetadata !== null &&
+        parentMetadata.archived !== true &&
+        childMetadata !== null &&
+        childMetadata.archived !== true;
+      const terminal = record ? isCornerTerminalState(record.state) : false;
+      if (!exists || terminal) terminalCornerIds.add(cornerId);
+      if ((!exists || terminal) && record?.state !== 'closed') {
+        if (record) this.cornerStates.seedLastCreatedAt(cornerId, record.at);
+        await this.cornerStates.publish({
+          parentRoomId,
+          cornerId,
+          state: 'closed',
+        });
+      }
+      if (terminal && childMetadata?.archived !== true) {
+        await archiveChannel(this.agentIdentity, cornerId).catch((error) =>
+          console.warn(`[body] startup sweep could not archive corner ${cornerId}:`, error),
+        );
+      }
+      if (!exists || terminal) {
+        await this.retractCornerActivityRecords(parentRoomId, cornerId);
+      }
+    }
+    return terminalCornerIds;
+  }
+
+  /** Stop and reap a locally tracked actor whose relay channel disappeared. */
+  private async reapMissingCorner(info: SubchannelInfo): Promise<void> {
+    const parentRoomId = info.session.parentChannelId;
+    if (!parentRoomId) throw new Error(`corner ${info.subchannelId} has no parent Room`);
+    info.missingFromRelay = true;
+    info.archived = true;
+    info.session.archived = true;
+    try {
+      info.session.client.sessionCancel(info.session.sessionId);
+    } catch {
+      // A dead session is the expected incident shape.
+    }
+    try {
+      info.session.unsubscribeActivity?.();
+    } catch {
+      // Cleanup remains idempotent and retryable below.
+    }
+    try {
+      info.session.unsubscribeCommands?.();
+    } catch {
+      // Cleanup remains idempotent and retryable below.
+    }
+    await info.session.client.stop().catch(() => undefined);
+    await this.transitionCornerState(info, 'closed');
+    await this.retractCornerActivityRecords(parentRoomId, info.subchannelId);
+    await this.removeWorktree(
+      info.subchannelId,
+      info.worktreePath,
+      info.featureBranch,
+      info.boundRepo,
+    );
+    this.sessions.delete(info.subchannelId);
+    this.subchannels.delete(info.subchannelId);
+    this.abandonedCorners.delete(info.subchannelId);
+    this.abandonedCornerScanAt.delete(info.subchannelId);
+  }
+
+  /**
+   * First operation of every Room maintenance tick. No git watch, message
+   * delivery, or ACP resume runs until parent + child existence is proven.
+   */
+  private async reconcileCornerExistence(parentRoomId: string): Promise<void> {
+    const parentMetadata = await this.readChannelMetadataForCorner(parentRoomId);
+    const parentLive = parentMetadata !== null && parentMetadata.archived !== true;
+    const corners = [...this.subchannels.values()].filter(
+      (info) => info.session.parentChannelId === parentRoomId,
+    );
+    for (const info of corners) {
+      if (info.missingFromRelay) {
+        await this.reapMissingCorner(info);
+        continue;
+      }
+      const childMetadata = parentLive
+        ? await this.readChannelMetadataForCorner(info.subchannelId)
+        : null;
+      if (!parentLive || childMetadata === null || childMetadata.archived === true) {
+        console.warn(
+          `[body] corner ${info.subchannelId} no longer exists on the relay; cancelling and reaping`,
+        );
+        await this.reapMissingCorner(info);
+        continue;
+      }
+      // WORKING is a 90-second lease. Reconcile refreshes that one state while
+      // its actor exists; every other state remains transition-only.
+      if (info.cornerState?.state === 'working') {
+        await this.transitionCornerState(info, 'working', undefined, true);
+      }
     }
   }
 
@@ -8836,39 +9033,68 @@ export class Body {
    * in-memory `info.cornerState` baseline: an unchanged state is never
    * republished (the #369 transition-only discipline — a fresh timestamp on
    * an unchanged verdict is exactly how restarts re-golded parked corners).
-   * The publish itself is fire-and-forget: state records are replaceable and
-   * retried inside the publisher, so no emission point can be slowed or
-   * thrown out of by the relay.
+   * Callers that own a terminal transition await it. Convenience emission
+   * sites may use `setCornerState`, but a failed publish rolls the in-memory
+   * baseline back so the next tick can retry instead of suppressing a state
+   * that never became durable.
    */
-  private setCornerState(
+  private transitionCornerState(
     info: SubchannelInfo,
     state: CornerMachineState,
     reason?: CornerMachineReason,
     force = false,
-  ): void {
-    if (this.disposed) return;
-    if (info.archived) return;
+  ): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    if (info.archived && state !== 'closed') return Promise.resolve();
     const previous = info.cornerState;
-    if (!force && previous && previous.state === state && previous.reason === reason) return;
-    info.cornerState = { state, ...(reason !== undefined ? { reason } : {}) };
+    if (!force && previous && previous.state === state && previous.reason === reason) {
+      return Promise.resolve();
+    }
+    // Stored runtimes and narrow unit fixtures may predate the canonical
+    // record. Migrate them through the real initial edge instead of letting a
+    // later state appear ex nihilo. The second publish is sequenced after the
+    // durable OPEN write, preserving the same table every new corner uses.
+    if (!previous && state !== 'open' && state !== 'closed') {
+      return this.transitionCornerState(info, 'open').then(() =>
+        this.transitionCornerState(info, state, reason, force),
+      );
+    }
+    assertCornerStateTransition(previous?.state, state);
+    const desired = { state, ...(reason !== undefined ? { reason } : {}) };
+    info.cornerState = desired;
     const parentId = info.session.parentChannelId;
-    if (!parentId) return;
-    void this.cornerStates
+    if (!parentId) {
+      info.cornerState = previous;
+      return Promise.reject(new Error(`corner ${info.subchannelId} has no parent Room`));
+    }
+    return this.cornerStates
       .publish({
         parentRoomId: parentId,
         cornerId: info.subchannelId,
         state,
         ...(reason ? { reason } : {}),
       })
-      .catch((error) =>
-        console.error(`[body] corner state publish failed for ${info.subchannelId}:`, error),
-      );
+      .catch((error) => {
+        if (info.cornerState === desired) info.cornerState = previous;
+        throw error;
+      });
+  }
+
+  private setCornerState(
+    info: SubchannelInfo,
+    state: CornerMachineState,
+    reason?: CornerMachineReason,
+    force = false,
+  ): void {
+    void this.transitionCornerState(info, state, reason, force).catch((error) =>
+      console.error(`[body] corner state publish failed for ${info.subchannelId}:`, error),
+    );
   }
 
   /**
    * The turn tail's state word, promoted from the conclude watch's ask
    * detection: a turn that resolved WITHOUT a review target either ended on a
-   * standing question for a person (`waiting-on-human`/`question`) or in plain
+   * standing question for a person (`waiting`/`question`) or in plain
    * idleness (`idle`). This is the one genuinely new emission the never-idle
    * conclude watch (#389) makes deterministic — the same read that decides
    * whether to nudge now also decides what the corner is doing while quiet.
@@ -8894,9 +9120,9 @@ export class Body {
         return;
       }
       if (standingAskFromEvents(events, this.agentIdentity.publicKey)) {
-        this.setCornerState(info, 'waiting-on-human', 'question');
+        await this.transitionCornerState(info, 'waiting', 'question');
       } else {
-        this.setCornerState(info, 'idle');
+        await this.transitionCornerState(info, 'idle');
       }
       console.log(
         `[body] corner ${info.subchannelId} tail state: ${info.cornerState?.state}` +
@@ -8955,21 +9181,22 @@ export class Body {
         return status === 'needs-attention' || status === 'failed';
       });
     const current: { state: CornerMachineState; reason?: CornerMachineReason } = info.mergeTarget
-      ? ({ state: 'waiting-on-human', reason: 'review' } as const)
+      ? ({ state: 'waiting', reason: 'review' } as const)
       : legacyQuestion
-        ? ({ state: 'waiting-on-human', reason: 'question' } as const)
+        ? ({ state: 'waiting', reason: 'question' } as const)
         : legacyParked
           ? ({ state: 'idle' } as const)
           : (info.cornerState ??
             (info.conclude?.quietSince !== undefined || info.conclude?.stalledNotified
               ? ({ state: 'idle' } as const)
               : ({ state: 'working' } as const)));
-    this.setCornerState(info, current.state, current.reason, true);
+    if (!foundRecord) await this.transitionCornerState(info, 'open');
+    await this.transitionCornerState(info, current.state, current.reason, true);
   }
 
   /**
    * The `failure` emission, gated per the owner's sharpening (2026-08-23):
-   * waiting-on-human golds ONLY for something the person can actually act on
+   * waiting golds ONLY for something the person can actually act on
    * — a published review target (retry/approve) or a standing question. A
    * concluded/stopped/"couldn't-deliver" worker with NEITHER has nothing for
    * a person to do, so it publishes plain `idle` and never golds the deck.
@@ -8977,8 +9204,8 @@ export class Body {
   private noteCornerFailure(info: SubchannelInfo): void {
     if (info.mergeTarget) {
       const alreadyFailure =
-        info.cornerState?.state === 'waiting-on-human' && info.cornerState.reason === 'failure';
-      this.setCornerState(info, 'waiting-on-human', 'failure');
+        info.cornerState?.state === 'waiting' && info.cornerState.reason === 'failure';
+      this.setCornerState(info, 'waiting', 'failure');
       if (!alreadyFailure) info.attentionNarrativePending = true;
     } else {
       this.setCornerState(info, 'idle');
@@ -8998,9 +9225,11 @@ export class Body {
    *  A turn start is also the state machine's `working` emission — this one
    *  funnel covers open-follow-up turns, realign turns, and restart
    *  continuations alike, because every working turn enters here. */
-  private noteCornerTurnStart(info: SubchannelInfo): void {
+  private async noteCornerTurnStart(info: SubchannelInfo): Promise<void> {
     info.turnSeq = (info.turnSeq ?? 0) + 1;
-    if (!info.archived) this.setCornerState(info, 'working');
+    // No ACP turn or draft may start until the canonical WORKING heartbeat is
+    // durable. If the relay refuses it, the caller fails before prompting.
+    if (!info.archived) await this.transitionCornerState(info, 'working');
     if (!info.conclude || info.conclude.quietSince !== undefined || info.conclude.nudges > 0) {
       info.conclude = freshConcludeEpisode();
       this.persistConcludeEpisode(info);
@@ -9102,7 +9331,7 @@ export class Body {
         // State machine: conclude budget exhausted — no review, no open
         // question (both returned earlier), so NOTHING is actionable and the
         // honest word is idle, never gold.
-        this.setCornerState(info, 'idle');
+        await this.transitionCornerState(info, 'idle');
         await this.postParentCornerStatus(
           info,
           'needs-attention',
@@ -9267,6 +9496,17 @@ export class Body {
         console.error(`[body] Room ${channelId} ${label} failed; will retry:`, error);
       }
     };
+    // Existence is the lifecycle gate. Nothing below may drive or resume a
+    // corner until this tick has proven both the parent Room and child live.
+    try {
+      await this.reconcileCornerExistence(channelId);
+    } catch (error) {
+      console.error(
+        `[body] Room ${channelId} corner existence could not be proven; skipping corner drivers this tick:`,
+        error,
+      );
+      return;
+    }
     // Landing runs BEFORE the corner member poll, and the ordering is
     // load-bearing rather than cosmetic.
     //
@@ -9411,7 +9651,10 @@ export class Body {
       // idempotent close until `archiveSubchannel` removes this entry from the
       // map, otherwise one filesystem failure leaves a closed corner's whole
       // worktree behind forever.
-      await this.archiveSubchannel(subchannelId).catch((error) =>
+      const cleanup = info.missingFromRelay
+        ? this.reapMissingCorner(info)
+        : this.archiveSubchannel(subchannelId);
+      await cleanup.catch((error) =>
         console.error(
           `[body] retrying incomplete archive cleanup of ${subchannelId}; will retry:`,
           error,
@@ -9585,7 +9828,7 @@ export class Body {
         this.noteInboundMessage(subchannelId);
         // A human message starts a fresh episode: any standing quiet period
         // and its spent conclude-nudge budget end here.
-        this.noteCornerTurnStart(info);
+        await this.noteCornerTurnStart(info);
         let promptAttempted = false;
         try {
           let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
@@ -9785,6 +10028,7 @@ export class Body {
       assertSubchannelArchiveTarget(info, relayParentChannelId);
 
       const { session, worktreePath, featureBranch, subchannelId: scId } = info;
+      const parentId = session.parentChannelId;
 
       // Close requested — gates new member-message processing immediately,
       // even if a step below fails partway and this call has to be retried.
@@ -9822,8 +10066,12 @@ export class Body {
         console.error(`[body] archive ${subchannelId}: session stop failed; continuing:`, error);
       }
 
+      // CLOSED is the durable lifecycle authority. Publish it, then overwrite
+      // replaceable activity records before any channel write becomes illegal.
+      await this.transitionCornerState(info, 'closed');
+      if (parentId) await this.retractCornerActivityRecords(parentId, subchannelId);
+
       // Post status messages BEFORE archiving (relay rejects events on archived channels).
-      const parentId = session.parentChannelId;
       // Last chance. Everything below deletes this corner from every map, so a
       // land whose recap has not reached the Room yet — a human closing the
       // corner in the window after the land, or a refusal the completion poll
@@ -9869,19 +10117,6 @@ export class Body {
       if (!info.archiveCompleted) {
         await archiveChannel(info.role, subchannelId);
         info.archiveCompleted = true;
-        // State machine: terminal truth remains the archive event; fold the
-        // replaceable three-state word to idle in the parent Room's tag space.
-        const parentIdForState = session.parentChannelId;
-        if (parentIdForState) {
-          void this.cornerStates
-            .publish({
-              parentRoomId: parentIdForState,
-              cornerId: subchannelId,
-              state: 'idle',
-            })
-            .catch(() => undefined);
-          info.cornerState = { state: 'idle' };
-        }
       }
 
       // Remove the worktree only once the relay durably knows this corner is
@@ -10589,15 +10824,12 @@ export class Body {
           }
         }
       };
-      const deadline = setTimeout(
-        () => {
-          timedOut = true;
-          console.warn(`[body] codegraph ${args[0]} exceeded its 10-minute deadline`);
-          signalGroup('SIGTERM');
-          killTimer = setTimeout(() => signalGroup('SIGKILL'), 500);
-        },
-        10 * 60_000,
-      );
+      const deadline = setTimeout(() => {
+        timedOut = true;
+        console.warn(`[body] codegraph ${args[0]} exceeded its 10-minute deadline`);
+        signalGroup('SIGTERM');
+        killTimer = setTimeout(() => signalGroup('SIGKILL'), 500);
+      }, 10 * 60_000);
       deadline.unref?.();
       child.on('error', (error) => {
         clearTimeout(deadline);

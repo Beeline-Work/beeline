@@ -5,7 +5,7 @@ import { cornerActionSurface } from '../../buzz/corner-attention';
 import { roomRowPresentation, type RoomRowInput } from '../../buzz/room-list-row';
 import { selectPinnedCorner } from '../../buzz/room-indicators';
 import type { CornerSummary } from '../../buzz/corners';
-import { resolveCornerLifecycle } from '@beeline/buzz-client';
+import type { CornerMachineState } from '@beeline/buzz-client';
 
 const chatSource = sourceFile('../../app/(app)/buzz/chat/[channelId].tsx');
 const channelsSource = sourceFile('../../app/(app)/buzz/channels.tsx');
@@ -27,14 +27,11 @@ function repoSource(relative: string): string {
 }
 
 /**
- * ONE oracle, FOUR surfaces. Every surface that reports a corner's state must
- * consume `resolveCornerLifecycle`'s verdict (via `@beeline/buzz-client`'s
- * corner-lifecycle module, re-exported by `buzz/corners.ts`) — a per-surface
- * re-derivation is how the deck golded corners their agents had already
- * picked back up, and how a restart's rebroadcast could re-gold parked work.
+ * ONE durable state record, FOUR surfaces. Transcript history is deliberately
+ * absent: every surface consumes the daemon-authored canonical machine state.
  */
-describe('one corner lifecycle oracle', () => {
-  it('every surface imports the one oracle and none re-derives it', () => {
+describe('one canonical corner lifecycle record', () => {
+  it('every surface consumes canonical state and none promotes transcript history', () => {
     // The surfaces, enumerated:
     // 1. deck rows (room-list-row), 2. deck expansion corner rows +
     //    standalone list (channels/corners screens via cornerStatusPresentation
@@ -44,11 +41,13 @@ describe('one corner lifecycle oracle', () => {
     expect(transportSource).toContain(
       "import { resolveCornerVerdict } from './corner-state-verdict'",
     );
-    expect(verdictSource).toMatch(/resolveCornerLifecycle[\s\S]*? from '@\/buzz\/corners'/);
+    expect(verdictSource).toMatch(/isCornerStateRecordFresh[\s\S]*?from '@beeline\/buzz-client'/);
     expect(rowSource).toMatch(/roomState[\s\S]*?from '@\/buzz\/corners'/);
-    expect(indicatorsSource).toMatch(/mergeCornerStatuses[\s\S]*?from '\.\/corners'/);
+    expect(indicatorsSource).toMatch(/currentCornerStatus[\s\S]*?from '\.\/corners'/);
     expect(chatSource).toMatch(/resolveCornerLifecycleStatus[\s\S]*?from '@\/buzz\/corners'/);
     expect(chatSource).toMatch(/cornerActionSurface[\s\S]*?from '@\/buzz\/corner-attention'/);
+    expect(indicatorsSource).toContain('if (!corner.machineState) continue;');
+    expect(verdictSource).toContain('if (!input.stateRecord) return');
 
     // No second derivation anywhere: only the shared module may define these.
     const sources = [chatSource, channelsSource, rowSource, indicatorsSource, transportSource];
@@ -62,12 +61,13 @@ describe('one corner lifecycle oracle', () => {
       expect(text).not.toMatch(/new Set<CornerStatus>\(\[\s*'needs-attention'/);
     }
 
-    // The oracle itself lives in exactly one implementation file.
-    const oracle = repoSource('packages/buzz-client/src/corner-lifecycle.ts');
-    expect(oracle).toContain('export function resolveCornerLifecycle');
+    // The durable state machine itself lives in exactly one shared module.
+    const machine = repoSource('packages/buzz-client/src/corner-state.ts');
+    expect(machine).toContain('export function canTransitionCornerState');
+    expect(machine).toContain('export function isCornerStateRecordFresh');
     const facade = repoSource('apps/mobile/sources/buzz/corners.ts');
     expect(facade).toMatch(/from '@beeline\/buzz-client'/);
-    expect(facade).not.toMatch(/export function mapRawCornerStatusTag/);
+    expect(facade).toContain('machineState?: CornerMachineState');
   });
 
   it('the corner screen never renders the attention card on itself', () => {
@@ -83,80 +83,83 @@ describe('one corner lifecycle oracle', () => {
     expect(chatSource).not.toContain("cornerAction.kind === 'attention'");
     expect(chatSource).not.toContain('corner-attention-card');
     expect(chatSource).not.toContain('REPLY IN THIS CORNER');
-    // And no other rendering path may branch on raw status words directly.
-    expect(chatSource).not.toMatch(/displayedCornerStatus === '(needs-attention|open|failed)'/);
+    // Canonical working, never a draft/turn/control event, drives "active".
+    expect(chatSource).toContain("canonicalCorner?.machineState === 'working'");
   });
 });
 
-/** The four surfaces, fed by one verdict. */
-function corner(status: CornerSummary['status']): CornerSummary {
+/** The four surfaces, fed by one canonical record projection. */
+function corner(machineState: CornerMachineState, status: CornerSummary['status']): CornerSummary {
   return {
     id: 'corner-1',
     name: 'fix-the-thing',
     openerPubkey: 'a'.repeat(64),
     status,
-    lastActivityAt: 200,
+    machineState,
+    ...(machineState === 'waiting'
+      ? {
+          machineReason:
+            status === 'open'
+              ? ('review' as const)
+              : status === 'failed'
+                ? ('failure' as const)
+                : ('question' as const),
+        }
+      : {}),
+    stateAt: Math.floor(Date.now() / 1_000),
+    lastActivityAt: Math.floor(Date.now() / 1_000),
   };
 }
 
 describe('four surfaces agree on one verdict', () => {
-  const cases = [
+  const cases: Array<{
+    facts: string;
+    machineState: CornerMachineState;
+    status: CornerSummary['status'];
+  }> = [
     {
-      facts: 'working: attention card superseded by newer work',
-      history: [
-        { createdAt: 100, rawStatus: 'needs-attention' },
-        { createdAt: 200, isWorkSignal: true },
-      ],
+      facts: 'working',
+      machineState: 'working',
       status: 'live',
     },
     {
       facts: 'ready-for-review',
-      history: [{ createdAt: 100, isMergeReady: true }],
+      machineState: 'waiting',
       status: 'open',
     },
     {
       facts: 'needs-decision',
-      history: [{ createdAt: 100, rawStatus: 'needs-attention' }],
+      machineState: 'waiting',
       status: 'needs-attention',
     },
-    { facts: 'idle: nothing reportable', history: [], status: null },
+    { facts: 'idle: nothing reportable', machineState: 'idle', status: null },
   ] as const;
 
-  for (const { facts, history, status } of cases) {
+  for (const { facts, machineState, status } of cases) {
     it(`agrees on ${facts}`, () => {
-      // The verdict itself comes from THE oracle, exactly as the transport does.
-      // `now` sits just after the newest fact so liveness windows hold.
-      const now = history.length > 0 ? history[history.length - 1].createdAt * 1000 + 1000 : 0;
-      const resolved =
-        history.length === 0 ? null : resolveCornerLifecycle(history as never, { now });
-      const expected = status;
-      if (status !== null) expect(resolved).toBe(expected);
-
-      const corners = status === null ? [] : [corner(expected)];
+      const corners = [corner(machineState, status)];
       const input: RoomRowInput = { corners };
 
       // 1+2. Deck row AND its expansion rows: same CornerSummary array.
       const row = roomRowPresentation(input, new Map());
       if (status === null) {
         expect(row.zone).toBe('idle');
-        expect(row.corners).toEqual([]);
+        expect(row.corners).toHaveLength(1);
       } else {
-        expect(row.corners.map((c) => c.status)).toEqual([expected]);
-        expect(row.zone).toBe(expected === 'live' ? 'working' : 'needs-you');
-        expect(row.attention).toBe(expected !== 'live');
+        expect(row.corners.map((c) => c.status)).toEqual([status]);
+        expect(row.zone).toBe(status === 'live' ? 'working' : 'needs-you');
+        expect(row.attention).toBe(status !== 'live');
       }
 
       // 3. Pinned room bar.
       const pinned = selectPinnedCorner({
-        signals: [],
         lifecycle: corners,
-        lifecycleLoaded: true,
       });
       if (status === null) expect(pinned).toBeNull();
-      else expect(pinned).toMatchObject({ cornerId: 'corner-1', status: expected });
+      else expect(pinned).toMatchObject({ cornerId: 'corner-1', status });
 
       // 4. Corner screen action area.
-      const action = cornerActionSurface({ status: expected, hasMergeTarget: false });
+      const action = cornerActionSurface({ status, hasMergeTarget: false });
       if (status === 'needs-attention' || status === 'open') {
         expect(action.kind).toBe('attention');
       } else if (status === 'live') {
@@ -168,25 +171,10 @@ describe('four surfaces agree on one verdict', () => {
   }
 
   it('all three waiting surfaces clear together when the agent picks work back up', () => {
-    // Before: parked on an attention card.
-    const before = resolveCornerLifecycle([{ createdAt: 100, rawStatus: 'needs-attention' }]);
-    expect(before).toBe('needs-attention');
-    // After: one new fact — the agent's own narration, NEWER than the card.
-    const after = resolveCornerLifecycle(
-      [
-        { createdAt: 100, rawStatus: 'needs-attention' },
-        { createdAt: 200, isWorkSignal: true },
-      ],
-      { now: 200 * 1000 + 1000 },
-    );
-    expect(after).toBe('live');
-
-    const corners = [corner(after)];
+    const corners = [corner('working', 'live')];
     expect(roomRowPresentation({ corners }, new Map()).zone).toBe('working');
-    expect(
-      selectPinnedCorner({ signals: [], lifecycle: corners, lifecycleLoaded: true }),
-    ).toMatchObject({ status: 'live' });
-    expect(cornerActionSurface({ status: after, hasMergeTarget: false }).kind).toBe(
+    expect(selectPinnedCorner({ lifecycle: corners })).toMatchObject({ status: 'live' });
+    expect(cornerActionSurface({ status: 'live', hasMergeTarget: false }).kind).toBe(
       'nothing-ready',
     );
   });

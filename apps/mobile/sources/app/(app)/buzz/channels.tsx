@@ -1890,8 +1890,8 @@ const styles = StyleSheet.create((theme) => {
       gap: 8,
     },
     cornerGlyph: {
-      width: 14,
-      height: 14,
+      width: 7,
+      height: 7,
       flexShrink: 0,
     },
     cornerName: {

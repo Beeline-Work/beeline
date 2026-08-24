@@ -663,17 +663,16 @@ export default function BuzzChat() {
   // windowed `messages`, so paging the visible window never drops a plan
   // that was established earlier in a long corner.
   const cornerPlan = useMemo(() => latestCornerPlan(combinedMessages), [combinedMessages]);
-  // The one line the corner's pinned panel opens with. Human-authored only:
-  // the agent's own plan objective, else the task the corner was opened for,
-  // else the corner's (task-slugged) name. Never raw harness output — that is
-  // exactly what put a codex startup dump in the first objective banner.
+  // The immutable task tag wins. Plan objective is a compatibility fallback
+  // for older corners; the task-slugged name is the final fallback.
   const cornerObjective = useMemo(
     () =>
       cornerObjectiveLine({
         ...(cornerTask ? { task: cornerTask } : {}),
+        ...(cornerPlan?.objective ? { planObjective: cornerPlan.objective } : {}),
         ...(resolvedChannelName ? { cornerName: resolvedChannelName } : {}),
       }),
-    [cornerTask, resolvedChannelName],
+    [cornerPlan?.objective, cornerTask, resolvedChannelName],
   );
 
   const loadOlderTranscriptMessages = useCallback(() => {

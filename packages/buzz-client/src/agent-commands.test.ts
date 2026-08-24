@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   MAX_AGENT_COMMANDS,
+  agentCommandsKey,
   getAgentCommands,
   parseAgentCommandEntries,
   parseAgentCommands,
@@ -9,6 +10,7 @@ import {
 } from './agent-commands.js';
 import { createIdentity } from './identity.js';
 import { TAG_AGENT_COMMANDS, TAG_COMMUNITY } from './kinds.js';
+import { tagValue } from './parse.js';
 import type { ChannelOpsContext } from './channel.js';
 
 const communityId = '22222222-2222-4222-8222-222222222222';
@@ -149,12 +151,19 @@ describe('agent command list records', () => {
     await publishAgentCommands(agentCtx(), communityId, [
       { name: 'loop', description: 'Loop' },
     ]);
+    const publishedEvent = JSON.parse(String(posts[0]?.init?.body)) as NostrEvent;
+    expect(tagValue(publishedEvent, 'd')).toBe(
+      agentCommandsKey(communityId, agentIdentity.publicKey),
+    );
     // The read path queries by the #d key with a small limit window.
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_url: unknown, init?: RequestInit) => {
         const filter = filterFrom(init);
         expect(filter.kinds).toEqual([30078]);
+        expect(filter['#d']).toEqual([
+          agentCommandsKey(communityId, agentIdentity.publicKey),
+        ]);
         return jsonResponse([
           validEvent(JSON.stringify({ commands: [{ name: 'old-command' }] })),
           validEvent(

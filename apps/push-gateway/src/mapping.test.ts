@@ -110,6 +110,25 @@ describe('mapEventToNotification', () => {
     ).toBeNull();
   });
 
+  it('never pushes repository activity, even when its text looks like an agent question', () => {
+    const repositoryActivity = event(
+      [
+        ['h', 'channel-123'],
+        ['t', 'agent-message'],
+        ['t', 'github-event'],
+        ['repo', 'acme/widget'],
+      ],
+      'lena opened issue #4: Should this page move?',
+    );
+    expect(isWaitingOnHumanEvent(repositoryActivity)).toBe(false);
+    expect(
+      mapEventToNotification(repositoryActivity, {
+        roomName: 'Widget',
+        senderName: 'Beeline events',
+      }),
+    ).toBeNull();
+  });
+
   it('keeps direct messages person-titled with a plain message body', () => {
     const result = mapEventToNotification(event([['h', 'dm-123']]), {
       roomName: 'Direct message',

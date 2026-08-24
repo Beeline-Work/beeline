@@ -4516,7 +4516,7 @@ export default function BuzzChat() {
                         {roomRepository.githubEventsEnabled === false ? ' OFF' : ' ON'}
                       </Text>
                       <Text style={styles.roomLifecycleHint}>
-                        Stars, issues, and pull requests posted here.
+                        Pushes, pull requests, issues, CI, and reviews posted here.
                       </Text>
                     </View>
                     <Text style={styles.roomLifecycleGlyph}>

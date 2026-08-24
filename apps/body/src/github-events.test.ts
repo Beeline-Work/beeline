@@ -1,390 +1,231 @@
 import { describe, expect, it, vi } from 'vitest';
-import { generateKeypair, type Keypair } from '@beeline/nostr';
 import {
-  describeGitHubRepoEvents,
-  runGitHubEventWatcher,
-  type GitHubEventWatcherDeps,
-  type GitHubRepoEvent,
+  GitHubEventsApiSource,
+  describeRepositoryEvents,
+  isMutedRepositoryEvent,
+  normalizeGitHubEvent,
 } from './github-events.js';
-import type { GitHubRoomEventsResult } from '@beeline/buzz-client';
-import { newIdentity } from '@beeline/gate';
-import { Body } from './body.js';
 
-function event(overrides: Partial<GitHubRepoEvent> = {}): GitHubRepoEvent {
+function raw(
+  type: string,
+  payload: Record<string, unknown>,
+  overrides: Record<string, unknown> = {},
+) {
   return {
-    id: 1,
-    type: 'star',
-    action: 'created',
-    actor: 'lena',
-    summary: 'lena starred octocat/widget',
-    received_at: '2026-01-01T00:00:00Z',
+    id: '100',
+    type,
+    actor: { login: 'lena', type: 'User' },
+    repo: { name: 'acme/widget', url: 'https://api.github.com/repos/acme/widget' },
+    created_at: '2026-08-24T12:00:00Z',
+    payload,
     ...overrides,
   };
 }
 
-interface HarnessOptions {
-  /** Pages served in order for successive `since`-reads. */
-  pages?: GitHubRepoEvent[][];
-  /** What the bootstrap read (no `since`) reports as the current position. */
-  bootstrapCursor?: number;
-  /** Pre-seeded cursor; `undefined` (default) forces the bootstrap path. */
-  initialCursor?: number;
-  enabled?: () => boolean;
-  /** Number of leading post() calls that throw. */
-  failPosts?: number;
-}
-
-/**
- * Drive one watcher to completion: when the scripted pages run out the harness
- * aborts the loop's signal, so the loop finishes the page it is holding and
- * exits cleanly.
- */
-async function harness(options: HarnessOptions = {}) {
-  const posted: string[] = [];
-  const savedCursors: number[] = [];
-  const identity = await generateKeypair();
-  const controller = new AbortController();
-  let pageIndex = 0;
-  let postAttempts = 0;
-  const pages = options.pages ?? [];
-  let cursor: number | undefined = options.initialCursor;
-  // The bootstrap read persists its position, then `since` reads begin.
-  let sinceCursor: number | undefined;
-
-  const fetchEvents = async (
-    _baseUrl: string,
-    _identity: Pick<Keypair, 'secretKey' | 'publicKey'>,
-    _roomId: string,
-    opts?: { since?: number; waitMs?: number },
-  ): Promise<GitHubRoomEventsResult> => {
-    if (opts?.since === undefined) {
-      sinceCursor = 0;
-      return {
-        fullName: 'octocat/widget',
-        head: options.bootstrapCursor ?? 0,
-        cursor: options.bootstrapCursor ?? 0,
-        events: [],
-      };
-    }
-    sinceCursor = opts.since;
-    // An over-read (past every scripted page) ends the harness: nothing new
-    // will ever arrive, so abort and let the loop exit cleanly.
-    if (pageIndex >= pages.length) {
-      controller.abort();
-      return { fullName: 'octocat/widget', head: opts.since, cursor: opts.since, events: [] };
-    }
-    const page = pages[pageIndex]!;
-    pageIndex += 1;
-    return {
-      fullName: 'octocat/widget',
-      head: page.at(-1)?.id ?? opts.since,
-      cursor: page.at(-1)?.id ?? opts.since,
-      events: page,
-    };
-  };
-
-  const deps: GitHubEventWatcherDeps = {
-    roomId: 'room-1',
-    fullName: 'octocat/widget',
-    identity,
-    baseUrl: 'https://relay.example',
-    eventsEnabled: async () => options.enabled?.() ?? true,
-    post: async (text) => {
-      postAttempts += 1;
-      if (postAttempts <= (options.failPosts ?? 0)) throw new Error('transient relay refusal');
-      posted.push(text);
-    },
-    loadCursor: async () => cursor,
-    saveCursor: async (id) => {
-      cursor = id;
-      savedCursors.push(id);
-    },
-    signal: controller.signal,
-    fetchEvents,
-    now: () => 1_000,
-    sleep: async () => {},
-  };
-  await runGitHubEventWatcher(deps);
-  return { posted, savedCursors, sinceCursor: () => sinceCursor, postAttempts };
-}
-
-describe('describeGitHubRepoEvents', () => {
-  it('composes one compact line per event and appends the link for a single event', () => {
-    expect(
-      describeGitHubRepoEvents([
-        event({
-          summary: 'lena opened issue #12 in octocat/widget: Fix login',
-          url: 'https://github.com/octocat/widget/issues/12',
-        }),
-      ]),
-    ).toBe(
-      'lena opened issue #12 in octocat/widget: Fix login\nhttps://github.com/octocat/widget/issues/12',
-    );
-  });
-
-  it('keeps a batch to bare lines so a burst lands as one readable card', () => {
-    const text = describeGitHubRepoEvents([
-      event({ id: 1, summary: 'lena starred octocat/widget', url: 'https://x/1' }),
-      event({ id: 2, type: 'issues', summary: 'lena closed issue #12 in octocat/widget' }),
-      event({
-        id: 3,
-        type: 'pull_request',
-        summary: 'lena merged pull request #34 in octocat/widget',
+describe('normalizeGitHubEvent', () => {
+  it('normalizes the exact included event set', () => {
+    const events = [
+      raw('PushEvent', { ref: 'refs/heads/main', commits: [{}, {}] }),
+      raw('PullRequestEvent', {
+        action: 'closed',
+        number: 7,
+        pull_request: {
+          number: 7,
+          title: 'Land it',
+          merged: true,
+          html_url: 'https://github.com/acme/widget/pull/7',
+        },
       }),
+      raw('IssuesEvent', {
+        action: 'opened',
+        issue: { number: 9, title: 'Broken', html_url: 'https://github.com/acme/widget/issues/9' },
+      }),
+      raw('WorkflowRunEvent', {
+        action: 'completed',
+        workflow_run: {
+          name: 'CI',
+          conclusion: 'success',
+          head_branch: 'main',
+          html_url: 'https://github.com/acme/widget/actions/runs/1',
+        },
+      }),
+      raw('PullRequestReviewCommentEvent', {
+        action: 'created',
+        pull_request: { number: 7, title: 'Land it' },
+        comment: { html_url: 'https://github.com/acme/widget/pull/7#discussion_r1' },
+      }),
+      raw('CheckRunEvent', {
+        action: 'completed',
+        check_run: {
+          name: 'Typecheck',
+          conclusion: 'success',
+          html_url: 'https://github.com/acme/widget/runs/2',
+        },
+      }),
+    ].map(normalizeGitHubEvent);
+
+    expect(events.map((event) => event?.type)).toEqual([
+      'push',
+      'pull-request',
+      'issue',
+      'ci',
+      'review-comment',
+      'ci',
     ]);
-    expect(text).toBe(
-      'lena starred octocat/widget\nlena closed issue #12 in octocat/widget\nlena merged pull request #34 in octocat/widget',
-    );
+    expect(events[1]?.summary).toContain('merged pull request #7');
+    expect(events[3]?.summary).toBe('CI concluded success on acme/widget:main');
+    expect(events[5]?.summary).toBe('Typecheck concluded success on acme/widget');
   });
 
-  it('caps a flood at ten lines plus an honest overflow count', () => {
-    const flood = Array.from({ length: 25 }, (_, index) =>
-      event({ id: index + 1, summary: `event ${index + 1}` }),
+  it('keeps every advertised pull-request and issue lifecycle action', () => {
+    const pullActions = ['opened', 'reopened', 'closed'] as const;
+    const pulls = pullActions.map((action) =>
+      normalizeGitHubEvent(
+        raw('PullRequestEvent', {
+          action,
+          number: 7,
+          pull_request: { number: 7, title: 'Lifecycle', merged: false },
+        }),
+      ),
     );
-    const lines = describeGitHubRepoEvents(flood)!.split('\n');
+    const issueActions = ['opened', 'reopened', 'closed'] as const;
+    const issues = issueActions.map((action) =>
+      normalizeGitHubEvent(
+        raw('IssuesEvent', {
+          action,
+          issue: { number: 9, title: 'Lifecycle' },
+        }),
+      ),
+    );
+
+    expect(pulls.map((event) => event?.action)).toEqual(pullActions);
+    expect(issues.map((event) => event?.action)).toEqual(issueActions);
+  });
+
+  it('drops high-churn actions and mutes bot pushes to non-target branches', () => {
+    expect(
+      normalizeGitHubEvent(
+        raw('PullRequestEvent', {
+          action: 'synchronize',
+          pull_request: { number: 7, title: 'Land it' },
+        }),
+      ),
+    ).toBeUndefined();
+    const botPush = normalizeGitHubEvent(
+      raw(
+        'PushEvent',
+        { ref: 'refs/heads/fm/noisy', commits: [{}] },
+        { actor: { login: 'beeline[bot]', type: 'Bot' } },
+      ),
+    )!;
+    expect(isMutedRepositoryEvent(botPush, new Set(['main']))).toBe(true);
+    expect(isMutedRepositoryEvent({ ...botPush, branch: 'main' }, new Set(['main']))).toBe(false);
+  });
+
+  it('coalesces bursts and caps a card at ten facts', () => {
+    const events = Array.from({ length: 12 }, (_, index) => ({
+      ...normalizeGitHubEvent(raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }))!,
+      id: String(index),
+      summary: `event ${index}`,
+    }));
+    const lines = describeRepositoryEvents(events)!.split('\n');
     expect(lines).toHaveLength(11);
-    expect(lines[10]).toBe('… and 15 more repository updates');
-  });
-
-  it('says nothing for an empty batch', () => {
-    expect(describeGitHubRepoEvents([])).toBeUndefined();
+    expect(lines[10]).toBe('… and 2 more repository updates');
   });
 });
 
-describe('runGitHubEventWatcher', () => {
-  it('bootstraps its cursor from "now" on first contact, then serves new events', async () => {
-    const { posted, savedCursors } = await harness({
-      bootstrapCursor: 7,
-      pages: [[event({ id: 9 })]],
-    });
-    // Bootstrap position persisted first (start from NOW, not from history).
-    expect(savedCursors[0]).toBe(7);
-    expect(posted).toEqual(['lena starred octocat/widget']);
-    expect(savedCursors).toEqual([7, 9]);
-  });
+describe('GitHubEventsApiSource', () => {
+  const target = { owner: 'acme', repo: 'widget', roomId: 'room' };
 
-  it('fans one repository out to each Room independently', async () => {
-    // Two Rooms bound to the same repo each run their own watcher with their
-    // own cursor; both must publish the same repository event.
-    const sharedPage = [event({ id: 5 })];
-    const makeWatcher = async (roomId: string) => {
-      const posted: string[] = [];
-      const controller = new AbortController();
-      let served = false;
-      await runGitHubEventWatcher({
-        roomId,
-        fullName: 'octocat/widget',
-        identity: await generateKeypair(),
-        baseUrl: 'https://relay.example',
-        eventsEnabled: async () => true,
-        post: async (text) => posted.push(text),
-        loadCursor: async () => 0,
-        saveCursor: async () => {},
-        fetchEvents: async (_b, _i, _r, opts) => {
-          if (opts?.since === undefined) {
-            return { fullName: 'octocat/widget', head: 0, cursor: 0, events: [] };
-          }
-          if (served) {
-            controller.abort();
-            return { fullName: 'octocat/widget', head: 5, cursor: 5, events: [] };
-          }
-          served = true;
-          return { fullName: 'octocat/widget', head: 5, cursor: 5, events: sharedPage };
-        },
-        signal: controller.signal,
-        now: () => 1_000,
-      });
-      return posted;
-    };
-    const [roomA, roomB] = await Promise.all([makeWatcher('room-a'), makeWatcher('room-b')]);
-    expect(roomA).toEqual(['lena starred octocat/widget']);
-    expect(roomB).toEqual(roomA);
-  });
-
-  it('posts nothing while the Room toggle is OFF, then delivers late when re-enabled', async () => {
-    const posted: string[] = [];
-    const savedCursors: number[] = [];
-    let enabled = false;
-    let polls = 0;
-    const controller = new AbortController();
-    const done = runGitHubEventWatcher({
-      roomId: 'room-1',
-      fullName: 'octocat/widget',
-      identity: await generateKeypair(),
-      baseUrl: 'https://relay.example',
-      eventsEnabled: async () => enabled,
-      post: async (text) => posted.push(text),
-      loadCursor: async () => 4,
-      saveCursor: async (id) => savedCursors.push(id),
-      fetchEvents: (async () => {
-        polls += 1;
-        controller.abort();
-        return { fullName: 'octocat/widget', head: 9, cursor: 9, events: [event({ id: 9 })] };
-      }) as typeof import('@beeline/buzz-client').getGitHubRoomEvents,
-      signal: controller.signal,
-      now: () => 1_000,
-      sleep: async (ms) => {
-        // The OFF park must be interruptible in tests, not a real 5-minute wait.
-        if (ms > 1_000) await new Promise((resolve) => setTimeout(resolve, 5));
-      },
-    });
-    // Let the loop reach the toggle check and park itself while OFF.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(posted).toEqual([]);
-    expect(polls).toBe(0); // nothing fetched while OFF
-
-    enabled = true;
-    await done;
-
-    // Late delivery from the frozen cursor once back ON.
-    expect(posted).toEqual(['lena starred octocat/widget']);
-    expect(savedCursors).toEqual([9]);
-    expect(polls).toBe(1);
-  });
-
-  it('retries an unpublished batch before advancing its cursor, then never reposts', async () => {
-    const { posted, savedCursors, postAttempts } = await harness({
-      pages: [[event({ id: 2 })]],
-      failPosts: 1,
-    });
-    expect(postAttempts).toBe(2);
-    expect(posted).toEqual(['lena starred octocat/widget']);
-    // Cursor advanced exactly once, only after the card actually published.
-    expect(savedCursors).toEqual([0, 2]);
-  });
-
-  it('drops an undeliverable batch after bounded retries, with a logged reason', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const { posted, savedCursors, postAttempts } = await harness({
-        pages: [[event({ id: 2 })]],
-        failPosts: 99, // never succeeds
-      });
-      expect(posted).toEqual([]);
-      expect(postAttempts).toBe(3); // 1 initial + 2 retries, then dropped before a 4th
-      expect(savedCursors).toEqual([0, 2]); // bootstrap position, then advance with the drop logged
-      expect(
-        errorSpy.mock.calls.some((call) =>
-          String(call[0]).includes('dropping 1 undeliverable event'),
+  it('walks newest-first results only to the durable cursor', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }, { id: '103' }),
+            raw(
+              'IssuesEvent',
+              { action: 'closed', issue: { number: 2, title: 'Done' } },
+              { id: '102' },
+            ),
+            raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }, { id: '101' }),
+          ]),
+          { status: 200 },
         ),
-      ).toBe(true);
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  it('stops permanently with one console line when the feed does not exist on this relay', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const sleeps: number[] = [];
-      await runGitHubEventWatcher({
-        roomId: 'room-1',
-        fullName: 'octocat/widget',
-        identity: await generateKeypair(),
-        baseUrl: 'https://relay.example',
-        eventsEnabled: async () => true,
-        post: async () => {},
-        loadCursor: async () => 0,
-        saveCursor: async () => {},
-        fetchEvents: async () => {
-          throw new Error('auth service returned HTTP 404');
-        },
-        sleep: async (ms) => {
-          sleeps.push(ms);
-        },
-      });
-      expect(sleeps).toEqual([]); // stopped rather than backed off forever
-      expect(errorSpy).toHaveBeenCalledTimes(1);
-      expect(errorSpy.mock.calls[0]?.[0]).toContain('feed unavailable');
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-});
-
-describe('Body wiring', () => {
-  const config = {
-    agentBinary: '/nonexistent',
-    mcpBinary: '/nonexistent',
-    agentEnv: {},
-    workspaceRoot: '/tmp/buzzy-body-unit-github-events',
-    relayBaseUrl: 'http://relay.test',
-    relayHost: 'relay.test',
-    relayScheme: 'http',
-    relayWsUrl: 'ws://relay.test',
-    autoApprovePermissions: true,
-  } as unknown as Parameters<typeof Body>[0];
-
-  function makeBody(): InstanceType<typeof Body> {
-    return new Body(config, newIdentity('operator'));
-  }
-
-  it('starts the feed for a GitHub-bound Room and never for a non-GitHub one', async () => {
-    const fetchCalls: Array<{ roomId?: string } | undefined> = [];
-    const body = makeBody();
-    body.githubEventsTestDeps = {
-      eventsEnabled: async () => true,
-      post: async () => {},
-      loadCursor: async () => 0,
-      saveCursor: async () => {},
-      fetchEvents: (async (_b, _i, roomId) => {
-        fetchCalls.push({ roomId });
-        throw new Error('auth service returned HTTP 404');
-      }) as typeof import('@beeline/buzz-client').getGitHubRoomEvents,
-    };
-
-    // A GitHub canonical binding remote starts the feed.
-    (
-      body as unknown as {
-        startRoomGitHubEventsLoop: (id: string, repo: object) => void;
-      }
-    ).startRoomGitHubEventsLoop('room-gh', {
-      repo: 'widget',
-      truth: { binding: { key: 'k', name: 'widget', remote: 'git://github.com/acme/widget' } },
+    );
+    const source = new GitHubEventsApiSource(async () => 'installation-token', {
+      fetch: fetchMock as typeof fetch,
     });
-    await vi.waitFor(() => expect(fetchCalls.length).toBe(1));
-    expect(fetchCalls[0]?.roomId).toBe('room-gh');
 
-    // A local-only repository has no webhook feed to consume at all.
-    (
-      body as unknown as {
-        startRoomGitHubEventsLoop: (id: string, repo: object) => void;
-      }
-    ).startRoomGitHubEventsLoop('room-local', {
-      repo: 'local',
-      localOnly: true,
-      truth: { binding: { key: 'l', name: 'local', localOnly: true } },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(fetchCalls.length).toBe(1); // unchanged
+    const result = await source.read(target, '101');
+
+    expect(result.head).toBe('103');
+    expect(result.sourceEventIds).toEqual(['103', '102']);
+    expect(result.events.map((event) => event.id)).toEqual(['103', '102']);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('starts the feed at most once per Room', async () => {
-    const fetchCalls: unknown[] = [];
-    const body = makeBody();
-    body.githubEventsTestDeps = {
-      eventsEnabled: async () => false,
-      post: async () => {},
-      loadCursor: async () => 0,
-      saveCursor: async () => {},
-      fetchEvents: (async () => {
-        fetchCalls.push(undefined);
-        throw new Error('unreachable');
-      }) as typeof import('@beeline/buzz-client').getGitHubRoomEvents,
-    };
-    const start = (
-      body as unknown as {
-        startRoomGitHubEventsLoop: (id: string, repo: object) => void;
-      }
-    ).startRoomGitHubEventsLoop.bind(body);
-    const boundRepo = {
-      repo: 'widget',
-      remoteUrl: 'https://github.com/acme/widget.git',
-    };
-    start('room-dup', boundRepo);
-    start('room-dup', boundRepo);
-    // Toggle OFF parks the loop without fetching; a second start is refused.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(fetchCalls).toHaveLength(0);
+  it('enforces an abort deadline on a stalled GitHub request', async () => {
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(init.signal?.reason ?? new Error('aborted')),
+            { once: true },
+          );
+        }),
+    );
+    const source = new GitHubEventsApiSource(async () => 'installation-token', {
+      fetch: fetchMock as typeof fetch,
+      requestTimeoutMs: 20,
+    });
+
+    await expect(source.read(target, '101')).rejects.toThrow(/timeout|aborted/i);
+  });
+
+  it('caps cold and expired-cursor catch-up at the newest twenty raw events', async () => {
+    const page = Array.from({ length: 25 }, (_, index) =>
+      raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }, { id: String(100 - index) }),
+    );
+    const source = new GitHubEventsApiSource(async () => 'installation-token', {
+      fetch: vi.fn(async () => new Response(JSON.stringify(page), { status: 200 })) as typeof fetch,
+    });
+
+    await expect(source.read(target, undefined)).resolves.toMatchObject({
+      head: '100',
+      sourceEventIds: Array.from({ length: 20 }, (_, index) => String(100 - index)),
+    });
+    await expect(source.read(target, 'missing-old-cursor')).resolves.toMatchObject({
+      head: '100',
+      sourceEventIds: Array.from({ length: 20 }, (_, index) => String(100 - index)),
+    });
+  });
+
+  it('walks multiple pages when the durable cursor is older than page one', async () => {
+    const first = Array.from({ length: 100 }, (_, index) =>
+      raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }, { id: String(300 - index) }),
+    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(first), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }, { id: '200' }),
+            raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }, { id: '199' }),
+          ]),
+          { status: 200 },
+        ),
+      );
+    const source = new GitHubEventsApiSource(async () => 'installation-token', {
+      fetch: fetchMock,
+    });
+
+    const result = await source.read(target, '199');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.head).toBe('300');
+    expect(result.sourceEventIds.at(-1)).toBe('200');
   });
 });

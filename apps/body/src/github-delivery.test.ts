@@ -158,6 +158,7 @@ describe('GitHub-origin delivery', () => {
       repo: 'remote/github-scratch',
       branch: 'refs/heads/main',
       tip,
+      patchId: expect.stringMatching(/^[0-9a-f]{40}$/),
     });
     expect(
       events.some((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready')),
@@ -230,7 +231,13 @@ describe('a moved target is standing authorization to update the feature branch'
     run(root, ['push', 'origin', 'main']);
     const moved = run(root, ['ls-remote', remote, 'refs/heads/main']).split(/\s+/)[0]!;
 
-    info.humanMergeApproval = { id: 'signed-human-approval', reviewer: 'human-admin', tip };
+    info.humanMergeApproval = {
+      id: 'signed-human-approval',
+      reviewer: 'human-admin',
+      tip,
+      approvedTip: tip,
+      patchId: info.mergeTarget?.patchId,
+    };
     vi.spyOn(body as never, 'findHumanMergeApproval' as never).mockResolvedValue(
       info.humanMergeApproval as never,
     );
@@ -248,7 +255,7 @@ describe('a moved target is standing authorization to update the feature branch'
     return { root, remote, worktree, info, body, events, tip, moved, prompts };
   }
 
-  it('automatically rebases, republishes review, and invalidates the stale approval', async () => {
+  it('automatically rebases and lands unchanged content with the standing approval', async () => {
     const { root, remote, worktree, info, body, events, tip, moved, prompts } =
       await approvedCornerWithMovedTarget();
 
@@ -262,9 +269,10 @@ describe('a moved target is standing authorization to update the feature branch'
     expect(refreshedTip).not.toBe(tip);
     expect(run(worktree, ['merge-base', '--is-ancestor', moved, refreshedTip])).toBe('');
     expect(info.mergeTarget?.tip).toBe(refreshedTip);
-    expect(info.humanMergeApproval).toBeUndefined();
+    expect(info.humanMergeApproval).toMatchObject({ id: 'signed-human-approval', approvedTip: tip });
 
-    // Rewritten work gets a new exact-tip review card; it is not auto-landed.
+    // Rewritten work gets a new content-addressed review card. The next land
+    // pass uses the one standing approval; no second tap is required.
     // Only signed kind:9 publishes count — the attention-transition gate also
     // POSTs /query reads through this capture.
     const ready = events
@@ -272,6 +280,8 @@ describe('a moved target is standing authorization to update the feature branch'
       .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'));
     expect(ready).toHaveLength(2);
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(refreshedTip);
+    await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(1);
+    expect(run(root, ['ls-remote', remote, 'refs/heads/main'])).toContain(refreshedTip);
   });
 
   it('truthfully reports the automatic recovery without exposing git plumbing', async () => {
@@ -281,11 +291,11 @@ describe('a moved target is standing authorization to update the feature branch'
     await body.waitForAgentTasks();
 
     const recovering = events.find((event) =>
-      event.content.startsWith("Couldn't land this change") &&
-      event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'auto'),
+      event.content.includes('realigning') &&
+      event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'realigning'),
     );
     expect(recovering).toBeDefined();
-    expect(recovering!.content).toMatch(/bringing the feature branch up to date automatically/i);
+    expect(recovering!.content).toMatch(/approval remains standing/i);
     // ...and no raw git plumbing reaches the transcript either.
     expect(recovering!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward|\[rejected\]/i);
   });
@@ -301,8 +311,8 @@ describe('a moved target is standing authorization to update the feature branch'
       .filter((event) => Array.isArray(event.tags))
       .filter(
         (event) =>
-          event.content.startsWith("Couldn't land this change") &&
-          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'auto'),
+          event.content.includes('realigning') &&
+          event.tags.some((tag) => tag[0] === 'retry' && tag[1] === 'realigning'),
       );
     expect(recovering).toHaveLength(1);
   });

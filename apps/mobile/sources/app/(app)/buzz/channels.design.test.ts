@@ -88,9 +88,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
       expect(text, `${name} chrome should not mount HullSurface`).not.toContain('<HullSurface');
     }
     expect(styleBlock(source, 'header')).toMatch(/borderBottomColor:\s*groknight\.border/);
-    expect(styleBlock(railSource, 'rail')).toMatch(
-      /borderRightWidth: StyleSheet\.hairlineWidth/,
-    );
+    expect(styleBlock(railSource, 'rail')).toMatch(/borderRightWidth: StyleSheet\.hairlineWidth/);
     // A row declares no surface of its own either — the slab shows through.
     expect(styleBlock(source, 'roomCell')).not.toMatch(/backgroundColor/);
   });
@@ -111,28 +109,17 @@ describe('Room list — Grok Mono Hull invariants', () => {
     }
   });
 
-  it('spends brass ONLY on needs-you rows — the deck\u2019s whole point', () => {
-    // The supervision deck's one rule: the accent appears on a needs-you row's
-    // rail and its activity line — there are no pills anymore, so the brass
-    // mark plus the accent fact line carry the whole "needs you" signal.
-    // Working is motion; idle and unread are steel/luminance.
+  it('spends state brass only inside the shared circle glyph', () => {
+    // The state circle is the sole visual status signal. Rows, counts, and
+    // fact text stay neutral, while motion/fill distinguish the three states.
     const accentStyles = [...source.matchAll(/ {2}([A-Za-z0-9_]+): \{[^}]*groknight\.accent/g)].map(
       (match) => match[1],
     );
-    expect(accentStyles.sort()).toEqual([
-      'attnRail',
-      'cornerPeekCountLive',
-      'rowPreviewAttention',
-    ]);
-    // Every accent style on a ROW is gated by the derived needs-you flag. The
-    // compose FAB's brand brass lives in its isolated owner-approved overlay,
-    // not in this row-style inventory.
-    expect(source).toContain("row.attention && <View pointerEvents=\"none\" style={styles.attnRail} />");
-    expect(source).toContain('row.attention && styles.rowPreviewAttention');
-    expect(source).toContain('row.attention && styles.cornerPeekCountLive');
-    // Corner state glyphs render through THE one shared diamond component —
-    // never a screen-local Text with an identity shape.
-    expect(source).toContain('<CornerGlyph status={corner.status} style={styles.cornerGlyph} />');
+    expect(accentStyles).toEqual([]);
+    expect(source).not.toMatch(/attnRail|rowPreviewAttention|cornerPeekCountLive/);
+    // Corner state glyphs render through the same shared circle component.
+    expect(source).toContain('<CornerGlyph');
+    expect(source).not.toContain('styles.cornerStatus');
     // No pill strip came back: the cell renders mark + name + fact + count,
     // and nothing else.
     expect(source).not.toMatch(/styles\.pillStrip|styles\.rowPill/);
@@ -142,7 +129,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
   it('renders the three deck states through one HullDeckMark driven by the projection', () => {
     // needs-you > working > idle is decided in `roomRowPresentation`; the
     // screen only maps the answer onto the shared three-state mark.
-    expect(source).toMatch(/row\.attention\s*\?\s*'needs-you'\s*:\s*row\.zone === 'working'\s*\?\s*'working'\s*:\s*'idle'/);
+    expect(source).toContain('const deckState = row.state;');
     expect(source).toContain('<HullDeckMark state={deckState} />');
     // No screen-local spinner or pulse: motion lives in MonoHull.
     expect(source).not.toMatch(/withRepeat|useSharedValue/);
@@ -159,10 +146,10 @@ describe('Room list — Grok Mono Hull invariants', () => {
         'groknight.ledgerGhost',
       );
     }
-    // Names are always semibold Space Grotesk 16; read DMs dim one tone.
-    expect(styleBlock(source, 'rowTitle')).toContain("Typography.default('semiBold')");
+    // Names share one tone; only unread rows add semibold weight.
+    expect(styleBlock(source, 'rowTitle')).toContain('Typography.default()');
     expect(styleBlock(source, 'rowTitle')).toContain('fontSize: 16');
-    expect(styleBlock(source, 'rowTitleRead')).toContain('groknight.textSecondary');
+    expect(styleBlock(source, 'rowTitleUnread')).toContain("Typography.default('semiBold')");
     // The repo tag rides the title line in mono.
     expect(styleBlock(source, 'rowRepo')).toMatch(/Typography\.mono\(/);
   });
@@ -219,12 +206,8 @@ describe('Room list — Grok Mono Hull invariants', () => {
     const repo = styleBlock(source, 'rowRepo');
     expect(repo).toContain("marginLeft: 'auto'");
     expect(repo).not.toMatch(/position: 'absolute'/);
-    // The brass rail is the ONE absolute layer left on a row cell, and it is
-    // an edge decoration bounded by the cell's own box (top/bottom/left/width,
-    // no negative offsets), so it can never escape into a neighbouring row.
-    const rail = styleBlock(source, 'attnRail');
-    expect(rail).toMatch(/width: 2/);
-    expect(rail).not.toMatch(/-(?:top|left|right|bottom)/);
+    // Status contributes no absolute row decoration; the circle stays in flow.
+    expect(source).not.toContain('attnRail');
   });
 
   it('shows the projected current fact, never raw plumbing or a placeholder id', () => {
@@ -238,7 +221,7 @@ describe('Room list — Grok Mono Hull invariants', () => {
   });
 
   it('attributes lifecycle facts with the same identity waterfall the rest of the app uses', () => {
-    expect(source).toContain('roomListSections(');
+    expect(source).toContain('roomListFeed(');
     expect(source).toContain('[...visible, ...directEntries]');
     expect(source).toContain("names.set(identity.publicKey, 'You')");
   });
@@ -282,13 +265,11 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(styleBlock(source, 'cornerPeek')).toContain("alignItems: 'center'");
   });
 
-  it('shows unread as a quiet gray pill, and reserves the left rail for needs-you', () => {
-    // The old solid-gold unread rail is gone: brass means only needs-you now.
-    // A needs-you Room carries the 2px accent edge instead, gated on the same
-    // derived flag as the status pill.
-    expect(styleBlock(source, 'attnRail')).toContain('groknight.accent');
-    expect(styleBlock(source, 'attnRail')).toContain('left: 0');
-    expect(styleBlock(source, 'attnRail')).not.toContain('width: 3');
+  it('keeps unread out of the room-state circle', () => {
+    expect(source).toContain('const deckState = row.state;');
+    expect(source).toContain('<HullDeckMark state={deckState} />');
+    expect(source).toContain('row.unread && styles.rowTitleUnread');
+    expect(source).not.toContain('attnRail');
     expect(source).not.toContain('styles.rowUnread');
   });
 
@@ -305,33 +286,28 @@ describe('Room list — Grok Mono Hull invariants', () => {
     // create panel through the audited dispatch switch.
     expect(source).toContain('<RoomDeckComposeMenu onSelect={handleComposeAction} />');
     expect(composeSource).toContain('testID="room-deck-compose-fab"');
-    expect(composeSource).toContain("width: 56");
-    expect(composeSource).toContain("backgroundColor: brand.mark");
+    expect(composeSource).toContain('width: 56');
+    expect(composeSource).toContain('backgroundColor: brand.mark');
     expect(source).toContain('openRoomCreator: () => setShowCreateChannel(true)');
   });
 
-  it("renders exactly two piles — NEEDS YOU and DOESN'T NEED YOU — and nothing else", () => {
-    // Owner spec 2026-08-23: attention-state and recency were semantically
-    // different tiers; the deck has exactly TWO section labels — NEEDS YOU
-    // (actionable corner work or an unread ROOM/DM message) then DOESN'T NEED
-    // YOU (every other entry — working AND finished Rooms included; the row
-    // marks already convey working vs quiet). No recency headings, no third
-    // top-level tier, no collapsed FINISHED pile, no DIRECT pile. The labels
-    // themselves are pinned by room-list-row.test.ts against the projection;
-    // this screen must render them verbatim from that one source, never
-    // re-derive a vocabulary of its own.
+  it('renders one ordered feed with no section headers', () => {
     expect(source).toContain("from '@/buzz/room-list-row'");
-    expect(source).toContain('{section.title} · {section.data.length}');
-    expect(source).toContain('<SectionList');
-    expect(source).toContain('sections={roomSections.sections}');
-    expect(source).toContain('stickySectionHeadersEnabled={false}');
-    expect(source).not.toContain("section.zone === 'working'");
-    for (const retired of ["'WORKING'", "'TODAY'", "'YESTERDAY'", "'EARLIER'"]) {
+    expect(source).toContain('<FlatList');
+    expect(source).toContain('data={roomFeed}');
+    expect(source).not.toContain('SectionList');
+    expect(source).not.toContain('renderSectionHeader');
+    expect(source).not.toContain('styles.indexHeader');
+    for (const retired of [
+      "'NEEDS YOU'",
+      `"DOESN'T NEED YOU"`,
+      "'WORKING'",
+      "'TODAY'",
+      "'YESTERDAY'",
+      "'EARLIER'",
+    ]) {
       expect(source, `${retired} must not come back as a tier label`).not.toContain(retired);
     }
-    // The FINISHED collapse is deleted: finished Rooms render inline like any
-    // other quiet Room, and the DIRECT footer is gone — DMs obey the same
-    // unread rule inside the two piles.
     expect(source).not.toContain('FINISHED ·');
     expect(source).not.toContain('finished-rooms-toggle');
     expect(source).not.toContain('showFinishedRooms');

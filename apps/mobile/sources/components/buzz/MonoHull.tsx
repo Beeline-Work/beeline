@@ -27,7 +27,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { groknight } from '@/buzz/groknight';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
-import { cornerGlyphForStatus, type CornerStatus } from '@/buzz/corners';
+import { cornerVisualState, type CornerStatus, type CornerVisualState } from '@/buzz/corners';
 import { Typography } from '@/constants/Typography';
 
 export const motionTokens = {
@@ -127,10 +127,7 @@ export function BrittlePress({
 }: BrittlePressProps) {
   const pressed = useSharedValue(0);
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: 1 - pressed.value * 0.015 },
-      { translateY: pressed.value },
-    ],
+    transform: [{ scale: 1 - pressed.value * 0.015 }, { translateY: pressed.value }],
   }));
 
   return (
@@ -306,27 +303,36 @@ function LoaderCell({
 export type HullDeckState = 'needs-you' | 'working' | 'idle';
 
 /**
- * The supervision deck's three-state leading mark — three visual languages,
- * no overlap:
- *
- *   - **working** is MOTION: a small spinner (a ring whose top arc carries the
- *     accent while it turns). Never a static color claim; the movement IS the
- *     state.
- *   - **needs-you** is the one loud brass mark: a solid dot, gently pulsing on
- *     the shared live clock.
- *   - **idle** is a quiet steel dot. Silence is a state.
- *
- * Reduced motion keeps all three distinguishable without animation: working
- * falls back to a hollow static ring (vs the needs-you SOLID brass dot and the
- * idle steel dot), and the pulse holds still — the fill difference alone still
- * separates needs-you from idle.
+ * The one state glyph used at BOTH hierarchy levels: hollow grey circle when
+ * idle, grey ring with a rotating brass top arc while working, and a gently
+ * pulsing filled brass circle when it needs you. The word exists only as
+ * invisible accessibility metadata.
  */
-export function HullDeckMark({ state }: { state: HullDeckState }) {
+export function StateCircle({
+  state,
+  scale = 'corner',
+  style,
+  testID,
+}: {
+  state: CornerVisualState;
+  scale?: 'corner' | 'room';
+  style?: StyleProp<ViewStyle>;
+  testID?: string;
+}) {
   const reducedMotion = useReducedMotion();
   const rotation = useSharedValue(0);
+  const { progress: pulseProgress, still: pulseStill } = useLiveCycle(state === 'needs-you');
   const spin = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rotation.value * 360}deg` }],
   }));
+  const pulseRing = useAnimatedStyle(() => {
+    if (pulseStill) return { opacity: 0, transform: [{ scale: 1 }] };
+    const phase = Math.sin(pulseProgress.value * Math.PI);
+    return {
+      opacity: 0.28 * (1 - phase),
+      transform: [{ scale: 1 + 0.55 * phase }],
+    };
+  });
 
   useEffect(() => {
     if (state !== 'working' || reducedMotion) {
@@ -335,7 +341,7 @@ export function HullDeckMark({ state }: { state: HullDeckState }) {
     }
     rotation.value = withRepeat(
       withTiming(1, {
-        duration: motionTokens.liveCycle,
+        duration: 900,
         easing: Easing.linear,
         reduceMotion: ReduceMotion.System,
       }),
@@ -344,35 +350,51 @@ export function HullDeckMark({ state }: { state: HullDeckState }) {
     );
   }, [rotation, reducedMotion, state]);
 
-  if (state === 'needs-you') {
-    const dot = <View style={styles.deckDotAttention} />;
-    return (
-      <View style={styles.deckMarkSlot}>
-        {reducedMotion ? dot : <HullLivePulse active>{dot}</HullLivePulse>}
-      </View>
+  const diameter = scale === 'room' ? 20 : 14;
+  const geometry = { width: diameter, height: diameter, borderRadius: diameter / 2 };
+  const mark =
+    state === 'working' ? (
+      <Animated.View
+        style={[
+          geometry,
+          styles.stateCircleWorking,
+          reducedMotion && styles.stateCircleWorkingStill,
+          spin,
+        ]}
+      />
+    ) : (
+      <View
+        style={[
+          geometry,
+          state === 'needs-you' ? styles.stateCircleNeedsYou : styles.stateCircleIdle,
+        ]}
+      />
     );
-  }
-  if (state === 'working') {
-    if (reducedMotion) {
-      return (
-        <View style={styles.deckMarkSlot}>
-          <View style={styles.deckRingIdle} />
-        </View>
-      );
-    }
-    return (
-      <View style={styles.deckMarkSlot}>
+  return (
+    <View
+      accessible
+      accessibilityLabel={state}
+      accessibilityRole={state === 'working' ? 'progressbar' : 'image'}
+      style={[styles.stateCircleSlot, geometry, style]}
+      testID={testID}
+    >
+      {state === 'needs-you' && !reducedMotion && (
         <Animated.View
-          accessibilityLabel="Working"
-          accessibilityRole="progressbar"
-          style={[styles.deckRingWorking, spin]}
+          pointerEvents="none"
+          style={[geometry, styles.stateCircleNeedsYouPulse, pulseRing]}
         />
-      </View>
-    );
-  }
+      )}
+      {mark}
+    </View>
+  );
+}
+
+/** Room compatibility name: the room mark is the same circle component,
+ * fed only by the max-severity rollup of its corners. */
+export function HullDeckMark({ state }: { state: HullDeckState }) {
   return (
     <View style={styles.deckMarkSlot}>
-      <View style={styles.deckDotIdle} />
+      <StateCircle state={state} scale="room" />
     </View>
   );
 }
@@ -427,7 +449,10 @@ export function HullWaveSignal({ active = true, label, compact = false }: HullWa
   // stay on the grayscale signal tone.
   const alive = label === 'LIVE';
 
-  const segments = useMemo(() => Array.from({ length: compact ? 6 : 9 }, (_, index) => index), [compact]);
+  const segments = useMemo(
+    () => Array.from({ length: compact ? 6 : 9 }, (_, index) => index),
+    [compact],
+  );
   return (
     <View accessibilityLabel={label} accessibilityRole="text" style={styles.waveSignal}>
       <View style={styles.waveSegments}>
@@ -474,26 +499,31 @@ const LIVE_PULSE_FLOOR = 0.55;
 
 /**
  * THE corner-state glyph, for every surface that names a corner: deck
- * expansion rows, corner lists, pinned references. Diamonds are the corner
- * family — corners are WORK, never identities (△○▢ are identity shapes,
- * `identity-mark.ts`), so this component is the only thing that may draw a
- * corner's own glyph: filled ◆ while the work is live, hollow ◇ otherwise.
- * The state word always rides beside it (`cornerStatusPresentation`).
+ * expansion rows, corner lists, pinned references. This component is the only
+ * thing that may draw a corner's state circle, with the same fill+motion
+ * vocabulary as its Room.
+ * No visible status word rides beside it.
  */
 export function CornerGlyph({
   status,
+  awaitingReply,
+  agentOffline,
   style,
   testID,
 }: {
   /** The oracle's verdict; `null` (stalled/idle) renders on the quiet tier. */
   status: CornerStatus | null;
-  style?: StyleProp<TextStyle>;
+  awaitingReply?: boolean;
+  agentOffline?: boolean;
+  style?: StyleProp<ViewStyle>;
   testID?: string;
 }) {
   return (
-    <Text style={[style, status === 'live' && styles.cornerGlyphLive]} testID={testID}>
-      {cornerGlyphForStatus(status)}
-    </Text>
+    <StateCircle
+      state={cornerVisualState(status, { awaitingReply, agentOffline })}
+      style={style}
+      testID={testID}
+    />
   );
 }
 
@@ -505,7 +535,7 @@ export function CornerGlyph({
  * accent dot would not read as *live*.
  *
  * Motion is the redundant channel here, never the only one: what it wraps is
- * already the gold `◆` corner glyph, and the row states the count beside it.
+ * already the filled brass needs-you circle.
  * With reduced motion on, or the app backgrounded, it simply holds still.
  */
 export function HullLivePulse({
@@ -520,7 +550,9 @@ export function HullLivePulse({
   const { progress, still } = useLiveCycle(active);
   const pulse = useAnimatedStyle(() => {
     if (still) return { opacity: 1 };
-    return { opacity: LIVE_PULSE_FLOOR + (1 - LIVE_PULSE_FLOOR) * Math.sin(progress.value * Math.PI) ** 2 };
+    return {
+      opacity: LIVE_PULSE_FLOOR + (1 - LIVE_PULSE_FLOOR) * Math.sin(progress.value * Math.PI) ** 2,
+    };
   });
   return <Animated.View style={[style, pulse]}>{children}</Animated.View>;
 }
@@ -633,9 +665,7 @@ export function PixelGateReveal({ children, style }: HullSurfaceProps) {
     <Animated.View style={[style, contentStyle]}>
       {children}
       {!reducedMotion &&
-        [0, 1, 2, 3].map((index) => (
-          <RevealStrip key={index} index={index} progress={progress} />
-        ))}
+        [0, 1, 2, 3].map((index) => <RevealStrip key={index} index={index} progress={progress} />)}
     </Animated.View>
   );
 }
@@ -658,8 +688,7 @@ export function NewMessageMaterialize({
   // navigating back into the Room) is closed by the session reveal registry.
   const animateRef = useRef<boolean | null>(null);
   if (animateRef.current === null) {
-    animateRef.current =
-      enabled && (messageId === undefined || !hasMessageRevealed(messageId));
+    animateRef.current = enabled && (messageId === undefined || !hasMessageRevealed(messageId));
   }
   const animate = animateRef.current;
   // Mark after commit, not during render: a render that React discards must
@@ -695,132 +724,130 @@ function RevealStrip({ index, progress }: { index: number; progress: SharedValue
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  hullSurface: { position: 'relative', overflow: 'hidden' },
-  cornerGlyphLive: { color: groknight.accent },
-  textureLayer: { ...StyleSheet.absoluteFillObject, opacity: 1 },
-  scratch: {
-    position: 'absolute',
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: groknight.bgTexturePeak,
-    opacity: 0.03,
-  },
-  fleck: {
-    position: 'absolute',
-    width: 1,
-    height: 2,
-    backgroundColor: groknight.steel,
-    opacity: 0.025,
-  },
-  raisedEdge: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    left: 0,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: groknight.focus,
-    opacity: 0.03,
-  },
-  codeNotch: {
-    position: 'absolute',
-    width: 8,
-    height: 2,
-    backgroundColor: groknight.borderStrong,
-    opacity: 0.7,
-  },
-  codeNotchTop: { top: 0, left: 0 },
-  codeNotchBottom: { right: 0, bottom: 0 },
-  pressTarget: { minWidth: 44, minHeight: 44 },
-  pressTargetPressed: { backgroundColor: groknight.bgPressed },
-  pressTargetDisabled: { backgroundColor: groknight.bgBase },
-  monoButtonFrame: { minHeight: 46 },
-  monoButton: {
-    minHeight: 46,
-    paddingHorizontal: 16,
-    borderRadius: 3,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 8,
-  },
-  primaryButton: { backgroundColor: groknight.actionFill, borderColor: groknight.actionFill },
-  secondaryButton: { backgroundColor: groknight.bgBase, borderColor: groknight.borderStrong },
-  destructiveButton: { borderStyle: 'dashed', borderColor: groknight.borderStrong },
-  disabledButton: { backgroundColor: groknight.bgBase, borderColor: groknight.border },
-  monoButtonText: { ...Typography.default('semiBold'), fontSize: 13, lineHeight: 18 },
-  primaryButtonText: { color: groknight.textInverted },
-  secondaryButtonText: { color: groknight.textSecondary },
-  disabledButtonText: { color: groknight.textDisabled },
-  pixelLoader: { width: 42, height: 14, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  pixelLoaderCompact: { width: 30, height: 10, gap: 3 },
-  loaderCell: { width: 7, height: 7, backgroundColor: groknight.signalBright },
-  loaderCellCompact: { width: 5, height: 5 },
-  staticLoader: { ...Typography.mono('semiBold'), color: groknight.signalBright, fontSize: 12 },
-  /**
-   * Geometry, not chroma, carries the status: a fixed 2px column at the
-   * mechanism indent, so a reader scans one edge instead of reading every
-   * label. It is `alignSelf: 'stretch'` rather than a fixed height because the
-   * row it marks can wrap.
-   */
-  mechanismRail: {
-    width: 2,
-    alignSelf: 'stretch',
-    minHeight: 14,
-    flexShrink: 0,
-    backgroundColor: groknight.borderQuiet,
-  },
-  mechanismRailLive: { backgroundColor: groknight.accent },
-  activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  /* ── HullDeckMark: the supervision deck's three-state column ─────── */
-  deckMarkSlot: { width: 26, alignItems: 'center', justifyContent: 'center' },
-  deckDotAttention: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: groknight.accent,
-  },
-  deckDotIdle: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: groknight.bgTexturePeak,
-  },
-  deckRingWorking: {
-    width: 14,
-    height: 14,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: groknight.bgTexturePeak,
-    borderTopColor: groknight.accent,
-  },
-  /* Reduced-motion working: the same ring, held still and all-steel — hollow
-   * vs solid keeps it distinct from the needs-you dot without any motion. */
-  deckRingIdle: {
-    width: 14,
-    height: 14,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: groknight.steel,
-  },
-  activityTipDot: { width: 5, height: 5, backgroundColor: groknight.accent },
-  activityTipLabel: {
-    ...Typography.mono(),
-    color: groknight.accent,
-    fontSize: 9,
-    lineHeight: 12,
-  },
-  waveSignal: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  waveSegments: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  waveSegment: { width: 3, height: 6, backgroundColor: groknight.signalBright },
-  waveSegmentLive: { backgroundColor: groknight.accent },
-  waveLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
-  },
-  revealStrip: { position: 'absolute', right: 0, left: 0, backgroundColor: groknight.bgRaised },
-  });
+  return {
+    hullSurface: { position: 'relative', overflow: 'hidden' },
+    cornerGlyphLive: { color: groknight.accent },
+    textureLayer: { ...StyleSheet.absoluteFillObject, opacity: 1 },
+    scratch: {
+      position: 'absolute',
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: groknight.bgTexturePeak,
+      opacity: 0.03,
+    },
+    fleck: {
+      position: 'absolute',
+      width: 1,
+      height: 2,
+      backgroundColor: groknight.steel,
+      opacity: 0.025,
+    },
+    raisedEdge: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      left: 0,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: groknight.focus,
+      opacity: 0.03,
+    },
+    codeNotch: {
+      position: 'absolute',
+      width: 8,
+      height: 2,
+      backgroundColor: groknight.borderStrong,
+      opacity: 0.7,
+    },
+    codeNotchTop: { top: 0, left: 0 },
+    codeNotchBottom: { right: 0, bottom: 0 },
+    pressTarget: { minWidth: 44, minHeight: 44 },
+    pressTargetPressed: { backgroundColor: groknight.bgPressed },
+    pressTargetDisabled: { backgroundColor: groknight.bgBase },
+    monoButtonFrame: { minHeight: 46 },
+    monoButton: {
+      minHeight: 46,
+      paddingHorizontal: 16,
+      borderRadius: 3,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 8,
+    },
+    primaryButton: { backgroundColor: groknight.actionFill, borderColor: groknight.actionFill },
+    secondaryButton: { backgroundColor: groknight.bgBase, borderColor: groknight.borderStrong },
+    destructiveButton: { borderStyle: 'dashed', borderColor: groknight.borderStrong },
+    disabledButton: { backgroundColor: groknight.bgBase, borderColor: groknight.border },
+    monoButtonText: { ...Typography.default('semiBold'), fontSize: 13, lineHeight: 18 },
+    primaryButtonText: { color: groknight.textInverted },
+    secondaryButtonText: { color: groknight.textSecondary },
+    disabledButtonText: { color: groknight.textDisabled },
+    pixelLoader: { width: 42, height: 14, flexDirection: 'row', alignItems: 'center', gap: 4 },
+    pixelLoaderCompact: { width: 30, height: 10, gap: 3 },
+    loaderCell: { width: 7, height: 7, backgroundColor: groknight.signalBright },
+    loaderCellCompact: { width: 5, height: 5 },
+    staticLoader: { ...Typography.mono('semiBold'), color: groknight.signalBright, fontSize: 12 },
+    /**
+     * Geometry, not chroma, carries the status: a fixed 2px column at the
+     * mechanism indent, so a reader scans one edge instead of reading every
+     * label. It is `alignSelf: 'stretch'` rather than a fixed height because the
+     * row it marks can wrap.
+     */
+    mechanismRail: {
+      width: 2,
+      alignSelf: 'stretch',
+      minHeight: 14,
+      flexShrink: 0,
+      backgroundColor: groknight.borderQuiet,
+    },
+    mechanismRailLive: { backgroundColor: groknight.accent },
+    activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
+    /* ── Unified state circle: Room rollup and corner state ──────────── */
+    deckMarkSlot: { width: 26, alignItems: 'center', justifyContent: 'center' },
+    stateCircleSlot: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    stateCircleNeedsYou: {
+      backgroundColor: groknight.accent,
+    },
+    stateCircleNeedsYouPulse: {
+      position: 'absolute',
+      borderWidth: 1,
+      borderColor: groknight.accent,
+    },
+    stateCircleIdle: {
+      borderWidth: 2,
+      borderColor: groknight.steel,
+      backgroundColor: 'transparent',
+    },
+    stateCircleWorking: {
+      borderWidth: 2,
+      borderColor: groknight.bgTexturePeak,
+      borderTopColor: groknight.accent,
+      backgroundColor: 'transparent',
+    },
+    stateCircleWorkingStill: {
+      borderColor: groknight.steel,
+      borderTopColor: groknight.steel,
+    },
+    activityTipDot: { width: 5, height: 5, backgroundColor: groknight.accent },
+    activityTipLabel: {
+      ...Typography.mono(),
+      color: groknight.accent,
+      fontSize: 9,
+      lineHeight: 12,
+    },
+    waveSignal: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
+    waveSegments: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+    waveSegment: { width: 3, height: 6, backgroundColor: groknight.signalBright },
+    waveSegmentLive: { backgroundColor: groknight.accent },
+    waveLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
+    },
+    revealStrip: { position: 'absolute', right: 0, left: 0, backgroundColor: groknight.bgRaised },
+  };
 });

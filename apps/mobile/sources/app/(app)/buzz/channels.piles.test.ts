@@ -1,11 +1,6 @@
 /**
- * The deck's EXACTLY TWO piles: behavior contract.
- *
- * Owner spec 2026-08-23 (two-pile refinement): NEEDS YOU — a corner ask/gate,
- * a live review target, or an unread ROOM/DM message; and DOESN'T NEED YOU —
- * everything else, working AND finished Rooms included. There is no collapsed
- * FINISHED entry (finished Rooms render inline like any other quiet Room) and
- * no DIRECT pile (DMs obey the same unread rule).
+ * The deck's one headerless activity feed: behavior contract.
+ * Needs-you Rooms pin first, then recency; unread changes title weight only.
  *
  * Render assertions on the real screen, not source greps.
  */
@@ -48,7 +43,9 @@ vi.mock('expo-web-browser', () => ({
 }));
 vi.mock('expo-linking', () => ({ createURL: (path: string) => `beeline://${path}` }));
 vi.mock('@react-navigation/native', () => ({ useFocusEffect: () => undefined }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
+}));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   DEFAULT_RELAY_URL: 'https://relay.test',
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
@@ -142,31 +139,23 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  const SectionList = (props: any) => {
-    const sections = props.sections ?? [];
-    const rows = sections.flatMap((section: any) => [
+  const FlatList = (props: any) => {
+    const rows = (props.data ?? []).map((item: unknown, index: number) =>
       ReactModule.createElement(
         ReactModule.Fragment,
-        { key: `header-${section.zone}` },
-        props.renderSectionHeader?.({ section }) ?? null,
+        { key: props.keyExtractor(item, index) },
+        props.renderItem({ item, index }),
       ),
-      ...section.data.map((item: unknown, index: number) =>
-        ReactModule.createElement(
-          ReactModule.Fragment,
-          { key: props.keyExtractor(item, index) },
-          props.renderItem({ item, index, section }),
-        ),
-      ),
-    ]);
-    return ReactModule.createElement('SectionList', props, [
+    );
+    return ReactModule.createElement('FlatList', props, [
       props.ListHeaderComponent ?? null,
       ...rows,
-      rows.length === 0 ? props.ListEmptyComponent ?? null : null,
+      rows.length === 0 ? (props.ListEmptyComponent ?? null) : null,
       props.ListFooterComponent ?? null,
     ]);
   };
   return {
-    SectionList,
+    FlatList,
     Platform: { OS: 'ios', select: (o: Record<string, unknown>) => o.ios ?? o.default },
     RefreshControl: host('RefreshControl'),
     Share: { share: vi.fn() },
@@ -178,8 +167,9 @@ vi.mock('react-native', async () => {
   };
 });
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { channelListCacheKey, useBuzzLocalCache } = await import('@/buzz/local-cache');
 const { useRoomReadState } = await import('@/buzz/room-read-state');
@@ -251,13 +241,25 @@ function findByAclPrefix(tree: ReactTestRenderer, prefix: string) {
   );
 }
 
+function titleStyleCounts(tree: ReactTestRenderer, title: string): number[] {
+  const nodes = tree.root.findAll(
+    (candidate: any) =>
+      candidate.type === 'Text' &&
+      candidate.children.length === 1 &&
+      candidate.children[0] === title,
+    { deep: true },
+  );
+  if (nodes.length === 0) throw new Error(`title not found: ${title}`);
+  return nodes.map((node) => [node.props.style].flat().filter(Boolean).length);
+}
+
 async function press(node: any) {
   await act(async () => {
     node.props.onPress?.();
   });
 }
 
-describe("the deck's exactly two piles", () => {
+describe("the deck's one ordered feed", () => {
   beforeEach(() => {
     mmkvValues.clear();
     navigation.push.mockClear();
@@ -265,7 +267,7 @@ describe("the deck's exactly two piles", () => {
     useRoomReadState.setState({ readAt: {} });
   });
 
-  it("zones actionable rooms into NEEDS YOU and everything else into DOESN'T NEED YOU", async () => {
+  it('pins actionable Rooms first and renders no section headers', async () => {
     seedRooms([
       {
         id: 'review-room',
@@ -281,14 +283,14 @@ describe("the deck's exactly two piles", () => {
     ]);
     const tree = await render();
 
-    const labels = ['NEEDS YOU · 1', "DOESN'T NEED YOU · 2"];
     const joined = visibleTextOf(tree);
-    for (const label of labels) {
-      expect(joined, `missing tier header ${label}`).toContain(label);
-    }
+    expect(joined).not.toContain('NEEDS YOU ·');
+    expect(joined).not.toContain("DOESN'T NEED YOU ·");
+    expect(joined.indexOf('Review room')).toBeLessThan(joined.indexOf('Working room'));
+    expect(joined.indexOf('Working room')).toBeLessThan(joined.indexOf('Quiet room'));
   });
 
-  it("keeps an asked-but-stalled corner in NEEDS YOU and a merely idle one in DOESN'T NEED YOU", async () => {
+  it('pins an asked corner ahead of a merely idle one', async () => {
     seedRooms([
       {
         id: 'asked-room',
@@ -303,11 +305,11 @@ describe("the deck's exactly two piles", () => {
     ]);
     const tree = await render();
     const joined = visibleTextOf(tree);
-    expect(joined).toContain('NEEDS YOU · 1');
-    expect(joined).toContain("DOESN'T NEED YOU · 1");
+    expect(joined.indexOf('Asked room')).toBeLessThan(joined.indexOf('Stalled room'));
+    expect(joined).not.toContain('NEEDS YOU ·');
   });
 
-  it("moves an unread Room message into NEEDS YOU, then back after the viewer reads it", async () => {
+  it('keeps unread out of attention state before and after reading', async () => {
     seedRooms([
       {
         id: 'room-message',
@@ -321,32 +323,33 @@ describe("the deck's exactly two piles", () => {
     });
     const tree = await render();
 
-    expect(visibleTextOf(tree)).toContain('NEEDS YOU · 1');
-    expect(visibleTextOf(tree)).not.toContain("DOESN'T NEED YOU ·");
-    expect(findByAclPrefix(tree, 'Open Room message')[0].props.accessibilityLabel).toContain(
+    expect(visibleTextOf(tree)).not.toContain('NEEDS YOU ·');
+    expect(findByAclPrefix(tree, 'Open Room message')[0].props.accessibilityLabel).not.toContain(
       'needs your attention',
     );
+    expect(titleStyleCounts(tree, 'Room message')).toContain(2);
 
-    // Exercise the real read-state action the screen uses on return from the
-    // Room. The same row must immediately fall into the quiet pile when no
-    // corner gate or review target remains.
+    // Reading clears bold activity without touching the idle circle/state.
     await act(async () => {
       useRoomReadState.getState().markRoomRead(VIEWER, 'room-message', 9_000);
     });
 
     expect(visibleTextOf(tree)).not.toContain('NEEDS YOU ·');
-    expect(visibleTextOf(tree)).toContain("DOESN'T NEED YOU · 1");
     expect(findByAclPrefix(tree, 'Open Room message')[0].props.accessibilityLabel).not.toContain(
       'needs your attention',
     );
+    expect(titleStyleCounts(tree, 'Room message')).not.toContain(2);
   });
 
-  it("renders finished Rooms INLINE as ordinary members of DOESN'T NEED YOU", async () => {
+  it('renders finished Rooms inline in the same headerless feed', async () => {
     seedRooms([
       {
         id: 'landed-room',
         title: 'Landed room',
-        corners: [corner('corner-e', 'landed work', 'merged'), corner('corner-f', 'gone', 'archived')],
+        corners: [
+          corner('corner-e', 'landed work', 'merged'),
+          corner('corner-f', 'gone', 'archived'),
+        ],
       },
       { id: 'closed-room', title: 'Closed room', archived: true },
       { id: 'active-room', title: 'Active room' },
@@ -360,8 +363,8 @@ describe("the deck's exactly two piles", () => {
     // Room — reachable directly, no expansion step.
     expect(findByAclPrefix(tree, 'Open Landed room')).toHaveLength(1);
     expect(findByAclPrefix(tree, 'Open Closed room')).toHaveLength(1);
-    expect(visibleTextOf(tree)).toContain("DOESN'T NEED YOU · 3");
     expect(visibleTextOf(tree)).not.toContain('NEEDS YOU ·');
+    expect(visibleTextOf(tree)).not.toContain("DOESN'T NEED YOU ·");
 
     // Tapping one navigates into the Room itself.
     await press(findByAclPrefix(tree, 'Open Landed room')[0]);
@@ -369,7 +372,7 @@ describe("the deck's exactly two piles", () => {
     expect(String(navigation.push.mock.calls[0][0])).toContain('landed-room');
   });
 
-  it("puts an unread DM in NEEDS YOU and a read one in DOESN'T NEED YOU — no DIRECT pile", async () => {
+  it('orders DMs by activity while unread remains typography only', async () => {
     seedRooms([]);
     const existing = useBuzzLocalCache.getState().channelLists;
     const key = Object.keys(existing)[0];
@@ -413,16 +416,16 @@ describe("the deck's exactly two piles", () => {
     const tree = await render();
 
     const joined = visibleTextOf(tree);
-    // No DIRECT header exists; both DMs live in the same two piles as Rooms.
+    // No section header exists; both DMs live in the one recency feed.
     expect(joined).not.toContain('DIRECT ·');
-    expect(joined).toContain('NEEDS YOU · 1');
-    expect(joined).toContain("DOESN'T NEED YOU · 1");
-    // The unread DM is the pile's occupant; the read DM sits below.
+    expect(joined).not.toContain('NEEDS YOU ·');
+    expect(joined).not.toContain("DOESN'T NEED YOU ·");
+    expect(joined.indexOf('New Peer')).toBeLessThan(joined.indexOf('Read Peer'));
     expect(findByAclPrefix(tree, 'Open direct message with New Peer')).toHaveLength(1);
     expect(findByAclPrefix(tree, 'Open direct message with Read Peer')).toHaveLength(1);
-    expect(findByAclPrefix(tree, 'Open direct message with New Peer')[0].props.accessibilityLabel).toContain(
-      'needs your attention',
-    );
+    expect(
+      findByAclPrefix(tree, 'Open direct message with New Peer')[0].props.accessibilityLabel,
+    ).not.toContain('needs your attention');
     expect(
       findByAclPrefix(tree, 'Open direct message with Read Peer')[0].props.accessibilityLabel,
     ).not.toContain('needs your attention');

@@ -122,11 +122,17 @@ describe('tool ledger transcript', () => {
     expect(narration.props.textStyle.fontSize).toBe(16);
   });
 
-  it('collapses runs over three into one mixed-outcome summary by default', () => {
-    const renderer = render(<ActivityTimeline items={MIXED_RUN} />);
+  it('collapses every machine run into one attributed, stamped line by default', () => {
+    const renderer = render(<ActivityTimeline handle="Clara" items={MIXED_RUN} stamp="15:41" />);
     const group = renderer.root.findByProps({ testID: 'activity-step-group' });
     expect(group.props.accessibilityState).toEqual({ expanded: false });
-    expect(renderedText(renderer)).toContain('5 steps - 1 failed - 51s');
+    const text = renderedText(renderer);
+    expect(text).toContain('CLARA');
+    expect(text).toContain('read');
+    expect(text).toContain('thought 51s');
+    expect(text).toContain('15:41');
+    expect(text).not.toContain('TOOL CALL');
+    expect(text).not.toContain('5 steps');
     expect(
       renderer.root.findAll((node: any) =>
         /^activity-step-(?!group)/.test(node.props?.testID ?? ''),
@@ -145,14 +151,19 @@ describe('tool ledger transcript', () => {
     }
   });
 
-  it('shows runs of three or fewer directly', () => {
+  it('collapses runs of three or fewer, including thought-only groups', () => {
     const renderer = render(<ActivityTimeline items={MIXED_RUN.slice(1, 4)} />);
-    expect(renderer.root.findAllByProps({ testID: 'activity-step-group' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'activity-step-typecheck' })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: 'activity-step-group' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ testID: 'activity-step-typecheck' })).toHaveLength(0);
+
+    const thought = render(<ActivityTimeline items={[MIXED_RUN[5]]} />);
+    expect(thought.root.findByProps({ testID: 'activity-step-group' })).toBeTruthy();
+    expect(renderedText(thought)).toContain('thought 51s');
   });
 
   it('uses one 44pt hairline row with an outcome-aware accessibility label', () => {
     const renderer = render(<ActivityTimeline items={MIXED_RUN.slice(1, 3)} />);
+    act(() => renderer.root.findByProps({ testID: 'activity-step-group' }).props.onPress());
     const row = renderer.root.findByProps({ testID: 'activity-step-typecheck' });
     expect(row.props.style({ pressed: false })[0]).toMatchObject({
       minHeight: 44,
@@ -163,6 +174,7 @@ describe('tool ledger transcript', () => {
 
   it('puts the distilled failure token inline with a brass cross and no FAILED chip', () => {
     const renderer = render(<ActivityTimeline items={[MIXED_RUN[4]]} />);
+    act(() => renderer.root.findByProps({ testID: 'activity-step-group' }).props.onPress());
     expect(renderer.root.findByProps({ testID: 'activity-reason-failure' }).props.children).toBe(
       'command not found: pnpm',
     );
@@ -175,6 +187,7 @@ describe('tool ledger transcript', () => {
 
   it('renders thoughts as the same quiet line with a tabular duration', () => {
     const renderer = render(<ActivityTimeline items={[MIXED_RUN[5]]} />);
+    act(() => renderer.root.findByProps({ testID: 'activity-step-group' }).props.onPress());
     const row = renderer.root.findByProps({ testID: 'activity-step-thought-0' });
     expect(row.props.accessibilityLabel).toBe('thought, succeeded');
     expect(renderedText(renderer)).toContain('thought');
@@ -197,6 +210,7 @@ describe('tool ledger transcript', () => {
         ]}
       />,
     );
+    act(() => renderer.root.findByProps({ testID: 'activity-step-group' }).props.onPress());
     expect(
       renderer.root.findByProps({ testID: 'activity-verdict-live' }).findByType('PixelLoader'),
     ).toBeTruthy();
@@ -204,6 +218,7 @@ describe('tool ledger transcript', () => {
 
   it('opens full selectable raw output in the flat sheet and closes on dismiss', () => {
     const renderer = render(<ActivityTimeline items={MIXED_RUN.slice(1, 3)} />);
+    act(() => renderer.root.findByProps({ testID: 'activity-step-group' }).props.onPress());
     expect(renderer.root.findByType('Modal').props.visible).toBe(false);
     act(() => renderer.root.findByProps({ testID: 'activity-step-typecheck' }).props.onPress());
     expect(renderer.root.findByType('Modal').props.visible).toBe(true);
@@ -236,12 +251,14 @@ describe('raw output sheet safe area', () => {
   it('clears the Android system nav bar', () => {
     mockInsets.current = { top: 0, right: 0, bottom: 34, left: 0 };
     const renderer = render(<ActivityTimeline items={MIXED_RUN.slice(1, 3)} />);
+    act(() => renderer.root.findByProps({ testID: 'activity-step-group' }).props.onPress());
     act(() => renderer.root.findByProps({ testID: 'activity-step-typecheck' }).props.onPress());
     expect(sheetRootPaddingBottom(renderer)).toBe(34);
   });
 
   it('keeps a 12pt floor without an inset', () => {
     const renderer = render(<ActivityTimeline items={MIXED_RUN.slice(1, 3)} />);
+    act(() => renderer.root.findByProps({ testID: 'activity-step-group' }).props.onPress());
     act(() => renderer.root.findByProps({ testID: 'activity-step-typecheck' }).props.onPress());
     expect(sheetRootPaddingBottom(renderer)).toBe(12);
   });

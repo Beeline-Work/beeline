@@ -1,12 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   activeMentionAtCursor,
   filterMentionCandidates,
   formatRoomParticipantList,
   formatRoomParticipantTotal,
+  cornerHumanMembershipError,
   mentionedAgentPubkey,
   replaceActiveMention,
+  reportCornerHumanMembershipError,
   resolveComposerMentions,
   roomParticipantPubkeys,
   selectedMentionPubkeys,
@@ -57,36 +59,51 @@ describe('Room participant presentation', () => {
     });
   });
 
-  it('excludes Room-only infrastructure identities from the participant roster', () => {
+  it('keeps every identity in the direct Room membership projection', () => {
     const roomMembers = new Set(['human', 'agent', 'merge-worker']);
 
-    expect([
-      ...roomParticipantPubkeys(roomMembers, [{ pubkey: 'human' }], [{ pubkey: 'agent' }]),
-    ]).toEqual(['human', 'agent']);
+    expect([...roomParticipantPubkeys(roomMembers)]).toEqual(['human', 'agent', 'merge-worker']);
   });
 
   it('counts direct Room membership when there is no Workspace roster', () => {
     expect([...roomParticipantPubkeys(new Set(['human', 'guest']))]).toEqual(['human', 'guest']);
   });
 
-  it('always keeps the viewer, whatever the Workspace roster read says', () => {
-    // The visibility filter asks whether a key appears in the Workspace's
-    // people/agents lists — a SEPARATE relay read that can land slow, partial,
-    // or not at all. When it does, the filter quietly removes whoever is
-    // missing from it, which is how the captain came to be absent from the
-    // roster of their own Room. Being the viewer is direct evidence no roster
-    // read can outrank.
-    const roomMembers = new Set(['captain', 'agent', 'merge-worker']);
+  it('keeps the exact bd2ab6ee membership shape in the visible roster', () => {
+    const owner = `5f5ad2e2${'0'.repeat(56)}`;
+    const codex = `codex${'0'.repeat(59)}`;
+    const ox = `ox${'0'.repeat(62)}`;
+    const stale = `stale${'0'.repeat(59)}`;
 
-    expect([...roomParticipantPubkeys(roomMembers, [], [{ pubkey: 'agent' }], 'captain')]).toEqual([
-      'captain',
-      'agent',
+    expect([
+      ...roomParticipantPubkeys(new Set([owner, codex, ox, stale])),
+    ]).toEqual([owner, codex, ox, stale]);
+
+    const sections = sectionRoomParticipants([
+      { pubkey: owner, kind: 'person' as const },
+      { pubkey: codex, kind: 'agent' as const },
+      { pubkey: ox, kind: 'agent' as const },
+      { pubkey: stale, kind: 'person' as const },
     ]);
+    expect(sections.people.map((member) => member.pubkey)).toContain(owner);
+    expect(sections.agents.map((member) => member.pubkey)).toEqual([codex, ox]);
+    expect(sections.people.length + sections.agents.length).toBe(4);
+    expect(cornerHumanMembershipError([...sections.people, ...sections.agents])).toBeUndefined();
   });
 
-  it('still hides infrastructure keys that merely share the Room', () => {
-    const roomMembers = new Set(['captain', 'merge-worker']);
-    expect([...roomParticipantPubkeys(roomMembers, [], [], 'captain')]).toEqual(['captain']);
+  it('flags and logs a corrupt corner with zero humans', () => {
+    const log = vi.fn();
+    const participants = [
+      { pubkey: 'codex', kind: 'agent' as const },
+      { pubkey: 'ox', kind: 'agent' as const },
+    ];
+
+    expect(reportCornerHumanMembershipError('corrupt-corner', participants, log)).toBe(
+      'Membership error: this corner has no person. A corner must include the human who opened it.',
+    );
+    expect(log).toHaveBeenCalledWith(
+      '[mobile] corner corrupt-corner: Membership error: this corner has no person. A corner must include the human who opened it.',
+    );
   });
 
   it('maps a visible @Agent name to its pubkey without partial-name matches', () => {

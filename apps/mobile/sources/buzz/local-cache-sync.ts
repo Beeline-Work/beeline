@@ -162,11 +162,20 @@ async function performMessageRevalidation(
   // An empty Room is still warm after its first successful relay read. Keep one
   // overlap second so an event racing the HTTP query is picked up next time.
   const cursor = Math.max(cached?.cursor ?? 0, eventCursor || Math.max(0, fetchStartedAt - 1));
-  const summary = messageSummaryPatch(latestRoomMessageSummary(events), cached);
-  const latestEventAt = Math.max(cached?.latestEventAt ?? 0, eventCursor) || undefined;
+  const summaryCandidate = latestRoomMessageSummary(events);
   const store = useBuzzLocalCache.getState();
+  // The relay read above is asynchronous. An optimistic send and its live
+  // relay delivery can both enter the cache while it is in flight, so the
+  // snapshot captured before the read is never safe as replacement input.
+  // Re-read immediately before the synchronous store write: this closes the
+  // race without widening the cache API or letting an older read regress the
+  // transcript cursor/preview that live delivery already advanced.
+  const current = getCachedChannel(viewerPubkey, channelId);
+  const summary = messageSummaryPatch(summaryCandidate, current);
+  const latestEventAt = Math.max(current?.latestEventAt ?? 0, eventCursor) || undefined;
+  const committedCursor = Math.max(current?.cursor ?? 0, cursor);
   if (warm) {
-    store.upsertMessages(viewerPubkey, channelId, projected.messages, cursor, {
+    store.upsertMessages(viewerPubkey, channelId, projected.messages, committedCursor, {
       ...summary,
       ...(latestEventAt ? { latestEventAt } : {}),
     });
@@ -174,8 +183,8 @@ async function performMessageRevalidation(
     store.replaceMessages(
       viewerPubkey,
       channelId,
-      upsertChatMessages(projected.messages, cached?.messages ?? []),
-      cursor,
+      upsertChatMessages(projected.messages, current?.messages ?? []),
+      committedCursor,
       {
         ...summary,
         ...(latestEventAt ? { latestEventAt } : {}),

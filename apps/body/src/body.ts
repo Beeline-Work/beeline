@@ -239,9 +239,12 @@ import {
 import { fetchAgentModelCatalog } from './model-catalog.js';
 import {
   assertCornerWorktreeIsolated,
+  cornerPoolCandidateRoots,
   cornerWorktreePath,
   cornersPoolRoot,
   legacyCornerWorktreePath,
+  legacySiblingCornerWorktreePath,
+  migrateCornerWorktreePath,
 } from './corner-isolation.js';
 import {
   CORNER_RESUME_MAX_TURNS,
@@ -3604,17 +3607,36 @@ export class Body {
             continue;
           }
         }
-        // Prefer the current isolated (top-level) location, but a corner opened
-        // before this change lives at the legacy buried `.worktrees/<id>` path;
-        // restore it there rather than orphaning in-flight work across upgrade.
+        // Prefer the current PATH-safe isolated location. A corner in the old
+        // unsafe sibling pool is moved when this replacement session starts
+        // (never under a live session); if Git cannot move it, the compatibility
+        // path remains usable. The older buried `.worktrees/<id>` layout is
+        // still the final restore fallback.
         const isolatedWorktreePath = this.cornerWorktreePath(cornerRepo, subchannelId);
+        const unsafeSiblingWorktreePath = legacySiblingCornerWorktreePath({
+          ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
+          workspaceRoot: this.config.workspaceRoot,
+          ...(cornerRepo.localPath ? { sourceCheckout: cornerRepo.localPath } : {}),
+          ...(cornerRepo.repositoryKey ? { repositoryKey: cornerRepo.repositoryKey } : {}),
+          subchannelId,
+        });
         const legacyWorktreePath = legacyCornerWorktreePath(
           this.config.workspaceRoot,
           subchannelId,
         );
-        let worktreePath = existsSync(isolatedWorktreePath)
-          ? isolatedWorktreePath
-          : legacyWorktreePath;
+        let worktreePath = isolatedWorktreePath;
+        if (!existsSync(worktreePath) && unsafeSiblingWorktreePath) {
+          worktreePath = existsSync(unsafeSiblingWorktreePath)
+            ? await this.migrateLegacyCornerWorktree(
+                cornerRepo,
+                unsafeSiblingWorktreePath,
+                isolatedWorktreePath,
+              )
+            : isolatedWorktreePath;
+        }
+        if (!existsSync(worktreePath) && existsSync(legacyWorktreePath)) {
+          worktreePath = legacyWorktreePath;
+        }
         if (!existsSync(worktreePath)) {
           // A missing worktree is not the same as missing work: the corner's
           // commits live on its feature branch, and a worktree is a checkout
@@ -9923,7 +9945,19 @@ export class Body {
   private abandonedCornerWorktreePaths(entry: AbandonedCorner): string[] {
     const paths = new Set<string>();
     if (entry.worktreePath) paths.add(entry.worktreePath);
-    if (entry.boundRepo) paths.add(this.cornerWorktreePath(entry.boundRepo, entry.subchannelId));
+    if (entry.boundRepo) {
+      paths.add(this.cornerWorktreePath(entry.boundRepo, entry.subchannelId));
+      const unsafeSibling = legacySiblingCornerWorktreePath({
+        ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
+        workspaceRoot: this.config.workspaceRoot,
+        ...(entry.boundRepo.localPath ? { sourceCheckout: entry.boundRepo.localPath } : {}),
+        ...(entry.boundRepo.repositoryKey
+          ? { repositoryKey: entry.boundRepo.repositoryKey }
+          : {}),
+        subchannelId: entry.subchannelId,
+      });
+      if (unsafeSibling) paths.add(unsafeSibling);
+    }
     paths.add(legacyCornerWorktreePath(this.config.workspaceRoot, entry.subchannelId));
     return [...paths];
   }
@@ -10339,7 +10373,7 @@ export class Body {
     return {
       protectedPaths: [
         this.config.workspaceRoot,
-        this.cornersPoolRoot(boundRepo),
+        ...this.cornersPoolRoots(boundRepo),
         ...(boundRepo.localPath ? [boundRepo.localPath] : []),
         ...(this.config.agentHomeRoot ? [this.config.agentHomeRoot] : []),
         ...(this.config.agentPrivateRoot ? [this.config.agentPrivateRoot] : []),
@@ -10455,6 +10489,31 @@ export class Body {
     await this.excludeCodegraphFromWorktreeStatus(worktreePath);
     await this.provisionWorktreeToolchain(worktreePath);
     return true;
+  }
+
+  /** Move one pre-fix sibling worktree immediately before its next session. */
+  private async migrateLegacyCornerWorktree(
+    boundRepo: BoundRepo,
+    legacyPath: string,
+    currentPath: string,
+  ): Promise<string> {
+    const repoRoot =
+      boundRepo.localPath ??
+      (boundRepo.ownerHex
+        ? resolve(this.config.workspaceRoot, `.git-${boundRepo.repo}`)
+        : undefined);
+    if (!repoRoot || !existsSync(repoRoot) || existsSync(currentPath)) return legacyPath;
+    try {
+      if (!(await migrateCornerWorktreePath(repoRoot, legacyPath, currentPath))) {
+        console.warn(`[body] corner path migration kept legacy ${legacyPath}`);
+        return legacyPath;
+      }
+    } catch (error) {
+      console.warn(`[body] corner path migration kept legacy ${legacyPath}:`, error);
+      return legacyPath;
+    }
+    console.log(`[body] migrated corner worktree ${legacyPath} -> ${currentPath}`);
+    return currentPath;
   }
 
   private async createWorktree(
@@ -10630,6 +10689,16 @@ export class Body {
       ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
       workspaceRoot: this.config.workspaceRoot,
       ...(boundRepo?.localPath ? { sourceCheckout: boundRepo.localPath } : {}),
+      ...(boundRepo?.repositoryKey ? { repositoryKey: boundRepo.repositoryKey } : {}),
+    });
+  }
+
+  /** Current pool plus the unsafe pre-fix sibling pool while it still exists. */
+  private cornersPoolRoots(boundRepo?: BoundRepo): string[] {
+    return cornerPoolCandidateRoots({
+      ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
+      workspaceRoot: this.config.workspaceRoot,
+      ...(boundRepo?.localPath ? { sourceCheckout: boundRepo.localPath } : {}),
     });
   }
 
@@ -10683,8 +10752,8 @@ export class Body {
     if (now - this.lastWorktreePruneAt < CORNER_WORKTREE_PRUNE_INTERVAL_MS) return;
     this.lastWorktreePruneAt = now;
 
-    const pool = this.cornersPoolRoot(boundRepo);
-    if (!existsSync(pool)) return;
+    const pools = this.cornersPoolRoots(boundRepo).filter((pool) => existsSync(pool));
+    if (pools.length === 0) return;
     // The authority on which worktrees git still tracks: the shared checkout
     // for a paired repo, or the bare git dir for a relay-origin/local corner.
     const worktreeGitDir =
@@ -10702,12 +10771,6 @@ export class Body {
     }
     const live = new Set([...this.subchannels.values()].map((info) => resolve(info.worktreePath)));
 
-    let entries: { name: string; isDirectory(): boolean }[];
-    try {
-      entries = await readdir(pool, { withFileTypes: true });
-    } catch {
-      return;
-    }
     // Resolving "archived?" costs a relay read per directory, so it is only
     // asked for directories the on-disk checks have already cleared — a dirty
     // or unlanded worktree is kept whatever the relay says about its corner.
@@ -10720,41 +10783,52 @@ export class Body {
       'refs/remotes/origin/master',
     ].filter((ref): ref is string => Boolean(ref));
     const pending: { dir: string; subchannelId: string; probe: CornerWorktreeProbe }[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      // The dir basename is the subchannel id (see `cornerWorktreePath`).
-      const subchannelId = entry.name;
-      const dir = resolve(pool, subchannelId);
-      const probe = await probeCornerWorktree(dir, await resolveTargetRefs(dir, targetCandidates));
-      const decision = cornerWorktreeSweepDecision({
-        registered: registered.has(dir),
-        live: live.has(dir),
-        tracked: this.subchannels.has(subchannelId) || this.abandonedCorners.has(subchannelId),
-        // Left unasked on purpose. "Is the corner archived?" costs a relay read
-        // and is the LAST question, never an override: a directory only reaches
-        // it once every on-disk guard has already cleared it.
-        probe,
-      });
-      if (decision.action === 'reap') {
-        console.log(`[body] corner worktree sweep reaping ${dir}: ${decision.reason}`);
-        await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    for (const pool of pools) {
+      let entries: { name: string; isDirectory(): boolean }[];
+      try {
+        entries = await readdir(pool, { withFileTypes: true });
+      } catch {
         continue;
       }
-      if (decision.action === 'repair') {
-        // A real worktree git stopped registering is the shape the old sweep
-        // deleted. Re-link it instead, so `restoreSubchannels` can find it.
-        const repair = await git(worktreeGitDir, ['worktree', 'repair', dir]);
-        console.log(
-          `[body] corner worktree sweep repairing ${dir}: ${decision.reason}` +
-            (repair.ok ? '' : ` (repair failed: ${repair.stderr.trim()})`),
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        // The dir basename is the subchannel id (see `cornerWorktreePath`).
+        const subchannelId = entry.name;
+        const dir = resolve(pool, subchannelId);
+        const probe = await probeCornerWorktree(
+          dir,
+          await resolveTargetRefs(dir, targetCandidates),
         );
-        continue;
+        const decision = cornerWorktreeSweepDecision({
+          registered: registered.has(dir),
+          live: live.has(dir),
+          tracked: this.subchannels.has(subchannelId) || this.abandonedCorners.has(subchannelId),
+          // Left unasked on purpose. "Is the corner archived?" costs a relay read
+          // and is the LAST question, never an override: a directory only reaches
+          // it once every on-disk guard has already cleared it.
+          probe,
+        });
+        if (decision.action === 'reap') {
+          console.log(`[body] corner worktree sweep reaping ${dir}: ${decision.reason}`);
+          await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+          continue;
+        }
+        if (decision.action === 'repair') {
+          // A real worktree git stopped registering is the shape the old sweep
+          // deleted. Re-link it instead, so `restoreSubchannels` can find it.
+          const repair = await git(worktreeGitDir, ['worktree', 'repair', dir]);
+          console.log(
+            `[body] corner worktree sweep repairing ${dir}: ${decision.reason}` +
+              (repair.ok ? '' : ` (repair failed: ${repair.stderr.trim()})`),
+          );
+          continue;
+        }
+        if (decision.action === 'ask') {
+          pending.push({ dir, subchannelId, probe });
+          continue;
+        }
+        console.log(`[body] corner worktree sweep keeping ${dir}: ${decision.reason}`);
       }
-      if (decision.action === 'ask') {
-        pending.push({ dir, subchannelId, probe });
-        continue;
-      }
-      console.log(`[body] corner worktree sweep keeping ${dir}: ${decision.reason}`);
     }
     if (pending.length === 0) return;
 

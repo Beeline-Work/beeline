@@ -28,9 +28,11 @@
  *     worktree into the shared checkout, for a harness that leaks past the
  *     isolation above.
  */
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { git, type GitResult } from '@beeline/gate';
+import { cornerDirectoryName, repositoryDirectoryName } from './repository-path.js';
 
 /** Thrown when a corner cannot be isolated from the primary checkout. */
 export class CornerIsolationError extends Error {
@@ -72,7 +74,7 @@ export function cornerWorktreePath(opts: {
   subchannelId: string;
 }): string {
   const base = cornersPoolRoot(opts);
-  return resolve(base, opts.subchannelId);
+  return resolve(base, cornerDirectoryName(opts.subchannelId));
 }
 
 /**
@@ -88,9 +90,78 @@ export function cornersPoolRoot(opts: {
   if (opts.cornersRoot) return resolve(opts.cornersRoot);
   if (opts.sourceCheckout) {
     const checkout = resolve(opts.sourceCheckout);
-    return resolve(checkout, '..', CORNERS_SIBLING_DIR, basename(checkout));
+    return resolve(
+      checkout,
+      '..',
+      CORNERS_SIBLING_DIR,
+      repositoryDirectoryName(basename(checkout)),
+    );
   }
   return resolve(opts.workspaceRoot, '.worktrees');
+}
+
+/**
+ * Pre-PATH-fix sibling pool, retained only to restore/sweep a corner whose
+ * directory could not be migrated before its next session starts.
+ */
+export function legacySiblingCornersPoolRoot(opts: {
+  cornersRoot?: string;
+  workspaceRoot: string;
+  sourceCheckout?: string;
+  repositoryKey?: string;
+}): string | undefined {
+  if (opts.cornersRoot || !opts.sourceCheckout) return undefined;
+  const checkout = resolve(opts.sourceCheckout);
+  const legacy = resolve(
+    checkout,
+    '..',
+    CORNERS_SIBLING_DIR,
+    opts.repositoryKey ?? basename(checkout),
+  );
+  return legacy === cornersPoolRoot(opts) ? undefined : legacy;
+}
+
+/** Current and compatibility pool roots, deduped, for restore and sweeping. */
+export function cornerPoolCandidateRoots(opts: {
+  cornersRoot?: string;
+  workspaceRoot: string;
+  sourceCheckout?: string;
+  repositoryKey?: string;
+}): string[] {
+  return [cornersPoolRoot(opts), legacySiblingCornersPoolRoot(opts)].filter(
+    (path): path is string => Boolean(path),
+  );
+}
+
+/** Compatibility location for a corner in the old unsafe sibling pool. */
+export function legacySiblingCornerWorktreePath(opts: {
+  cornersRoot?: string;
+  workspaceRoot: string;
+  sourceCheckout?: string;
+  repositoryKey?: string;
+  subchannelId: string;
+}): string | undefined {
+  const pool = legacySiblingCornersPoolRoot(opts);
+  return pool ? resolve(pool, opts.subchannelId) : undefined;
+}
+
+/**
+ * Move an inactive legacy corner through Git so both its directory and the
+ * common worktree registry change together. Call only immediately before a
+ * replacement session starts; an already-running session must keep its cwd.
+ */
+export async function migrateCornerWorktreePath(
+  repositoryRoot: string,
+  legacyPath: string,
+  currentPath: string,
+  runGit: (cwd: string, args: string[]) => Promise<GitResult> | GitResult = git,
+): Promise<boolean> {
+  if (!existsSync(repositoryRoot) || !existsSync(legacyPath) || existsSync(currentPath)) {
+    return false;
+  }
+  await mkdir(resolve(currentPath, '..'), { recursive: true, mode: 0o700 });
+  const moved = await runGit(repositoryRoot, ['worktree', 'move', legacyPath, currentPath]);
+  return moved.ok;
 }
 
 /** Physically resolve a path (mirrors firstmate's `pwd -P`); raw path on failure. */

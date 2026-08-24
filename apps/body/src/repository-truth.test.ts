@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { inspectLocalRepository } from './runtime.js';
-import { RepositoryTruthResolver } from './repository-truth.js';
+import { inspectLocalRepository, type AgentRuntimeRecord } from './runtime.js';
+import { migrateLegacyRepositoryPaths, RepositoryTruthResolver } from './repository-truth.js';
+import { repositoryDirectoryName } from './repository-path.js';
 
 const cleanup: string[] = [];
 
@@ -44,6 +45,101 @@ function fixture(): {
 }
 
 describe('one repository-truth resolver', () => {
+  it('uses a collision-resistant PATH-safe directory for an unsafe repository key', () => {
+    const root = mkdtempSync(join(tmpdir(), 'beeline-repository-path-'));
+    cleanup.push(root);
+    const resolver = new RepositoryTruthResolver({ repositoriesRoot: root });
+    const checkout = resolver.checkoutPath('github:1330313701');
+
+    expect(checkout).toBe(resolve(root, repositoryDirectoryName('github:1330313701')));
+    expect(checkout).not.toMatch(/[:\s]/);
+    expect(checkout).not.toBe(resolver.checkoutPath('github-1330313701'));
+  });
+
+  it('keeps an unmigratable legacy checkout reachable through the compatibility resolver', () => {
+    const root = mkdtempSync(join(tmpdir(), 'beeline-repository-compat-'));
+    cleanup.push(root);
+    const legacy = resolve(root, 'github:1330313701');
+    const current = resolve(root, repositoryDirectoryName('github:1330313701'));
+    mkdirSync(legacy, { recursive: true });
+    mkdirSync(current, { recursive: true });
+
+    const resolver = new RepositoryTruthResolver({ repositoriesRoot: root });
+    expect(resolver.checkoutPath('github:1330313701')).toBe(legacy);
+  });
+
+  it('migrates a legacy checkout, preserves linked corners, repairs Git, and rewrites runtime paths', async () => {
+    const supervisorRoot = mkdtempSync(join(tmpdir(), 'beeline-repository-migration-'));
+    cleanup.push(supervisorRoot);
+    const repositoriesRoot = resolve(supervisorRoot, 'beeline', 'repositories');
+    const repositoryKey = 'github:1330313701';
+    const legacyCheckout = resolve(repositoriesRoot, repositoryKey);
+    const currentCheckout = resolve(repositoriesRoot, repositoryDirectoryName(repositoryKey));
+    const legacyCorner = resolve(repositoriesRoot, '.beeline-corners', repositoryKey, 'corner-1');
+    mkdirSync(repositoriesRoot, { recursive: true });
+    git(repositoriesRoot, ['init', '-q', '-b', 'main', legacyCheckout]);
+    git(legacyCheckout, ['config', 'user.name', 'Migration']);
+    git(legacyCheckout, ['config', 'user.email', 'migration@example.invalid']);
+    git(legacyCheckout, ['commit', '-q', '--allow-empty', '-m', 'seed']);
+    mkdirSync(resolve(legacyCorner, '..'), { recursive: true });
+    git(legacyCheckout, ['worktree', 'add', '-q', '-b', 'feature/corner-1', legacyCorner, 'main']);
+    const orphanKey = 'github:orphan-cache';
+    const orphanLegacy = resolve(repositoriesRoot, orphanKey);
+    const orphanCurrent = resolve(repositoriesRoot, repositoryDirectoryName(orphanKey));
+    git(repositoriesRoot, ['init', '-q', '-b', 'main', orphanLegacy]);
+
+    const runtime: AgentRuntimeRecord = {
+      version: 2,
+      communityId: '11111111-1111-4111-8111-111111111111',
+      pairedBy: 'c'.repeat(64),
+      agent: { name: 'Agent', secretKeyHex: '1'.repeat(64), publicKey: 'a'.repeat(64) },
+      body: { name: 'Body', secretKeyHex: '2'.repeat(64), publicKey: 'b'.repeat(64) },
+      rooms: [
+        {
+          channelId: 'room-1',
+          repo: {
+            root: legacyCheckout,
+            gitCommonDir: resolve(legacyCheckout, '.git'),
+            targetBranch: 'main',
+            repository: { key: repositoryKey, name: 'example', localOnly: true },
+          },
+          membershipSince: 1,
+          discoveredAt: new Date(0).toISOString(),
+        },
+      ],
+      supervisorRoot,
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+
+    const result = await migrateLegacyRepositoryPaths(runtime, { log: () => undefined });
+
+    expect(result.migrated).toBe(2);
+    expect(existsSync(legacyCheckout)).toBe(false);
+    expect(existsSync(legacyCorner)).toBe(true);
+    expect(existsSync(currentCheckout)).toBe(true);
+    expect(git(legacyCorner, ['rev-parse', '--show-toplevel'])).toBe(legacyCorner);
+    expect(git(currentCheckout, ['worktree', 'list', '--porcelain'])).toContain(
+      `worktree ${legacyCorner}`,
+    );
+    expect(existsSync(orphanLegacy)).toBe(false);
+    expect(existsSync(orphanCurrent)).toBe(true);
+    expect(result.runtime.rooms[0]!.repo.root).toBe(currentCheckout);
+    expect(result.runtime.rooms[0]!.repo.gitCommonDir).toBe(resolve(currentCheckout, '.git'));
+    const configPath = resolve(
+      supervisorRoot,
+      'beeline',
+      'agents',
+      runtime.agent.publicKey,
+      'runtime.json',
+    );
+    const stored = JSON.parse(readFileSync(configPath, 'utf8')) as AgentRuntimeRecord;
+    expect(stored.rooms[0]!.repo.root).toBe(currentCheckout);
+    expect(stored.rooms[0]!.repo.gitCommonDir).toBe(resolve(currentCheckout, '.git'));
+  });
+
   it('treats a remote as truth and refreshes the canonical cache before a corner opens', async () => {
     const f = fixture();
     const resolver = new RepositoryTruthResolver({

@@ -77,6 +77,7 @@ import {
 } from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { markRoomRemovedAndPurge } from '@/buzz/removed-rooms';
+import { isCornerClosed, markCornerClosedAndPurge, useClosedCorners } from '@/buzz/closed-corners';
 import { latestCornerPlan } from '@/buzz/activity-timeline';
 import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
 import { hydrateRoomEntry } from '@/buzz/room-entry';
@@ -621,6 +622,18 @@ export default function BuzzChat() {
   presenceReconnectGraceRef.current = presenceReconnectGrace;
   const activeCacheViewer = useBuzzLocalCache((state) => state.activeViewerPubkey);
   const cacheViewerPubkey = userPubkey || activeCacheViewer || '';
+  // A corner this viewer CLOSED reads as archived on this screen immediately
+  // and durably: entering it directly (stale link, notification) lands in the
+  // read-only archived presentation on frame one, instead of staying live
+  // until relay state catches up. Relay truth remains the lifecycle
+  // authority; the tombstone only ever adds an already-dismissed verdict.
+  const cornerClosedLocally = useClosedCorners((state) =>
+    isCornerClosed(state.closedAt, cacheViewerPubkey, parentChannelId ?? decodedId, decodedId),
+  );
+  useEffect(() => {
+    if (cornerClosedLocally) setIsArchived(true);
+  }, [cornerClosedLocally]);
+  const closedCornerAt = useClosedCorners((state) => state.closedAt);
   const channelCache = useBuzzLocalCache((state) =>
     cacheViewerPubkey ? state.channels[channelCacheKey(cacheViewerPubkey, decodedId)] : undefined,
   );
@@ -1142,14 +1155,28 @@ export default function BuzzChat() {
   // source, and chosen by how much it is being worked on. `null` for a Room
   // with no live corner, however busy its agent is right now.
   const pinnedCorner = useMemo(
-    () =>
-      selectPinnedCorner({
+    () => {
+      const selected = selectPinnedCorner({
         signals: cornerSignals,
         lifecycle: cornerLifecycle,
         lifecycleLoaded: cornerLifecycleLoaded,
         permittedCorner,
-      }),
-    [cornerLifecycle, cornerLifecycleLoaded, cornerSignals, permittedCorner],
+      });
+      // A corner this viewer CLOSED never gets the pinned line — the deck's
+      // dropdown and the corners list already hide it, so a gold "view →"
+      // pointing at dismissed work would be the one affordance left leading
+      // into it.
+      if (!selected) return null;
+      return isCornerClosed(
+        closedCornerAt,
+        userPubkey || activeCacheViewer,
+        decodedId,
+        selected.cornerId,
+      )
+        ? null
+        : selected;
+    },
+    [closedCornerAt, cornerLifecycle, cornerLifecycleLoaded, cornerSignals, decodedId, permittedCorner, userPubkey, activeCacheViewer],
   );
   const pinnedCornerCard = useMemo(
     () =>
@@ -2698,6 +2725,16 @@ export default function BuzzChat() {
     }
     try {
       await transport.closeCorner(decodedId);
+      // The close publish resolved: dismiss the corner LOCALLY right now —
+      // durable tombstone plus purge from every cached list — so it leaves
+      // the deck's counts/dropdowns on this frame instead of whenever the
+      // daemon's next maintenance tick lands its archive cards. Re-closing
+      // an already-closed corner is tolerated (no-op archive, #396/#402
+      // semantics): the re-stamp keeps removal stuck either way.
+      const viewerKey = userPubkey || activeCacheViewer;
+      if (viewerKey && parentChannelId) {
+        markCornerClosedAndPurge(viewerKey, parentChannelId, decodedId);
+      }
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       handleBack();
     } catch (err) {
@@ -2705,7 +2742,7 @@ export default function BuzzChat() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
     }
-  }, [decodedId, handleBack, transport]);
+  }, [decodedId, handleBack, parentChannelId, transport, userPubkey, activeCacheViewer]);
 
   // An approval that was accepted by the relay but never acknowledged by the
   // daemon resolves ITSELF here. The signed approval stays on the relay and a

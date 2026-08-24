@@ -224,6 +224,7 @@ import {
 } from './corner-isolation.js';
 import { measureSessionReprime } from './session-reprime.js';
 import { readCornerGitResumeState } from './corner-resume.js';
+import { isCornerCloseRequest } from './corner-close-intent.js';
 import {
   completedModelSpend,
   failedModelSpend,
@@ -8603,12 +8604,23 @@ export class Body {
         // Close-corner archives the subchannel outright (it also cancels any
         // active turn as part of that teardown) — distinct from a plain
         // cancel, which only stops the current turn and leaves the corner open.
+        // The TAGGED control is not the only way a person asks: "Close this
+        // corner" typed as an ordinary chat message (owner-reported
+        // 2026-08-23) used to be forwarded into the ACP session as
+        // conversation, where the agent — which cannot close its own corner —
+        // could only talk about it, and the corner stayed open and enterable
+        // forever. The strict recognizer routes that explicit imperative to
+        // this same teardown; anything it does not match keeps flowing to the
+        // agent exactly as before.
         // Mirror the ordinary message path below: mark delivered only once
         // the triggered work actually succeeds, and `failed` on the catch
         // path. Marking `delivered` before the archive attempt (the old
         // behavior) makes a partial archive failure permanently
         // un-retryable — even across a restart, since `delivered` persists.
-        if (evt.tags.some((t) => t[0] === 't' && t[1] === CORNER_CLOSE_TAG)) {
+        const cornerCloseRequested =
+          evt.tags.some((t) => t[0] === 't' && t[1] === CORNER_CLOSE_TAG) ||
+          isCornerCloseRequest(evt.content);
+        if (cornerCloseRequested) {
           try {
             await this.archiveSubchannel(subchannelId);
           } catch (closeError) {

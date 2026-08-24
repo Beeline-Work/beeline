@@ -53,6 +53,7 @@ import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
+import { isCornerClosed, useClosedCorners } from '@/buzz/closed-corners';
 import {
   NO_ACTIVITY_PREVIEW,
   finishedRoomEntries,
@@ -460,6 +461,10 @@ export default function BuzzChannels() {
   // us after a refused leave), so the deck itself filters these out on every
   // build — cache seed, refresh, and restart alike.
   const removedAt = useRemovedRooms((state) => state.removedAt);
+  // Closed-corner tombstones (#corner-close): a corner this viewer dismissed
+  // leaves the deck's counts and dropdowns on the frame the close lands,
+  // not a daemon maintenance tick later.
+  const closedCornerAt = useClosedCorners((state) => state.closedAt);
   // The Room the reader just left. Marking read on the way *back* — not on the
   // way in — is what keeps a message you sent, or one that arrived while you
   // were looking at it, from lighting the row up as unread on return.
@@ -507,12 +512,15 @@ export default function BuzzChannels() {
       .map((room) => ({
         ...room,
         unreadNew: unreadCountFor(room, identity?.publicKey, readAt),
+        corners: (room.corners ?? []).filter(
+          (corner) => !isCornerClosed(closedCornerAt, viewerKey, room.id, corner.id),
+        ),
       }));
     return {
       sections: roomListSections(visible, authorNames, { now: ageNow }),
       finished: finishedRoomEntries(visible, authorNames),
     };
-  }, [ageNow, authorNames, cachedListEntry?.viewerPubkey, displayChannels, identity?.publicKey, readAt, removedAt]);
+  }, [ageNow, authorNames, cachedListEntry?.viewerPubkey, closedCornerAt, displayChannels, identity?.publicKey, readAt, removedAt]);
   // One projection, one consumer each: inline tiers vs the collapsed entry.
   // Kept as separate names so the JSX below stays flat.
   const finishedRooms = roomSections.finished;

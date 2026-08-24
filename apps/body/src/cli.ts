@@ -541,6 +541,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   console.log(`[body] ${sandbox.advisory}`);
 
   let ready = false;
+  let stoppingStatus = 'daemon stopped';
   try {
     const core = new ThinDaemonCore(runtime, configPath, config);
     const result = await core.run({
@@ -572,7 +573,14 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         // The watchdog heartbeat is coupled to this completed progress tick.
         await notifier.progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`);
         if (await update?.check()) {
-          await notifier.stopping('desired release changed; intake quiesced, draining');
+          const handoff = await readUpdateHandoff(runtimeDir);
+          if (!handoff) throw new Error('update drift was detected without a durable handoff');
+          core.setDrainDeadlineAt(handoff.drainDeadlineAt);
+          stoppingStatus =
+            `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
+            `desired_release=${handoff.desiredRelease}; intake quiesced, draining; ` +
+            `exit_deadline=${new Date(handoff.drainDeadlineAt).toISOString()}`;
+          await notifier.stopping(stoppingStatus);
           controller.abort();
         }
       },
@@ -605,7 +613,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     }
     throw error;
   } finally {
-    await notifier.stopping('daemon stopped').catch(() => undefined);
+    await notifier.stopping(stoppingStatus).catch(() => undefined);
     // Only clear the pid file while it still names THIS process — a
     // self-update handover has already written the replacement's pid there.
     const pidPath = resolve(dirname(configPath), 'daemon.pid');

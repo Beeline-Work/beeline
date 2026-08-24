@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Buzzy body CLI — run a body against a TLC channel.
+ * Beeline body CLI — run a body against a TLC channel.
  *
  * Usage:
  *   BUZZ_PRIVATE_KEY=nsec1... \
@@ -30,6 +30,7 @@ import {
   type AgentAccessPolicy,
 } from './access-policy.js';
 import type { AgentModelConfigOption } from '@beeline/buzz-client';
+import { DEFAULT_AGENT_IDENTITY_NAME, DEFAULT_BODY_IDENTITY_NAME } from '@beeline/buzz-client';
 import { fetchAgentModelCatalog } from './model-catalog.js';
 import { unadvertisedModelSelectionValues } from './model-config.js';
 import { pickModelAndEffort, resolveAccessSettings } from './agent-settings-prompts.js';
@@ -98,7 +99,7 @@ import {
 
 function usage(exitCode = 1): void {
   console.error(`
-${pc.bold('Buzzy Body — agent session manager.')}
+${pc.bold('Beeline Body — agent session manager.')}
 
 ${pc.dim('Usage:')}
   beeline provision <channel-uuid>          Attach read-only agent to a TLC
@@ -619,7 +620,7 @@ async function pairOneAgent(input: {
   interactiveUi?: boolean;
 }): Promise<PairRuntimeResult> {
   const { code, selectedAgent, agentIdentity, bodyIdentity } = input;
-  const mergeWorkerIdentity = newIdentity('buzzy-merge-worker');
+  const mergeWorkerIdentity = newIdentity('beeline-merge-worker');
   const relayBaseUrl = (process.env.BUZZY_RELAY_URL ?? BASE_URL)
     .replace(/^ws/, 'http')
     .replace(/\/$/, '');
@@ -821,8 +822,8 @@ async function runPairCommand(
         const result = await pairOneAgent({
           code: codes[index]!,
           selectedAgent,
-          agentIdentity: newIdentity('buzzy-agent'),
-          bodyIdentity: newIdentity('buzzy-body'),
+          agentIdentity: newIdentity(DEFAULT_AGENT_IDENTITY_NAME),
+          bodyIdentity: newIdentity(DEFAULT_BODY_IDENTITY_NAME),
           cwd: pairCwd,
           repo: pairRepo,
           progressLabel: `Pairing agent ${index + 1}/${codes.length} (${kind})…`,
@@ -848,7 +849,7 @@ async function runPairCommand(
     // than inside `pairRepositoryAgent`, where it would only fire after the
     // operator had answered all of them. Fresh identities can't collide, so
     // the --agents form above needs no equivalent check.
-    const agentIdentity = identityFromKey(agentPrivateKey, 'buzzy-agent');
+    const agentIdentity = identityFromKey(agentPrivateKey, DEFAULT_AGENT_IDENTITY_NAME);
     await assertAgentIdentityUnpaired(defaultSupervisorRoot(process.env), agentIdentity.publicKey);
     const selectedAgent = await selectPairAgentCommand({
       explicitKind: pairOptions.singleKind,
@@ -861,7 +862,7 @@ async function runPairCommand(
       code: pairOptions.codes[0]!,
       selectedAgent,
       agentIdentity,
-      bodyIdentity: identityFromKey(process.env.BUZZ_BODY_KEY, 'buzzy-body'),
+      bodyIdentity: identityFromKey(process.env.BUZZ_BODY_KEY, DEFAULT_BODY_IDENTITY_NAME),
       cwd: pairCwd,
       repo: pairRepo,
       progressLabel: 'Pairing…',
@@ -1112,8 +1113,8 @@ async function main(): Promise<void> {
 
   // Create body identity (operator key or fresh).
   const bodyKey = process.env.BUZZ_BODY_KEY;
-  const bodyIdentity = identityFromKey(bodyKey, 'buzzy-body');
-  const agentIdentity = identityFromKey(agentPrivateKey, 'buzzy-agent');
+  const bodyIdentity = identityFromKey(bodyKey, DEFAULT_BODY_IDENTITY_NAME);
+  const agentIdentity = identityFromKey(agentPrivateKey, DEFAULT_AGENT_IDENTITY_NAME);
 
   const body = new Body(config, bodyIdentity, agentIdentity);
 

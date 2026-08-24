@@ -20,6 +20,7 @@ import {
   TAG_AGENT,
   TAG_COMMUNITY,
 } from './kinds.js';
+import { DEFAULT_AGENT_IDENTITY_NAME, fallbackAgentName } from './display-name.js';
 import type { ChannelOpsContext } from './channel.js';
 
 const communityId = '11111111-1111-4111-8111-111111111111';
@@ -121,7 +122,7 @@ describe('agent entity model', () => {
     expect(parseAgent({ ...event, content: `${event.content}tampered` })).toBeNull();
   });
 
-  it('registers a compound daemon base name as "Buzzy", never a masked placeholder', async () => {
+  it('resolves the daemon default marker to a distinct pubkey seed name per agent', async () => {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -146,14 +147,52 @@ describe('agent entity model', () => {
       }),
     );
 
-    // The daemon mints its identities with the generic `buzzy-agent` marker.
-    const daemonIdentity = createAgentIdentity('buzzy-agent');
+    // The daemon mints its identities with the generic `beeline-agent` marker;
+    // that placeholder resolves to this agent's OWN stable seed name.
+    const daemonIdentity = createAgentIdentity('beeline-agent');
     const agent = await createAgent(ctx(daemonIdentity), communityId);
 
-    // Before this fix the hyphen failed the single-word rule and registration
-    // silently swapped in a pubkey-derived first name (e.g. "Pia").
-    expect(agent.displayName).toBe('Buzzy');
-    expect(published[0]!.tags).toContainEqual(['name', 'Buzzy']);
+    // Distinct per agent, never a shared label ("buzzy-agent"/"Buzzy" is gone)
+    // and never a random-looking mask: same pubkey, same name, every time.
+    expect(agent.displayName).toBe(fallbackAgentName(daemonIdentity.publicKey));
+    expect(agent.displayName).not.toBe('buzzy-agent');
+    expect(published[0]!.tags).toContainEqual(['name', agent.displayName]);
+  });
+
+  it('never registers two default-named agents under one shared display name', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          return jsonResponse({ accepted: true });
+        }
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', owner.publicKey],
+              ['p', first.publicKey],
+              ['p', second.publicKey],
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([adminState()]);
+        return jsonResponse([]);
+      }),
+    );
+
+    const first = createAgentIdentity(DEFAULT_AGENT_IDENTITY_NAME);
+    const second = createAgentIdentity(DEFAULT_AGENT_IDENTITY_NAME);
+    expect(first.publicKey).not.toBe(second.publicKey);
+    const firstAgent = await createAgent(ctx(first), communityId);
+    const secondAgent = await createAgent(ctx(second), communityId);
+    expect(firstAgent.displayName).toBe(fallbackAgentName(first.publicKey));
+    expect(secondAgent.displayName).toBe(fallbackAgentName(second.publicKey));
+    // The whole point of the seed-name derivation: no two freshly paired
+    // soul-less agents share one identity label.
+    expect(firstAgent.displayName).not.toBe(secondAgent.displayName);
   });
 
   it('preserves an authored multi-word display name end to end', async () => {

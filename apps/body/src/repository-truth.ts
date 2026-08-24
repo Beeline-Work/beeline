@@ -8,11 +8,17 @@
  * use it as an agent cwd, a corner base, a land target, or recap content.
  */
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, readdir, rename } from 'node:fs/promises';
+import { resolve, sep } from 'node:path';
 import { git, gitAuthed, type GitResult, type Identity } from '@beeline/gate';
 import type { RepositoryBinding } from '@beeline/buzz-client';
-import { inspectLocalRepositoryBounded, type LocalRepositoryBinding } from './runtime.js';
+import {
+  inspectLocalRepositoryBounded,
+  writeRuntimeRecord,
+  type AgentRuntimeRecord,
+  type LocalRepositoryBinding,
+} from './runtime.js';
+import { compatibleRepositoryCheckoutPath, repositoryCheckoutPaths } from './repository-path.js';
 
 export type RepositoryTruthCheckpoint = 'room-join' | 'corner-open' | 'land' | 'recap';
 
@@ -126,6 +132,156 @@ function relayRepo(binding: RepositoryBinding): { ownerHex: string; repo: string
     : undefined;
 }
 
+function replacePathPrefix(value: string, from: string, to: string): string {
+  const absolute = resolve(value);
+  return absolute === from || absolute.startsWith(`${from}${sep}`)
+    ? `${to}${absolute.slice(from.length)}`
+    : value;
+}
+
+function worktreePaths(porcelain: string): string[] {
+  return porcelain
+    .split('\0')
+    .filter((field) => field.startsWith('worktree '))
+    .map((field) => resolve(field.slice('worktree '.length)));
+}
+
+/**
+ * One-time daemon-start migration for repository keys that were used raw as
+ * directory names. The checkout moves and `git worktree repair` rewrites its
+ * absolute administrative links. Linked corner directories deliberately stay
+ * in place until each corner's next session starts.
+ *
+ * A collision or rename/repair failure rolls the move back and leaves the old
+ * path usable through {@link compatibleRepositoryCheckoutPath}. The function
+ * runs before ThinDaemonCore starts any Room or corner session, so no live
+ * process has its cwd moved underneath it.
+ */
+export async function migrateLegacyRepositoryPaths(
+  runtime: AgentRuntimeRecord,
+  options: { log?: (message: string) => void } = {},
+): Promise<{ runtime: AgentRuntimeRecord; migrated: number }> {
+  const log = options.log ?? console.warn;
+  const repositoriesRoot = resolve(runtime.supervisorRoot, 'beeline', 'repositories');
+  let migrated = 0;
+  let recordChanged = false;
+
+  const repositoryKeys = new Set(runtime.rooms.map((room) => room.repo.repository.key));
+  try {
+    for (const entry of await readdir(repositoriesRoot, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name !== '.beeline-corners') repositoryKeys.add(entry.name);
+    }
+  } catch {
+    // A fresh daemon has no repository store yet.
+  }
+
+  for (const repositoryKey of repositoryKeys) {
+    const paths = repositoryCheckoutPaths(repositoriesRoot, repositoryKey);
+    if (!paths.legacy) continue;
+    const legacy = paths.legacy;
+    const current = paths.current;
+
+    // A previous run may have completed the rename but failed before the
+    // runtime record was rewritten. Converge the recorded absolute paths.
+    if (!existsSync(legacy) && existsSync(current)) {
+      for (const room of runtime.rooms) {
+        if (room.repo.repository.key !== repositoryKey) continue;
+        const root = replacePathPrefix(room.repo.root, legacy, current);
+        const gitCommonDir = replacePathPrefix(room.repo.gitCommonDir, legacy, current);
+        if (root !== room.repo.root || gitCommonDir !== room.repo.gitCommonDir) {
+          room.repo = { ...room.repo, root, gitCommonDir };
+          recordChanged = true;
+        }
+      }
+      continue;
+    }
+    if (!existsSync(legacy)) continue;
+
+    if (existsSync(current)) {
+      log(
+        `[body] repository path migration kept legacy ${legacy}: ` +
+          'the colon-free destination already exists',
+      );
+      continue;
+    }
+
+    const listed = await git(legacy, ['worktree', 'list', '--porcelain', '-z']);
+    if (!listed.ok) {
+      log(
+        `[body] repository path migration kept legacy ${legacy}: ` +
+          `git worktree list failed: ${listed.stderr.trim()}`,
+      );
+      continue;
+    }
+    const beforeWorktrees = worktreePaths(listed.stdout);
+    let checkoutMoved = false;
+    try {
+      await rename(legacy, current);
+      checkoutMoved = true;
+      // Linked corner worktrees stay in place here: another daemon may still
+      // own a live session. Git's registry is repaired against their existing
+      // paths, and each corner moves immediately before its own next session.
+      const repairedWorktrees = beforeWorktrees.map((path) =>
+        replacePathPrefix(path, legacy, current),
+      );
+      const linked = repairedWorktrees.filter((path) => path !== current);
+      const repaired = await git(current, ['worktree', 'repair', ...linked]);
+      if (!repaired.ok) {
+        throw new Error(`git worktree repair failed: ${repaired.stderr.trim()}`);
+      }
+      for (const path of repairedWorktrees) {
+        const verified = await git(path, ['rev-parse', '--show-toplevel']);
+        if (!verified.ok || resolve(verified.stdout.trim()) !== path) {
+          throw new Error(`migrated worktree did not verify at ${path}`);
+        }
+      }
+    } catch (error) {
+      // Put both directories back before repairing the original registrations.
+      // If rollback itself cannot complete, fail startup rather than serving a
+      // half-migrated repository with broken linked worktrees.
+      try {
+        if (checkoutMoved) await rename(current, legacy);
+        if (checkoutMoved) {
+          const rollbackRepair = await git(legacy, [
+            'worktree',
+            'repair',
+            ...beforeWorktrees.filter((path) => path !== legacy),
+          ]);
+          if (!rollbackRepair.ok) throw new Error(rollbackRepair.stderr.trim());
+        }
+      } catch (rollbackError) {
+        throw new Error(
+          `repository path migration failed for ${legacy} and rollback failed: ${
+            rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+          }`,
+          { cause: error },
+        );
+      }
+      log(
+        `[body] repository path migration kept legacy ${legacy}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      continue;
+    }
+
+    for (const room of runtime.rooms) {
+      if (room.repo.repository.key !== repositoryKey) continue;
+      room.repo = {
+        ...room.repo,
+        root: replacePathPrefix(room.repo.root, legacy, current),
+        gitCommonDir: replacePathPrefix(room.repo.gitCommonDir, legacy, current),
+      };
+    }
+    recordChanged = true;
+    migrated += 1;
+    log(`[body] migrated repository path ${legacy} -> ${current}`);
+  }
+
+  if (recordChanged) await writeRuntimeRecord(runtime);
+  return { runtime, migrated };
+}
+
 export class RepositoryTruthResolver {
   readonly #options: RepositoryTruthResolverOptions;
 
@@ -134,7 +290,7 @@ export class RepositoryTruthResolver {
   }
 
   checkoutPath(repositoryKey: string): string {
-    return resolve(this.#options.repositoriesRoot, repositoryKey);
+    return compatibleRepositoryCheckoutPath(this.#options.repositoriesRoot, repositoryKey);
   }
 
   private runRemoteGit(

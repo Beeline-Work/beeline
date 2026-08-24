@@ -10,7 +10,10 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     Modal: host('Modal'),
-    Platform: { OS: 'ios', select: (choices: Record<string, unknown>) => choices.ios ?? choices.default },
+    Platform: {
+      OS: 'ios',
+      select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
+    },
     Pressable: host('Pressable'),
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
@@ -21,6 +24,19 @@ vi.mock('react-native', async () => {
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
+
+vi.mock('react-native-svg', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return {
+    default: host('Svg'),
+    Circle: host('Circle'),
+    Path: host('Path'),
+    Polygon: host('Polygon'),
+    Rect: host('Rect'),
+  };
+});
 
 vi.mock('react-native-reanimated', async () => {
   const ReactModule = await import('react');
@@ -39,6 +55,7 @@ vi.mock('react-native-reanimated', async () => {
 import { RoomDeckComposeMenu } from './RoomDeckComposeMenu';
 
 const source = readFileSync(new URL('./RoomDeckComposeMenu.tsx', import.meta.url), 'utf8');
+const roomGlyphSource = readFileSync(new URL('./RoomGlyph.tsx', import.meta.url), 'utf8');
 const actionSheetSource = readFileSync(new URL('./HullActionSheet.tsx', import.meta.url), 'utf8');
 
 const originalConsoleError = console.error;
@@ -72,7 +89,7 @@ function open(renderer: ReactTestRenderer) {
 }
 
 describe('Room deck compose menu', () => {
-  it('morphs the FAB and opens two named groups with five accessible rows in order', () => {
+  it('morphs the FAB and opens one continuous list with five accessible rows in order', () => {
     const renderer = renderMenu();
     const fab = renderer.root.findByProps({ testID: 'room-deck-compose-fab' });
     expect(fab.props.accessibilityState).toEqual({ expanded: false });
@@ -91,9 +108,33 @@ describe('Room deck compose menu', () => {
     expect(rows).toHaveLength(5);
     expect(rows.map((row) => row.props.accessibilityRole)).toEqual(Array(5).fill('button'));
     expect(rows.map((row) => row.props.accessibilityLabel.split('.')[0])).toEqual(labels);
-    expect(rows.map((row) => row.findAllByType('Text' as any)[1].props.children)).toEqual(labels);
-    expect(renderer.root.findByProps({ testID: 'room-deck-compose-group-start' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'room-deck-compose-group-workspace' })).toBeDefined();
+    expect(rows.map((row) => row.findAllByType('Text' as any)[0].props.children)).toEqual(labels);
+    expect(renderer.root.findByProps({ testID: 'room-deck-compose-options' })).toBeDefined();
+    expect(source).not.toContain("label: 'START'");
+    expect(source).not.toContain("label: 'WORKSPACE'");
+    expect(source).not.toContain('groupLabel');
+  });
+
+  it('draws a distinct thin-stroke inline SVG for every action', () => {
+    const renderer = renderMenu();
+    open(renderer);
+
+    const glyphs = actions.map((action) =>
+      renderer.root.findByProps({ testID: `room-deck-compose-glyph-${action}` }),
+    );
+    expect(glyphs).toHaveLength(5);
+    expect(glyphs.map((glyph) => glyph.props.width ?? glyph.props.size)).toEqual(Array(5).fill(24));
+    expect(source).toContain('GLYPH_STROKE_WIDTH = 1.25');
+    expect(source).toContain('<Rect {...common} x="3.5" y="5.5" width="17" height="13"');
+    expect(source).toContain('<RoomGlyph');
+    expect(source).toContain('testID="room-deck-compose-glyph-room"');
+    expect(roomGlyphSource).toContain('ROOM_GLYPH_STROKE_WIDTH = 1.25');
+    expect(roomGlyphSource).toContain('<Rect');
+    expect(roomGlyphSource).toContain('x="4.5"');
+    expect(roomGlyphSource).toContain('y="4.5"');
+    expect(source).toContain('<Polygon {...common} points="12 4.5 20 19.5 4 19.5" />');
+    expect(source).toContain('<Path {...common} d="M5 20V4h13v16" />');
+    expect(source).not.toContain('ACTION_GLYPHS');
   });
 
   it('uses one opaque tokenized hull surface with no BlurView or local radius', () => {

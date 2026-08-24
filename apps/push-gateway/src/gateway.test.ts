@@ -20,7 +20,11 @@ function event(id: string, pubkey = AUTHOR, roomId = 'room-1234'): NostrEvent {
     pubkey,
     created_at: 100,
     kind: 9,
-    tags: [['h', roomId]],
+    tags: [
+      ['h', roomId],
+      ['p', PUBKEY_A],
+      ['p', PUBKEY_B],
+    ],
     content: 'private message',
     sig: 'd'.repeat(128),
   };
@@ -138,7 +142,6 @@ describe('RegisteredEventPoller', () => {
     expect(queried).toEqual([PUBKEY_A]);
     expect(queriedFilters[0]).toEqual([
       { kinds: [9], since: 100, limit: 1_000 },
-      { kinds: [9000], since: 100, limit: 1_000 },
       { kinds: [30078], '#t': ['buzz-agent-soul'], since: 100, limit: 1_000 },
     ]);
     await expect(poller.pollNext()).resolves.toBe('polled');
@@ -217,6 +220,54 @@ describe('PushGateway', () => {
     expect(sendEachForMulticast).toHaveBeenCalledOnce();
     expect(sendEachForMulticast.mock.calls[0]?.[0]).toMatchObject({
       data: { channelId: 'corner-1234', cornerId: 'corner-1234', type: 'merge-approval-request' },
+      android: { notification: { channelId: 'attention' } },
+    });
+  });
+
+  it('uses activity for DMs and attention for an agent question', async () => {
+    const registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    const send = vi.fn(async () => ({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'sent' }],
+    }));
+    const metadata = {
+      resolve: async (relayEvent: NostrEvent) => ({
+        roomName: relayEvent.tags.some((tag) => tag[1] === 'dm-room') ? 'Direct message' : 'Corner',
+        senderName: 'Codex',
+        isDirectMessage: relayEvent.tags.some((tag) => tag[1] === 'dm-room'),
+        workspaceName: 'Product Engineering',
+        persistentWorkspaceRoom: true,
+      }),
+      invalidate: () => undefined,
+    } as never;
+    const gateway = new PushGateway(
+      registry,
+      { sendEachForMulticast: send } as unknown as Messaging,
+      await DeliveryState.load(),
+      metadata,
+    );
+    const dm = { ...event('q'), tags: [['h', 'dm-room']] };
+    const question = {
+      ...event('r'),
+      tags: [
+        ['h', 'corner-room'],
+        ['t', 'agent-message'],
+      ],
+      content: 'Which branch should I use?',
+    };
+
+    await gateway.handleRelayEvent(dm, PUBKEY_A, reader);
+    await gateway.handleRelayEvent(question, PUBKEY_A, reader);
+
+    expect(send.mock.calls[0]?.[0]).toMatchObject({
+      data: { type: 'direct-message' },
+      android: { notification: { channelId: 'activity' } },
+    });
+    expect(send.mock.calls[1]?.[0]).toMatchObject({
+      data: { type: 'agent-question' },
+      android: { notification: { channelId: 'attention' } },
     });
   });
 
@@ -271,11 +322,11 @@ describe('PushGateway', () => {
     expect(sendEachForMulticast).toHaveBeenCalledOnce();
     expect(sendEachForMulticast.mock.calls[0]![0]).toMatchObject({
       tokens: [TOKEN_A],
-      notification: { title: '#Roadmap', body: 'Ada: private message' },
-      data: { channelId: 'room-1234', roomName: 'Roadmap', type: 'channel-activity' },
+      notification: { title: '#Roadmap', body: 'Ada mentioned you: private message' },
+      data: { channelId: 'room-1234', roomName: 'Roadmap', type: 'mention' },
       android: {
         collapseKey: 'room-1234',
-        notification: { channelId: 'messages', tag: 'room:room-1234' },
+        notification: { channelId: 'mentions', tag: 'room:room-1234' },
       },
     });
     expect(JSON.stringify(sendEachForMulticast.mock.calls[0]![0])).not.toContain('Buzzy');
@@ -453,8 +504,8 @@ describe('PushGateway', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0]).toMatchObject({
       tokens: [TOKEN_A],
-      notification: { title: '#Launch room', body: 'Joy: private message' },
-      data: { channelId: roomId, roomName: 'Launch room', type: 'channel-activity' },
+      notification: { title: '#Launch room', body: 'Joy mentioned you: private message' },
+      data: { channelId: roomId, roomName: 'Launch room', type: 'mention' },
     });
     expect(JSON.stringify(captured)).not.toContain('displayName');
   });
@@ -512,7 +563,7 @@ describe('PushGateway decision tracing', () => {
   it.each([
     ['no-channel', NO_CHANNEL_EVENT],
     [
-      'not-notifiable-markers',
+      'fatigue-policy-ambient',
       {
         ...event('b', AUTHOR),
         tags: [
@@ -530,7 +581,10 @@ describe('PushGateway decision tracing', () => {
     async (reason, relayEvent) => {
       const gateway = await gatewayWith(vi.fn());
       const recipient =
-        reason === 'sender-self' || reason === 'no-channel' || reason.startsWith('not-notifiable-')
+        reason === 'sender-self' ||
+        reason === 'no-channel' ||
+        reason === 'fatigue-policy-ambient' ||
+        reason.startsWith('not-notifiable-')
           ? PUBKEY_A
           : PUBKEY_B;
       await gateway.handleRelayEvent(relayEvent, recipient, reader);
@@ -651,7 +705,10 @@ describe('PushGateway @mention pushes', () => {
     invalidate: () => undefined,
   } as never;
 
-  async function gatewayWith(sendEachForMulticast: ReturnType<typeof vi.fn>, meta: object = metadata) {
+  async function gatewayWith(
+    sendEachForMulticast: ReturnType<typeof vi.fn>,
+    meta: object = metadata,
+  ) {
     return new PushGateway(
       registry,
       { sendEachForMulticast } as unknown as Messaging,
@@ -690,7 +747,7 @@ describe('PushGateway @mention pushes', () => {
         ['t', 'land-summary'],
         ...(mentionedPubkey ? [['p', mentionedPubkey]] : []),
       ],
-      content: 'can you review this?',
+      content: 'please review this.',
       sig: 'd'.repeat(128),
     } as NostrEvent;
   }
@@ -706,18 +763,18 @@ describe('PushGateway @mention pushes', () => {
     expect(send).toHaveBeenCalledOnce();
     expect(send.mock.calls[0]?.[0]).toMatchObject({
       tokens: [TOKEN_A],
-      notification: { title: '#Roadmap', body: 'Ada mentioned you: can you review this?' },
+      notification: { title: '#Roadmap', body: 'Ada mentioned you: please review this.' },
       data: { channelId: 'room-1234', roomName: 'Roadmap', type: 'mention' },
     });
   });
 
-  it('the same shape without a p tag still skips at the plain-chat marker gate', async () => {
+  it('the same shape without a p tag stays in-app only', async () => {
     const send = vi.fn();
     await (await gatewayWith(send)).handleRelayEvent(mentionEvent('m', null), PUBKEY_A, reader);
 
     expect(send).not.toHaveBeenCalled();
     expect(logs.filter((line) => line.includes('[push] decision event='))).toHaveLength(1);
-    expect(logs[0]).toContain('verdict=skip reason=not-notifiable-markers');
+    expect(logs[0]).toContain('verdict=skip reason=fatigue-policy-ambient');
   });
 
   it('never notifies the author of their own mention', async () => {
@@ -750,279 +807,42 @@ describe('PushGateway @mention pushes', () => {
   });
 });
 
-describe('PushGateway member-join pushes', () => {
-  const JOINER = 'd'.repeat(64);
-  const ACTOR = AUTHOR;
-
-  function joinEvent(id: string, roomId = 'room-1234'): NostrEvent {
-    // Real NIP-29 shape written by buzz-client's setMemberRole / relay self-join:
-    // h = channel, p = added member, role = granted role.
-    return {
-      id: id.repeat(64),
-      pubkey: ACTOR,
-      created_at: 100,
-      kind: 9000,
-      tags: [
-        ['h', roomId],
-        ['p', JOINER],
-        ['role', 'member'],
-      ],
-      content: '',
-      sig: 'd'.repeat(128),
-    };
-  }
-
-  const metadata = {
-    resolve: async () => ({
-      roomName: 'Roadmap',
-      workspaceName: 'Product Engineering',
-      persistentWorkspaceRoom: true,
-    }),
-    resolveMemberName: async () => 'Nova',
-    invalidate: () => undefined,
-  } as never;
-
-  async function gatewayWith(sendEachForMulticast: ReturnType<typeof vi.fn>, meta: object = metadata) {
-    return new PushGateway(
-      registry,
-      { sendEachForMulticast } as unknown as Messaging,
-      await DeliveryState.load(),
-      meta,
-    );
-  }
-
-  let registry: TokenRegistry;
-  let logs: string[];
-  let spy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(async () => {
-    registry = await TokenRegistry.load();
-    logs = [];
-    spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+describe('PushGateway member-join fatigue policy', () => {
+  it('keeps member joins in-app only and records the decision', async () => {
+    const registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    const send = vi.fn();
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
       logs.push(String(line));
     });
-  });
+    try {
+      const gateway = new PushGateway(
+        registry,
+        { sendEachForMulticast: send } as unknown as Messaging,
+        await DeliveryState.load(),
+      );
+      await gateway.handleRelayEvent(
+        {
+          ...event('j'),
+          kind: 9000,
+          tags: [
+            ['h', 'room-1234'],
+            ['p', 'd'.repeat(64)],
+            ['role', 'member'],
+          ],
+        },
+        PUBKEY_A,
+        reader,
+      );
 
-  afterEach(() => {
-    spy.mockRestore();
-  });
-
-  it('notifies a registered owner/admin of the room a new member joined', async () => {
-    await registry.register(PUBKEY_A, TOKEN_A);
-    const send = vi.fn(async () => ({
-      successCount: 1,
-      failureCount: 0,
-      responses: [{ success: true, messageId: 'join' }],
-    }));
-    await (await gatewayWith(send)).handleRelayEvent(joinEvent('j'), PUBKEY_A, reader);
-
-    expect(send).toHaveBeenCalledOnce();
-    expect(send.mock.calls[0]?.[0]).toMatchObject({
-      tokens: [TOKEN_A],
-      notification: { title: '#Roadmap', body: 'Nova joined Roadmap' },
-      data: { channelId: 'room-1234', roomName: 'Roadmap', type: 'member-join' },
-    });
-    expect(logs[0]).toContain('verdict=notify');
-    expect(logs[0]).toContain('type=member-join');
-  });
-
-  it('falls back to the deterministic seed name when the joiner lookup fails', async () => {
-    await registry.register(PUBKEY_A, TOKEN_A);
-    const send = vi.fn(async () => ({
-      successCount: 1,
-      failureCount: 0,
-      responses: [{ success: true, messageId: 'join' }],
-    }));
-    const failingNames = {
-      ...metadata,
-      resolveMemberName: async () => {
-        throw new Error('relay hiccup');
-      },
-    } as never;
-    await (await gatewayWith(send, failingNames)).handleRelayEvent(joinEvent('j'), PUBKEY_A, reader);
-
-    expect(send).toHaveBeenCalledOnce();
-    expect(logs.some((line) => line.includes('[push] join-name-fallback'))).toBe(true);
-  });
-
-  it('never notifies the joiner about their own join', async () => {
-    await registry.register(JOINER, TOKEN_B);
-    const send = vi.fn();
-    await (await gatewayWith(send)).handleRelayEvent(joinEvent('j'), JOINER, reader);
-
-    expect(send).not.toHaveBeenCalled();
-    expect(logs[0]).toContain('verdict=skip reason=member-join-self');
-  });
-
-  it('never notifies the actor who performed the add', async () => {
-    await registry.register(ACTOR, TOKEN_B);
-    const send = vi.fn();
-    await (await gatewayWith(send)).handleRelayEvent(joinEvent('j'), ACTOR, reader);
-
-    expect(send).not.toHaveBeenCalled();
-    expect(logs[0]).toContain('verdict=skip reason=sender-self');
-  });
-
-  it('stays quiet for a join into a corner worktree channel', async () => {
-    await registry.register(PUBKEY_A, TOKEN_A);
-    const send = vi.fn();
-    const cornerMetadata = {
-      resolve: async () => ({
-        roomName: 'Corner',
-        workspaceName: 'Product Engineering',
-        persistentWorkspaceRoom: true,
-        isChildChannel: true,
-      }),
-      resolveMemberName: async () => 'Nova',
-      invalidate: () => undefined,
-    } as never;
-    await (await gatewayWith(send, cornerMetadata)).handleRelayEvent(joinEvent('j'), PUBKEY_A, reader);
-
-    expect(send).not.toHaveBeenCalled();
-    expect(logs[0]).toContain('verdict=skip reason=member-join-quiet-channel');
-  });
-
-  it('stays quiet for a join into a direct message', async () => {
-    await registry.register(PUBKEY_A, TOKEN_A);
-    const send = vi.fn();
-    const dmMetadata = {
-      resolve: async () => ({
-        roomName: 'Direct message',
-        isDirectMessage: true,
-        workspaceName: 'Product Engineering',
-        persistentWorkspaceRoom: true,
-      }),
-      resolveMemberName: async () => 'Nova',
-      invalidate: () => undefined,
-    } as never;
-    await (await gatewayWith(send, dmMetadata)).handleRelayEvent(joinEvent('j'), PUBKEY_A, reader);
-
-    expect(send).not.toHaveBeenCalled();
-    expect(logs[0]).toContain('verdict=skip reason=member-join-quiet-channel');
-  });
-
-  it('fixture suppression still applies to join notifications', async () => {
-    await registry.register(PUBKEY_A, TOKEN_A);
-    const send = vi.fn();
-    const fixtureMetadata = {
-      resolve: async () => ({
-        roomName: 'ui-demo-uidemo-123',
-        workspaceName: 'Product Engineering',
-        persistentWorkspaceRoom: true,
-      }),
-      resolveMemberName: async () => 'Nova',
-      invalidate: () => undefined,
-    } as never;
-    await (await gatewayWith(send, fixtureMetadata)).handleRelayEvent(joinEvent('j'), PUBKEY_A, reader);
-
-    expect(send).not.toHaveBeenCalled();
-    expect(logs[0]).toContain('verdict=skip reason=fixture-suppressed');
-  });
-
-  it('resolves the joiner name through the real resolver against real-shaped relay records', async () => {
-    const admin = createIdentity('admin-author');
-    const joinerIdentity = createIdentity('joiner');
-    const human = createIdentity('human-admin');
-    const communityId = 'workspace-9';
-    const roomId = 'room-5678';
-    await registry.register(PUBKEY_A, TOKEN_A);
-
-    const roomCreate: NostrEvent = {
-      id: 'a'.repeat(64),
-      pubkey: human.publicKey,
-      created_at: 10,
-      kind: 9007,
-      tags: [
-        ['h', roomId],
-        ['name', 'Launch room'],
-        ['community', communityId],
-      ],
-      content: '',
-      sig: 'e'.repeat(128),
-    };
-    const roomMetadata: NostrEvent = {
-      id: 'b'.repeat(64),
-      pubkey: human.publicKey,
-      created_at: 11,
-      kind: 39000,
-      tags: [
-        ['d', roomId],
-        ['name', 'Launch room'],
-        ['community', communityId],
-      ],
-      content: '',
-      sig: 'e'.repeat(128),
-    };
-    const workspaceCreate: NostrEvent = {
-      id: 'c'.repeat(64),
-      pubkey: human.publicKey,
-      created_at: 5,
-      kind: 9007,
-      tags: [
-        ['h', communityId],
-        ['name', 'Product Engineering'],
-        ['community', communityId],
-      ],
-      content: '',
-      sig: 'e'.repeat(128),
-    };
-    const joinerProfile = signEvent(
-      {
-        pubkey: joinerIdentity.publicKey,
-        created_at: 20,
-        kind: 0,
-        tags: [],
-        content: JSON.stringify({ name: 'Nova' }),
-      },
-      joinerIdentity.secretKey,
-    );
-    const authorizedReader: RelayEventReader = {
-      query: async (filters) => {
-        const serialized = JSON.stringify(filters);
-        if (serialized.includes(joinerIdentity.publicKey)) return [joinerProfile];
-        if (serialized.includes(`"${roomId}"`)) return [roomCreate, roomMetadata];
-        if (serialized.includes(communityId)) return [workspaceCreate];
-        return [];
-      },
-      disconnect: () => undefined,
-    };
-
-    const putUser: NostrEvent = signEvent(
-      {
-        pubkey: admin.publicKey,
-        created_at: 100,
-        kind: 9000,
-        tags: [
-          ['h', roomId],
-          ['p', joinerIdentity.publicKey],
-          ['role', 'member'],
-        ],
-        content: '',
-      },
-      admin.secretKey,
-    );
-
-    const send = vi.fn(async () => ({
-      successCount: 1,
-      failureCount: 0,
-      responses: [{ success: true, messageId: 'join-real' }],
-    }));
-    const gateway = new PushGateway(
-      registry,
-      { sendEachForMulticast: send } as unknown as Messaging,
-      await DeliveryState.load(),
-      new NotificationMetadataResolver(),
-    );
-    await gateway.handleRelayEvent(putUser, PUBKEY_A, authorizedReader);
-
-    expect(send).toHaveBeenCalledOnce();
-    expect(send.mock.calls[0]?.[0]).toMatchObject({
-      notification: { title: '#Launch room', body: 'Nova joined Launch room' },
-      data: { channelId: roomId, roomName: 'Launch room', type: 'member-join' },
-    });
+      expect(send).not.toHaveBeenCalled();
+      expect(logs[0]).toContain('verdict=skip reason=fatigue-policy-member-join');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
-
 describe('PushGateway.sendTestNotification', () => {
   it('reports per-device FCM results and sends a real-shaped notification', async () => {
     const registry = await TokenRegistry.load();

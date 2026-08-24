@@ -371,12 +371,13 @@ export class BuzzRigTransport implements RigTransport {
   /** Compose one signed message. Retries must publish this returned event unchanged. */
   async composeMessage(
     input: MessageSubmitInput,
-    opts?: { mentionAgent?: string },
+    opts?: { mentionAgent?: string; mentionPubkeys?: string[] },
   ): Promise<NostrEvent> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(input.attachments ?? []);
     return client.buildMessage(input.sessionId, input.text, {
       ...(opts?.mentionAgent ? { mentionAgent: opts.mentionAgent } : {}),
+      ...(opts?.mentionPubkeys?.length ? { mentionPubkeys: opts.mentionPubkeys } : {}),
       ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
     });
   }
@@ -401,7 +402,7 @@ export class BuzzRigTransport implements RigTransport {
   /** Submit a message and return the stable signed event id for optimistic UI reconciliation. */
   async messageSubmitWithEventId(
     input: MessageSubmitInput,
-    opts?: { mentionAgent?: string; event?: NostrEvent },
+    opts?: { mentionAgent?: string; mentionPubkeys?: string[]; event?: NostrEvent },
   ): Promise<string> {
     const event = opts?.event ?? (await this.composeMessage(input, opts));
     return this.publishPreparedMessage(event);
@@ -427,6 +428,7 @@ export class BuzzRigTransport implements RigTransport {
     replyToId: string,
     mentionAgent?: string,
     attachments: AttachmentReference[] = [],
+    mentionPubkeys: string[] = [],
   ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
@@ -437,6 +439,7 @@ export class BuzzRigTransport implements RigTransport {
       replyToId;
     const event = await client.messageSubmit(channelId, text, {
       ...(mentionAgent ? { mentionAgent } : {}),
+      ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
       extraTags: [
         ...(replyRootId !== replyToId ? [['e', replyRootId, '', 'root']] : []),
         ['e', replyToId, '', 'reply'],
@@ -783,13 +786,31 @@ export class BuzzRigTransport implements RigTransport {
     return client.getAgentModelConfig(communityId, agentPubkey);
   }
 
-  /** The slash commands/skills an agent's harness advertises, if published. */
+  /**
+   * The slash commands/skills an agent's harness advertises, if published.
+   *
+   * Command records are keyed by Workspace root, never by Room id or relay
+   * tenant. Resolve that immutable Room linkage here so screen selection/cache
+   * state cannot silently query a different `d` key. Older corners may lack
+   * the linkage on their own create event, so their already-resolved parent
+   * Workspace remains a compatibility fallback.
+   */
   async agentCommandsRead(
-    communityId: string,
+    channelId: string,
     agentPubkey: string,
+    fallbackWorkspaceRootId?: string,
   ): Promise<AgentCommandList | null> {
     const client = await this.getClient();
-    return client.getAgentCommands(communityId, agentPubkey);
+    let roomWorkspaceRootId: string | null;
+    try {
+      roomWorkspaceRootId = await client.getChannelCommunityId(channelId);
+    } catch (error) {
+      if (!fallbackWorkspaceRootId) throw error;
+      roomWorkspaceRootId = null;
+    }
+    const workspaceRootId = roomWorkspaceRootId ?? fallbackWorkspaceRootId;
+    if (!workspaceRootId) return null;
+    return client.getAgentCommands(workspaceRootId, agentPubkey);
   }
 
   /** Choose a model/effort for an agent. Applied on that agent's next session (re)activation. */

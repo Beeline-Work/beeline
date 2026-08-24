@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   archiveRoom,
+  buildMessage,
   createChannel,
   isMember,
   getChannelMetadata,
@@ -38,7 +39,10 @@ function projection(kind: number, channelId: string): NostrEvent {
       pubkey: identity.publicKey,
       created_at: 1_700_000_000,
       kind,
-      tags: [['d', channelId], ['p', identity.publicKey]],
+      tags: [
+        ['d', channelId],
+        ['p', identity.publicKey],
+      ],
       content: '',
     },
     identity.secretKey,
@@ -54,11 +58,14 @@ describe('listChannelsForPubkey', () => {
       'fetch',
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
         filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0];
-        return new Response(JSON.stringify([
-          projection(KIND_CHANNEL_MEMBERS, 'member-room'),
-          projection(KIND_CHANNEL_ADMINS, 'admin-room'),
-          projection(KIND_CHANNEL_ADMINS, 'member-room'),
-        ]), { status: 200 });
+        return new Response(
+          JSON.stringify([
+            projection(KIND_CHANNEL_MEMBERS, 'member-room'),
+            projection(KIND_CHANNEL_ADMINS, 'admin-room'),
+            projection(KIND_CHANNEL_ADMINS, 'member-room'),
+          ]),
+          { status: 200 },
+        );
       }),
     );
 
@@ -84,7 +91,10 @@ describe('listChannelsForPubkey', () => {
                   pubkey: identity.publicKey,
                   created_at: 1_700_000_001,
                   kind,
-                  tags: [['d', channelId], ['p', identity.publicKey, 'owner']],
+                  tags: [
+                    ['d', channelId],
+                    ['p', identity.publicKey, 'owner'],
+                  ],
                   content: '',
                 },
                 identity.secretKey,
@@ -101,6 +111,20 @@ describe('listChannelsForPubkey', () => {
       { pubkey: identity.publicKey, role: 'owner' },
     ]);
     await expect(isMember(ctx, channelId, identity.publicKey)).resolves.toBe(true);
+  });
+});
+
+describe('buildMessage mentions', () => {
+  it('p-tags selected humans and agents once while retaining the addressed agent', () => {
+    const built = buildMessage(ctx, 'room', 'Ask @Alan and @Ada', {
+      mentionAgent: 'agent-pubkey',
+      mentionPubkeys: ['human-pubkey', 'agent-pubkey'],
+    });
+
+    expect(built.tags.filter((tag) => tag[0] === 'p')).toEqual([
+      ['p', 'human-pubkey'],
+      ['p', 'agent-pubkey'],
+    ]);
   });
 });
 
@@ -243,54 +267,66 @@ describe('renameChannel', () => {
         const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
         const kind = (filter.kinds as number[])[0];
         if (kind === KIND_CREATE_GROUP) {
-          return new Response(JSON.stringify([
-            signEvent(
-              {
-                pubkey: identity.publicKey,
-                created_at: 1_700_000_000,
-                kind,
-                tags: [['h', channelId], ['name', 'Old name']],
-                content: '',
-              },
-              identity.secretKey,
-            ),
-          ]));
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [
+                    ['h', channelId],
+                    ['name', 'Old name'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
         }
         if (kind === KIND_CHANNEL_MEMBERS) {
           return new Response(JSON.stringify([projection(kind, channelId)]));
         }
         if (kind === KIND_CHANNEL_ADMINS) {
-          return new Response(JSON.stringify([
-            signEvent(
-              {
-                pubkey: identity.publicKey,
-                created_at: 1_700_000_000,
-                kind,
-                tags: [['d', channelId], ['p', identity.publicKey, 'owner']],
-                content: '',
-              },
-              identity.secretKey,
-            ),
-          ]));
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [
+                    ['d', channelId],
+                    ['p', identity.publicKey, 'owner'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
         }
         if (kind === KIND_CHANNEL_METADATA) {
-          return new Response(JSON.stringify([
-            signEvent(
-              {
-                pubkey: identity.publicKey,
-                created_at: 1_700_000_001,
-                kind,
-                tags: [
-                  ['d', channelId],
-                  ['name', projectedName],
-                  ['about', 'Keep this'],
-                  ['archived', 'true'],
-                ],
-                content: '',
-              },
-              identity.secretKey,
-            ),
-          ]));
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_001,
+                  kind,
+                  tags: [
+                    ['d', channelId],
+                    ['name', projectedName],
+                    ['about', 'Keep this'],
+                    ['archived', 'true'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
         }
         return new Response(JSON.stringify([]));
       }),
@@ -340,50 +376,62 @@ describe('renameChannel', () => {
         const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
         const kind = (filter.kinds as number[])[0];
         if (kind === KIND_CREATE_GROUP) {
-          return new Response(JSON.stringify([
-            signEvent(
-              {
-                pubkey: identity.publicKey,
-                created_at: 1_700_000_000,
-                kind,
-                tags: [['h', channelId], ['name', 'Old name']],
-                content: '',
-              },
-              identity.secretKey,
-            ),
-          ]));
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [
+                    ['h', channelId],
+                    ['name', 'Old name'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
         }
         if (kind === KIND_CHANNEL_MEMBERS) {
-          return new Response(JSON.stringify([
-            signEvent(
-              {
-                pubkey: identity.publicKey,
-                created_at: 1_700_000_000,
-                kind,
-                tags: [
-                  ['d', channelId],
-                  ['p', identity.publicKey],
-                  ['p', memberIdentity.publicKey],
-                ],
-                content: '',
-              },
-              identity.secretKey,
-            ),
-          ]));
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [
+                    ['d', channelId],
+                    ['p', identity.publicKey],
+                    ['p', memberIdentity.publicKey],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
         }
         if (kind === KIND_CHANNEL_ADMINS) {
-          return new Response(JSON.stringify([
-            signEvent(
-              {
-                pubkey: identity.publicKey,
-                created_at: 1_700_000_000,
-                kind,
-                tags: [['d', channelId], ['p', identity.publicKey, 'owner']],
-                content: '',
-              },
-              identity.secretKey,
-            ),
-          ]));
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [
+                    ['d', channelId],
+                    ['p', identity.publicKey, 'owner'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
         }
         return new Response(JSON.stringify([]));
       }),
@@ -405,15 +453,24 @@ describe('getChannelMetadata', () => {
           pubkey: identity.publicKey,
           created_at: createdAt,
           kind: KIND_CHANNEL_METADATA,
-          tags: [['d', channelId], ['name', name]],
+          tags: [
+            ['d', channelId],
+            ['name', name],
+          ],
           content: '',
         },
         identity.secretKey,
       );
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify([metadata('Old name', 1_700_000_000), metadata('New name', 1_700_000_001)])),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify([
+              metadata('Old name', 1_700_000_000),
+              metadata('New name', 1_700_000_001),
+            ]),
+          ),
       ),
     );
 
@@ -518,7 +575,10 @@ describe('waitUntilMember (WS-driven)', () => {
             pubkey: identity.publicKey,
             created_at: 1_700_000_000,
             kind: KIND_CHANNEL_MEMBERS,
-            tags: [['d', channelId], ['p', pubkey]],
+            tags: [
+              ['d', channelId],
+              ['p', pubkey],
+            ],
             content: '',
           },
           identity.secretKey,
@@ -586,7 +646,9 @@ describe('waitUntilMember (WS-driven)', () => {
         const kind = (filter.kinds as number[])[0];
         if (kind !== KIND_CHANNEL_MEMBERS) return new Response(JSON.stringify([]));
         attempt += 1;
-        return attempt < 2 ? new Response(JSON.stringify([])) : membersResponse(channelId, recruit.publicKey);
+        return attempt < 2
+          ? new Response(JSON.stringify([]))
+          : membersResponse(channelId, recruit.publicKey);
       }),
     );
 
@@ -607,7 +669,10 @@ describe('waitUntilMember (WS-driven)', () => {
   it('throws after the timeout when neither a WS push nor the backstop poll ever finds membership', async () => {
     const channelId = 'timeout-room';
     const recruit = createIdentity('timeout-recruit');
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([]))));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify([]))),
+    );
 
     const fakeSocket = {
       connected: true,
@@ -670,8 +735,9 @@ describe('top-level Room creation is human-only', () => {
   it('refuses a registered agent identity as the creator of a Room', async () => {
     const published = stubRelay();
 
-    await expect(createChannel({ http: { ...http, identity: agent }, identity: agent }, 'firstmate'))
-      .rejects.toThrow('room creation is a human action');
+    await expect(
+      createChannel({ http: { ...http, identity: agent }, identity: agent }, 'firstmate'),
+    ).rejects.toThrow('room creation is a human action');
     // The refusal happens before any kind:9007 write leaves the client.
     expect(published).toEqual([]);
   });
@@ -778,7 +844,10 @@ describe('archiveRoom and leaveRoom against an already-archived channel', () => 
                   pubkey: identity.publicKey,
                   created_at: 1_700_000_001,
                   kind,
-                  tags: [['d', channelId], ['archived', 'true']],
+                  tags: [
+                    ['d', channelId],
+                    ['archived', 'true'],
+                  ],
                   content: '',
                 },
                 identity.secretKey,
@@ -823,7 +892,8 @@ describe('archiveRoom and leaveRoom against an already-archived channel', () => 
 
   it('still surfaces a genuine publish failure on delete', async () => {
     stubRelay('broken-room', {
-      publish: () => new Response(JSON.stringify({ error: 'invalid: bad signature' }), { status: 400 }),
+      publish: () =>
+        new Response(JSON.stringify({ error: 'invalid: bad signature' }), { status: 400 }),
     });
 
     await expect(archiveRoom(ctx, 'broken-room')).rejects.toThrow(/bad signature/);
@@ -846,7 +916,8 @@ describe('archiveRoom and leaveRoom against an already-archived channel', () => 
   it('still surfaces a genuine failure when leaving a live Room', async () => {
     stubRelay('leave-live-room', {
       role: 'member',
-      publish: () => new Response(JSON.stringify({ error: 'invalid: not permitted' }), { status: 400 }),
+      publish: () =>
+        new Response(JSON.stringify({ error: 'invalid: not permitted' }), { status: 400 }),
     });
 
     await expect(leaveRoom(ctx, 'leave-live-room')).rejects.toThrow(/not permitted/);

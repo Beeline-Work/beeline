@@ -36,14 +36,20 @@ is mounted at runtime and is never copied into the image or repository.
 
 ## Relay access
 
-Both `BUZZY_RELAY_URL` (ACL-scoped HTTP reads) and
-`BUZZY_RELAY_SUBSCRIPTION_URL` (WebSocket event wakeups) default to
-`http://relay:3000`; `BUZZY_RELAY_HOST=usebeeline.app` preserves the production
-tenant host. `push-gateway` depends on the healthy `relay` service and its HTTP
-server does not start until its relay WebSocket has connected. Consequently, a
-healthy gateway container also proves that the poller reached the relay over
-the Compose network. Deployments with a separate internal query replica can
-override `BUZZY_PUSH_RELAY_URL` without changing the image.
+`BUZZY_RELAY_URL` is the ACL-scoped HTTP feed origin;
+`BUZZY_RELAY_HOST=usebeeline.app` preserves the production tenant host. Buzz
+deliberately does not fan channel-scoped events into global WebSocket
+subscriptions, so the gateway drains this trusted bridge as each registered
+public key instead of collecting users' signing keys. `push-gateway` depends on
+the healthy `relay` service. Deployments with a separate internal query replica
+can override `BUZZY_PUSH_RELAY_URL` without changing the image.
+
+After startup, verify both the immediate `[push] feed live mode=acl-query`
+line after its first successful relay read and a recurring
+`[push] feed heartbeat ... eventsPerMinute=N` line. A
+transport failure logs its retry delay; the feed issues a fresh query after
+bounded exponential backoff and returns to the configured poll cadence after
+the first success.
 
 ## Public routes and permanent alias
 

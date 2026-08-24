@@ -9,6 +9,8 @@ const auth = vi.hoisted(() => ({
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) })),
 }));
 const avatarUpload = vi.hoisted(() => ({ pickAndUploadAvatar: vi.fn() }));
+const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefined) }));
+const nativeAlerts = vi.hoisted(() => ({ alert: vi.fn() }));
 const client = vi.hoisted(() => ({
   getCommunity: vi.fn(),
   getChannelMetadata: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 vi.mock('@/auth/buzz-identity-storage', () => auth);
 vi.mock('@/buzz/avatar-upload', () => avatarUpload);
+vi.mock('expo-clipboard', () => clipboard);
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
@@ -58,6 +61,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    Alert: nativeAlerts,
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
     ScrollView: host('ScrollView'),
     Share: { share: vi.fn() },
@@ -253,7 +257,7 @@ describe('Workspace Settings authority', () => {
     ).toHaveLength(1);
   });
 
-  it('renders same-name Rooms with distinct visible identifiers', async () => {
+  it('qualifies same-name Rooms with human dates and discloses the full ID on demand', async () => {
     client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
     client.query.mockResolvedValue([
       roomCreate('11111111-room', 'beeline', 1),
@@ -269,7 +273,36 @@ describe('Workspace Settings authority', () => {
     const renderer = await render();
     const visibleText = renderer.root.findAllByType('Text').map((node) => node.children.join(''));
 
-    expect(visibleText).toContain('ID 11111111');
-    expect(visibleText).toContain('ID 22222222');
+    expect(visibleText).toContain('Created Jan 1, 1970 · 00:00:01 UTC');
+    expect(visibleText).toContain('Created Jan 1, 1970 · 00:00:02 UTC');
+    expect(visibleText.join(' ')).not.toContain('ID 11111111');
+    expect(visibleText.join(' ')).not.toContain('ID 22222222');
+
+    act(() => renderer.root.findByProps({ testID: 'room-details-11111111-room' }).props.onPress());
+    expect(nativeAlerts.alert).toHaveBeenCalledWith(
+      'beeline',
+      '11111111-room',
+      expect.any(Array),
+    );
+    const buttons = nativeAlerts.alert.mock.calls[0][2];
+    await act(async () => buttons[1].onPress());
+    expect(clipboard.setStringAsync).toHaveBeenCalledWith('11111111-room');
+  });
+
+  it('names the outcome of the 44pt Room visibility action', async () => {
+    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
+    client.query.mockResolvedValue([roomCreate('room-1', 'atlas', 1)]);
+    client.getChannelMetadata.mockResolvedValue({
+      channelId: 'room-1',
+      name: 'atlas',
+      visibility: 'public',
+      archived: false,
+    });
+
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'room-visibility-room-1' }).props).toMatchObject({
+      accessibilityLabel: 'Make atlas invite-only',
+      accessibilityRole: 'button',
+    });
   });
 });

@@ -13,8 +13,11 @@ const sources = [
   '../../app/(app)/buzz/settings/workspace.tsx',
   './CommunityInviteEntry.tsx',
   './CommunityRail.tsx',
+  './EmptyLedgerState.tsx',
   './HeaderLadder.tsx',
   './Ledger.tsx',
+  './RoomDeckComposeMenu.tsx',
+  './SettingsNavigationRow.tsx',
 ];
 
 const monoStyles = new Set([
@@ -74,6 +77,10 @@ const monoStyles = new Set([
   'roleLabelText',
   'inviteTitle',
   'visibilityButtonText',
+  'roomMark',
+  'roomDetailsText',
+  'glyph',
+  'groupLabel',
   'mentionKind',
   'mentionMenuLabel',
   'mentionOverflow',

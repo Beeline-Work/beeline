@@ -7,6 +7,15 @@ export type MentionCandidate = {
   handle: string;
 };
 
+export type MentionableParticipant = MentionCandidate & {
+  pubkey: string;
+};
+
+export type ResolvedComposerMentions = {
+  pubkeys: string[];
+  handles: string[];
+};
+
 export type ActiveMention = {
   start: number;
   end: number;
@@ -173,26 +182,62 @@ export function selectedMentionPubkeys(
   text: string,
   selections: ReadonlyMap<string, string>,
 ): string[] {
+  return resolveComposerMentions(text, [], selections).pubkeys;
+}
+
+const COMPOSER_MENTION_PATTERN = /@([\p{L}\p{M}\p{N}_-]+)/gu;
+const MENTION_HANDLE_CHARACTER = /[\p{L}\p{M}\p{N}_.-]/u;
+
+/**
+ * Resolve every live mention in composer order.
+ *
+ * A picker selection is already an exact handle→pubkey binding and survives
+ * an asynchronous roster refresh. A manually completed handle is live only
+ * when it maps to exactly one current Room participant; ambiguous and unknown
+ * tokens remain ordinary prose and must not produce either a p-tag or gold UI.
+ */
+export function resolveComposerMentions(
+  text: string,
+  participants: readonly MentionableParticipant[],
+  selections: ReadonlyMap<string, string>,
+): ResolvedComposerMentions {
+  const selectedByHandle = new Map(
+    [...selections].map(([handle, pubkey]) => [normalizeMentionSearch(handle), pubkey]),
+  );
+  const participantsByHandle = new Map<string, Set<string>>();
+  for (const participant of participants) {
+    const handle = normalizeMentionSearch(participant.handle);
+    const pubkeys = participantsByHandle.get(handle) ?? new Set<string>();
+    pubkeys.add(participant.pubkey);
+    participantsByHandle.set(handle, pubkeys);
+  }
+
   const normalized = text.normalize('NFKC').toLocaleLowerCase();
-  const pubkeyOffsets = new Map<string, number>();
-  for (const [handle, pubkey] of [...selections.entries()].sort(
-    ([left], [right]) => right.length - left.length,
-  )) {
-    const mention = `@${handle.normalize('NFKC').toLocaleLowerCase()}`;
-    let offset = normalized.indexOf(mention);
-    while (offset >= 0) {
-      const trailing = normalized[offset + mention.length];
-      if (trailing === undefined || /[\s,.:;!?)}\]]/.test(trailing)) {
-        const existing = pubkeyOffsets.get(pubkey);
-        if (existing === undefined || offset < existing) pubkeyOffsets.set(pubkey, offset);
-        break;
-      }
-      offset = normalized.indexOf(mention, offset + mention.length);
+  const pubkeys: string[] = [];
+  const handles: string[] = [];
+  const seenPubkeys = new Set<string>();
+  const seenHandles = new Set<string>();
+  for (const match of normalized.matchAll(COMPOSER_MENTION_PATTERN)) {
+    const offset = match.index ?? 0;
+    const before = offset > 0 ? normalized[offset - 1]! : '';
+    if (before && MENTION_HANDLE_CHARACTER.test(before)) continue;
+
+    const handle = match[1] ?? '';
+    const selectedPubkey = selectedByHandle.get(handle);
+    const rosterPubkeys = participantsByHandle.get(handle);
+    const pubkey =
+      selectedPubkey ?? (rosterPubkeys?.size === 1 ? [...rosterPubkeys][0] : undefined);
+    if (!pubkey) continue;
+    if (!seenPubkeys.has(pubkey)) {
+      seenPubkeys.add(pubkey);
+      pubkeys.push(pubkey);
+    }
+    if (!seenHandles.has(handle)) {
+      seenHandles.add(handle);
+      handles.push(handle);
     }
   }
-  return [...pubkeyOffsets.entries()]
-    .sort(([, left], [, right]) => left - right)
-    .map(([pubkey]) => pubkey);
+  return { pubkeys, handles };
 }
 
 /** Resolve the first visible @Agent name into the member pubkey written to the Nostr p-tag. */

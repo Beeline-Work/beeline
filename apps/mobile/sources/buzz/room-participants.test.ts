@@ -7,6 +7,7 @@ import {
   formatRoomParticipantTotal,
   mentionedAgentPubkey,
   replaceActiveMention,
+  resolveComposerMentions,
   roomParticipantPubkeys,
   selectedMentionPubkeys,
   sectionRoomParticipants,
@@ -110,6 +111,30 @@ describe('Room participant presentation', () => {
       'human-alan',
       'agent-codex',
     ]);
+  });
+
+  it('resolves manually completed human and agent handles to wire-ready member pubkeys', () => {
+    const participants = [
+      { pubkey: 'human-alan', name: 'Alan', handle: 'alan' },
+      { pubkey: 'agent-codex', name: 'Codex', handle: 'codex' },
+    ];
+
+    expect(resolveComposerMentions('Ask @alan and @codex', participants, new Map())).toEqual({
+      pubkeys: ['human-alan', 'agent-codex'],
+      handles: ['alan', 'codex'],
+    });
+  });
+
+  it('keeps unknown or ambiguous tokens ordinary instead of presenting a false mention', () => {
+    const participants = [
+      { pubkey: 'first-alan', name: 'Alan One', handle: 'alan' },
+      { pubkey: 'second-alan', name: 'Alan Two', handle: 'alan' },
+    ];
+
+    expect(resolveComposerMentions('@unknown and @alan', participants, new Map())).toEqual({
+      pubkeys: [],
+      handles: [],
+    });
   });
 
   it('finds a mention at the cursor without treating emails or word-internal @ as mentions', () => {

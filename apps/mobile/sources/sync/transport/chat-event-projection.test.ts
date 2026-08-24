@@ -51,6 +51,105 @@ function displaySequence(events: SessionEvent[]): ChatDisplayMessage[] {
 }
 
 describe('Buzz Room screen event projection', () => {
+  it('renders every ordinary member-authored kind:9 branch as chat', () => {
+    const ordinaryTagBranches: string[][][] = [
+      [],
+      [['p', agent]],
+      [
+        ['p', agent],
+        ['e', 'prior-message', '', 'reply'],
+      ],
+      [['t', 'ordinary-topic']],
+      [['status', 'failed']],
+      [['delivery', 'landed']],
+    ];
+
+    for (const [index, tags] of ordinaryTagBranches.entries()) {
+      const content =
+        index === 1
+          ? '@Ox 1. I approve switching the canon branch of this room to main.'
+          : index === 3
+            ? 'I lost my connection to the relay — reconnecting.'
+            : `ordinary member message ${index}`;
+      const event: SessionEvent = {
+        type: 'raw',
+        sessionId: 'fb264364-5a71-4881-826d-c04f6f779497',
+        payload: {
+          id:
+            index === 1
+              ? 'cc0cad0f42b9693abcfcd3e42d3e8011f2a2b3f1b6ce3788c54784f859e9256b'
+              : `human-${index}`,
+          content,
+          pubkey: viewer,
+          createdAt: 1_787_620_118 + index,
+          tags: [['h', 'fb264364-5a71-4881-826d-c04f6f779497'], ...tags],
+        },
+      };
+      const projected = projectChatEvent(event, viewer).message;
+
+      expect(projected, `ordinary tag branch ${index}`).toMatchObject({
+        text: content,
+        isUser: true,
+      });
+      expect(transcriptMessages([projected!], false), `transcript branch ${index}`).toHaveLength(1);
+    }
+  });
+
+  it('never renders explicit control or raw session-update events as chat prose', () => {
+    const sessionEnvelope = JSON.stringify({
+      sessionId: '01a03592-raw-production-session',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'dump-1',
+        title: 'Query relay state',
+      },
+    });
+    const controlBranches: Array<{ content: string; tags: string[][] }> = [
+      { content: sessionEnvelope, tags: [] },
+      { content: sessionEnvelope, tags: [['t', 'body-control']] },
+      {
+        content: JSON.stringify({
+          sessionId: '01a03592-metadata-only',
+          update: { sessionUpdate: 'usage_update', usage: { input_tokens: 80 } },
+        }),
+        tags: [],
+      },
+      { content: 'internal control', tags: [['t', 'body-control']] },
+      { content: 'landed digest', tags: [['t', 'land-summary']] },
+      { content: 'merge digest', tags: [['t', 'merge-summary']] },
+      { content: 'manifest', tags: [['t', 'change-review-manifest']] },
+      {
+        content: 'corner state',
+        tags: [
+          ['t', 'body-control'],
+          ['subchannel', cornerId],
+          ['status', 'working'],
+        ],
+      },
+    ];
+
+    for (const [index, branch] of controlBranches.entries()) {
+      const projected = projectChatEvent(
+        raw(`control-${index}`, branch.content, branch.tags, index + 1),
+        viewer,
+      ).message;
+      const transcript = projected ? transcriptMessages([projected], false) : [];
+
+      expect(
+        transcript.every(
+          (message) =>
+            message.isAgentActivity ||
+            message.isSystemNotice ||
+            Boolean(message.corner) ||
+            Boolean(message.agentTurn) ||
+            Boolean(message.cornerProcess),
+        ),
+        `control branch ${index} leaked as ordinary chat`,
+      ).toBe(true);
+      expect(transcript.some((message) => message.text === branch.content)).toBe(false);
+    }
+  });
+
   it('keeps the serialized p-tags that make transcript mentions live', () => {
     expect(
       projectChatEvent(

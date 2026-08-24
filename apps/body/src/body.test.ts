@@ -5998,6 +5998,7 @@ describe('corner narrative persistence', () => {
       const startPlan = vi.fn(async () => undefined);
       const session = {
         channelId: 'corner-steer',
+        parentChannelId: 'room-steer',
         sessionId: 'session-steer',
         client: { sessionPrompt, sessionCancel: vi.fn(), activeRunId: () => undefined },
         activityProjection: { startPlan, completePlan: vi.fn(async () => undefined) },
@@ -6015,16 +6016,17 @@ describe('corner narrative persistence', () => {
       });
 
       const followUps = ['One more tweak please.', '@codex u alive?', 'Keep going.'].map(
-        (content, index) => signEvent(
-          {
-            pubkey: human.publicKey,
-            created_at: Math.floor(Date.now() / 1000) + index,
-            kind: 9,
-            tags: [['h', 'corner-steer']],
-            content,
-          },
-          human.secretKey,
-        ),
+        (content, index) =>
+          signEvent(
+            {
+              pubkey: human.publicKey,
+              created_at: Math.floor(Date.now() / 1000) + index,
+              kind: 9,
+              tags: [['h', 'corner-steer']],
+              content,
+            },
+            human.secretKey,
+          ),
       );
       (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = vi
         .fn()
@@ -6112,7 +6114,11 @@ describe('corner merge-ready surfaces a real committed change', () => {
         worktreePath,
         featureBranch: 'feature/ready',
         role: agent,
-        session: { channelId: 'corner-merge-ready', sessionId: 'session' } as never,
+        session: {
+          channelId: 'corner-merge-ready',
+          sessionId: 'session',
+          parentChannelId: 'room-merge-ready',
+        } as never,
         lastPolledAt: 0,
         archived: false,
         boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
@@ -6175,6 +6181,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
         session: {
           channelId: 'corner-merge-ready-private-state',
           sessionId: 'session',
+          parentChannelId: 'room-merge-ready',
           agentPrivateState,
         } as never,
         lastPolledAt: 0,
@@ -6307,7 +6314,11 @@ describe('corner merge-ready surfaces a real committed change', () => {
         worktreePath,
         featureBranch: 'feature/ready',
         role: agent,
-        session: { channelId: subchannelId, sessionId: 'session' } as never,
+        session: {
+          channelId: subchannelId,
+          sessionId: 'session',
+          parentChannelId: 'room-merge-ready',
+        } as never,
         lastPolledAt: 0,
         archived: false,
         boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
@@ -6396,6 +6407,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
         role: agent,
         session: {
           channelId: 'corner-merge-feedback',
+          parentChannelId: 'room-merge-feedback',
           sessionId: 'session',
           client: { sessionPrompt, sessionCancel: vi.fn() },
         } as never,
@@ -6461,7 +6473,11 @@ describe('corner merge-ready surfaces a real committed change', () => {
         worktreePath,
         featureBranch: 'feature/ready',
         role: agent,
-        session: { channelId: 'corner-merge-feedback-stuck', sessionId: 'session' } as never,
+        session: {
+          channelId: 'corner-merge-feedback-stuck',
+          parentChannelId: 'room-merge-feedback-stuck',
+          sessionId: 'session',
+        } as never,
         lastPolledAt: 0,
         archived: false,
         boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
@@ -7218,6 +7234,10 @@ describe('graceful relay-failure confirmation', () => {
       archived: false,
       mergeTarget,
     });
+    // This regression exercises merge-gate failure narration, not relay
+    // existence. The maintenance driver now proves existence first on every
+    // tick, so keep that independent prerequisite successful here.
+    vi.spyOn(body as never, 'reconcileCornerExistence' as never).mockResolvedValue(true as never);
 
     const gitRejectionDump = [
       'ff merge failed:',
@@ -8330,7 +8350,7 @@ describe('closing a corner with no live session', () => {
       subchannelId: 'corner-restated',
       featureBranch: 'feature/restated',
       session: { sessionId: 's1', parentChannelId: 'room-restated' },
-      cornerState: { state: 'waiting-on-human', reason: 'failure' },
+      cornerState: { state: 'waiting', reason: 'failure' },
     } as never;
     await Reflect.get(body, 'postParentCornerStatus').call(
       body,
@@ -8858,12 +8878,17 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
   }
 
   const queuedAcks = (published: NostrEvent[]): NostrEvent[] =>
-    published.filter((event) =>
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === STEER_QUEUED_TAG),
+    published.filter(
+      (event) =>
+        Array.isArray(event.tags) &&
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === STEER_QUEUED_TAG),
     );
 
   const stallNotices = (published: NostrEvent[]): NostrEvent[] =>
-    published.filter((event) => event.content.includes('taking longer than usual'));
+    published.filter(
+      (event) =>
+        typeof event.content === 'string' && event.content.includes('taking longer than usual'),
+    );
 
   function memberMessage(
     human: ReturnType<typeof newIdentity>,
@@ -8893,6 +8918,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       const sessionSteer = vi.fn().mockResolvedValue(undefined);
       const session = {
         channelId: 'corner-addressing',
+        parentChannelId: 'room-addressing',
         sessionId: 'session-addressing',
         client: {
           sessionSteer,
@@ -8971,6 +8997,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         .mockRejectedValue(new Error('ACP session corner-queue has no active run to steer'));
       const session = {
         channelId: 'corner-queue',
+        parentChannelId: 'room-queue',
         sessionId: 'session-queue',
         client: { sessionPrompt, sessionSteer, sessionCancel: vi.fn(), activeRunId: () => 'run-1' },
       } as never;
@@ -9038,6 +9065,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
 
       const session = {
         channelId: 'corner-overlap',
+        parentChannelId: 'room-overlap',
         sessionId: 'session-overlap',
         client: {
           sessionPrompt,
@@ -9098,6 +9126,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       const sessionSteer = vi.fn();
       const session = {
         channelId: 'corner-idle',
+        parentChannelId: 'room-idle',
         sessionId: 'session-idle',
         client: {
           sessionPrompt,
@@ -10671,6 +10700,7 @@ describe('harness-independent corner commit watch', () => {
       session: {
         channelId: 'corner-commit-watch',
         sessionId: 'session',
+        parentChannelId: 'room-commit-watch',
         client: { activeRunId: () => undefined },
       } as never,
       lastPolledAt: 0,
@@ -10855,6 +10885,7 @@ describe('harness-independent corner commit watch', () => {
         session: {
           channelId: 'corner-commit-watch',
           sessionId: 'session',
+          parentChannelId: 'room-commit-watch',
           client: { activeRunId: () => 'run-1' },
         },
       });

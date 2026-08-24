@@ -97,6 +97,10 @@ vi.mock('@/buzz/local-cache-sync', () => ({
   cacheLiveSessionEvents: vi.fn(),
   cacheLiveSessionEvent: vi.fn(),
   loadOlderMessages: vi.fn(),
+  refreshRoomCornerCache: vi.fn(
+    async (transport: any, _viewerPubkey: string, roomIds: string[]) =>
+      transport.listSubchannelLifecycleForRooms(roomIds),
+  ),
   revalidateCachedMessages: vi.fn(async () => ({ entry: {} })),
 }));
 vi.mock('@/buzz/defer-interaction', () => ({ afterInteractions: () => () => undefined }));
@@ -120,26 +124,31 @@ vi.mock('@/sync/transport', () => ({
     // The RELAY still reports BOTH corners as open work — this is exactly the
     // window between the close publish and the daemon's next maintenance tick
     // (or forever, if the daemon is down). Local dismissal must win.
-    listSubchannelLifecycleForRooms = vi.fn(async () =>
-      new Map([
-        [
-          'room-with-corners',
+    listSubchannelLifecycleForRooms = vi.fn(
+      async () =>
+        new Map([
           [
-            {
-              id: 'corner-closed',
-              name: 'Closed Work',
-              openerPubkey: 'b'.repeat(64),
-              status: 'live',
-            },
-            {
-              id: 'corner-open',
-              name: 'Open Work',
-              openerPubkey: 'b'.repeat(64),
-              status: 'live',
-            },
+            'room-with-corners',
+            [
+              {
+                id: 'corner-closed',
+                name: 'Closed Work',
+                openerPubkey: 'b'.repeat(64),
+                status: 'live',
+                machineState: 'working',
+                stateAt: Math.floor(Date.now() / 1_000),
+              },
+              {
+                id: 'corner-open',
+                name: 'Open Work',
+                openerPubkey: 'b'.repeat(64),
+                status: 'live',
+                machineState: 'working',
+                stateAt: Math.floor(Date.now() / 1_000),
+              },
+            ],
           ],
-        ],
-      ]),
+        ]),
     );
     roomRepositoryState = vi.fn(async () => undefined);
   },
@@ -266,15 +275,21 @@ const ROOM = 'room-with-corners';
 /** The relay still knows the Room and lists both its corners as open work —
  * exactly the pre-daemon-tick window (or daemon-offline forever). */
 function mockRelayStillReturnsRoom() {
-  clientMocks.query.mockImplementation(async () => [
-    {
-      id: 'e1',
-      kind: 9007,
-      pubkey: VIEWER,
-      created_at: 100,
-      tags: [['h', ROOM], ['community', 'shared-1']],
-    },
-  ] as never);
+  clientMocks.query.mockImplementation(
+    async () =>
+      [
+        {
+          id: 'e1',
+          kind: 9007,
+          pubkey: VIEWER,
+          created_at: 100,
+          tags: [
+            ['h', ROOM],
+            ['community', 'shared-1'],
+          ],
+        },
+      ] as never,
+  );
   clientMocks.listMyChannels.mockResolvedValue([{ channelId: ROOM }]);
   clientMocks.getChannelMetadata.mockResolvedValue({ archived: false });
 }
@@ -372,9 +387,9 @@ describe('closed corners stay closed locally', () => {
 
     const rendered = JSON.stringify(renderRowTexts(tree));
     expect(rendered).not.toContain('Closed Work');
-    expect(useClosedCorners.getState().closedAt[
-      `${VIEWER}/${ROOM}/corner-closed`
-    ]).toBeTypeOf('number');
+    expect(useClosedCorners.getState().closedAt[`${VIEWER}/${ROOM}/corner-closed`]).toBeTypeOf(
+      'number',
+    );
   });
 });
 

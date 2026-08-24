@@ -14,6 +14,7 @@ import { publishEvent } from '@beeline/gate';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   AGENT_PRESENCE_HEARTBEAT_MS,
+  agentDraftKey,
   agentPresenceKey,
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
@@ -306,7 +307,8 @@ function observedTarget(
  *  read/search call can carry, just enough to say what it found. */
 function observedResult(update: Record<string, unknown>): string | undefined {
   const toolCall = objectValue(update.toolCall);
-  const raw = update.output ?? update.rawOutput ?? update.result ?? update.content ?? toolCall?.output;
+  const raw =
+    update.output ?? update.rawOutput ?? update.result ?? update.content ?? toolCall?.output;
   const text = compactText(raw, MAX_OBSERVED_RESULT_CHARS);
   if (!text) return undefined;
   const firstLines = text.split(/\r?\n/).slice(0, 2).join(' ').trim();
@@ -333,11 +335,16 @@ function describeMajorUpdate(
   else if (info.kind === 'delete') label = info.path ? `Deleted ${info.path}` : 'Deleted a file';
   else if (info.kind === 'move') label = info.path ? `Moved ${info.path}` : 'Moved a file';
   else if (/\bgit\s+commit\b/i.test(info.command ?? info.title ?? '')) label = 'Committed changes';
-  else if (/\b(?:gh|gh-axi)\s+pr\s+(?:create|open)\b|\bpull\s+request\b/i.test(info.command ?? info.title ?? ''))
+  else if (
+    /\b(?:gh|gh-axi)\s+pr\s+(?:create|open)\b|\bpull\s+request\b/i.test(
+      info.command ?? info.title ?? '',
+    )
+  )
     label = 'Opened a pull request';
   else if (/\b(?:build)\b/i.test(info.command ?? info.title ?? '')) label = 'Ran a build';
   else if (/\b(?:lint)\b/i.test(info.command ?? info.title ?? '')) label = 'Ran lint checks';
-  else if (/\b(?:typecheck|tsc)\b/i.test(info.command ?? info.title ?? '')) label = 'Ran type checks';
+  else if (/\b(?:typecheck|tsc)\b/i.test(info.command ?? info.title ?? ''))
+    label = 'Ran type checks';
   else label = 'Ran the test suite';
   return update.status === 'failed' ? `${label} failed` : label;
 }
@@ -408,7 +415,11 @@ const PI_DIVIDER_LINE = /^-{3,}\s*$/;
  *  pi lists skill/context/extension files, never how narration writes prose. */
 const PI_PATH_BULLET_LINE = /^[-*]\s+(?:\/|~\/|npm:)\S*$/;
 
-function nextSignificantLineMatches(lines: readonly string[], from: number, pattern: RegExp): boolean {
+function nextSignificantLineMatches(
+  lines: readonly string[],
+  from: number,
+  pattern: RegExp,
+): boolean {
   let j = from;
   while (j < lines.length && !lines[j]!.trim()) j++;
   return j < lines.length && pattern.test(lines[j]!.trim());
@@ -427,7 +438,8 @@ function stripPiHarnessPreamble(message: string): string {
     PI_STARTUP_VERSION_LINE.test(first) ||
     PI_KNOWN_SECTION_HEADER.test(first) ||
     PI_UPDATE_NOTICE_LINE.test(first) ||
-    (PI_DIVIDER_LINE.test(first) && nextSignificantLineMatches(lines, i + 1, PI_UPDATE_NOTICE_LINE));
+    (PI_DIVIDER_LINE.test(first) &&
+      nextSignificantLineMatches(lines, i + 1, PI_UPDATE_NOTICE_LINE));
   if (!entersKnownBlock) return message;
 
   let sectionOpen = PI_KNOWN_SECTION_HEADER.test(first);
@@ -616,13 +628,23 @@ function activityPlan(...sources: unknown[]): CompactActivityPlan | undefined {
   return undefined;
 }
 
-export function latestActivityPlanFromEvents(events: readonly Pick<NostrEvent, 'content' | 'created_at' | 'id'>[]): CompactActivityPlan | undefined {
+export function latestActivityPlanFromEvents(
+  events: readonly Pick<NostrEvent, 'content' | 'created_at' | 'id'>[],
+): CompactActivityPlan | undefined {
   let latest: CompactActivityPlan | undefined;
-  for (const event of [...events].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))) {
+  for (const event of [...events].sort(
+    (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
+  )) {
     try {
-      const batch = JSON.parse(event.content) as { update?: { updates?: unknown[] }; events?: unknown[] };
-      for (const update of batch.update?.updates ?? batch.events ?? []) latest = activityPlan(update) ?? latest;
-    } catch { /* non-activity prose shares the query */ }
+      const batch = JSON.parse(event.content) as {
+        update?: { updates?: unknown[] };
+        events?: unknown[];
+      };
+      for (const update of batch.update?.updates ?? batch.events ?? [])
+        latest = activityPlan(update) ?? latest;
+    } catch {
+      /* non-activity prose shares the query */
+    }
   }
   return latest;
 }
@@ -962,11 +984,7 @@ export function projectActivity(
     // sends it as its own suppressed `plan` update, while other harnesses
     // model it as an `update_plan` tool call that is not load-bearing enough
     // to survive `isMajorUpdate`. Both are the same fact about the turn.
-    const updatePlan = activityPlan(
-      sanitized,
-      sanitized.rawInput,
-      objectValue(sanitized.toolCall),
-    );
+    const updatePlan = activityPlan(sanitized, sanitized.rawInput, objectValue(sanitized.toolCall));
     if (updatePlan?.items.length) {
       currentPlan = {
         ...(pinnedObjective ? { objective: pinnedObjective } : {}),
@@ -1019,7 +1037,10 @@ export function projectActivity(
     }
     await publishPlan(completed);
   };
-  controller.currentPlan = () => currentPlan ? { ...currentPlan, items: currentPlan.items.map((item) => ({ ...item })) } : undefined;
+  controller.currentPlan = () =>
+    currentPlan
+      ? { ...currentPlan, items: currentPlan.items.map((item) => ({ ...item })) }
+      : undefined;
   return controller;
 }
 
@@ -1100,7 +1121,7 @@ export async function postAgentDraft(
       created_at: createdAt,
       kind: KIND_AGENT_DRAFT,
       tags: [
-        ['d', `${TAG_AGENT_DRAFT}:${channelId}`],
+        ['d', agentDraftKey(channelId)],
         ['h', channelId],
         ['t', TAG_AGENT_DRAFT],
         ['agent', owner.publicKey],
@@ -1112,6 +1133,40 @@ export async function postAgentDraft(
     owner.secretKey,
   );
   await publishEvent(event, owner);
+}
+
+/**
+ * Replace a corner's last live draft with a terminal marker. `scopeChannelId`
+ * is normally the parent Room: it remains writable even when the corner was
+ * deleted out of band, while the unchanged `d` key still replaces the stale
+ * corner record.
+ */
+export async function retractAgentDraft(
+  cornerId: string,
+  scopeChannelId: string,
+  owner: Identity,
+  createdAt = Math.floor(Date.now() / 1_000),
+): Promise<void> {
+  await publishEvent(
+    signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: createdAt,
+        kind: KIND_AGENT_DRAFT,
+        tags: [
+          ['d', agentDraftKey(cornerId)],
+          ['h', scopeChannelId],
+          ['t', TAG_AGENT_DRAFT],
+          ['agent', owner.publicKey],
+          ['status', 'closed'],
+          ['corner', cornerId],
+        ],
+        content: '',
+      },
+      owner.secretKey,
+    ),
+    owner,
+  );
 }
 
 /**
@@ -1331,10 +1386,19 @@ export function postAgentTurnStatus(
   ]);
 }
 
-export function postCornerSessionStatus(channelId: string, owner: Identity, sessionId: string, status: 'live' | 'suspended' | 'waiting-for-slot', sequence: number): Promise<void> {
+export function postCornerSessionStatus(
+  channelId: string,
+  owner: Identity,
+  sessionId: string,
+  status: 'live' | 'suspended' | 'waiting-for-slot',
+  sequence: number,
+): Promise<void> {
   return postControlMessage(channelId, owner, `Corner session ${status}.`, [
-    ['t', CORNER_SESSION_TAG], ['session', sessionId], ['agent', owner.publicKey],
-    ['status', status], ['sequence', String(sequence)],
+    ['t', CORNER_SESSION_TAG],
+    ['session', sessionId],
+    ['agent', owner.publicKey],
+    ['status', status],
+    ['sequence', String(sequence)],
   ]);
 }
 
@@ -1366,7 +1430,7 @@ export function postAgentStallNotice(
   return postAgentMessage(
     channelId,
     owner,
-    "Still working on this — my coding backend is taking longer than usual to respond.",
+    'Still working on this — my coding backend is taking longer than usual to respond.',
     replyTo,
     [],
     [],
@@ -1453,6 +1517,36 @@ export async function postAgentPresence(
     owner.secretKey,
   );
   await publishEvent(event, owner);
+}
+
+/** Same terminal replacement as {@link retractAgentDraft}, for presence. */
+export async function retractAgentPresence(
+  cornerId: string,
+  scopeChannelId: string,
+  owner: Identity,
+  createdAt = Math.floor(Date.now() / 1_000),
+): Promise<void> {
+  await publishEvent(
+    signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: createdAt,
+        kind: KIND_AGENT_PRESENCE,
+        tags: [
+          ['d', agentPresenceKey(cornerId)],
+          ['h', scopeChannelId],
+          ['t', TAG_AGENT_PRESENCE],
+          ['agent', owner.publicKey],
+          ['status', 'offline'],
+          ['terminal', 'closed'],
+          ['corner', cornerId],
+        ],
+        content: 'offline',
+      },
+      owner.secretKey,
+    ),
+    owner,
+  );
 }
 
 /**

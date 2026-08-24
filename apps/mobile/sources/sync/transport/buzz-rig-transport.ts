@@ -55,6 +55,8 @@ import {
   type AgentModelConfigInput,
   type AgentCommandList,
   TAG_AGENT_PRESENCE,
+  isAgentPresenceOnline,
+  type AgentPresence,
   type RoomRepository,
   type RoomRepositoryResolution,
   type RoomRepositoryInput,
@@ -98,6 +100,68 @@ const ROOM_CONTEXT_SCAN_LIMIT = 80;
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
+/** Parse one presence record (kind:30078, `d=agent-presence:<channelId>`,
+ * self-signed `agent` tag) off the wire into the shared AgentPresence shape. */
+function presenceFromEvent(event: NostrEvent): AgentPresence | undefined {
+  const status = tagValue(event, 'status');
+  const agentPubkey = tagValue(event, 'agent');
+  if ((status !== 'online' && status !== 'offline') || !agentPubkey) return undefined;
+  return {
+    agentPubkey,
+    status,
+    observedAt: event.created_at < 1_000_000_000_000 ? event.created_at * 1_000 : event.created_at,
+  };
+}
+
+/**
+ * Whether every agent that ever served this Room is PROVABLY offline — past
+ * `isAgentPresenceOnline`'s lease (120s), which already absorbs brief blips:
+ * a heartbeat every 45s means two missed beats still read online. Presence is
+ * a SOFT input to the corner oracle, so this must never guess:
+ * - any record inside its lease → online (false);
+ * - records exist but ALL are outside their lease → true;
+ * - NO record at all → unknown (`undefined`) — an old daemon predating
+ *   presence, or a relay answer we cannot vouch for, must not flip verdicts.
+ */
+function roomAgentsOffline(events: NostrEvent[], now = Date.now()): boolean | undefined {
+  const records = events
+    .map(presenceFromEvent)
+    .filter((record): record is AgentPresence => record !== undefined);
+  if (records.length === 0) return undefined;
+  return !records.some((record) => isAgentPresenceOnline(record, now));
+}
+
+/** One best-effort multi-`#d` presence read across parent Rooms. Filtered by
+ * `#d`, never `#h`: kind:30078 replaceable records are indexed by `d` and a
+ * `#h` filter matches nothing. A failed read resolves empty — unknown, never
+ * a false offline verdict. */
+async function fetchRoomPresence(
+  client: BuzzClient,
+  parentChannelIds: string[],
+): Promise<Map<string, NostrEvent[]>> {
+  if (parentChannelIds.length === 0) return new Map();
+  const events = await client
+    .query([
+      {
+        kinds: [KIND_AGENT_PRESENCE],
+        '#d': parentChannelIds.map((id) => `${TAG_AGENT_PRESENCE}:${id}`),
+        limit: Math.max(200, parentChannelIds.length * 10),
+      },
+    ])
+    .catch(() => [] as NostrEvent[]);
+  const byRoom = new Map<string, NostrEvent[]>();
+  for (const event of events) {
+    const d = tagValue(event, 'd');
+    const prefix = `${TAG_AGENT_PRESENCE}:`;
+    if (!d?.startsWith(prefix)) continue;
+    const roomId = d.slice(prefix.length);
+    const list = byRoom.get(roomId) ?? [];
+    list.push(event);
+    byRoom.set(roomId, list);
+  }
+  return byRoom;
+}
+
 /** Pure projection shared by the single-Room and cross-Room lifecycle fetchers.
  * Both paths — and therefore the cached snapshot and the warm refetch — MUST
  * derive status through this one function (`resolveCornerLifecycle` is the
@@ -109,6 +173,10 @@ function cornerSummaryFromEvents(
   metadata: ChannelMetadata | null,
   events: BuzzSessionEvent[],
   merged: boolean,
+  /** Room-level agent-presence verdict from {@link roomAgentsOffline}:
+   * `true` only when every presence record for the parent Room is provably
+   * past its lease; `undefined` = unknown = today's behaviour. */
+  agentOffline?: boolean,
 ): CornerSummary {
   const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
   // Reduce every event to its lifecycle facts once, then let THE one oracle
@@ -138,7 +206,12 @@ function cornerSummaryFromEvents(
     create?.created_at ?? 0,
     ...events.map((event) => event.createdAt),
   );
-  const status = resolveCornerLifecycle(facts, { merged, archived });
+  const oracleOptions = {
+    merged,
+    archived,
+    ...(agentOffline ? { agentOffline: true } : {}),
+  };
+  const status = resolveCornerLifecycle(facts, oracleOptions);
   // A `null` word hides WHICH needs-human case holds: a fresh unanswered agent
   // ask (a person must reply) or a merely idle stalled corner (nobody must).
   // The owner's deck tiers split them — asked corners stay in NEEDS YOU,
@@ -148,14 +221,20 @@ function cornerSummaryFromEvents(
   // oracle, twice.
   const awaitingReply =
     status === null &&
-    resolveCornerState(facts, { merged, archived }) === 'needs-human' &&
-    resolveCornerState(facts, { merged, archived, askFreshWindowMs: 0 }) === 'working';
+    resolveCornerState(facts, oracleOptions) === 'needs-human' &&
+    resolveCornerState(facts, { ...oracleOptions, askFreshWindowMs: 0 }) === 'working';
+  // The soft presence input only reaches the summary when it actually changed
+  // the verdict to STALLED — an offline agent holding a reviewable change
+  // (`open`) stays needs-you and carries no offline flag.
+  const stalledOffline =
+    agentOffline === true && resolveCornerState(facts, oracleOptions) === 'stalled';
   return {
     id,
     name: cornerName(create ? tagValue(create, 'name') : undefined, id),
     openerPubkey: create?.pubkey ?? '',
     status,
     ...(awaitingReply ? { awaitingReply } : {}),
+    ...(stalledOffline ? { agentOffline: true } : {}),
     createdAt: create?.created_at,
     ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
   };
@@ -1117,19 +1196,25 @@ export class BuzzRigTransport implements RigTransport {
   private async fetchOneRoomLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
     const client = await this.getClient();
     const ids = await client.listSubchannels(parentChannelId);
-    const parentEvents = await client.query([
-      {
-        kinds: [9],
-        '#h': [parentChannelId],
-        '#t': ['merge-summary'],
-        limit: 500,
-      },
+    const [parentEvents, presence] = await Promise.all([
+      client.query([
+        {
+          kinds: [9],
+          '#h': [parentChannelId],
+          '#t': ['merge-summary'],
+          limit: 500,
+        },
+      ]),
+      // Best-effort soft input for the oracle's STALLED verdict (see
+      // `fetchRoomPresence`); a failed read is unknown, never offline.
+      fetchRoomPresence(client, [parentChannelId]),
     ]);
     const mergedIds = new Set(
       parentEvents
         .map((event) => tagValue(event, 'subchannel'))
         .filter((id): id is string => Boolean(id)),
     );
+    const agentOffline = roomAgentsOffline(presence.get(parentChannelId) ?? []);
 
     return Promise.all(
       ids.map(async (id) => {
@@ -1138,7 +1223,14 @@ export class BuzzRigTransport implements RigTransport {
           client.getChannelMetadata(id),
           client.sessionEventsBackfill(id, { limit: 50 }),
         ]);
-        return cornerSummaryFromEvents(id, creates, metadata, events, mergedIds.has(id));
+        return cornerSummaryFromEvents(
+          id,
+          creates,
+          metadata,
+          events,
+          mergedIds.has(id),
+          agentOffline,
+        );
       }),
     );
   }
@@ -1193,13 +1285,17 @@ export class BuzzRigTransport implements RigTransport {
     );
     const allCornerIds = [...new Set(idsByRoom.flatMap((entry) => entry.ids))];
 
-    const [createEvents, mergeSummaryEvents] = await Promise.all([
+    const [createEvents, mergeSummaryEvents, presenceByRoom] = await Promise.all([
       allCornerIds.length > 0
         ? client.query([
             { kinds: [9007], '#h': allCornerIds, limit: Math.max(500, allCornerIds.length * 5) },
           ])
         : Promise.resolve([]),
       client.query([{ kinds: [9], '#h': parentChannelIds, '#t': ['merge-summary'], limit: 500 }]),
+      // Best-effort soft input for the oracle's STALLED verdict — one
+      // multi-`#d` read across every requested Room; a failed read is
+      // unknown, never a false offline verdict.
+      fetchRoomPresence(client, parentChannelIds),
     ]);
 
     const createsById = new Map<string, NostrEvent[]>();
@@ -1224,6 +1320,7 @@ export class BuzzRigTransport implements RigTransport {
     await Promise.all(
       idsByRoom.map(async ({ parentChannelId, ids }) => {
         const mergedIds = mergedIdsByRoom.get(parentChannelId) ?? new Set<string>();
+        const agentOffline = roomAgentsOffline(presenceByRoom.get(parentChannelId) ?? []);
         const corners = await Promise.all(
           ids.map(async (id) => {
             const [metadata, events] = await Promise.all([
@@ -1236,6 +1333,7 @@ export class BuzzRigTransport implements RigTransport {
               metadata,
               events,
               mergedIds.has(id),
+              agentOffline,
             );
           }),
         );

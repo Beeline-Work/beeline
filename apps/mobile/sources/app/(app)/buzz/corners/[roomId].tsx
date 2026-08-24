@@ -309,7 +309,12 @@ export default function BuzzCorners() {
           refreshing={refreshing}
           onRefresh={() => void handleRefresh()}
           renderItem={({ item }) => {
-            const status = cornerStatusPresentation(item.status);
+            // STALLED, not NEEDS HUMAN: a provably-offline agent's unfinished
+            // corner is nobody's question to answer (same oracle verdict the
+            // deck golds from).
+            const status = cornerStatusPresentation(item.status, {
+              agentOffline: item.agentOffline,
+            });
             const agent = agents.find((candidate) => candidate.pubkey === item.openerPubkey);
             const personProfile = personProfiles.find(
               (candidate) => candidate.pubkey === item.openerPubkey,

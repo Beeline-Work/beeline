@@ -178,6 +178,88 @@ describe('corner lifecycle oracle — THE three-word verdict', () => {
   });
 });
 
+describe('corner lifecycle oracle — agent-offline (stalled) verdict', () => {
+  // The owner's real shape (2026-08-23): a corner holding a stale ask card,
+  // its daemon dead — the only thing that clears an ask (newer work) can
+  // never come from a dead agent, so the ask golded the row as "waiting on
+  // you" forever. Presence is a SOFT input: same facts + provably offline =
+  // STALLED, not needs-human.
+  const askFacts = [card(100, 'needs-attention'), ask(200)];
+  const askNow = fresh(200);
+
+  it('an ONLINE agent with a fresh ask reads needs-human exactly as today', () => {
+    expect(resolveCornerState(askFacts, { now: askNow })).toBe('needs-human');
+    // Unknown presence (no record read yet) must behave identically — the
+    // soft input only speaks when it can PROVE sustained offline.
+    expect(resolveCornerState(askFacts, { now: askNow, agentOffline: undefined })).toBe(
+      'needs-human',
+    );
+    expect(resolveCornerState(askFacts, { now: askNow, agentOffline: false })).toBe(
+      'needs-human',
+    );
+  });
+
+  it('the SAME facts with the agent offline past the lease read stalled, never waiting-on-you', () => {
+    expect(resolveCornerState(askFacts, { now: askNow, agentOffline: true })).toBe('stalled');
+    // A bare fresh ask with no card behind it stalls too.
+    expect(resolveCornerState([ask(200)], { now: askNow, agentOffline: true })).toBe('stalled');
+    // So does idle-without-finishing and even a stale `live` word: a dead
+    // agent is not working, whatever its last card said.
+    const idleNow = 100 * 1000 + CORNER_WORK_LIVENESS_WINDOW_MS + 1;
+    expect(resolveCornerState([work(100)], { now: idleNow, agentOffline: true })).toBe(
+      'stalled',
+    );
+    expect(resolveCornerState([card(100, 'live')], { now: fresh(100), agentOffline: true })).toBe(
+      'stalled',
+    );
+  });
+
+  it('an offline agent WITH a live merge target still reads needs-you (review)', () => {
+    const review = [fact(100, { t: 'merge-ready', displayStatus: 'ready' })];
+    expect(resolveCornerState(review, { now: fresh(100) })).toBe('needs-human');
+    expect(resolveCornerState(review, { now: fresh(100), agentOffline: true })).toBe(
+      'needs-human',
+    );
+    // Same for an explicit ready word standing as the newest fact.
+    expect(
+      resolveCornerState([card(100, 'ready')], { now: fresh(100), agentOffline: true }),
+    ).toBe('needs-human');
+  });
+
+  it('a presence blip inside the lease never flips a verdict (soft input)', () => {
+    // Only `agentOffline: true` — computed from a lease already past — may
+    // change the reading; false/undefined are the today behaviour.
+    const working = [work(3000)];
+    expect(resolveCornerState(working, { now: fresh(3000), agentOffline: false })).toBe(
+      'working',
+    );
+    const review = [fact(100, { t: 'merge-ready', displayStatus: 'ready' })];
+    expect(resolveCornerState(review, { now: fresh(100), agentOffline: true })).toBe(
+      'needs-human',
+    );
+  });
+
+  it('terminal words still win outright over the offline input', () => {
+    expect(
+      resolveCornerState([card(100, 'archived')], { now: fresh(100), agentOffline: true }),
+    ).toBe('finished');
+    expect(resolveCornerState([], { merged: true, agentOffline: true })).toBe('finished');
+  });
+
+  it('the legacy projection maps stalled to null (no fourth wire word)', () => {
+    expect(resolveCornerLifecycle(askFacts, { now: askNow, agentOffline: true })).toBeNull();
+    // ...while the online reading keeps its word.
+    expect(resolveCornerLifecycle(askFacts, { now: askNow })).toBe('needs-attention');
+    // And an offline review still carries its legacy open word.
+    expect(
+      resolveCornerLifecycle([fact(100, { t: 'merge-ready', displayStatus: 'ready' })], {
+        now: fresh(100),
+        agentOffline: true,
+      }),
+    ).toBe('open');
+  });
+});
+
 describe('corner lifecycle oracle — vocabulary and sets', () => {
   it('maps every raw wire status onto the one canonical vocabulary', () => {
     expect(mapRawCornerStatusTag('starting')).toBe('live');

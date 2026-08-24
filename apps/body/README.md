@@ -205,7 +205,7 @@ beeline spend --day 2026-08-20 --json
 npm run body -- provision <channel-uuid>
 
 # Keep the body attached: addressed chat stays in the read-only Room; human-
-# authorized edits use corners, and signed exact-tip approvals land + archive
+# authorized edits use corners, and signed corner approvals land + archive
 npm run body -- serve <channel-uuid> <repo-owner-hex> <repo-name>
 
 # Open a subchannel (edit session) under a TLC
@@ -235,7 +235,7 @@ accepted turns, and releases that Room's processes.
 The paired Workspace-member agent creates the Room, makes the pairing human and
 a dedicated merge-worker identity admins, and immediately projects itself as a
 plain member. The worker discovers every change opened in that Room and lands a
-feature tip only after an exact-tip approval from a human admin; agent-signed
+feature tip only after an approval for that corner from a human admin; agent-signed
 approvals remain refused. Both pairing and daemon/`serve` startup assert that the
 agent cannot push the protected branch and exit fatally on unsafe policy. The
 machine identities, known Room bindings, repo roots, and supervisor state live under
@@ -350,7 +350,7 @@ into the process environment.
   `owner/repo`; the signed human prompt displays and binds that target, and
   clone/access failures leave the Room read-only. Agent completion
   can publish only the feature ref and `merge-ready`; target landing and archive
-  cleanup require an independently verified, exact-tip approval from a
+  cleanup require an independently verified approval for that corner from a
   device-held human admin.
 - **The permission handler is the policy; bubblewrap is the floor.** The Room
   read-only rule and the corner worktree rule are enforced in the ACP permission

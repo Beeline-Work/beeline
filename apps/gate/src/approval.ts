@@ -1,24 +1,24 @@
 /**
- * The merge-approval event — the human's signed "yes, land exactly this."
+ * The merge-approval event — the human's signed "yes, land this corner."
  *
  * It is a schnorr-signed Nostr channel message (kind:9, so the Buzz relay
  * stores and fans it out like any repo-channel post — the relay rejects
- * unknown kinds) whose tags BIND the grant to one specific merge:
+ * unknown kinds) whose tags BIND the grant to one specific corner merge:
+ *   - ["h", "<corner id>"]             which corner
  *   - ["t", "buzz-merge-approval"]      marker for filtering
  *   - ["repo", "<ownerHex>/<repo>"]     which repository
  *   - ["branch", "refs/heads/main"]     which protected target ref
- *   - ["tip", "<40-hex sha>"]           reviewed commit at approval time
- *   - ["patch-id", "<40-hex id>"]       optional stable reviewed-content id
+ *   - ["tip", "<40-hex sha>"]           work tip visible at approval time
+ *   - ["patch-id", "<40-hex id>"]       optional visible-content snapshot
  *
  * The gate is the conjunction the worker checks (see verifyApproval):
  *   1. schnorr signature valid over the event id, AND
  *   2. event.pubkey === the trusted reviewer, AND
- *   3. repo + branch match, AND
- *   4. either the tip matches exactly or both sides carry the same independently
- *      computed patch identity.
- * A grant for merge A therefore cannot authorize different content. Legacy
- * approvals have no patch identity and remain exact-tip only. Note kind:46011
- * is a Buzz *workflow* kind, deliberately NOT reused here.
+ *   3. corner id + repo + branch match.
+ * Tip and patch-id are review/audit snapshots, not authorization pins. A human
+ * who approves a corner explicitly trusts its ongoing work until its one merge
+ * lands; another corner still cannot reuse that grant. Note kind:46011 is a
+ * Buzz *workflow* kind, deliberately NOT reused here.
  */
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { Identity } from './identity.js';
@@ -31,13 +31,13 @@ export interface MergeTarget {
   repo: string;
   /** Full target ref, e.g. `refs/heads/main`. */
   branch: string;
-  /** 40-hex commit the target ref is authorized to advance to. */
+  /** Current 40-hex work tip; signed events retain the approval-time snapshot. */
   tip: string;
-  /** Stable reviewed-content identity. Omitted by legacy exact-tip clients. */
+  /** Stable reviewed-content snapshot. Omitted by legacy clients. */
   patchId?: string;
 }
 
-/** Build a signed approval binding the reviewer's grant to `target`. */
+/** Build a signed approval for this corner's one merge into `target.branch`. */
 export function buildApproval(
   reviewer: Identity,
   channelId: string,
@@ -56,7 +56,9 @@ export function buildApproval(
         ['tip', target.tip],
         ...(target.patchId ? [['patch-id', target.patchId]] : []),
       ],
-      content: `APPROVE merge of ${target.repo} ${target.branch} -> ${target.tip}`,
+      content:
+        `APPROVE this corner's merge of ${target.repo} into ${target.branch}; ` +
+        `covers its ongoing work until it lands (current tip ${target.tip})`,
     },
     reviewer.secretKey,
   );
@@ -67,22 +69,22 @@ function tagValue(event: NostrEvent, name: string): string | undefined {
 }
 
 /**
- * Return true iff `event` is a valid approval by `trustedReviewer` that binds
- * to `target` by exact tip or stable content identity. Every clause must hold;
- * a caller that does not independently compute `target.patchId` stays exact-tip.
+ * Return true iff `event` is a valid approval by `trustedReviewer` for this
+ * corner's one merge into `target.branch`. Every clause must hold. The signed
+ * tip and patch id remain informational snapshots as the corner advances.
  */
 export function verifyApproval(
   event: NostrEvent,
   trustedReviewer: string,
   target: MergeTarget,
+  channelId: string,
 ): boolean {
   if (event.kind !== KIND_STREAM_MESSAGE) return false;
   if (tagValue(event, 't') !== APPROVAL_MARKER) return false;
   if (event.pubkey !== trustedReviewer) return false;
   if (!verifyEvent(event)) return false; // schnorr sig over the id
+  if (tagValue(event, 'h') !== channelId) return false;
   if (tagValue(event, 'repo') !== target.repo) return false;
   if (tagValue(event, 'branch') !== target.branch) return false;
-  if (tagValue(event, 'tip') === target.tip) return true;
-  const approvedPatch = tagValue(event, 'patch-id');
-  return Boolean(approvedPatch && target.patchId && approvedPatch === target.patchId);
+  return true;
 }

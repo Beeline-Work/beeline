@@ -22,6 +22,7 @@ function raw(id: string, content: string, tags: string[][], createdAt: number): 
 
 /** A live `#t=agent-draft` (kind 30078) delivery, shaped like the real relay event. */
 function draft(id: string, text: string, requestId: string, createdAt: number): SessionEvent {
+  const freshCreatedAt = createdAt < 1_000_000_000 ? Math.floor(Date.now() / 1_000) : createdAt;
   return {
     type: 'raw',
     sessionId: 'room',
@@ -29,7 +30,7 @@ function draft(id: string, text: string, requestId: string, createdAt: number): 
       id,
       content: text,
       pubkey: agent,
-      createdAt,
+      createdAt: freshCreatedAt,
       tags: [
         ['h', 'room'],
         ['d', 'agent-draft:room'],
@@ -68,7 +69,19 @@ describe('Buzz Room screen event projection', () => {
   });
 
   it('projects corner process state without a transcript row', () => {
-    const event = raw('state', 'waiting', [['t', 'body-control'], ['t', 'corner-session'], ['session', 'logical'], ['agent', agent], ['status', 'waiting-for-slot'], ['sequence', '2']], 1);
+    const event = raw(
+      'state',
+      'waiting',
+      [
+        ['t', 'body-control'],
+        ['t', 'corner-session'],
+        ['session', 'logical'],
+        ['agent', agent],
+        ['status', 'waiting-for-slot'],
+        ['sequence', '2'],
+      ],
+      1,
+    );
     const message = projectChatEvent(event, viewer).message!;
     expect(message.cornerProcess).toMatchObject({ state: 'waiting-for-slot', sequence: 2 });
     expect(transcriptMessages([message], true)).toEqual([]);
@@ -548,11 +561,7 @@ describe('Buzz Room screen event projection', () => {
         raw(
           `land-failed-${retry ?? 'none'}`,
           'Couldn’t land the approved change on main.',
-          [
-            ['t', 'body-control'],
-            ['status', 'failed'],
-            ...(retry ? [['retry', retry]] : []),
-          ],
+          [['t', 'body-control'], ['status', 'failed'], ...(retry ? [['retry', retry]] : [])],
           11,
         ),
         viewer,
@@ -606,7 +615,7 @@ describe('Buzz Room screen event projection', () => {
     // line, never agent speech.
     const event = raw(
       'slash-notice-1',
-      '/loop is not a Beeline command. Beeline understands: /open-corner, /approve, /change-target-branch, /add-agent, /invite, /close-corner — sent from the composer\'s slash menu. Your message was still passed to the agent as an ordinary request.',
+      "/loop is not a Beeline command. Beeline understands: /open-corner, /approve, /change-target-branch, /add-agent, /invite, /close-corner — sent from the composer's slash menu. Your message was still passed to the agent as an ordinary request.",
       [
         ['t', 'body-control'],
         ['t', 'slash-command-notice'],
@@ -631,7 +640,15 @@ describe('Buzz Room screen event projection', () => {
     // must not be misread as a delivery failure.
     expect(
       projectChatEvent(
-        raw('archived', 'Subchannel archived.', [['t', 'body-control'], ['status', 'archived']], 1),
+        raw(
+          'archived',
+          'Subchannel archived.',
+          [
+            ['t', 'body-control'],
+            ['status', 'archived'],
+          ],
+          1,
+        ),
         viewer,
       ).deliveryFailed,
     ).toBeUndefined();
@@ -642,7 +659,11 @@ describe('Buzz Room screen event projection', () => {
         raw(
           'parent-failed',
           'Delivery failed. Open corner for details.',
-          [['t', 'body-control'], ['subchannel', cornerId], ['status', 'failed']],
+          [
+            ['t', 'body-control'],
+            ['subchannel', cornerId],
+            ['status', 'failed'],
+          ],
           2,
         ),
         viewer,
@@ -823,15 +844,14 @@ describe('Buzz Room screen event projection', () => {
       corner: { subchannelId: 'corner-2', status: 'archived' },
     };
 
-    // Live status is state and stays out of both transcripts. The archived
-    // parent card is durable history because its text is the completion
-    // summary Body wrote when it closed the corner.
+    // Every legacy lifecycle card stays out of both transcripts. Room history
+    // now comes from render-time structural updates, not these kind:9 cards.
     expect(
       transcriptMessages([conversation, activity, merge, lifecycle, corner, archivedCorner], false),
-    ).toEqual([conversation, archivedCorner]);
+    ).toEqual([conversation]);
     expect(
       transcriptMessages([conversation, activity, merge, lifecycle, corner, archivedCorner], true),
-    ).toEqual([conversation, merge, lifecycle]);
+    ).toEqual([conversation, lifecycle]);
   });
 
   it('streams a Room reply into one bubble that fills in place and finalizes without a second bubble', () => {
@@ -874,7 +894,9 @@ describe('Buzz Room screen event projection', () => {
       ],
       11,
     );
-    const settled = upsertChatMessages(afterMoreDeltas, [projectChatEvent(final, viewer, true).message!]);
+    const settled = upsertChatMessages(afterMoreDeltas, [
+      projectChatEvent(final, viewer, true).message!,
+    ]);
 
     // The final reply reconciles onto the SAME bubble id in place — bubble
     // count does not increase, and it is no longer marked provisional.
@@ -1039,7 +1061,7 @@ describe('agent activity projection', () => {
     ]);
   });
 
-  it('carries the compact per-call receipt that backs the review sheet\'s real detail', () => {
+  it("carries the compact per-call receipt that backs the review sheet's real detail", () => {
     // Body's `observed` array is the only source of per-call detail for a
     // folded call — the calls themselves never earn their own wire event, so
     // without this the review sheet has nothing beyond the tally to show.
@@ -1099,7 +1121,11 @@ describe('agent activity projection', () => {
     expect(
       agentActivityDetails(
         JSON.stringify({
-          update: { sessionUpdate: 'activity_summary', content: { type: 'text', text: '' }, rollup: { read: 8 } },
+          update: {
+            sessionUpdate: 'activity_summary',
+            content: { type: 'text', text: '' },
+            rollup: { read: 8 },
+          },
         }),
       ),
     ).toEqual([{ kind: 'summary', title: 'Summary', rollup: { read: 8 } }]);
@@ -1112,7 +1138,11 @@ describe('agent activity projection', () => {
     expect(
       agentActivityDetails(
         JSON.stringify({
-          update: { sessionUpdate: 'activity_summary', content: { type: 'text', text: '' }, thoughtMs: 8_200 },
+          update: {
+            sessionUpdate: 'activity_summary',
+            content: { type: 'text', text: '' },
+            thoughtMs: 8_200,
+          },
         }),
       ),
     ).toEqual([{ kind: 'summary', title: 'Summary', thoughtMs: 8_200 }]);
@@ -1122,14 +1152,22 @@ describe('agent activity projection', () => {
     expect(
       agentActivityDetails(
         JSON.stringify({
-          update: { sessionUpdate: 'activity_summary', content: { type: 'text', text: '' }, thoughtMs: 0 },
+          update: {
+            sessionUpdate: 'activity_summary',
+            content: { type: 'text', text: '' },
+            thoughtMs: 0,
+          },
         }),
       ),
     ).toEqual([]);
     expect(
       agentActivityDetails(
         JSON.stringify({
-          update: { sessionUpdate: 'activity_summary', content: { type: 'text', text: '' }, thoughtMs: 'soon' },
+          update: {
+            sessionUpdate: 'activity_summary',
+            content: { type: 'text', text: '' },
+            thoughtMs: 'soon',
+          },
         }),
       ),
     ).toEqual([]);
@@ -1140,7 +1178,9 @@ describe('agent activity projection', () => {
     // the kind the corner renders on the slab rather than folding away.
     expect(
       agentActivityDetails(
-        JSON.stringify({ update: { sessionUpdate: 'progress_update', text: 'Both bugs are fixed.' } }),
+        JSON.stringify({
+          update: { sessionUpdate: 'progress_update', text: 'Both bugs are fixed.' },
+        }),
       ),
     ).toEqual([{ kind: 'output', title: 'Update', text: 'Both bugs are fixed.' }]);
   });
@@ -1286,7 +1326,11 @@ describe('approval acknowledgement projection', () => {
   it('projects an accepted ack as a system notice carrying the receipt', () => {
     const event = raw('ack1', 'Approval received — landing main…', ackTags('accepted'), 10);
     const projection = projectChatEvent(event, viewer);
-    expect(projection.approvalAck).toEqual({ approvalId: 'approval-event-id', decision: 'accepted', tip: 'c'.repeat(40) });
+    expect(projection.approvalAck).toEqual({
+      approvalId: 'approval-event-id',
+      decision: 'accepted',
+      tip: 'c'.repeat(40),
+    });
     expect(projection.message?.isSystemNotice).toBe(true);
   });
 
@@ -1315,7 +1359,13 @@ describe('approval acknowledgement projection', () => {
     const event = raw(
       'land',
       'Human-approved work landed on refs/heads/main.',
-      [['t', 'body-control'], ['t', 'landed'], ['status', 'ready'], ['delivery', 'landed'], ['tip', 'c'.repeat(40)]],
+      [
+        ['t', 'body-control'],
+        ['t', 'landed'],
+        ['status', 'ready'],
+        ['delivery', 'landed'],
+        ['tip', 'c'.repeat(40)],
+      ],
       13,
     );
     const projection = projectChatEvent(event, viewer);
@@ -1323,7 +1373,15 @@ describe('approval acknowledgement projection', () => {
   });
 
   it('does not mark ordinary body-control chatter as a landed delivery', () => {
-    const event = raw('chat', 'Agent is thinking…', [['t', 'body-control'], ['status', 'working']], 14);
+    const event = raw(
+      'chat',
+      'Agent is thinking…',
+      [
+        ['t', 'body-control'],
+        ['status', 'working'],
+      ],
+      14,
+    );
     expect(projectChatEvent(event, viewer).deliveryLanded).toBeUndefined();
   });
 });

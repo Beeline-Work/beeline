@@ -1,0 +1,44 @@
+appId: app.buzzy.mobile.roomupdates
+name: Room updates visual verification
+env:
+  VERIFY_NSEC: ${VERIFY_NSEC}
+  VERIFY_ROOM_ID: ${VERIFY_ROOM_ID}
+---
+- tapOn:
+    id: onboarding-advanced
+- tapOn:
+    id: onboarding-secret-key
+- inputText: ${VERIFY_NSEC}
+- pressKey: enter
+- runFlow:
+    when:
+      visible: "Don’t allow"
+    commands:
+      - tapOn: "Don’t allow"
+- runFlow:
+    when:
+      visible:
+        id: onboarding-person-name-step
+    commands:
+      - tapOn:
+          id: onboarding-person-name-input
+      - eraseText
+      - inputText: Maya
+      - pressKey: back
+      - tapOn:
+          id: onboarding-enter-workspace
+- extendedWaitUntil:
+    visible:
+      id: room-${VERIFY_ROOM_ID}
+    timeout: 20000
+- tapOn:
+    id: room-${VERIFY_ROOM_ID}
+- extendedWaitUntil:
+    visible: "⌗ corner closed"
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      text: "○ Alan joined"
+    direction: UP
+    timeout: 10000
+- takeScreenshot: .verification/room-updates-transcript

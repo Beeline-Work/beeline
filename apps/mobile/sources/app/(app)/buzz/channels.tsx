@@ -56,7 +56,12 @@ import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-sta
 import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
 import { isCornerClosed, useClosedCorners } from '@/buzz/closed-corners';
 import { NO_ACTIVITY_PREVIEW, roomListFeed, type RoomRowPresentation } from '@/buzz/room-list-row';
-import { cornerVisualState, sortCorners, type CornerSummary } from '@/buzz/corners';
+import {
+  cornerVisualState,
+  currentCornerStatus,
+  sortCorners,
+  type CornerSummary,
+} from '@/buzz/corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
   CHANGES_LABEL,
@@ -87,6 +92,7 @@ import { sessionEventHasTag, sessionEventTagValue } from '@/sync/transport/buzz-
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import {
   cacheLiveSessionEvents,
+  refreshRoomCornerCache,
   refreshRoomListCornersForUnknownSignals,
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
@@ -306,14 +312,22 @@ async function enrichDisplayChannels(
   viewerPubkey: string,
 ): Promise<ChannelDisplayItem[]> {
   const client = await transport.ensureClient();
+  const cachedChannels =
+    useBuzzLocalCache.getState().channelLists[channelListCacheKey(viewerPubkey, activeCommunityId)]
+      ?.channels ?? [];
+  const cachedCornersByRoom = new Map(
+    cachedChannels.map((room) => [room.id, room.corners ?? []] as const),
+  );
   const [workspacePeople, workspaceAgents, cornersByRoom] = await Promise.all([
     activeCommunityId ? client.communityMembers(activeCommunityId) : Promise.resolve(undefined),
     activeCommunityId ? client.listAgents(activeCommunityId) : Promise.resolve(undefined),
     // One cross-Room batched fetch for every Room's corners instead of one
     // call graph per Room.
-    transport
-      .listSubchannelLifecycleForRooms(rooms.map((room) => room.id))
-      .catch(() => new Map<string, CornerSummary[]>()),
+    refreshRoomCornerCache(
+      transport,
+      viewerPubkey,
+      rooms.map((room) => room.id),
+    ).catch(() => undefined),
   ]);
   // One model-catalog read per registered Workspace agent (not per Room): the
   // pill strip reports which model an agent in this Room runs, straight off
@@ -349,7 +363,12 @@ async function enrichDisplayChannels(
         members.status === 'fulfilled' ? members.value.map((member) => member.pubkey) : [];
       return {
         ...room,
-        corners: sortCorners(cornersByRoom.get(room.id) ?? []),
+        // A successful relay derivation is authoritative even when empty: it
+        // evicts locally-persisted corners that disappeared out of band. A
+        // failed derivation is unknown and preserves the cache until retry.
+        corners: cornersByRoom
+          ? sortCorners(cornersByRoom.get(room.id) ?? [])
+          : cachedCornersByRoom.get(room.id),
         latestMessage: synced.status === 'fulfilled' ? synced.value.entry.latestMessage : undefined,
         latestMessageAt:
           synced.status === 'fulfilled' ? synced.value.entry.latestMessageAt : undefined,
@@ -1304,7 +1323,10 @@ export default function BuzzChannels() {
               {corners.map((corner) => {
                 // Offline without an artifact folds to idle — same verdict the deck row
                 // golds from; a dead agent's ask is nobody's to answer.
-                const state = cornerVisualState(corner.status, corner);
+                const status = currentCornerStatus(corner, ageNow);
+                const state = cornerVisualState(status, {
+                  awaitingReply: corner.awaitingReply,
+                });
                 return (
                   <TouchableOpacity
                     accessibilityLabel={`Open ${corner.name} ${CORNER_LABEL}, ${state}`}
@@ -1315,9 +1337,8 @@ export default function BuzzChannels() {
                     style={styles.cornerRow}
                   >
                     <CornerGlyph
-                      status={corner.status}
+                      status={status}
                       awaitingReply={corner.awaitingReply}
-                      agentOffline={corner.agentOffline}
                       style={styles.cornerGlyph}
                     />
                     <Text numberOfLines={1} style={styles.cornerName}>

@@ -287,6 +287,54 @@ into a repository and cannot grant permissions or approve merges. The remaining
 explicit `serve`/`open` commands are internal diagnostic compatibility surfaces,
 not part of the user pairing workflow.
 
+### Repository event service
+
+GitHub activity is owned by one host-wide service, not by any paired agent:
+
+```bash
+mkdir -p ~/.config/beeline
+$EDITOR ~/.config/beeline/events.env
+beeline events install
+```
+
+`events.env` is mode-0600 operator configuration and must provide
+`BEELINE_GITHUB_APP_ID` plus `BEELINE_GITHUB_APP_PRIVATE_KEY` (a PEM encoded
+with literal `\n` separators is accepted). Optional
+`BEELINE_GITHUB_API_BASE_URL` and `BEELINE_GITHUB_EVENTS_REQUEST_TIMEOUT_MS`
+exist for GitHub Enterprise and testing. Agent units do not read this file;
+the credentials and the service's dedicated non-agent Nostr identity remain
+under `~/.config/beeline/` and `~/.local/state/beeline/events/` respectively.
+On discovery, each Room's dedicated merge-gate admin enrolls that service key
+as a normal member before the first configuration read or card; repository
+cards are still authored only by the service key. A legacy Room without a
+stored admin fails visibly and retries until an authorized Room identity is
+available instead of advancing its GitHub cursor silently.
+
+The service scans durable runtime records, groups Room bindings into one poll
+per GitHub repository per Workspace, and fans one compact ambient card to each
+bound Room. It includes:
+
+- human pushes, plus bot pushes only when they target a Room's landing branch;
+- pull requests opened, reopened, closed, or merged;
+- issues opened, reopened, or closed;
+- completed workflow/check conclusions; and
+- new pull-request review comments.
+
+Other GitHub event types and high-churn actions such as PR synchronize/labeled
+events advance the cursor silently. Cards are capped at ten facts, never carry
+recipient mention tags, and `@beeline/push-gateway` explicitly refuses
+`#t=github-event`, so repository activity is Room content but never a phone
+notification. First contact backfills at most 20 raw GitHub events. A legacy
+Body cursor seeds at the current GitHub head instead, preventing a migration
+replay flood.
+
+Every GitHub request and relay publish is deadline-bounded. Active repositories
+poll faster, idle repositories slow to five minutes, and failures back off per
+repository without delaying siblings. Three consecutive failures publish one
+degraded card per failure episode; systemd `STATUS=` always includes each
+repository's last successful poll. Durable signed pending cards make restart
+retries relay-idempotent.
+
 ### As a library
 
 ```typescript

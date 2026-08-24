@@ -5,6 +5,7 @@ import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AGENT_PRESENCE_STALE_MS,
+  CORNER_ACTIVITY_FRESHNESS_MS,
   isAgentPresenceOnline,
   type Agent,
   type AgentPresence,
@@ -12,7 +13,13 @@ import {
   type PersonProfile,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { cornerVisualState, isCornerActive, sortCorners, type CornerSummary } from '@/buzz/corners';
+import {
+  cornerVisualState,
+  currentCornerStatus,
+  isCornerActive,
+  sortCorners,
+  type CornerSummary,
+} from '@/buzz/corners';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -64,7 +71,8 @@ function seedFromRoomListCache(channelId: string): {
   const corners =
     room?.corners?.filter(
       (corner) =>
-        corner.status !== 'archived' &&
+        Boolean(corner.machineState) &&
+        currentCornerStatus(corner) !== 'archived' &&
         !isCornerClosed(closedCornerAt, viewerKey, channelId, corner.id),
     ) ?? [];
   return {
@@ -129,11 +137,16 @@ export default function BuzzCorners() {
           // viewer CLOSED, whose tombstone hides it regardless of relay state.
           const closedAt = useClosedCorners.getState().closedAt;
           const viewerKey = client.identity.publicKey;
+          // A successful refresh is an authoritative replacement, including
+          // the empty set. Persist it before presentation filtering so a child
+          // absent from relay derivation cannot survive another app restart.
+          useBuzzLocalCache.getState().replaceRoomCorners(viewerKey, decodedId, nextCorners);
           setCorners(
             sortCorners(
               nextCorners.filter(
                 (corner) =>
-                  corner.status !== 'archived' &&
+                  Boolean(corner.machineState) &&
+                  currentCornerStatus(corner) !== 'archived' &&
                   !isCornerClosed(closedAt, viewerKey, decodedId, corner.id),
               ),
             ),
@@ -241,20 +254,24 @@ export default function BuzzCorners() {
   }, [decodedId, loadCorners]);
 
   useEffect(() => {
-    // Presence only changes at a lease deadline. A five-second clock here woke
-    // the whole list every five seconds forever; wake once, exactly when the
-    // next lease is due, and only while one is actually outstanding.
+    // Presence and canonical WORKING are leases. Wake exactly at the next
+    // deadline so neither an online dot nor an active corner can live forever.
     const now = Date.now();
-    const deadlines = Object.values(agentPresences)
-      .map((presence) => presence.observedAt + AGENT_PRESENCE_STALE_MS)
-      .filter((deadline) => Number.isFinite(deadline) && deadline > now);
+    const deadlines = [
+      ...Object.values(agentPresences).map(
+        (presence) => presence.observedAt + AGENT_PRESENCE_STALE_MS,
+      ),
+      ...corners
+        .filter((corner) => corner.machineState === 'working' && corner.stateAt !== undefined)
+        .map((corner) => corner.stateAt! * 1_000 + CORNER_ACTIVITY_FRESHNESS_MS),
+    ].filter((deadline) => Number.isFinite(deadline) && deadline > now);
     if (deadlines.length === 0) return;
     const timer = setTimeout(
       () => setPresenceNow(Date.now()),
       Math.max(1, Math.min(...deadlines) - now + 1),
     );
     return () => clearTimeout(timer);
-  }, [agentPresences]);
+  }, [agentPresences, corners]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -326,10 +343,10 @@ export default function BuzzCorners() {
           refreshing={refreshing}
           onRefresh={() => void handleRefresh()}
           renderItem={({ item }) => {
-            // Offline without an artifact folds to idle: a provably-offline agent's unfinished
-            // corner is nobody's question to answer (same oracle verdict the
-            // deck golds from).
-            const state = cornerVisualState(item.status, item);
+            // Canonical lifecycle owns the glyph. Presence remains a separate
+            // online/offline fact and cannot promote or demote it.
+            const status = currentCornerStatus(item, presenceNow);
+            const state = cornerVisualState(status, { awaitingReply: item.awaitingReply });
             const agent = agents.find((candidate) => candidate.pubkey === item.openerPubkey);
             const personProfile = personProfiles.find(
               (candidate) => candidate.pubkey === item.openerPubkey,
@@ -338,7 +355,7 @@ export default function BuzzCorners() {
             // Presence is a separate dot, never a replacement for the
             // lifecycle status word shown here — the same word the Room-list
             // dropdown and the in-Room corner card show for this corner.
-            const showsPresence = Boolean(agent) && isCornerActive(item.status);
+            const showsPresence = Boolean(agent) && isCornerActive(status);
             const online =
               showsPresence &&
               isAgentPresenceOnline(agentPresences[item.openerPubkey], presenceNow);
@@ -382,9 +399,8 @@ export default function BuzzCorners() {
                 <View style={styles.statusBlock}>
                   <View style={styles.statusGlyphRow}>
                     <CornerGlyph
-                      status={item.status}
+                      status={status}
                       awaitingReply={item.awaitingReply}
-                      agentOffline={item.agentOffline}
                       style={styles.statusGlyph}
                     />
                     {showsPresence && (

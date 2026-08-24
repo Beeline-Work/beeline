@@ -172,11 +172,9 @@ export class CornerStatePublisher {
       } catch (error) {
         const lastAttempt = attempt >= AGENT_PRESENCE_RETRY_MAX_ATTEMPTS;
         if (lastAttempt || this.stopped) {
-          console.error(
-            `[body] corner state ${target.state} publish failed after ${attempt} attempts for ${cornerId}:`,
-            error,
+          throw new Error(
+            `[body] corner state ${target.state} publish failed after ${attempt} attempts for ${cornerId}: ${String(error)}`,
           );
-          return;
         }
         const delayMs = agentPresenceRetryDelayMs(attempt, error);
         for (let remaining = delayMs; remaining > 0 && !this.stopped; remaining -= 250) {

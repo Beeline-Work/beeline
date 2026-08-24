@@ -519,7 +519,7 @@ export function CornerGlyph({
   style,
   testID,
 }: {
-  /** The oracle's verdict; `null` (stalled/idle) renders on the quiet tier. */
+  /** Canonical lifecycle projection; `null` renders on the quiet tier. */
   status: CornerStatus | null;
   awaitingReply?: boolean;
   agentOffline?: boolean;

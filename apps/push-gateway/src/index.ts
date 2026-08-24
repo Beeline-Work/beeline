@@ -1,7 +1,7 @@
 import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
-import { queryEvents } from '@beeline/buzz-client';
 import { loadPushGatewayConfig } from './config.js';
+import { PostgresEventStore } from './database.js';
 import { DeliveryState } from './delivery-state.js';
 import { PushEventFeed } from './feed.js';
 import { PushGateway, RegisteredEventPoller } from './gateway.js';
@@ -26,19 +26,14 @@ async function main(): Promise<void> {
     });
   const registry = await TokenRegistry.load(config.registryFile);
   const deliveryState = await DeliveryState.load(config.deliveryStateFile);
+  const eventStore = new PostgresEventStore(config.databaseUrl);
+  await eventStore.connect();
 
   const gateway = new PushGateway(registry, getMessaging(firebaseApp), deliveryState);
-  const relayHttp = { baseUrl: config.queryRelayUrl, host: config.relayHost };
   let feed: PushEventFeed;
   const poller = new RegisteredEventPoller(
     registry,
-    (pubkey) => ({
-      // The gateway is co-located with the production relay and uses its
-      // trusted X-Pubkey bridge to perform an ACL-scoped read. Do not point
-      // this process at a public relay origin that requires a user's NIP-98 key.
-      query: (filters) => queryEvents(relayHttp, filters, pubkey),
-      disconnect: () => undefined,
-    }),
+    (pubkey) => eventStore.readerFor(pubkey),
     (event, recipientPubkey, reader) => {
       feed.noteEvent();
       return gateway.handleRelayEvent(event, recipientPubkey, reader);
@@ -58,13 +53,14 @@ async function main(): Promise<void> {
   server.listen(config.port, config.host, () => {
     console.log(
       `[push] gateway listening on http://${config.host}:${config.port}; ` +
-        `queryRelay=${config.queryRelayUrl}; feed=acl-query; devices=${registry.tokenCount}`,
+        `feed=postgres-tail; devices=${registry.tokenCount}`,
     );
   });
 
   const shutdown = () => {
     feed.stop();
     server.close();
+    void eventStore.close();
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);

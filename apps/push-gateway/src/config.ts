@@ -1,8 +1,7 @@
 import { dirname, join } from 'node:path';
 
 export interface PushGatewayConfig {
-  queryRelayUrl: string;
-  relayHost: string;
+  databaseUrl: string;
   host: string;
   port: number;
   registryFile: string;
@@ -12,11 +11,11 @@ export interface PushGatewayConfig {
 }
 
 export function loadPushGatewayConfig(env: NodeJS.ProcessEnv = process.env): PushGatewayConfig {
-  const queryRelayUrl = env.BUZZY_RELAY_URL ?? 'http://127.0.0.1:3010';
+  const databaseUrl = env.BUZZY_PUSH_DATABASE_URL ?? env.DATABASE_URL;
+  if (!databaseUrl) throw new Error('set BUZZY_PUSH_DATABASE_URL or DATABASE_URL');
   const registryFile = env.BUZZY_PUSH_REGISTRY_FILE ?? '.data/registrations.json';
   return {
-    queryRelayUrl,
-    relayHost: env.BUZZY_RELAY_HOST ?? new URL(queryRelayUrl).host,
+    databaseUrl,
     host: env.BUZZY_PUSH_HOST ?? '127.0.0.1',
     port: Number(env.PORT ?? '8788'),
     registryFile,

@@ -6,11 +6,11 @@ import {
   createBuzzClient,
   createChannel,
   createIdentity,
-  queryEvents,
   type Identity,
 } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging, MulticastMessage } from 'firebase-admin/messaging';
+import { PostgresEventStore } from '../src/database.js';
 import { DeliveryState } from '../src/delivery-state.js';
 import { PushGateway, RegisteredEventPoller, type RelayEventReader } from '../src/gateway.js';
 import { TokenRegistry } from '../src/registry.js';
@@ -19,24 +19,18 @@ const publicRelayUrl =
   process.env.BUZZY_RELAY_PUBLIC_URL ??
   process.env.BUZZY_RELAY_SUBSCRIPTION_URL ??
   'https://usebeeline.app';
-const privateRelayUrl = process.env.BUZZY_RELAY_URL ?? 'http://127.0.0.1:3410';
 const relayHost = process.env.BUZZY_RELAY_HOST ?? 'usebeeline.app';
+const databaseUrl = process.env.BUZZY_PUSH_DATABASE_URL ?? process.env.DATABASE_URL;
 
 function client(identity: Identity) {
   return createBuzzClient({ baseUrl: publicRelayUrl, host: relayHost, identity });
 }
 
-function reader(pubkey: string): RelayEventReader {
-  return {
-    query: (filters) => queryEvents({ baseUrl: privateRelayUrl, host: relayHost }, filters, pubkey),
-    disconnect: () => undefined,
-  };
-}
-
 async function main(): Promise<void> {
-  if (privateRelayUrl.includes('127.0.0.1:3010')) {
-    throw new Error('refusing local test relay');
-  }
+  if (!databaseUrl) throw new Error('set BUZZY_PUSH_DATABASE_URL or DATABASE_URL');
+  const eventStore = new PostgresEventStore(databaseUrl);
+  await eventStore.connect();
+  const reader = (pubkey: string): RelayEventReader => eventStore.readerFor(pubkey);
 
   const marker = randomUUID().slice(0, 8);
   const sender = createIdentity(`push-sender-${marker}`);
@@ -150,23 +144,11 @@ async function main(): Promise<void> {
 
     const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-live-proof-'));
     const deliveryStateFile = join(directory, 'deliveries.json');
-    const replayingReader = (): RelayEventReader => ({
-      query: async (filters) => {
-        const isRegisteredEventPoll =
-          filters.length === 2 &&
-          (filters[0]?.kinds as number[] | undefined)?.includes(9) &&
-          (filters[1]?.kinds as number[] | undefined)?.includes(30078);
-        return isRegisteredEventPoll
-          ? [fixtureEvent, messageEvent]
-          : reader(recipient.publicKey).query(filters);
-      },
-      disconnect: () => undefined,
-    });
     const runPoll = async (state: DeliveryState, count: number): Promise<PushGateway> => {
       const gateway = new PushGateway(registry, messaging, state);
       const poller = new RegisteredEventPoller(
         registry,
-        replayingReader,
+        () => reader(recipient.publicKey),
         (event, pubkey, scopedReader) => gateway.handleRelayEvent(event, pubkey, scopedReader),
         state,
         Date.now,
@@ -187,9 +169,7 @@ async function main(): Promise<void> {
     }
 
     const restartedState = await DeliveryState.load(deliveryStateFile);
-    const restartedGateway = await runPoll(restartedState, 1);
-    await restartedGateway.handleRelayEvent(fixtureEvent, recipient.publicKey, replayingReader());
-    await restartedGateway.handleRelayEvent(messageEvent, recipient.publicKey, replayingReader());
+    await runPoll(restartedState, 1);
     if (captured.length !== 1) {
       throw new Error(
         `restart/replay proof failed: expected one FCM payload, got ${captured.length}`,
@@ -208,7 +188,7 @@ async function main(): Promise<void> {
       JSON.stringify({
         ok: true,
         deliveryMode: 'captured-no-fcm-network-call',
-        queryRelay: privateRelayUrl,
+        feed: 'postgres-tail',
         publicRelay: publicRelayUrl,
         event: messageEvent.id.slice(0, 12),
         acl: { recipient: recipientEvents.length, outsider: outsiderEvents.length },
@@ -225,6 +205,7 @@ async function main(): Promise<void> {
     if (fixtureChannelId) await senderClient.archiveRoom(fixtureChannelId).catch(() => undefined);
     if (realChannelId) await senderClient.archiveRoom(realChannelId).catch(() => undefined);
     senderClient.disconnect();
+    await eventStore.close();
   }
 }
 

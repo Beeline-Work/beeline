@@ -23,7 +23,11 @@ const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 512;
 
 export interface RelayEventReader {
+  /** Stable authorization scope used to keep metadata caches tenant-local. */
+  readonly scopeKey?: string;
   query(filters: Record<string, unknown>[]): Promise<NostrEvent[]>;
+  /** Bind follow-up metadata reads to the server-stamped scope of one feed event. */
+  forEvent?(event: NostrEvent): RelayEventReader;
   disconnect(): void;
 }
 
@@ -177,7 +181,8 @@ export class NotificationMetadataResolver {
   async resolve(event: NostrEvent, reader: RelayEventReader): Promise<NotificationContext> {
     const channelId = tagValue(event, 'h');
     if (!channelId) return {};
-    const room = await this.cached(this.rooms, channelId, () => this.loadRoom(channelId, reader));
+    const roomKey = `${reader.scopeKey ?? ''}:${channelId}`;
+    const room = await this.cached(this.rooms, roomKey, () => this.loadRoom(channelId, reader));
     const senderKey = `${room.communityId ?? ''}:${event.pubkey}`;
     const senderName = await this.cached(this.senders, senderKey, () =>
       this.loadSender(event.pubkey, room.communityId, reader),
@@ -200,7 +205,8 @@ export class NotificationMetadataResolver {
     pubkey: string,
     reader: RelayEventReader,
   ): Promise<string | undefined> {
-    const room = await this.cached(this.rooms, roomId, () => this.loadRoom(roomId, reader));
+    const roomKey = `${reader.scopeKey ?? ''}:${roomId}`;
+    const room = await this.cached(this.rooms, roomKey, () => this.loadRoom(roomId, reader));
     return this.cached(this.senders, `${room.communityId ?? ''}:${pubkey}`, () =>
       this.loadSender(pubkey, room.communityId, reader),
     );

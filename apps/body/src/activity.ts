@@ -1405,6 +1405,8 @@ export async function postAgentPresence(
         ['t', TAG_AGENT_PRESENCE],
         ['agent', owner.publicKey],
         ['status', status],
+        ['capability', 'factory-permissions-v1'],
+        ['capability', 'delegation-v1'],
         ...(generationId ? [['generation', generationId]] : []),
       ],
       content: status,

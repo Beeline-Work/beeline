@@ -116,7 +116,12 @@ export interface BodyConfig {
    */
   accessPolicy?: AgentAccessPolicy;
   accessOwnerPubkey?: string;
+  /** Exact identities authorized when `accessPolicy === 'allowlist'`. */
+  accessAllowlist?: string[];
   accessAutoResponse?: string;
+  /** Hard local circuit breakers for delegated provider calls. */
+  delegationDailyMaxCalls?: number;
+  delegationDailyMaxReservedTokens?: number;
   /** Explicit account capabilities mounted for this agent; never inherited from operator config. */
   externalMcpCapabilities?: ExternalMcpCapability[];
   /**

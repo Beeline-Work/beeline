@@ -19,6 +19,7 @@ const execFileAsync = promisify(execFile);
 import {
   DEFAULT_ACCESS_POLICY,
   isAgentAccessPolicy,
+  isAgentAccessAllowlist,
   LEGACY_ACCESS_POLICY,
   type AgentAccessPolicy,
 } from './access-policy.js';
@@ -61,6 +62,8 @@ export interface AgentRuntimeRecord {
    * pre-policy records; readers treat that as `everyone` (see access-policy.ts).
    */
   accessPolicy?: AgentAccessPolicy;
+  /** Exact pubkeys permitted under `allowlist`; creator is not implicit. */
+  accessAllowlist?: string[];
   /** Optional custom auto-response for a non-permitted questioner. */
   accessAutoResponse?: string;
   /** Explicit external MCP grants. Profiles contain no credential material. */
@@ -657,6 +660,9 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
     ) ||
     (parsed.agentKind !== undefined && !AGENT_KINDS.includes(parsed.agentKind)) ||
     (parsed.accessPolicy !== undefined && !isAgentAccessPolicy(parsed.accessPolicy)) ||
+    (parsed.accessAllowlist !== undefined && !isAgentAccessAllowlist(parsed.accessAllowlist)) ||
+    (parsed.accessPolicy === 'allowlist' && !isAgentAccessAllowlist(parsed.accessAllowlist)) ||
+    (parsed.accessPolicy !== 'allowlist' && parsed.accessAllowlist !== undefined) ||
     (parsed.accessAutoResponse !== undefined && typeof parsed.accessAutoResponse !== 'string') ||
     (parsed.externalMcpCapabilities !== undefined &&
       (!Array.isArray(parsed.externalMcpCapabilities) ||
@@ -1008,6 +1014,7 @@ export async function pairRepositoryAgent(
     agentCommand?: string;
     agentArgs?: string[];
     accessPolicy?: AgentAccessPolicy;
+    accessAllowlist?: string[];
     accessAutoResponse?: string;
     externalMcpCapabilities?: ExternalMcpCapability[];
     modelSelection?: { model?: string; effort?: string };
@@ -1042,6 +1049,12 @@ export async function pairRepositoryAgent(
 ): Promise<PairRuntimeResult> {
   if (input.externalMcpCapabilities?.length && input.accessPolicy !== 'creator') {
     throw new Error('external MCP capabilities require creator access');
+  }
+  if (input.accessPolicy === 'allowlist' && !isAgentAccessAllowlist(input.accessAllowlist)) {
+    throw new Error('allowlist access requires one to 64 unique hex pubkeys');
+  }
+  if (input.accessPolicy !== 'allowlist' && input.accessAllowlist !== undefined) {
+    throw new Error('access allowlist requires allowlist access');
   }
   // The runtime root is machine-local agent state, deliberately not the paired
   // repository's `.git`. The repository binding for this Room is `repo` below.
@@ -1116,6 +1129,7 @@ export async function pairRepositoryAgent(
       // (DEFAULT_ACCESS_POLICY = 'creator'), so a record written from now on
       // never depends on the constant at read time.
       accessPolicy: input.accessPolicy ?? DEFAULT_ACCESS_POLICY,
+      ...(input.accessPolicy === 'allowlist' ? { accessAllowlist: input.accessAllowlist } : {}),
       ...(input.accessAutoResponse ? { accessAutoResponse: input.accessAutoResponse } : {}),
       ...(input.externalMcpCapabilities?.length
         ? { externalMcpCapabilities: [...new Set(input.externalMcpCapabilities)] }

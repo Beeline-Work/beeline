@@ -30,7 +30,11 @@ import {
   type AgentAccessPolicy,
 } from './access-policy.js';
 import type { AgentModelConfigOption } from '@beeline/buzz-client';
-import { DEFAULT_AGENT_IDENTITY_NAME, DEFAULT_BODY_IDENTITY_NAME } from '@beeline/buzz-client';
+import {
+  decodeNpub,
+  DEFAULT_AGENT_IDENTITY_NAME,
+  DEFAULT_BODY_IDENTITY_NAME,
+} from '@beeline/buzz-client';
 import { fetchAgentModelCatalog } from './model-catalog.js';
 import { unadvertisedModelSelectionValues } from './model-config.js';
 import { pickModelAndEffort, resolveAccessSettings } from './agent-settings-prompts.js';
@@ -157,12 +161,14 @@ ${pc.bold('Pair this repository and start its durable Room agent(s).')}
 ${pc.dim('Usage:')}
   beeline pair <BUZZ-XXXX-XXXX> [--agent <codex|claude|goose|pi|grok|reference|custom>]
                [--agent-command '<command> [args...]'] [--repo <path>]
-               [--access <everyone|creator>] [--auto-response '<text>']
+               [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
+               [--auto-response '<text>']
                [--mcp <squire>]
                [--model <model>] [--effort <level>]
 
   beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...> [--repo <path>]
-               [--access <everyone|creator>] [--auto-response '<text>']
+               [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
+               [--auto-response '<text>']
                [--mcp <squire>]
                [--model <model>] [--effort <level>]
 
@@ -216,8 +222,9 @@ requiring the flags. A non-terminal session (script, CI) never blocks on this;
 it just proceeds with no default, same as before this existed.
 
 Access policy (per agent, set here at invite time):
-  everyone  any Room member may address the agent (default)
+  everyone  any Room member may address the agent
   creator   only the inviting owner may; anyone else gets the auto-response
+  allowlist only identities named by --allow may address it; creator is not implicit
 
 External MCP capabilities: --mcp squire grants Trusty Squire to this agent.
 Account capabilities require --access creator and are mounted from a built-in
@@ -250,6 +257,7 @@ interface PairOptions {
   repo?: string;
   /** Undefined means `--access` was omitted — the interactive flow (or the default) decides. */
   access?: AgentAccessPolicy;
+  accessAllowlist?: string[];
   autoResponse?: string;
   model?: string;
   effort?: string;
@@ -264,6 +272,7 @@ function parsePairOptions(args: string[]): PairOptions {
   let customCommand: string | undefined;
   let repo: string | undefined;
   let access: AgentAccessPolicy | undefined;
+  let accessAllowlist: string[] | undefined;
   let autoResponse: string | undefined;
   let model: string | undefined;
   let effort: string | undefined;
@@ -274,6 +283,7 @@ function parsePairOptions(args: string[]): PairOptions {
     '--agent-command',
     '--repo',
     '--access',
+    '--allow',
     '--auto-response',
     '--model',
     '--effort',
@@ -311,13 +321,38 @@ function parsePairOptions(args: string[]): PairOptions {
       externalMcpCapabilities = capabilities as ExternalMcpCapability[];
     } else if (token === '--access') {
       if (!isAgentAccessPolicy(value)) {
-        throw new Error(`--access must be one of everyone|creator (got: ${value})`);
+        throw new Error(`--access must be one of everyone|creator|allowlist (got: ${value})`);
       }
       access = value;
+    } else if (token === '--allow') {
+      const entries = value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          if (/^[0-9a-fA-F]{64}$/.test(entry)) return entry.toLowerCase();
+          if (entry.startsWith('npub1')) {
+            try {
+              return decodeNpub(entry);
+            } catch {
+              // Fall through to the single stable CLI error below.
+            }
+          }
+          throw new Error(
+            `--allow must contain only npub or 64-character hex keys (got: ${entry})`,
+          );
+        });
+      accessAllowlist = [...new Set(entries)];
     }
   }
   if (kinds && (singleKind || customCommand)) {
     throw new Error('--agents cannot be combined with --agent or --agent-command');
+  }
+  if (access === 'allowlist' && !accessAllowlist?.length) {
+    throw new Error('--access allowlist requires --allow <npub-or-hex,...>');
+  }
+  if (access !== 'allowlist' && accessAllowlist !== undefined) {
+    throw new Error('--allow requires --access allowlist');
   }
   return {
     codes,
@@ -326,6 +361,7 @@ function parsePairOptions(args: string[]): PairOptions {
     ...(customCommand !== undefined ? { customCommand } : {}),
     ...(repo !== undefined ? { repo } : {}),
     ...(access !== undefined ? { access } : {}),
+    ...(accessAllowlist !== undefined ? { accessAllowlist } : {}),
     ...(autoResponse !== undefined ? { autoResponse } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(effort !== undefined ? { effort } : {}),
@@ -475,6 +511,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // behaviour — never the new pairing default.
   config.accessPolicy = runtime.accessPolicy ?? LEGACY_ACCESS_POLICY;
   config.accessOwnerPubkey = runtime.pairedBy;
+  if (runtime.accessAllowlist) config.accessAllowlist = [...runtime.accessAllowlist];
   if (runtime.accessAutoResponse) config.accessAutoResponse = runtime.accessAutoResponse;
   if (runtime.externalMcpCapabilities) {
     config.externalMcpCapabilities = [...runtime.externalMcpCapabilities];
@@ -654,6 +691,7 @@ async function pairOneAgent(input: {
   llmEnvFile?: string;
   /** Undefined defers to the interactive picker (or `DEFAULT_ACCESS_POLICY` non-interactively). */
   access?: AgentAccessPolicy;
+  accessAllowlist?: string[];
   autoResponse?: string;
   modelSelection?: { model?: string; effort?: string };
   externalMcpCapabilities?: ExternalMcpCapability[];
@@ -725,6 +763,7 @@ async function pairOneAgent(input: {
         agentCommand: selectedAgent.command,
         agentArgs: selectedAgent.args,
         accessPolicy: access,
+        ...(input.accessAllowlist ? { accessAllowlist: input.accessAllowlist } : {}),
         ...(autoResponse ? { accessAutoResponse: autoResponse } : {}),
         ...(modelSelection ? { modelSelection } : {}),
         ...(input.externalMcpCapabilities?.length
@@ -878,6 +917,7 @@ async function runPairCommand(
           progressDone: (pid) => `Paired ${kind} (pid ${pid}).`,
           ...(llmEnvFile ? { llmEnvFile } : {}),
           access: pairOptions.access,
+          accessAllowlist: pairOptions.accessAllowlist,
           ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
           ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
           interactiveUi,
@@ -914,6 +954,7 @@ async function runPairCommand(
       progressDone: (pid) => `Paired (pid ${pid}).`,
       ...(llmEnvFile ? { llmEnvFile } : {}),
       access: pairOptions.access,
+      accessAllowlist: pairOptions.accessAllowlist,
       ...(pairOptions.autoResponse ? { autoResponse: pairOptions.autoResponse } : {}),
       ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
       interactiveUi,

@@ -10748,7 +10748,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
 
     it('the Room system prompt names the exact command and forbids claiming the change', () => {
       const instructions = roomEditPolicyInstructions('repository').join('\n');
-      expect(instructions).toContain('beeline-propose-target-branch --branch <branch>');
+      expect(instructions).toContain('/change-target-branch --branch <branch>');
       expect(instructions).toContain('the Room owner has to confirm that card');
       expect(instructions).toMatch(/never say a landing-target change is in effect/i);
     });
@@ -10759,7 +10759,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       const open = vi.spyOn(body, 'openSubchannel');
       armTurn(body);
 
-      await expect(handle(body, 'beeline-propose-target-branch --branch staging')).resolves.toBe(
+      await expect(handle(body, '/change-target-branch --branch staging')).resolves.toBe(
         'reject',
       );
 
@@ -10785,9 +10785,9 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       const published = stubRelay(roomId, 'master');
       armTurn(body);
 
-      await handle(body, 'beeline-propose-target-branch --branch staging');
-      await handle(body, 'beeline-propose-target-branch --branch staging');
-      await handle(body, 'beeline-propose-target-branch --branch other');
+      await handle(body, '/change-target-branch --branch staging');
+      await handle(body, '/change-target-branch --branch staging');
+      await handle(body, '/change-target-branch --branch other');
 
       expect(proposals(published)).toHaveLength(1);
       rmSync(workspaceRoot, { recursive: true, force: true });
@@ -10800,7 +10800,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       const published = stubRelay(roomId, 'master');
       armTurn(body, { readOnlyInformationRequest: true });
 
-      await handle(body, 'beeline-propose-target-branch --branch staging');
+      await handle(body, '/change-target-branch --branch staging');
 
       expect(proposals(published)).toHaveLength(1);
       rmSync(workspaceRoot, { recursive: true, force: true });
@@ -10811,7 +10811,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       const published = stubRelay(roomId, 'master');
       armTurn(body, { boundRepo: undefined, editPolicy: 'direct-message' });
 
-      await expect(handle(body, 'beeline-propose-target-branch --branch staging')).resolves.toBe(
+      await expect(handle(body, '/change-target-branch --branch staging')).resolves.toBe(
         'reject',
       );
       expect(proposals(published)).toHaveLength(0);
@@ -10828,7 +10828,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       armTurn(body, { permissionHandled: true });
 
       await expect(
-        handle(body, 'beeline-propose-target-branch --branch staging; rm -rf /tmp/x'),
+        handle(body, '/change-target-branch --branch staging; rm -rf /tmp/x'),
       ).resolves.toBe('reject');
       expect(proposals(published)).toHaveLength(0);
       rmSync(workspaceRoot, { recursive: true, force: true });

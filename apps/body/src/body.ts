@@ -6919,7 +6919,7 @@ export class Body {
   }
 
   /**
-   * Answer the agent's `beeline-propose-target-branch --branch <name>` marker.
+   * Answer the agent's `/change-target-branch --branch <name>` marker.
    *
    * This exists because the daemon's own recognizer
    * (`targetBranchChangeIntent`) is a fixed set of phrasings and natural

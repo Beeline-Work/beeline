@@ -19,7 +19,9 @@ import { permissionRequestStrings } from './repository-target.js';
 export const TARGET_BRANCH_PROPOSAL_TAG = 'buzz-target-branch-proposal';
 
 /**
- * The exact native command a Room agent attempts to ASK for the proposal card.
+ * The exact native slash command a Room agent attempts to ASK for the proposal
+ * card. It intentionally matches the command people see in Beeline's composer
+ * instead of exposing a second, private vocabulary to the model.
  *
  * It is never executed: the host recognizes it in the Room's ACP permission
  * callback, rejects the invocation itself, and publishes the proposal. Same
@@ -28,7 +30,10 @@ export const TARGET_BRANCH_PROPOSAL_TAG = 'buzz-target-branch-proposal';
  * misses can take, and unlike free-form agent text it carries exactly one
  * typed argument this file validates.
  */
-export const TARGET_BRANCH_PROPOSAL_COMMAND = 'beeline-propose-target-branch';
+export const TARGET_BRANCH_PROPOSAL_COMMAND = '/change-target-branch';
+
+/** Kept for physical Room sessions whose prompt predates the slash command. */
+const LEGACY_TARGET_BRANCH_PROPOSAL_COMMAND = 'beeline-propose-target-branch';
 
 /** A standing change ("from now on"), as opposed to one about this change. */
 const STANDING_CHANGE =
@@ -178,7 +183,7 @@ export function shortBranchName(ref: string | undefined): string {
 /**
  * The branch a Room agent's own native-command marker asks to repoint to.
  *
- * `beeline-propose-target-branch --branch staging`. This is the agent's ONLY
+ * `/change-target-branch --branch staging`. This is the agent's ONLY
  * way to raise the proposal card, and it raises nothing else: the command is
  * never executed, the value is validated as a git branch name here, and the
  * card it produces still has to be confirmed by a Room admin whose own key
@@ -192,12 +197,16 @@ export function targetBranchProposalFromPermission(
     permission.toolCall?.title,
     ...permissionRequestStrings(permission.toolCall?.rawInput),
   ].filter((value): value is string => typeof value === 'string');
+  const markerCommands = [
+    String.raw`\/change-target-branch`,
+    LEGACY_TARGET_BRANCH_PROPOSAL_COMMAND,
+  ].join('|');
   const marker = new RegExp(
     // The branch name ends the command: nothing may follow it but closing
     // quotes/parens from a harness's own wrapper. A chained shell payload
     // (`--branch staging && rm -rf /`) is therefore not this marker at all and
     // gets the ordinary read-only denial, exactly like any other command.
-    String.raw`(?:^|\s)${TARGET_BRANCH_PROPOSAL_COMMAND}\s+--branch(?:=|\s+)(['"\x60]?)([A-Za-z0-9._\/-]+)\1['"\x60)\s]*$`,
+    String.raw`(?:^|\s)(?:${markerCommands})\s+--branch(?:=|\s+)(['"\x60]?)([A-Za-z0-9._\/-]+)\1['"\x60)\s]*$`,
   );
   for (const candidate of candidates) {
     const branch = normalizeTargetBranchName(candidate.match(marker)?.[2]);

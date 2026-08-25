@@ -102,6 +102,13 @@ describe('proposal copy', () => {
 describe('the agent-attempted proposal marker', () => {
   const command = (line: string) => ({ toolCall: { title: line, kind: 'execute' } });
 
+  it('uses the shipped slash command so the native permission request reaches this parser', () => {
+    expect(TARGET_BRANCH_PROPOSAL_COMMAND).toBe('/change-target-branch');
+    expect(
+      targetBranchProposalFromPermission(command('/change-target-branch --branch staging')),
+    ).toBe('staging');
+  });
+
   it('reads the branch out of the exact documented command', () => {
     expect(
       targetBranchProposalFromPermission(
@@ -123,6 +130,14 @@ describe('the agent-attempted proposal marker', () => {
     ]) {
       expect(targetBranchProposalFromPermission(command(line)), line).toBe('staging');
     }
+  });
+
+  it('keeps accepting the pre-slash marker from an already-running Room session', () => {
+    expect(
+      targetBranchProposalFromPermission(
+        command('beeline-propose-target-branch --branch staging'),
+      ),
+    ).toBe('staging');
   });
 
   it('finds it wherever the adapter puts the command line', () => {

@@ -67,7 +67,6 @@ import {
   resolveRuntimeConfigPath,
   runtimeAgentCommand,
   runtimeDaemonPid,
-  runtimeDirectory,
   runtimeIdentity,
   stopRuntimeDaemon,
   tryInspectLocalRepository,
@@ -85,7 +84,10 @@ import {
   type ExternalMcpCapability,
 } from './external-mcp-capabilities.js';
 import { connectTrustySquireForPair } from './trusty-squire-onboarding.js';
-import { trustySquireConfigRoot } from './trusty-squire-storage.js';
+import {
+  trustySquireConfigRoot,
+  trustySquireConfigRootForRuntimeConfig,
+} from './trusty-squire-storage.js';
 import { DurableBodyState } from './durable-state.js';
 import {
   activeReleaseId,
@@ -529,7 +531,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // can exec this bundle's CLI against the exact runtime record — no state-home
   // discovery inside the sandbox, where XDG dirs are deliberately relocated.
   config.runtimeConfigPath = configPath;
-  config.squireConfigRoot = trustySquireConfigRoot(dirname(configPath));
+  config.squireConfigRoot = trustySquireConfigRootForRuntimeConfig(configPath);
   // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
   // here, at daemon start, so an unusable bwrap costs one advisory line rather
   // than a failed spawn per session — and so the operator learns the state of
@@ -752,9 +754,7 @@ async function pairOneAgent(input: {
     /^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/i.test(code.trim())
   ) {
     console.log("[beeline] checking this machine's Trusty Squire vault/link…");
-    const configRoot = trustySquireConfigRoot(
-      runtimeDirectory(defaultSupervisorRoot(process.env), agentIdentity.publicKey),
-    );
+    const configRoot = trustySquireConfigRoot(defaultSupervisorRoot(process.env));
     const connected = await connectTrustySquireForPair({
       agentKind: selectedAgent.kind,
       configRoot,

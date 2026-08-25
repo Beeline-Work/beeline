@@ -304,6 +304,46 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function pushGatewayError(response: Response): Promise<string> {
+  try {
+    const payload = (await response.json()) as { error?: unknown };
+    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error;
+  } catch {
+    // Fall through to the HTTP status when the gateway did not return JSON.
+  }
+  return `gateway returned HTTP ${response.status}`;
+}
+
+/** Send an authenticated proof-of-delivery notification to this identity's devices. */
+export async function sendBuzzPushTestNotification(identity: Identity): Promise<void> {
+  const testSendUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/test-send`;
+  const controller = new AbortController();
+  try {
+    await withRegistrationTimeout(
+      (async () => {
+        const response = await fetch(testSendUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: nip98AuthHeader(
+              identity.secretKey,
+              identity.publicKey,
+              testSendUrl,
+              'POST',
+            ),
+          },
+          body: JSON.stringify({ pubkey: identity.publicKey }),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(await pushGatewayError(response));
+      })(),
+      'test notification request',
+    );
+  } finally {
+    controller.abort();
+  }
+}
+
 /**
  * Automatic retry on app foreground: only acts when the last attempt left an
  * unregistered-but-retryable state and its backoff window has elapsed. Returns

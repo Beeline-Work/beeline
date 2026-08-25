@@ -61,6 +61,7 @@ import {
   getBuzzPushEnabled,
   getBuzzPushRegistrationState,
   registerBuzzPushNotifications,
+  sendBuzzPushTestNotification,
   setBuzzPushEnabled,
   type BuzzPushRegistrationResult,
   type BuzzPushRegistrationState,
@@ -172,6 +173,11 @@ export default function BuzzIdentitySettings() {
   const [pushRegistration, setPushRegistration] = useState<BuzzPushRegistrationState | null>(null);
   const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
   const [pushWorking, setPushWorking] = useState(false);
+  const [pushTestWorking, setPushTestWorking] = useState(false);
+  const [pushTestNotice, setPushTestNotice] = useState<{
+    kind: 'success' | 'error';
+    message: string;
+  } | null>(null);
   const [linkedAccount, setLinkedAccount] = useState<
     'checking' | 'connected' | 'not-linked' | 'unavailable'
   >('checking');
@@ -511,6 +517,28 @@ export default function BuzzIdentitySettings() {
       setPushWorking(false);
     }
   }, [applyPushResult, profileIdentity, pushRegistration, pushWorking]);
+
+  const sendTestNotification = useCallback(async () => {
+    if (!profileIdentity || pushTestWorking || pushRegistration?.phase !== 'registered') return;
+    setPushTestWorking(true);
+    setPushTestNotice(null);
+    try {
+      await sendBuzzPushTestNotification(profileIdentity);
+      setPushTestNotice({
+        kind: 'success',
+        message: 'Test sent - check your notification shade',
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (caught) {
+      setPushTestNotice({
+        kind: 'error',
+        message: caught instanceof Error ? caught.message : String(caught),
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setPushTestWorking(false);
+    }
+  }, [profileIdentity, pushRegistration?.phase, pushTestWorking]);
 
   const lockExport = useCallback(() => {
     setSecret(null);
@@ -883,6 +911,35 @@ export default function BuzzIdentitySettings() {
               </Text>
             </TouchableOpacity>
           ) : null}
+          {pushRegistration?.phase === 'registered' ? (
+            <>
+              <TouchableOpacity
+                accessibilityLabel="Send test notification"
+                accessibilityRole="button"
+                disabled={pushTestWorking}
+                onPress={() => void sendTestNotification()}
+                style={styles.pushRetryButton}
+                testID="push-send-test-notification"
+              >
+                <Text style={styles.pushRetryText}>
+                  {pushTestWorking ? 'Sending…' : 'Send test notification'}
+                </Text>
+              </TouchableOpacity>
+              {pushTestNotice ? (
+                <Text
+                  accessibilityRole="alert"
+                  style={
+                    pushTestNotice.kind === 'error'
+                      ? styles.pushTestError
+                      : styles.pushTestSuccess
+                  }
+                  testID="push-test-notification-result"
+                >
+                  {pushTestNotice.message}
+                </Text>
+              ) : null}
+            </>
+          ) : null}
         </View>
 
         <View style={styles.settingsSection} testID="linked-sign-in-setting">
@@ -1219,6 +1276,22 @@ const styles = StyleSheet.create((theme) => {
   pushRetryText: {
     ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
     color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  pushTestSuccess: {
+    ...Typography.default(), fontFamily: groknight.proseRegular,
+    marginTop: 4,
+    paddingHorizontal: 12,
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  pushTestError: {
+    ...Typography.default(), fontFamily: groknight.proseRegular,
+    marginTop: 4,
+    paddingHorizontal: 12,
+    color: groknight.danger,
     fontSize: 12,
     lineHeight: 16,
   },

@@ -54,6 +54,28 @@ function loadNativeVersion(): string {
   return output;
 }
 
+function loadUpdatesChannel(updatesChannel?: string): string {
+  const mobileRoot = fileURLToPath(new URL('../..', import.meta.url));
+  return execFileSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '--eval',
+      "import configModule from './app.config.js'; const config = configModule.default ?? configModule; process.stdout.write(config.expo.updates.requestHeaders['expo-channel-name']);",
+    ],
+    {
+      cwd: mobileRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ...(updatesChannel ? { EXPO_UPDATES_CHANNEL: updatesChannel } : {}),
+      },
+    },
+  );
+}
+
 function loadGoogleServicesFile(appEnv?: string): string | undefined {
   const mobileRoot = fileURLToPath(new URL('../..', import.meta.url));
   const output = execFileSync(
@@ -98,9 +120,7 @@ const APP_STORE_CONNECT_BUNDLE_IDENTIFIERS: Record<string, string> = {
   '6799574618': 'app.buzzy.mobile',
 };
 
-function assertSubmissionMatchesAppStoreConnect(
-  submission: IosSubmissionConfig,
-): void {
+function assertSubmissionMatchesAppStoreConnect(submission: IosSubmissionConfig): void {
   expect(APP_STORE_CONNECT_BUNDLE_IDENTIFIERS[submission.ascAppId]).toBe(
     submission.bundleIdentifier,
   );
@@ -208,28 +228,30 @@ describe('Beeline display branding', () => {
     });
   });
 
-  it('keeps every build and publish path on the production EAS Updates channel', () => {
+  it('keeps production binaries on production and gives the canary a beta-only APK', () => {
     const easBuildProfiles = JSON.parse(easConfig).build as Record<string, EasBuildProfile>;
     const packageJson = JSON.parse(
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     ) as { scripts?: Record<string, string> };
 
-    expect(Object.keys(easBuildProfiles)).toEqual(['production', 'production-apk']);
-    for (const profileName of Object.keys(easBuildProfiles)) {
-      expect(resolveEasBuildProfile(easBuildProfiles, profileName).channel).toBe('production');
-    }
+    expect(Object.keys(easBuildProfiles)).toEqual(['production', 'production-apk', 'beta-apk']);
+    expect(resolveEasBuildProfile(easBuildProfiles, 'production').channel).toBe('production');
+    expect(resolveEasBuildProfile(easBuildProfiles, 'production-apk').channel).toBe('production');
+    expect(resolveEasBuildProfile(easBuildProfiles, 'beta-apk').channel).toBe('beta');
     for (const [name, script] of Object.entries(packageJson.scripts ?? {})) {
       if (!script.includes('eas update')) continue;
-      expect(script, `${name} must publish to production`).toMatch(
-        /--(?:branch|channel)\s+production\b/,
+      expect(script, `${name} must publish candidates to beta`).toMatch(
+        /--(?:branch|channel)\s+beta\b/,
       );
-      expect(script, `${name} must not publish to another channel`).not.toMatch(
-        /--(?:branch|channel)\s+(?!production\b)\S+/,
+      expect(script, `${name} must not publish directly to production`).not.toMatch(
+        /--(?:branch|channel)\s+production\b/,
       );
     }
 
-    expect(appConfig).toContain('const updatesChannel = "production"');
+    expect(appConfig).toContain('process.env.EXPO_UPDATES_CHANNEL || "production"');
     expect(appConfig).toContain('"expo-channel-name": updatesChannel');
+    expect(loadUpdatesChannel()).toBe('production');
+    expect(loadUpdatesChannel('beta')).toBe('beta');
     expect(appConfig).toContain('runtimeVersion: "21"');
   });
 
@@ -246,6 +268,14 @@ describe('Beeline display branding', () => {
       extends: 'production',
       channel: 'production',
       android: { buildType: 'apk' },
+    });
+    expect(easBuildProfiles['beta-apk']).toEqual({
+      extends: 'production-apk',
+      channel: 'beta',
+      env: {
+        EXPO_UPDATES_CHANNEL: 'beta',
+        SHARP_IGNORE_GLOBAL_LIBVIPS: '1',
+      },
     });
     expect(productionApk).toEqual({
       ...production,

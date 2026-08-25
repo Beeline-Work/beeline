@@ -1,6 +1,6 @@
 {
   "cli": {
-    "version": ">= 14.2.0",
+    "version": "22.2.0",
     "appVersionSource": "remote"
   },
   "build": {
@@ -20,6 +20,14 @@
       "channel": "production",
       "android": {
         "buildType": "apk"
+      }
+    },
+    "beta-apk": {
+      "extends": "production-apk",
+      "channel": "beta",
+      "env": {
+        "EXPO_UPDATES_CHANNEL": "beta",
+        "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
       }
     }
   },

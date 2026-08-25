@@ -2,7 +2,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { existsSync, createReadStream } from 'node:fs';
-import { lstat, mkdtemp as mkdtempFs, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdtemp as mkdtempFs,
+  mkdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -38,7 +46,8 @@ async function tempDir(prefix: string): Promise<string> {
 }
 
 afterAll(async () => {
-  for (const dir of tempDirs) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  for (const dir of tempDirs)
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -62,15 +71,21 @@ describe('bundle identity comparison', () => {
   });
 
   it('treats a different source commit as an update (the publisher rolls from main)', () => {
-    expect(
-      compareBundleIdentity({ commit: 'aaa' }, published({ commit: 'bbb' })).kind,
-    ).toBe('update-available');
-    expect(compareBundleIdentity({ commit: 'aaa' }, published({ commit: 'aaa' })).kind).toBe('current');
+    expect(compareBundleIdentity({ commit: 'aaa' }, published({ commit: 'bbb' })).kind).toBe(
+      'update-available',
+    );
+    expect(compareBundleIdentity({ commit: 'aaa' }, published({ commit: 'aaa' })).kind).toBe(
+      'current',
+    );
   });
 
   it('falls back to comparable versions when commits are absent', () => {
-    expect(compareBundleIdentity({ version: '1.0.0' }, published({ version: '1.1.0' })).kind).toBe('update-available');
-    expect(compareBundleIdentity({ version: '2.0.0' }, published({ version: '1.9.0' })).kind).toBe('current');
+    expect(compareBundleIdentity({ version: '1.0.0' }, published({ version: '1.1.0' })).kind).toBe(
+      'update-available',
+    );
+    expect(compareBundleIdentity({ version: '2.0.0' }, published({ version: '1.9.0' })).kind).toBe(
+      'current',
+    );
   });
 
   it('is deliberately indeterminate when neither side can be named', () => {
@@ -107,7 +122,12 @@ describe('manifest parsing', () => {
     const perBundle = parseUpdateManifest(
       JSON.stringify({
         bundles: {
-          [hostPlatformKey()]: { file: 'b.tar.gz', sha256: 'b'.repeat(64), commit: 'zzz', version: '9.9.9' },
+          [hostPlatformKey()]: {
+            file: 'b.tar.gz',
+            sha256: 'b'.repeat(64),
+            commit: 'zzz',
+            version: '9.9.9',
+          },
         },
       }),
       hostPlatformKey(),
@@ -118,7 +138,9 @@ describe('manifest parsing', () => {
 
   it('rejects unusable manifests loudly', () => {
     expect(() => parseUpdateManifest('not json', hostPlatformKey())).toThrow(/not valid JSON/);
-    expect(() => parseUpdateManifest('{"bundles":{}}', hostPlatformKey())).toThrow(/no bundle for platform/);
+    expect(() => parseUpdateManifest('{"bundles":{}}', hostPlatformKey())).toThrow(
+      /no bundle for platform/,
+    );
     expect(() =>
       parseUpdateManifest(
         JSON.stringify({ bundles: { [hostPlatformKey()]: { file: 'x.tar.gz', sha256: 'short' } } }),
@@ -127,7 +149,9 @@ describe('manifest parsing', () => {
     ).toThrow(/sha256/);
     expect(() =>
       parseUpdateManifest(
-        JSON.stringify({ bundles: { [hostPlatformKey()]: { file: '../evil.tar.gz', sha256: 'a'.repeat(64) } } }),
+        JSON.stringify({
+          bundles: { [hostPlatformKey()]: { file: '../evil.tar.gz', sha256: 'a'.repeat(64) } },
+        }),
         hostPlatformKey(),
       ),
     ).toThrow(/unusable bundle file/);
@@ -191,6 +215,7 @@ async function buildFixtureBundle(commit: string, version: string): Promise<Fixt
   await mkdir(join(staging, 'bin'), { recursive: true });
   await mkdir(join(staging, 'lib', 'beeline'), { recursive: true });
   await writeFile(join(staging, 'lib', 'beeline', 'beeline-cli.mjs'), STUB_CLI);
+  await writeFile(join(staging, 'lib', 'beeline', 'squire-mcp-proxy.mjs'), 'process.exit(0);\n');
   await writeFile(
     join(staging, 'bundle.json'),
     `${JSON.stringify({ schemaVersion: 1, name: 'beeline', platform: hostPlatformKey(), commit, version }, null, 2)}\n`,
@@ -198,7 +223,9 @@ async function buildFixtureBundle(commit: string, version: string): Promise<Fixt
   const tarballPath = join(staging, 'bundle.tar.gz');
   const tar = spawnSync('tar', ['-czf', tarballPath, '-C', staging, 'lib', 'bundle.json']);
   if (tar.status !== 0) throw new Error(`fixture tar failed: ${tar.stderr?.toString()}`);
-  const sha256 = createHash('sha256').update(await readFile(tarballPath)).digest('hex');
+  const sha256 = createHash('sha256')
+    .update(await readFile(tarballPath))
+    .digest('hex');
   return { commit, version, tarballPath, sha256 };
 }
 
@@ -254,14 +281,20 @@ describe('self-update end to end against a local fixture manifest', () => {
   }
 
   /** A legacy-shaped install (real directory at lib/beeline), like today's installer produces. */
-  async function makeLegacyInstall(commit: string, version: string): Promise<{ root: string; layout: BeelineInstallLayout }> {
+  async function makeLegacyInstall(
+    commit: string,
+    version: string,
+  ): Promise<{ root: string; layout: BeelineInstallLayout }> {
     const root = await tempDir('install-');
     const binDir = join(root, 'prefix', 'bin');
     const libDir = join(root, 'prefix', 'lib', 'beeline');
     await mkdir(join(libDir, 'lib', 'beeline'), { recursive: true });
     await mkdir(binDir, { recursive: true });
     await writeFile(join(libDir, 'lib', 'beeline', 'beeline-cli.mjs'), STUB_CLI);
-    await writeFile(join(libDir, 'bundle.json'), `${JSON.stringify({ commit, version }, null, 2)}\n`);
+    await writeFile(
+      join(libDir, 'bundle.json'),
+      `${JSON.stringify({ commit, version }, null, 2)}\n`,
+    );
     await writeFile(join(binDir, 'beeline'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     return { root, layout: beelineInstallLayout({ BEELINE_LIB_DIR: libDir })! };
   }
@@ -311,7 +344,9 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(await activeReleaseId(layout)).toBe(v2.commit);
 
     // Previous bundle preserved for rollback.
-    expect(existsSync(join(layout.releasesRoot, 'c1alpha', 'lib', 'beeline', 'beeline-cli.mjs'))).toBe(true);
+    expect(
+      existsSync(join(layout.releasesRoot, 'c1alpha', 'lib', 'beeline', 'beeline-cli.mjs')),
+    ).toBe(true);
 
     // The rollback journal is durable operational state. A successful update
     // and restart must not publish anything into Room chat.
@@ -320,7 +355,10 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(pending?.previousReleaseId).toBe('c1alpha');
 
     // Identity now reads from the INSTALLED bundle itself.
-    expect(await readInstalledBundleIdentity(layout)).toEqual({ commit: v2.commit, version: v2.version });
+    expect(await readInstalledBundleIdentity(layout)).toEqual({
+      commit: v2.commit,
+      version: v2.version,
+    });
 
     // Handover: launch the replacement daemon from the ACTIVE bundle and
     // prove the NEW bundle is what came up.
@@ -362,7 +400,10 @@ describe('self-update end to end against a local fixture manifest', () => {
     // Nothing staged, nothing swapped, installed identity unchanged.
     expect(await activeReleaseId(layout)).toBe('legacy');
     expect(existsSync(join(layout.releasesRoot, tampered.commit))).toBe(false);
-    expect(await readInstalledBundleIdentity(layout)).toEqual({ commit: 'c1alpha', version: '1.0.0' });
+    expect(await readInstalledBundleIdentity(layout)).toEqual({
+      commit: 'c1alpha',
+      version: '1.0.0',
+    });
     void v2;
   });
 
@@ -447,17 +488,27 @@ describe('self-update end to end against a local fixture manifest', () => {
 });
 
 describe('anchor-drift restart (a running daemon picks up an externally swapped install)', () => {
-  interface FixtureRelease { id: string; commit: string; version: string }
+  interface FixtureRelease {
+    id: string;
+    commit: string;
+    version: string;
+  }
 
   /** A release-based install (symlinked anchor) with pre-staged releases, like every post-first-update host. */
-  async function makeReleaseInstall(releases: FixtureRelease[], activeId: string): Promise<{ root: string; layout: BeelineInstallLayout }> {
+  async function makeReleaseInstall(
+    releases: FixtureRelease[],
+    activeId: string,
+  ): Promise<{ root: string; layout: BeelineInstallLayout }> {
     const root = await tempDir('install-drift');
     const libDir = join(root, 'prefix', 'lib', 'beeline');
     const releasesRoot = join(root, 'prefix', 'lib', 'beeline-releases');
     await mkdir(join(root, 'prefix', 'bin'), { recursive: true });
     for (const release of releases) {
       await mkdir(join(releasesRoot, release.id, 'lib', 'beeline'), { recursive: true });
-      await writeFile(join(releasesRoot, release.id, 'lib', 'beeline', 'beeline-cli.mjs'), STUB_CLI);
+      await writeFile(
+        join(releasesRoot, release.id, 'lib', 'beeline', 'beeline-cli.mjs'),
+        STUB_CLI,
+      );
       await writeFile(
         join(releasesRoot, release.id, 'bundle.json'),
         `${JSON.stringify({ schemaVersion: 1, name: 'beeline', platform: hostPlatformKey(), ...release }, null, 2)}\n`,
@@ -490,7 +541,9 @@ describe('anchor-drift restart (a running daemon picks up an externally swapped 
     return { manager, logs, restartRequested: () => requested };
   }
 
-  async function waitDaemonStarted(runtimeDir: string): Promise<{ pid: number; commit?: string; entrypoint: string }> {
+  async function waitDaemonStarted(
+    runtimeDir: string,
+  ): Promise<{ pid: number; commit?: string; entrypoint: string }> {
     const startedPath = join(runtimeDir, 'daemon-started.json');
     for (let waited = 0; waited < 15_000 && !existsSync(startedPath); waited += 100) {
       await new Promise((r) => setTimeout(r, 100));
@@ -582,7 +635,10 @@ describe('anchor-drift restart (a running daemon picks up an externally swapped 
     const { layout } = await makeReleaseInstall([oldR, newR], oldR.id);
     const { manager, restartRequested } = makeManager(layout, {
       idle: () => true,
-      env: { BEELINE_UPDATE_DISABLE: '1', BEELINE_UPDATE_MANIFEST_URL: 'https://invalid.invalid/dl/manifest.json' },
+      env: {
+        BEELINE_UPDATE_DISABLE: '1',
+        BEELINE_UPDATE_MANIFEST_URL: 'https://invalid.invalid/dl/manifest.json',
+      },
     });
 
     await manager.tickOnce();
@@ -693,12 +749,17 @@ describe('rollback helper', () => {
     const releasesRoot = join(root, 'prefix', 'lib', 'beeline-releases');
     for (const release of ['r1', 'r2']) {
       await mkdir(join(releasesRoot, release, 'lib', 'beeline'), { recursive: true });
-      await writeFile(join(releasesRoot, release, 'lib', 'beeline', 'beeline-cli.mjs'), `// ${release}\n`);
+      await writeFile(
+        join(releasesRoot, release, 'lib', 'beeline', 'beeline-cli.mjs'),
+        `// ${release}\n`,
+      );
     }
     await symlink(join('beeline-releases', 'r2'), libDir);
     const layout = beelineInstallLayout({ BEELINE_LIB_DIR: libDir })!;
     await rollbackToPreviousRelease(layout, 'r1');
     expect(await activeReleaseId(layout)).toBe('r1');
-    expect(await readFile(join(libDir, 'lib', 'beeline', 'beeline-cli.mjs'), 'utf8')).toBe('// r1\n');
+    expect(await readFile(join(libDir, 'lib', 'beeline', 'beeline-cli.mjs'), 'utf8')).toBe(
+      '// r1\n',
+    );
   });
 });

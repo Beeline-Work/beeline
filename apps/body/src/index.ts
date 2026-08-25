@@ -36,6 +36,8 @@ export {
   type PermissionActionClaim,
   type PermissionDirectiveRosterEntry,
   type PermissionExecutionOutcome,
+  type PermissionExecutionHandle,
+  type PermissionBeginOutcome,
   type PermissionRuntimeDependencies,
 } from './permission-runtime.js';
 export {
@@ -133,10 +135,16 @@ export {
 export {
   EXTERNAL_MCP_CAPABILITIES,
   authorizedExternalMcpServers,
+  externalMcpPermissionPolicy,
   externalMcpServers,
+  governedSquireCall,
   isExternalMcpCapability,
   isExternalMcpPermissionRequest,
+  SQUIRE_GOVERNED_TOOLS,
   type ExternalMcpCapability,
+  type ExternalMcpPermissionPolicy,
+  type GovernedSquireCall,
+  type SquireGovernedTool,
 } from './external-mcp-capabilities.js';
 export {
   classifyCornerPermission,

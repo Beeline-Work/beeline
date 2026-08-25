@@ -5,12 +5,15 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 import {
+  hasAmbientTrustySquireConfiguration,
+  hasLocalTrustySquireState,
   harnessStateDirsFromEnv,
   prepareRoomAgentHome,
   roomAgentHomeEnv,
 } from './agent-home.js';
 import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
+import { tomlChildTableNames } from './toml-section.js';
 
 const cleanup: string[] = [];
 
@@ -33,7 +36,14 @@ describe('per-room harness state isolation', () => {
     const envA = await prepareRoomAgentHome({ root: roomA, operatorHome });
     const envB = await prepareRoomAgentHome({ root: roomB, operatorHome });
 
-    for (const key of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GROK_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'TMPDIR']) {
+    for (const key of [
+      'CLAUDE_CONFIG_DIR',
+      'CODEX_HOME',
+      'GROK_HOME',
+      'XDG_STATE_HOME',
+      'XDG_CACHE_HOME',
+      'TMPDIR',
+    ]) {
       expect(envA[key]).toBeTruthy();
       expect(envA[key]!.startsWith(roomA)).toBe(true);
       // Two Rooms of the same agent must not share a harness state directory.
@@ -83,6 +93,31 @@ describe('per-room harness state isolation', () => {
     await writeFile(root, 'not a directory');
 
     await expect(prepareRoomAgentHome({ root })).resolves.toEqual({});
+    await expect(prepareRoomAgentHome({ root, failClosed: true })).rejects.toThrow();
+  });
+
+  it('detects the local Trusty Squire state boundary', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    expect(hasLocalTrustySquireState(operatorHome)).toBe(false);
+    await mkdir(resolve(operatorHome, '.config/trusty-squire'), { recursive: true });
+    expect(hasLocalTrustySquireState(operatorHome)).toBe(true);
+
+    const alternateOperatorHome = await scratch('beeline-alternate-operator-');
+    const alternateHome = await scratch('beeline-alternate-xdg-');
+    await mkdir(resolve(alternateHome, 'trusty-squire'), { recursive: true });
+    expect(
+      hasLocalTrustySquireState(alternateOperatorHome, { XDG_CONFIG_HOME: alternateHome }),
+    ).toBe(true);
+  });
+
+  it('detects ambient Trusty Squire MCP declarations without a local vault', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.codex/config.toml'),
+      '[mcp_servers.vault]\ncommand = "npx"\nargs = ["-y", "@trusty-squire/mcp@1.1.12"]\n',
+    );
+    expect(hasAmbientTrustySquireConfiguration(operatorHome)).toBe(true);
   });
 
   it('derives the env overlay without touching the filesystem', () => {
@@ -116,6 +151,17 @@ describe('operator skills + MCP passthrough', () => {
     '[mcp_servers.squire]',
     'command = "npx"',
     'args = ["-y", "@trusty-squire/mcp"]',
+    '',
+    '[mcp_servers.vault_tools]',
+    'command = "npx"',
+    'args = ["-y", "@trusty-squire/mcp@1.1.12"]',
+    '',
+    '[mcp_servers.stable_vault]',
+    'command = "node"',
+    'args = ["/opt/node_modules/@trusty-squire/mcp/dist/bin.js", "server"]',
+    '',
+    '[mcp_servers.project_tools]',
+    'command = "project-tools"',
   ].join('\n');
 
   async function operatorHomeWithHarnessConfigs(): Promise<string> {
@@ -158,8 +204,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(stats.isSymbolicLink()).toBe(false);
     expect(stats.isFile()).toBe(true);
     const isolatedText = readFileSync(isolatedConfig, 'utf8');
-    expect(isolatedText).toContain('[mcp_servers.squire]');
-    expect(isolatedText).not.toMatch(/model|approval_policy|sandbox_mode/);
+    expect(tomlChildTableNames(isolatedText, ['mcp_servers'])).toEqual(['project_tools']);
 
     // Writing through the session cannot reach the operator's real config.
     await writeFile(isolatedConfig, '[mcp_servers.scribe]\ncommand = "scribe"\n');
@@ -174,7 +219,13 @@ describe('operator skills + MCP passthrough', () => {
     await mkdir(resolve(operatorHome, '.grok'), { recursive: true });
     await writeFile(
       resolve(operatorHome, '.claude.json'),
-      JSON.stringify({ mcpServers: { files: { command: 'files-mcp' } } }),
+      JSON.stringify({
+        mcpServers: {
+          files: { command: 'files-mcp' },
+          squire: { command: 'npx', args: ['-y', '@trusty-squire/mcp'] },
+          vault: { command: 'npx', args: ['-y', '@trusty-squire/mcp@1.1.12'] },
+        },
+      }),
     );
     await writeFile(
       resolve(operatorHome, '.grok/config.toml'),
@@ -193,8 +244,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(claudeParsed).not.toHaveProperty('otherTopLevel');
 
     const grokConfig = readFileSync(resolve(roomRoot, 'grok', 'config.toml'), 'utf8');
-    expect(grokConfig).toContain('[mcp_servers.tools]');
-    expect(grokConfig).not.toContain('theme');
+    expect(tomlChildTableNames(grokConfig, ['mcp_servers'])).toEqual(['tools']);
   });
 
   it('regenerates the copied MCP configs on every prepare so operator edits reach existing rooms', async () => {
@@ -241,7 +291,7 @@ describe('operator skills + MCP passthrough', () => {
 
     expect(lstatSync(resolve(roomRoot, 'codex', 'config.toml')).isSymbolicLink()).toBe(false);
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toContain(
-      '[mcp_servers.squire]',
+      '[mcp_servers.project_tools]',
     );
     expect(readFileSync(redirected, 'utf8')).toBe('must stay unchanged\n');
   });

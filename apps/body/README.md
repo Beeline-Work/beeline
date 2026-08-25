@@ -17,11 +17,12 @@ by projecting agent activity into the relay channel.
 │                │                                             │
 │                ├── read mode MCP ──► buzz-readonly-mcp       │
 │                ├── edit mode MCP ──► buzz-dev-mcp            │
+│                ├── opted-in Squire ─► host credential broker │
 │                └── batched session/update ──► relay          │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- **TLC (read-only):** ACP session with only Beeline's fixed
+- **TLC (read-only):** ACP session with Beeline's fixed
   `buzz-readonly-mcp` inspection surface mounted. It can list and read files,
   perform bounded literal search, and inspect local commit history/diffs. It
   exposes no shell, raw git arguments, filesystem mutation, package install, or
@@ -32,7 +33,10 @@ by projecting agent activity into the relay channel.
   their real `session/request_permission` becomes a signed Room prompt. pi-acp
   cannot send that protocol request, so only pi-backed Rooms retain the
   stripped `CORNER_REQUEST:` text fallback. An explicit human command to open a
-  corner is the only message that creates one without the approval card.
+  corner is the only message that creates one without the approval card. A
+  creator-only Codex or Claude agent may also mount separately selected Trusty
+  Squire capabilities; their side effects require exact P1 factory permission
+  and do not widen the filesystem boundary.
 - **Subchannel (edit):** ACP session with `buzz-dev-mcp` mounted, `cwd` set to
   a git worktree on a feature branch. Agent has full write access **only within
   the worktree**. Either an explicit open-a-corner command or a human member's
@@ -77,7 +81,7 @@ by projecting agent activity into the relay channel.
 
 3. **LLM egress credentials** — set via env or file (see below).
 
-4. **`bubblewrap` (optional, recommended)** — `bwrap` on PATH lets the daemon
+4. **`bubblewrap` (optional, recommended; required for Trusty Squire)** — `bwrap` on PATH lets the daemon
    confine every ACP harness child to a read-only filesystem plus the paths that
    session legitimately owns. Without it the daemon logs one advisory line and
    spawns unwrapped; see **Key design decisions** below.
@@ -169,6 +173,15 @@ beeline pair BUZZ-XXXX-XXXX --agent codex
 #   npm install -g @agentclientprotocol/claude-agent-acp
 beeline pair BUZZ-XXXX-XXXX --agent claude
 
+# Optional machine-local credentials. Each profile is a separate opt-in and
+# requires creator-only access. Pairing runs Trusty Squire's connect check while
+# you are present, opening Google/GitHub in your browser only when the local
+# vault or provider link is missing or stale. Codex and Claude are supported.
+beeline pair BUZZ-XXXX-XXXX --agent codex --access creator \
+  --mcp squire-credential-use
+beeline pair BUZZ-XXXX-XXXX --agent claude --access creator \
+  --mcp squire-app-access
+
 # Goose exposes ACP natively as `goose acp`.
 beeline pair BUZZ-XXXX-XXXX --agent goose
 
@@ -244,6 +257,18 @@ open that Room in the mobile app and tap `＋ Agent`; the human-signed membershi
 write attaches the already-linked identity using the active Workspace ID. No
 second CLI pairing occurs. Removing that membership stops new intake, drains
 accepted turns, and releases that Room's processes.
+
+Trusty Squire keeps provider credentials in a Body-owned, machine-local store;
+Beeline does not upload or centrally custody them, and the daemon never performs
+the browser connection ceremony. `squire-credential-use` exposes credential
+inventory plus exact, one-call `use_credential`. `squire-app-access` separately
+exposes bounded `grant_app_access`, inventory, and `revoke_app_access`; every
+grant must include `rate_limit_per_hour` and remains independently revocable.
+Each credential use, grant, or revocation requires a fresh, human-owner-signed
+P1 `operation.execute` permission for the exact arguments. Ordinary corner
+auto-approval and selecting one Squire profile never authorize the other.
+Pass both profile names as a comma-separated `--mcp` value only when the agent
+needs both capabilities.
 
 For an existing repository Room, pairing ensures the pairing human and the
 Room's dedicated merge-worker identity are admins, then joins the agent as a
@@ -463,7 +488,10 @@ into the process environment.
   Explicit open-a-corner commands bypass that extra prompt by authorizing the
   isolated worktree directly. Permission-capable agents initiate the request;
   Body does not synthesize a permission request from mutation verbs in the
-  human's prose.
+  human's prose. Trusty Squire is the only explicit exception to the fixed Room
+  inventory: its separately selected metadata tools remain read-only, while
+  each credential or egress side effect is brokered only after an exact P1
+  factory permission.
   Information-only turns reject any model-requested mutation without projecting
   ALLOW. DMs are permanently read-only and cannot request or open a corner. A
   repo-less normal Room may request a corner only by naming an exact
@@ -487,8 +515,10 @@ into the process environment.
   bookkeeping is neither the repository nor the operator's tree.
   `harness-sandbox.live.test.ts` holds that line for every installed adapter.
   Network is untouched, since every harness needs its model API. Detection runs
-  once at daemon start and **fails open**: a missing or unusable `bwrap` logs one
-  advisory line and spawns unwrapped, exactly as before. Set `sandbox: "off"` in
+  once at daemon start and normally **fails open**: a missing or unusable `bwrap`
+  logs one advisory line and spawns unwrapped, exactly as before. A runtime with
+  Trusty Squire state or capabilities instead fails closed because its local
+  vault and IPC paths must be masked from the agent. Set `sandbox: "off"` in
   the agent's `runtime.json` (or `BUZZY_BODY_SANDBOX=off`) on a host where
   bubblewrap misbehaves.
 - **Edit-corner permission intent is authority-free:** any current human Room member may

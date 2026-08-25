@@ -77,7 +77,16 @@ import {
   roomTurnPrompt,
   WRITE_PERMISSION_BACKSTOP_POLL_MS,
 } from './body.js';
-import { buildMergeApproval } from '@beeline/buzz-client';
+import {
+  buildMergeApproval,
+  buildPermissionDecision,
+  buildPermissionRequest,
+  defaultPermissionGrantEnvelope,
+  parsePermissionDecision,
+  parsePermissionRequest,
+  type PermissionFreshReader,
+  type PermissionRequestV1,
+} from '@beeline/buzz-client';
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
@@ -651,7 +660,7 @@ describe('agent identity boundary', () => {
         { CLAUDE_CONFIG_DIR: '/srv/rooms/r1/agent-home/claude' },
       );
       expect(spawn.command).toBe('/usr/bin/bwrap');
-      expect(spawn.args.slice(0, 3)).toEqual(['--ro-bind', '/', '/']);
+      expect(spawn.args.slice(0, 4)).toEqual(['--unshare-pid', '--ro-bind', '/', '/']);
       // Harness state is writable (codex/pi cannot start otherwise); the Room's
       // cwd — the canonical checkout — is bound nowhere and so stays read-only.
       const binds = spawn.args
@@ -676,7 +685,7 @@ describe('agent identity boundary', () => {
         { TMPDIR: '/srv/rooms/r1/agent-home/tmp' },
       );
       expect(spawn.command).toBe('/usr/bin/bwrap');
-      expect(spawn.args.slice(0, 3)).toEqual(['--bind', '/', '/']);
+      expect(spawn.args.slice(0, 4)).toEqual(['--unshare-pid', '--bind', '/', '/']);
       const protectedAt = spawn.args.indexOf(sandboxRoot);
       expect(spawn.args.slice(protectedAt - 1, protectedAt + 2)).toEqual([
         '--ro-bind',
@@ -1034,21 +1043,29 @@ describe('agent identity boundary', () => {
       ).resolves.toBe('allow');
     });
 
-    it('allows safe Squire verbs only on a creator-scoped agent and owner-gates checkout', async () => {
+    it('allows Squire inventory only for creator scope and routes exact effects to P1', async () => {
       const safeRequest = {
         toolCall: {
           kind: 'other',
-          title: 'mcp__squire__operate_start',
-          rawInput: { server: 'squire', tool: 'operate_start', arguments: {} },
+          title: 'mcp__squire__list_credentials',
+          rawInput: { server: 'squire', tool: 'list_credentials', arguments: {} },
         },
       };
       const creatorBody = new Body(
-        { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire'] },
+        {
+          ...config,
+          accessPolicy: 'creator',
+          externalMcpCapabilities: ['squire-credential-use'],
+        },
         newIdentity('operator'),
         newIdentity('agent'),
       );
       const everyoneBody = new Body(
-        { ...config, accessPolicy: 'everyone', externalMcpCapabilities: ['squire'] },
+        {
+          ...config,
+          accessPolicy: 'everyone',
+          externalMcpCapabilities: ['squire-credential-use'],
+        },
         newIdentity('operator'),
         newIdentity('agent'),
       );
@@ -1067,24 +1084,31 @@ describe('agent identity boundary', () => {
         ),
       ).resolves.toBe('reject');
 
-      const confirm = vi
-        .spyOn(creatorBody as never, 'handleSquireOwnerConfirmation' as never)
+      const govern = vi
+        .spyOn(creatorBody as never, 'handleGovernedSquirePermission' as never)
         .mockResolvedValue('allow' as never);
-      const checkoutRequest = {
+      const credentialRequest = {
         toolCall: {
           kind: 'other',
-          title: 'mcp__squire__checkout',
-          rawInput: { server: 'squire', tool: 'checkout', arguments: {} },
+          title: 'mcp__squire__use_credential',
+          rawInput: {
+            server: 'squire',
+            tool: 'use_credential',
+            arguments: {
+              service: 'github',
+              http: { method: 'GET', url: 'https://api.github.com/user' },
+            },
+          },
         },
       };
       await expect(
         Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(
           creatorBody,
           'room-1',
-          checkoutRequest,
+          credentialRequest,
         ),
       ).resolves.toBe('allow');
-      expect(confirm).toHaveBeenCalledWith('room-1', checkoutRequest);
+      expect(govern).toHaveBeenCalledWith('room-1', credentialRequest);
       await expect(
         Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(creatorBody, 'room-1', {
           toolCall: {
@@ -1096,55 +1120,388 @@ describe('agent identity boundary', () => {
       ).resolves.toBe('reject');
     });
 
-    it('routes a spending-capable Squire verb through an owner-only permission card', async () => {
+    it('never lets a corner auto-approval bypass a governed Squire effect', async () => {
       const body = new Body(
-        { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire'] },
+        { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire-app-access'] },
         newIdentity('operator'),
         newIdentity('agent'),
       );
-      (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('room-1', {
-        request: {
-          eventId: 'squire-checkout-request',
-          authorPubkey: newIdentity('squire-requester').publicKey,
-          content: 'Complete checkout.',
-          createdAt: 1,
-        },
-      });
-      const wait = vi
-        .spyOn(body as never, 'waitForWritePermissionDecision' as never)
+      const govern = vi
+        .spyOn(body as never, 'handleGovernedSquirePermission' as never)
         .mockResolvedValue('allow' as never);
-      const published: NostrEvent[] = [];
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-          published.push(JSON.parse(String(init?.body)) as NostrEvent);
-          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-        }),
-      );
       const request = {
+        sessionId: 'corner-session',
         toolCall: {
+          toolCallId: 'tool-1',
           kind: 'other',
-          title: 'mcp__squire__checkout',
-          rawInput: { server: 'squire', tool: 'checkout', arguments: {} },
+          title: 'mcp__squire__grant_app_access',
+          rawInput: {
+            server: 'squire',
+            tool: 'grant_app_access',
+            arguments: { service: 'github', rate_limit_per_hour: 20 },
+          },
         },
       };
+      const handler = Reflect.get(body, 'cornerPermissionHandler').call(
+        body,
+        '/worktree',
+        ['/protected'],
+        ['/worktree'],
+        'corner-1',
+      );
+      await expect(handler(request)).resolves.toBe('allow');
+      expect(govern).toHaveBeenCalledWith('corner-1', request);
+    });
+
+    it('accepts only the first current human-owner P1 decision for Squire', async () => {
+      const agent = newIdentity('squire-agent');
+      const owner = newIdentity('squire-owner');
+      const rogueAgent = newIdentity('squire-rogue-agent');
+      const body = new Body(config, newIdentity('operator'), agent);
+      const now = Math.floor(Date.now() / 1_000) - 10;
+      const scope = {
+        type: 'operation.execute' as const,
+        connectorId: 'squire',
+        tool: 'use_credential',
+        argumentsDigest: 'a'.repeat(64),
+        target: 'GET https://api.github.com/user via service:github',
+        risk: 'out-of-scope' as const,
+      };
+      const value: PermissionRequestV1 = {
+        version: 1,
+        permissionId: '11111111-1111-4111-8111-111111111111',
+        roomId: 'room-1',
+        workspaceId: 'workspace-1',
+        requesterAgentPubkey: agent.publicKey,
+        audience: 'owner',
+        summary: 'Use the exact GitHub credential call',
+        scope,
+        provenance: {
+          immediateTurnEventId: '1'.repeat(64),
+          rootEventId: '2'.repeat(64),
+        },
+        requestedAt: now,
+        requestExpiresAt: now + 600,
+      };
+      const request = parsePermissionRequest(
+        buildPermissionRequest(agent, value, [owner.publicKey]),
+      )!;
+      const decision = (
+        signer: ReturnType<typeof newIdentity>,
+        verdict: 'grant' | 'deny',
+        decidedAt: number,
+      ) =>
+        parsePermissionDecision(
+          buildPermissionDecision(signer, request, {
+            version: 1,
+            permissionId: value.permissionId,
+            requestEventId: request.event.id,
+            decision: verdict,
+            decidedAt,
+            ...(verdict === 'grant'
+              ? { grant: defaultPermissionGrantEnvelope(scope, decidedAt) }
+              : {}),
+          }),
+          request,
+        )!;
+      const rogue = decision(rogueAgent, 'grant', now + 1);
+      const deny = decision(owner, 'deny', now + 2);
+      const laterGrant = decision(owner, 'grant', now + 3);
+      const reader: PermissionFreshReader = {
+        readEvent: async () => undefined,
+        isRegisteredAgent: async (pubkey) =>
+          pubkey === agent.publicKey || pubkey === rogueAgent.publicKey,
+        isRoomMember: async () => true,
+        isWorkspaceMember: async () => true,
+        roleForRoom: async (_roomId, pubkey) => (pubkey === owner.publicKey ? 'owner' : 'member'),
+        hasDeviceCustody: async (pubkey) => pubkey === owner.publicKey,
+        permissionHistory: async () => [],
+      };
+      Reflect.set(body, 'permissionReader', reader);
 
       await expect(
-        Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'room-1', request),
-      ).resolves.toBe('allow');
-      expect(wait).toHaveBeenCalledWith(
-        'room-1',
-        expect.any(String),
-        'squire-checkout-request',
-        'external:squire',
-        10 * 60_000,
-        { ownerOnly: true },
+        Reflect.get(body, 'firstGovernedSquireDecision').call(body, request, [
+          laterGrant.event,
+          rogue.event,
+          deny.event,
+        ]),
+      ).resolves.toEqual(deny);
+    });
+
+    it('records an explicitly failed Squire tool result as failed', async () => {
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const revoke = vi.fn();
+      Reflect.set(body, 'squireBroker', { revoke });
+      const runtime = Reflect.get(body, 'permissionRuntime');
+      const complete = vi.spyOn(runtime, 'complete').mockResolvedValue({ status: 'succeeded' });
+      const execution = {
+        action: {
+          roomId: 'room-1',
+          scope: {
+            type: 'operation.execute',
+            connectorId: 'squire',
+            tool: 'use_credential',
+            argumentsDigest: 'a'.repeat(64),
+          },
+        },
+      };
+      Reflect.get(body, 'governedToolExecutions').set('session-1\0tool-1', {
+        execution,
+        brokerAuthorizationId: 'broker-auth-1',
+      });
+      const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+      const unsubscribe = Reflect.get(body, 'attachGovernedToolCompletion').call(body, client);
+
+      client.emit('session/update', {
+        sessionId: 'session-1',
+        update: { sessionUpdate: 'tool_result', toolCallId: 'tool-1', status: 'failed' },
+      });
+
+      await vi.waitFor(() =>
+        expect(complete).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'failed', result: 'squire:use_credential:failed' }),
+        ),
       );
-      expect(published).toHaveLength(2);
-      expect(published[0]!.tags).toContainEqual(['t', 'buzz-write-permission-request']);
-      expect(published[0]!.tags).toContainEqual(['purpose', 'squire-spending']);
-      expect(published[0]!.tags).toContainEqual(['status', 'pending']);
-      expect(published[1]!.tags).toContainEqual(['status', 'allowed']);
+      expect(revoke).toHaveBeenCalledWith('room-1', 'broker-auth-1');
+      unsubscribe();
+    });
+
+    it('finalizes a pending Squire action before every managed-session stop', async () => {
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const revokeAuthorizations = vi.fn();
+      Reflect.set(body, 'squireBroker', { revokeAuthorizations });
+      const runtime = Reflect.get(body, 'permissionRuntime');
+      const complete = vi.spyOn(runtime, 'complete').mockResolvedValue({ status: 'succeeded' });
+      const execution = {
+        action: {
+          roomId: 'room-2',
+          scope: {
+            type: 'operation.execute',
+            connectorId: 'squire',
+            tool: 'grant_app_access',
+            argumentsDigest: 'b'.repeat(64),
+          },
+        },
+      };
+      Reflect.get(body, 'governedToolExecutions').set('session-2\0tool-2', { execution });
+      const stop = vi.fn(async () => undefined);
+      const session = {
+        channelId: 'room-2',
+        sessionId: 'session-2',
+        client: { isAlive: true, stop },
+      };
+
+      await Reflect.get(body, 'stopManagedSession').call(body, session);
+
+      expect(complete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'unknown',
+          result: 'squire:session-ended-before-terminal-update',
+        }),
+      );
+      expect(complete.mock.invocationCallOrder[0]).toBeLessThan(stop.mock.invocationCallOrder[0]);
+      expect(revokeAuthorizations).toHaveBeenCalledWith(session.channelId);
+    });
+
+    it('retries a terminal receipt after relay failure, teardown, and restart', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'squire-receipt-outbox-'));
+      const statePath = join(root, 'state.json');
+      const agent = newIdentity('receipt-agent');
+      const receipt = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: 1_700_000_000,
+          kind: 9,
+          tags: [['t', 'factory-permission-execution']],
+          content: JSON.stringify({ status: 'failed' }),
+        },
+        agent.secretKey,
+      );
+      const failedPublish = vi.fn(async () => {
+        throw new Error('relay unavailable');
+      });
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const first = new Body(config, undefined, agent, undefined, {
+          statePath,
+          publishPermissionReceipt: failedPublish,
+        });
+        await Reflect.get(first, 'publishTerminalPermissionReceipt').call(first, receipt);
+        await first.dispose();
+        expect(failedPublish).toHaveBeenCalled();
+
+        const delivered: NostrEvent[] = [];
+        const restarted = new Body(config, undefined, agent, undefined, {
+          statePath,
+          publishPermissionReceipt: async (event) => {
+            delivered.push(event);
+          },
+        });
+        await vi.waitFor(() => expect(delivered.map((event) => event.id)).toEqual([receipt.id]));
+        await restarted.dispose();
+      } finally {
+        error.mockRestore();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('fails closed before launch when Squire cannot use an isolated governable harness', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'squire-launch-boundary-'));
+      try {
+        const operatorHome = join(root, 'operator');
+        mkdirSync(join(operatorHome, '.config/trusty-squire'), { recursive: true });
+        const squireConfigRoot = join(root, 'runtime', 'squire-config');
+        mkdirSync(join(squireConfigRoot, 'trusty-squire'), { recursive: true });
+        const sessionBus = join(root, 'run', 'bus');
+        mkdirSync(join(root, 'run'), { recursive: true });
+        const alternateConfig = join(root, 'alternate-xdg');
+        const unsupported = new Body({
+          ...config,
+          agentKind: 'pi',
+          agentHomeRoot: join(root, 'pi-home'),
+          operatorHome,
+        });
+        await expect(Reflect.get(unsupported, 'sessionAgentEnv').call(unsupported)).rejects.toThrow(
+          /Codex or Claude/,
+        );
+
+        const ambient = new Body({
+          ...config,
+          agentKind: 'codex',
+          operatorHome,
+        });
+        await expect(Reflect.get(ambient, 'sessionAgentEnv').call(ambient)).rejects.toThrow(
+          /isolated agent home/,
+        );
+
+        const blockedHome = join(root, 'blocked-home');
+        writeFileSync(blockedHome, 'not a directory');
+        const unprovisioned = new Body({
+          ...config,
+          agentKind: 'claude',
+          agentHomeRoot: blockedHome,
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+        });
+        await expect(
+          Reflect.get(unprovisioned, 'sessionAgentEnv').call(unprovisioned),
+        ).rejects.toThrow();
+
+        const isolatedRoot = join(root, 'codex-home');
+        const unwrapped = new Body({
+          ...config,
+          agentKind: 'codex',
+          agentHomeRoot: isolatedRoot,
+          operatorHome,
+        });
+        await expect(Reflect.get(unwrapped, 'sessionAgentEnv').call(unwrapped)).rejects.toThrow(
+          /bubblewrap credential-mask boundary/,
+        );
+
+        const supported = new Body({
+          ...config,
+          agentKind: 'codex',
+          agentHomeRoot: isolatedRoot,
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+          agentEnv: {
+            ...config.agentEnv,
+            XDG_CONFIG_HOME: alternateConfig,
+            DBUS_SESSION_BUS_ADDRESS: `unix:path=${sessionBus}`,
+            DBUS_STARTER_ADDRESS: `unix:path=${sessionBus}`,
+            DBUS_STARTER_BUS_TYPE: 'session',
+          },
+        });
+        const supportedEnv = await Reflect.get(supported, 'sessionAgentEnv').call(supported);
+        expect(supportedEnv).toMatchObject({ CODEX_HOME: join(isolatedRoot, 'codex') });
+        expect(supportedEnv).not.toHaveProperty('DBUS_SESSION_BUS_ADDRESS');
+        expect(supportedEnv).not.toHaveProperty('DBUS_STARTER_ADDRESS');
+        const masks = Reflect.get(supported, 'sandboxCredentialMaskPaths').call(supported);
+        expect(masks).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: join(squireConfigRoot, 'trusty-squire') }),
+            expect.objectContaining({
+              path: join(alternateConfig, 'trusty-squire'),
+              create: true,
+            }),
+            expect.objectContaining({ path: sessionBus, create: true }),
+          ]),
+        );
+
+        const abstractBus = new Body({
+          ...config,
+          agentKind: 'codex',
+          agentHomeRoot: join(root, 'abstract-bus-home'),
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+          agentEnv: {
+            ...config.agentEnv,
+            DBUS_SESSION_BUS_ADDRESS: 'unix:abstract=/tmp/dbus-session',
+          },
+        });
+        await expect(Reflect.get(abstractBus, 'sessionAgentEnv').call(abstractBus)).rejects.toThrow(
+          /session IPC cannot be masked safely/,
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps the owned Squire store isolated after capability removal and downgrade', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'squire-owned-store-boundary-'));
+      try {
+        const operatorHome = join(root, 'operator');
+        const squireConfigRoot = join(root, 'beeline', 'squire-host-config');
+        mkdirSync(join(squireConfigRoot, 'trusty-squire'), { recursive: true });
+
+        const removed = new Body({
+          ...config,
+          externalMcpCapabilities: [],
+          agentKind: 'codex',
+          agentHomeRoot: join(root, 'codex-home'),
+          operatorHome,
+          squireConfigRoot,
+        });
+        await expect(Reflect.get(removed, 'sessionAgentEnv').call(removed)).rejects.toThrow(
+          /bubblewrap credential-mask boundary/,
+        );
+
+        const downgraded = new Body({
+          ...config,
+          externalMcpCapabilities: [],
+          agentKind: 'pi',
+          agentHomeRoot: join(root, 'pi-home'),
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+        });
+        await expect(Reflect.get(downgraded, 'sessionAgentEnv').call(downgraded)).rejects.toThrow(
+          /Codex or Claude/,
+        );
+
+        const isolated = new Body({
+          ...config,
+          externalMcpCapabilities: [],
+          agentKind: 'claude',
+          agentHomeRoot: join(root, 'claude-home'),
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+        });
+        await expect(
+          Reflect.get(isolated, 'sessionAgentEnv').call(isolated),
+        ).resolves.toMatchObject({ CLAUDE_CONFIG_DIR: join(root, 'claude-home', 'claude') });
+        expect(Reflect.get(isolated, 'sandboxCredentialMaskPaths').call(isolated)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: join(squireConfigRoot, 'trusty-squire') }),
+          ]),
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
   });
 
@@ -1288,8 +1645,10 @@ describe('agent identity boundary', () => {
   it('adds only the explicitly granted squire profile to a creator Room', async () => {
     const body = new Body({
       ...config,
+      agentKind: 'codex',
       accessPolicy: 'creator',
-      externalMcpCapabilities: ['squire'],
+      externalMcpCapabilities: ['squire-credential-use'],
+      squireConfigRoot: join(tmpdir(), 'beeline-squire-config-unit'),
       readonlyMcpCommand: '/buzz-readonly-mcp',
     });
     vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);
@@ -1308,20 +1667,20 @@ describe('agent identity boundary', () => {
 
     await body.provision('room-id', { repo: 'repo', localPath: '/paired/repo' });
 
-    expect(create.mock.calls[0]![0].mcpServers).toEqual([
-      {
-        name: 'buzz-readonly-mcp',
-        command: '/buzz-readonly-mcp',
-        args: [],
-        env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
-      },
-      {
-        name: 'squire',
-        command: 'npx',
-        args: ['-y', '@trusty-squire/mcp'],
-        env: [],
-      },
-    ]);
+    expect(create.mock.calls[0]![0].mcpServers[0]).toEqual({
+      name: 'buzz-readonly-mcp',
+      command: '/buzz-readonly-mcp',
+      args: [],
+      env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
+    });
+    expect(create.mock.calls[0]![0].mcpServers[1]).toMatchObject({
+      name: 'squire',
+      command: process.execPath,
+      env: [],
+    });
+    expect(create.mock.calls[0]![0].mcpServers[1].args[0]).toContain('squire-mcp-proxy.js');
+    expect(create.mock.calls[0]![0].mcpServers[1].args).not.toContain('@trusty-squire/mcp');
+    await body.dispose();
   });
 
   it('fails a research Room closed when buzz-readonly-mcp is unresolved', async () => {

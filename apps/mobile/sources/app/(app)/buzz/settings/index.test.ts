@@ -15,9 +15,24 @@ const localCache = vi.hoisted(() => ({ clearBuzzLocalCache: vi.fn() }));
 const authSession = vi.hoisted(() => ({
   clearPendingGitHubSignInState: vi.fn(async () => undefined),
 }));
+const updates = vi.hoisted(() => ({
+  isEnabled: true,
+  checkForUpdateAsync: vi.fn(),
+  fetchUpdateAsync: vi.fn(),
+  reloadAsync: vi.fn(),
+}));
 
 vi.mock('expo-router', () => ({ router: navigation }));
-vi.mock('expo-updates', () => ({ updateId: 'ota-running-123', channel: 'preview' }));
+vi.mock('expo-updates', () => ({
+  updateId: 'ota-running-123',
+  channel: 'preview',
+  get isEnabled() {
+    return updates.isEnabled;
+  },
+  checkForUpdateAsync: updates.checkForUpdateAsync,
+  fetchUpdateAsync: updates.fetchUpdateAsync,
+  reloadAsync: updates.reloadAsync,
+}));
 vi.mock('@/auth/buzz-identity-storage', () => identityStorage);
 vi.mock('@/auth/github-auth-session', () => authSession);
 vi.mock('@/buzz/local-cache', () => localCache);
@@ -37,6 +52,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
+    ActivityIndicator: host('ActivityIndicator'),
     Linking: { openURL: vi.fn(async () => undefined) },
     StyleSheet: { create: (styles: unknown) => styles },
     Text: host('Text'),
@@ -71,7 +87,17 @@ beforeAll(() => {
 });
 
 afterAll(() => vi.restoreAllMocks());
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  updates.isEnabled = true;
+  updates.checkForUpdateAsync.mockResolvedValue({ isAvailable: false });
+  updates.fetchUpdateAsync.mockResolvedValue({
+    isNew: true,
+    isRollBackToEmbedded: false,
+    manifest: { id: 'ota-next' },
+  });
+  updates.reloadAsync.mockResolvedValue(undefined);
+});
 
 function render(): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
@@ -89,6 +115,88 @@ describe('Buzz global Settings', () => {
       .toEqual(['Running update: ', 'ota-running-123']);
     expect(renderer.root.findByProps({ testID: 'ota-update-channel' }).props.children)
       .toEqual(['Channel: ', 'preview']);
+  });
+
+  it('checks on demand and reports when the running build is latest', async () => {
+    const renderer = render();
+
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'ota-update-check' }).props.onPress();
+    });
+
+    expect(updates.checkForUpdateAsync).toHaveBeenCalledOnce();
+    expect(updates.fetchUpdateAsync).not.toHaveBeenCalled();
+    expect(updates.reloadAsync).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ testID: 'ota-update-status' }).props.children).toBe(
+      "You're on the latest version.",
+    );
+    expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.disabled).toBe(false);
+  });
+
+  it('downloads an available update with progress before reloading', async () => {
+    updates.checkForUpdateAsync.mockResolvedValue({ isAvailable: true });
+    let finishDownload!: (value: {
+      isNew: true;
+      isRollBackToEmbedded: false;
+      manifest: { id: string };
+    }) => void;
+    updates.fetchUpdateAsync.mockReturnValue(
+      new Promise((resolve) => {
+        finishDownload = resolve;
+      }),
+    );
+    const renderer = render();
+
+    let updateRun!: Promise<void>;
+    await act(async () => {
+      updateRun = renderer.root.findByProps({ testID: 'ota-update-check' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(updates.fetchUpdateAsync).toHaveBeenCalledOnce();
+    expect(renderer.root.findByProps({ testID: 'ota-update-progress' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.accessibilityLabel).toBe(
+      'Downloading…',
+    );
+
+    await act(async () => {
+      finishDownload({
+        isNew: true,
+        isRollBackToEmbedded: false,
+        manifest: { id: 'ota-next' },
+      });
+      await updateRun;
+    });
+
+    expect(updates.reloadAsync).toHaveBeenCalledOnce();
+    expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.accessibilityLabel).toBe(
+      'Reloading…',
+    );
+  });
+
+  it('returns to an actionable error state when the check fails', async () => {
+    updates.checkForUpdateAsync.mockRejectedValue(new Error('offline'));
+    const renderer = render();
+
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'ota-update-check' }).props.onPress();
+    });
+
+    expect(renderer.root.findByProps({ testID: 'ota-update-status' }).props.children).toContain(
+      'try again',
+    );
+    expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.disabled).toBe(false);
+    expect(renderer.root.findAllByProps({ testID: 'ota-update-progress' })).toHaveLength(0);
+  });
+
+  it('disables the control with a clear note when expo-updates is unavailable', () => {
+    updates.isEnabled = false;
+    const renderer = render();
+
+    expect(renderer.root.findByProps({ testID: 'ota-update-check' }).props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'ota-update-status' }).props.children).toBe(
+      'Updates are unavailable in this build.',
+    );
   });
 
   it('is the one coherent account surface, reachable and not a dead end', () => {

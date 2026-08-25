@@ -1,5 +1,17 @@
 import type { AttachmentReference } from '../attachment.js';
 import type { CornerMachineReason, CornerMachineState } from '../corner-state.js';
+import type {
+  DelegationReceiptV1,
+  DelegationTurnV1,
+  ParsedDelegationTurn,
+} from '../delegation-turn.js';
+import type {
+  ParsedPermissionRequest,
+  PermissionDecisionV1,
+  PermissionExecutionV1,
+  PermissionRequestV1,
+  PermissionRevocationV1,
+} from '../permission-request.js';
 
 declare const channelIdBrand: unique symbol;
 declare const eventIdBrand: unique symbol;
@@ -274,6 +286,24 @@ export type Activity = ChannelEnvelope & {
   readonly detail: ActivityDetail;
 };
 
+/** Immutable machine commands are typed before reducers or UI can observe them. */
+export type Command = ChannelEnvelope & {
+  readonly type: 'command';
+  readonly command:
+    | { readonly kind: 'permission.request'; readonly request: PermissionRequestV1 }
+    | { readonly kind: 'permission.decision'; readonly decision: PermissionDecisionV1 }
+    | { readonly kind: 'permission.revocation'; readonly revocation: PermissionRevocationV1 }
+    | { readonly kind: 'delegation.turn'; readonly turn: DelegationTurnV1 };
+};
+
+/** Receipts are never conversational messages and cannot render as agent prose. */
+export type Receipt = ChannelEnvelope & {
+  readonly type: 'receipt';
+  readonly receipt:
+    | { readonly kind: 'permission.execution'; readonly execution: PermissionExecutionV1 }
+    | { readonly kind: 'delegation.receipt'; readonly delegation: DelegationReceiptV1 };
+};
+
 /** Unknown has no body, tags, or payload, so it cannot satisfy a chat selector. */
 export type Unknown = {
   readonly type: 'unknown';
@@ -301,6 +331,8 @@ export type ReadEvent =
   | Lifecycle
   | Membership
   | Activity
+  | Command
+  | Receipt
   | Unknown;
 
 export type ReadModelDiagnostic = {
@@ -417,6 +449,10 @@ export type ParseAuthority = {
   readonly knownMessages?: Readonly<
     Record<string, { readonly channelId: string; readonly rootId?: string }>
   >;
+  /** Exact, already-verified requests used to parse bound decision/receipt events. */
+  readonly knownPermissionRequests?: Readonly<Record<string, ParsedPermissionRequest>>;
+  /** Exact, already-verified assignment turns used to parse related receipts. */
+  readonly knownDelegationTurns?: Readonly<Record<string, ParsedDelegationTurn>>;
 };
 
 export type SnapshotInput = {

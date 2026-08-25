@@ -5079,6 +5079,7 @@ export class Body {
       this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
       senderPubkey,
       this.config.accessOwnerPubkey,
+      this.config.accessAllowlist,
     );
   }
 

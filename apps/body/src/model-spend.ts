@@ -9,7 +9,8 @@ export type ModelTurnCause =
   | 'corner-conclude'
   | 'target-sync'
   | 'restart-continuation'
-  | 'agent-exchange';
+  | 'agent-exchange'
+  | 'delegation';
 
 export interface ModelTurnAttribution {
   /** Event that immediately caused this invocation. */
@@ -17,10 +18,21 @@ export interface ModelTurnAttribution {
   /** Original human request when the immediate cause is a bounded continuation. */
   originalRequestId: string;
   cause: ModelTurnCause;
+  trigger?: 'human' | 'delegation' | 'schedule';
+  rootEventId?: string;
+  principalPubkey?: string;
+  commissionedByAgentPubkey?: string;
+  delegationId?: string;
+  workItemId?: string;
+  scheduleId?: string;
+  scheduleRunId?: string;
+  reservedTokens?: number;
 }
 
 export interface ModelTurnSpend extends ModelTurnAttribution {
   agentPubkey: string;
+  /** Always the Body whose provider account handled the call. */
+  chargedAgentPubkey?: string;
   channelId: string;
   startedAt: string;
   status: 'complete' | 'failed';
@@ -107,6 +119,11 @@ export function completedModelSpend(input: {
   return {
     ...input.attribution,
     agentPubkey: input.agentPubkey,
+    chargedAgentPubkey: input.agentPubkey,
+    trigger:
+      input.attribution.trigger ??
+      (input.attribution.cause === 'delegation' ? 'delegation' : 'human'),
+    rootEventId: input.attribution.rootEventId ?? input.attribution.originalRequestId,
     channelId: input.channelId,
     startedAt: input.startedAt,
     status: 'complete',
@@ -131,6 +148,11 @@ export function failedModelSpend(input: {
   return {
     ...input.attribution,
     agentPubkey: input.agentPubkey,
+    chargedAgentPubkey: input.agentPubkey,
+    trigger:
+      input.attribution.trigger ??
+      (input.attribution.cause === 'delegation' ? 'delegation' : 'human'),
+    rootEventId: input.attribution.rootEventId ?? input.attribution.originalRequestId,
     channelId: input.channelId,
     startedAt: input.startedAt,
     status: 'failed',

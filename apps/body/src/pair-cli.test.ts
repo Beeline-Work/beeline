@@ -460,7 +460,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     );
 
     expect(status).toBe(1);
-    expect(stderr).toContain('--access must be one of everyone|creator');
+    expect(stderr).toContain('--access must be one of everyone|creator|allowlist');
     expect(stderr).not.toMatch(/\n\s+at /);
   });
 

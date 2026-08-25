@@ -52,6 +52,7 @@ import { formatRoomParticipantTotal } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
+import { isAgentTurnActive } from '@/buzz/agent-presence';
 import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
@@ -98,6 +99,7 @@ import {
 } from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import type { SessionEvent } from '@/sync/transport';
+import { latestAgentTurns } from '@/sync/transport/buzz-event-projection';
 import {
   BrittlePress,
   CornerGlyph,
@@ -473,13 +475,6 @@ export default function BuzzChannels() {
   const [readyInviteUrl, setReadyInviteUrl] = useState<string | undefined>(inviteUrl);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [ageNow, setAgeNow] = useState(() => Date.now());
-  /** Rooms where an agent turn is streaming RIGHT NOW, seen live by this
-   * screen's own event subscription. Corner turns are durable relay state
-   * (they arrive through `corners`); conversational Room turns only exist on
-   * the wire while they run, so they are tracked here from live events and
-   * deliberately reset when the subscription tears down.
-   */
-  const [liveTurnRooms, setLiveTurnRooms] = useState<ReadonlySet<string>>(() => new Set());
   const skipInitialFocusRefresh = useRef(true);
   const loadGeneration = useRef(0);
   const visibleRefreshGeneration = useRef<number | null>(null);
@@ -505,8 +500,18 @@ export default function BuzzChannels() {
         const snapshot = identity?.publicKey
           ? normalizedChannelCaches[channelCacheKey(identity.publicKey, room.id)]?.snapshot
           : undefined;
+        // Use the same normalized-journal lifecycle that drives the in-Room
+        // thinking line. Unlike a focus-scoped transition set, this survives
+        // first paint, backgrounding, and navigation while a turn is already
+        // working. Completion/failed markers close it through the same newest-
+        // per-agent ordering, so replay cannot resurrect an older WORKING.
+        const activeAgentTurn = snapshot
+          ? latestAgentTurns(snapshot, room.id).find((turn) => isAgentTurnActive(turn, undefined))
+          : undefined;
         return {
           ...room,
+          agentTurnWorking: Boolean(activeAgentTurn),
+          agentTurnAt: activeAgentTurn ? snapshot?.rooms[room.id]?.coverage.newest : undefined,
           corners: snapshot ? cornerSummariesFromSnapshot(room.id, snapshot) : [],
         };
       }),
@@ -551,11 +556,9 @@ export default function BuzzChannels() {
       .map((room) => ({
         ...room,
         unreadNew: unreadCountFor(room, identity?.publicKey, readAt),
-        // Unread is activity only: it bolds/floats the Room but never changes
-        // the max-of-corners state circle.
+        // Message unread is activity only: it bolds/floats the Room but never
+        // changes the lifecycle state circle.
         roomUnread: isRoomUnread(roomReadAt(readAt, viewerKey, room.id), room.latestMessageAt),
-        agentTurnWorking: liveTurnRooms.has(room.id),
-        agentTurnAt: liveTurnRooms.has(room.id) ? Math.floor(ageNow / 1000) : undefined,
         corners: room.corners ?? [],
       }));
     // DMs share the same recency feed. Their own fields ride along so the row
@@ -576,7 +579,6 @@ export default function BuzzChannels() {
     cachedListEntry?.viewerPubkey,
     displayChannels,
     identity?.publicKey,
-    liveTurnRooms,
     orderedDirectMessages,
     readAt,
     removedAt,
@@ -929,10 +931,10 @@ export default function BuzzChannels() {
   // Keep the list current while it is visible; cacheLiveSessionEvents also
   // writes the same fresh summary to MMKV on the next background transition.
   //
-  // The same stream also feeds the deck's WORKING state for conversational
-  // Room turns: an `agent-turn` working event (or a streaming draft) marks the
-  // Room live until its complete/failed lands. Corner turns need none of this
-  // — their lifecycle is durable relay state read through `corners`.
+  // The same stream folds durable `agent-turn` lifecycle into each Room's
+  // normalized snapshot. The deck reads that snapshot above, so a turn that
+  // began before focus is visible immediately and complete/failed settles it
+  // without maintaining a second transition-only state machine here.
   //
   // Coalesce per animation frame. A corner streaming its reply delivers one
   // raw event per token, and `cacheLiveSessionEvents` rebuilds and re-sorts
@@ -952,23 +954,6 @@ export default function BuzzChannels() {
       const pending = new Map<string, SessionEvent[]>();
       let flushScheduled = false;
       let stopped = false;
-      const noteTurnEvent = (channelId: string, event: SessionEvent) => {
-        if (event.type !== 'read-model' || event.event.type !== 'session-update') return;
-        const update = event.event.update;
-        if (update.kind !== 'turn' && update.kind !== 'draft') return;
-        const finished =
-          update.kind === 'turn'
-            ? update.status === 'complete' || update.status === 'failed'
-            : update.closed;
-        setLiveTurnRooms((current) => {
-          const has = current.has(channelId);
-          if (finished === !has) return current; // no change
-          const next = new Set(current);
-          if (finished) next.delete(channelId);
-          else next.add(channelId);
-          return next;
-        });
-      };
       const flush = () => {
         flushScheduled = false;
         if (stopped || pending.size === 0) return;
@@ -983,7 +968,6 @@ export default function BuzzChannels() {
           channelId,
           (event) => {
             if (stopped) return;
-            noteTurnEvent(channelId, event);
             const queued = pending.get(channelId);
             if (queued) queued.push(event);
             else pending.set(channelId, [event]);
@@ -998,7 +982,6 @@ export default function BuzzChannels() {
       return () => {
         stopped = true;
         unsubscribes.forEach((unsubscribe) => unsubscribe());
-        setLiveTurnRooms(new Set());
       };
     }, [identity, roomIdsKey, transport]),
   );

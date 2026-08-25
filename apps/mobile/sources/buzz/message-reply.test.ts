@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { replyMessageText, type MessageReplyTarget } from './message-reply';
+import { replyMessageText, type MessageReplyDisplayTarget } from './message-reply';
 
-const personTarget: MessageReplyTarget = {
+const personTarget: MessageReplyDisplayTarget = {
   messageId: 'person-message',
   authorName: 'Mira',
   authorPubkey: 'person',
@@ -10,7 +10,7 @@ const personTarget: MessageReplyTarget = {
   preview: 'A human note',
 };
 
-const agentTarget: MessageReplyTarget = {
+const agentTarget: MessageReplyDisplayTarget = {
   messageId: 'agent-message',
   authorName: 'Brisk Pilot',
   authorPubkey: 'agent',

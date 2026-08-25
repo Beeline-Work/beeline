@@ -31,8 +31,7 @@ import {
   buildAttachmentTags,
   tagValue,
   tagValues,
-  classifySessionEvent,
-  toSessionEvent,
+  parseRelayEvents,
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
@@ -44,6 +43,8 @@ import {
   KIND_REMOVE_USER,
   KIND_EDIT_METADATA,
   KIND_CREATE_GROUP,
+  KIND_CHANNEL_MEMBERS,
+  KIND_CHANNEL_ADMINS,
   KIND_STREAM_MESSAGE,
   TAG_COMMUNITY,
   TAG_PARENT,
@@ -55,7 +56,6 @@ import {
   type ChannelMetadata,
   type Identity,
   type MergeTarget,
-  type SessionEvent as BuzzSessionEvent,
   type WritePermissionDecision,
   type AttachmentReference,
   type AgentModelCatalog,
@@ -64,7 +64,6 @@ import {
   type AgentCommandList,
   TAG_CORNER_STATE,
   KIND_CORNER_STATE,
-  parseCornerStateRecord,
   cornerStateKey,
   type RoomRepository,
   type RoomRepositoryResolution,
@@ -76,27 +75,27 @@ import {
   getGitHubRepositoryAccess,
   type GitHubInstallationAccess,
   type GitHubRepositoryAccessResult,
+  type IdentityRecord,
+  type KnownMessageReference,
+  type ParseAuthority,
+  type ReadEvent,
+  type WorkspaceSnapshot,
+  createWorkspaceSnapshot,
+  reduceWorkspaceEvents,
+  commitRoomCoverage,
+  selectCorners,
 } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { cornerName, type CornerSummary } from '@/buzz/corners';
-import { projectChatEvent, toRigEvent, type ChatDisplayMessage } from './buzz-event-projection';
+import type { CornerSummary } from '@/buzz/corners';
+import { transcriptMessages, toRigEvent } from './buzz-event-projection';
 import {
   ROOM_CONTEXT_LIMIT,
   selectRoomContext,
   type RoomContextEntry,
 } from '@/buzz/corner-context';
-import {
-  clearCornerLifecycleCache,
-  getCachedCornerLifecycle,
-  setCachedCornerLifecycle,
-} from './corner-lifecycle-cache';
-import { resolveCornerVerdict } from './corner-state-verdict';
-import type { CornerStateRecord } from '@beeline/buzz-client';
-
-export { invalidateCornerLifecycleCache } from './corner-lifecycle-cache';
 
 /** Room events read back to find the pre-open window. Generous enough that a
  *  burst of corner status cards and activity batches right before the corner
@@ -106,85 +105,11 @@ const ROOM_REPOSITORY_MARKER = 'buzz-room-repository';
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
-/** One best-effort multi-`#d` read of the daemon-authoritative corner state
- * records across corners. Filtered by `#d`, never `#h` (kind:30078 records
- * are indexed by `d`). A failed or empty read resolves an empty map, which
- * can only produce canonical idle — never history-derived activity. */
-async function fetchCornerStateRecords(
-  client: BuzzClient,
-  cornerIds: string[],
-): Promise<Map<string, Array<{ record: CornerStateRecord; authorPubkey: string }>>> {
-  if (cornerIds.length === 0) return new Map();
-  let events: NostrEvent[];
-  try {
-    events = await client.query([
-      {
-        kinds: [KIND_CORNER_STATE],
-        '#d': cornerIds.map((id) => cornerStateKey(id)),
-        limit: Math.max(200, cornerIds.length * 5),
-      },
-    ]);
-  } catch {
-    events = [];
-  }
-  const byCorner = new Map<string, Array<{ record: CornerStateRecord; authorPubkey: string }>>();
-  for (const event of events) {
-    const record = parseCornerStateRecord(event);
-    if (!record) continue;
-    const records = byCorner.get(record.cornerId) ?? [];
-    records.push({ record, authorPubkey: event.pubkey });
-    byCorner.set(record.cornerId, records);
-  }
-  return byCorner;
-}
-
-/** Pure projection shared by the single-Room and cross-Room lifecycle fetchers. */
-function cornerSummaryFromEvents(
-  id: string,
-  creates: NostrEvent[],
-  metadata: ChannelMetadata | null,
-  events: BuzzSessionEvent[],
-  parentRoomLive: boolean,
-  authoredStates: Array<{ record: CornerStateRecord; authorPubkey: string }> = [],
-): CornerSummary {
-  const create = [...creates].sort((a, b) => a.created_at - b.created_at)[0];
-  // The immutable kind:9007 creator is the lifecycle authority. A different
-  // pubkey can publish the same d text under its own replaceable namespace,
-  // but it cannot speak for this corner.
-  const stateRecord = create
-    ? authoredStates
-        .filter((candidate) => candidate.authorPubkey === create.pubkey)
-        .sort((a, b) => b.record.at - a.record.at)[0]?.record
-    : undefined;
-  const lastActivityAt = Math.max(
-    create?.created_at ?? 0,
-    ...events.map((event) => event.createdAt),
-  );
-  const verdict = resolveCornerVerdict({
-    ...(stateRecord !== undefined ? { stateRecord } : {}),
-    channelExists: metadata !== null && metadata.archived !== true,
-    parentRoomLive,
-  });
-  return {
-    id,
-    name: cornerName(create ? tagValue(create, 'name') : undefined, id),
-    openerPubkey: create?.pubkey ?? '',
-    status: verdict.status,
-    ...(verdict.machineState ? { machineState: verdict.machineState } : {}),
-    ...(verdict.machineReason ? { machineReason: verdict.machineReason } : {}),
-    ...(verdict.stateAt !== undefined ? { stateAt: verdict.stateAt } : {}),
-    ...(verdict.awaitingReply ? { awaitingReply: true } : {}),
-    createdAt: create?.created_at,
-    ...(lastActivityAt > 0 ? { lastActivityAt } : {}),
-  };
-}
-
 function sharedClient(identity: Identity, baseUrl: string): BuzzClient {
   const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
   const key = `${normalizedBaseUrl}\u0000${identity.publicKey}`;
   if (sharedClientEntry?.key === key) return sharedClientEntry.client;
   sharedClientEntry?.client.disconnect();
-  clearCornerLifecycleCache();
   const client = createBuzzClient({
     baseUrl: normalizedBaseUrl,
     identity,
@@ -202,6 +127,8 @@ export class BuzzRigTransport implements RigTransport {
   private subscriptions = new Map<SessionId, () => void>();
   /** A second caller publishing the same prepared event joins the first publish. */
   private outgoingPublishes = new Map<string, Promise<string>>();
+  private readAuthorities = new Map<string, { loadedAt: number; authority: ParseAuthority }>();
+  private knownMessages = new Map<string, { channelId: string; rootId?: string }>();
 
   constructor(identity: Identity, baseUrl: string = getBuzzRuntimeConfig().relayUrl) {
     this.identity = identity;
@@ -224,6 +151,153 @@ export class BuzzRigTransport implements RigTransport {
   /** Expose the underlying client for direct buzz-client calls when needed. */
   async ensureClient(): Promise<BuzzClient> {
     return this.getClient();
+  }
+
+  private async readAuthority(channelId: string): Promise<ParseAuthority> {
+    const cached = this.readAuthorities.get(channelId);
+    if (cached && Date.now() - cached.loadedAt < 15_000) {
+      return {
+        ...cached.authority,
+        knownMessages: Object.fromEntries(this.knownMessages),
+      };
+    }
+    const client = await this.getClient();
+    const [members, communityId, creator] = await Promise.all([
+      client.listMembers(channelId),
+      client.getChannelCommunityId(channelId),
+      this.getChannelCreator(channelId),
+    ]);
+    const workspaceId = communityId ?? channelId;
+    const agents = communityId ? await client.listAgents(communityId).catch(() => []) : [];
+    const agentByPubkey = new Map(agents.map((agent) => [agent.pubkey, agent]));
+    const humanPubkeys = members
+      .map((member) => member.pubkey)
+      .filter((pubkey) => !agentByPubkey.has(pubkey));
+    const profiles = communityId
+      ? await client.listPersonProfiles(communityId, humanPubkeys).catch(() => [])
+      : [];
+    const profileByPubkey = new Map(profiles.map((profile) => [profile.pubkey, profile]));
+    const identities: Record<string, IdentityRecord> = {};
+    for (const member of members) {
+      const agent = agentByPubkey.get(member.pubkey);
+      const profile = profileByPubkey.get(member.pubkey);
+      identities[member.pubkey] = agent
+        ? {
+            kind: 'agent',
+            pubkey: member.pubkey as IdentityRecord['pubkey'],
+            displayName: agent.displayName,
+            revision: agent.raw.id,
+          }
+        : {
+            kind: 'human',
+            pubkey: member.pubkey as IdentityRecord['pubkey'],
+            ...(profile?.name ? { displayName: profile.name } : {}),
+            ...(profile?.handle ? { handle: profile.handle } : {}),
+            revision: profile?.raw.id ?? `member:${member.pubkey}`,
+          };
+    }
+    for (const agent of agents) {
+      identities[agent.pubkey] = {
+        kind: 'agent',
+        pubkey: agent.pubkey as IdentityRecord['pubkey'],
+        displayName: agent.displayName,
+        revision: agent.raw.id,
+      };
+    }
+    if (!identities[this.identity.publicKey]) {
+      identities[this.identity.publicKey] = {
+        kind: 'human',
+        pubkey: this.identity.publicKey as IdentityRecord['pubkey'],
+        ...(this.identity.name ? { displayName: this.identity.name } : {}),
+        revision: `local:${this.identity.publicKey}`,
+      };
+    }
+    const admins = members
+      .filter((member) => member.role === 'owner' || member.role === 'admin')
+      .map((member) => member.pubkey);
+    const authority: ParseAuthority = {
+      workspaceId,
+      expectedChannelId: channelId,
+      identities,
+      ...(creator ? { channelCreators: { [channelId]: creator } } : {}),
+      channelAdmins: { [channelId]: [...new Set([...(creator ? [creator] : []), ...admins])] },
+      knownMessages: Object.fromEntries(this.knownMessages),
+    };
+    this.readAuthorities.set(channelId, { loadedAt: Date.now(), authority });
+    return authority;
+  }
+
+  private async readAuthorityForChannels(channelIds: readonly string[]): Promise<ParseAuthority> {
+    const authorities = await Promise.all(
+      channelIds.map((channelId) => this.readAuthority(channelId)),
+    );
+    const workspaceId = authorities[0]?.workspaceId ?? channelIds[0] ?? 'unknown-workspace';
+    const identities: Record<string, IdentityRecord> = {};
+    const channelCreators: Record<string, string> = {};
+    const channelAdmins: Record<string, readonly string[]> = {};
+    for (const authority of authorities) {
+      for (const identity of Object.values(authority.identities)) {
+        const current = identities[identity.pubkey];
+        if (!current || current.revision < identity.revision)
+          identities[identity.pubkey] = identity;
+      }
+      Object.assign(channelCreators, authority.channelCreators);
+      Object.assign(channelAdmins, authority.channelAdmins);
+    }
+    return {
+      workspaceId,
+      allowedChannelIds: [...new Set(channelIds)],
+      identities,
+      channelCreators,
+      channelAdmins,
+      knownMessages: Object.fromEntries(this.knownMessages),
+    };
+  }
+
+  private rememberMessages(events: readonly ReadEvent[]): void {
+    for (const event of events) {
+      if (event.type !== 'human-message' && event.type !== 'agent-message') continue;
+      this.knownMessages.set(event.eventId, {
+        channelId: event.channelId,
+        rootId: event.reply?.rootId ?? event.eventId,
+      });
+    }
+  }
+
+  private parseReadyEvents(
+    authority: ParseAuthority,
+    events: readonly NostrEvent[],
+  ): SessionEvent[] {
+    const parsed = parseRelayEvents(events, {
+      ...authority,
+      knownMessages: Object.fromEntries(this.knownMessages),
+    });
+    this.rememberMessages(parsed);
+    return parsed.map(toRigEvent);
+  }
+
+  private async parseEvents(
+    channelId: string,
+    events: readonly NostrEvent[],
+  ): Promise<SessionEvent[]> {
+    const authority = await this.readAuthority(channelId);
+    return this.parseReadyEvents(authority, events);
+  }
+
+  async readModelSnapshot(
+    channelId: string,
+    events: readonly NostrEvent[],
+  ): Promise<WorkspaceSnapshot> {
+    const authority = await this.readAuthority(channelId);
+    const parsed = parseRelayEvents(events, authority);
+    this.rememberMessages(parsed);
+    return reduceWorkspaceEvents(
+      createWorkspaceSnapshot({
+        workspaceId: authority.workspaceId,
+        identities: Object.values(authority.identities),
+      }),
+      parsed,
+    );
   }
 
   // ── Sessions (P1: channels as sessions) ────────────────────────────────
@@ -336,59 +410,20 @@ export class BuzzRigTransport implements RigTransport {
 
   /** Publish a NIP-10 reply, optionally addressing the original Agent explicitly. */
   async messageSubmitReply(
-    channelId: string,
     text: string,
-    replyToId: string,
+    parent: KnownMessageReference,
     mentionAgent?: string,
     attachments: AttachmentReference[] = [],
     mentionPubkeys: string[] = [],
   ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
-    const [replyTarget] = await client.query([{ ids: [replyToId], limit: 1 }]);
-
-    // Buzz validates a NIP-10 parent against the parent event's persisted
-    // channel association. Compatibility-era agent/control events can still
-    // appear in a transcript without their own `h` tag; referencing one
-    // directly makes the relay reject the otherwise-valid reply with
-    // "parent event has no channel association". In that case, thread from
-    // the nearest channel-associated ancestor instead. If there is no safe
-    // ancestor, publish the conversational response without a forged parent.
-    let effectiveReplyTarget =
-      replyTarget?.tags.some((tag) => tag[0] === 'h' && tag[1] === channelId)
-        ? replyTarget
-        : undefined;
-    if (replyTarget && !effectiveReplyTarget) {
-      const ancestorIds = [
-        replyTarget.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply')?.[1],
-        replyTarget.tags.find((tag) => tag[0] === 'e' && tag[1] && tag[3] === 'root')?.[1],
-      ].filter((id, index, ids): id is string => Boolean(id) && ids.indexOf(id) === index);
-      if (ancestorIds.length) {
-        const ancestors = await client.query([{ ids: ancestorIds, limit: ancestorIds.length }]);
-        effectiveReplyTarget = ancestorIds
-          .map((id) => ancestors.find((event) => event.id === id))
-          .find((event) =>
-            event?.tags.some((tag) => tag[0] === 'h' && tag[1] === channelId),
-          );
-      }
-    }
-    const effectiveReplyToId = effectiveReplyTarget?.id;
-    const replyRootId =
-      effectiveReplyTarget?.tags.find(
-        (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'root',
-      )?.[1] ??
-      effectiveReplyTarget?.tags.find(
-        (tag) => tag[0] === 'e' && tag[1] && tag[3] === 'reply',
-      )?.[1] ??
-      effectiveReplyToId;
-    const event = client.buildMessage(channelId, text, {
+    const event = client.buildMessage(parent.channelId, text, {
       ...(mentionAgent ? { mentionAgent } : {}),
       ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
       extraTags: [
-        ...(replyRootId && effectiveReplyToId && replyRootId !== effectiveReplyToId
-          ? [['e', replyRootId, '', 'root']]
-          : []),
-        ...(effectiveReplyToId ? [['e', effectiveReplyToId, '', 'reply']] : []),
+        ...(parent.rootId !== parent.eventId ? [['e', parent.rootId, '', 'root']] : []),
+        ['e', parent.eventId, '', 'reply'],
         ...attachmentTags,
       ],
     });
@@ -424,6 +459,7 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<boolean> {
     const client = await this.getClient();
     const result = await client.attachAgentToChannel(channelId, agentPubkey, communityId);
+    this.readAuthorities.delete(channelId);
     return result.joined;
   }
 
@@ -439,6 +475,7 @@ export class BuzzRigTransport implements RigTransport {
       memberPubkey,
       communityId,
     );
+    this.readAuthorities.delete(channelId);
     return result.joined;
   }
 
@@ -446,6 +483,7 @@ export class BuzzRigTransport implements RigTransport {
   async removeRoomMember(channelId: string, memberPubkey: string): Promise<void> {
     const client = await this.getClient();
     await client.removeRoomMember(channelId, memberPubkey);
+    this.readAuthorities.delete(channelId);
   }
 
   /** Leave a Room as a normal member and wait until the relay projection drops us. */
@@ -511,8 +549,10 @@ export class BuzzRigTransport implements RigTransport {
     handler: (event: SessionEvent) => void,
   ): Promise<() => void> {
     const client = await this.getClient();
+    const authority = await this.readAuthority(sessionId);
     const relayUnsubscribe = await client.sessionEventsSubscribe(sessionId, (event) => {
-      handler(toRigEvent(event));
+      const [parsed] = this.parseReadyEvents(authority, [event]);
+      if (parsed) handler(parsed);
     });
     let stopped = false;
     const stop = () => {
@@ -553,165 +593,97 @@ export class BuzzRigTransport implements RigTransport {
     sessionId: SessionId,
     opts?: { beforeSeq?: number; afterSeq?: number; limit?: number },
   ): Promise<SessionEvent[]> {
+    return (await this.readModelBackfill(sessionId, opts)).events;
+  }
+
+  async readModelBackfill(
+    sessionId: SessionId,
+    opts?: { beforeSeq?: number; afterSeq?: number; limit?: number },
+  ): Promise<{ snapshot: WorkspaceSnapshot; events: SessionEvent[] }> {
     const client = await this.getClient();
     const buzzEvents = await client.sessionEventsBackfill(sessionId, {
       limit: opts?.limit,
       until: opts?.beforeSeq,
       since: opts?.afterSeq,
     });
-    return buzzEvents.map(toRigEvent);
-  }
-
-  /**
-   * Read every relay record needed to derive a Room's quiet state-change
-   * transcript. The returned records are structure, not new chat messages:
-   * membership/metadata/repository history plus the canonical per-corner
-   * lifecycle records and existing land summaries used only for digest copy.
-   */
-  async roomUpdateEventsBackfill(roomId: string): Promise<NostrEvent[]> {
-    const client = await this.getClient();
-    const cornerIds = await client.listSubchannels(roomId);
-    const [roomCreate, roomMutations, repository, cornerStates, cornerCreates, landContext] =
-      await Promise.all([
-        client.query([{ kinds: [KIND_CREATE_GROUP], '#h': [roomId], limit: 10 }]),
-        client.query([
-          {
-            kinds: [KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA],
-            '#h': [roomId],
-            limit: 2_000,
-          },
-        ]),
-        client.query([
-          {
-            kinds: [KIND_CORNER_STATE],
-            '#d': [`${ROOM_REPOSITORY_MARKER}:${roomId}`],
-            limit: 100,
-          },
-        ]),
-        cornerIds.length
-          ? client.query([
-              {
-                kinds: [KIND_CORNER_STATE],
-                '#d': cornerIds.map((cornerId) => cornerStateKey(cornerId)),
-                limit: Math.max(100, cornerIds.length * 20),
-              },
-            ])
-          : Promise.resolve([]),
-        cornerIds.length
-          ? client.query([
-              { kinds: [KIND_CREATE_GROUP], '#h': cornerIds, limit: cornerIds.length * 5 },
-            ])
-          : Promise.resolve([]),
-        client.query([
-          {
-            kinds: [KIND_STREAM_MESSAGE],
-            '#h': [roomId],
-            '#t': ['landed', 'land-summary', 'merge-summary'],
-            limit: 500,
-          },
-        ]),
-      ]);
-    return [
-      ...new Map(
-        [
-          ...roomCreate,
-          ...roomMutations,
-          ...repository,
-          ...cornerStates,
-          ...cornerCreates,
-          ...landContext,
-        ].map((event) => [event.id, event]),
-      ).values(),
-    ].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
-  }
-
-  /** Live structural delivery. It reuses the Room socket and emits no writes. */
-  async roomUpdateEventsSubscribeReady(
-    roomId: string,
-    handler: (event: NostrEvent) => void,
-  ): Promise<() => void> {
-    const subscriptionKey = `room-updates:${roomId}`;
-    const client = await this.getClient();
-    const cornerIds = new Set(await client.listSubchannels(roomId));
-    const stops: Array<() => void> = [];
-    const relayUnsubscribe = await client.sessionEventsSubscribe(
-      roomId,
-      (event) => {
-        const raw = event.event;
-        const marker = tagValue(raw, 't');
-        if (
-          raw.kind === KIND_STREAM_MESSAGE &&
-          !['landed', 'land-summary', 'merge-summary'].includes(marker ?? '')
-        ) {
-          return;
-        }
-        handler(raw);
-      },
-      {
-        kinds: [KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA, KIND_STREAM_MESSAGE],
-      },
-    );
-    stops.push(relayUnsubscribe);
-
-    // Kind:30078 is indexed by `d`, not the Room's `h`. Keep its live path on
-    // exact repository/corner keys, mirroring the canonical corner-state
-    // reader. A child create dynamically installs the new key; the create is
-    // also handed to the renderer as the immutable objective/authority fact.
-    await client.connect();
-    const socket = client.socket;
-    if (!socket) throw new Error('Room update socket unavailable after connect');
-    const subscribeCorner = (cornerId: string) => {
-      if (cornerIds.has(cornerId)) return;
-      cornerIds.add(cornerId);
-      stops.push(
-        socket.subscribe(
-          [{ kinds: [KIND_CORNER_STATE], '#d': [cornerStateKey(cornerId)] }],
-          handler,
-        ),
-      );
-    };
-    const initialCornerIds = [...cornerIds];
-    cornerIds.clear();
-    initialCornerIds.forEach(subscribeCorner);
-    stops.push(
-      socket.subscribe(
-        [
-          {
-            kinds: [KIND_CORNER_STATE],
-            '#d': [`${ROOM_REPOSITORY_MARKER}:${roomId}`],
-          },
-        ],
-        (event) => {
-          if (tagValue(event, 't') === ROOM_REPOSITORY_MARKER) handler(event);
+    const parentRoomId = await client.getParentChannelId(sessionId);
+    const roomId = parentRoomId ?? sessionId;
+    const cornerIds = parentRoomId ? [sessionId] : await client.listSubchannels(roomId);
+    const channelIds = [...new Set([roomId, ...cornerIds])];
+    const [structural, projections, cornerStates] = await Promise.all([
+      client.query([
+        {
+          kinds: [KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA],
+          '#h': channelIds,
+          limit: Math.max(2_000, channelIds.length * 200),
         },
-      ),
-    );
-    stops.push(
-      socket.subscribe([{ kinds: [KIND_CREATE_GROUP], [`#${TAG_PARENT}`]: [roomId] }], (event) => {
-        const cornerId = tagValue(event, 'h');
-        if (!cornerId) return;
-        handler(event);
-        subscribeCorner(cornerId);
-      }),
-    );
-    let stopped = false;
-    const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      stops.splice(0).forEach((unsubscribe) => unsubscribe());
-      if (this.subscriptions.get(subscriptionKey) === stop) {
-        this.subscriptions.delete(subscriptionKey);
-      }
+      ]),
+      client.query([
+        {
+          kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+          '#d': channelIds,
+          limit: channelIds.length * 4,
+        },
+        {
+          kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+          '#h': channelIds,
+          limit: channelIds.length * 4,
+        },
+      ]),
+      cornerIds.length
+        ? client.query([
+            {
+              kinds: [KIND_CORNER_STATE],
+              '#d': cornerIds.map((cornerId) => cornerStateKey(cornerId)),
+              limit: Math.max(100, cornerIds.length * 20),
+            },
+          ])
+        : Promise.resolve([]),
+    ]);
+    const authority = {
+      ...(await this.readAuthorityForChannels(channelIds)),
+      trustedProjectionPubkeys: [...new Set(projections.map((event) => event.pubkey))],
     };
-    this.subscriptions.set(subscriptionKey, stop);
-    return stop;
+    const parsed = parseRelayEvents(
+      [...buzzEvents, ...structural, ...projections, ...cornerStates].filter(
+        (event, index, all) => all.findIndex((candidate) => candidate.id === event.id) === index,
+      ),
+      authority,
+    );
+    this.rememberMessages(parsed);
+    const reduced = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({
+        workspaceId: authority.workspaceId,
+        identities: Object.values(authority.identities),
+      }),
+      parsed,
+    );
+    const oldest = parsed
+      .flatMap((event) =>
+        event.type === 'unknown' || event.scope === 'workspace' ? [] : [event.createdAt],
+      )
+      .sort((a, b) => a - b)[0];
+    const newest = parsed
+      .flatMap((event) =>
+        event.type === 'unknown' || event.scope === 'workspace' ? [] : [event.createdAt],
+      )
+      .sort((a, b) => b - a)[0];
+    const snapshot = reduced.rooms[sessionId]
+      ? commitRoomCoverage(reduced, sessionId, {
+          epoch: Date.now(),
+          initialBackfillComplete: opts?.afterSeq === undefined,
+          ...(oldest !== undefined ? { oldest } : {}),
+          ...(newest !== undefined ? { newest } : {}),
+        })
+      : reduced;
+    return { snapshot, events: parsed.map(toRigEvent) };
   }
 
   /** Read the current parameterized-replaceable presence record(s) for a Room. */
   async agentPresenceBackfill(channelId: string): Promise<SessionEvent[]> {
     const client = await this.getClient();
     const buzzEvents = await client.agentPresenceBackfill(channelId);
-    return buzzEvents.map(toRigEvent);
+    return this.parseEvents(channelId, buzzEvents);
   }
 
   /**
@@ -751,10 +723,8 @@ export class BuzzRigTransport implements RigTransport {
         limit: Math.max(200, roomIds.length * 10),
       },
     ]);
-    return buzzEvents
-      .map(toSessionEvent)
-      .filter((event): event is BuzzSessionEvent => event !== null)
-      .map(toRigEvent);
+    const authority = await this.readAuthorityForChannels(roomIds);
+    return this.parseReadyEvents(authority, buzzEvents);
   }
 
   /** Subscribe only to Room presence, keeping telemetry out of chat backfill. */
@@ -764,8 +734,10 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<() => void> {
     const subscriptionKey = `presence:${channelId}`;
     const client = await this.getClient();
+    const authority = await this.readAuthority(channelId);
     const relayUnsubscribe = await client.agentPresenceSubscribe(channelId, (event) => {
-      handler(toRigEvent(event));
+      const [parsed] = this.parseReadyEvents(authority, [event]);
+      if (parsed) handler(parsed);
     });
     let stopped = false;
     const stop = () => {
@@ -810,7 +782,7 @@ export class BuzzRigTransport implements RigTransport {
   async agentDraftBackfill(channelId: string): Promise<SessionEvent[]> {
     const client = await this.getClient();
     const buzzEvents = await client.agentDraftBackfill(channelId);
-    return buzzEvents.map(toRigEvent);
+    return this.parseEvents(channelId, buzzEvents);
   }
 
   /** Subscribe only to this Room's live agent reply draft, isolated from chat backfill. */
@@ -820,8 +792,10 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<() => void> {
     const subscriptionKey = `draft:${channelId}`;
     const client = await this.getClient();
+    const authority = await this.readAuthority(channelId);
     const relayUnsubscribe = await client.agentDraftSubscribe(channelId, (event) => {
-      handler(toRigEvent(event));
+      const [parsed] = this.parseReadyEvents(authority, [event]);
+      if (parsed) handler(parsed);
     });
     let stopped = false;
     const stop = () => {
@@ -865,39 +839,18 @@ export class BuzzRigTransport implements RigTransport {
     return unsubscribe;
   }
 
-  /** Current canonical lifecycle records for exact corner ids. */
-  async cornerStateBackfill(cornerIds: string[]): Promise<CornerStateRecord[]> {
-    const client = await this.getClient();
-    const authorities = new Map(
-      await Promise.all(
-        cornerIds.map(async (id) => [id, await this.getChannelCreator(id)] as const),
-      ),
-    );
-    const events = await client.cornerStateBackfill(cornerIds);
-    return events
-      .filter((event) => {
-        const record = parseCornerStateRecord(event);
-        return record !== undefined && authorities.get(record.cornerId) === event.pubkey;
-      })
-      .map(parseCornerStateRecord)
-      .filter((record): record is CornerStateRecord => record !== undefined);
-  }
-
-  /** Live canonical lifecycle delivery. Parent body-control cards never enter. */
-  async cornerStateSubscribeReady(
+  /** Live canonical lifecycle delivery through the typed wire parser. */
+  async cornerLifecycleSubscribeReady(
+    parentRoomId: string,
     cornerIds: string[],
-    handler: (record: CornerStateRecord) => void,
+    handler: (event: SessionEvent) => void,
   ): Promise<() => void> {
     const subscriptionKey = `corner-state:${[...cornerIds].sort().join(',')}`;
     const client = await this.getClient();
-    const authorities = new Map(
-      await Promise.all(
-        cornerIds.map(async (id) => [id, await this.getChannelCreator(id)] as const),
-      ),
-    );
+    const authority = await this.readAuthorityForChannels([parentRoomId, ...cornerIds]);
     const relayUnsubscribe = await client.cornerStateSubscribe(cornerIds, (event) => {
-      const record = parseCornerStateRecord(event);
-      if (record && authorities.get(record.cornerId) === event.pubkey) handler(record);
+      const [parsed] = this.parseReadyEvents(authority, [event]);
+      if (parsed) handler(parsed);
     });
     let stopped = false;
     const stop = () => {
@@ -1399,26 +1352,7 @@ export class BuzzRigTransport implements RigTransport {
     try {
       const client = await this.getClient();
       const meta = await client.getChannelMetadata(channelId);
-      if (meta?.archived) return true;
-      const parentChannelId = await client.getParentChannelId(channelId);
-      if (!parentChannelId) return false;
-      // A corner archive also posts a status card into its parent Room. That
-      // card describes the tagged subchannel; it is not Room lifecycle state.
-      // Legacy self-archive messages have no subchannel tag, so keep accepting
-      // those for verified corners when relay metadata has not materialized.
-      const events = await client.sessionEventsBackfill(channelId, { limit: 10 });
-      for (const ev of events) {
-        const tTags = (ev.event.tags ?? []).filter((t: string[]) => t[0] === 't');
-        const isControl = tTags.some((t: string[]) => t[1] === 'body-control');
-        if (isControl) {
-          const status = tagValue(ev.event, 'status');
-          const scopedSubchannel = tagValue(ev.event, 'subchannel');
-          if (status === 'archived' && (!scopedSubchannel || scopedSubchannel === channelId)) {
-            return true;
-          }
-        }
-      }
-      return false;
+      return meta?.archived === true;
     } catch {
       return false;
     }
@@ -1432,43 +1366,35 @@ export class BuzzRigTransport implements RigTransport {
     return client.listSubchannels(parentChannelId);
   }
 
-  /**
-   * Person-facing corner projection used by navigation and the full browse
-   * view. Cached for a few seconds per parent Room across all 3 call sites;
-   * see `invalidateCornerLifecycleCache`.
-   */
+  /** Person-facing projection of the canonical snapshot corner union. */
   async listSubchannelLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
-    const cached = getCachedCornerLifecycle(parentChannelId);
-    if (cached) return cached;
-    const promise = this.fetchOneRoomLifecycle(parentChannelId);
-    setCachedCornerLifecycle(parentChannelId, promise);
-    return promise;
-  }
-
-  private async fetchOneRoomLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
-    const client = await this.getClient();
-    const ids = await client.listSubchannels(parentChannelId);
-    const parentMetadata = await client.getChannelMetadata(parentChannelId);
-    const parentRoomLive = parentMetadata !== null && parentMetadata.archived !== true;
-    const cornerIds = ids;
-    const stateRecordsByCorner = await fetchCornerStateRecords(client, cornerIds);
-    return Promise.all(
-      ids.map(async (id) => {
-        const [creates, metadata, events] = await Promise.all([
-          client.query([{ kinds: [9007], '#h': [id], limit: 5 }]),
-          client.getChannelMetadata(id),
-          client.sessionEventsBackfill(id, { limit: 50 }),
-        ]);
-        return cornerSummaryFromEvents(
-          id,
-          creates,
-          metadata,
-          events,
-          parentRoomLive,
-          stateRecordsByCorner.get(id),
-        );
-      }),
-    );
+    const { snapshot } = await this.readModelBackfill(parentChannelId, { limit: 1 });
+    return selectCorners(snapshot, parentChannelId).map((corner) => {
+      const status =
+        corner.kind === 'active'
+          ? corner.state === 'working'
+            ? 'live'
+            : corner.state === 'waiting'
+              ? corner.reason === 'review'
+                ? 'open'
+                : corner.reason === 'failure'
+                  ? 'failed'
+                  : 'needs-attention'
+              : null
+          : 'failed';
+      return {
+        id: corner.id,
+        name: corner.name ?? `corner-${corner.id.slice(0, 8)}`,
+        openerPubkey: corner.creatorPubkey ?? '',
+        status,
+        ...(corner.kind === 'active' ? { machineState: corner.state } : {}),
+        ...(corner.kind === 'active' && corner.reason ? { machineReason: corner.reason } : {}),
+        stateAt: corner.stateAt,
+        ...(corner.kind === 'active' && corner.state === 'waiting' ? { awaitingReply: true } : {}),
+        ...(corner.createdAt !== undefined ? { createdAt: corner.createdAt } : {}),
+        lastActivityAt: snapshot.rooms[corner.id]?.coverage.newest ?? corner.stateAt,
+      } satisfies CornerSummary;
+    });
   }
 
   /**
@@ -1482,93 +1408,14 @@ export class BuzzRigTransport implements RigTransport {
   async listSubchannelLifecycleForRooms(
     parentChannelIds: string[],
   ): Promise<Map<string, CornerSummary[]>> {
-    const result = new Map<string, CornerSummary[]>();
-    const toFetch: string[] = [];
-    for (const parentChannelId of parentChannelIds) {
-      const cached = getCachedCornerLifecycle(parentChannelId);
-      if (cached) {
-        result.set(parentChannelId, await cached);
-      } else {
-        toFetch.push(parentChannelId);
-      }
-    }
-    if (toFetch.length > 0) {
-      const fetchPromise = this.fetchManyRoomsLifecycle(toFetch);
-      for (const parentChannelId of toFetch) {
-        setCachedCornerLifecycle(
-          parentChannelId,
-          fetchPromise.then((byRoom) => byRoom.get(parentChannelId) ?? []),
-        );
-      }
-      const fetched = await fetchPromise;
-      for (const [parentChannelId, corners] of fetched) result.set(parentChannelId, corners);
-    }
-    return result;
-  }
-
-  private async fetchManyRoomsLifecycle(
-    parentChannelIds: string[],
-  ): Promise<Map<string, CornerSummary[]>> {
-    const result = new Map<string, CornerSummary[]>();
-    if (parentChannelIds.length === 0) return result;
-    const client = await this.getClient();
-
-    const idsByRoom = await Promise.all(
-      parentChannelIds.map(async (parentChannelId) => ({
-        parentChannelId,
-        ids: await client.listSubchannels(parentChannelId),
-      })),
-    );
-    const allCornerIds = [...new Set(idsByRoom.flatMap((entry) => entry.ids))];
-
-    // One multi-`#d` read for the daemon-authoritative corner state records.
-    const stateRecordsByCorner = await fetchCornerStateRecords(client, allCornerIds);
-
-    const [createEvents, parentMetadataEntries] = await Promise.all([
-      allCornerIds.length > 0
-        ? client.query([
-            { kinds: [9007], '#h': allCornerIds, limit: Math.max(500, allCornerIds.length * 5) },
-          ])
-        : Promise.resolve([]),
-      Promise.all(
-        parentChannelIds.map(async (id) => [id, await client.getChannelMetadata(id)] as const),
+    return new Map(
+      await Promise.all(
+        parentChannelIds.map(
+          async (parentChannelId) =>
+            [parentChannelId, await this.listSubchannelLifecycle(parentChannelId)] as const,
+        ),
       ),
-    ]);
-    const parentMetadataById = new Map(parentMetadataEntries);
-
-    const createsById = new Map<string, NostrEvent[]>();
-    for (const event of createEvents) {
-      const id = tagValue(event, 'h');
-      if (!id) continue;
-      const list = createsById.get(id) ?? [];
-      list.push(event);
-      createsById.set(id, list);
-    }
-
-    await Promise.all(
-      idsByRoom.map(async ({ parentChannelId, ids }) => {
-        const parentMetadata = parentMetadataById.get(parentChannelId);
-        const parentRoomLive = parentMetadata !== null && parentMetadata?.archived !== true;
-        const corners = await Promise.all(
-          ids.map(async (id) => {
-            const [metadata, events] = await Promise.all([
-              client.getChannelMetadata(id),
-              client.sessionEventsBackfill(id, { limit: 50 }),
-            ]);
-            return cornerSummaryFromEvents(
-              id,
-              createsById.get(id) ?? [],
-              metadata,
-              events,
-              parentRoomLive,
-              stateRecordsByCorner.get(id),
-            );
-          }),
-        );
-        result.set(parentChannelId, corners);
-      }),
     );
-    return result;
   }
 
   async getChannelCreator(channelId: string): Promise<string | null> {
@@ -1614,15 +1461,19 @@ export class BuzzRigTransport implements RigTransport {
     // No create event means no reliable "before the corner opened" boundary,
     // and a window taken from the wrong side of it would be worse than none.
     if (!create) return { context: [] };
-    const task = tagValue(create, 'task');
     const events = await client.sessionEventsBackfill(parentChannelId, {
       until: create.created_at,
       limit: ROOM_CONTEXT_SCAN_LIMIT,
     });
     const viewer = this.identity.publicKey;
-    const messages = events
-      .map((event) => projectChatEvent(toRigEvent(event), viewer).message)
-      .filter((message): message is ChatDisplayMessage => Boolean(message));
+    const [parentSnapshot, cornerSnapshot] = await Promise.all([
+      this.readModelSnapshot(parentChannelId, events),
+      this.readModelSnapshot(cornerChannelId, creates),
+    ]);
+    const messages = transcriptMessages(parentSnapshot, parentChannelId, viewer);
+    const task = selectCorners(cornerSnapshot, parentChannelId).find(
+      (corner) => corner.id === cornerChannelId,
+    )?.task;
     return { ...(task ? { task } : {}), context: selectRoomContext(messages, limit) };
   }
 

@@ -32,11 +32,9 @@ import { readFileSync, existsSync } from 'node:fs';
  * corner status cards (`postControlMessage` with a `status`/`display-status`
  * tag) all describe work the human asked for, not the daemon's own weather.
  *
- * The reader-side half of this deletion — hiding the notices already published
- * to real Rooms, which cannot be unpublished — lives in
- * `apps/mobile/sources/buzz/retired-agent-notices.ts`. Any string added back
- * here has to be added there too, which is exactly the friction this file
- * exists to create.
+ * Historical notices already published to real Rooms cannot be unpublished.
+ * The typed read-model parser owns their explicit control schemas, keeping that
+ * machine state structurally out of transcript and agent-history selectors.
  */
 describe('the daemon-published agent state notices stay deleted', () => {
   const src = (name: string) => readFileSync(new URL(name, import.meta.url), 'utf8');

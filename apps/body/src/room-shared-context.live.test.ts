@@ -5,11 +5,11 @@ import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { newIdentity } from '@beeline/gate';
-import { createBuzzClient, TAG_AGENT } from '@beeline/buzz-client';
+import { createBuzzClient, selectAgentHistory, TAG_AGENT } from '@beeline/buzz-client';
 import { Body } from './body.js';
 import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
-import type { ConversationEntry, DurableBodyState } from './durable-state.js';
+import type { DurableBodyState } from './durable-state.js';
 
 const baseUrl = process.env.BUZZY_RELAY_URL ?? 'http://127.0.0.1:3010';
 const host = process.env.BUZZY_RELAY_HOST ?? new URL(baseUrl).host;
@@ -53,8 +53,12 @@ describe.runIf(reachable)('shared Room conversation context', () => {
     autoApprovePermissions: true,
   });
 
-  const conversation = (body: Body): Promise<ConversationEntry[]> =>
-    (Reflect.get(body, 'durableState') as DurableBodyState).conversation(roomId);
+  const conversation = async (body: Body) => {
+    const snapshot = await (Reflect.get(body, 'durableState') as DurableBodyState).readModel(
+      roomId,
+    );
+    return snapshot ? selectAgentHistory(snapshot, roomId) : [];
+  };
 
   beforeAll(async () => {
     root = await mkdtemp(resolve(tmpdir(), 'beeline-room-context-'));
@@ -156,11 +160,11 @@ describe.runIf(reachable)('shared Room conversation context', () => {
 
     expect(xianPrompts).toHaveBeenCalledTimes(1);
     expect(joyPrompts).toHaveBeenCalledTimes(1);
-    expect((await conversation(xianBody)).map((entry) => entry.text)).toContainEqual(
-      expect.stringContaining('[Agent Joy (@joy)'),
+    expect((await conversation(xianBody)).map((entry) => entry.author.label)).toContainEqual(
+      expect.stringContaining('Joy'),
     );
-    expect((await conversation(joyBody)).map((entry) => entry.text)).toContainEqual(
-      expect.stringContaining('[Agent Xian (@xian)'),
+    expect((await conversation(joyBody)).map((entry) => entry.author.label)).toContainEqual(
+      expect.stringContaining('Xian'),
     );
     expect((await conversation(xianBody)).map((entry) => entry.eventId)).toContain(general.id);
     expect((await conversation(joyBody)).map((entry) => entry.eventId)).toContain(general.id);

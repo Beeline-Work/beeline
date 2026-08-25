@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ReadEvent } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import { agentDraftFromSessionEvent } from './agent-draft';
 
@@ -8,31 +9,33 @@ function draft(
   text: string,
   createdAt: number,
   overrides: {
-    pubkey?: string;
     sessionId?: string;
     requestId?: string;
-    agentTag?: string;
     status?: string;
   } = {},
 ): SessionEvent {
   return {
-    type: 'raw',
+    type: 'read-model',
     sessionId: 'room',
-    payload: {
-      id: `draft-${createdAt}`,
-      content: text,
-      pubkey: overrides.pubkey ?? agent,
+    event: {
+      type: 'session-update',
+      eventId: `draft-${createdAt}`,
+      authorPubkey: agent,
       createdAt,
-      tags: [
-        ['h', 'room'],
-        ['d', 'agent-draft:room'],
-        ['t', 'agent-draft'],
-        ['agent', overrides.agentTag ?? overrides.pubkey ?? agent],
-        ['session', overrides.sessionId ?? 'session-1'],
-        ['request', overrides.requestId ?? 'request-1'],
-        ...(overrides.status ? [['status', overrides.status]] : []),
-      ],
-    },
+      sourceKind: 30078,
+      signature: 'verified',
+      scope: 'channel',
+      channelId: 'room',
+      workspaceId: 'workspace',
+      sessionId: overrides.sessionId ?? 'session-1',
+      update: {
+        kind: 'draft',
+        agentPubkey: agent,
+        requestId: overrides.requestId ?? 'request-1',
+        text: text || undefined,
+        closed: overrides.status === 'closed',
+      },
+    } as ReadEvent,
   };
 }
 
@@ -57,47 +60,11 @@ describe('mobile agent draft projection', () => {
     ).toBeUndefined();
   });
 
-  it('rejects a draft whose agent tag does not match the signing pubkey', () => {
-    expect(
-      agentDraftFromSessionEvent(draft('spoofed', 1, { agentTag: 'c'.repeat(64) })),
-    ).toBeUndefined();
-  });
-
-  it('rejects an event missing the agent-draft marker tag', () => {
+  it('rejects other typed event families', () => {
     const event: SessionEvent = {
-      type: 'raw',
+      type: 'read-model',
       sessionId: 'room',
-      payload: {
-        id: 'not-a-draft',
-        content: 'hi',
-        pubkey: agent,
-        createdAt: 1,
-        tags: [
-          ['h', 'room'],
-          ['agent', agent],
-          ['session', 'session-1'],
-          ['request', 'request-1'],
-        ],
-      },
-    };
-    expect(agentDraftFromSessionEvent(event)).toBeUndefined();
-  });
-
-  it('rejects a draft missing session or request correlation tags', () => {
-    const event: SessionEvent = {
-      type: 'raw',
-      sessionId: 'room',
-      payload: {
-        id: 'incomplete',
-        content: 'hi',
-        pubkey: agent,
-        createdAt: 1,
-        tags: [
-          ['h', 'room'],
-          ['t', 'agent-draft'],
-          ['agent', agent],
-        ],
-      },
+      event: { type: 'unknown', reason: 'unknown-schema' },
     };
     expect(agentDraftFromSessionEvent(event)).toBeUndefined();
   });

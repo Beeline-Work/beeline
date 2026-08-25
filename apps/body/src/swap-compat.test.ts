@@ -6,6 +6,7 @@ import { newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig } from './config.js';
 import { DurableBodyState } from './durable-state.js';
+import { createWorkspaceSnapshot } from '@beeline/buzz-client';
 import { readRuntimeRecord, type AgentRuntimeRecord } from './runtime.js';
 
 const mocks = vi.hoisted(() => ({
@@ -125,11 +126,7 @@ describe('thin-core swap compatibility', () => {
       sig: 'c'.repeat(128),
     };
     await durable.enqueue('corner-1', [approval]);
-    await durable.appendConversation('corner-1', {
-      role: 'control',
-      text: 'Turn interrupted by daemon restart; resume automatically.',
-      at: new Date(0).toISOString(),
-    });
+    await durable.replaceReadModel('corner-1', createWorkspaceSnapshot({ workspaceId: 'room-1' }));
 
     const loaded = await readRuntimeRecord(configPath);
     const before = await readFile(durablePath, 'utf8');
@@ -177,7 +174,7 @@ describe('thin-core swap compatibility', () => {
     expect(established).toBe(true);
     expect(mocks.bodyStarts).toEqual([{ roomId: 'room-1', statePath: durablePath }]);
     expect((await durable.pending('corner-1'))[0]?.id).toBe(approval.id);
-    expect((await durable.conversation('corner-1'))[0]?.text).toContain('resume automatically');
+    expect((await durable.readModel('corner-1'))?.workspaceId).toBe('room-1');
     expect(await readFile(durablePath, 'utf8')).toBe(before);
     expect(ThinDaemonCore.name).toBe('ThinDaemonCore');
   });

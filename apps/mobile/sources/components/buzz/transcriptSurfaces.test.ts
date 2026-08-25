@@ -468,10 +468,12 @@ describe('Machine noise', () => {
   });
 
   it('puts attribution and the tabular timestamp on the collapsed row without an indent gutter', () => {
-    expect(activitySource).toContain("handle?.toUpperCase()");
+    expect(activitySource).toContain('handle?.toUpperCase()');
     expect(activitySource).toContain('testID="activity-group-stamp"');
     expect(styleDefinition(activitySource, 'groupRow')).toMatch(/paddingHorizontal:\s*0/);
-    expect(styleDefinition(activitySource, 'groupStamp')).toMatch(/fontVariant:\s*\['tabular-nums'\]/);
+    expect(styleDefinition(activitySource, 'groupStamp')).toMatch(
+      /fontVariant:\s*\['tabular-nums'\]/,
+    );
     expect(chatSource).toContain('stamp={ledgerStamp(item.timestamp)}');
     expect(chatSource).not.toContain('testID={`chat-marginalia-${item.id}`}');
   });
@@ -600,31 +602,26 @@ describe('Machine noise', () => {
     expect(branch).toMatch(/<LedgerEntry[\s\S]{0,1000}replyReference=\{replyReference\}/);
   });
 
-  it('decodes percent escapes before anything renders them', () => {
+  it('keeps wire interpretation outside the presentation adapter', () => {
     const projection = readFileSync(
       new URL('../../sync/transport/buzz-event-projection.ts', import.meta.url),
       'utf8',
     );
-    // At the single funnel, so the transcript and the Room list agree.
-    expect(projection).toMatch(/function eventText[\s\S]{0,300}decodePercentEncoding/);
-    expect(projection).toMatch(/text: decodePercentEncoding\(agentDraft\.text\)/);
+    expect(projection).toContain('selectTranscript');
+    expect(projection).not.toMatch(/\.tags\b|\.content\b/);
+    expect(projection).not.toMatch(/classifySessionEvent|projectChatEvent|roomMessage/);
   });
 
-  it('keeps the shared transcript filter on one loop for both surfaces', () => {
+  it('keeps the shared transcript surface on one pure snapshot selector', () => {
     const projection = readFileSync(
       new URL('../../sync/transport/buzz-event-projection.ts', import.meta.url),
       'utf8',
     );
     const fn = projection.slice(projection.indexOf('export function transcriptMessages'));
-    // One activity-folding loop, not a corner branch plus a room filter.
-    expect(fn).not.toMatch(/if \(isCorner\) \{/);
-    expect(fn).toMatch(/activityRunOpen/);
-    // Every legacy kind:9 lifecycle card stays out; structural roomUpdate
-    // entries pass through this same loop as ordinary chronological rows.
-    expect(fn).toMatch(/if \(message\.corner\)/);
-    expect(fn).toMatch(/if \(message\.isMergeSummary\)/);
-    expect(fn).toMatch(/!isCorner && message\.isArchivedNotice/);
-    expect(fn).toContain('transcript.push({');
+    expect(fn).toMatch(/selectTranscript\(snapshot, channelId, input\)/);
+    expect(fn).not.toMatch(/event\.tags|event\.content|isCorner/);
+    expect(fn).toContain("item.kind === 'human-message'");
+    expect(fn).toContain("item.kind === 'activity'");
   });
 });
 

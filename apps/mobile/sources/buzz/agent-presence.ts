@@ -1,16 +1,10 @@
 import {
-  TAG_AGENT_PRESENCE,
   isAgentPresenceOnline,
   newerAgentPresence,
   type AgentPresence,
 } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
-import {
-  sessionEventHasTag,
-  sessionEventPayload,
-  sessionEventTagValue,
-  type ChatDisplayMessage,
-} from '@/sync/transport/buzz-event-projection';
+import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
 
@@ -45,20 +39,14 @@ export function isAgentOfflineAfterPresenceResolved(
 
 /** Accept only an agent's self-signed presence marker; a forged agent tag is ignored. */
 export function agentPresenceFromSessionEvent(event: SessionEvent): RoomAgentPresence | undefined {
-  const payload = sessionEventPayload(event);
-  const pubkey = payload?.pubkey;
-  const createdAt = payload?.createdAt ?? payload?.created_at;
-  if (typeof pubkey !== 'string' || typeof createdAt !== 'number') return undefined;
-  if (!sessionEventHasTag(event, 't', TAG_AGENT_PRESENCE)) return undefined;
-  const agentPubkey = sessionEventTagValue(event, 'agent');
-  const status = sessionEventTagValue(event, 'status');
-  const generationId = sessionEventTagValue(event, 'generation');
-  if (agentPubkey !== pubkey || (status !== 'online' && status !== 'offline')) return undefined;
+  if (event.type !== 'read-model' || event.event.type !== 'session-update') return undefined;
+  const update = event.event.update;
+  if (update.kind !== 'presence') return undefined;
   return {
-    agentPubkey,
-    status,
-    observedAt: createdAt < 1_000_000_000_000 ? createdAt * 1_000 : createdAt,
-    ...(generationId ? { generationId } : {}),
+    agentPubkey: update.agentPubkey,
+    status: update.status,
+    observedAt: event.event.createdAt * 1_000,
+    ...(update.generationId ? { generationId: update.generationId } : {}),
   };
 }
 
@@ -118,19 +106,17 @@ export function agentLivenessFromSessionEvent(
   event: SessionEvent,
   agentPubkeys: ReadonlySet<string>,
 ): RoomAgentPresence | undefined {
-  const payload = sessionEventPayload(event);
-  const pubkey = payload?.pubkey;
-  const createdAt = payload?.createdAt ?? payload?.created_at;
-  if (typeof pubkey !== 'string' || typeof createdAt !== 'number') return undefined;
-  if (!agentPubkeys.has(pubkey)) return undefined;
+  if (event.type !== 'read-model' || event.event.type === 'unknown') return undefined;
+  const typed = event.event;
+  if (typed.scope !== 'channel' || !agentPubkeys.has(typed.authorPubkey)) return undefined;
   // A presence record is handled by `agentPresenceFromSessionEvent`, which
   // reads its explicit status; reading it here too would turn an authoritative
   // `offline` marker into an `online` observation of the same instant.
-  if (sessionEventHasTag(event, 't', TAG_AGENT_PRESENCE)) return undefined;
+  if (typed.type === 'session-update' && typed.update.kind === 'presence') return undefined;
   return {
-    agentPubkey: pubkey,
+    agentPubkey: typed.authorPubkey,
     status: 'online',
-    observedAt: createdAt < 1_000_000_000_000 ? createdAt * 1_000 : createdAt,
+    observedAt: typed.createdAt * 1_000,
   };
 }
 

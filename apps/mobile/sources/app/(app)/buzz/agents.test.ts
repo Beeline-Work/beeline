@@ -45,11 +45,17 @@ vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 vi.mock('react-native-keyboard-controller', async () => {
   const ReactModule = await import('react');
-  return { KeyboardAwareScrollView: (props: any) => ReactModule.createElement('ScrollView', props, props.children) };
+  return {
+    KeyboardAwareScrollView: (props: any) =>
+      ReactModule.createElement('ScrollView', props, props.children),
+  };
 });
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
-  loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) })),
+  loadBuzzIdentity: vi.fn(async () => ({
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32),
+  })),
 }));
 vi.mock('@/buzz/avatar-upload', () => ({ pickAndUploadAvatar: vi.fn() }));
 vi.mock('@/buzz/workspace-bootstrap', () => ({
@@ -69,11 +75,15 @@ vi.mock('@/sync/transport', () => ({
 }));
 vi.mock('@/components/buzz/CommunityRail', async () => {
   const ReactModule = await import('react');
-  return { BuzzCommunityShell: (props: any) => ReactModule.createElement('BuzzCommunityShell', props, props.children) };
+  return {
+    BuzzCommunityShell: (props: any) =>
+      ReactModule.createElement('BuzzCommunityShell', props, props.children),
+  };
 });
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
   return {
     hairlineDivider: { borderBottomWidth: 1, borderBottomColor: '#4e4e4e' },
     HullSurface: host('HullSurface'),
@@ -88,12 +98,16 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
 });
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
   return {
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
     Share: { share: vi.fn() },
     StyleSheet: { create: (styles: unknown) => styles },
-    Text: host('Text'), TextInput: host('TextInput'), TouchableOpacity: host('TouchableOpacity'), View: host('View'),
+    Text: host('Text'),
+    TextInput: host('TextInput'),
+    TouchableOpacity: host('TouchableOpacity'),
+    View: host('View'),
   };
 });
 
@@ -105,9 +119,12 @@ import MembersScreen from './MembersScreen';
 const originalConsoleError = console.error;
 
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
+      return;
     originalConsoleError(message, ...args);
   });
 });
@@ -164,7 +181,9 @@ describe('Members screen', () => {
 
     expect(renderer.root.findByProps({ testID: 'members-people-section' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'members-agents-section' })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: 'invite-person' }).props.label).toBe('Invite person');
+    expect(renderer.root.findByProps({ testID: 'invite-person' }).props.label).toBe(
+      'Invite person',
+    );
     expect(renderer.root.findByProps({ testID: 'add-agent' }).props.label).toBe('Add agent');
   });
 
@@ -221,8 +240,9 @@ describe('Members screen', () => {
     ]);
     const renderer = await render();
 
-    expect(renderer.root.findByProps({ testID: `member-${target}-role-label` }).props.children)
-      .toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: `member-${target}-role-label` }).props.children,
+    ).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: `member-${target}-admin` })).toHaveLength(0);
 
     await act(async () => {
@@ -246,28 +266,44 @@ describe('Members screen', () => {
     const dormantAgentPubkey = '1'.repeat(64);
     const nowSeconds = Math.floor(Date.now() / 1000);
     client.listAgents.mockResolvedValue([
-      { agentId: 'live', communityId: 'workspace-1', displayName: 'joy', pubkey: liveAgentPubkey, createdAt: 0, raw: {} },
-      { agentId: 'dormant', communityId: 'workspace-1', displayName: 'sumo', pubkey: dormantAgentPubkey, createdAt: 0, raw: {} },
+      {
+        agentId: 'live',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: liveAgentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
+      {
+        agentId: 'dormant',
+        communityId: 'workspace-1',
+        displayName: 'sumo',
+        pubkey: dormantAgentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
     ]);
     // Only the live agent has a fresh presence heartbeat in any Room; the
     // dormant one has none anywhere in the Workspace (paired, but its daemon
     // is stopped) — the real distinguishing signal, not a made-up flag.
     agentPresenceBackfillForWorkspace.mockResolvedValue([
       {
-        type: 'raw',
+        type: 'read-model',
         sessionId: 'room-1',
-        payload: {
-          pubkey: liveAgentPubkey,
-          created_at: nowSeconds,
-          tags: [
-            ['d', 'agent-presence:room-1'],
-            ['h', 'room-1'],
-            ['t', 'agent-presence'],
-            ['agent', liveAgentPubkey],
-            ['status', 'online'],
-          ],
+        event: {
+          type: 'session-update',
+          eventId: 'presence-live',
+          authorPubkey: liveAgentPubkey,
+          createdAt: nowSeconds,
+          sourceKind: 30078,
+          signature: 'verified',
+          scope: 'channel',
+          channelId: 'room-1',
+          workspaceId: 'workspace-1',
+          sessionId: 'room-1',
+          update: { kind: 'presence', agentPubkey: liveAgentPubkey, status: 'online' },
         },
-      },
+      } as never,
     ]);
 
     const renderer = await render();
@@ -280,25 +316,40 @@ describe('Members screen', () => {
     });
 
     expect(agentPresenceBackfillForWorkspace).toHaveBeenCalledWith('workspace-1');
-    expect(renderer.root.findByProps({ testID: `agent-${liveAgentPubkey}-identity` })).toBeDefined();
-    expect(renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-identity` })).toBeDefined();
     expect(
-      renderer.root.findByProps({ testID: `agent-${liveAgentPubkey}-presence-label` }).props.children,
+      renderer.root.findByProps({ testID: `agent-${liveAgentPubkey}-identity` }),
+    ).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-identity` }),
+    ).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: `agent-${liveAgentPubkey}-presence-label` }).props
+        .children,
     ).toBe('ONLINE');
     expect(
-      renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-presence-label` }).props.children,
+      renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-presence-label` }).props
+        .children,
     ).toBe('OFFLINE');
   });
 
   it('accepts an operator-chosen compound agent name, not just one spoken word', async () => {
     const agentPubkey = '4'.repeat(64);
     client.listAgents.mockResolvedValue([
-      { agentId: 'a3', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+      {
+        agentId: 'a3',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: agentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
     ]);
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -331,14 +382,21 @@ describe('Members screen', () => {
         displayName: 'joy',
         pubkey: agentPubkey,
         createdAt: 0,
-        soulProfile: { name: 'joy', soul: 'Keep the suite green.', avatarSeed: agentPubkey, avatar: 'https://example.test/joy.png' },
+        soulProfile: {
+          name: 'joy',
+          soul: 'Keep the suite green.',
+          avatarSeed: agentPubkey,
+          avatar: 'https://example.test/joy.png',
+        },
         raw: {},
       },
     ]);
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -359,18 +417,29 @@ describe('Members screen', () => {
     // fallback axes render with manual entry instead.
     const agentPubkey = '2'.repeat(64);
     client.listAgents.mockResolvedValue([
-      { agentId: 'a1', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+      {
+        agentId: 'a1',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: agentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
     ]);
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(agentModelCatalogRead).toHaveBeenCalledWith('workspace-1', agentPubkey);
-    expect(renderer.root.findByProps({ testID: `agent-${agentPubkey}-model-config` })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: `agent-${agentPubkey}-model-config` }),
+    ).toBeDefined();
     // Fallback axes only: model + effort, never a mode axis.
     expect(renderer.root.findByProps({ testID: 'model-axis-model' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'model-axis-effort' })).toBeDefined();
@@ -382,9 +451,9 @@ describe('Members screen', () => {
       renderer.root.findByProps({ testID: 'model-custom-model' }).props.onPress();
     });
     await act(async () => {
-      renderer.root.findByProps({ testID: 'model-custom-input-model' }).props.onChangeText(
-        'openrouter/stealth/ox-alpha',
-      );
+      renderer.root
+        .findByProps({ testID: 'model-custom-input-model' })
+        .props.onChangeText('openrouter/stealth/ox-alpha');
     });
     await act(async () => {
       renderer.root.findByProps({ testID: 'model-custom-submit-model' }).props.onPress();
@@ -400,7 +469,14 @@ describe('Members screen', () => {
   it('lists the advertised model/effort catalog, never a mode axis, and lets you choose an option', async () => {
     const agentPubkey = '3'.repeat(64);
     client.listAgents.mockResolvedValue([
-      { agentId: 'a2', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+      {
+        agentId: 'a2',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: agentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
     ]);
     agentModelCatalogRead.mockResolvedValue({
       communityId: 'workspace-1',
@@ -433,12 +509,16 @@ describe('Members screen', () => {
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(renderer.root.findByProps({ testID: `agent-${agentPubkey}-model-config` })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: `agent-${agentPubkey}-model-config` }),
+    ).toBeDefined();
     // No mode axis was even advertised by the daemon-published catalog (it is
     // filtered before publish) — this asserts the client never renders one.
     expect(renderer.root.findAllByProps({ testID: 'model-axis-mode' })).toHaveLength(0);
@@ -458,14 +538,25 @@ describe('Members screen', () => {
       await Promise.resolve();
     });
 
-    expect(agentModelConfigSet).toHaveBeenNthCalledWith(1, 'workspace-1', agentPubkey, { model: 'opus' });
-    expect(agentModelConfigSet).toHaveBeenNthCalledWith(2, 'workspace-1', agentPubkey, { effort: 'high' });
+    expect(agentModelConfigSet).toHaveBeenNthCalledWith(1, 'workspace-1', agentPubkey, {
+      model: 'opus',
+    });
+    expect(agentModelConfigSet).toHaveBeenNthCalledWith(2, 'workspace-1', agentPubkey, {
+      effort: 'high',
+    });
   });
 
   it('lets you enter a model id the catalog does not list, and keeps the effort axis alongside it', async () => {
     const agentPubkey = '4'.repeat(64);
     client.listAgents.mockResolvedValue([
-      { agentId: 'a3', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+      {
+        agentId: 'a3',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: agentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
     ]);
     agentModelCatalogRead.mockResolvedValue({
       communityId: 'workspace-1',
@@ -499,7 +590,9 @@ describe('Members screen', () => {
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -512,9 +605,9 @@ describe('Members screen', () => {
       renderer.root.findByProps({ testID: 'model-custom-model' }).props.onPress();
     });
     await act(async () => {
-      renderer.root.findByProps({ testID: 'model-custom-input-model' }).props.onChangeText(
-        'openrouter/stealth/ox-alpha',
-      );
+      renderer.root
+        .findByProps({ testID: 'model-custom-input-model' })
+        .props.onChangeText('openrouter/stealth/ox-alpha');
     });
     await act(async () => {
       renderer.root.findByProps({ testID: 'model-custom-submit-model' }).props.onPress();
@@ -547,14 +640,31 @@ describe('Members screen', () => {
     // app must show it even with no human-authored config record at all.
     const agentPubkey = '8'.repeat(64);
     client.listAgents.mockResolvedValue([
-      { agentId: 'a8', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+      {
+        agentId: 'a8',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: agentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
     ]);
     agentModelCatalogRead.mockResolvedValue({
       communityId: 'workspace-1',
       agentPubkey,
       options: [
-        { id: 'model', category: 'model', currentValue: 'default', options: [{ id: 'gpt-5.1-codex' }] },
-        { id: 'effort', category: 'effort', currentValue: 'default', options: [{ id: 'low' }, { id: 'xhigh' }] },
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'default',
+          options: [{ id: 'gpt-5.1-codex' }],
+        },
+        {
+          id: 'effort',
+          category: 'effort',
+          currentValue: 'default',
+          options: [{ id: 'low' }, { id: 'xhigh' }],
+        },
       ],
       selection: { model: 'gpt-5.1-codex', effort: 'xhigh' },
       updatedAt: 0,
@@ -564,17 +674,19 @@ describe('Members screen', () => {
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(
-      renderer.root.findByProps({ testID: 'model-axis-value-model' }).props.children,
-    ).toBe('gpt-5.1-codex');
-    expect(
-      renderer.root.findByProps({ testID: 'model-axis-value-effort' }).props.children,
-    ).toBe('xhigh');
+    expect(renderer.root.findByProps({ testID: 'model-axis-value-model' }).props.children).toBe(
+      'gpt-5.1-codex',
+    );
+    expect(renderer.root.findByProps({ testID: 'model-axis-value-effort' }).props.children).toBe(
+      'xhigh',
+    );
   });
 
   it('renders the effort axis as selectable levels, never a free-text input', async () => {
@@ -583,12 +695,21 @@ describe('Members screen', () => {
     // the fallback offers the common levels instead.
     const agentPubkey = '9'.repeat(64);
     client.listAgents.mockResolvedValue([
-      { agentId: 'a9', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+      {
+        agentId: 'a9',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: agentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
     ]);
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -608,26 +729,37 @@ describe('Members screen', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(agentModelConfigSet).toHaveBeenCalledWith('workspace-1', agentPubkey, { effort: 'medium' });
+    expect(agentModelConfigSet).toHaveBeenCalledWith('workspace-1', agentPubkey, {
+      effort: 'medium',
+    });
   });
 
   it('never renders a dead row: an unknown value says so and every row stays tappable', async () => {
-    const agentPubkey = '11'.repeat(2) /* '1111…' */;
+    const agentPubkey = '11'.repeat(2); /* '1111…' */
     client.listAgents.mockResolvedValue([
-      { agentId: 'a11', communityId: 'workspace-1', displayName: 'joy', pubkey: agentPubkey, createdAt: 0, raw: {} },
+      {
+        agentId: 'a11',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: agentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
     ]);
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
 
     for (const axis of ['model', 'effort']) {
-      expect(
-        renderer.root.findByProps({ testID: `model-axis-value-${axis}` }).props.children,
-      ).toBe('Not set — tap to choose');
+      expect(renderer.root.findByProps({ testID: `model-axis-value-${axis}` }).props.children).toBe(
+        'Not set — tap to choose',
+      );
       // The chevron is the affordance; it must never disappear just because
       // the axis has no advertised options.
       const row = renderer.root.findByProps({ testID: `model-axis-${axis}` });
@@ -648,7 +780,12 @@ describe('Members screen', () => {
       channels: [],
       directMessages: [],
       workspaceMembers: [
-        { peerPubkey: cachedPersonPubkey, peerName: 'Cached Carol', peerKind: 'person', role: 'member' },
+        {
+          peerPubkey: cachedPersonPubkey,
+          peerName: 'Cached Carol',
+          peerKind: 'person',
+          role: 'member',
+        },
         {
           peerPubkey: cachedAgentPubkey,
           peerName: 'sumo',
@@ -681,17 +818,26 @@ describe('Members screen', () => {
       renderer = create(React.createElement(MembersScreen));
     });
 
-    expect(renderer.root.findByProps({ testID: `agent-${cachedAgentPubkey}-identity` }).props.children).toBe(
-      'sumo',
-    );
-    expect(renderer.root.findByProps({ testID: `member-${cachedPersonPubkey}-identity` })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: `agent-${cachedAgentPubkey}-identity` }).props.children,
+    ).toBe('sumo');
+    expect(
+      renderer.root.findByProps({ testID: `member-${cachedPersonPubkey}-identity` }),
+    ).toBeDefined();
   });
 
   it('removes an agent through a pure membership change even while its presence is stale/offline', async () => {
     const agentPubkey = '8'.repeat(64);
     client.listAgents
       .mockResolvedValueOnce([
-        { agentId: 'a5', communityId: 'workspace-1', displayName: 'sumo', pubkey: agentPubkey, createdAt: 0, raw: {} },
+        {
+          agentId: 'a5',
+          communityId: 'workspace-1',
+          displayName: 'sumo',
+          pubkey: agentPubkey,
+          createdAt: 0,
+          raw: {},
+        },
       ])
       .mockResolvedValue([]);
     // No presence record anywhere in the Workspace: this agent reads offline.
@@ -699,12 +845,16 @@ describe('Members screen', () => {
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(renderer.root.findByProps({ testID: `agent-${agentPubkey}-offline-notice` })).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: `agent-${agentPubkey}-offline-notice` }),
+    ).toBeDefined();
 
     await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: 'Remove this Agent' }).props.onPress();
@@ -717,24 +867,37 @@ describe('Members screen', () => {
     });
 
     expect(client.removeAgent).toHaveBeenCalledWith('workspace-1', agentPubkey);
-    expect(renderer.root.findAllByProps({ testID: `agent-${agentPubkey}-identity` })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: `agent-${agentPubkey}-identity` })).toHaveLength(
+      0,
+    );
   });
 
   it('never renders a Remove Agent action for a non-admin viewer', async () => {
     const agentPubkey = '9'.repeat(64);
     client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'member' }]);
     client.listAgents.mockResolvedValue([
-      { agentId: 'a6', communityId: 'workspace-1', displayName: 'sumo', pubkey: agentPubkey, createdAt: 0, raw: {} },
+      {
+        agentId: 'a6',
+        communityId: 'workspace-1',
+        displayName: 'sumo',
+        pubkey: agentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
     ]);
     const renderer = await render();
 
     await act(async () => {
-      ancestorButton(renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` })).props.onPress();
+      ancestorButton(
+        renderer.root.findByProps({ testID: `agent-${agentPubkey}-identity` }),
+      ).props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Remove this Agent' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Remove this Agent' })).toHaveLength(
+      0,
+    );
     expect(renderer.root.findAllByProps({ testID: 'add-agent' })).toHaveLength(0);
   });
 
@@ -814,7 +977,10 @@ describe('Members screen', () => {
       seedOwnerCache();
       let releaseWorkspace!: (value: unknown) => void;
       (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-        () => new Promise((resolve) => { releaseWorkspace = resolve; }),
+        () =>
+          new Promise((resolve) => {
+            releaseWorkspace = resolve;
+          }),
       );
 
       let renderer!: ReactTestRenderer;
@@ -850,7 +1016,10 @@ describe('Members screen', () => {
       client.createInvite.mockResolvedValue({ token: 'bzi_test' });
       let releaseWorkspace!: (value: unknown) => void;
       (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-        () => new Promise((resolve) => { releaseWorkspace = resolve; }),
+        () =>
+          new Promise((resolve) => {
+            releaseWorkspace = resolve;
+          }),
       );
 
       let renderer!: ReactTestRenderer;
@@ -879,7 +1048,10 @@ describe('Members screen', () => {
       seedOwnerCache();
       let failWorkspace!: (reason: unknown) => void;
       (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-        () => new Promise((_resolve, reject) => { failWorkspace = reject; }),
+        () =>
+          new Promise((_resolve, reject) => {
+            failWorkspace = reject;
+          }),
       );
 
       let renderer!: ReactTestRenderer;
@@ -898,7 +1070,9 @@ describe('Members screen', () => {
       });
 
       expect(client.createAgentPairingCode).not.toHaveBeenCalled();
-      expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' }).length).toBeGreaterThan(0);
+      expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' }).length).toBeGreaterThan(
+        0,
+      );
       // The discriminating assertion: the banner carries the *handler's* own
       // failure text, proving the queued tap reached its catch. A silent return
       // leaves only the init effect's bare `String(caught)` message behind.
@@ -920,11 +1094,13 @@ describe('Members screen', () => {
       // back on the community record — management gating must come from the
       // roster read alone.
       (prepareWorkspaceContext as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-        workspaces: [{
-          communityId: 'workspace-1',
-          name: 'Night Shift',
-          ownerPubkey: predecessorKey,
-        }],
+        workspaces: [
+          {
+            communityId: 'workspace-1',
+            name: 'Night Shift',
+            ownerPubkey: predecessorKey,
+          },
+        ],
         activeWorkspaceId: 'workspace-1',
       });
 
@@ -945,5 +1121,4 @@ describe('Members screen', () => {
       expect(renderer.root.findByProps({ testID: 'members-people-count' }).props.children).toBe(1);
     });
   });
-
 });

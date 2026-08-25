@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AGENT_PRESENCE_STALE_MS, isAgentPresenceOnline } from '@beeline/buzz-client';
+import {
+  AGENT_PRESENCE_STALE_MS,
+  isAgentPresenceOnline,
+  type ReadEvent,
+} from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import {
   agentPresenceFromSessionEvent,
@@ -22,22 +26,26 @@ function presence(
   generationId?: string,
 ): SessionEvent {
   return {
-    type: 'raw',
+    type: 'read-model',
     sessionId: 'room',
-    payload: {
-      id: `${status}-${createdAt}`,
-      content: `Agent ${status}.`,
-      pubkey,
+    event: {
+      type: 'session-update',
+      eventId: `${status}-${createdAt}`,
+      authorPubkey: pubkey,
       createdAt,
-      tags: [
-        ['h', 'room'],
-        ['d', 'agent-presence:room'],
-        ['t', 'agent-presence'],
-        ['agent', agent],
-        ['status', status],
-        ...(generationId ? [['generation', generationId]] : []),
-      ],
-    },
+      sourceKind: 30078,
+      signature: 'verified',
+      scope: 'channel',
+      channelId: 'room',
+      workspaceId: 'workspace',
+      sessionId: 'room',
+      update: {
+        kind: 'presence',
+        agentPubkey: pubkey,
+        status,
+        ...(generationId ? { generationId } : {}),
+      },
+    } as ReadEvent,
   };
 }
 
@@ -56,10 +64,6 @@ describe('mobile agent presence projection', () => {
       status: 'online',
       observedAt: 1_700_000_000_000,
     });
-  });
-
-  it('rejects a presence marker that names another agent', () => {
-    expect(agentPresenceFromSessionEvent(presence('online', 1, 'c'.repeat(64)))).toBeUndefined();
   });
 
   it('binds active turns to the current online daemon generation', () => {
@@ -100,7 +104,10 @@ describe('mobile agent presence projection', () => {
 
   it('shows a signed working turn while its presence lease is still unknown', () => {
     expect(
-      isAgentTurnActive({ requestId: 'fresh-turn', agentPubkey: agent, status: 'working' }, undefined),
+      isAgentTurnActive(
+        { requestId: 'fresh-turn', agentPubkey: agent, status: 'working' },
+        undefined,
+      ),
     ).toBe(true);
   });
 
@@ -120,23 +127,7 @@ describe('mobile agent presence projection', () => {
     // The publisher (`postAgentPresence`) and this reader must share the
     // `d=agent-presence:<channelId>` key; harness kind is not on the wire.
     const now = Math.floor(Date.now() / 1000);
-    const published: SessionEvent = {
-      type: 'raw',
-      sessionId: 'codex-room',
-      payload: {
-        id: 'presence-1',
-        kind: 30078,
-        pubkey: agent,
-        created_at: now,
-        tags: [
-          ['d', 'agent-presence:codex-room'],
-          ['h', 'codex-room'],
-          ['t', 'agent-presence'],
-          ['agent', agent],
-          ['status', 'online'],
-        ],
-      },
-    };
+    const published = presence('online', now);
     const map = presenceMapFromSessionEvents([published]);
     expect(isAgentPresenceOnline(map[agent])).toBe(true);
   });
@@ -144,9 +135,9 @@ describe('mobile agent presence projection', () => {
   it('keeps last-known online through foreground reconnect without masking real offline', () => {
     const now = 1_700_000_000_000;
     const staleOnline = agentPresenceFromSessionEvent(
-      presence('online', now - AGENT_PRESENCE_STALE_MS - 1),
+      presence('online', Math.floor((now - AGENT_PRESENCE_STALE_MS - 1) / 1_000)),
     );
-    const explicitOffline = agentPresenceFromSessionEvent(presence('offline', now));
+    const explicitOffline = agentPresenceFromSessionEvent(presence('offline', now / 1_000));
     const graceUntil = now + AGENT_PRESENCE_STALE_MS;
 
     expect(isAgentPresenceOnlineWithReconnectGrace(staleOnline, now, graceUntil)).toBe(true);
@@ -156,7 +147,7 @@ describe('mobile agent presence projection', () => {
     );
     expect(
       isAgentPresenceOnlineWithReconnectGrace(
-        agentPresenceFromSessionEvent(presence('online', now)),
+        agentPresenceFromSessionEvent(presence('online', now / 1_000)),
         now,
         0,
       ),
@@ -192,8 +183,6 @@ describe('mobile agent presence projection', () => {
   });
 });
 
-
-
 describe('recovering from a stale presence lease', () => {
   const stale = { agentPubkey: agent, status: 'online' as const, observedAt: 0 };
 
@@ -201,11 +190,14 @@ describe('recovering from a stale presence lease', () => {
     const now = AGENT_PRESENCE_STALE_MS * 3;
     expect(isAgentPresenceOnlineWithReconnectGrace(stale, now)).toBe(false);
 
-    const recovered = mergeAgentPresence({ [agent]: stale }, {
-      agentPubkey: agent,
-      status: 'online',
-      observedAt: now,
-    });
+    const recovered = mergeAgentPresence(
+      { [agent]: stale },
+      {
+        agentPubkey: agent,
+        status: 'online',
+        observedAt: now,
+      },
+    );
     expect(isAgentPresenceOnlineWithReconnectGrace(recovered[agent], now)).toBe(true);
   });
 
@@ -215,27 +207,32 @@ describe('recovering from a stale presence lease', () => {
     // time (see startAgentPresence in apps/body/src/activity.ts) rather than
     // when the heartbeat was enqueued behind a retry.
     const now = AGENT_PRESENCE_STALE_MS * 3;
-    const late = mergeAgentPresence({ [agent]: stale }, {
-      agentPubkey: agent,
-      status: 'online',
-      observedAt: now - AGENT_PRESENCE_STALE_MS - 1,
-    });
+    const late = mergeAgentPresence(
+      { [agent]: stale },
+      {
+        agentPubkey: agent,
+        status: 'online',
+        observedAt: now - AGENT_PRESENCE_STALE_MS - 1,
+      },
+    );
     expect(isAgentPresenceOnlineWithReconnectGrace(late[agent], now)).toBe(false);
   });
 
   it('never lets an older record displace the newest one the reader already holds', () => {
     const now = AGENT_PRESENCE_STALE_MS * 3;
     const fresh = { agentPubkey: agent, status: 'online' as const, observedAt: now };
-    const merged = mergeAgentPresence({ [agent]: fresh }, {
-      agentPubkey: agent,
-      status: 'offline',
-      observedAt: now - 60_000,
-    });
+    const merged = mergeAgentPresence(
+      { [agent]: fresh },
+      {
+        agentPubkey: agent,
+        status: 'offline',
+        observedAt: now - 60_000,
+      },
+    );
     expect(merged[agent]).toBe(fresh);
     expect(isAgentPresenceOnlineWithReconnectGrace(merged[agent], now)).toBe(true);
   });
 });
-
 
 /**
  * An agent's own visible output is evidence about the agent.
@@ -324,7 +321,7 @@ describe('an agent message counts as liveness', () => {
     );
   });
 
-  it('takes the agent\'s most recent message, not the first one it finds', () => {
+  it("takes the agent's most recent message, not the first one it finds", () => {
     const now = 5_000_000;
     const corrected = presenceWithMessageLiveness(
       {},

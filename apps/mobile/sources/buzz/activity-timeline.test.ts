@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { agentActivityDetails } from '@/sync/transport/buzz-event-projection';
 import { buildActivityTimeline, buildTurnActivity, latestCornerPlan } from './activity-timeline';
 
 describe('buildActivityTimeline', () => {
@@ -297,32 +296,19 @@ describe('latestCornerPlan', () => {
     expect(latestCornerPlan([])).toBeUndefined();
   });
 
-  it("reads a plan straight off body's own wire envelope, end to end", () => {
-    // The seam this whole feature hangs on, and the one that was silently
-    // broken: the daemon rides a changed plan out on the `activity_summary`
-    // receipt inside its `activity_batch` envelope, and the pin reads it back
-    // through `agentActivityDetails`. A regression anywhere along that chain
-    // makes the objective panel render an objective with no checklist and
-    // nothing to say why.
-    const activity = agentActivityDetails(
-      JSON.stringify({
-        update: {
-          sessionUpdate: 'activity_batch',
-          updates: [
-            {
-              sessionUpdate: 'activity_summary',
-              content: { type: 'text', text: '' },
-              plan: {
-                items: [
-                  { step: 'Find the renderer', status: 'completed' },
-                  { step: 'Wire the highlighter', status: 'in_progress' },
-                ],
-              },
-            },
+  it('reads a plan from the typed activity detail', () => {
+    const activity = [
+      {
+        kind: 'summary' as const,
+        title: 'Progress',
+        plan: {
+          items: [
+            { step: 'Find the renderer', status: 'completed' as const },
+            { step: 'Wire the highlighter', status: 'in_progress' as const },
           ],
         },
-      }),
-    );
+      },
+    ];
 
     expect(latestCornerPlan([{ activity }])).toEqual({
       items: [
@@ -449,28 +435,21 @@ describe('failure reasons', () => {
     expect(turn.actions[0]?.reason).toBe('exit 127');
   });
 
-  it('derives the reason at the projection level, from the real activity_batch envelope', () => {
-    const envelope = JSON.stringify({
-      sessionId: 's1',
-      update: {
-        sessionUpdate: 'activity_batch',
-        updates: [
-          {
-            sessionUpdate: 'tool_activity',
-            toolCallId: 'exec-1',
-            title: 'Committed changes',
-            kind: 'execute',
-            status: 'failed',
-            command: 'git commit -m "fix"',
-            output: wireOutput(
-              "fatal: Unable to create '/r/.git/index.lock': Read-only file system",
-              128,
-            ),
-          },
-        ],
+  it('derives the reason from a typed failed activity item', () => {
+    const items = [
+      {
+        kind: 'tool' as const,
+        id: 'exec-1',
+        title: 'Committed changes',
+        toolKind: 'execute',
+        status: 'failed',
+        command: 'git commit -m "fix"',
+        output: wireOutput(
+          "fatal: Unable to create '/r/.git/index.lock': Read-only file system",
+          128,
+        ),
       },
-    });
-    const items = agentActivityDetails(envelope);
+    ];
     expect(items[0]).toMatchObject({ kind: 'tool', status: 'failed' });
     const turn = buildTurnActivity(items);
     expect(turn.actions[0]?.weight).toBe('failure');

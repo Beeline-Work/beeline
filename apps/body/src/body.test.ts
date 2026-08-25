@@ -57,7 +57,6 @@ import {
   taskDescriptionFromCornerRequest,
   taskSlugForCornerIntent,
   isChannelAddressedMessage,
-  isRoomConversationMessage,
   isChannelTaskRequest,
   isChannelWorkIntent,
   isReadOnlyInformationRequest,
@@ -101,6 +100,7 @@ import {
   DEFAULT_AGENT_IDENTITY_NAME,
   deriveAgentDisplayName,
   fallbackAgentName,
+  type AgentHistoryEntry,
 } from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
@@ -138,6 +138,10 @@ afterEach(() => {
   mocks.createBuzzClient.mockReset();
   mocks.createBuzzClient.mockImplementation(mocks.realCreateBuzzClient);
 });
+
+function stubEmptyAgentHistory(body: Body): void {
+  vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
+}
 
 describe('mcp-inventory', () => {
   it('hasWriteTools returns false for empty list', () => {
@@ -821,10 +825,6 @@ describe('agent identity boundary', () => {
       mkdirSync(workbench, { recursive: true });
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
       Reflect.get(body, 'sessions').set('room-1', { workbench: { dir: workbench } });
-      const durable = Reflect.get(body, 'durableState');
-      vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(
-        undefined as never,
-      );
       const handle = Reflect.get(body, 'handleRoomPermissionRequest').bind(body);
 
       try {
@@ -851,16 +851,8 @@ describe('agent identity boundary', () => {
       }
     });
 
-    it('denies a write and a shell command, and records the corner steer', async () => {
+    it('denies a write and a shell command', async () => {
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
-      const appended: Array<{ role: string; text: string }> = [];
-      const durable = (body as unknown as { durableState: unknown }).durableState;
-      vi.spyOn(durable as never, 'appendConversation' as never).mockImplementation((async (
-        _channelId: string,
-        entry: { role: string; text: string },
-      ) => {
-        appended.push(entry);
-      }) as never);
 
       const handle = (
         body as unknown as {
@@ -893,12 +885,6 @@ describe('agent identity boundary', () => {
           toolCall: { kind: 'execute', rawInput: { command: 'git commit -am wip' } },
         }),
       ).resolves.toBe('reject');
-
-      expect(appended.length).toBeGreaterThan(0);
-      for (const entry of appended) {
-        expect(entry.role).toBe('control');
-        expect(entry.text).toContain(ROOM_READ_ONLY_STEER);
-      }
     });
 
     /**
@@ -910,14 +896,6 @@ describe('agent identity boundary', () => {
      */
     it('answers a real claude read_file/git_log/git_show with allow, and its write/bash with reject', async () => {
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
-      const appended: Array<{ role: string; text: string }> = [];
-      const durable = (body as unknown as { durableState: unknown }).durableState;
-      vi.spyOn(durable as never, 'appendConversation' as never).mockImplementation((async (
-        _channelId: string,
-        entry: { role: string; text: string },
-      ) => {
-        appended.push(entry);
-      }) as never);
       const handle = (
         body as unknown as {
           handleRoomPermissionRequest(
@@ -937,21 +915,12 @@ describe('agent identity boundary', () => {
       ]) {
         await expect(handle('room-1', captured)).resolves.toBe('allow');
       }
-      // An allowed read is not a denial: it leaves no read-only steer behind.
-      expect(appended).toEqual([]);
-
       await expect(handle('room-1', CLAUDE_ACP_NATIVE_WRITE_PERMISSION)).resolves.toBe('reject');
       await expect(handle('room-1', CLAUDE_ACP_NATIVE_BASH_PERMISSION)).resolves.toBe('reject');
-      expect(appended.length).toBeGreaterThan(0);
-      for (const entry of appended) expect(entry.text).toContain(ROOM_READ_ONLY_STEER);
     });
 
     it('rejects a shell command whose text merely spells an inspection tool', async () => {
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
-      const durable = (body as unknown as { durableState: unknown }).durableState;
-      vi.spyOn(durable as never, 'appendConversation' as never).mockImplementation(
-        (async () => {}) as never,
-      );
       const handle = (
         body as unknown as {
           handleRoomPermissionRequest(
@@ -1008,13 +977,6 @@ describe('agent identity boundary', () => {
         newIdentity('operator'),
         newIdentity('agent'),
       );
-      for (const body of [creatorBody, everyoneBody]) {
-        const durable = (body as unknown as { durableState: unknown }).durableState;
-        vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(
-          undefined as never,
-        );
-      }
-
       await expect(
         Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(
           creatorBody,
@@ -1210,12 +1172,9 @@ describe('agent identity boundary', () => {
 
   it('fails a research Room closed when buzz-readonly-mcp is unresolved', async () => {
     const body = new Body({ ...config, workspaceRoot: '/tmp/buzzy-readonly-unavailable-unit' });
+    stubEmptyAgentHistory(body);
     const open = vi.spyOn(body, 'openSubchannel');
     const create = vi.spyOn(body as never, 'createManagedSession' as never);
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -1253,6 +1212,7 @@ describe('agent identity boundary', () => {
 
   it('never reuses an edit session as a read-only Room session', async () => {
     const body = new Body({ ...config, readonlyMcpCommand: '/buzz-readonly-mcp' });
+    stubEmptyAgentHistory(body);
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     body.registerSession({
       channelId: 'room-id',
@@ -1262,10 +1222,6 @@ describe('agent identity boundary', () => {
     });
     const open = vi.spyOn(body, 'openSubchannel');
     const prompt = vi.spyOn(client, 'sessionPrompt');
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -1822,14 +1778,14 @@ describe('Room poll resilience', () => {
     // (an iteration's own unsubscribe removes its handler from `latest`, so a
     // plain array length would go DOWN on reconnect and hide the re-subscribe).
     let subscribeCount = 0;
-    let latest: ((sessionEvent: { event: NostrEvent }) => void) | undefined;
+    let latest: ((event: NostrEvent) => void) | undefined;
     const closeCallbacks = new Set<() => void>();
     const fakeClient = {
       connect: vi.fn().mockResolvedValue(undefined),
       disconnect: vi.fn(),
       listMembers: vi.fn().mockResolvedValue([]),
       sessionEventsSubscribe: vi.fn(
-        async (_channelId: string, handler: (sessionEvent: { event: NostrEvent }) => void) => {
+        async (_channelId: string, handler: (event: NostrEvent) => void) => {
           subscribeCount += 1;
           latest = handler;
           return () => {
@@ -1919,7 +1875,7 @@ describe('Room poll resilience', () => {
       ).toBeGreaterThanOrEqual(2);
 
       // An event that arrives only AFTER the reconnection is delivered.
-      latest!({ event: { id: 'post-reconnect' } as NostrEvent });
+      latest!({ id: 'post-reconnect' } as NostrEvent);
       await waitFor(
         () => processed.some((event) => event.id === 'post-reconnect'),
         'post-reconnect delivery',
@@ -1941,7 +1897,7 @@ describe('Room poll resilience', () => {
       disconnect: vi.fn(),
       listMembers: vi.fn().mockResolvedValue([]),
       sessionEventsSubscribe: vi.fn(
-        async (_channelId: string, _handler: (sessionEvent: { event: NostrEvent }) => void) => {
+        async (_channelId: string, _handler: (event: NostrEvent) => void) => {
           subscribeCount += 1;
           return () => undefined;
         },
@@ -2032,14 +1988,14 @@ describe('Room poll resilience', () => {
   });
 
   it('isRoomAgentOnline seeds once per Room via a query, then updates live off agentPresenceSubscribe with no further queries', async () => {
-    let presenceHandler: ((sessionEvent: { event: NostrEvent }) => void) | undefined;
+    let presenceHandler: ((event: NostrEvent) => void) | undefined;
     const unsubscribe = vi.fn();
     const disconnect = vi.fn();
     const fakeClient = {
       connect: vi.fn(async () => undefined),
       socket: null,
       agentPresenceSubscribe: vi.fn(
-        async (_channelId: string, handler: (sessionEvent: { event: NostrEvent }) => void) => {
+        async (_channelId: string, handler: (event: NostrEvent) => void) => {
           presenceHandler = handler;
           return unsubscribe;
         },
@@ -2089,14 +2045,12 @@ describe('Room poll resilience', () => {
     // A live presence event updates the cache in place; a repeat check for
     // the same Room costs zero further queries or subscribes.
     presenceHandler?.({
-      event: {
-        tags: [
-          ['agent', agentPubkey],
-          ['status', 'online'],
-        ],
-        created_at: Math.floor(Date.now() / 1_000),
-      } as unknown as NostrEvent,
-    });
+      tags: [
+        ['agent', agentPubkey],
+        ['status', 'online'],
+      ],
+      created_at: Math.floor(Date.now() / 1_000),
+    } as unknown as NostrEvent);
     await expect(isOnline('room-a')).resolves.toBe(true);
     expect(seedQuery).toHaveBeenCalledOnce();
     expect(fakeClient.agentPresenceSubscribe).toHaveBeenCalledOnce();
@@ -2968,6 +2922,28 @@ describe('Room conversation and permission-gated work intent', () => {
   const human = newIdentity('human');
   const agent = newIdentity('agent');
 
+  function historyEntry(
+    eventId: string,
+    body: string,
+    kind: 'human-message' | 'agent-message' = 'human-message',
+    createdAt = 1,
+  ): AgentHistoryEntry {
+    return {
+      eventId,
+      channelId: 'parent-channel',
+      type: kind,
+      author: {
+        pubkey: kind === 'human-message' ? human.publicKey : agent.publicKey,
+        kind: kind === 'human-message' ? 'human' : 'agent',
+        label: kind === 'human-message' ? 'Milo (@milo)' : 'Joy (@joy)',
+      },
+      body,
+      attachments: [],
+      createdAt,
+      provenance: 'relay-verified',
+    } as AgentHistoryEntry;
+  }
+
   function requestEvent(
     tags: string[][],
     author = human,
@@ -3138,38 +3114,18 @@ describe('Room conversation and permission-gated work intent', () => {
     ).toBe(false);
   });
 
-  it('separates shared participant messages from Room control traffic', () => {
-    expect(isRoomConversationMessage(requestEvent([]))).toBe(true);
-    expect(isRoomConversationMessage(requestEvent([['t', 'agent-message']], agent))).toBe(true);
-    expect(isRoomConversationMessage(requestEvent([['t', 'body-control']], agent))).toBe(false);
-    expect(isRoomConversationMessage(requestEvent([['t', 'agent-activity']], agent))).toBe(false);
-    expect(isRoomConversationMessage(requestEvent([['t', 'buzz-write-permission-response']]))).toBe(
-      false,
-    );
-    expect(isRoomConversationMessage(requestEvent([['t', 'buzz-agent']], agent))).toBe(false);
-  });
-
   it('quotes attributed shared history without granting it turn authority', () => {
     const prompt = roomTurnPrompt(
       [
-        {
-          role: 'agent',
-          text: '[Agent Joy (@joy) · abc123]: I prefer mushroom.',
-          eventId: 'joy-message',
-          at: new Date(0).toISOString(),
-        },
-        {
-          role: 'user',
-          text: '[Person Milo (@milo) · def456]: @xian what did Joy recommend?',
-          eventId: 'current',
-          at: new Date(1_000).toISOString(),
-        },
+        historyEntry('joy-message', 'I prefer mushroom.', 'agent-message', 0),
+        historyEntry('current', '@xian what did Joy recommend?', 'human-message', 1),
       ],
       '[Person Milo (@milo) · def456]: @xian what did Joy recommend?',
       'current',
     );
 
-    expect(prompt).toContain('[Agent Joy (@joy) · abc123]: I prefer mushroom.');
+    expect(prompt).toContain('[Agent Joy (@joy) ·');
+    expect(prompt).toContain('I prefer mushroom.');
     expect(prompt).toContain('Current human-addressed request:');
     expect(prompt).toContain('@xian what did Joy recommend?');
     expect(prompt).toContain('It does not authorize mutation');
@@ -3182,12 +3138,9 @@ describe('Room conversation and permission-gated work intent', () => {
     ['Room', roomTurnPrompt],
     ['corner', cornerTurnPrompt],
   ] as const)('quotes only the six newest %s shared-context messages', (_surface, turnPrompt) => {
-    const transcript = Array.from({ length: 8 }, (_, index) => ({
-      role: 'user',
-      text: `[Person ${index}]: context-${index}`,
-      eventId: `context-${index}`,
-      at: new Date(index * 1_000).toISOString(),
-    }));
+    const transcript = Array.from({ length: 8 }, (_, index) =>
+      historyEntry(`context-${index}`, `context-${index}`, 'human-message', index),
+    );
 
     const prompt = turnPrompt(transcript, '[Person current]: answer this', 'current');
 
@@ -3250,14 +3203,7 @@ describe('Room conversation and permission-gated work intent', () => {
 
   it('tells an authorized peer to ground one reply and exposes the N=2 hard cap', () => {
     const prompt = agentExchangeTurnPrompt(
-      [
-        {
-          role: 'agent',
-          text: '[Agent Xian (@xian) · abc123]: What tradeoff matters most?',
-          eventId: 'turn-1',
-          at: new Date(0).toISOString(),
-        },
-      ],
+      [historyEntry('turn-1', 'What tradeoff matters most?', 'agent-message', 0)],
       '[Agent Xian (@xian) · abc123]: What tradeoff matters most?',
       'turn-1',
       {
@@ -3282,13 +3228,14 @@ describe('Room conversation and permission-gated work intent', () => {
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
       agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-room-reply-unit',
+      workspaceRoot: mkdtempSync(join(tmpdir(), 'buzzy-room-reply-unit-')),
       relayBaseUrl: 'http://relay.test',
       relayHost: 'relay.test',
       relayScheme: 'http',
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     const prompt = vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
       stopReason: 'end_turn',
@@ -3303,10 +3250,6 @@ describe('Room conversation and permission-gated work intent', () => {
       client,
       mode: 'readonly',
     });
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -3494,13 +3437,14 @@ describe('Room conversation and permission-gated work intent', () => {
       agentCommand: 'pi-acp',
       mcpBinary: '/nonexistent',
       agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-pi-corner-request-unit',
+      workspaceRoot: mkdtempSync(join(tmpdir(), 'buzzy-pi-corner-request-unit-')),
       relayBaseUrl: 'http://relay.test',
       relayHost: 'relay.test',
       relayScheme: 'http',
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     const client = new AcpClient({ agentCommand: 'pi-acp', agentEnv: {} });
     vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
       stopReason: 'end_turn',
@@ -3515,10 +3459,6 @@ describe('Room conversation and permission-gated work intent', () => {
       client,
       mode: 'readonly',
     });
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     const requestCorner = vi
       .spyOn(body as never, 'handleAgentCornerRequest' as never)
       .mockResolvedValue(undefined as never);
@@ -3568,6 +3508,7 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     const request = {
       eventId: 'agent-corner-request',
       authorPubkey: human.publicKey,
@@ -3578,10 +3519,6 @@ describe('Room conversation and permission-gated work intent', () => {
     vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
       'allow' as never,
     );
-    const durableState = Reflect.get(body, 'durableState') as {
-      conversation: (...args: unknown[]) => Promise<unknown[]>;
-    };
-    vi.spyOn(durableState, 'conversation').mockResolvedValue([]);
     const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     const info = {
       subchannelId: 'agent-corner-id',
@@ -3704,13 +3641,14 @@ describe('Room conversation and permission-gated work intent', () => {
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
       agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-room-permission-recycle-unit',
+      workspaceRoot: mkdtempSync(join(tmpdir(), 'buzzy-room-permission-recycle-unit-')),
       relayBaseUrl: 'http://relay.test',
       relayHost: 'relay.test',
       relayScheme: 'http',
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     const scheduler = Reflect.get(body, 'scheduler') as {
       suspend: (channelId: string) => Promise<void>;
     };
@@ -3735,10 +3673,6 @@ describe('Room conversation and permission-gated work intent', () => {
       client,
       mode: 'readonly',
     });
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     vi.stubGlobal(
       'fetch',
       vi.fn(
@@ -3779,6 +3713,7 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     const prompt = vi.spyOn(client, 'sessionPrompt');
     body.registerSession({
@@ -3787,10 +3722,6 @@ describe('Room conversation and permission-gated work intent', () => {
       client,
       mode: 'readonly',
     });
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     const request = {
       eventId: 'explicit-corner-request',
       authorPubkey: human.publicKey,
@@ -3854,22 +3785,13 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     body.registerSession({
       channelId: 'parent-channel',
       sessionId: 'readonly-session',
       client,
       mode: 'readonly',
-    });
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (channelId: string, entry: unknown) => Promise<void>;
-      conversation: (channelId: string) => Promise<unknown[]>;
-    };
-    await durableState.appendConversation('parent-channel', {
-      role: 'user',
-      text: '[Person Joy (@joy) · abc123]: unrelated lunch plans are tacos at noon',
-      eventId: 'unrelated-message',
-      at: new Date(0).toISOString(),
     });
     const request = {
       eventId: 'explicit-corner-request',
@@ -4004,6 +3926,7 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     // Every relay-backed idempotency check sees no prior state, matching the
     // worst case for a real relay round-trip that hasn't converged yet.
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
@@ -4048,7 +3971,7 @@ describe('Room conversation and permission-gated work intent', () => {
     ).resolves.toBe(0);
     expect(sessionPromptSpy).toHaveBeenCalledTimes(1);
     expect(
-      published.some((item) => item.content.includes("won't retry it without another message")),
+      published.some((item) => item.content?.includes("won't retry it without another message")),
     ).toBe(true);
 
     // A later poll must not re-drive the backend a further time — the event
@@ -4222,12 +4145,9 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     const provision = vi.spyOn(body, 'provision');
     const open = vi.spyOn(body, 'openSubchannel');
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -4558,6 +4478,7 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     const client = new AcpClient({ agentCommand: 'codex-acp', agentEnv: {} });
     body.registerSession({
       channelId: 'parent-channel',
@@ -4606,12 +4527,6 @@ describe('Room conversation and permission-gated work intent', () => {
       };
     });
     const provision = vi.spyOn(body, 'provision');
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-      conversation: (...args: unknown[]) => Promise<unknown[]>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
-    vi.spyOn(durableState, 'conversation').mockResolvedValue([]);
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -4718,13 +4633,14 @@ describe('Room conversation and permission-gated work intent', () => {
       agentCommand: 'codex-acp',
       mcpBinary: '/nonexistent',
       agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-direct-named-request-unit',
+      workspaceRoot: mkdtempSync(join(tmpdir(), 'buzzy-direct-named-request-unit-')),
       relayBaseUrl: 'http://relay.test',
       relayHost: 'relay.test',
       relayScheme: 'http',
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    stubEmptyAgentHistory(body);
     const client = new AcpClient({ agentCommand: 'codex-acp', agentEnv: {} });
     body.registerSession({
       channelId: 'repo-less-room',
@@ -4760,10 +4676,6 @@ describe('Room conversation and permission-gated work intent', () => {
       };
     });
     const provision = vi.spyOn(body, 'provision');
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -6435,7 +6347,6 @@ describe('corner merge-ready surfaces a real committed change', () => {
     const worktreePath = committedFeatureWorktree();
     try {
       const durableState = Reflect.get(body, 'durableState');
-      vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
       vi.spyOn(durableState, 'recordModelTurn').mockResolvedValue();
       writeFileSync(join(worktreePath, 'PENDING.txt'), 'commit me\n');
       const prompts: string[] = [];
@@ -6522,7 +6433,6 @@ describe('corner merge-ready surfaces a real committed change', () => {
     );
     const worktreePath = committedFeatureWorktree();
     try {
-      vi.spyOn(Reflect.get(body, 'durableState'), 'appendConversation').mockResolvedValue();
       writeFileSync(join(worktreePath, 'STUCK.txt'), 'still dirty\n');
       const info = {
         subchannelId: 'corner-merge-feedback-stuck',
@@ -7983,12 +7893,9 @@ describe('room owns the repo (Stage 1)', () => {
 
   it('refuses an open-a-corner command in a repo-less Room with an actionable message', async () => {
     const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+    stubEmptyAgentHistory(body);
     const open = vi.spyOn(body, 'openSubchannel');
     const create = vi.spyOn(body as never, 'createManagedSession' as never);
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     const published: NostrEvent[] = [];
     stubPublish(published);
 
@@ -9014,17 +8921,35 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       );
       const queryEvents = vi.fn().mockResolvedValueOnce([chatter]).mockResolvedValueOnce([mention]);
       (Reflect.get(body, 'agentRelay') as { queryEvents: unknown }).queryEvents = queryEvents;
+      vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([
+        {
+          eventId: chatter.id,
+          channelId: 'corner-addressing',
+          type: 'human-message',
+          author: { pubkey: firstHuman.publicKey, kind: 'human', label: 'First human' },
+          body: chatter.content,
+          attachments: [],
+          createdAt: chatter.created_at,
+          provenance: 'relay-verified',
+        },
+        {
+          eventId: mention.id,
+          channelId: 'corner-addressing',
+          type: 'human-message',
+          author: { pubkey: secondHuman.publicKey, kind: 'human', label: 'Second human' },
+          body: mention.content,
+          attachments: [],
+          createdAt: mention.created_at,
+          provenance: 'relay-verified',
+        },
+      ] as never);
       const durableState = Reflect.get(body, 'durableState') as {
-        conversation: (channelId: string) => Promise<{ eventId?: string; text: string }[]>;
         delivered: (channelId: string, eventId: string) => Promise<void>;
       };
       const delivered = vi.spyOn(durableState, 'delivered');
 
       expect(await body.pollMembers('corner-addressing')).toBe(0);
       expect(sessionSteer).not.toHaveBeenCalled();
-      expect(await durableState.conversation('corner-addressing')).toEqual(
-        expect.arrayContaining([expect.objectContaining({ eventId: chatter.id })]),
-      );
       expect(delivered).toHaveBeenCalledWith('corner-addressing', chatter.id);
 
       expect(await body.pollMembers('corner-addressing')).toBe(1);
@@ -9045,6 +8970,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-queue-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
 
       const prompts: string[] = [];
       const sessionPrompt = vi.fn(async (_sessionId: string, prompt: string) => {
@@ -9243,6 +9169,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-failed-start-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
       const sessionPrompt = vi.fn();
       const session = {
         channelId: 'corner-failed-start',
@@ -9478,7 +9405,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     expect((Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('ack-room')).toBe(2);
   });
 
-  it('acknowledges nothing for a Room control event or the agent’s own message', async () => {
+  it('preserves human prose with reserved tags while ignoring the agent’s own message', async () => {
     const published = stubPublishing();
     const agent = newIdentity('room-noack-agent');
     const human = newIdentity('room-noack-human');
@@ -9509,10 +9436,10 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     Reflect.get(body, 'noteRoomInboundMessage').call(body, 'noack-room', control, participants);
     Reflect.get(body, 'noteRoomInboundMessage').call(body, 'noack-room', ownMessage, participants);
 
-    expect(queuedAcks(published)).toHaveLength(0);
-    expect(
-      (Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('noack-room'),
-    ).toBeUndefined();
+    await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(1));
+    expect((Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('noack-room')).toBe(
+      1,
+    );
   });
 });
 
@@ -10220,10 +10147,7 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
   function makeBody(): { body: Body; workspaceRoot: string } {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-target-branch-'));
     const body = new Body(baseConfig(workspaceRoot));
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
+    stubEmptyAgentHistory(body);
     return { body, workspaceRoot };
   }
 
@@ -10544,7 +10468,7 @@ describe('an unrecognized slash command is marked, never silently executed', () 
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
       agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-slash-notice-unit',
+      workspaceRoot: mkdtempSync(join(tmpdir(), 'buzzy-slash-notice-unit-')),
       relayBaseUrl: 'http://relay.test',
       relayHost: 'relay.test',
       relayScheme: 'http',
@@ -10566,6 +10490,7 @@ describe('an unrecognized slash command is marked, never silently executed', () 
   }
 
   function stubRoomTurn(body: Body, reply: string) {
+    stubEmptyAgentHistory(body);
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     const prompt = vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
       stopReason: 'end_turn',
@@ -10579,10 +10504,6 @@ describe('an unrecognized slash command is marked, never silently executed', () 
       client,
       mode: 'readonly',
     });
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (...args: unknown[]) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockResolvedValue();
     return { prompt };
   }
 

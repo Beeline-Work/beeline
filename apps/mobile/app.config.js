@@ -59,6 +59,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
+            icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
             buildNumber: "1",

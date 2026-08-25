@@ -11,7 +11,7 @@
  *       channel metadata.
  *   - Activity projection bridges ACP session/update → relay channel events.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, readFile, realpath, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
@@ -185,6 +185,7 @@ import {
   verifyPermissionAction,
   type PermissionConcreteAction,
   type PermissionFreshReader,
+  type PermissionRequestV1,
   DEFAULT_RELAY_BASE_URL,
   isProductionRelayHost,
 } from '@beeline/buzz-client';
@@ -239,6 +240,11 @@ import {
   targetBranchProposalText,
 } from './target-branch.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
+import {
+  ScheduleActivationRefusedError,
+  parseScheduledTurnReceipt,
+  type ScheduledTurnRequest,
+} from './work-calendar.js';
 import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
 import { prepareGitReadTokenHelper, resolveBeelineCliEntrypoint } from './corner-read-token.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
@@ -1209,6 +1215,18 @@ interface PendingRoomTurn {
   squireSpendingHandled?: boolean;
   /** Exact target written in this turn; absent stays fail-closed. */
   namedRepositoryTarget?: NamedRepositoryTarget;
+  /** Calendar provenance never grants any tool or connector authority. */
+  scheduled?: Pick<
+    ScheduledTurnRequest,
+    | 'workspaceId'
+    | 'scheduleId'
+    | 'scheduleRevision'
+    | 'scheduleRunId'
+    | 'principalPubkey'
+    | 'reservedTokens'
+  >;
+  /** At most one P1 request is emitted for a scheduled turn's rejected side effect. */
+  scheduledPermissionRequested?: boolean;
 }
 
 export const AGENT_EXCHANGE_TAG = 'buzz-agent-exchange';
@@ -2382,6 +2400,11 @@ export class Body {
     return this.agentIdentity;
   }
 
+  /** Fresh paired-owner policy check used by daemon-level scheduled admission. */
+  currentPrincipalCanDrive(workspaceId: string, principalPubkey: string): Promise<boolean> {
+    return this.senderAccessAllowedFresh(workspaceId, principalPubkey);
+  }
+
   /** Remote git authority for this repository. GitHub production bindings are
    * required to come through the supervisor's installation-token callback. */
   private async remoteGit(repo: BoundRepo, cwd: string, args: string[]): Promise<GitResult> {
@@ -3302,10 +3325,14 @@ export class Body {
     return session;
   }
 
-  private runOnSession<T>(session: AgentSession, task: () => Promise<T>): Promise<T> {
+  private runOnSession<T>(
+    session: AgentSession,
+    task: () => Promise<T>,
+    priority = session.mode === 'readonly' ? ('interactive' as const) : ('background' as const),
+  ): Promise<T> {
     if (!session.lifecycle) return task();
     return this.scheduler.run(session.channelId, session.lifecycle, task, {
-      priority: session.mode === 'readonly' ? 'interactive' : 'background',
+      priority,
       // A corner budgets against its parent Room, so one Room's corners can
       // never crowd another Room out of the Workspace pool.
       roomKey: session.parentChannelId ?? session.channelId,
@@ -3434,7 +3461,11 @@ export class Body {
        * everything downstream — live draft and final text.
        */
       cornerRequests?: boolean;
+      /** Calendar authority is re-read after background scheduler admission,
+       * immediately before the ACP model invocation. */
+      beforeModelActivation?: () => Promise<void>;
     },
+    activeRoomTurn?: PendingRoomTurn,
   ): Promise<
     PromptResult & {
       cornerRequest?: AgentCornerRequest;
@@ -3508,60 +3539,80 @@ export class Body {
     // activation failures spent no model call and must not appear as one.
     let modelCallStartedAt: string | undefined;
     try {
-      result = await this.runOnSession(session, () => {
-        // Armed HERE, not before `runOnSession`: a turn queued behind another
-        // turn on the same pinned session has sent the backend nothing yet, so
-        // a "my coding backend is taking longer than usual" notice fired while
-        // merely waiting in that FIFO is simply false — and lands in the
-        // transcript directly under the message that is still waiting its turn.
-        stallBaselineSeq = this.inboundMessageSeq.get(turn.channelId) ?? 0;
-        armStallTimer();
-        modelCallStartedAt = new Date().toISOString();
-        const publishMessageDraft = (fullText: string) => {
-          const visible = cornerRequestFilter ? cornerRequestFilter.onChunk(fullText) : fullText;
-          const gateSafeVisible = turn.withholdMergeClaims
-            ? withoutPrematureMergeClaims(visible)
-            : visible;
-          if (gateSafeVisible !== visible) withheldMergeClaim = true;
-          draft?.onChunk(gateSafeVisible);
-        };
-        let typedStreamSeen = false;
-        const promptCall = session.client.sessionPrompt(
-          session.sessionId,
-          wirePrompt,
-          ROOM_AGENT_PROMPT_TIMEOUT_MS,
-          (_delta, fullText) => {
-            // Compatibility for test doubles and older in-process clients
-            // that implement only the original chunk callback. A real
-            // AcpClient supplies the typed snapshot first for every update.
-            if (!typedStreamSeen) publishMessageDraft(fullText);
-          },
-          (stream) => {
+      result = await this.runOnSession(
+        session,
+        async () => {
+          const previousRoomTurn = activeRoomTurn
+            ? this.pendingRoomTurns.get(turn.channelId)
+            : undefined;
+          if (activeRoomTurn) this.pendingRoomTurns.set(turn.channelId, activeRoomTurn);
+          try {
+            await turn.beforeModelActivation?.();
+            // Armed HERE, not before `runOnSession`: a turn queued behind another
+            // turn on the same pinned session has sent the backend nothing yet, so
+            // a "my coding backend is taking longer than usual" notice fired while
+            // merely waiting in that FIFO is simply false — and lands in the
+            // transcript directly under the message that is still waiting its turn.
+            stallBaselineSeq = this.inboundMessageSeq.get(turn.channelId) ?? 0;
             armStallTimer();
-            if (!stream) return;
-            typedStreamSeen = true;
-            // Progress narration that an adapter reports as an earlier
-            // message run moves into the rolling thought lane at the tool
-            // boundary. Only the current run can accumulate as the answer.
-            publishMessageDraft(stream.messageText);
-            if (stream.thoughtText) thought?.onChunk(stream.thoughtText);
-          },
-        );
-        let hardTimer: NodeJS.Timeout | undefined;
-        const hardDeadline = new Promise<never>((_, reject) => {
-          hardTimer = setTimeout(
-            () =>
-              reject(
-                new Error(`ACP turn hard deadline exceeded after ${ROOM_AGENT_HARD_TIMEOUT_MS}ms`),
-              ),
-            ROOM_AGENT_HARD_TIMEOUT_MS,
-          );
-          hardTimer.unref?.();
-        });
-        return Promise.race([promptCall, hardDeadline]).finally(() => {
-          if (hardTimer) clearTimeout(hardTimer);
-        });
-      });
+            modelCallStartedAt = new Date().toISOString();
+            const publishMessageDraft = (fullText: string) => {
+              const visible = cornerRequestFilter
+                ? cornerRequestFilter.onChunk(fullText)
+                : fullText;
+              const gateSafeVisible = turn.withholdMergeClaims
+                ? withoutPrematureMergeClaims(visible)
+                : visible;
+              if (gateSafeVisible !== visible) withheldMergeClaim = true;
+              draft?.onChunk(gateSafeVisible);
+            };
+            let typedStreamSeen = false;
+            const promptCall = session.client.sessionPrompt(
+              session.sessionId,
+              wirePrompt,
+              ROOM_AGENT_PROMPT_TIMEOUT_MS,
+              (_delta, fullText) => {
+                // Compatibility for test doubles and older in-process clients
+                // that implement only the original chunk callback. A real
+                // AcpClient supplies the typed snapshot first for every update.
+                if (!typedStreamSeen) publishMessageDraft(fullText);
+              },
+              (stream) => {
+                armStallTimer();
+                if (!stream) return;
+                typedStreamSeen = true;
+                // Progress narration that an adapter reports as an earlier
+                // message run moves into the rolling thought lane at the tool
+                // boundary. Only the current run can accumulate as the answer.
+                publishMessageDraft(stream.messageText);
+                if (stream.thoughtText) thought?.onChunk(stream.thoughtText);
+              },
+            );
+            let hardTimer: NodeJS.Timeout | undefined;
+            const hardDeadline = new Promise<never>((_, reject) => {
+              hardTimer = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `ACP turn hard deadline exceeded after ${ROOM_AGENT_HARD_TIMEOUT_MS}ms`,
+                    ),
+                  ),
+                ROOM_AGENT_HARD_TIMEOUT_MS,
+              );
+              hardTimer.unref?.();
+            });
+            return await Promise.race([promptCall, hardDeadline]).finally(() => {
+              if (hardTimer) clearTimeout(hardTimer);
+            });
+          } finally {
+            if (activeRoomTurn && this.pendingRoomTurns.get(turn.channelId) === activeRoomTurn) {
+              if (previousRoomTurn) this.pendingRoomTurns.set(turn.channelId, previousRoomTurn);
+              else this.pendingRoomTurns.delete(turn.channelId);
+            }
+          }
+        },
+        turn.trigger === 'schedule' ? 'background' : undefined,
+      );
       clearStallTimer();
       // End-of-turn corner-request extraction: the final text may carry the
       // marker even when no streaming callback ever fired (a harness that
@@ -3593,6 +3644,8 @@ export class Body {
               commissionedByAgentPubkey: turn.commissionedByAgentPubkey,
               delegationId: turn.delegationId,
               workItemId: turn.workItemId,
+              scheduleId: turn.scheduleId,
+              scheduleRunId: turn.scheduleRunId,
               reservedTokens: turn.reservedTokens,
             },
             agentPubkey: this.agentIdentity.publicKey,
@@ -3619,6 +3672,8 @@ export class Body {
                 commissionedByAgentPubkey: turn.commissionedByAgentPubkey,
                 delegationId: turn.delegationId,
                 workItemId: turn.workItemId,
+                scheduleId: turn.scheduleId,
+                scheduleRunId: turn.scheduleRunId,
                 reservedTokens: turn.reservedTokens,
               },
               agentPubkey: this.agentIdentity.publicKey,
@@ -5111,6 +5166,12 @@ export class Body {
     request: ChannelTaskRequest,
     finalText: string,
   ): Promise<void> {
+    // The parser can prove ordinary prose is inert without any relay-derived
+    // roster. Avoid turning every conversational answer into an authority
+    // lookup (and, more importantly, never let that unrelated read failure
+    // convert an already-published Room reply into a failed turn).
+    const preflight = parseDelegationDirectives(finalText, []);
+    if (preflight.directives.length === 0 && preflight.errors.length === 0) return;
     const workspaceId = await this.channelCommunityId(channelId);
     if (!workspaceId) return;
     const { attributions } = await this.delegationRoster(channelId);
@@ -5307,28 +5368,33 @@ export class Body {
         attachments: [],
         createdAt: turn.value.createdAt,
       };
-      this.pendingRoomTurns.set(channelId, {
+      const pendingTurn: PendingRoomTurn = {
         request,
         boundRepo,
         editPolicy,
         permissionHandled: false,
         transitionedToCorner: false,
         readOnlyInformationRequest: false,
-      });
-      const result = await this.promptAgent(session, prompt, {
-        channelId,
-        requestId: turn.event.id,
-        originalRequestId: turn.value.rootEventId,
-        cause: 'delegation',
-        trigger: 'delegation',
-        rootEventId: turn.value.rootEventId,
-        principalPubkey: turn.value.principalPubkey,
-        commissionedByAgentPubkey: turn.value.fromAgentPubkey,
-        delegationId: turn.value.delegationId,
-        workItemId: turn.value.workItemId,
-        reservedTokens: turn.value.budget.reservedTokens,
-        replyToId: turn.event.id,
-      });
+      };
+      const result = await this.promptAgent(
+        session,
+        prompt,
+        {
+          channelId,
+          requestId: turn.event.id,
+          originalRequestId: turn.value.rootEventId,
+          cause: 'delegation',
+          trigger: 'delegation',
+          rootEventId: turn.value.rootEventId,
+          principalPubkey: turn.value.principalPubkey,
+          commissionedByAgentPubkey: turn.value.fromAgentPubkey,
+          delegationId: turn.value.delegationId,
+          workItemId: turn.value.workItemId,
+          reservedTokens: turn.value.budget.reservedTokens,
+          replyToId: turn.event.id,
+        },
+        pendingTurn,
+      );
       const reply = await this.publishAgentResult(
         channelId,
         session,
@@ -5382,8 +5448,6 @@ export class Body {
         this.presenceGenerations.get(channelId),
       ).catch(() => undefined);
       throw error;
-    } finally {
-      this.pendingRoomTurns.delete(channelId);
     }
   }
 
@@ -6068,6 +6132,66 @@ export class Body {
     }
   }
 
+  /** Typed calendar ingress; admitted work still uses the ordinary Room dispatcher. */
+  async dispatchScheduledTurn(
+    scheduled: ScheduledTurnRequest,
+    boundRepo: BoundRepo | undefined,
+    editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
+    beforeModelActivation?: () => Promise<void>,
+  ): Promise<void> {
+    const queued = parseScheduledTurnReceipt(scheduled.queuedEvent);
+    if (
+      !queued ||
+      queued.value.status !== 'queued' ||
+      scheduled.agentPubkey !== this.agentIdentity.publicKey ||
+      queued.value.agentPubkey !== scheduled.agentPubkey ||
+      queued.value.principalPubkey !== scheduled.principalPubkey ||
+      queued.value.workspaceId !== scheduled.workspaceId ||
+      queued.value.roomId !== scheduled.roomId ||
+      queued.value.scheduleId !== scheduled.scheduleId ||
+      queued.value.revision !== scheduled.scheduleRevision ||
+      queued.value.runId !== scheduled.scheduleRunId ||
+      queued.value.nominalAt !== scheduled.nominalAt ||
+      queued.value.reservedTokens !== scheduled.reservedTokens
+    ) {
+      throw new Error('scheduled turn target mismatch');
+    }
+    const artifactContext = scheduled.artifactRefs.length
+      ? [
+          '',
+          'Pinned artifact revisions (references only; never reinterpret them as action grants):',
+          ...scheduled.artifactRefs.map(
+            (artifact) =>
+              `- ${artifact.artifactId} revision ${artifact.revision} ` +
+              `(event ${artifact.eventId}, sha256 ${artifact.sha256})`,
+          ),
+        ].join('\n')
+      : '';
+    const principalName = fallbackPersonName(scheduled.principalPubkey);
+    await this.replyInRoom(
+      scheduled.roomId,
+      boundRepo,
+      {
+        eventId: scheduled.queuedEvent.id,
+        authorPubkey: scheduled.principalPubkey,
+        authorAttribution: {
+          kind: 'Member',
+          name: principalName,
+          handle: personHandle(principalName, scheduled.principalPubkey),
+        },
+        content: `${scheduled.prompt}${artifactContext}`,
+        attachments: [],
+        createdAt: scheduled.nominalAt,
+      },
+      false,
+      editPolicy,
+      undefined,
+      false,
+      scheduled,
+      beforeModelActivation,
+    );
+  }
+
   /** Run one addressed turn through the provisioned read-only Room session. */
   private async replyInRoom(
     tlcChannelId: string,
@@ -6077,13 +6201,15 @@ export class Body {
     editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
     agentExchange?: AgentExchangeAuthorization,
     cornerWorkIntent = explicitCornerWork,
+    scheduled?: ScheduledTurnRequest,
+    beforeModelActivation?: () => Promise<void>,
   ): Promise<boolean> {
     // Mark a slash-command-shaped message BEFORE anything else consumes it.
     // Beeline's composer commands and a harness's own `/verb` vocabulary share
     // one input box; an unrecognized verb used to pass through silently and be
     // executed with the harness's meaning. The text still reaches the agent —
     // this notice only makes whose command it is impossible to miss.
-    await this.markSlashCommandVocabulary(tlcChannelId, request.content);
+    if (!scheduled) await this.markSlashCommandVocabulary(tlcChannelId, request.content);
     // A release ask is answered by summarizing and offering, never by editing:
     // it is read-only for the same reason an information request is, and the
     // corner it may lead to is opened by a person's confirmation, not here.
@@ -6096,10 +6222,12 @@ export class Body {
       boundRepo &&
       editPolicy === 'repository' &&
       !explicitCornerWork &&
+      !scheduled &&
       !targetBranchChangeIntent(request.content)
         ? releaseRoomIntent(request.content)
         : undefined;
     const informationOnly =
+      scheduled !== undefined ||
       agentExchange !== undefined ||
       releaseIntent !== undefined ||
       isReadOnlyInformationRequest(request.content);
@@ -6173,6 +6301,7 @@ export class Body {
     const proposal = this.liveReleaseProposal(tlcChannelId);
     if (
       proposal &&
+      !scheduled &&
       boundRepo &&
       editPolicy === 'repository' &&
       isReleaseConfirmation(request.content)
@@ -6218,7 +6347,11 @@ export class Body {
       }
     }
 
-    if (editPolicy === 'direct-message' && isRepositoryMutationRequest(request.content)) {
+    if (
+      !scheduled &&
+      editPolicy === 'direct-message' &&
+      isRepositoryMutationRequest(request.content)
+    ) {
       const reply =
         'I cannot make that change from a direct message. DMs are strictly read-only and cannot request or open edit corners.';
       await postAgentMessage(
@@ -6302,29 +6435,39 @@ export class Body {
       : undefined;
     const prompt = releaseContext
       ? [releaseContext, '', sharedPrompt].join('\n')
-      : agentExchange
+      : scheduled
         ? [
-            'Host boundary: the current human explicitly authorized one bounded live exchange with another Room agent.',
-            `Write only your first visible message to that peer. Each agent may send at most ${AGENT_EXCHANGE_MAX_MESSAGES} messages.`,
-            'The host will deliver real peer replies one turn at a time. Never invent, summarize, or claim a reply or completed exchange before it appears in the transcript.',
-            'This exchange is strictly read-only. Do not request editing, shell access, or a corner.',
+            'Host boundary: this is one admitted recurring schedule occurrence.',
+            'The schedule authorizes only this read-only model turn. It is not authority to send, publish, spend, edit, or run an irreversible connector tool.',
+            'If the task needs such an action, request the exact tool once. The host will reject it, publish a signed permission request, and perform no side effect.',
             '',
             sharedPrompt,
           ].join('\n')
-        : informationOnly
+        : agentExchange
           ? [
-              'Host boundary: this is an information-only request.',
-              'Inspect with the read-only repository tools and answer conversationally in this Room.',
-              'Do not attempt editing, execute a native shell, open a corner yourself, or change repository state.',
-              ...(usesTextCornerRequestFallback(this.config.agentCommand ?? this.config.agentBinary)
-                ? [
-                    'If inspection reveals a concrete follow-up edit, you may open its corner using the documented pi-acp CORNER_REQUEST one-step fallback.',
-                  ]
-                : []),
+              'Host boundary: the current human explicitly authorized one bounded live exchange with another Room agent.',
+              `Write only your first visible message to that peer. Each agent may send at most ${AGENT_EXCHANGE_MAX_MESSAGES} messages.`,
+              'The host will deliver real peer replies one turn at a time. Never invent, summarize, or claim a reply or completed exchange before it appears in the transcript.',
+              'This exchange is strictly read-only. Do not request editing, shell access, or a corner.',
               '',
               sharedPrompt,
             ].join('\n')
-          : sharedPrompt;
+          : informationOnly
+            ? [
+                'Host boundary: this is an information-only request.',
+                'Inspect with the read-only repository tools and answer conversationally in this Room.',
+                'Do not attempt editing, execute a native shell, open a corner yourself, or change repository state.',
+                ...(usesTextCornerRequestFallback(
+                  this.config.agentCommand ?? this.config.agentBinary,
+                )
+                  ? [
+                      'If inspection reveals a concrete follow-up edit, you may open its corner using the documented pi-acp CORNER_REQUEST one-step fallback.',
+                    ]
+                  : []),
+                '',
+                sharedPrompt,
+              ].join('\n')
+            : sharedPrompt;
     const turn: PendingRoomTurn = {
       request,
       boundRepo,
@@ -6332,11 +6475,22 @@ export class Body {
       permissionHandled: false,
       transitionedToCorner: false,
       readOnlyInformationRequest: informationOnly,
+      ...(scheduled
+        ? {
+            scheduled: {
+              workspaceId: scheduled.workspaceId,
+              scheduleId: scheduled.scheduleId,
+              scheduleRevision: scheduled.scheduleRevision,
+              scheduleRunId: scheduled.scheduleRunId,
+              principalPubkey: scheduled.principalPubkey,
+              reservedTokens: scheduled.reservedTokens,
+            },
+          }
+        : {}),
       ...(editPolicy === 'named-repository'
         ? { namedRepositoryTarget: namedRepositoryTargetFromRoomRequest(request.content) }
         : {}),
     };
-    this.pendingRoomTurns.set(tlcChannelId, turn);
     let promptAttempted = false;
     try {
       promptAttempted = true;
@@ -6344,15 +6498,27 @@ export class Body {
         channelId: tlcChannelId,
         requestId: request.eventId,
         originalRequestId: request.eventId,
-        cause: 'room-message',
+        cause: scheduled ? ('schedule' as const) : ('room-message' as const),
+        ...(scheduled
+          ? {
+              trigger: 'schedule' as const,
+              rootEventId: scheduled.queuedEvent.id,
+              principalPubkey: scheduled.principalPubkey,
+              scheduleId: scheduled.scheduleId,
+              scheduleRunId: scheduled.scheduleRunId,
+              reservedTokens: scheduled.reservedTokens,
+              ...(beforeModelActivation ? { beforeModelActivation } : {}),
+            }
+          : {}),
         replyToId: request.eventId,
         replyRootId: request.replyRootId,
         cornerRequests:
+          !scheduled &&
           editPolicy !== 'direct-message' &&
           boundRepo !== undefined &&
           usesTextCornerRequestFallback(this.config.agentCommand ?? this.config.agentBinary),
       } as const;
-      let result = await this.promptAgent(session, prompt, promptOptions);
+      let result = await this.promptAgent(session, prompt, promptOptions, turn);
       // Some ACP adapters occasionally finish a turn successfully without
       // emitting any text or tool activity. The old generic fallback claimed
       // "No repository findings" even when the person had asked a greeting or
@@ -6363,7 +6529,8 @@ export class Body {
         !result.agentText.trim() &&
         result.updates.length === 0 &&
         result.toolCalls.length === 0 &&
-        !result.cornerRequest
+        !result.cornerRequest &&
+        !scheduled
       ) {
         result = await this.promptAgent(
           session,
@@ -6373,6 +6540,7 @@ export class Body {
             'Do not claim you inspected the repository or found nothing unless the request actually asked for that and your tool results support it.',
           ].join('\n'),
           promptOptions,
+          turn,
         );
       }
       if (turn.transitionedToCorner) {
@@ -6403,7 +6571,7 @@ export class Body {
           : undefined,
       });
       if (!reply) throw new Error('agent returned an empty Room reply');
-      if (!agentExchange) {
+      if (!agentExchange && !scheduled) {
         // This is the sole prose-to-authority bridge: it sees the completed
         // signed reply, applies the narrow parser, and emits typed events.
         // Publication failure is part of this delivery attempt; the durable
@@ -6414,7 +6582,7 @@ export class Body {
       // Permission-capable harnesses reach the native handler above and are
       // never parsed for this marker. Fire-and-forget so the Room reply does
       // not wait for worktree/session provisioning.
-      if (result.cornerRequest && boundRepo && editPolicy === 'repository') {
+      if (!scheduled && result.cornerRequest && boundRepo && editPolicy === 'repository') {
         void this.handleAgentCornerRequest(
           tlcChannelId,
           boundRepo,
@@ -6438,6 +6606,17 @@ export class Body {
       );
       return false;
     } catch (error) {
+      if (scheduled && error instanceof ScheduleActivationRefusedError) {
+        await postAgentTurnStatus(
+          tlcChannelId,
+          this.agentIdentity,
+          request.eventId,
+          session.logicalSessionId ?? session.sessionId,
+          'failed',
+          this.presenceGenerations.get(tlcChannelId),
+        ).catch(() => undefined);
+        throw error;
+      }
       await postAgentTurnStatus(
         tlcChannelId,
         this.agentIdentity,
@@ -6468,7 +6647,6 @@ export class Body {
       }
       throw error;
     } finally {
-      this.pendingRoomTurns.delete(tlcChannelId);
       if (turn.permissionHandled) {
         // A rejected in-place mutation leaves some ACP agents reluctant to ask
         // again on a later Room turn. Retire that physical read-only generation
@@ -6583,6 +6761,77 @@ export class Body {
   }
 
   /**
+   * Turn a scheduled model's first attempted side effect into a signed P1
+   * request. The attempted ACP tool is always rejected here: schedule
+   * authority never reaches an adapter, and a later ops executor must verify
+   * and consume the exact action grant independently.
+   */
+  private async requestScheduledActionPermission(
+    roomId: string,
+    turn: PendingRoomTurn,
+    permission: AcpPermissionRequest,
+  ): Promise<void> {
+    const scheduled = turn.scheduled;
+    if (!scheduled || turn.scheduledPermissionRequested) return;
+    turn.scheduledPermissionRequested = true;
+    const rawTool =
+      permission.toolCall?.title?.trim() || permission.toolCall?.kind?.trim() || 'connector-action';
+    const tool =
+      rawTool
+        .toLowerCase()
+        .replace(/[^a-z0-9._:/@+-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 200) || 'connector-action';
+    const rawInput = JSON.stringify(permission.toolCall?.rawInput ?? null);
+    const requestedAt = Math.floor(Date.now() / 1_000);
+    const value: PermissionRequestV1 = {
+      version: 1,
+      permissionId: randomUUID(),
+      roomId,
+      workspaceId: scheduled.workspaceId,
+      requesterAgentPubkey: this.agentIdentity.publicKey,
+      audience: 'owner',
+      summary: `Scheduled work requests the irreversible operation '${rawTool.slice(0, 160)}'.`,
+      scope: {
+        type: 'operation.execute',
+        connectorId: 'scheduled-room-tool',
+        tool,
+        argumentsDigest: createHash('sha256').update(rawInput).digest('hex'),
+        target: roomId,
+        risk: 'irreversible',
+      },
+      provenance: {
+        immediateTurnEventId: turn.request.eventId,
+        rootEventId: turn.request.eventId,
+        scheduleRunId: scheduled.scheduleRunId,
+      },
+      requestedAt,
+      requestExpiresAt: requestedAt + 10 * 60,
+    };
+    try {
+      const members = await listMembers(this.agentClientContext(), roomId);
+      const eligible = (
+        await Promise.all(
+          members.map(async (member) => ({
+            pubkey: member.pubkey,
+            role: await getChannelRole(this.agentClientContext(), roomId, member.pubkey),
+            agent: await isRegisteredAgentIdentity(member.pubkey, this.agentRelay),
+          })),
+        )
+      )
+        .filter((member) => !member.agent && (member.role === 'owner' || member.role === 'admin'))
+        .map((member) => member.pubkey);
+      if (eligible.length === 0) throw new Error('no current human admin can authorize the action');
+      await this.permissionRuntime.publishRequest(value, eligible);
+    } catch (error) {
+      // Fail closed and permit another scheduled occurrence to ask again. The
+      // current tool remains rejected regardless of publication success.
+      turn.scheduledPermissionRequested = false;
+      console.error('[body] scheduled action permission request failed:', error);
+    }
+  }
+
+  /**
    * A Room is read-only, and the ACP permission callback is where that is
    * ENFORCED rather than merely instructed. Every request that is not an exact
    * host-marked read-only MCP call is denied: file writes, edits, deletes,
@@ -6605,6 +6854,14 @@ export class Body {
     editPolicy?: RoomEditPolicy,
   ): Promise<AcpPermissionDecision> {
     if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
+    const pendingTurn = this.pendingRoomTurns.get(tlcChannelId);
+    if (pendingTurn?.scheduled) {
+      await this.requestScheduledActionPermission(tlcChannelId, pendingTurn, permission);
+      // A schedule is authority for a model call only. Even creator-enabled
+      // account MCP capabilities remain inert until a separate P1 executor
+      // consumes an exact action grant.
+      return 'reject';
+    }
     if (
       this.config.accessPolicy === 'creator' &&
       isExternalMcpPermissionRequest(permission, this.config.externalMcpCapabilities)
@@ -6628,7 +6885,7 @@ export class Body {
     if (workbench && isAgentWorkbenchWritePermissionRequest(permission, workbench.dir)) {
       return 'allow';
     }
-    const turn = this.pendingRoomTurns.get(tlcChannelId);
+    const turn = pendingTurn;
     // The agent's one prompt-documented way to raise a Room-config change it
     // cannot make itself. Handled ahead of the read-only denial note because
     // this command is not an attempted write and its steer ("open a corner

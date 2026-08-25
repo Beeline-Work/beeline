@@ -9,7 +9,8 @@ import {
   type RoomRepository,
 } from '@beeline/buzz-client';
 import { git, gitAuthed, type GitResult, type Identity } from '@beeline/gate';
-import { Body, type BoundRepo } from './body.js';
+import { Body, type BoundRepo, type RoomEditPolicy } from './body.js';
+import type { ScheduledTurnRequest } from './work-calendar.js';
 import type { BodyConfig } from './config.js';
 import type { NamedRepositoryTarget } from './repository-target.js';
 import {
@@ -37,6 +38,8 @@ import { RoomQuarantineStateMachine } from './room-quarantine.js';
 
 interface RunningRoom {
   body: Body;
+  boundRepo?: BoundRepo;
+  editPolicy: RoomEditPolicy;
   controller: AbortController;
   promise: Promise<void>;
   /** Last successful Room request poll (not merely a running JS promise). */
@@ -389,6 +392,29 @@ export class RoomRuntimeCoordinator {
 
   activeRoomCount(): number {
     return this.running.size;
+  }
+
+  async currentPrincipalCanDrive(
+    roomId: string,
+    workspaceId: string,
+    principalPubkey: string,
+  ): Promise<boolean | undefined> {
+    const room = this.running.get(roomId);
+    return room?.body.currentPrincipalCanDrive(workspaceId, principalPubkey);
+  }
+
+  async dispatchScheduledTurn(
+    request: ScheduledTurnRequest,
+    beforeModelActivation: () => Promise<void>,
+  ): Promise<void> {
+    const room = this.running.get(request.roomId);
+    if (!room) throw new Error('scheduled Room is not active');
+    await room.body.dispatchScheduledTurn(
+      request,
+      room.boundRepo,
+      room.editPolicy,
+      beforeModelActivation,
+    );
   }
 
   needsFastReconcile(): boolean {
@@ -881,6 +907,8 @@ export class RoomRuntimeCoordinator {
       });
     this.running.set(channelId, {
       body,
+      boundRepo,
+      editPolicy: 'repository',
       controller,
       promise,
       lastPollAt: startedAt,
@@ -920,6 +948,7 @@ export class RoomRuntimeCoordinator {
       });
     this.running.set(channelId, {
       body,
+      editPolicy: kind,
       controller,
       promise,
       lastPollAt: startedAt,

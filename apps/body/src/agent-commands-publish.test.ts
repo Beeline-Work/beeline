@@ -14,6 +14,7 @@ afterEach(async () => {
       .splice(0)
       .map((directory) => rm(directory, { recursive: true, force: true })),
   );
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -128,7 +129,11 @@ describe('AcpClient available-commands capture', () => {
       {},
       null,
     ]);
-    expect(parsed.map((command) => command.name)).toEqual(['leading-slashes', 'hinted', 'described']);
+    expect(parsed.map((command) => command.name)).toEqual([
+      'leading-slashes',
+      'hinted',
+      'described',
+    ]);
     expect(parsed[1]?.inputHint).toBe('[file]');
     // Over-long fields are clamped/dropped, not thrown on.
     expect(parsed[2]?.description).toHaveLength(300);
@@ -139,6 +144,7 @@ describe('AcpClient available-commands capture', () => {
 describe('agent command list publishing', () => {
   it('debounces bursts to the last list and dedupes already-published signatures', async () => {
     vi.useFakeTimers();
+    const publishError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const published: string[][] = [];
     const publishedSignatures = new Set<string>();
     let failNext = false;
@@ -170,6 +176,10 @@ describe('agent command list publishing', () => {
     publisher.onCommands([{ name: 'c' }]);
     await vi.advanceTimersByTimeAsync(1_500);
     expect(published).toEqual([['a', 'b']]);
+    expect(publishError).toHaveBeenCalledWith(
+      '[body] failed to publish agent command list:',
+      expect.objectContaining({ message: 'relay down' }),
+    );
     publisher.onCommands([{ name: 'c' }]);
     await vi.advanceTimersByTimeAsync(1_500);
     expect(published).toEqual([['a', 'b'], ['c']]);

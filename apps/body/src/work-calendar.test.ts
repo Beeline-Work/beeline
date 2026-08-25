@@ -7,6 +7,7 @@ import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DurableWorkCalendarState,
+  MAX_CALENDAR_IN_FLIGHT_RUNS,
   SCHEDULED_TURN_TAG,
   WORK_SCHEDULE_PAUSED_TAG,
   WORK_SCHEDULE_RUNTIME_TAG,
@@ -84,6 +85,7 @@ async function calendarFixture(
       | ScheduleAuthorityResult
       | ((schedule: ParsedWorkSchedule) => Promise<ScheduleAuthorityResult>);
     validateScheduleCreation?: WorkCalendarDependencies['validateScheduleCreation'];
+    validateArtifacts?: WorkCalendarDependencies['validateArtifacts'];
     publish?: (event: NostrEvent) => Promise<void>;
     dispatch?: WorkCalendarDependencies['dispatch'];
   } = {},
@@ -116,6 +118,7 @@ async function calendarFixture(
     ...(options.validateScheduleCreation
       ? { validateScheduleCreation: options.validateScheduleCreation }
       : {}),
+    ...(options.validateArtifacts ? { validateArtifacts: options.validateArtifacts } : {}),
     publish: options.publish ?? (async (event) => published.push(event)),
     dispatch,
     now: () => now,
@@ -137,6 +140,203 @@ async function calendarFixture(
     },
   };
 }
+
+function checkpointFixture(
+  schedule: WorkScheduleV1,
+  updatedAt = schedule.startsAt - 1,
+) {
+  return {
+    version: 1 as const,
+    type: 'runtime' as const,
+    checkpointVersion: 1 as const,
+    workspaceId: schedule.workspaceId,
+    roomId: schedule.roomId,
+    agentPubkey: schedule.agentPubkey,
+    principalPubkey: schedule.principalPubkey,
+    scheduleId: schedule.scheduleId,
+    revision: schedule.revision,
+    status: 'active' as const,
+    consecutiveFailures: 0,
+    updatedAt,
+    runCount: 0,
+    budgetDay: dayUtcForTest(schedule.startsAt),
+    dailyReservedTokens: 0,
+    receiptCursorAt: schedule.startsAt - 1,
+  };
+}
+
+describe('durable terminal watermark', () => {
+  it('retains more than the old compaction threshold and backpressures at the bound', async () => {
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, { maxRuns: 1_000_000 });
+    const durable = await state();
+    const checkpoint = checkpointFixture(schedule);
+    for (let index = 0; index < MAX_CALENDAR_IN_FLIGHT_RUNS; index += 1) {
+      const nominalAt = schedule.startsAt + index * 60;
+      const runId = deterministicScheduleRunId(schedule.scheduleId, schedule.revision, nominalAt);
+      const reserved = await durable.reserveRun({
+        runId,
+        scheduleId: schedule.scheduleId,
+        revision: schedule.revision,
+        workspaceId: schedule.workspaceId,
+        roomId: schedule.roomId,
+        agentPubkey: schedule.agentPubkey,
+        principalPubkey: schedule.principalPubkey,
+        nominalAt,
+        reservedTokens: schedule.perRunReservedTokens,
+        reservedAt: nominalAt,
+      });
+      expect(reserved.state).toBe('reserved');
+      const terminal = buildScheduledTurnReceipt(agent, {
+        version: 1,
+        workspaceId: schedule.workspaceId,
+        roomId: schedule.roomId,
+        agentPubkey: schedule.agentPubkey,
+        principalPubkey: schedule.principalPubkey,
+        scheduleId: schedule.scheduleId,
+        revision: schedule.revision,
+        runId,
+        nominalAt,
+        status: 'failed',
+        at: nominalAt,
+        reservedTokens: schedule.perRunReservedTokens,
+        reason: 'relay unavailable',
+      });
+      await durable.stageCompletion(runId, 'failed', terminal, [], {
+        ...checkpoint,
+        updatedAt: nominalAt,
+        latestNominalAt: nominalAt,
+        latestRunId: runId,
+        latestRunStatus: 'failed',
+      });
+    }
+    expect(await durable.runs()).toHaveLength(MAX_CALENDAR_IN_FLIGHT_RUNS);
+    expect((await durable.pendingReceipts()).filter(({ status }) => status === 'failed')).toHaveLength(
+      MAX_CALENDAR_IN_FLIGHT_RUNS,
+    );
+    const nominalAt = schedule.startsAt + MAX_CALENDAR_IN_FLIGHT_RUNS * 60;
+    await expect(
+      durable.reserveRun({
+        runId: deterministicScheduleRunId(schedule.scheduleId, schedule.revision, nominalAt),
+        scheduleId: schedule.scheduleId,
+        revision: schedule.revision,
+        workspaceId: schedule.workspaceId,
+        roomId: schedule.roomId,
+        agentPubkey: schedule.agentPubkey,
+        principalPubkey: schedule.principalPubkey,
+        nominalAt,
+        reservedTokens: schedule.perRunReservedTokens,
+        reservedAt: nominalAt,
+      }),
+    ).resolves.toEqual({ state: 'backpressure' });
+  });
+
+  it('advances only across a contiguous terminal-published prefix', async () => {
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const durable = await state();
+    const checkpoint = checkpointFixture(schedule);
+    const receipts: Array<{ runId: string; nominalAt: number; event: NostrEvent }> = [];
+    for (let index = 0; index < 3; index += 1) {
+      const nominalAt = schedule.startsAt + index * 60;
+      const runId = deterministicScheduleRunId(schedule.scheduleId, schedule.revision, nominalAt);
+      await durable.reserveRun({
+        runId,
+        scheduleId: schedule.scheduleId,
+        revision: schedule.revision,
+        workspaceId: schedule.workspaceId,
+        roomId: schedule.roomId,
+        agentPubkey: schedule.agentPubkey,
+        principalPubkey: schedule.principalPubkey,
+        nominalAt,
+        reservedTokens: schedule.perRunReservedTokens,
+        reservedAt: nominalAt,
+      });
+      const event = buildScheduledTurnReceipt(agent, {
+        version: 1,
+        workspaceId: schedule.workspaceId,
+        roomId: schedule.roomId,
+        agentPubkey: schedule.agentPubkey,
+        principalPubkey: schedule.principalPubkey,
+        scheduleId: schedule.scheduleId,
+        revision: schedule.revision,
+        runId,
+        nominalAt,
+        status: 'complete',
+        at: nominalAt,
+        reservedTokens: schedule.perRunReservedTokens,
+      });
+      await durable.stageCompletion(runId, 'complete', event, [], {
+        ...checkpoint,
+        updatedAt: nominalAt,
+        latestNominalAt: nominalAt,
+        latestRunId: runId,
+        latestRunStatus: 'complete',
+      });
+      receipts.push({ runId, nominalAt, event });
+    }
+    await durable.markReceiptPublished(receipts[1]!.runId, 'complete', receipts[1]!.event.id);
+    expect((await durable.checkpoints())[0]?.watermarkNominalAt).toBeUndefined();
+    await durable.markReceiptPublished(receipts[0]!.runId, 'complete', receipts[0]!.event.id);
+    expect((await durable.checkpoints())[0]).toEqual(
+      expect.objectContaining({
+        watermarkNominalAt: receipts[1]!.nominalAt,
+        watermarkRunId: receipts[1]!.runId,
+      }),
+    );
+    expect((await durable.runs()).map((run) => run.runId)).toEqual([receipts[2]!.runId]);
+  });
+});
+
+describe('scheduled artifact activation boundary', () => {
+  it('pauses before model activation when a fresh artifact revision check fails', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, {
+      artifactRefs: [
+        {
+          artifactId: 'artifact-one',
+          revision: 1,
+          eventId: 'a'.repeat(64),
+          sha256: 'b'.repeat(64),
+        },
+      ],
+    });
+    let activated = false;
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      validateArtifacts: async () => ({
+        authorized: false,
+        terminal: true,
+        reason: 'artifact-digest-mismatch',
+      }),
+      dispatch: vi.fn(async (_request, beforeModelActivation) => {
+        await beforeModelActivation();
+        activated = true;
+      }),
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(activated).toBe(false);
+    expect(await fixture.durable.checkpoints()).toContainEqual(
+      expect.objectContaining({
+        status: 'paused',
+        pauseReason: 'artifact-digest-mismatch',
+      }),
+    );
+    expect(
+      fixture.published.some((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === WORK_SCHEDULE_PAUSED_TAG),
+      ),
+    ).toBe(true);
+    await fixture.calendar.dispose();
+  });
+});
 
 describe('work schedule occurrence math', () => {
   const agent = createIdentity();
@@ -541,7 +741,13 @@ describe('WorkCalendar durable execution', () => {
     fixture.setNow(fixture.schedule.startsAt + 5);
     await fixture.calendar.wakeNow();
     expect(modelCall).toHaveBeenCalledOnce();
-    expect((await fixture.durable.runs())[0]!.state).toBe('complete');
+    expect(await fixture.durable.runs()).toHaveLength(0);
+    expect(await fixture.durable.checkpoints()).toContainEqual(
+      expect.objectContaining({
+        latestRunStatus: 'complete',
+        watermarkNominalAt: fixture.schedule.startsAt,
+      }),
+    );
     await fixture.calendar.dispose();
   });
 
@@ -574,7 +780,13 @@ describe('WorkCalendar durable execution', () => {
     fixture.setNow(fixture.schedule.startsAt + 5);
     await fixture.calendar.wakeNow();
     expect(modelCall).toHaveBeenCalledOnce();
-    expect((await fixture.durable.runs())[0]?.state).toBe('complete');
+    expect(await fixture.durable.runs()).toHaveLength(0);
+    expect(await fixture.durable.checkpoints()).toContainEqual(
+      expect.objectContaining({
+        latestRunStatus: 'complete',
+        watermarkNominalAt: fixture.schedule.startsAt,
+      }),
+    );
     await fixture.calendar.dispose();
   });
 

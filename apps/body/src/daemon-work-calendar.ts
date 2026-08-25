@@ -1,4 +1,5 @@
 /** Production relay/authority adapter for the pure WorkCalendar state machine. */
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import {
   createBuzzClient,
@@ -6,6 +7,7 @@ import {
   parsePermissionRequest,
   permissionActionId,
   verifyPermissionAction,
+  type ArtifactRevisionRef,
   type PermissionConcreteAction,
   type PermissionFreshReader,
 } from '@beeline/buzz-client';
@@ -31,6 +33,32 @@ import {
 
 function hasMember(members: readonly { pubkey: string }[], pubkey: string): boolean {
   return members.some((member) => member.pubkey === pubkey);
+}
+
+function uniqueArtifactTag(event: NostrEvent, name: string): string | undefined {
+  const values = event.tags.filter((tag) => tag[0] === name);
+  return values.length === 1 ? values[0]?.[1] : undefined;
+}
+
+export function validateArtifactRevisionEvents(
+  artifacts: readonly ArtifactRevisionRef[],
+  events: readonly NostrEvent[],
+): ScheduleAuthorityResult {
+  const byId = new Map(events.map((event) => [event.id, event]));
+  for (const artifact of artifacts) {
+    const event = byId.get(artifact.eventId);
+    if (!event) return { authorized: false, terminal: true, reason: 'artifact-missing' };
+    if (!verifyEvent(event))
+      return { authorized: false, terminal: true, reason: 'artifact-signature-invalid' };
+    const artifactId = uniqueArtifactTag(event, 'artifact') ?? uniqueArtifactTag(event, 'd');
+    if (artifactId !== artifact.artifactId)
+      return { authorized: false, terminal: true, reason: 'artifact-id-mismatch' };
+    if (uniqueArtifactTag(event, 'revision') !== String(artifact.revision))
+      return { authorized: false, terminal: true, reason: 'artifact-revision-mismatch' };
+    if (createHash('sha256').update(event.content).digest('hex') !== artifact.sha256)
+      return { authorized: false, terminal: true, reason: 'artifact-digest-mismatch' };
+  }
+  return { authorized: true };
 }
 
 function rawRequestEventId(event: NostrEvent): string | undefined {
@@ -480,6 +508,16 @@ export function createDaemonWorkCalendar(input: {
       return true;
     },
     authorize,
+    validateArtifacts: async (artifacts) => {
+      try {
+        const events = await rawEvents([{ ids: artifacts.map((artifact) => artifact.eventId), limit: artifacts.length + 1 }]);
+        if (events.length > artifacts.length)
+          return { authorized: false, terminal: true, reason: 'artifact-read-ambiguous' };
+        return validateArtifactRevisionEvents(artifacts, events);
+      } catch {
+        return { authorized: false, terminal: true, reason: 'artifact-unavailable' };
+      }
+    },
     publish: async (event) => {
       await relay.publishEvent(event);
     },

@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { createIdentity, type Identity } from '@beeline/buzz-client';
-import type { NostrEvent } from '@beeline/nostr';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { describe, expect, it } from 'vitest';
 import {
   authorizeDaemonWorkSchedule,
   readScheduledTurnReceiptTail,
+  validateArtifactRevisionEvents,
   type DaemonWorkScheduleAuthorityDependencies,
   type DaemonWorkScheduleAuthorityFacts,
 } from './daemon-work-calendar.js';
@@ -153,6 +155,44 @@ describe('scheduled receipt history recovery', () => {
         3,
       ),
     ).rejects.toThrow('receipt tail exceeds recovery bound');
+  });
+});
+
+describe('scheduled artifact authority', () => {
+  it('accepts only the exact signed artifact revision and content digest', () => {
+    const author = createIdentity();
+    const content = JSON.stringify({ title: 'Pinned research', body: 'Exact revision bytes' });
+    const event = signEvent(
+      {
+        pubkey: author.publicKey,
+        created_at: 1_900_000_000,
+        kind: 30078,
+        tags: [
+          ['d', 'artifact-one'],
+          ['revision', '7'],
+        ],
+        content,
+      },
+      author.secretKey,
+    );
+    const artifact = {
+      artifactId: 'artifact-one',
+      revision: 7,
+      eventId: event.id,
+      sha256: createHash('sha256').update(content).digest('hex'),
+    };
+    expect(validateArtifactRevisionEvents([artifact], [event])).toEqual({ authorized: true });
+    expect(
+      validateArtifactRevisionEvents([{ ...artifact, revision: 8 }], [event]),
+    ).toEqual({ authorized: false, terminal: true, reason: 'artifact-revision-mismatch' });
+    expect(
+      validateArtifactRevisionEvents([{ ...artifact, sha256: 'f'.repeat(64) }], [event]),
+    ).toEqual({ authorized: false, terminal: true, reason: 'artifact-digest-mismatch' });
+    expect(validateArtifactRevisionEvents([artifact], [])).toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'artifact-missing',
+    });
   });
 });
 

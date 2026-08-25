@@ -899,7 +899,10 @@ describe('archiveRoom and leaveRoom against an already-archived channel', () => 
         new Response(JSON.stringify({ error: 'invalid: bad signature' }), { status: 400 }),
     });
 
-    await expect(archiveRoom(ctx, 'broken-room')).rejects.toThrow(/bad signature/);
+    await expect(archiveRoom(ctx, 'broken-room')).rejects.toMatchObject({
+      kind: 'INVALID_EVENT',
+      retryable: false,
+    });
   });
 
   it('lets a member leave an already-archived Room without a successful publish', async () => {
@@ -923,6 +926,9 @@ describe('archiveRoom and leaveRoom against an already-archived channel', () => 
         new Response(JSON.stringify({ error: 'invalid: not permitted' }), { status: 400 }),
     });
 
-    await expect(leaveRoom(ctx, 'leave-live-room')).rejects.toThrow(/not permitted/);
+    await expect(leaveRoom(ctx, 'leave-live-room')).rejects.toMatchObject({
+      kind: 'INVALID_EVENT',
+      retryable: false,
+    });
   });
 });

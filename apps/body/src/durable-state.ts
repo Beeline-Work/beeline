@@ -49,6 +49,9 @@ interface StoredPermissionReceipt {
   delivered: boolean;
 }
 
+/** Current on-disk schema version, shared with release-fixture compatibility gates. */
+export const DURABLE_BODY_STATE_VERSION = 2;
+
 interface DurableBodyData {
   version: 2;
   inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;

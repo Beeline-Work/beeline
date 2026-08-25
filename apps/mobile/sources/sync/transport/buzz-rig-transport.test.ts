@@ -35,6 +35,7 @@ const WORKSPACE = 'workspace';
 const human = createIdentity('Captain');
 const agent = createIdentity('Buzzy');
 const peerAgent = createIdentity('Ox');
+const unattachedAgent = createIdentity('Unattached');
 const relay = createIdentity('Relay');
 
 function signed(
@@ -362,6 +363,12 @@ describe('BuzzRigTransport typed read-model boundary', () => {
         content: 'Private out-of-Room traffic.',
       }),
     );
+    fixture.deliver(
+      message(unattachedAgent, 'Same h, but the signer is not a Room member.', 14, [
+        ['t', 'agent-message'],
+        ['t', 'buzz-agent-exchange'],
+      ]),
+    );
 
     await vi.waitFor(() =>
       expect(delivered).toContainEqual(
@@ -420,7 +427,121 @@ describe('BuzzRigTransport typed read-model boundary', () => {
         event: expect.objectContaining({ type: 'unknown', reason: 'foreign-channel' }),
       }),
     );
+    expect(delivered).toContainEqual(
+      expect.objectContaining({
+        type: 'read-model',
+        event: expect.objectContaining({
+          type: 'unknown',
+          reason: 'unresolved-identity',
+          authorPubkey: unattachedAgent.publicKey,
+        }),
+      }),
+    );
+    for (const event of [
+      ...delivered.flatMap((item) => (item.type === 'read-model' ? [item.event] : [])),
+    ]) {
+      expect(
+        delivered.filter(
+          (item) => item.type === 'read-model' && item.event.eventId === event.eventId,
+        ),
+      ).toHaveLength(1);
+    }
     stop();
+  });
+
+  it('retains unresolved diagnostics without retrying the same author when refresh fails', async () => {
+    const fixture = clientFixture();
+    const transport = transportWith(fixture.client);
+    const delivered: SessionEvent[] = [];
+    const stop = await transport.sessionEventsSubscribeReady(ROOM, (event) => delivered.push(event));
+    fixture.client.listMembers.mockRejectedValueOnce(new Error('membership projection unavailable'));
+
+    const first = message(peerAgent, 'First unresolved turn.', 20);
+    const second = message(peerAgent, 'Second unresolved turn.', 21);
+    fixture.deliver(first);
+    await vi.waitFor(() =>
+      expect(delivered).toContainEqual(
+        expect.objectContaining({
+          type: 'read-model',
+          event: expect.objectContaining({ eventId: first.id, reason: 'unresolved-identity' }),
+        }),
+      ),
+    );
+    fixture.deliver(second);
+    await vi.waitFor(() =>
+      expect(delivered).toContainEqual(
+        expect.objectContaining({
+          type: 'read-model',
+          event: expect.objectContaining({ eventId: second.id, reason: 'unresolved-identity' }),
+        }),
+      ),
+    );
+
+    expect(fixture.client.listMembers).toHaveBeenCalledTimes(2);
+    expect(
+      delivered.filter(
+        (item) =>
+          item.type === 'read-model' && (item.event.eventId === first.id || item.event.eventId === second.id),
+      ),
+    ).toHaveLength(2);
+    stop();
+  });
+
+  it('queues live events that arrive during authority recovery and delivers each once in order', async () => {
+    const fixture = clientFixture();
+    const transport = transportWith(fixture.client);
+    const delivered: SessionEvent[] = [];
+    const stop = await transport.sessionEventsSubscribeReady(ROOM, (event) => delivered.push(event));
+    let resolveMembers!: (members: Array<{ pubkey: string; role: string }>) => void;
+    const membersReady = new Promise<Array<{ pubkey: string; role: string }>>((resolve) => {
+      resolveMembers = resolve;
+    });
+    fixture.client.listMembers.mockImplementationOnce(() => membersReady);
+    fixture.client.listAgents.mockResolvedValue([
+      { pubkey: agent.publicKey, displayName: 'Buzzy', raw: { id: 'agent-identity' } },
+      { pubkey: peerAgent.publicKey, displayName: 'Ox', raw: { id: 'peer-agent-identity' } },
+    ]);
+
+    const exchange = message(peerAgent, 'Exchange waits for fresh authority.', 30);
+    const known = message(agent, 'Already-known author waits behind it.', 31);
+    fixture.deliver(exchange);
+    await vi.waitFor(() => expect(fixture.client.listMembers).toHaveBeenCalledTimes(2));
+    fixture.deliver(known);
+    resolveMembers([
+      { pubkey: human.publicKey, role: 'owner' },
+      { pubkey: agent.publicKey, role: 'member' },
+      { pubkey: peerAgent.publicKey, role: 'member' },
+    ]);
+
+    await vi.waitFor(() => expect(delivered).toHaveLength(2));
+    expect(
+      delivered.map((item) => (item.type === 'read-model' ? item.event.eventId : undefined)),
+    ).toEqual([exchange.id, known.id]);
+    stop();
+  });
+
+  it('suppresses a recovered batch after the live subscription stops', async () => {
+    const fixture = clientFixture();
+    const transport = transportWith(fixture.client);
+    const delivered: SessionEvent[] = [];
+    const stop = await transport.sessionEventsSubscribeReady(ROOM, (event) => delivered.push(event));
+    let resolveMembers!: (members: Array<{ pubkey: string; role: string }>) => void;
+    const membersReady = new Promise<Array<{ pubkey: string; role: string }>>((resolve) => {
+      resolveMembers = resolve;
+    });
+    fixture.client.listMembers.mockImplementationOnce(() => membersReady);
+
+    fixture.deliver(message(peerAgent, 'Do not deliver after stop.', 40));
+    await vi.waitFor(() => expect(fixture.client.listMembers).toHaveBeenCalledTimes(2));
+    stop();
+    resolveMembers([
+      { pubkey: human.publicKey, role: 'owner' },
+      { pubkey: agent.publicKey, role: 'member' },
+      { pubkey: peerAgent.publicKey, role: 'member' },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(delivered).toEqual([]);
   });
 
   it('publishes replies only from the snapshot-owned same-Room reference', async () => {

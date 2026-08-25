@@ -104,12 +104,26 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
+          # The self-hosted runner account does not carry the emulator owner's
+          # PATH; the canary resolves adb from here against the sanctioned
+          # existing emulator-5554 on this host.
+          ANDROID_HOME: /home/lunchbox/android-sdk
         run: |
           set -euo pipefail
           if [ -n "$EXPO_TOKEN_SECRET" ]; then
             export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
           fi
+          set +e
           scripts/ota-canary.sh --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
+          canary_status=$?
+          set -e
+          if [ "$canary_status" -ne 0 ]; then
+            node scripts/ota-release.mjs mark-canary \
+              --ledger "$RUNNER_TEMP/mobile-ota-ledger.json" \
+              --status blocked \
+              --reason "ota-canary.sh exited ${canary_status}; promotion parked until the canary passes (see step log)"
+            exit "$canary_status"
+          fi
           node scripts/ota-release.mjs mark-canary \
             --ledger "$RUNNER_TEMP/mobile-ota-ledger.json" \
             --status passed
@@ -134,6 +148,7 @@ jobs:
           node scripts/ota-release.mjs promote \
             --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
       - name: Store release ledger
+        if: always() && steps.candidate.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: mobile-ota-ledger-${{ github.run_id }}

@@ -7,7 +7,7 @@ import { constants } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const webRoot = resolve(repoRoot, 'relay-stack', 'web');
@@ -128,6 +128,22 @@ function parseMcpTools(stdout) {
   fail('installed buzz-readonly-mcp did not answer tools/list');
 }
 
+export function parseSquireAuthentication(received, proxyPath) {
+  const line = received.trim().split('\n')[0] ?? '';
+  if (!line) {
+    fail(`installed Squire proxy ${proxyPath} returned an empty authentication frame`);
+  }
+  try {
+    return JSON.parse(line);
+  } catch (error) {
+    fail(
+      `installed Squire proxy ${proxyPath} returned invalid authentication JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 async function verifySquireProxy(proxyPath, cwd, env) {
   const token = 'beeline-install-proxy-token';
   let received = '';
@@ -152,7 +168,7 @@ async function verifySquireProxy(proxyPath, cwd, env) {
       { cwd, env, input: 'proxy-request\n', timeoutMs: 10_000 },
     );
     const lines = received.trim().split('\n');
-    const authentication = JSON.parse(lines[0] ?? '{}');
+    const authentication = parseSquireAuthentication(received, proxyPath);
     if (authentication.token !== token || lines[1] !== 'proxy-request') {
       fail('installed Squire proxy did not authenticate and forward stdin');
     }
@@ -293,7 +309,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

@@ -11,7 +11,7 @@
  *       channel metadata.
  *   - Activity projection bridges ACP session/update → relay channel events.
  */
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, readFile, realpath, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
@@ -185,7 +185,6 @@ import {
   verifyPermissionAction,
   type PermissionConcreteAction,
   type PermissionFreshReader,
-  type PermissionRequestV1,
   DEFAULT_RELAY_BASE_URL,
   isProductionRelayHost,
 } from '@beeline/buzz-client';
@@ -1215,7 +1214,7 @@ interface PendingRoomTurn {
   squireSpendingHandled?: boolean;
   /** Exact target written in this turn; absent stays fail-closed. */
   namedRepositoryTarget?: NamedRepositoryTarget;
-  /** Calendar provenance never grants any tool or connector authority. */
+  /** The human-authorized schedule is the mandate for this occurrence. */
   scheduled?: Pick<
     ScheduledTurnRequest,
     | 'workspaceId'
@@ -1225,8 +1224,6 @@ interface PendingRoomTurn {
     | 'principalPubkey'
     | 'reservedTokens'
   >;
-  /** At most one P1 request is emitted for a scheduled turn's rejected side effect. */
-  scheduledPermissionRequested?: boolean;
 }
 
 export const AGENT_EXCHANGE_TAG = 'buzz-agent-exchange';
@@ -3827,14 +3824,9 @@ export class Body {
       replyRootId?: string;
       extraTags?: readonly string[][];
       concise?: boolean;
-      allowAttachments?: boolean;
-      publishReply?: (event: NostrEvent) => Promise<void>;
     } = {},
   ): Promise<string> {
-    const uploaded =
-      options.allowAttachments === false
-        ? { attachments: [], errors: [] }
-        : await this.uploadAgentOutputs(session, result);
+    const uploaded = await this.uploadAgentOutputs(session, result);
     let reply = stripAttachmentDirectives(stripAgentReplyPreamble(result.agentText)).trim();
     if (!reply) reply = uploaded.attachments.length ? 'Shared an attachment.' : fallback;
     if (uploaded.errors.length)
@@ -3846,21 +3838,20 @@ export class Body {
     if (options.concise) reply = conciseCornerTurnSummary(reply) || fallback;
     if (!reply) throw new Error('agent returned an empty reply');
     if (options.replyTo) {
-      const candidate = buildAgentMessage(
+      const event = await this.durableState.reserveReply(
         channelId,
-        this.agentIdentity,
-        reply,
         options.replyTo,
-        uploaded.attachments,
-        [['request', options.replyTo], ...(options.extraTags ?? [])],
-        options.replyRootId,
+        buildAgentMessage(
+          channelId,
+          this.agentIdentity,
+          reply,
+          options.replyTo,
+          uploaded.attachments,
+          [['request', options.replyTo], ...(options.extraTags ?? [])],
+          options.replyRootId,
+        ),
       );
-      if (options.publishReply) {
-        await options.publishReply(candidate);
-      } else {
-        const event = await this.durableState.reserveReply(channelId, options.replyTo, candidate);
-        await publishEvent(event, this.agentIdentity);
-      }
+      await publishEvent(event, this.agentIdentity);
     } else {
       await postAgentMessage(
         channelId,
@@ -4356,11 +4347,12 @@ export class Body {
         systemPrompt: [
           'You are a helpful coding assistant in a read-only conversation channel.',
           NO_PERSONAL_CONNECTORS_INSTRUCTION,
+          'A host turn explicitly identified as a human-authorized schedule occurrence is the one exception: that bounded schedule is the mandate for its mounted action tools and attachments.',
           'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
           'Those inspection tools are non-mutating and do not require human approval.',
           'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
           'You CANNOT create, edit, or delete repository files in this Room. The separately named workbench and memory directories are the only writable exceptions; open an isolated corner yourself for any landable change.',
-          `The host DENIES repository writes and every shell/execute request in this Room: ${ROOM_READ_ONLY_STEER}`,
+          `The host always DENIES repository writes in this Room; outside a host-identified schedule occurrence it also denies every shell/execute request: ${ROOM_READ_ONLY_STEER}`,
           'Never reach outside the repository by absolute path except for the exact workbench and memory paths announced by the host, and never run builds, tests, formatters, or git commands here.',
           'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never attempt editing unless the host prompt explicitly allows an edit-corner request.',
           'Never claim that an action, tool result, peer reply, or agent exchange happened unless the host-provided transcript or tool result shows it actually happened.',
@@ -6144,7 +6136,6 @@ export class Body {
     boundRepo: BoundRepo | undefined,
     editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
     beforeModelActivation?: () => Promise<void>,
-    publishScheduledOutput?: (event: NostrEvent) => Promise<void>,
   ): Promise<void> {
     const queued = parseScheduledTurnReceipt(scheduled.queuedEvent);
     if (
@@ -6196,7 +6187,6 @@ export class Body {
       false,
       scheduled,
       beforeModelActivation,
-      publishScheduledOutput,
     );
   }
 
@@ -6211,7 +6201,6 @@ export class Body {
     cornerWorkIntent = explicitCornerWork,
     scheduled?: ScheduledTurnRequest,
     beforeModelActivation?: () => Promise<void>,
-    publishScheduledOutput?: (event: NostrEvent) => Promise<void>,
   ): Promise<boolean> {
     // Mark a slash-command-shaped message BEFORE anything else consumes it.
     // Beeline's composer commands and a harness's own `/verb` vocabulary share
@@ -6447,8 +6436,8 @@ export class Body {
       : scheduled
         ? [
             'Host boundary: this is one admitted recurring schedule occurrence.',
-            'The schedule authorizes only this read-only model turn. It is not authority to send, publish, spend, edit, or run an irreversible connector tool.',
-            'If the task needs such an action, request the exact tool once. The host will reject it, publish a signed permission request, and perform no side effect.',
+            'A current human admin or owner authorized this bounded schedule. The schedule is the mandate for this occurrence, including send, publish, spend, connector, and attachment actions needed to complete it.',
+            'Stay within the schedule prompt and its expiry, run-count, and token-budget envelope.',
             '',
             sharedPrompt,
           ].join('\n')
@@ -6563,26 +6552,6 @@ export class Body {
         );
         return true;
       }
-      if (scheduled && !result.agentText.trim() && outputCandidates(result).length === 0) {
-        throw new Error('scheduled model returned no output');
-      }
-      if (scheduled) {
-        const attachmentAttempts = outputCandidates(result);
-        if (attachmentAttempts.length > 0) {
-          await this.requestScheduledActionPermission(tlcChannelId, turn, {
-            toolCall: {
-              kind: 'execute',
-              title: 'publish scheduled attachments',
-              rawInput: {
-                attachments: attachmentAttempts.map((attachment) => ({
-                  name: attachment.name,
-                  mimeType: attachment.mimeType,
-                })),
-              },
-            },
-          });
-        }
-      }
       const fallback = turn.permissionHandled
         ? turn.transitionedToCorner
           ? 'The in-Room mutation was refused; implementation continues only in the isolated corner.'
@@ -6598,8 +6567,6 @@ export class Body {
         extraTags: agentExchange
           ? agentExchangeTags(agentExchange, 1, agentExchange.peerPubkey)
           : undefined,
-        allowAttachments: !scheduled,
-        ...(scheduled && publishScheduledOutput ? { publishReply: publishScheduledOutput } : {}),
       });
       if (!reply) throw new Error('agent returned an empty Room reply');
       if (!agentExchange && !scheduled) {
@@ -6637,7 +6604,7 @@ export class Body {
       );
       return false;
     } catch (error) {
-      if (scheduled) {
+      if (scheduled && error instanceof ScheduleActivationRefusedError) {
         await postAgentTurnStatus(
           tlcChannelId,
           this.agentIdentity,
@@ -6757,77 +6724,6 @@ export class Body {
   }
 
   /**
-   * Turn a scheduled model's first attempted side effect into a signed P1
-   * request. The attempted ACP tool is always rejected here: schedule
-   * authority never reaches an adapter, and a later ops executor must verify
-   * and consume the exact action grant independently.
-   */
-  private async requestScheduledActionPermission(
-    roomId: string,
-    turn: PendingRoomTurn,
-    permission: AcpPermissionRequest,
-  ): Promise<void> {
-    const scheduled = turn.scheduled;
-    if (!scheduled || turn.scheduledPermissionRequested) return;
-    turn.scheduledPermissionRequested = true;
-    const rawTool =
-      permission.toolCall?.title?.trim() || permission.toolCall?.kind?.trim() || 'connector-action';
-    const tool =
-      rawTool
-        .toLowerCase()
-        .replace(/[^a-z0-9._:/@+-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 200) || 'connector-action';
-    const rawInput = JSON.stringify(permission.toolCall?.rawInput ?? null);
-    const requestedAt = Math.floor(Date.now() / 1_000);
-    const value: PermissionRequestV1 = {
-      version: 1,
-      permissionId: randomUUID(),
-      roomId,
-      workspaceId: scheduled.workspaceId,
-      requesterAgentPubkey: this.agentIdentity.publicKey,
-      audience: 'owner',
-      summary: `Scheduled work requests the irreversible operation '${rawTool.slice(0, 160)}'.`,
-      scope: {
-        type: 'operation.execute',
-        connectorId: 'scheduled-room-tool',
-        tool,
-        argumentsDigest: createHash('sha256').update(rawInput).digest('hex'),
-        target: roomId,
-        risk: 'irreversible',
-      },
-      provenance: {
-        immediateTurnEventId: turn.request.eventId,
-        rootEventId: turn.request.eventId,
-        scheduleRunId: scheduled.scheduleRunId,
-      },
-      requestedAt,
-      requestExpiresAt: requestedAt + 10 * 60,
-    };
-    try {
-      const members = await listMembers(this.agentClientContext(), roomId);
-      const eligible = (
-        await Promise.all(
-          members.map(async (member) => ({
-            pubkey: member.pubkey,
-            role: await getChannelRole(this.agentClientContext(), roomId, member.pubkey),
-            agent: await isRegisteredAgentIdentity(member.pubkey, this.agentRelay),
-          })),
-        )
-      )
-        .filter((member) => !member.agent && (member.role === 'owner' || member.role === 'admin'))
-        .map((member) => member.pubkey);
-      if (eligible.length === 0) throw new Error('no current human admin can authorize the action');
-      await this.permissionRuntime.publishRequest(value, eligible);
-    } catch (error) {
-      // Fail closed and permit another scheduled occurrence to ask again. The
-      // current tool remains rejected regardless of publication success.
-      turn.scheduledPermissionRequested = false;
-      console.error('[body] scheduled action permission request failed:', error);
-    }
-  }
-
-  /**
    * Answer the agent's `beeline-propose-target-branch --branch <name>` marker.
    *
    * This exists because the daemon's own recognizer
@@ -6884,15 +6780,14 @@ export class Body {
     permission: AcpPermissionRequest,
     editPolicy?: RoomEditPolicy,
   ): Promise<AcpPermissionDecision> {
-    if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
     const pendingTurn = this.pendingRoomTurns.get(tlcChannelId);
     if (pendingTurn?.scheduled) {
-      await this.requestScheduledActionPermission(tlcChannelId, pendingTurn, permission);
-      // A schedule is authority for a model call only. Even creator-enabled
-      // account MCP capabilities remain inert until a separate P1 executor
-      // consumes an exact action grant.
-      return 'reject';
+      // A current human admin/owner authorized the schedule itself. Once the
+      // calendar's fresh activation check passes, that bounded mandate carries
+      // full action authority for this occurrence across every ACP harness.
+      return 'allow';
     }
+    if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
     if (
       this.config.accessPolicy === 'creator' &&
       isExternalMcpPermissionRequest(permission, this.config.externalMcpCapabilities)

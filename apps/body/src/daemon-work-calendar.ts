@@ -17,14 +17,10 @@ import type { RoomRuntimeCoordinator } from './room-runtime.js';
 import { runtimeIdentity, type AgentRuntimeRecord } from './runtime.js';
 import {
   DurableWorkCalendarState,
-  SCHEDULED_TURN_TAG,
   WORK_SCHEDULE_KIND,
-  WORK_SCHEDULE_PAUSED_TAG,
-  WORK_SCHEDULE_RUNTIME_TAG,
   WORK_SCHEDULE_TAG,
   WorkCalendar,
   parseWorkSchedule,
-  parseWorkScheduleCheckpoint,
   workScheduleKey,
   workScheduleRevisionDigest,
   type ParsedWorkSchedule,
@@ -89,136 +85,6 @@ export interface DaemonWorkScheduleAuthorityDependencies {
   readCurrentEvents(schedule: ParsedWorkSchedule): Promise<readonly NostrEvent[]>;
   readFacts(schedule: ParsedWorkSchedule): Promise<DaemonWorkScheduleAuthorityFacts>;
   verifyScheduleGrant(schedule: ParsedWorkSchedule): Promise<boolean>;
-  readFailurePauses(schedule: ParsedWorkSchedule): Promise<readonly NostrEvent[]>;
-}
-
-const MAX_RECEIPT_TAIL_EVENTS = 512;
-
-export async function readScheduledTurnReceiptTail(
-  queryEvents: (filters: Record<string, unknown>[]) => Promise<readonly NostrEvent[]>,
-  agentPubkey: string,
-  schedules: readonly ParsedWorkSchedule[],
-  checkpoints: readonly ReturnType<typeof parseWorkScheduleCheckpoint>[],
-  maxEventsPerSchedule = MAX_RECEIPT_TAIL_EVENTS,
-): Promise<NostrEvent[]> {
-  if (!Number.isSafeInteger(maxEventsPerSchedule) || maxEventsPerSchedule < 1)
-    throw new Error('invalid receipt tail bound');
-  const all = new Map<string, NostrEvent>();
-  for (const schedule of schedules) {
-    const checkpoint = checkpoints
-      .filter(
-        (candidate) =>
-          candidate?.scheduleId === schedule.value.scheduleId &&
-          candidate.revision === schedule.value.revision,
-      )
-      .sort((left, right) => (right?.receiptCursorAt ?? -1) - (left?.receiptCursorAt ?? -1))[0];
-    const page = await queryEvents([
-      {
-        kinds: [9],
-        '#t': [SCHEDULED_TURN_TAG],
-        '#agent': [agentPubkey],
-        '#schedule': [schedule.value.scheduleId],
-        '#revision': [String(schedule.value.revision)],
-        authors: [agentPubkey],
-        since: checkpoint?.receiptCursorAt ?? schedule.value.startsAt - 1,
-        limit: maxEventsPerSchedule + 1,
-      },
-    ]);
-    if (page.length > maxEventsPerSchedule)
-      throw new Error(
-        `scheduled receipt tail exceeds recovery bound for ${schedule.value.scheduleId}`,
-      );
-    for (const event of page) all.set(event.id, event);
-  }
-  return [...all.values()];
-}
-
-function tagValue(event: NostrEvent, name: string): string | undefined {
-  return event.tags.find((tag) => tag[0] === name)?.[1];
-}
-
-async function requiresHumanResume(
-  parsed: ParsedWorkSchedule,
-  candidates: readonly ParsedWorkSchedule[],
-  dependencies: DaemonWorkScheduleAuthorityDependencies,
-): Promise<boolean> {
-  const pauseRevision = (await dependencies.readFailurePauses(parsed))
-    .filter(
-      (event) =>
-        event.kind === 9 &&
-        event.pubkey === dependencies.agentPubkey &&
-        verifyEvent(event) &&
-        tagValue(event, 't') === WORK_SCHEDULE_PAUSED_TAG &&
-        tagValue(event, 'schedule') === parsed.value.scheduleId,
-    )
-    .map((event) => Number(tagValue(event, 'revision')))
-    .filter((revision) => Number.isSafeInteger(revision) && revision >= 1)
-    .sort((left, right) => right - left)[0];
-  if (pauseRevision === undefined) return false;
-  if (parsed.value.revision <= pauseRevision) return true;
-  for (const candidate of candidates) {
-    if (
-      candidate.value.status !== 'active' ||
-      candidate.value.revision <= pauseRevision ||
-      candidate.value.revision > parsed.value.revision ||
-      candidate.event.pubkey !== candidate.value.principalPubkey ||
-      candidate.event.pubkey === candidate.value.agentPubkey
-    ) {
-      continue;
-    }
-    const authority = await authorizeCandidate(candidate, candidates, dependencies, false);
-    if (authority.authorized) return false;
-  }
-  return true;
-}
-
-async function authorizeCandidate(
-  parsed: ParsedWorkSchedule,
-  candidates: readonly ParsedWorkSchedule[],
-  dependencies: DaemonWorkScheduleAuthorityDependencies,
-  checkFailurePause: boolean,
-): Promise<ScheduleAuthorityResult> {
-  const schedule = parsed.value;
-  const facts = await dependencies.readFacts(parsed);
-  if (facts.roomArchived === undefined)
-    return { authorized: false, terminal: false, reason: 'room-metadata-unavailable' };
-  if (facts.roomArchived) return { authorized: false, terminal: true, reason: 'room-archived' };
-  if (
-    !facts.workspaceMemberPubkeys.includes(schedule.agentPubkey) ||
-    !facts.roomMemberPubkeys.includes(schedule.agentPubkey)
-  )
-    return { authorized: false, terminal: true, reason: 'agent-removed' };
-  if (
-    !facts.workspaceMemberPubkeys.includes(schedule.principalPubkey) ||
-    !facts.roomMemberPubkeys.includes(schedule.principalPubkey)
-  )
-    return { authorized: false, terminal: true, reason: 'principal-removed' };
-  if (facts.principalCanDrive === undefined)
-    return { authorized: false, terminal: false, reason: 'principal-access-unavailable' };
-  if (!facts.principalCanDrive)
-    return { authorized: false, terminal: true, reason: 'principal-access-denied' };
-  if (facts.principalIsAgent)
-    return { authorized: false, terminal: true, reason: 'principal-is-agent' };
-  if (facts.principalRole !== 'owner' && facts.principalRole !== 'admin')
-    return { authorized: false, terminal: true, reason: 'schedule-principal-role-lost' };
-  if (parsed.event.pubkey === schedule.agentPubkey) {
-    if (!facts.authorIsAgent || !(await dependencies.verifyScheduleGrant(parsed)))
-      return { authorized: false, terminal: true, reason: 'schedule-change-grant-invalid' };
-    if (
-      checkFailurePause &&
-      schedule.status === 'active' &&
-      (await requiresHumanResume(parsed, candidates, dependencies))
-    )
-      return { authorized: false, terminal: true, reason: 'human-resume-required' };
-  } else if (
-    facts.authorIsAgent ||
-    parsed.event.pubkey !== schedule.principalPubkey ||
-    schedule.permissionGrantEventId
-  )
-    return { authorized: false, terminal: true, reason: 'human-author-mismatch' };
-  else if (facts.authorRole !== 'owner' && facts.authorRole !== 'admin')
-    return { authorized: false, terminal: true, reason: 'schedule-author-role-lost' };
-  return { authorized: true };
 }
 
 /** Pure production-policy seam: every fact is freshly read by the daemon adapter below. */
@@ -234,28 +100,70 @@ export async function authorizeDaemonWorkSchedule(
     ) {
       return { authorized: false, terminal: true, reason: 'schedule-target-mismatch' };
     }
-    const candidates = (await dependencies.readCurrentEvents(parsed)).flatMap((event) => {
-      const candidate = parseWorkSchedule(event);
-      return candidate &&
-        candidate.value.workspaceId === schedule.workspaceId &&
-        candidate.value.agentPubkey === schedule.agentPubkey &&
-        candidate.value.principalPubkey === schedule.principalPubkey &&
-        workScheduleKey(candidate.value) === workScheduleKey(schedule) &&
-        (candidate.event.pubkey === candidate.value.principalPubkey ||
-          candidate.event.pubkey === candidate.value.agentPubkey)
-        ? [candidate]
-        : [];
-    });
-    const current = [...candidates].sort(
-      (left, right) =>
-        right.value.revision - left.value.revision ||
-        right.event.created_at - left.event.created_at ||
-        right.event.id.localeCompare(left.event.id),
-    )[0];
+    const current = (await dependencies.readCurrentEvents(parsed))
+      .flatMap((event) => {
+        const candidate = parseWorkSchedule(event);
+        return candidate &&
+          candidate.value.workspaceId === schedule.workspaceId &&
+          candidate.value.agentPubkey === schedule.agentPubkey &&
+          candidate.event.pubkey === parsed.event.pubkey
+          ? [candidate]
+          : [];
+      })
+      .sort(
+        (left, right) =>
+          right.value.revision - left.value.revision ||
+          right.event.created_at - left.event.created_at ||
+          right.event.id.localeCompare(left.event.id),
+      )[0];
     if (!current || current.event.id !== parsed.event.id) {
       return { authorized: false, terminal: true, reason: 'schedule-superseded' };
     }
-    return await authorizeCandidate(parsed, candidates, dependencies, true);
+    const facts = await dependencies.readFacts(parsed);
+    if (facts.roomArchived === undefined) {
+      return { authorized: false, terminal: false, reason: 'room-metadata-unavailable' };
+    }
+    if (facts.roomArchived) {
+      return { authorized: false, terminal: true, reason: 'room-archived' };
+    }
+    if (
+      !facts.workspaceMemberPubkeys.includes(schedule.agentPubkey) ||
+      !facts.roomMemberPubkeys.includes(schedule.agentPubkey)
+    ) {
+      return { authorized: false, terminal: true, reason: 'agent-removed' };
+    }
+    if (
+      !facts.workspaceMemberPubkeys.includes(schedule.principalPubkey) ||
+      !facts.roomMemberPubkeys.includes(schedule.principalPubkey)
+    ) {
+      return { authorized: false, terminal: true, reason: 'principal-removed' };
+    }
+    if (facts.principalCanDrive === undefined) {
+      return { authorized: false, terminal: false, reason: 'principal-access-unavailable' };
+    }
+    if (!facts.principalCanDrive) {
+      return { authorized: false, terminal: true, reason: 'principal-access-denied' };
+    }
+    if (facts.principalIsAgent) {
+      return { authorized: false, terminal: true, reason: 'principal-is-agent' };
+    }
+    if (facts.principalRole !== 'owner' && facts.principalRole !== 'admin') {
+      return { authorized: false, terminal: true, reason: 'schedule-principal-role-lost' };
+    }
+    if (parsed.event.pubkey === schedule.agentPubkey) {
+      if (!facts.authorIsAgent || !(await dependencies.verifyScheduleGrant(parsed))) {
+        return { authorized: false, terminal: true, reason: 'schedule-change-grant-invalid' };
+      }
+    } else if (
+      facts.authorIsAgent ||
+      parsed.event.pubkey !== schedule.principalPubkey ||
+      schedule.permissionGrantEventId
+    ) {
+      return { authorized: false, terminal: true, reason: 'human-author-mismatch' };
+    } else if (facts.authorRole !== 'owner' && facts.authorRole !== 'admin') {
+      return { authorized: false, terminal: true, reason: 'schedule-author-role-lost' };
+    }
+    return { authorized: true };
   } catch {
     return { authorized: false, terminal: false, reason: 'authority-unavailable' };
   }
@@ -429,16 +337,6 @@ export function createDaemonWorkCalendar(input: {
         }
       },
       verifyScheduleGrant,
-      readFailurePauses: (schedule) =>
-        rawEvents([
-          {
-            kinds: [9],
-            '#t': [WORK_SCHEDULE_PAUSED_TAG],
-            '#schedule': [schedule.value.scheduleId],
-            authors: [identity.publicKey],
-            limit: 100,
-          },
-        ]),
     });
 
   return new WorkCalendar({
@@ -456,45 +354,6 @@ export function createDaemonWorkCalendar(input: {
           limit: 1_000,
         },
       ]),
-    readReceipts: async (scheduleEvents, localCheckpoints) => {
-      const schedules = scheduleEvents.flatMap((event) => {
-        const parsed = parseWorkSchedule(event);
-        return parsed && parsed.value.agentPubkey === identity.publicKey ? [parsed] : [];
-      });
-      const unique = [
-        ...new Map(
-          schedules.map((schedule) => [workScheduleKey(schedule.value), schedule]),
-        ).values(),
-      ];
-      const outputFilters = unique.flatMap((schedule) => [
-        {
-          kinds: [9],
-          '#t': [WORK_SCHEDULE_PAUSED_TAG],
-          '#schedule': [schedule.value.scheduleId],
-          '#revision': [String(schedule.value.revision)],
-          authors: [identity.publicKey],
-          limit: 2,
-        },
-        {
-          kinds: [WORK_SCHEDULE_KIND],
-          '#t': [WORK_SCHEDULE_RUNTIME_TAG],
-          '#d': [`${workScheduleKey(schedule.value)}:runtime`],
-          authors: [identity.publicKey],
-          limit: 2,
-        },
-      ]);
-      const outputs: NostrEvent[] = [];
-      for (let index = 0; index < outputFilters.length; index += 50)
-        outputs.push(...(await rawEvents(outputFilters.slice(index, index + 50))));
-      const checkpoints = [...localCheckpoints, ...outputs.map(parseWorkScheduleCheckpoint)];
-      const receipts = await readScheduledTurnReceiptTail(
-        rawEvents,
-        identity.publicKey,
-        unique,
-        checkpoints,
-      );
-      return [...receipts, ...outputs];
-    },
     validateScheduleCreation: async (creation) => {
       for (const candidate of creation) {
         if (candidate.event.pubkey === candidate.value.agentPubkey) {
@@ -510,7 +369,9 @@ export function createDaemonWorkCalendar(input: {
       return true;
     },
     authorize,
-    validateArtifacts: async (artifacts) => {
+    validateArtifacts: async (parsed) => {
+      const artifacts = parsed.value.artifactRefs ?? [];
+      if (artifacts.length === 0) return { authorized: true };
       try {
         const events = await rawEvents([
           { ids: artifacts.map((artifact) => artifact.eventId), limit: artifacts.length + 1 },
@@ -519,14 +380,14 @@ export function createDaemonWorkCalendar(input: {
           return { authorized: false, terminal: true, reason: 'artifact-read-ambiguous' };
         return validateArtifactRevisionEvents(artifacts, events);
       } catch {
-        return { authorized: false, terminal: true, reason: 'artifact-unavailable' };
+        return { authorized: false, terminal: false, reason: 'artifact-unavailable' };
       }
     },
     publish: async (event) => {
       await relay.publishEvent(event);
     },
-    dispatch: (request, beforeModelActivation, publishOutput) =>
-      input.roomRuntime.dispatchScheduledTurn(request, beforeModelActivation, publishOutput),
+    dispatch: (request, beforeModelActivation) =>
+      input.roomRuntime.dispatchScheduledTurn(request, beforeModelActivation),
     now: () => Math.floor((input.nowMs?.() ?? Date.now()) / 1_000),
   });
 }

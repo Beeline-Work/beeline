@@ -418,25 +418,48 @@ describe('room-list corner dropdown', () => {
     await press(toggle[0]);
 
     // N corners -> exactly N rows, each navigating into that corner with its
-    // parent Room carried for the back lookup.
-    for (const [name, id] of [
-      ['fix ledger drift', 'corner-a'],
-      ['polish bylines', 'corner-b'],
+    // parent Room carried for the back lookup. Each row renders the channel
+    // mark form `#<room>/<corner>` (display-only) and pushes the RAW stored
+    // corner name as the route's title hint — navigation params never see
+    // the mark.
+    for (const [rawName, displayName, id] of [
+      ['fix ledger drift', 'fix-ledger-drift', 'corner-a'],
+      ['polish bylines', 'polish-bylines', 'corner-b'],
     ] as const) {
-      const row = findByAclPrefix(tree, `Open ${name} corner`);
-      expect(row, `missing dropdown row for ${name}`).toHaveLength(1);
+      const row = findByAclPrefix(tree, `Open #Ledger rewrite/${displayName} corner`);
+      expect(row, `missing dropdown row for ${displayName}`).toHaveLength(1);
       await press(row[0]);
       expect(navigation.push).toHaveBeenCalledTimes(1);
       const pushed = navigation.push.mock.calls[0][0];
       expect(String(pushed?.params?.channelId ?? '')).toBe(id.padEnd(64, '0'));
       expect(pushed?.params?.parent).toBe('room-1');
       expect(pushed?.params?.returnTo).toBe('room-list');
+      // Stored-name immutability: the pushed title hint is the raw name.
+      expect(pushed?.params?.title).toBe(rawName);
       navigation.push.mockClear();
     }
 
     // The expansion IS the full list: no trailing All Corners row exists.
     expect(findAllByTestId(tree, 'room-all-corners-room-1')).toHaveLength(0);
     expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it('dropdown rows render #<room>/<corner> and the stored names stay unmarked', async () => {
+    cornerFixtures['room-1'] = [corner('corner-a', 'fix ledger drift', 'live')];
+    seedWorkspace();
+    const tree = await render();
+
+    await press(findAllByTestId(tree, 'room-corners-toggle-room-1')[0]);
+
+    const visibleText = tree.root
+      .findAllByType('Text')
+      .map((node: any) => node.props?.children)
+      .flat()
+      .filter((child: unknown) => typeof child === 'string');
+    // Display form carries the mark, composed from stored names.
+    expect(visibleText).toContain('#Ledger rewrite/fix-ledger-drift');
+    // The raw stored name is never itself rendered with a mark baked in.
+    expect(visibleText).not.toContain('##Ledger rewrite/fix-ledger-drift');
   });
 
   it('a Room whose corners are all immutably terminal shows no corner affordance at all', async () => {

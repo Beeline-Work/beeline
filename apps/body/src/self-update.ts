@@ -17,12 +17,12 @@
  *     lays down), or
  *   - a real directory on a never-updated legacy install, in one of two
  *     content shapes: "flat" (installer v1 output: beeline-cli.mjs,
- *     beeline-readonly-mcp.mjs and bundle.json directly inside) or already
+ *     beeline-readonly-mcp.mjs, squire-mcp-proxy.mjs and bundle.json directly inside) or already
  *     release-shaped. Migration normalizes flat to release-shaped.
  *
  * A BUNDLE ROOT (what a published tar extracts, what a release dir contains)
  * is always:
- *   bin/<tools>  +  lib/beeline/{beeline-cli.mjs,beeline-readonly-mcp.mjs,bundle.json}
+ *   bin/<tools>  +  lib/beeline/{beeline-cli.mjs,beeline-readonly-mcp.mjs,squire-mcp-proxy.mjs,bundle.json}
  * so the canonical CLI entrypoint through the anchor is
  *   <prefix>/lib/beeline/lib/beeline/beeline-cli.mjs
  * with <anchor>/beeline-cli.mjs tolerated as the legacy-flat fallback.
@@ -351,6 +351,7 @@ function run(
 }
 
 const BUNDLE_ENTRYPOINT = 'lib/beeline/beeline-cli.mjs';
+const SQUIRE_MCP_PROXY_ENTRYPOINT = 'lib/beeline/squire-mcp-proxy.mjs';
 
 /** Entrypoint candidates: release-shaped first, then the legacy-flat fallback. */
 function entrypointCandidates(bundleDir: string): string[] {
@@ -377,7 +378,7 @@ export async function resolveBundleEntrypoint(bundleDir: string): Promise<string
 
 /** Files whose presence makes an extracted bundle installable. */
 function requiredBundlePaths(): string[] {
-  return [BUNDLE_ENTRYPOINT];
+  return [BUNDLE_ENTRYPOINT, SQUIRE_MCP_PROXY_ENTRYPOINT];
 }
 
 /**
@@ -595,7 +596,12 @@ export async function activateRelease(
 }
 
 /** Files a legacy-flat bundle keeps at its root; migration moves them into lib/beeline/. */
-const LEGACY_FLAT_BUNDLE_FILES = ['beeline-cli.mjs', 'beeline-readonly-mcp.mjs', 'bundle.json'];
+const LEGACY_FLAT_BUNDLE_FILES = [
+  'beeline-cli.mjs',
+  'beeline-readonly-mcp.mjs',
+  'squire-mcp-proxy.mjs',
+  'bundle.json',
+];
 
 /**
  * A real-directory install preserved from before self-update existed may hold

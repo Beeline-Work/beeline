@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { squireArgumentsDigest } from './external-mcp-capabilities.js';
-import { SquireHostBroker } from './squire-host-broker.js';
+import { SquireHostBroker, squireMcpProxyEntrypoint } from './squire-host-broker.js';
 import { trustySquireHostEnv } from './trusty-squire-storage.js';
 
 class FakeSquireProcess extends EventEmitter {
@@ -23,6 +23,15 @@ afterEach(async () => {
 });
 
 describe('Trusty Squire host broker', () => {
+  it('resolves the proxy beside source and bundled CLI entrypoints', () => {
+    expect(squireMcpProxyEntrypoint('/workspace/apps/body/dist/cli.js')).toBe(
+      '/workspace/apps/body/dist/squire-mcp-proxy.js',
+    );
+    expect(squireMcpProxyEntrypoint('/opt/beeline/lib/beeline/beeline-cli.mjs')).toBe(
+      '/opt/beeline/lib/beeline/squire-mcp-proxy.mjs',
+    );
+  });
+
   it('never hands daemon push credentials to the credential process', () => {
     expect(
       trustySquireHostEnv(

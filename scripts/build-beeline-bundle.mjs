@@ -187,6 +187,16 @@ async function main() {
     '--target=node20',
     `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-readonly-mcp.mjs')}`,
   ]);
+  run('npx', [
+    '--no-install',
+    'esbuild',
+    resolve(repoRoot, 'apps/body/dist/squire-mcp-proxy.js'),
+    '--bundle',
+    '--platform=node',
+    '--format=esm',
+    '--target=node20',
+    `--outfile=${resolve(staging, 'lib', 'beeline', 'squire-mcp-proxy.mjs')}`,
+  ]);
 
   await copyFile(binaries.agent, resolve(staging, 'bin', 'buzz-agent'));
   await copyFile(binaries.mcp, resolve(staging, 'bin', 'buzz-dev-mcp'));

@@ -13,6 +13,7 @@ import {
 } from './agent-home.js';
 import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
+import { tomlChildTableNames } from './toml-section.js';
 
 const cleanup: string[] = [];
 
@@ -196,11 +197,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(stats.isSymbolicLink()).toBe(false);
     expect(stats.isFile()).toBe(true);
     const isolatedText = readFileSync(isolatedConfig, 'utf8');
-    expect(isolatedText).toContain('[mcp_servers.project_tools]');
-    expect(isolatedText).not.toContain('[mcp_servers.squire]');
-    expect(isolatedText).not.toContain('[mcp_servers.vault_tools]');
-    expect(isolatedText).not.toContain('[mcp_servers.stable_vault]');
-    expect(isolatedText).not.toMatch(/model|approval_policy|sandbox_mode/);
+    expect(tomlChildTableNames(isolatedText, ['mcp_servers'])).toEqual(['project_tools']);
 
     // Writing through the session cannot reach the operator's real config.
     await writeFile(isolatedConfig, '[mcp_servers.scribe]\ncommand = "scribe"\n');

@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer, type Server, type Socket } from 'node:net';
-import { fileURLToPath } from 'node:url';
+import { dirname, extname, resolve } from 'node:path';
 import type { McpServerWire } from './acp.js';
 import {
   SQUIRE_GOVERNED_TOOLS,
@@ -37,6 +37,12 @@ interface BrokerConnection {
 
 type SpawnSquire = () => ChildProcessWithoutNullStreams;
 
+export function squireMcpProxyEntrypoint(cliEntrypoint: string = process.argv[1] ?? ''): string {
+  if (!cliEntrypoint) throw new Error('Beeline CLI entrypoint is unavailable');
+  const extension = extname(cliEntrypoint) === '.mjs' ? '.mjs' : '.js';
+  return resolve(dirname(cliEntrypoint), `squire-mcp-proxy${extension}`);
+}
+
 export class SquireHostBroker {
   private server?: Server;
   private readonly channels = new Map<string, BrokerChannel>();
@@ -50,6 +56,7 @@ export class SquireHostBroker {
         stdio: ['pipe', 'pipe', 'pipe'],
       }),
     private readonly now: () => number = Date.now,
+    private readonly proxyEntrypoint: string = squireMcpProxyEntrypoint(),
   ) {}
 
   authorize(
@@ -123,7 +130,7 @@ export class SquireHostBroker {
       name: 'squire',
       command: process.execPath,
       args: [
-        fileURLToPath(new URL('./squire-mcp-proxy.js', import.meta.url)),
+        this.proxyEntrypoint,
         '127.0.0.1',
         String(address.port),
         channel.token,

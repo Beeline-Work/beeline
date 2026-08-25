@@ -106,6 +106,7 @@ async function buildStubBundle(commit: string, version: string): Promise<StubBun
   const cli = `console.log('beeline-stub ${version}');\n`;
   await writeFile(join(staging, 'lib', 'beeline', 'beeline-cli.mjs'), cli);
   await writeFile(join(staging, 'lib', 'beeline', 'beeline-readonly-mcp.mjs'), 'process.exit(0);\n');
+  await writeFile(join(staging, 'lib', 'beeline', 'squire-mcp-proxy.mjs'), 'process.exit(0);\n');
   await writeFile(
     join(staging, 'lib', 'beeline', 'bundle.json'),
     `${JSON.stringify({ schemaVersion: 1, name: 'beeline', platform: hostPlatformKey(), commit, version }, null, 2)}\n`,

@@ -394,7 +394,7 @@ export class BuzzRigTransport implements RigTransport {
     return Promise.all(
       channels.map(async (c) => {
         const metadata = await client.getChannelMetadata(c.channelId);
-        const nameTag = c.event.tags.find((t) => t[0] === 'name');
+        const nameTag = c.event.tags.find((t: string[]) => t[0] === 'name');
         return {
           id: c.channelId,
           active: true,
@@ -1510,7 +1510,11 @@ export class BuzzRigTransport implements RigTransport {
     for (const event of [...events]
       .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
       .reverse()) {
-      if ((event.tags ?? []).some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready')) {
+      if (
+        (event.tags ?? []).some(
+          (tag: string[]) => tag[0] === 't' && tag[1] === 'merge-not-ready',
+        )
+      ) {
         return event.content ? { reason: event.content } : null;
       }
       const repo = tagValue(event, 'repo');

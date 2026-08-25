@@ -46,20 +46,22 @@ docker compose --env-file .env up -d --no-deps auth
 docker compose --env-file .env ps auth
 ```
 
-Copy the `/auth/` location from `nginx.conf` into the live relay-front config
-and back that file up first. The production relay-front mounts `nginx.conf` as
-a read-only single-file bind. Atomic host-side edits replace the source inode,
-while the running container remains pinned to the old inode, so `nginx -s
-reload` alone does not see the change.
+Production nginx configuration is tracked in `relay-stack/prod/nginx.conf` and
+normally reaches the host through `scripts/deploy-relay-host.sh`. The
+production relay-front deliberately loads that file through the enclosing
+read-only `relay-front/` directory bind. Do not change it back to a single-file
+bind: an atomic host-side replacement would leave the running container pinned
+to the old inode, so a successful nginx reload would still read stale bytes.
 
-Validate the candidate config on `buzz-net`, then restart **only** relay-front
-to attach the new inode. Never restart or recreate the relay:
+For an emergency manual change, back up the live file, validate the candidate
+on `buzz-net`, place it under the directory bind, then HUP **only** relay-front.
+Never restart or recreate the relay:
 
 ```sh
 docker run --rm --network buzz-router-prod_buzz-net \
   -v /home/lunchbox/buzz-router-relay-prod/relay-front/nginx.conf:/etc/nginx/nginx.conf:ro \
   nginx:1.27-alpine nginx -t
-docker restart buzz-router-prod-relay-front-1
+docker kill -s HUP buzz-router-prod-relay-front-1
 docker exec buzz-router-prod-relay-front-1 nginx -t
 ```
 

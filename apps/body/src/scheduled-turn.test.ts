@@ -334,11 +334,12 @@ describe('scheduled Room turn boundary', () => {
     const factory = vi
       .spyOn(body as never, 'publishRootFactoryDirectives' as never)
       .mockResolvedValue(undefined as never);
+    const upload = vi.spyOn(body as never, 'uploadAgentOutputs' as never);
     const sessionPrompt = vi.fn(async () => ({
       stopReason: 'end_turn',
       updates: [],
       agentText:
-        'Draft complete.\nCORNER_REQUEST: mutate the repository\n@Owner: create an outcome room named “Blast” with @Scout.',
+        'Draft complete. [[buzz-attachment:/tmp/report.html]]\nCORNER_REQUEST: mutate the repository\n@Owner: create an outcome room named “Blast” with @Scout.',
       toolCalls: [],
     }));
     body.registerSession({
@@ -388,17 +389,21 @@ describe('scheduled Room turn boundary', () => {
       queuedEvent,
     };
     const beforeModelActivation = vi.fn(async () => undefined);
+    const publishScheduledOutput = vi.fn(async (event: NostrEvent) => published.push(event));
     try {
       await body.dispatchScheduledTurn(
         request,
         { repo: 'repo' },
         'repository',
         beforeModelActivation,
+        publishScheduledOutput,
       );
       expect(beforeModelActivation).toHaveBeenCalledOnce();
       expect(sessionPrompt).toHaveBeenCalledOnce();
       expect(corner).not.toHaveBeenCalled();
       expect(factory).not.toHaveBeenCalled();
+      expect(upload).not.toHaveBeenCalled();
+      expect(publishScheduledOutput).toHaveBeenCalledOnce();
       expect(
         published.some((event) =>
           event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),

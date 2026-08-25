@@ -17,6 +17,7 @@ import {
   DurableWorkCalendarState,
   SCHEDULED_TURN_TAG,
   WORK_SCHEDULE_KIND,
+  WORK_SCHEDULE_PAUSED_TAG,
   WORK_SCHEDULE_TAG,
   WorkCalendar,
   parseWorkSchedule,
@@ -57,6 +58,7 @@ export interface DaemonWorkScheduleAuthorityDependencies {
   readCurrentEvents(schedule: ParsedWorkSchedule): Promise<readonly NostrEvent[]>;
   readFacts(schedule: ParsedWorkSchedule): Promise<DaemonWorkScheduleAuthorityFacts>;
   verifyScheduleGrant(schedule: ParsedWorkSchedule): Promise<boolean>;
+  hasFailurePause(schedule: ParsedWorkSchedule): Promise<boolean>;
 }
 
 /** Pure production-policy seam: every fact is freshly read by the daemon adapter below. */
@@ -78,7 +80,8 @@ export async function authorizeDaemonWorkSchedule(
         return candidate &&
           candidate.value.workspaceId === schedule.workspaceId &&
           candidate.value.agentPubkey === schedule.agentPubkey &&
-          candidate.event.pubkey === parsed.event.pubkey
+          (candidate.event.pubkey === candidate.value.principalPubkey ||
+            candidate.event.pubkey === candidate.value.agentPubkey)
           ? [candidate]
           : [];
       })
@@ -122,6 +125,9 @@ export async function authorizeDaemonWorkSchedule(
     if (parsed.event.pubkey === schedule.agentPubkey) {
       if (!facts.authorIsAgent || !(await dependencies.verifyScheduleGrant(parsed))) {
         return { authorized: false, terminal: true, reason: 'schedule-change-grant-invalid' };
+      }
+      if (schedule.status === 'active' && (await dependencies.hasFailurePause(parsed))) {
+        return { authorized: false, terminal: true, reason: 'human-resume-required' };
       }
     } else if (
       facts.authorIsAgent ||
@@ -303,6 +309,21 @@ export function createDaemonWorkCalendar(input: {
         }
       },
       verifyScheduleGrant,
+      hasFailurePause: async (schedule) => {
+        const events = await rawEvents([
+          {
+            kinds: [9],
+            '#t': [WORK_SCHEDULE_PAUSED_TAG],
+            '#schedule': [schedule.value.scheduleId],
+            authors: [identity.publicKey],
+            limit: 100,
+          },
+        ]);
+        return events.some((event) => {
+          const revision = event.tags.find((tag) => tag[0] === 'revision')?.[1];
+          return Number(revision) < schedule.value.revision;
+        });
+      },
     });
 
   return new WorkCalendar({
@@ -328,8 +349,8 @@ export function createDaemonWorkCalendar(input: {
     publish: async (event) => {
       await relay.publishEvent(event);
     },
-    dispatch: (request, beforeModelActivation) =>
-      input.roomRuntime.dispatchScheduledTurn(request, beforeModelActivation),
+    dispatch: (request, beforeModelActivation, publishOutput) =>
+      input.roomRuntime.dispatchScheduledTurn(request, beforeModelActivation, publishOutput),
     now: () => Math.floor((input.nowMs?.() ?? Date.now()) / 1_000),
   });
 }

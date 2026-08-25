@@ -1,0 +1,10 @@
+{
+  "currentVersion": 3,
+  "fixtures": [
+    {
+      "version": 3,
+      "release": "0.2.18",
+      "file": "v3-release-0.2.18.json"
+    }
+  ]
+}

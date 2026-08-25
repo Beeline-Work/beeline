@@ -33,10 +33,49 @@ export type MessageSyncResult = {
 };
 
 const COLD_BACKFILL_LIMIT = 200;
+export const LIVE_EVENT_FRAME_BUDGET_MS = 5;
+export const LIVE_EVENT_CHUNK_SIZE = 16;
+export const LIVE_EVENT_FRAME_MAX_EVENTS = 64;
 const inFlightRevalidations = new Map<string, Promise<MessageSyncResult>>();
 const pendingColdLiveEvents = new Map<string, SessionEvent[]>();
 
 export { sessionEventCursor };
+
+export type LiveEventFrameResult = {
+  processed: number;
+  remaining: number;
+  elapsedMs: number;
+};
+
+/**
+ * Consume a burst in small cache batches until either the JS-frame time budget
+ * or the hard event cap is reached. At least one small chunk makes progress;
+ * the caller schedules another animation frame while `remaining` is non-zero.
+ */
+export function drainLiveEventFrame<T>(
+  queue: T[],
+  consume: (batch: T[]) => void,
+  options: {
+    now?: () => number;
+    budgetMs?: number;
+    chunkSize?: number;
+    maxEvents?: number;
+  } = {},
+): LiveEventFrameResult {
+  const now = options.now ?? (() => performance.now());
+  const budgetMs = Math.max(0, options.budgetMs ?? LIVE_EVENT_FRAME_BUDGET_MS);
+  const chunkSize = Math.max(1, Math.floor(options.chunkSize ?? LIVE_EVENT_CHUNK_SIZE));
+  const maxEvents = Math.max(1, Math.floor(options.maxEvents ?? LIVE_EVENT_FRAME_MAX_EVENTS));
+  const startedAt = now();
+  let processed = 0;
+  while (queue.length > 0 && processed < maxEvents) {
+    const size = Math.min(chunkSize, maxEvents - processed, queue.length);
+    consume(queue.splice(0, size));
+    processed += size;
+    if (now() - startedAt >= budgetMs) break;
+  }
+  return { processed, remaining: queue.length, elapsedMs: now() - startedAt };
+}
 
 function summaryPatch(snapshot: WorkspaceSnapshot, channelId: string): RoomSummaryPatch {
   const selection = selectRoomRow(snapshot, channelId);

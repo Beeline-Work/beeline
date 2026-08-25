@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -149,5 +149,164 @@ esac
     expect(canaryScript).toContain('--runtime-version "$android_runtime"');
     expect(canaryScript).toContain('MAESTRO_SKIP_BUILD=1');
     expect(canaryScript).toContain('EXPECTED_ANDROID_UPDATE_ID="$android_update"');
+  });
+
+  describe('canary runner environment classification', () => {
+    const barePath = '/usr/bin:/bin';
+
+    function runCanary(
+      args: string[] = [],
+      env: Record<string, string | undefined> = {},
+    ) {
+      return spawnSync(
+        'bash',
+        [join(mobileRoot, 'scripts/ota-canary.sh'), ...args],
+        {
+          cwd: mobileRoot,
+          encoding: 'utf8',
+          // Empty strings make the script's ${VAR:-} defaults treat these as
+          // unset even when this developer shell exported a real SDK.
+          env: {
+            ...process.env,
+            ANDROID_HOME: '',
+            ANDROID_SDK_ROOT: '',
+            PATH: barePath,
+            ...env,
+          },
+        },
+      );
+    }
+
+    function writeBetaLedger(directory: string): string {
+      const ledger = join(directory, 'ledger.json');
+      writeFileSync(
+        ledger,
+        JSON.stringify({
+          status: 'beta',
+          sourceSha: '1234567890abcdef',
+          candidateGroupId: 'candidate-group',
+          androidUpdateId: 'beta-android',
+          canary: { status: 'pending' },
+        }),
+      );
+      return ledger;
+    }
+
+    function stubAdbSdk(directory: string, devicesOutput: string): string {
+      const platformTools = join(directory, 'platform-tools');
+      mkdirSync(platformTools, { recursive: true });
+      const adb = join(platformTools, 'adb');
+      writeFileSync(adb, `#!/bin/sh\nprintf '${devicesOutput}\\n'\n`);
+      chmodSync(adb, 0o755);
+      return directory;
+    }
+
+    it('parks with an actionable reason when no adb is reachable from the runner environment', () => {
+      const result = runCanary();
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('platform-tools');
+      expect(result.stderr).toContain('ANDROID_HOME');
+      expect(result.stderr).not.toContain('requires the existing Android emulator');
+    });
+
+    it('resolves adb from ANDROID_HOME when PATH lacks it and proceeds past the device gate', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-ok-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\\nemulator-5554\\tdevice',
+      );
+      const ledger = writeBetaLedger(directory);
+
+      // A missing APK proves the run got past adb resolution AND the device
+      // gate without touching a real emulator or the network.
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: sdkRoot,
+        BEELINE_BETA_APK: join(directory, 'missing.apk'),
+      });
+
+      expect(result.stderr).not.toContain('platform-tools binary');
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Beta APK not found');
+    });
+
+    it('parks when the sanctioned emulator is not attached to the adb server', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-none-'));
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached');
+
+      const result = runCanary([], { ANDROID_HOME: sdkRoot });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('emulator-5554');
+      expect(result.stderr).toContain('boot');
+    });
+
+    it('parks when the emulator is attached but not ready', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-offline-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\\nemulator-5554\\toffline',
+      );
+
+      const result = runCanary([], { ANDROID_HOME: sdkRoot });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('offline');
+      expect(result.stderr).toContain('not ready');
+    });
+  });
+
+  it('records a blocked canary and parks production promotion behind the stored reason', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-blocked-'));
+    const ledger = join(directory, 'ledger.json');
+    writeFileSync(
+      ledger,
+      JSON.stringify({
+        status: 'beta',
+        sourceSha: '1234567890abcdef',
+        candidateGroupId: 'candidate-group',
+        canary: { status: 'pending' },
+      }),
+    );
+
+    const missingReason = runRelease([
+      'mark-canary',
+      '--ledger',
+      ledger,
+      '--status',
+      'blocked',
+    ]);
+    expect(missingReason.status).toBe(1);
+    expect(missingReason.stderr).toContain('--reason');
+
+    const blocked = runRelease([
+      'mark-canary',
+      '--ledger',
+      ledger,
+      '--status',
+      'blocked',
+      '--reason',
+      'ota-canary.sh exited 2: runner cannot reach adb/emulator-5554',
+    ]);
+    expect(blocked.status).toBe(0);
+
+    const promote = runRelease(['promote', '--ledger', ledger]);
+    expect(promote.status).toBe(1);
+    expect(promote.stderr).toContain('parked');
+    expect(promote.stderr).toContain('runner cannot reach adb/emulator-5554');
+
+    expect(JSON.parse(readFileSync(ledger, 'utf8')).canary).toMatchObject({
+      status: 'blocked',
+      reason: 'ota-canary.sh exited 2: runner cannot reach adb/emulator-5554',
+    });
+  });
+
+  it('the workflow parks the ledger record on canary failure and pins where adb lives', () => {
+    expect(workflow).toContain('ANDROID_HOME: /home/lunchbox/android-sdk');
+    expect(workflow).toContain("--status blocked");
+    expect(workflow.indexOf('--status blocked')).toBeLessThan(
+      workflow.indexOf('node scripts/ota-release.mjs promote'),
+    );
+    expect(workflow).toMatch(/Store release ledger[\s\S]*?if: always\(\) && steps\.candidate\.outcome == 'success'/);
   });
 });

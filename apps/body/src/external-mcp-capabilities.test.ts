@@ -3,6 +3,7 @@ import {
   authorizedExternalMcpServers,
   externalMcpPermissionPolicy,
   externalMcpServers,
+  governedSquireCall,
   isExternalMcpPermissionRequest,
 } from './external-mcp-capabilities.js';
 
@@ -12,13 +13,13 @@ describe('external MCP capabilities', () => {
       {
         name: 'squire',
         command: 'npx',
-        args: ['-y', '@trusty-squire/mcp'],
+        args: ['-y', '@trusty-squire/mcp', 'server'],
         env: [],
       },
     ]);
   });
 
-  it('allows only non-spending Squire verbs by default and owner-gates checkout', () => {
+  it('allows only metadata reads and routes exact credential/egress effects through P1', () => {
     const call = (tool: string) => ({
       toolCall: {
         kind: 'other',
@@ -26,15 +27,58 @@ describe('external MCP capabilities', () => {
         rawInput: { server: 'squire', tool, arguments: {} },
       },
     });
-    for (const tool of ['operate_start', 'observe', 'act', 'screenshot', 'extract']) {
+    for (const tool of ['list_credentials', 'list_app_access', 'audit_log']) {
       expect(externalMcpPermissionPolicy(call(tool), ['squire']), tool).toBe('allow');
     }
-    for (const tool of ['checkout', 'create_payment_credential', 'purchase']) {
-      expect(externalMcpPermissionPolicy(call(tool), ['squire']), tool).toBe('owner-confirm');
+    for (const tool of ['use_credential', 'grant_app_access', 'revoke_app_access']) {
+      expect(externalMcpPermissionPolicy(call(tool), ['squire']), tool).toBe('factory-permission');
     }
-    expect(externalMcpPermissionPolicy(call('list_credentials'), ['squire'])).toBe('owner-confirm');
+    expect(externalMcpPermissionPolicy(call('operate_start'), ['squire'])).toBe('deny');
     expect(externalMcpPermissionPolicy(call('delete_vault'), ['squire'])).toBe('deny');
     expect(externalMcpPermissionPolicy(call('observe'), [])).toBe('deny');
+  });
+
+  it('builds a secret-free exact P1 scope and rejects unbounded egress grants', () => {
+    const use = governedSquireCall({
+      toolCall: {
+        title: 'mcp.squire.use_credential',
+        rawInput: {
+          server: 'squire',
+          tool: 'use_credential',
+          arguments: {
+            service: 'github',
+            http: {
+              method: 'post',
+              url: 'https://api.github.com/repos/acme/widgets/issues?token=not-relayed',
+              headers: { authorization: '${SECRET}' },
+              body: '{"sensitive":"payload"}',
+            },
+          },
+        },
+      },
+    });
+    expect(use?.scope).toMatchObject({
+      type: 'operation.execute',
+      connectorId: 'squire',
+      tool: 'use_credential',
+      target: 'POST https://api.github.com/repos/acme/widgets/issues via service:github',
+      risk: 'out-of-scope',
+    });
+    expect(JSON.stringify(use?.scope)).not.toContain('not-relayed');
+    expect(JSON.stringify(use?.scope)).not.toContain('sensitive');
+    expect(use?.scope.argumentsDigest).toMatch(/^[0-9a-f]{64}$/);
+
+    const grant = (args: Record<string, unknown>) =>
+      governedSquireCall({
+        toolCall: {
+          title: 'mcp__squire__grant_app_access',
+          rawInput: { server: 'squire', tool: 'grant_app_access', arguments: args },
+        },
+      });
+    expect(grant({ service: 'clerk' })).toBeUndefined();
+    expect(grant({ service: 'clerk', rate_limit_per_hour: 100 })?.scope.target).toContain(
+      'max 100 requests/hour',
+    );
   });
 
   it('mounts account capabilities only for creator-scoped agents', () => {

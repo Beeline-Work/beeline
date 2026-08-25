@@ -125,6 +125,29 @@ function fixture() {
 }
 
 describe('PermissionRuntime', () => {
+  it('holds an externally-run action open between started and its terminal receipt', async () => {
+    const f = fixture();
+    const begun = await f.runtime.begin({ action: f.action(0), attempt: 1 });
+    expect(begun.status).toBe('started');
+    expect(f.published.map((event) => JSON.parse(event.content).status)).toEqual(['started']);
+    if (begun.status !== 'started') throw new Error('expected started execution');
+
+    await expect(
+      f.runtime.complete({
+        execution: begun.execution,
+        status: 'succeeded',
+        result: 'squire:use_credential:succeeded',
+      }),
+    ).resolves.toMatchObject({ status: 'succeeded' });
+    expect(f.published.map((event) => JSON.parse(event.content).status)).toEqual([
+      'started',
+      'succeeded',
+    ]);
+    await expect(
+      f.runtime.complete({ execution: begun.execution, status: 'unknown' }),
+    ).resolves.toEqual({ status: 'duplicate' });
+  });
+
   it('executes multiple autonomous actions inside one standing envelope', async () => {
     const f = fixture();
     const invoke = vi.fn(async ({ actionId }: { actionId: string }) => ({ result: actionId }));

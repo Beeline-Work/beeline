@@ -103,4 +103,6 @@ Each `beeline start` identifies and gracefully drains the legacy detached
 process before enabling the unit, so the two generations never serve the same
 agent concurrently. Existing `runtime.json`, keys, Room roots, durable corner
 records, worktrees, review publications, souls, and standing approvals are
-read in place; there is no data migration.
+read in place; there is no manual host data migration. A version-1
+`body-state.json` is upgraded in memory while preserving its inbox items and
+cursors, then written as version 2 on the next durable save.

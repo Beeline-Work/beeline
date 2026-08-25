@@ -18,6 +18,8 @@ import {
   type PermissionFreshReader,
   type PermissionRequestV1,
   type PermissionScope,
+  type PermissionUsage,
+  type PermissionGrantEnvelopeV1,
 } from '@beeline/buzz-client';
 
 export interface PermissionDirectiveRosterEntry {
@@ -77,12 +79,31 @@ export function parseRoomCreatePermissionDirective(input: {
 
 export type PermissionActionClaim = 'claimed' | 'duplicate';
 
+export interface PermissionCapacityReservation {
+  key: string;
+  grantEventId: string;
+  actionId: string;
+  at: number;
+  charge: PermissionConcreteAction['charge'];
+  usage: PermissionUsage;
+  grant: PermissionGrantEnvelopeV1;
+}
+
+export type PermissionCapacityResult =
+  | 'claimed'
+  | 'duplicate'
+  | 'exhausted'
+  | 'rate-exhausted'
+  | 'budget-exhausted';
+
 export interface PermissionRuntimeDependencies {
   identity: Identity;
   reader: PermissionFreshReader;
   publish(event: NostrEvent): Promise<void>;
   /** Atomic and durable across restarts. Keys include the explicit attempt. */
   claim(key: string): Promise<PermissionActionClaim>;
+  /** Atomically reserve shared envelope capacity before any side effect. */
+  reserveCapacity(input: PermissionCapacityReservation): Promise<PermissionCapacityResult>;
   now?: () => number;
 }
 
@@ -197,8 +218,21 @@ export class PermissionRuntime {
         return { status: 'failed', receipt, result };
       }
 
-      if ((await this.dependencies.claim(attemptKey)) === 'duplicate') {
+      const capacity = await this.dependencies.reserveCapacity({
+        key: attemptKey,
+        grantEventId: verification.decision.event.id,
+        actionId: action.actionId,
+        at: now,
+        charge: action.charge,
+        usage: verification.usage,
+        grant: verification.decision.value.grant!,
+      });
+      if (capacity === 'duplicate') {
         return { status: 'duplicate' };
+      }
+      if (capacity !== 'claimed') {
+        const receipt = await this.publishRefusalIfPossible(action, attempt, capacity, true);
+        return { status: 'refused', terminal: true, reason: capacity, ...(receipt ? { receipt } : {}) };
       }
       await this.publishReceipt(
         verification.request,

@@ -205,11 +205,49 @@ export function buildDelegationEscalationPermission(input: {
 export interface DelegationDailyUsage {
   calls: number;
   reservedTokens: number;
+  turnEventIds: readonly string[];
 }
 
 export interface DelegationDailyLimit {
   maxCalls: number;
   maxReservedTokens: number;
+}
+
+export interface DelegationCapacityReservation {
+  eventId: string;
+  delegationId: string;
+  agentPubkey: string;
+  day: string;
+  phase: DelegationTurnV1['phase'];
+  parentWorkItemId?: string;
+  reservedTokens: number;
+  allocatedTurns: number;
+  observedTurnEventIds: readonly string[];
+  observedRootTurns: number;
+  rootMaxAgentTurns: number;
+  observedDailyCalls: number;
+  observedDailyReservedTokens: number;
+  observedDailyTurnEventIds: readonly string[];
+  dailyMaxCalls: number;
+  dailyMaxReservedTokens: number;
+  observedSiblingCount: number;
+  observedSiblingAllocatedTurns: number;
+  observedSiblingAllocatedTokens: number;
+  parentMaxChildren?: number;
+  parentAvailableTurns?: number;
+  parentAvailableTokens?: number;
+}
+
+export type DelegationCapacityResult =
+  | 'claimed'
+  | 'duplicate'
+  | 'over-turn-budget'
+  | 'over-child-budget'
+  | 'over-token-budget';
+
+export interface DelegationOutboundReservation {
+  state: 'reserved' | 'pending' | 'delivered';
+  event: NostrEvent;
 }
 
 export interface DelegationRuntimeReader {
@@ -240,8 +278,11 @@ export interface DelegationRuntimeDependencies {
   publish(event: NostrEvent): Promise<void>;
   /** Atomic, durable inbox claim by immutable turn event id. */
   claimInbound(eventId: string): Promise<'claimed' | 'duplicate'>;
-  /** Persist the signed outbox event and its root-budget reservation atomically. */
-  reserveOutbound(event: NostrEvent): Promise<'claimed' | 'duplicate'>;
+  /** Atomically claim an admitted turn and reserve shared root/day capacity. */
+  reserveInboundCapacity(input: DelegationCapacityReservation): Promise<DelegationCapacityResult>;
+  /** Persist the exact signed outbox event before publication. */
+  reserveOutbound(event: NostrEvent): Promise<DelegationOutboundReservation>;
+  markOutboundDelivered(eventId: string): Promise<void>;
   dailyLimit: DelegationDailyLimit;
   now?: () => number;
 }
@@ -280,21 +321,23 @@ export class DelegationRuntime {
    */
   async publishTurn(value: DelegationTurnV1): Promise<{ event: NostrEvent; duplicate: boolean }> {
     const turn = buildDelegationTurn(this.dependencies.identity, value);
-    if ((await this.dependencies.reserveOutbound(turn)) === 'duplicate') {
-      return { event: turn, duplicate: true };
+    const reservation = await this.dependencies.reserveOutbound(turn);
+    if (reservation.state === 'delivered') {
+      return { event: reservation.event, duplicate: true };
     }
-    await this.dependencies.publish(turn);
+    await this.dependencies.publish(reservation.event);
+    await this.dependencies.markOutboundDelivered(reservation.event.id);
     await this.dependencies.publish(
       buildDelegationReceipt(this.dependencies.identity, value.roomId, {
         version: 1,
         delegationId: value.delegationId,
         workItemId: value.workItemId,
-        turnEventId: turn.id,
+        turnEventId: reservation.event.id,
         status: 'queued',
         at: this.dependencies.now?.() ?? Math.floor(Date.now() / 1000),
       }),
     );
-    return { event: turn, duplicate: false };
+    return { event: reservation.event, duplicate: reservation.state === 'pending' };
   }
 
   async handleEvent(
@@ -452,8 +495,62 @@ export class DelegationRuntime {
           return { status: 'refused', reason: 'escalation-required', receipt };
         }
       }
-      if ((await this.dependencies.claimInbound(event.id)) === 'duplicate') {
-        return { status: 'duplicate' };
+      const rootTurns = history.filter(
+        (candidate) => candidate.value.delegationId === turn.value.delegationId,
+      );
+      const parent = turn.value.parentWorkItemId
+        ? rootTurns.find(
+            (candidate) =>
+              candidate.value.phase === 'assign' &&
+              candidate.value.workItemId === turn.value.parentWorkItemId &&
+              candidate.value.toAgentPubkey === turn.value.fromAgentPubkey,
+          )
+        : undefined;
+      const siblings = turn.value.parentWorkItemId
+        ? rootTurns.filter(
+            (candidate) =>
+              candidate.value.phase === 'assign' &&
+              candidate.value.parentWorkItemId === turn.value.parentWorkItemId,
+          )
+        : [];
+      const capacity = await this.dependencies.reserveInboundCapacity({
+        eventId: event.id,
+        delegationId: turn.value.delegationId,
+        agentPubkey: this.dependencies.identity.publicKey,
+        day: new Date(now * 1_000).toISOString().slice(0, 10),
+        phase: turn.value.phase,
+        ...(turn.value.parentWorkItemId ? { parentWorkItemId: turn.value.parentWorkItemId } : {}),
+        reservedTokens: turn.value.budget.reservedTokens,
+        allocatedTurns: turn.value.budget.maxAgentTurns,
+        observedTurnEventIds: rootTurns.map((candidate) => candidate.event.id),
+        observedRootTurns: rootTurns.length,
+        rootMaxAgentTurns: admission.rootBudget.maxAgentTurns,
+        observedDailyCalls: usage.calls,
+        observedDailyReservedTokens: usage.reservedTokens,
+        observedDailyTurnEventIds: usage.turnEventIds,
+        dailyMaxCalls: this.dependencies.dailyLimit.maxCalls,
+        dailyMaxReservedTokens: this.dependencies.dailyLimit.maxReservedTokens,
+        observedSiblingCount: siblings.length,
+        observedSiblingAllocatedTurns: siblings.reduce(
+          (sum, sibling) => sum + sibling.value.budget.maxAgentTurns,
+          0,
+        ),
+        observedSiblingAllocatedTokens: siblings.reduce(
+          (sum, sibling) => sum + sibling.value.budget.reservedTokens,
+          0,
+        ),
+        ...(parent
+          ? {
+              parentMaxChildren: parent.value.budget.maxChildren,
+              parentAvailableTurns: Math.max(0, parent.value.budget.maxAgentTurns - 1),
+              parentAvailableTokens: parent.value.budget.reservedTokens,
+            }
+          : {}),
+      });
+      if (capacity === 'duplicate') return { status: 'duplicate' };
+      if (capacity !== 'claimed') {
+        const receipt = await this.publishReceipt(turn, 'budget-exhausted', capacity);
+        return { status: 'refused', reason: capacity, receipt };
       }
 
       // Receipt before cold harness activation is the user-visible turn

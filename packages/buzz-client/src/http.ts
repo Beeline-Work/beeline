@@ -271,6 +271,28 @@ function isNonRetryableQueryError(error: unknown): boolean {
   );
 }
 
+function withQueryAttemptTimeout<T>(
+  operation: Promise<T>,
+  controller: AbortController,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`queryEvents timed out after ${QUERY_ATTEMPT_TIMEOUT_MS}ms`));
+    }, QUERY_ATTEMPT_TIMEOUT_MS);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 /**
  * One `/query` POST with the retry/timeout policy above — no caching, no
  * same-tick batching (that's what the public `queryEvents()` adds on top).
@@ -287,16 +309,17 @@ export async function requestQueryEvents(
   const method = 'POST';
   for (let attempt = 1; attempt <= QUERY_MAX_ATTEMPTS; attempt++) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), QUERY_ATTEMPT_TIMEOUT_MS);
     try {
       recordNetworkRequest();
-      const res = await fetch(url, {
-        method,
-        headers: bridgeHeaders(opts, queryPubkey, url, method),
-        body: JSON.stringify(filters),
-        signal: controller.signal,
-      });
-      const text = await res.text();
+      const { res, text } = await withQueryAttemptTimeout(
+        fetch(url, {
+          method,
+          headers: bridgeHeaders(opts, queryPubkey, url, method),
+          body: JSON.stringify(filters),
+          signal: controller.signal,
+        }).then(async (res) => ({ res, text: await res.text() })),
+        controller,
+      );
       if (res.ok) {
         const parsed = JSON.parse(text) as unknown;
         if (!Array.isArray(parsed)) {
@@ -318,8 +341,6 @@ export async function requestQueryEvents(
       }
       await sleep(QUERY_RETRY_BASE_MS * attempt);
       continue;
-    } finally {
-      clearTimeout(timeout);
     }
   }
   throw new Error(`queryEvents exhausted ${QUERY_MAX_ATTEMPTS} attempts`);

@@ -114,6 +114,26 @@ const CORNER_STATE_DISCOVERY_LIMIT = 500;
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
 const READ_AUTHORITY_TTL_MS = 60_000;
+const LIVE_AUTHORITY_REFRESH_TIMEOUT_MS = 3_000;
+
+function withLiveAuthorityRefreshTimeout<T>(promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('live Room authority refresh timed out')),
+      LIVE_AUTHORITY_REFRESH_TIMEOUT_MS,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 type ReadModelBackfillResult = { snapshot: WorkspaceSnapshot; events: SessionEvent[] };
 type ReadModelBackfillOptions = { beforeSeq?: number; afterSeq?: number; limit?: number };
@@ -721,7 +741,9 @@ export class BuzzRigTransport implements RigTransport {
             // the intact batch. Raw tags remain parser-owned.
             // The parser remains the authorization boundary: an unattached or
             // out-of-Room signer is still quarantined after this refresh.
-            authority = await this.readAuthority(sessionId, true);
+            authority = await withLiveAuthorityRefreshTimeout(
+              this.readAuthority(sessionId, true),
+            );
             if (!stopped) parsed = this.parseReadyEvents(authority, batch);
           }
         } catch {

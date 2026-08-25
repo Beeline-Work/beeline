@@ -271,11 +271,15 @@ export class BuzzRigTransport implements RigTransport {
       Date.now() - cached.loadedAt < READ_AUTHORITY_TTL_MS &&
       memberPubkeys.every((pubkey) => cached.identities[pubkey])
     ) {
-      return cached.identities;
+      return Object.fromEntries(
+        memberPubkeys.map((pubkey) => [pubkey, cached.identities[pubkey]!]),
+      );
     }
-    const agents = hasWorkspace
-      ? await client.listAgents(workspaceId, { forceRefresh }).catch(() => [])
-      : [];
+    const agents = !hasWorkspace
+      ? []
+      : forceRefresh
+        ? await client.listAgents(workspaceId, { forceRefresh: true })
+        : await client.listAgents(workspaceId).catch(() => []);
     const agentByPubkey = new Map(agents.map((agent) => [agent.pubkey, agent]));
     const humanPubkeys = memberPubkeys.filter((pubkey) => !agentByPubkey.has(pubkey));
     const profiles = hasWorkspace

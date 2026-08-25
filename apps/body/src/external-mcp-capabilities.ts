@@ -4,22 +4,17 @@ import type { AcpPermissionRequest, McpServerWire } from './acp.js';
 import type { AgentAccessPolicy } from './access-policy.js';
 
 /** External account capabilities that an operator may explicitly grant to one agent. */
-export type ExternalMcpCapability = 'squire';
+export type ExternalMcpCapability = 'squire-credential-use' | 'squire-app-access';
 
-export const EXTERNAL_MCP_CAPABILITIES = ['squire'] as const;
+export const EXTERNAL_MCP_CAPABILITIES = ['squire-credential-use', 'squire-app-access'] as const;
 export const SQUIRE_MCP_VERSION = '1.1.12';
 export const SQUIRE_MCP_PACKAGE = `@trusty-squire/mcp@${SQUIRE_MCP_VERSION}`;
 
-export function isTrustySquireMcpLaunch(
-  command: string,
-  args: readonly string[] = [],
-): boolean {
+export function isTrustySquireMcpLaunch(command: string, args: readonly string[] = []): boolean {
   return [command, ...args].some((value) => {
     const normalized = value.trim().replace(/\\/g, '/').toLowerCase();
     return (
-      /(^|[\s/="'\[,])@trusty-squire\/mcp(?:@[^\s/"'\],}]+)?(?=$|[\s/"'\],}])/i.test(
-        normalized,
-      ) ||
+      /(^|[\s/="'\[,])@trusty-squire\/mcp(?:@[^\s/"'\],}]+)?(?=$|[\s/"'\],}])/i.test(normalized) ||
       /(^|\/)trusty-squire(?:-mcp)?(?:\.[a-z0-9]+)?$/i.test(normalized)
     );
   });
@@ -38,12 +33,7 @@ export function externalMcpServers(
   capabilities: readonly ExternalMcpCapability[] = [],
   squireBroker?: McpServerWire,
 ): McpServerWire[] {
-  return capabilities.flatMap((capability) => {
-    switch (capability) {
-      case 'squire':
-        return squireBroker ? [squireBroker] : [];
-    }
-  });
+  return capabilities.length > 0 && squireBroker ? [squireBroker] : [];
 }
 
 /** Account-backed tools are never mounted for a multi-member-drivable agent. */
@@ -72,27 +62,24 @@ export function isExternalMcpPermissionRequest(
   request: AcpPermissionRequest,
   capabilities: readonly ExternalMcpCapability[] = [],
 ): boolean {
-  const enabled = new Set<string>(capabilities);
-  if (enabled.size === 0 || shellPayload(request.toolCall)) return false;
+  if (capabilities.length === 0 || shellPayload(request.toolCall)) return false;
   const kind = request.toolCall?.kind;
   if (kind && kind !== 'other' && kind !== 'execute') return false;
 
   const rawInput = request.toolCall?.rawInput;
   if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
     const server = (rawInput as Record<string, unknown>).server;
-    if (typeof server === 'string' && enabled.has(server)) return true;
+    if (server === 'squire') return true;
   }
 
   const title = request.toolCall?.title?.trim() ?? '';
-  for (const server of enabled) {
-    if (
-      title.startsWith(`mcp.${server}.`) ||
-      title.startsWith(`${server}.`) ||
-      title.startsWith(`${server}/`) ||
-      title.startsWith(`mcp__${server}__`)
-    ) {
-      return true;
-    }
+  if (
+    title.startsWith('mcp.squire.') ||
+    title.startsWith('squire.') ||
+    title.startsWith('squire/') ||
+    title.startsWith('mcp__squire__')
+  ) {
+    return true;
   }
   return false;
 }
@@ -116,11 +103,7 @@ export function externalMcpToolName(request: AcpPermissionRequest): string | und
 }
 
 /** Metadata-only inventory needed to select and revoke an exact credential/grant. */
-export const SQUIRE_READ_ONLY_TOOLS = new Set([
-  'list_credentials',
-  'list_app_access',
-  'audit_log',
-]);
+export const SQUIRE_READ_ONLY_TOOLS = new Set(['list_credentials', 'list_app_access', 'audit_log']);
 
 /** Every side-effecting Squire verb Beeline exposes. All others fail closed. */
 export const SQUIRE_GOVERNED_TOOLS = [
@@ -131,6 +114,25 @@ export const SQUIRE_GOVERNED_TOOLS = [
 export type SquireGovernedTool = (typeof SQUIRE_GOVERNED_TOOLS)[number];
 const SQUIRE_GOVERNED_TOOL_SET = new Set<string>(SQUIRE_GOVERNED_TOOLS);
 
+export function squireToolsForCapabilities(
+  capabilities: readonly ExternalMcpCapability[] = [],
+): Set<string> {
+  const tools = new Set<string>();
+  if (capabilities.includes('squire-credential-use')) {
+    tools.add('list_credentials');
+    tools.add('audit_log');
+    tools.add('use_credential');
+  }
+  if (capabilities.includes('squire-app-access')) {
+    tools.add('list_credentials');
+    tools.add('list_app_access');
+    tools.add('audit_log');
+    tools.add('grant_app_access');
+    tools.add('revoke_app_access');
+  }
+  return tools;
+}
+
 /** Explicit profile policy: metadata reads or one exact P1-governed side effect. */
 export function externalMcpPermissionPolicy(
   request: AcpPermissionRequest,
@@ -138,7 +140,7 @@ export function externalMcpPermissionPolicy(
 ): ExternalMcpPermissionPolicy {
   if (!isExternalMcpPermissionRequest(request, capabilities)) return 'deny';
   const tool = externalMcpToolName(request);
-  if (!tool) return 'deny';
+  if (!tool || !squireToolsForCapabilities(capabilities).has(tool)) return 'deny';
   if (SQUIRE_READ_ONLY_TOOLS.has(tool)) return 'allow';
   return SQUIRE_GOVERNED_TOOL_SET.has(tool) ? 'factory-permission' : 'deny';
 }

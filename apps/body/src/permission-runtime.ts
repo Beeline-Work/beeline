@@ -10,6 +10,7 @@ import type { NostrEvent } from '@beeline/nostr';
 import {
   buildPermissionExecution,
   buildPermissionRequest,
+  parsePermissionExecution,
   parsePermissionRequest,
   verifyPermissionAction,
   type Identity,
@@ -98,6 +99,7 @@ export interface PermissionRuntimeDependencies {
   identity: Identity;
   reader: PermissionFreshReader;
   publish(event: NostrEvent): Promise<void>;
+  publishTerminalReceipt?(event: NostrEvent): Promise<void>;
   /** Atomic and durable across restarts. Keys include the explicit attempt. */
   claim(key: string): Promise<PermissionActionClaim>;
   /** Atomically reserve shared envelope capacity before any side effect. */
@@ -212,6 +214,28 @@ export class PermissionRuntime {
         result: known ? error.code : boundedResult(error),
       });
     }
+  }
+
+  async reverify(execution: PermissionExecutionHandle): Promise<boolean> {
+    const now = this.dependencies.now?.() ?? Math.floor(Date.now() / 1000);
+    const reader: PermissionFreshReader = {
+      ...this.dependencies.reader,
+      permissionHistory: async (roomId, permissionId) =>
+        (await this.dependencies.reader.permissionHistory(roomId, permissionId)).filter((event) => {
+          const parsed = parsePermissionExecution(event, execution.request);
+          return parsed?.value.actionId !== execution.action.actionId;
+        }),
+    };
+    const verification = await verifyPermissionAction({
+      reader,
+      action: execution.action,
+      now,
+    });
+    return (
+      verification.authorized &&
+      verification.request.event.id === execution.request.event.id &&
+      verification.request.value.permissionId === execution.request.value.permissionId
+    );
   }
 
   /** Reserve and publish `started` immediately before an externally-run action. */
@@ -372,7 +396,11 @@ export class PermissionRuntime {
       ...(includeCharge ? { charge: action.charge } : {}),
       ...(result ? { result } : {}),
     });
-    await this.dependencies.publish(event);
+    if (status === 'started' || !this.dependencies.publishTerminalReceipt) {
+      await this.dependencies.publish(event);
+    } else {
+      await this.dependencies.publishTerminalReceipt(event);
+    }
     return event;
   }
 }

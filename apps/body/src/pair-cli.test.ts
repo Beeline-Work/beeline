@@ -410,7 +410,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
         '--access',
         'everyone',
         '--mcp',
-        'squire',
+        'squire-credential-use',
       ],
       { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
     );
@@ -439,7 +439,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
         '--agent-command',
         agent,
         '--mcp',
-        'squire',
+        'squire-credential-use',
       ],
       { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
     );

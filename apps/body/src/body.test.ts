@@ -978,12 +978,20 @@ describe('agent identity boundary', () => {
         },
       };
       const creatorBody = new Body(
-        { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire'] },
+        {
+          ...config,
+          accessPolicy: 'creator',
+          externalMcpCapabilities: ['squire-credential-use'],
+        },
         newIdentity('operator'),
         newIdentity('agent'),
       );
       const everyoneBody = new Body(
-        { ...config, accessPolicy: 'everyone', externalMcpCapabilities: ['squire'] },
+        {
+          ...config,
+          accessPolicy: 'everyone',
+          externalMcpCapabilities: ['squire-credential-use'],
+        },
         newIdentity('operator'),
         newIdentity('agent'),
       );
@@ -1040,7 +1048,7 @@ describe('agent identity boundary', () => {
 
     it('never lets a corner auto-approval bypass a governed Squire effect', async () => {
       const body = new Body(
-        { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire'] },
+        { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire-app-access'] },
         newIdentity('operator'),
         newIdentity('agent'),
       );
@@ -1221,6 +1229,48 @@ describe('agent identity boundary', () => {
       expect(revokeAuthorizations).toHaveBeenCalledWith(session.channelId);
     });
 
+    it('retries a terminal receipt after relay failure, teardown, and restart', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'squire-receipt-outbox-'));
+      const statePath = join(root, 'state.json');
+      const agent = newIdentity('receipt-agent');
+      const receipt = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: 1_700_000_000,
+          kind: 9,
+          tags: [['t', 'factory-permission-execution']],
+          content: JSON.stringify({ status: 'failed' }),
+        },
+        agent.secretKey,
+      );
+      const failedPublish = vi.fn(async () => {
+        throw new Error('relay unavailable');
+      });
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const first = new Body(config, undefined, agent, undefined, {
+          statePath,
+          publishPermissionReceipt: failedPublish,
+        });
+        await Reflect.get(first, 'publishTerminalPermissionReceipt').call(first, receipt);
+        await first.dispose();
+        expect(failedPublish).toHaveBeenCalled();
+
+        const delivered: NostrEvent[] = [];
+        const restarted = new Body(config, undefined, agent, undefined, {
+          statePath,
+          publishPermissionReceipt: async (event) => {
+            delivered.push(event);
+          },
+        });
+        await vi.waitFor(() => expect(delivered.map((event) => event.id)).toEqual([receipt.id]));
+        await restarted.dispose();
+      } finally {
+        error.mockRestore();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     it('fails closed before launch when Squire cannot use an isolated governable harness', async () => {
       const root = mkdtempSync(join(tmpdir(), 'squire-launch-boundary-'));
       try {
@@ -1366,9 +1416,9 @@ describe('agent identity boundary', () => {
           bwrapPath: '/usr/bin/bwrap',
           squireConfigRoot,
         });
-        await expect(Reflect.get(isolated, 'sessionAgentEnv').call(isolated)).resolves.toMatchObject(
-          { CLAUDE_CONFIG_DIR: join(root, 'claude-home', 'claude') },
-        );
+        await expect(
+          Reflect.get(isolated, 'sessionAgentEnv').call(isolated),
+        ).resolves.toMatchObject({ CLAUDE_CONFIG_DIR: join(root, 'claude-home', 'claude') });
         expect(Reflect.get(isolated, 'sandboxCredentialMaskPaths').call(isolated)).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ path: join(squireConfigRoot, 'trusty-squire') }),
@@ -1522,7 +1572,7 @@ describe('agent identity boundary', () => {
       ...config,
       agentKind: 'codex',
       accessPolicy: 'creator',
-      externalMcpCapabilities: ['squire'],
+      externalMcpCapabilities: ['squire-credential-use'],
       readonlyMcpCommand: '/buzz-readonly-mcp',
     });
     vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);
@@ -1541,14 +1591,12 @@ describe('agent identity boundary', () => {
 
     await body.provision('room-id', { repo: 'repo', localPath: '/paired/repo' });
 
-    expect(create.mock.calls[0]![0].mcpServers[0]).toEqual(
-      {
-        name: 'buzz-readonly-mcp',
-        command: '/buzz-readonly-mcp',
-        args: [],
-        env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
-      },
-    );
+    expect(create.mock.calls[0]![0].mcpServers[0]).toEqual({
+      name: 'buzz-readonly-mcp',
+      command: '/buzz-readonly-mcp',
+      args: [],
+      env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
+    });
     expect(create.mock.calls[0]![0].mcpServers[1]).toMatchObject({
       name: 'squire',
       command: process.execPath,

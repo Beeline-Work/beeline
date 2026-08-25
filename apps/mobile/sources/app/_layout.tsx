@@ -35,8 +35,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
 import {
   isLegacySessionNotificationResponse,
-  getBuzzChannelIdFromNotificationData,
-  navigateToBuzzChannelFromNotification,
+  navigateToBuzzNotificationResponse,
 } from '@/utils/notificationRouting';
 import { applyVoiceUpsellOverride } from '@/realtime/voiceExperiment';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
@@ -420,11 +419,11 @@ export default function RootLayout() {
           '[PUSH ROUTING] notification.request.content.data:\n' +
             stringifyNotificationPayload(response.notification.request.content.data),
         );
-        const notificationData = response.notification.request.content.data;
-        const buzzChannelId = getBuzzChannelIdFromNotificationData(notificationData);
-        if (buzzChannelId) {
-          console.log(`[PUSH ROUTING] Navigating to Buzz channel: ${buzzChannelId}`);
-          navigateToBuzzChannelFromNotification(router, buzzChannelId, responseId);
+        const buzzTarget = navigateToBuzzNotificationResponse(router, response);
+        if (buzzTarget) {
+          console.log(
+            `[PUSH ROUTING] Navigating to Buzz ${buzzTarget.target}: ${buzzTarget.channelId}`,
+          );
           return;
         }
         if (!isLegacySessionNotificationResponse(response)) {

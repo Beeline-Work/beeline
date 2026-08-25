@@ -1149,7 +1149,6 @@ export default function BuzzChat() {
     const targetFinished =
       canonicalCornerStatus === 'merged' ||
       canonicalCornerStatus === 'archived' ||
-      cornerClosedLocally ||
       (isCorner && isArchived);
     const targetMissing =
       isCorner &&
@@ -1163,7 +1162,6 @@ export default function BuzzChat() {
     });
   }, [
     canonicalCornerStatus,
-    cornerClosedLocally,
     decodedId,
     isArchived,
     isCorner,

@@ -438,9 +438,23 @@ export default function BuzzChat() {
   // corner already knows both, so passing them makes the header correct on the
   // first frame instead of one relay round trip later. The screen's own reads
   // still run and still win.
-  const { channelId, notificationResponseId, parent, title, returnTo } = useLocalSearchParams<{
+  const {
+    channelId,
+    notificationResponseId,
+    notificationTarget,
+    notificationMessageId,
+    notificationApprovalId,
+    notificationFallbackChannelId,
+    parent,
+    title,
+    returnTo,
+  } = useLocalSearchParams<{
     channelId: string;
     notificationResponseId?: string;
+    notificationTarget?: string;
+    notificationMessageId?: string;
+    notificationApprovalId?: string;
+    notificationFallbackChannelId?: string;
     parent?: string;
     title?: string;
     returnTo?: string;
@@ -457,6 +471,8 @@ export default function BuzzChat() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
+  const handledNotificationAnchorRef = useRef<string | null>(null);
+  const handledNotificationFallbackRef = useRef<string | null>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
   // immediately taps send. Keep the authoritative in-flight draft beside the
@@ -544,6 +560,10 @@ export default function BuzzChat() {
   // name is canonical. It is served from `listSubchannelLifecycle`'s shared
   // short-TTL cache, which the Room list has usually already warmed.
   const [cornerLifecycle, setCornerLifecycle] = useState<CornerSummary[]>([]);
+  const [notificationParentResolution, setNotificationParentResolution] = useState<{
+    channelId: string;
+    parentId: string | null;
+  } | null>(null);
   const [cornerStateNow, setCornerStateNow] = useState(Date.now());
   // "No corner on record" and "the corner list has not answered yet" are
   // different answers, and only the first one may let a freshly permitted
@@ -1105,6 +1125,46 @@ export default function BuzzChat() {
       : canonicalCorner?.machineState === 'concluded' || canonicalCorner?.machineState === 'closed'
         ? 'done'
         : 'idle';
+
+  // A notification may outlive the corner it names. Once relay truth says the
+  // target disappeared or finished, replace it with the parent Room carried by
+  // the push instead of stranding the reader on an empty/read-only transcript.
+  useEffect(() => {
+    const fallbackId = notificationFallbackChannelId?.trim();
+    if (
+      !notificationResponseId ||
+      !fallbackId ||
+      fallbackId === decodedId ||
+      handledNotificationFallbackRef.current === notificationResponseId
+    ) {
+      return;
+    }
+    const targetFinished =
+      canonicalCornerStatus === 'merged' ||
+      canonicalCornerStatus === 'archived' ||
+      cornerClosedLocally ||
+      (isCorner && isArchived);
+    const targetMissing =
+      isCorner &&
+      notificationParentResolution?.channelId === decodedId &&
+      notificationParentResolution.parentId === null;
+    if (!targetMissing && !targetFinished) return;
+    handledNotificationFallbackRef.current = notificationResponseId;
+    router.replace({
+      pathname: '/buzz/chat/[channelId]',
+      params: { channelId: fallbackId, notificationResponseId },
+    });
+  }, [
+    canonicalCornerStatus,
+    cornerClosedLocally,
+    decodedId,
+    isArchived,
+    isCorner,
+    notificationFallbackChannelId,
+    notificationParentResolution,
+    notificationResponseId,
+  ]);
+
   const cornerAgentPubkey = useMemo(
     () => resolveCornerViewAgentPubkey(messages, (pubkey) => agentByPubkey.has(pubkey)),
     [agentByPubkey, messages],
@@ -1172,6 +1232,57 @@ export default function BuzzChat() {
   // Newest-first for the inverted FlatList; chronological visibleMessages
   // above stays the source of truth for everything else that reads order.
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
+  // Reveal the exact fact that caused the alert. Fresh messages usually land
+  // in the cached tail; if the target is already resident outside the initial
+  // window, widen the window first and scroll on the next render. An approval
+  // targets the corner's review footer at inverted-list offset zero.
+  useEffect(() => {
+    if (!notificationResponseId) return;
+    const anchorKey = `${notificationResponseId}:${notificationMessageId ?? notificationApprovalId ?? notificationTarget ?? ''}`;
+    if (handledNotificationAnchorRef.current === anchorKey) return;
+
+    if (notificationTarget === 'approval') {
+      if (!isCorner || !mergeTarget) return;
+      requestAnimationFrame(() =>
+        flatListRef.current?.scrollToOffset({ offset: 0, animated: false }),
+      );
+      handledNotificationAnchorRef.current = anchorKey;
+      return;
+    }
+
+    const messageId = notificationMessageId?.trim();
+    if (!messageId) return;
+    const visibleIndex = invertedMessages.findIndex(
+      (message) => message.id === messageId || message.relayId === messageId,
+    );
+    if (visibleIndex >= 0) {
+      requestAnimationFrame(() =>
+        flatListRef.current?.scrollToIndex({
+          index: visibleIndex,
+          viewPosition: 0.5,
+          animated: false,
+        }),
+      );
+      handledNotificationAnchorRef.current = anchorKey;
+      return;
+    }
+    const residentIndex = combinedMessages.findIndex(
+      (message) => message.id === messageId || message.relayId === messageId,
+    );
+    if (residentIndex >= 0) {
+      const rowsFromNewest = combinedMessages.length - residentIndex;
+      setVisibleMessageCount((count) => Math.max(count, rowsFromNewest));
+    }
+  }, [
+    combinedMessages,
+    invertedMessages,
+    isCorner,
+    mergeTarget,
+    notificationApprovalId,
+    notificationMessageId,
+    notificationResponseId,
+    notificationTarget,
+  ]);
   // A reconciled draft/final bubble keeps a stable display `id` across the
   // turn, so it also needs to resolve by its real relay event id — the id
   // any NIP-10 reply on another client actually references.
@@ -1898,6 +2009,7 @@ export default function BuzzChat() {
             // Called on both branches: an absent parent only means "room" once
             // this read has actually landed.
             onParentChannelId: (parentId) => {
+              setNotificationParentResolution({ channelId: decodedId, parentId });
               setChannelKind(parentId ? 'corner' : 'room');
               if (!parentId) return;
               setParentChannelId(parentId);
@@ -3660,6 +3772,21 @@ export default function BuzzChat() {
           }}
           keyboardShouldPersistTaps="handled"
           renderItem={renderItem}
+          onScrollToIndexFailed={({ averageItemLength, index }) => {
+            // Variable-height ledger rows cannot provide getItemLayout. Jump
+            // near the target, let the list measure that window, then retry.
+            flatListRef.current?.scrollToOffset({
+              offset: averageItemLength * index,
+              animated: false,
+            });
+            setTimeout(() => {
+              flatListRef.current?.scrollToIndex({
+                index,
+                viewPosition: 0.5,
+                animated: false,
+              });
+            }, 50);
+          }}
           onEndReached={loadOlderTranscriptMessages}
           onEndReachedThreshold={0.5}
           ListEmptyComponent={

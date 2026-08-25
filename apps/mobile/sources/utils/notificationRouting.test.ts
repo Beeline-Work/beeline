@@ -1,16 +1,20 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  getBuzzNotificationTargetFromData,
   isLegacySessionNotificationData,
   isLegacySessionNotificationResponse,
   getBuzzChannelIdFromNotificationData,
   navigateToBuzzChannelFromNotification,
+  navigateToBuzzNotificationResponse,
+  navigateToBuzzTargetFromNotification,
 } from './notificationRouting';
 
 const buzzChatSource = readFileSync(
   new URL('../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
   'utf8',
 );
+const appLayoutSource = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
 
 describe('isLegacySessionNotificationData', () => {
   it('recognizes a retired session notification by id', () => {
@@ -89,6 +93,136 @@ describe('getBuzzChannelIdFromNotificationData', () => {
   });
 });
 
+describe('getBuzzNotificationTargetFromData', () => {
+  it('keeps the parent Room, corner, and message anchor from a corner push', () => {
+    expect(
+      getBuzzNotificationTargetFromData({
+        type: 'agent-question',
+        target: 'message',
+        roomId: 'parent-room',
+        channelId: 'corner-123',
+        cornerId: 'corner-123',
+        eventId: 'event-456',
+        messageId: 'event-456',
+      }),
+    ).toEqual({
+      type: 'agent-question',
+      target: 'message',
+      roomId: 'parent-room',
+      channelId: 'corner-123',
+      cornerId: 'corner-123',
+      eventId: 'event-456',
+      messageId: 'event-456',
+    });
+  });
+});
+
+describe('navigateToBuzzNotificationResponse', () => {
+  it.each(['cold', 'warm'])('%s tap opens the exact corner message', () => {
+    const navigate = vi.fn();
+
+    const target = navigateToBuzzNotificationResponse(
+      { navigate },
+      {
+        notification: {
+          request: {
+            identifier: 'response-789',
+            content: {
+              data: {
+                type: 'agent-question',
+                target: 'message',
+                roomId: 'parent-room',
+                channelId: 'corner-123',
+                cornerId: 'corner-123',
+                eventId: 'event-456',
+                messageId: 'event-456',
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(target).toMatchObject({ channelId: 'corner-123', messageId: 'event-456' });
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        pathname: '/buzz/chat/[channelId]',
+        params: {
+          channelId: 'corner-123',
+          parent: 'parent-room',
+          notificationFallbackChannelId: 'parent-room',
+          notificationMessageId: 'event-456',
+          notificationResponseId: 'response-789',
+          notificationTarget: 'message',
+        },
+      },
+      { dangerouslySingular: true },
+    );
+  });
+
+  it('opens the parent Room when the corner target no longer exists', () => {
+    const navigate = vi.fn();
+
+    navigateToBuzzTargetFromNotification(
+      { navigate },
+      {
+        type: 'agent-attention',
+        target: 'corner',
+        roomId: 'parent-room',
+        channelId: 'corner-gone',
+        cornerId: 'corner-gone',
+        eventId: 'event-456',
+      },
+      'response-789',
+      { targetExists: false },
+    );
+
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        pathname: '/buzz/chat/[channelId]',
+        params: {
+          channelId: 'parent-room',
+          notificationResponseId: 'response-789',
+        },
+      },
+      { dangerouslySingular: true },
+    );
+  });
+
+  it('opens merge-ready notifications on the corner approval surface', () => {
+    const navigate = vi.fn();
+
+    navigateToBuzzTargetFromNotification(
+      { navigate },
+      {
+        type: 'merge-approval-request',
+        target: 'approval',
+        roomId: 'parent-room',
+        channelId: 'corner-review',
+        cornerId: 'corner-review',
+        eventId: 'merge-ready-event',
+        approvalId: 'merge-ready-event',
+      },
+      'response-approval',
+    );
+
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        pathname: '/buzz/chat/[channelId]',
+        params: {
+          channelId: 'corner-review',
+          parent: 'parent-room',
+          notificationApprovalId: 'merge-ready-event',
+          notificationFallbackChannelId: 'parent-room',
+          notificationResponseId: 'response-approval',
+          notificationTarget: 'approval',
+        },
+      },
+      { dangerouslySingular: true },
+    );
+  });
+});
+
 describe('navigateToBuzzChannelFromNotification', () => {
   it('reuses the room route and refreshes it for each notification response', () => {
     const navigate = vi.fn();
@@ -108,9 +242,7 @@ describe('navigateToBuzzChannelFromNotification', () => {
   });
 
   it('uses the notification response id to invalidate the retained room backfill', () => {
-    expect(buzzChatSource).toMatch(
-      /const \{ channelId, notificationResponseId[^}]*\} = useLocalSearchParams/,
-    );
+    expect(buzzChatSource).toMatch(/notificationResponseId,[\s\S]*= useLocalSearchParams/);
     // The hydration effect must re-run when a notification re-opens the
     // same channel. Assert that dependency, not the whole literal list —
     // the rest of the list is free to change with the effect's internals.
@@ -121,5 +253,20 @@ describe('navigateToBuzzChannelFromNotification', () => {
       hydrationDeps,
       'room hydration effect must depend on notificationResponseId',
     ).not.toBeNull();
+  });
+
+  it('wires the same precise handler to warm taps and cold-start responses', () => {
+    expect(appLayoutSource).toContain('Notifications.addNotificationResponseReceivedListener');
+    expect(appLayoutSource).toContain('Notifications.getLastNotificationResponseAsync()');
+    expect(appLayoutSource.match(/handleNotificationResponse\(response\)/g)).toHaveLength(2);
+    expect(appLayoutSource).toContain('navigateToBuzzNotificationResponse(router, response)');
+  });
+
+  it('anchors messages and approvals, then replaces a missing corner with its parent Room', () => {
+    expect(buzzChatSource).toMatch(/scrollToIndex\(\{\s*index: visibleIndex/);
+    expect(buzzChatSource).toContain('scrollToOffset({ offset: 0');
+    expect(buzzChatSource).toContain('notificationParentResolution?.channelId === decodedId');
+    expect(buzzChatSource).toContain('notificationParentResolution.parentId === null');
+    expect(buzzChatSource).toContain('params: { channelId: fallbackId, notificationResponseId }');
   });
 });

@@ -348,10 +348,35 @@ describe('scheduled Room turn boundary', () => {
       client: { sessionPrompt, sessionCancel: vi.fn() },
       mode: 'readonly',
     } as never);
+    const projection = (kind: number, tags: string[][]) =>
+      signEvent(
+        { pubkey: principal.publicKey, created_at: 1_900_000_000, kind, tags, content: '' },
+        principal.secretKey,
+      );
+    const members = projection(KIND_CHANNEL_MEMBERS, [
+      ['d', 'scheduled-room'],
+      ['p', principal.publicKey],
+      ['p', agent.publicKey],
+    ]);
+    const admins = projection(KIND_CHANNEL_ADMINS, [
+      ['d', 'scheduled-room'],
+      ['p', principal.publicKey, '', 'owner'],
+    ]);
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          const filters = JSON.parse(String(init?.body)) as Array<{ kinds?: number[] }>;
+          const kinds = new Set(filters.flatMap((filter) => filter.kinds ?? []));
+          return new Response(
+            JSON.stringify([
+              ...(kinds.has(KIND_CHANNEL_MEMBERS) ? [members] : []),
+              ...(kinds.has(KIND_CHANNEL_ADMINS) ? [admins] : []),
+            ]),
+            { status: 200 },
+          );
+        }
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
@@ -404,6 +429,15 @@ describe('scheduled Room turn boundary', () => {
       expect(factory).not.toHaveBeenCalled();
       expect(upload).not.toHaveBeenCalled();
       expect(publishScheduledOutput).toHaveBeenCalledOnce();
+      const requests = published.flatMap((event) => {
+        const parsed = parsePermissionRequest(event);
+        return parsed ? [parsed] : [];
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]!.value).toMatchObject({
+        scope: { type: 'operation.execute', risk: 'irreversible' },
+        provenance: { scheduleRunId: runId },
+      });
       expect(
         published.some((event) =>
           event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),

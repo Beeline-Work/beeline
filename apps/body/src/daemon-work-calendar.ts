@@ -10,7 +10,7 @@ import {
   type PermissionFreshReader,
 } from '@beeline/buzz-client';
 import { createRelayClient } from '@beeline/gate';
-import type { NostrEvent } from '@beeline/nostr';
+import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { RoomRuntimeCoordinator } from './room-runtime.js';
 import { runtimeIdentity, type AgentRuntimeRecord } from './runtime.js';
 import {
@@ -21,6 +21,7 @@ import {
   WORK_SCHEDULE_TAG,
   WorkCalendar,
   parseWorkSchedule,
+  selectCanonicalWorkSchedule,
   workScheduleKey,
   workScheduleRevisionDigest,
   type ParsedWorkSchedule,
@@ -58,7 +59,94 @@ export interface DaemonWorkScheduleAuthorityDependencies {
   readCurrentEvents(schedule: ParsedWorkSchedule): Promise<readonly NostrEvent[]>;
   readFacts(schedule: ParsedWorkSchedule): Promise<DaemonWorkScheduleAuthorityFacts>;
   verifyScheduleGrant(schedule: ParsedWorkSchedule): Promise<boolean>;
-  hasFailurePause(schedule: ParsedWorkSchedule): Promise<boolean>;
+  readFailurePauses(schedule: ParsedWorkSchedule): Promise<readonly NostrEvent[]>;
+}
+
+function tagValue(event: NostrEvent, name: string): string | undefined {
+  return event.tags.find((tag) => tag[0] === name)?.[1];
+}
+
+async function requiresHumanResume(
+  parsed: ParsedWorkSchedule,
+  candidates: readonly ParsedWorkSchedule[],
+  dependencies: DaemonWorkScheduleAuthorityDependencies,
+): Promise<boolean> {
+  const pauseRevision = (await dependencies.readFailurePauses(parsed))
+    .filter(
+      (event) =>
+        event.kind === 9 &&
+        event.pubkey === dependencies.agentPubkey &&
+        verifyEvent(event) &&
+        tagValue(event, 't') === WORK_SCHEDULE_PAUSED_TAG &&
+        tagValue(event, 'schedule') === parsed.value.scheduleId,
+    )
+    .map((event) => Number(tagValue(event, 'revision')))
+    .filter((revision) => Number.isSafeInteger(revision) && revision >= 1)
+    .sort((left, right) => right - left)[0];
+  if (pauseRevision === undefined) return false;
+  if (parsed.value.revision <= pauseRevision) return true;
+  for (const candidate of candidates) {
+    if (
+      candidate.value.status !== 'active' ||
+      candidate.value.revision <= pauseRevision ||
+      candidate.value.revision > parsed.value.revision ||
+      candidate.event.pubkey !== candidate.value.principalPubkey ||
+      candidate.event.pubkey === candidate.value.agentPubkey
+    ) {
+      continue;
+    }
+    const authority = await authorizeCandidate(candidate, candidates, dependencies, false);
+    if (authority.authorized) return false;
+  }
+  return true;
+}
+
+async function authorizeCandidate(
+  parsed: ParsedWorkSchedule,
+  candidates: readonly ParsedWorkSchedule[],
+  dependencies: DaemonWorkScheduleAuthorityDependencies,
+  checkFailurePause: boolean,
+): Promise<ScheduleAuthorityResult> {
+  const schedule = parsed.value;
+  const facts = await dependencies.readFacts(parsed);
+  if (facts.roomArchived === undefined)
+    return { authorized: false, terminal: false, reason: 'room-metadata-unavailable' };
+  if (facts.roomArchived)
+    return { authorized: false, terminal: true, reason: 'room-archived' };
+  if (
+    !facts.workspaceMemberPubkeys.includes(schedule.agentPubkey) ||
+    !facts.roomMemberPubkeys.includes(schedule.agentPubkey)
+  )
+    return { authorized: false, terminal: true, reason: 'agent-removed' };
+  if (
+    !facts.workspaceMemberPubkeys.includes(schedule.principalPubkey) ||
+    !facts.roomMemberPubkeys.includes(schedule.principalPubkey)
+  )
+    return { authorized: false, terminal: true, reason: 'principal-removed' };
+  if (facts.principalCanDrive === undefined)
+    return { authorized: false, terminal: false, reason: 'principal-access-unavailable' };
+  if (!facts.principalCanDrive)
+    return { authorized: false, terminal: true, reason: 'principal-access-denied' };
+  if (facts.principalIsAgent)
+    return { authorized: false, terminal: true, reason: 'principal-is-agent' };
+  if (parsed.event.pubkey === schedule.agentPubkey) {
+    if (!facts.authorIsAgent || !(await dependencies.verifyScheduleGrant(parsed)))
+      return { authorized: false, terminal: true, reason: 'schedule-change-grant-invalid' };
+    if (
+      checkFailurePause &&
+      schedule.status === 'active' &&
+      (await requiresHumanResume(parsed, candidates, dependencies))
+    )
+      return { authorized: false, terminal: true, reason: 'human-resume-required' };
+  } else if (
+    facts.authorIsAgent ||
+    parsed.event.pubkey !== schedule.principalPubkey ||
+    schedule.permissionGrantEventId
+  )
+    return { authorized: false, terminal: true, reason: 'human-author-mismatch' };
+  else if (facts.authorRole !== 'owner' && facts.authorRole !== 'admin')
+    return { authorized: false, terminal: true, reason: 'schedule-author-role-lost' };
+  return { authorized: true };
 }
 
 /** Pure production-policy seam: every fact is freshly read by the daemon adapter below. */
@@ -74,71 +162,41 @@ export async function authorizeDaemonWorkSchedule(
     ) {
       return { authorized: false, terminal: true, reason: 'schedule-target-mismatch' };
     }
-    const current = (await dependencies.readCurrentEvents(parsed))
+    const candidates = (await dependencies.readCurrentEvents(parsed))
       .flatMap((event) => {
         const candidate = parseWorkSchedule(event);
         return candidate &&
           candidate.value.workspaceId === schedule.workspaceId &&
           candidate.value.agentPubkey === schedule.agentPubkey &&
+          workScheduleKey(candidate.value) === workScheduleKey(schedule) &&
           (candidate.event.pubkey === candidate.value.principalPubkey ||
             candidate.event.pubkey === candidate.value.agentPubkey)
           ? [candidate]
           : [];
-      })
-      .sort(
+      });
+    const authority = new Map<string, Promise<ScheduleAuthorityResult>>();
+    const current = await selectCanonicalWorkSchedule(candidates, (candidate) => {
+      let result = authority.get(candidate.event.id);
+      if (!result) {
+        result = authorizeCandidate(candidate, candidates, dependencies, true);
+        authority.set(candidate.event.id, result);
+      }
+      return result;
+    });
+    if (!current) {
+      const newest = [...candidates].sort(
         (left, right) =>
           right.value.revision - left.value.revision ||
           right.event.created_at - left.event.created_at ||
           right.event.id.localeCompare(left.event.id),
       )[0];
-    if (!current || current.event.id !== parsed.event.id) {
+      if (newest?.event.id === parsed.event.id) return await authority.get(parsed.event.id)!;
       return { authorized: false, terminal: true, reason: 'schedule-superseded' };
     }
-    const facts = await dependencies.readFacts(parsed);
-    if (facts.roomArchived === undefined) {
-      return { authorized: false, terminal: false, reason: 'room-metadata-unavailable' };
+    if (current.event.id !== parsed.event.id) {
+      return { authorized: false, terminal: true, reason: 'schedule-superseded' };
     }
-    if (facts.roomArchived) {
-      return { authorized: false, terminal: true, reason: 'room-archived' };
-    }
-    if (
-      !facts.workspaceMemberPubkeys.includes(schedule.agentPubkey) ||
-      !facts.roomMemberPubkeys.includes(schedule.agentPubkey)
-    ) {
-      return { authorized: false, terminal: true, reason: 'agent-removed' };
-    }
-    if (
-      !facts.workspaceMemberPubkeys.includes(schedule.principalPubkey) ||
-      !facts.roomMemberPubkeys.includes(schedule.principalPubkey)
-    ) {
-      return { authorized: false, terminal: true, reason: 'principal-removed' };
-    }
-    if (facts.principalCanDrive === undefined) {
-      return { authorized: false, terminal: false, reason: 'principal-access-unavailable' };
-    }
-    if (!facts.principalCanDrive) {
-      return { authorized: false, terminal: true, reason: 'principal-access-denied' };
-    }
-    if (facts.principalIsAgent) {
-      return { authorized: false, terminal: true, reason: 'principal-is-agent' };
-    }
-    if (parsed.event.pubkey === schedule.agentPubkey) {
-      if (!facts.authorIsAgent || !(await dependencies.verifyScheduleGrant(parsed))) {
-        return { authorized: false, terminal: true, reason: 'schedule-change-grant-invalid' };
-      }
-      if (schedule.status === 'active' && (await dependencies.hasFailurePause(parsed))) {
-        return { authorized: false, terminal: true, reason: 'human-resume-required' };
-      }
-    } else if (
-      facts.authorIsAgent ||
-      parsed.event.pubkey !== schedule.principalPubkey ||
-      schedule.permissionGrantEventId
-    ) {
-      return { authorized: false, terminal: true, reason: 'human-author-mismatch' };
-    } else if (facts.authorRole !== 'owner' && facts.authorRole !== 'admin') {
-      return { authorized: false, terminal: true, reason: 'schedule-author-role-lost' };
-    }
-    return { authorized: true };
+    return await authority.get(parsed.event.id)!;
   } catch {
     return { authorized: false, terminal: false, reason: 'authority-unavailable' };
   }
@@ -309,8 +367,8 @@ export function createDaemonWorkCalendar(input: {
         }
       },
       verifyScheduleGrant,
-      hasFailurePause: async (schedule) => {
-        const events = await rawEvents([
+      readFailurePauses: (schedule) =>
+        rawEvents([
           {
             kinds: [9],
             '#t': [WORK_SCHEDULE_PAUSED_TAG],
@@ -318,12 +376,7 @@ export function createDaemonWorkCalendar(input: {
             authors: [identity.publicKey],
             limit: 100,
           },
-        ]);
-        return events.some((event) => {
-          const revision = event.tags.find((tag) => tag[0] === 'revision')?.[1];
-          return Number(revision) < schedule.value.revision;
-        });
-      },
+        ]),
     });
 
   return new WorkCalendar({

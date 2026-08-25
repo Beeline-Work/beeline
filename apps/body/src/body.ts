@@ -6552,6 +6552,23 @@ export class Body {
           turn,
         );
       }
+      if (scheduled) {
+        const attachmentAttempts = outputCandidates(result);
+        if (attachmentAttempts.length > 0) {
+          await this.requestScheduledActionPermission(tlcChannelId, turn, {
+            toolCall: {
+              kind: 'execute',
+              title: 'publish scheduled attachments',
+              rawInput: {
+                attachments: attachmentAttempts.map((attachment) => ({
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                })),
+              },
+            },
+          });
+        }
+      }
       if (turn.transitionedToCorner) {
         await postAgentTurnStatus(
           tlcChannelId,

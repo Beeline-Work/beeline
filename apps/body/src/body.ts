@@ -235,6 +235,7 @@ import {
   type NamedRepositoryTarget,
 } from './repository-target.js';
 import { resolvePreviewUrl } from './preview-url.js';
+import { BEELINE_SKILL_PROMPT_LINE } from './beeline-skill.js';
 import {
   TARGET_BRANCH_PROPOSAL_COMMAND,
   TARGET_BRANCH_PROPOSAL_TAG,
@@ -3287,6 +3288,9 @@ export class Body {
           : undefined;
         const systemPrompt = [
           appendPersonaSessionInstructions(input.systemPrompt, profile, nativePersonaPrepared),
+          // Exactly one pointer line; the reference itself lives in the
+          // daemon-shipped `using-beeline` skill materialized by agent-home.ts.
+          BEELINE_SKILL_PROMPT_LINE,
           agentPrivateStateInstructions(input.agentPrivateState),
           agentMemoryInstructions(input.agentMemory),
           workbenchInstructions(workbench, input.mode),

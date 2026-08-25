@@ -13,6 +13,8 @@
  * consumer). `apps/body/src/archived-channel.ts` re-exports it for Body's
  * Room-quarantine and corner-archive paths.
  */
+import { asRelayPublishError } from './relay-error.js';
+
 export function isArchivedChannelError(error: unknown): boolean {
-  return /channel is archived/i.test(error instanceof Error ? error.message : String(error));
+  return asRelayPublishError(error).kind === 'ROOM_ARCHIVED';
 }

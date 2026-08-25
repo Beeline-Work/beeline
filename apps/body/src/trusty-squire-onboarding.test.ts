@@ -8,6 +8,10 @@ import {
   connectTrustySquireForPair,
   ensureTrustySquireSkill,
 } from './trusty-squire-onboarding.js';
+import {
+  trustySquireConfigRoot,
+  trustySquireConfigRootForRuntimeConfig,
+} from './trusty-squire-storage.js';
 
 const cleanup: string[] = [];
 function scratch(prefix: string): string {
@@ -65,5 +69,36 @@ describe('Trusty Squire pair-time onboarding', () => {
     expect(await readFile(path, 'utf8')).toBe('operator copy\n');
     expect(() => assertTrustySquireConnectSupported('pi')).toThrow(/cannot enforce the P1/);
     expect(() => assertTrustySquireConnectSupported('goose')).toThrow(/cannot enforce the P1/);
+  });
+
+  it('reuses one machine-local store across pair retries and supported agents', async () => {
+    const supervisorRoot = scratch('squire-supervisor-');
+    const operatorHome = scratch('squire-operator-home-');
+    const configRoots: string[] = [];
+
+    for (const agentKind of ['codex', 'claude'] as const) {
+      const configRoot = trustySquireConfigRoot(supervisorRoot);
+      await connectTrustySquireForPair({
+        agentKind,
+        operatorHome,
+        configRoot,
+        run: async (_command, _args, _timeoutMs, env) => {
+          configRoots.push(env.XDG_CONFIG_HOME ?? '');
+        },
+      });
+    }
+
+    const expected = resolve(supervisorRoot, 'beeline', 'squire-host-config');
+    expect(configRoots).toEqual([expected, expected]);
+    expect(
+      trustySquireConfigRootForRuntimeConfig(
+        resolve(supervisorRoot, 'beeline', 'agents', 'agent-a', 'runtime.json'),
+      ),
+    ).toBe(expected);
+    expect(
+      trustySquireConfigRootForRuntimeConfig(
+        resolve(supervisorRoot, 'beeline', 'agents', 'agent-b', 'runtime.json'),
+      ),
+    ).toBe(expected);
   });
 });

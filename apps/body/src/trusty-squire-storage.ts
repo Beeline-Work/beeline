@@ -4,8 +4,12 @@ import { isAbsolute, resolve } from 'node:path';
 
 export const TRUSTY_SQUIRE_RUNTIME_CONFIG_DIR = 'squire-host-config';
 
-export function trustySquireConfigRoot(runtimeDir: string): string {
-  return resolve(runtimeDir, TRUSTY_SQUIRE_RUNTIME_CONFIG_DIR);
+export function trustySquireConfigRoot(supervisorRoot: string): string {
+  return resolve(supervisorRoot, 'beeline', TRUSTY_SQUIRE_RUNTIME_CONFIG_DIR);
+}
+
+export function trustySquireConfigRootForRuntimeConfig(runtimeConfigPath: string): string {
+  return resolve(runtimeConfigPath, '..', '..', '..', TRUSTY_SQUIRE_RUNTIME_CONFIG_DIR);
 }
 
 export function trustySquireStorePath(configRoot: string): string {

@@ -1324,6 +1324,60 @@ describe('agent identity boundary', () => {
         rmSync(root, { recursive: true, force: true });
       }
     });
+
+    it('keeps the owned Squire store isolated after capability removal and downgrade', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'squire-owned-store-boundary-'));
+      try {
+        const operatorHome = join(root, 'operator');
+        const squireConfigRoot = join(root, 'beeline', 'squire-host-config');
+        mkdirSync(join(squireConfigRoot, 'trusty-squire'), { recursive: true });
+
+        const removed = new Body({
+          ...config,
+          externalMcpCapabilities: [],
+          agentKind: 'codex',
+          agentHomeRoot: join(root, 'codex-home'),
+          operatorHome,
+          squireConfigRoot,
+        });
+        await expect(Reflect.get(removed, 'sessionAgentEnv').call(removed)).rejects.toThrow(
+          /bubblewrap credential-mask boundary/,
+        );
+
+        const downgraded = new Body({
+          ...config,
+          externalMcpCapabilities: [],
+          agentKind: 'pi',
+          agentHomeRoot: join(root, 'pi-home'),
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+        });
+        await expect(Reflect.get(downgraded, 'sessionAgentEnv').call(downgraded)).rejects.toThrow(
+          /Codex or Claude/,
+        );
+
+        const isolated = new Body({
+          ...config,
+          externalMcpCapabilities: [],
+          agentKind: 'claude',
+          agentHomeRoot: join(root, 'claude-home'),
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+        });
+        await expect(Reflect.get(isolated, 'sessionAgentEnv').call(isolated)).resolves.toMatchObject(
+          { CLAUDE_CONFIG_DIR: join(root, 'claude-home', 'claude') },
+        );
+        expect(Reflect.get(isolated, 'sandboxCredentialMaskPaths').call(isolated)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: join(squireConfigRoot, 'trusty-squire') }),
+          ]),
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 
   it('refuses to collapse the agent onto the operator identity', () => {

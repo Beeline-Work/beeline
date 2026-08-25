@@ -2553,6 +2553,8 @@ export class Body {
     const env = { ...process.env, ...this.config.agentEnv };
     return Boolean(
       this.config.externalMcpCapabilities?.includes('squire') ||
+      (this.config.squireConfigRoot &&
+        existsSync(trustySquireStorePath(this.config.squireConfigRoot))) ||
       hasLocalTrustySquireState(this.config.operatorHome, env) ||
       hasAmbientTrustySquireConfiguration(this.config.operatorHome),
     );

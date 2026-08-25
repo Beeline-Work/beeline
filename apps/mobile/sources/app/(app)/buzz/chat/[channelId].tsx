@@ -81,6 +81,10 @@ import {
   useBuzzLocalCache,
 } from '@/buzz/local-cache';
 import {
+  pushOpenBuzzChannelId,
+  releaseOpenBuzzChannelId,
+} from '@/buzz/open-room-tracker';
+import {
   cacheLiveSessionEvents,
   drainLiveEventFrame,
   loadOlderMessages,
@@ -499,6 +503,14 @@ export default function BuzzChat() {
   const selectedMentionsRef = useRef(new Map<string, string>());
   // When each agent was last told about, so a standing offline condition is
   const sendInFlightRef = useRef(false);
+
+  // Publish the open conversation to the foreground notification policy. The
+  // root notification handler runs outside the React tree, so it reads this
+  // tracker instead of route state. Synchronous, no relay work.
+  useEffect(() => {
+    pushOpenBuzzChannelId(decodedId || null);
+    return () => releaseOpenBuzzChannelId(decodedId || null);
+  }, [decodedId]);
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [transcriptHydrationAttempt, setTranscriptHydrationAttempt] = useState(0);

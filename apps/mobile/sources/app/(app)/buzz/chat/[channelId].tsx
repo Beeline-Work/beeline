@@ -79,7 +79,7 @@ import {
 } from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { markRoomRemovedAndPurge } from '@/buzz/removed-rooms';
-import { latestCornerPlan } from '@/buzz/activity-timeline';
+import { buildTurnActivity, latestCornerPlan } from '@/buzz/activity-timeline';
 import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
 import { hydrateRoomEntry } from '@/buzz/room-entry';
 import { groknight } from '@/buzz/groknight';
@@ -261,20 +261,10 @@ const knownAgentPubkeysFor = (agentByPubkey: Map<string, unknown>): Set<string> 
   return keys;
 };
 
-/**
- * One turn of the agent's work: its narration on the slab, its tools as
- * footnotes.
- *
- * The split lives in `ActivityTimeline`, and it is the whole point of this
- * row — the agent's own prose reads at the ledger's brightest tier, full
- * width, never behind a disclosure, while every read/search/list folds into
- * one counted note. An activity event carrying nothing but text is therefore
- * pure narration, which is exactly what the fallback below builds; treating it
- * as tool output is what buried an agent's words behind "tap to expand".
- *
- * A Room passes `handle` because several agents can be working there; a Corner
- * names its one agent in the top bar instead.
- */
+/** The live thought/tool/message lanes for one signed WORKING turn. A Room
+ * passes `handle` because several agents can be working there; a Corner names
+ * its one agent in the top bar instead. The selector removes this row at turn
+ * end, so none of its machine telemetry can become replayable history. */
 function LedgerActivity({
   message,
   active,
@@ -302,11 +292,24 @@ function LedgerActivity({
         active={active}
         handle={handle}
         items={activity}
+        thought={message.agentThought}
+        messageDraft={message.agentMessageDraft}
         stamp={stamp}
         testID="corner-activity-timeline"
       />
     </View>
   );
+}
+
+function durableFactLine(message: ChatDisplayMessage): string {
+  const turn = buildTurnActivity(message.activity ?? []);
+  const step =
+    message.durableFact?.kind === 'failure'
+      ? [...turn.steps].reverse().find((candidate) => candidate.outcome === 'failure')
+      : turn.steps.at(-1);
+  const glyph = message.durableFact?.kind === 'failure' ? '✗' : '✓';
+  const label = step?.label ?? (message.durableFact?.kind === 'merge' ? 'change merged' : 'action');
+  return `${glyph} ${label}${step?.reason ? ` · ${step.reason}` : ''}`;
 }
 
 /**
@@ -1439,19 +1442,27 @@ export default function BuzzChat() {
       if (sessionState !== 'working') return null;
       return `${cornerAgentDisplay?.name ?? 'agent'} thinking…`;
     }
-    const turn = activeAgentTurn?.agentTurn;
-    if (!turn) return null;
-    const subject = turn.agentPubkey
-      ? resolveAgentDisplayIdentity(turn.agentPubkey, agentByPubkey.get(turn.agentPubkey)).name
+    const liveTurn = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
+    const pubkey = liveTurn?.pubkey ?? activeAgentTurn?.agentTurn?.agentPubkey;
+    if (!pubkey) return null;
+    const subject = pubkey
+      ? resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name
       : 'agent';
     return `${subject} thinking…`;
-  }, [activeAgentTurn, agentByPubkey, agentsOffline, cornerAgentDisplay, isCorner, sessionState]);
+  }, [
+    activeAgentTurn,
+    agentByPubkey,
+    agentsOffline,
+    cornerAgentDisplay,
+    isCorner,
+    sessionState,
+    visibleMessages,
+  ]);
 
   const activeActivityId = useMemo(() => {
-    if (isCorner ? sessionState !== 'working' : !activeAgentTurn) return undefined;
-    const latest = visibleMessages.at(-1);
-    return isCorner && !isArchived && latest?.isAgentActivity ? latest.id : undefined;
-  }, [activeAgentTurn, isArchived, isCorner, sessionState, visibleMessages]);
+    const latest = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
+    return !isArchived && latest ? latest.id : undefined;
+  }, [isArchived, visibleMessages]);
 
   useEffect(() => {
     setReviewFiles(null);
@@ -1856,33 +1867,28 @@ export default function BuzzChat() {
               setPresenceNow(Date.now());
             });
           })();
-          // Corners already stream their own reply text as durable, in-place
-          // narrative bubbles (see openSubchannel/startAgentTask). Only a Room
-          // or DM's own turn draft needs to flow into the transcript — the
-          // draft/final reconciliation in buzz-event-projection.ts relies on
-          // the final reply's NIP-10 reply-to, which corners never set.
-          const installDraft = parentChannelId
-            ? Promise.resolve()
-            : (async () => {
-                try {
-                  const stop = await t.agentDraftSubscribeReady(decodedId, handleLiveMessage);
-                  if (cancelled) {
-                    stop();
-                    return;
-                  }
-                  unsubscribeDraft = stop;
-                } catch (error) {
-                  console.warn(
-                    `Failed to establish live agent draft subscription for ${decodedId}:`,
-                    error,
-                  );
-                  if (!cancelled) {
-                    unsubscribeDraft = t.agentDraftSubscribe(decodedId, handleLiveMessage);
-                  }
-                }
-                const draftEvents = await t.agentDraftBackfill(decodedId);
-                if (!cancelled) draftEvents.forEach(handleLiveMessage);
-              })();
+          // Rooms, DMs, and corners share the same replaceable message/thought
+          // lanes. The typed selector spends both when the turn settles.
+          const installDraft = (async () => {
+            try {
+              const stop = await t.agentDraftSubscribeReady(decodedId, handleLiveMessage);
+              if (cancelled) {
+                stop();
+                return;
+              }
+              unsubscribeDraft = stop;
+            } catch (error) {
+              console.warn(
+                `Failed to establish live agent draft subscription for ${decodedId}:`,
+                error,
+              );
+              if (!cancelled) {
+                unsubscribeDraft = t.agentDraftSubscribe(decodedId, handleLiveMessage);
+              }
+            }
+            const draftEvents = await t.agentDraftBackfill(decodedId);
+            if (!cancelled) draftEvents.forEach(handleLiveMessage);
+          })();
           await Promise.all([installMessages, installPresence, installDraft]);
         };
 
@@ -3199,6 +3205,17 @@ export default function BuzzChat() {
           <View style={styles.systemNoticeBubble} testID={`system-notice-${item.id}`}>
             <Text style={styles.systemNoticeText}>{item.text}</Text>
           </View>
+        );
+      }
+
+      if (item.durableFact) {
+        return (
+          <LedgerRoomUpdate
+            id={item.id}
+            line={durableFactLine(item)}
+            stamp={ledgerStamp(item.timestamp)}
+            tone={item.durableFact.kind === 'failure' ? 'brass' : 'quiet'}
+          />
         );
       }
 

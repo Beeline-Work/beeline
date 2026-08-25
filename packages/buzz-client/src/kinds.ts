@@ -71,6 +71,9 @@ export const TAG_AGENT_PRESENCE = 'agent-presence';
 /** Marker tag value for a Room-scoped live in-flight agent reply draft (streaming text). */
 export const TAG_AGENT_DRAFT = 'agent-draft';
 
+/** Marker tag value for a Room-scoped live rolling agent thought. */
+export const TAG_AGENT_THOUGHT = 'agent-thought';
+
 /** Marker tag value for a self-signed first-class agent record. */
 export const TAG_AGENT = 'buzz-agent';
 

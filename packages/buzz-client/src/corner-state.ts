@@ -6,7 +6,12 @@
  * presentation only; none of them may promote a corner to an active state.
  */
 import type { NostrEvent } from '@beeline/nostr';
-import { KIND_CORNER_STATE, TAG_AGENT_DRAFT, TAG_CORNER_STATE } from './kinds.js';
+import {
+  KIND_CORNER_STATE,
+  TAG_AGENT_DRAFT,
+  TAG_AGENT_THOUGHT,
+  TAG_CORNER_STATE,
+} from './kinds.js';
 
 export { KIND_CORNER_STATE };
 
@@ -18,6 +23,11 @@ export function cornerStateKey(cornerId: string): string {
 
 export function agentDraftKey(channelId: string): string {
   return `${TAG_AGENT_DRAFT}:${channelId}`;
+}
+
+/** One replaceable rolling-thought record per Room/corner. */
+export function agentThoughtKey(channelId: string): string {
+  return `${TAG_AGENT_THOUGHT}:${channelId}`;
 }
 
 export type CornerMachineState = 'open' | 'working' | 'waiting' | 'idle' | 'concluded' | 'closed';

@@ -27,9 +27,13 @@ export type ChatDisplayMessage = {
   isSystemNotice?: boolean;
   isAgentAuthor?: boolean;
   isAgentActivity?: boolean;
+  isAgentLiveTurn?: boolean;
   isAgentDraft?: boolean;
   relayId?: string;
   activity?: AgentActivityItem[];
+  agentThought?: string;
+  agentMessageDraft?: string;
+  durableFact?: { kind: 'failure' | 'merge' | 'action' };
   attachments?: AttachmentReference[];
   mentionPubkeys?: string[];
   replyToId?: string;
@@ -98,12 +102,11 @@ export function sessionEventCursor(event: SessionEvent): number | undefined {
   return event.type === 'read-model' ? event.event.createdAt : undefined;
 }
 
-function activityItem(event: Activity): AgentActivityItem {
-  const detail = event.detail;
+function activityItem(event: Activity, detail = event.detail, index = 0): AgentActivityItem {
   return {
     kind: detail.kind,
     title: detail.title,
-    id: event.stepId,
+    id: detail.toolCallId ?? `${event.stepId}:${index}`,
     ...(detail.operation ? { toolKind: detail.operation } : {}),
     ...(detail.rollup ? { rollup: { ...detail.rollup } } : {}),
     ...(detail.observed ? { observed: detail.observed.map((item) => ({ ...item })) } : {}),
@@ -123,6 +126,12 @@ function activityItem(event: Activity): AgentActivityItem {
         }
       : {}),
   };
+}
+
+function activityItems(event: Activity): AgentActivityItem[] {
+  return (event.details?.length ? event.details : [event.detail]).map((detail, index) =>
+    activityItem(event, detail, index),
+  );
 }
 
 function controlProjection(
@@ -265,7 +274,7 @@ export function projectReadEvent(
         timestamp: event.createdAt,
         pubkey: event.authorPubkey,
         isAgentActivity: true,
-        activity: [activityItem(event)],
+        activity: activityItems(event),
         ...(isNew ? { isNew: true } : {}),
       },
     };
@@ -317,8 +326,28 @@ export function transcriptMessages(
           text: '',
           isUser: false,
           timestamp: item.timestamp,
+          pubkey: item.authorPubkey,
           isAgentActivity: true,
-          activity: item.steps.map(activityItem),
+          isAgentLiveTurn: true,
+          isAgentDraft: Boolean(item.messageDraft),
+          activity: item.steps.flatMap(activityItems),
+          ...(item.thought ? { agentThought: item.thought } : {}),
+          ...(item.messageDraft ? { agentMessageDraft: item.messageDraft } : {}),
+          ...(input?.newIds?.has(item.id) ? { isNew: true } : {}),
+        },
+      ];
+    }
+    if (item.kind === 'durable-fact') {
+      return [
+        {
+          id: item.id,
+          text: '',
+          isUser: false,
+          timestamp: item.timestamp,
+          pubkey: item.authorPubkey,
+          isAgentActivity: true,
+          activity: activityItems(item.activity),
+          durableFact: { kind: item.factKind },
           ...(input?.newIds?.has(item.id) ? { isNew: true } : {}),
         },
       ];

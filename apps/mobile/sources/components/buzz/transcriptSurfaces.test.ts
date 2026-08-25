@@ -208,7 +208,7 @@ describe('One ledger, both surfaces', () => {
     expect(styleDefinition(chatSource, 'activityGroup')).not.toMatch(
       /paddingRight:\s*LEDGER_MARGINALIA_WIDTH/,
     );
-    expect(styleDefinition(activitySource, 'groupStamp')).toMatch(/lineHeight:\s*18/);
+    expect(styleDefinition(activitySource, 'liveStamp')).toMatch(/fontSize:\s*10/);
     for (const name of ['marginaliaStamp', 'marginaliaDetail']) {
       expect(styleDefinition(ledgerSource, name)).toMatch(/color:\s*theme\.buzz\.ledgerGhost/);
     }
@@ -453,45 +453,41 @@ describe('Machine noise', () => {
     expect(chatSource).not.toMatch(/\bactivityUpdate:\s*\{/);
   });
 
-  it('uses one-line hairline rows and collapses every machine run', () => {
+  it('uses live-only one-line hairline rows with no replay affordance', () => {
     expect(activitySource).not.toContain('GROUP_THRESHOLD');
-    expect(activitySource).toContain('const grouped = turn.steps.length > 0');
-    expect(activitySource).toContain('const showSteps = expanded');
-    expect(styleDefinition(activitySource, 'stepRow')).toMatch(/minHeight:\s*44/);
+    expect(activitySource).toContain(
+      'if (!active || (!thought && !messageDraft && !steps.length))',
+    );
+    expect(activitySource).not.toContain('activity-step-group');
+    expect(activitySource).not.toContain('<Pressable');
+    expect(styleDefinition(activitySource, 'stepRow')).toMatch(/minHeight:\s*36/);
     expect(styleDefinition(activitySource, 'stepRow')).toMatch(
-      /borderBottomWidth:\s*StyleSheet\.hairlineWidth/,
+      /borderTopWidth:\s*StyleSheet\.hairlineWidth/,
     );
     expect(styleDefinition(activitySource, 'stepLabel')).toMatch(/Typography\.mono\(\)/);
     expect(activitySource).not.toContain('FAILED');
     expect(activitySource).not.toContain('BlurView');
-    expect(activitySource).toContain('<HullActionSheet');
+    expect(activitySource).not.toContain('HullActionSheet');
   });
 
-  it('puts attribution and the tabular timestamp on the collapsed row without an indent gutter', () => {
-    expect(activitySource).toContain('handle?.toUpperCase()');
-    expect(activitySource).toContain('testID="activity-group-stamp"');
-    expect(styleDefinition(activitySource, 'groupRow')).toMatch(/paddingHorizontal:\s*0/);
-    expect(styleDefinition(activitySource, 'groupStamp')).toMatch(
-      /fontVariant:\s*\['tabular-nums'\]/,
-    );
+  it('puts attribution and timestamp on the live turn without an indent gutter', () => {
+    expect(activitySource).toContain('handle.toUpperCase()');
+    expect(styleDefinition(activitySource, 'liveByline')).toMatch(/flexDirection:\s*'row'/);
+    expect(styleDefinition(activitySource, 'liveStamp')).toMatch(/marginLeft:\s*'auto'/);
     expect(chatSource).toContain('stamp={ledgerStamp(item.timestamp)}');
     expect(chatSource).not.toContain('testID={`chat-marginalia-${item.id}`}');
   });
 
-  it('keeps the agent’s own prose out of the fold entirely', () => {
-    // Narration is the spine of a turn, so it renders on the slab at the
-    // ledger's own brightest tier — full width, no glyph, no indent, and with
-    // no disclosure between it and the reader. Folding it in with the tool
-    // output is the bug this replaced.
-    const narration = styleDefinition(activitySource, 'narration');
+  it('keeps the accumulating agent message out of the tool ledger entirely', () => {
+    const narration = styleDefinition(activitySource, 'messageDraft');
     expect(narration).toMatch(/Typography\.ledger\(\)/);
     expect(narration).toMatch(/color:\s*groknight\.ledgerBright/);
     // ONE message size (Editorial direction): narration is message text, so
     // it matches the ledger body exactly.
     expect(narration).toMatch(/fontSize:\s*16/);
-    expect(narration).toMatch(/width:\s*'100%'/);
     expect(narration).not.toMatch(/textShadow/);
     expect(narration).not.toMatch(/paddingLeft/);
+    expect(activitySource).toContain('testID="activity-message-draft"');
     // Machine steps stay quiet and mono; brass is reserved for the failure mark.
     expect(styleDefinition(activitySource, 'stepLabel')).toMatch(/color:\s*groknight\.ledgerQuiet/);
     expect(styleDefinition(activitySource, 'verdictFailed')).toMatch(/color:\s*groknight\.accent/);

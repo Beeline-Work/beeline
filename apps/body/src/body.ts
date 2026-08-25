@@ -43,7 +43,9 @@ import {
   replyRootIdForEvent,
   stripAgentReplyPreamble,
   createDraftStreamer,
+  createThoughtStreamer,
   retractAgentDraft,
+  retractAgentThought,
   retractAgentPresence,
   relayRetryAfterMs,
   latestActivityPlanFromEvents,
@@ -156,6 +158,7 @@ import {
   beelineSlashCommandList,
   cornerStateKey,
   agentDraftKey,
+  agentThoughtKey,
   agentPresenceKey,
   assertCornerStateTransition,
   isCornerTerminalState,
@@ -3105,7 +3108,9 @@ export class Body {
           client,
           input.channelId,
           this.agentIdentity,
-          created.sessionId,
+          // Transcript correlation follows the durable logical turn, not a
+          // physical ACP process id that changes after suspension/restart.
+          session.logicalSessionId ?? created.sessionId,
         );
         session.activityProjection = activityProjection;
         session.unsubscribeActivity = activityProjection;
@@ -3444,6 +3449,13 @@ export class Body {
           turn.requestId,
         )
       : undefined;
+    const thought = !turn.silent
+      ? createThoughtStreamer(
+          turn.channelId,
+          this.agentIdentity,
+          session.logicalSessionId ?? session.sessionId,
+        )
+      : undefined;
     const cornerRequestFilter = turn.cornerRequests ? createCornerRequestFilter() : undefined;
     let withheldMergeClaim = false;
     // Surface a stall well before ROOM_AGENT_PROMPT_TIMEOUT_MS elapses. Armed
@@ -3505,25 +3517,35 @@ export class Body {
         stallBaselineSeq = this.inboundMessageSeq.get(turn.channelId) ?? 0;
         armStallTimer();
         modelCallStartedAt = new Date().toISOString();
+        const publishMessageDraft = (fullText: string) => {
+          const visible = cornerRequestFilter ? cornerRequestFilter.onChunk(fullText) : fullText;
+          const gateSafeVisible = turn.withholdMergeClaims
+            ? withoutPrematureMergeClaims(visible)
+            : visible;
+          if (gateSafeVisible !== visible) withheldMergeClaim = true;
+          draft?.onChunk(gateSafeVisible);
+        };
+        let typedStreamSeen = false;
         const promptCall = session.client.sessionPrompt(
           session.sessionId,
           wirePrompt,
           ROOM_AGENT_PROMPT_TIMEOUT_MS,
-          (draft || cornerRequestFilter) &&
-            ((_delta, fullText) => {
-              // The corner-request cut happens BEFORE the draft consumer so
-              // the marker line (and everything after it) cannot flash in the
-              // provisional transcript.
-              const visible = cornerRequestFilter
-                ? cornerRequestFilter.onChunk(fullText)
-                : fullText;
-              const gateSafeVisible = turn.withholdMergeClaims
-                ? withoutPrematureMergeClaims(visible)
-                : visible;
-              if (gateSafeVisible !== visible) withheldMergeClaim = true;
-              draft?.onChunk(gateSafeVisible);
-            }),
-          armStallTimer,
+          (_delta, fullText) => {
+            // Compatibility for test doubles and older in-process clients
+            // that implement only the original chunk callback. A real
+            // AcpClient supplies the typed snapshot first for every update.
+            if (!typedStreamSeen) publishMessageDraft(fullText);
+          },
+          (stream) => {
+            armStallTimer();
+            if (!stream) return;
+            typedStreamSeen = true;
+            // Progress narration that an adapter reports as an earlier
+            // message run moves into the rolling thought lane at the tool
+            // boundary. Only the current run can accumulate as the answer.
+            publishMessageDraft(stream.messageText);
+            if (stream.thoughtText) thought?.onChunk(stream.thoughtText);
+          },
         );
         let hardTimer: NodeJS.Timeout | undefined;
         const hardDeadline = new Promise<never>((_, reject) => {
@@ -3614,7 +3636,7 @@ export class Body {
       throw error;
     } finally {
       clearStallTimer();
-      await draft?.finish();
+      await Promise.all([draft?.finish(), thought?.finish()]);
     }
     return {
       ...result,
@@ -3773,7 +3795,7 @@ export class Body {
           reply,
           options.replyTo,
           uploaded.attachments,
-          options.extraTags,
+          [['request', options.replyTo], ...(options.extraTags ?? [])],
           options.replyRootId,
         ),
       );
@@ -9429,7 +9451,7 @@ export class Body {
     const events = await this.agentRelay.queryEvents([
       {
         kinds: [KIND_AGENT_DRAFT, KIND_AGENT_PRESENCE],
-        '#d': [agentDraftKey(cornerId), agentPresenceKey(cornerId)],
+        '#d': [agentDraftKey(cornerId), agentThoughtKey(cornerId), agentPresenceKey(cornerId)],
         authors: [this.agentIdentity.publicKey],
         limit: 20,
       },
@@ -9439,7 +9461,8 @@ export class Body {
       Math.floor(Date.now() / 1_000),
     );
     await retractAgentDraft(cornerId, parentRoomId, this.agentIdentity, floor + 1);
-    await retractAgentPresence(cornerId, parentRoomId, this.agentIdentity, floor + 2);
+    await retractAgentThought(cornerId, parentRoomId, this.agentIdentity, cornerId, floor + 2);
+    await retractAgentPresence(cornerId, parentRoomId, this.agentIdentity, floor + 3);
   }
 
   /**

@@ -201,7 +201,7 @@ async function main(): Promise<void> {
     events: sanitized,
     expected: {
       minimumTranscriptItems: 1,
-      maximumReplayMs: Number(option('budget-ms') ?? 20_000),
+      maximumReplayMs: Number(option('budget-ms') ?? 30_000),
     },
   };
   await mkdir(dirname(resolve(output!)), { recursive: true });

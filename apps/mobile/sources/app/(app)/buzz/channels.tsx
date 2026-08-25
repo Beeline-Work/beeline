@@ -112,6 +112,26 @@ import type { RepoCandidate } from '@/buzz/room-repo-picker';
 /** Relative ages only change on the minute, so the index re-derives them on a
  * one-minute tick while it is the focused screen and never on a render loop. */
 const AGE_TICK_MS = 60_000;
+export const CHANNEL_BOOTSTRAP_STEP_TIMEOUT_MS = 8_000;
+
+function withBootstrapStepTimeout<T>(promise: Promise<T>, step: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${step} timed out after ${CHANNEL_BOOTSTRAP_STEP_TIMEOUT_MS}ms`)),
+      CHANNEL_BOOTSTRAP_STEP_TIMEOUT_MS,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -421,6 +441,8 @@ export default function BuzzChannels() {
   );
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bootstrapFailed, setBootstrapFailed] = useState(false);
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [memberPickerVisible, setMemberPickerVisible] = useState(false);
@@ -560,8 +582,12 @@ export default function BuzzChannels() {
     skipInitialFocusRefresh.current = true;
     void (async () => {
       setError(null);
+      setBootstrapFailed(false);
       try {
-        const currentIdentity = await loadBuzzIdentity();
+        const currentIdentity = await withBootstrapStepTimeout(
+          loadBuzzIdentity(),
+          'Loading identity',
+        );
         if (!currentIdentity) {
           router.replace('/buzz/onboarding');
           return;
@@ -586,33 +612,48 @@ export default function BuzzChannels() {
           setViewerAvatarUrl(cached?.viewerAvatarUrl);
           setCanEditWorkspaceAvatar(cached?.canEditWorkspaceAvatar ?? false);
         }
-        const url = await getEffectiveRelayUrl();
+        const url = await withBootstrapStepTimeout(
+          getEffectiveRelayUrl(),
+          'Loading relay settings',
+        );
         const nextTransport = new BuzzRigTransport(currentIdentity, url);
         if (isCurrent()) {
           setRelayUrl(url);
           setTransport(nextTransport);
         }
-        const client = await nextTransport.ensureClient();
+        const client = await withBootstrapStepTimeout(
+          nextTransport.ensureClient(),
+          'Connecting to relay',
+        );
         const bootstrapOptions = {
           loadPredecessors: () => loadSuccessionPredecessors(url, currentIdentity),
         };
-        const [workspaceContext, identityIsAgent] = await Promise.all([
-          prepareWorkspaceContext(
-            client,
-            currentIdentity.publicKey,
-            requestedCommunity,
-            undefined,
-            bootstrapOptions,
-          ),
-          client.isAgentIdentity(currentIdentity.publicKey),
-        ]);
+        const [workspaceContext, identityIsAgent] = await withBootstrapStepTimeout(
+          Promise.all([
+            prepareWorkspaceContext(
+              client,
+              currentIdentity.publicKey,
+              requestedCommunity,
+              undefined,
+              bootstrapOptions,
+            ),
+            client.isAgentIdentity(currentIdentity.publicKey),
+          ]),
+          'Loading Workspaces',
+        );
         const {
           workspaces: available,
           activeWorkspaceId: active,
           personalWorkspaceId: personal,
         } = workspaceContext;
-        await ensurePersonNameForWorkspace(client, active, currentIdentity.publicKey);
-        const channels = await loadDisplayChannelBasics(nextTransport, active, available);
+        await withBootstrapStepTimeout(
+          ensurePersonNameForWorkspace(client, active, currentIdentity.publicKey),
+          'Loading profile',
+        );
+        const channels = await withBootstrapStepTimeout(
+          loadDisplayChannelBasics(nextTransport, active, available),
+          `Loading ${ROOMS_LABEL}`,
+        );
         if (isCurrent()) {
           setCommunities(available);
           setActiveCommunityId(active);
@@ -636,25 +677,32 @@ export default function BuzzChannels() {
             updatedAt: now,
             lastAccessedAt: now,
           });
+          setBootstrapFailed(false);
         }
 
         const roster = active
-          ? await loadWorkspaceRoster(nextTransport, active, currentIdentity.publicKey)
+          ? await withBootstrapStepTimeout(
+              loadWorkspaceRoster(nextTransport, active, currentIdentity.publicKey),
+              'Loading Workspace members',
+            )
           : { members: [], profiles: [], canEditAvatar: false };
-        const [viewerProfile, enriched, dms] = await Promise.all([
-          active
-            ? client.getPersonProfile(active, currentIdentity.publicKey)
-            : Promise.resolve(null),
-          enrichDisplayChannels(nextTransport, channels, active, currentIdentity.publicKey),
-          active
-            ? loadDirectMessageDisplays(
-                nextTransport,
-                active,
-                currentIdentity.publicKey,
-                roster.members,
-              )
-            : Promise.resolve([]),
-        ]);
+        const [viewerProfile, enriched, dms] = await withBootstrapStepTimeout(
+          Promise.all([
+            active
+              ? client.getPersonProfile(active, currentIdentity.publicKey)
+              : Promise.resolve(null),
+            enrichDisplayChannels(nextTransport, channels, active, currentIdentity.publicKey),
+            active
+              ? loadDirectMessageDisplays(
+                  nextTransport,
+                  active,
+                  currentIdentity.publicKey,
+                  roster.members,
+                )
+              : Promise.resolve([]),
+          ]),
+          `Refreshing ${ROOMS_LABEL}`,
+        );
         if (isCurrent()) {
           setViewerAvatarUrl(viewerProfile?.avatar);
           setCanEditWorkspaceAvatar(roster.canEditAvatar);
@@ -682,13 +730,20 @@ export default function BuzzChannels() {
           }
         }
       } catch (err) {
-        if (isCurrent()) setError(String(err));
+        if (isCurrent()) {
+          setBootstrapFailed(true);
+          setError(`Couldn't reach relay. ${String(err)}`);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [requestedCommunity]);
+  }, [bootstrapAttempt, requestedCommunity]);
+
+  const handleBootstrapRetry = useCallback(() => {
+    setBootstrapAttempt((attempt) => attempt + 1);
+  }, []);
 
   const handleSelectCommunity = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -1407,11 +1462,44 @@ export default function BuzzChannels() {
     [ageNow, openChannel],
   );
 
-  if (!cachedListEntry) {
+  if (!cachedListEntry && !bootstrapFailed) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />
         <Text style={styles.loadingText}>CONNECTING TO RELAY</Text>
+      </View>
+    );
+  }
+
+  if (!cachedListEntry) {
+    return (
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        <View accessibilityRole="alert" style={styles.errorPanel}>
+          <Text style={styles.errorLabel}>! ERROR</Text>
+          <Text accessibilityRole="alert" style={styles.errorText}>
+            {error ?? "Couldn't reach relay."}
+          </Text>
+          <MonoButton
+            label="RETRY"
+            onPress={handleBootstrapRetry}
+            style={styles.errorRetry}
+            variant="secondary"
+          />
+        </View>
+        <FlatList
+          testID="room-list"
+          data={[]}
+          renderItem={() => null}
+          keyExtractor={() => 'unavailable'}
+          contentContainerStyle={styles.emptyContainer}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyGlyph}>⌁</Text>
+              <Text style={styles.emptyTitle}>No {ROOMS_LABEL.toLowerCase()} loaded</Text>
+              <Text style={styles.emptySubtitle}>Reconnect to load your Room list.</Text>
+            </View>
+          }
+        />
       </View>
     );
   }
@@ -1537,7 +1625,7 @@ export default function BuzzChannels() {
             </Text>
             <MonoButton
               label="RETRY"
-              onPress={() => void handleRefresh(true)}
+              onPress={bootstrapFailed ? handleBootstrapRetry : () => void handleRefresh(true)}
               style={styles.errorRetry}
               variant="secondary"
             />

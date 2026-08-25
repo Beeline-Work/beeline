@@ -28,7 +28,7 @@ export {
   type NamedRepositoryTarget,
 } from './repository-target.js';
 export { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
-export { DurableBodyState, type EventCursor, type ConversationEntry } from './durable-state.js';
+export { DurableBodyState, type EventCursor } from './durable-state.js';
 export {
   completedModelSpend,
   dailyAgentSpend,

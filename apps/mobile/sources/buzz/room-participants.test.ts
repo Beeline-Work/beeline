@@ -1,16 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   activeMentionAtCursor,
   filterMentionCandidates,
   formatRoomParticipantList,
   formatRoomParticipantTotal,
-  cornerHumanMembershipError,
   mentionedAgentPubkey,
   replaceActiveMention,
-  reportCornerHumanMembershipError,
   resolveComposerMentions,
-  roomParticipantPubkeys,
   selectedMentionPubkeys,
   sectionRoomParticipants,
   sectionRoomRoster,
@@ -57,53 +54,6 @@ describe('Room participant presentation', () => {
       people: [participants[0], participants[2]],
       agents: [participants[1]],
     });
-  });
-
-  it('keeps every identity in the direct Room membership projection', () => {
-    const roomMembers = new Set(['human', 'agent', 'merge-worker']);
-
-    expect([...roomParticipantPubkeys(roomMembers)]).toEqual(['human', 'agent', 'merge-worker']);
-  });
-
-  it('counts direct Room membership when there is no Workspace roster', () => {
-    expect([...roomParticipantPubkeys(new Set(['human', 'guest']))]).toEqual(['human', 'guest']);
-  });
-
-  it('keeps the exact bd2ab6ee membership shape in the visible roster', () => {
-    const owner = `5f5ad2e2${'0'.repeat(56)}`;
-    const codex = `codex${'0'.repeat(59)}`;
-    const ox = `ox${'0'.repeat(62)}`;
-    const stale = `stale${'0'.repeat(59)}`;
-
-    expect([
-      ...roomParticipantPubkeys(new Set([owner, codex, ox, stale])),
-    ]).toEqual([owner, codex, ox, stale]);
-
-    const sections = sectionRoomParticipants([
-      { pubkey: owner, kind: 'person' as const },
-      { pubkey: codex, kind: 'agent' as const },
-      { pubkey: ox, kind: 'agent' as const },
-      { pubkey: stale, kind: 'person' as const },
-    ]);
-    expect(sections.people.map((member) => member.pubkey)).toContain(owner);
-    expect(sections.agents.map((member) => member.pubkey)).toEqual([codex, ox]);
-    expect(sections.people.length + sections.agents.length).toBe(4);
-    expect(cornerHumanMembershipError([...sections.people, ...sections.agents])).toBeUndefined();
-  });
-
-  it('flags and logs a corrupt corner with zero humans', () => {
-    const log = vi.fn();
-    const participants = [
-      { pubkey: 'codex', kind: 'agent' as const },
-      { pubkey: 'ox', kind: 'agent' as const },
-    ];
-
-    expect(reportCornerHumanMembershipError('corrupt-corner', participants, log)).toBe(
-      'Membership error: this corner has no person. A corner must include the human who opened it.',
-    );
-    expect(log).toHaveBeenCalledWith(
-      '[mobile] corner corrupt-corner: Membership error: this corner has no person. A corner must include the human who opened it.',
-    );
   });
 
   it('maps a visible @Agent name to its pubkey without partial-name matches', () => {

@@ -97,7 +97,8 @@ vi.mock('@/components/buzz/CommunityRail', async () => {
 });
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
-  const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
   return {
     hairlineDivider: { borderBottomWidth: 1, borderBottomColor: '#4e4e4e' },
     HullSurface: host('HullSurface'),
@@ -139,7 +140,8 @@ beforeAll(() => {
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
+      return;
     originalConsoleError(message, ...args);
   });
 });
@@ -218,7 +220,9 @@ function renderedText(renderer: ReactTestRenderer): string {
 function personRows(renderer: ReactTestRenderer, pubkey: string): unknown[] {
   return renderer.root
     .findAllByType('Text')
-    .filter((node: { props: { testID?: string } }) => node.props.testID === `member-${pubkey}-identity`);
+    .filter(
+      (node: { props: { testID?: string } }) => node.props.testID === `member-${pubkey}-identity`,
+    );
 }
 
 describe('the owner of a Personal Workspace, against real captured relay state', () => {
@@ -266,9 +270,13 @@ describe('the owner of a Personal Workspace, against real captured relay state',
     const renderer = await render();
     expect(personRows(renderer, OWNER)).toHaveLength(1);
     expect(
-      Number(renderer.root.findAllByType('Text').find(
-        (node: { props: { testID?: string } }) => node.props.testID === 'members-people-count',
-      )!.props.children),
+      Number(
+        renderer.root
+          .findAllByType('Text')
+          .find(
+            (node: { props: { testID?: string } }) => node.props.testID === 'members-people-count',
+          )!.props.children,
+      ),
     ).toBeGreaterThanOrEqual(1);
     expect(renderedText(renderer)).not.toContain('No people in this Workspace yet');
   });
@@ -278,7 +286,9 @@ describe('the owner of a Personal Workspace, against real captured relay state',
     const renderer = await render();
     const count = renderer.root
       .findAllByType('Text')
-      .find((node: { props: { testID?: string } }) => node.props.testID === 'members-people-count')!;
+      .find(
+        (node: { props: { testID?: string } }) => node.props.testID === 'members-people-count',
+      )!;
     expect(Number(count.props.children)).toBe(1);
   });
 
@@ -332,21 +342,25 @@ describe('a serving agent, against its real captured presence record', () => {
   function lenaOnline(ageSeconds: number): unknown {
     const createdAt = Math.floor(Date.now() / 1000) - ageSeconds;
     return {
-      type: 'raw',
+      type: 'read-model',
       sessionId: LENA_ROOM,
-      payload: {
-        id: 'presence-lena',
-        pubkey: LENA,
+      event: {
+        type: 'session-update',
+        eventId: 'presence-lena',
+        authorPubkey: LENA,
         createdAt,
-        content: 'online',
-        tags: [
-          ['d', `agent-presence:${LENA_ROOM}`],
-          ['h', LENA_ROOM],
-          ['t', 'agent-presence'],
-          ['agent', LENA],
-          ['status', 'online'],
-          ['generation', 'beb114fc-569f-44b2-844f-09ccfe6ad602'],
-        ],
+        sourceKind: 30078,
+        signature: 'verified',
+        scope: 'channel',
+        channelId: LENA_ROOM,
+        workspaceId: WORKSPACE,
+        sessionId: LENA_ROOM,
+        update: {
+          kind: 'presence',
+          agentPubkey: LENA,
+          status: 'online',
+          generationId: 'beb114fc-569f-44b2-844f-09ccfe6ad602',
+        },
       },
     };
   }

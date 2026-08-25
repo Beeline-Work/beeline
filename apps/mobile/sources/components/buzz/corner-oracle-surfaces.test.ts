@@ -12,7 +12,6 @@ const channelsSource = sourceFile('../../app/(app)/buzz/channels.tsx');
 const rowSource = sourceFile('../../buzz/room-list-row.ts');
 const indicatorsSource = sourceFile('../../buzz/room-indicators.ts');
 const transportSource = sourceFile('../../sync/transport/buzz-rig-transport.ts');
-const verdictSource = sourceFile('../../sync/transport/corner-state-verdict.ts');
 
 /** Read a repo file by a path relative to THIS test file. */
 function sourceFile(relative: string): string {
@@ -38,16 +37,12 @@ describe('one canonical corner lifecycle record', () => {
     //    on oracle-fed CornerSummary), 3. pinned room bar (room-indicators),
     //    4. corner screen card/panel ([channelId].tsx via
     //    resolveCornerLifecycleStatus + corner-attention).
-    expect(transportSource).toContain(
-      "import { resolveCornerVerdict } from './corner-state-verdict'",
-    );
-    expect(verdictSource).toMatch(/isCornerStateRecordFresh[\s\S]*?from '@beeline\/buzz-client'/);
-    expect(rowSource).toMatch(/roomState[\s\S]*?from '@\/buzz\/corners'/);
+    expect(transportSource).toContain('selectCorners');
+    expect(channelsSource).toContain('cornerSummariesFromSnapshot');
     expect(indicatorsSource).toMatch(/currentCornerStatus[\s\S]*?from '\.\/corners'/);
     expect(chatSource).toMatch(/resolveCornerLifecycleStatus[\s\S]*?from '@\/buzz\/corners'/);
     expect(chatSource).toMatch(/cornerActionSurface[\s\S]*?from '@\/buzz\/corner-attention'/);
     expect(indicatorsSource).toContain('if (!corner.machineState) continue;');
-    expect(verdictSource).toContain('if (!input.stateRecord) return');
 
     // No second derivation anywhere: only the shared module may define these.
     const sources = [chatSource, channelsSource, rowSource, indicatorsSource, transportSource];
@@ -62,9 +57,11 @@ describe('one canonical corner lifecycle record', () => {
     }
 
     // The durable state machine itself lives in exactly one shared module.
-    const machine = repoSource('packages/buzz-client/src/corner-state.ts');
-    expect(machine).toContain('export function canTransitionCornerState');
-    expect(machine).toContain('export function isCornerStateRecordFresh');
+    const machine = repoSource('packages/buzz-client/src/read-model/reducer.ts');
+    expect(machine).toContain('corner-without-human');
+    expect(machine).toContain('canTransitionCornerState');
+    const selectors = repoSource('packages/buzz-client/src/read-model/selectors.ts');
+    expect(selectors).toContain('export function selectCorners');
     const facade = repoSource('apps/mobile/sources/buzz/corners.ts');
     expect(facade).toMatch(/from '@beeline\/buzz-client'/);
     expect(facade).toContain('machineState?: CornerMachineState');

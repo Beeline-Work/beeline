@@ -13,7 +13,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBuzzClient } from './client.js';
 import { createIdentity } from './identity.js';
-import { DEFAULT_BASE_URL, DEFAULT_HOST, isRelayUp, sleep, uniqueMarker, waitFor } from './live-helpers.js';
+import {
+  DEFAULT_BASE_URL,
+  DEFAULT_HOST,
+  isRelayUp,
+  sleep,
+  uniqueMarker,
+  waitFor,
+} from './live-helpers.js';
 import type { SessionEvent } from './types.js';
 
 const reachable = await isRelayUp();
@@ -101,23 +108,23 @@ describe.runIf(reachable)('live two-participants transport proof', () => {
 
     await waitFor(
       () =>
-        receivedA.some((e) => e.content === activity1 && e.kind === 'agent-activity') &&
-        receivedA.some((e) => e.content === activity2 && e.kind === 'agent-activity'),
+        receivedA.some((e) => e.content === activity1) &&
+        receivedA.some((e) => e.content === activity2),
       { label: 'A receives both agent-activity', timeoutMs: 20_000 },
     );
     await waitFor(
       () =>
-        receivedB.some((e) => e.content === activity1 && e.kind === 'agent-activity') &&
-        receivedB.some((e) => e.content === activity2 && e.kind === 'agent-activity'),
+        receivedB.some((e) => e.content === activity1) &&
+        receivedB.some((e) => e.content === activity2),
       { label: 'B receives both agent-activity', timeoutMs: 20_000 },
     );
 
     const idsA = receivedA
-      .filter((e) => e.kind === 'agent-activity')
+      .filter((e) => e.content === activity1 || e.content === activity2)
       .map((e) => e.id)
       .sort();
     const idsB = receivedB
-      .filter((e) => e.kind === 'agent-activity')
+      .filter((e) => e.content === activity1 || e.content === activity2)
       .map((e) => e.id)
       .sort();
     expect(idsA).toEqual(idsB);
@@ -149,7 +156,7 @@ describe.runIf(reachable)('live two-participants transport proof', () => {
 
     expect(contents).toContain(cmdA);
     expect(contents).toContain(cmdB);
-    expect(ours.some((e) => e.kind === 'agent-activity')).toBe(true);
+    expect(ours.some((e) => e.content === activity1 || e.content === activity2)).toBe(true);
 
     // Temporal ordering (creation-time guarantees):
     //   activity-1 has a 1s head-start over every other event (sleep(1100) before activity-2,
@@ -159,18 +166,20 @@ describe.runIf(reachable)('live two-participants transport proof', () => {
     const act1 = ours.find((e) => e.content.includes('agent-activity-1'))!;
     for (const e of ours) {
       if (e.content.includes('agent-activity-1')) continue;
-      expect(e.createdAt).toBeGreaterThanOrEqual(act1.createdAt);
+      expect(e.created_at).toBeGreaterThanOrEqual(act1.created_at);
     }
 
     console.log('[live] === two-participants transcript ===');
     console.log(`[live] runId=${runId}`);
     console.log(`[live] channelId=${channelId}`);
-    console.log(`[live] A=${participantA.publicKey.slice(0, 16)}… B=${participantB.publicKey.slice(0, 16)}…`);
+    console.log(
+      `[live] A=${participantA.publicKey.slice(0, 16)}… B=${participantB.publicKey.slice(0, 16)}…`,
+    );
     console.log(`[live] concurrent sockets: A≠B confirmed`);
     console.log(`[live] pubA=${pubA.id.slice(0, 12)} pubB=${pubB.id.slice(0, 12)}`);
     for (const e of ours) {
       console.log(
-        `[live]   ${e.createdAt} ${e.kind.padEnd(15)} ${e.pubkey.slice(0, 8)}… ${e.content}`,
+        `[live]   ${e.created_at} ${String(e.kind).padEnd(15)} ${e.pubkey.slice(0, 8)}… ${e.content}`,
       );
     }
     console.log('[live] === end transcript ===');

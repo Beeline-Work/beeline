@@ -1,6 +1,6 @@
 import type { NostrEvent } from '@beeline/nostr';
-import { TAG_AGENT_ACTIVITY, TAG_COMMUNITY, TAG_PARENT } from './kinds.js';
-import type { ChannelMember, ChannelMetadata, SessionEvent, SessionEventKind } from './types.js';
+import { TAG_COMMUNITY, TAG_PARENT } from './kinds.js';
+import type { ChannelMember, ChannelMetadata } from './types.js';
 
 /** First value of tag `name`, if any. */
 export function tagValue(event: NostrEvent, name: string): string | undefined {
@@ -15,33 +15,6 @@ export function tagValues(event: NostrEvent, name: string): string[] {
 /** Channel UUID from the `h` tag (Buzz requires UUID; non-UUIDs are dropped). */
 export function channelIdOf(event: NostrEvent): string | undefined {
   return tagValue(event, 'h');
-}
-
-/** True when the event is a body-projected agent-activity frame. */
-export function isAgentActivity(event: NostrEvent): boolean {
-  return tagValues(event, 't').includes(TAG_AGENT_ACTIVITY);
-}
-
-/** Classify a kind:9 (or other) event for the session surface. */
-export function classifySessionEvent(event: NostrEvent): SessionEventKind {
-  if (isAgentActivity(event)) return 'agent-activity';
-  if (event.kind === 9) return 'message';
-  return 'other';
-}
-
-/** Project a raw Nostr event into a SessionEvent (requires `h` channel tag). */
-export function toSessionEvent(event: NostrEvent): SessionEvent | null {
-  const channelId = channelIdOf(event);
-  if (!channelId) return null;
-  return {
-    kind: classifySessionEvent(event),
-    event,
-    channelId,
-    content: event.content,
-    pubkey: event.pubkey,
-    createdAt: event.created_at,
-    id: event.id,
-  };
 }
 
 /**

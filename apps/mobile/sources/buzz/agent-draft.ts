@@ -1,10 +1,5 @@
-import { CORNER_ACTIVITY_FRESHNESS_MS, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
+import { CORNER_ACTIVITY_FRESHNESS_MS } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
-import {
-  sessionEventHasTag,
-  sessionEventPayload,
-  sessionEventTagValue,
-} from '@/sync/transport/buzz-event-projection';
 
 export type AgentDraft = {
   requestId: string;
@@ -23,26 +18,16 @@ export function agentDraftFromSessionEvent(
   event: SessionEvent,
   now = Date.now(),
 ): AgentDraft | undefined {
-  const payload = sessionEventPayload(event);
-  const pubkey = payload?.pubkey;
-  const createdAt = payload?.createdAt ?? payload?.created_at;
-  const content = payload?.content;
-  if (typeof pubkey !== 'string' || typeof createdAt !== 'number' || typeof content !== 'string') {
-    return undefined;
-  }
-  if (!sessionEventHasTag(event, 't', TAG_AGENT_DRAFT)) return undefined;
-  if (sessionEventTagValue(event, 'status') === 'closed') return undefined;
-  const agentPubkey = sessionEventTagValue(event, 'agent');
-  const sessionId = sessionEventTagValue(event, 'session');
-  const requestId = sessionEventTagValue(event, 'request');
-  if (agentPubkey !== pubkey || !sessionId || !requestId) return undefined;
-  const observedAt = createdAt < 1_000_000_000_000 ? createdAt * 1_000 : createdAt;
+  if (event.type !== 'read-model' || event.event.type !== 'session-update') return undefined;
+  const update = event.event.update;
+  if (update.kind !== 'draft' || update.closed || !update.text) return undefined;
+  const observedAt = event.event.createdAt * 1_000;
   if (now - observedAt < 0 || now - observedAt > CORNER_ACTIVITY_FRESHNESS_MS) return undefined;
   return {
-    requestId,
-    sessionId,
-    agentPubkey,
-    text: content,
+    requestId: update.requestId,
+    sessionId: event.event.sessionId,
+    agentPubkey: update.agentPubkey,
+    text: update.text,
     observedAt,
   };
 }

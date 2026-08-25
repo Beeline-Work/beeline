@@ -1,8 +1,8 @@
 import { MMKV } from 'react-native-mmkv';
 import { create } from 'zustand';
+import { guardReadModelBoot } from '@beeline/buzz-client';
 import type {
   Agent,
-  ChannelMember,
   Community,
   CommunityMember,
   CommunityRole,
@@ -10,18 +10,15 @@ import type {
   MergeTarget,
   PersonProfile,
   RoomRepositoryResolution,
+  WorkspaceSnapshot,
 } from '@beeline/buzz-client';
 import type { CornerSummary } from '@/buzz/corners';
-import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
-import { isRetiredAgentStateNotice } from './retired-agent-notices';
-import { upsertChatMessages } from '@/sync/transport/buzz-event-projection';
 import type { SessionSummary } from '@/sync/transport';
 
 // v1 treated any stream event as if it were a conversational message. Its
 // cursor can therefore outrun the preview and permanently retain old text.
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 const CACHE_KEY = `buzz-local-cache-v${CACHE_VERSION}`;
-export const MAX_CACHED_MESSAGES_PER_CHANNEL = 200;
 export const MAX_CACHED_CHANNELS = 30;
 const MAX_CACHED_LISTS = 12;
 const MAX_CACHED_PROFILE_SCOPES = 12;
@@ -96,7 +93,10 @@ export type ChannelListCacheEntry = {
 export type ChannelCacheEntry = {
   viewerPubkey: string;
   channelId: string;
-  messages?: ChatDisplayMessage[];
+  /** The only persisted Room history. Render DTOs are always selected at read time. */
+  snapshot?: WorkspaceSnapshot;
+  /** A corrupt normalized cache is held and rendered loudly until relay rebuild succeeds. */
+  integrityHalt?: string;
   cursor?: number;
   /** True only after a complete initial history read, not merely a live event. */
   backfilled?: boolean;
@@ -106,7 +106,6 @@ export type ChannelCacheEntry = {
   latestMessageId?: string;
   latestMessageAuthor?: string;
   latestEventAt?: number;
-  roomMembers?: ChannelMember[];
   availablePeople?: CommunityMember[];
   availableAgents?: Agent[];
   communityId?: string | null;
@@ -120,6 +119,7 @@ export type ChannelCacheEntry = {
 };
 
 type PersistedBuzzCache = {
+  bootIntegrityHalt: string | null;
   activeViewerPubkey: string | null;
   activeListKeyByViewer: Record<string, string>;
   channelLists: Record<string, ChannelListCacheEntry>;
@@ -142,43 +142,31 @@ type BuzzCacheState = PersistedBuzzCache & {
   ) => void;
   /** Move landed work in the Room index without creating unread/message copy. */
   bumpChannelRecency: (viewerPubkey: string, channelId: string, timestamp: number) => void;
-  replaceMessages: (
+  replaceSnapshot: (
     viewerPubkey: string,
     channelId: string,
-    messages: ChatDisplayMessage[],
+    snapshot: WorkspaceSnapshot,
     cursor: number | undefined,
     summary?: RoomSummaryPatch,
   ) => void;
-  upsertMessages: (
+  updateSnapshot: (
     viewerPubkey: string,
     channelId: string,
-    messages: ChatDisplayMessage[],
+    update: (snapshot: WorkspaceSnapshot | undefined) => WorkspaceSnapshot,
     cursor?: number,
     summary?: RoomSummaryPatch,
   ) => void;
-  updateMessages: (
-    viewerPubkey: string,
-    channelId: string,
-    update: (messages: ChatDisplayMessage[]) => ChatDisplayMessage[],
-  ) => void;
-  /** Replace the complete authoritative lifecycle snapshot for a Room.
-   * An empty successful refresh evicts every persisted corner for that Room. */
-  replaceRoomCorners: (viewerPubkey: string, roomId: string, corners: CornerSummary[]) => void;
   replaceProfiles: (viewerPubkey: string, communityId: string, profiles: PersonProfile[]) => void;
   /** Purge a deleted/left Room from every cached list row of this viewer and
    * drop its transcript cache. Pairs with the durable tombstone in
    * `removed-rooms.ts`: the purge makes removal immediate, the tombstone is
    * what keeps a later relay refresh from re-materializing the row. */
   removeChannel: (viewerPubkey: string, channelId: string) => void;
-  /** Remove ONE corner from a cached Room row (every list of this viewer).
-   * Pairs with the durable tombstone in `closed-corners.ts`: the purge makes
-   * the close immediate in the deck's count/dropdown; the tombstone keeps a
-   * later lifecycle refresh from re-listing it. */
-  removeCorner: (viewerPubkey: string, roomId: string, cornerId: string) => void;
   clear: () => void;
 };
 
 const emptyCache = (): PersistedBuzzCache => ({
+  bootIntegrityHalt: null,
   activeViewerPubkey: null,
   activeListKeyByViewer: {},
   channelLists: {},
@@ -213,18 +201,9 @@ function restoreChannelLists(value: unknown): Record<string, ChannelListCacheEnt
         ...entry,
         channels: Array.isArray(entry.channels)
           ? entry.channels.map((channel) => {
-              if (!isRecord(channel) || !Array.isArray(channel.corners)) return channel;
-              // Older OTAs cached lifecycle words derived from parent kind:9
-              // control history. Keep only rows carrying the canonical record
-              // fields; relay revalidation repopulates the rest without a
-              // first-frame ghost active pill.
-              const corners = channel.corners.filter(
-                (corner) =>
-                  isRecord(corner) &&
-                  typeof corner.machineState === 'string' &&
-                  typeof corner.stateAt === 'number',
-              );
-              return { ...channel, corners };
+              if (!isRecord(channel)) return channel;
+              const { corners: _presentationCache, ...normalized } = channel;
+              return normalized;
             })
           : [],
         directMessages: Array.isArray(entry.directMessages) ? entry.directMessages : [],
@@ -238,27 +217,14 @@ function restoreChannelLists(value: unknown): Record<string, ChannelListCacheEnt
 function restoreChannels(value: unknown): Record<string, ChannelCacheEntry> {
   return Object.fromEntries(
     Object.entries(recordOfEntries(value)).map(([key, entry]) => {
-      const { messages, roomMembers, availablePeople, availableAgents, ...rest } = entry;
-      // A transcript cached by an older build still holds the retired daemon
-      // state notices (`retired-agent-notices.ts`). The projection drops them
-      // for every event that arrives from now on, but the cache is what paints
-      // the first frame, so the wall would survive here until a revalidation
-      // that never rewrites an already-stored row.
-      // The same floor clears any stale `isNew` entrance-animation flag a
-      // pre-strip build persisted: the flag is transient "arrived this
-      // session" state (`message-reveal.ts`), and a restored one replays the
-      // new-message animation on old messages at first paint.
-      const kept = Array.isArray(messages)
-        ? messages
-            .filter((message) => !isRetiredAgentStateNotice(message?.text ?? ''))
-            .map(({ isNew: _staleNewFlag, ...message }) => message)
-        : undefined;
+      const { snapshot, availablePeople, availableAgents, ...rest } = entry;
+      const guarded = snapshot === undefined ? undefined : guardReadModelBoot(snapshot);
       return [
         key,
         {
           ...rest,
-          ...(kept ? { messages: kept } : {}),
-          ...(Array.isArray(roomMembers) ? { roomMembers } : {}),
+          ...(guarded?.status === 'ready' ? { snapshot: guarded.snapshot } : {}),
+          ...(guarded?.status === 'integrity-halt' ? { integrityHalt: guarded.diagnostic } : {}),
           ...(Array.isArray(availablePeople) ? { availablePeople } : {}),
           ...(Array.isArray(availableAgents) ? { availableAgents } : {}),
         } as ChannelCacheEntry,
@@ -297,6 +263,7 @@ function loadCache(): PersistedBuzzCache {
     const parsed: unknown = JSON.parse(serialized);
     if (!isRecord(parsed)) throw new Error('Invalid Buzz local cache');
     return {
+      bootIntegrityHalt: null,
       activeViewerPubkey:
         typeof parsed.activeViewerPubkey === 'string' ? parsed.activeViewerPubkey : null,
       activeListKeyByViewer: Object.fromEntries(
@@ -308,42 +275,23 @@ function loadCache(): PersistedBuzzCache {
       channels: restoreChannels(parsed.channels),
       profiles: recordOfArrays(parsed.profiles) as Record<string, PersonProfile[]>,
     };
-  } catch {
-    try {
-      storage.delete(CACHE_KEY);
-    } catch {
-      // A damaged or unavailable cache must never prevent the app from booting.
-    }
-    return emptyCache();
+  } catch (error) {
+    return {
+      ...emptyCache(),
+      bootIntegrityHalt: `The normalized read-model cache could not be decoded: ${String(error)}`,
+    };
   }
 }
 
 function persisted(state: BuzzCacheState): PersistedBuzzCache {
   return {
+    bootIntegrityHalt: state.bootIntegrityHalt,
     activeViewerPubkey: state.activeViewerPubkey,
     activeListKeyByViewer: state.activeListKeyByViewer,
     channelLists: state.channelLists,
-    channels: Object.fromEntries(
-      Object.entries(state.channels).map(([key, entry]) => [
-        key,
-        {
-          ...entry,
-          // Optimistic rows are replaced by their confirmed event, and
-          // `isNew` is a transient "arrived while watching" signal owned by
-          // `message-reveal.ts` — persisting either replays the entrance
-          // animation on old messages after hydration.
-          messages: entry.messages
-            ?.filter((message) => !message.id.startsWith('optimistic-'))
-            .map(({ isNew: _transient, ...message }) => message),
-        },
-      ]),
-    ),
+    channels: state.channels,
     profiles: state.profiles,
   };
-}
-
-function boundedMessages(messages: ChatDisplayMessage[]): ChatDisplayMessage[] {
-  return messages.slice(-MAX_CACHED_MESSAGES_PER_CHANNEL);
 }
 
 /**
@@ -383,7 +331,6 @@ export function mergeChannelBasicsWithCache(
     );
     return {
       ...channel,
-      ...(existing.corners !== undefined ? { corners: existing.corners } : {}),
       ...(existing.latestMessage !== undefined ? { latestMessage: existing.latestMessage } : {}),
       ...(existing.latestMessageAt !== undefined
         ? { latestMessageAt: existing.latestMessageAt }
@@ -490,10 +437,17 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
   setChannelList: (entry) =>
     set((state) => {
       const key = channelListCacheKey(entry.viewerPubkey, entry.communityId);
+      const normalizedEntry = {
+        ...entry,
+        channels: entry.channels.map(({ corners: _presentationCache, ...channel }) => channel),
+      };
       return {
         activeViewerPubkey: entry.viewerPubkey,
         activeListKeyByViewer: { ...state.activeListKeyByViewer, [entry.viewerPubkey]: key },
-        channelLists: trimRecord({ ...state.channelLists, [key]: entry }, MAX_CACHED_LISTS),
+        channelLists: trimRecord(
+          { ...state.channelLists, [key]: normalizedEntry },
+          MAX_CACHED_LISTS,
+        ),
       };
     }),
   patchChannelList: (viewerPubkey, communityId, patch) =>
@@ -502,31 +456,18 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
       const current = state.channelLists[key];
       if (!current) return state;
       const now = Date.now();
+      const normalizedPatch = patch.channels
+        ? {
+            ...patch,
+            channels: patch.channels.map(({ corners: _presentationCache, ...channel }) => channel),
+          }
+        : patch;
       return {
         channelLists: {
           ...state.channelLists,
-          [key]: { ...current, ...patch, updatedAt: now, lastAccessedAt: now },
+          [key]: { ...current, ...normalizedPatch, updatedAt: now, lastAccessedAt: now },
         },
       };
-    }),
-  replaceRoomCorners: (viewerPubkey, roomId, corners) =>
-    set((state) => {
-      let listsChanged = false;
-      const channelLists = Object.fromEntries(
-        Object.entries(state.channelLists).map(([key, entry]) => {
-          if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
-          let entryChanged = false;
-          const channels = entry.channels.map((channel) => {
-            if (channel.id !== roomId) return channel;
-            entryChanged = true;
-            return { ...channel, corners };
-          });
-          if (!entryChanged) return [key, entry];
-          listsChanged = true;
-          return [key, { ...entry, channels }];
-        }),
-      );
-      return listsChanged ? { channelLists } : state;
     }),
   patchChannel: (viewerPubkey, channelId, patch) =>
     set((state) => {
@@ -575,7 +516,7 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
       );
       return listsChanged ? { channelLists } : state;
     }),
-  replaceMessages: (viewerPubkey, channelId, messages, cursor, summary) =>
+  replaceSnapshot: (viewerPubkey, channelId, snapshot, cursor, summary) =>
     set((state) => {
       const key = channelCacheKey(viewerPubkey, channelId);
       const now = Date.now();
@@ -593,7 +534,8 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
             [key]: {
               ...current,
               ...summary,
-              messages: boundedMessages(messages),
+              snapshot,
+              integrityHalt: undefined,
               cursor,
               backfilled: true,
               updatedAt: now,
@@ -604,7 +546,7 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
         ),
       };
     }),
-  upsertMessages: (viewerPubkey, channelId, messages, cursor, summary) =>
+  updateSnapshot: (viewerPubkey, channelId, update, cursor, summary) =>
     set((state) => {
       const key = channelCacheKey(viewerPubkey, channelId);
       const now = Date.now();
@@ -622,7 +564,8 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
             [key]: {
               ...current,
               ...summary,
-              messages: boundedMessages(upsertChatMessages(current.messages ?? [], messages)),
+              snapshot: update(current.snapshot),
+              integrityHalt: undefined,
               cursor: Math.max(current.cursor ?? 0, cursor ?? 0) || undefined,
               updatedAt: now,
               lastAccessedAt: now,
@@ -630,24 +573,6 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
           },
           MAX_CACHED_CHANNELS,
         ),
-      };
-    }),
-  updateMessages: (viewerPubkey, channelId, update) =>
-    set((state) => {
-      const key = channelCacheKey(viewerPubkey, channelId);
-      const current = state.channels[key];
-      if (!current?.messages) return state;
-      const now = Date.now();
-      return {
-        channels: {
-          ...state.channels,
-          [key]: {
-            ...current,
-            messages: boundedMessages(update(current.messages)),
-            updatedAt: now,
-            lastAccessedAt: now,
-          },
-        },
       };
     }),
   replaceProfiles: (viewerPubkey, communityId, profiles) =>
@@ -682,29 +607,6 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
       const channels = { ...state.channels };
       delete channels[channelKey];
       return listsChanged ? { channelLists, channels } : { channels };
-    }),
-  removeCorner: (viewerPubkey, roomId, cornerId) =>
-    set((state) => {
-      let listsChanged = false;
-      const channelLists = Object.fromEntries(
-        Object.entries(state.channelLists).map(([key, entry]) => {
-          if (entry.viewerPubkey !== viewerPubkey) return [key, entry];
-          let entryChanged = false;
-          const channels = entry.channels.map((channel) => {
-            if (channel.id !== roomId || !channel.corners) return channel;
-            const corners = channel.corners.filter((corner) => corner.id !== cornerId);
-            if (corners.length === channel.corners.length) return channel;
-            entryChanged = true;
-            return { ...channel, corners };
-          });
-          if (!entryChanged) return [key, entry];
-          listsChanged = true;
-          return [key, { ...entry, channels }];
-        }),
-      );
-      // Identity-preserved when nothing moved: this runs on every close and
-      // an unchanged snapshot must not re-render the deck.
-      return listsChanged ? { channelLists } : state;
     }),
   clear: () => set(emptyCache()),
 }));

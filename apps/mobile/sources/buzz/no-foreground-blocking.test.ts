@@ -67,11 +67,15 @@ describe('no foreground-blocking network work', () => {
     // Only local storage reads and the (I/O-free) shared-client constructor
     // may be awaited directly here. Anything else is a relay round-trip that
     // would sit in front of the first painted frame.
-    const awaited = [...effect.matchAll(/await ([A-Za-z_$][\w$.]*)\(/g)].map(
-      (match) => match[1],
-    );
+    const awaited = [...effect.matchAll(/await ([A-Za-z_$][\w$.]*)\(/g)].map((match) => match[1]);
     expect(awaited.sort()).toEqual(
-      ['getEffectiveRelayUrl', 'hydrateRoomEntry', 'loadBuzzIdentity', 't.ensureClient'].sort(),
+      [
+        'getEffectiveRelayUrl',
+        'hydrateRoomEntry',
+        'loadBuzzIdentity',
+        't.cornerLifecycleSubscribeReady',
+        't.ensureClient',
+      ].sort(),
     );
   });
 

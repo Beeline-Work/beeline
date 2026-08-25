@@ -68,6 +68,7 @@ describe('durable state schema migration', () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-v2-'));
     cleanup.push(root);
     const path = resolve(root, 'state.json');
+    const readModel = createWorkspaceSnapshot({ workspaceId: 'room', identities: [] });
     const persisted = `${JSON.stringify({
       version: 2,
       inboxes: {
@@ -76,13 +77,33 @@ describe('durable state schema migration', () => {
           items: {},
         },
       },
-      readModels: {},
+      readModels: { room: readModel },
     })}\n`;
     await writeFile(path, persisted);
 
     const state = new DurableBodyState(path);
     expect(await state.cursor('room')).toEqual({ createdAt: 42, eventId: 'v2-cursor' });
+    expect(await state.readModel('room')).toEqual(readModel);
     expect(await readFile(path, 'utf8')).toBe(persisted);
+  });
+
+  it('fails closed when an existing version 2 read model fails its integrity guard', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-invalid-v2-model-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 2,
+        inboxes: {},
+        readModels: { room: { schemaVersion: 1, workspaceId: 'room' } },
+      }),
+    );
+
+    const state = new DurableBodyState(path);
+    await expect(state.readModel('room')).rejects.toThrow(
+      `read-model integrity halt for room at ${path}`,
+    );
   });
 
   it('fails closed on malformed persisted JSON', async () => {

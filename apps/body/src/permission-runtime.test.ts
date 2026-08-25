@@ -97,6 +97,7 @@ function fixture() {
     };
   }
   const claimed = new Set<string>();
+  const reserved = new Set<string>();
   const published: typeof history = [];
   const runtime = new PermissionRuntime({
     identity: executor,
@@ -105,6 +106,11 @@ function fixture() {
     claim: async (key) => {
       if (claimed.has(key)) return 'duplicate';
       claimed.add(key);
+      return 'claimed';
+    },
+    reserveCapacity: async (input) => {
+      if (reserved.has(input.key)) return 'duplicate';
+      reserved.add(input.key);
       return 'claimed';
     },
     publish: async (event) => {

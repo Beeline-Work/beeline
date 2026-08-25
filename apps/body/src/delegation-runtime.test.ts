@@ -19,7 +19,10 @@ import {
 
 const NOW = 1_900_000_000;
 
-function fixture(overrides: Partial<DelegationRuntimeDependencies['reader']> = {}) {
+function fixture(
+  overrides: Partial<DelegationRuntimeDependencies['reader']> = {},
+  dependencyOverrides: Partial<DelegationRuntimeDependencies> = {},
+) {
   const sender = createIdentity();
   const recipient = createIdentity();
   const principal = createIdentity();
@@ -55,7 +58,7 @@ function fixture(overrides: Partial<DelegationRuntimeDependencies['reader']> = {
     escalationAuthorized: async () => true,
     consumeEscalation: async () => true,
     graph: async () => ({ turns: [], receipts: [] }),
-    delegatedUsage: async () => ({ calls: 0, reservedTokens: 0 }),
+    delegatedUsage: async () => ({ calls: 0, reservedTokens: 0, turnEventIds: [] }),
     ...overrides,
   };
   const runtime = new DelegationRuntime({
@@ -68,10 +71,17 @@ function fixture(overrides: Partial<DelegationRuntimeDependencies['reader']> = {
       claimed.add(id);
       return 'claimed';
     },
-    reserveOutbound: async () => 'claimed',
+    reserveInboundCapacity: async (input) => {
+      if (claimed.has(input.eventId)) return 'duplicate';
+      claimed.add(input.eventId);
+      return 'claimed';
+    },
+    reserveOutbound: async (outbound) => ({ state: 'reserved', event: outbound }),
+    markOutboundDelivered: async () => undefined,
     publish: async (receipt) => {
       published.push(receipt);
     },
+    ...dependencyOverrides,
   });
   return { claimed, event, principal, published, recipient, runtime, sender, value };
 }
@@ -128,6 +138,42 @@ describe('DelegationRuntime', () => {
     ]);
   });
 
+  it('retries the exact pending outbound event after a transient publish failure', async () => {
+    let stored: ReturnType<typeof buildDelegationTurn> | undefined;
+    let delivered = false;
+    let fail = true;
+    const published: ReturnType<typeof buildDelegationTurn>[] = [];
+    const f = fixture({}, {
+      reserveOutbound: async (event) => {
+        if (!stored) {
+          stored = event;
+          return { state: 'reserved', event };
+        }
+        return { state: delivered ? 'delivered' : 'pending', event: stored };
+      },
+      markOutboundDelivered: async () => { delivered = true; },
+      publish: async (event) => {
+        if (fail) {
+          fail = false;
+          throw new Error('relay unavailable');
+        }
+        published.push(event);
+      },
+    });
+    const outbound = {
+      ...f.value,
+      fromAgentPubkey: f.recipient.publicKey,
+      toAgentPubkey: f.sender.publicKey,
+      path: [f.recipient.publicKey],
+    };
+    await expect(f.runtime.publishTurn(outbound)).rejects.toThrow('relay unavailable');
+    const retried = await f.runtime.publishTurn(outbound);
+    expect(retried.event.id).toBe(stored?.id);
+    expect(retried.duplicate).toBe(true);
+    expect(published[0]?.id).toBe(stored?.id);
+    expect(delivered).toBe(true);
+  });
+
   it('fails closed on access, circuit-breaker, and authority boundaries', async () => {
     const denied = fixture({ accessPermitted: async () => false });
     const invoke = vi.fn(async () => undefined);
@@ -137,7 +183,7 @@ describe('DelegationRuntime', () => {
     });
 
     const exhausted = fixture({
-      delegatedUsage: async () => ({ calls: 20, reservedTokens: 0 }),
+      delegatedUsage: async () => ({ calls: 20, reservedTokens: 0, turnEventIds: [] }),
     });
     await expect(exhausted.runtime.handleEvent(exhausted.event, invoke)).resolves.toMatchObject({
       status: 'refused',

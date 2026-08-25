@@ -392,6 +392,7 @@ export function projectPermissionCards(
   events: readonly NostrEvent[],
   now: number,
   decisionAuthorized: (event: NostrEvent) => boolean = () => false,
+  executionAuthorized: (event: NostrEvent) => boolean = () => false,
 ): PermissionCardProjection[] {
   return events.flatMap((event) => {
     const request = parsePermissionRequest(event);
@@ -409,7 +410,7 @@ export function projectPermissionCards(
     });
     const executions = related.flatMap((candidate) => {
       const parsed = parsePermissionExecution(candidate, request);
-      return parsed ? [parsed] : [];
+      return parsed && executionAuthorized(parsed.event) ? [parsed] : [];
     });
     return [{
       request,

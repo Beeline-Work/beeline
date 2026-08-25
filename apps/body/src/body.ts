@@ -2314,6 +2314,7 @@ export class Body {
         await publishEvent(event, this.agentIdentity);
       },
       claim: (key) => this.durableState.claimPermissionAction(key),
+      reserveCapacity: (input) => this.durableState.reservePermissionCapacity(input),
     });
     this.delegationRuntime = new DelegationRuntime({
       identity: this.agentIdentity,
@@ -2349,6 +2350,7 @@ export class Body {
           return {
             calls: turns.length,
             reservedTokens: turns.reduce((sum, turn) => sum + (turn.reservedTokens ?? 0), 0),
+            turnEventIds: turns.map((turn) => turn.requestId),
           };
         },
       },
@@ -2356,7 +2358,9 @@ export class Body {
         await publishEvent(event, this.agentIdentity);
       },
       claimInbound: (eventId) => this.durableState.claimDelegationInbound(eventId),
+      reserveInboundCapacity: (input) => this.durableState.reserveDelegationInbound(input),
       reserveOutbound: (event) => this.durableState.reserveDelegationOutbound(event),
+      markOutboundDelivered: (eventId) => this.durableState.markDelegationOutboundDelivered(eventId),
       dailyLimit: {
         maxCalls: this.config.delegationDailyMaxCalls ?? 64,
         maxReservedTokens: this.config.delegationDailyMaxReservedTokens ?? 1_000_000,

@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  buildPermissionExecution,
   buildPermissionRequest,
   createIdentity,
   parseAgentAccessConfig,
+  parsePermissionDecision,
   parsePermissionExecution,
+  parsePermissionRequest,
   type PermissionFreshReader,
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
@@ -121,8 +124,52 @@ describe('factory permission mobile runtime', () => {
       mode: 'standing',
       maxUses: 1,
     });
+    expect(item.action.roomId).toBe('factory-room');
+    expect(item.action.scope).toMatchObject({
+      type: 'room.create',
+      roomId: '018f4d8e-7a01-7cc2-91f1-222222222222',
+    });
     expect(projectPermissionCards([request, ...history], 1_002, () => true)[0]?.state.status).toBe('granted');
     expect(await outbox.get(item.action.actionId)).toEqual(item);
+  });
+
+  it('ignores execution receipts outside the trusted executor authority', async () => {
+    const { owner, otherAdmin, request } = fixture();
+    const history: NostrEvent[] = [];
+    const item = await grantAndQueueRoomCreate({
+      identity: owner,
+      requestEvent: request,
+      client: { publish: async (event) => history.push(event) },
+      outbox: new RoomCreateOutbox(new MemoryStorage()),
+      now: 1_001,
+    });
+    const parsedRequest = parsePermissionRequest(request)!;
+    const decision = parsePermissionDecision(item.decision, parsedRequest)!;
+    const receiptValue = {
+      version: 1 as const,
+      permissionId: item.action.permissionId,
+      grantEventId: decision.event.id,
+      actionId: item.action.actionId,
+      idempotencyKey: item.action.idempotencyKey,
+      attempt: 1,
+      at: 1_002,
+    };
+    const started = buildPermissionExecution(owner, parsedRequest, {
+      ...receiptValue,
+      status: 'started',
+      charge: item.action.charge,
+    });
+    const forgedUnknown = buildPermissionExecution(otherAdmin, parsedRequest, {
+      ...receiptValue,
+      status: 'unknown',
+      result: 'forged',
+    });
+    expect(projectPermissionCards(
+      [request, item.decision, started, forgedUnknown],
+      1_003,
+      () => true,
+      (event) => event.pubkey === owner.publicKey,
+    )[0]?.state.status).toBe('executing');
   });
 
   it('resumes after Room creation and before receipt without creating twice', async () => {

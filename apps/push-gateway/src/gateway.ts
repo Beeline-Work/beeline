@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
-import { KIND_AGENT_SOUL, TAG_AGENT_SOUL } from '@beeline/buzz-client';
+import {
+  KIND_AGENT_SOUL,
+  KIND_CORNER_STATE,
+  TAG_AGENT_SOUL,
+  TAG_CORNER_STATE,
+  parseCornerStateRecord,
+} from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging } from 'firebase-admin/messaging';
 import { DeliveryState } from './delivery-state.js';
@@ -16,6 +22,7 @@ const PERMANENT_TOKEN_ERRORS = new Set([
   'messaging/invalid-registration-token',
   'messaging/registration-token-not-registered',
 ]);
+const CORNER_ATTENTION_INTERVAL_MS = 10 * 60_000;
 
 export type { RelayEventReader } from './metadata.js';
 
@@ -39,6 +46,7 @@ function registeredEventFilters(since: number): Record<string, unknown>[] {
   return [
     { kinds: [9], since, limit: 1_000 },
     { kinds: [KIND_AGENT_SOUL], '#t': [TAG_AGENT_SOUL], since, limit: 1_000 },
+    { kinds: [KIND_CORNER_STATE], '#t': [TAG_CORNER_STATE], since, limit: 1_000 },
   ];
 }
 
@@ -68,6 +76,16 @@ function deliveryKey(event: NostrEvent, type: string): string {
         event.tags.find((tag) => tag[0] === 'tip')?.[1] ?? '',
       ].join('\u0000'),
     )
+    .digest('hex');
+}
+
+function tagValue(event: NostrEvent, name: string): string | undefined {
+  return event.tags.find((tag) => tag[0] === name)?.[1];
+}
+
+function attentionSignature(plan: PushNotificationPlan): string {
+  return createHash('sha256')
+    .update([plan.title.trim(), plan.body.trim()].join('\u0000'))
     .digest('hex');
 }
 
@@ -173,6 +191,33 @@ export class PushGateway {
     reader: RelayEventReader,
   ): Promise<void> {
     this.metadata.invalidate(event);
+    if (event.kind === KIND_CORNER_STATE) {
+      const record = parseCornerStateRecord(event);
+      if (!record) {
+        this.trace(event, recipientPubkey, 'skip', 'not-notifiable-kind');
+        return;
+      }
+      // Automatic retry turns briefly say `working`; that is not human
+      // acknowledgement and must not re-arm the same stuck-loop alert. Idle
+      // and terminal lifecycle facts are the durable episode boundaries.
+      const resolved =
+        record.state === 'idle' || record.state === 'concluded' || record.state === 'closed';
+      if (resolved) {
+        await this.deliveryState.clearAttention(record.cornerId, recipientPubkey);
+      }
+      this.trace(
+        event,
+        recipientPubkey,
+        'skip',
+        resolved
+          ? 'corner-attention-resolved'
+          : record.state === 'waiting'
+            ? 'corner-attention-standing'
+            : 'corner-lifecycle-observed',
+        { corner: record.cornerId, state: record.state },
+      );
+      return;
+    }
     const channelId = event.tags.find((tag) => tag[0] === 'h')?.[1];
     if (!channelId) {
       this.trace(event, recipientPubkey, 'skip', 'no-channel');
@@ -232,14 +277,27 @@ export class PushGateway {
 
     // Claim durably before FCM. An ambiguous network result is never retried:
     // at-most-once delivery is more important than risking a duplicate alert.
-    const dedupeKey = deliveryKey(event, plan.data.type ?? 'channel-activity');
+    const notificationType = plan.data.type ?? 'channel-activity';
+    const dedupeKey = deliveryKey(event, notificationType);
     let reserved: boolean;
     try {
-      reserved = await this.deliveryState.reserveAttempt(
-        dedupeKey,
-        event.created_at,
-        recipientPubkey,
-      );
+      reserved =
+        notificationType === 'agent-attention'
+          ? await this.deliveryState.reserveAttentionAttempt({
+              eventId: dedupeKey,
+              eventCreatedAt: event.created_at,
+              pubkey: recipientPubkey,
+              sourceId: plan.data.cornerId ?? plan.channelId,
+              kind: notificationType,
+              reason:
+                tagValue(event, 'reason') ??
+                tagValue(event, 'delivery') ??
+                tagValue(event, 'status') ??
+                'needs-attention',
+              signature: attentionSignature(plan),
+              minIntervalMs: CORNER_ATTENTION_INTERVAL_MS,
+            })
+          : await this.deliveryState.reserveAttempt(dedupeKey, event.created_at, recipientPubkey);
     } catch (error) {
       this.trace(event, recipientPubkey, 'skip', 'delivery-state-error', {
         error: error instanceof Error ? error.message.slice(0, 160) : String(error).slice(0, 160),
@@ -247,7 +305,12 @@ export class PushGateway {
       throw error;
     }
     if (!reserved) {
-      this.trace(event, recipientPubkey, 'skip', 'already-attempted');
+      this.trace(
+        event,
+        recipientPubkey,
+        'skip',
+        notificationType === 'agent-attention' ? 'attention-coalesced' : 'already-attempted',
+      );
       return;
     }
 
@@ -282,7 +345,7 @@ export class PushGateway {
     // bookkeeping failures are separately reported by the poll loop without
     // creating a second, contradictory event decision.
     this.trace(event, recipientPubkey, 'notify', 'fcm-result', {
-      type: plan.data.type ?? 'channel-activity',
+      type: notificationType,
       recipients: 1,
       devices: tokens.length,
       success: result.successCount,

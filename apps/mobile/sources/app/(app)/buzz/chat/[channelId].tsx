@@ -789,12 +789,29 @@ export default function BuzzChat() {
         agent,
       });
     }
+    // The snapshot membership selector is the Room roster authority. Workspace
+    // People and Agent reads only enrich/classify those keys, and can be partial
+    // or stale. Any member absent from both secondary reads remains visible as
+    // a person-shaped identity instead of disappearing from the count.
+    for (const member of roomMembers) {
+      if (options.has(member.pubkey)) continue;
+      const shortNpub = shortMemberNpub(member.pubkey);
+      const profileName = personProfileByPubkey.get(member.pubkey)?.name;
+      options.set(member.pubkey, {
+        pubkey: member.pubkey,
+        name: member.pubkey === userPubkey ? 'You' : (profileName ?? shortNpub),
+        handle: profileName
+          ? personHandle(profileName, member.pubkey)
+          : shortNpub.replace(/[^a-zA-Z0-9_-]/g, ''),
+        kind: 'person',
+      });
+    }
     return [...options.values()].sort((a, b) => {
       if (a.pubkey === userPubkey) return -1;
       if (b.pubkey === userPubkey) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [availableAgents, availablePeople, personProfileByPubkey, userPubkey]);
+  }, [availableAgents, availablePeople, personProfileByPubkey, roomMembers, userPubkey]);
   const roomParticipants = useMemo(
     () =>
       selectedMembers.map((member) => {

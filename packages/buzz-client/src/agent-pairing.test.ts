@@ -392,6 +392,121 @@ describe('agent pairing and soul overlays', () => {
     ).rejects.toThrow('already has a kind:0 profile');
   });
 
+  it('resolves predecessor-authored souls through the current owner and picks the newest linked record deterministically', async () => {
+    const predecessor = createIdentity('ox-owner-predecessor-e216a225');
+    const successor = createIdentity('ox-owner-successor-5f5ad2e2');
+    const unrelated = createIdentity('unrelated-soul-author');
+    const oxAgent = createAgentIdentity('ox-agent-a3447f11');
+    const agentRecord = signEvent(
+      {
+        pubkey: oxAgent.publicKey,
+        created_at: 1_700_000_000,
+        kind: KIND_STREAM_MESSAGE,
+        tags: [
+          ['h', communityId],
+          ['d', 'ox-agent-id'],
+          ['p', oxAgent.publicKey],
+          ['name', 'Agent'],
+          ['t', TAG_AGENT],
+          [TAG_COMMUNITY, communityId],
+        ],
+        content: JSON.stringify({ displayName: 'Agent' }),
+      },
+      oxAgent.secretKey,
+    );
+    const soul = (author: typeof predecessor, createdAt: number, name: string): NostrEvent =>
+      signEvent(
+        {
+          pubkey: author.publicKey,
+          created_at: createdAt,
+          kind: KIND_AGENT_SOUL,
+          tags: [
+            ['d', `${communityId}:${oxAgent.publicKey}`],
+            ['h', communityId],
+            ['p', oxAgent.publicKey],
+            ['t', TAG_AGENT_SOUL],
+            [TAG_COMMUNITY, communityId],
+          ],
+          content: JSON.stringify({
+            name,
+            soul: `${name} keeps ownership of prior work across daemon restarts.`,
+            avatarSeed: oxAgent.publicKey,
+          }),
+        },
+        author.secretKey,
+      );
+    const predecessorSoul = soul(predecessor, 1_700_000_100, 'Ox');
+    const successorSoul = soul(successor, 1_700_000_200, 'Ox Current');
+    const unrelatedSoul = soul(unrelated, 1_700_000_300, 'Impostor');
+    let soulEvents = [predecessorSoul];
+    let reverseResults = false;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const kind = (filterFrom(init).kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(successor, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', successor.publicKey],
+              ['p', oxAgent.publicKey],
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return jsonResponse([
+            signed(successor, KIND_CHANNEL_ADMINS, [
+              ['d', communityId],
+              ['p', successor.publicKey, 'owner'],
+            ]),
+          ]);
+        }
+        if (kind === KIND_STREAM_MESSAGE) return jsonResponse([agentRecord]);
+        if (kind === KIND_AGENT_SOUL) {
+          reverseResults = !reverseResults;
+          return jsonResponse(reverseResults ? [...soulEvents].reverse() : soulEvents);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    const resolveCurrentPubkey = async (pubkey: string): Promise<string> =>
+      pubkey === predecessor.publicKey ? successor.publicKey : pubkey;
+
+    // Production Ox shape: the soul is signed by the e216a225 predecessor,
+    // the agent is a3447f11, and the Workspace owner is now 5f5ad2e2.
+    await expect(
+      listAgents(ctx(successor), communityId, 200, { resolveCurrentPubkey }),
+    ).resolves.toMatchObject([
+      {
+        pubkey: oxAgent.publicKey,
+        soulProfile: { name: 'Ox', authoredBy: predecessor.publicKey },
+      },
+    ]);
+
+    soulEvents = [unrelatedSoul, predecessorSoul, successorSoul];
+    const firstSession = await listAgents(ctx(successor), communityId, 200, {
+      resolveCurrentPubkey,
+    });
+    const restartedSession = await listAgents(ctx(successor), communityId, 200, {
+      resolveCurrentPubkey,
+    });
+    expect(firstSession[0]?.soulProfile).toMatchObject({
+      name: 'Ox Current',
+      authoredBy: successor.publicKey,
+    });
+    expect(restartedSession[0]?.soulProfile).toEqual(firstSession[0]?.soulProfile);
+
+    soulEvents = [unrelatedSoul];
+    const unrelatedOnly = await listAgents(ctx(successor), communityId, 200, {
+      resolveCurrentPubkey,
+    });
+    expect(unrelatedOnly).toMatchObject([{ pubkey: oxAgent.publicKey }]);
+    expect(unrelatedOnly[0]?.soulProfile).toBeUndefined();
+  });
+
   it('migrates legacy personality and intent into one soul without losing either text', () => {
     const legacy = signEvent(
       {

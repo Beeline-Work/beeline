@@ -61,8 +61,8 @@ describe.runIf(live)('live corner close (archive) contract', () => {
         agent,
         parentChannelId,
         `corner-close-sub-${Date.now()}`,
+        human.publicKey,
       );
-      await setMemberRole(human, subchannelId, human.publicKey, 'member');
 
       const sessionCancel = vi.fn();
       const info: SubchannelInfo = {
@@ -136,8 +136,8 @@ describe.runIf(live)('live corner close (archive) contract', () => {
         agent,
         parentChannelId,
         `corner-close-race-sub-${Date.now()}`,
+        human.publicKey,
       );
-      await setMemberRole(human, subchannelId, human.publicKey, 'member');
 
       const publishSpy = vi.spyOn(body as never, 'publishAgentResult' as never);
 

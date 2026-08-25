@@ -9,10 +9,11 @@ import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { getRandomBytes } from 'expo-crypto';
 import {
-  fallbackPersonName,
-  normalizePersonName,
+  claimNip05Handle,
+  lookupManagedIdentity,
+  Nip05ClaimError,
+  normalizeManagedHandle,
   OidcBindError,
-  personHandle,
   type BuzzClient,
   buildOidcBindEvent,
   finishOidcBind,
@@ -20,6 +21,7 @@ import {
   lookupRecovery,
   startGitHubBind,
   type Identity,
+  type ManagedIdentity,
   type OidcBindChallenge,
 } from '@beeline/buzz-client';
 import {
@@ -63,7 +65,6 @@ import {
   isPersonNameOnboardingPending,
   loadPreferredPersonName,
   markPersonNameOnboardingPending,
-  publishPreferredPersonName,
   resolveOnboardingPersonName,
   savePreferredPersonName,
 } from '@/buzz/person-name';
@@ -78,6 +79,7 @@ import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { t } from '@/text';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -85,6 +87,7 @@ interface PendingBind {
   challenge: OidcBindChallenge;
   identity: Identity;
   bound: boolean;
+  managedIdentity?: ManagedIdentity;
 }
 
 function randomState(): string {
@@ -125,7 +128,6 @@ export default function BuzzOnboarding() {
   const [nameFocused, setNameFocused] = useState(false);
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
-  const [namingCommunityId, setNamingCommunityId] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState('');
   const loading = loadingAction !== null;
 
@@ -174,32 +176,65 @@ export default function BuzzOnboarding() {
     [],
   );
 
-  const continueAfterIdentity = async (identity: Identity) => {
+  const continueAfterIdentity = async (
+    identity: Identity,
+    suppliedManagedIdentity?: ManagedIdentity,
+    requireManagedHandle = false,
+  ) => {
     setStatus('entering_workspace');
     try {
       const transport = new BuzzRigTransport(identity, getBuzzRuntimeConfig().relayUrl);
       const client = await transport.ensureClient();
-      const resolved = await resolveOnboardingPersonName(client, identity.publicKey);
-      if (!resolved.needsPrompt) {
-        await clearPersonNameOnboardingPending();
+      const enterWithManagedIdentity = async (managedIdentity: ManagedIdentity) => {
+        let displayName = managedIdentity.displayName;
+        try {
+          const current = await client.getGlobalPersonProfile(identity.publicKey).catch(() => null);
+          displayName = current?.name ?? managedIdentity.displayName;
+          await client.setGlobalPersonProfile({
+            name: displayName,
+            handle: managedIdentity.handle,
+            avatar: current?.avatar,
+            nip05: managedIdentity.nip05,
+          });
+        } catch {
+          // The server-side assignment is already authoritative. Profile
+          // publication can retry after entry; GitHub users are never sent to
+          // a redundant naming prompt because relay projection is delayed.
+        }
+        await savePreferredPersonName(identity.publicKey, displayName).catch(() => undefined);
+        await clearPersonNameOnboardingPending().catch(() => undefined);
         router.replace('/buzz/channels');
+      };
+      const managedIdentity =
+        suppliedManagedIdentity ??
+        (await lookupManagedIdentity(getBuzzRuntimeConfig().relayUrl, identity).catch(() => null));
+      if (managedIdentity) {
+        await enterWithManagedIdentity(managedIdentity);
         return;
       }
+      if (!requireManagedHandle) {
+        const resolved = await resolveOnboardingPersonName(client, identity.publicKey);
+        if (!resolved.needsPrompt) {
+          await clearPersonNameOnboardingPending();
+          router.replace('/buzz/channels');
+          return;
+        }
+      }
       setNamingClient(client);
-      setNamingCommunityId(resolved.communityId);
-      setNameInput(resolved.name);
+      setNameInput('');
       setNamingIdentity(identity);
       setNotice(null);
     } catch {
-      const preferred = await loadPreferredPersonName(identity.publicKey);
-      if (preferred) {
-        await clearPersonNameOnboardingPending();
-        router.replace('/buzz/channels');
-        return;
+      if (!requireManagedHandle) {
+        const preferred = await loadPreferredPersonName(identity.publicKey);
+        if (preferred) {
+          await clearPersonNameOnboardingPending();
+          router.replace('/buzz/channels');
+          return;
+        }
       }
       setNamingClient(null);
-      setNamingCommunityId(null);
-      setNameInput(fallbackPersonName(identity.publicKey));
+      setNameInput('');
       setNamingIdentity(identity);
       setNotice(null);
     }
@@ -216,7 +251,12 @@ export default function BuzzOnboarding() {
           throw new OidcBindError('ticket_expired', 'The bind ticket expired', 410);
         }
         const event = buildOidcBindEvent(pending.challenge, pending.identity);
-        await finishOidcBind(getBuzzRuntimeConfig().relayUrl, pending.challenge, event);
+        const result = await finishOidcBind(
+          getBuzzRuntimeConfig().relayUrl,
+          pending.challenge,
+          event,
+        );
+        pending.managedIdentity = result.identity;
         pending.bound = true;
       }
       await clearPendingGitHubSignInState();
@@ -232,7 +272,7 @@ export default function BuzzOnboarding() {
       await registerBuzzPushNotifications(pending.identity).catch(() => undefined);
       pendingBind.current = null;
       setStatus(nextOnboardingStatus('binding', 'bind_succeeded'));
-      await continueAfterIdentity(pending.identity);
+      await continueAfterIdentity(pending.identity, pending.managedIdentity);
     } catch (error) {
       const normalized =
         error instanceof OidcBindError
@@ -308,11 +348,11 @@ export default function BuzzOnboarding() {
         await saveBuzzIdentity(identity);
         await clearPendingGitHubIdentity().catch(() => undefined);
         await markPersonNameOnboardingPending().catch(() => undefined);
-        if (alive) await continueAfterIdentity(identity);
+        if (alive) await continueAfterIdentity(identity, undefined, true);
         return;
       }
       if (await isPersonNameOnboardingPending()) {
-        if (alive && links.length > 0) await continueAfterIdentity(identity);
+        if (alive) await continueAfterIdentity(identity, undefined, true);
         return;
       }
       if (!alive || links.length === 0) return;
@@ -387,7 +427,12 @@ export default function BuzzOnboarding() {
         throw new OidcBindError('ticket_expired', 'The recovery ticket expired', 410);
       }
       const event = buildOidcBindEvent(pending.challenge, pending.identity);
-      await recoverOidcBind(getBuzzRuntimeConfig().relayUrl, pending.challenge, event);
+      const result = await recoverOidcBind(
+        getBuzzRuntimeConfig().relayUrl,
+        pending.challenge,
+        event,
+      );
+      pending.managedIdentity = result.identity;
       pending.bound = true;
       await finishPendingBind(pending);
     } catch (error) {
@@ -423,7 +468,7 @@ export default function BuzzOnboarding() {
         clearPendingGitHubSignInState().catch(() => undefined),
       ]);
       await registerBuzzPushNotifications(identity);
-      await continueAfterIdentity(identity);
+      await continueAfterIdentity(identity, undefined, true);
     } catch (error) {
       if (!identitySaved) await clearPersonNameOnboardingPending();
       setNotice({
@@ -519,7 +564,7 @@ export default function BuzzOnboarding() {
       await registerBuzzPushNotifications(newKey.identity);
       const identity = newKey.identity;
       resetNewKey();
-      await continueAfterIdentity(identity);
+      await continueAfterIdentity(identity, undefined, true);
     } catch (error) {
       if (!identitySaved) await clearPersonNameOnboardingPending();
       setNotice({
@@ -535,12 +580,12 @@ export default function BuzzOnboarding() {
 
   const handleNameContinue = async () => {
     if (!namingIdentity) return;
-    const normalized = normalizePersonName(nameInput);
+    const normalized = normalizeManagedHandle(nameInput);
     if (!normalized) {
       setNotice({
         status: 'bind_retry',
-        title: 'NAME REQUIRED',
-        message: 'Choose a name between 1 and 60 characters.',
+        title: t('beelineIdentity.handleInvalidTitle'),
+        message: t('beelineIdentity.handleInvalidMessage'),
         retryable: false,
       });
       return;
@@ -548,23 +593,49 @@ export default function BuzzOnboarding() {
     setLoadingAction('name');
     setNotice(null);
     try {
-      if (namingClient && namingCommunityId) {
-        await publishPreferredPersonName(
-          namingClient,
-          namingCommunityId,
-          namingIdentity.publicKey,
-          normalized,
-        );
-      } else {
-        await savePreferredPersonName(namingIdentity.publicKey, normalized);
+      const claim = await claimNip05Handle(
+        getBuzzRuntimeConfig().relayUrl,
+        namingIdentity,
+        normalized,
+      );
+      try {
+        const client =
+          namingClient ??
+          (await new BuzzRigTransport(
+            namingIdentity,
+            getBuzzRuntimeConfig().relayUrl,
+          ).ensureClient());
+        const current = await client
+          .getGlobalPersonProfile(namingIdentity.publicKey)
+          .catch(() => null);
+        await client.setGlobalPersonProfile({
+          name: claim.identity.displayName,
+          handle: claim.identity.handle,
+          avatar: current?.avatar,
+          nip05: claim.identity.nip05,
+        });
+      } catch {
+        // The authenticated hosted claim is authoritative. Relay profile
+        // publication is best-effort here and can reconcile on next launch.
       }
-      await clearPersonNameOnboardingPending();
+      await savePreferredPersonName(
+        namingIdentity.publicKey,
+        claim.identity.displayName,
+      ).catch(() => undefined);
+      await clearPersonNameOnboardingPending().catch(() => undefined);
       router.replace('/buzz/channels');
     } catch (error) {
+      const taken = error instanceof Nip05ClaimError && error.code === 'name_taken';
       setNotice({
         status: 'bind_retry',
-        title: 'NAME NOT SAVED',
-        message: error instanceof Error ? error.message : String(error),
+        title: taken
+          ? t('beelineIdentity.handleTakenTitle')
+          : t('beelineIdentity.handleClaimFailedTitle'),
+        message: taken
+          ? t('beelineIdentity.handleTakenMessage', { handle: normalized })
+          : error instanceof Error
+            ? error.message
+            : String(error),
         retryable: false,
       });
     } finally {
@@ -576,50 +647,49 @@ export default function BuzzOnboarding() {
   const signInLabel = 'Continue with GitHub';
 
   if (namingIdentity) {
-    const normalized = normalizePersonName(nameInput);
-    const handle = personHandle(
-      normalized ?? fallbackPersonName(namingIdentity.publicKey),
-      namingIdentity.publicKey,
-    );
+    const normalized = normalizeManagedHandle(nameInput);
     return (
       <View
         style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-        testID="onboarding-person-name-step"
+        testID="onboarding-handle-ceremony"
       >
         <PixelGateReveal style={styles.namePanel}>
-          <Text style={styles.sectionLabel}>IDENTITY · YOUR WORKSPACE</Text>
+          <Text style={styles.sectionLabel}>{t('beelineIdentity.handleCeremonyLabel')}</Text>
           <View style={styles.nameAvatar}>
             <IdentityMark
               kind="human"
               seed={namingIdentity.publicKey}
-              name={normalized ?? nameInput}
+              name={(normalized ?? nameInput) || 'new identity'}
               size={82}
             />
           </View>
-          <Text style={styles.nameTitle}>What should we call you?</Text>
+          <Text style={styles.nameTitle}>{t('beelineIdentity.handleCeremonyTitle')}</Text>
           <Text style={styles.nameBody}>
-            This is how people and Agents will recognize you. You can change it later in Identity
-            settings.
+            {t('beelineIdentity.handleCeremonyBody')}
           </Text>
           <TextInput
-            accessibilityLabel="Your display name"
-            autoCapitalize="words"
+            accessibilityLabel={t('beelineIdentity.handleAccessibility')}
+            autoCapitalize="none"
             autoCorrect={false}
             autoFocus
             editable={!loading}
-            maxLength={60}
+            maxLength={30}
             onBlur={() => setNameFocused(false)}
-            onChangeText={setNameInput}
+            onChangeText={(value) => setNameInput(value.toLowerCase())}
             onFocus={() => setNameFocused(true)}
             onSubmitEditing={() => void handleNameContinue()}
-            placeholder="Ada"
+            placeholder={t('beelineIdentity.handlePlaceholder')}
             placeholderTextColor={theme.buzz.textDisabled}
             returnKeyType="done"
             style={[styles.nameInput, nameFocused && styles.inputFocused]}
-            testID="onboarding-person-name-input"
+            testID="onboarding-handle-input"
             value={nameInput}
           />
-          <Text style={styles.nameHandle}>@{handle}</Text>
+          <Text style={styles.nameHandle}>
+            {normalized
+              ? `${normalized}@usebeeline.app`
+              : t('beelineIdentity.handleRules')}
+          </Text>
           {notice && (
             <View accessibilityRole="alert" style={styles.noticePanel}>
               <Text style={styles.statusLabel}>◇ {notice.title}</Text>
@@ -629,10 +699,10 @@ export default function BuzzOnboarding() {
           <MonoButton
             labelStyle={styles.buttonLabel}
             disabled={!normalized || loading}
-            label="Enter Workspace"
+            label={t('beelineIdentity.claimHandle')}
             loading={loadingAction === 'name'}
             onPress={() => void handleNameContinue()}
-            testID="onboarding-enter-workspace"
+            testID="onboarding-claim-handle"
           />
         </PixelGateReveal>
       </View>

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { CornerSummary, CornerStatus } from './corners';
 import {
+  displayRoomIndexTitle,
   isRoomAlive,
   NO_ACTIVITY_PREVIEW,
   roomListFeed,
@@ -527,5 +528,19 @@ describe('Room row presentation', () => {
       NO_NAMES,
     );
     expect(clustered.map(({ item }) => item.id)).toEqual(['read-needs-you', 'unread-idle']);
+  });
+
+  describe('displayRoomIndexTitle (the # channel-mark teaching cue)', () => {
+    it('adds exactly one # to a stored Room name, presentation only', () => {
+      expect(displayRoomIndexTitle('Roadmap')).toBe('#Roadmap');
+      // Idempotent: a name already carrying the mark is not double-prefixed.
+      expect(displayRoomIndexTitle('#Roadmap')).toBe('#Roadmap');
+    });
+
+    it('never decorates a fabricated placeholder', () => {
+      expect(displayRoomIndexTitle(undefined)).toBeUndefined();
+      expect(displayRoomIndexTitle('')).toBeUndefined();
+      expect(displayRoomIndexTitle('   ')).toBeUndefined();
+    });
   });
 });

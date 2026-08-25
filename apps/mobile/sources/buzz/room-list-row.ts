@@ -402,6 +402,19 @@ function projectEntries<T extends RoomRowInput>(
 }
 
 /**
+ * Captain's channel-mark convention (2026-08): Room index rows display
+ * `#<name>`. Strictly presentation — the stored name, search keys, sorting,
+ * unread state, and identity never see the prefix. A Room whose title fell
+ * back to the placeholder id gains no mark: nothing fabricated is decorated.
+ */
+export function displayRoomIndexTitle(storedTitle: string | undefined): string | undefined {
+  const trimmed = storedTitle?.trim();
+  if (!trimmed) return undefined;
+  // Idempotent: a name that already carries the mark is never double-prefixed.
+  return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+}
+
+/**
  * Build the one headerless feed. Needs-you Rooms cluster first; each cluster
  * is newest-activity first. Unread and live Room turns affect recency/weight,
  * never state. Native stable sort preserves source order for exact ties.

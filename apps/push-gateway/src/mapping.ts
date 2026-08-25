@@ -17,6 +17,10 @@ export interface PushNotificationPlan {
 export interface NotificationContext {
   roomName?: string;
   senderName?: string;
+  /** Current display name of a destination corner's parent Room, resolved from relay truth. */
+  parentRoomName?: string;
+  /** Display name of the destination corner channel itself. */
+  cornerName?: string;
   /** Derived from the immutable Room create's existing buzz-dm marker. */
   isDirectMessage?: boolean;
   /** True when the immutable create names a parent channel — a corner worktree channel. */
@@ -144,6 +148,27 @@ const roomTitle = (resolvedRoomName: string | undefined): string | undefined =>
       : `#${resolvedRoomName}`
     : undefined;
 
+/**
+ * Channel-naming convention (captain, 2026-08): a Room notification is titled
+ * `#<room>`; a Corner notification is titled `#<room>/<corner>`, where the Room
+ * half is the PARENT Room's current display name resolved from relay truth —
+ * never invented, duplicated, or derived from the corner's own name.
+ *
+ * When the parent metadata is absent or deleted, the title falls back to this
+ * gateway's long-standing shape: the event channel's own resolved name, then
+ * the sender. A room name is never fabricated.
+ */
+const locationTitle = (
+  resolvedParentRoomName: string | undefined,
+  resolvedCornerName: string | undefined,
+  resolvedRoomName: string | undefined,
+): string | undefined => {
+  if (!resolvedParentRoomName) return roomTitle(resolvedRoomName);
+  return resolvedCornerName
+    ? `${roomTitle(resolvedParentRoomName)}/${resolvedCornerName}`
+    : roomTitle(resolvedParentRoomName);
+};
+
 export function mapEventToNotification(
   event: NostrEvent,
   context: NotificationContext,
@@ -177,6 +202,11 @@ export function mapEventToNotification(
     normalizedDisplayText(context.senderName, 80) ?? fallbackPersonName(event.pubkey);
   const showMessagePreview = options.showMessagePreview ?? true;
   const preview = formatMessagePreview(event.content);
+  const composedTitle = locationTitle(
+    normalizedDisplayText(context.parentRoomName, 80),
+    normalizedDisplayText(context.cornerName, 80),
+    resolvedRoomName,
+  );
   const cornerId =
     isMergeRequest || context.parentChannelId
       ? channelId
@@ -193,7 +223,7 @@ export function mapEventToNotification(
       ? 'Merge approval requested'
       : context.isDirectMessage
         ? senderName
-        : (roomTitle(resolvedRoomName) ?? senderName),
+        : (composedTitle ?? senderName),
     body: isMergeRequest
       ? `Review requested in ${roomName}`
       : mentioned

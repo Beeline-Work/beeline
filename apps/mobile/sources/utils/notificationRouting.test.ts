@@ -118,6 +118,49 @@ describe('getBuzzNotificationTargetFromData', () => {
 });
 
 describe('navigateToBuzzNotificationResponse', () => {
+  it('opens a Room notification on exactly that Room, with no corner back-stack hints', () => {
+    const navigate = vi.fn();
+
+    const target = navigateToBuzzNotificationResponse(
+      { navigate },
+      {
+        notification: {
+          request: {
+            identifier: 'response-room',
+            content: {
+              // The gateway's exact serialization for a Room mention
+              // (see push-gateway mapping.test.ts).
+              data: {
+                type: 'mention',
+                target: 'message',
+                roomId: 'room-123',
+                channelId: 'room-123',
+                roomName: 'Roadmap',
+                eventId: 'event-1',
+                messageId: 'event-1',
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(target).toMatchObject({ channelId: 'room-123', roomId: 'room-123' });
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        pathname: '/buzz/chat/[channelId]',
+        params: {
+          channelId: 'room-123',
+          notificationMessageId: 'event-1',
+          notificationResponseId: 'response-room',
+          notificationTarget: 'message',
+        },
+      },
+      { dangerouslySingular: true },
+    );
+  });
+
   it.each(['cold', 'warm'])('%s tap opens the exact corner message', () => {
     const navigate = vi.fn();
 

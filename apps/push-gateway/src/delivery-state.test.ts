@@ -7,7 +7,7 @@ import { DeliveryState } from './delivery-state.js';
 const PUBKEY = 'a'.repeat(64);
 
 describe('DeliveryState', () => {
-  it('persists a standing attention signature and clears the episode explicitly', async () => {
+  it('persists a spent attention episode until it is cleared explicitly', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-attention-'));
     const file = join(directory, 'deliveries.json');
     const sourceId = 'corner-peddle';
@@ -19,10 +19,7 @@ describe('DeliveryState', () => {
         eventCreatedAt: 100,
         pubkey: PUBKEY,
         sourceId,
-        kind: 'agent-attention',
         reason: 'review',
-        signature: 'same-copy',
-        minIntervalMs: 600_000,
       }),
     ).resolves.toBe(true);
 
@@ -33,10 +30,7 @@ describe('DeliveryState', () => {
         eventCreatedAt: 101,
         pubkey: PUBKEY,
         sourceId,
-        kind: 'agent-attention',
         reason: 'review',
-        signature: 'same-copy',
-        minIntervalMs: 600_000,
       }),
     ).resolves.toBe(false);
 
@@ -47,10 +41,7 @@ describe('DeliveryState', () => {
         eventCreatedAt: 102,
         pubkey: PUBKEY,
         sourceId,
-        kind: 'agent-attention',
         reason: 'review',
-        signature: 'same-copy',
-        minIntervalMs: 600_000,
       }),
     ).resolves.toBe(true);
   });

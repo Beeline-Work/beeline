@@ -49,12 +49,6 @@ render_svg() {
   rsvg-convert -w "$2" -h "$2" "$1" >"$3"
 }
 
-recolor_svg() {
-  # stdin -> stdout with one hex color swapped for another (case-insensitive)
-  local from="$1" to="$2"
-  sed "s/${from}/${to}/gI"
-}
-
 render_notification_svg() {
   # White loop silhouette on transparent, sized for the status bar.
   local size="$1" out="$2"
@@ -102,9 +96,6 @@ rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive-background.svg" \
   -o "$image_dir/icon-adaptive-background.png"
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive.svg" \
   -o "$image_dir/icon-adaptive.png"
-# Monochrome themed icon (Android 13): the same single silhouette in white.
-rsvg-convert -w 1024 -h 1024 < <(recolor_svg "$brand_mark" "#FFFFFF" <"$image_dir/icon-adaptive.svg") \
-  -o "$image_dir/icon-monochrome.png"
 
 # Favicon + splash share the app icon's framing: brass loop on the aubergine
 # field. The splash screens' backgroundColor in app.config.js must stay #14091A

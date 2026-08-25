@@ -105,6 +105,12 @@ import {
 const ROOM_CONTEXT_SCAN_LIMIT = 80;
 const ROOM_REPOSITORY_MARKER = 'buzz-room-repository';
 
+/** Newest canonical corner-state records enumerated per discovery read. The
+ * marker page spans the whole relay, so this bounds its cost; corners beyond
+ * the window are still recovered through their `subchannel`-tagged cards in
+ * the Room's own message page plus the exact-`#d` state read-back. */
+const CORNER_STATE_DISCOVERY_LIMIT = 500;
+
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
 const READ_AUTHORITY_TTL_MS = 60_000;
@@ -804,39 +810,39 @@ export class BuzzRigTransport implements RigTransport {
     sessionId: SessionId,
     opts: ReadModelBackfillOptions,
   ): Promise<ReadModelBackfillResult> {
-    // The message page, parent relation, and top-level Room corner records are
-    // independent and therefore share the first authenticated relay batch.
-    const [buzzEvents, parentRoomId, sessionCornerStates] = await Promise.all([
+    // The message page, parent relation, and the relay-wide marker page that
+    // discovers canonical corner records are independent and therefore share
+    // the first authenticated batch.
+    const [buzzEvents, parentRoomId, markedCornerStates] = await Promise.all([
       client.sessionEventsBackfill(sessionId, {
         limit: opts.limit,
         until: opts.beforeSeq,
         since: opts.afterSeq,
       }),
       client.getParentChannelId(sessionId),
+      // Canonical corner-state records are parameterized-replaceable
+      // kind:30078 events, which this relay indexes by `#d` ONLY: a `#h`
+      // filter over kind 30078 matches nothing (the same relay truth that
+      // forced the presence and change-review reads onto exact `#d` keys).
+      // The `#t` marker enumeration is the one relay-answerable discovery
+      // read that does not page a relay-wide kind:9007 scan. It is
+      // discovery input only — each discovered corner's state is re-read
+      // authoritatively by its exact `d` coordinate in the second round.
       client.query([
         {
           kinds: [KIND_CORNER_STATE],
-          '#h': [sessionId],
           '#t': [TAG_CORNER_STATE],
-          limit: 500,
+          limit: CORNER_STATE_DISCOVERY_LIMIT,
         },
       ]),
     ]);
     const roomId = parentRoomId ?? sessionId;
-    const cornerStates = parentRoomId
-      ? await client.query([
-          {
-            kinds: [KIND_CORNER_STATE],
-            '#h': [roomId],
-            '#t': [TAG_CORNER_STATE],
-            limit: 500,
-          },
-        ])
-      : sessionCornerStates;
-    // Canonical corner-state records name the children directly. The
-    // chat-open path must never page a relay-wide scan of every kind:9007
-    // create merely to learn those ids.
-    const discovered = deriveRelayAuthorityFacts(cornerStates);
+    // Scope the marker page through the parser boundary — it spans every Room
+    // on the relay and only the parser may interpret which records name this
+    // Room family. The bounded message page contributes further child ids
+    // through its own `subchannel` tags (body-control cards), recovering
+    // corners whose newest record fell beyond the marker page's window.
+    const discovered = deriveRelayAuthorityFacts([...markedCornerStates, ...buzzEvents]);
     const cornerIds = [
       ...new Set([
         ...(parentRoomId ? [sessionId] : []),
@@ -844,25 +850,30 @@ export class BuzzRigTransport implements RigTransport {
       ]),
     ];
     const channelIds = [...new Set([roomId, ...cornerIds])];
-    // One multi-filter read carries every structural and membership fact for
-    // the Room family. Those same facts build ParseAuthority below; there is
-    // no second per-channel listMembers/community/creator pass.
-    const authorityEvents = await client.query([
-      {
-        kinds: [KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA],
-        '#h': channelIds,
-        limit: Math.max(2_000, channelIds.length * 200),
-      },
-      {
-        kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-        '#d': channelIds,
-        limit: channelIds.length * 4,
-      },
-      {
-        kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-        '#h': channelIds,
-        limit: channelIds.length * 4,
-      },
+    // Round two pairs the structural/projection read with an exact-`#d`
+    // read-back of every discovered corner's canonical state. A `#d` key
+    // returns the record's current replaceable value regardless of any
+    // recency window, so this is the authoritative state source even for a
+    // corner whose newest record is older than the marker page covers.
+    const [authorityEvents, cornerStates] = await Promise.all([
+      client.query([
+        {
+          kinds: [KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA],
+          '#h': channelIds,
+          limit: Math.max(2_000, channelIds.length * 200),
+        },
+        {
+          kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+          '#d': channelIds,
+          limit: channelIds.length * 4,
+        },
+        {
+          kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+          '#h': channelIds,
+          limit: channelIds.length * 4,
+        },
+      ]),
+      client.cornerStateBackfill(cornerIds),
     ]);
     const authorityFacts = deriveRelayAuthorityFacts([...authorityEvents, ...cornerStates]);
     const workspaceId =

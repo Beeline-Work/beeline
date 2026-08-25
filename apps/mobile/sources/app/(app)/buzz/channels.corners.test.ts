@@ -78,15 +78,22 @@ vi.mock('@/buzz/local-cache-sync', async (importOriginal) => {
   return {
     ...actual,
     cacheLiveSessionEvents: vi.fn(),
-    refreshRoomCornerCache: vi.fn(async () => new Map()),
-    revalidateCachedMessages: vi.fn(async () => undefined),
   };
 });
 vi.mock('@/buzz/defer-interaction', () => ({ afterInteractions: () => () => undefined }));
 
-/** Corner summaries handed to the screen by the transport mock, keyed by
- *  parent Room id. Declared before the transport mock below reads it. */
+/** Corner summaries seeded into the persisted snapshot, keyed by parent Room. */
 const cornerFixtures: Record<string, Array<{ id: string; name: string; status: string }>> = {};
+
+/** What the transport's read-model backfill answers for the refresh pass.
+ * Defaults to a cornerless empty snapshot; individual tests point it at a
+ * thrown failure or a populated snapshot to exercise each refresh outcome
+ * through the REAL projection boundary (revalidateCachedMessages + merge +
+ * persist), never around it. */
+const backfillBehavior: {
+  mode: 'empty' | 'throw' | 'snapshot';
+  snapshot?: unknown;
+} = { mode: 'empty' };
 
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
@@ -121,12 +128,18 @@ vi.mock('@/sync/transport', () => ({
           : null,
       ),
     }));
-    // Corner lifecycle the enrich pass consumes; keyed by parent Room id.
-    listSubchannelLifecycleForRooms = vi.fn(async (roomIds: string[]) => {
-      const map = new Map<string, never[]>();
-      for (const id of roomIds) map.set(id, (cornerFixtures[id] ?? []) as never[]);
-      return map;
-    });
+    roomRepositoryState = vi.fn(async () => ({ kind: 'none' }) as never);
+    readModelBackfill = async () => {
+      if (backfillBehavior.mode === 'throw')
+        throw backfillBehavior.snapshot ?? new Error('relay unreachable');
+      if (backfillBehavior.mode === 'snapshot') {
+        return { snapshot: backfillBehavior.snapshot, events: [] } as never;
+      }
+      return {
+        snapshot: createWorkspaceSnapshot({ workspaceId: 'shared-1', identities: [] }),
+        events: [],
+      } as never;
+    };
   },
 }));
 vi.mock('@/components/buzz/CommunityRail', async () => {
@@ -305,7 +318,26 @@ function seedWorkspace() {
     updatedAt: now,
     lastAccessedAt: now,
   });
-  const lifecycle = (cornerFixtures['room-1'] ?? []).flatMap((item, index) => {
+  const lifecycle = cornerLifecycleEvents(cornerFixtures['room-1'] ?? []);
+  const snapshot = reduceWorkspaceEvents(
+    createWorkspaceSnapshot({
+      workspaceId: 'shared-1',
+      identities: [
+        { kind: 'human', pubkey: VIEWER, displayName: 'Captain', revision: '1' } as never,
+      ],
+    }),
+    lifecycle,
+  );
+  useBuzzLocalCache.getState().replaceSnapshot(VIEWER, 'room-1', snapshot, undefined);
+  routeParams.current = { communityId: 'shared-1' };
+}
+
+function cornerLifecycleEvents(
+  entries: Array<{ id: string; name: string; status: string }>,
+  generation = 0,
+): ReadEvent[] {
+  return entries.flatMap((item, index) => {
+    const sequence = generation * 100 + index * 2;
     const state: CornerMachineState =
       item.status === 'live'
         ? 'working'
@@ -316,9 +348,9 @@ function seedWorkspace() {
             : 'waiting';
     const open = {
       type: 'lifecycle',
-      eventId: `corner-open-${index}`,
+      eventId: `corner-open-${generation}-${index}`,
       authorPubkey: 'agent',
-      createdAt: index * 2 + 1,
+      createdAt: sequence + 1,
       sourceKind: 30078,
       signature: 'verified',
       scope: 'channel',
@@ -331,7 +363,7 @@ function seedWorkspace() {
         state: 'open',
         name: item.name,
         exists: true,
-        stateAt: index * 2 + 1,
+        stateAt: sequence + 1,
         initialMembers: [{ pubkey: VIEWER, role: 'owner' }],
       },
     } as unknown as ReadEvent;
@@ -340,27 +372,16 @@ function seedWorkspace() {
       open,
       {
         ...open,
-        eventId: `corner-state-${index}`,
-        createdAt: index * 2 + 2,
+        eventId: `corner-state-${generation}-${index}`,
+        createdAt: sequence + 2,
         lifecycle: {
           ...open.lifecycle,
           state,
-          stateAt: index * 2 + 2,
+          stateAt: sequence + 2,
         },
       } as unknown as ReadEvent,
     ];
   });
-  const snapshot = reduceWorkspaceEvents(
-    createWorkspaceSnapshot({
-      workspaceId: 'shared-1',
-      identities: [
-        { kind: 'human', pubkey: VIEWER, displayName: 'Captain', revision: '1' } as never,
-      ],
-    }),
-    lifecycle,
-  );
-  useBuzzLocalCache.getState().replaceSnapshot(VIEWER, 'room-1', snapshot, undefined);
-  routeParams.current = { communityId: 'shared-1' };
 }
 
 async function render(): Promise<ReactTestRenderer> {
@@ -400,6 +421,8 @@ describe('room-list corner dropdown', () => {
     mmkvValues.clear();
     navigation.push.mockClear();
     for (const key of Object.keys(cornerFixtures)) delete cornerFixtures[key];
+    backfillBehavior.mode = 'empty';
+    delete backfillBehavior.snapshot;
     useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
   });
 
@@ -461,5 +484,72 @@ describe('room-list corner dropdown', () => {
 
     expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(0);
     expect(findAllByTestId(tree, 'room-all-corners-room-1')).toHaveLength(0);
+  });
+
+  // The refresh pass owns corner discovery. These cases walk the REAL
+  // projection boundary — revalidateCachedMessages → transport backfill →
+  // snapshot merge → persisted cache → deck render — for each outcome a
+  // flaky relay can produce.
+  it('a failed lifecycle revalidation never wipes the persisted corners', async () => {
+    cornerFixtures['room-1'] = [corner('corner-a', 'fix ledger drift', 'live')];
+    seedWorkspace();
+    backfillBehavior.mode = 'throw';
+    const tree = await render();
+
+    // A thrown read is not an authoritative empty answer: the previously
+    // non-empty persisted corner cache must still drive the deck.
+    expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(1);
+  });
+
+  it('an incomplete lifecycle page that looks empty never wipes the persisted corners', async () => {
+    cornerFixtures['room-1'] = [corner('corner-a', 'fix ledger drift', 'live')];
+    seedWorkspace();
+    const tree = await render();
+
+    // The normalized refresh merges journals, so absence from one bounded
+    // page is unknown rather than proof that an earlier corner disappeared.
+    expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(1);
+  });
+
+  it('an explicit terminal lifecycle update removes a persisted corner from the active deck', async () => {
+    cornerFixtures['room-1'] = [corner('corner-a', 'fix ledger drift', 'live')];
+    seedWorkspace();
+    backfillBehavior.mode = 'snapshot';
+    backfillBehavior.snapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({ workspaceId: 'shared-1', identities: [] }),
+      cornerLifecycleEvents([corner('corner-a', 'fix ledger drift', 'archived')], 1),
+    );
+    const tree = await render();
+
+    // A verified terminal fact is authoritative. Preserving the cache on an
+    // empty/failed page must not resurrect a corner after its close arrives.
+    expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(0);
+  });
+
+  it('corners discovered by a fresh backfill reach the deck', async () => {
+    // No persisted snapshot: discovery must come from this refresh's read.
+    const entries = [corner('corner-e', 'freshly discovered', 'needs-attention')];
+    seedWorkspace();
+    useBuzzLocalCache
+      .getState()
+      .replaceSnapshot(
+        VIEWER,
+        'room-1',
+        createWorkspaceSnapshot({ workspaceId: 'shared-1', identities: [] }),
+        undefined,
+      );
+    backfillBehavior.mode = 'snapshot';
+    backfillBehavior.snapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({
+        workspaceId: 'shared-1',
+        identities: [
+          { kind: 'human', pubkey: VIEWER, displayName: 'Captain', revision: '1' } as never,
+        ],
+      }),
+      cornerLifecycleEvents(entries),
+    );
+    const tree = await render();
+
+    expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(1);
   });
 });

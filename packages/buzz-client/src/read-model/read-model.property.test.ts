@@ -4,14 +4,17 @@ import { describe, expect, it } from 'vitest';
 import { createIdentity } from '../identity.js';
 import {
   KIND_CHANNEL_MEMBERS,
+  KIND_AGENT_DRAFT,
   KIND_CORNER_STATE,
   KIND_CREATE_GROUP,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_ACTIVITY,
+  TAG_AGENT_DRAFT,
+  TAG_AGENT_THOUGHT,
   TAG_CORNER_STATE,
   TAG_PARENT,
 } from '../kinds.js';
-import { guardReadModelBoot } from './cache.js';
+import { guardReadModelBoot, snapshotForPersistence } from './cache.js';
 import { parseRelayEvent } from './parser.js';
 import {
   commitRoomCoverage,
@@ -120,6 +123,39 @@ function cornerState(state: string, createdAt: number): NostrEvent {
       ['at', String(createdAt)],
     ],
     content: '',
+  });
+}
+
+function turn(status: 'working' | 'complete' | 'failed', createdAt: number): NostrEvent {
+  return message(agent, `turn ${status}`, createdAt, [
+    ['t', 'body-control'],
+    ['t', 'agent-turn'],
+    ['request', 'request-1'],
+    ['session', 'session-1'],
+    ['agent', agent.publicKey],
+    ['status', status],
+  ]);
+}
+
+function lane(
+  marker: typeof TAG_AGENT_DRAFT | typeof TAG_AGENT_THOUGHT,
+  text: string,
+  createdAt: number,
+  closed = false,
+): NostrEvent {
+  return signed(agent, {
+    created_at: createdAt,
+    kind: KIND_AGENT_DRAFT,
+    tags: [
+      ['d', `${marker}:${ROOM}`],
+      ['h', ROOM],
+      ['t', marker],
+      ['agent', agent.publicKey],
+      ['session', 'session-1'],
+      ...(marker === TAG_AGENT_DRAFT ? [['request', 'request-1']] : []),
+      ...(closed ? [['status', 'closed']] : []),
+    ],
+    content: text,
   });
 }
 
@@ -426,7 +462,7 @@ describe('read-model invariants (property based)', () => {
     );
   });
 
-  it('RM-14 folds activity only within a session boundary and never eats prose', () => {
+  it('RM-14 renders activity only for a live turn and never eats prose', () => {
     fc.assert(
       fc.property(
         fc.string({ minLength: 1 }).filter((value) => value.trim().length > 0),
@@ -435,29 +471,205 @@ describe('read-model invariants (property based)', () => {
             message(
               agent,
               JSON.stringify({
-                sessionId: 's',
+                sessionId: 'session-1',
                 update: { sessionUpdate: 'tool_activity', title: 'Read' },
               }),
               createdAt,
               [['t', TAG_AGENT_ACTIVITY]],
             );
           const snapshot = replay(
-            parse([
-              message(human, prose, 110),
-              activity(111),
-              activity(112),
-              message(agent, 'done', 113),
-            ]),
+            parse([message(human, prose, 110), turn('working', 111), activity(111), activity(112)]),
           );
           const transcript = selectTranscript(snapshot, ROOM);
-          expect(transcript.map((item) => item.kind)).toEqual([
+          expect(transcript.map((item) => item.kind)).toEqual(['human-message', 'activity']);
+          expect(transcript[1]?.kind === 'activity' && transcript[1].steps).toHaveLength(2);
+          const settled = replay(
+            parse([
+              message(human, prose, 110),
+              turn('working', 111),
+              activity(112),
+              message(agent, 'done', 113, [['t', 'agent-message']]),
+              turn('complete', 114),
+            ]),
+          );
+          expect(selectTranscript(settled, ROOM).map((item) => item.kind)).toEqual([
             'human-message',
-            'activity',
             'agent-message',
           ]);
-          expect(transcript[1]?.kind === 'activity' && transcript[1].steps).toHaveLength(2);
         },
       ),
+    );
+  });
+
+  it('RM-17 maps live thought, tool, and message lanes then spends all machine work on success', () => {
+    fc.assert(
+      fc.property(fc.integer(), (seed) => {
+        const tool = message(
+          agent,
+          JSON.stringify({
+            sessionId: 'session-1',
+            update: {
+              sessionUpdate: 'activity_batch',
+              updates: [
+                {
+                  sessionUpdate: 'tool_activity',
+                  toolCallId: 'gate',
+                  title: 'Certification gate',
+                  status: 'completed',
+                },
+              ],
+            },
+          }),
+          403,
+          [['t', TAG_AGENT_ACTIVITY]],
+        );
+        const liveEvents = parse([
+          message(human, 'please check', 400),
+          turn('working', 401),
+          lane(TAG_AGENT_THOUGHT, 'Checking the gate', 402),
+          tool,
+          lane(TAG_AGENT_DRAFT, 'The answer is arriving', 404),
+        ]);
+        const live = selectTranscript(replay(delivery(liveEvents, seed)), ROOM);
+        const liveTurn = live.find((item) => item.kind === 'activity');
+        expect(liveTurn).toMatchObject({
+          kind: 'activity',
+          thought: 'Checking the gate',
+          messageDraft: 'The answer is arriving',
+        });
+        expect(liveTurn?.kind === 'activity' && liveTurn.steps[0]?.details[0]?.kind).toBe('tool');
+
+        const settled = replay(
+          delivery(
+            parse([
+              ...[message(human, 'please check', 400), turn('working', 401), tool],
+              lane(TAG_AGENT_THOUGHT, '', 405, true),
+              lane(TAG_AGENT_DRAFT, '', 406, true),
+              message(agent, 'Only this answer remains.', 407, [['t', 'agent-message']]),
+              turn('complete', 408),
+            ]),
+            seed,
+          ),
+        );
+        expect(selectTranscript(settled, ROOM).map((item) => item.kind)).toEqual([
+          'human-message',
+          'agent-message',
+        ]);
+        expect(JSON.stringify(snapshotForPersistence(settled))).not.toContain('activity_batch');
+      }),
+      { numRuns: 60 },
+    );
+  });
+
+  it('RM-18 keeps exactly one durable failure fact and no thought/tool residue', () => {
+    fc.assert(
+      fc.property(fc.integer(), (seed) => {
+        const failed = message(
+          agent,
+          JSON.stringify({
+            sessionId: 'physical-session',
+            update: {
+              sessionUpdate: 'activity_batch',
+              updates: [
+                {
+                  sessionUpdate: 'tool_activity',
+                  toolCallId: 'gate',
+                  title: 'Certification gate',
+                  status: 'failed',
+                  output: 'sh: 1: pnpm: not found',
+                },
+              ],
+            },
+          }),
+          503,
+          [
+            ['t', TAG_AGENT_ACTIVITY],
+            ['status', 'failed'],
+          ],
+        );
+        const snapshot = replay(
+          delivery(
+            parse([
+              message(human, 'run the gate', 500),
+              turn('working', 501),
+              lane(TAG_AGENT_THOUGHT, 'Running checks', 502),
+              failed,
+              message(agent, 'The gate could not run.', 504, [['t', 'agent-message']]),
+              turn('failed', 505),
+            ]),
+            seed,
+          ),
+        );
+        const transcript = selectTranscript(snapshot, ROOM);
+        expect(transcript.filter((item) => item.kind === 'durable-fact')).toHaveLength(1);
+        expect(transcript.filter((item) => item.kind === 'activity')).toHaveLength(0);
+        expect(transcript.find((item) => item.kind === 'durable-fact')).toMatchObject({
+          factKind: 'failure',
+        });
+        const persisted = snapshotForPersistence(snapshot);
+        expect(JSON.stringify(persisted)).not.toContain('Running checks');
+        expect(JSON.stringify(persisted)).toContain('Certification gate');
+      }),
+      { numRuns: 60 },
+    );
+  });
+
+  it('RM-19 collapses failure, merge, and consequential action runs to one durable fact', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom('failure' as const, 'merge' as const, 'action' as const),
+        fc.integer(),
+        (factKind, seed) => {
+          const factTags =
+            factKind === 'failure'
+              ? ([['status', 'failed']] as string[][])
+              : factKind === 'merge'
+                ? ([['delivery-stage', 'landed']] as string[][])
+                : ([['t', 'corner-open']] as string[][]);
+          const fact = (id: string, createdAt: number) =>
+            message(
+              agent,
+              JSON.stringify({
+                sessionId: 'physical-session',
+                update: {
+                  sessionUpdate: 'activity_batch',
+                  updates: [
+                    {
+                      sessionUpdate: 'tool_activity',
+                      toolCallId: id,
+                      title: id,
+                      status: factKind === 'failure' ? 'failed' : 'completed',
+                    },
+                  ],
+                },
+              }),
+              createdAt,
+              [['t', TAG_AGENT_ACTIVITY], ...factTags],
+            );
+          const snapshot = replay(
+            delivery(
+              parse([
+                message(human, 'do the consequential work', 600),
+                turn('working', 601),
+                fact('first fact', 602),
+                fact('newest fact', 603),
+                message(agent, 'Done.', 604, [['t', 'agent-message']]),
+                turn(factKind === 'failure' ? 'failed' : 'complete', 605),
+              ]),
+              seed,
+            ),
+          );
+          const facts = selectTranscript(snapshot, ROOM).filter(
+            (item) => item.kind === 'durable-fact',
+          );
+          expect(facts).toHaveLength(1);
+          expect(facts[0]).toMatchObject({ factKind });
+          expect(
+            selectTranscript(snapshot, ROOM).filter((item) => item.kind === 'activity'),
+          ).toEqual([]);
+        },
+      ),
+      { numRuns: 90 },
     );
   });
 

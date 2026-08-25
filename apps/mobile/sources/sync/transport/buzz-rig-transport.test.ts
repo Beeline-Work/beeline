@@ -203,8 +203,10 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     expect(
       selectTranscript(result.snapshot, ROOM).filter((item) => item.kind === 'human-message'),
     ).toHaveLength(1);
+    // A settled routine tool update remains typed in the snapshot but is
+    // spent transcript work: only live turns or consequential facts render.
     expect(selectTranscript(result.snapshot, ROOM).some((item) => item.kind === 'activity')).toBe(
-      true,
+      false,
     );
     expect(selectMembers(result.snapshot, ROOM).map((member) => member.pubkey)).toEqual(
       expect.arrayContaining([human.publicKey, agent.publicKey]),

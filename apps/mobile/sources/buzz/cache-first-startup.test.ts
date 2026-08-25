@@ -15,7 +15,7 @@ describe('Buzz cache-first startup', () => {
   it('keys the room list cache before waiting for a relay client', () => {
     const activeViewer = channelsSource.indexOf('setActiveBuzzCacheViewer(currentIdentity.publicKey);');
     const identity = channelsSource.indexOf('setIdentity(currentIdentity);', activeViewer);
-    const relay = channelsSource.indexOf('await nextTransport.ensureClient();');
+    const relay = channelsSource.indexOf('nextTransport.ensureClient()');
 
     expect(activeViewer).toBeGreaterThanOrEqual(0);
     expect(identity).toBeGreaterThan(activeViewer);

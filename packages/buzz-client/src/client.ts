@@ -635,9 +635,9 @@ export class BuzzClient {
     return agent;
   }
 
-  listAgents(communityId: string): Promise<Agent[]> {
+  listAgents(communityId: string, options?: { forceRefresh?: boolean }): Promise<Agent[]> {
     const cached = this.agentListCache.get(communityId);
-    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+    if (!options?.forceRefresh && cached && cached.expiresAt > Date.now()) return cached.promise;
     const entry = {
       expiresAt: Number.POSITIVE_INFINITY,
       promise: listAgents(this.ctx, communityId, 200, {

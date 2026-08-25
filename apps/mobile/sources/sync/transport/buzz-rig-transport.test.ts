@@ -336,6 +336,11 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     fixture.client.listAgents.mockResolvedValue([
       { pubkey: agent.publicKey, displayName: 'Buzzy', raw: { id: 'agent-identity' } },
       { pubkey: peerAgent.publicKey, displayName: 'Ox', raw: { id: 'peer-agent-identity' } },
+      {
+        pubkey: unattachedAgent.publicKey,
+        displayName: 'Unattached',
+        raw: { id: 'unattached-agent-identity' },
+      },
     ]);
 
     fixture.deliver(message(agent, 'A proven human-to-agent reply.', 11));
@@ -382,6 +387,9 @@ describe('BuzzRigTransport typed read-model boundary', () => {
       ),
     );
     expect(fixture.client.listMembers).toHaveBeenCalledTimes(2);
+    expect(fixture.client.listAgents).toHaveBeenLastCalledWith(WORKSPACE, {
+      forceRefresh: true,
+    });
 
     const readEvents = delivered.flatMap((event) =>
       event.type === 'read-model' && event.event.type !== 'unknown' ? [event.event] : [],

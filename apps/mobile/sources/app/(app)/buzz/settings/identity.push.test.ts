@@ -12,6 +12,7 @@ const pushModule = vi.hoisted(() => ({
   getBuzzPushEnabled: vi.fn(async () => true),
   getBuzzPushRegistrationState: vi.fn(async () => null),
   registerBuzzPushNotifications: vi.fn(),
+  sendBuzzPushTestNotification: vi.fn(),
   setBuzzPushEnabled: vi.fn(),
 }));
 const permissionInfo = vi.hoisted(() => ({
@@ -231,6 +232,41 @@ describe('identity settings push row honesty', () => {
     expect(toggle(renderer).value).toBe(true);
     expect(subtitleText(renderer)).toContain('OS permission: allowed');
     expect(renderer.root.findAllByProps({ testID: 'push-retry-registration' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'push-send-test-notification' })).toBeDefined();
+  });
+
+  it('sends a test only when registered and shows the gateway result', async () => {
+    pushModule.getBuzzPushRegistrationState.mockResolvedValue(
+      registrationState({ registered: true, retryable: false, phase: 'registered', failedAttempts: 0 }),
+    );
+    pushModule.sendBuzzPushTestNotification.mockResolvedValue(undefined);
+    const renderer = await renderScreen();
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'push-send-test-notification' }).props.onPress();
+    });
+
+    expect(pushModule.sendBuzzPushTestNotification).toHaveBeenCalledTimes(1);
+    expect(renderer.root.findByProps({ testID: 'push-test-notification-result' }).props.children).toBe(
+      'Test sent - check your notification shade',
+    );
+  });
+
+  it('hides the test action when push is not registered and surfaces gateway errors', async () => {
+    const unregistered = await renderScreen();
+    expect(unregistered.root.findAllByProps({ testID: 'push-send-test-notification' })).toHaveLength(0);
+
+    pushModule.getBuzzPushRegistrationState.mockResolvedValue(
+      registrationState({ registered: true, retryable: false, phase: 'registered', failedAttempts: 0 }),
+    );
+    pushModule.sendBuzzPushTestNotification.mockRejectedValue(new Error('test-send unavailable'));
+    const registered = await renderScreen();
+    await act(async () => {
+      registered.root.findByProps({ testID: 'push-send-test-notification' }).props.onPress();
+    });
+    expect(registered.root.findByProps({ testID: 'push-test-notification-result' }).props.children).toBe(
+      'test-send unavailable',
+    );
   });
 
   it('toggling on reflects the registration result, not just the request', async () => {

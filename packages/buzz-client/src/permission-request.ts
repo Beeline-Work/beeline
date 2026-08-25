@@ -28,7 +28,7 @@ export const MAX_PERMISSION_SUMMARY_CHARS = 600;
 export const MAX_PERMISSION_NOTE_CHARS = 600;
 export const MAX_PERMISSION_REASON_CHARS = 80;
 export const MAX_PERMISSION_LIST_ITEMS = 128;
-export const MAX_PERMISSION_USES = 10_000;
+export const MAX_PERMISSION_USES = 100_000;
 export const MAX_PERMISSION_RATE_WINDOW_SECONDS = 31 * 24 * 60 * 60;
 export const MAX_PERMISSION_GRANT_TTL_SECONDS = 31 * 24 * 60 * 60;
 export const MAX_PERMISSION_CONTENT_CHARS = 32_000;
@@ -53,6 +53,55 @@ export type NormalizedDestination = {
   type: 'email' | 'phone' | 'social' | 'room' | 'url';
   value: string;
 };
+
+export type MissionCornerOperation = 'open' | 'close';
+export type MissionScheduleOperation = 'create' | 'update' | 'pause' | 'delete' | 'fire';
+export type MissionScheduleMode = 'script' | 'model';
+
+/** A static budget slice owned by exactly one mission agent. */
+export interface MissionTargetAllocation {
+  agentPubkey: string;
+  maxActiveCorners: number;
+  maxReservedTokensPerDay: number;
+  maxTotalReservedTokens: number;
+}
+
+/**
+ * A non-overlapping schedule allocation. The captain grants the slot and its
+ * limits; the CoS supplies a new exact revision digest for every audited
+ * create/update/fire action without asking the captain to re-sign it.
+ */
+export interface MissionScheduleAllocation {
+  scheduleId: string;
+  targetAgentPubkey: string;
+  modes: MissionScheduleMode[];
+  maxRuns: number;
+  maxReservedTokensPerRun: number;
+  maxReservedTokensPerDay: number;
+  maxTotalReservedTokens: number;
+  maxScriptRuntimeSeconds: number;
+  revisionDigest?: string;
+}
+
+/**
+ * One captain-signed mission boundary. Derived actions are represented as
+ * attenuated values of this same scope and verified by the ordinary
+ * permission ledger; this is deliberately not a second grant system.
+ */
+export interface MissionControlScope {
+  type: 'mission.control';
+  missionId: string;
+  workspaceId: string;
+  roomId: string;
+  controllerAgentPubkey: string;
+  repository: { key: string; targetBranch: string };
+  cornerOperations: MissionCornerOperation[];
+  scheduleOperations: MissionScheduleOperation[];
+  targetAllocations: MissionTargetAllocation[];
+  scheduleAllocations: MissionScheduleAllocation[];
+  /** Standing land authority is exact to `repository`; false grants none. */
+  land: boolean;
+}
 
 export type PermissionScope =
   | {
@@ -100,6 +149,7 @@ export type PermissionScope =
       scheduleId: string;
       revisionDigest: string;
     }
+  | MissionControlScope
   | {
       type: 'delegation.escalate';
       delegationId: string;
@@ -297,6 +347,16 @@ export const PERMISSION_SCOPE_REGISTRY: Readonly<
     executor: 'body',
     tier: tierOne,
   },
+  'mission.control': {
+    type: 'mission.control',
+    minimumRole: 'owner',
+    defaultGrantTtlSeconds: 7 * 24 * 60 * 60,
+    maximumGrantTtlSeconds: MAX_PERMISSION_GRANT_TTL_SECONDS,
+    defaultMaxUses: 50_000,
+    defaultRateWindowSeconds: 24 * 60 * 60,
+    executor: 'body',
+    tier: tierOne,
+  },
   'delegation.escalate': {
     type: 'delegation.escalate',
     minimumRole: 'admin',
@@ -350,6 +410,21 @@ function uniqueStrings(
   const parsed = value.map(parse);
   if (parsed.some((candidate) => !candidate)) return undefined;
   const result = parsed as string[];
+  return new Set(result).size === result.length ? result : undefined;
+}
+
+function enumStrings<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  max = MAX_PERMISSION_LIST_ITEMS,
+): T[] | undefined {
+  if (!Array.isArray(value) || value.length > max) return undefined;
+  if (
+    value.some((candidate) => typeof candidate !== 'string' || !allowed.includes(candidate as T))
+  ) {
+    return undefined;
+  }
+  const result = value as T[];
   return new Set(result).size === result.length ? result : undefined;
 }
 
@@ -535,6 +610,174 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
         revisionDigest,
       };
     }
+    case 'mission.control': {
+      const missionId = token(input.missionId);
+      const workspaceId = token(input.workspaceId);
+      const roomId = token(input.roomId);
+      const controllerAgentPubkey = pubkey(input.controllerAgentPubkey);
+      const repositoryInput = object(input.repository);
+      const repositoryKey = token(repositoryInput?.key);
+      const targetBranch = token(repositoryInput?.targetBranch);
+      const cornerOperations = enumStrings<MissionCornerOperation>(input.cornerOperations, [
+        'open',
+        'close',
+      ]);
+      const scheduleOperations = enumStrings<MissionScheduleOperation>(input.scheduleOperations, [
+        'create',
+        'update',
+        'pause',
+        'delete',
+        'fire',
+      ]);
+      const rawTargets = Array.isArray(input.targetAllocations)
+        ? input.targetAllocations
+        : undefined;
+      const targetAllocations = rawTargets?.flatMap((candidate) => {
+        const allocation = object(candidate);
+        const agentPubkey = pubkey(allocation?.agentPubkey);
+        const maxActiveCorners = integer(allocation?.maxActiveCorners, 0, 1_000);
+        const maxReservedTokensPerDay = integer(
+          allocation?.maxReservedTokensPerDay,
+          0,
+          100_000_000,
+        );
+        const maxTotalReservedTokens = integer(
+          allocation?.maxTotalReservedTokens,
+          0,
+          Number.MAX_SAFE_INTEGER,
+        );
+        return agentPubkey &&
+          maxActiveCorners !== undefined &&
+          maxReservedTokensPerDay !== undefined &&
+          maxTotalReservedTokens !== undefined &&
+          maxReservedTokensPerDay <= maxTotalReservedTokens
+          ? [
+              {
+                agentPubkey,
+                maxActiveCorners,
+                maxReservedTokensPerDay,
+                maxTotalReservedTokens,
+              },
+            ]
+          : [];
+      });
+      const rawSchedules = Array.isArray(input.scheduleAllocations)
+        ? input.scheduleAllocations
+        : undefined;
+      const scheduleAllocations = rawSchedules?.flatMap((candidate) => {
+        const allocation = object(candidate);
+        const scheduleId = token(allocation?.scheduleId);
+        const targetAgentPubkey = pubkey(allocation?.targetAgentPubkey);
+        const modes = enumStrings<MissionScheduleMode>(allocation?.modes, ['script', 'model']);
+        const maxRuns = integer(allocation?.maxRuns, 1, 1_000_000);
+        const maxReservedTokensPerRun = integer(
+          allocation?.maxReservedTokensPerRun,
+          0,
+          100_000_000,
+        );
+        const maxReservedTokensPerDay = integer(
+          allocation?.maxReservedTokensPerDay,
+          0,
+          100_000_000,
+        );
+        const maxTotalReservedTokens = integer(
+          allocation?.maxTotalReservedTokens,
+          0,
+          Number.MAX_SAFE_INTEGER,
+        );
+        const maxScriptRuntimeSeconds = integer(allocation?.maxScriptRuntimeSeconds, 1, 3_600);
+        const revisionDigest =
+          allocation?.revisionDigest === undefined
+            ? undefined
+            : typeof allocation.revisionDigest === 'string' &&
+                SHA_256.test(allocation.revisionDigest)
+              ? allocation.revisionDigest
+              : null;
+        return scheduleId &&
+          targetAgentPubkey &&
+          modes &&
+          modes.length > 0 &&
+          maxRuns !== undefined &&
+          maxReservedTokensPerRun !== undefined &&
+          maxReservedTokensPerDay !== undefined &&
+          maxTotalReservedTokens !== undefined &&
+          maxScriptRuntimeSeconds !== undefined &&
+          revisionDigest !== null &&
+          maxReservedTokensPerRun <= maxReservedTokensPerDay &&
+          maxReservedTokensPerDay <= maxTotalReservedTokens &&
+          maxReservedTokensPerRun * maxRuns >= maxTotalReservedTokens
+          ? [
+              {
+                scheduleId,
+                targetAgentPubkey,
+                modes,
+                maxRuns,
+                maxReservedTokensPerRun,
+                maxReservedTokensPerDay,
+                maxTotalReservedTokens,
+                maxScriptRuntimeSeconds,
+                ...(revisionDigest ? { revisionDigest } : {}),
+              },
+            ]
+          : [];
+      });
+      const targetKeys = targetAllocations?.map((allocation) => allocation.agentPubkey);
+      const scheduleKeys = scheduleAllocations?.map((allocation) => allocation.scheduleId);
+      if (
+        !missionId ||
+        !workspaceId ||
+        !roomId ||
+        !controllerAgentPubkey ||
+        !repositoryKey ||
+        !targetBranch ||
+        !cornerOperations ||
+        !scheduleOperations ||
+        !rawTargets ||
+        rawTargets.length === 0 ||
+        rawTargets.length > MAX_PERMISSION_LIST_ITEMS ||
+        !targetAllocations ||
+        targetAllocations.length !== rawTargets.length ||
+        new Set(targetKeys).size !== targetKeys?.length ||
+        !targetAllocations.some((allocation) => allocation.agentPubkey === controllerAgentPubkey) ||
+        !rawSchedules ||
+        rawSchedules.length > MAX_PERMISSION_LIST_ITEMS ||
+        !scheduleAllocations ||
+        scheduleAllocations.length !== rawSchedules.length ||
+        new Set(scheduleKeys).size !== scheduleKeys?.length ||
+        scheduleAllocations.some(
+          (allocation) => !targetKeys?.includes(allocation.targetAgentPubkey),
+        ) ||
+        targetAllocations.some((target) => {
+          const schedules = scheduleAllocations.filter(
+            (allocation) => allocation.targetAgentPubkey === target.agentPubkey,
+          );
+          return (
+            schedules.reduce((sum, allocation) => sum + allocation.maxReservedTokensPerDay, 0) >
+              target.maxReservedTokensPerDay ||
+            schedules.reduce((sum, allocation) => sum + allocation.maxTotalReservedTokens, 0) >
+              target.maxTotalReservedTokens
+          );
+        }) ||
+        (scheduleOperations.length > 0 && scheduleAllocations.length === 0) ||
+        (input.land !== true && input.land !== false) ||
+        (cornerOperations.length === 0 && scheduleOperations.length === 0 && input.land === false)
+      ) {
+        return undefined;
+      }
+      return {
+        type: input.type,
+        missionId,
+        workspaceId,
+        roomId,
+        controllerAgentPubkey,
+        repository: { key: repositoryKey, targetBranch },
+        cornerOperations,
+        scheduleOperations,
+        targetAllocations,
+        scheduleAllocations,
+        land: input.land,
+      };
+    }
     case 'delegation.escalate': {
       const delegationId = protocolId(input.delegationId);
       const extraTurns = integer(input.extraTurns, 1, 1_000);
@@ -619,6 +862,17 @@ function parseEnvelope(
   } else if (maxMinorUnits !== undefined || currency !== undefined) {
     return undefined;
   }
+  if (
+    scope.type === 'mission.control' &&
+    (maxReservedTokens === undefined ||
+      maxReservedTokens >
+        scope.targetAllocations.reduce(
+          (sum, allocation) => sum + allocation.maxTotalReservedTokens,
+          0,
+        ))
+  ) {
+    return undefined;
+  }
   return {
     tier,
     mode: mode as 'standing' | 'per-action',
@@ -649,6 +903,14 @@ export function defaultPermissionGrantEnvelope(
     budget: {
       ...(scope.type === 'money.spend'
         ? { maxMinorUnits: scope.maxMinorUnits, currency: scope.currency }
+        : {}),
+      ...(scope.type === 'mission.control'
+        ? {
+            maxReservedTokens: scope.targetAllocations.reduce(
+              (sum, allocation) => sum + allocation.maxTotalReservedTokens,
+              0,
+            ),
+          }
         : {}),
     },
     rate: { maxUses, windowSeconds: policy.defaultRateWindowSeconds },
@@ -697,7 +959,9 @@ function parseRequestContent(value: unknown): PermissionRequestV1 | undefined {
     requestedAt === undefined ||
     requestExpiresAt === undefined ||
     requestExpiresAt <= requestedAt ||
-    (scope.type === 'room.create' && scope.workspaceId !== workspaceId)
+    (scope.type === 'room.create' && scope.workspaceId !== workspaceId) ||
+    (scope.type === 'mission.control' &&
+      (scope.workspaceId !== workspaceId || scope.roomId !== roomId))
   ) {
     return undefined;
   }
@@ -1307,6 +1571,52 @@ export function permissionScopeAllows(boundary: PermissionScope, action: Permiss
         stable(boundary.destination) === stable(action.destination) &&
         sameSet(boundary.artifacts, action.artifacts, (value) => stable(value))
       );
+    case 'mission.control': {
+      if (action.type !== 'mission.control') return false;
+      const includes = <T>(allowed: readonly T[], requested: readonly T[]) =>
+        requested.every((candidate) => allowed.includes(candidate));
+      const targetsAllowed = action.targetAllocations.every((requested) => {
+        const allowed = boundary.targetAllocations.find(
+          (candidate) => candidate.agentPubkey === requested.agentPubkey,
+        );
+        return (
+          allowed !== undefined &&
+          requested.maxActiveCorners <= allowed.maxActiveCorners &&
+          requested.maxReservedTokensPerDay <= allowed.maxReservedTokensPerDay &&
+          requested.maxTotalReservedTokens <= allowed.maxTotalReservedTokens
+        );
+      });
+      const schedulesAllowed = action.scheduleAllocations.every((requested) => {
+        const allowed = boundary.scheduleAllocations.find(
+          (candidate) =>
+            candidate.scheduleId === requested.scheduleId &&
+            candidate.targetAgentPubkey === requested.targetAgentPubkey,
+        );
+        return (
+          allowed !== undefined &&
+          includes(allowed.modes, requested.modes) &&
+          requested.maxRuns <= allowed.maxRuns &&
+          requested.maxReservedTokensPerRun <= allowed.maxReservedTokensPerRun &&
+          requested.maxReservedTokensPerDay <= allowed.maxReservedTokensPerDay &&
+          requested.maxTotalReservedTokens <= allowed.maxTotalReservedTokens &&
+          requested.maxScriptRuntimeSeconds <= allowed.maxScriptRuntimeSeconds &&
+          (allowed.revisionDigest === undefined ||
+            allowed.revisionDigest === requested.revisionDigest)
+        );
+      });
+      return (
+        boundary.missionId === action.missionId &&
+        boundary.workspaceId === action.workspaceId &&
+        boundary.roomId === action.roomId &&
+        boundary.controllerAgentPubkey === action.controllerAgentPubkey &&
+        stable(boundary.repository) === stable(action.repository) &&
+        includes(boundary.cornerOperations, action.cornerOperations) &&
+        includes(boundary.scheduleOperations, action.scheduleOperations) &&
+        targetsAllowed &&
+        schedulesAllowed &&
+        (!action.land || boundary.land)
+      );
+    }
     default:
       return stable(boundary) === stable(action);
   }
@@ -1343,6 +1653,12 @@ export type PermissionFreshReader = {
   roleForRoom(roomId: string, pubkey: string): Promise<'owner' | 'admin' | 'member' | null>;
   hasDeviceCustody(pubkey: string): Promise<boolean>;
   permissionHistory(roomId: string, permissionId: string): Promise<readonly NostrEvent[]>;
+  /** Direct grant-indexed revocation read; mission stop checks must not depend on a capped mixed history. */
+  permissionRevocations?(
+    roomId: string,
+    permissionId: string,
+    grantEventId: string,
+  ): Promise<readonly NostrEvent[]>;
 };
 
 export type PermissionVerificationResult =
@@ -1489,7 +1805,17 @@ export async function verifyPermissionAction(input: {
     if (input.now > grant.expiresAt) {
       return { authorized: false, terminal: true, reason: 'expired' };
     }
-    const revocations = history.flatMap((event) => {
+    const directRevocations = input.reader.permissionRevocations
+      ? await input.reader.permissionRevocations(
+          request.value.roomId,
+          request.value.permissionId,
+          winner.event.id,
+        )
+      : [];
+    const revocationEvents = [...history, ...directRevocations].filter(
+      (event, index, all) => all.findIndex((candidate) => candidate.id === event.id) === index,
+    );
+    const revocations = revocationEvents.flatMap((event) => {
       const parsed = parsePermissionRevocation(event, request);
       return parsed && parsed.value.revokedAt <= input.now ? [parsed] : [];
     });

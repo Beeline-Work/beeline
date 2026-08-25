@@ -1,6 +1,6 @@
 /**
- * Ref-policy push broker — the structural half of "an agent can never land on
- * main without the owner's signed approval".
+ * Ref-policy push broker — the structural half of "an agent can advance a
+ * protected ref only under one explicit owner-signed authorization".
  *
  * ## The invariant
  *
@@ -16,8 +16,8 @@
  *    BEFORE any credential is used:
  *      - the corner's own feature branch → allowed;
  *      - a protected ref (the landing target) → performed only with a valid
- *        owner-signed corner approval artifact (the same `buzz-merge-approval`
- *        signature the gate and `findHumanMergeApproval` verify);
+ *        owner-signed corner approval artifact, or a separately verified
+ *        mission-standing-land grant bound to the fresh Room repository key;
  *      - anything else → refused with a plain-language reason.
  *
  * Every brokered decision is audited as one greppable daemon log line naming
@@ -67,10 +67,38 @@ export interface VerifiedBrokerApproval {
   approval: BrokerApproval;
 }
 
+/** Distinct protected-ref carve-out; never represented as a corner approval. */
+export interface MissionStandingLandAuthorization {
+  kind: 'mission-standing-land';
+  verified: true;
+  missionId: string;
+  grantEventId: string;
+  roomId: string;
+  controllerAgentPubkey: string;
+  repositoryKey: string;
+  targetRef: string;
+}
+
+export type BrokerProtectedAuthorization =
+  | { kind: 'corner-approval'; verified: true; approval: BrokerApproval }
+  | MissionStandingLandAuthorization;
+
+export interface BrokerRepositoryContext {
+  /** Fresh `RepositoryTruth.binding.key`, never a path, display name, or remote alias. */
+  repositoryKey: string;
+  roomId: string;
+  controllerAgentPubkey: string;
+}
+
 export type BrokerDecision =
   | { action: 'allow'; refClass: Extract<BrokerRefClass, 'feature'>; reason: string }
   | {
       action: 'perform-with-approval';
+      refClass: Extract<BrokerRefClass, 'protected'>;
+      reason: string;
+    }
+  | {
+      action: 'perform-with-mission-grant';
       refClass: Extract<BrokerRefClass, 'protected'>;
       reason: string;
     }
@@ -125,7 +153,10 @@ export interface EvaluateBrokeredPushInput {
    * `{verified:false}` means no valid owner-signed corner approval was
    * presented — a protected push is refused.
    */
+  authorization?: BrokerProtectedAuthorization | { verified: false };
+  /** Backward-compatible ordinary-corner input; normalized to the union above. */
   approval?: VerifiedBrokerApproval | { verified: false };
+  repository?: BrokerRepositoryContext;
   /** Corner requesting this push. Required for a protected landing. */
   cornerId?: string;
 }
@@ -184,9 +215,13 @@ export function evaluateBrokeredPush(input: EvaluateBrokeredPushInput): BrokerDe
           'target. Only the corner’s own feature branch may be pushed directly; ask in the Room to open a corner for other work.',
       };
     }
-    // Protected: requires the verified corner artifact binding THIS target.
-    const approval = input.approval;
-    if (!approval || !approval.verified) {
+    // Protected: requires one explicit authorization variant binding THIS target.
+    const authorization =
+      input.authorization ??
+      (input.approval?.verified
+        ? ({ kind: 'corner-approval', ...input.approval } as const)
+        : input.approval);
+    if (!authorization || !authorization.verified) {
       return {
         action: 'refuse',
         refClass,
@@ -198,23 +233,61 @@ export function evaluateBrokeredPush(input: EvaluateBrokeredPushInput): BrokerDe
     }
     const [src, dst] = refspec.includes(':') ? refspec.split(':', 2) : [undefined, refspec];
     const boundTip = src && SHA_40.test(src) ? src : undefined;
-    if (
-      normalizeBranchRef(approval.approval.branch) !== normalizeBranchRef(dst!) ||
-      !input.cornerId ||
-      approval.approval.cornerId !== input.cornerId ||
-      !boundTip
+    if (!boundTip) {
+      return {
+        action: 'refuse',
+        refClass,
+        reason: 'A protected ref may only be advanced to one exact commit.',
+      };
+    }
+    if (authorization.kind === 'corner-approval') {
+      if (
+        normalizeBranchRef(authorization.approval.branch) !== normalizeBranchRef(dst!) ||
+        !input.cornerId ||
+        authorization.approval.cornerId !== input.cornerId ||
+        (input.repository !== undefined &&
+          authorization.approval.repo !== input.repository.repositoryKey)
+      ) {
+        return {
+          action: 'refuse',
+          refClass,
+          reason:
+            'The presented approval does not bind this corner, repository, and protected ref, so it authorizes nothing. ' +
+            'Use the approval card in this corner.',
+        };
+      }
+    } else if (
+      !input.repository ||
+      authorization.roomId !== input.repository.roomId ||
+      authorization.repositoryKey !== input.repository.repositoryKey ||
+      authorization.controllerAgentPubkey !== input.repository.controllerAgentPubkey ||
+      normalizeBranchRef(authorization.targetRef) !== normalizeBranchRef(dst!)
     ) {
       return {
         action: 'refuse',
         refClass,
         reason:
-          'The presented approval does not bind this corner and protected ref, so it authorizes nothing. ' +
-          'Use the approval card in this corner.',
+          'The mission grant does not bind the fresh Room, repository key, controller, and protected ref.',
       };
     }
   }
   if (seenClass === 'protected') {
-    const reviewer = input.approval?.verified ? input.approval.approval.reviewerPubkey : '';
+    const authorization =
+      input.authorization ??
+      (input.approval?.verified
+        ? ({ kind: 'corner-approval', ...input.approval } as const)
+        : input.approval);
+    if (authorization?.verified && authorization.kind === 'mission-standing-land') {
+      return {
+        action: 'perform-with-mission-grant',
+        refClass: 'protected',
+        reason: `protected ref advanced under fresh mission ${authorization.missionId}`,
+      };
+    }
+    const reviewer =
+      authorization?.verified && authorization.kind === 'corner-approval'
+        ? authorization.approval.reviewerPubkey
+        : '';
     return {
       action: 'perform-with-approval',
       refClass: 'protected',
@@ -262,7 +335,10 @@ export interface PerformBrokeredPushInput {
   remote: string;
   policy: PushBrokerPolicy;
   extraArgs?: string[];
+  authorization?: BrokerProtectedAuthorization | { verified: false };
+  /** Backward-compatible ordinary-corner input. */
   approval?: VerifiedBrokerApproval | { verified: false };
+  repository?: BrokerRepositoryContext;
   cornerId?: string;
   sessionId?: string;
   /**
@@ -294,7 +370,9 @@ export async function performBrokeredPush(
     policy: input.policy,
     ...(input.cornerId ? { cornerId: input.cornerId } : {}),
     ...(forceArgs.length ? { forceArgs } : {}),
+    ...(input.authorization ? { authorization: input.authorization } : {}),
     ...(input.approval ? { approval: input.approval } : {}),
+    ...(input.repository ? { repository: input.repository } : {}),
   });
   console.log(
     brokerAuditLine({

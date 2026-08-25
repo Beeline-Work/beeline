@@ -226,7 +226,7 @@ describe('scheduled Room turn boundary', () => {
     }
   });
 
-  it('treats the human-authorized schedule as full action authority without a P1 request', async () => {
+  it('keeps native execute denied for a scheduled model turn without minting a P1 request', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-permission-'));
     const principal = newIdentity('scheduled-principal');
     const agent = newIdentity('scheduled-action-agent');
@@ -280,12 +280,25 @@ describe('scheduled Room turn boundary', () => {
       transitionedToCorner: false,
       readOnlyInformationRequest: true,
       scheduled: {
+        trigger: 'schedule',
+        priority: 'background',
         workspaceId,
+        roomId,
+        agentPubkey: agent.publicKey,
+        targetAgentPubkey: agent.publicKey,
         scheduleId: 'campaign',
         scheduleRevision: 1,
+        scheduleRevisionDigest: 'a'.repeat(64),
         scheduleRunId: runId,
         principalPubkey: principal.publicKey,
+        nominalAt: 1_900_000_000,
+        prompt: 'Send and publish the campaign.',
+        artifactRefs: [],
         reservedTokens: 500,
+        maxRuns: 1,
+        dailyReservedTokens: 500,
+        queuedEvent: {} as NostrEvent,
+        execution: { mode: 'model' },
       },
     });
     const adapterInvocation = vi.fn();
@@ -303,7 +316,7 @@ describe('scheduled Room turn boundary', () => {
         },
         'direct-message',
       );
-      expect(decision).toBe('allow');
+      expect(decision).toBe('reject');
       expect(adapterInvocation).not.toHaveBeenCalled();
       const requests = published.flatMap((event) => {
         const parsed = parsePermissionRequest(event);
@@ -311,6 +324,104 @@ describe('scheduled Room turn boundary', () => {
       });
       expect(requests).toHaveLength(0);
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('routes a target-daemon mission mutation only through the mission corner funnel', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-delegated-mission-corner-'));
+    const controller = newIdentity('mission-controller');
+    const target = newIdentity('mission-target');
+    const captain = newIdentity('mission-captain');
+    const body = new Body(config(root), undefined, target);
+    const roomId = 'mission-room';
+    const request = {
+      eventId: '3'.repeat(64),
+      authorPubkey: controller.publicKey,
+      content: 'Update state.md in the mission repository.',
+      createdAt: 1_900_000_000,
+    };
+    const delegation = {
+      event: { id: '4'.repeat(64) },
+      value: {
+        phase: 'assign',
+        rootEventId: '5'.repeat(64),
+        roomId,
+        workspaceId: 'mission-workspace',
+        principalPubkey: captain.publicKey,
+        toAgentPubkey: target.publicKey,
+        mission: {
+          missionId: 'mission-one',
+          grantEventId: '5'.repeat(64),
+          controllerAgentPubkey: controller.publicKey,
+          targetAgentPubkey: target.publicKey,
+          repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+        },
+      },
+    };
+    const corner = {
+      subchannelId: 'mission-corner',
+      taskDescription: request.content,
+    };
+    const openMission = vi
+      .spyOn(body as never, 'openDelegatedMissionCorner' as never)
+      .mockResolvedValue(corner as never);
+    const ordinaryOpen = vi.spyOn(body, 'openSubchannel');
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+    vi.spyOn(body as never, 'noteRoomReadOnlyDenial' as never).mockResolvedValue(
+      undefined as never,
+    );
+    Reflect.get(body, 'pendingRoomTurns').set(roomId, {
+      request,
+      boundRepo: {
+        repo: 'mission',
+        repositoryKey: 'github:123',
+        targetBranch: 'refs/heads/main',
+      },
+      editPolicy: 'repository',
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: true,
+      missionDelegation: delegation,
+    });
+
+    try {
+      await expect(
+        Reflect.get(body, 'handleRoomPermissionRequest').call(body, roomId, {
+          toolCall: { kind: 'edit', title: 'Update state.md', rawInput: { path: 'state.md' } },
+        }),
+      ).resolves.toBe('reject');
+      expect(openMission).toHaveBeenCalledOnce();
+      expect(ordinaryOpen).not.toHaveBeenCalled();
+      expect(start).toHaveBeenCalledOnce();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('best-effort cancels every active derived action when its fresh grant check fails', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-mission-revocation-cancel-'));
+    const body = new Body(config(root), undefined, newIdentity('mission-cancel-agent'));
+    const cancelScript = vi.fn();
+    const cancelModel = vi.fn();
+    const register = Reflect.get(body, 'registerMissionWork').bind(body);
+    const releaseScript = register('a'.repeat(64), {
+      fresh: async () => false,
+      cancel: cancelScript,
+    });
+    const releaseModel = register('a'.repeat(64), {
+      fresh: async () => false,
+      cancel: cancelModel,
+    });
+    try {
+      await Reflect.get(body, 'cancelRevokedMissionWork').call(body);
+      expect(cancelScript).toHaveBeenCalledOnce();
+      expect(cancelModel).toHaveBeenCalledOnce();
+    } finally {
+      releaseScript();
+      releaseModel();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -383,15 +494,20 @@ describe('scheduled Room turn boundary', () => {
       workspaceId: 'scheduled-workspace',
       roomId: 'scheduled-room',
       agentPubkey: agent.publicKey,
+      targetAgentPubkey: agent.publicKey,
       principalPubkey: principal.publicKey,
       scheduleId: 'inert-directives',
       scheduleRevision: 1,
+      scheduleRevisionDigest: 'a'.repeat(64),
       scheduleRunId: runId,
       nominalAt,
       prompt: 'Prepare a draft only.',
       artifactRefs: [],
       reservedTokens: 100,
+      maxRuns: 10,
+      dailyReservedTokens: 1_000,
       queuedEvent,
+      execution: { mode: 'model' },
     };
     const beforeModelActivation = vi.fn(async () => undefined);
     try {
@@ -465,15 +581,20 @@ describe('scheduled Room turn boundary', () => {
             workspaceId: 'scheduled-workspace',
             roomId: 'scheduled-room',
             agentPubkey: agent.publicKey,
+            targetAgentPubkey: agent.publicKey,
             principalPubkey: principal.publicKey,
             scheduleId,
             scheduleRevision: 1,
+            scheduleRevisionDigest: 'a'.repeat(64),
             scheduleRunId: runId,
             nominalAt,
             prompt: 'Prepare the report.',
             artifactRefs: [],
             reservedTokens: 100,
+            maxRuns: 10,
+            dailyReservedTokens: 1_000,
             queuedEvent,
+            execution: { mode: 'model' },
           },
           undefined,
           'direct-message',

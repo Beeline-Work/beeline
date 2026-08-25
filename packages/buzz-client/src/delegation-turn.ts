@@ -40,6 +40,25 @@ export interface DelegationBudgetV1 {
   deadlineAt: number;
 }
 
+/** Mission lineage carried by the existing same-Room delegation transport. */
+export interface MissionDelegationV1 {
+  missionId: string;
+  grantEventId: string;
+  controllerAgentPubkey: string;
+  scheduleId: string;
+  scheduleRevision: number;
+  scheduleRevisionDigest: string;
+  scheduleRunId: string;
+  mode: 'script' | 'model';
+  targetAgentPubkey: string;
+  maxRuns: number;
+  perRunReservedTokens: number;
+  dailyReservedTokens: number;
+  totalReservedTokens: number;
+  scriptRuntimeSeconds: number;
+  repository: { key: string; targetBranch: string };
+}
+
 export interface DelegationTurnV1 {
   version: 1;
   delegationId: string;
@@ -59,6 +78,7 @@ export interface DelegationTurnV1 {
   task: string;
   artifactRefs?: ArtifactRevisionRef[];
   escalationGrantEventId?: string;
+  mission?: MissionDelegationV1;
   createdAt: number;
 }
 
@@ -215,6 +235,69 @@ function parseTurnContent(value: unknown): DelegationTurnV1 | undefined {
           HEX_64.test(input.escalationGrantEventId)
         ? input.escalationGrantEventId
         : undefined;
+  const missionInput = input?.mission === undefined ? undefined : object(input.mission);
+  const missionRepository = object(missionInput?.repository);
+  const mission = missionInput
+    ? {
+        missionId: token(missionInput.missionId),
+        grantEventId:
+          typeof missionInput.grantEventId === 'string' && HEX_64.test(missionInput.grantEventId)
+            ? missionInput.grantEventId
+            : undefined,
+        controllerAgentPubkey: pubkey(missionInput.controllerAgentPubkey),
+        scheduleId: token(missionInput.scheduleId),
+        scheduleRevision: integer(missionInput.scheduleRevision, 1),
+        scheduleRevisionDigest:
+          typeof missionInput.scheduleRevisionDigest === 'string' &&
+          SHA_256.test(missionInput.scheduleRevisionDigest)
+            ? missionInput.scheduleRevisionDigest
+            : undefined,
+        scheduleRunId: token(missionInput.scheduleRunId),
+        mode: ['script', 'model'].includes(String(missionInput.mode))
+          ? (missionInput.mode as MissionDelegationV1['mode'])
+          : undefined,
+        targetAgentPubkey: pubkey(missionInput.targetAgentPubkey),
+        maxRuns: integer(missionInput.maxRuns, 1, 1_000_000),
+        perRunReservedTokens: integer(
+          missionInput.perRunReservedTokens,
+          0,
+          MAX_DELEGATION_RESERVED_TOKENS,
+        ),
+        dailyReservedTokens: integer(
+          missionInput.dailyReservedTokens,
+          0,
+          MAX_DELEGATION_RESERVED_TOKENS,
+        ),
+        totalReservedTokens: integer(missionInput.totalReservedTokens, 0, Number.MAX_SAFE_INTEGER),
+        scriptRuntimeSeconds: integer(missionInput.scriptRuntimeSeconds, 1, 3_600),
+        repository: {
+          key: token(missionRepository?.key),
+          targetBranch: token(missionRepository?.targetBranch),
+        },
+      }
+    : undefined;
+  const validMission =
+    mission &&
+    mission.missionId &&
+    mission.grantEventId &&
+    mission.controllerAgentPubkey &&
+    mission.scheduleId &&
+    mission.scheduleRevision !== undefined &&
+    mission.scheduleRevisionDigest &&
+    mission.scheduleRunId &&
+    mission.mode &&
+    mission.targetAgentPubkey &&
+    mission.maxRuns !== undefined &&
+    mission.perRunReservedTokens !== undefined &&
+    mission.dailyReservedTokens !== undefined &&
+    mission.totalReservedTokens !== undefined &&
+    mission.scriptRuntimeSeconds !== undefined &&
+    mission.repository.key &&
+    mission.repository.targetBranch &&
+    mission.perRunReservedTokens <= mission.dailyReservedTokens &&
+    mission.dailyReservedTokens <= mission.totalReservedTokens
+      ? (mission as MissionDelegationV1)
+      : undefined;
   const createdAt = integer(input?.createdAt);
   if (
     input?.version !== 1 ||
@@ -236,12 +319,20 @@ function parseTurnContent(value: unknown): DelegationTurnV1 | undefined {
     !task ||
     (input.artifactRefs !== undefined && !artifactRefs) ||
     (input.escalationGrantEventId !== undefined && !escalationGrantEventId) ||
+    (input.mission !== undefined && !validMission) ||
     createdAt === undefined ||
     path[path.length - 1] !== fromAgentPubkey ||
     fromAgentPubkey === toAgentPubkey ||
     (input.phase === 'assign' &&
       (depth === 1 ? parentWorkItemId !== undefined : !parentWorkItemId)) ||
-    (input.phase === 'return' && !parentWorkItemId)
+    (input.phase === 'return' && !parentWorkItemId) ||
+    (validMission !== undefined &&
+      (rootEventId !== validMission.grantEventId ||
+        (input.phase === 'assign'
+          ? fromAgentPubkey !== validMission.controllerAgentPubkey ||
+            toAgentPubkey !== validMission.targetAgentPubkey
+          : toAgentPubkey !== validMission.controllerAgentPubkey ||
+            fromAgentPubkey !== validMission.targetAgentPubkey)))
   ) {
     return undefined;
   }
@@ -264,6 +355,7 @@ function parseTurnContent(value: unknown): DelegationTurnV1 | undefined {
     task,
     ...(artifactRefs ? { artifactRefs } : {}),
     ...(escalationGrantEventId ? { escalationGrantEventId } : {}),
+    ...(validMission ? { mission: validMission } : {}),
     createdAt,
   };
 }
@@ -349,6 +441,15 @@ export function parseDelegationTurn(event: NostrEvent): ParsedDelegationTurn | u
       uniqueTag(event, 'escalation-grant') !== value.escalationGrantEventId) ||
     (value.escalationGrantEventId === undefined &&
       event.tags.some((candidate) => candidate[0] === 'escalation-grant')) ||
+    (value.mission !== undefined &&
+      (uniqueTag(event, 'mission') !== value.mission.missionId ||
+        uniqueTag(event, 'mission-grant') !== value.mission.grantEventId ||
+        uniqueTag(event, 'schedule') !== value.mission.scheduleId ||
+        uniqueTag(event, 'schedule-run') !== value.mission.scheduleRunId)) ||
+    (value.mission === undefined &&
+      event.tags.some((candidate) =>
+        ['mission', 'mission-grant', 'schedule', 'schedule-run'].includes(candidate[0] ?? ''),
+      )) ||
     (value.parentWorkItemId !== undefined &&
       uniqueTag(event, 'parent-work-item') !== value.parentWorkItemId) ||
     (value.parentWorkItemId === undefined &&
@@ -423,6 +524,14 @@ export function buildDelegationTurn(sender: Identity, input: DelegationTurnV1): 
       ['depth', String(value.depth)],
       ['deadline', String(value.budget.deadlineAt)],
       ...(value.escalationGrantEventId ? [['escalation-grant', value.escalationGrantEventId]] : []),
+      ...(value.mission
+        ? [
+            ['mission', value.mission.missionId],
+            ['mission-grant', value.mission.grantEventId],
+            ['schedule', value.mission.scheduleId],
+            ['schedule-run', value.mission.scheduleRunId],
+          ]
+        : []),
     ],
     value,
     value.createdAt,

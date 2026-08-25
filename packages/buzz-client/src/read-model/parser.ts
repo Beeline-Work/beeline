@@ -82,6 +82,8 @@ const CONTROL_MARKERS = new Set([
   'buzz-write-permission-response',
   'buzz-agent-cancel',
   'buzz-corner-close',
+  'buzz-scheduled-turn',
+  'buzz-work-schedule-paused',
   'change-review-manifest',
   'change-review-file',
   // Harness retry/backoff narration is machine state, never an agent's
@@ -643,6 +645,40 @@ function controlPayload(
   visibility: Control['visibility'];
   payload: ControlPayload;
 } {
+  if (markerSet.has('buzz-scheduled-turn')) {
+    const parsed = parseJson(event.content);
+    const status = text(parsed?.status);
+    const reason = text(parsed?.reason)
+      ?.replace(/[\r\n]+/g, ' ')
+      .slice(0, 600);
+    return status === 'failed'
+      ? {
+          visibility: 'system-line',
+          payload: {
+            kind: 'system',
+            status,
+            text: reason ? `Scheduled work failed: ${reason}` : 'Scheduled work failed.',
+          },
+        }
+      : {
+          visibility: 'hidden',
+          payload: { kind: 'record', recordType: 'buzz-scheduled-turn' },
+        };
+  }
+  if (markerSet.has('buzz-work-schedule-paused')) {
+    const parsed = parseJson(event.content);
+    const reason = text(parsed?.reason)
+      ?.replace(/[\r\n]+/g, ' ')
+      .slice(0, 600);
+    return {
+      visibility: 'card',
+      payload: {
+        kind: 'system',
+        status: 'paused',
+        text: reason ? `Schedule paused: ${reason}` : 'Schedule paused.',
+      },
+    };
+  }
   if (markerSet.has('buzz-write-permission-request')) {
     const status = tag(event, 'status');
     return {

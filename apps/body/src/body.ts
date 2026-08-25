@@ -96,6 +96,11 @@ import {
   WRITE_PERMISSION_REQUEST_TAG,
   WRITE_PERMISSION_RESPONSE_TAG,
   TAG_AGENT,
+  TAG_PERMISSION_REQUEST,
+  TAG_PERMISSION_DECISION,
+  TAG_PERMISSION_REVOCATION,
+  TAG_PERMISSION_EXECUTION,
+  TAG_DELEGATION_RECEIPT,
   TAG_MERGE_APPROVAL,
   agentHandle,
   fallbackAgentName,
@@ -107,6 +112,7 @@ import {
   personHandle,
   listAgents,
   listMembers,
+  getChannelRole,
   listPersonProfiles,
   getParentChannelId,
   getChannelCreator,
@@ -118,6 +124,12 @@ import {
   getAgentModelCatalog,
   publishAgentCommands,
   getRoomRepository,
+  KIND_AGENT_ACCESS_CONFIG,
+  agentAccessConfigKey,
+  parseAgentAccessConfig,
+  parseDelegationReceipt,
+  parseDelegationTurn,
+  parseDelegationDirectives,
   publishAgentModelCatalog,
   createWorkspaceSnapshot,
   parseRelayEvents,
@@ -160,6 +172,16 @@ import {
   type IdentityRecord,
   type ParseAuthority,
   type WorkspaceSnapshot,
+  type ParsedDelegationTurn,
+  type ParsedDelegationReceipt,
+  type DelegationTurnV1,
+  DEFAULT_DELEGATION_MAX_AGENT_TURNS,
+  permissionActionId,
+  parsePermissionRequest,
+  parsePermissionDecision,
+  verifyPermissionAction,
+  type PermissionConcreteAction,
+  type PermissionFreshReader,
   DEFAULT_RELAY_BASE_URL,
   isProductionRelayHost,
 } from '@beeline/buzz-client';
@@ -180,6 +202,13 @@ import {
   renderAccessAutoResponse,
 } from './access-policy.js';
 import { DurableBodyState } from './durable-state.js';
+import {
+  DelegationRuntime,
+  buildDelegationEscalationPermission,
+  dispatchRootFactoryDirectives,
+  type RootFactoryRosterEntry,
+} from './delegation-runtime.js';
+import { PermissionRuntime } from './permission-runtime.js';
 import {
   CONCLUDE_PROMPT,
   CONCLUDE_TURN_FALLBACK,
@@ -2111,6 +2140,9 @@ export class Body {
   private scheduler: SessionScheduler;
   private ownsScheduler: boolean;
   private durableState: DurableBodyState;
+  private delegationRuntime: DelegationRuntime;
+  private permissionRuntime: PermissionRuntime;
+  private permissionReader: PermissionFreshReader;
   private agentRelay: RelayClient;
   private mergeWorkerRelay?: RelayClient;
   private pendingRoomTurns = new Map<string, PendingRoomTurn>();
@@ -2250,6 +2282,91 @@ export class Body {
     this.durableState = new DurableBodyState(
       services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
     );
+    this.permissionReader = {
+      readEvent: async (eventId) => {
+        const events = await this.agentRelay.queryEvents([{ ids: [eventId], limit: 2 }]);
+        return events.find((event) => event.id === eventId);
+      },
+      isRegisteredAgent: (pubkey) => isRegisteredAgentIdentity(pubkey, this.agentRelay),
+      isRoomMember: async (roomId, pubkey) =>
+        (await listMembers(this.agentClientContext(), roomId)).some(
+          (member) => member.pubkey === pubkey,
+        ),
+      isWorkspaceMember: async (workspaceId, pubkey) =>
+        (await listMembers(this.agentClientContext(), workspaceId)).some(
+          (member) => member.pubkey === pubkey,
+        ),
+      roleForRoom: (roomId, pubkey) => getChannelRole(this.agentClientContext(), roomId, pubkey),
+      // Relay identities do not currently carry a separate custody claim.
+      // Agent-first identity proof plus a current human role is the strongest
+      // available signal; mobile keeps the human-device executor local.
+      hasDeviceCustody: async (pubkey) =>
+        !(await isRegisteredAgentIdentity(pubkey, this.agentRelay)),
+      permissionHistory: (roomId, permissionId) =>
+        this.agentRelay.queryEvents([
+          { kinds: [9], '#h': [roomId], '#permission': [permissionId], limit: 1_000 },
+        ]),
+    };
+    this.permissionRuntime = new PermissionRuntime({
+      identity: this.agentIdentity,
+      reader: this.permissionReader,
+      publish: async (event) => {
+        await publishEvent(event, this.agentIdentity);
+      },
+      claim: (key) => this.durableState.claimPermissionAction(key),
+      reserveCapacity: (input) => this.durableState.reservePermissionCapacity(input),
+    });
+    this.delegationRuntime = new DelegationRuntime({
+      identity: this.agentIdentity,
+      reader: {
+        isRegisteredAgent: (pubkey) => isRegisteredAgentIdentity(pubkey, this.agentRelay),
+        isRoomMember: async (roomId, pubkey) =>
+          (await listMembers(this.agentClientContext(), roomId)).some(
+            (member) => member.pubkey === pubkey,
+          ),
+        isWorkspaceMember: async (workspaceId, pubkey) =>
+          (await listMembers(this.agentClientContext(), workspaceId)).some(
+            (member) => member.pubkey === pubkey,
+          ),
+        accessPermitted: (workspaceId, senderPubkey, _principalPubkey) =>
+          this.senderAccessAllowedFresh(workspaceId, senderPubkey),
+        targetOnline: (roomId, pubkey) => this.isRoomAgentOnline(roomId, pubkey),
+        // Reaching this runtime proves the exact recipient is running a P1
+        // build. Outbound dispatch still checks advertised compatibility.
+        targetSupportsDelegationV1: (roomId, pubkey) =>
+          this.agentSupportsDelegationV1(roomId, pubkey),
+        rootAuthorized: (turn) => this.delegationRootAuthorized(turn),
+        escalationAuthorized: (turn) => this.delegationEscalationAuthorized(turn),
+        consumeEscalation: (turn) => this.consumeDelegationEscalation(turn),
+        graph: (delegationId, roomId) => this.delegationGraph(roomId, delegationId),
+        delegatedUsage: async (pubkey, at) => {
+          const day = new Date(at * 1_000).toISOString().slice(0, 10);
+          const turns = (await this.durableState.modelTurns()).filter(
+            (turn) =>
+              turn.startedAt.slice(0, 10) === day &&
+              (turn.chargedAgentPubkey ?? turn.agentPubkey) === pubkey &&
+              (turn.trigger === 'delegation' || turn.cause === 'delegation'),
+          );
+          return {
+            calls: turns.length,
+            reservedTokens: turns.reduce((sum, turn) => sum + (turn.reservedTokens ?? 0), 0),
+            turnEventIds: turns.map((turn) => turn.requestId),
+          };
+        },
+      },
+      publish: async (event) => {
+        await publishEvent(event, this.agentIdentity);
+      },
+      claimInbound: (eventId) => this.durableState.claimDelegationInbound(eventId),
+      reserveInboundCapacity: (input) => this.durableState.reserveDelegationInbound(input),
+      reserveOutbound: (event) => this.durableState.reserveDelegationOutbound(event),
+      markOutboundDelivered: (eventId) =>
+        this.durableState.markDelegationOutboundDelivered(eventId),
+      dailyLimit: {
+        maxCalls: this.config.delegationDailyMaxCalls ?? 64,
+        maxReservedTokens: this.config.delegationDailyMaxReservedTokens ?? 1_000_000,
+      },
+    });
     this.cornerStates = new CornerStatePublisher(this.agentIdentity);
     this.assertDistinctAgentIdentity(this.agentIdentity);
   }
@@ -3448,6 +3565,13 @@ export class Body {
               requestId: turn.requestId,
               originalRequestId: turn.originalRequestId,
               cause: turn.cause,
+              trigger: turn.trigger,
+              rootEventId: turn.rootEventId,
+              principalPubkey: turn.principalPubkey,
+              commissionedByAgentPubkey: turn.commissionedByAgentPubkey,
+              delegationId: turn.delegationId,
+              workItemId: turn.workItemId,
+              reservedTokens: turn.reservedTokens,
             },
             agentPubkey: this.agentIdentity.publicKey,
             channelId: turn.channelId,
@@ -3467,6 +3591,13 @@ export class Body {
                 requestId: turn.requestId,
                 originalRequestId: turn.originalRequestId,
                 cause: turn.cause,
+                trigger: turn.trigger,
+                rootEventId: turn.rootEventId,
+                principalPubkey: turn.principalPubkey,
+                commissionedByAgentPubkey: turn.commissionedByAgentPubkey,
+                delegationId: turn.delegationId,
+                workItemId: turn.workItemId,
+                reservedTokens: turn.reservedTokens,
               },
               agentPubkey: this.agentIdentity.publicKey,
               channelId: turn.channelId,
@@ -4804,6 +4935,25 @@ export class Body {
     return isAgentPresenceOnline(cache.byPubkey.get(agentPubkey));
   }
 
+  private async agentSupportsDelegationV1(
+    channelId: string,
+    agentPubkey: string,
+  ): Promise<boolean> {
+    const events = await this.agentRelay.queryEvents([
+      {
+        kinds: [KIND_AGENT_PRESENCE],
+        '#d': [agentPresenceKey(channelId)],
+        limit: 50,
+      },
+    ]);
+    return events.some(
+      (event) =>
+        tagValue(event, 'agent') === agentPubkey &&
+        tagValue(event, 'status') === 'online' &&
+        event.tags.some((tag) => tag[0] === 'capability' && tag[1] === 'delegation-v1'),
+    );
+  }
+
   private async validateAgentExchangeEnvelope(
     channelId: string,
     event: NostrEvent,
@@ -4910,6 +5060,309 @@ export class Body {
       [],
       request.replyRootId,
     );
+  }
+
+  private async delegationRoster(channelId: string): Promise<{
+    roster: Array<{ handle: string; pubkey: string }>;
+    attributions: ReadonlyMap<string, RoomAuthorAttribution>;
+  }> {
+    const participants = await this.roomParticipants(channelId);
+    const attributions = await this.roomAuthorAttributions(channelId, participants);
+    return {
+      roster: participants.flatMap((pubkey) => {
+        const attribution = attributions.get(pubkey);
+        return attribution?.kind === 'Agent'
+          ? [{ handle: attribution.handle.replace(/^@/, ''), pubkey }]
+          : [];
+      }),
+      attributions,
+    };
+  }
+
+  /**
+   * Convert only the narrow, line-leading factory grammar in a completed
+   * model turn into signed typed events. The visible model text remains inert
+   * unless it passes the shared parser and every relay-derived roster check.
+   */
+  private async publishRootFactoryDirectives(
+    channelId: string,
+    request: ChannelTaskRequest,
+    finalText: string,
+  ): Promise<void> {
+    const workspaceId = await this.channelCommunityId(channelId);
+    if (!workspaceId) return;
+    const { attributions } = await this.delegationRoster(channelId);
+    const immediateTurn = await this.durableState.reply(channelId, request.eventId);
+    const immediateTurnEventId = immediateTurn?.id ?? request.eventId;
+    const currentMembers = await listMembers(this.agentClientContext(), channelId);
+    const agentFlags = await Promise.all(
+      currentMembers.map((member) =>
+        isRegisteredAgentIdentity(member.pubkey, this.agentRelay).catch(() => true),
+      ),
+    );
+    const roster: RootFactoryRosterEntry[] = currentMembers.map((member, index) => {
+      const attribution = attributions.get(member.pubkey);
+      const isAgent = agentFlags[index] ?? true;
+      return {
+        handle: (
+          attribution?.handle ??
+          (isAgent
+            ? agentHandle(fallbackAgentName(member.pubkey), member.pubkey)
+            : personHandle(fallbackPersonName(member.pubkey), member.pubkey))
+        ).replace(/^@/, ''),
+        pubkey: member.pubkey,
+        kind: isAgent ? 'agent' : 'human',
+        ...(member.role ? { role: member.role } : {}),
+      };
+    });
+    const dispatched = await dispatchRootFactoryDirectives(
+      {
+        identity: this.agentIdentity,
+        publishTurn: (value) => this.delegationRuntime.publishTurn(value),
+        publishPermission: (event) => publishEvent(event, this.agentIdentity),
+        targetReady: async (roomId, pubkey) =>
+          (await this.isRoomAgentOnline(roomId, pubkey)) &&
+          (await this.agentSupportsDelegationV1(roomId, pubkey)),
+      },
+      {
+        roomId: channelId,
+        workspaceId,
+        principalPubkey: request.authorPubkey,
+        rootEventId: request.eventId,
+        immediateTurnEventId,
+        completedAt: immediateTurn?.created_at ?? Math.floor(Date.now() / 1_000),
+        finalText,
+        roster,
+      },
+    );
+    if (dispatched.errors) {
+      console.warn(
+        `[body] ignored ${dispatched.errors} invalid factory directive(s) in ${channelId}`,
+      );
+    }
+  }
+
+  /** Publish child assignments authored by a delegated turn, conserving its subtree budget. */
+  private async publishDelegationChildren(
+    turn: ParsedDelegationTurn,
+    finalText: string,
+  ): Promise<void> {
+    if (turn.value.phase === 'return') return;
+    const { roster } = await this.delegationRoster(turn.value.roomId);
+    const parsed = parseDelegationDirectives(finalText, roster);
+    const directives = parsed.directives.filter(
+      (directive): directive is Extract<(typeof parsed.directives)[number], { kind: 'delegate' }> =>
+        directive.kind === 'delegate',
+    );
+    const remainingTurns = Math.max(0, turn.value.budget.maxAgentTurns - 2);
+    const requiredTurns = directives.length * 2;
+    if (requiredTurns > remainingTurns && directives.length > 0) {
+      const reply = await this.durableState.reply(turn.value.roomId, turn.event.id);
+      const requestedAt = reply?.created_at ?? Math.floor(Date.now() / 1_000);
+      const currentMembers = await listMembers(this.agentClientContext(), turn.value.roomId);
+      const agentFlags = await Promise.all(
+        currentMembers.map((member) =>
+          isRegisteredAgentIdentity(member.pubkey, this.agentRelay).catch(() => true),
+        ),
+      );
+      const eligibleHumans = currentMembers.flatMap((member, index) =>
+        !agentFlags[index] && (member.role === 'owner' || member.role === 'admin')
+          ? [member.pubkey]
+          : [],
+      );
+      if (eligibleHumans.length) {
+        await publishEvent(
+          buildDelegationEscalationPermission({
+            identity: this.agentIdentity,
+            turn,
+            immediateTurnEventId: reply?.id ?? turn.event.id,
+            requestedAt,
+            extraTurns: requiredTurns - remainingTurns,
+            extraReservedTokens: 0,
+            permittedAgentPubkeys: [
+              this.agentIdentity.publicKey,
+              ...directives.map((directive) => directive.targetPubkey),
+            ],
+            eligibleHumanPubkeys: eligibleHumans,
+          }),
+          this.agentIdentity,
+        );
+      }
+    }
+    const count = Math.min(directives.length, turn.value.budget.maxChildren, remainingTurns);
+    if (count === 0) return;
+    const baseTurns = Math.floor(remainingTurns / count);
+    let extraTurns = remainingTurns % count;
+    const baseTokens = Math.floor(turn.value.budget.reservedTokens / count);
+    let extraTokens = turn.value.budget.reservedTokens % count;
+    for (const directive of directives.slice(0, count)) {
+      if (
+        !(await this.isRoomAgentOnline(turn.value.roomId, directive.targetPubkey)) ||
+        !(await this.agentSupportsDelegationV1(turn.value.roomId, directive.targetPubkey))
+      ) {
+        continue;
+      }
+      const childTurns = baseTurns + (extraTurns-- > 0 ? 1 : 0);
+      const childTokens = baseTokens + (extraTokens-- > 0 ? 1 : 0);
+      await this.delegationRuntime.publishTurn({
+        version: 1,
+        delegationId: turn.value.delegationId,
+        workItemId: randomUUID(),
+        phase: 'assign',
+        roomId: turn.value.roomId,
+        workspaceId: turn.value.workspaceId,
+        fromAgentPubkey: this.agentIdentity.publicKey,
+        toAgentPubkey: directive.targetPubkey,
+        rootEventId: turn.value.rootEventId,
+        parentEventId: turn.event.id,
+        parentWorkItemId: turn.value.workItemId,
+        principalPubkey: turn.value.principalPubkey,
+        path: [...turn.value.path, this.agentIdentity.publicKey],
+        depth: turn.value.depth + 1,
+        budget: {
+          maxAgentTurns: childTurns,
+          maxDepth: turn.value.budget.maxDepth,
+          maxChildren: turn.value.budget.maxChildren,
+          reservedTokens: childTokens,
+          deadlineAt: turn.value.budget.deadlineAt,
+        },
+        task: directive.task,
+        createdAt: Math.floor(Date.now() / 1_000),
+      });
+    }
+  }
+
+  /**
+   * A typed delegation is an ordinary FIFO read-only Room turn with factory
+   * attribution. It never reuses the sender's tools, grants, or filesystem.
+   */
+  private async replyToDelegationTurn(
+    channelId: string,
+    boundRepo: BoundRepo | undefined,
+    editPolicy: RoomEditPolicy,
+    turn: ParsedDelegationTurn,
+    authorAttribution?: RoomAuthorAttribution,
+  ): Promise<void> {
+    const receiptSessionId =
+      this.sessions.get(channelId)?.logicalSessionId ??
+      `${this.agentIdentity.publicKey}:${channelId}`;
+    await postAgentTurnStatus(
+      channelId,
+      this.agentIdentity,
+      turn.event.id,
+      receiptSessionId,
+      'working',
+      this.presenceGenerations.get(channelId),
+    );
+    let session: AgentSession;
+    try {
+      session =
+        this.sessions.get(channelId) ?? (await this.provision(channelId, boundRepo, editPolicy));
+      if (session.mode !== 'readonly') {
+        throw new ReadOnlyToolsUnavailableError(
+          'read-only tools unavailable: refusing an edit session for delegation',
+        );
+      }
+      const current = attachmentPrompt(
+        turn.value.fromAgentPubkey,
+        turn.value.task,
+        [],
+        authorAttribution,
+      );
+      const prompt = [
+        'Host boundary: this is one admitted signed delegation work item.',
+        'Use only this agent’s own read-only Room tools, memory, and provider account.',
+        'Do not inherit or claim the sender’s tools, grants, filesystem, or authority.',
+        'Repository mutation still requires the ordinary corner/permission boundary.',
+        '',
+        roomTurnPrompt(await this.agentHistory(channelId), current, turn.event.id),
+      ].join('\n');
+      const request: ChannelTaskRequest = {
+        eventId: turn.event.id,
+        authorPubkey: turn.value.fromAgentPubkey,
+        ...(authorAttribution ? { authorAttribution } : {}),
+        content: turn.value.task,
+        attachments: [],
+        createdAt: turn.value.createdAt,
+      };
+      this.pendingRoomTurns.set(channelId, {
+        request,
+        boundRepo,
+        editPolicy,
+        permissionHandled: false,
+        transitionedToCorner: false,
+        readOnlyInformationRequest: false,
+      });
+      const result = await this.promptAgent(session, prompt, {
+        channelId,
+        requestId: turn.event.id,
+        originalRequestId: turn.value.rootEventId,
+        cause: 'delegation',
+        trigger: 'delegation',
+        rootEventId: turn.value.rootEventId,
+        principalPubkey: turn.value.principalPubkey,
+        commissionedByAgentPubkey: turn.value.fromAgentPubkey,
+        delegationId: turn.value.delegationId,
+        workItemId: turn.value.workItemId,
+        reservedTokens: turn.value.budget.reservedTokens,
+        replyToId: turn.event.id,
+      });
+      const reply = await this.publishAgentResult(
+        channelId,
+        session,
+        result,
+        "I couldn't produce a response for this delegated work item.",
+        { replyTo: turn.event.id },
+      );
+      await this.publishDelegationChildren(turn, result.agentText);
+      if (turn.value.phase === 'assign' && turn.value.budget.maxAgentTurns > 1) {
+        const returnValue: DelegationTurnV1 = {
+          version: 1,
+          delegationId: turn.value.delegationId,
+          workItemId: randomUUID(),
+          phase: 'return',
+          roomId: turn.value.roomId,
+          workspaceId: turn.value.workspaceId,
+          fromAgentPubkey: this.agentIdentity.publicKey,
+          toAgentPubkey: turn.value.fromAgentPubkey,
+          rootEventId: turn.value.rootEventId,
+          parentEventId: turn.event.id,
+          parentWorkItemId: turn.value.workItemId,
+          principalPubkey: turn.value.principalPubkey,
+          path: [...turn.value.path, this.agentIdentity.publicKey],
+          depth: turn.value.depth + 1,
+          budget: {
+            ...turn.value.budget,
+            maxAgentTurns: 1,
+            maxChildren: 1,
+            reservedTokens: 0,
+          },
+          task: reply.slice(0, 1_200),
+          createdAt: Math.floor(Date.now() / 1_000),
+        };
+        await this.delegationRuntime.publishTurn(returnValue);
+      }
+      await postAgentTurnStatus(
+        channelId,
+        this.agentIdentity,
+        turn.event.id,
+        session.logicalSessionId ?? session.sessionId,
+        'complete',
+        this.presenceGenerations.get(channelId),
+      );
+    } catch (error) {
+      await postAgentTurnStatus(
+        channelId,
+        this.agentIdentity,
+        turn.event.id,
+        receiptSessionId,
+        'failed',
+        this.presenceGenerations.get(channelId),
+      ).catch(() => undefined);
+      throw error;
+    } finally {
+      this.pendingRoomTurns.delete(channelId);
+    }
   }
 
   private async replyToAuthorizedAgentExchange(
@@ -5079,7 +5532,222 @@ export class Body {
       this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
       senderPubkey,
       this.config.accessOwnerPubkey,
+      this.config.accessAllowlist,
     );
+  }
+
+  /**
+   * Current paired-owner access policy for delegated calls. A mobile config
+   * can override the filesystem seed only when its newest replaceable record
+   * is signed by the paired owner's current succession key. A malformed
+   * current-owner record denies rather than falling back to a wider policy.
+   */
+  private async senderAccessAllowedFresh(
+    workspaceId: string,
+    senderPubkey: string,
+  ): Promise<boolean> {
+    let policy = this.config.accessPolicy ?? LEGACY_ACCESS_POLICY;
+    let allowlist = this.config.accessAllowlist;
+    const pairedOwner = this.config.accessOwnerPubkey;
+    let currentOwner = pairedOwner;
+    if (pairedOwner) {
+      currentOwner = await resolveCurrentIdentityPubkey(
+        this.config.relayBaseUrl,
+        this.agentIdentity,
+        pairedOwner,
+      );
+      const ownerIsCurrentHuman =
+        (await listMembers(this.agentClientContext(), workspaceId)).some(
+          (member) => member.pubkey === currentOwner,
+        ) && !(await isRegisteredAgentIdentity(currentOwner, this.agentRelay));
+      if (!ownerIsCurrentHuman) return false;
+      const events = await this.agentRelay.queryEvents([
+        {
+          kinds: [KIND_AGENT_ACCESS_CONFIG],
+          '#d': [agentAccessConfigKey(workspaceId, this.agentIdentity.publicKey)],
+          limit: 20,
+        },
+      ]);
+      const ownerEvents = events
+        .filter((event) => event.pubkey === currentOwner)
+        .sort(
+          (left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id),
+        );
+      const newest = ownerEvents[0];
+      if (newest) {
+        const parsed = parseAgentAccessConfig(newest);
+        if (
+          !parsed ||
+          parsed.workspaceId !== workspaceId ||
+          parsed.agentPubkey !== this.agentIdentity.publicKey
+        ) {
+          return false;
+        }
+        policy = parsed.policy;
+        allowlist = parsed.allowlist;
+      } else if (
+        currentOwner !== pairedOwner &&
+        events.some((event) => event.pubkey === pairedOwner)
+      ) {
+        // A predecessor-authored remote policy must never silently widen back
+        // to the machine seed after key succession. The current successor
+        // republishes explicitly; until then this agent denies all principals.
+        return false;
+      }
+    }
+    return isSenderPermitted(policy, senderPubkey, currentOwner, allowlist);
+  }
+
+  /** Relay-derived prior graph used for structural admission and replay checks. */
+  private async delegationGraph(
+    roomId: string,
+    delegationId: string,
+  ): Promise<{
+    turns: ParsedDelegationTurn[];
+    receipts: ParsedDelegationReceipt[];
+  }> {
+    const events = await this.agentRelay.queryEvents([
+      {
+        kinds: [9],
+        '#h': [roomId],
+        '#delegation': [delegationId],
+        limit: 1_000,
+      },
+    ]);
+    const turns = events.flatMap((event) => {
+      const parsed = parseDelegationTurn(event);
+      return parsed && parsed.value.roomId === roomId && parsed.value.delegationId === delegationId
+        ? [parsed]
+        : [];
+    });
+    const byId = new Map(turns.map((turn) => [turn.event.id, turn]));
+    const receipts = events.flatMap((event) => {
+      const parsed = parseDelegationReceipt(event);
+      if (!parsed || parsed.value.delegationId !== delegationId) return [];
+      const turn = byId.get(parsed.value.turnEventId);
+      if (
+        !turn ||
+        turn.value.workItemId !== parsed.value.workItemId ||
+        (parsed.value.status === 'queued'
+          ? event.pubkey !== turn.value.fromAgentPubkey
+          : event.pubkey !== turn.value.toAgentPubkey)
+      ) {
+        return [];
+      }
+      return [parsed];
+    });
+    return { turns, receipts };
+  }
+
+  /** Load and bind the immutable human root; a well-shaped id is not provenance. */
+  private async delegationRootAuthorized(turn: ParsedDelegationTurn): Promise<boolean> {
+    const events = await this.agentRelay.queryEvents([
+      { ids: [turn.value.rootEventId], kinds: [9], limit: 2 },
+    ]);
+    const root = events.find((event) => event.id === turn.value.rootEventId);
+    const roomTags = root?.tags.filter((tag) => tag[0] === 'h') ?? [];
+    if (
+      !root ||
+      !verifyEvent(root) ||
+      root.pubkey !== turn.value.principalPubkey ||
+      roomTags.length !== 1 ||
+      roomTags[0]?.[1] !== turn.value.roomId
+    ) {
+      return false;
+    }
+    return !(await isRegisteredAgentIdentity(root.pubkey, this.agentRelay));
+  }
+
+  private async delegationEscalationAction(
+    turn: ParsedDelegationTurn,
+  ): Promise<PermissionConcreteAction | undefined> {
+    const grantEventId = turn.value.escalationGrantEventId;
+    if (!grantEventId) return undefined;
+    const grantEvent = await this.permissionReader.readEvent(grantEventId);
+    if (!grantEvent || grantEvent.content.length > 32_000) return undefined;
+    let requestEventId: string | undefined;
+    try {
+      const value = JSON.parse(grantEvent.content) as { requestEventId?: unknown };
+      if (typeof value.requestEventId === 'string' && /^[0-9a-f]{64}$/.test(value.requestEventId)) {
+        requestEventId = value.requestEventId;
+      }
+    } catch {
+      return undefined;
+    }
+    if (!requestEventId) return undefined;
+    const requestEvent = await this.permissionReader.readEvent(requestEventId);
+    const request = requestEvent ? parsePermissionRequest(requestEvent) : undefined;
+    const decision = request ? parsePermissionDecision(grantEvent, request) : undefined;
+    const scope = request?.value.scope;
+    const extraTurns = Math.max(
+      0,
+      turn.value.budget.maxAgentTurns - DEFAULT_DELEGATION_MAX_AGENT_TURNS,
+    );
+    if (
+      !request ||
+      !decision ||
+      decision.value.decision !== 'grant' ||
+      scope?.type !== 'delegation.escalate' ||
+      scope.delegationId !== turn.value.delegationId ||
+      scope.extraTurns < extraTurns ||
+      scope.extraReservedTokens < turn.value.budget.reservedTokens ||
+      !scope.permittedAgentPubkeys.includes(turn.value.fromAgentPubkey) ||
+      !scope.permittedAgentPubkeys.includes(turn.value.toAgentPubkey) ||
+      request.value.roomId !== turn.value.roomId ||
+      request.value.workspaceId !== turn.value.workspaceId
+    ) {
+      return undefined;
+    }
+    const actionId = permissionActionId(scope, request.event.id, 0);
+    return {
+      permissionId: request.value.permissionId,
+      requestEventId: request.event.id,
+      grantEventId,
+      ordinal: 0,
+      actionId,
+      idempotencyKey: `delegation-escalate:${turn.value.delegationId}`,
+      workspaceId: turn.value.workspaceId,
+      roomId: turn.value.roomId,
+      scope,
+      executor: 'body',
+      executorPubkey: this.agentIdentity.publicKey,
+      charge: {
+        uses: 1,
+        ...(scope.extraReservedTokens ? { reservedTokens: scope.extraReservedTokens } : {}),
+      },
+    };
+  }
+
+  private async delegationEscalationAuthorized(turn: ParsedDelegationTurn): Promise<boolean> {
+    if (!turn.value.escalationGrantEventId) return true;
+    const action = await this.delegationEscalationAction(turn);
+    if (!action) return false;
+    const verification = await verifyPermissionAction({
+      reader: this.permissionReader,
+      action,
+      now: Math.floor(Date.now() / 1_000),
+    });
+    return (
+      verification.authorized ||
+      (!verification.authorized && verification.reason === 'action-already-succeeded')
+    );
+  }
+
+  private async consumeDelegationEscalation(turn: ParsedDelegationTurn): Promise<boolean> {
+    if (!turn.value.escalationGrantEventId) return true;
+    const action = await this.delegationEscalationAction(turn);
+    if (!action) return false;
+    const result = await this.permissionRuntime.execute({
+      action,
+      attempt: 1,
+      invoke: async () => ({ result: turn.value.delegationId }),
+    });
+    if (result.status === 'succeeded' || result.status === 'duplicate') return true;
+    if (result.status === 'refused') {
+      if (result.reason === 'action-already-succeeded') return true;
+      if (!result.terminal) throw new Error(result.reason);
+    }
+    return false;
   }
 
   /** Owner display name for the auto-response template, resolved once and cached. */
@@ -5142,11 +5810,40 @@ export class Body {
         const reservedReply = await this.durableState.reply(tlcChannelId, event.id);
         if (reservedReply) {
           await publishEvent(reservedReply, this.agentIdentity);
+          if (!(await isRegisteredAgentIdentity(event.pubkey, this.agentRelay))) {
+            await this.publishRootFactoryDirectives(
+              tlcChannelId,
+              {
+                eventId: event.id,
+                authorPubkey: event.pubkey,
+                content: event.content.trim(),
+                attachments: parseAttachmentTags(event.tags),
+                createdAt: event.created_at,
+                replyRootId: replyRootIdForEvent(event),
+              },
+              reservedReply.content,
+            );
+          }
           this.processedRequestIds.add(event.id);
           await this.durableState.delivered(tlcChannelId, event.id);
           continue;
         }
         if (event.tags.some((tag) => tag[0] === 't' && tag[1] === WRITE_PERMISSION_RESPONSE_TAG)) {
+          this.processedRequestIds.add(event.id);
+          await this.durableState.delivered(tlcChannelId, event.id);
+          continue;
+        }
+        const typedControlMarker = event.tags.find((tag) => tag[0] === 't')?.[1];
+        if (
+          typedControlMarker &&
+          [
+            TAG_PERMISSION_REQUEST,
+            TAG_PERMISSION_DECISION,
+            TAG_PERMISSION_REVOCATION,
+            TAG_PERMISSION_EXECUTION,
+            TAG_DELEGATION_RECEIPT,
+          ].includes(typedControlMarker)
+        ) {
           this.processedRequestIds.add(event.id);
           await this.durableState.delivered(tlcChannelId, event.id);
           continue;
@@ -5171,6 +5868,24 @@ export class Body {
           // Fail closed: a registered agent can never task another body through the
           // human request affordance, regardless of any channel role it holds.
           if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) {
+            const delegation = parseDelegationTurn(event);
+            if (delegation) {
+              const outcome = await this.delegationRuntime.handleEvent(event, async (turn) => {
+                await this.replyToDelegationTurn(
+                  tlcChannelId,
+                  boundRepo,
+                  editPolicy,
+                  turn,
+                  authorAttribution,
+                );
+              });
+              if (outcome.status === 'deferred') {
+                throw new Error(`delegation admission deferred: ${outcome.reason}`);
+              }
+              this.processedRequestIds.add(event.id);
+              await this.durableState.delivered(tlcChannelId, event.id);
+              continue;
+            }
             const exchange = await this.validateAgentExchangeEnvelope(
               tlcChannelId,
               event,
@@ -5213,7 +5928,11 @@ export class Body {
           // Per-agent access policy (fail-closed). A sender the inviter's
           // policy does not permit never drives the agent; it gets one
           // rate-limited auto-response instead of silence, then quiet.
-          if (!this.senderAccessAllowed(event.pubkey)) {
+          const workspaceId = await this.channelCommunityId(tlcChannelId);
+          const accessAllowed = workspaceId
+            ? await this.senderAccessAllowedFresh(workspaceId, event.pubkey)
+            : this.senderAccessAllowed(event.pubkey);
+          if (!accessAllowed) {
             await this.postAccessRefusal(tlcChannelId, event);
             this.processedRequestIds.add(event.id);
             await this.durableState.delivered(tlcChannelId, event.id);
@@ -5662,6 +6381,13 @@ export class Body {
           : undefined,
       });
       if (!reply) throw new Error('agent returned an empty Room reply');
+      if (!agentExchange) {
+        // This is the sole prose-to-authority bridge: it sees the completed
+        // signed reply, applies the narrow parser, and emits typed events.
+        // Publication failure is part of this delivery attempt; the durable
+        // Room reply prevents a later retry from invoking the model again.
+        await this.publishRootFactoryDirectives(tlcChannelId, request, result.agentText);
+      }
       // A pi-acp agent opened an edit corner through its text-only fallback.
       // Permission-capable harnesses reach the native handler above and are
       // never parsed for this marker. Fire-and-forget so the Room reply does

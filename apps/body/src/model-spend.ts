@@ -9,7 +9,8 @@ export type ModelTurnCause =
   | 'corner-conclude'
   | 'target-sync'
   | 'restart-continuation'
-  | 'agent-exchange';
+  | 'agent-exchange'
+  | 'delegation';
 
 export interface ModelTurnAttribution {
   /** Event that immediately caused this invocation. */
@@ -17,10 +18,21 @@ export interface ModelTurnAttribution {
   /** Original human request when the immediate cause is a bounded continuation. */
   originalRequestId: string;
   cause: ModelTurnCause;
+  trigger?: 'human' | 'delegation' | 'schedule';
+  rootEventId?: string;
+  principalPubkey?: string;
+  commissionedByAgentPubkey?: string;
+  delegationId?: string;
+  workItemId?: string;
+  scheduleId?: string;
+  scheduleRunId?: string;
+  reservedTokens?: number;
 }
 
 export interface ModelTurnSpend extends ModelTurnAttribution {
   agentPubkey: string;
+  /** Always the Body whose provider account handled the call. */
+  chargedAgentPubkey?: string;
   channelId: string;
   startedAt: string;
   status: 'complete' | 'failed';
@@ -51,7 +63,10 @@ function tokenPair(value: unknown): TokenPair | undefined {
     record.inputTokens ?? record.input_tokens ?? record.promptTokens ?? record.prompt_tokens,
   );
   const output = finiteTokenCount(
-    record.outputTokens ?? record.output_tokens ?? record.completionTokens ?? record.completion_tokens,
+    record.outputTokens ??
+      record.output_tokens ??
+      record.completionTokens ??
+      record.completion_tokens,
   );
   if (input === undefined && output === undefined) return undefined;
   return { input: input ?? 0, output: output ?? 0 };
@@ -102,11 +117,17 @@ export function completedModelSpend(input: {
   startedAt: string;
 }): ModelTurnSpend {
   const reported = reportedTokenUsage(input.result.updates);
-  const inputTokens = reported?.input ?? approximateTokens(input.systemPromptChars + input.prompt.length);
+  const inputTokens =
+    reported?.input ?? approximateTokens(input.systemPromptChars + input.prompt.length);
   const outputTokens = reported?.output ?? approximateTokens(input.result.agentText.length);
   return {
     ...input.attribution,
     agentPubkey: input.agentPubkey,
+    chargedAgentPubkey: input.agentPubkey,
+    trigger:
+      input.attribution.trigger ??
+      (input.attribution.cause === 'delegation' ? 'delegation' : 'human'),
+    rootEventId: input.attribution.rootEventId ?? input.attribution.originalRequestId,
     channelId: input.channelId,
     startedAt: input.startedAt,
     status: 'complete',
@@ -131,6 +152,11 @@ export function failedModelSpend(input: {
   return {
     ...input.attribution,
     agentPubkey: input.agentPubkey,
+    chargedAgentPubkey: input.agentPubkey,
+    trigger:
+      input.attribution.trigger ??
+      (input.attribution.cause === 'delegation' ? 'delegation' : 'human'),
+    rootEventId: input.attribution.rootEventId ?? input.attribution.originalRequestId,
     channelId: input.channelId,
     startedAt: input.startedAt,
     status: 'failed',
@@ -178,10 +204,7 @@ export interface RestartReprimeSpend {
   records: SessionReprimeRecord[];
 }
 
-export function dailyAgentSpend(
-  turns: readonly ModelTurnSpend[],
-  day: string,
-): AgentDailySpend[] {
+export function dailyAgentSpend(turns: readonly ModelTurnSpend[], day: string): AgentDailySpend[] {
   const byAgent = new Map<string, AgentDailySpend>();
   for (const turn of turns) {
     if (turn.startedAt.slice(0, 10) !== day) continue;

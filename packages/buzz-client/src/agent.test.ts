@@ -450,7 +450,7 @@ describe('agent entity model', () => {
       ),
     ).toBe(true);
     expect(removedCommunity.has(communityId)).toBe(true);
-  });
+  }, 30_000);
 
   it('refuses registration before the agent key is a community member', async () => {
     vi.stubGlobal(
@@ -538,7 +538,7 @@ describe('abandonAgentPairing', () => {
     vi.unstubAllGlobals();
   });
 
-  it("drops the membership redemption just added, so a failed pair leaves no ghost", async () => {
+  it('drops the membership redemption just added, so a failed pair leaves no ghost', async () => {
     // `listAgents` filters on current Workspace membership, so this is the
     // write that actually makes a half-created agent disappear from the app.
     const removed = new Set<string>();

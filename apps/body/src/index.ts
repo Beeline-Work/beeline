@@ -30,6 +30,27 @@ export {
 export { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 export { DurableBodyState, type EventCursor } from './durable-state.js';
 export {
+  PermissionKnownFailure,
+  PermissionRuntime,
+  parseRoomCreatePermissionDirective,
+  type PermissionActionClaim,
+  type PermissionDirectiveRosterEntry,
+  type PermissionExecutionOutcome,
+  type PermissionRuntimeDependencies,
+} from './permission-runtime.js';
+export {
+  DelegationRuntime,
+  buildDelegationEscalationPermission,
+  dispatchRootFactoryDirectives,
+  type DelegationDailyLimit,
+  type DelegationDailyUsage,
+  type DelegationDispatchOutcome,
+  type DelegationRuntimeDependencies,
+  type DelegationRuntimeReader,
+  type RootFactoryDirectiveDependencies,
+  type RootFactoryRosterEntry,
+} from './delegation-runtime.js';
+export {
   completedModelSpend,
   dailyAgentSpend,
   dailyRestartReprimes,

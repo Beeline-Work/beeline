@@ -60,6 +60,14 @@ export { buildApproval, verifyApproval, APPROVAL_MARKER, type MergeTarget } from
 export { serializeRepoLanding } from './land-queue.js';
 
 export {
+  authorizeHumanAuthority,
+  type HumanAuthorityDependencies,
+  type HumanAuthorityResult,
+  type HumanAuthorityRole,
+  type HumanKeyCustody,
+} from './human-authority.js';
+
+export {
   attemptMerge,
   authorizeReviewer,
   DurableMergeGate,

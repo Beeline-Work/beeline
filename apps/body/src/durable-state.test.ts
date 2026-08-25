@@ -202,3 +202,67 @@ describe('durable input inbox', () => {
     ]);
   });
 });
+
+describe('factory capacity reservations', () => {
+  it('atomically admits only one concurrent action into a one-use grant', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-permission-capacity-'));
+    cleanup.push(root);
+    const state = new DurableBodyState(resolve(root, 'state.json'));
+    const base = {
+      grantEventId: 'grant',
+      at: 1_000,
+      charge: { uses: 1 },
+      usage: {
+        uses: 0,
+        minorUnits: 0,
+        reservedTokens: 0,
+        committedAt: [],
+        actionStatuses: new Map(),
+      },
+      grant: {
+        tier: 1 as const,
+        mode: 'standing' as const,
+        notBefore: 900,
+        expiresAt: 2_000,
+        maxUses: 1,
+        budget: {},
+        rate: { maxUses: 1, windowSeconds: 60 },
+      },
+    };
+    const results = await Promise.all([
+      state.reservePermissionCapacity({ ...base, key: 'a:1', actionId: 'a' }),
+      state.reservePermissionCapacity({ ...base, key: 'b:1', actionId: 'b' }),
+    ]);
+    expect(results.sort()).toEqual(['claimed', 'exhausted']);
+  });
+
+  it('atomically admits only one concurrent turn into shared root and daily capacity', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-delegation-capacity-'));
+    cleanup.push(root);
+    const state = new DurableBodyState(resolve(root, 'state.json'));
+    const base = {
+      delegationId: 'delegation',
+      agentPubkey: 'agent',
+      day: '2030-01-01',
+      phase: 'assign' as const,
+      reservedTokens: 100,
+      allocatedTurns: 1,
+      observedTurnEventIds: [],
+      observedRootTurns: 0,
+      rootMaxAgentTurns: 1,
+      observedDailyCalls: 0,
+      observedDailyReservedTokens: 0,
+      observedDailyTurnEventIds: [],
+      dailyMaxCalls: 1,
+      dailyMaxReservedTokens: 100,
+      observedSiblingCount: 0,
+      observedSiblingAllocatedTurns: 0,
+      observedSiblingAllocatedTokens: 0,
+    };
+    const results = await Promise.all([
+      state.reserveDelegationInbound({ ...base, eventId: 'turn-a' }),
+      state.reserveDelegationInbound({ ...base, eventId: 'turn-b' }),
+    ]);
+    expect(results.sort()).toEqual(['claimed', 'over-turn-budget']);
+  });
+});

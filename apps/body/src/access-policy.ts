@@ -10,15 +10,16 @@
  * `creator` is the primary cost/safety lever: only the inviting owner may
  * address the agent, so no one else spends the operator's subscription or
  * triggers the owner's commands. It is also the default for newly paired
- * agents (see DEFAULT_ACCESS_POLICY below). `allowlist` is intentionally
- * reserved here so a future explicit-pubkey mode lands without a
- * runtime-record migration.
+ * agents (see DEFAULT_ACCESS_POLICY below). `allowlist` is the explicit
+ * delegation policy: only the configured identities may assign work. The
+ * creator is not implicitly included; authority is exactly the stored list.
  */
 
-export type AgentAccessPolicy = 'everyone' | 'creator';
+export type AgentAccessPolicy = 'everyone' | 'creator' | 'allowlist';
 
-/** Every access policy this build understands. `allowlist` is reserved (see above). */
-export const AGENT_ACCESS_POLICIES = ['everyone', 'creator'] as const;
+/** Every access policy this build understands. */
+export const AGENT_ACCESS_POLICIES = ['everyone', 'creator', 'allowlist'] as const;
+export const MAX_ACCESS_ALLOWLIST_ENTRIES = 64;
 
 /**
  * Default for a NEWLY PAIRED agent: only the inviting owner may address it,
@@ -48,6 +49,17 @@ export function isAgentAccessPolicy(value: unknown): value is AgentAccessPolicy 
   return (AGENT_ACCESS_POLICIES as readonly string[]).includes(value as string);
 }
 
+/** Strict persisted form: unique lowercase hex pubkeys with a bounded cardinality. */
+export function isAgentAccessAllowlist(value: unknown): value is string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_ACCESS_ALLOWLIST_ENTRIES) {
+    return false;
+  }
+  if (value.some((pubkey) => typeof pubkey !== 'string' || !/^[0-9a-f]{64}$/.test(pubkey))) {
+    return false;
+  }
+  return new Set(value).size === value.length;
+}
+
 /**
  * The captain-specified default auto-response, verbatim. `<@owner_name>` is a
  * template variable resolved to the owner's display name / handle at send time.
@@ -74,6 +86,7 @@ export function isSenderPermitted(
   policy: AgentAccessPolicy,
   senderPubkey: string,
   ownerPubkey: string | undefined,
+  allowlist: readonly string[] | undefined = undefined,
 ): boolean {
   if (!senderPubkey) return false;
   switch (policy) {
@@ -81,6 +94,8 @@ export function isSenderPermitted(
       return true;
     case 'creator':
       return Boolean(ownerPubkey) && senderPubkey === ownerPubkey;
+    case 'allowlist':
+      return Boolean(allowlist?.includes(senderPubkey));
     default:
       // An unrecognized policy is treated as the most restrictive: deny.
       return false;

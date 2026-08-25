@@ -116,6 +116,9 @@ describe('operator skills + MCP passthrough', () => {
     '[mcp_servers.squire]',
     'command = "npx"',
     'args = ["-y", "@trusty-squire/mcp"]',
+    '',
+    '[mcp_servers.project_tools]',
+    'command = "project-tools"',
   ].join('\n');
 
   async function operatorHomeWithHarnessConfigs(): Promise<string> {
@@ -158,7 +161,8 @@ describe('operator skills + MCP passthrough', () => {
     expect(stats.isSymbolicLink()).toBe(false);
     expect(stats.isFile()).toBe(true);
     const isolatedText = readFileSync(isolatedConfig, 'utf8');
-    expect(isolatedText).toContain('[mcp_servers.squire]');
+    expect(isolatedText).toContain('[mcp_servers.project_tools]');
+    expect(isolatedText).not.toContain('[mcp_servers.squire]');
     expect(isolatedText).not.toMatch(/model|approval_policy|sandbox_mode/);
 
     // Writing through the session cannot reach the operator's real config.
@@ -174,7 +178,12 @@ describe('operator skills + MCP passthrough', () => {
     await mkdir(resolve(operatorHome, '.grok'), { recursive: true });
     await writeFile(
       resolve(operatorHome, '.claude.json'),
-      JSON.stringify({ mcpServers: { files: { command: 'files-mcp' } } }),
+      JSON.stringify({
+        mcpServers: {
+          files: { command: 'files-mcp' },
+          squire: { command: 'npx', args: ['-y', '@trusty-squire/mcp'] },
+        },
+      }),
     );
     await writeFile(
       resolve(operatorHome, '.grok/config.toml'),
@@ -241,7 +250,7 @@ describe('operator skills + MCP passthrough', () => {
 
     expect(lstatSync(resolve(roomRoot, 'codex', 'config.toml')).isSymbolicLink()).toBe(false);
     expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toContain(
-      '[mcp_servers.squire]',
+      '[mcp_servers.project_tools]',
     );
     expect(readFileSync(redirected, 'utf8')).toBe('must stay unchanged\n');
   });

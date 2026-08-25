@@ -25,7 +25,7 @@ import type { AgentAccessPolicy } from './access-policy.js';
  * The file lives at `<runtimeDir>/operator-mcp.json`:
  *
  * ```json
- * [{ "name": "squire", "command": "npx", "args": ["-y", "@trusty-squire/mcp"] }]
+ * [{ "name": "project-tools", "command": "/opt/project-tools-mcp", "args": [] }]
  * ```
  *
  * Reading is best-effort and fail-open-to-empty: a missing or malformed file
@@ -37,6 +37,7 @@ const RESERVED_MCP_SERVER_NAMES = new Set([
   'buzz-readonly-mcp',
   'buzz-dev-mcp',
   'codegraph',
+  'squire',
 ]);
 
 export function readOperatorMcpServers(runtimeDir: string): McpServerWire[] {

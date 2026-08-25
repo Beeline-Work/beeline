@@ -27,7 +27,6 @@ describe('readOperatorMcpServers', () => {
     try {
       const servers = readOperatorMcpServers(dir);
       expect(servers).toEqual([
-        { name: 'squire', command: 'npx', args: ['-y', '@trusty-squire/mcp'], env: [] },
         { name: 'project-tools', command: '/usr/local/bin/project-mcp', args: [], env: [] },
       ]);
     } finally {
@@ -91,7 +90,7 @@ describe('readOperatorMcpServers', () => {
 });
 
 describe('operatorMcpServersForCorners', () => {
-  const configured = [{ name: 'squire', command: 'npx', args: ['-y'], env: [] }];
+  const configured = [{ name: 'project-tools', command: 'project-tools', args: ['-y'], env: [] }];
 
   it('mounts operator servers only for a creator-policy agent', () => {
     expect(operatorMcpServersForCorners('creator', configured)).toEqual(configured);

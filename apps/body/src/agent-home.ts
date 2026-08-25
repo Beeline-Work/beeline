@@ -18,9 +18,9 @@
  * visible to every other Room.
  *
  * **Skills + MCP passthrough (owner decision 2026-08-23).** The operator's
- * skills directories are symlinked into each harness home and the operator's
+ * skills directories are symlinked into each harness home and ordinary operator
  * MCP server declarations are COPIED into it, so every Room/corner session has
- * every skill and MCP server the host offers — without them a harness boots
+ * the tools the host offers — without them a harness boots
  * with a login but nothing to advertise over ACP. Two shapes, deliberately:
  * skills are LINKED (read-only reference data; edits through the link would be
  * the operator's own business anyway) while MCP config is COPIED — codex-acp
@@ -29,8 +29,8 @@
  * declarations pass through: model/sandbox/approval settings stay out because
  * they fight the daemon's own agent-mode flags. This does NOT touch the #376
  * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
- * `~/.git-credentials`) are never linked, and an MCP server that needs a
- * secret continues to get it its own way (e.g. Trusty Squire's vault).
+ * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Squire is
+ * omitted from ambient declarations and mounted only through its host broker.
  *
  * `pi` needs none of this: it never reads the `mcpServers` it is handed and
  * loads the operator's global `~/.pi/agent` extensions/skills from `$HOME`
@@ -95,8 +95,8 @@ const SHARED_SKILLS: Array<{ dir: 'claude' | 'codex' | 'grok'; source: string }>
  *     `mcpServers` key of `~/.claude.json`; the same object is written as a
  *     minimal `.claude.json` inside the isolated `CLAUDE_CONFIG_DIR`.
  *
- * Everything else in those files (models, sandbox modes, approval policy)
- * deliberately stays behind.
+ * Everything else in those files (models, sandbox modes, approval policy) and
+ * the reserved `squire` server deliberately stay behind.
  */
 const HARNESS_MCP_CONFIGS = [
   { dir: 'codex' as const, toml: '.codex/config.toml' },
@@ -176,7 +176,7 @@ async function provisionOperatorSkillsAndMcp(
       const source = resolve(operatorHome, config.toml);
       const target = resolve(root, config.dir, 'config.toml');
       const section = existsSync(source)
-        ? extractTomlSections(readFileSync(source, 'utf8'), ['mcp_servers'])
+        ? extractTomlSections(readFileSync(source, 'utf8'), ['mcp_servers'], ['squire'])
         : undefined;
       // Regeneration is also deletion: if the operator removes the config or
       // its last MCP table, do not leave stale servers active in a Room.
@@ -213,7 +213,9 @@ function readClaudeUserScopeMcpServers(path: string): Record<string, unknown> | 
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     if (parsed && typeof parsed.mcpServers === 'object' && parsed.mcpServers !== null) {
-      return parsed.mcpServers as Record<string, unknown>;
+      const servers = { ...(parsed.mcpServers as Record<string, unknown>) };
+      delete servers.squire;
+      return servers;
     }
   } catch {
     // Malformed operator config: skip rather than fail the Room.

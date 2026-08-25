@@ -7,10 +7,14 @@
  * failed model invocation becomes a terminal receipt with no automatic retry.
  */
 import type { NostrEvent } from '@beeline/nostr';
+import { createHash } from 'node:crypto';
 import {
   admitDelegationTurn,
   buildDelegationReceipt,
   buildDelegationTurn,
+  buildPermissionRequest,
+  defaultDelegationBudget,
+  parseDelegationDirectives,
   parseDelegationTurn,
   type DelegationAdmissionReason,
   type DelegationReceiptV1,
@@ -18,7 +22,185 @@ import {
   type Identity,
   type ParsedDelegationReceipt,
   type ParsedDelegationTurn,
+  type PermissionRequestV1,
 } from '@beeline/buzz-client';
+import { parseRoomCreatePermissionDirective } from './permission-runtime.js';
+
+export interface RootFactoryRosterEntry {
+  handle: string;
+  pubkey: string;
+  kind: 'agent' | 'human';
+  role?: string;
+}
+
+export interface RootFactoryDirectiveDependencies {
+  identity: Identity;
+  publishTurn(value: DelegationTurnV1): Promise<unknown>;
+  publishPermission(event: NostrEvent): Promise<unknown>;
+  targetReady(roomId: string, agentPubkey: string): Promise<boolean>;
+}
+
+function factoryUuid(seed: string): string {
+  const bytes = Buffer.from(createHash('sha256').update(seed).digest().subarray(0, 16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * Sole model-prose bridge for factory authority. Every output is a signed,
+ * deterministic typed event; everything outside the narrow parser is inert.
+ */
+export async function dispatchRootFactoryDirectives(
+  dependencies: RootFactoryDirectiveDependencies,
+  input: {
+    roomId: string;
+    workspaceId: string;
+    principalPubkey: string;
+    rootEventId: string;
+    immediateTurnEventId: string;
+    completedAt: number;
+    finalText: string;
+    roster: readonly RootFactoryRosterEntry[];
+  },
+): Promise<{ delegations: number; permissions: number; errors: number }> {
+  const parsed = parseDelegationDirectives(
+    input.finalText,
+    input.roster.flatMap((entry) =>
+      entry.kind === 'agent' ? [{ handle: entry.handle, pubkey: entry.pubkey }] : [],
+    ),
+  );
+  const delegates = parsed.directives.flatMap((directive, index) =>
+    directive.kind === 'delegate' ? [{ directive, index }] : [],
+  );
+  const availableTurns = Math.max(
+    0,
+    defaultDelegationBudget(input.completedAt).maxAgentTurns - 1,
+  );
+  const delegateCount = Math.min(delegates.length, availableTurns);
+  const baseTurns = delegateCount ? Math.floor(availableTurns / delegateCount) : 0;
+  let extraTurns = delegateCount ? availableTurns % delegateCount : 0;
+  let delegationCount = 0;
+  for (const { directive, index } of delegates.slice(0, delegateCount)) {
+    if (
+      directive.targetPubkey === dependencies.identity.publicKey ||
+      !(await dependencies.targetReady(input.roomId, directive.targetPubkey))
+    ) {
+      continue;
+    }
+    const budget = defaultDelegationBudget(input.completedAt);
+    budget.maxAgentTurns = baseTurns + (extraTurns-- > 0 ? 1 : 0);
+    await dependencies.publishTurn({
+      version: 1,
+      delegationId: factoryUuid(`${input.immediateTurnEventId}:delegation:${index}`),
+      workItemId: factoryUuid(`${input.immediateTurnEventId}:work-item:${index}`),
+      phase: 'assign',
+      roomId: input.roomId,
+      workspaceId: input.workspaceId,
+      fromAgentPubkey: dependencies.identity.publicKey,
+      toAgentPubkey: directive.targetPubkey,
+      rootEventId: input.rootEventId,
+      parentEventId: input.immediateTurnEventId,
+      principalPubkey: input.principalPubkey,
+      path: [dependencies.identity.publicKey],
+      depth: 1,
+      budget,
+      task: directive.task,
+      createdAt: input.completedAt,
+    });
+    delegationCount++;
+  }
+
+  let permissionCount = 0;
+  for (const [index, directive] of parsed.directives.entries()) {
+    if (directive.kind !== 'permission') continue;
+    const scope = parseRoomCreatePermissionDirective({
+      task: directive.task,
+      workspaceId: input.workspaceId,
+      reservedRoomId: factoryUuid(`${input.immediateTurnEventId}:room:${index}`),
+      principalPubkey: input.principalPubkey,
+      roster: input.roster,
+    });
+    if (!scope) continue;
+    const eligibleHumans = input.roster.flatMap((entry) => {
+      if (entry.kind !== 'human') return [];
+      const eligible =
+        directive.audience === 'owner'
+          ? entry.role === 'owner'
+          : entry.role === 'owner' || entry.role === 'admin';
+      return eligible ? [entry.pubkey] : [];
+    });
+    if (eligibleHumans.length === 0) continue;
+    const value: PermissionRequestV1 = {
+      version: 1,
+      permissionId: factoryUuid(`${input.immediateTurnEventId}:permission:${index}`),
+      roomId: input.roomId,
+      workspaceId: input.workspaceId,
+      requesterAgentPubkey: dependencies.identity.publicKey,
+      audience: directive.audience,
+      summary: directive.task.slice(0, 600),
+      scope,
+      provenance: {
+        immediateTurnEventId: input.immediateTurnEventId,
+        rootEventId: input.rootEventId,
+      },
+      requestedAt: input.completedAt,
+      requestExpiresAt: input.completedAt + 30 * 60,
+    };
+    await dependencies.publishPermission(
+      buildPermissionRequest(dependencies.identity, value, eligibleHumans),
+    );
+    permissionCount++;
+  }
+  return {
+    delegations: delegationCount,
+    permissions: permissionCount,
+    errors: parsed.errors.length,
+  };
+}
+
+/** Exact structural boundary excess → one typed admin request, never a click per child. */
+export function buildDelegationEscalationPermission(input: {
+  identity: Identity;
+  turn: ParsedDelegationTurn;
+  immediateTurnEventId: string;
+  requestedAt: number;
+  extraTurns: number;
+  extraReservedTokens: number;
+  permittedAgentPubkeys: string[];
+  eligibleHumanPubkeys: string[];
+}): NostrEvent {
+  if (!Number.isSafeInteger(input.extraTurns) || input.extraTurns < 1) {
+    throw new Error('delegation escalation requires positive extra turns');
+  }
+  const permissionId = factoryUuid(
+    `${input.immediateTurnEventId}:delegation-escalation:${input.turn.value.delegationId}`,
+  );
+  return buildPermissionRequest(input.identity, {
+    version: 1,
+    permissionId,
+    roomId: input.turn.value.roomId,
+    workspaceId: input.turn.value.workspaceId,
+    requesterAgentPubkey: input.identity.publicKey,
+    audience: 'admin',
+    summary: `Extend delegation ${input.turn.value.delegationId} by ${input.extraTurns} bounded turn(s).`,
+    scope: {
+      type: 'delegation.escalate',
+      delegationId: input.turn.value.delegationId,
+      extraTurns: input.extraTurns,
+      extraReservedTokens: input.extraReservedTokens,
+      permittedAgentPubkeys: [...new Set(input.permittedAgentPubkeys)],
+    },
+    provenance: {
+      immediateTurnEventId: input.immediateTurnEventId,
+      rootEventId: input.turn.value.rootEventId,
+      delegationId: input.turn.value.delegationId,
+    },
+    requestedAt: input.requestedAt,
+    requestExpiresAt: input.requestedAt + 30 * 60,
+  }, input.eligibleHumanPubkeys);
+}
 
 export interface DelegationDailyUsage {
   calls: number;
@@ -34,10 +216,18 @@ export interface DelegationRuntimeReader {
   isRegisteredAgent(pubkey: string): Promise<boolean>;
   isRoomMember(roomId: string, pubkey: string): Promise<boolean>;
   isWorkspaceMember(workspaceId: string, pubkey: string): Promise<boolean>;
-  accessPermitted(senderAgentPubkey: string, principalPubkey: string): Promise<boolean>;
+  accessPermitted(
+    workspaceId: string,
+    senderAgentPubkey: string,
+    principalPubkey: string,
+  ): Promise<boolean>;
   targetOnline(roomId: string, agentPubkey: string): Promise<boolean>;
   targetSupportsDelegationV1(roomId: string, agentPubkey: string): Promise<boolean>;
-  graph(delegationId: string): Promise<{
+  rootAuthorized(turn: ParsedDelegationTurn): Promise<boolean>;
+  escalationAuthorized(turn: ParsedDelegationTurn): Promise<boolean>;
+  /** Consume the root escalation action; throw only for retryable authority failure. */
+  consumeEscalation(turn: ParsedDelegationTurn): Promise<boolean>;
+  graph(delegationId: string, roomId: string): Promise<{
     turns: readonly ParsedDelegationTurn[];
     receipts: readonly ParsedDelegationReceipt[];
   }>;
@@ -128,7 +318,10 @@ export class DelegationRuntime {
         senderWorkspaceMember: boolean;
         recipientRoomMember: boolean;
         recipientWorkspaceMember: boolean;
+        principalRoomMember: boolean;
         principalWorkspaceMember: boolean;
+        rootAuthorized: boolean;
+        escalationAuthorized: boolean;
         accessPermitted: boolean;
         targetOnline: boolean;
         targetSupportsDelegationV1: boolean;
@@ -136,7 +329,7 @@ export class DelegationRuntime {
       let usage: DelegationDailyUsage;
       try {
         [graph, usage] = await Promise.all([
-          this.dependencies.reader.graph(turn.value.delegationId),
+          this.dependencies.reader.graph(turn.value.delegationId, turn.value.roomId),
           this.dependencies.reader.delegatedUsage(this.dependencies.identity.publicKey, now),
         ]);
         const [
@@ -145,7 +338,10 @@ export class DelegationRuntime {
           senderWorkspaceMember,
           recipientRoomMember,
           recipientWorkspaceMember,
+          principalRoomMember,
           principalWorkspaceMember,
+          rootAuthorized,
+          escalationAuthorized,
           accessPermitted,
           targetOnline,
           targetSupportsDelegationV1,
@@ -164,11 +360,18 @@ export class DelegationRuntime {
             turn.value.workspaceId,
             this.dependencies.identity.publicKey,
           ),
+          this.dependencies.reader.isRoomMember(
+            turn.value.roomId,
+            turn.value.principalPubkey,
+          ),
           this.dependencies.reader.isWorkspaceMember(
             turn.value.workspaceId,
             turn.value.principalPubkey,
           ),
+          this.dependencies.reader.rootAuthorized(turn),
+          this.dependencies.reader.escalationAuthorized(turn),
           this.dependencies.reader.accessPermitted(
+            turn.value.workspaceId,
             turn.value.fromAgentPubkey,
             turn.value.principalPubkey,
           ),
@@ -187,7 +390,10 @@ export class DelegationRuntime {
           senderWorkspaceMember,
           recipientRoomMember,
           recipientWorkspaceMember,
+          principalRoomMember,
           principalWorkspaceMember,
+          rootAuthorized,
+          escalationAuthorized,
           accessPermitted,
           targetOnline,
           targetSupportsDelegationV1,
@@ -211,10 +417,10 @@ export class DelegationRuntime {
       const dailyTokensExhausted =
         usage.reservedTokens + turn.value.budget.reservedTokens >
         this.dependencies.dailyLimit.maxReservedTokens;
-      if ((await this.dependencies.claimInbound(event.id)) === 'duplicate') {
-        return { status: 'duplicate' };
-      }
       if (!admission.admitted || dailyCallExhausted || dailyTokensExhausted) {
+        if ((await this.dependencies.claimInbound(event.id)) === 'duplicate') {
+          return { status: 'duplicate' };
+        }
         const reason = admission.admitted
           ? dailyCallExhausted
             ? 'over-turn-budget'
@@ -226,6 +432,28 @@ export class DelegationRuntime {
           reason,
         );
         return { status: 'refused', reason, receipt };
+      }
+      if (turn.value.escalationGrantEventId) {
+        let consumed: boolean;
+        try {
+          consumed = await this.dependencies.reader.consumeEscalation(turn);
+        } catch {
+          return { status: 'deferred', reason: 'authority-unavailable' };
+        }
+        if (!consumed) {
+          if ((await this.dependencies.claimInbound(event.id)) === 'duplicate') {
+            return { status: 'duplicate' };
+          }
+          const receipt = await this.publishReceipt(
+            turn,
+            'budget-exhausted',
+            'escalation-required',
+          );
+          return { status: 'refused', reason: 'escalation-required', receipt };
+        }
+      }
+      if ((await this.dependencies.claimInbound(event.id)) === 'duplicate') {
+        return { status: 'duplicate' };
       }
 
       // Receipt before cold harness activation is the user-visible turn

@@ -223,7 +223,15 @@ export class BuzzClient {
   /** Create an open stream channel; returns UUID. */
   createChannel(
     name: string,
-    opts?: { parentChannelId?: string; communityId?: string; repository?: RepositoryBinding },
+    opts?: {
+      channelId?: string;
+      visibility?: string;
+      parentChannelId?: string;
+      communityId?: string;
+      repository?: RepositoryBinding;
+      extraTags?: string[][];
+      mirrorCommunityMembers?: boolean;
+    },
   ): Promise<string> {
     return createChannel(this.ctx, name, opts);
   }

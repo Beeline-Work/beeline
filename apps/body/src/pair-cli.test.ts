@@ -464,6 +464,41 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     expect(stderr).not.toMatch(/\n\s+at /);
   });
 
+  it('accepts and normalizes an explicit allowlist before pairing redemption', async () => {
+    const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const agent = await fakeModelAgent();
+    const atlas = 'A'.repeat(64);
+    const { status, stderr } = runPair(
+      [
+        'not-a-real-code', '--repo', gitRepo, '--agent', 'custom',
+        '--agent-command', agent, '--access', 'allowlist', '--allow', `${atlas},${atlas}`,
+      ],
+      { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
+    );
+    expect(status).toBe(1);
+    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).not.toContain('--access allowlist requires');
+  });
+
+  it.each([
+    [['BUZZ-ABCD-EFGH', '--access', 'allowlist'], '--access allowlist requires --allow'],
+    [['BUZZ-ABCD-EFGH', '--access', 'creator', '--allow', 'a'.repeat(64)], '--allow requires --access allowlist'],
+    [['BUZZ-ABCD-EFGH', '--access', 'allowlist', '--allow', 'not-a-key'], '--allow must contain only npub or 64-character hex keys'],
+  ] as const)('rejects invalid allowlist arguments before relay work', async (args, message) => {
+    const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const { status, stderr } = runPair([...args, '--repo', gitRepo], {
+      cwd: gitRepo,
+      env: { XDG_STATE_HOME: stateHome },
+    });
+    expect(status).toBe(1);
+    expect(stderr).toContain(message);
+    expect(stderr).not.toMatch(/\n\s+at /);
+  });
+
   it('never prompts non-interactively: --access creator with no --auto-response proceeds straight to redemption', async () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });

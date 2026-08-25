@@ -656,7 +656,8 @@ function parseRequestContent(value: unknown): PermissionRequestV1 | undefined {
     (provenance.scheduleRunId !== undefined && !scheduleRunId) ||
     requestedAt === undefined ||
     requestExpiresAt === undefined ||
-    requestExpiresAt <= requestedAt
+    requestExpiresAt <= requestedAt ||
+    (scope.type === 'room.create' && scope.workspaceId !== workspaceId)
   ) {
     return undefined;
   }
@@ -836,7 +837,8 @@ export function parsePermissionRequest(event: NostrEvent): ParsedPermissionReque
     event.created_at !== value.requestedAt ||
     event.pubkey !== value.requesterAgentPubkey ||
     pTags.length === 0 ||
-    pTags.some((candidate) => !pubkey(candidate[1]))
+    pTags.some((candidate) => !pubkey(candidate[1])) ||
+    new Set(pTags.map((candidate) => candidate[1])).size !== pTags.length
   ) {
     return undefined;
   }
@@ -1232,6 +1234,7 @@ export interface PermissionConcreteAction {
   permissionId: string;
   requestEventId: string;
   grantEventId: string;
+  ordinal: number;
   actionId: string;
   idempotencyKey: string;
   workspaceId: string;
@@ -1361,6 +1364,8 @@ export async function verifyPermissionAction(input: {
       return { authorized: false, terminal: true, reason: 'decision-invalid' };
     }
     const policy = PERMISSION_SCOPE_REGISTRY[request.value.scope.type];
+    const minimumRole: PermissionRole =
+      request.value.audience === 'owner' ? 'owner' : policy.minimumRole;
     if (policy.executor !== input.action.executor) {
       return { authorized: false, terminal: true, reason: 'executor-mismatch' };
     }
@@ -1372,7 +1377,7 @@ export async function verifyPermissionAction(input: {
     const authorizedDecisions: ParsedPermissionDecision[] = [];
     let requestedDecisionAuthority: CurrentHumanAuthority | undefined;
     for (const decision of decisions) {
-      const authority = await currentHumanAuthorized(input.reader, request, decision, policy.minimumRole);
+      const authority = await currentHumanAuthorized(input.reader, request, decision, minimumRole);
       if (decision.event.id === requestedDecision.event.id) requestedDecisionAuthority = authority;
       if (authority.authorized) {
         authorizedDecisions.push(decision);
@@ -1400,7 +1405,7 @@ export async function verifyPermissionAction(input: {
     for (const revocation of revocations) {
       if (
         revocation.value.grantEventId === winner.event.id &&
-        (await currentHumanAuthorized(input.reader, request, revocation, policy.minimumRole)).authorized
+        (await currentHumanAuthorized(input.reader, request, revocation, minimumRole)).authorized
       ) {
         return { authorized: false, terminal: true, reason: 'revoked' };
       }
@@ -1421,6 +1426,14 @@ export async function verifyPermissionAction(input: {
       return { authorized: false, terminal: true, reason: 'action-outcome-unknown' };
     }
     if (!permissionScopeAllows(request.value.scope, input.action.scope)) {
+      return { authorized: false, terminal: true, reason: 'action-mismatch' };
+    }
+    if (
+      !Number.isSafeInteger(input.action.ordinal) ||
+      input.action.ordinal < 0 ||
+      permissionActionId(input.action.scope, request.event.id, input.action.ordinal) !==
+        input.action.actionId
+    ) {
       return { authorized: false, terminal: true, reason: 'action-mismatch' };
     }
     if (!HEX_64.test(input.action.executorPubkey)) {

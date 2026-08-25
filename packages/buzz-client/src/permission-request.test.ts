@@ -15,6 +15,7 @@ import {
   parsePermissionExecution,
   parsePermissionRequest,
   parsePermissionRevocation,
+  permissionActionId,
   permissionScopeAllows,
   verifyPermissionAction,
   type PermissionConcreteAction,
@@ -158,6 +159,11 @@ describe('permission protocol codecs', () => {
     expect(parsePermissionRequest(resign([...original.tags, ['h', request.value.roomId]]))).toBeUndefined();
     expect(
       parsePermissionRequest(
+        resign([...original.tags, ['p', original.tags.find((tag) => tag[0] === 'p')![1]!]]),
+      ),
+    ).toBeUndefined();
+    expect(
+      parsePermissionRequest(
         resign(original.tags.map((tag) => (tag[0] === 'scope' ? ['scope', 'money.spend'] : tag))),
       ),
     ).toBeUndefined();
@@ -165,6 +171,11 @@ describe('permission protocol codecs', () => {
     expect(parsePermissionRequest(resign(original.tags, future))).toBeUndefined();
     const oversized = JSON.stringify({ ...request.value, summary: 'x'.repeat(601) });
     expect(parsePermissionRequest(resign(original.tags, oversized))).toBeUndefined();
+    const wrongWorkspace = JSON.stringify({
+      ...request.value,
+      scope: { ...request.value.scope, workspaceId: 'other-workspace' },
+    });
+    expect(parsePermissionRequest(resign(original.tags, wrongWorkspace))).toBeUndefined();
     const forged = { ...original, content: `${original.content} ` };
     expect(parsePermissionRequest(forged)).toBeUndefined();
 
@@ -285,7 +296,8 @@ describe('standing envelope execution verification', () => {
       permissionId: setupResult.request.value.permissionId,
       requestEventId: setupResult.request.event.id,
       grantEventId: setupResult.decision.event.id,
-      actionId: 'charge-one',
+      ordinal: 0,
+      actionId: permissionActionId(moneyScope(500), setupResult.request.event.id, 0),
       idempotencyKey: 'charge-one',
       workspaceId: setupResult.request.value.workspaceId,
       roomId: setupResult.request.value.roomId,
@@ -318,7 +330,12 @@ describe('standing envelope execution verification', () => {
     await expect(
       verifyPermissionAction({
         reader: fixture.reader,
-        action: { ...fixture.action, actionId: 'charge-two', idempotencyKey: 'charge-two' },
+        action: {
+          ...fixture.action,
+          ordinal: 1,
+          actionId: permissionActionId(fixture.action.scope, fixture.request.event.id, 1),
+          idempotencyKey: 'charge-two',
+        },
         now: NOW + 4,
       }),
     ).resolves.toMatchObject({ authorized: true, usage: { uses: 1, minorUnits: 500 } });
@@ -340,6 +357,16 @@ describe('standing envelope execution verification', () => {
         now: NOW + 2,
       }),
     ).resolves.toEqual({ authorized: false, terminal: true, reason: 'request-invalid' });
+    await expect(
+      verifyPermissionAction({
+        reader: fixture.reader,
+        action: {
+          ...fixture.action,
+          actionId: permissionActionId(fixture.action.scope, fixture.request.event.id, 1),
+        },
+        now: NOW + 2,
+      }),
+    ).resolves.toEqual({ authorized: false, terminal: true, reason: 'action-mismatch' });
 
     fixture.reader.isRegisteredAgent = async () => true;
     await expect(
@@ -407,6 +434,70 @@ describe('standing envelope execution verification', () => {
     await expect(
       verifyPermissionAction({ reader: fixture.reader, action: fixture.action, now: NOW + 2 }),
     ).resolves.toEqual({ authorized: false, terminal: false, reason: 'authority-unavailable' });
+  });
+
+  it.each([
+    ['removed admin', { roomMember: false, workspaceMember: true, role: 'owner', custody: true, agent: false }, 'signer-not-current-admin'],
+    ['unrelated member', { roomMember: true, workspaceMember: true, role: 'member', custody: true, agent: false }, 'signer-not-current-admin'],
+    ['non-device key', { roomMember: true, workspaceMember: true, role: 'owner', custody: false, agent: false }, 'signer-not-device-held'],
+    ['agent signer', { roomMember: true, workspaceMember: true, role: 'owner', custody: true, agent: true }, 'signer-is-agent'],
+  ] as const)('rejects a %s using current authority facts', async (_label, facts, reason) => {
+    const fixture = verifierFixture();
+    fixture.reader.isRegisteredAgent = async (pubkey) =>
+      pubkey === fixture.agent.publicKey || (facts.agent && pubkey === fixture.admin.publicKey);
+    fixture.reader.isRoomMember = async (_room, pubkey) =>
+      pubkey === fixture.admin.publicKey ? facts.roomMember : true;
+    fixture.reader.isWorkspaceMember = async (_workspace, pubkey) =>
+      pubkey === fixture.admin.publicKey ? facts.workspaceMember : true;
+    fixture.reader.roleForRoom = async (_room, pubkey) =>
+      pubkey === fixture.admin.publicKey ? facts.role : 'member';
+    fixture.reader.hasDeviceCustody = async (pubkey) =>
+      pubkey === fixture.admin.publicKey && facts.custody;
+    await expect(
+      verifyPermissionAction({ reader: fixture.reader, action: fixture.action, now: NOW + 2 }),
+    ).resolves.toEqual({ authorized: false, terminal: true, reason });
+  });
+
+  it('honors an owner-only audience even when the registry minimum is admin', async () => {
+    const scope = roomScope();
+    const agent = createIdentity('agent');
+    const admin = createIdentity('admin');
+    const executor = admin;
+    const value = { ...requestValue(agent.publicKey, scope), audience: 'owner' as const };
+    const request = parsePermissionRequest(buildPermissionRequest(agent, value, [admin.publicKey]))!;
+    const decision = parsePermissionDecision(
+      buildPermissionDecision(admin, request, decisionValue(request)),
+      request,
+    )!;
+    const events = new Map([[request.event.id, request.event], [decision.event.id, decision.event]]);
+    const reader: PermissionFreshReader = {
+      readEvent: async (id) => events.get(id),
+      isRegisteredAgent: async (pubkey) => pubkey === agent.publicKey,
+      isRoomMember: async () => true,
+      isWorkspaceMember: async () => true,
+      roleForRoom: async (_room, pubkey) => pubkey === admin.publicKey ? 'admin' : 'member',
+      hasDeviceCustody: async (pubkey) => pubkey === admin.publicKey,
+      permissionHistory: async () => [decision.event],
+    };
+    const action: PermissionConcreteAction = {
+      permissionId: request.value.permissionId,
+      requestEventId: request.event.id,
+      grantEventId: decision.event.id,
+      ordinal: 0,
+      actionId: permissionActionId(scope, request.event.id, 0),
+      idempotencyKey: 'room-create',
+      workspaceId: request.value.workspaceId,
+      roomId: request.value.roomId,
+      scope,
+      executor: 'human-device',
+      executorPubkey: executor.publicKey,
+      charge: { uses: 1 },
+    };
+    await expect(verifyPermissionAction({ reader, action, now: NOW + 2 })).resolves.toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'signer-not-current-admin',
+    });
   });
 
   it('property-checks monetary scope containment at the exact signed boundary', () => {

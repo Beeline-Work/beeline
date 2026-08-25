@@ -55,7 +55,10 @@ function admission(turn: ParsedDelegationTurn, history: ParsedDelegationTurn[] =
     senderWorkspaceMember: true,
     recipientRoomMember: true,
     recipientWorkspaceMember: true,
+    principalRoomMember: true,
     principalWorkspaceMember: true,
+    rootAuthorized: true,
+    escalationAuthorized: true,
     accessPermitted: true,
     targetOnline: true,
     targetSupportsDelegationV1: true,
@@ -103,6 +106,16 @@ describe('delegation codecs', () => {
     expect(parseDelegationTurn(resign(event.tags, JSON.stringify({ ...parsed, version: 2 })))).toBeUndefined();
     expect(
       parseDelegationTurn(resign(event.tags, JSON.stringify({ ...parsed, task: 'x'.repeat(1_201) }))),
+    ).toBeUndefined();
+    expect(
+      parseDelegationTurn(
+        resign(event.tags, JSON.stringify({ ...parsed, path: ['e'.repeat(64)], depth: 1 })),
+      ),
+    ).toBeUndefined();
+    expect(
+      parseDelegationTurn(
+        resign(event.tags, JSON.stringify({ ...parsed, depth: 2, path: [atlas.publicKey, atlas.publicKey] })),
+      ),
     ).toBeUndefined();
   });
 });
@@ -190,8 +203,12 @@ describe('delegation graph admission', () => {
     ['wrong-recipient', { expectedRecipientPubkey: 'e'.repeat(64) }],
     ['sender-not-agent', { senderIsRegisteredAgent: false }],
     ['sender-not-member', { senderRoomMember: false }],
+    ['sender-not-member', { senderWorkspaceMember: false }],
     ['recipient-not-member', { recipientRoomMember: false }],
+    ['recipient-not-member', { recipientWorkspaceMember: false }],
+    ['principal-not-member', { principalRoomMember: false }],
     ['principal-not-member', { principalWorkspaceMember: false }],
+    ['root-mismatch', { rootAuthorized: false }],
     ['access-denied', { accessPermitted: false }],
     ['target-offline', { targetOnline: false }],
     ['target-incompatible', { targetSupportsDelegationV1: false }],
@@ -212,7 +229,10 @@ describe('delegation graph admission', () => {
         senderWorkspaceMember: true,
         recipientRoomMember: true,
         recipientWorkspaceMember: true,
+        principalRoomMember: true,
         principalWorkspaceMember: true,
+        rootAuthorized: true,
+        escalationAuthorized: true,
         accessPermitted: true,
         targetOnline: true,
         targetSupportsDelegationV1: true,
@@ -230,6 +250,7 @@ describe('delegation graph admission', () => {
         turnValue(atlas.publicKey, scout.publicKey, {
           path: [scout.publicKey, atlas.publicKey],
           depth: 2,
+          parentWorkItemId: randomUUID(),
         }),
       ),
     )!;
@@ -254,6 +275,34 @@ describe('delegation graph admission', () => {
       ),
     )!;
     expect(admission(escalated)).toEqual({ admitted: false, reason: 'escalation-required' });
+
+    const forgedGrant = parseDelegationTurn(
+      buildDelegationTurn(
+        atlas,
+        turnValue(atlas.publicKey, scout.publicKey, {
+          budget: { ...defaultDelegationBudget(NOW), maxAgentTurns: 9 },
+          escalationGrantEventId: '3'.repeat(64),
+        }),
+      ),
+    )!;
+    expect(admitDelegationTurn({
+      turn: forgedGrant,
+      history: [],
+      now: NOW + 1,
+      expectedRecipientPubkey: scout.publicKey,
+      senderIsRegisteredAgent: true,
+      senderRoomMember: true,
+      senderWorkspaceMember: true,
+      recipientRoomMember: true,
+      recipientWorkspaceMember: true,
+      principalRoomMember: true,
+      principalWorkspaceMember: true,
+      rootAuthorized: true,
+      escalationAuthorized: false,
+      accessPermitted: true,
+      targetOnline: true,
+      targetSupportsDelegationV1: true,
+    })).toEqual({ admitted: false, reason: 'escalation-required' });
   });
 
   it('conserves sibling turn and token allocations', () => {
@@ -283,5 +332,25 @@ describe('delegation graph admission', () => {
       ),
     )!;
     expect(admission(child, [root])).toEqual({ admitted: false, reason: 'over-child-budget' });
+  });
+
+  it('allows only one root assignment per delegation graph', () => {
+    const atlas = createIdentity('Atlas');
+    const scout = createIdentity('Scout');
+    const writer = createIdentity('Writer');
+    const root = parseDelegationTurn(
+      buildDelegationTurn(atlas, turnValue(atlas.publicKey, scout.publicKey)),
+    )!;
+    const secondRoot = parseDelegationTurn(
+      buildDelegationTurn(atlas, turnValue(atlas.publicKey, writer.publicKey, {
+        delegationId: root.value.delegationId,
+        rootEventId: root.value.rootEventId,
+        principalPubkey: root.value.principalPubkey,
+        roomId: root.value.roomId,
+        workspaceId: root.value.workspaceId,
+        budget: root.value.budget,
+      })),
+    )!;
+    expect(admission(secondRoot, [root])).toEqual({ admitted: false, reason: 'root-mismatch' });
   });
 });

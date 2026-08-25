@@ -472,8 +472,17 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     const atlas = 'A'.repeat(64);
     const { status, stderr } = runPair(
       [
-        'not-a-real-code', '--repo', gitRepo, '--agent', 'custom',
-        '--agent-command', agent, '--access', 'allowlist', '--allow', `${atlas},${atlas}`,
+        'not-a-real-code',
+        '--repo',
+        gitRepo,
+        '--agent',
+        'custom',
+        '--agent-command',
+        agent,
+        '--access',
+        'allowlist',
+        '--allow',
+        `${atlas},${atlas}`,
       ],
       { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
     );
@@ -484,8 +493,14 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
 
   it.each([
     [['BUZZ-ABCD-EFGH', '--access', 'allowlist'], '--access allowlist requires --allow'],
-    [['BUZZ-ABCD-EFGH', '--access', 'creator', '--allow', 'a'.repeat(64)], '--allow requires --access allowlist'],
-    [['BUZZ-ABCD-EFGH', '--access', 'allowlist', '--allow', 'not-a-key'], '--allow must contain only npub or 64-character hex keys'],
+    [
+      ['BUZZ-ABCD-EFGH', '--access', 'creator', '--allow', 'a'.repeat(64)],
+      '--allow requires --access allowlist',
+    ],
+    [
+      ['BUZZ-ABCD-EFGH', '--access', 'allowlist', '--allow', 'not-a-key'],
+      '--allow must contain only npub or 64-character hex keys',
+    ],
   ] as const)('rejects invalid allowlist arguments before relay work', async (args, message) => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });

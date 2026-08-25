@@ -2360,7 +2360,8 @@ export class Body {
       claimInbound: (eventId) => this.durableState.claimDelegationInbound(eventId),
       reserveInboundCapacity: (input) => this.durableState.reserveDelegationInbound(input),
       reserveOutbound: (event) => this.durableState.reserveDelegationOutbound(event),
-      markOutboundDelivered: (eventId) => this.durableState.markDelegationOutboundDelivered(eventId),
+      markOutboundDelivered: (eventId) =>
+        this.durableState.markDelegationOutboundDelivered(eventId),
       dailyLimit: {
         maxCalls: this.config.delegationDailyMaxCalls ?? 64,
         maxReservedTokens: this.config.delegationDailyMaxReservedTokens ?? 1_000_000,
@@ -4949,9 +4950,7 @@ export class Body {
       (event) =>
         tagValue(event, 'agent') === agentPubkey &&
         tagValue(event, 'status') === 'online' &&
-        event.tags.some(
-          (tag) => tag[0] === 'capability' && tag[1] === 'delegation-v1',
-        ),
+        event.tags.some((tag) => tag[0] === 'capability' && tag[1] === 'delegation-v1'),
     );
   }
 
@@ -5105,7 +5104,8 @@ export class Body {
       const attribution = attributions.get(member.pubkey);
       const isAgent = agentFlags[index] ?? true;
       return {
-        handle: (attribution?.handle ??
+        handle: (
+          attribution?.handle ??
           (isAgent
             ? agentHandle(fallbackAgentName(member.pubkey), member.pubkey)
             : personHandle(fallbackPersonName(member.pubkey), member.pubkey))
@@ -5159,10 +5159,7 @@ export class Body {
     if (requiredTurns > remainingTurns && directives.length > 0) {
       const reply = await this.durableState.reply(turn.value.roomId, turn.event.id);
       const requestedAt = reply?.created_at ?? Math.floor(Date.now() / 1_000);
-      const currentMembers = await listMembers(
-        this.agentClientContext(),
-        turn.value.roomId,
-      );
+      const currentMembers = await listMembers(this.agentClientContext(), turn.value.roomId);
       const agentFlags = await Promise.all(
         currentMembers.map((member) =>
           isRegisteredAgentIdentity(member.pubkey, this.agentRelay).catch(() => true),
@@ -5192,11 +5189,7 @@ export class Body {
         );
       }
     }
-    const count = Math.min(
-      directives.length,
-      turn.value.budget.maxChildren,
-      remainingTurns,
-    );
+    const count = Math.min(directives.length, turn.value.budget.maxChildren, remainingTurns);
     if (count === 0) return;
     const baseTurns = Math.floor(remainingTurns / count);
     let extraTurns = remainingTurns % count;
@@ -5578,8 +5571,7 @@ export class Body {
       const ownerEvents = events
         .filter((event) => event.pubkey === currentOwner)
         .sort(
-          (left, right) =>
-            right.created_at - left.created_at || right.id.localeCompare(left.id),
+          (left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id),
         );
       const newest = ownerEvents[0];
       if (newest) {
@@ -5624,9 +5616,7 @@ export class Body {
     ]);
     const turns = events.flatMap((event) => {
       const parsed = parseDelegationTurn(event);
-      return parsed &&
-        parsed.value.roomId === roomId &&
-        parsed.value.delegationId === delegationId
+      return parsed && parsed.value.roomId === roomId && parsed.value.delegationId === delegationId
         ? [parsed]
         : [];
     });
@@ -5723,9 +5713,7 @@ export class Body {
       executorPubkey: this.agentIdentity.publicKey,
       charge: {
         uses: 1,
-        ...(scope.extraReservedTokens
-          ? { reservedTokens: scope.extraReservedTokens }
-          : {}),
+        ...(scope.extraReservedTokens ? { reservedTokens: scope.extraReservedTokens } : {}),
       },
     };
   }
@@ -5739,8 +5727,10 @@ export class Body {
       action,
       now: Math.floor(Date.now() / 1_000),
     });
-    return verification.authorized ||
-      (!verification.authorized && verification.reason === 'action-already-succeeded');
+    return (
+      verification.authorized ||
+      (!verification.authorized && verification.reason === 'action-already-succeeded')
+    );
   }
 
   private async consumeDelegationEscalation(turn: ParsedDelegationTurn): Promise<boolean> {

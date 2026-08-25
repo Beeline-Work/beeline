@@ -538,7 +538,7 @@ describe('abandonAgentPairing', () => {
     vi.unstubAllGlobals();
   });
 
-  it("drops the membership redemption just added, so a failed pair leaves no ghost", async () => {
+  it('drops the membership redemption just added, so a failed pair leaves no ghost', async () => {
     // `listAgents` filters on current Workspace membership, so this is the
     // write that actually makes a half-created agent disappear from the app.
     const removed = new Set<string>();

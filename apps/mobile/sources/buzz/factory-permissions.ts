@@ -114,7 +114,9 @@ export interface RoomCreateExecutorDependencies {
   client: RoomCreateClient;
   outbox: RoomCreateOutbox;
   /** Fresh relay comparison of creator, immutable scope, and exact roster. */
-  inspectRoomFresh(scope: Extract<PermissionScope, { type: 'room.create' }>): Promise<ExactRoomState>;
+  inspectRoomFresh(
+    scope: Extract<PermissionScope, { type: 'room.create' }>,
+  ): Promise<ExactRoomState>;
   /** Resolve the credential-free binding named by an exact permission scope. */
   resolveRepositoryBinding?(key: string): Promise<RepositoryBinding | undefined>;
   now?: () => number;
@@ -201,18 +203,17 @@ async function createExactRoom(
 }
 
 /** Build the default standing grant and persist it before the relay write. */
-export async function grantAndQueueRoomCreate(
-  input: {
-    identity: Identity;
-    requestEvent: NostrEvent;
-    client: PermissionEventPublisher;
-    outbox: RoomCreateOutbox;
-    now?: number;
-    grant?: PermissionGrantEnvelopeV1;
-  },
-): Promise<RoomCreateOutboxItem> {
+export async function grantAndQueueRoomCreate(input: {
+  identity: Identity;
+  requestEvent: NostrEvent;
+  client: PermissionEventPublisher;
+  outbox: RoomCreateOutbox;
+  now?: number;
+  grant?: PermissionGrantEnvelopeV1;
+}): Promise<RoomCreateOutboxItem> {
   const request = parsePermissionRequest(input.requestEvent);
-  if (!request || request.value.scope.type !== 'room.create') throw new Error('invalid Room request');
+  if (!request || request.value.scope.type !== 'room.create')
+    throw new Error('invalid Room request');
   const decidedAt = input.now ?? Math.floor(Date.now() / 1_000);
   const decision = buildPermissionDecision(input.identity, request, {
     version: 1,
@@ -397,8 +398,10 @@ export function projectPermissionCards(
   return events.flatMap((event) => {
     const request = parsePermissionRequest(event);
     if (!request) return [];
-    const related = events.filter(
-      (candidate) => candidate.tags.some((tag) => tag[0] === 'permission' && tag[1] === request.value.permissionId),
+    const related = events.filter((candidate) =>
+      candidate.tags.some(
+        (tag) => tag[0] === 'permission' && tag[1] === request.value.permissionId,
+      ),
     );
     const decisions = related.flatMap((candidate) => {
       const parsed = parsePermissionDecision(candidate, request);
@@ -412,18 +415,20 @@ export function projectPermissionCards(
       const parsed = parsePermissionExecution(candidate, request);
       return parsed && executionAuthorized(parsed.event) ? [parsed] : [];
     });
-    return [{
-      request,
-      state: foldPermissionLedger({
+    return [
+      {
         request,
-        decisions,
-        revocations,
-        executions,
-        now,
-        decisionAuthorized: (decision) => decisionAuthorized(decision.event),
-        revocationAuthorized: (revocation) => decisionAuthorized(revocation.event),
-      }),
-    }];
+        state: foldPermissionLedger({
+          request,
+          decisions,
+          revocations,
+          executions,
+          now,
+          decisionAuthorized: (decision) => decisionAuthorized(decision.event),
+          revocationAuthorized: (revocation) => decisionAuthorized(revocation.event),
+        }),
+      },
+    ];
   });
 }
 

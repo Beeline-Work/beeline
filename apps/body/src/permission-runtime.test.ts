@@ -49,7 +49,9 @@ function fixture() {
     requestedAt: NOW,
     requestExpiresAt: NOW + 60,
   };
-  const request = parsePermissionRequest(buildPermissionRequest(agent, requestValue, [admin.publicKey]))!;
+  const request = parsePermissionRequest(
+    buildPermissionRequest(agent, requestValue, [admin.publicKey]),
+  )!;
   const envelope = defaultPermissionGrantEnvelope(scope, NOW + 1);
   envelope.maxUses = 4;
   envelope.rate.maxUses = 4;
@@ -126,10 +128,14 @@ describe('PermissionRuntime', () => {
   it('executes multiple autonomous actions inside one standing envelope', async () => {
     const f = fixture();
     const invoke = vi.fn(async ({ actionId }: { actionId: string }) => ({ result: actionId }));
-    await expect(f.runtime.execute({ action: f.action(0), attempt: 1, invoke })).resolves.toMatchObject({
+    await expect(
+      f.runtime.execute({ action: f.action(0), attempt: 1, invoke }),
+    ).resolves.toMatchObject({
       status: 'succeeded',
     });
-    await expect(f.runtime.execute({ action: f.action(1), attempt: 1, invoke })).resolves.toMatchObject({
+    await expect(
+      f.runtime.execute({ action: f.action(1), attempt: 1, invoke }),
+    ).resolves.toMatchObject({
       status: 'succeeded',
     });
     expect(invoke).toHaveBeenCalledTimes(2);
@@ -191,13 +197,15 @@ describe('room.create directive normalization', () => {
   ];
 
   it('normalizes one exact outcome Room request with a reserved id', () => {
-    expect(parseRoomCreatePermissionDirective({
-      task: 'create an outcome Room named “Q3 launch” with @Atlas and @Scout.',
-      workspaceId: 'workspace-one',
-      reservedRoomId: 'room-reservation',
-      principalPubkey: principal,
-      roster,
-    })).toEqual({
+    expect(
+      parseRoomCreatePermissionDirective({
+        task: 'create an outcome Room named “Q3 launch” with @Atlas and @Scout.',
+        workspaceId: 'workspace-one',
+        reservedRoomId: 'room-reservation',
+        principalPubkey: principal,
+        roster,
+      }),
+    ).toEqual({
       type: 'room.create',
       workspaceId: 'workspace-one',
       roomId: 'room-reservation',
@@ -214,12 +222,14 @@ describe('room.create directive normalization', () => {
     'create an outcome Room named “Q3 launch” with @Unknown',
     'create an outcome Room named “Q3 launch” with @Atlas and @Atlas',
   ])('keeps non-exact prose inert: %s', (task) => {
-    expect(parseRoomCreatePermissionDirective({
-      task,
-      workspaceId: 'workspace-one',
-      reservedRoomId: 'room-reservation',
-      principalPubkey: principal,
-      roster,
-    })).toBeUndefined();
+    expect(
+      parseRoomCreatePermissionDirective({
+        task,
+        workspaceId: 'workspace-one',
+        reservedRoomId: 'room-reservation',
+        principalPubkey: principal,
+        roster,
+      }),
+    ).toBeUndefined();
   });
 });

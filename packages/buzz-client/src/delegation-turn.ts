@@ -7,11 +7,7 @@
  * state plus the durable graph history.
  */
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import {
-  KIND_STREAM_MESSAGE,
-  TAG_DELEGATION_RECEIPT,
-  TAG_DELEGATION_TURN,
-} from './kinds.js';
+import { KIND_STREAM_MESSAGE, TAG_DELEGATION_RECEIPT, TAG_DELEGATION_TURN } from './kinds.js';
 import type { Identity } from './types.js';
 import type { ArtifactRevisionRef } from './permission-request.js';
 
@@ -29,7 +25,8 @@ export const MAX_DELEGATION_RESERVED_TOKENS = 10_000_000;
 export const MAX_DELEGATION_CONTENT_CHARS = 32_000;
 
 const HEX_64 = /^[0-9a-f]{64}$/;
-const PROTOCOL_ID = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$/i;
+const PROTOCOL_ID =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
 const SHA_256 = /^[0-9a-f]{64}$/;
 
@@ -66,12 +63,7 @@ export interface DelegationTurnV1 {
 }
 
 export type DelegationReceiptStatus =
-  | 'queued'
-  | 'working'
-  | 'complete'
-  | 'failed'
-  | 'refused'
-  | 'budget-exhausted';
+  'queued' | 'working' | 'complete' | 'failed' | 'refused' | 'budget-exhausted';
 
 export interface DelegationReceiptV1 {
   version: 1;
@@ -141,12 +133,10 @@ function parseArtifact(value: unknown): ArtifactRevisionRef | undefined {
   const input = object(value);
   const artifactId = token(input?.artifactId);
   const revision = integer(input?.revision, 1);
-  const eventId = typeof input?.eventId === 'string' && HEX_64.test(input.eventId)
-    ? input.eventId
-    : undefined;
-  const sha256 = typeof input?.sha256 === 'string' && SHA_256.test(input.sha256)
-    ? input.sha256
-    : undefined;
+  const eventId =
+    typeof input?.eventId === 'string' && HEX_64.test(input.eventId) ? input.eventId : undefined;
+  const sha256 =
+    typeof input?.sha256 === 'string' && SHA_256.test(input.sha256) ? input.sha256 : undefined;
   return input && artifactId && revision !== undefined && eventId && sha256
     ? { artifactId, revision, eventId, sha256 }
     : undefined;
@@ -157,7 +147,9 @@ function parseArtifacts(value: unknown): ArtifactRevisionRef[] | undefined {
   const parsed = value.map(parseArtifact);
   if (parsed.some((candidate) => !candidate)) return undefined;
   const artifacts = parsed as ArtifactRevisionRef[];
-  const ids = artifacts.map((artifact) => `${artifact.artifactId}:${artifact.revision}:${artifact.eventId}`);
+  const ids = artifacts.map(
+    (artifact) => `${artifact.artifactId}:${artifact.revision}:${artifact.eventId}`,
+  );
   return new Set(ids).size === ids.length ? artifacts : undefined;
 }
 
@@ -181,10 +173,7 @@ export function parseDelegationBudget(value: unknown): DelegationBudgetV1 | unde
   return { maxAgentTurns, maxDepth, maxChildren, reservedTokens, deadlineAt };
 }
 
-export function defaultDelegationBudget(
-  createdAt: number,
-  reservedTokens = 0,
-): DelegationBudgetV1 {
+export function defaultDelegationBudget(createdAt: number, reservedTokens = 0): DelegationBudgetV1 {
   return {
     maxAgentTurns: DEFAULT_DELEGATION_MAX_AGENT_TURNS,
     maxDepth: DEFAULT_DELEGATION_MAX_DEPTH,
@@ -202,26 +191,30 @@ function parseTurnContent(value: unknown): DelegationTurnV1 | undefined {
   const workspaceId = token(input?.workspaceId);
   const fromAgentPubkey = pubkey(input?.fromAgentPubkey);
   const toAgentPubkey = pubkey(input?.toAgentPubkey);
-  const rootEventId = typeof input?.rootEventId === 'string' && HEX_64.test(input.rootEventId)
-    ? input.rootEventId
-    : undefined;
-  const parentEventId = typeof input?.parentEventId === 'string' && HEX_64.test(input.parentEventId)
-    ? input.parentEventId
-    : undefined;
-  const parentWorkItemId = input?.parentWorkItemId === undefined
-    ? undefined
-    : protocolId(input.parentWorkItemId);
+  const rootEventId =
+    typeof input?.rootEventId === 'string' && HEX_64.test(input.rootEventId)
+      ? input.rootEventId
+      : undefined;
+  const parentEventId =
+    typeof input?.parentEventId === 'string' && HEX_64.test(input.parentEventId)
+      ? input.parentEventId
+      : undefined;
+  const parentWorkItemId =
+    input?.parentWorkItemId === undefined ? undefined : protocolId(input.parentWorkItemId);
   const principalPubkey = pubkey(input?.principalPubkey);
   const path = uniquePubkeys(input?.path);
   const depth = integer(input?.depth, 1, 32);
   const budget = parseDelegationBudget(input?.budget);
   const task = nonEmpty(input?.task, MAX_DELEGATION_TASK_CHARS);
-  const artifactRefs = input?.artifactRefs === undefined ? undefined : parseArtifacts(input.artifactRefs);
-  const escalationGrantEventId = input?.escalationGrantEventId === undefined
-    ? undefined
-    : typeof input.escalationGrantEventId === 'string' && HEX_64.test(input.escalationGrantEventId)
-      ? input.escalationGrantEventId
-      : undefined;
+  const artifactRefs =
+    input?.artifactRefs === undefined ? undefined : parseArtifacts(input.artifactRefs);
+  const escalationGrantEventId =
+    input?.escalationGrantEventId === undefined
+      ? undefined
+      : typeof input.escalationGrantEventId === 'string' &&
+          HEX_64.test(input.escalationGrantEventId)
+        ? input.escalationGrantEventId
+        : undefined;
   const createdAt = integer(input?.createdAt);
   if (
     input?.version !== 1 ||
@@ -279,9 +272,10 @@ function parseReceiptContent(value: unknown): DelegationReceiptV1 | undefined {
   const input = object(value);
   const delegationId = protocolId(input?.delegationId);
   const workItemId = protocolId(input?.workItemId);
-  const turnEventId = typeof input?.turnEventId === 'string' && HEX_64.test(input.turnEventId)
-    ? input.turnEventId
-    : undefined;
+  const turnEventId =
+    typeof input?.turnEventId === 'string' && HEX_64.test(input.turnEventId)
+      ? input.turnEventId
+      : undefined;
   const at = integer(input?.at);
   const reason = input?.reason === undefined ? undefined : nonEmpty(input.reason, 600);
   if (
@@ -289,7 +283,9 @@ function parseReceiptContent(value: unknown): DelegationReceiptV1 | undefined {
     !delegationId ||
     !workItemId ||
     !turnEventId ||
-    !['queued', 'working', 'complete', 'failed', 'refused', 'budget-exhausted'].includes(String(input?.status)) ||
+    !['queued', 'working', 'complete', 'failed', 'refused', 'budget-exhausted'].includes(
+      String(input?.status),
+    ) ||
     at === undefined ||
     (input.reason !== undefined && !reason)
   ) {
@@ -353,8 +349,10 @@ export function parseDelegationTurn(event: NostrEvent): ParsedDelegationTurn | u
       uniqueTag(event, 'escalation-grant') !== value.escalationGrantEventId) ||
     (value.escalationGrantEventId === undefined &&
       event.tags.some((candidate) => candidate[0] === 'escalation-grant')) ||
-    (value.parentWorkItemId !== undefined && uniqueTag(event, 'parent-work-item') !== value.parentWorkItemId) ||
-    (value.parentWorkItemId === undefined && event.tags.some((candidate) => candidate[0] === 'parent-work-item'))
+    (value.parentWorkItemId !== undefined &&
+      uniqueTag(event, 'parent-work-item') !== value.parentWorkItemId) ||
+    (value.parentWorkItemId === undefined &&
+      event.tags.some((candidate) => candidate[0] === 'parent-work-item'))
   ) {
     return undefined;
   }
@@ -406,7 +404,8 @@ function sign(identity: Identity, tags: string[][], value: unknown, createdAt: n
 
 export function buildDelegationTurn(sender: Identity, input: DelegationTurnV1): NostrEvent {
   const value = parseTurnContent(input);
-  if (!value || value.fromAgentPubkey !== sender.publicKey) throw new Error('invalid delegation turn');
+  if (!value || value.fromAgentPubkey !== sender.publicKey)
+    throw new Error('invalid delegation turn');
   return sign(
     sender,
     [
@@ -423,9 +422,7 @@ export function buildDelegationTurn(sender: Identity, input: DelegationTurnV1): 
       ['principal', value.principalPubkey],
       ['depth', String(value.depth)],
       ['deadline', String(value.budget.deadlineAt)],
-      ...(value.escalationGrantEventId
-        ? [['escalation-grant', value.escalationGrantEventId]]
-        : []),
+      ...(value.escalationGrantEventId ? [['escalation-grant', value.escalationGrantEventId]] : []),
     ],
     value,
     value.createdAt,
@@ -580,7 +577,10 @@ export type DelegationAdmission =
   | { admitted: true; rootBudget: DelegationBudgetV1; turnOrdinal: number }
   | { admitted: false; reason: DelegationAdmissionReason };
 
-function rootTurns(history: readonly ParsedDelegationTurn[], delegationId: string): ParsedDelegationTurn[] {
+function rootTurns(
+  history: readonly ParsedDelegationTurn[],
+  delegationId: string,
+): ParsedDelegationTurn[] {
   return history.filter((turn) => turn.value.delegationId === delegationId);
 }
 
@@ -611,7 +611,8 @@ export function admitDelegationTurn(input: {
   if (input.history.some((candidate) => candidate.event.id === input.turn.event.id)) {
     return { admitted: false, reason: 'duplicate' };
   }
-  if (turn.toAgentPubkey !== input.expectedRecipientPubkey) return { admitted: false, reason: 'wrong-recipient' };
+  if (turn.toAgentPubkey !== input.expectedRecipientPubkey)
+    return { admitted: false, reason: 'wrong-recipient' };
   if (!input.senderIsRegisteredAgent) return { admitted: false, reason: 'sender-not-agent' };
   if (!input.senderRoomMember) return { admitted: false, reason: 'sender-not-member' };
   if (!input.senderWorkspaceMember) return { admitted: false, reason: 'sender-not-member' };
@@ -624,10 +625,7 @@ export function admitDelegationTurn(input: {
   if (!input.targetOnline) return { admitted: false, reason: 'target-offline' };
   if (!input.targetSupportsDelegationV1) return { admitted: false, reason: 'target-incompatible' };
   if (input.now > turn.budget.deadlineAt) return { admitted: false, reason: 'expired' };
-  if (
-    turn.depth >
-    turn.budget.maxDepth + (turn.phase === 'return' ? 1 : 0)
-  ) {
+  if (turn.depth > turn.budget.maxDepth + (turn.phase === 'return' ? 1 : 0)) {
     return { admitted: false, reason: 'over-depth' };
   }
   const ungrantableBudgetShape =
@@ -645,8 +643,16 @@ export function admitDelegationTurn(input: {
   }
 
   const graph = rootTurns(input.history, turn.delegationId);
-  if (graph.some((candidate) => candidate.value.workItemId === turn.workItemId && candidate.value.phase === turn.phase)) {
-    return { admitted: false, reason: turn.phase === 'return' ? 'duplicate-return' : 'duplicate-work-item' };
+  if (
+    graph.some(
+      (candidate) =>
+        candidate.value.workItemId === turn.workItemId && candidate.value.phase === turn.phase,
+    )
+  ) {
+    return {
+      admitted: false,
+      reason: turn.phase === 'return' ? 'duplicate-return' : 'duplicate-work-item',
+    };
   }
   const root = graph[0];
   if (root) {

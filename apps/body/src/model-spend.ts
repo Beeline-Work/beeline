@@ -63,7 +63,10 @@ function tokenPair(value: unknown): TokenPair | undefined {
     record.inputTokens ?? record.input_tokens ?? record.promptTokens ?? record.prompt_tokens,
   );
   const output = finiteTokenCount(
-    record.outputTokens ?? record.output_tokens ?? record.completionTokens ?? record.completion_tokens,
+    record.outputTokens ??
+      record.output_tokens ??
+      record.completionTokens ??
+      record.completion_tokens,
   );
   if (input === undefined && output === undefined) return undefined;
   return { input: input ?? 0, output: output ?? 0 };
@@ -114,7 +117,8 @@ export function completedModelSpend(input: {
   startedAt: string;
 }): ModelTurnSpend {
   const reported = reportedTokenUsage(input.result.updates);
-  const inputTokens = reported?.input ?? approximateTokens(input.systemPromptChars + input.prompt.length);
+  const inputTokens =
+    reported?.input ?? approximateTokens(input.systemPromptChars + input.prompt.length);
   const outputTokens = reported?.output ?? approximateTokens(input.result.agentText.length);
   return {
     ...input.attribution,
@@ -200,10 +204,7 @@ export interface RestartReprimeSpend {
   records: SessionReprimeRecord[];
 }
 
-export function dailyAgentSpend(
-  turns: readonly ModelTurnSpend[],
-  day: string,
-): AgentDailySpend[] {
+export function dailyAgentSpend(turns: readonly ModelTurnSpend[], day: string): AgentDailySpend[] {
   const byAgent = new Map<string, AgentDailySpend>();
   for (const turn of turns) {
     if (turn.startedAt.slice(0, 10) !== day) continue;

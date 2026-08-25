@@ -338,7 +338,9 @@ function parsePairOptions(args: string[]): PairOptions {
               // Fall through to the single stable CLI error below.
             }
           }
-          throw new Error(`--allow must contain only npub or 64-character hex keys (got: ${entry})`);
+          throw new Error(
+            `--allow must contain only npub or 64-character hex keys (got: ${entry})`,
+          );
         });
       accessAllowlist = [...new Set(entries)];
     }

@@ -58,6 +58,7 @@ import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-sta
 import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
 import {
   NO_ACTIVITY_PREVIEW,
+  displayCornerTitle,
   displayRoomIndexTitle,
   roomListFeed,
   type RoomRowPresentation,
@@ -1404,9 +1405,13 @@ export default function BuzzChannels() {
                 const state = cornerVisualState(status, {
                   awaitingReply: corner.awaitingReply,
                 });
+                // Channel-mark convention, display-only: `#<room>/<corner>`
+                // composed from stored names. The pushed route still carries
+                // the raw corner name as its title hint.
+                const displayCorner = displayCornerTitle(item.title, corner.name, corner.id);
                 return (
                   <TouchableOpacity
-                    accessibilityLabel={`Open ${corner.name} ${CORNER_LABEL}, ${state}`}
+                    accessibilityLabel={`Open ${displayCorner} ${CORNER_LABEL}, ${state}`}
                     key={corner.id}
                     onPress={() =>
                       router.push(cornerHref(corner.id, item.id, corner.name, 'room-list'))
@@ -1419,7 +1424,7 @@ export default function BuzzChannels() {
                       style={styles.cornerGlyph}
                     />
                     <Text numberOfLines={1} style={styles.cornerName}>
-                      {corner.name}
+                      {displayCorner}
                     </Text>
                   </TouchableOpacity>
                 );

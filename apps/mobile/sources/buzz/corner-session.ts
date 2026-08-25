@@ -1,5 +1,6 @@
 import { resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
 import { cornerName } from '@/buzz/corners';
+import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import type { ChatDisplayMessage, CornerProcessState } from '@/sync/transport/buzz-event-projection';
 
@@ -28,27 +29,57 @@ export function cachedChannelKind(
 }
 
 /**
- * The chat header's title, or `null` when the screen should show a skeleton.
+ * The chat header's title under the captain's `#` channel-mark convention
+ * (2026-08, extended to every surface): a Room renders `#<name>`, a Corner
+ * renders `#<room>/<corner>` composed from stored names at render time.
+ * Presentation only — the stored name, cache entries, and navigation params
+ * never see the mark; see `displayRoomIndexTitle` / `displayCornerTitle` in
+ * `buzz/room-list-row.ts` for the one naming model.
  *
- * `resolvedName` is `null` only while the channel's own metadata read is still
- * in flight; an empty string means the read landed and the channel carries no
- * name, which is a different answer.
+ * `null` when the screen should show a skeleton. `resolvedName` is `null`
+ * only while the channel's own metadata read is still in flight; an empty
+ * string means the read landed and the channel carries no name, which is a
+ * different answer.
  *
- * A corner must never fall back to the word "Room": it names the wrong surface,
- * and because a corner's own kind:9007 name is a slug like `fix-oauth-callback`
- * the generic label is not even a plausible stand-in. When the channel kind
- * itself is still unresolved, neither word is honest, so this returns `null`
- * and the caller renders a skeleton instead of guessing.
+ * A corner must never fall back to the word "Room": it names the wrong
+ * surface, and because a corner's own kind:9007 name is a slug like
+ * `fix-oauth-callback` the generic label is not even a plausible stand-in.
+ * When the channel kind itself is still unresolved, neither word is honest,
+ * so this returns `null` and the caller renders a skeleton instead of
+ * guessing. A DM's title is its peer's identity — a person, not a place —
+ * so it never takes the mark (`options.directMessage`).
  */
+export type ChannelTitleOptions = {
+  /** A direct message renders its peer identity unmarked. */
+  directMessage?: boolean;
+  /**
+   * The corner's parent Room STORED name, for the `#<room>/<corner>` form.
+   * `undefined` when the channel is not a corner; `null` when it is a corner
+   * whose parent Room name has not resolved yet (the header degrades to the
+   * honest `#<corner>` rather than blocking on another read).
+   */
+  parentRoomName?: string | null;
+};
+
 export function channelHeaderTitle(
   resolvedName: string | null,
   kind: ChannelKind,
   channelId: string,
+  options: ChannelTitleOptions = {},
 ): string | null {
   if (kind === 'corner') {
-    return resolvedName === null ? null : cornerName(resolvedName, channelId);
+    if (resolvedName === null) return null;
+    if (options.directMessage) return cornerName(resolvedName, channelId);
+    return displayCornerTitle(options.parentRoomName, resolvedName, channelId);
   }
-  if (resolvedName !== null && resolvedName.trim()) return resolvedName.trim();
+  if (resolvedName !== null && resolvedName.trim()) {
+    const trimmed = resolvedName.trim();
+    // The kind can still be unresolved while a cached name has landed; that
+    // legacy shape keeps showing the plain name rather than guessing which
+    // mark form applies. Only a confirmed Room takes the room mark.
+    if (!options.directMessage && kind === 'room') return displayRoomIndexTitle(trimmed) ?? trimmed;
+    return trimmed;
+  }
   return kind === 'room' ? ROOM_LABEL : null;
 }
 

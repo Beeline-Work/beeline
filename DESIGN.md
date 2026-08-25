@@ -384,13 +384,21 @@ and guessing wrong shows a placeholder rather than nothing. A Room and the
 Members screen must never name the same key differently; if they do, one of them
 is reading an empty roster, not a different name.
 
-Vocabulary: "Room," never "Channel." "Members," never "People." Room names carry
-the `#` channel mark in exactly two places — push-notification titles
-(`#<room>`, corners as `#<room>/<corner>` with the parent Room's real name) and
-Room index rows, both added at render through one presentation-only derivation
-(`displayRoomIndexTitle`; gateway `mapping.ts` owns notification titles).
-Captain decision 2026-08, superseding the earlier no-`#` rule; corner labels,
-stored names, and every other surface stay unprefixed.
+Vocabulary: "Room," never "Channel." "Members," never "People." Room and corner
+names carry the `#` channel mark everywhere a surface EXPOSES them — chat
+headers (`#<room>`, corners as `#<room>/<corner>`), push-notification titles
+(gateway `mapping.ts` owns those), Room index rows, the pinned-corner line, the
+Room-list corner dropdown, the standalone corners list, Workspace-settings room
+lists, and Members references — all added at render through one
+presentation-only derivation pair (`displayRoomIndexTitle` /
+`displayCornerTitle`, `buzz/room-list-row.ts`). The mark is strictly
+display-only: stored names, search keys, cache entries, navigation params,
+route hints, and rename drafts never see it, a name already carrying the mark
+is never double-prefixed, and the generic ROOM_LABEL fallback gains no mark (a
+label is not a name). A corner whose parent Room name has not resolved yet
+degrades to the honest `#<corner>` rather than blocking on another read.
+Captain decision 2026-08, superseding the earlier no-`#` rule and the later
+"two surfaces only" narrowing.
 
 ## Type
 

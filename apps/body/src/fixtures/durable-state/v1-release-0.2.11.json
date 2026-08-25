@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "inboxes": {
+    "released-room": {
+      "cursor": {
+        "createdAt": 1700000000,
+        "eventId": "released-v1-cursor"
+      },
+      "items": {}
+    }
+  }
+}

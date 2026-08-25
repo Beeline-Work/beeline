@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "inboxes": {
+    "released-room": {
+      "cursor": {
+        "createdAt": 1700000001,
+        "eventId": "released-v2-cursor"
+      },
+      "items": {}
+    }
+  },
+  "readModels": {},
+  "modelTurns": [],
+  "sessionReprimes": [],
+  "concludeEpisodes": {}
+}

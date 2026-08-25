@@ -22,6 +22,7 @@ import {
   WORK_SCHEDULE_TAG,
   WorkCalendar,
   parseWorkSchedule,
+  parseWorkScheduleCheckpoint,
   workScheduleKey,
   workScheduleRevisionDigest,
   type ParsedWorkSchedule,
@@ -63,48 +64,41 @@ export interface DaemonWorkScheduleAuthorityDependencies {
   readFailurePauses(schedule: ParsedWorkSchedule): Promise<readonly NostrEvent[]>;
 }
 
-const RECEIPT_HISTORY_PAGE_SIZE = 5_000;
-const MAX_RECEIPT_EVENTS_PER_SCHEDULE = 3_000_000;
+const MAX_RECEIPT_TAIL_EVENTS = 512;
 
-export async function readScheduledTurnReceiptHistory(
+export async function readScheduledTurnReceiptTail(
   queryEvents: (filters: Record<string, unknown>[]) => Promise<readonly NostrEvent[]>,
   agentPubkey: string,
-  scheduleIds: readonly string[],
-  options: { pageSize?: number; maxEventsPerSchedule?: number } = {},
+  schedules: readonly ParsedWorkSchedule[],
+  checkpoints: readonly ReturnType<typeof parseWorkScheduleCheckpoint>[],
+  maxEventsPerSchedule = MAX_RECEIPT_TAIL_EVENTS,
 ): Promise<NostrEvent[]> {
-  const pageSize = options.pageSize ?? RECEIPT_HISTORY_PAGE_SIZE;
-  const maxEvents = options.maxEventsPerSchedule ?? MAX_RECEIPT_EVENTS_PER_SCHEDULE;
-  if (!Number.isSafeInteger(pageSize) || pageSize < 1) throw new Error('invalid receipt page size');
-  if (!Number.isSafeInteger(maxEvents) || maxEvents < 1)
-    throw new Error('invalid receipt history bound');
+  if (!Number.isSafeInteger(maxEventsPerSchedule) || maxEventsPerSchedule < 1)
+    throw new Error('invalid receipt tail bound');
   const all = new Map<string, NostrEvent>();
-  for (const scheduleId of [...new Set(scheduleIds)]) {
-    const scheduleEvents = new Map<string, NostrEvent>();
-    let until: number | undefined;
-    for (;;) {
-      const page = await queryEvents([
-        {
-          kinds: [9],
-          '#t': [SCHEDULED_TURN_TAG],
-          '#agent': [agentPubkey],
-          '#schedule': [scheduleId],
-          authors: [agentPubkey],
-          limit: pageSize,
-          ...(until !== undefined ? { until } : {}),
-        },
-      ]);
-      if (page.length === 0) break;
-      const fresh = page.filter((event) => !scheduleEvents.has(event.id));
-      if (scheduleEvents.size + fresh.length > maxEvents)
-        throw new Error(`scheduled receipt history exceeds recovery bound for ${scheduleId}`);
-      for (const event of fresh) scheduleEvents.set(event.id, event);
-      const oldest = Math.min(...page.map((event) => event.created_at));
-      if (page.length < pageSize) break;
-      if (!Number.isSafeInteger(oldest) || oldest <= 0 || fresh.length === 0)
-        throw new Error(`scheduled receipt history pagination stalled for ${scheduleId}`);
-      until = oldest;
-    }
-    for (const event of scheduleEvents.values()) all.set(event.id, event);
+  for (const schedule of schedules) {
+    const checkpoint = checkpoints
+      .filter(
+        (candidate) =>
+          candidate?.scheduleId === schedule.value.scheduleId &&
+          candidate.revision === schedule.value.revision,
+      )
+      .sort((left, right) => (right?.receiptCursorAt ?? -1) - (left?.receiptCursorAt ?? -1))[0];
+    const page = await queryEvents([
+      {
+        kinds: [9],
+        '#t': [SCHEDULED_TURN_TAG],
+        '#agent': [agentPubkey],
+        '#schedule': [schedule.value.scheduleId],
+        '#revision': [String(schedule.value.revision)],
+        authors: [agentPubkey],
+        since: checkpoint?.receiptCursorAt ?? schedule.value.startsAt - 1,
+        limit: maxEventsPerSchedule + 1,
+      },
+    ]);
+    if (page.length > maxEventsPerSchedule)
+      throw new Error(`scheduled receipt tail exceeds recovery bound for ${schedule.value.scheduleId}`);
+    for (const event of page) all.set(event.id, event);
   }
   return [...all.values()];
 }
@@ -434,7 +428,7 @@ export function createDaemonWorkCalendar(input: {
           limit: 1_000,
         },
       ]),
-    readReceipts: async (scheduleEvents) => {
+    readReceipts: async (scheduleEvents, localCheckpoints) => {
       const schedules = scheduleEvents.flatMap((event) => {
         const parsed = parseWorkSchedule(event);
         return parsed && parsed.value.agentPubkey === identity.publicKey ? [parsed] : [];
@@ -442,11 +436,6 @@ export function createDaemonWorkCalendar(input: {
       const unique = [
         ...new Map(schedules.map((schedule) => [workScheduleKey(schedule.value), schedule])).values(),
       ];
-      const receipts = await readScheduledTurnReceiptHistory(
-        rawEvents,
-        identity.publicKey,
-        unique.map((schedule) => schedule.value.scheduleId),
-      );
       const outputFilters = unique.flatMap((schedule) => [
         {
           kinds: [9],
@@ -467,6 +456,13 @@ export function createDaemonWorkCalendar(input: {
       const outputs: NostrEvent[] = [];
       for (let index = 0; index < outputFilters.length; index += 50)
         outputs.push(...(await rawEvents(outputFilters.slice(index, index + 50))));
+      const checkpoints = [...localCheckpoints, ...outputs.map(parseWorkScheduleCheckpoint)];
+      const receipts = await readScheduledTurnReceiptTail(
+        rawEvents,
+        identity.publicKey,
+        unique,
+        checkpoints,
+      );
       return [...receipts, ...outputs];
     },
     validateScheduleCreation: async (creation) => {

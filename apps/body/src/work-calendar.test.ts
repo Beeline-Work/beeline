@@ -18,6 +18,7 @@ import {
   nextWorkOccurrence,
   parseScheduledTurnReceipt,
   parseWorkSchedule,
+  parseWorkScheduleCheckpoint,
   previousWorkOccurrence,
   type CalendarRunReservation,
   type ParsedWorkSchedule,
@@ -37,6 +38,10 @@ async function state(): Promise<DurableWorkCalendarState> {
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-work-calendar-'));
   roots.push(root);
   return new DurableWorkCalendarState(resolve(root, 'calendar.json'));
+}
+
+function dayUtcForTest(at: number): string {
+  return new Date(at * 1_000).toISOString().slice(0, 10);
 }
 
 function scheduleFixture(
@@ -854,6 +859,111 @@ describe('WorkCalendar durable execution', () => {
     expect(await fixture.durable.principalForSchedule(first.scheduleId)).toBe(
       principal.publicKey,
     );
+
+    principalLost = false;
+    await fixture.calendar.refreshNow();
+    expect(fixture.calendar.snapshot().schedules).toBe(0);
+    expect(await fixture.durable.checkpoints()).toContainEqual(
+      expect.objectContaining({
+        revision: 2,
+        status: 'paused',
+        pauseReason: 'principal-removed',
+      }),
+    );
+
+    schedules.push(
+      buildWorkSchedule(
+        agent,
+        { ...first, revision: 3, permissionGrantEventId: 'a'.repeat(64) },
+        { createdAt: first.startsAt - 4 },
+      ),
+    );
+    await fixture.calendar.refreshNow();
+    expect(fixture.calendar.snapshot().schedules).toBe(0);
+
+    schedules.push(
+      buildWorkSchedule(principal, { ...first, revision: 4 }, { createdAt: first.startsAt - 3 }),
+    );
+    await fixture.calendar.refreshNow();
+    expect(fixture.calendar.snapshot().schedules).toBe(1);
+    await fixture.calendar.dispose();
+  });
+
+  it('rejects a tampered daemon checkpoint and fails closed', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const checkpoint = buildWorkScheduleProjection(agent, {
+      version: 1,
+      type: 'runtime',
+      checkpointVersion: 1,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: agent.publicKey,
+      principalPubkey: principal.publicKey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      status: 'active',
+      consecutiveFailures: 0,
+      updatedAt: schedule.startsAt - 1,
+      runCount: 10,
+      budgetDay: dayUtcForTest(schedule.startsAt),
+      dailyReservedTokens: 0,
+      receiptCursorAt: schedule.startsAt - 1,
+    });
+    const tampered = { ...checkpoint, content: checkpoint.content.replace('"runCount":10', '"runCount":11') };
+    const fixture = await calendarFixture({ agent, principal, schedule, receiptEvents: [tampered] });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.calendar.snapshot().schedules).toBe(0);
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    await fixture.calendar.dispose();
+  });
+
+  it('keeps a newer local million-run checkpoint over a regressing relay projection', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, { maxRuns: 1_000_000 });
+    const durable = await state();
+    const local = {
+      version: 1 as const,
+      type: 'runtime' as const,
+      checkpointVersion: 1 as const,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: agent.publicKey,
+      principalPubkey: principal.publicKey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      status: 'active' as const,
+      consecutiveFailures: 0,
+      updatedAt: schedule.startsAt,
+      runCount: 1_000_000,
+      budgetDay: dayUtcForTest(schedule.startsAt),
+      dailyReservedTokens: 0,
+      receiptCursorAt: schedule.startsAt,
+    };
+    await durable.stageCheckpoint(local, []);
+    const regressing = buildWorkScheduleProjection(agent, {
+      ...local,
+      updatedAt: schedule.startsAt - 1,
+      runCount: 999_999,
+      receiptCursorAt: schedule.startsAt - 1,
+    });
+    expect(parseWorkScheduleCheckpoint(regressing)).toBeDefined();
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      store: durable,
+      receiptEvents: [regressing],
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect((await durable.checkpoints())[0]?.runCount).toBe(1_000_000);
     await fixture.calendar.dispose();
   });
 

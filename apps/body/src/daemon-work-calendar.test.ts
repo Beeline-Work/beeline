@@ -3,14 +3,17 @@ import type { NostrEvent } from '@beeline/nostr';
 import { describe, expect, it } from 'vitest';
 import {
   authorizeDaemonWorkSchedule,
-  readScheduledTurnReceiptHistory,
+  readScheduledTurnReceiptTail,
   type DaemonWorkScheduleAuthorityDependencies,
   type DaemonWorkScheduleAuthorityFacts,
 } from './daemon-work-calendar.js';
 import {
   buildWorkSchedule,
   buildWorkSchedulePauseCard,
+  buildWorkScheduleProjection,
+  deterministicScheduleRunId,
   parseWorkSchedule,
+  parseWorkScheduleCheckpoint,
   type ParsedWorkSchedule,
   type WorkScheduleV1,
 } from './work-calendar.js';
@@ -73,31 +76,83 @@ function authorityFixture(options: { agentAuthored?: boolean; grantValid?: boole
 }
 
 describe('scheduled receipt history recovery', () => {
-  it('paginates each schedule without truncating older receipts', async () => {
-    const events = Array.from({ length: 7 }, (_, index): NostrEvent => ({
+  it('uses a million-run checkpoint and reads only a bounded receipt tail', async () => {
+    const fixture = authorityFixture();
+    const checkpointEvent = buildWorkScheduleProjection(fixture.agent, {
+      version: 1,
+      type: 'runtime',
+      checkpointVersion: 1,
+      workspaceId: fixture.schedule.workspaceId,
+      roomId: fixture.schedule.roomId,
+      agentPubkey: fixture.agent.publicKey,
+      principalPubkey: fixture.principal.publicKey,
+      scheduleId: fixture.schedule.scheduleId,
+      revision: 1,
+      status: 'active',
+      consecutiveFailures: 0,
+      updatedAt: 1_999_999_999,
+      runCount: 1_000_000,
+      budgetDay: '2033-05-18',
+      dailyReservedTokens: 100,
+      latestNominalAt: 1_999_999_940,
+      latestRunId: deterministicScheduleRunId(
+        fixture.schedule.scheduleId,
+        fixture.schedule.revision,
+        1_999_999_940,
+      ),
+      latestRunStatus: 'complete',
+      receiptCursorAt: 1_999_999_999,
+      receiptCursorId: 'd'.repeat(64),
+    });
+    const checkpoint = parseWorkScheduleCheckpoint(checkpointEvent);
+    expect(checkpoint).toBeDefined();
+    const events = Array.from({ length: 2 }, (_, index): NostrEvent => ({
       id: index.toString(16).padStart(64, '0'),
-      pubkey: 'a'.repeat(64),
-      created_at: 100 - Math.floor(index / 2),
+      pubkey: fixture.agent.publicKey,
+      created_at: 2_000_000_000 + index,
       kind: 9,
       tags: [],
       content: '',
       sig: 'b'.repeat(128),
     }));
+    const observed: Array<Record<string, unknown>> = [];
     const query = async (filters: Record<string, unknown>[]) => {
-      const filter = filters[0] as { until?: number; limit: number };
-      return events
-        .filter((event) => filter.until === undefined || event.created_at <= filter.until)
-        .slice(0, filter.limit);
+      observed.push(filters[0]!);
+      return events;
     };
-    const recovered = await readScheduledTurnReceiptHistory(
+    const recovered = await readScheduledTurnReceiptTail(
       query,
-      'a'.repeat(64),
-      ['schedule-one'],
-      { pageSize: 3, maxEventsPerSchedule: 7 },
+      fixture.agent.publicKey,
+      [fixture.parsed],
+      [checkpoint],
+      8,
     );
-    expect(new Set(recovered.map((event) => event.id))).toEqual(
-      new Set(events.map((event) => event.id)),
-    );
+    expect(recovered).toHaveLength(2);
+    expect(observed).toEqual([
+      expect.objectContaining({ since: 1_999_999_999, limit: 9 }),
+    ]);
+  });
+
+  it('fails closed when the bounded tail is truncated', async () => {
+    const fixture = authorityFixture();
+    await expect(
+      readScheduledTurnReceiptTail(
+        async () =>
+          Array.from({ length: 4 }, (_, index) => ({
+            id: index.toString(16).padStart(64, '0'),
+            pubkey: fixture.agent.publicKey,
+            created_at: fixture.schedule.startsAt + index,
+            kind: 9,
+            tags: [],
+            content: '',
+            sig: 'b'.repeat(128),
+          })),
+        fixture.agent.publicKey,
+        [fixture.parsed],
+        [],
+        3,
+      ),
+    ).rejects.toThrow('receipt tail exceeds recovery bound');
   });
 });
 

@@ -355,10 +355,10 @@ describe("the deck's one ordered feed", () => {
     const tree = await render();
 
     expect(visibleTextOf(tree)).not.toContain('NEEDS YOU ·');
-    expect(findByAclPrefix(tree, 'Open Room message')[0].props.accessibilityLabel).not.toContain(
+    expect(findByAclPrefix(tree, 'Open #Room message')[0].props.accessibilityLabel).not.toContain(
       'needs your attention',
     );
-    expect(titleStyleCounts(tree, 'Room message')).toContain(2);
+    expect(titleStyleCounts(tree, '#Room message')).toContain(2);
 
     // Reading clears bold activity without touching the idle circle/state.
     await act(async () => {
@@ -366,10 +366,10 @@ describe("the deck's one ordered feed", () => {
     });
 
     expect(visibleTextOf(tree)).not.toContain('NEEDS YOU ·');
-    expect(findByAclPrefix(tree, 'Open Room message')[0].props.accessibilityLabel).not.toContain(
+    expect(findByAclPrefix(tree, 'Open #Room message')[0].props.accessibilityLabel).not.toContain(
       'needs your attention',
     );
-    expect(titleStyleCounts(tree, 'Room message')).not.toContain(2);
+    expect(titleStyleCounts(tree, '#Room message')).not.toContain(2);
   });
 
   it('renders finished Rooms inline in the same headerless feed', async () => {
@@ -392,13 +392,13 @@ describe("the deck's one ordered feed", () => {
     expect(visibleTextOf(tree)).not.toContain('FINISHED');
     // Finished rows render inline through the same renderer as every other
     // Room — reachable directly, no expansion step.
-    expect(findByAclPrefix(tree, 'Open Landed room')).toHaveLength(1);
-    expect(findByAclPrefix(tree, 'Open Closed room')).toHaveLength(1);
+    expect(findByAclPrefix(tree, 'Open #Landed room')).toHaveLength(1);
+    expect(findByAclPrefix(tree, 'Open #Closed room')).toHaveLength(1);
     expect(visibleTextOf(tree)).not.toContain('NEEDS YOU ·');
     expect(visibleTextOf(tree)).not.toContain("DOESN'T NEED YOU ·");
 
     // Tapping one navigates into the Room itself.
-    await press(findByAclPrefix(tree, 'Open Landed room')[0]);
+    await press(findByAclPrefix(tree, 'Open #Landed room')[0]);
     expect(navigation.push).toHaveBeenCalledTimes(1);
     expect(String(navigation.push.mock.calls[0][0])).toContain('landed-room');
   });

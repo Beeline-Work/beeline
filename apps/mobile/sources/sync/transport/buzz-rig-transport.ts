@@ -273,14 +273,18 @@ export class BuzzRigTransport implements RigTransport {
     ) {
       return cached.identities;
     }
-    const agents = hasWorkspace ? await client.listAgents(workspaceId).catch(() => []) : [];
+    const agents = hasWorkspace
+      ? await client.listAgents(workspaceId, { forceRefresh }).catch(() => [])
+      : [];
     const agentByPubkey = new Map(agents.map((agent) => [agent.pubkey, agent]));
     const humanPubkeys = memberPubkeys.filter((pubkey) => !agentByPubkey.has(pubkey));
     const profiles = hasWorkspace
       ? await client.listPersonProfiles(workspaceId, humanPubkeys).catch(() => [])
       : [];
     const profileByPubkey = new Map(profiles.map((profile) => [profile.pubkey, profile]));
-    const identities: Record<string, IdentityRecord> = { ...cached?.identities };
+    // Parse authority is Room-scoped. Workspace directory membership supplies
+    // names and agent kinds, but never grants a Workspace peer access to a Room.
+    const identities: Record<string, IdentityRecord> = {};
     for (const pubkey of memberPubkeys) {
       const agent = agentByPubkey.get(pubkey);
       const profile = profileByPubkey.get(pubkey);
@@ -298,22 +302,6 @@ export class BuzzRigTransport implements RigTransport {
             ...(profile?.handle ? { handle: profile.handle } : {}),
             revision: profile?.raw.id ?? `member:${pubkey}`,
           };
-    }
-    for (const agent of agents) {
-      identities[agent.pubkey] = {
-        kind: 'agent',
-        pubkey: agent.pubkey as IdentityRecord['pubkey'],
-        displayName: agent.displayName,
-        revision: agent.raw.id,
-      };
-    }
-    if (!identities[this.identity.publicKey]) {
-      identities[this.identity.publicKey] = {
-        kind: 'human',
-        pubkey: this.identity.publicKey as IdentityRecord['pubkey'],
-        ...(this.identity.name ? { displayName: this.identity.name } : {}),
-        revision: `local:${this.identity.publicKey}`,
-      };
     }
     cache.workspaceIdentities.set(workspaceId, { loadedAt: Date.now(), identities });
     return identities;

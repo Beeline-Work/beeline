@@ -250,19 +250,19 @@ export function isPureRetryNarration(text: string): boolean {
   return !/[\w]/.test(rest);
 }
 
-/** Only the last SUBSTANTIVE assistant-message run is the turn's durable final
- *  output. Earlier runs are progress narration around tool work and stay
- *  draft-only, and retry/backoff narration can never be the answer: scan back
- *  past pure-narration runs so a turn that ends `...Retrying...resuming.`
- *  after real prose still selects that prose, and a turn that produced ONLY
- *  narration selects nothing (the caller then treats the turn as failed). */
+/** Only the LAST assistant-message run is the turn's durable final output;
+ *  earlier runs are progress narration around tool work and stay draft-only.
+ *  Retry/backoff narration can never be the answer either: classify that last
+ *  run and return empty when it is pure narration, so a flaked turn selects
+ *  nothing (the caller treats the turn as failed and stays retryable) while
+ *  genuine prose — including prose that merely mentions retries — is kept.
+ *  Never scan backwards past the last run: an earlier pre-tool progress
+ *  sentence is not the answer just because the turn later degraded into
+ *  retry narration. */
 function finalAgentMessageText(updates: readonly SessionUpdate[]): string {
-  const runs = agentMessageRuns(updates);
-  for (let i = runs.length - 1; i >= 0; i--) {
-    const run = runs[i];
-    if (run && !isPureRetryNarration(run)) return run;
-  }
-  return '';
+  const last = agentMessageRuns(updates).at(-1);
+  if (!last || isPureRetryNarration(last)) return '';
+  return last;
 }
 
 function updateText(update: Record<string, unknown>): string {

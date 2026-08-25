@@ -2748,6 +2748,49 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(oldChain.statusCode).toBe(200);
     expect(oldChain.json()).toEqual({ predecessors: [] });
+
+    const resolver = generateKeypair();
+    const currentUrl = `${alphaTenant.origin}/auth/oidc/current/${oldKey.publicKey}`;
+    const unauthenticatedCurrent = await app.inject({
+      method: 'GET',
+      url: currentUrl,
+      headers: { host: alphaTenant.host },
+    });
+    expect(unauthenticatedCurrent.statusCode).toBe(401);
+
+    const current = await app.inject({
+      method: 'GET',
+      url: currentUrl,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          resolver.secretKey,
+          resolver.publicKey,
+          currentUrl,
+          'GET',
+        ),
+      },
+    });
+    expect(current.statusCode).toBe(200);
+    expect(current.json()).toEqual({ current_pubkey: newKey.publicKey });
+
+    const unrelated = generateKeypair();
+    const unrelatedUrl = `${alphaTenant.origin}/auth/oidc/current/${unrelated.publicKey}`;
+    const unrelatedResolution = await app.inject({
+      method: 'GET',
+      url: unrelatedUrl,
+      headers: {
+        host: alphaTenant.host,
+        authorization: nip98AuthHeader(
+          resolver.secretKey,
+          resolver.publicKey,
+          unrelatedUrl,
+          'GET',
+        ),
+      },
+    });
+    expect(unrelatedResolution.statusCode).toBe(200);
+    expect(unrelatedResolution.json()).toEqual({ current_pubkey: unrelated.publicKey });
   });
 
   it('returns a native bind challenge only through an allowlisted state-bound app callback', async () => {

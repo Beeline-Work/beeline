@@ -101,6 +101,7 @@ import {
   agentHandle,
   fallbackAgentName,
   fallbackPersonName,
+  resolveCurrentIdentityPubkey,
   hasAgentIdentityMarker,
   parseAttachmentTags,
   parseAgent,
@@ -120,6 +121,7 @@ import {
   getRoomRepository,
   publishAgentModelCatalog,
   type AgentPresence,
+  type AgentSoulProfile,
   type ChannelOpsContext,
   type AttachmentReference,
   type AgentModelConfigOption,
@@ -2845,11 +2847,42 @@ export class Body {
           permissionHandler: input.permissionHandler,
         });
         session.client = client;
-        const profile = input.communityId
-          ? (await listAgents(this.agentClientContext(), input.communityId)).find(
-              (agent) => agent.pubkey === this.agentIdentity.publicKey,
-            )?.soulProfile
-          : undefined;
+        let profile: AgentSoulProfile | undefined;
+        if (input.communityId) {
+          try {
+            profile = (
+              await listAgents(this.agentClientContext(), input.communityId, 200, {
+                resolveCurrentPubkey: (pubkey) =>
+                  resolveCurrentIdentityPubkey(
+                    this.config.relayBaseUrl,
+                    this.agentIdentity,
+                    pubkey,
+                  ),
+              })
+            ).find((agent) => agent.pubkey === this.agentIdentity.publicKey)?.soulProfile;
+          } catch (error) {
+            console.error(
+              `[body] agent soul resolution failed for session ` +
+                `(workspace=${input.communityId}, agent=${this.agentIdentity.publicKey}); ` +
+                'session activation refused rather than running without its configured persona:',
+              error,
+            );
+            throw error;
+          }
+          if (profile) {
+            console.info(
+              `[body] agent soul resolved for session ` +
+                `(workspace=${input.communityId}, agent=${this.agentIdentity.publicKey}, ` +
+                `author=${profile.authoredBy}, updatedAt=${profile.updatedAt})`,
+            );
+          } else {
+            console.warn(
+              `[body] no authorized agent soul resolved for session ` +
+                `(workspace=${input.communityId}, agent=${this.agentIdentity.publicKey}); ` +
+                'starting explicitly without a configured persona',
+            );
+          }
+        }
         // Prefer the harness's native global instructions file. It is loaded
         // once when the child starts and stays stable for prompt caching,
         // unlike #407's compatibility prefix on every turn. A failed write or

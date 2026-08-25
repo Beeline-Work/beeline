@@ -5,6 +5,7 @@ import {
   isPinnedCornerLive,
   isPinnedCornerReadyForReview,
   selectPinnedCorner,
+  selectTurnProgressAgentPubkey,
 } from './room-indicators';
 
 const NOW = 1_700_000_000_000;
@@ -123,5 +124,39 @@ describe('pinned-corner presentation', () => {
   it('labels only review-ready as ready for review', () => {
     expect(isPinnedCornerReadyForReview('open')).toBe(true);
     expect(isPinnedCornerReadyForReview('live')).toBe(false);
+  });
+});
+
+describe('turn-progress presentation', () => {
+  it('lights a Corner from a bare working receipt without consulting Corner session state', () => {
+    expect(
+      selectTurnProgressAgentPubkey({
+        isCorner: true,
+        agentsOffline: true,
+        activeTurnPubkey: 'corner-agent',
+      }),
+    ).toBe('corner-agent');
+  });
+
+  it('prefers the visibly streaming lane and preserves the Room offline guard', () => {
+    expect(
+      selectTurnProgressAgentPubkey({
+        isCorner: true,
+        agentsOffline: false,
+        liveTurnPubkey: 'streaming-agent',
+        activeTurnPubkey: 'receipt-agent',
+      }),
+    ).toBe('streaming-agent');
+    expect(
+      selectTurnProgressAgentPubkey({
+        isCorner: false,
+        agentsOffline: true,
+        liveTurnPubkey: 'room-agent',
+      }),
+    ).toBeNull();
+  });
+
+  it('stays dark when neither a live lane nor a working receipt exists', () => {
+    expect(selectTurnProgressAgentPubkey({ isCorner: true, agentsOffline: false })).toBeNull();
   });
 });

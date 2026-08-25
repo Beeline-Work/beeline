@@ -59,6 +59,7 @@ import {
 } from '@beeline/buzz-client';
 import {
   latestAgentTurns,
+  projectCornerTranscript,
   projectReadEvent,
   transcriptMessages,
   mergeDisplayPages,
@@ -80,6 +81,10 @@ import {
   useBuzzLocalCache,
 } from '@/buzz/local-cache';
 import {
+  pushOpenBuzzChannelId,
+  releaseOpenBuzzChannelId,
+} from '@/buzz/open-room-tracker';
+import {
   cacheLiveSessionEvents,
   drainLiveEventFrame,
   loadOlderMessages,
@@ -97,6 +102,7 @@ import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
+import { selectTurnProgressAgentPubkey } from '@/buzz/room-indicators';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import {
   activeMentionAtCursor,
@@ -116,7 +122,6 @@ import {
 } from '@/buzz/agent-display';
 import { useAgentNameCache, withKnownAgentNames } from '@/buzz/agent-name-cache';
 import {
-  cornerName,
   currentCornerStatus,
   roomListCorners,
   resolveCornerLifecycleStatus,
@@ -151,6 +156,7 @@ import {
   isPinnedCornerReadyForReview,
   selectPinnedCorner,
 } from '@/buzz/room-indicators';
+import { displayCornerTitle } from '@/buzz/room-list-row';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -498,6 +504,14 @@ export default function BuzzChat() {
   // When each agent was last told about, so a standing offline condition is
   const sendInFlightRef = useRef(false);
 
+  // Publish the open conversation to the foreground notification policy. The
+  // root notification handler runs outside the React tree, so it reads this
+  // tracker instead of route state. Synchronous, no relay work.
+  useEffect(() => {
+    pushOpenBuzzChannelId(decodedId || null);
+    return () => releaseOpenBuzzChannelId(decodedId || null);
+  }, [decodedId]);
+
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [transcriptHydrationAttempt, setTranscriptHydrationAttempt] = useState(0);
   const [transcriptHydrationFailed, setTranscriptHydrationFailed] = useState(false);
@@ -768,7 +782,7 @@ export default function BuzzChat() {
   }, [cachedMessages, olderMessages, optimisticMessages]);
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
-  const messages = useMemo(
+  const unprojectedMessages = useMemo(
     () => combinedMessages.slice(-visibleMessageCount),
     [combinedMessages, visibleMessageCount],
   );
@@ -1039,6 +1053,37 @@ export default function BuzzChat() {
     mentionSuggestions.matches.length > 0,
   );
   const isCorner = Boolean(parentChannelId);
+  // Turn receipts are channel-local for Rooms and Corners alike. Derive them
+  // before final transcript presentation so a bare signed WORKING receipt can
+  // drive both the thinking line and Corner stall suppression during the
+  // silent window before the first draft/thought/tool event.
+  const agentTurnMarkers = useMemo(
+    () => (cachedSnapshot ? latestAgentTurns(cachedSnapshot, decodedId) : []),
+    [cachedSnapshot, decodedId],
+  );
+  const activeAgentTurn = useMemo(
+    () =>
+      agentTurnMarkers.find((turn) =>
+        isAgentTurnActive(
+          turn,
+          agentPresences[turn.agentPubkey],
+          presenceNow,
+          presenceReconnectGrace[turn.agentPubkey],
+        ),
+      ),
+    [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
+  );
+  const messages = useMemo(() => {
+    if (!isCorner) return unprojectedMessages;
+    const liveAgentPubkeys = new Set<string>();
+    if (!isArchived) {
+      if (activeAgentTurn?.agentPubkey) liveAgentPubkeys.add(activeAgentTurn.agentPubkey);
+      for (const message of unprojectedMessages) {
+        if (message.isAgentLiveTurn && message.pubkey) liveAgentPubkeys.add(message.pubkey);
+      }
+    }
+    return projectCornerTranscript(unprojectedMessages, { liveAgentPubkeys });
+  }, [activeAgentTurn, isArchived, isCorner, unprojectedMessages]);
   const isDirectMessage = Boolean(directMessage);
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
@@ -1174,14 +1219,32 @@ export default function BuzzChat() {
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room
   // label as a stand-in for its own slug.
+  // The parent Room's STORED name, for a corner's `#<room>/<corner>` header.
+  // Read from the same Room-list cache the reference resolver uses — never a
+  // second index. `undefined` = not a corner; `null` = corner whose parent
+  // name has not landed yet (the header degrades to `#<corner>`, it does not
+  // block on another read).
+  const parentRoomName = useMemo(() => {
+    if (!parentChannelId) return undefined;
+    const parent = cachedChannelList?.channels.find(
+      (channel) => channel.id === parentChannelId && !channel.parentChannelId,
+    );
+    return parent?.title?.trim() ? parent.title : null;
+  }, [cachedChannelList, parentChannelId]);
   const headerTitle = channelHeaderTitle(
     resolvedChannelName,
     isCorner ? 'corner' : channelKind,
     decodedId,
+    {
+      directMessage: isDirectMessage,
+      parentRoomName,
+    },
   );
-  // Room-lifecycle copy ("Delete <name>?") only ever runs on a Room, which by
-  // then has a resolved name; the label is the safe fallback for the sentence.
+  // Room-lifecycle copy ("Delete <name>?"), rename drafts, and cache writes
+  // use the STORED name — the `#` mark is display-only and must never leak
+  // into a mutation path. The header renders through `headerTitle` instead.
   const roomName = headerTitle ?? ROOM_LABEL;
+  const storedRoomName = resolvedChannelName?.trim() || ROOM_LABEL;
   // A DM's title is its peer's identity. Derived from cached state rather
   // than resolved inside the enter-room fetch chain, so it is right on the
   // first painted frame of a warm cache instead of several relay reads later.
@@ -1419,27 +1482,6 @@ export default function BuzzChat() {
       }),
     [displayedCornerStatus, isArchived, mergeTarget, mergeNotReadyReason, messages],
   );
-  // The daemon's own `#t=agent-turn` lifecycle, derived straight from the
-  // normalized snapshot journal — one marker per agent, newest first. This is
-  // what lights the Room's thinking indicator during the silent window
-  // between the daemon's WORKING receipt and the first streamed draft, when
-  // the transcript's live activity lane does not exist yet.
-  const agentTurnMarkers = useMemo(
-    () => (cachedSnapshot ? latestAgentTurns(cachedSnapshot, decodedId) : []),
-    [cachedSnapshot, decodedId],
-  );
-  const activeAgentTurn = useMemo(
-    () =>
-      agentTurnMarkers.find((turn) =>
-        isAgentTurnActive(
-          turn,
-          agentPresences[turn.agentPubkey],
-          presenceNow,
-          presenceReconnectGrace[turn.agentPubkey],
-        ),
-      ),
-    [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
-  );
   /**
    * The pinned corner line's whole state, resolved in one place so the words it
    * shows and the corner a tap on it opens can never disagree.
@@ -1492,8 +1534,13 @@ export default function BuzzChat() {
     const subject = agentPubkey
       ? resolveAgentDisplayIdentity(agentPubkey, agentByPubkey.get(agentPubkey)).name
       : 'agent';
-    const target = cornerName(
-      cornerLifecycle.find((corner) => corner.id === pinnedCorner.cornerId)?.name,
+    // The channel-mark convention: a corner names itself `#<room>/<corner>`,
+    // composed from stored names at render time. Before this Room's own name
+    // has resolved the line still marks the corner alone rather than blocking.
+    const lifecycleCorner = cornerLifecycle.find((corner) => corner.id === pinnedCorner.cornerId);
+    const target = displayCornerTitle(
+      resolvedChannelName?.trim() || undefined,
+      lifecycleCorner?.name,
       pinnedCorner.cornerId,
     );
     const live = isPinnedCornerLive(pinnedCorner.status);
@@ -1517,6 +1564,7 @@ export default function BuzzChat() {
     mergeTarget,
     pinnedCorner,
     pinnedCornerCard,
+    resolvedChannelName,
     sessionState,
   ]);
 
@@ -1527,31 +1575,22 @@ export default function BuzzChat() {
    * nothing else — no corner reaches it, exactly as no turn reaches the corner
    * line above.
    *
-   * A Corner uses the same progress line while its canonical WORKING lease is
-   * fresh. Drafts and ACP turns cannot light it independently.
+   * A Corner uses the same signed turn/live-lane proof as a Room. Its separate
+   * canonical Corner lease still owns the pinned Corner bar, but cannot hide a
+   * channel-local reply that is visibly streaming now.
    */
   const turnProgressLabel = useMemo(() => {
-    if (!isCorner && agentsOffline) return null;
-    if (isCorner) {
-      if (sessionState !== 'working') return null;
-      return `${cornerAgentDisplay?.name ?? 'agent'} thinking…`;
-    }
     const liveTurn = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
-    const pubkey = liveTurn?.pubkey ?? activeAgentTurn?.agentPubkey;
+    const pubkey = selectTurnProgressAgentPubkey({
+      isCorner,
+      agentsOffline,
+      ...(liveTurn?.pubkey ? { liveTurnPubkey: liveTurn.pubkey } : {}),
+      ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
+    });
     if (!pubkey) return null;
-    const subject = pubkey
-      ? resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name
-      : 'agent';
+    const subject = resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name;
     return `${subject} thinking…`;
-  }, [
-    activeAgentTurn,
-    agentByPubkey,
-    agentsOffline,
-    cornerAgentDisplay,
-    isCorner,
-    sessionState,
-    visibleMessages,
-  ]);
+  }, [activeAgentTurn, agentByPubkey, agentsOffline, isCorner, visibleMessages]);
 
   const activeActivityId = useMemo(() => {
     const latest = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
@@ -4674,7 +4713,9 @@ export default function BuzzChat() {
                   accessibilityRole="button"
                   disabled={renameBusy}
                   onPress={() => {
-                    setRenameDraft(roomName);
+                    // The rename draft is the STORED name; the header's `#`
+                    // mark is display-only and must never be saved back.
+                    setRenameDraft(storedRoomName);
                     setRenameError(null);
                     setRenameEditing(true);
                   }}

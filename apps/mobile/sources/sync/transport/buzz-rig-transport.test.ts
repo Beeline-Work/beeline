@@ -15,6 +15,7 @@ import {
   TAG_CORNER_STATE,
   TAG_PARENT,
   createIdentity,
+  reduceWorkspaceEvents,
   selectCorners,
   selectMembers,
   selectReplyTarget,
@@ -285,6 +286,38 @@ describe('BuzzRigTransport typed read-model boundary', () => {
       extraTags: [['e', parent.id, '', 'reply']],
     });
     expect(fixture.client.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes the existing thread root when replying to an incremental threaded message', async () => {
+    const root = message(human, 'Thread root', 5);
+    const parent = message(agent, 'First reply', 6, [
+      ['e', root.id, '', 'root'],
+      ['e', root.id, '', 'reply'],
+    ]);
+    const threadedParent = message(human, 'Reply to the first reply', 7, [
+      ['e', root.id, '', 'root'],
+      ['e', parent.id, '', 'reply'],
+    ]);
+    const fixture = clientFixture();
+    const transport = transportWith(fixture.client);
+
+    const initial = await transport.readModelSnapshot(ROOM, [root, parent]);
+    const incremental = await transport.readModelSnapshot(ROOM, [threadedParent]);
+    const snapshot = reduceWorkspaceEvents(
+      initial,
+      Object.values(incremental.rooms[ROOM]!.eventJournal),
+    );
+    const selected = selectReplyTarget(snapshot, ROOM, threadedParent.id);
+    if (selected.status !== 'available') throw new Error('threaded parent was not selected');
+
+    await transport.messageSubmitReply('Deeper reply', selected.reference);
+
+    expect(fixture.client.buildMessage).toHaveBeenCalledWith(ROOM, 'Deeper reply', {
+      extraTags: [
+        ['e', root.id, '', 'root'],
+        ['e', threadedParent.id, '', 'reply'],
+      ],
+    });
   });
 
   it('derives canonical corners from creator-authored lifecycle and verified membership', async () => {

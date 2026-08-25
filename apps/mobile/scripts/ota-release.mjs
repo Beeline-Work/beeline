@@ -199,12 +199,20 @@ function publish(options) {
 }
 
 function markCanary(options) {
-  if (!['passed', 'skipped'].includes(options.status)) {
-    fail('mark-canary --status must be passed or skipped');
+  if (!['passed', 'skipped', 'blocked'].includes(options.status)) {
+    fail('mark-canary --status must be passed, skipped, or blocked');
+  }
+  const reason = typeof options.reason === 'string' ? options.reason.trim() : '';
+  if (options.status === 'blocked' && !reason) {
+    fail('mark-canary --status blocked requires --reason naming why promotion is parked');
   }
   const ledger = readLedger(options.ledger);
   if (ledger.status !== 'beta') fail(`Cannot mark canary from ledger status ${ledger.status}.`);
-  ledger.canary = { status: options.status, recordedAt: isoNow() };
+  ledger.canary = {
+    status: options.status,
+    recordedAt: isoNow(),
+    ...(reason ? { reason } : {}),
+  };
   writeLedger(options.ledger, ledger);
 }
 
@@ -212,7 +220,13 @@ function promote(options) {
   const ledger = readLedger(options.ledger);
   if (ledger.status !== 'beta') fail(`Cannot promote ledger status ${ledger.status}.`);
   if (!['passed', 'skipped'].includes(ledger.canary?.status)) {
-    fail('Refusing production promotion before a passed or explicitly skipped canary.');
+    const parked =
+      ledger.canary?.status === 'blocked' && ledger.canary.reason
+        ? ` Promotion is parked: ${ledger.canary.reason}`
+        : '';
+    fail(
+      `Refusing production promotion before a passed or explicitly skipped canary.${parked}`,
+    );
   }
   const message = `promote beta ${ledger.candidateGroupId} (${ledger.sourceSha.slice(0, 12)})`;
   const result = runEas(

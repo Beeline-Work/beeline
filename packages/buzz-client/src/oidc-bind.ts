@@ -1037,6 +1037,46 @@ export async function fetchIdentityPredecessors(
 }
 
 /**
+ * Resolve any historical device key to the current key of the same identity.
+ *
+ * Unlike {@link fetchIdentityPredecessors}, this is intentionally usable by a
+ * different authenticated Workspace actor (including its paired agent): soul
+ * readers need to verify that a predecessor author now names a current human
+ * member, while the predecessor's private key is no longer available.
+ */
+export async function resolveCurrentIdentityPubkey(
+  baseUrl: string,
+  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
+  pubkey: string,
+): Promise<string> {
+  if (!HEX_KEY_RE.test(pubkey)) throw new OidcBindError('invalid_identity', 'invalid public key');
+  const url = endpoint(baseUrl, `/auth/oidc/current/${pubkey}`).toString();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
+      },
+    });
+  } catch (error) {
+    throw new OidcBindError(
+      'offline',
+      error instanceof Error ? error.message : 'auth service unavailable',
+    );
+  }
+  const body = await responseBody(response);
+  if (!response.ok) throw serviceError(body, response.status);
+  if (typeof body.current_pubkey !== 'string' || !HEX_KEY_RE.test(body.current_pubkey)) {
+    throw new OidcBindError(
+      'invalid_response',
+      'auth service returned an invalid current identity key',
+      response.status,
+    );
+  }
+  return body.current_pubkey;
+}
+
+/**
  * Fetch stored GitHub repository activity for one Room, over the same
  * authority as {@link getGitHubRoomInstallationToken}: the auth sidecar
  * re-resolves Room state and releases only events for the repository that

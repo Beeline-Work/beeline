@@ -479,6 +479,7 @@ export async function listAgents(
   ctx: ChannelOpsContext,
   communityId: string,
   limit = 200,
+  options?: AgentSoulAuthorResolution,
 ): Promise<Agent[]> {
   const [agents, members] = await Promise.all([
     listAgentIdentities(ctx, communityId, limit),
@@ -496,17 +497,29 @@ export async function listAgents(
     )
   ).flat();
   const memberPubkeys = new Set(members.map((member) => member.pubkey));
-  const overlayAuthors = [
-    ...new Set(
-      soulEvents.map((event) => event.pubkey).filter((pubkey) => memberPubkeys.has(pubkey)),
-    ),
-  ];
+  const overlayAuthors = [...new Set(soulEvents.map((event) => event.pubkey))];
+  const effectiveSoulAuthors = new Map<string, string>();
+  await Promise.all(
+    overlayAuthors.map(async (author) => {
+      if (memberPubkeys.has(author)) {
+        effectiveSoulAuthors.set(author, author);
+        return;
+      }
+      if (!options?.resolveCurrentPubkey) return;
+      // Succession truth is deliberately supplied by the auth service that
+      // owns the ledger. A resolver failure propagates: launching a session
+      // without a known, previously configured soul is worse than delaying
+      // activation until authorship can be verified.
+      const current = await options.resolveCurrentPubkey(author);
+      if (memberPubkeys.has(current)) effectiveSoulAuthors.set(author, current);
+    }),
+  );
   const agentAuthors = new Set(
     (
       await Promise.all(
-        overlayAuthors.map(async (pubkey) =>
-          (await isAgentIdentity(ctx, pubkey)) ? pubkey : null,
-        ),
+        [
+          ...new Set([...effectiveSoulAuthors].flatMap(([author, current]) => [author, current])),
+        ].map(async (pubkey) => ((await isAgentIdentity(ctx, pubkey)) ? pubkey : null)),
       )
     ).filter((pubkey): pubkey is string => pubkey !== null),
   );
@@ -516,13 +529,20 @@ export async function listAgents(
     if (
       !profile ||
       profile.communityId !== communityId ||
-      !memberPubkeys.has(profile.authoredBy) ||
-      agentAuthors.has(profile.authoredBy)
+      !effectiveSoulAuthors.has(profile.authoredBy) ||
+      agentAuthors.has(profile.authoredBy) ||
+      agentAuthors.has(effectiveSoulAuthors.get(profile.authoredBy)!)
     ) {
       continue;
     }
     const prior = profiles.get(profile.agentPubkey);
-    if (!prior || prior.updatedAt < profile.updatedAt) profiles.set(profile.agentPubkey, profile);
+    if (
+      !prior ||
+      prior.updatedAt < profile.updatedAt ||
+      (prior.updatedAt === profile.updatedAt && prior.raw.id.localeCompare(profile.raw.id) < 0)
+    ) {
+      profiles.set(profile.agentPubkey, profile);
+    }
   }
   return agents
     .filter((agent) => memberPubkeys.has(agent.pubkey))
@@ -538,6 +558,16 @@ export async function listAgents(
           }
         : agent;
     });
+}
+
+/**
+ * Optional key-succession resolution for soul-author checks. The resolver
+ * must use the authoritative identity registry; relay projections alone
+ * cannot prove that a removed predecessor and a current member are one human.
+ */
+export interface AgentSoulAuthorResolution {
+  /** Resolve an authored key forward to its identity's current device key. */
+  resolveCurrentPubkey?: (pubkey: string) => Promise<string>;
 }
 
 /**

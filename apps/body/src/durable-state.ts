@@ -8,6 +8,15 @@ import {
 } from '@beeline/buzz-client';
 import type { ModelTurnSpend, SessionReprimeRecord } from './model-spend.js';
 import type { ConcludeEpisode } from './conclude-watch.js';
+import type {
+  PermissionCapacityReservation,
+  PermissionCapacityResult,
+} from './permission-runtime.js';
+import type {
+  DelegationCapacityReservation,
+  DelegationCapacityResult,
+  DelegationOutboundReservation,
+} from './delegation-runtime.js';
 
 export interface EventCursor {
   createdAt: number;
@@ -23,6 +32,18 @@ interface InboxItem {
   reply?: NostrEvent;
 }
 
+interface StoredPermissionReservation extends Omit<
+  PermissionCapacityReservation,
+  'usage' | 'grant'
+> {}
+
+interface StoredDelegationReservation extends DelegationCapacityReservation {}
+
+interface StoredOutboundDelegation {
+  event: NostrEvent;
+  delivered: boolean;
+}
+
 interface DurableBodyData {
   version: 2;
   inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;
@@ -36,6 +57,15 @@ interface DurableBodyData {
   /** Quiet-episode conclude-watch state per corner, so a restart mid-episode
    *  neither resets the spent nudge budget nor re-marks a resolved episode. */
   concludeEpisodes?: Record<string, ConcludeEpisode>;
+  /** Versioned P1 trust-spine reservations. Keys are immutable signed ids. */
+  factory?: {
+    version: 1;
+    inboundDelegationClaims: string[];
+    inboundDelegationReservations?: Record<string, StoredDelegationReservation>;
+    outboundDelegations: Record<string, NostrEvent | StoredOutboundDelegation>;
+    permissionActionClaims: string[];
+    permissionReservations?: Record<string, StoredPermissionReservation>;
+  };
 }
 
 function emptyData(): DurableBodyData {
@@ -50,6 +80,7 @@ function emptyData(): DurableBodyData {
 }
 
 const MAX_MODEL_TURNS = 20_000;
+const MAX_FACTORY_CLAIMS = 20_000;
 
 function compareEvents(a: NostrEvent, b: NostrEvent): number {
   return a.created_at - b.created_at || a.id.localeCompare(b.id);
@@ -205,6 +236,179 @@ export class DurableBodyState {
     return [...(this.data.modelTurns ?? [])];
   }
 
+  /** Atomic durable inbox and shared root/day budget linearization. */
+  async reserveDelegationInbound(
+    input: DelegationCapacityReservation,
+  ): Promise<DelegationCapacityResult> {
+    await this.load();
+    const factory = this.factory();
+    if (factory.inboundDelegationClaims.includes(input.eventId)) return 'duplicate';
+    const reservations = (factory.inboundDelegationReservations ??= {});
+    const observed = new Set(input.observedTurnEventIds);
+    const unseen = Object.values(reservations).filter(
+      (reservation) => !observed.has(reservation.eventId),
+    );
+    if (
+      input.observedRootTurns +
+        unseen.filter((reservation) => reservation.delegationId === input.delegationId).length +
+        1 >
+      input.rootMaxAgentTurns
+    )
+      return 'over-turn-budget';
+    const observedDaily = new Set(input.observedDailyTurnEventIds);
+    const sameDay = unseen.filter(
+      (reservation) =>
+        reservation.agentPubkey === input.agentPubkey &&
+        reservation.day === input.day &&
+        !observedDaily.has(reservation.eventId),
+    );
+    if (input.observedDailyCalls + sameDay.length + 1 > input.dailyMaxCalls) {
+      return 'over-turn-budget';
+    }
+    if (
+      input.observedDailyReservedTokens +
+        sameDay.reduce((sum, reservation) => sum + reservation.reservedTokens, 0) +
+        input.reservedTokens >
+      input.dailyMaxReservedTokens
+    )
+      return 'over-token-budget';
+    if (input.parentWorkItemId && input.phase === 'assign') {
+      const siblings = unseen.filter(
+        (reservation) =>
+          reservation.delegationId === input.delegationId &&
+          reservation.parentWorkItemId === input.parentWorkItemId &&
+          reservation.phase === 'assign',
+      );
+      if (
+        input.observedSiblingCount + siblings.length + 1 > (input.parentMaxChildren ?? 0) ||
+        input.observedSiblingAllocatedTurns +
+          siblings.reduce((sum, reservation) => sum + reservation.allocatedTurns, 0) +
+          input.allocatedTurns >
+          (input.parentAvailableTurns ?? 0)
+      )
+        return 'over-child-budget';
+      if (
+        input.observedSiblingAllocatedTokens +
+          siblings.reduce((sum, reservation) => sum + reservation.reservedTokens, 0) +
+          input.reservedTokens >
+        (input.parentAvailableTokens ?? 0)
+      )
+        return 'over-token-budget';
+    }
+    factory.inboundDelegationClaims.push(input.eventId);
+    factory.inboundDelegationClaims = factory.inboundDelegationClaims.slice(-MAX_FACTORY_CLAIMS);
+    reservations[input.eventId] = input;
+    for (const eventId of Object.keys(reservations)) {
+      if (!factory.inboundDelegationClaims.includes(eventId)) delete reservations[eventId];
+    }
+    await this.save();
+    return 'claimed';
+  }
+
+  async claimDelegationInbound(eventId: string): Promise<'claimed' | 'duplicate'> {
+    await this.load();
+    const factory = this.factory();
+    if (factory.inboundDelegationClaims.includes(eventId)) return 'duplicate';
+    factory.inboundDelegationClaims.push(eventId);
+    factory.inboundDelegationClaims = factory.inboundDelegationClaims.slice(-MAX_FACTORY_CLAIMS);
+    await this.save();
+    return 'claimed';
+  }
+
+  /** Reserve the exact signed event before relay publication. */
+  async reserveDelegationOutbound(event: NostrEvent): Promise<DelegationOutboundReservation> {
+    await this.load();
+    const factory = this.factory();
+    const existing = factory.outboundDelegations[event.id];
+    if (existing) {
+      if ('event' in existing) {
+        return { state: existing.delivered ? 'delivered' : 'pending', event: existing.event };
+      }
+      return { state: 'pending', event: existing };
+    }
+    factory.outboundDelegations[event.id] = { event, delivered: false };
+    const ids = Object.keys(factory.outboundDelegations);
+    for (const stale of ids.slice(0, Math.max(0, ids.length - MAX_FACTORY_CLAIMS))) {
+      delete factory.outboundDelegations[stale];
+    }
+    await this.save();
+    return { state: 'reserved', event };
+  }
+
+  async markDelegationOutboundDelivered(eventId: string): Promise<void> {
+    await this.load();
+    const existing = this.factory().outboundDelegations[eventId];
+    if (!existing) return;
+    this.factory().outboundDelegations[eventId] = {
+      event: 'event' in existing ? existing.event : existing,
+      delivered: true,
+    };
+    await this.save();
+  }
+
+  async claimPermissionAction(key: string): Promise<'claimed' | 'duplicate'> {
+    await this.load();
+    const factory = this.factory();
+    if (factory.permissionActionClaims.includes(key)) return 'duplicate';
+    factory.permissionActionClaims.push(key);
+    factory.permissionActionClaims = factory.permissionActionClaims.slice(-MAX_FACTORY_CLAIMS);
+    await this.save();
+    return 'claimed';
+  }
+
+  async reservePermissionCapacity(
+    input: PermissionCapacityReservation,
+  ): Promise<PermissionCapacityResult> {
+    await this.load();
+    const factory = this.factory();
+    const reservations = (factory.permissionReservations ??= {});
+    if (reservations[input.key]) return 'duplicate';
+    const observedActions = input.usage.actionStatuses;
+    const unseen = Object.values(reservations).filter(
+      (reservation) =>
+        reservation.grantEventId === input.grantEventId &&
+        !observedActions.has(reservation.actionId),
+    );
+    const uses = unseen.reduce((sum, reservation) => sum + reservation.charge.uses, 0);
+    if (input.usage.uses + uses + input.charge.uses > input.grant.maxUses) return 'exhausted';
+    const windowStart = input.at - input.grant.rate.windowSeconds;
+    const recentUses = unseen
+      .filter((reservation) => reservation.at >= windowStart)
+      .reduce((sum, reservation) => sum + reservation.charge.uses, 0);
+    if (
+      input.usage.committedAt.filter((at) => at >= windowStart).length +
+        recentUses +
+        input.charge.uses >
+      input.grant.rate.maxUses
+    )
+      return 'rate-exhausted';
+    if (
+      input.grant.budget.maxMinorUnits !== undefined &&
+      input.usage.minorUnits +
+        unseen.reduce((sum, reservation) => sum + (reservation.charge.minorUnits ?? 0), 0) +
+        (input.charge.minorUnits ?? 0) >
+        input.grant.budget.maxMinorUnits
+    )
+      return 'budget-exhausted';
+    if (
+      input.grant.budget.maxReservedTokens !== undefined &&
+      input.usage.reservedTokens +
+        unseen.reduce((sum, reservation) => sum + (reservation.charge.reservedTokens ?? 0), 0) +
+        (input.charge.reservedTokens ?? 0) >
+        input.grant.budget.maxReservedTokens
+    )
+      return 'budget-exhausted';
+    reservations[input.key] = {
+      key: input.key,
+      grantEventId: input.grantEventId,
+      actionId: input.actionId,
+      at: input.at,
+      charge: input.charge,
+    };
+    await this.save();
+    return 'claimed';
+  }
+
   async recordSessionReprime(record: SessionReprimeRecord): Promise<void> {
     await this.load();
     const records = this.data.sessionReprimes ?? [];
@@ -255,6 +459,15 @@ export class DurableBodyState {
     return (this.data.inboxes[channelId] ??= {
       cursor: { createdAt: 0, eventId: '' },
       items: {},
+    });
+  }
+
+  private factory(): NonNullable<DurableBodyData['factory']> {
+    return (this.data.factory ??= {
+      version: 1,
+      inboundDelegationClaims: [],
+      outboundDelegations: {},
+      permissionActionClaims: [],
     });
   }
 

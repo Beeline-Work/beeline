@@ -47,6 +47,8 @@ export const KIND_AGENT_MODEL_CATALOG = 30078;
 
 /** NIP-33 parameterized replaceable application data (human-authored agent model/effort selection). */
 export const KIND_AGENT_MODEL_CONFIG = 30078;
+/** Paired-owner-authored per-agent access policy. */
+export const KIND_AGENT_ACCESS_CONFIG = 30078;
 
 /** Same kind:30078 convention — a self-authored snapshot of an agent's advertised commands. */
 export const KIND_AGENT_COMMANDS = 30078;
@@ -95,6 +97,17 @@ export const TAG_PERSON_PROFILE = 'buzz-person-profile';
 
 /** Marker tag value for merge approval (P0 gate shape — mirrors @beeline/gate). */
 export const TAG_MERGE_APPROVAL = 'buzz-merge-approval';
+
+/** P1 factory permission ledger command and receipt families. */
+export const TAG_PERMISSION_REQUEST = 'buzz-permission-request';
+export const TAG_PERMISSION_DECISION = 'buzz-permission-decision';
+export const TAG_PERMISSION_REVOCATION = 'buzz-permission-revocation';
+export const TAG_PERMISSION_EXECUTION = 'buzz-permission-execution';
+
+/** P1 bounded agent-to-agent turn and receipt families. */
+export const TAG_DELEGATION_TURN = 'buzz-delegation-turn';
+export const TAG_DELEGATION_RECEIPT = 'buzz-delegation-receipt';
+export const TAG_AGENT_ACCESS_CONFIG = 'buzz-agent-access-config';
 
 /** App-convention parent-channel linkage tag on child (sub)channels. */
 export const TAG_PARENT = 'parent';

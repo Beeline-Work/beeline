@@ -17,7 +17,7 @@ describe('beeline pair help', () => {
     expect(result.stdout).toContain('ACP adapters stay visible');
     expect(result.stdout).toContain('never installs packages automatically');
     expect(result.stdout).toContain(
-      'grok       Operator\'s Grok through its native \'grok agent stdio\' ACP server',
+      "grok       Operator's Grok through its native 'grok agent stdio' ACP server",
     );
     expect(result.stdout).toContain(
       'reference  Bundled buzz-agent (explicit fallback; requires an LLM key)',
@@ -39,7 +39,8 @@ describe('beeline pair help', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('--agents <kind1,kind2,...>');
-    expect(result.stdout).toContain('--access <everyone|creator>');
+    expect(result.stdout).toContain('--access <everyone|creator|allowlist>');
+    expect(result.stdout).toContain('--allow <npub-or-hex,...>');
     expect(result.stdout).toContain('--mcp <squire>');
     expect(result.stdout).toContain('Account capabilities require --access creator');
     expect(result.stdout).toContain('one single-use pairing code per agent');

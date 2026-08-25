@@ -2,6 +2,12 @@ import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { normalizeAttachmentReference, type AttachmentReference } from '../attachment.js';
 import type { CornerMachineState } from '../corner-state.js';
 import {
+  DELEGATION_RECEIPT_MARKER,
+  DELEGATION_TURN_MARKER,
+  parseDelegationReceipt,
+  parseDelegationTurn,
+} from '../delegation-turn.js';
+import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
   KIND_CORNER_STATE,
@@ -18,6 +24,16 @@ import {
   TAG_CORNER_STATE,
   TAG_PARENT,
 } from '../kinds.js';
+import {
+  PERMISSION_DECISION_MARKER,
+  PERMISSION_EXECUTION_MARKER,
+  PERMISSION_REQUEST_MARKER,
+  PERMISSION_REVOCATION_MARKER,
+  parsePermissionDecision,
+  parsePermissionExecution,
+  parsePermissionRequest,
+  parsePermissionRevocation,
+} from '../permission-request.js';
 import type {
   Activity,
   ActivityDetail,
@@ -27,6 +43,7 @@ import type {
   ChannelScope,
   Control,
   ControlPayload,
+  Command,
   EventId,
   HumanMessage,
   IdentityRecord,
@@ -37,6 +54,7 @@ import type {
   ParseAuthority,
   Pubkey,
   ReadEvent,
+  Receipt,
   SessionUpdate,
   SessionUpdatePayload,
   Unknown,
@@ -69,6 +87,15 @@ const CONTROL_MARKERS = new Set([
   // conversational answer. The explicit wire marker is the schema boundary;
   // content wording is deliberately not inspected.
   'agent-activity/narration',
+]);
+
+const FACTORY_MARKERS = new Set([
+  PERMISSION_REQUEST_MARKER,
+  PERMISSION_DECISION_MARKER,
+  PERMISSION_REVOCATION_MARKER,
+  PERMISSION_EXECUTION_MARKER,
+  DELEGATION_TURN_MARKER,
+  DELEGATION_RECEIPT_MARKER,
 ]);
 
 const SESSION_MARKERS = new Set([
@@ -574,12 +601,120 @@ function controlPayload(
   };
 }
 
+function knownPermissionRequest(
+  authority: ParseAuthority,
+  permissionId: string | undefined,
+  requestEventId?: string,
+) {
+  if (requestEventId) return authority.knownPermissionRequests?.[requestEventId];
+  if (!permissionId) return undefined;
+  return Object.values(authority.knownPermissionRequests ?? {}).find(
+    (request) => request.value.permissionId === permissionId,
+  );
+}
+
+function parseFactoryMessage(
+  event: NostrEvent,
+  scope: ChannelScope,
+  author: IdentityRecord | undefined,
+  markerSet: ReadonlySet<string>,
+  authority: ParseAuthority,
+): Command | Receipt | Unknown | undefined {
+  const factoryMarkers = [...markerSet].filter((candidate) => FACTORY_MARKERS.has(candidate));
+  if (factoryMarkers.length === 0) return undefined;
+  if (factoryMarkers.length !== 1 || !author) return unknown(event, 'malformed-schema');
+  const factoryMarker = factoryMarkers[0];
+  if (factoryMarker === PERMISSION_REQUEST_MARKER) {
+    const request = parsePermissionRequest(event);
+    if (!request) return unknown(event, 'malformed-schema');
+    if (author.kind !== 'agent') return unknown(event, 'unauthorized');
+    return {
+      ...envelope(event, scope),
+      type: 'command',
+      command: { kind: 'permission.request', request: request.value },
+    };
+  }
+  if (factoryMarker === PERMISSION_DECISION_MARKER) {
+    const replyTags = tags(event, 'e');
+    const requestEventId =
+      replyTags.length === 1 && replyTags[0]?.[3] === 'reply' ? replyTags[0]?.[1] : undefined;
+    const request = knownPermissionRequest(authority, tag(event, 'permission'), requestEventId);
+    const decision = request ? parsePermissionDecision(event, request) : undefined;
+    if (!decision) return unknown(event, 'malformed-schema');
+    if (author.kind !== 'human' || !isAdmin(authority, scope.channelId, event.pubkey)) {
+      return unknown(event, 'unauthorized');
+    }
+    return {
+      ...envelope(event, scope),
+      type: 'command',
+      command: { kind: 'permission.decision', decision: decision.value },
+    };
+  }
+  if (factoryMarker === PERMISSION_REVOCATION_MARKER) {
+    const request = knownPermissionRequest(authority, tag(event, 'permission'));
+    const revocation = request ? parsePermissionRevocation(event, request) : undefined;
+    if (!revocation) return unknown(event, 'malformed-schema');
+    if (author.kind !== 'human' || !isAdmin(authority, scope.channelId, event.pubkey)) {
+      return unknown(event, 'unauthorized');
+    }
+    return {
+      ...envelope(event, scope),
+      type: 'command',
+      command: { kind: 'permission.revocation', revocation: revocation.value },
+    };
+  }
+  if (factoryMarker === PERMISSION_EXECUTION_MARKER) {
+    const request = knownPermissionRequest(authority, tag(event, 'permission'));
+    const execution = request ? parsePermissionExecution(event, request) : undefined;
+    if (!execution) return unknown(event, 'malformed-schema');
+    return {
+      ...envelope(event, scope),
+      type: 'receipt',
+      receipt: { kind: 'permission.execution', execution: execution.value },
+    };
+  }
+  if (factoryMarker === DELEGATION_TURN_MARKER) {
+    const turn = parseDelegationTurn(event);
+    if (!turn) return unknown(event, 'malformed-schema');
+    if (author.kind !== 'agent') return unknown(event, 'unauthorized');
+    return {
+      ...envelope(event, scope),
+      type: 'command',
+      command: { kind: 'delegation.turn', turn: turn.value },
+    };
+  }
+  const receipt = parseDelegationReceipt(event);
+  const parentTurn = receipt
+    ? authority.knownDelegationTurns?.[receipt.value.turnEventId]
+    : undefined;
+  if (
+    !receipt ||
+    !parentTurn ||
+    parentTurn.value.roomId !== scope.channelId ||
+    parentTurn.value.delegationId !== receipt.value.delegationId ||
+    parentTurn.value.workItemId !== receipt.value.workItemId ||
+    (receipt.value.status === 'queued'
+      ? event.pubkey !== parentTurn.value.fromAgentPubkey
+      : event.pubkey !== parentTurn.value.toAgentPubkey)
+  ) {
+    return unknown(event, 'malformed-schema');
+  }
+  if (author.kind !== 'agent') return unknown(event, 'unauthorized');
+  return {
+    ...envelope(event, scope),
+    type: 'receipt',
+    receipt: { kind: 'delegation.receipt', delegation: receipt.value },
+  };
+}
+
 function parseMessage(event: NostrEvent, authority: ParseAuthority): ReadEvent {
   const scope = channelScope(event, authority);
   if (isUnknown(scope)) return scope;
   const author = identity(authority, event.pubkey);
-  if (!author || author.kind === 'infrastructure') return unknown(event, 'unresolved-identity');
   const markerSet = new Set(markers(event));
+  const factory = parseFactoryMessage(event, scope, author, markerSet, authority);
+  if (factory) return factory;
+  if (!author || author.kind === 'infrastructure') return unknown(event, 'unresolved-identity');
   const agentAuthor = author.kind === 'agent';
 
   if (agentAuthor && markerSet.has(TAG_AGENT_ACTIVITY)) {
@@ -898,7 +1033,20 @@ export function parseRelayEvents(
   const knownMessages: Record<string, { channelId: string; rootId?: string }> = {
     ...authority.knownMessages,
   };
-  const candidateAuthority = { ...authority, knownMessages: {} };
+  const knownPermissionRequests = { ...authority.knownPermissionRequests };
+  const knownDelegationTurns = { ...authority.knownDelegationTurns };
+  for (const event of events) {
+    const request = parsePermissionRequest(event);
+    if (request) knownPermissionRequests[event.id] = request;
+    const turn = parseDelegationTurn(event);
+    if (turn) knownDelegationTurns[event.id] = turn;
+  }
+  const candidateAuthority = {
+    ...authority,
+    knownMessages: {},
+    knownPermissionRequests,
+    knownDelegationTurns,
+  };
   for (const event of events) {
     const parsed = parseRelayEvent(event, candidateAuthority);
     if (parsed.type !== 'human-message' && parsed.type !== 'agent-message') continue;
@@ -929,6 +1077,11 @@ export function parseRelayEvents(
       rootId: rootFor(eventId),
     };
   }
-  const finalAuthority = { ...authority, knownMessages };
+  const finalAuthority = {
+    ...authority,
+    knownMessages,
+    knownPermissionRequests,
+    knownDelegationTurns,
+  };
   return events.map((event) => parseRelayEvent(event, finalAuthority));
 }

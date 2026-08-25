@@ -48,18 +48,28 @@ import {
 } from '@/push/buzz-push-registration';
 import type { Identity } from '@beeline/buzz-client';
 import { flushBuzzLocalCacheForBackground } from '@/buzz/local-cache';
+import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
+import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 
-// Keep remote notifications visible while the app is foregrounded. The sender
-// may be writing in a different Room than the one currently on screen.
+// Foreground banner policy: suppress banners while the app is active, and
+// always for the Room the person currently has open. Background display and
+// response routing are untouched; see push/foreground-policy.ts.
 Notifications.setNotificationHandler({
-  handleNotification: async () => {
+  handleNotification: async (notification) => {
+    const decision = decideForegroundNotificationDisplay({
+      appState: AppState.currentState,
+      openChannelId: getOpenBuzzChannelId(),
+      data: notification.request.content.data,
+    });
     return {
-      shouldShowAlert: true,
-      shouldPlaySound: true,
+      shouldShowAlert: decision.shouldPresent,
+      shouldPlaySound: decision.shouldPresent,
       shouldSetBadge: true,
-      shouldShowBanner: true,
+      shouldShowBanner: decision.shouldPresent,
+      // Keep suppressed notifications in the notification list/tray so they
+      // remain discoverable after the fact without interrupting the screen.
       shouldShowList: true,
     };
   },

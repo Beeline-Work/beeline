@@ -935,6 +935,13 @@ export default function BuzzChannels() {
   useFocusEffect(
     useCallback(() => {
       if (!transport || !identity || !roomIdsKey) return;
+      // The HTTP/cache revalidation owns history. A live Nostr subscription
+      // without `since` replays every event in every listed Room each time
+      // this screen regains focus. Besides starving Back/re-entry gestures,
+      // that replay can resurrect an old WORKING update as a false spinner.
+      // Leave a one-second overlap for events racing the focus transition;
+      // the normalized reducer deduplicates that bounded overlap by event id.
+      const liveSince = Math.max(0, Math.floor(Date.now() / 1_000) - 1);
       const pending = new Map<string, SessionEvent[]>();
       let flushScheduled = false;
       let stopped = false;
@@ -965,17 +972,21 @@ export default function BuzzChannels() {
         }
       };
       const unsubscribes = roomIdsKey.split(',').map((channelId) =>
-        transport.sessionEventsSubscribe(channelId, (event) => {
-          if (stopped) return;
-          noteTurnEvent(channelId, event);
-          const queued = pending.get(channelId);
-          if (queued) queued.push(event);
-          else pending.set(channelId, [event]);
-          if (!flushScheduled) {
-            flushScheduled = true;
-            requestAnimationFrame(flush);
-          }
-        }),
+        transport.sessionEventsSubscribe(
+          channelId,
+          (event) => {
+            if (stopped) return;
+            noteTurnEvent(channelId, event);
+            const queued = pending.get(channelId);
+            if (queued) queued.push(event);
+            else pending.set(channelId, [event]);
+            if (!flushScheduled) {
+              flushScheduled = true;
+              requestAnimationFrame(flush);
+            }
+          },
+          { since: liveSince },
+        ),
       );
       return () => {
         stopped = true;

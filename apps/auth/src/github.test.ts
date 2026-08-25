@@ -15,7 +15,9 @@ describe('GitHub-only account and repository access', () => {
         }),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ id: 1234, login: 'octocat' }), { status: 200 }),
+        new Response(JSON.stringify({ id: 1234, login: 'octocat', name: 'The Octocat' }), {
+          status: 200,
+        }),
       );
     vi.stubGlobal('fetch', fetchMock);
     const client = new GitHubOAuthClient({ clientId: 'client-id', clientSecret: 'secret' });
@@ -26,6 +28,7 @@ describe('GitHub-only account and repository access', () => {
       audience: 'client-id',
       subject: '1234',
       login: 'octocat',
+      displayName: 'The Octocat',
       accessToken: 'user-token',
     });
   });

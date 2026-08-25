@@ -12,7 +12,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
-import { AuthStore } from './store.js';
+import { AuthStore, type ManagedIdentity } from './store.js';
 import { OidcClient } from './oidc.js';
 import {
   GitHubAppClient,
@@ -31,6 +31,7 @@ import { extractGitHubRepoEvent } from './github-repo-events.js';
 import { resolveGitHubRepositoryAccess } from './github-repository-access.js';
 import {
   isValidNip05Name,
+  isResolvableNip05Name,
   normalizeHost,
   OIDC_BIND_KIND,
   OIDC_BIND_MARKER,
@@ -142,6 +143,17 @@ function noStore(reply: { header(name: string, value: string): unknown }): void 
   reply.header('cache-control', 'no-store');
   reply.header('pragma', 'no-cache');
   reply.header('referrer-policy', 'no-referrer');
+}
+
+function managedIdentityJson(identity: ManagedIdentity) {
+  return {
+    handle: identity.handle,
+    display_name: identity.displayName,
+    nip05: identity.nip05,
+    source: identity.source,
+    ...(identity.githubLogin ? { github_login: identity.githubLogin } : {}),
+    github_rename_available: identity.githubRenameAvailable,
+  };
 }
 
 function escapeHtml(value: string): string {
@@ -684,7 +696,13 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   const issueBindChallenge = async (
     tenant: AuthTenant,
     flow: { appRedirectUri: string | null; appState: string | null },
-    identity: { issuer: string; audience: string; subject: string },
+    identity: {
+      issuer: string;
+      audience: string;
+      subject: string;
+      login?: string;
+      displayName?: string;
+    },
     reply: FastifyReply,
   ) => {
     const ticket = randomToken();
@@ -702,6 +720,8 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       attemptCount: 0,
       consumedAt: null,
       boundPubkey: null,
+      providerLogin: identity.login?.toLowerCase() ?? null,
+      providerDisplayName: identity.displayName?.trim() || identity.login || null,
     });
     noStore(reply);
     const bindChallenge = {
@@ -720,6 +740,26 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const completion = nativeCompletion(flow, bindChallenge);
     if (completion) return deliverNativeCompletion(reply, completion);
     return reply.send(bindChallenge);
+  };
+
+  const provisionManagedIdentity = async (
+    ticket: NonNullable<Awaited<ReturnType<AuthStore['findTicket']>>>,
+    pubkey: string,
+  ): Promise<ManagedIdentity | undefined> => {
+    if (ticket.issuer !== 'https://github.com') return undefined;
+    const login = ticket.providerLogin?.toLowerCase() ?? '';
+    if (!isResolvableNip05Name(login)) {
+      throw new Error('verified GitHub identity is missing a valid login');
+    }
+    const displayName = ticket.providerDisplayName?.trim().slice(0, 60) || login;
+    return options.store.provisionGitHubIdentity(
+      ticket.community,
+      ticket.subject,
+      pubkey,
+      login,
+      displayName,
+      now(),
+    );
   };
 
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 1024 * 1024 });
@@ -799,7 +839,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const query = request.query as Record<string, unknown>;
     const name = typeof query.name === 'string' ? query.name : null;
     const names: Record<string, string> = {};
-    if (name && isValidNip05Name(name)) {
+    if (name && isResolvableNip05Name(name)) {
       const pubkey = await options.store.resolveNip05Name(name);
       if (pubkey) names[name] = pubkey;
     }
@@ -1133,8 +1173,14 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
           link.subject === ticket.subject,
       );
       if (actuallyLinked) {
+        const identity = await provisionManagedIdentity(ticket, verification.event.pubkey);
         noStore(reply);
-        return reply.send({ linked: true, idempotent: true, pubkey: verification.event.pubkey });
+        return reply.send({
+          linked: true,
+          idempotent: true,
+          pubkey: verification.event.pubkey,
+          ...(identity ? { identity: managedIdentityJson(identity) } : {}),
+        });
       }
       throw new ProtocolError(
         409,
@@ -1164,8 +1210,14 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
             link.subject === raced.subject,
         );
         if (actuallyLinked) {
+          const identity = await provisionManagedIdentity(raced, verification.event.pubkey);
           noStore(reply);
-          return reply.send({ linked: true, idempotent: true, pubkey: verification.event.pubkey });
+          return reply.send({
+            linked: true,
+            idempotent: true,
+            pubkey: verification.event.pubkey,
+            ...(identity ? { identity: managedIdentityJson(identity) } : {}),
+          });
         }
         throw new ProtocolError(
           409,
@@ -1185,11 +1237,13 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       );
     }
     if (!('link' in result)) throw new Error('unexpected bind transaction result');
+    const identity = await provisionManagedIdentity(ticket, result.link.pubkey);
     noStore(reply);
     return reply.status(result.status === 'linked' ? 201 : 200).send({
       linked: true,
       idempotent: result.status === 'idempotent',
       pubkey: result.link.pubkey,
+      ...(identity ? { identity: managedIdentityJson(identity) } : {}),
     });
   });
 
@@ -1262,11 +1316,13 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       throw new ProtocolError(410, 'ticket_expired', 'recovery ticket expired');
     if (!('link' in result)) throw new Error('unexpected recovery transaction result');
 
+    const identity = await provisionManagedIdentity(ticket, result.link.pubkey);
     noStore(reply);
     return reply.send({
       linked: true,
       replaced: result.status === 'replaced',
       pubkey: result.link.pubkey,
+      ...(identity ? { identity: managedIdentityJson(identity) } : {}),
     });
   });
 
@@ -1310,6 +1366,81 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     });
   });
 
+  app.get<{ Params: { pubkey: string } }>('/auth/identity/:pubkey', async (request, reply) => {
+    const tenant = tenantFor(request);
+    const pubkey = request.params.pubkey;
+    if (!/^[0-9a-f]{64}$/.test(pubkey))
+      throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
+    const auth = verifyNip98Header(
+      request.headers.authorization,
+      publicUrl(tenant, request),
+      'GET',
+      now(),
+    );
+    if (!auth.ok || auth.pubkey !== pubkey) {
+      throw new ProtocolError(
+        401,
+        'unauthorized',
+        auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+      );
+    }
+    const authNow = now();
+    const claimed = await options.store.claimNip98Event(
+      auth.eventId,
+      new Date(authNow.getTime() + 2 * 60_000),
+      authNow,
+    );
+    if (!claimed)
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    const identity = await options.store.managedIdentity(tenant.community, pubkey);
+    noStore(reply);
+    return reply.send({ identity: identity ? managedIdentityJson(identity) : null });
+  });
+
+  app.post<{ Params: { pubkey: string } }>(
+    '/auth/identity/:pubkey/github-handle',
+    async (request, reply) => {
+      const tenant = tenantFor(request);
+      const pubkey = request.params.pubkey;
+      if (!/^[0-9a-f]{64}$/.test(pubkey))
+        throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
+      if (
+        !request.body ||
+        typeof request.body !== 'object' ||
+        (request.body as Record<string, unknown>).confirm_rename !== true
+      ) {
+        throw new ProtocolError(400, 'rename_confirmation_required', 'confirm the handle rename');
+      }
+      const auth = verifyNip98Header(
+        request.headers.authorization,
+        publicUrl(tenant, request),
+        'POST',
+        now(),
+      );
+      if (!auth.ok || auth.pubkey !== pubkey) {
+        throw new ProtocolError(
+          401,
+          'unauthorized',
+          auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+        );
+      }
+      const authNow = now();
+      const claimed = await options.store.claimNip98Event(
+        auth.eventId,
+        new Date(authNow.getTime() + 2 * 60_000),
+        authNow,
+      );
+      if (!claimed)
+        throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+      const result = await options.store.adoptGitHubHandle(tenant.community, pubkey, authNow);
+      if (result.status === 'unavailable') {
+        throw new ProtocolError(409, 'rename_not_available', 'GitHub handle rename is unavailable');
+      }
+      noStore(reply);
+      return reply.send({ renamed: true, identity: managedIdentityJson(result.identity) });
+    },
+  );
+
   /**
    * The key-succession chain BELOW this key: the device keys that previously
    * held this identity, oldest first. Served only to the key itself (NIP-98
@@ -1346,6 +1477,38 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     const predecessors = await options.store.successionPredecessors(tenant.community, pubkey);
     noStore(reply);
     return reply.send({ predecessors });
+  });
+
+  /**
+   * Resolve a historical device key to the current key of that identity.
+   * Any authenticated tenant actor may ask: paired agents need this narrow
+   * answer to authorize human-authored soul overlays after device recovery.
+   * The endpoint reveals no link/profile data and an unrelated key resolves
+   * to itself, preserving the registry's fail-closed equality semantics.
+   */
+  app.get<{ Params: { pubkey: string } }>('/auth/oidc/current/:pubkey', async (request, reply) => {
+    const tenant = tenantFor(request);
+    const pubkey = request.params.pubkey;
+    if (!/^[0-9a-f]{64}$/.test(pubkey))
+      throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
+    const auth = verifyNip98Header(
+      request.headers.authorization,
+      publicUrl(tenant, request),
+      'GET',
+      now(),
+    );
+    if (!auth.ok) throw new ProtocolError(401, 'unauthorized', auth.reason);
+    const authNow = now();
+    const claimed = await options.store.claimNip98Event(
+      auth.eventId,
+      new Date(authNow.getTime() + 2 * 60_000),
+      authNow,
+    );
+    if (!claimed)
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    const currentPubkey = await options.store.resolveCurrentPubkey(tenant.community, pubkey);
+    noStore(reply);
+    return reply.send({ current_pubkey: currentPubkey });
   });
 
   app.post('/auth/github/install/start', async (request, reply) => {
@@ -2374,7 +2537,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       throw new ProtocolError(
         400,
         'invalid_name',
-        'handle must be 1-30 lowercase letters, numbers, dashes, or underscores, and not reserved',
+        'handle must be 3-30 lowercase letters, numbers, or dashes, and not reserved',
       );
     }
     const auth = verifyNip98Header(
@@ -2392,15 +2555,28 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     );
     if (!claimed)
       throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
-    const outcome = await options.store.claimNip05Name(name, auth.pubkey, authNow);
-    if (outcome === 'taken')
+    const outcome = await options.store.claimNip05Name(
+      tenant.community,
+      name,
+      auth.pubkey,
+      authNow,
+    );
+    if (outcome.status === 'taken')
       throw new ProtocolError(409, 'name_taken', 'handle is already claimed');
+    if (outcome.status === 'already_assigned')
+      throw new ProtocolError(
+        409,
+        'handle_already_assigned',
+        'this identity already has a hosted handle',
+      );
+    if (!('identity' in outcome)) throw new Error('unexpected hosted handle claim result');
     noStore(reply);
-    return reply.status(outcome === 'claimed' ? 201 : 200).send({
+    return reply.status(outcome.status === 'claimed' ? 201 : 200).send({
       claimed: true,
-      idempotent: outcome === 'idempotent',
+      idempotent: outcome.status === 'idempotent',
       name,
       pubkey: auth.pubkey,
+      identity: managedIdentityJson(outcome.identity),
     });
   });
 

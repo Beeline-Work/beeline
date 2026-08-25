@@ -309,10 +309,9 @@ async function enrichDisplayChannels(
   viewerPubkey: string,
 ): Promise<ChannelDisplayItem[]> {
   const client = await transport.ensureClient();
-  const [workspacePeople, workspaceAgents] = await Promise.all([
-    activeCommunityId ? client.communityMembers(activeCommunityId) : Promise.resolve(undefined),
-    activeCommunityId ? client.listAgents(activeCommunityId) : Promise.resolve(undefined),
-  ]);
+  const workspaceAgents = activeCommunityId
+    ? await client.listAgents(activeCommunityId)
+    : undefined;
   // One model-catalog read per registered Workspace agent (not per Room): the
   // pill strip reports which model an agent in this Room runs, straight off
   // the catalog the daemon itself publishes. Best-effort — a Room whose agents
@@ -333,9 +332,8 @@ async function enrichDisplayChannels(
   }
   const enriched = await Promise.all(
     rooms.map(async (room): Promise<ChannelDisplayItem> => {
-      const [synced, members, repo] = await Promise.allSettled([
+      const [synced, repo] = await Promise.allSettled([
         revalidateCachedMessages(transport, viewerPubkey, room.id),
-        client.listMembers(room.id),
         // The repo name is published Room state (admin-authored binding),
         // never derived from cwd or pairing history. The tri-state read keeps
         // "could not confirm" distinct from "there isn't one", so a transient
@@ -343,8 +341,10 @@ async function enrichDisplayChannels(
         // line's repo tag — `mergedRepoName` keeps the previous name then.
         transport.roomRepositoryState(room.id),
       ]);
-      const roomMemberPubkeys =
-        members.status === 'fulfilled' ? members.value.map((member) => member.pubkey) : [];
+      const snapshot = synced.status === 'fulfilled' ? synced.value.entry.snapshot : undefined;
+      const roomMemberPubkeys = snapshot
+        ? selectMembers(snapshot, room.id).map((member) => member.pubkey)
+        : [];
       return {
         ...room,
         corners:
@@ -365,12 +365,7 @@ async function enrichDisplayChannels(
           synced.status === 'fulfilled'
             ? (synced.value.entry.latestEventAt ?? room.createdAt ?? room.updatedAt)
             : (room.createdAt ?? room.updatedAt),
-        participantCount:
-          synced.status === 'fulfilled' && synced.value.entry.snapshot
-            ? selectMembers(synced.value.entry.snapshot, room.id).length
-            : members.status === 'fulfilled'
-              ? members.value.length
-              : 0,
+        participantCount: snapshot ? roomMemberPubkeys.length : room.participantCount,
         repoName: mergedRepoName(
           room.repoName,
           repo.status === 'fulfilled' ? repo.value : undefined,

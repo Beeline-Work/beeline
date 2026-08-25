@@ -26,10 +26,31 @@ interface RecipientCursor {
   throughCreatedAt: number;
 }
 
+interface StandingAttention {
+  pubkey: string;
+  sourceId: string;
+  kind: string;
+  reason: string;
+  signature: string;
+  attemptedAt: number;
+}
+
 interface DeliveryStateFile {
   version: 1;
   cursors: RecipientCursor[];
   events: DeliveredEvent[];
+  attentions?: StandingAttention[];
+}
+
+export interface AttentionAttempt {
+  eventId: string;
+  eventCreatedAt: number;
+  pubkey: string;
+  sourceId: string;
+  kind: string;
+  reason: string;
+  signature: string;
+  minIntervalMs: number;
 }
 
 /**
@@ -45,6 +66,7 @@ export class DeliveryState {
   private readonly cursors = new Map<string, number>();
   private readonly events = new Map<string, Map<string, DeliveryAttempt>>();
   private readonly eventCreatedAt = new Map<string, number>();
+  private readonly attentions = new Map<string, StandingAttention>();
 
   private constructor(
     private readonly filePath?: string,
@@ -86,6 +108,18 @@ export class DeliveryState {
         if (recipients.size > 0) {
           state.events.set(entry.eventId, recipients);
           state.eventCreatedAt.set(entry.eventId, entry.eventCreatedAt);
+        }
+      }
+      for (const attention of Array.isArray(parsed.attentions) ? parsed.attentions : []) {
+        if (
+          PUBKEY_RE.test(attention.pubkey) &&
+          attention.sourceId &&
+          attention.kind &&
+          typeof attention.reason === 'string' &&
+          attention.signature &&
+          Number.isSafeInteger(attention.attemptedAt)
+        ) {
+          state.attentions.set(state.attentionKey(attention), attention);
         }
       }
       if (state.prune()) await state.persist();
@@ -130,6 +164,81 @@ export class DeliveryState {
         this.events.delete(eventId);
         this.eventCreatedAt.delete(eventId);
       }
+      throw error;
+    }
+  }
+
+  /**
+   * Atomically claims both a concrete relay event and its semantic attention
+   * episode. Identical copy remains quiet until lifecycle resolution; changed
+   * copy for the same source/reason is capped by `minIntervalMs`.
+   */
+  async reserveAttentionAttempt(attempt: AttentionAttempt): Promise<boolean> {
+    if (
+      this.hasAttempt(attempt.eventId, attempt.pubkey) ||
+      this.isBehindCursor(attempt.pubkey, attempt.eventCreatedAt)
+    ) {
+      return false;
+    }
+
+    const key = this.attentionKey(attempt);
+    const standing = this.attentions.get(key);
+    const now = this.now();
+    const eligible =
+      !standing ||
+      (standing.signature !== attempt.signature &&
+        now - standing.attemptedAt >= attempt.minIntervalMs);
+    const previousAttention = standing;
+    const recipients = this.events.get(attempt.eventId) ?? new Map<string, DeliveryAttempt>();
+    recipients.set(attempt.pubkey, {
+      pubkey: attempt.pubkey,
+      attemptedAt: now,
+      status: 'attempted',
+    });
+    this.events.set(attempt.eventId, recipients);
+    this.eventCreatedAt.set(attempt.eventId, attempt.eventCreatedAt);
+    if (eligible) {
+      this.attentions.set(key, {
+        pubkey: attempt.pubkey,
+        sourceId: attempt.sourceId,
+        kind: attempt.kind,
+        reason: attempt.reason,
+        signature: attempt.signature,
+        attemptedAt: now,
+      });
+    }
+
+    try {
+      await this.persist();
+      return eligible;
+    } catch (error) {
+      recipients.delete(attempt.pubkey);
+      if (recipients.size === 0) {
+        this.events.delete(attempt.eventId);
+        this.eventCreatedAt.delete(attempt.eventId);
+      }
+      if (eligible) {
+        if (previousAttention) this.attentions.set(key, previousAttention);
+        else this.attentions.delete(key);
+      }
+      throw error;
+    }
+  }
+
+  /** A canonical non-waiting lifecycle record ends every attention reason for this episode. */
+  async clearAttention(sourceId: string, pubkey: string): Promise<void> {
+    const removed: Array<[string, StandingAttention]> = [];
+    for (const [key, attention] of this.attentions) {
+      if (attention.sourceId === sourceId && attention.pubkey === pubkey) {
+        this.attentions.delete(key);
+        removed.push([key, attention]);
+      }
+    }
+    if (removed.length === 0) return;
+    try {
+      await this.persist();
+    } catch (error) {
+      for (const [key, attention] of removed) this.attentions.set(key, attention);
       throw error;
     }
   }
@@ -188,6 +297,12 @@ export class DeliveryState {
     return this.events.size !== sizeBefore;
   }
 
+  private attentionKey(
+    attention: Pick<StandingAttention, 'pubkey' | 'sourceId' | 'kind' | 'reason'>,
+  ): string {
+    return [attention.pubkey, attention.sourceId, attention.kind, attention.reason].join('\u0000');
+  }
+
   private async persist(): Promise<void> {
     if (!this.filePath) return;
     const directory = dirname(this.filePath);
@@ -203,6 +318,7 @@ export class DeliveryState {
         eventCreatedAt: this.eventCreatedAt.get(eventId) ?? 0,
         recipients: [...recipients.values()],
       })),
+      attentions: [...this.attentions.values()],
     };
     const temporaryPath = `${this.filePath}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify(value)}\n`, { mode: 0o600 });

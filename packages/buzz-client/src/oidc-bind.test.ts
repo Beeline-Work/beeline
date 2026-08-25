@@ -11,8 +11,11 @@ import {
   getAuthCapabilities,
   getGitHubRoomInstallationToken,
   getGitHubRoomEvents,
+  adoptGitHubHandle,
+  lookupManagedIdentity,
   lookupRecovery,
   parseOidcBindCallback,
+  resolveCurrentIdentityPubkey,
   startGitHubBind,
   startGitHubInstallation,
   listGitHubRepositories,
@@ -21,6 +24,37 @@ import {
 } from './oidc-bind.js';
 
 const StandardURL = URL;
+
+describe('identity succession resolution', () => {
+  it('resolves the same predecessor deterministically for repeated session activations', async () => {
+    const agent = generateKeypair();
+    const predecessor = generateKeypair();
+    const successor = generateKeypair();
+    const authorizationHeaders: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        expect(String(input)).toBe(
+          `https://relay.example/auth/oidc/current/${predecessor.publicKey}`,
+        );
+        authorizationHeaders.push(String(new Headers(init?.headers).get('authorization')));
+        return new Response(JSON.stringify({ current_pubkey: successor.publicKey }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+
+    await expect(
+      resolveCurrentIdentityPubkey('https://relay.example', agent, predecessor.publicKey),
+    ).resolves.toBe(successor.publicKey);
+    await expect(
+      resolveCurrentIdentityPubkey('https://relay.example', agent, predecessor.publicKey),
+    ).resolves.toBe(successor.publicKey);
+    expect(authorizationHeaders).toHaveLength(2);
+    expect(authorizationHeaders[0]).not.toBe(authorizationHeaders[1]);
+  });
+});
 
 /** The URL behavior shipped by React Native, limited to the surface this module uses. */
 class ReactNativeURLFixture {
@@ -608,6 +642,63 @@ describe('OIDC device-key bind protocol', () => {
     expect((init.headers as Record<string, string>).authorization).not.toContain(
       identity.secretKey,
     );
+  });
+
+  it('reads and adopts the authenticated hosted identity on the same key', async () => {
+    const hosted = {
+      handle: 'ada-labs',
+      display_name: 'Ada',
+      nip05: 'ada-labs@usebeeline.app',
+      source: 'key',
+      github_login: 'ada',
+      github_rename_available: true,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ identity: hosted }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            renamed: true,
+            identity: {
+              ...hosted,
+              handle: 'ada',
+              nip05: 'ada@usebeeline.app',
+              source: 'github',
+              github_rename_available: false,
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(lookupManagedIdentity('https://relay.example', identity)).resolves.toMatchObject({
+      handle: 'ada-labs',
+      githubLogin: 'ada',
+      githubRenameAvailable: true,
+    });
+    await expect(adoptGitHubHandle('https://relay.example', identity)).resolves.toMatchObject({
+      handle: 'ada',
+      githubRenameAvailable: false,
+    });
+
+    const [lookupUrl, lookupInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [renameUrl, renameInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(lookupUrl).toBe(
+      `https://relay.example/auth/identity/${identity.publicKey}`,
+    );
+    expect(renameUrl).toBe(
+      `https://relay.example/auth/identity/${identity.publicKey}/github-handle`,
+    );
+    expect((lookupInit.headers as Record<string, string>).authorization).toMatch(/^Nostr /);
+    expect((renameInit.headers as Record<string, string>).authorization).toMatch(/^Nostr /);
+    expect(JSON.parse(String(renameInit.body))).toEqual({ confirm_rename: true });
   });
 
   it('reads the deployed provider gate without requiring a device identity', async () => {

@@ -346,7 +346,14 @@ work. Every occurrence revalidates the pinned principal's current owner/admin
 role independently of the event author. Cold recovery accepts that principal
 only from daemon-signed run history or an unambiguous signed revision-1 creation
 record (including the human grant chain for agent authors); otherwise it refuses
-the schedule.
+the schedule. A principal membership, owner/admin-role, or drive-authority lapse
+durably pauses that revision; restored authority alone cannot restart it, and a
+newer active revision must be directly authored by a currently authorized human.
+The daemon signs a monotonic runtime checkpoint with cumulative run and daily
+budget totals, latest settled occurrence, failure count, pause reason, and receipt
+cursor. Each refresh verifies that checkpoint and reads only a bounded receipt
+tail, so a million-run schedule has constant-size recovery work; a missing,
+tampered, regressing, or truncated checkpoint/tail fails closed.
 
 ### Repository event service
 

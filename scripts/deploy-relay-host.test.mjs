@@ -12,7 +12,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -404,3 +404,222 @@ test('compose validation never resolves real env_file secrets: an unreadable env
     fs.chmodSync(secret, 0o644);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Bind-mount inode regression (#fm/beeline-mount-inode).
+//
+// deploy-relay-host.sh places nginx.conf through fixed-argument
+// `sudo install ...`, which REPLACES the destination's inode whenever
+// relay-front holds an active single-file bind-mount of that exact file
+// (verified empirically: bare-file install truncates in place, but under a
+// live file bind it unlinks and recreates). Docker single-file binds pin the
+// INODE at container creation, so the container kept reading an orphaned
+// pre-deploy inode and every HUP reload silently re-applied stale bytes.
+//
+// The fix makes prod compose.yml bind the whole ./relay-front DIRECTORY (the
+// pattern the web tree in the same container always used), which tracks
+// member files across inode replacement.
+// ---------------------------------------------------------------------------
+
+/** Minimal targeted extractor: the `relay-front:` service block text. */
+function relayFrontServiceBlock(composeText) {
+  const lines = composeText.split('\n');
+  const start = lines.findIndex((l) => l === '  relay-front:');
+  assert.ok(start !== -1, 'compose.yml must declare a relay-front service');
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^  [a-z][a-z0-9-]*:$/.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(start, end);
+}
+
+function relayFrontMounts(blockLines) {
+  const volIdx = blockLines.findIndex((l) => l === '    volumes:');
+  assert.ok(volIdx !== -1, 'relay-front must declare volumes');
+  const mounts = [];
+  for (let i = volIdx + 1; i < blockLines.length; i++) {
+    const m = blockLines[i].match(/^ {6}- ([^:\s]+):([^:\s]+)(?::(ro|rw))?$/);
+    if (!m) {
+      if (/^ {6}- /.test(blockLines[i])) {
+        throw new Error(`unparsed relay-front volume entry: ${blockLines[i].trim()}`);
+      }
+      if (mounts.length) break;
+      continue;
+    }
+    mounts.push({ source: m[1], containerPath: m[2], mode: m[3] ?? 'rw' });
+  }
+  assert.ok(mounts.length > 0, 'relay-front volumes must use short `- src:dst[:mode]` syntax');
+  return mounts;
+}
+
+function relayFrontCommand(blockLines) {
+  const line = blockLines.find((l) => l.startsWith('    command:'));
+  if (!line) return null;
+  return JSON.parse(line.slice('    command:'.length).trim());
+}
+
+test('relay-front loads nginx.conf through the enclosing read-only directory mount', () => {
+  const block = relayFrontServiceBlock(fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
+  const mounts = relayFrontMounts(block);
+
+  const configMount = mounts.find((m) => m.source === './relay-front');
+  assert.deepEqual(
+    configMount,
+    { source: './relay-front', containerPath: '/etc/beeline-front', mode: 'ro' },
+    'relay-front must bind the enclosing config directory read-only; binding nginx.conf itself pins its old inode',
+  );
+
+  const cmd = relayFrontCommand(block);
+  assert.ok(Array.isArray(cmd), 'relay-front must pin a command[] loading config via -c from a directory mount');
+  const cFlag = cmd.indexOf('-c');
+  assert.notEqual(cFlag, -1, 'relay-front command must carry a -c flag');
+  const configPath = cmd[cFlag + 1];
+  assert.ok(
+    configPath.startsWith(configMount.containerPath + '/'),
+    `nginx -c path ${configPath} must live inside ${configMount.containerPath}`,
+  );
+});
+
+test('nginx HUP reloads current bytes after deploy placement through the deployed directory mount', { skip: !dockerAvailable() }, async (t) => {
+  const block = relayFrontServiceBlock(fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
+  const mounts = relayFrontMounts(block);
+  const cmd = relayFrontCommand(block);
+  const cFlag = cmd.indexOf('-c');
+  const containerConfigPath = cmd[cFlag + 1];
+
+  const proj = mkdtemp();
+  t.after(() => fs.rmSync(proj, { recursive: true, force: true }));
+  const hostFor = (containerPath) => {
+    const m = mounts.find((x) => containerPath === x.containerPath || containerPath.startsWith(x.containerPath + '/'));
+    assert.ok(m, `no declared mount covers ${containerPath}`);
+    const rel = path.relative(m.containerPath, containerPath);
+    const srcAbs = path.join(proj, path.normalize(m.source).replace(/^([.][/\\])+/, ''));
+    return rel && rel !== '.' ? path.join(srcAbs, rel) : srcAbs;
+  };
+
+  const config = (marker) =>
+    `events {}\nhttp { server { listen 3000; location = /m { return 200 "${marker}\\n"; } } }\n`;
+  const hostConf = hostFor(containerConfigPath);
+  fs.mkdirSync(path.dirname(hostConf), { recursive: true });
+  fs.writeFileSync(hostConf, config('V1'));
+
+  const suffix = `${process.pid}-${path.basename(proj).replace(/[^a-z0-9]/gi, '')}`;
+  const staleName = `beeline-inode-file-${suffix}`;
+  const fixedName = `beeline-inode-dir-${suffix}`;
+  const running = new Set();
+  t.after(async () => {
+    await Promise.all([...running].map((name) => docker(['rm', '-f', name]).catch(() => {})));
+  });
+
+  // Disconfirm "HUP is broken" and "the candidate config is invalid": an
+  // in-place write keeps the inode, and a file-bound nginx reloads V2.
+  await docker([
+    'run', '-d', '--rm', '--name', staleName,
+    '-v', `${hostConf}:/etc/nginx/nginx.conf:ro`,
+    'nginx:1.27-alpine',
+  ]);
+  running.add(staleName);
+  await waitForMarker(staleName, 'V1');
+  const originalInode = fs.statSync(hostConf).ino;
+  fs.writeFileSync(hostConf, config('V2'));
+  assert.equal(fs.statSync(hostConf).ino, originalInode, 'in-place write must preserve the source inode');
+  await docker(['kill', '-s', 'HUP', staleName]);
+  await waitForMarker(staleName, 'V2');
+
+  // Initiating trigger + visible symptom: install replaces the source inode;
+  // HUP succeeds, but the file-bound nginx keeps serving the old V2 bytes.
+  const stagedV3 = path.join(proj, 'staged-v3.nginx.conf');
+  fs.writeFileSync(stagedV3, config('V3'));
+  await installFile(stagedV3, hostConf);
+  assert.notEqual(fs.statSync(hostConf).ino, originalInode, 'install must replace the source inode for this reproduction');
+  await docker(['kill', '-s', 'HUP', staleName]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(await nginxMarker(staleName), 'V2\n', 'single-file bind must reproduce the stale nginx response');
+  await docker(['rm', '-f', staleName]);
+  running.delete(staleName);
+
+  // Smallest counterfactual: keep install + HUP unchanged and carry exactly
+  // the declared production binds/command. Whether install preserves or
+  // replaces the member inode, directory lookup lets nginx reload V4.
+  const bindArgs = mounts.flatMap((m) => [
+    '-v', `${path.join(proj, path.normalize(m.source).replace(/^([.][/\\])+/, ''))}:${m.containerPath}:${m.mode}`,
+  ]);
+  await docker(['run', '-d', '--rm', '--name', fixedName, ...bindArgs, 'nginx:1.27-alpine', ...cmd]);
+  running.add(fixedName);
+  await waitForMarker(fixedName, 'V3');
+  const stagedV4 = path.join(proj, 'staged-v4.nginx.conf');
+  fs.writeFileSync(stagedV4, config('V4'));
+  await installFile(stagedV4, hostConf);
+  assert.equal(fs.readFileSync(hostConf, 'utf8'), config('V4'), 'deploy placement must update the host config');
+  await docker(['kill', '-s', 'HUP', fixedName]);
+  await waitForMarker(fixedName, 'V4');
+
+  // Stronger check: even an explicit atomic replacement changes the member
+  // inode without orphaning a directory bind. HUP still loads V5.
+  const directoryVisibleInode = fs.statSync(hostConf).ino;
+  const stagedV5 = path.join(proj, 'staged-v5.nginx.conf');
+  fs.writeFileSync(stagedV5, config('V5'));
+  fs.renameSync(stagedV5, hostConf);
+  assert.notEqual(fs.statSync(hostConf).ino, directoryVisibleInode, 'atomic replacement must change the member inode');
+  await docker(['kill', '-s', 'HUP', fixedName]);
+  await waitForMarker(fixedName, 'V5');
+});
+
+function installFile(source, destination) {
+  return new Promise((resolve, reject) => {
+    const p = spawn('install', [
+      '-o', String(process.getuid()), '-g', String(process.getgid()), '-m', '644', source, destination,
+    ]);
+    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`install exited ${code}`))));
+  });
+}
+
+async function nginxMarker(container) {
+  return dockerOutput(['exec', container, 'wget', '-qO-', 'http://127.0.0.1:3000/m']);
+}
+
+async function waitForMarker(container, marker) {
+  let last = '';
+  for (let attempt = 0; attempt < 30; attempt++) {
+    try {
+      last = await nginxMarker(container);
+      if (last === `${marker}\n`) return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(last, `${marker}\n`, `nginx in ${container} never served ${marker}`);
+}
+
+// Synchronous so it can gate node:test's static `skip` option: the semantic
+// proof below needs a real daemon (bind-mount semantics cannot be stubbed),
+// and environments without docker take the skip rather than a failure.
+function dockerAvailable() {
+  try {
+    return spawnSync('docker', ['info', '--format', 'ok'], { stdio: 'ignore' }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function docker(args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn('docker', args, { stdio: 'ignore' });
+    p.on('error', reject);
+    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`docker ${args.join(' ')} exited ${code}`))));
+  });
+}
+
+function dockerOutput(args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn('docker', args);
+    let stdout = '';
+    let stderr = '';
+    p.stdout.on('data', (chunk) => { stdout += chunk; });
+    p.stderr.on('data', (chunk) => { stderr += chunk; });
+    p.on('error', reject);
+    p.on('close', (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`docker ${args.join(' ')} exited ${code}: ${stderr.trim()}`));
+    });
+  });
+}

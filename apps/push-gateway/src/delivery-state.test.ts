@@ -7,6 +7,54 @@ import { DeliveryState } from './delivery-state.js';
 const PUBKEY = 'a'.repeat(64);
 
 describe('DeliveryState', () => {
+  it('persists a standing attention signature and clears the episode explicitly', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-attention-'));
+    const file = join(directory, 'deliveries.json');
+    const sourceId = 'corner-peddle';
+    const first = await DeliveryState.load(file, { now: () => 200_000 });
+
+    await expect(
+      first.reserveAttentionAttempt({
+        eventId: '1'.repeat(64),
+        eventCreatedAt: 100,
+        pubkey: PUBKEY,
+        sourceId,
+        kind: 'agent-attention',
+        reason: 'review',
+        signature: 'same-copy',
+        minIntervalMs: 600_000,
+      }),
+    ).resolves.toBe(true);
+
+    const restarted = await DeliveryState.load(file, { now: () => 900_000 });
+    await expect(
+      restarted.reserveAttentionAttempt({
+        eventId: '2'.repeat(64),
+        eventCreatedAt: 101,
+        pubkey: PUBKEY,
+        sourceId,
+        kind: 'agent-attention',
+        reason: 'review',
+        signature: 'same-copy',
+        minIntervalMs: 600_000,
+      }),
+    ).resolves.toBe(false);
+
+    await restarted.clearAttention(sourceId, PUBKEY);
+    await expect(
+      restarted.reserveAttentionAttempt({
+        eventId: '3'.repeat(64),
+        eventCreatedAt: 102,
+        pubkey: PUBKEY,
+        sourceId,
+        kind: 'agent-attention',
+        reason: 'review',
+        signature: 'same-copy',
+        minIntervalMs: 600_000,
+      }),
+    ).resolves.toBe(true);
+  });
+
   it('persists an FCM attempt before delivery and treats it as terminal after restart', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-deliveries-'));
     const file = join(directory, 'deliveries.json');

@@ -153,7 +153,10 @@ export async function connectTrustySquireForPair(input: {
     'npx',
     ['-y', SQUIRE_MCP_PACKAGE, 'connect', `--target=${target}`, '--no-interactive'],
     CONNECT_TIMEOUT_MS,
-    trustySquireHostEnv(process.env, input.configRoot),
+    {
+      ...trustySquireHostEnv(process.env, input.configRoot),
+      TRUSTY_SQUIRE_SKIP_VERSION_CHECK: '1',
+    },
   );
   const operatorHome = input.operatorHome ?? homedir();
   await ensureTrustySquireSkill(operatorHome);

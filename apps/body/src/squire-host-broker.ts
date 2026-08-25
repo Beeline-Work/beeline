@@ -16,6 +16,7 @@ export const SQUIRE_AUTHORIZATION_TTL_MS = 60_000;
 const GOVERNED = new Set<string>(SQUIRE_GOVERNED_TOOLS);
 
 interface BrokerChannel {
+  id: string;
   token: string;
   allowedTools: Set<string>;
   endpoint?: McpServerWire;
@@ -122,6 +123,7 @@ export class SquireHostBroker {
     if (!address || typeof address === 'string')
       throw new Error('Squire broker has no TCP endpoint');
     const channel = existing ?? {
+      id: channelId,
       token: randomBytes(32).toString('hex'),
       allowedTools: new Set(allowedTools),
     };
@@ -197,7 +199,8 @@ export class SquireHostBroker {
             }
             if (
               connection &&
-              (await this.allowLine(line, socket, connection, channel.allowedTools))
+              channel &&
+              (await this.allowLine(line, socket, connection, channel))
             ) {
               connection.child.stdin.write(`${line}\n`);
             }
@@ -228,7 +231,7 @@ export class SquireHostBroker {
     line: string,
     socket: Socket,
     connection: BrokerConnection,
-    allowedTools: ReadonlySet<string>,
+    channel: BrokerChannel,
   ): Promise<boolean> {
     let parsed: unknown;
     try {
@@ -253,7 +256,7 @@ export class SquireHostBroker {
       this.reject(socket, message.id, 'invalid Trusty Squire tool name');
       return false;
     }
-    if (!allowedTools.has(name)) {
+    if (!channel.allowedTools.has(name)) {
       this.reject(socket, message.id, 'Trusty Squire tool is not enabled for this capability');
       return false;
     }
@@ -286,7 +289,20 @@ export class SquireHostBroker {
       this.reject(socket, message.id, 'current P1 factory permission was revoked');
       return false;
     }
-    return true;
+    if (
+      authorization.expiresAt <= this.now() ||
+      socket.destroyed ||
+      !socket.writable ||
+      connection.socket !== socket ||
+      this.channels.get(channel.id) !== channel ||
+      channel.connection !== connection ||
+      !channel.allowedTools.has(name)
+    ) {
+      this.reject(socket, message.id, 'Trusty Squire authorization expired or session ended');
+      return false;
+    }
+    connection.child.stdin.write(`${line}\n`);
+    return false;
   }
 
   private pipeChildOutput(connection: BrokerConnection, allowedTools: ReadonlySet<string>): void {

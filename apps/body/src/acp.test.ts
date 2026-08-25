@@ -400,6 +400,50 @@ lines.on('line', (line) => {
   return binary;
 }
 
+/** Goose-shaped verbose stream: three progress messages around tool updates,
+ * a replay of the second message, then one final response. */
+async function fakeVerboseGooseAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-goose-stream-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-goose-streaming-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const update = (update) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'goose-stream-session', update } });
+const chunk = (text, created) => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text }, _meta: { goose: { created } } });
+const tool = (id) => update({ sessionUpdate: 'tool_call', toolCallId: id, kind: 'read', status: 'completed' });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'goose-stream-session' } });
+  } else if (message.method === 'session/prompt') {
+    chunk('I am mapping the call graph.', 1);
+    tool('read-1');
+    chunk('I confirmed the publishing path.', 2);
+    tool('read-2');
+    chunk('I confirmed the publishing path.', 2);
+    tool('read-2-replay');
+    chunk('I am checking the tests now.', 3);
+    tool('read-3');
+    chunk('Fixed the publisher and all tests pass.', 4);
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 /** Emits the model's very first token, gets interrupted by a non-text update
  *  before the second token of the SAME word arrives, then finishes the
  *  sentence — the live stream-head shape that made a corner's first message
@@ -659,7 +703,7 @@ describe('AcpClient live steering', () => {
     }
   });
 
-  it('inserts a paragraph break when narration resumes after a tool call, instead of gluing the two thoughts together', async () => {
+  it('keeps interim narration in the live draft but returns only the final post-tool message', async () => {
     const client = new AcpClient({
       agentBinary: await fakeInterruptedNarrationAgent(),
       agentEnv: {},
@@ -672,12 +716,38 @@ describe('AcpClient live steering', () => {
         seenFullText.push(fullText);
       });
       expect(result.agentText).not.toContain('patternsNow');
-      expect(result.agentText).toBe(
+      expect(result.agentText).toBe('Now I have the full picture.');
+      expect(seenFullText.at(-1)).toBe(
         '...existing test and typecheck patterns\n\nNow I have the full picture.',
       );
-      // The live stream (what a corner's narrative committer actually reads)
-      // must carry the same break, not just the final joined result.
-      expect(seenFullText.at(-1)).toBe(result.agentText);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('deduplicates a replayed Goose message run and selects one final output', async () => {
+    const client = new AcpClient({
+      agentBinary: await fakeVerboseGooseAgent(),
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const seenFullText: string[] = [];
+      const result = await client.sessionPrompt(sessionId, 'go', 5_000, (_delta, fullText) => {
+        seenFullText.push(fullText);
+      });
+
+      expect(result.agentText).toBe('Fixed the publisher and all tests pass.');
+      expect(seenFullText.at(-1)).toBe(
+        [
+          'I am mapping the call graph.',
+          'I confirmed the publishing path.',
+          'I am checking the tests now.',
+          'Fixed the publisher and all tests pass.',
+        ].join('\n\n'),
+      );
+      expect(seenFullText.at(-1)!.match(/I confirmed the publishing path\./g)).toHaveLength(1);
     } finally {
       await client.stop();
     }
@@ -703,8 +773,8 @@ describe('AcpClient live steering', () => {
       expect(result.agentText).toBe("I'll take a look at the README first.");
       expect(result.agentText.startsWith('I')).toBe(true);
       expect(result.agentText).not.toContain('\n\n');
-      // The live stream a corner's narrative committer reads carries the same
-      // unbroken sentence, not a one-character head followed by its own tail.
+      // The live draft carries the same unbroken sentence, not a one-character
+      // head followed by its own tail.
       expect(seenFullText.at(-1)).toBe(result.agentText);
     } finally {
       await client.stop();

@@ -142,9 +142,7 @@ describe.runIf(live)('production live text streaming contract (Option B)', () =>
       observedDraftTexts.length < 2 &&
       !(await client
         .sessionEventsBackfill(roomId, { limit: 50 })
-        .then((events) =>
-          events.some((event) => tagValue(event.event, 't') === 'agent-message'),
-        ))
+        .then((events) => events.some((event) => tagValue(event.event, 't') === 'agent-message')))
     ) {
       const drafts = await client.agentDraftBackfill(roomId);
       const text = drafts[0]?.content;
@@ -170,10 +168,11 @@ describe.runIf(live)('production live text streaming contract (Option B)', () =>
         tagValue(event.event, 'e') === greeting.id,
     );
     expect(finalMessage?.content).toBe('Streaming this reply one word at a time.');
-    // The relay's replaceable draft record settles at the same final text —
-    // a fresh subscriber never sees a partial snapshot after the turn ends.
+    // Finalization supersedes the replaceable draft with a terminal empty
+    // record. A fresh subscriber sees no provisional transcript residue.
     const settledDraft = await client.agentDraftBackfill(roomId);
-    expect(settledDraft[0]?.content).toBe('Streaming this reply one word at a time.');
+    expect(settledDraft[0]?.content).toBe('');
+    expect(tagValue(settledDraft[0]!.event, 'status')).toBe('closed');
   }, 30_000);
 });
 

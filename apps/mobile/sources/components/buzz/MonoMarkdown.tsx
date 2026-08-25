@@ -4,13 +4,19 @@ import { StyleSheet } from 'react-native-unistyles';
 import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMarkdown';
 import { Typography } from '@/constants/Typography';
 import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
+import {
+  findChannelReferences,
+  type ChannelReferenceIndex,
+  type ChannelReferenceTarget,
+} from '@/buzz/channel-reference';
 
 /**
- * A span split out of plain prose by `glossMentions` — the same MarkdownSpan
- * plus a mention flag. Kept local to this file: the parser above knows
- * nothing about mentions, and it must stay that way.
+ * A span split out of plain prose by `glossMentions` / `glossChannelReferences`
+ * — the same MarkdownSpan plus flags for the two tagged-token families.
+ * Kept local to this file: the parser above knows nothing about mentions or
+ * channel references, and it must stay that way.
  */
-type MentionSpan = MarkdownSpan & { mention?: boolean };
+type MentionSpan = MarkdownSpan & { mention?: boolean; channelRef?: ChannelReferenceTarget };
 
 /**
  * A tagged identity in prose: `@` followed by a handle token (letters,
@@ -55,6 +61,43 @@ export function glossMentions(
   return out;
 }
 
+/**
+ * Explicit `#room` / `#room/corner` references resolved against the CURRENT
+ * workspace's known channels (`@/buzz/channel-reference`). Same discipline as
+ * mentions, one family over: only plain prose spans are glossed — never code,
+ * URLs, or an existing mention span — and only tokens that resolve EXACTLY
+ * become links; everything else stays ordinary text. The index comes from the
+ * caller and must be referentially stable across unrelated renders (memoize
+ * it) so this component's React.memo bailout keeps working.
+ */
+export function glossChannelReferences(
+  spans: MentionSpan[],
+  index: ChannelReferenceIndex | undefined,
+): MentionSpan[] {
+  if (!index) return spans;
+  const out: MentionSpan[] = [];
+  for (const span of spans) {
+    // A mention span is already a tagged token; url/code are machine text.
+    if (span.url || span.styles.includes('code') || span.mention) {
+      out.push(span);
+      continue;
+    }
+    const matches = findChannelReferences(span.text, index);
+    if (matches.length === 0) {
+      out.push(span);
+      continue;
+    }
+    let last = 0;
+    for (const match of matches) {
+      if (match.start > last) out.push({ ...span, text: span.text.slice(last, match.start) });
+      out.push({ ...span, text: match.text, channelRef: match.target });
+      last = match.end;
+    }
+    if (last < span.text.length) out.push({ ...span, text: span.text.slice(last) });
+  }
+  return out;
+}
+
 type MonoMarkdownProps = {
   markdown: string;
   /**
@@ -79,6 +122,10 @@ type MonoMarkdownProps = {
   leadingInline?: React.ReactNode;
   /** Handles backed by this event's real p-tags and current Room members. */
   mentionHandles?: readonly string[];
+  /** Known rooms/corners of THIS workspace; omitted → no reference is linked. */
+  channelIndex?: ChannelReferenceIndex;
+  /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
+  onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
   testID?: string;
 };
 
@@ -93,7 +140,9 @@ function spanStyle(span: MentionSpan, base: TextStyle) {
     span.styles.includes('italic') && styles.italic,
     span.styles.includes('code') && styles.inlineCode,
     span.url && styles.link,
-    span.mention && styles.mention,
+    // A resolved channel reference shares the tagged-token brass: the same
+    // interactive-text vocabulary as a @mention, never a new accent or chip.
+    (span.mention || span.channelRef) && styles.mention,
   ];
 }
 
@@ -102,21 +151,32 @@ function InlineMarkdown({
   base,
   onLink,
   liveMentionHandles,
+  channelIndex,
+  onChannelReference,
 }: {
   spans: MarkdownSpan[];
   base: TextStyle;
   onLink: (url: string) => void;
   liveMentionHandles: ReadonlySet<string>;
+  channelIndex?: ChannelReferenceIndex;
+  onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
 }) {
   // One funnel: every prose block (text, header, list items) renders its spans
-  // here, so a mention glosses identically wherever it is spoken.
-  const glossed = glossMentions(spans, liveMentionHandles);
+  // here, so a mention or a channel reference glosses identically wherever it
+  // is spoken.
+  const glossed = glossChannelReferences(glossMentions(spans, liveMentionHandles), channelIndex);
   return (
     <>
       {glossed.map((span, index) => (
         <Text
           key={`${span.text}-${index}`}
-          onPress={span.url ? () => onLink(span.url!) : undefined}
+          onPress={
+            span.channelRef && onChannelReference
+              ? () => onChannelReference(span.channelRef!, span.text)
+              : span.url
+                ? () => onLink(span.url!)
+                : undefined
+          }
           style={spanStyle(span, base)}
         >
           {span.text}
@@ -141,6 +201,8 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   textStyle,
   leadingInline,
   mentionHandles,
+  channelIndex,
+  onChannelReference,
   testID,
 }: MonoMarkdownProps) {
   const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
@@ -181,6 +243,8 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                 base={base}
                 onLink={onLink}
                 liveMentionHandles={liveMentionHandles}
+                channelIndex={channelIndex}
+                onChannelReference={onChannelReference}
               />
             </Text>
           );
@@ -194,6 +258,8 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                 base={base}
                 onLink={onLink}
                 liveMentionHandles={liveMentionHandles}
+                channelIndex={channelIndex}
+                onChannelReference={onChannelReference}
               />
             </Text>
           );
@@ -216,6 +282,8 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
                     base={base}
                     onLink={onLink}
                     liveMentionHandles={liveMentionHandles}
+                    channelIndex={channelIndex}
+                    onChannelReference={onChannelReference}
                   />
                 </Text>
               ))}
@@ -224,7 +292,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
         }
         if (block.type === 'code-block' || block.type === 'mermaid') {
           const code = block.content;
-          const language = 'language' in block ? block.language ?? null : null;
+          const language = 'language' in block ? (block.language ?? null) : null;
           return (
             <View key={index} style={[styles.codeFrame, blockStyle]}>
               {'language' in block && block.language ? (

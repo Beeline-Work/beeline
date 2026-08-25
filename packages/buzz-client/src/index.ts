@@ -181,6 +181,15 @@ export {
 
 export { publishEvent, queryEvents, requestQueryEvents, relayReachable } from './http.js';
 export type { AuthenticatedHttpBridgeOptions, HttpBridgeOptions } from './http.js';
+export {
+  RelayPublishError,
+  asRelayPublishError,
+  isRetryableRelayPublishError,
+  relayPublishErrorFromResponse,
+} from './relay-error.js';
+export type { RelayPublishErrorKind } from './relay-error.js';
+export { buildReplyCommand } from './reply-command.js';
+export type { ReplyCommandOptions } from './reply-command.js';
 export { isArchivedChannelError } from './archived-channel.js';
 
 export {

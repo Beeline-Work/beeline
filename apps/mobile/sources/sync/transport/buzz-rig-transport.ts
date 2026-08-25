@@ -525,15 +525,17 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
+    // Re-derive the thread root from observed raw-tag parent links before the
+    // builder signs: a stale persisted cache can carry a mid-thread rootId,
+    // and the relay refuses signed ancestry that does not match the thread.
     const replyRootId = this.replyThreadRootFor(parent);
-    const event = client.buildMessage(parent.channelId, text, {
+    const event = client.buildReplyMessage(
+      text,
+      replyRootId === parent.rootId ? parent : { ...parent, rootId: replyRootId },
+      {
       ...(mentionAgent ? { mentionAgent } : {}),
       ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
-      extraTags: [
-        ...(replyRootId !== parent.eventId ? [['e', replyRootId, '', 'root']] : []),
-        ['e', parent.eventId, '', 'reply'],
-        ...attachmentTags,
-      ],
+      ...(attachmentTags.length ? { contentTags: attachmentTags } : {}),
     });
     return this.publishPreparedMessage(event);
   }

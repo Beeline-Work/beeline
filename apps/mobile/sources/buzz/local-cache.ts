@@ -18,8 +18,8 @@ import type { SessionSummary } from '@/sync/transport';
 
 // v1 treated any stream event as if it were a conversational message. Its
 // cursor can therefore outrun the preview and permanently retain old text.
-const CACHE_VERSION = 3;
-const CACHE_KEY = `buzz-local-cache-v${CACHE_VERSION}`;
+export const BUZZ_CACHE_VERSION = 3;
+export const BUZZ_CACHE_KEY = `buzz-local-cache-v${BUZZ_CACHE_VERSION}`;
 export const MAX_CACHED_CHANNELS = 30;
 const MAX_CACHED_LISTS = 12;
 const MAX_CACHED_PROFILE_SCOPES = 12;
@@ -119,7 +119,7 @@ export type ChannelCacheEntry = {
   lastAccessedAt: number;
 };
 
-type PersistedBuzzCache = {
+export type PersistedBuzzCache = {
   bootIntegrityHalt: string | null;
   activeViewerPubkey: string | null;
   activeListKeyByViewer: Record<string, string>;
@@ -356,9 +356,8 @@ function trimRecord<T extends { lastAccessedAt: number }>(
   );
 }
 
-function loadCache(): PersistedBuzzCache {
+export function decodePersistedBuzzCache(serialized: string | undefined): PersistedBuzzCache {
   try {
-    const serialized = storage.getString(CACHE_KEY);
     if (!serialized) return emptyCache();
     const parsed: unknown = JSON.parse(serialized);
     if (!isRecord(parsed)) throw new Error('Invalid Buzz local cache');
@@ -381,6 +380,10 @@ function loadCache(): PersistedBuzzCache {
       bootIntegrityHalt: `The normalized read-model cache could not be decoded: ${String(error)}`,
     };
   }
+}
+
+function loadCache(): PersistedBuzzCache {
+  return decodePersistedBuzzCache(storage.getString(BUZZ_CACHE_KEY));
 }
 
 function persisted(state: BuzzCacheState): PersistedBuzzCache {
@@ -730,7 +733,7 @@ let cacheDirty = false;
 export function flushBuzzLocalCacheForBackground(): void {
   if (!cacheDirty) return;
   cacheDirty = false;
-  storage.set(CACHE_KEY, JSON.stringify(persisted(useBuzzLocalCache.getState())));
+  storage.set(BUZZ_CACHE_KEY, JSON.stringify(persisted(useBuzzLocalCache.getState())));
 }
 
 useBuzzLocalCache.subscribe((state) => {
@@ -767,5 +770,5 @@ export function setActiveBuzzCacheViewer(viewerPubkey: string): void {
 export function clearBuzzLocalCache(): void {
   useBuzzLocalCache.getState().clear();
   cacheDirty = false;
-  storage.delete(CACHE_KEY);
+  storage.delete(BUZZ_CACHE_KEY);
 }

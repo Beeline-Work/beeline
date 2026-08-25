@@ -9,6 +9,7 @@
  * transient failures with bounded backoff; give up honestly otherwise).
  */
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { RelayPublishError } from '@beeline/buzz-client';
 import {
   isTransientRelayPublishError,
   publishCritical,
@@ -19,6 +20,18 @@ afterEach(() => {
 });
 
 describe('isTransientRelayPublishError', () => {
+  it('uses typed retry posture without parsing the safe sentence', () => {
+    expect(
+      isTransientRelayPublishError(
+        new RelayPublishError({
+          kind: 'RATE_LIMITED',
+          sentence: 'The relay is busy.',
+          retryable: true,
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it('treats HTTP 5xx as transient', () => {
     expect(
       isTransientRelayPublishError(new Error('publishEvent kind=9 failed: HTTP 502 <html>')),

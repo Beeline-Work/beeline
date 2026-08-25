@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 
@@ -65,14 +64,6 @@ export function trustySquireIsolationPaths(input: {
     ...trustySquireLegacyStorePaths(input.operatorHome, input.env),
     ...trustySquireIpcPaths(input.env),
   ].filter((path, index, all) => all.indexOf(path) === index);
-}
-
-export function existingTrustySquireIsolationPaths(input: {
-  configRoot: string;
-  operatorHome?: string;
-  env?: NodeJS.ProcessEnv;
-}): string[] {
-  return trustySquireIsolationPaths(input).filter(existsSync);
 }
 
 export function trustySquireHostEnv(

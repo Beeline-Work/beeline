@@ -1280,9 +1280,7 @@ describe('agent identity boundary', () => {
         mkdirSync(join(squireConfigRoot, 'trusty-squire'), { recursive: true });
         const sessionBus = join(root, 'run', 'bus');
         mkdirSync(join(root, 'run'), { recursive: true });
-        writeFileSync(sessionBus, 'socket placeholder');
         const alternateConfig = join(root, 'alternate-xdg');
-        mkdirSync(join(alternateConfig, 'trusty-squire'), { recursive: true });
         const unsupported = new Body({
           ...config,
           agentKind: 'pi',
@@ -1350,8 +1348,11 @@ describe('agent identity boundary', () => {
         expect(masks).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ path: join(squireConfigRoot, 'trusty-squire') }),
-            expect.objectContaining({ path: join(alternateConfig, 'trusty-squire') }),
-            expect.objectContaining({ path: sessionBus }),
+            expect.objectContaining({
+              path: join(alternateConfig, 'trusty-squire'),
+              create: true,
+            }),
+            expect.objectContaining({ path: sessionBus, create: true }),
           ]),
         );
 

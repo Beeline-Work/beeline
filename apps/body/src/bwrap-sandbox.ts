@@ -279,13 +279,15 @@ export const KNOWN_CREDENTIAL_MASK_PATHS = [
 export interface MaskedPath {
   path: string;
   kind: 'dir' | 'file';
+  create?: boolean;
 }
 
 /**
  * The credential-mask entries for one host: the built-in known list plus the
- * owner's configured extras, resolved against `$HOME`. Entries that do not
- * exist on this host are skipped — bwrap cannot mount over a missing target —
- * and `kind` comes from a real stat so the argv builder can pick tmpfs vs
+ * owner's configured extras, resolved against `$HOME`. Optional entries that
+ * do not exist are skipped. Required absent entries get namespace-only
+ * directory mountpoints so later-created host paths remain hidden. Existing
+ * entry kinds come from a real stat so the argv builder can pick tmpfs vs
  * `/dev/null` without touching the filesystem itself.
  */
 export function credentialMaskPaths(
@@ -299,7 +301,9 @@ export function credentialMaskPaths(
       return undefined;
     }
   },
+  requiredPaths: string[] = [],
 ): MaskedPath[] {
+  const required = new Set(requiredPaths.map((path) => resolve(path)));
   const candidates = [
     ...KNOWN_CREDENTIAL_MASK_PATHS.map((entry) => resolve(home, entry)),
     ...(extraPaths ?? []).map((entry) => resolve(entry)),
@@ -310,7 +314,10 @@ export function credentialMaskPaths(
     if (seen.has(path)) continue;
     seen.add(path);
     const info = stat(path);
-    if (!info) continue;
+    if (!info) {
+      if (required.has(path)) masks.push({ path, kind: 'dir', create: true });
+      continue;
+    }
     masks.push({ path, kind: info.isDirectory ? 'dir' : 'file' });
   }
   return masks.sort((a, b) => a.path.localeCompare(b.path));
@@ -526,8 +533,10 @@ export function buildBwrapArgv(input: {
   // DIRECTORY becomes an empty writable tmpfs (tools may write into nothing);
   // a masked FILE becomes /dev/null (readable, empty).
   for (const mask of input.plan.masks) {
-    if (mask.kind === 'dir') args.push('--tmpfs', mask.path);
-    else args.push('--ro-bind', '/dev/null', mask.path);
+    if (mask.kind === 'dir') {
+      if (mask.create) args.push('--dir', mask.path);
+      args.push('--tmpfs', mask.path);
+    } else args.push('--ro-bind', '/dev/null', mask.path);
   }
   // `--bind-try`, not `--bind`: a harness state root that has never been created
   // must not make the whole session fail to spawn.

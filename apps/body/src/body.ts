@@ -319,7 +319,6 @@ import {
 import { operatorMcpServersForCorners } from './operator-mcp.js';
 import { SquireHostBroker } from './squire-host-broker.js';
 import {
-  existingTrustySquireIsolationPaths,
   hasUnmaskableTrustySquireIpc,
   trustySquireIsolationPaths,
   trustySquireStorePath,
@@ -2583,6 +2582,8 @@ export class Body {
     return credentialMaskPaths(
       [...(this.config.sandboxMaskPaths ?? []), ...squirePaths],
       operatorHome,
+      undefined,
+      squirePaths,
     );
   }
 
@@ -2620,10 +2621,10 @@ export class Body {
       if (hasUnmaskableTrustySquireIpc(isolationInput.env)) {
         return Promise.reject(new Error('Trusty Squire session IPC cannot be masked safely'));
       }
-      const requiredPaths = existingTrustySquireIsolationPaths(isolationInput);
+      const requiredPaths = trustySquireIsolationPaths(isolationInput);
       const store = trustySquireStorePath(this.config.squireConfigRoot);
       const masked = new Set(this.sandboxCredentialMaskPaths().map((mask) => mask.path));
-      if (!requiredPaths.includes(store) || requiredPaths.some((path) => !masked.has(path))) {
+      if (!existsSync(store) || requiredPaths.some((path) => !masked.has(path))) {
         return Promise.reject(
           new Error(
             'Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox',

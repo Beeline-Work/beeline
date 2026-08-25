@@ -12,7 +12,53 @@ Fork of **[Happy](https://github.com/slopus/happy)**'s Expo/React Native app
 - Happy's MIT license is preserved in [`LICENSE`](./LICENSE)
 - Also see [`UPSTREAM.md`](./UPSTREAM.md) for vendor provenance
 
-The mobile app ships under one Beeline native identity and one production OTA channel.
+The mobile app ships under one Beeline native identity with governed beta and
+production OTA channels.
+
+## OTA release governor
+
+`main` is a candidate source, not a release trigger. The
+[`mobile-ota.yml`](../../.github/workflows/mobile-ota.yml) workflow publishes an
+immutable update group to the `beta` branch, installs the latest `beta-apk` on
+the host's existing Android emulator, runs the real Room open/send/reply Maestro
+smoke, then republishes that exact group to `production`. It never rebuilds the
+JavaScript or assets during promotion.
+
+The first beta binary for a runtime (and every later native/runtimeVersion
+change) must be built once before an OTA candidate can pass the canary:
+
+```sh
+cd apps/mobile
+npx --yes eas-cli@22.2.0 build --profile beta-apk --platform android --non-interactive
+```
+
+The canary is locally runnable and self-limits to nine minutes. It reuses the
+named AVD and either downloads the latest successful `beta-apk` or installs an
+operator-supplied APK:
+
+```sh
+cd apps/mobile
+EXPO_TOKEN=... scripts/ota-canary.sh --ledger /path/to/mobile-ota-ledger.json
+# or: BEELINE_BETA_APK=/path/to/beta.apk scripts/ota-canary.sh --ledger ...
+```
+
+Every successful release stores `candidateGroupId`, the republished production
+group, and `previousProductionGroupId` in the `mobile-ota-ledger-<run-id>`
+workflow artifact. Choose `rollback` in the workflow dispatch UI to republish
+that recorded predecessor; `rollback_group` can override it with another known
+good group. The captain-only emergency path is a manual `release` dispatch with
+`skip_canary=true`; it defaults to false and is recorded in the ledger.
+
+The direct rollback one-liner is:
+
+```sh
+cd apps/mobile && npx --yes eas-cli@22.2.0 update:republish --group <LAST_GOOD_GROUP_ID> --destination-branch production --platform all --message "captain rollback" --json --non-interactive
+```
+
+`--destination-branch production` is intentional: with `--group`, current EAS
+CLI uses `--branch` to select a source rather than to name the destination.
+Native changes still require a binary rebuild and runtimeVersion bump; the
+governor does not relax that compatibility boundary.
 
 ## Monorepo integration (isolated install)
 

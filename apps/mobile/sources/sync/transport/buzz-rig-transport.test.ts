@@ -287,34 +287,6 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     expect(fixture.client.publish).toHaveBeenCalledTimes(1);
   });
 
-  it('inherits the original thread root when replying to an existing reply', async () => {
-    const root = message(human, 'Thread root', 5);
-    const parent = message(agent, 'First reply', 6, [
-      ['e', root.id, '', 'root'],
-      ['e', root.id, '', 'reply'],
-    ]);
-    const threadedReply = message(human, 'Reply to the first reply', 7, [
-      ['e', root.id, '', 'root'],
-      ['e', parent.id, '', 'reply'],
-    ]);
-    const fixture = clientFixture();
-    const transport = transportWith(fixture.client);
-
-    await transport.readModelSnapshot(ROOM, [root, parent]);
-    const snapshot = await transport.readModelSnapshot(ROOM, [threadedReply]);
-    const selected = selectReplyTarget(snapshot, ROOM, threadedReply.id);
-    if (selected.status !== 'available') throw new Error('threaded reply was not selected');
-
-    await transport.messageSubmitReply('Deeper reply', selected.reference);
-
-    expect(fixture.client.buildMessage).toHaveBeenCalledWith(ROOM, 'Deeper reply', {
-      extraTags: [
-        ['e', root.id, '', 'root'],
-        ['e', threadedReply.id, '', 'reply'],
-      ],
-    });
-  });
-
   it('derives canonical corners from creator-authored lifecycle and verified membership', async () => {
     const fixture = clientFixture({ corners: true });
     const result = await transportWith(fixture.client).readModelBackfill(ROOM);

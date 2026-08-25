@@ -58,6 +58,7 @@ import {
   selectReplyTarget,
 } from '@beeline/buzz-client';
 import {
+  latestAgentTurns,
   projectReadEvent,
   transcriptMessages,
   mergeDisplayPages,
@@ -1345,21 +1346,26 @@ export default function BuzzChat() {
       }),
     [displayedCornerStatus, isArchived, mergeTarget, mergeNotReadyReason, messages],
   );
+  // The daemon's own `#t=agent-turn` lifecycle, derived straight from the
+  // normalized snapshot journal — one marker per agent, newest first. This is
+  // what lights the Room's thinking indicator during the silent window
+  // between the daemon's WORKING receipt and the first streamed draft, when
+  // the transcript's live activity lane does not exist yet.
+  const agentTurnMarkers = useMemo(
+    () => (cachedSnapshot ? latestAgentTurns(cachedSnapshot, decodedId) : []),
+    [cachedSnapshot, decodedId],
+  );
   const activeAgentTurn = useMemo(
     () =>
-      [...messages]
-        .reverse()
-        .find(
-          (message) =>
-            message.agentTurn &&
-            isAgentTurnActive(
-              message.agentTurn,
-              agentPresences[message.agentTurn.agentPubkey],
-              presenceNow,
-              presenceReconnectGrace[message.agentTurn.agentPubkey],
-            ),
+      agentTurnMarkers.find((turn) =>
+        isAgentTurnActive(
+          turn,
+          agentPresences[turn.agentPubkey],
+          presenceNow,
+          presenceReconnectGrace[turn.agentPubkey],
         ),
-    [agentPresences, messages, presenceNow, presenceReconnectGrace],
+      ),
+    [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
   );
   /**
    * The pinned corner line's whole state, resolved in one place so the words it
@@ -1458,7 +1464,7 @@ export default function BuzzChat() {
       return `${cornerAgentDisplay?.name ?? 'agent'} thinking…`;
     }
     const liveTurn = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
-    const pubkey = liveTurn?.pubkey ?? activeAgentTurn?.agentTurn?.agentPubkey;
+    const pubkey = liveTurn?.pubkey ?? activeAgentTurn?.agentPubkey;
     if (!pubkey) return null;
     const subject = pubkey
       ? resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name

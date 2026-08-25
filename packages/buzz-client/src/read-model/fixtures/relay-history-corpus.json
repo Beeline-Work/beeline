@@ -1,0 +1,110 @@
+{
+  "source": "sanitized relay-shaped fixtures from buzz-client, mobile transcript, room-update, and corner lifecycle tests",
+  "workspaceId": "corpus-workspace",
+  "roomId": "11111111-2222-4333-8444-555555555555",
+  "cornerId": "66666666-7777-4888-8999-aaaaaaaaaaaa",
+  "events": [
+    {
+      "actor": "relay",
+      "created_at": 100,
+      "kind": 39002,
+      "tags": [
+        ["d", "11111111-2222-4333-8444-555555555555"],
+        ["p", "$human", "owner"],
+        ["p", "$agent", "member"]
+      ],
+      "content": ""
+    },
+    {
+      "actor": "human",
+      "created_at": 101,
+      "kind": 9,
+      "tags": [["h", "11111111-2222-4333-8444-555555555555"]],
+      "content": "Please inspect the read model."
+    },
+    {
+      "actor": "agent",
+      "created_at": 102,
+      "kind": 9,
+      "tags": [
+        ["h", "11111111-2222-4333-8444-555555555555"],
+        ["t", "agent-activity"]
+      ],
+      "content": "{\"sessionId\":\"corpus-session\",\"update\":{\"sessionUpdate\":\"tool_activity\",\"title\":\"Read files\"}}"
+    },
+    {
+      "actor": "agent",
+      "created_at": 103,
+      "kind": 9,
+      "tags": [
+        ["h", "11111111-2222-4333-8444-555555555555"],
+        ["t", "agent-message"]
+      ],
+      "content": "The read model needs one authority."
+    },
+    {
+      "actor": "agent",
+      "created_at": 103,
+      "kind": 9,
+      "tags": [
+        ["h", "11111111-2222-4333-8444-555555555555"],
+        ["t", "agent-activity/narration"]
+      ],
+      "content": "Retrying (attempt 1/3, waiting 2s)...Retry finished, resuming"
+    },
+    {
+      "actor": "agent",
+      "created_at": 104,
+      "kind": 9007,
+      "tags": [
+        ["h", "66666666-7777-4888-8999-aaaaaaaaaaaa"],
+        ["parent", "11111111-2222-4333-8444-555555555555"],
+        ["name", "unified-read-model"]
+      ],
+      "content": ""
+    },
+    {
+      "actor": "relay",
+      "created_at": 105,
+      "kind": 39002,
+      "tags": [
+        ["d", "66666666-7777-4888-8999-aaaaaaaaaaaa"],
+        ["p", "$human", "owner"],
+        ["p", "$agent", "member"]
+      ],
+      "content": ""
+    },
+    {
+      "actor": "agent",
+      "created_at": 106,
+      "kind": 30078,
+      "tags": [
+        ["d", "buzz-corner-state:66666666-7777-4888-8999-aaaaaaaaaaaa"],
+        ["t", "buzz-corner-state"],
+        ["h", "11111111-2222-4333-8444-555555555555"],
+        ["state", "working"],
+        ["at", "106"]
+      ],
+      "content": ""
+    },
+    {
+      "actor": "agent",
+      "created_at": 107,
+      "kind": 9,
+      "tags": [
+        ["h", "11111111-2222-4333-8444-555555555555"],
+        ["t", "body-control"],
+        ["subchannel", "66666666-7777-4888-8999-aaaaaaaaaaaa"],
+        ["status", "working"]
+      ],
+      "content": "Agent opened a corner."
+    }
+  ],
+  "expected": {
+    "humanMessages": ["Please inspect the read model."],
+    "agentMessages": ["The read model needs one authority."],
+    "excludedControlText": "Retrying (attempt 1/3, waiting 2s)...Retry finished, resuming",
+    "members": 2,
+    "activeCorners": ["66666666-7777-4888-8999-aaaaaaaaaaaa"]
+  }
+}

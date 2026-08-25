@@ -12,7 +12,7 @@
  * account-scoped; that mismatch is the re-plumb work.
  */
 
-import type { AttachmentReference } from '@beeline/buzz-client';
+import type { AttachmentReference, ReadEvent } from '@beeline/buzz-client';
 
 export type SessionId = string;
 export type ChannelId = string;
@@ -107,7 +107,7 @@ export type SessionEvent =
       payload?: unknown;
     }
   | { type: 'status'; sessionId: SessionId; status: string; payload?: unknown }
-  | { type: 'raw'; sessionId: SessionId; payload: unknown };
+  | { type: 'read-model'; sessionId: SessionId; event: ReadEvent };
 
 export type MessageSubmitInput = {
   sessionId: SessionId;

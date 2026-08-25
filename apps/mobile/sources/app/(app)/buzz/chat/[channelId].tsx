@@ -26,7 +26,6 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
-import type { NostrEvent } from '@beeline/nostr';
 import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,7 +40,6 @@ import {
 import { authSessionOptions } from '@/auth/auth-session';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
-import { cornerVerdictFromRecord } from '@/sync/transport/corner-state-verdict';
 import {
   type Agent,
   type Community,
@@ -55,11 +53,13 @@ import {
   AGENT_PRESENCE_STALE_MS,
   CORNER_ACTIVITY_FRESHNESS_MS,
   personHandle,
+  selectMembers,
+  selectReplyTarget,
 } from '@beeline/buzz-client';
 import {
-  projectChatEvent,
+  projectReadEvent,
   transcriptMessages,
-  upsertChatMessages,
+  mergeDisplayPages,
   type ChatDisplayMessage,
   type DeliveryRetryPosture,
 } from '@/sync/transport/buzz-event-projection';
@@ -73,14 +73,12 @@ import {
   useBuzzLocalCache,
 } from '@/buzz/local-cache';
 import {
-  cacheLiveSessionEvent,
   cacheLiveSessionEvents,
   loadOlderMessages,
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { markRoomRemovedAndPurge } from '@/buzz/removed-rooms';
-import { isCornerClosed, markCornerClosedAndPurge, useClosedCorners } from '@/buzz/closed-corners';
 import { latestCornerPlan } from '@/buzz/activity-timeline';
 import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
 import { hydrateRoomEntry } from '@/buzz/room-entry';
@@ -95,12 +93,9 @@ import {
   activeMentionAtCursor,
   filterMentionCandidates,
   formatRoomParticipantTotal,
-  cornerHumanMembershipError,
   mentionedAgentPubkey,
-  reportCornerHumanMembershipError,
   replaceActiveMention,
   resolveComposerMentions,
-  roomParticipantPubkeys,
   sectionRoomParticipants,
   sectionRoomRoster,
   selectedMentionAgentPubkey,
@@ -180,10 +175,13 @@ import {
   type ChatStackRoute,
 } from '@/buzz/corner-navigation';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
-import { replyMessageText, type MessageReplyTarget } from '@/buzz/message-reply';
+import {
+  replyMessageText,
+  type MessageReplyDisplayTarget,
+  type MessageReplyTarget,
+} from '@/buzz/message-reply';
 import { mentionKeyboardAction } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
-import { deriveRoomUpdates, roomUpdateLine } from '@/buzz/room-updates';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   presenceWithMessageLiveness,
@@ -648,35 +646,34 @@ export default function BuzzChat() {
   presenceReconnectGraceRef.current = presenceReconnectGrace;
   const activeCacheViewer = useBuzzLocalCache((state) => state.activeViewerPubkey);
   const cacheViewerPubkey = userPubkey || activeCacheViewer || '';
-  // A corner this viewer CLOSED reads as archived on this screen immediately
-  // and durably: entering it directly (stale link, notification) lands in the
-  // read-only archived presentation on frame one, instead of staying live
-  // until relay state catches up. Relay truth remains the lifecycle
-  // authority; the tombstone only ever adds an already-dismissed verdict.
-  const cornerClosedLocally = useClosedCorners((state) =>
-    isCornerClosed(state.closedAt, cacheViewerPubkey, parentChannelId ?? decodedId, decodedId),
-  );
-  useEffect(() => {
-    if (cornerClosedLocally) setIsArchived(true);
-  }, [cornerClosedLocally]);
-  const closedCornerAt = useClosedCorners((state) => state.closedAt);
   const channelCache = useBuzzLocalCache((state) =>
     cacheViewerPubkey ? state.channels[channelCacheKey(cacheViewerPubkey, decodedId)] : undefined,
   );
   // Seeded synchronously from the local cache so history is on screen on
   // first paint, before the async identity load resolves the live channelCache.
-  const cachedMessages = channelCache?.messages ?? initialChannelCache?.messages ?? [];
+  const cachedSnapshot = channelCache?.snapshot ?? initialChannelCache?.snapshot;
+  const cachedMessages = useMemo(
+    () =>
+      cachedSnapshot && cacheViewerPubkey
+        ? transcriptMessages(cachedSnapshot, decodedId, cacheViewerPubkey)
+        : [],
+    [cacheViewerPubkey, cachedSnapshot, decodedId],
+  );
   // Older pages loaded on demand via "scroll up" pagination. Kept out of the
   // shared cache (which bounds to the recent tail) and merged in only here.
   const [olderMessages, setOlderMessages] = useState<ChatDisplayMessage[]>([]);
-  const [roomUpdateEvents, setRoomUpdateEvents] = useState<NostrEvent[]>([]);
+  const [optimisticMessages, setOptimisticMessages] = useState<ChatDisplayMessage[]>([]);
   const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_MESSAGE_WINDOW);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const hasMoreHistoryRef = useRef(true);
-  const combinedMessages = useMemo(
-    () => upsertChatMessages(olderMessages, cachedMessages),
-    [olderMessages, cachedMessages],
-  );
+  const combinedMessages = useMemo(() => {
+    const cachedIds = new Set(cachedMessages.map((message) => message.id));
+    return mergeDisplayPages(
+      olderMessages,
+      cachedMessages,
+      optimisticMessages.filter((message) => !cachedIds.has(message.id)),
+    );
+  }, [cachedMessages, olderMessages, optimisticMessages]);
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
   const messages = useMemo(
@@ -723,7 +720,7 @@ export default function BuzzChat() {
         const fresh = older.filter((message) => message.id !== oldest.id);
         if (fresh.length < OLDER_MESSAGES_PAGE_SIZE - 1) hasMoreHistoryRef.current = false;
         if (fresh.length === 0) return;
-        setOlderMessages((current) => upsertChatMessages(current, fresh));
+        setOlderMessages((current) => mergeDisplayPages(current, fresh));
         setVisibleMessageCount((count) => count + fresh.length);
       })
       .catch((err) => console.warn('Failed to load older messages:', err))
@@ -746,9 +743,16 @@ export default function BuzzChat() {
     [knownAgentNames, channelCache?.availableAgents],
   );
   const availablePeople = channelCache?.availablePeople ?? [];
-  const roomMembers = channelCache?.roomMembers ?? [];
+  const selectedMembers = useMemo(
+    () => (cachedSnapshot ? selectMembers(cachedSnapshot, decodedId) : []),
+    [cachedSnapshot, decodedId],
+  );
+  const roomMembers = useMemo(
+    () => selectedMembers.map((member) => ({ pubkey: member.pubkey, role: member.role })),
+    [selectedMembers],
+  );
   const roomMemberPubkeys = useMemo(
-    () => new Set(roomMembers.map((member) => member.pubkey)),
+    () => new Set<string>(roomMembers.map((member) => member.pubkey)),
     [roomMembers],
   );
   const cachedPersonProfiles = useBuzzLocalCache((state) =>
@@ -757,10 +761,7 @@ export default function BuzzChat() {
       : undefined,
   );
   const personProfiles = cachedPersonProfiles ?? [];
-  const participantsHydrated =
-    channelCache?.roomMembers !== undefined &&
-    channelCache.availablePeople !== undefined &&
-    channelCache.availableAgents !== undefined;
+  const participantsHydrated = cachedSnapshot?.rooms[decodedId]?.membership.status === 'known';
   const agentByPubkey = useMemo(
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
@@ -808,10 +809,10 @@ export default function BuzzChat() {
         agent,
       });
     }
-    // `listMembers` is the Room roster authority. Workspace People and Agent
-    // reads only enrich/classify those keys, and can be partial or stale. Any
-    // direct member absent from both secondary reads remains visible as a
-    // person-shaped identity instead of disappearing from the count.
+    // The snapshot membership selector is the Room roster authority. Workspace
+    // People and Agent reads only enrich/classify those keys, and can be partial
+    // or stale. Any member absent from both secondary reads remains visible as
+    // a person-shaped identity instead of disappearing from the count.
     for (const member of roomMembers) {
       if (options.has(member.pubkey)) continue;
       const shortNpub = shortMemberNpub(member.pubkey);
@@ -831,13 +832,28 @@ export default function BuzzChat() {
       return a.name.localeCompare(b.name);
     });
   }, [availableAgents, availablePeople, personProfileByPubkey, roomMembers, userPubkey]);
-  const participantPubkeys = useMemo(
-    () => roomParticipantPubkeys(roomMemberPubkeys),
-    [roomMemberPubkeys],
-  );
   const roomParticipants = useMemo(
-    () => memberOptions.filter((option) => participantPubkeys.has(option.pubkey)),
-    [memberOptions, participantPubkeys],
+    () =>
+      selectedMembers.map((member) => {
+        const known = memberOptions.find((option) => option.pubkey === member.pubkey);
+        if (known) return known;
+        const name =
+          member.identity?.kind !== 'infrastructure'
+            ? (member.identity?.displayName ?? member.identity?.handle)
+            : undefined;
+        return {
+          pubkey: member.pubkey,
+          name: member.pubkey === userPubkey ? 'You' : (name ?? shortMemberNpub(member.pubkey)),
+          handle: name
+            ? personHandle(name, member.pubkey)
+            : shortMemberNpub(member.pubkey).replace(/[^a-zA-Z0-9_-]/g, ''),
+          kind: member.kind === 'agent' ? 'agent' : 'person',
+          ...(member.kind === 'agent' && agentByPubkey.get(member.pubkey)
+            ? { agent: agentByPubkey.get(member.pubkey) }
+            : {}),
+        } satisfies RoomMemberOption;
+      }),
+    [agentByPubkey, memberOptions, selectedMembers, userPubkey],
   );
   const participantPickerOptions = useMemo(
     () =>
@@ -854,14 +870,6 @@ export default function BuzzChat() {
     () => sectionRoomParticipants(roomParticipants),
     [roomParticipants],
   );
-  const cornerMembershipError =
-    channelKind === 'corner' && participantsHydrated
-      ? cornerHumanMembershipError(roomParticipants)
-      : undefined;
-  useEffect(() => {
-    if (!cornerMembershipError) return;
-    reportCornerHumanMembershipError(decodedId, roomParticipants);
-  }, [cornerMembershipError, decodedId, roomParticipants]);
   const roomParticipantTotal = roomParticipants.length;
   const roomAgents = useMemo(
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
@@ -896,7 +904,10 @@ export default function BuzzChat() {
     onlineAgentCount,
   );
   const roomMemberByPubkey = useMemo(
-    () => new Map(roomMembers.map((member) => [member.pubkey, member])),
+    () =>
+      new Map<string, (typeof roomMembers)[number]>(
+        roomMembers.map((member) => [member.pubkey, member]),
+      ),
     [roomMembers],
   );
   const viewerRoomRole = normalizedRoomRole(roomMemberByPubkey.get(userPubkey));
@@ -1142,7 +1153,6 @@ export default function BuzzChat() {
     const targetFinished =
       canonicalCornerStatus === 'merged' ||
       canonicalCornerStatus === 'archived' ||
-      cornerClosedLocally ||
       (isCorner && isArchived);
     const targetMissing =
       isCorner &&
@@ -1156,7 +1166,6 @@ export default function BuzzChat() {
     });
   }, [
     canonicalCornerStatus,
-    cornerClosedLocally,
     decodedId,
     isArchived,
     isCorner,
@@ -1184,33 +1193,7 @@ export default function BuzzChat() {
       presenceReconnectGrace[cornerAgentPubkey],
     ),
   );
-  const derivedRoomUpdateMessages = useMemo<ChatDisplayMessage[]>(() => {
-    if (isCorner || isDirectMessage) return [];
-    const updates = deriveRoomUpdates(decodedId, roomUpdateEvents, new Set(agentByPubkey.keys()));
-    const identityName = (pubkey: string) => {
-      const agent = agentByPubkey.get(pubkey);
-      if (agent) return resolveAgentDisplayIdentity(pubkey, agent).name;
-      return personIdentityLabel(personProfileByPubkey.get(pubkey), pubkey);
-    };
-    return updates.map((update) => ({
-      id: update.id,
-      text: roomUpdateLine(update, identityName),
-      isUser: false,
-      timestamp: update.timestamp,
-      roomUpdate: { ...(update.digest ? { digest: update.digest } : {}) },
-    }));
-  }, [
-    agentByPubkey,
-    decodedId,
-    isCorner,
-    isDirectMessage,
-    personProfileByPubkey,
-    roomUpdateEvents,
-  ]);
-  const visibleMessages = useMemo(
-    () => transcriptMessages(upsertChatMessages(messages, derivedRoomUpdateMessages), isCorner),
-    [derivedRoomUpdateMessages, isCorner, messages],
-  );
+  const visibleMessages = messages;
   // Attribution is per run, not per entry: only the first entry of a voice's
   // run carries its mark and name (see `buzz/ledger-attribution.ts`). Corners
   // attribute exactly like Rooms — several people can sit in one corner, so
@@ -1305,21 +1288,8 @@ export default function BuzzChat() {
   // source, and chosen by how much it is being worked on. `null` for a Room
   // with no live corner, however busy its agent is right now.
   const pinnedCorner = useMemo(() => {
-    const selected = selectPinnedCorner({ lifecycle: cornerLifecycle, now: cornerStateNow });
-    // A corner this viewer CLOSED never gets the pinned line — the deck's
-    // dropdown and the corners list already hide it, so a gold "view →"
-    // pointing at dismissed work would be the one affordance left leading
-    // into it.
-    if (!selected) return null;
-    return isCornerClosed(
-      closedCornerAt,
-      userPubkey || activeCacheViewer,
-      decodedId,
-      selected.cornerId,
-    )
-      ? null
-      : selected;
-  }, [closedCornerAt, cornerLifecycle, cornerStateNow, decodedId, userPubkey, activeCacheViewer]);
+    return selectPinnedCorner({ lifecycle: cornerLifecycle, now: cornerStateNow });
+  }, [cornerLifecycle, cornerStateNow]);
   const pinnedCornerCard = useMemo(
     () =>
       pinnedCorner
@@ -1585,23 +1555,14 @@ export default function BuzzChat() {
   }, [decodedId, isCorner, transport]);
 
   // Helper to add new messages, deduplicating by id.
-  const addMessages = useCallback(
-    (newMsgs: ChatDisplayMessage[]) => {
-      const viewerPubkey = useBuzzLocalCache.getState().activeViewerPubkey;
-      if (!viewerPubkey) return;
-      // `isNew` here is safe precisely because this path only ever sees the
-      // optimistic send's fresh id — a genuine first insertion. Warm
-      // revalidation / WS replay do NOT flow through here; they go through
-      // `upsertChatMessages`, whose merge strips the flag from any id the
-      // cache already holds (the replay bug's actual funnel).
-      useBuzzLocalCache.getState().upsertMessages(
-        viewerPubkey,
-        decodedId,
+  const addMessages = useCallback((newMsgs: ChatDisplayMessage[]) => {
+    setOptimisticMessages((current) =>
+      mergeDisplayPages(
+        current,
         newMsgs.map((message) => ({ ...message, isNew: true })),
-      );
-    },
-    [decodedId],
-  );
+      ),
+    );
+  }, []);
 
   useEffect(() => {
     if (!decodedId) return;
@@ -1611,12 +1572,7 @@ export default function BuzzChat() {
     let unsubscribe: (() => void) | undefined;
     let unsubscribePresence: (() => void) | undefined;
     let unsubscribeDraft: (() => void) | undefined;
-    let unsubscribeRoomUpdates: (() => void) | undefined;
     let unsubscribeCornerState: (() => void) | undefined;
-    // A canonical record owns state, not existence. Only the relay-derived
-    // lifecycle list may admit an id here; otherwise an old WORKING record
-    // for a deleted corner could resurrect the exact ghost this gate closes.
-    const relayExistingCornerIds = new Set<string>();
     let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
     const cancelDeferred: (() => void)[] = [];
     agentPresencesRef.current = {};
@@ -1626,7 +1582,7 @@ export default function BuzzChat() {
     setPresenceResolved(false);
     hasMoreHistoryRef.current = true;
     setOlderMessages([]);
-    setRoomUpdateEvents([]);
+    setOptimisticMessages([]);
     setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
 
     // The screen is already painted from the local cache by the time this
@@ -1661,59 +1617,40 @@ export default function BuzzChat() {
         const client = await t.ensureClient();
         if (cancelled) return;
 
-        const applyCanonicalCornerState = (
-          record: Awaited<ReturnType<typeof t.cornerStateBackfill>>[number],
-        ) => {
-          if (cancelled || !relayExistingCornerIds.has(record.cornerId)) return;
-          const verdict = cornerVerdictFromRecord(record, Date.now());
-          const update = (corner: CornerSummary): CornerSummary => {
-            if (corner.id !== record.cornerId) return corner;
-            const { awaitingReply: _oldAwaitingReply, ...rest } = corner;
-            return {
-              ...rest,
-              status: verdict.status,
-              machineState: record.state,
-              ...(record.reason ? { machineReason: record.reason } : {}),
-              stateAt: record.at,
-              ...(verdict.awaitingReply ? { awaitingReply: true } : {}),
-            };
-          };
-          setCornerLifecycle((current) => {
-            return current.some((corner) => corner.id === record.cornerId)
-              ? current.map(update)
-              : current;
-          });
-          if (record.cornerId === decodedId) {
-            setCornerLifecycleStatus(verdict.status);
-            if (record.parentRoomId) {
-              setChannelKind('corner');
-              setParentChannelId(record.parentRoomId);
-            }
-            if (record.state === 'closed' || record.state === 'concluded') setIsArchived(true);
-          }
-          setCornerStateNow(Date.now());
-        };
-
         let cornerStateDeliveryGeneration = 0;
         const installCornerStateDelivery = (cornerIds: string[]): Promise<void> => {
           const ids = [...new Set([...cornerIds, decodedId])];
           const generation = ++cornerStateDeliveryGeneration;
           unsubscribeCornerState?.();
           unsubscribeCornerState = undefined;
-          const subscription = t
-            .cornerStateSubscribeReady(ids, applyCanonicalCornerState)
-            .then((unsubscribe) => {
-              if (cancelled || generation !== cornerStateDeliveryGeneration) {
-                unsubscribe();
-                return;
-              }
-              unsubscribeCornerState = unsubscribe;
-            });
-          const backfill = t.cornerStateBackfill(ids).then((records) => {
-            if (cancelled || generation !== cornerStateDeliveryGeneration) return;
-            records.forEach(applyCanonicalCornerState);
+          return t.getParentChannelId(decodedId).then(async (knownParent) => {
+            const lifecycleParent = knownParent ?? decodedId;
+            const unsubscribe = await t.cornerLifecycleSubscribeReady(
+              lifecycleParent,
+              ids,
+              (event) => {
+                if (cancelled || generation !== cornerStateDeliveryGeneration) return;
+                cacheLiveSessionEvents(identity.publicKey, decodedId, [event]);
+                void t.listSubchannelLifecycle(lifecycleParent).then((corners) => {
+                  if (cancelled || generation !== cornerStateDeliveryGeneration) return;
+                  setCornerLifecycle(corners);
+                  const current = corners.find((corner) => corner.id === decodedId);
+                  if (current) {
+                    setCornerLifecycleStatus(current.status);
+                    if (current.machineState === 'closed' || current.machineState === 'concluded') {
+                      setIsArchived(true);
+                    }
+                  }
+                  setCornerStateNow(Date.now());
+                });
+              },
+            );
+            if (cancelled || generation !== cornerStateDeliveryGeneration) {
+              unsubscribe();
+              return;
+            }
+            unsubscribeCornerState = unsubscribe;
           });
-          return Promise.all([subscription, backfill]).then(() => undefined);
         };
 
         // A corner's live agent-activity stream can deliver one raw event per
@@ -1721,7 +1658,7 @@ export default function BuzzChat() {
         // one saturates the JS thread and reads as a UI freeze during a send
         // or while the agent is actively working. Coalesce whatever arrives
         // within one animation frame into a single cache write instead.
-        let pendingLiveEvents: Parameters<typeof cacheLiveSessionEvent>[2][] = [];
+        let pendingLiveEvents: Parameters<typeof cacheLiveSessionEvents>[2] = [];
         let liveFlushScheduled = false;
         const flushLiveEvents = () => {
           liveFlushScheduled = false;
@@ -1795,7 +1732,7 @@ export default function BuzzChat() {
             applyAgentPresence(projected.agentPresence);
           }
         };
-        const handleLiveMessage = (event: Parameters<typeof cacheLiveSessionEvent>[2]) => {
+        const handleLiveMessage = (event: Parameters<typeof cacheLiveSessionEvents>[2][number]) => {
           if (cancelled) return;
           pendingLiveEvents.push(event);
           if (!liveFlushScheduled) {
@@ -1851,9 +1788,13 @@ export default function BuzzChat() {
           // previously starved the resumed composer.
         });
 
-        const handleLivePresence = (event: Parameters<typeof projectChatEvent>[0]) => {
+        const handleLivePresence = (
+          event: Parameters<typeof cacheLiveSessionEvents>[2][number],
+        ) => {
           if (cancelled) return;
-          applyAgentPresence(projectChatEvent(event, identity.publicKey).agentPresence);
+          if (event.type === 'read-model') {
+            applyAgentPresence(projectReadEvent(event.event, identity.publicKey).agentPresence);
+          }
         };
 
         /**
@@ -1942,45 +1883,7 @@ export default function BuzzChat() {
                 const draftEvents = await t.agentDraftBackfill(decodedId);
                 if (!cancelled) draftEvents.forEach(handleLiveMessage);
               })();
-          const installRoomUpdates = parentChannelId
-            ? Promise.resolve()
-            : (async () => {
-                const mergeRoomUpdateEvents = (incoming: NostrEvent[]) => {
-                  if (cancelled || incoming.length === 0) return;
-                  setRoomUpdateEvents((current) => [
-                    ...new Map(
-                      [...current, ...incoming].map((event) => [event.id, event]),
-                    ).values(),
-                  ]);
-                };
-                const handleRoomUpdateEvent = (event: NostrEvent) => {
-                  mergeRoomUpdateEvents([event]);
-                  if (event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-corner-state')) {
-                    void t
-                      .roomUpdateEventsBackfill(decodedId)
-                      .then(mergeRoomUpdateEvents)
-                      .catch((error) =>
-                        console.warn(`Failed to refresh Room updates for ${decodedId}:`, error),
-                      );
-                  }
-                };
-                try {
-                  const stop = await t.roomUpdateEventsSubscribeReady(
-                    decodedId,
-                    handleRoomUpdateEvent,
-                  );
-                  if (cancelled) {
-                    stop();
-                    return;
-                  }
-                  unsubscribeRoomUpdates = stop;
-                } catch (error) {
-                  console.warn(`Failed to establish Room update delivery for ${decodedId}:`, error);
-                }
-                const historical = await t.roomUpdateEventsBackfill(decodedId);
-                mergeRoomUpdateEvents(historical);
-              })();
-          await Promise.all([installMessages, installPresence, installDraft, installRoomUpdates]);
+          await Promise.all([installMessages, installPresence, installDraft]);
         };
 
         await hydrateRoomEntry(
@@ -2027,7 +1930,6 @@ export default function BuzzChat() {
                 saveLastViewedChannel(identity.publicKey, communityId, decodedId),
               ]).catch(() => undefined);
             },
-            onMembers: (roomMembers) => patchChannelCache(identity.publicKey, { roomMembers }),
             // Agent names are the union across every Workspace the viewer
             // belongs to, and land on their own — never behind the
             // person-profile read, whose failure used to leave the transcript
@@ -2062,8 +1964,6 @@ export default function BuzzChat() {
             onMergeNotReadyReason: setMergeNotReadyReason,
             onCornerStatus: setCornerLifecycleStatus,
             onCornerLifecycle: (corners) => {
-              relayExistingCornerIds.clear();
-              corners.forEach((corner) => relayExistingCornerIds.add(corner.id));
               setCornerLifecycle(corners);
               void installCornerStateDelivery(corners.map((corner) => corner.id)).catch((error) =>
                 console.warn('Failed to establish canonical corner-state delivery:', error),
@@ -2090,7 +1990,6 @@ export default function BuzzChat() {
       if (unsubscribe) unsubscribe();
       if (unsubscribePresence) unsubscribePresence();
       if (unsubscribeDraft) unsubscribeDraft();
-      if (unsubscribeRoomUpdates) unsubscribeRoomUpdates();
       if (unsubscribeCornerState) unsubscribeCornerState();
     };
   }, [decodedId, notificationResponseId, applyAgentPresence]);
@@ -2114,7 +2013,7 @@ export default function BuzzChat() {
   );
 
   const replyTargetForMessage = useCallback(
-    (message: ChatDisplayMessage): MessageReplyTarget => {
+    (message: ChatDisplayMessage): MessageReplyDisplayTarget => {
       const knownAgent = message.pubkey ? agentByPubkey.get(message.pubkey) : undefined;
       const isAgent = Boolean(
         message.pubkey &&
@@ -2131,9 +2030,9 @@ export default function BuzzChat() {
         : undefined;
       const attachmentPreview = message.attachments?.[0]?.name;
       return {
-        // Reply threading is a NIP-10 `e` tag lookup by real relay event id;
-        // a reconciled draft/final bubble's display `id` is a synthetic
-        // per-turn key, so prefer the real event id when one is recorded.
+        // A reconciled draft/final bubble's display `id` is a synthetic
+        // per-turn key. The composer separately obtains the opaque threading
+        // proof from the snapshot using this real relay id.
         messageId: message.relayId ?? message.id,
         authorName: message.isUser
           ? 'You'
@@ -2148,12 +2047,15 @@ export default function BuzzChat() {
 
   const beginReply = useCallback(
     (message: ChatDisplayMessage) => {
-      setReplyTarget(replyTargetForMessage(message));
+      if (!cachedSnapshot) return;
+      const selected = selectReplyTarget(cachedSnapshot, decodedId, message.relayId ?? message.id);
+      if (selected.status !== 'available') return;
+      setReplyTarget({ ...replyTargetForMessage(message), reference: selected.reference });
       setDismissedMentionKey(null);
       void Haptics.selectionAsync();
       requestAnimationFrame(() => composerRef.current?.focus());
     },
-    [replyTargetForMessage],
+    [cachedSnapshot, decodedId, replyTargetForMessage],
   );
 
   const handleSend = useCallback(async () => {
@@ -2211,7 +2113,7 @@ export default function BuzzChat() {
           timestamp: Date.now(),
           pubkey: userPubkey,
           ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-          ...(replyTarget ? { replyToId: replyTarget.messageId } : {}),
+          ...(replyTarget ? { replyToId: replyTarget.reference.eventId } : {}),
           ...(attachments.length ? { attachments } : {}),
         },
       ]);
@@ -2232,9 +2134,8 @@ export default function BuzzChat() {
       // id on a transient failure, so the relay can dedupe an ambiguous send.
       const eventId = replyTarget
         ? await transport.messageSubmitReply(
-            decodedId,
             text,
-            replyTarget.messageId,
+            replyTarget.reference,
             mentionedAgent,
             attachments,
             mentionedPubkeys,
@@ -2248,11 +2149,9 @@ export default function BuzzChat() {
                 }
               : undefined,
           );
-      useBuzzLocalCache
-        .getState()
-        .updateMessages(cacheViewerPubkey, decodedId, (current) =>
-          reconcileOptimisticMessage(current, optimisticId, eventId),
-        );
+      setOptimisticMessages((current) =>
+        reconcileOptimisticMessage(current, optimisticId, eventId),
+      );
     } catch (err) {
       console.warn('Send failed:', err);
       Alert.alert('Attachment not sent', err instanceof Error ? err.message : String(err));
@@ -2393,19 +2292,6 @@ export default function BuzzChat() {
           decision,
           permission.repository,
         );
-        useBuzzLocalCache.getState().updateMessages(cacheViewerPubkey, decodedId, (current) =>
-          current.map((item) =>
-            item.id === message.id && item.writePermission
-              ? {
-                  ...item,
-                  writePermission: {
-                    ...item.writePermission,
-                    status: decision === 'allow' ? 'allowed' : 'denied',
-                  },
-                }
-              : item,
-          ),
-        );
         void Haptics.notificationAsync(
           decision === 'allow'
             ? Haptics.NotificationFeedbackType.Success
@@ -2481,12 +2367,7 @@ export default function BuzzChat() {
             activeCommunityId,
           );
         }
-        useBuzzLocalCache.getState().patchChannel(cacheViewerPubkey, decodedId, {
-          roomMembers: [
-            ...roomMembers.filter((member) => member.pubkey !== option.pubkey),
-            { pubkey: option.pubkey, role: 'member' },
-          ],
-        });
+        await revalidateCachedMessages(transport, cacheViewerPubkey, decodedId);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         setMembershipError(`Could not add @${option.name}: ${String(err)}`);
@@ -2500,7 +2381,6 @@ export default function BuzzChat() {
       cacheViewerPubkey,
       decodedId,
       roomMemberPubkeys,
-      roomMembers,
       transport,
     ],
   );
@@ -2526,12 +2406,8 @@ export default function BuzzChat() {
               setMembershipError(null);
               void transport
                 .removeRoomMember(decodedId, participant.pubkey)
-                .then(() => {
-                  useBuzzLocalCache.getState().patchChannel(cacheViewerPubkey, decodedId, {
-                    roomMembers: roomMembers.filter(
-                      (member) => member.pubkey !== participant.pubkey,
-                    ),
-                  });
+                .then(async () => {
+                  await revalidateCachedMessages(transport, cacheViewerPubkey, decodedId);
                   void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 })
                 .catch((err) => {
@@ -2543,15 +2419,7 @@ export default function BuzzChat() {
         ],
       );
     },
-    [
-      cacheViewerPubkey,
-      decodedId,
-      roomMemberByPubkey,
-      roomMembers,
-      transport,
-      userPubkey,
-      viewerRoomRole,
-    ],
+    [cacheViewerPubkey, decodedId, roomMemberByPubkey, transport, userPubkey, viewerRoomRole],
   );
 
   const returnToRoomList = useCallback(() => {
@@ -2995,16 +2863,6 @@ export default function BuzzChat() {
     }
     try {
       await transport.closeCorner(decodedId);
-      // The close publish resolved: dismiss the corner LOCALLY right now —
-      // durable tombstone plus purge from every cached list — so it leaves
-      // the deck's counts/dropdowns on this frame instead of whenever the
-      // daemon's next maintenance tick lands its archive cards. Re-closing
-      // an already-closed corner is tolerated (no-op archive, #396/#402
-      // semantics): the re-stamp keeps removal stuck either way.
-      const viewerKey = userPubkey || activeCacheViewer;
-      if (viewerKey && parentChannelId) {
-        markCornerClosedAndPurge(viewerKey, parentChannelId, decodedId);
-      }
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       handleBack();
     } catch (err) {
@@ -3012,7 +2870,7 @@ export default function BuzzChat() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
     }
-  }, [decodedId, handleBack, parentChannelId, transport, userPubkey, activeCacheViewer]);
+  }, [decodedId, handleBack, transport]);
 
   // An approval that was accepted by the relay but never acknowledged by the
   // daemon resolves ITSELF here. The signed approval stays on the relay and a
@@ -3543,7 +3401,20 @@ export default function BuzzChat() {
     ],
   );
 
-  if (channelCache?.messages === undefined && initialChannelCache?.messages === undefined) {
+  const readModelIntegrityHalt =
+    channelCache?.integrityHalt ??
+    initialChannelCache?.integrityHalt ??
+    initialCacheState.bootIntegrityHalt;
+  if (readModelIntegrityHalt) {
+    return (
+      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+        <Text style={styles.loadingText}>READ MODEL INTEGRITY HALT</Text>
+        <Text style={styles.loadingText}>{readModelIntegrityHalt}</Text>
+      </View>
+    );
+  }
+
+  if (channelCache?.snapshot === undefined && initialChannelCache?.snapshot === undefined) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />
@@ -4341,12 +4212,6 @@ export default function BuzzChat() {
               contentContainerStyle={styles.rosterContent}
               showsVerticalScrollIndicator={false}
             >
-              {cornerMembershipError ? (
-                <View accessibilityRole="alert" style={styles.rosterInvariantError}>
-                  <Text style={styles.rosterInvariantErrorLabel}>MEMBERSHIP ERROR</Text>
-                  <Text style={styles.rosterInvariantErrorText}>{cornerMembershipError}</Text>
-                </View>
-              ) : null}
               {[
                 { key: 'people', label: 'PEOPLE', options: visibleRosterSections.people },
                 { key: 'agents', label: 'AGENTS', options: visibleRosterSections.agents },
@@ -5087,27 +4952,6 @@ const styles = StyleSheet.create((theme) => {
     },
     rosterModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
     rosterContent: { paddingTop: 18, paddingBottom: 4 },
-    rosterInvariantError: {
-      marginBottom: 18,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: groknight.chrome,
-      backgroundColor: groknight.bgBase,
-    },
-    rosterInvariantErrorLabel: {
-      ...Typography.mono('semiBold'),
-      color: groknight.chrome,
-      fontSize: 9,
-      lineHeight: 13,
-      letterSpacing: 0.7,
-    },
-    rosterInvariantErrorText: {
-      ...Typography.default(),
-      marginTop: 5,
-      color: groknight.textPrimary,
-      fontSize: 12,
-      lineHeight: 17,
-    },
     rosterSectionLabel: {
       ...Typography.mono('semiBold'),
       marginBottom: 7,

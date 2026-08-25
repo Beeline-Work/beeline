@@ -100,7 +100,6 @@ import {
 } from './person-profile.js';
 import { getDirectMessage, listDirectMessages, resolveDirectMessage } from './direct-message.js';
 import { uploadMedia } from './media.js';
-import { toSessionEvent } from './parse.js';
 import {
   resolveRepositoryRoom,
   resolveRepositoryRoomForHuman,
@@ -743,9 +742,7 @@ export class BuzzClient {
 
   /** HTTP backfill of channel stream messages, oldest-first. */
   sessionEventsBackfill(channelId: string, opts?: ChannelFilterOpts): Promise<SessionEvent[]> {
-    return backfillMessages(this.ctx, channelId, opts).then((events) =>
-      events.map(toSessionEvent).filter((e): e is SessionEvent => e !== null),
-    );
+    return backfillMessages(this.ctx, channelId, opts);
   }
 
   /** Read this Room's parameterized-replaceable agent presence records. */
@@ -756,11 +753,7 @@ export class BuzzClient {
         '#d': [agentPresenceKey(channelId)],
         limit: 20,
       },
-    ]).then((events) =>
-      events
-        .map(toSessionEvent)
-        .filter((event): event is SessionEvent => event !== null && event.channelId === channelId),
-    );
+    ]);
   }
 
   /**
@@ -782,14 +775,13 @@ export class BuzzClient {
     let lastSeenCreatedAt: number | undefined = opts?.since;
     const deliveredIds = new Set<string>();
     const deliver = (event: NostrEvent) => {
-      const se = toSessionEvent(event);
-      if (!se || deliveredIds.has(se.id)) return;
-      deliveredIds.add(se.id);
+      if (deliveredIds.has(event.id)) return;
+      deliveredIds.add(event.id);
       // Keep bounded id memory while the timestamp cursor handles reconnect
       // replay. Retain enough ids for a busy second returned by `since`.
       if (deliveredIds.size > 2_048) deliveredIds.delete(deliveredIds.values().next().value!);
-      lastSeenCreatedAt = Math.max(lastSeenCreatedAt ?? 0, se.createdAt);
-      handler(se);
+      lastSeenCreatedAt = Math.max(lastSeenCreatedAt ?? 0, event.created_at);
+      handler(event);
     };
     return ws.subscribe(
       [{ kinds, '#h': [channelId], ...(opts?.since === undefined ? {} : { since: opts.since }) }],
@@ -822,10 +814,7 @@ export class BuzzClient {
           '#d': [agentPresenceKey(channelId)],
         },
       ],
-      (event) => {
-        const sessionEvent = toSessionEvent(event);
-        if (sessionEvent?.channelId === channelId) handler(sessionEvent);
-      },
+      handler,
     );
   }
 
@@ -837,11 +826,7 @@ export class BuzzClient {
         '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
         limit: 5,
       },
-    ]).then((events) =>
-      events
-        .map(toSessionEvent)
-        .filter((event): event is SessionEvent => event !== null && event.channelId === channelId),
-    );
+    ]);
   }
 
   /** Subscribe only to this Room's live agent reply draft record. */
@@ -857,10 +842,7 @@ export class BuzzClient {
           '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
         },
       ],
-      (event) => {
-        const sessionEvent = toSessionEvent(event);
-        if (sessionEvent?.channelId === channelId) handler(sessionEvent);
-      },
+      handler,
     );
   }
 

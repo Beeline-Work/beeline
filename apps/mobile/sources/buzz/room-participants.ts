@@ -2,9 +2,6 @@ export type MentionableAgent = { pubkey: string; name: string; handle?: string }
 type RoomRosterMember = { pubkey: string };
 type RoomParticipant = RoomRosterMember & { kind: 'person' | 'agent' };
 
-export const CORNER_WITHOUT_HUMAN_ERROR =
-  'Membership error: this corner has no person. A corner must include the human who opened it.';
-
 export type MentionCandidate = {
   name: string;
   handle: string;
@@ -85,13 +82,6 @@ export function replaceActiveMention(
   };
 }
 
-/** Direct Room membership is the roster authority; secondary identity reads only classify it. */
-export function roomParticipantPubkeys(
-  roomMemberPubkeys: ReadonlySet<string>,
-): Set<string> {
-  return new Set(roomMemberPubkeys);
-}
-
 /** Keep one Workspace roster, ordered as current Room members followed by addable members. */
 export function sectionRoomRoster<T extends RoomRosterMember>(
   roster: T[],
@@ -116,26 +106,6 @@ export function sectionRoomParticipants<T extends RoomParticipant>(
     people: participants.filter((participant) => participant.kind === 'person'),
     agents: participants.filter((participant) => participant.kind === 'agent'),
   };
-}
-
-/** A corner without a directly resolved person is corrupt, not a normal agent-only roster. */
-export function cornerHumanMembershipError(
-  participants: readonly RoomParticipant[],
-): string | undefined {
-  return participants.some((participant) => participant.kind === 'person')
-    ? undefined
-    : CORNER_WITHOUT_HUMAN_ERROR;
-}
-
-/** Log the invariant violation once from a lifecycle-aware UI effect and return its visible copy. */
-export function reportCornerHumanMembershipError(
-  channelId: string,
-  participants: readonly RoomParticipant[],
-  log: (message: string) => void = console.error,
-): string | undefined {
-  const error = cornerHumanMembershipError(participants);
-  if (error) log(`[mobile] corner ${channelId}: ${error}`);
-  return error;
 }
 
 /** Slack-style participant copy: five names at most, with overflow folded into the fifth slot. */

@@ -13,7 +13,6 @@ import {
   type CornerVisualState,
 } from '@/buzz/corners';
 import { isMachinePreview } from '@/buzz/room-list-summary';
-import { isRetiredAgentStateNotice } from '@/buzz/retired-agent-notices';
 
 /** The one state vocabulary used by both row projection and circle rendering. */
 export type RoomListZone = 'needs-you' | 'working' | 'idle';
@@ -287,8 +286,7 @@ export function roomRowPresentation(
   // The stored preview was sanitized when it was written; this is the floor
   // for one written by an older build and still sitting in the local cache.
   const stored = room.latestMessage?.trim();
-  const clean =
-    stored && !isMachinePreview(stored) && !isRetiredAgentStateNotice(stored) ? stored : undefined;
+  const clean = stored && !isMachinePreview(stored) ? stored : undefined;
   const messageAt = room.latestMessageAt ?? (clean ? room.updatedAt : undefined) ?? 0;
   const meaningfulAt = Math.max(
     messageAt,

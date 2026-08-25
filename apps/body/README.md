@@ -10,6 +10,7 @@ by projecting agent activity into the relay channel.
 ┌──────────────────────── Body machine ────────────────────────┐
 │ Thin daemon core (one paired agent identity)                  │
 │   ├── one persistent relay socket + deterministic routing    │
+│   ├── durable WorkCalendar heap + one next-due timer         │
 │   ├── Room A Body ──► killable Room/corner ACP processes     │
 │   ├── Room B Body ──► killable Room/corner ACP processes     │
 │   └── bounded scheduler + durable per-channel inbox          │
@@ -326,7 +327,10 @@ of creating duplicates. This permission-gated factory path is separate from
 
 Each agent daemon owns one durable `WorkCalendar` min-heap and one next-due
 timer. Signed kind:30078 schedule records describe expiring, budgeted recurring
-turns. Its small atomic local state stores only the pinned principal,
+turns. Cron and daily cadences require an IANA timezone; intervals use an
+explicit anchor. Across daylight-saving transitions, a nonexistent local time
+runs at the next valid instant, while a repeated local time runs once at its
+first occurrence. Its small atomic local state stores only the pinned principal,
 last-executed occurrence, budget/run counters, and consecutive-failure pause;
 kind:9 lifecycle receipts are best-effort observability and are never replayed
 as execution state. A crash after a turn but before the timestamp write may run
@@ -334,7 +338,10 @@ that occurrence again. Every occurrence rechecks the current canonical
 revision, author/principal role, Room/Workspace membership, agent access policy,
 artifact revisions, expiry, budgets, and any P1 `schedule.change` grant,
 including one final fresh check after the background turn wins its process
-slot. Catch-up is bounded to zero or one occurrence.
+slot. Catch-up either skips missed work or runs only the latest missed
+occurrence. A terminal authority or artifact lapse is durably paused before its
+actionable card; restored authority alone does not resume it. Resumption requires
+a newer active revision authored by a currently authorized human admin.
 
 Calendar admission is deliberately separate from process capacity. A due item
 enters the ordinary Room dispatcher with `trigger='schedule'` and background

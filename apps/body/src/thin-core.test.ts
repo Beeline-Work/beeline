@@ -256,7 +256,10 @@ describe('ThinDaemonCore', () => {
 
     expect(workCalendar.start).toHaveBeenCalledTimes(2);
     expect(reconcile).toHaveBeenCalledTimes(2);
-    expect(startError).toHaveBeenCalledWith('[thin-core] work calendar start failed:', startupFailure);
+    expect(startError).toHaveBeenCalledWith(
+      '[thin-core] work calendar start failed:',
+      startupFailure,
+    );
     expect(workCalendar.dispose).toHaveBeenCalledOnce();
   });
 });

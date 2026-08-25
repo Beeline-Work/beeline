@@ -62,6 +62,7 @@ export type ChatDisplayMessage = {
     agentPubkey: string;
     tool: string;
     repository?: string;
+    purpose?: 'squire-spending';
     status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
     subchannelId?: string;
   };
@@ -185,6 +186,7 @@ function controlProjection(
           tool: payload.tool ?? 'edit files',
           status: payload.status,
           ...(payload.repository ? { repository: payload.repository } : {}),
+          ...(payload.purpose ? { purpose: payload.purpose } : {}),
           ...(payload.subchannelId ? { subchannelId: payload.subchannelId } : {}),
         },
       },

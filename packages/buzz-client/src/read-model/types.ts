@@ -120,6 +120,7 @@ export type ControlPayload =
       readonly status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
       readonly tool?: string;
       readonly repository?: string;
+      readonly purpose?: 'squire-spending';
       readonly subchannelId?: ChannelId;
     }
   | {

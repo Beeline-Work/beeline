@@ -3,8 +3,8 @@
  *
  * The shipped pi-acp harness never sends `session/request_permission`: it
  * executes tools before the daemon sees them. A pi-backed Room agent therefore
- * has one text-only compatibility channel for asking the humans for an edit
- * corner: it ends a reply with a single marker line:
+ * has one text-only compatibility channel for opening an edit corner: it ends
+ * a reply with a single marker line:
  *
  *   CORNER_REQUEST: <one-sentence description of the task>
  *
@@ -12,9 +12,9 @@
  * HUMAN types into the composer (see `markSlashCommandVocabulary`), while this
  * marker is something the AGENT writes into its own reply text, so the two can
  * never collide. The host strips the line from everything it publishes — live
- * drafts and the final message alike — posts an
- * approve/deny card reusing the existing write-permission surface, and opens
- * the corner only after a human ALLOW. The agent never announces the corner:
+ * drafts and the final message alike — consumes the control line, and opens
+ * the corner directly. Opening creates no commit, push, review approval, or
+ * merge authority. The agent never announces the corner:
  * nothing it authored claims the corner exists until the host's own status
  * events say so after creation succeeded.
  */
@@ -29,9 +29,9 @@ export const CORNER_REQUEST_MARKER = 'CORNER_REQUEST:';
  */
 export const PI_CORNER_REQUEST_INSTRUCTIONS = [
   'This session uses pi-acp, which cannot send a native permission request before a tool runs.',
-  'When repository inspection reveals a concrete edit worth making, you may ask the humans for an edit corner.',
-  'Briefly explain the proposed change, then end your reply with exactly: CORNER_REQUEST: <one-sentence task objective>',
-  'That final line requests approval only. The host removes it from chat and shows humans an allow/deny decision.',
+  'When repository inspection reveals a concrete edit worth making, open an edit corner yourself in one step.',
+  'Briefly explain the transition, then end your reply with exactly: CORNER_REQUEST: <one-sentence task objective>',
+  'The host removes that final line from chat and directly opens the isolated corner; no human approval is needed merely to open one.',
   'Never describe the corner as open, created, or started unless a later host message confirms successful creation.',
   'Do not emit CORNER_REQUEST for information-only follow-up that does not need repository edits.',
 ];

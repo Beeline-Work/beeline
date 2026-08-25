@@ -474,6 +474,9 @@ function controlPayload(
             : 'pending',
         ...(tag(event, 'tool') ? { tool: tag(event, 'tool') } : {}),
         ...(tag(event, 'repo') ? { repository: tag(event, 'repo') } : {}),
+        ...(tag(event, 'purpose') === 'squire-spending'
+          ? { purpose: 'squire-spending' as const }
+          : {}),
         ...(tag(event, 'subchannel')
           ? { subchannelId: tag(event, 'subchannel') as ChannelId }
           : {}),

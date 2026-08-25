@@ -3,10 +3,10 @@
  * proposal card the agent posts in answer to it.
  *
  * The agent NEVER authors the Room→repository binding — that event is
- * admin-authored and reader-verified (`packages/buzz-client/src/room-repository.ts`).
+ * owner-authored and reader-verified (`packages/buzz-client/src/room-repository.ts`).
  * All the daemon does here is recognize "land to staging from now on" and
- * publish a small typed proposal a Room admin confirms in the app; the app
- * then republishes the binding under the ADMIN's own key
+ * publish a small typed proposal the Room owner confirms in the app; the app
+ * then republishes the binding under the OWNER's own key
  * (`setRoomTargetBranch`). That split is the whole security property: an
  * agent-authored config event is refused by the reader's role re-check even if
  * it reaches the relay.
@@ -56,9 +56,32 @@ const BRANCH_LEAD_IN = String.raw`(?:(?:a|an|the|our|its|my|this)\s+)?(?:new\s+)
  * connectors and standing markers of the phrase itself ("land to from now on").
  */
 const BRANCH_STOP_WORDS = new Set([
-  'from', 'now', 'then', 'here', 'future', 'default', 'always', 'going', 'forward',
-  'the', 'a', 'an', 'it', 'this', 'that', 'and', 'or', 'to', 'on', 'onto', 'into',
-  'off', 'against', 'branch', 'permanently', 'be',
+  'from',
+  'now',
+  'then',
+  'here',
+  'future',
+  'default',
+  'always',
+  'going',
+  'forward',
+  'the',
+  'a',
+  'an',
+  'it',
+  'this',
+  'that',
+  'and',
+  'or',
+  'to',
+  'on',
+  'onto',
+  'into',
+  'off',
+  'against',
+  'branch',
+  'permanently',
+  'be',
 ]);
 
 /** A question about the target branch is a read, never a change request. */
@@ -66,24 +89,24 @@ const QUESTION_LEAD =
   /^(?:what|which|where|why|how|who|is|are|was|were|does|do|did|can|could|should|will|would|am|has|have)\b/i;
 
 function normalizeRequest(content: string): string {
-  return content
-    .normalize('NFKC')
-    .replace(/\s+/g, ' ')
-    .trim()
-    // Addressing is authenticated by the signed `p` tag; the text is noise.
-    .replace(/^(?:@[\p{L}\p{N}_-]+\s*[,:;]?\s+)+/u, '')
-    .replace(
-      /^(?:(?:hey|hi|hello|yo|ok|okay|alright|so|now)\b[,:;-]*\s+|(?:please|kindly|just)\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)\s+you\s+to\s+|(?:let['’]?s|lets)\s+)+/iu,
-      '',
-    )
-    .trim();
+  return (
+    content
+      .normalize('NFKC')
+      .replace(/\s+/g, ' ')
+      .trim()
+      // Addressing is authenticated by the signed `p` tag; the text is noise.
+      .replace(/^(?:@[\p{L}\p{N}_-]+\s*[,:;]?\s+)+/u, '')
+      .replace(
+        /^(?:(?:hey|hi|hello|yo|ok|okay|alright|so|now)\b[,:;-]*\s+|(?:please|kindly|just)\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)\s+you\s+to\s+|(?:let['’]?s|lets)\s+)+/iu,
+        '',
+      )
+      .trim()
+  );
 }
 
 function branchFrom(match: RegExpMatchArray | null, group = 1): string | null {
   if (!match) return null;
-  const raw = (match[group] ?? '')
-    .replace(/^['"`]+|['"`]+$/g, '')
-    .replace(/[.,;:!?)\]]+$/g, '');
+  const raw = (match[group] ?? '').replace(/^['"`]+|['"`]+$/g, '').replace(/[.,;:!?)\]]+$/g, '');
   return normalizeTargetBranchName(raw);
 }
 

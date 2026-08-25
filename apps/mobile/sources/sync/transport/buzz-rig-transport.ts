@@ -85,6 +85,7 @@ import {
   commitRoomCoverage,
   selectCorners,
   selectReplyTarget,
+  type EventId,
 } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
@@ -172,7 +173,10 @@ export class BuzzRigTransport implements RigTransport {
   private subscriptions = new Map<SessionId, () => void>();
   /** A second caller publishing the same prepared event joins the first publish. */
   private outgoingPublishes = new Map<string, Promise<string>>();
-  private knownMessages = new Map<string, { channelId: string; rootId?: string }>();
+  private knownMessages = new Map<
+    string,
+    { channelId: string; rootId?: string; parentId?: string }
+  >();
 
   constructor(identity: Identity, baseUrl: string = getBuzzRuntimeConfig().relayUrl) {
     this.identity = identity;
@@ -336,11 +340,35 @@ export class BuzzRigTransport implements RigTransport {
   private rememberMessages(events: readonly ReadEvent[]): void {
     for (const event of events) {
       if (event.type !== 'human-message' && event.type !== 'agent-message') continue;
+      const parentId = event.reply?.eventId;
       this.knownMessages.set(event.eventId, {
         channelId: event.channelId,
         rootId: event.reply?.rootId ?? event.eventId,
+        ...(typeof parentId === 'string' ? { parentId } : {}),
       });
     }
+  }
+
+  /** Resolve the thread root to sign on a reply.
+   *
+   * Parent links come verbatim from each message's raw NIP-10 `reply` tag, so
+   * climbing them yields the true ancestry even when a remembered `rootId` is
+   * stale (a truncated or incremental parse once stored a mid-thread root).
+   * The climb only wins when it terminates at a message the transport has seen
+   * with no parent of its own; otherwise the reference's own root claim (and
+   * its one-level known-root correction) stands.
+   */
+  private replyThreadRootFor(parent: KnownMessageReference): EventId {
+    let cursor: string = parent.eventId;
+    const seen = new Set<string>();
+    while (!seen.has(cursor)) {
+      seen.add(cursor);
+      const entry = this.knownMessages.get(cursor);
+      if (!entry) break; // chain leaves observed history: unverified
+      if (!entry.parentId || entry.parentId === cursor) return cursor as EventId;
+      cursor = entry.parentId;
+    }
+    return (this.knownMessages.get(parent.rootId)?.rootId ?? parent.rootId) as EventId;
   }
 
   private parseReadyEvents(
@@ -497,7 +525,14 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
-    const event = client.buildReplyMessage(text, parent, {
+    // Re-derive the thread root from observed raw-tag parent links before the
+    // builder signs: a stale persisted cache can carry a mid-thread rootId,
+    // and the relay refuses signed ancestry that does not match the thread.
+    const replyRootId = this.replyThreadRootFor(parent);
+    const event = client.buildReplyMessage(
+      text,
+      replyRootId === parent.rootId ? parent : { ...parent, rootId: replyRootId },
+      {
       ...(mentionAgent ? { mentionAgent } : {}),
       ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
       ...(attachmentTags.length ? { contentTags: attachmentTags } : {}),

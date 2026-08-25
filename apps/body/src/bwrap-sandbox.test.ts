@@ -68,6 +68,7 @@ describe('sandbox mount plan', () => {
     expect(sandboxMountPlan({ mode: 'readonly', cwd: '/srv/repo' })).toEqual({
       readOnly: [],
       writable: [],
+      quotaTmpfs: [],
       masks: [],
     });
   });

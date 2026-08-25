@@ -30,6 +30,7 @@ import { transcriptMessages } from './buzz-event-projection';
 import type { SessionEvent } from './rig-transport';
 
 const ROOM = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const OTHER_ROOM = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
 const CORNER = 'cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const WORKSPACE = 'workspace';
 const human = createIdentity('Captain');
@@ -457,16 +458,32 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     stop();
   });
 
-  it('retains unresolved diagnostics without retrying the same author when refresh fails', async () => {
+  it('retains unresolved diagnostics and agent lanes when the forced directory refresh fails', async () => {
     const fixture = clientFixture();
     const transport = transportWith(fixture.client);
     const delivered: SessionEvent[] = [];
     const stop = await transport.sessionEventsSubscribeReady(ROOM, (event) => delivered.push(event));
-    fixture.client.listMembers.mockRejectedValueOnce(new Error('membership projection unavailable'));
+    fixture.client.listMembers.mockResolvedValue([
+      { pubkey: human.publicKey, role: 'owner' },
+      { pubkey: agent.publicKey, role: 'member' },
+      { pubkey: peerAgent.publicKey, role: 'member' },
+    ]);
+    fixture.client.listAgents.mockRejectedValueOnce(new Error('agent directory unavailable'));
 
     const first = message(peerAgent, 'First unresolved turn.', 20);
     const second = message(peerAgent, 'Second unresolved turn.', 21);
     fixture.deliver(first);
+    fixture.deliver(
+      message(
+        agent,
+        JSON.stringify({
+          sessionId: ROOM,
+          update: { sessionUpdate: 'tool_call_update', title: 'Read file', status: 'completed' },
+        }),
+        20,
+        [['t', TAG_AGENT_ACTIVITY]],
+      ),
+    );
     await vi.waitFor(() =>
       expect(delivered).toContainEqual(
         expect.objectContaining({
@@ -486,6 +503,13 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     );
 
     expect(fixture.client.listMembers).toHaveBeenCalledTimes(2);
+    expect(fixture.client.listAgents).toHaveBeenCalledTimes(2);
+    expect(delivered).toContainEqual(
+      expect.objectContaining({
+        type: 'read-model',
+        event: expect.objectContaining({ type: 'activity', authorPubkey: agent.publicKey }),
+      }),
+    );
     expect(
       delivered.filter(
         (item) =>
@@ -493,6 +517,56 @@ describe('BuzzRigTransport typed read-model boundary', () => {
       ),
     ).toHaveLength(2);
     stop();
+  });
+
+  it('never reuses a superset Room identity cache to authorize another Room', async () => {
+    const fixture = clientFixture();
+    const transport = transportWith(fixture.client);
+    fixture.client.listMembers.mockImplementation(async (channelId: string) =>
+      channelId === ROOM
+        ? [
+            { pubkey: human.publicKey, role: 'owner' },
+            { pubkey: agent.publicKey, role: 'member' },
+            { pubkey: peerAgent.publicKey, role: 'member' },
+          ]
+        : [
+            { pubkey: human.publicKey, role: 'owner' },
+            { pubkey: agent.publicKey, role: 'member' },
+          ],
+    );
+    fixture.client.listAgents.mockResolvedValue([
+      { pubkey: agent.publicKey, displayName: 'Buzzy', raw: { id: 'agent-identity' } },
+      { pubkey: peerAgent.publicKey, displayName: 'Ox', raw: { id: 'peer-agent-identity' } },
+    ]);
+
+    const stopFirst = await transport.sessionEventsSubscribeReady(ROOM, vi.fn());
+    stopFirst();
+    const delivered: SessionEvent[] = [];
+    const stopSecond = await transport.sessionEventsSubscribeReady(OTHER_ROOM, (event) =>
+      delivered.push(event),
+    );
+    const wrongRoomAuthor = signed(peerAgent, {
+      created_at: 25,
+      kind: 9,
+      tags: [['h', OTHER_ROOM]],
+      content: 'Room A membership cannot authorize Room B.',
+    });
+    fixture.deliver(wrongRoomAuthor);
+
+    await vi.waitFor(() =>
+      expect(delivered).toContainEqual(
+        expect.objectContaining({
+          type: 'read-model',
+          event: expect.objectContaining({
+            eventId: wrongRoomAuthor.id,
+            type: 'unknown',
+            reason: 'unresolved-identity',
+          }),
+        }),
+      ),
+    );
+    expect(fixture.client.listAgents).toHaveBeenCalledTimes(2);
+    stopSecond();
   });
 
   it('queues live events that arrive during authority recovery and delivers each once in order', async () => {

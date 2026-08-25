@@ -86,6 +86,23 @@ afterEach(() => {
 });
 
 describe('relay interaction latency probe', () => {
+  it('bypasses the short-lived agent directory cache only when explicitly requested', async () => {
+    const fetchMock = vi.fn(async () => new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = createBuzzClient({
+      baseUrl: 'https://directory-cache.relay.test',
+      identity,
+    });
+
+    await client.listAgents('workspace');
+    const initialRequests = fetchMock.mock.calls.length;
+    await client.listAgents('workspace');
+    expect(fetchMock).toHaveBeenCalledTimes(initialRequests);
+
+    await client.listAgents('workspace', { forceRefresh: true });
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(initialRequests);
+  });
+
   it('records the SDK round trips on the main mobile screen paths', async () => {
     const scenarios = [
       [

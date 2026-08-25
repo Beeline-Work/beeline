@@ -207,18 +207,18 @@ export class BuzzRigTransport implements RigTransport {
     return this.getClient();
   }
 
-  private async readAuthority(channelId: string): Promise<ParseAuthority> {
+  private async readAuthority(channelId: string, forceRefresh = false): Promise<ParseAuthority> {
     const client = await this.getClient();
     const cache = sharedReadCache(client);
     let cached = cache.authorities.get(channelId);
-    if (cached && Date.now() - cached.loadedAt < 15_000) {
+    if (!forceRefresh && cached && Date.now() - cached.loadedAt < 15_000) {
       return {
         ...cached.authority,
         knownMessages: Object.fromEntries(this.knownMessages),
       };
     }
     const activeBackfill = cache.backfills.get(channelId)?.[0];
-    if (activeBackfill) {
+    if (!forceRefresh && activeBackfill) {
       await activeBackfill.promise.catch(() => undefined);
       cached = cache.authorities.get(channelId);
       if (cached && Date.now() - cached.loadedAt < 15_000) {
@@ -239,6 +239,7 @@ export class BuzzRigTransport implements RigTransport {
       workspaceId,
       members.map((member) => member.pubkey),
       Boolean(communityId),
+      forceRefresh,
     );
     const admins = members
       .filter((member) => member.role === 'owner' || member.role === 'admin')
@@ -260,24 +261,34 @@ export class BuzzRigTransport implements RigTransport {
     workspaceId: string,
     memberPubkeys: readonly string[],
     hasWorkspace: boolean,
+    forceRefresh = false,
   ): Promise<Readonly<Record<string, IdentityRecord>>> {
     const cache = sharedReadCache(client);
     const cached = cache.workspaceIdentities.get(workspaceId);
     if (
+      !forceRefresh &&
       cached &&
       Date.now() - cached.loadedAt < READ_AUTHORITY_TTL_MS &&
       memberPubkeys.every((pubkey) => cached.identities[pubkey])
     ) {
-      return cached.identities;
+      return Object.fromEntries(
+        memberPubkeys.map((pubkey) => [pubkey, cached.identities[pubkey]!]),
+      );
     }
-    const agents = hasWorkspace ? await client.listAgents(workspaceId).catch(() => []) : [];
+    const agents = !hasWorkspace
+      ? []
+      : forceRefresh
+        ? await client.listAgents(workspaceId, { forceRefresh: true })
+        : await client.listAgents(workspaceId).catch(() => []);
     const agentByPubkey = new Map(agents.map((agent) => [agent.pubkey, agent]));
     const humanPubkeys = memberPubkeys.filter((pubkey) => !agentByPubkey.has(pubkey));
     const profiles = hasWorkspace
       ? await client.listPersonProfiles(workspaceId, humanPubkeys).catch(() => [])
       : [];
     const profileByPubkey = new Map(profiles.map((profile) => [profile.pubkey, profile]));
-    const identities: Record<string, IdentityRecord> = { ...cached?.identities };
+    // Parse authority is Room-scoped. Workspace directory membership supplies
+    // names and agent kinds, but never grants a Workspace peer access to a Room.
+    const identities: Record<string, IdentityRecord> = {};
     for (const pubkey of memberPubkeys) {
       const agent = agentByPubkey.get(pubkey);
       const profile = profileByPubkey.get(pubkey);
@@ -295,22 +306,6 @@ export class BuzzRigTransport implements RigTransport {
             ...(profile?.handle ? { handle: profile.handle } : {}),
             revision: profile?.raw.id ?? `member:${pubkey}`,
           };
-    }
-    for (const agent of agents) {
-      identities[agent.pubkey] = {
-        kind: 'agent',
-        pubkey: agent.pubkey as IdentityRecord['pubkey'],
-        displayName: agent.displayName,
-        revision: agent.raw.id,
-      };
-    }
-    if (!identities[this.identity.publicKey]) {
-      identities[this.identity.publicKey] = {
-        kind: 'human',
-        pubkey: this.identity.publicKey as IdentityRecord['pubkey'],
-        ...(this.identity.name ? { displayName: this.identity.name } : {}),
-        revision: `local:${this.identity.publicKey}`,
-      };
     }
     cache.workspaceIdentities.set(workspaceId, { loadedAt: Date.now(), identities });
     return identities;
@@ -690,20 +685,64 @@ export class BuzzRigTransport implements RigTransport {
     let authority: ParseAuthority | undefined;
     const pending: NostrEvent[] = [];
     let stopped = false;
+    let flushing = false;
     let cancelScheduledFlush: (() => void) | undefined;
-    const flush = () => {
+    const authorityRefreshAttemptedAt = new Map<string, number>();
+    const flush = async () => {
       cancelScheduledFlush = undefined;
-      if (stopped || !authority || pending.length === 0) return;
+      if (stopped || flushing || !authority || pending.length === 0) return;
+      flushing = true;
       const batch = pending.splice(0);
-      for (const parsed of this.parseReadyEvents(authority, batch)) handler(parsed);
+      let parsed = this.parseReadyEvents(authority, batch);
+      const unresolvedAuthors = new Set(
+        parsed.flatMap((candidate) =>
+          candidate.type === 'read-model' &&
+          candidate.event.type === 'unknown' &&
+          candidate.event.reason === 'unresolved-identity' &&
+          candidate.event.authorPubkey &&
+          Date.now() -
+            (authorityRefreshAttemptedAt.get(candidate.event.authorPubkey) ??
+              Number.NEGATIVE_INFINITY) >=
+            READ_AUTHORITY_TTL_MS
+            ? [candidate.event.authorPubkey]
+            : [],
+        ),
+      );
+      try {
+        try {
+          if (unresolvedAuthors.size > 0) {
+            const attemptedAt = Date.now();
+            for (const pubkey of unresolvedAuthors) {
+              authorityRefreshAttemptedAt.set(pubkey, attemptedAt);
+            }
+            // A Room can gain a member after the human has already opened it.
+            // Re-read structural membership and Workspace identities only after
+            // the parser reports that exact stale-authority symptom, then reparse
+            // the intact batch. Raw tags remain parser-owned.
+            // The parser remains the authorization boundary: an unattached or
+            // out-of-Room signer is still quarantined after this refresh.
+            authority = await this.readAuthority(sessionId, true);
+            if (!stopped) parsed = this.parseReadyEvents(authority, batch);
+          }
+        } catch {
+          // Preserve the original diagnostic event. A failed authority refresh
+          // must not turn an unresolved signer into accepted conversation.
+        }
+        if (!stopped) {
+          for (const event of parsed) handler(event);
+        }
+      } finally {
+        flushing = false;
+        scheduleFlush();
+      }
     };
     const scheduleFlush = () => {
-      if (stopped || !authority || pending.length === 0 || cancelScheduledFlush) return;
+      if (stopped || flushing || !authority || pending.length === 0 || cancelScheduledFlush) return;
       if (typeof requestAnimationFrame === 'function') {
-        const frame = requestAnimationFrame(flush);
+        const frame = requestAnimationFrame(() => void flush());
         cancelScheduledFlush = () => cancelAnimationFrame(frame);
       } else {
-        const timer = setTimeout(flush, 0);
+        const timer = setTimeout(() => void flush(), 0);
         cancelScheduledFlush = () => clearTimeout(timer);
       }
     };

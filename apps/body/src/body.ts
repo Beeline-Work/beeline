@@ -3827,9 +3827,14 @@ export class Body {
       replyRootId?: string;
       extraTags?: readonly string[][];
       concise?: boolean;
+      allowAttachments?: boolean;
+      publishReply?: (event: NostrEvent) => Promise<void>;
     } = {},
   ): Promise<string> {
-    const uploaded = await this.uploadAgentOutputs(session, result);
+    const uploaded =
+      options.allowAttachments === false
+        ? { attachments: [], errors: [] }
+        : await this.uploadAgentOutputs(session, result);
     let reply = stripAttachmentDirectives(stripAgentReplyPreamble(result.agentText)).trim();
     if (!reply) reply = uploaded.attachments.length ? 'Shared an attachment.' : fallback;
     if (uploaded.errors.length)
@@ -3841,10 +3846,7 @@ export class Body {
     if (options.concise) reply = conciseCornerTurnSummary(reply) || fallback;
     if (!reply) throw new Error('agent returned an empty reply');
     if (options.replyTo) {
-      const event = await this.durableState.reserveReply(
-        channelId,
-        options.replyTo,
-        buildAgentMessage(
+      const candidate = buildAgentMessage(
           channelId,
           this.agentIdentity,
           reply,
@@ -3852,9 +3854,13 @@ export class Body {
           uploaded.attachments,
           [['request', options.replyTo], ...(options.extraTags ?? [])],
           options.replyRootId,
-        ),
       );
-      await publishEvent(event, this.agentIdentity);
+      if (options.publishReply) {
+        await options.publishReply(candidate);
+      } else {
+        const event = await this.durableState.reserveReply(channelId, options.replyTo, candidate);
+        await publishEvent(event, this.agentIdentity);
+      }
     } else {
       await postAgentMessage(
         channelId,
@@ -6138,6 +6144,7 @@ export class Body {
     boundRepo: BoundRepo | undefined,
     editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
     beforeModelActivation?: () => Promise<void>,
+    publishScheduledOutput?: (event: NostrEvent) => Promise<void>,
   ): Promise<void> {
     const queued = parseScheduledTurnReceipt(scheduled.queuedEvent);
     if (
@@ -6189,6 +6196,7 @@ export class Body {
       false,
       scheduled,
       beforeModelActivation,
+      publishScheduledOutput,
     );
   }
 
@@ -6203,6 +6211,7 @@ export class Body {
     cornerWorkIntent = explicitCornerWork,
     scheduled?: ScheduledTurnRequest,
     beforeModelActivation?: () => Promise<void>,
+    publishScheduledOutput?: (event: NostrEvent) => Promise<void>,
   ): Promise<boolean> {
     // Mark a slash-command-shaped message BEFORE anything else consumes it.
     // Beeline's composer commands and a harness's own `/verb` vocabulary share
@@ -6569,6 +6578,10 @@ export class Body {
         extraTags: agentExchange
           ? agentExchangeTags(agentExchange, 1, agentExchange.peerPubkey)
           : undefined,
+        allowAttachments: !scheduled,
+        ...(scheduled && publishScheduledOutput
+          ? { publishReply: publishScheduledOutput }
+          : {}),
       });
       if (!reply) throw new Error('agent returned an empty Room reply');
       if (!agentExchange && !scheduled) {

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { createIdentity, type Identity } from '@beeline/buzz-client';
-import type { NostrEvent } from '@beeline/nostr';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DurableWorkCalendarState,
@@ -74,7 +74,9 @@ async function calendarFixture(
     receiptEvents?: NostrEvent[];
     now?: number;
     store?: DurableWorkCalendarState;
-    authority?: ScheduleAuthorityResult | (() => Promise<ScheduleAuthorityResult>);
+    authority?:
+      | ScheduleAuthorityResult
+      | ((schedule: ParsedWorkSchedule) => Promise<ScheduleAuthorityResult>);
     publish?: (event: NostrEvent) => Promise<void>;
     dispatch?: WorkCalendarDependencies['dispatch'];
   } = {},
@@ -100,9 +102,9 @@ async function calendarFixture(
     store: durable,
     readSchedules: async () => scheduleEvents,
     readReceipts: async () => receiptEvents,
-    authorize: async () =>
+    authorize: async (candidate) =>
       typeof options.authority === 'function'
-        ? options.authority()
+        ? options.authority(candidate)
         : (options.authority ?? { authorized: true }),
     publish: options.publish ?? (async (event) => published.push(event)),
     dispatch,
@@ -533,7 +535,7 @@ describe('WorkCalendar durable execution', () => {
       revision: 1,
       runId: priorId,
       nominalAt: priorAt,
-      status: 'working',
+      status: 'complete',
       at: priorAt,
       reservedTokens: 100,
     };
@@ -623,6 +625,48 @@ describe('WorkCalendar durable execution', () => {
     expect(dispatch).not.toHaveBeenCalled();
     expect(calendar.snapshot().schedules).toBe(0);
     await calendar.dispose();
+  });
+
+  it('does not fall back across authors when the canonical author loses authority', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const first = scheduleFixture(agent, principal);
+    const second = {
+      ...first,
+      revision: 2,
+      permissionGrantEventId: 'a'.repeat(64),
+    };
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule: first,
+      scheduleEvents: [
+        buildWorkSchedule(principal, first, { createdAt: first.startsAt - 20 }),
+        buildWorkSchedule(agent, second, { createdAt: first.startsAt - 10 }),
+      ],
+      authority: async (candidate) =>
+        candidate.value.revision === 2
+          ? { authorized: false, terminal: true, reason: 'schedule-change-grant-invalid' }
+          : { authorized: true },
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    await fixture.calendar.dispose();
+  });
+
+  it('accepts an authorized delete tombstone without dispatching work', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const deleted = scheduleFixture(agent, principal, { revision: 2, status: 'deleted' });
+    const fixture = await calendarFixture({ agent, principal, schedule: deleted });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.calendar.snapshot().schedules).toBe(1);
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    await fixture.calendar.dispose();
   });
 
   it('ignores a high-revision record by an unauthorized outside author', async () => {
@@ -802,6 +846,85 @@ describe('WorkCalendar durable execution', () => {
     await fixture.calendar.dispose();
   });
 
+  it('replays a staged model output after relay failure without another model call', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const durable = await state();
+    const published: NostrEvent[] = [];
+    let rejectOutput = true;
+    const publish = async (event: NostrEvent) => {
+      if (event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message') && rejectOutput) {
+        rejectOutput = false;
+        throw new Error('relay unavailable');
+      }
+      published.push(event);
+    };
+    const modelCall = vi.fn();
+    const dispatch: WorkCalendarDependencies['dispatch'] = async (
+      request,
+      beforeModelActivation,
+      publishOutput,
+    ) => {
+      await beforeModelActivation();
+      modelCall();
+      await publishOutput(
+        signEvent(
+          {
+            pubkey: agent.publicKey,
+            created_at: schedule.startsAt,
+            kind: 9,
+            tags: [
+              ['h', request.roomId],
+              ['t', 'agent-message'],
+              ['request', request.queuedEvent.id],
+            ],
+            content: 'durable scheduled result',
+          },
+          agent.secretKey,
+        ),
+      );
+    };
+    const scheduleEvents = [
+      buildWorkSchedule(principal, schedule, { createdAt: schedule.startsAt - 1 }),
+    ];
+    const first = new WorkCalendar({
+      identity: agent,
+      workspaceId: schedule.workspaceId,
+      store: durable,
+      readSchedules: async () => scheduleEvents,
+      readReceipts: async () => published,
+      authorize: async () => ({ authorized: true }),
+      publish,
+      dispatch,
+      now: () => schedule.startsAt,
+      resyncSeconds: 3_600,
+    });
+    await first.start();
+    await first.wakeNow();
+    await first.dispose();
+    expect(modelCall).toHaveBeenCalledOnce();
+    expect(published.some((event) => event.content === 'durable scheduled result')).toBe(false);
+
+    const restarted = new WorkCalendar({
+      identity: agent,
+      workspaceId: schedule.workspaceId,
+      store: durable,
+      readSchedules: async () => scheduleEvents,
+      readReceipts: async () => published,
+      authorize: async () => ({ authorized: true }),
+      publish,
+      dispatch,
+      now: () => schedule.startsAt,
+      resyncSeconds: 3_600,
+    });
+    await restarted.start();
+    expect(published.some((event) => event.content === 'durable scheduled result')).toBe(true);
+    expect(modelCall).toHaveBeenCalledOnce();
+    await restarted.dispose();
+  });
+
   it('stays queued until the background dispatcher admits the model activation', async () => {
     vi.useFakeTimers();
     let admit!: () => void;
@@ -836,6 +959,38 @@ describe('WorkCalendar durable execution', () => {
         return parsed ? [parsed.value.status] : [];
       }),
     ).toEqual(['queued', 'working', 'complete']);
+    await fixture.calendar.dispose();
+  });
+
+  it('submits all due schedules to the dispatcher before either turn completes', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const first = scheduleFixture(agent, principal, { scheduleId: 'parallel-one' });
+    const second = scheduleFixture(agent, principal, { scheduleId: 'parallel-two' });
+    let release!: () => void;
+    const held = new Promise<void>((resolveHeld) => {
+      release = resolveHeld;
+    });
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+      await held;
+    });
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule: first,
+      scheduleEvents: [
+        buildWorkSchedule(principal, first, { createdAt: first.startsAt - 1 }),
+        buildWorkSchedule(principal, second, { createdAt: second.startsAt - 1 }),
+      ],
+      dispatch,
+    });
+    await fixture.calendar.start();
+    const wake = fixture.calendar.wakeNow();
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2));
+    release();
+    await wake;
     await fixture.calendar.dispose();
   });
 });

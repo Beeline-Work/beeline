@@ -63,6 +63,7 @@ function authorityFixture(options: { agentAuthored?: boolean; grantValid?: boole
     readCurrentEvents: async () => [parsed.event],
     readFacts: async () => facts,
     verifyScheduleGrant: async () => options.grantValid === true,
+    hasFailurePause: async () => false,
   };
   return { agent, principal, schedule, parsed, facts, dependencies };
 }
@@ -75,6 +76,13 @@ describe('daemon work schedule authority', () => {
     });
 
     const agent = authorityFixture({ agentAuthored: true, grantValid: true });
+    await expect(authorizeDaemonWorkSchedule(agent.parsed, agent.dependencies)).resolves.toEqual({
+      authorized: true,
+    });
+
+    agent.schedule.status = 'deleted';
+    agent.parsed = parsedSchedule(agent.agent, agent.schedule);
+    agent.dependencies.readCurrentEvents = async () => [agent.parsed.event];
     await expect(authorizeDaemonWorkSchedule(agent.parsed, agent.dependencies)).resolves.toEqual({
       authorized: true,
     });
@@ -164,5 +172,30 @@ describe('daemon work schedule authority', () => {
       terminal: true,
       reason: 'schedule-superseded',
     });
+  });
+
+  it('requires a human active revision after a failure pause', async () => {
+    const fixture = authorityFixture({ agentAuthored: true, grantValid: true });
+    fixture.schedule.revision = 2;
+    fixture.parsed = parsedSchedule(fixture.agent, fixture.schedule);
+    fixture.dependencies.readCurrentEvents = async () => [fixture.parsed.event];
+    fixture.dependencies.hasFailurePause = async () => true;
+    await expect(
+      authorizeDaemonWorkSchedule(fixture.parsed, fixture.dependencies),
+    ).resolves.toEqual({ authorized: false, terminal: true, reason: 'human-resume-required' });
+  });
+
+  it('treats the highest cross-author revision as canonical', async () => {
+    const fixture = authorityFixture();
+    const agentRevision = {
+      ...fixture.schedule,
+      revision: 2,
+      permissionGrantEventId: 'a'.repeat(64),
+    };
+    const newer = parsedSchedule(fixture.agent, agentRevision);
+    fixture.dependencies.readCurrentEvents = async () => [fixture.parsed.event, newer.event];
+    await expect(
+      authorizeDaemonWorkSchedule(fixture.parsed, fixture.dependencies),
+    ).resolves.toEqual({ authorized: false, terminal: true, reason: 'schedule-superseded' });
   });
 });

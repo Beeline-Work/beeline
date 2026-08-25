@@ -52,7 +52,7 @@ export interface WorkScheduleV1 {
   dailyReservedTokens: number;
   catchUp: 'skip' | 'latest-one';
   maxConsecutiveFailures: number;
-  status: 'active' | 'paused';
+  status: 'active' | 'paused' | 'deleted';
   permissionGrantEventId?: string;
 }
 
@@ -440,7 +440,7 @@ export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefin
     perRunReservedTokens > dailyReservedTokens ||
     maxConsecutiveFailures === undefined ||
     !['skip', 'latest-one'].includes(String(input.catchUp)) ||
-    !['active', 'paused'].includes(String(input.status))
+    !['active', 'paused', 'deleted'].includes(String(input.status))
   )
     return undefined;
   let artifactRefs: ArtifactRevisionRef[] | undefined;
@@ -1036,6 +1036,7 @@ export interface WorkCalendarDependencies {
   dispatch(
     request: ScheduledTurnRequest,
     beforeModelActivation: () => Promise<void>,
+    publishOutput: (event: NostrEvent) => Promise<void>,
   ): Promise<void>;
   now?: () => number;
   resyncSeconds?: number;
@@ -1066,6 +1067,7 @@ export class WorkCalendar {
   private started = false;
   private disposed = false;
   private wakeTail: Promise<void> = Promise.resolve();
+  private readonly inFlight = new Map<string, Promise<void>>();
 
   constructor(private readonly dependencies: WorkCalendarDependencies) {}
 
@@ -1101,6 +1103,7 @@ export class WorkCalendar {
 
   async wakeNow(): Promise<void> {
     await this.enqueueWake(async () => this.onWake());
+    await Promise.all([...this.inFlight.values()]);
   }
 
   async dispose(): Promise<void> {
@@ -1108,6 +1111,7 @@ export class WorkCalendar {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     await this.wakeTail.catch(() => undefined);
+    await Promise.all([...this.inFlight.values()]);
   }
 
   private secondsNow(): number {
@@ -1159,33 +1163,42 @@ export class WorkCalendar {
             candidate.event.pubkey === candidate.value.principalPubkey ||
             candidate.event.pubkey === candidate.value.agentPubkey,
         );
-      const byAuthor = new Map<string, ParsedWorkSchedule[]>();
-      for (const candidate of plausible) {
-        const authored = byAuthor.get(candidate.event.pubkey) ?? [];
-        authored.push(candidate);
-        byAuthor.set(candidate.event.pubkey, authored);
-      }
-      const authorized: ParsedWorkSchedule[] = [];
-      for (const authored of byAuthor.values()) {
-        authored.sort(
-          (left, right) =>
-            right.value.revision - left.value.revision ||
-            right.event.created_at - left.event.created_at ||
-            right.event.id.localeCompare(left.event.id),
-        );
-        const current = authored[0]!;
-        // Never fall back to an older record by the same author when their
-        // newest revision is paused, revoked, malformed, or unauthorized.
-        const authority = await this.dependencies.authorize(current);
-        if (authority.authorized) authorized.push(current);
-      }
-      authorized.sort(
+      plausible.sort(
         (left, right) =>
           right.value.revision - left.value.revision ||
           right.event.created_at - left.event.created_at ||
           right.event.id.localeCompare(left.event.id),
       );
-      if (authorized[0]) this.schedules.set(key, authorized[0]);
+      let current: ParsedWorkSchedule | undefined;
+      for (const [index, candidate] of plausible.entries()) {
+        const authority = await this.dependencies.authorize(candidate);
+        if (authority.authorized) {
+          current = candidate;
+          break;
+        }
+        if (
+          plausible.slice(index + 1).some((older) => older.event.pubkey === candidate.event.pubkey) ||
+          authority.reason === 'schedule-author-role-lost' ||
+          authority.reason === 'schedule-change-grant-invalid' ||
+          authority.reason === 'human-resume-required'
+        ) {
+          break;
+        }
+      }
+      if (!current) continue;
+      const failurePaused = plausible.some(
+        (candidate) =>
+          candidate.value.revision < current.value.revision &&
+          this.consecutiveFailures(candidate.value) >= candidate.value.maxConsecutiveFailures,
+      );
+      if (
+        failurePaused &&
+        current.value.status === 'active' &&
+        current.event.pubkey === current.value.agentPubkey
+      ) {
+        continue;
+      }
+      this.schedules.set(key, current);
     }
     this.rebuildHeap();
     this.nextResyncAt =
@@ -1302,19 +1315,29 @@ export class WorkCalendar {
   private async onWake(): Promise<void> {
     if (this.disposed) return;
     await this.flushOutbox();
-    let processed = 0;
-    while (processed < MAX_CALENDAR_DUE_PER_WAKE) {
+    let submitted = 0;
+    while (submitted < MAX_CALENDAR_DUE_PER_WAKE) {
       const entry = this.heap.peek();
       if (!entry || entry.wakeAt > this.secondsNow()) break;
       this.heap.pop();
-      processed += 1;
-      await this.process(entry);
-      this.localRuns = await this.dependencies.store.runs();
-      const current = this.schedules.get(entry.key);
-      if (current && current.value.revision === entry.parsed.value.revision) {
-        const next = this.entryFor(entry.key, current, this.secondsNow());
-        if (next) this.heap.push(next);
-      }
+      submitted += 1;
+      const key = `${entry.key}:${entry.parsed.value.revision}:${entry.nominalAt}`;
+      if (this.inFlight.has(key)) continue;
+      const run = this.process(entry)
+        .then(async () => {
+          this.localRuns = await this.dependencies.store.runs();
+          const current = this.schedules.get(entry.key);
+          if (current && current.value.revision === entry.parsed.value.revision) {
+            const next = this.entryFor(entry.key, current, this.secondsNow());
+            if (next) this.heap.push(next);
+          }
+        })
+        .catch((error) => console.error(`[work-calendar] run ${key} failed:`, error))
+        .finally(() => {
+          this.inFlight.delete(key);
+          this.armTimer();
+        });
+      this.inFlight.set(key, run);
     }
     if (this.secondsNow() >= this.nextResyncAt) {
       await this.refreshSafely();
@@ -1434,6 +1457,7 @@ export class WorkCalendar {
           if (!working) throw new Error('working-receipt-publish-failed');
           activationChecked = true;
         },
+        (event) => this.publishOutput(`reply:${schedule.scheduleId}:${runId}`, event),
       );
       if (!activationChecked) {
         throw new Error('scheduled dispatcher bypassed the activation authority check');

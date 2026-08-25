@@ -7,7 +7,8 @@
   "types": "./dist/index.d.ts",
   "bin": {
     "beeline": "./dist/cli.js",
-    "buzz-readonly-mcp": "./dist/read-only-mcp.js"
+    "buzz-readonly-mcp": "./dist/read-only-mcp.js",
+    "beeline-squire-proxy": "./dist/squire-mcp-proxy.js"
   },
   "exports": {
     ".": {

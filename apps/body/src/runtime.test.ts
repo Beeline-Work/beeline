@@ -551,7 +551,7 @@ describe('multi-identity guard (S0) + access policy', () => {
       accessPolicy?: 'everyone' | 'creator' | 'allowlist';
       accessAllowlist?: string[];
       accessAutoResponse?: string;
-      externalMcpCapabilities?: ['squire'];
+      externalMcpCapabilities?: ['squire-credential-use'];
     } = {},
   ) {
     return pairRepositoryAgent(
@@ -684,10 +684,10 @@ describe('multi-identity guard (S0) + access policy', () => {
     const supervisorRoot = await stateRoot();
     const result = await pairAgent(root, supervisorRoot, newIdentity('agent'), {
       accessPolicy: 'creator',
-      externalMcpCapabilities: ['squire'],
+      externalMcpCapabilities: ['squire-credential-use'],
     });
     const stored = await readRuntimeRecord(result.configPath);
-    expect(stored.externalMcpCapabilities).toEqual(['squire']);
+    expect(stored.externalMcpCapabilities).toEqual(['squire-credential-use']);
     // The grant is only a profile name. Command details and provider auth are
     // resolved at session start and never copied into the runtime record.
     expect(Object.keys(stored)).not.toContain('externalMcpServers');
@@ -699,7 +699,7 @@ describe('multi-identity guard (S0) + access policy', () => {
     await expect(
       pairAgent(root, supervisorRoot, newIdentity('agent'), {
         accessPolicy: 'everyone',
-        externalMcpCapabilities: ['squire'],
+        externalMcpCapabilities: ['squire-credential-use'],
       }),
     ).rejects.toThrow('external MCP capabilities require creator access');
   });

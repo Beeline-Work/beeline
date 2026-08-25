@@ -127,6 +127,7 @@ export function parseTomlTableHeader(line: string): string[] | undefined {
 export function extractTomlSections(
   source: string,
   prefixPath: readonly string[],
+  excludedChildren: readonly string[] = [],
 ): string | undefined {
   const lines = source.split(/\r?\n/);
   const collected: string[] = [];
@@ -146,7 +147,8 @@ export function extractTomlSections(
     if (header) {
       inMatchedTable =
         header.length >= prefixPath.length &&
-        prefixPath.every((segment, index) => header[index] === segment);
+        prefixPath.every((segment, index) => header[index] === segment) &&
+        !excludedChildren.includes(header[prefixPath.length] ?? '');
       if (inMatchedTable) {
         if (collected.length > 0) collected.push('');
         collected.push(rawLine.trimEnd());
@@ -170,4 +172,27 @@ export function extractTomlSections(
 
   while (collected.length > 0 && collected[collected.length - 1] === '') collected.pop();
   return collected.length > 0 ? `${collected.join('\n')}\n` : undefined;
+}
+
+export function tomlChildTableNames(source: string, prefixPath: readonly string[]): string[] {
+  const names = new Set<string>();
+  const openString: { kind: 'basic' | 'literal' | null } = { kind: null };
+  let continuationDepth = 0;
+  for (const line of source.split(/\r?\n/)) {
+    const scanned = scanLine(line, openString);
+    if (continuationDepth > 0) {
+      continuationDepth += scanned.depthDelta;
+      continue;
+    }
+    continuationDepth = Math.max(0, scanned.depthDelta);
+    const header = parseTomlTableHeader(scanned.code);
+    if (
+      header &&
+      header.length > prefixPath.length &&
+      prefixPath.every((segment, index) => header[index] === segment)
+    ) {
+      names.add(header[prefixPath.length]!);
+    }
+  }
+  return [...names];
 }

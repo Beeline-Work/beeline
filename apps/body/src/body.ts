@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, readFile, realpath, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import {
@@ -26,6 +27,7 @@ import {
   type AcpPermissionRequest,
   type McpServerWire,
   type PromptResult,
+  type SessionUpdate,
 } from './acp.js';
 import {
   projectActivity,
@@ -185,6 +187,9 @@ import {
   verifyPermissionAction,
   type PermissionConcreteAction,
   type PermissionFreshReader,
+  type PermissionRequestV1,
+  type ParsedPermissionDecision,
+  type ParsedPermissionRequest,
   DEFAULT_RELAY_BASE_URL,
   isProductionRelayHost,
 } from '@beeline/buzz-client';
@@ -211,7 +216,7 @@ import {
   dispatchRootFactoryDirectives,
   type RootFactoryRosterEntry,
 } from './delegation-runtime.js';
-import { PermissionRuntime } from './permission-runtime.js';
+import { PermissionRuntime, type PermissionExecutionHandle } from './permission-runtime.js';
 import {
   CONCLUDE_PROMPT,
   CONCLUDE_TURN_FALLBACK,
@@ -244,7 +249,12 @@ import {
   parseScheduledTurnReceipt,
   type ScheduledTurnRequest,
 } from './work-calendar.js';
-import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import {
+  harnessStateDirsFromEnv,
+  hasAmbientTrustySquireConfiguration,
+  hasLocalTrustySquireState,
+  prepareRoomAgentHome,
+} from './agent-home.js';
 import { prepareGitReadTokenHelper, resolveBeelineCliEntrypoint } from './corner-read-token.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
 import {
@@ -302,10 +312,17 @@ import { cornerToolchainNotice, ensureCornerToolchainProvisioned } from './corne
 import {
   authorizedExternalMcpServers,
   externalMcpPermissionPolicy,
-  externalMcpToolName,
+  governedSquireCall,
   isExternalMcpPermissionRequest,
+  squireToolsForCapabilities,
 } from './external-mcp-capabilities.js';
 import { operatorMcpServersForCorners } from './operator-mcp.js';
+import { SquireHostBroker } from './squire-host-broker.js';
+import {
+  hasUnmaskableTrustySquireIpc,
+  trustySquireIsolationPaths,
+  trustySquireStorePath,
+} from './trusty-squire-storage.js';
 import {
   applyAgentModelSelection,
   filterAllowedModelConfigOptions,
@@ -423,6 +440,8 @@ export interface AgentSession {
   unsubscribeActivity?: () => void;
   /** Unsubscribe from harness command-list capture (relay republish). */
   unsubscribeCommands?: () => void;
+  /** Unsubscribe from P1-governed external-tool completion capture. */
+  unsubscribeGovernedTools?: () => void;
   /** Corner-only plan boundary layered onto the activity projection. */
   activityProjection?: ActivityProjectionController;
   /** Task-authored opening plan to publish when a lazily suspended session activates. */
@@ -1210,8 +1229,6 @@ interface PendingRoomTurn {
   readOnlyDenialNoted?: boolean;
   /** One target-branch proposal card per turn, however often the agent asks. */
   targetBranchProposed?: boolean;
-  /** One owner confirmation ceremony for a spending-capable Squire call. */
-  squireSpendingHandled?: boolean;
   /** Exact target written in this turn; absent stays fail-closed. */
   namedRepositoryTarget?: NamedRepositoryTarget;
   /** The human-authorized schedule is the mandate for this occurrence. */
@@ -1224,6 +1241,19 @@ interface PendingRoomTurn {
     | 'principalPubkey'
     | 'reservedTokens'
   >;
+}
+
+interface ActivePermissionTurn {
+  requestId: string;
+  originalRequestId?: string;
+  rootEventId?: string;
+  delegationId?: string;
+}
+
+interface PendingGovernedToolExecution {
+  execution: PermissionExecutionHandle;
+  brokerAuthorizationId?: string;
+  completion?: Promise<void>;
 }
 
 export const AGENT_EXCHANGE_TAG = 'buzz-agent-exchange';
@@ -2164,6 +2194,16 @@ export class Body {
   private agentRelay: RelayClient;
   private mergeWorkerRelay?: RelayClient;
   private pendingRoomTurns = new Map<string, PendingRoomTurn>();
+  /** Provenance exists only while one prompt is actually driving its ACP session. */
+  private activePermissionTurns = new Map<string, ActivePermissionTurn>();
+  /** Coalesce duplicate permission callbacks for one exact physical tool call. */
+  private governedToolRequests = new Map<string, Promise<AcpPermissionDecision>>();
+  /** Started P1 actions awaiting the harness's terminal tool update. */
+  private governedToolExecutions = new Map<string, PendingGovernedToolExecution>();
+  private squireBroker?: SquireHostBroker;
+  private permissionReceiptDrain: Promise<void> = Promise.resolve();
+  private permissionReceiptRetry?: ReturnType<typeof setTimeout>;
+  private publishPermissionReceipt: (event: NostrEvent) => Promise<void>;
   /** Live authenticated Room sockets, retained only for teardown and recovery. */
   private roomSockets = new Map<string, ReturnType<typeof createBuzzClient>>();
   /**
@@ -2265,16 +2305,27 @@ export class Body {
       onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
       onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
       relaySocket?: SharedRelaySocket;
+      publishPermissionReceipt?: (event: NostrEvent) => Promise<void>;
       /** Test/embedding seam for the hidden metadata-only model turn. */
       generateCornerMetadata?: (prompt: string) => Promise<string>;
     } = {},
   ) {
     this.config = config;
+    if (config.accessPolicy === 'creator' && config.externalMcpCapabilities?.length) {
+      if (config.squireConfigRoot) {
+        this.squireBroker = new SquireHostBroker(config.squireConfigRoot);
+      }
+    }
     this.bodyIdentity = bodyIdentity ?? newIdentity(DEFAULT_BODY_IDENTITY_NAME);
     this.agentIdentity = agentIdentity ?? newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
     this.mergeWorkerIdentity = mergeWorkerIdentity;
     const relayConfig = { baseUrl: config.relayBaseUrl, host: config.relayHost };
     this.agentRelay = createRelayClient(this.agentIdentity, relayConfig);
+    this.publishPermissionReceipt =
+      services.publishPermissionReceipt ??
+      (async (event) => {
+        await publishEvent(event, this.agentIdentity);
+      });
     this.mergeWorkerRelay = mergeWorkerIdentity
       ? createRelayClient(mergeWorkerIdentity, relayConfig)
       : undefined;
@@ -2331,9 +2382,13 @@ export class Body {
       publish: async (event) => {
         await publishEvent(event, this.agentIdentity);
       },
+      publishTerminalReceipt: (event) => this.publishTerminalPermissionReceipt(event),
       claim: (key) => this.durableState.claimPermissionAction(key),
       reserveCapacity: (input) => this.durableState.reservePermissionCapacity(input),
     });
+    void this.drainPermissionReceiptOutbox().catch((error) =>
+      console.error('[body] governed permission receipt restart drain failed:', error),
+    );
     this.delegationRuntime = new DelegationRuntime({
       identity: this.agentIdentity,
       reader: {
@@ -2504,13 +2559,93 @@ export class Body {
    * every child activation: the env paths are stable, while copied MCP config
    * must reflect operator edits on the next session start.
    */
+  private squireBoundaryRequired(): boolean {
+    const env = { ...process.env, ...this.config.agentEnv };
+    return Boolean(
+      Boolean(this.config.externalMcpCapabilities?.length) ||
+      (this.config.squireConfigRoot &&
+        existsSync(trustySquireStorePath(this.config.squireConfigRoot))) ||
+      hasLocalTrustySquireState(this.config.operatorHome, env) ||
+      hasAmbientTrustySquireConfiguration(this.config.operatorHome),
+    );
+  }
+
+  private sandboxCredentialMaskPaths(): ReturnType<typeof credentialMaskPaths> {
+    const operatorHome = this.config.operatorHome ?? homedir();
+    const squirePaths = this.config.squireConfigRoot
+      ? trustySquireIsolationPaths({
+          configRoot: this.config.squireConfigRoot,
+          operatorHome,
+          env: { ...process.env, ...this.config.agentEnv },
+        })
+      : [];
+    return credentialMaskPaths(
+      [...(this.config.sandboxMaskPaths ?? []), ...squirePaths],
+      operatorHome,
+      undefined,
+      squirePaths,
+    );
+  }
+
   private sessionAgentEnv(): Promise<Record<string, string>> {
     const root = this.config.agentHomeRoot;
+    const squireBoundaryRequired = this.squireBoundaryRequired();
+    if (squireBoundaryRequired) {
+      if (this.config.agentKind !== 'codex' && this.config.agentKind !== 'claude') {
+        return Promise.reject(
+          new Error(
+            'Trusty Squire requires a Codex or Claude harness with an interceptable P1 boundary',
+          ),
+        );
+      }
+      if (!root) {
+        return Promise.reject(
+          new Error(
+            'Trusty Squire requires an isolated agent home; ambient harness state is refused',
+          ),
+        );
+      }
+      if (!this.config.bwrapPath) {
+        return Promise.reject(
+          new Error('Trusty Squire requires an active bubblewrap credential-mask boundary'),
+        );
+      }
+      if (!this.config.squireConfigRoot) {
+        return Promise.reject(new Error('Trusty Squire host-only storage is not configured'));
+      }
+      const isolationInput = {
+        configRoot: this.config.squireConfigRoot,
+        operatorHome: this.config.operatorHome ?? homedir(),
+        env: { ...process.env, ...this.config.agentEnv },
+      };
+      if (hasUnmaskableTrustySquireIpc(isolationInput.env)) {
+        return Promise.reject(new Error('Trusty Squire session IPC cannot be masked safely'));
+      }
+      const requiredPaths = trustySquireIsolationPaths(isolationInput);
+      const store = trustySquireStorePath(this.config.squireConfigRoot);
+      const masked = new Set(this.sandboxCredentialMaskPaths().map((mask) => mask.path));
+      if (!existsSync(store) || requiredPaths.some((path) => !masked.has(path))) {
+        return Promise.reject(
+          new Error(
+            'Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox',
+          ),
+        );
+      }
+    }
     if (!root) return Promise.resolve(this.config.agentEnv);
-    return prepareRoomAgentHome({ root }).then((overlay) => ({
-      ...this.config.agentEnv,
-      ...overlay,
-    }));
+    return prepareRoomAgentHome({
+      root,
+      failClosed: Boolean(squireBoundaryRequired),
+      ...(this.config.operatorHome ? { operatorHome: this.config.operatorHome } : {}),
+    }).then((overlay) => {
+      const env = { ...this.config.agentEnv, ...overlay };
+      if (squireBoundaryRequired) {
+        delete env.DBUS_SESSION_BUS_ADDRESS;
+        delete env.DBUS_STARTER_ADDRESS;
+        delete env.DBUS_STARTER_BUS_TYPE;
+      }
+      return env;
+    });
   }
 
   /**
@@ -2695,12 +2830,18 @@ export class Body {
   ): Promise<{ command: string; args: string[] }> {
     const command = this.config.agentCommand ?? this.config.agentBinary;
     const args = this.config.agentArgs;
-    if (!this.config.bwrapPath) return { command, args: [...(args ?? [])] };
+    if (!this.config.bwrapPath) {
+      if (this.squireBoundaryRequired()) {
+        throw new Error('Trusty Squire activation refused without bubblewrap isolation');
+      }
+      return { command, args: [...(args ?? [])] };
+    }
     const { stateDirs, tmpDir } = harnessStateDirsFromEnv(env);
     // Bind-try tolerates an absent state root, but the harness itself cannot
     // create one on a read-only $HOME — so create the roots we know about here,
     // in the daemon, before the child is confined.
-    const homeStateDirs = harnessHomeStateDirs(command);
+    const operatorHome = this.config.operatorHome ?? homedir();
+    const homeStateDirs = harnessHomeStateDirs(command, operatorHome);
     for (const dir of homeStateDirs) {
       try {
         mkdirSync(dir, { recursive: true });
@@ -2715,7 +2856,7 @@ export class Body {
       harnessHomeStateDirs: homeStateDirs,
       // Credential masks (built-in known stores + owner-configured extras) in
       // BOTH modes: a session that can read a credential can use it out-of-band.
-      maskPaths: credentialMaskPaths(this.config.sandboxMaskPaths),
+      maskPaths: this.sandboxCredentialMaskPaths(),
       ...(tmpDir ? { tmpDir } : {}),
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
       ...(input.protectedPaths ? { protectedPaths: input.protectedPaths } : {}),
@@ -2735,6 +2876,9 @@ export class Body {
     if (input.mode === 'edit') {
       const gitCommonDir = await resolveGitCommonDir(input.worktreePath ?? input.cwd);
       if (!gitCommonDir) {
+        if (this.squireBoundaryRequired()) {
+          throw new Error('Trusty Squire activation refused because sandbox mounts are incomplete');
+        }
         console.warn(
           `[body] OS sandbox skipped for edit session ${input.channelIdForLog ?? input.cwd}: git common directory unresolved`,
         );
@@ -2877,6 +3021,48 @@ export class Body {
     } finally {
       if (client.isAlive) await client.stop();
     }
+  }
+
+  private async authorizedExternalServers(channelId: string): Promise<McpServerWire[]> {
+    const capabilities = this.config.externalMcpCapabilities ?? [];
+    const broker = this.squireBroker
+      ? await this.squireBroker.mcpServer(channelId, squireToolsForCapabilities(capabilities))
+      : undefined;
+    return authorizedExternalMcpServers(this.config.accessPolicy, capabilities, broker);
+  }
+
+  private async stopManagedSession(session: AgentSession): Promise<void> {
+    const failures: unknown[] = [];
+    await this.finalizeGovernedToolsForSession(session.sessionId).catch((error) =>
+      failures.push(error),
+    );
+    this.squireBroker?.revokeAuthorizations(session.channelId);
+    const unsubscribeGovernedTools = session.unsubscribeGovernedTools;
+    session.unsubscribeGovernedTools = undefined;
+    try {
+      unsubscribeGovernedTools?.();
+    } catch (error) {
+      failures.push(error);
+    }
+    const unsubscribeActivity = session.unsubscribeActivity;
+    session.unsubscribeActivity = undefined;
+    try {
+      unsubscribeActivity?.();
+    } catch (error) {
+      failures.push(error);
+    }
+    const unsubscribeCommands = session.unsubscribeCommands;
+    session.unsubscribeCommands = undefined;
+    try {
+      unsubscribeCommands?.();
+    } catch (error) {
+      failures.push(error);
+    }
+    session.activityProjection = undefined;
+    if (session.client.isAlive) {
+      await session.client.stop().catch((error) => failures.push(error));
+    }
+    if (failures.length) throw failures[0];
   }
 
   private async createManagedSession(input: {
@@ -3119,6 +3305,8 @@ export class Body {
           mode: input.mode,
         });
         session.sessionId = created.sessionId;
+        session.unsubscribeGovernedTools?.();
+        session.unsubscribeGovernedTools = this.attachGovernedToolCompletion(client);
         session.activationCount = (session.activationCount ?? 0) + 1;
         await this.durableState
           .recordSessionReprime({
@@ -3165,12 +3353,7 @@ export class Body {
       suspend: async () => {
         const plan = session.activityProjection?.currentPlan();
         if (plan) session.resumePlan = plan;
-        session.unsubscribeActivity?.();
-        session.unsubscribeActivity = undefined;
-        session.unsubscribeCommands?.();
-        session.unsubscribeCommands = undefined;
-        session.activityProjection = undefined;
-        if (client.isAlive) await client.stop();
+        await this.stopManagedSession(session);
       },
       ...(input.parentChannelId
         ? {
@@ -3506,6 +3689,12 @@ export class Body {
     // Baseline for the "a fresh message arrived" check below. Sampled when the
     // prompt actually starts, not when this method is entered.
     let stallBaselineSeq = 0;
+    const permissionTurn: ActivePermissionTurn = {
+      requestId: turn.requestId,
+      ...(turn.originalRequestId ? { originalRequestId: turn.originalRequestId } : {}),
+      ...(turn.rootEventId ? { rootEventId: turn.rootEventId } : {}),
+      ...(turn.delegationId ? { delegationId: turn.delegationId } : {}),
+    };
     const clearStallTimer = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = undefined;
@@ -3563,6 +3752,7 @@ export class Body {
             // transcript directly under the message that is still waiting its turn.
             stallBaselineSeq = this.inboundMessageSeq.get(turn.channelId) ?? 0;
             armStallTimer();
+            this.activePermissionTurns.set(turn.channelId, permissionTurn);
             modelCallStartedAt = new Date().toISOString();
             const publishMessageDraft = (fullText: string) => {
               const visible = cornerRequestFilter
@@ -3699,6 +3889,9 @@ export class Body {
       throw error;
     } finally {
       clearStallTimer();
+      if (this.activePermissionTurns.get(turn.channelId) === permissionTurn) {
+        this.activePermissionTurns.delete(turn.channelId);
+      }
       await Promise.all([draft?.finish(), thought?.finish()]);
     }
     return {
@@ -4066,12 +4259,7 @@ export class Body {
           ];
           const restoredCodegraphServer = codegraphMcpServer(this.config);
           if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
-          restoredMcpServers.push(
-            ...authorizedExternalMcpServers(
-              this.config.accessPolicy,
-              this.config.externalMcpCapabilities,
-            ),
-          );
+          restoredMcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
           const session = await this.createManagedSession({
             channelId: subchannelId,
             mode: 'edit',
@@ -4092,6 +4280,7 @@ export class Body {
               worktreePath,
               cornerFilesystem.protectedPaths,
               cornerFilesystem.writablePaths,
+              subchannelId,
             ),
             parentChannelId,
             worktreePath,
@@ -4343,10 +4532,7 @@ export class Body {
     // plus explicit creator-only account capabilities. Operator config is never inherited.
     const roomMcpServers = [
       readonlyServer,
-      ...authorizedExternalMcpServers(
-        this.config.accessPolicy,
-        this.config.externalMcpCapabilities,
-      ),
+      ...(await this.authorizedExternalServers(tlcChannelId)),
     ];
     let session: AgentSession;
     try {
@@ -4579,12 +4765,7 @@ export class Body {
         env: [],
       },
     ];
-    mcpServers.push(
-      ...authorizedExternalMcpServers(
-        this.config.accessPolicy,
-        this.config.externalMcpCapabilities,
-      ),
-    );
+    mcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
     // Operator-authored tool servers (`operator-mcp.json`), same `creator`
     // authorization shape as the capability profiles above. pi ignores this
     // wire field entirely (it loads the operator's own global extensions), so
@@ -4629,6 +4810,7 @@ export class Body {
         worktreePath,
         cornerFilesystem.protectedPaths,
         cornerFilesystem.writablePaths,
+        subchannelId,
       ),
       parentChannelId: tlcChannelId,
       worktreePath,
@@ -6807,8 +6989,8 @@ export class Body {
     ) {
       const policy = externalMcpPermissionPolicy(permission, this.config.externalMcpCapabilities);
       if (policy === 'allow') return 'allow';
-      if (policy === 'owner-confirm') {
-        return this.handleSquireOwnerConfirmation(tlcChannelId, permission);
+      if (policy === 'factory-permission') {
+        return this.handleGovernedSquirePermission(tlcChannelId, permission);
       }
       return 'reject';
     }
@@ -7041,59 +7223,375 @@ export class Body {
     return (title || kind || 'edit files').replace(/\s+/g, ' ').slice(0, 120);
   }
 
+  private governedToolKey(permission: AcpPermissionRequest): string | undefined {
+    const sessionId = permission.sessionId;
+    const toolCallId = permission.toolCall?.toolCallId;
+    return sessionId && toolCallId ? `${sessionId}\0${toolCallId}` : undefined;
+  }
+
+  /** Current owner authority for the first-decision-wins P1 fold. */
+  private async isCurrentPermissionOwner(
+    request: ParsedPermissionRequest,
+    decision: ParsedPermissionDecision,
+  ): Promise<boolean> {
+    const signer = decision.event.pubkey;
+    return (
+      !(await this.permissionReader.isRegisteredAgent(signer)) &&
+      (await this.permissionReader.hasDeviceCustody(signer)) &&
+      (await this.permissionReader.isRoomMember(request.value.roomId, signer)) &&
+      (await this.permissionReader.isWorkspaceMember(request.value.workspaceId, signer)) &&
+      (await this.permissionReader.roleForRoom(request.value.roomId, signer)) === 'owner'
+    );
+  }
+
+  /** Resolve only the first currently-authorized signed P1 decision. */
+  private async firstGovernedSquireDecision(
+    request: ParsedPermissionRequest,
+    events: readonly NostrEvent[],
+  ): Promise<ParsedPermissionDecision | undefined> {
+    const now = Math.floor(Date.now() / 1_000);
+    const candidates = events
+      .flatMap((event) => {
+        const decision = parsePermissionDecision(event, request);
+        return decision && decision.value.decidedAt <= now ? [decision] : [];
+      })
+      .sort(
+        (left, right) =>
+          left.event.created_at - right.event.created_at ||
+          left.event.id.localeCompare(right.event.id),
+      );
+    for (const decision of candidates) {
+      if (await this.isCurrentPermissionOwner(request, decision)) return decision;
+    }
+    return undefined;
+  }
+
   /**
-   * Spending-capable Trusty Squire calls pause on the existing human decision
-   * channel, but only the Room owner may satisfy them. Credentials and browser
-   * state remain in Squire's own process/vault; the Room sees only the verb.
+   * WS-primary wait for the signed factory-permission decision. The low-rate
+   * HTTP pass is the correctness backstop and re-reads current authority on
+   * every candidate; an unavailable authority fails closed.
    */
-  private async handleSquireOwnerConfirmation(
-    tlcChannelId: string,
+  private async waitForGovernedSquireDecision(
+    request: ParsedPermissionRequest,
+  ): Promise<ParsedPermissionDecision | undefined> {
+    const deadline = request.value.requestExpiresAt * 1_000;
+    const startedAt = request.value.requestedAt - 1;
+    const channelId = request.value.roomId;
+
+    return new Promise<ParsedPermissionDecision | undefined>((resolvePromise, rejectPromise) => {
+      let settled = false;
+      let backstopRunning = false;
+      let unsubscribe: (() => void) | undefined;
+      const finish = (decision?: ParsedPermissionDecision) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearInterval(backstop);
+        unsubscribe?.();
+        resolvePromise(decision);
+      };
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearInterval(backstop);
+        unsubscribe?.();
+        rejectPromise(error);
+      };
+      const inspect = async (events: readonly NostrEvent[]) => {
+        const decision = await this.firstGovernedSquireDecision(request, events);
+        if (decision) finish(decision);
+      };
+      const pollOnce = async () => {
+        if (settled || backstopRunning) return;
+        backstopRunning = true;
+        try {
+          await inspect(
+            await this.permissionReader.permissionHistory(
+              request.value.roomId,
+              request.value.permissionId,
+            ),
+          );
+        } catch (error) {
+          if (!isTransientPermissionPollError(error)) fail(error);
+        } finally {
+          backstopRunning = false;
+        }
+      };
+
+      const timer = setTimeout(() => finish(), Math.max(0, deadline - Date.now()));
+      const backstop = setInterval(() => void pollOnce(), WRITE_PERMISSION_BACKSTOP_POLL_MS);
+      backstop.unref?.();
+      void pollOnce();
+
+      const socketChannelId = this.sessions.get(channelId)?.parentChannelId ?? channelId;
+      const socket = this.roomSockets.get(socketChannelId)?.socket;
+      if (socket?.connected) {
+        try {
+          unsubscribe = socket.subscribe(
+            [
+              {
+                kinds: [9],
+                '#h': [channelId],
+                '#t': [TAG_PERMISSION_DECISION],
+                '#permission': [request.value.permissionId],
+                since: startedAt,
+              },
+            ],
+            () => void pollOnce(),
+          );
+        } catch {
+          unsubscribe = undefined;
+        }
+      }
+    });
+  }
+
+  private async governedSquirePermission(
+    channelId: string,
     permission: AcpPermissionRequest,
   ): Promise<AcpPermissionDecision> {
-    const turn = this.pendingRoomTurns.get(tlcChannelId);
-    if (!turn || turn.squireSpendingHandled) return 'reject';
-    turn.squireSpendingHandled = true;
-    const permissionId = randomUUID();
-    const repository = 'external:squire';
-    const toolName = externalMcpToolName(permission) ?? this.permissionToolLabel(permission);
-    const tool = `Trusty Squire ${toolName}`.slice(0, 120);
-    const tags = [
-      ['t', WRITE_PERMISSION_REQUEST_TAG],
-      ['permission', permissionId],
-      ['request', turn.request.eventId],
-      ['requester', turn.request.authorPubkey],
-      ['agent', this.agentIdentity.publicKey],
-      ['p', this.agentIdentity.publicKey],
-      ['tool', tool],
-      ['repo', repository],
-      ['purpose', 'squire-spending'],
-    ];
-    await postControlMessage(
-      tlcChannelId,
-      this.agentIdentity,
-      `${this.agentIdentity.name || 'Agent'} requests owner confirmation for the spending-capable Squire action “${toolName}”.`,
-      [...tags, ['status', 'pending']],
+    const call = governedSquireCall(permission);
+    const key = this.governedToolKey(permission);
+    const session = this.sessions.get(channelId);
+    const turn = this.activePermissionTurns.get(channelId);
+    if (
+      !call ||
+      !key ||
+      !session ||
+      permission.sessionId !== session.sessionId ||
+      !turn ||
+      this.governedToolExecutions.has(key)
+    ) {
+      return 'reject';
+    }
+
+    const immediateTurnEventId = turn.requestId;
+    const rootEventId = turn.rootEventId ?? turn.originalRequestId ?? immediateTurnEventId;
+    if (!/^[0-9a-f]{64}$/.test(immediateTurnEventId) || !/^[0-9a-f]{64}$/.test(rootEventId)) {
+      return 'reject';
+    }
+    const workspaceId = await this.channelCommunityId(channelId);
+    if (!workspaceId) return 'reject';
+
+    const members = await listMembers(this.agentClientContext(), channelId);
+    const ownerCandidates = members.filter((member) => member.role === 'owner');
+    const ownerChecks = await Promise.all(
+      ownerCandidates.map(async (member) => ({
+        pubkey: member.pubkey,
+        authorized:
+          !(await this.permissionReader.isRegisteredAgent(member.pubkey)) &&
+          (await this.permissionReader.hasDeviceCustody(member.pubkey)) &&
+          (await this.permissionReader.isWorkspaceMember(workspaceId, member.pubkey)),
+      })),
     );
-    const decision = await this.waitForWritePermissionDecision(
-      tlcChannelId,
-      permissionId,
-      turn.request.eventId,
-      repository,
-      10 * 60_000,
-      { ownerOnly: true },
+    const eligibleOwners = ownerChecks
+      .filter((candidate) => candidate.authorized)
+      .map((candidate) => candidate.pubkey);
+    if (eligibleOwners.length === 0) return 'reject';
+
+    const now = Math.floor(Date.now() / 1_000);
+    const requestValue: PermissionRequestV1 = {
+      version: 1,
+      permissionId: randomUUID(),
+      roomId: channelId,
+      workspaceId,
+      requesterAgentPubkey: this.agentIdentity.publicKey,
+      audience: 'owner',
+      summary: `Trusty Squire requests ${call.tool}: ${call.scope.target}`,
+      scope: call.scope,
+      provenance: {
+        immediateTurnEventId,
+        rootEventId,
+        ...(turn.delegationId ? { delegationId: turn.delegationId } : {}),
+      },
+      requestedAt: now,
+      requestExpiresAt: now + 10 * 60,
+    };
+    const requestEvent = await this.permissionRuntime.publishRequest(requestValue, eligibleOwners);
+    const parsedRequest = parsePermissionRequest(requestEvent);
+    if (!parsedRequest) return 'reject';
+    const decision = await this.waitForGovernedSquireDecision(parsedRequest);
+    if (!decision || decision.value.decision !== 'grant') return 'reject';
+
+    const actionId = permissionActionId(call.scope, parsedRequest.event.id, 0);
+    const action: PermissionConcreteAction = {
+      permissionId: requestValue.permissionId,
+      requestEventId: parsedRequest.event.id,
+      grantEventId: decision.event.id,
+      ordinal: 0,
+      actionId,
+      idempotencyKey: `squire:${requestValue.permissionId}:${call.scope.argumentsDigest.slice(0, 32)}`,
+      workspaceId,
+      roomId: channelId,
+      scope: call.scope,
+      executor: 'ops-broker',
+      executorPubkey: this.agentIdentity.publicKey,
+      charge: { uses: 1 },
+    };
+    const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
+    if (begun.status !== 'started') return 'reject';
+    const brokerAuthorizationId = this.squireBroker?.authorize(
+      channelId,
+      call.tool,
+      call.scope.argumentsDigest,
+      () => this.permissionRuntime.reverify(begun.execution),
     );
-    const status = decision === 'allow' ? 'allowed' : decision === 'deny' ? 'denied' : 'expired';
-    await postControlMessage(
-      tlcChannelId,
-      this.agentIdentity,
-      decision === 'allow'
-        ? `The Room owner confirmed ${toolName}; Squire may continue inside its vault-backed process.`
-        : decision === 'deny'
-          ? `The Room owner denied ${toolName}; Squire did not perform it.`
-          : `Owner confirmation for ${toolName} expired; Squire did not perform it.`,
-      [...tags, ['status', status]],
-    );
-    return decision === 'allow' ? 'allow' : 'reject';
+    if (!brokerAuthorizationId) {
+      await this.permissionRuntime.complete({
+        execution: begun.execution,
+        status: 'failed',
+        result: 'squire:broker-authorization-unavailable',
+      });
+      return 'reject';
+    }
+    this.governedToolExecutions.set(key, { execution: begun.execution, brokerAuthorizationId });
+    return 'allow';
+  }
+
+  /** One coalesced P1 ceremony for each ACP tool-call id. */
+  private async handleGovernedSquirePermission(
+    channelId: string,
+    permission: AcpPermissionRequest,
+  ): Promise<AcpPermissionDecision> {
+    const key = this.governedToolKey(permission);
+    if (!key) return 'reject';
+    const existing = this.governedToolRequests.get(key);
+    if (existing) return existing;
+    const request = this.governedSquirePermission(channelId, permission)
+      .catch((error) => {
+        console.error('[body] governed Trusty Squire permission failed:', error);
+        return 'reject' as const;
+      })
+      .finally(() => this.governedToolRequests.delete(key));
+    this.governedToolRequests.set(key, request);
+    return request;
+  }
+
+  private serializePermissionReceipt(work: () => Promise<void>): Promise<void> {
+    const result = this.permissionReceiptDrain.then(work, work);
+    this.permissionReceiptDrain = result.catch(() => undefined);
+    return result;
+  }
+
+  private async publishTerminalPermissionReceipt(event: NostrEvent): Promise<void> {
+    await this.serializePermissionReceipt(async () => {
+      const reserved = await this.durableState.reservePermissionReceipt(event);
+      if (reserved.state === 'delivered') return;
+      try {
+        await this.publishPermissionReceipt(reserved.event);
+        await this.durableState.markPermissionReceiptDelivered(reserved.event.id);
+      } catch (error) {
+        console.error('[body] governed permission receipt queued for retry:', error);
+        this.schedulePermissionReceiptDrain();
+      }
+    });
+  }
+
+  private drainPermissionReceiptOutbox(): Promise<void> {
+    return this.serializePermissionReceipt(async () => {
+      const pending = await this.durableState.pendingPermissionReceipts();
+      for (const event of pending) {
+        try {
+          await this.publishPermissionReceipt(event);
+          await this.durableState.markPermissionReceiptDelivered(event.id);
+        } catch (error) {
+          console.error('[body] governed permission receipt retry failed:', error);
+          this.schedulePermissionReceiptDrain();
+          return;
+        }
+      }
+    });
+  }
+
+  private schedulePermissionReceiptDrain(): void {
+    if (this.disposed || this.permissionReceiptRetry) return;
+    this.permissionReceiptRetry = setTimeout(() => {
+      this.permissionReceiptRetry = undefined;
+      void this.drainPermissionReceiptOutbox().catch((error) =>
+        console.error('[body] governed permission receipt retry could not load state:', error),
+      );
+    }, 5_000);
+    this.permissionReceiptRetry.unref?.();
+  }
+
+  private async completeGovernedTool(
+    key: string,
+    pending: PendingGovernedToolExecution,
+    status: 'succeeded' | 'failed' | 'unknown',
+    result: string,
+  ): Promise<void> {
+    if (pending.completion) return pending.completion;
+    const action = pending.execution.action;
+    if (pending.brokerAuthorizationId) {
+      this.squireBroker?.revoke(action.roomId, pending.brokerAuthorizationId);
+    }
+    const completion = this.permissionRuntime
+      .complete({ execution: pending.execution, status, result })
+      .then(() => {
+        if (this.governedToolExecutions.get(key) === pending) {
+          this.governedToolExecutions.delete(key);
+        }
+      })
+      .catch((error) => {
+        console.error('[body] failed to publish governed Trusty Squire completion:', error);
+        throw error;
+      })
+      .finally(() => {
+        if (this.governedToolExecutions.get(key) === pending) pending.completion = undefined;
+      });
+    pending.completion = completion;
+    return completion;
+  }
+
+  private attachGovernedToolCompletion(client: AcpClient): () => void {
+    const onUpdate = (message: SessionUpdate) => {
+      const toolCallId = message.update.toolCallId;
+      if (typeof toolCallId !== 'string') return;
+      const key = `${message.sessionId}\0${toolCallId}`;
+      const pending = this.governedToolExecutions.get(key);
+      if (!pending) return;
+      const updateKind = message.update.sessionUpdate;
+      const toolStatus = message.update.status;
+      const explicitFailure =
+        toolStatus === 'failed' ||
+        toolStatus === 'error' ||
+        message.update.isError === true ||
+        message.update.error !== undefined;
+      const status = explicitFailure
+        ? 'failed'
+        : updateKind === 'tool_result' || toolStatus === 'completed'
+          ? 'succeeded'
+          : undefined;
+      if (!status) return;
+      const tool = pending.execution.action.scope;
+      void this.completeGovernedTool(
+        key,
+        pending,
+        status,
+        `squire:${tool.type === 'operation.execute' ? tool.tool : 'tool'}:${status}`,
+      ).catch((error) =>
+        console.error('[body] governed Trusty Squire completion remains pending:', error),
+      );
+    };
+    client.on('session/update', onUpdate);
+    return () => client.off('session/update', onUpdate);
+  }
+
+  private async finalizeGovernedToolsForSession(sessionId: string): Promise<void> {
+    if (!sessionId) return;
+    const prefix = `${sessionId}\0`;
+    for (const [key, pending] of [...this.governedToolExecutions]) {
+      if (!key.startsWith(prefix)) continue;
+      await pending.completion;
+      if (this.governedToolExecutions.get(key) !== pending) continue;
+      await this.completeGovernedTool(
+        key,
+        pending,
+        'unknown',
+        'squire:session-ended-before-terminal-update',
+      );
+    }
   }
 
   private async resolveApprovedNamedRepository(
@@ -9751,17 +10249,8 @@ export class Body {
     } catch {
       // A dead session is the expected incident shape.
     }
-    try {
-      info.session.unsubscribeActivity?.();
-    } catch {
-      // Cleanup remains idempotent and retryable below.
-    }
-    try {
-      info.session.unsubscribeCommands?.();
-    } catch {
-      // Cleanup remains idempotent and retryable below.
-    }
-    await info.session.client.stop().catch(() => undefined);
+    await this.stopManagedSession(info.session).catch(() => undefined);
+    this.squireBroker?.revokeChannel(info.subchannelId);
     await this.transitionCornerState(info, 'closed');
     await this.retractCornerActivityRecords(parentRoomId, info.subchannelId);
     await this.removeWorktree(
@@ -11478,26 +11967,11 @@ export class Body {
         console.error(`[body] archive ${subchannelId}: session cancel failed; continuing:`, error);
       }
       try {
-        session.unsubscribeActivity?.();
-      } catch (error) {
-        console.error(
-          `[body] archive ${subchannelId}: activity teardown failed; continuing:`,
-          error,
-        );
-      }
-      try {
-        session.unsubscribeCommands?.();
-      } catch (error) {
-        console.error(
-          `[body] archive ${subchannelId}: command-list teardown failed; continuing:`,
-          error,
-        );
-      }
-      try {
-        await session.client.stop();
+        await this.stopManagedSession(session);
       } catch (error) {
         console.error(`[body] archive ${subchannelId}: session stop failed; continuing:`, error);
       }
+      this.squireBroker?.revokeChannel(subchannelId);
 
       // CLOSED is the durable lifecycle authority. Publish it, then overwrite
       // replaceable activity records before any channel write becomes illegal.
@@ -12295,7 +12769,7 @@ export class Body {
         ...(boundRepo.localPath ? [boundRepo.localPath] : []),
         ...(this.config.agentHomeRoot ? [this.config.agentHomeRoot] : []),
         ...(this.config.agentPrivateRoot ? [this.config.agentPrivateRoot] : []),
-        ...credentialMaskPaths(this.config.sandboxMaskPaths).map((mask) => mask.path),
+        ...this.sandboxCredentialMaskPaths().map((mask) => mask.path),
       ],
       writablePaths: [
         worktreePath,
@@ -12317,8 +12791,20 @@ export class Body {
     worktreePath: string,
     protectedPaths: readonly string[],
     writablePaths: readonly string[],
+    channelId?: string,
   ): AcpPermissionHandler {
     return async (request) => {
+      if (
+        this.config.accessPolicy === 'creator' &&
+        isExternalMcpPermissionRequest(request, this.config.externalMcpCapabilities)
+      ) {
+        const policy = externalMcpPermissionPolicy(request, this.config.externalMcpCapabilities);
+        if (policy === 'allow') return 'allow';
+        if (policy === 'factory-permission' && channelId) {
+          return this.handleGovernedSquirePermission(channelId, request);
+        }
+        return 'reject';
+      }
       const verdict = classifyCornerPermission(
         request,
         worktreePath,
@@ -12823,6 +13309,13 @@ export class Body {
   /** Dispose all sessions. */
   async dispose(): Promise<void> {
     this.disposed = true;
+    if (this.permissionReceiptRetry) {
+      clearTimeout(this.permissionReceiptRetry);
+      this.permissionReceiptRetry = undefined;
+    }
+    await this.drainPermissionReceiptOutbox().catch((error) =>
+      console.error('[body] governed permission receipt drain failed during shutdown:', error),
+    );
     // Stop the corner state publisher FIRST: a planned shutdown publishes
     // nothing (the #384 presence lesson — the last record stands and the
     // replacement daemon re-asserts state), so the queue must not drain
@@ -12862,6 +13355,7 @@ export class Body {
       await this.scheduler.suspend(session.channelId);
     }
     if (this.ownsScheduler) await this.scheduler.dispose();
+    await this.squireBroker?.close();
     this.workbench = undefined;
     this.sessions.clear();
     this.subchannels.clear();

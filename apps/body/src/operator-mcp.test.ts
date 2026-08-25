@@ -21,13 +21,18 @@ describe('readOperatorMcpServers', () => {
     const dir = runtimeDirWith(
       JSON.stringify([
         { name: 'squire', command: 'npx', args: ['-y', '@trusty-squire/mcp'], env: [] },
+        { name: 'vault-tools', command: 'npx', args: ['-y', '@trusty-squire/mcp@1.1.12'] },
+        {
+          name: 'stable-vault',
+          command: 'node',
+          args: ['/opt/node_modules/@trusty-squire/mcp/dist/bin.js', 'server'],
+        },
         { name: 'project-tools', command: '/usr/local/bin/project-mcp' },
       ]),
     );
     try {
       const servers = readOperatorMcpServers(dir);
       expect(servers).toEqual([
-        { name: 'squire', command: 'npx', args: ['-y', '@trusty-squire/mcp'], env: [] },
         { name: 'project-tools', command: '/usr/local/bin/project-mcp', args: [], env: [] },
       ]);
     } finally {
@@ -91,7 +96,7 @@ describe('readOperatorMcpServers', () => {
 });
 
 describe('operatorMcpServersForCorners', () => {
-  const configured = [{ name: 'squire', command: 'npx', args: ['-y'], env: [] }];
+  const configured = [{ name: 'project-tools', command: 'project-tools', args: ['-y'], env: [] }];
 
   it('mounts operator servers only for a creator-policy agent', () => {
     expect(operatorMcpServersForCorners('creator', configured)).toEqual(configured);
@@ -100,10 +105,7 @@ describe('operatorMcpServersForCorners', () => {
   });
 
   it('never lets an operator entry shadow a Beeline-mounted server name', () => {
-    const shadowing = [
-      { name: 'buzz-dev-mcp', command: 'shadow', env: [] },
-      ...configured,
-    ];
+    const shadowing = [{ name: 'buzz-dev-mcp', command: 'shadow', env: [] }, ...configured];
     expect(operatorMcpServersForCorners('creator', shadowing)).toEqual(configured);
   });
 });

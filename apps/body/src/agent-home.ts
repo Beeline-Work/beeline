@@ -18,9 +18,9 @@
  * visible to every other Room.
  *
  * **Skills + MCP passthrough (owner decision 2026-08-23).** The operator's
- * skills directories are symlinked into each harness home and the operator's
+ * skills directories are symlinked into each harness home and ordinary operator
  * MCP server declarations are COPIED into it, so every Room/corner session has
- * every skill and MCP server the host offers — without them a harness boots
+ * the tools the host offers — without them a harness boots
  * with a login but nothing to advertise over ACP. Two shapes, deliberately:
  * skills are LINKED (read-only reference data; edits through the link would be
  * the operator's own business anyway) while MCP config is COPIED — codex-acp
@@ -29,8 +29,8 @@
  * declarations pass through: model/sandbox/approval settings stay out because
  * they fight the daemon's own agent-mode flags. This does NOT touch the #376
  * credential armor: masked stores (`~/.ssh`, `~/.netrc`, `~/.config/gh`,
- * `~/.git-credentials`) are never linked, and an MCP server that needs a
- * secret continues to get it its own way (e.g. Trusty Squire's vault).
+ * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Squire is
+ * omitted from ambient declarations and mounted only through its host broker.
  *
  * `pi` needs none of this: it never reads the `mcpServers` it is handed and
  * loads the operator's global `~/.pi/agent` extensions/skills from `$HOME`
@@ -51,7 +51,9 @@ import {
 import { homedir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
 import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
-import { extractTomlSections } from './toml-section.js';
+import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
+import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
+import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
 
 /**
  * Credential files shared back into an isolated harness state directory,
@@ -95,8 +97,8 @@ const SHARED_SKILLS: Array<{ dir: 'claude' | 'codex' | 'grok'; source: string }>
  *     `mcpServers` key of `~/.claude.json`; the same object is written as a
  *     minimal `.claude.json` inside the isolated `CLAUDE_CONFIG_DIR`.
  *
- * Everything else in those files (models, sandbox modes, approval policy)
- * deliberately stays behind.
+ * Everything else in those files (models, sandbox modes, approval policy) and
+ * the reserved `squire` server deliberately stay behind.
  */
 const HARNESS_MCP_CONFIGS = [
   { dir: 'codex' as const, toml: '.codex/config.toml' },
@@ -111,13 +113,15 @@ export interface RoomAgentHomeInput {
   root: string;
   /** Operator's real home directory; defaults to the daemon's. */
   operatorHome?: string;
+  failClosed?: boolean;
 }
 
 /**
  * Create the room-instance's harness state directories, share the operator's
- * credentials into them, and return the env overlay that points the harness at
- * them. Never throws: an unwritable or already-populated path degrades to the
- * daemon's ambient state rather than failing the Room.
+ * harness login into them, and return the env overlay that points the harness at
+ * them. Normally an unwritable or already-populated path degrades to the
+ * daemon's ambient state; `failClosed` propagates setup errors for governed
+ * credential sessions that may not fall back to ambient state.
  */
 export async function prepareRoomAgentHome(
   input: RoomAgentHomeInput,
@@ -130,6 +134,7 @@ export async function prepareRoomAgentHome(
       await mkdir(resolve(root, subdir), { recursive: true, mode: 0o700 });
     }
   } catch (error) {
+    if (input.failClosed) throw error;
     console.error(`[body] per-room agent home unavailable at ${root}; using daemon state:`, error);
     return {};
   }
@@ -143,9 +148,12 @@ export async function prepareRoomAgentHome(
     await symlink(source, target).catch(() => undefined);
   }
 
-  await provisionOperatorSkillsAndMcp(root, operatorHome).catch((error) => {
-    console.warn(`[body] operator skills/MCP passthrough incomplete for ${root}:`, error);
-  });
+  await provisionOperatorSkillsAndMcp(root, operatorHome, input.failClosed ?? false).catch(
+    (error) => {
+      if (input.failClosed) throw error;
+      console.warn(`[body] operator skills/MCP passthrough incomplete for ${root}:`, error);
+    },
+  );
 
   return roomAgentHomeEnv(root);
 }
@@ -162,6 +170,7 @@ export async function prepareRoomAgentHome(
 async function provisionOperatorSkillsAndMcp(
   root: string,
   operatorHome: string,
+  failClosed: boolean,
 ): Promise<void> {
   for (const skills of SHARED_SKILLS) {
     const source = resolve(operatorHome, skills.source);
@@ -176,7 +185,7 @@ async function provisionOperatorSkillsAndMcp(
       const source = resolve(operatorHome, config.toml);
       const target = resolve(root, config.dir, 'config.toml');
       const section = existsSync(source)
-        ? extractTomlSections(readFileSync(source, 'utf8'), ['mcp_servers'])
+        ? filteredHarnessMcpToml(readFileSync(source, 'utf8'))
         : undefined;
       // Regeneration is also deletion: if the operator removes the config or
       // its last MCP table, do not leave stale servers active in a Room.
@@ -186,6 +195,7 @@ async function provisionOperatorSkillsAndMcp(
       }
       await writeIsolatedHarnessFile(target, section);
     } catch (error) {
+      if (failClosed) throw error;
       console.warn(`[body] operator MCP passthrough failed for ${config.dir}:`, error);
     }
   }
@@ -197,15 +207,55 @@ async function provisionOperatorSkillsAndMcp(
       ? readClaudeUserScopeMcpServers(claudeJson)
       : undefined;
     if (mcpServers && Object.keys(mcpServers).length > 0) {
-      await writeIsolatedHarnessFile(
-        claudeTarget,
-        `${JSON.stringify({ mcpServers }, null, 2)}\n`,
-      );
+      await writeIsolatedHarnessFile(claudeTarget, `${JSON.stringify({ mcpServers }, null, 2)}\n`);
     } else {
       await unlink(claudeTarget).catch(() => undefined);
     }
   } catch (error) {
+    if (failClosed) throw error;
     console.warn('[body] operator MCP passthrough failed for claude:', error);
+  }
+}
+
+export function hasLocalTrustySquireState(
+  operatorHome = homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return trustySquireLegacyStorePaths(operatorHome, env).some(existsSync);
+}
+
+export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): boolean {
+  for (const relativePath of ['.codex/config.toml', '.grok/config.toml']) {
+    const path = resolve(operatorHome, relativePath);
+    if (!existsSync(path)) continue;
+    const source = readFileSync(path, 'utf8');
+    for (const name of tomlChildTableNames(source, ['mcp_servers'])) {
+      const section = extractTomlSections(source, ['mcp_servers', name]);
+      if (name === 'squire' || (section && isTrustySquireMcpLaunch(section))) return true;
+    }
+  }
+  const claudePath = resolve(operatorHome, '.claude.json');
+  if (!existsSync(claudePath)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(claudePath, 'utf8')) as Record<string, unknown>;
+    const servers = parsed.mcpServers;
+    if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return false;
+    return Object.entries(servers).some(([name, value]) => {
+      if (name === 'squire') return true;
+      const server = value as Record<string, unknown> | null;
+      return Boolean(
+        server &&
+        typeof server.command === 'string' &&
+        isTrustySquireMcpLaunch(
+          server.command,
+          Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
+            ? (server.args as string[])
+            : [],
+        ),
+      );
+    });
+  } catch {
+    return false;
   }
 }
 
@@ -213,12 +263,31 @@ function readClaudeUserScopeMcpServers(path: string): Record<string, unknown> | 
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     if (parsed && typeof parsed.mcpServers === 'object' && parsed.mcpServers !== null) {
-      return parsed.mcpServers as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.entries(parsed.mcpServers as Record<string, unknown>).filter(([name, value]) => {
+          if (name === 'squire') return false;
+          const server = value as Record<string, unknown> | null;
+          if (!server || typeof server.command !== 'string') return true;
+          const args =
+            Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
+              ? (server.args as string[])
+              : [];
+          return !isTrustySquireMcpLaunch(server.command, args);
+        }),
+      );
     }
   } catch {
     // Malformed operator config: skip rather than fail the Room.
   }
   return undefined;
+}
+
+function filteredHarnessMcpToml(source: string): string | undefined {
+  const excluded = tomlChildTableNames(source, ['mcp_servers']).filter((name) => {
+    const section = extractTomlSections(source, ['mcp_servers', name]);
+    return name === 'squire' || Boolean(section && isTrustySquireMcpLaunch(section));
+  });
+  return extractTomlSections(source, ['mcp_servers'], excluded);
 }
 
 async function linkOperatorDir(source: string, target: string): Promise<void> {

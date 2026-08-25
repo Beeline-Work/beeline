@@ -77,6 +77,8 @@ export interface BodyConfig {
    * already-provisioned Room from before per-room homes must keep using.
    */
   agentHomeRoot?: string;
+  operatorHome?: string;
+  squireConfigRoot?: string;
   /** Durable persona memory/lessons root outside corner worktrees. */
   agentPrivateRoot?: string;
   /**

@@ -384,8 +384,13 @@ and guessing wrong shows a placeholder rather than nothing. A Room and the
 Members screen must never name the same key differently; if they do, one of them
 is reading an empty roster, not a different name.
 
-Vocabulary: "Room," never "Channel." "Members," never "People." No `#` prefix on
-names — that's someone else's product's convention.
+Vocabulary: "Room," never "Channel." "Members," never "People." Room names carry
+the `#` channel mark in exactly two places — push-notification titles
+(`#<room>`, corners as `#<room>/<corner>` with the parent Room's real name) and
+Room index rows, both added at render through one presentation-only derivation
+(`displayRoomIndexTitle`; gateway `mapping.ts` owns notification titles).
+Captain decision 2026-08, superseding the earlier no-`#` rule; corner labels,
+stored names, and every other surface stay unprefixed.
 
 ## Type
 

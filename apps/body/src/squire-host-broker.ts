@@ -17,8 +17,13 @@ const GOVERNED = new Set<string>(SQUIRE_GOVERNED_TOOLS);
 interface BrokerChannel {
   token: string;
   endpoint?: McpServerWire;
+  connection?: BrokerConnection;
+}
+
+interface BrokerConnection {
+  socket: Socket;
+  child: ChildProcessWithoutNullStreams;
   authorizations: Map<string, Array<{ id: string; expiresAt: number }>>;
-  sockets: Set<Socket>;
 }
 
 type SpawnSquire = () => ChildProcessWithoutNullStreams;
@@ -64,19 +69,20 @@ export class SquireHostBroker {
     expiresAt = this.now() + SQUIRE_AUTHORIZATION_TTL_MS,
   ): string | undefined {
     const channel = this.channels.get(channelId);
-    if (!channel || expiresAt <= this.now()) return undefined;
+    const authorizations = channel?.connection?.authorizations;
+    if (!authorizations || expiresAt <= this.now()) return undefined;
     const key = this.authorizationKey(tool, argumentsDigest);
-    const live = (channel.authorizations.get(key) ?? []).filter(
+    const live = (authorizations.get(key) ?? []).filter(
       (authorization) => authorization.expiresAt > this.now(),
     );
     const id = randomBytes(24).toString('hex');
     live.push({ id, expiresAt });
-    channel.authorizations.set(key, live);
+    authorizations.set(key, live);
     return id;
   }
 
   revoke(channelId: string, authorizationId: string): void {
-    const authorizations = this.channels.get(channelId)?.authorizations;
+    const authorizations = this.channels.get(channelId)?.connection?.authorizations;
     if (!authorizations) return;
     for (const [key, entries] of authorizations) {
       const remaining = entries.filter((entry) => entry.id !== authorizationId);
@@ -86,7 +92,7 @@ export class SquireHostBroker {
   }
 
   revokeAuthorizations(channelId: string): void {
-    this.channels.get(channelId)?.authorizations.clear();
+    this.channels.get(channelId)?.connection?.authorizations.clear();
   }
 
   revokeChannel(channelId: string): void {
@@ -94,7 +100,7 @@ export class SquireHostBroker {
     if (!channel) return;
     this.revokeAuthorizations(channelId);
     this.channels.delete(channelId);
-    for (const socket of channel.sockets) socket.destroy();
+    channel.connection?.socket.destroy();
   }
 
   async mcpServer(channelId: string): Promise<McpServerWire> {
@@ -117,8 +123,6 @@ export class SquireHostBroker {
       existing ??
       {
         token: randomBytes(32).toString('hex'),
-        authorizations: new Map<string, Array<{ id: string; expiresAt: number }>>(),
-        sockets: new Set<Socket>(),
       };
     const endpoint = {
       name: 'squire',
@@ -140,10 +144,10 @@ export class SquireHostBroker {
     socket.setEncoding('utf8');
     let channel: BrokerChannel | undefined;
     let buffer = '';
-    let child: ChildProcessWithoutNullStreams | undefined;
+    let connection: BrokerConnection | undefined;
     const close = () => {
       socket.destroy();
-      child?.kill('SIGTERM');
+      connection?.child.kill('SIGTERM');
     };
     socket.on('data', (chunk: string) => {
       buffer += chunk;
@@ -163,28 +167,34 @@ export class SquireHostBroker {
           channel = [...this.channels.values()].find((candidate) =>
             this.matchesToken(token as string, candidate.token),
           );
-          if (!channel) return close();
-          channel.sockets.add(socket);
-          child = this.spawnSquire();
+          if (!channel || channel.connection) return close();
+          const child = this.spawnSquire();
+          connection = { socket, child, authorizations: new Map() };
+          channel.connection = connection;
+          channel.token = '';
           this.children.add(child);
           child.stdout.pipe(socket);
           child.stderr.on('data', (data) => process.stderr.write(data));
           child.once('close', () => {
-            this.children.delete(child!);
+            this.children.delete(child);
             socket.end();
           });
           child.once('error', close);
           continue;
         }
-        if (child && this.allowLine(line, socket, channel.authorizations)) {
-          child.stdin.write(`${line}\n`);
+        if (connection && this.allowLine(line, socket, connection.authorizations)) {
+          connection.child.stdin.write(`${line}\n`);
         }
       }
     });
     socket.once('close', () => {
-      channel?.sockets.delete(socket);
-      if (child) this.children.delete(child);
-      child?.kill('SIGTERM');
+      if (channel && channel.connection === connection) {
+        channel.connection = undefined;
+        channel.token = randomBytes(32).toString('hex');
+        if (channel.endpoint?.args) channel.endpoint.args[channel.endpoint.args.length - 1] = channel.token;
+      }
+      if (connection) this.children.delete(connection.child);
+      connection?.child.kill('SIGTERM');
     });
     socket.once('error', close);
   }

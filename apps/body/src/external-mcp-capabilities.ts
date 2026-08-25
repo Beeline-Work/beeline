@@ -10,6 +10,18 @@ export const EXTERNAL_MCP_CAPABILITIES = ['squire'] as const;
 export const SQUIRE_MCP_VERSION = '1.1.12';
 export const SQUIRE_MCP_PACKAGE = `@trusty-squire/mcp@${SQUIRE_MCP_VERSION}`;
 
+export function isTrustySquireMcpLaunch(
+  command: string,
+  args: readonly string[] = [],
+): boolean {
+  const values = [command, ...args];
+  return values.some(
+    (value) =>
+      /(^|[\s="'\[,])@trusty-squire\/mcp(?:@[^\s"'\],}]+)?(?=$|[\s"'\],}])/i.test(value) ||
+      /(^|[/\\])trusty-squire(?:-mcp)?(?:\.[a-z0-9]+)?$/i.test(value.trim()),
+  );
+}
+
 export function isExternalMcpCapability(value: unknown): value is ExternalMcpCapability {
   return (EXTERNAL_MCP_CAPABILITIES as readonly unknown[]).includes(value);
 }

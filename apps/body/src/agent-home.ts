@@ -51,7 +51,8 @@ import {
 import { homedir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
 import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
-import { extractTomlSections } from './toml-section.js';
+import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
+import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
 
 /**
  * Credential files shared back into an isolated harness state directory,
@@ -181,9 +182,7 @@ async function provisionOperatorSkillsAndMcp(
     try {
       const source = resolve(operatorHome, config.toml);
       const target = resolve(root, config.dir, 'config.toml');
-      const section = existsSync(source)
-        ? extractTomlSections(readFileSync(source, 'utf8'), ['mcp_servers'], ['squire'])
-        : undefined;
+      const section = existsSync(source) ? filteredHarnessMcpToml(readFileSync(source, 'utf8')) : undefined;
       // Regeneration is also deletion: if the operator removes the config or
       // its last MCP table, do not leave stale servers active in a Room.
       if (!section) {
@@ -224,11 +223,11 @@ export function hasLocalTrustySquireState(operatorHome = homedir()): boolean {
 export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): boolean {
   for (const relativePath of ['.codex/config.toml', '.grok/config.toml']) {
     const path = resolve(operatorHome, relativePath);
-    if (
-      existsSync(path) &&
-      extractTomlSections(readFileSync(path, 'utf8'), ['mcp_servers', 'squire'])
-    ) {
-      return true;
+    if (!existsSync(path)) continue;
+    const source = readFileSync(path, 'utf8');
+    for (const name of tomlChildTableNames(source, ['mcp_servers'])) {
+      const section = extractTomlSections(source, ['mcp_servers', name]);
+      if (name === 'squire' || (section && isTrustySquireMcpLaunch(section))) return true;
     }
   }
   const claudePath = resolve(operatorHome, '.claude.json');
@@ -236,12 +235,21 @@ export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): b
   try {
     const parsed = JSON.parse(readFileSync(claudePath, 'utf8')) as Record<string, unknown>;
     const servers = parsed.mcpServers;
-    return Boolean(
-      servers &&
-        typeof servers === 'object' &&
-        !Array.isArray(servers) &&
-        Object.prototype.hasOwnProperty.call(servers, 'squire'),
-    );
+    if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return false;
+    return Object.entries(servers).some(([name, value]) => {
+      if (name === 'squire') return true;
+      const server = value as Record<string, unknown> | null;
+      return Boolean(
+        server &&
+          typeof server.command === 'string' &&
+          isTrustySquireMcpLaunch(
+            server.command,
+            Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
+              ? (server.args as string[])
+              : [],
+          ),
+      );
+    });
   } catch {
     return false;
   }
@@ -251,14 +259,31 @@ function readClaudeUserScopeMcpServers(path: string): Record<string, unknown> | 
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     if (parsed && typeof parsed.mcpServers === 'object' && parsed.mcpServers !== null) {
-      const servers = { ...(parsed.mcpServers as Record<string, unknown>) };
-      delete servers.squire;
-      return servers;
+      return Object.fromEntries(
+        Object.entries(parsed.mcpServers as Record<string, unknown>).filter(([name, value]) => {
+          if (name === 'squire') return false;
+          const server = value as Record<string, unknown> | null;
+          if (!server || typeof server.command !== 'string') return true;
+          const args =
+            Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
+              ? (server.args as string[])
+              : [];
+          return !isTrustySquireMcpLaunch(server.command, args);
+        }),
+      );
     }
   } catch {
     // Malformed operator config: skip rather than fail the Room.
   }
   return undefined;
+}
+
+function filteredHarnessMcpToml(source: string): string | undefined {
+  const excluded = tomlChildTableNames(source, ['mcp_servers']).filter((name) => {
+    const section = extractTomlSections(source, ['mcp_servers', name]);
+    return name === 'squire' || Boolean(section && isTrustySquireMcpLaunch(section));
+  });
+  return extractTomlSections(source, ['mcp_servers'], excluded);
 }
 
 async function linkOperatorDir(source: string, target: string): Promise<void> {

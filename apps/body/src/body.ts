@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, readFile, realpath, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import {
@@ -2540,12 +2541,17 @@ export class Body {
    * every child activation: the env paths are stable, while copied MCP config
    * must reflect operator edits on the next session start.
    */
-  private sessionAgentEnv(): Promise<Record<string, string>> {
-    const root = this.config.agentHomeRoot;
-    const squireBoundaryRequired =
+  private squireBoundaryRequired(): boolean {
+    return Boolean(
       this.config.externalMcpCapabilities?.includes('squire') ||
       hasLocalTrustySquireState(this.config.operatorHome) ||
-      hasAmbientTrustySquireConfiguration(this.config.operatorHome);
+      hasAmbientTrustySquireConfiguration(this.config.operatorHome),
+    );
+  }
+
+  private sessionAgentEnv(): Promise<Record<string, string>> {
+    const root = this.config.agentHomeRoot;
+    const squireBoundaryRequired = this.squireBoundaryRequired();
     if (squireBoundaryRequired) {
       if (this.config.agentKind !== 'codex' && this.config.agentKind !== 'claude') {
         return Promise.reject(
@@ -2557,6 +2563,26 @@ export class Body {
       if (!root) {
         return Promise.reject(
           new Error('Trusty Squire requires an isolated agent home; ambient harness state is refused'),
+        );
+      }
+      if (!this.config.bwrapPath) {
+        return Promise.reject(
+          new Error('Trusty Squire requires an active bubblewrap credential-mask boundary'),
+        );
+      }
+      const squireStore = resolve(
+        this.config.operatorHome ?? homedir(),
+        '.config',
+        'trusty-squire',
+      );
+      if (
+        !credentialMaskPaths(
+          this.config.sandboxMaskPaths,
+          this.config.operatorHome ?? homedir(),
+        ).some((mask) => mask.path === squireStore)
+      ) {
+        return Promise.reject(
+          new Error('Trusty Squire credential store cannot be masked from the agent sandbox'),
         );
       }
     }
@@ -2753,12 +2779,18 @@ export class Body {
   ): Promise<{ command: string; args: string[] }> {
     const command = this.config.agentCommand ?? this.config.agentBinary;
     const args = this.config.agentArgs;
-    if (!this.config.bwrapPath) return { command, args: [...(args ?? [])] };
+    if (!this.config.bwrapPath) {
+      if (this.squireBoundaryRequired()) {
+        throw new Error('Trusty Squire activation refused without bubblewrap isolation');
+      }
+      return { command, args: [...(args ?? [])] };
+    }
     const { stateDirs, tmpDir } = harnessStateDirsFromEnv(env);
     // Bind-try tolerates an absent state root, but the harness itself cannot
     // create one on a read-only $HOME — so create the roots we know about here,
     // in the daemon, before the child is confined.
-    const homeStateDirs = harnessHomeStateDirs(command);
+    const operatorHome = this.config.operatorHome ?? homedir();
+    const homeStateDirs = harnessHomeStateDirs(command, operatorHome);
     for (const dir of homeStateDirs) {
       try {
         mkdirSync(dir, { recursive: true });
@@ -2773,7 +2805,7 @@ export class Body {
       harnessHomeStateDirs: homeStateDirs,
       // Credential masks (built-in known stores + owner-configured extras) in
       // BOTH modes: a session that can read a credential can use it out-of-band.
-      maskPaths: credentialMaskPaths(this.config.sandboxMaskPaths),
+      maskPaths: credentialMaskPaths(this.config.sandboxMaskPaths, operatorHome),
       ...(tmpDir ? { tmpDir } : {}),
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
       ...(input.protectedPaths ? { protectedPaths: input.protectedPaths } : {}),
@@ -2793,6 +2825,9 @@ export class Body {
     if (input.mode === 'edit') {
       const gitCommonDir = await resolveGitCommonDir(input.worktreePath ?? input.cwd);
       if (!gitCommonDir) {
+        if (this.squireBoundaryRequired()) {
+          throw new Error('Trusty Squire activation refused because sandbox mounts are incomplete');
+        }
         console.warn(
           `[body] OS sandbox skipped for edit session ${input.channelIdForLog ?? input.cwd}: git common directory unresolved`,
         );
@@ -12622,7 +12657,10 @@ export class Body {
         ...(boundRepo.localPath ? [boundRepo.localPath] : []),
         ...(this.config.agentHomeRoot ? [this.config.agentHomeRoot] : []),
         ...(this.config.agentPrivateRoot ? [this.config.agentPrivateRoot] : []),
-        ...credentialMaskPaths(this.config.sandboxMaskPaths).map((mask) => mask.path),
+        ...credentialMaskPaths(
+          this.config.sandboxMaskPaths,
+          this.config.operatorHome ?? homedir(),
+        ).map((mask) => mask.path),
       ],
       writablePaths: [
         worktreePath,

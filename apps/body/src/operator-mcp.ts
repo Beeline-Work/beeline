@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { McpServerWire } from './acp.js';
 import type { AgentAccessPolicy } from './access-policy.js';
+import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 
 /**
  * Operator-configured MCP tool servers for corner edit sessions.
@@ -86,12 +87,18 @@ function parseOperatorMcpEntry(entry: unknown, path: string): McpServerWire | un
     console.warn(`[body] ignoring MCP server "${name}" in ${path}: missing command`);
     return undefined;
   }
+  const normalizedArgs =
+    Array.isArray(args) && args.every((a) => typeof a === 'string') ? (args as string[]) : [];
+  if (isTrustySquireMcpLaunch(command, normalizedArgs)) {
+    console.warn(
+      `[body] ignoring MCP server "${name}" in ${path}: Trusty Squire is mounted only by Beeline`,
+    );
+    return undefined;
+  }
   return {
     name,
     command,
-    ...(Array.isArray(args) && args.every((a) => typeof a === 'string')
-      ? { args: args as string[] }
-      : { args: [] }),
+    args: normalizedArgs,
     ...(Array.isArray(env) &&
     env.every(
       (pair) =>
@@ -121,5 +128,9 @@ export function operatorMcpServersForCorners(
   configured: readonly McpServerWire[] = [],
 ): McpServerWire[] {
   if (accessPolicy !== 'creator') return [];
-  return configured.filter((server) => !RESERVED_MCP_SERVER_NAMES.has(server.name));
+  return configured.filter(
+    (server) =>
+      !RESERVED_MCP_SERVER_NAMES.has(server.name) &&
+      !isTrustySquireMcpLaunch(server.command, server.args),
+  );
 }

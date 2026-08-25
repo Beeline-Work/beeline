@@ -46,6 +46,12 @@ describe('Trusty Squire host broker', () => {
     const socket = connect({ host, port: Number(rawPort) });
     await once(socket, 'connect');
     socket.write(`${JSON.stringify({ token })}\n`);
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+
+    const competing = connect({ host, port: Number(rawPort) });
+    await once(competing, 'connect');
+    competing.write(`${JSON.stringify({ token })}\n`);
+    await once(competing, 'close');
 
     const args = {
       service: 'github',
@@ -97,6 +103,7 @@ describe('Trusty Squire host broker', () => {
     const socket = connect({ host, port: Number(rawPort) });
     await once(socket, 'connect');
     socket.write(`${JSON.stringify({ token })}\n`);
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
     const args = { grant_id: 'grant-1' };
     const digest = squireArgumentsDigest(args);
     const request = (id: number) =>

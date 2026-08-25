@@ -900,6 +900,35 @@ describe('Buzz Room screen event projection', () => {
     ]);
   });
 
+  it('projects Squire spending confirmation on the same permission card family', () => {
+    const event = raw(
+      'squire-checkout-confirmation',
+      'Lina requests owner confirmation for checkout.',
+      [
+        ['t', 'body-control'],
+        ['t', 'buzz-write-permission-request'],
+        ['permission', 'squire-permission'],
+        ['request', 'human-request'],
+        ['agent', agent],
+        ['tool', 'Trusty Squire checkout'],
+        ['repo', 'external:squire'],
+        ['purpose', 'squire-spending'],
+        ['status', 'pending'],
+      ],
+      10,
+    );
+
+    expect(projectChatEvent(event, viewer).message).toMatchObject({
+      id: 'write-permission-squire-permission',
+      writePermission: {
+        permissionId: 'squire-permission',
+        repository: 'external:squire',
+        purpose: 'squire-spending',
+        status: 'pending',
+      },
+    });
+  });
+
   it('keeps telemetry, merge dumps, and lifecycle notices out of the Room', () => {
     const conversation: ChatDisplayMessage = {
       id: 'answer',

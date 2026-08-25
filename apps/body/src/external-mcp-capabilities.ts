@@ -80,3 +80,46 @@ export function isExternalMcpPermissionRequest(
   }
   return false;
 }
+
+export type ExternalMcpPermissionPolicy = 'allow' | 'owner-confirm' | 'deny';
+
+/** Canonical MCP tool name across codex/Claude ACP spellings. */
+export function externalMcpToolName(request: AcpPermissionRequest): string | undefined {
+  if (shellPayload(request.toolCall)) return undefined;
+  const rawInput = request.toolCall?.rawInput;
+  if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
+    const input = rawInput as Record<string, unknown>;
+    if (input.server === 'squire' && typeof input.tool === 'string') return input.tool;
+  }
+  const title = request.toolCall?.title?.trim() ?? '';
+  const match =
+    /^mcp__squire__([A-Za-z0-9_-]+)$/.exec(title) ??
+    /^mcp\.squire\.([A-Za-z0-9_-]+)$/.exec(title) ??
+    /^squire[./]([A-Za-z0-9_-]+)$/.exec(title);
+  return match?.[1];
+}
+
+const SQUIRE_NON_SPENDING_TOOLS = new Set([
+  'operate_start',
+  'observe',
+  'operate_observe',
+  'act',
+  'operate_act',
+  'screenshot',
+  'operate_screenshot',
+  'extract',
+  'operate_extract',
+]);
+const SQUIRE_SPENDING_TOOL = /(?:pay|payment|purchase|checkout|credential|card|wallet|spend)/i;
+
+/** Shared-Room Squire policy: observation by default, owner ceremony for spend. */
+export function externalMcpPermissionPolicy(
+  request: AcpPermissionRequest,
+  capabilities: readonly ExternalMcpCapability[] = [],
+): ExternalMcpPermissionPolicy {
+  if (!isExternalMcpPermissionRequest(request, capabilities)) return 'deny';
+  const tool = externalMcpToolName(request);
+  if (!tool) return 'deny';
+  if (SQUIRE_NON_SPENDING_TOOLS.has(tool)) return 'allow';
+  return SQUIRE_SPENDING_TOOL.test(tool) ? 'owner-confirm' : 'deny';
+}

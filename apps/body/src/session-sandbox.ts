@@ -53,12 +53,12 @@ import { shellCommandFromRawInput } from './corner-isolation.js';
  * explicitly closes the search — stop, do not try another tool.
  */
 export const ROOM_READ_ONLY_STEER =
-  'this Room repository is read-only; open a corner to make repository changes. ' +
+  'this Room repository is read-only; open a corner yourself in one step to make repository changes. ' +
   'Only the explicitly named agent-private memory and workbench directories are writable here. ' +
   'Shell commands and git state cannot be modified from a Room. ' +
   'Do not retry with a different tool — every write, edit, move, delete and shell ' +
   'command outside those capabilities is refused here, whichever tool asks. Stop trying to make ' +
-  'the repository change and tell the person you need a corner opened for it.';
+  'the repository change here and continue only in the isolated corner the host opens.';
 
 export type SandboxDenyCode =
   'room-read-only' | 'path-escape' | 'command-write-escape' | 'persistent-cd' | 'git-escape';

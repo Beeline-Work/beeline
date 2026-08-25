@@ -340,6 +340,11 @@ export interface SandboxMountPlan {
   /** Paths bind-mounted read-write, deduplicated and sorted. */
   writable: string[];
   /**
+   * Hard-limited scratch filesystems whose mount lives only for this physical
+   * sandbox session.
+   */
+  quotaTmpfs: Array<{ target: string; maxBytes: number; maxInodes: number; blockGit?: boolean }>;
+  /**
    * Credential stores replaced by emptiness (empty tmpfs for directories,
    * `/dev/null` for files). Emitted AFTER the whole-home ro-bind — which
    * would otherwise expose them read-only — and BEFORE the writable binds,
@@ -379,6 +384,8 @@ export interface SandboxSessionSpec {
   protectedPaths?: string[];
   /** Explicit capabilities restored writable after protected parent mounts. */
   additionalWritablePaths?: string[];
+  /** Per-session quota workbench mounted at this stable path. */
+  workbench?: { dir: string; maxBytes: number; maxInodes: number };
   /** Credential stores hidden from this session ({@link credentialMaskPaths}).
    * Both modes get them: a Room reading the operator's gh token is the same
    * out-of-band-push hole a corner would be. */
@@ -446,6 +453,16 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
     ...(spec.mode === 'edit' ? { rootWritable: true } : {}),
     readOnly,
     writable,
+    quotaTmpfs: spec.workbench
+      ? [
+          {
+            target: resolve(spec.workbench.dir),
+            maxBytes: spec.workbench.maxBytes,
+            maxInodes: spec.workbench.maxInodes,
+            blockGit: true,
+          },
+        ]
+      : [],
     masks: [...(spec.maskPaths ?? [])],
   };
 }
@@ -454,6 +471,13 @@ export interface WrappedCommand {
   command: string;
   args: string[];
 }
+
+const QUOTA_TMPFS_BOOTSTRAP = [
+  'set -eu',
+  'mount -t tmpfs -o "remount,size=$2,nr_inodes=$3" tmpfs "$1"',
+  'shift 3',
+  'exec setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs "$@"',
+].join('\n');
 
 /**
  * Wrap `command`/`args` so they run under bwrap with `plan`'s mount table.
@@ -469,7 +493,21 @@ export function buildBwrapArgv(input: {
   command: string;
   args?: string[];
 }): WrappedCommand {
+  const quotaTmpfs = input.plan.quotaTmpfs ?? [];
   const args = [
+    ...(quotaTmpfs.length
+      ? [
+          '--unshare-user',
+          '--uid',
+          '0',
+          '--gid',
+          '0',
+          '--cap-add',
+          'CAP_SYS_ADMIN',
+          '--cap-add',
+          'CAP_SETPCAP',
+        ]
+      : []),
     input.plan.rootWritable ? '--bind' : '--ro-bind',
     '/',
     '/',
@@ -492,10 +530,41 @@ export function buildBwrapArgv(input: {
   // `--bind-try`, not `--bind`: a harness state root that has never been created
   // must not make the whole session fail to spawn.
   for (const path of input.plan.writable) args.push('--bind-try', path, path);
+  for (const binding of quotaTmpfs) {
+    args.push(
+      '--dir',
+      binding.target,
+      '--size',
+      String(binding.maxBytes),
+      '--tmpfs',
+      binding.target,
+    );
+    // The sandbox reserves this leaf. Mounting /dev/null over it makes `.git`
+    // neither a directory nor removable, so `git init`, worktree `.git` files,
+    // and `cp -r repo/. …` all fail inside the kernel mount table.
+    if (binding.blockGit) args.push('--ro-bind', '/dev/null', resolve(binding.target, '.git'));
+  }
   args.push('--chdir', input.cwd);
   // The sandbox must not outlive the daemon that owns the session.
   args.push('--die-with-parent');
-  args.push('--', input.command, ...(input.args ?? []));
+  if (quotaTmpfs.length) {
+    if (quotaTmpfs.length !== 1) throw new Error('only one quota tmpfs is supported per session');
+    const quota = quotaTmpfs[0]!;
+    args.push(
+      '--',
+      'sh',
+      '-c',
+      QUOTA_TMPFS_BOOTSTRAP,
+      'beeline-quota-tmpfs',
+      quota.target,
+      String(quota.maxBytes),
+      String(quota.maxInodes),
+      input.command,
+      ...(input.args ?? []),
+    );
+  } else {
+    args.push('--', input.command, ...(input.args ?? []));
+  }
   return { command: input.bwrapPath, args };
 }
 
@@ -570,7 +639,7 @@ export function detectBwrapSandbox(
     });
   const probe = buildBwrapArgv({
     bwrapPath,
-    plan: { readOnly: [], writable: [], masks: [] },
+    plan: { readOnly: [], writable: [], quotaTmpfs: [], masks: [] },
     cwd: '/',
     command: '/bin/true',
   });

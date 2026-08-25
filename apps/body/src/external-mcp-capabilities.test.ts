@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   authorizedExternalMcpServers,
+  externalMcpPermissionPolicy,
   externalMcpServers,
   isExternalMcpPermissionRequest,
 } from './external-mcp-capabilities.js';
@@ -15,6 +16,25 @@ describe('external MCP capabilities', () => {
         env: [],
       },
     ]);
+  });
+
+  it('allows only non-spending Squire verbs by default and owner-gates checkout', () => {
+    const call = (tool: string) => ({
+      toolCall: {
+        kind: 'other',
+        title: `mcp__squire__${tool}`,
+        rawInput: { server: 'squire', tool, arguments: {} },
+      },
+    });
+    for (const tool of ['operate_start', 'observe', 'act', 'screenshot', 'extract']) {
+      expect(externalMcpPermissionPolicy(call(tool), ['squire']), tool).toBe('allow');
+    }
+    for (const tool of ['checkout', 'create_payment_credential', 'purchase']) {
+      expect(externalMcpPermissionPolicy(call(tool), ['squire']), tool).toBe('owner-confirm');
+    }
+    expect(externalMcpPermissionPolicy(call('list_credentials'), ['squire'])).toBe('owner-confirm');
+    expect(externalMcpPermissionPolicy(call('delete_vault'), ['squire'])).toBe('deny');
+    expect(externalMcpPermissionPolicy(call('observe'), [])).toBe('deny');
   });
 
   it('mounts account capabilities only for creator-scoped agents', () => {

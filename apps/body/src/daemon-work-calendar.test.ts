@@ -56,6 +56,7 @@ function authorityFixture(options: { agentAuthored?: boolean; grantValid?: boole
     authorIsAgent: options.agentAuthored === true,
     principalIsAgent: false,
     principalCanDrive: true,
+    principalRole: 'owner',
     authorRole: options.agentAuthored ? 'member' : 'owner',
   };
   const dependencies: DaemonWorkScheduleAuthorityDependencies = {
@@ -172,6 +173,18 @@ describe('daemon work schedule authority', () => {
       authorized: false,
       terminal: true,
       reason: 'schedule-superseded',
+    });
+  });
+
+  it('rejects an agent-authored schedule when its principal loses admin role', async () => {
+    const fixture = authorityFixture({ agentAuthored: true, grantValid: true });
+    fixture.facts.principalRole = 'member';
+    await expect(
+      authorizeDaemonWorkSchedule(fixture.parsed, fixture.dependencies),
+    ).resolves.toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'schedule-principal-role-lost',
     });
   });
 

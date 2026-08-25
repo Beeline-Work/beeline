@@ -15,10 +15,12 @@ import { signEvent, type NostrEvent } from '@beeline/nostr';
 import {
   AGENT_PRESENCE_HEARTBEAT_MS,
   agentDraftKey,
+  agentThoughtKey,
   agentPresenceKey,
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
   TAG_AGENT_DRAFT,
+  TAG_AGENT_THOUGHT,
   TAG_AGENT_PRESENCE,
   buildAttachmentTags,
   type AgentPresenceStatus,
@@ -50,30 +52,6 @@ export function replyRootIdForEvent(event: NostrEvent): string {
 const LOAD_BEARING_TOOL_KINDS = new Set(['edit', 'delete', 'move']);
 /** ACP tool-call kinds that are inherently background inspection, never surfaced alone. */
 const LOW_SIGNAL_TOOL_KINDS = new Set(['read', 'search', 'think', 'fetch', 'other']);
-/**
- * The subset of suppressed kinds that is specifically the agent *reasoning*.
- *
- * Its content never reaches the wire and must not: it is unbounded, it is the
- * noisiest thing the harness emits, and publishing it would blow the per-pubkey
- * quota on the one stretch of a turn that produces no user-facing result. What
- * is cheap, and what a reader actually wants, is the receipt — grok Build shows
- * a live `Thinking…` block for the whole stretch and then collapses it to a
- * five-word `Thought for 5.8s` the instant the answer lands. Only the elapsed
- * span is needed for that second half, and a span is a number.
- */
-const REASONING_SESSION_UPDATE_KINDS = new Set([
-  'agent_thought_chunk',
-  'agent_thought',
-  'reasoning',
-  'reasoning_chunk',
-  'thinking',
-  'thinking_chunk',
-  'analysis',
-  'analysis_chunk',
-]);
-/** Below this a receipt is clutter, not information. */
-const REASONING_RECEIPT_MIN_MS = 400;
-
 /** `session/update` kinds that are reasoning/planning/metadata noise, never projected. */
 const SUPPRESSED_SESSION_UPDATE_KINDS = new Set([
   'agent_thought_chunk',
@@ -207,12 +185,6 @@ function isMajorUpdate(
     path: info.path ?? known?.path,
     isMcp: info.isMcp || known?.isMcp || false,
   });
-}
-
-/** True for an update that is the agent thinking, not the agent working. */
-function isReasoningUpdate(update: Record<string, unknown>): boolean {
-  const sessionUpdate = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
-  return Boolean(sessionUpdate && REASONING_SESSION_UPDATE_KINDS.has(sessionUpdate));
 }
 
 /**
@@ -808,13 +780,6 @@ export function projectActivity(
   // whole picture — files/diff/command from creation, output from the
   // terminal — from a single record.
   const toolCallRaw = new Map<string, Record<string, unknown>>();
-  // The open reasoning stretch, spanning batches. It closes when real work
-  // lands — which is exactly the flush that has something to publish — so a
-  // long think that straddles several 5s windows still reports one span, not
-  // one per window, and a turn that is still only thinking reports nothing at
-  // all rather than a partial count that would have to be revised.
-  let reasoningOpenedAt: number | undefined;
-  let reasoningLastAt: number | undefined;
   // The agent's current plan/checklist, and the last one actually put on the
   // wire. A task-authored opening plan seeds the panel; later ACP `plan`
   // updates are suppressed from the transcript (they are reasoning there,
@@ -872,35 +837,15 @@ export function projectActivity(
     const events = pending;
     pending = [];
     if (!events.length) return;
-    // Batch first, then keep only the major load-bearing actions — an edit, a
-    // completed test/build/PR command, or a failure — so the projected
-    // transcript reads like a clean assistant log, not raw tool telemetry.
-    // Each surviving action still carries its full compact detail (files,
-    // diffs, command, output) so the corner drill-down can inspect it.
     const major: Record<string, unknown>[] = [];
     const labels: string[] = [];
-    // Tally what the filter drops. Read-only work never earns its own wire
-    // event, but its shape ("read 41, searched 12") is exactly what makes a
-    // research phase legible instead of silent, so the counts ride along on
-    // the summary event that is published anyway.
-    //
-    // This has to happen in the *same* pass: the major branch below clears the
-    // tool call's tracked kind/command, so a second pass would re-classify the
-    // very milestone it just published as an anonymous observational call.
     const rollup: Record<string, number> = {};
-    // A compact receipt per folded call — not the calls themselves, which stay
-    // dropped for the quota reason above, but enough (what it looked at, a line
-    // or two of what it found) that the review sheet has something real to show
-    // instead of just the tally. Capped independently of the tally: a batch of
-    // hundreds of reads still reports its true count, just not hundreds of rows.
     const observed: CompactObservedCall[] = [];
     for (const event of events) {
       if (!isMajorUpdate(event, toolCallKinds)) {
         const verb = observationalVerb(event, toolCallKinds);
         if (verb) {
           rollup[verb] = (rollup[verb] ?? 0) + 1;
-          // MCP calls stay implementation detail even in the drill-down —
-          // 'queried' is the one verb observationalVerb reserves for them.
           if (verb !== 'queried' && observed.length < MAX_OBSERVED_DETAILS_PER_BATCH) {
             const toolCallId = typeof event.toolCallId === 'string' ? event.toolCallId : undefined;
             const known = toolCallId ? toolCallKinds.get(toolCallId) : undefined;
@@ -939,27 +884,11 @@ export function projectActivity(
     // showed no sign of life. It now emits exactly one event (the summary),
     // never more than the mixed case already cost.
     if (!major.length && !rollupTotal && !plan) return;
-    // Work landed, so the reasoning that preceded it is over: close the span
-    // and let the receipt ride this same event. Reset unconditionally, even
-    // below the reporting floor, or a sub-threshold think would leak into the
-    // next stretch's total.
-    // First reasoning chunk to last, not first-chunk-to-now: the flush that
-    // carries the receipt can be up to a whole batch window later, and the
-    // tool calls in between are not thinking. Under-reporting a stalled think
-    // is the safe direction — the receipt is a fact about the agent, and the
-    // live rail already reports that something is still happening.
-    const thoughtMs =
-      reasoningOpenedAt !== undefined && reasoningLastAt !== undefined
-        ? reasoningLastAt - reasoningOpenedAt
-        : 0;
-    reasoningOpenedAt = undefined;
-    reasoningLastAt = undefined;
     const summary: Record<string, unknown> = {
       sessionUpdate: 'activity_summary',
       content: { type: 'text', text: summarizeMajorActions(labels) },
       ...(rollupTotal ? { rollup } : {}),
       ...(observed.length ? { observed } : {}),
-      ...(thoughtMs >= REASONING_RECEIPT_MIN_MS ? { thoughtMs } : {}),
       ...(plan ? { plan } : {}),
     };
     if (plan) publishedPlanKey = planKey;
@@ -972,11 +901,6 @@ export function projectActivity(
     // telemetry so conversation copy cannot be duplicated or lost in a batch.
     if (u.update.sessionUpdate === 'agent_message_chunk') return;
     const sanitized = sanitizeActivityUpdate(u.update);
-    if (isReasoningUpdate(sanitized)) {
-      const now = Date.now();
-      reasoningOpenedAt ??= now;
-      reasoningLastAt = now;
-    }
     // Read the plan off every update, including the ones dropped below: ACP
     // sends it as its own suppressed `plan` update, while other harnesses
     // model it as an `update_plan` tool call that is not load-bearing enough
@@ -1167,6 +1091,64 @@ export async function retractAgentDraft(
   );
 }
 
+/** Publish the rolling, replaceable thought lane. It is never kind:9 chat. */
+export async function postAgentThought(
+  channelId: string,
+  owner: Identity,
+  sessionId: string,
+  text: string,
+  createdAt = Math.floor(Date.now() / 1_000),
+): Promise<void> {
+  await publishEvent(
+    signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: createdAt,
+        kind: KIND_AGENT_DRAFT,
+        tags: [
+          ['d', agentThoughtKey(channelId)],
+          ['h', channelId],
+          ['t', TAG_AGENT_THOUGHT],
+          ['agent', owner.publicKey],
+          ['session', sessionId],
+        ],
+        content: text,
+      },
+      owner.secretKey,
+    ),
+    owner,
+  );
+}
+
+export async function retractAgentThought(
+  channelId: string,
+  scopeChannelId: string,
+  owner: Identity,
+  sessionId: string,
+  createdAt = Math.floor(Date.now() / 1_000),
+): Promise<void> {
+  await publishEvent(
+    signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: createdAt,
+        kind: KIND_AGENT_DRAFT,
+        tags: [
+          ['d', agentThoughtKey(channelId)],
+          ['h', scopeChannelId],
+          ['t', TAG_AGENT_THOUGHT],
+          ['agent', owner.publicKey],
+          ['session', sessionId],
+          ['status', 'closed'],
+        ],
+        content: '',
+      },
+      owner.secretKey,
+    ),
+    owner,
+  );
+}
+
 /**
  * `created_at` (unix seconds) strictly greater than the last value `lastRef`
  * produced, floored at the current wall clock. Several call sites in this
@@ -1217,8 +1199,9 @@ export function createDraftStreamer(
     // the stripped text is empty and nothing is published at all.
     const stripped = stripAgentReplyPreamble(latest).trim();
     if (stripped === published || publishedSnapshots.has(stripped)) return;
+    const hadPublishedText = Boolean(published);
     published = stripped;
-    if (!stripped) return;
+    if (!stripped && !hadPublishedText) return;
     publishedSnapshots.add(stripped);
     // Capture the snapshot before queueing the publish. Reading the mutable
     // `published` variable inside this closure lets a later flush replace it
@@ -1249,6 +1232,52 @@ export function createDraftStreamer(
         inflight = inflight
           .then(() => retractAgentDraft(channelId, channelId, owner, createdAt))
           .catch((error) => console.error('[body] agent draft retract failed:', error));
+      }
+      await inflight;
+    },
+  };
+}
+
+/** Coalesced replace-in-place thought publication for one model turn. */
+export function createThoughtStreamer(
+  channelId: string,
+  owner: Identity,
+  sessionId: string,
+  flushMs = AGENT_DRAFT_FLUSH_MS,
+): DraftStreamer {
+  let latest = '';
+  let published = '';
+  let finished = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let inflight = Promise.resolve();
+  const lastCreatedAt = { value: 0 };
+  const flush = () => {
+    timer = undefined;
+    const text = latest.trim();
+    if (!text || text === published) return;
+    published = text;
+    const snapshot = text;
+    const createdAt = nextMonotonicSecond(lastCreatedAt);
+    inflight = inflight
+      .then(() => postAgentThought(channelId, owner, sessionId, snapshot, createdAt))
+      .catch((error) => console.error('[body] agent thought publish failed:', error));
+  };
+  return {
+    onChunk(text) {
+      if (finished || !text.trim()) return;
+      latest = text;
+      timer ??= setTimeout(flush, flushMs);
+    },
+    async finish() {
+      if (finished) return inflight;
+      finished = true;
+      if (timer) clearTimeout(timer);
+      flush();
+      if (published) {
+        const createdAt = nextMonotonicSecond(lastCreatedAt);
+        inflight = inflight
+          .then(() => retractAgentThought(channelId, channelId, owner, sessionId, createdAt))
+          .catch((error) => console.error('[body] agent thought retract failed:', error));
       }
       await inflight;
     },

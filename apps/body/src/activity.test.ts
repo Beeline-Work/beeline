@@ -19,6 +19,7 @@ vi.mock('@beeline/gate', async (importOriginal) => ({
 import {
   projectActivity,
   createDraftStreamer,
+  createThoughtStreamer,
   compactActivityUpdate,
   AGENT_DRAFT_FLUSH_MS,
   AGENT_MESSAGE_TAG,
@@ -30,7 +31,12 @@ import {
   postSteerQueuedNotice,
   STEER_QUEUED_TAG,
 } from './activity.js';
-import { KIND_AGENT_DRAFT, KIND_AGENT_PRESENCE, TAG_AGENT_DRAFT } from '@beeline/buzz-client';
+import {
+  KIND_AGENT_DRAFT,
+  KIND_AGENT_PRESENCE,
+  TAG_AGENT_DRAFT,
+  TAG_AGENT_THOUGHT,
+} from '@beeline/buzz-client';
 
 const published = mocks.published;
 
@@ -522,7 +528,7 @@ describe('projectActivity granularity', () => {
     expect(JSON.stringify(content)).not.toContain('inspecting the code');
   });
 
-  it('collapses a reasoning stretch to a bare elapsed receipt, never its content', async () => {
+  it('keeps reasoning entirely out of durable activity, including elapsed receipts', async () => {
     const unsubscribe = projectActivity(
       client as unknown as AcpClient,
       channelId,
@@ -530,11 +536,8 @@ describe('projectActivity granularity', () => {
       sessionId,
     );
 
-    // grok Build shows a live `Thinking…` block for the whole stretch and then
-    // collapses it to `Thought for 5.8s` the instant the answer lands. Only
-    // the second half is affordable here: reasoning text is unbounded and
-    // would blow the per-pubkey quota, so the span rides the summary event
-    // that is published anyway and the content never leaves the daemon.
+    // The replaceable thought lane owns live reasoning. Durable activity gets
+    // neither its text nor a historical "Thought for …" receipt.
     emit({
       sessionUpdate: 'agent_thought_chunk',
       content: 'the median bug is the even-length case',
@@ -557,13 +560,12 @@ describe('projectActivity granularity', () => {
         content: { type: 'text', text: '' },
         rollup: { read: 1 },
         observed: [{ verb: 'read', target: 'read_file' }],
-        thoughtMs: 2_000,
       },
     ]);
     expect(JSON.stringify(content)).not.toContain('divides by zero');
   });
 
-  it('carries one reasoning span across batches instead of reporting it per window', async () => {
+  it('publishes no reasoning residue even when thought spans several batches', async () => {
     const unsubscribe = projectActivity(
       client as unknown as AcpClient,
       channelId,
@@ -571,9 +573,8 @@ describe('projectActivity granularity', () => {
       sessionId,
     );
 
-    // A think that outlasts the 5s batch window used to have no way to be
-    // reported at all. It must not become one receipt per window either: the
-    // span closes when work lands, which is the same trigger grok uses.
+    // A long thought stays on the replaceable lane and never creates a
+    // duration receipt in the durable activity batch.
     emit({ sessionUpdate: 'agent_thought_chunk', content: 'still working it out' });
     await vi.advanceTimersByTimeAsync(6_000);
     expect(published).toHaveLength(0);
@@ -587,16 +588,12 @@ describe('projectActivity granularity', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     unsubscribe();
 
-    // One receipt, spanning first thought to last (0ms -> 6000ms) — not one
-    // per 5s window, and not stretched to the flush that happened to carry it.
     expect(published).toHaveLength(1);
     const content = JSON.parse(published[0]!.content) as {
       update: { updates: Array<Record<string, unknown>> };
     };
-    expect(content.update.updates.at(-1)).toMatchObject({
-      sessionUpdate: 'activity_summary',
-      thoughtMs: 6_000,
-    });
+    expect(content.update.updates.at(-1)).toMatchObject({ sessionUpdate: 'activity_summary' });
+    expect(content.update.updates.at(-1)!.thoughtMs).toBeUndefined();
   });
 
   it('omits the receipt for a think too short to be worth reporting', async () => {
@@ -977,6 +974,34 @@ describe('createDraftStreamer', () => {
     expect(published[0]!.content).not.toContain('pi v0.83.0');
     expect(published[0]!.content).not.toContain('New version available');
     expect(published[1]!.tags).toContainEqual(['status', 'closed']);
+  });
+});
+
+describe('createThoughtStreamer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    published.length = 0;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('replaces the rolling thought lane and closes it without a durable message', async () => {
+    const owner = newIdentity('thought-stream-owner');
+    const streamer = createThoughtStreamer('room-thought', owner, 'session-thought');
+    streamer.onChunk('first line');
+    await vi.advanceTimersByTimeAsync(AGENT_DRAFT_FLUSH_MS);
+    streamer.onChunk('replacement line');
+    await vi.advanceTimersByTimeAsync(AGENT_DRAFT_FLUSH_MS);
+    await streamer.finish();
+
+    const thoughts = published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === TAG_AGENT_THOUGHT),
+    );
+    expect(thoughts.map((event) => event.content)).toEqual(['first line', 'replacement line', '']);
+    expect(thoughts.at(-1)?.tags).toContainEqual(['status', 'closed']);
+    expect(thoughts.every((event) => event.kind === KIND_AGENT_DRAFT)).toBe(true);
   });
 });
 

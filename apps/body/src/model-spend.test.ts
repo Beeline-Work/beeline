@@ -14,8 +14,14 @@ describe('model spend accounting', () => {
   it('uses cumulative adapter-reported tokens without double-counting streaming snapshots', () => {
     expect(
       reportedTokenUsage([
-        { sessionId: 's', update: { sessionUpdate: 'usage_update', usage: { input_tokens: 80, output_tokens: 10 } } },
-        { sessionId: 's', update: { sessionUpdate: 'usage_update', usage: { input_tokens: 80, output_tokens: 25 } } },
+        {
+          sessionId: 's',
+          update: { sessionUpdate: 'usage_update', usage: { input_tokens: 80, output_tokens: 10 } },
+        },
+        {
+          sessionId: 's',
+          update: { sessionUpdate: 'usage_update', usage: { input_tokens: 80, output_tokens: 25 } },
+        },
       ]),
     ).toEqual({ input: 80, output: 25 });
   });
@@ -33,7 +39,11 @@ describe('model spend accounting', () => {
       },
       prompt: '12345678',
       systemPromptChars: 12,
-      attribution: { cause: 'restart-continuation', requestId: 'resume', originalRequestId: 'human' },
+      attribution: {
+        cause: 'restart-continuation',
+        requestId: 'resume',
+        originalRequestId: 'human',
+      },
       agentPubkey: 'agent-a',
       channelId: 'corner',
       startedAt: '2026-08-20T12:00:00.000Z',
@@ -66,7 +76,11 @@ describe('model spend accounting', () => {
     const failed = failedModelSpend({
       prompt: 'retry',
       systemPromptChars: 3,
-      attribution: { cause: 'restart-continuation', requestId: 'request-1', originalRequestId: 'request-1' },
+      attribution: {
+        cause: 'restart-continuation',
+        requestId: 'request-1',
+        originalRequestId: 'request-1',
+      },
       agentPubkey: 'agent-a',
       channelId: 'corner',
       startedAt: '2026-08-20T13:00:00.000Z',
@@ -88,9 +102,7 @@ describe('model spend accounting', () => {
       'room-message',
       'restart-continuation',
     ]);
-    expect(formatAgentSpendReport(report)).toContain(
-      'agent=agent-a calls=2 tokens=',
-    );
+    expect(formatAgentSpendReport(report)).toContain('agent=agent-a calls=2 tokens=');
     expect(formatAgentSpendReport(report)).toContain(
       'restart-continuation status=failed tokens=~2 tools=0 request=request-1 original=request-1',
     );

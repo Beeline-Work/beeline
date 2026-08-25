@@ -53,7 +53,10 @@ function moneyScope(maxMinorUnits = 5_000): PermissionScope {
   };
 }
 
-function requestValue(agentPubkey: string, scope: PermissionScope = roomScope()): PermissionRequestV1 {
+function requestValue(
+  agentPubkey: string,
+  scope: PermissionScope = roomScope(),
+): PermissionRequestV1 {
   return {
     version: 1,
     permissionId: randomUUID(),
@@ -87,11 +90,9 @@ function setup(scope: PermissionScope = roomScope()) {
   const agent = createIdentity('agent');
   const admin = createIdentity('admin');
   const executor = createIdentity('executor');
-  const requestEvent = buildPermissionRequest(
-    agent,
-    requestValue(agent.publicKey, scope),
-    [admin.publicKey],
-  );
+  const requestEvent = buildPermissionRequest(agent, requestValue(agent.publicKey, scope), [
+    admin.publicKey,
+  ]);
   const request = parsePermissionRequest(requestEvent)!;
   const decisionEvent = buildPermissionDecision(admin, request, decisionValue(request));
   const decision = parsePermissionDecision(decisionEvent, request)!;
@@ -155,8 +156,12 @@ describe('permission protocol codecs', () => {
         { ...original, id: undefined as never, sig: undefined as never, tags, content },
         agent.secretKey,
       );
-    expect(parsePermissionRequest(resign(original.tags.filter((tag) => tag[0] !== 'h')))).toBeUndefined();
-    expect(parsePermissionRequest(resign([...original.tags, ['h', request.value.roomId]]))).toBeUndefined();
+    expect(
+      parsePermissionRequest(resign(original.tags.filter((tag) => tag[0] !== 'h'))),
+    ).toBeUndefined();
+    expect(
+      parsePermissionRequest(resign([...original.tags, ['h', request.value.roomId]])),
+    ).toBeUndefined();
     expect(
       parsePermissionRequest(
         resign([...original.tags, ['p', original.tags.find((tag) => tag[0] === 'p')![1]!]]),
@@ -212,9 +217,9 @@ describe('permission fold', () => {
       buildPermissionDecision(secondAdmin, request, decisionValue(request, NOW + 3)),
       request,
     )!;
-    expect(
-      foldPermissionLedger({ request, decisions: [grant, deny], now: NOW + 4 }),
-    ).toMatchObject({ status: 'denied', decision: { event: { id: deny.event.id } } });
+    expect(foldPermissionLedger({ request, decisions: [grant, deny], now: NOW + 4 })).toMatchObject(
+      { status: 'denied', decision: { event: { id: deny.event.id } } },
+    );
     expect(
       foldPermissionLedger({
         request,
@@ -242,7 +247,12 @@ describe('permission fold', () => {
       request,
     )!;
     expect(
-      foldPermissionLedger({ request, decisions: [decision], revocations: [revocation], now: NOW + 3 }),
+      foldPermissionLedger({
+        request,
+        decisions: [decision],
+        revocations: [revocation],
+        now: NOW + 3,
+      }),
     ).toMatchObject({ status: 'revoked' });
 
     const receipt = (status: PermissionExecutionV1['status']) =>
@@ -261,13 +271,28 @@ describe('permission fold', () => {
         request,
       )!;
     expect(
-      foldPermissionLedger({ request, decisions: [decision], executions: [receipt('succeeded')], now: NOW + 5 }),
+      foldPermissionLedger({
+        request,
+        decisions: [decision],
+        executions: [receipt('succeeded')],
+        now: NOW + 5,
+      }),
     ).toMatchObject({ status: 'consumed' });
     expect(
-      foldPermissionLedger({ request, decisions: [decision], executions: [receipt('unknown')], now: NOW + 5 }),
+      foldPermissionLedger({
+        request,
+        decisions: [decision],
+        executions: [receipt('unknown')],
+        now: NOW + 5,
+      }),
     ).toMatchObject({ status: 'unknown' });
     expect(
-      foldPermissionLedger({ request, decisions: [decision], executions: [receipt('failed')], now: NOW + 5 }),
+      foldPermissionLedger({
+        request,
+        decisions: [decision],
+        executions: [receipt('failed')],
+        now: NOW + 5,
+      }),
     ).toMatchObject({ status: 'granted' });
   });
 });
@@ -346,7 +371,11 @@ describe('standing envelope execution verification', () => {
     await expect(
       verifyPermissionAction({
         reader: fixture.reader,
-        action: { ...fixture.action, scope: moneyScope(5_001), charge: { uses: 1, minorUnits: 5_001, currency: 'USD' } },
+        action: {
+          ...fixture.action,
+          scope: moneyScope(5_001),
+          charge: { uses: 1, minorUnits: 5_001, currency: 'USD' },
+        },
         now: NOW + 2,
       }),
     ).resolves.toEqual({ authorized: false, terminal: true, reason: 'action-mismatch' });
@@ -437,10 +466,26 @@ describe('standing envelope execution verification', () => {
   });
 
   it.each([
-    ['removed admin', { roomMember: false, workspaceMember: true, role: 'owner', custody: true, agent: false }, 'signer-not-current-admin'],
-    ['unrelated member', { roomMember: true, workspaceMember: true, role: 'member', custody: true, agent: false }, 'signer-not-current-admin'],
-    ['non-device key', { roomMember: true, workspaceMember: true, role: 'owner', custody: false, agent: false }, 'signer-not-device-held'],
-    ['agent signer', { roomMember: true, workspaceMember: true, role: 'owner', custody: true, agent: true }, 'signer-is-agent'],
+    [
+      'removed admin',
+      { roomMember: false, workspaceMember: true, role: 'owner', custody: true, agent: false },
+      'signer-not-current-admin',
+    ],
+    [
+      'unrelated member',
+      { roomMember: true, workspaceMember: true, role: 'member', custody: true, agent: false },
+      'signer-not-current-admin',
+    ],
+    [
+      'non-device key',
+      { roomMember: true, workspaceMember: true, role: 'owner', custody: false, agent: false },
+      'signer-not-device-held',
+    ],
+    [
+      'agent signer',
+      { roomMember: true, workspaceMember: true, role: 'owner', custody: true, agent: true },
+      'signer-is-agent',
+    ],
   ] as const)('rejects a %s using current authority facts', async (_label, facts, reason) => {
     const fixture = verifierFixture();
     fixture.reader.isRegisteredAgent = async (pubkey) =>
@@ -464,18 +509,23 @@ describe('standing envelope execution verification', () => {
     const admin = createIdentity('admin');
     const executor = admin;
     const value = { ...requestValue(agent.publicKey, scope), audience: 'owner' as const };
-    const request = parsePermissionRequest(buildPermissionRequest(agent, value, [admin.publicKey]))!;
+    const request = parsePermissionRequest(
+      buildPermissionRequest(agent, value, [admin.publicKey]),
+    )!;
     const decision = parsePermissionDecision(
       buildPermissionDecision(admin, request, decisionValue(request)),
       request,
     )!;
-    const events = new Map([[request.event.id, request.event], [decision.event.id, decision.event]]);
+    const events = new Map([
+      [request.event.id, request.event],
+      [decision.event.id, decision.event],
+    ]);
     const reader: PermissionFreshReader = {
       readEvent: async (id) => events.get(id),
       isRegisteredAgent: async (pubkey) => pubkey === agent.publicKey,
       isRoomMember: async () => true,
       isWorkspaceMember: async () => true,
-      roleForRoom: async (_room, pubkey) => pubkey === admin.publicKey ? 'admin' : 'member',
+      roleForRoom: async (_room, pubkey) => (pubkey === admin.publicKey ? 'admin' : 'member'),
       hasDeviceCustody: async (pubkey) => pubkey === admin.publicKey,
       permissionHistory: async () => [decision.event],
     };
@@ -502,9 +552,13 @@ describe('standing envelope execution verification', () => {
 
   it('property-checks monetary scope containment at the exact signed boundary', () => {
     fc.assert(
-      fc.property(fc.integer({ min: 1, max: 100_000 }), fc.integer({ min: 1, max: 200_000 }), (limit, spend) => {
-        expect(permissionScopeAllows(moneyScope(limit), moneyScope(spend))).toBe(spend <= limit);
-      }),
+      fc.property(
+        fc.integer({ min: 1, max: 100_000 }),
+        fc.integer({ min: 1, max: 200_000 }),
+        (limit, spend) => {
+          expect(permissionScopeAllows(moneyScope(limit), moneyScope(spend))).toBe(spend <= limit);
+        },
+      ),
     );
   });
 });

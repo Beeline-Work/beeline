@@ -40,9 +40,10 @@ export function parseRoomCreatePermissionDirective(input: {
   principalPubkey: string;
   roster: readonly PermissionDirectiveRosterEntry[];
 }): Extract<PermissionScope, { type: 'room.create' }> | undefined {
-  const match = /^create\s+(?:an?\s+)?(?:outcome\s+)?room\s+named\s+["“]([^"”]{1,120})["”]\s+with\s+(.+?)[.]?$/i.exec(
-    input.task.trim(),
-  );
+  const match =
+    /^create\s+(?:an?\s+)?(?:outcome\s+)?room\s+named\s+["“]([^"”]{1,120})["”]\s+with\s+(.+?)[.]?$/i.exec(
+      input.task.trim(),
+    );
   if (!match?.[1] || !match[2]) return undefined;
   const handles = match[2]
     .split(/\s*(?:,|\band\b)\s*/i)
@@ -90,11 +91,7 @@ export interface PermissionCapacityReservation {
 }
 
 export type PermissionCapacityResult =
-  | 'claimed'
-  | 'duplicate'
-  | 'exhausted'
-  | 'rate-exhausted'
-  | 'budget-exhausted';
+  'claimed' | 'duplicate' | 'exhausted' | 'rate-exhausted' | 'budget-exhausted';
 
 export interface PermissionRuntimeDependencies {
   identity: Identity;
@@ -149,27 +146,21 @@ export class PermissionRuntime {
     input: PermissionRequestV1,
     eligibleHumanPubkeys: readonly string[],
   ): Promise<NostrEvent> {
-    const event = buildPermissionRequest(
-      this.dependencies.identity,
-      input,
-      eligibleHumanPubkeys,
-    );
+    const event = buildPermissionRequest(this.dependencies.identity, input, eligibleHumanPubkeys);
     await this.dependencies.publish(event);
     return event;
   }
 
-  async execute(
-    input: {
-      action: PermissionConcreteAction;
+  async execute(input: {
+    action: PermissionConcreteAction;
+    attempt: number;
+    preflight?: () => Promise<void>;
+    invoke: (context: {
+      idempotencyKey: string;
+      actionId: string;
       attempt: number;
-      preflight?: () => Promise<void>;
-      invoke: (context: {
-        idempotencyKey: string;
-        actionId: string;
-        attempt: number;
-      }) => Promise<PermissionAdapterResult>;
-    },
-  ): Promise<PermissionExecutionOutcome> {
+    }) => Promise<PermissionAdapterResult>;
+  }): Promise<PermissionExecutionOutcome> {
     const { action, attempt } = input;
     if (
       action.executorPubkey !== this.dependencies.identity.publicKey ||
@@ -232,16 +223,14 @@ export class PermissionRuntime {
       }
       if (capacity !== 'claimed') {
         const receipt = await this.publishRefusalIfPossible(action, attempt, capacity, true);
-        return { status: 'refused', terminal: true, reason: capacity, ...(receipt ? { receipt } : {}) };
+        return {
+          status: 'refused',
+          terminal: true,
+          reason: capacity,
+          ...(receipt ? { receipt } : {}),
+        };
       }
-      await this.publishReceipt(
-        verification.request,
-        action,
-        attempt,
-        'started',
-        undefined,
-        true,
-      );
+      await this.publishReceipt(verification.request, action, attempt, 'started', undefined, true);
 
       try {
         const adapter = await input.invoke({
@@ -285,7 +274,9 @@ export class PermissionRuntime {
     terminal: boolean,
   ): Promise<NostrEvent | undefined> {
     if (!terminal) return undefined;
-    const event = await this.dependencies.reader.readEvent(action.requestEventId).catch(() => undefined);
+    const event = await this.dependencies.reader
+      .readEvent(action.requestEventId)
+      .catch(() => undefined);
     const request = event ? parsePermissionRequest(event) : undefined;
     if (!request || request.value.permissionId !== action.permissionId) return undefined;
     const key = `refusal:${action.grantEventId}:${action.actionId}:${attempt}:${reason}`;

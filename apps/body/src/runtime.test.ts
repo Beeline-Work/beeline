@@ -650,22 +650,33 @@ describe('multi-identity guard (S0) + access policy', () => {
     const stored = await readRuntimeRecord(result.configPath);
     expect(stored.accessPolicy).toBe('allowlist');
     expect(stored.accessAllowlist).toEqual([atlas]);
-    expect(isSenderPermitted(stored.accessPolicy!, atlas, stored.pairedBy, stored.accessAllowlist)).toBe(true);
     expect(
-      isSenderPermitted(stored.accessPolicy!, stored.pairedBy, stored.pairedBy, stored.accessAllowlist),
+      isSenderPermitted(stored.accessPolicy!, atlas, stored.pairedBy, stored.accessAllowlist),
+    ).toBe(true);
+    expect(
+      isSenderPermitted(
+        stored.accessPolicy!,
+        stored.pairedBy,
+        stored.pairedBy,
+        stored.accessAllowlist,
+      ),
     ).toBe(false);
   });
 
   it('rejects missing or malformed allowlists before redeeming', async () => {
     const root = await repository('https://example.com/team/project.git');
     const supervisorRoot = await stateRoot();
-    await expect(pairAgent(root, supervisorRoot, newIdentity('missing'), {
-      accessPolicy: 'allowlist',
-    })).rejects.toThrow('allowlist access requires');
-    await expect(pairAgent(root, supervisorRoot, newIdentity('malformed'), {
-      accessPolicy: 'allowlist',
-      accessAllowlist: ['not-a-pubkey'],
-    })).rejects.toThrow('allowlist access requires');
+    await expect(
+      pairAgent(root, supervisorRoot, newIdentity('missing'), {
+        accessPolicy: 'allowlist',
+      }),
+    ).rejects.toThrow('allowlist access requires');
+    await expect(
+      pairAgent(root, supervisorRoot, newIdentity('malformed'), {
+        accessPolicy: 'allowlist',
+        accessAllowlist: ['not-a-pubkey'],
+      }),
+    ).rejects.toThrow('allowlist access requires');
   });
 
   it('persists a creator-only squire grant without credential material', async () => {

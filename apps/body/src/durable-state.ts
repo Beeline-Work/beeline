@@ -32,7 +32,10 @@ interface InboxItem {
   reply?: NostrEvent;
 }
 
-interface StoredPermissionReservation extends Omit<PermissionCapacityReservation, 'usage' | 'grant'> {}
+interface StoredPermissionReservation extends Omit<
+  PermissionCapacityReservation,
+  'usage' | 'grant'
+> {}
 
 interface StoredDelegationReservation extends DelegationCapacityReservation {}
 
@@ -250,7 +253,8 @@ export class DurableBodyState {
         unseen.filter((reservation) => reservation.delegationId === input.delegationId).length +
         1 >
       input.rootMaxAgentTurns
-    ) return 'over-turn-budget';
+    )
+      return 'over-turn-budget';
     const observedDaily = new Set(input.observedDailyTurnEventIds);
     const sameDay = unseen.filter(
       (reservation) =>
@@ -266,7 +270,8 @@ export class DurableBodyState {
         sameDay.reduce((sum, reservation) => sum + reservation.reservedTokens, 0) +
         input.reservedTokens >
       input.dailyMaxReservedTokens
-    ) return 'over-token-budget';
+    )
+      return 'over-token-budget';
     if (input.parentWorkItemId && input.phase === 'assign') {
       const siblings = unseen.filter(
         (reservation) =>
@@ -280,13 +285,15 @@ export class DurableBodyState {
           siblings.reduce((sum, reservation) => sum + reservation.allocatedTurns, 0) +
           input.allocatedTurns >
           (input.parentAvailableTurns ?? 0)
-      ) return 'over-child-budget';
+      )
+        return 'over-child-budget';
       if (
         input.observedSiblingAllocatedTokens +
           siblings.reduce((sum, reservation) => sum + reservation.reservedTokens, 0) +
           input.reservedTokens >
         (input.parentAvailableTokens ?? 0)
-      ) return 'over-token-budget';
+      )
+        return 'over-token-budget';
     }
     factory.inboundDelegationClaims.push(input.eventId);
     factory.inboundDelegationClaims = factory.inboundDelegationClaims.slice(-MAX_FACTORY_CLAIMS);
@@ -370,23 +377,27 @@ export class DurableBodyState {
       .reduce((sum, reservation) => sum + reservation.charge.uses, 0);
     if (
       input.usage.committedAt.filter((at) => at >= windowStart).length +
-        recentUses + input.charge.uses >
+        recentUses +
+        input.charge.uses >
       input.grant.rate.maxUses
-    ) return 'rate-exhausted';
+    )
+      return 'rate-exhausted';
     if (
       input.grant.budget.maxMinorUnits !== undefined &&
       input.usage.minorUnits +
         unseen.reduce((sum, reservation) => sum + (reservation.charge.minorUnits ?? 0), 0) +
         (input.charge.minorUnits ?? 0) >
-      input.grant.budget.maxMinorUnits
-    ) return 'budget-exhausted';
+        input.grant.budget.maxMinorUnits
+    )
+      return 'budget-exhausted';
     if (
       input.grant.budget.maxReservedTokens !== undefined &&
       input.usage.reservedTokens +
         unseen.reduce((sum, reservation) => sum + (reservation.charge.reservedTokens ?? 0), 0) +
         (input.charge.reservedTokens ?? 0) >
-      input.grant.budget.maxReservedTokens
-    ) return 'budget-exhausted';
+        input.grant.budget.maxReservedTokens
+    )
+      return 'budget-exhausted';
     reservations[input.key] = {
       key: input.key,
       grantEventId: input.grantEventId,

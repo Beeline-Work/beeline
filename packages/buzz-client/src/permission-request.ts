@@ -34,7 +34,8 @@ export const MAX_PERMISSION_GRANT_TTL_SECONDS = 31 * 24 * 60 * 60;
 export const MAX_PERMISSION_CONTENT_CHARS = 32_000;
 
 const HEX_64 = /^[0-9a-f]{64}$/;
-const PROTOCOL_ID = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$/i;
+const PROTOCOL_ID =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
 const CURRENCY = /^[A-Z]{3}$/;
 const SHA_256 = /^[0-9a-f]{64}$/;
@@ -357,12 +358,10 @@ function parseArtifact(value: unknown): ArtifactRevisionRef | undefined {
   if (!input) return undefined;
   const artifactId = token(input.artifactId);
   const revision = integer(input.revision, 1);
-  const eventId = typeof input.eventId === 'string' && HEX_64.test(input.eventId)
-    ? input.eventId
-    : undefined;
-  const sha256 = typeof input.sha256 === 'string' && SHA_256.test(input.sha256)
-    ? input.sha256
-    : undefined;
+  const eventId =
+    typeof input.eventId === 'string' && HEX_64.test(input.eventId) ? input.eventId : undefined;
+  const sha256 =
+    typeof input.sha256 === 'string' && SHA_256.test(input.sha256) ? input.sha256 : undefined;
   if (!artifactId || revision === undefined || !eventId || !sha256) return undefined;
   return { artifactId, revision, eventId, sha256 };
 }
@@ -374,7 +373,9 @@ function parseArtifacts(value: unknown): ArtifactRevisionRef[] | undefined {
   const parsed = value.map(parseArtifact);
   if (parsed.some((candidate) => !candidate)) return undefined;
   const artifacts = parsed as ArtifactRevisionRef[];
-  const ids = artifacts.map((artifact) => `${artifact.artifactId}:${artifact.revision}:${artifact.eventId}`);
+  const ids = artifacts.map(
+    (artifact) => `${artifact.artifactId}:${artifact.revision}:${artifact.eventId}`,
+  );
   return new Set(ids).size === ids.length ? artifacts : undefined;
 }
 
@@ -449,7 +450,14 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
       const merchant = nonEmpty(input.merchant, 160);
       const purpose = nonEmpty(input.purpose, 600);
       const connectorId = token(input.connectorId);
-      if (!currency || !CURRENCY.test(currency) || maxMinorUnits === undefined || !merchant || !purpose || !connectorId) {
+      if (
+        !currency ||
+        !CURRENCY.test(currency) ||
+        maxMinorUnits === undefined ||
+        !merchant ||
+        !purpose ||
+        !connectorId
+      ) {
         return undefined;
       }
       return { type: input.type, currency, maxMinorUnits, merchant, purpose, connectorId };
@@ -458,7 +466,12 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
       const connectorId = token(input.connectorId);
       const artifacts = parseArtifacts(input.artifacts);
       const recipients = parseDestinations(input.recipients);
-      if (!['email', 'sms', 'social-dm'].includes(String(input.channel)) || !connectorId || !artifacts || !recipients) {
+      if (
+        !['email', 'sms', 'social-dm'].includes(String(input.channel)) ||
+        !connectorId ||
+        !artifacts ||
+        !recipients
+      ) {
         return undefined;
       }
       return {
@@ -479,11 +492,18 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
     case 'operation.execute': {
       const connectorId = token(input.connectorId);
       const tool = token(input.tool);
-      const argumentsDigest = typeof input.argumentsDigest === 'string' && SHA_256.test(input.argumentsDigest)
-        ? input.argumentsDigest
-        : undefined;
+      const argumentsDigest =
+        typeof input.argumentsDigest === 'string' && SHA_256.test(input.argumentsDigest)
+          ? input.argumentsDigest
+          : undefined;
       const target = nonEmpty(input.target, 512);
-      if (!connectorId || !tool || !argumentsDigest || !target || !['irreversible', 'out-of-scope'].includes(String(input.risk))) {
+      if (
+        !connectorId ||
+        !tool ||
+        !argumentsDigest ||
+        !target ||
+        !['irreversible', 'out-of-scope'].includes(String(input.risk))
+      ) {
         return undefined;
       }
       return {
@@ -497,10 +517,15 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
     }
     case 'schedule.change': {
       const scheduleId = protocolId(input.scheduleId);
-      const revisionDigest = typeof input.revisionDigest === 'string' && SHA_256.test(input.revisionDigest)
-        ? input.revisionDigest
-        : undefined;
-      if (!['create', 'update', 'pause', 'delete'].includes(String(input.operation)) || !scheduleId || !revisionDigest) {
+      const revisionDigest =
+        typeof input.revisionDigest === 'string' && SHA_256.test(input.revisionDigest)
+          ? input.revisionDigest
+          : undefined;
+      if (
+        !['create', 'update', 'pause', 'delete'].includes(String(input.operation)) ||
+        !scheduleId ||
+        !revisionDigest
+      ) {
         return undefined;
       }
       return {
@@ -515,7 +540,12 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
       const extraTurns = integer(input.extraTurns, 1, 1_000);
       const extraReservedTokens = integer(input.extraReservedTokens, 0);
       const permittedAgentPubkeys = uniqueStrings(input.permittedAgentPubkeys, pubkey, 64);
-      if (!delegationId || extraTurns === undefined || extraReservedTokens === undefined || !permittedAgentPubkeys) {
+      if (
+        !delegationId ||
+        extraTurns === undefined ||
+        extraReservedTokens === undefined ||
+        !permittedAgentPubkeys
+      ) {
         return undefined;
       }
       return {
@@ -531,7 +561,10 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
   }
 }
 
-function parseEnvelope(value: unknown, scope: PermissionScope): PermissionGrantEnvelopeV1 | undefined {
+function parseEnvelope(
+  value: unknown,
+  scope: PermissionScope,
+): PermissionGrantEnvelopeV1 | undefined {
   const input = object(value);
   const policy = PERMISSION_SCOPE_REGISTRY[scope.type];
   if (!input) return undefined;
@@ -563,18 +596,19 @@ function parseEnvelope(value: unknown, scope: PermissionScope): PermissionGrantE
   ) {
     return undefined;
   }
-  const maxMinorUnits = budgetInput.maxMinorUnits === undefined
-    ? undefined
-    : integer(budgetInput.maxMinorUnits, 1);
-  const currency = budgetInput.currency === undefined ? undefined : nonEmpty(budgetInput.currency, 3);
-  const maxReservedTokens = budgetInput.maxReservedTokens === undefined
-    ? undefined
-    : integer(budgetInput.maxReservedTokens, 0);
+  const maxMinorUnits =
+    budgetInput.maxMinorUnits === undefined ? undefined : integer(budgetInput.maxMinorUnits, 1);
+  const currency =
+    budgetInput.currency === undefined ? undefined : nonEmpty(budgetInput.currency, 3);
+  const maxReservedTokens =
+    budgetInput.maxReservedTokens === undefined
+      ? undefined
+      : integer(budgetInput.maxReservedTokens, 0);
   if (
     (budgetInput.maxMinorUnits !== undefined && maxMinorUnits === undefined) ||
     (budgetInput.currency !== undefined && (!currency || !CURRENCY.test(currency))) ||
     (budgetInput.maxReservedTokens !== undefined && maxReservedTokens === undefined) ||
-    ((maxMinorUnits === undefined) !== (currency === undefined))
+    (maxMinorUnits === undefined) !== (currency === undefined)
   ) {
     return undefined;
   }
@@ -630,14 +664,20 @@ function parseRequestContent(value: unknown): PermissionRequestV1 | undefined {
   const workspaceId = token(input?.workspaceId);
   const requesterAgentPubkey = pubkey(input?.requesterAgentPubkey);
   const summary = nonEmpty(input?.summary, MAX_PERMISSION_SUMMARY_CHARS);
-  const immediateTurnEventId = provenance && typeof provenance.immediateTurnEventId === 'string' && HEX_64.test(provenance.immediateTurnEventId)
-    ? provenance.immediateTurnEventId
-    : undefined;
-  const rootEventId = provenance && typeof provenance.rootEventId === 'string' && HEX_64.test(provenance.rootEventId)
-    ? provenance.rootEventId
-    : undefined;
-  const delegationId = provenance?.delegationId === undefined ? undefined : protocolId(provenance.delegationId);
-  const scheduleRunId = provenance?.scheduleRunId === undefined ? undefined : token(provenance.scheduleRunId);
+  const immediateTurnEventId =
+    provenance &&
+    typeof provenance.immediateTurnEventId === 'string' &&
+    HEX_64.test(provenance.immediateTurnEventId)
+      ? provenance.immediateTurnEventId
+      : undefined;
+  const rootEventId =
+    provenance && typeof provenance.rootEventId === 'string' && HEX_64.test(provenance.rootEventId)
+      ? provenance.rootEventId
+      : undefined;
+  const delegationId =
+    provenance?.delegationId === undefined ? undefined : protocolId(provenance.delegationId);
+  const scheduleRunId =
+    provenance?.scheduleRunId === undefined ? undefined : token(provenance.scheduleRunId);
   const requestedAt = integer(input?.requestedAt);
   const requestExpiresAt = integer(input?.requestExpiresAt);
   if (
@@ -681,14 +721,19 @@ function parseRequestContent(value: unknown): PermissionRequestV1 | undefined {
   };
 }
 
-function parseDecisionContent(value: unknown, scope: PermissionScope): PermissionDecisionV1 | undefined {
+function parseDecisionContent(
+  value: unknown,
+  scope: PermissionScope,
+): PermissionDecisionV1 | undefined {
   const input = object(value);
   const permissionId = protocolId(input?.permissionId);
-  const requestEventId = typeof input?.requestEventId === 'string' && HEX_64.test(input.requestEventId)
-    ? input.requestEventId
-    : undefined;
+  const requestEventId =
+    typeof input?.requestEventId === 'string' && HEX_64.test(input.requestEventId)
+      ? input.requestEventId
+      : undefined;
   const decidedAt = integer(input?.decidedAt);
-  const note = input?.note === undefined ? undefined : nonEmpty(input.note, MAX_PERMISSION_NOTE_CHARS);
+  const note =
+    input?.note === undefined ? undefined : nonEmpty(input.note, MAX_PERMISSION_NOTE_CHARS);
   if (
     input?.version !== 1 ||
     !permissionId ||
@@ -700,7 +745,10 @@ function parseDecisionContent(value: unknown, scope: PermissionScope): Permissio
     return undefined;
   }
   const grant = input.decision === 'grant' ? parseEnvelope(input.grant, scope) : undefined;
-  if ((input.decision === 'grant' && !grant) || (input.decision === 'deny' && input.grant !== undefined)) {
+  if (
+    (input.decision === 'grant' && !grant) ||
+    (input.decision === 'deny' && input.grant !== undefined)
+  ) {
     return undefined;
   }
   return {
@@ -717,13 +765,22 @@ function parseDecisionContent(value: unknown, scope: PermissionScope): Permissio
 function parseRevocationContent(value: unknown): PermissionRevocationV1 | undefined {
   const input = object(value);
   const permissionId = protocolId(input?.permissionId);
-  const grantEventId = typeof input?.grantEventId === 'string' && HEX_64.test(input.grantEventId)
-    ? input.grantEventId
-    : undefined;
+  const grantEventId =
+    typeof input?.grantEventId === 'string' && HEX_64.test(input.grantEventId)
+      ? input.grantEventId
+      : undefined;
   const revokedAt = integer(input?.revokedAt);
   const reason = token(input?.reason, MAX_PERMISSION_REASON_CHARS);
-  const note = input?.note === undefined ? undefined : nonEmpty(input.note, MAX_PERMISSION_NOTE_CHARS);
-  if (input?.version !== 1 || !permissionId || !grantEventId || revokedAt === undefined || !reason || (input.note !== undefined && !note)) {
+  const note =
+    input?.note === undefined ? undefined : nonEmpty(input.note, MAX_PERMISSION_NOTE_CHARS);
+  if (
+    input?.version !== 1 ||
+    !permissionId ||
+    !grantEventId ||
+    revokedAt === undefined ||
+    !reason ||
+    (input.note !== undefined && !note)
+  ) {
     return undefined;
   }
   return { version: 1, permissionId, grantEventId, revokedAt, reason, ...(note ? { note } : {}) };
@@ -732,9 +789,10 @@ function parseRevocationContent(value: unknown): PermissionRevocationV1 | undefi
 function parseExecutionContent(value: unknown): PermissionExecutionV1 | undefined {
   const input = object(value);
   const permissionId = protocolId(input?.permissionId);
-  const grantEventId = typeof input?.grantEventId === 'string' && HEX_64.test(input.grantEventId)
-    ? input.grantEventId
-    : undefined;
+  const grantEventId =
+    typeof input?.grantEventId === 'string' && HEX_64.test(input.grantEventId)
+      ? input.grantEventId
+      : undefined;
   const actionId = token(input?.actionId);
   const idempotencyKey = token(input?.idempotencyKey);
   const attempt = integer(input?.attempt, 1, 1_000);
@@ -758,14 +816,17 @@ function parseExecutionContent(value: unknown): PermissionExecutionV1 | undefine
   let charge: PermissionExecutionV1['charge'];
   if (chargeInput) {
     const uses = integer(chargeInput.uses, 1, MAX_PERMISSION_USES);
-    const minorUnits = chargeInput.minorUnits === undefined ? undefined : integer(chargeInput.minorUnits, 0);
-    const currency = chargeInput.currency === undefined ? undefined : nonEmpty(chargeInput.currency, 3);
-    const reservedTokens = chargeInput.reservedTokens === undefined ? undefined : integer(chargeInput.reservedTokens, 0);
+    const minorUnits =
+      chargeInput.minorUnits === undefined ? undefined : integer(chargeInput.minorUnits, 0);
+    const currency =
+      chargeInput.currency === undefined ? undefined : nonEmpty(chargeInput.currency, 3);
+    const reservedTokens =
+      chargeInput.reservedTokens === undefined ? undefined : integer(chargeInput.reservedTokens, 0);
     if (
       uses === undefined ||
       (chargeInput.minorUnits !== undefined && minorUnits === undefined) ||
       (chargeInput.currency !== undefined && (!currency || !CURRENCY.test(currency))) ||
-      ((minorUnits === undefined) !== (currency === undefined)) ||
+      (minorUnits === undefined) !== (currency === undefined) ||
       (chargeInput.reservedTokens !== undefined && reservedTokens === undefined)
     ) {
       return undefined;
@@ -934,12 +995,19 @@ export function parsePermissionEvent(
   if (marker(event) === PERMISSION_REQUEST_MARKER) return parsePermissionRequest(event);
   if (!request) return undefined;
   if (marker(event) === PERMISSION_DECISION_MARKER) return parsePermissionDecision(event, request);
-  if (marker(event) === PERMISSION_REVOCATION_MARKER) return parsePermissionRevocation(event, request);
-  if (marker(event) === PERMISSION_EXECUTION_MARKER) return parsePermissionExecution(event, request);
+  if (marker(event) === PERMISSION_REVOCATION_MARKER)
+    return parsePermissionRevocation(event, request);
+  if (marker(event) === PERMISSION_EXECUTION_MARKER)
+    return parsePermissionExecution(event, request);
   return undefined;
 }
 
-function sign(identity: Identity, tags: string[][], content: unknown, createdAt: number): NostrEvent {
+function sign(
+  identity: Identity,
+  tags: string[][],
+  content: unknown,
+  createdAt: number,
+): NostrEvent {
   return signEvent(
     {
       pubkey: identity.publicKey,
@@ -988,7 +1056,11 @@ export function buildPermissionDecision(
   input: PermissionDecisionV1,
 ): NostrEvent {
   const value = parseDecisionContent(input, request.value.scope);
-  if (!value || value.permissionId !== request.value.permissionId || value.requestEventId !== request.event.id) {
+  if (
+    !value ||
+    value.permissionId !== request.value.permissionId ||
+    value.requestEventId !== request.event.id
+  ) {
     throw new Error('invalid permission decision');
   }
   return sign(
@@ -1118,7 +1190,11 @@ export type PermissionFoldState =
   | { status: 'expired' }
   | { status: 'denied'; decision: ParsedPermissionDecision }
   | { status: 'granted'; decision: ParsedPermissionDecision; usage: PermissionUsage }
-  | { status: 'revoked'; decision: ParsedPermissionDecision; revocation: ParsedPermissionRevocation }
+  | {
+      status: 'revoked';
+      decision: ParsedPermissionDecision;
+      revocation: ParsedPermissionRevocation;
+    }
   | { status: 'executing'; decision: ParsedPermissionDecision; usage: PermissionUsage }
   | { status: 'unknown'; decision: ParsedPermissionDecision; usage: PermissionUsage }
   | { status: 'consumed'; decision: ParsedPermissionDecision; usage: PermissionUsage };
@@ -1133,27 +1209,31 @@ export function foldPermissionLedger(input: {
   revocationAuthorized?: (revocation: ParsedPermissionRevocation) => boolean;
 }): PermissionFoldState {
   const decision = [...input.decisions]
-    .filter((candidate) =>
-      candidate.value.permissionId === input.request.value.permissionId &&
-      candidate.value.requestEventId === input.request.event.id &&
-      candidate.value.decidedAt <= input.request.value.requestExpiresAt &&
-      candidate.value.decidedAt <= input.now &&
-      (input.decisionAuthorized?.(candidate) ?? true),
+    .filter(
+      (candidate) =>
+        candidate.value.permissionId === input.request.value.permissionId &&
+        candidate.value.requestEventId === input.request.event.id &&
+        candidate.value.decidedAt <= input.request.value.requestExpiresAt &&
+        candidate.value.decidedAt <= input.now &&
+        (input.decisionAuthorized?.(candidate) ?? true),
     )
     .sort(compareEvents)[0];
   if (!decision) {
-    return input.now > input.request.value.requestExpiresAt ? { status: 'expired' } : { status: 'pending' };
+    return input.now > input.request.value.requestExpiresAt
+      ? { status: 'expired' }
+      : { status: 'pending' };
   }
   if (decision.value.decision === 'deny') return { status: 'denied', decision };
   const grant = decision.value.grant!;
   if (input.now < grant.notBefore) return { status: 'pending' };
   if (input.now > grant.expiresAt) return { status: 'expired' };
   const revocation = [...(input.revocations ?? [])]
-    .filter((candidate) =>
-      candidate.value.permissionId === input.request.value.permissionId &&
-      candidate.value.grantEventId === decision.event.id &&
-      candidate.value.revokedAt <= input.now &&
-      (input.revocationAuthorized?.(candidate) ?? true),
+    .filter(
+      (candidate) =>
+        candidate.value.permissionId === input.request.value.permissionId &&
+        candidate.value.grantEventId === decision.event.id &&
+        candidate.value.revokedAt <= input.now &&
+        (input.revocationAuthorized?.(candidate) ?? true),
     )
     .sort(compareEvents)[0];
   if (revocation) return { status: 'revoked', decision, revocation };
@@ -1161,8 +1241,10 @@ export function foldPermissionLedger(input: {
     (input.executions ?? []).filter((execution) => execution.value.at <= input.now),
     decision.event.id,
   );
-  if ([...usage.actionStatuses.values()].includes('unknown')) return { status: 'unknown', decision, usage };
-  if ([...usage.actionStatuses.values()].includes('started')) return { status: 'executing', decision, usage };
+  if ([...usage.actionStatuses.values()].includes('unknown'))
+    return { status: 'unknown', decision, usage };
+  if ([...usage.actionStatuses.values()].includes('started'))
+    return { status: 'executing', decision, usage };
   if (usage.uses >= grant.maxUses) return { status: 'consumed', decision, usage };
   return { status: 'granted', decision, usage };
 }
@@ -1296,7 +1378,10 @@ export type PermissionVerificationResult =
         | 'action-mismatch';
     };
 
-function roleSatisfies(role: 'owner' | 'admin' | 'member' | null, minimum: PermissionRole): boolean {
+function roleSatisfies(
+  role: 'owner' | 'admin' | 'member' | null,
+  minimum: PermissionRole,
+): boolean {
   return role === 'owner' || (minimum === 'admin' && role === 'admin');
 }
 
@@ -1359,7 +1444,9 @@ export async function verifyPermissionAction(input: {
       return { authorized: false, terminal: true, reason: 'requester-not-current-member' };
     }
     const decisionEvent = await input.reader.readEvent(input.action.grantEventId);
-    const requestedDecision = decisionEvent ? parsePermissionDecision(decisionEvent, request) : undefined;
+    const requestedDecision = decisionEvent
+      ? parsePermissionDecision(decisionEvent, request)
+      : undefined;
     if (!requestedDecision || requestedDecision.value.decision !== 'grant') {
       return { authorized: false, terminal: true, reason: 'decision-invalid' };
     }
@@ -1369,7 +1456,10 @@ export async function verifyPermissionAction(input: {
     if (policy.executor !== input.action.executor) {
       return { authorized: false, terminal: true, reason: 'executor-mismatch' };
     }
-    const history = await input.reader.permissionHistory(request.value.roomId, request.value.permissionId);
+    const history = await input.reader.permissionHistory(
+      request.value.roomId,
+      request.value.permissionId,
+    );
     const decisions = history.flatMap((event) => {
       const parsed = parsePermissionDecision(event, request);
       return parsed && parsed.value.decidedAt <= input.now ? [parsed] : [];
@@ -1394,7 +1484,8 @@ export async function verifyPermissionAction(input: {
       return { authorized: false, terminal: true, reason: 'denied' };
     }
     const grant = winner.value.grant!;
-    if (input.now < grant.notBefore) return { authorized: false, terminal: false, reason: 'not-yet-valid' };
+    if (input.now < grant.notBefore)
+      return { authorized: false, terminal: false, reason: 'not-yet-valid' };
     if (input.now > grant.expiresAt) {
       return { authorized: false, terminal: true, reason: 'expired' };
     }
@@ -1475,7 +1566,8 @@ export async function verifyPermissionAction(input: {
     }
     if (
       grant.budget.maxReservedTokens !== undefined &&
-      usage.reservedTokens + (input.action.charge.reservedTokens ?? 0) > grant.budget.maxReservedTokens
+      usage.reservedTokens + (input.action.charge.reservedTokens ?? 0) >
+        grant.budget.maxReservedTokens
     ) {
       return { authorized: false, terminal: true, reason: 'budget-exhausted' };
     }

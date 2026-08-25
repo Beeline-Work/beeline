@@ -74,10 +74,7 @@ export async function dispatchRootFactoryDirectives(
   const delegates = parsed.directives.flatMap((directive, index) =>
     directive.kind === 'delegate' ? [{ directive, index }] : [],
   );
-  const availableTurns = Math.max(
-    0,
-    defaultDelegationBudget(input.completedAt).maxAgentTurns - 1,
-  );
+  const availableTurns = Math.max(0, defaultDelegationBudget(input.completedAt).maxAgentTurns - 1);
   const delegateCount = Math.min(delegates.length, availableTurns);
   const baseTurns = delegateCount ? Math.floor(availableTurns / delegateCount) : 0;
   let extraTurns = delegateCount ? availableTurns % delegateCount : 0;
@@ -177,29 +174,33 @@ export function buildDelegationEscalationPermission(input: {
   const permissionId = factoryUuid(
     `${input.immediateTurnEventId}:delegation-escalation:${input.turn.value.delegationId}`,
   );
-  return buildPermissionRequest(input.identity, {
-    version: 1,
-    permissionId,
-    roomId: input.turn.value.roomId,
-    workspaceId: input.turn.value.workspaceId,
-    requesterAgentPubkey: input.identity.publicKey,
-    audience: 'admin',
-    summary: `Extend delegation ${input.turn.value.delegationId} by ${input.extraTurns} bounded turn(s).`,
-    scope: {
-      type: 'delegation.escalate',
-      delegationId: input.turn.value.delegationId,
-      extraTurns: input.extraTurns,
-      extraReservedTokens: input.extraReservedTokens,
-      permittedAgentPubkeys: [...new Set(input.permittedAgentPubkeys)],
+  return buildPermissionRequest(
+    input.identity,
+    {
+      version: 1,
+      permissionId,
+      roomId: input.turn.value.roomId,
+      workspaceId: input.turn.value.workspaceId,
+      requesterAgentPubkey: input.identity.publicKey,
+      audience: 'admin',
+      summary: `Extend delegation ${input.turn.value.delegationId} by ${input.extraTurns} bounded turn(s).`,
+      scope: {
+        type: 'delegation.escalate',
+        delegationId: input.turn.value.delegationId,
+        extraTurns: input.extraTurns,
+        extraReservedTokens: input.extraReservedTokens,
+        permittedAgentPubkeys: [...new Set(input.permittedAgentPubkeys)],
+      },
+      provenance: {
+        immediateTurnEventId: input.immediateTurnEventId,
+        rootEventId: input.turn.value.rootEventId,
+        delegationId: input.turn.value.delegationId,
+      },
+      requestedAt: input.requestedAt,
+      requestExpiresAt: input.requestedAt + 30 * 60,
     },
-    provenance: {
-      immediateTurnEventId: input.immediateTurnEventId,
-      rootEventId: input.turn.value.rootEventId,
-      delegationId: input.turn.value.delegationId,
-    },
-    requestedAt: input.requestedAt,
-    requestExpiresAt: input.requestedAt + 30 * 60,
-  }, input.eligibleHumanPubkeys);
+    input.eligibleHumanPubkeys,
+  );
 }
 
 export interface DelegationDailyUsage {
@@ -239,11 +240,7 @@ export interface DelegationCapacityReservation {
 }
 
 export type DelegationCapacityResult =
-  | 'claimed'
-  | 'duplicate'
-  | 'over-turn-budget'
-  | 'over-child-budget'
-  | 'over-token-budget';
+  'claimed' | 'duplicate' | 'over-turn-budget' | 'over-child-budget' | 'over-token-budget';
 
 export interface DelegationOutboundReservation {
   state: 'reserved' | 'pending' | 'delivered';
@@ -265,7 +262,10 @@ export interface DelegationRuntimeReader {
   escalationAuthorized(turn: ParsedDelegationTurn): Promise<boolean>;
   /** Consume the root escalation action; throw only for retryable authority failure. */
   consumeEscalation(turn: ParsedDelegationTurn): Promise<boolean>;
-  graph(delegationId: string, roomId: string): Promise<{
+  graph(
+    delegationId: string,
+    roomId: string,
+  ): Promise<{
     turns: readonly ParsedDelegationTurn[];
     receipts: readonly ParsedDelegationReceipt[];
   }>;
@@ -403,10 +403,7 @@ export class DelegationRuntime {
             turn.value.workspaceId,
             this.dependencies.identity.publicKey,
           ),
-          this.dependencies.reader.isRoomMember(
-            turn.value.roomId,
-            turn.value.principalPubkey,
-          ),
+          this.dependencies.reader.isRoomMember(turn.value.roomId, turn.value.principalPubkey),
           this.dependencies.reader.isWorkspaceMember(
             turn.value.workspaceId,
             turn.value.principalPubkey,
@@ -574,19 +571,15 @@ export class DelegationRuntime {
     status: DelegationReceiptV1['status'],
     reason?: string,
   ): Promise<NostrEvent> {
-    const receipt = buildDelegationReceipt(
-      this.dependencies.identity,
-      turn.value.roomId,
-      {
-        version: 1,
-        delegationId: turn.value.delegationId,
-        workItemId: turn.value.workItemId,
-        turnEventId: turn.event.id,
-        status,
-        at: this.dependencies.now?.() ?? Math.floor(Date.now() / 1000),
-        ...(reason ? { reason } : {}),
-      },
-    );
+    const receipt = buildDelegationReceipt(this.dependencies.identity, turn.value.roomId, {
+      version: 1,
+      delegationId: turn.value.delegationId,
+      workItemId: turn.value.workItemId,
+      turnEventId: turn.event.id,
+      status,
+      at: this.dependencies.now?.() ?? Math.floor(Date.now() / 1000),
+      ...(reason ? { reason } : {}),
+    });
     await this.dependencies.publish(receipt);
     return receipt;
   }

@@ -26,9 +26,15 @@ const TURN = 'cd'.repeat(32);
 
 class MemoryStorage implements FactoryOutboxStorage {
   readonly values = new Map<string, string>();
-  async getItem(key: string) { return this.values.get(key) ?? null; }
-  async setItem(key: string, value: string) { this.values.set(key, value); }
-  async removeItem(key: string) { this.values.delete(key); }
+  async getItem(key: string) {
+    return this.values.get(key) ?? null;
+  }
+  async setItem(key: string, value: string) {
+    this.values.set(key, value);
+  }
+  async removeItem(key: string) {
+    this.values.delete(key);
+  }
 }
 
 function fixture() {
@@ -36,27 +42,31 @@ function fixture() {
   const owner = createIdentity();
   const otherAdmin = createIdentity();
   const scout = createIdentity();
-  const request = buildPermissionRequest(agent, {
-    version: 1,
-    permissionId: '018f4d8e-7a01-7cc2-91f1-111111111111',
-    roomId: 'factory-room',
-    workspaceId: 'factory-workspace',
-    requesterAgentPubkey: agent.publicKey,
-    audience: 'admin',
-    summary: 'Create the Launch Room with Scout.',
-    scope: {
-      type: 'room.create',
+  const request = buildPermissionRequest(
+    agent,
+    {
+      version: 1,
+      permissionId: '018f4d8e-7a01-7cc2-91f1-111111111111',
+      roomId: 'factory-room',
       workspaceId: 'factory-workspace',
-      roomId: '018f4d8e-7a01-7cc2-91f1-222222222222',
-      name: 'Launch Room',
-      visibility: 'invite-only',
-      participantPubkeys: [owner.publicKey],
-      agentPubkeys: [scout.publicKey],
+      requesterAgentPubkey: agent.publicKey,
+      audience: 'admin',
+      summary: 'Create the Launch Room with Scout.',
+      scope: {
+        type: 'room.create',
+        workspaceId: 'factory-workspace',
+        roomId: '018f4d8e-7a01-7cc2-91f1-222222222222',
+        name: 'Launch Room',
+        visibility: 'invite-only',
+        participantPubkeys: [owner.publicKey],
+        agentPubkeys: [scout.publicKey],
+      },
+      provenance: { immediateTurnEventId: TURN, rootEventId: ROOT },
+      requestedAt: 1_000,
+      requestExpiresAt: 2_000,
     },
-    provenance: { immediateTurnEventId: TURN, rootEventId: ROOT },
-    requestedAt: 1_000,
-    requestExpiresAt: 2_000,
-  }, [owner.publicKey, otherAdmin.publicKey]);
+    [owner.publicKey, otherAdmin.publicKey],
+  );
   return { agent, owner, otherAdmin, scout, request };
 }
 
@@ -129,7 +139,9 @@ describe('factory permission mobile runtime', () => {
       type: 'room.create',
       roomId: '018f4d8e-7a01-7cc2-91f1-222222222222',
     });
-    expect(projectPermissionCards([request, ...history], 1_002, () => true)[0]?.state.status).toBe('granted');
+    expect(projectPermissionCards([request, ...history], 1_002, () => true)[0]?.state.status).toBe(
+      'granted',
+    );
     expect(await outbox.get(item.action.actionId)).toEqual(item);
   });
 
@@ -164,12 +176,14 @@ describe('factory permission mobile runtime', () => {
       status: 'unknown',
       result: 'forged',
     });
-    expect(projectPermissionCards(
-      [request, item.decision, started, forgedUnknown],
-      1_003,
-      () => true,
-      (event) => event.pubkey === owner.publicKey,
-    )[0]?.state.status).toBe('executing');
+    expect(
+      projectPermissionCards(
+        [request, item.decision, started, forgedUnknown],
+        1_003,
+        () => true,
+        (event) => event.pubkey === owner.publicKey,
+      )[0]?.state.status,
+    ).toBe('executing');
   });
 
   it('resumes after Room creation and before receipt without creating twice', async () => {
@@ -228,19 +242,24 @@ describe('factory permission mobile runtime', () => {
       outbox: outboxB,
       now: 1_001,
     });
-    const [winner, loser] = itemA.decision.id < itemB.decision.id
-      ? [[itemA, owner, outboxA] as const, [itemB, otherAdmin, outboxB] as const]
-      : [[itemB, otherAdmin, outboxB] as const, [itemA, owner, outboxA] as const];
+    const [winner, loser] =
+      itemA.decision.id < itemB.decision.id
+        ? [[itemA, owner, outboxA] as const, [itemB, otherAdmin, outboxB] as const]
+        : [[itemB, otherAdmin, outboxB] as const, [itemA, owner, outboxA] as const];
     const state: { value: ExactRoomState } = { value: 'missing' };
     const shared = roomClient({ history, state });
-    const run = ([item, identity, outbox]: typeof winner) => executeQueuedRoomCreate({
-      identity,
-      reader: readerFor({ request, history, agentPubkey: agent.publicKey }),
-      client: shared.client,
-      outbox,
-      inspectRoomFresh: async () => state.value,
-      now: () => 1_002,
-    }, item);
+    const run = ([item, identity, outbox]: typeof winner) =>
+      executeQueuedRoomCreate(
+        {
+          identity,
+          reader: readerFor({ request, history, agentPubkey: agent.publicKey }),
+          client: shared.client,
+          outbox,
+          inspectRoomFresh: async () => state.value,
+          now: () => 1_002,
+        },
+        item,
+      );
     const [won, lost] = await Promise.all([run(winner), run(loser)]);
     expect(won.status).toBe('succeeded');
     expect(lost).toMatchObject({ status: 'refused', reason: 'decision-not-winning' });
@@ -270,9 +289,14 @@ describe('factory permission mobile runtime', () => {
 
   it('keeps malformed unknown-version permission events out of cards', () => {
     const { request } = fixture();
-    const malformed = { ...request, content: request.content.replace('"version":1', '"version":2') };
+    const malformed = {
+      ...request,
+      content: request.content.replace('"version":1', '"version":2'),
+    };
     expect(projectPermissionCards([malformed], 1_001)).toEqual([]);
-    expect(parsePermissionExecution(malformed, parsePermissionRequestSafe(request))).toBeUndefined();
+    expect(
+      parsePermissionExecution(malformed, parsePermissionRequestSafe(request)),
+    ).toBeUndefined();
   });
 });
 

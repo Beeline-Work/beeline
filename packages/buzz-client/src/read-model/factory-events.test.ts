@@ -129,7 +129,14 @@ describe('factory event read-model taxonomy', () => {
       channelAdmins: { 'room-one': [admin.publicKey] },
     };
     const parsed = parseRelayEvents(
-      [permissionEvent, decisionEvent, executionEvent, revocationEvent, delegationEvent, delegationReceipt],
+      [
+        permissionEvent,
+        decisionEvent,
+        executionEvent,
+        revocationEvent,
+        delegationEvent,
+        delegationReceipt,
+      ],
       authority,
     );
     expect(parsed.map((event) => event.type)).toEqual([
@@ -192,7 +199,11 @@ describe('factory event read-model taxonomy', () => {
       expectedChannelId: 'room-one',
       identities: {
         [agent.publicKey]: { kind: 'agent', pubkey: agent.publicKey as Pubkey, revision: 'agent' },
-        [member.publicKey]: { kind: 'human', pubkey: member.publicKey as Pubkey, revision: 'member' },
+        [member.publicKey]: {
+          kind: 'human',
+          pubkey: member.publicKey as Pubkey,
+          revision: 'member',
+        },
       },
       channelAdmins: { 'room-one': [] },
     });

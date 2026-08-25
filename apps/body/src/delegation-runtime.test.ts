@@ -46,7 +46,7 @@ function fixture(
   };
   const event = buildDelegationTurn(sender, value);
   const claimed = new Set<string>();
-  const published: typeof event[] = [];
+  const published: (typeof event)[] = [];
   const reader: DelegationRuntimeDependencies['reader'] = {
     isRegisteredAgent: async (pubkey) => pubkey === sender.publicKey,
     isRoomMember: async () => true,
@@ -129,7 +129,9 @@ describe('DelegationRuntime', () => {
     const invoke = vi.fn(async () => {
       throw new Error('ACP exited');
     });
-    await expect(f.runtime.handleEvent(f.event, invoke)).resolves.toMatchObject({ status: 'failed' });
+    await expect(f.runtime.handleEvent(f.event, invoke)).resolves.toMatchObject({
+      status: 'failed',
+    });
     await expect(f.runtime.handleEvent(f.event, invoke)).resolves.toEqual({ status: 'duplicate' });
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(f.published.map((event) => JSON.parse(event.content).status)).toEqual([
@@ -143,23 +145,28 @@ describe('DelegationRuntime', () => {
     let delivered = false;
     let fail = true;
     const published: ReturnType<typeof buildDelegationTurn>[] = [];
-    const f = fixture({}, {
-      reserveOutbound: async (event) => {
-        if (!stored) {
-          stored = event;
-          return { state: 'reserved', event };
-        }
-        return { state: delivered ? 'delivered' : 'pending', event: stored };
+    const f = fixture(
+      {},
+      {
+        reserveOutbound: async (event) => {
+          if (!stored) {
+            stored = event;
+            return { state: 'reserved', event };
+          }
+          return { state: delivered ? 'delivered' : 'pending', event: stored };
+        },
+        markOutboundDelivered: async () => {
+          delivered = true;
+        },
+        publish: async (event) => {
+          if (fail) {
+            fail = false;
+            throw new Error('relay unavailable');
+          }
+          published.push(event);
+        },
       },
-      markOutboundDelivered: async () => { delivered = true; },
-      publish: async (event) => {
-        if (fail) {
-          fail = false;
-          throw new Error('relay unavailable');
-        }
-        published.push(event);
-      },
-    });
+    );
     const outbound = {
       ...f.value,
       fromAgentPubkey: f.recipient.publicKey,
@@ -240,25 +247,28 @@ describe('root factory directive dispatch', () => {
     const run = async () => {
       const turns: DelegationTurnV1[] = [];
       const permissions: ReturnType<typeof parsePermissionRequest>[] = [];
-      const result = await dispatchRootFactoryDirectives({
-        identity: atlas,
-        publishTurn: async (value) => turns.push(value),
-        publishPermission: async (event) => permissions.push(parsePermissionRequest(event)),
-        targetReady: async () => true,
-      }, {
-        roomId: 'room-one',
-        workspaceId: 'workspace-one',
-        principalPubkey: owner.publicKey,
-        rootEventId: '1'.repeat(64),
-        immediateTurnEventId: '2'.repeat(64),
-        completedAt: NOW,
-        finalText: [
-          '@Scout: research the market',
-          '@Writer: draft the brief',
-          '@admin: create an outcome Room named “Launch” with @Scout and @Writer.',
-        ].join('\n'),
-        roster,
-      });
+      const result = await dispatchRootFactoryDirectives(
+        {
+          identity: atlas,
+          publishTurn: async (value) => turns.push(value),
+          publishPermission: async (event) => permissions.push(parsePermissionRequest(event)),
+          targetReady: async () => true,
+        },
+        {
+          roomId: 'room-one',
+          workspaceId: 'workspace-one',
+          principalPubkey: owner.publicKey,
+          rootEventId: '1'.repeat(64),
+          immediateTurnEventId: '2'.repeat(64),
+          completedAt: NOW,
+          finalText: [
+            '@Scout: research the market',
+            '@Writer: draft the brief',
+            '@admin: create an outcome Room named “Launch” with @Scout and @Writer.',
+          ].join('\n'),
+          roster,
+        },
+      );
       return { turns, permissions, result };
     };
     const first = await run();
@@ -271,8 +281,9 @@ describe('root factory directive dispatch', () => {
       name: 'Launch',
       agentPubkeys: [scout.publicKey, writer.publicKey],
     });
-    expect(replay.turns.map(({ delegationId, workItemId }) => ({ delegationId, workItemId })))
-      .toEqual(first.turns.map(({ delegationId, workItemId }) => ({ delegationId, workItemId })));
+    expect(
+      replay.turns.map(({ delegationId, workItemId }) => ({ delegationId, workItemId })),
+    ).toEqual(first.turns.map(({ delegationId, workItemId }) => ({ delegationId, workItemId })));
     expect(replay.permissions[0]?.event.id).toBe(first.permissions[0]?.event.id);
   });
 
@@ -280,21 +291,26 @@ describe('root factory directive dispatch', () => {
     const atlas = createIdentity();
     const scout = createIdentity();
     const publishTurn = vi.fn(async () => undefined);
-    await expect(dispatchRootFactoryDirectives({
-      identity: atlas,
-      publishTurn,
-      publishPermission: async () => undefined,
-      targetReady: async () => false,
-    }, {
-      roomId: 'room-one',
-      workspaceId: 'workspace-one',
-      principalPubkey: 'f'.repeat(64),
-      rootEventId: '1'.repeat(64),
-      immediateTurnEventId: '2'.repeat(64),
-      completedAt: NOW,
-      finalText: '@Scout: research',
-      roster: [{ handle: 'Scout', pubkey: scout.publicKey, kind: 'agent' }],
-    })).resolves.toMatchObject({ delegations: 0 });
+    await expect(
+      dispatchRootFactoryDirectives(
+        {
+          identity: atlas,
+          publishTurn,
+          publishPermission: async () => undefined,
+          targetReady: async () => false,
+        },
+        {
+          roomId: 'room-one',
+          workspaceId: 'workspace-one',
+          principalPubkey: 'f'.repeat(64),
+          rootEventId: '1'.repeat(64),
+          immediateTurnEventId: '2'.repeat(64),
+          completedAt: NOW,
+          finalText: '@Scout: research',
+          roster: [{ handle: 'Scout', pubkey: scout.publicKey, kind: 'agent' }],
+        },
+      ),
+    ).resolves.toMatchObject({ delegations: 0 });
     expect(publishTurn).not.toHaveBeenCalled();
   });
 });

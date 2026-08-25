@@ -153,6 +153,12 @@ beeline pair BUZZ-XXXX-XXXX --repo /path/to/repo
 # Piped/non-interactive sessions with several matches must choose explicitly.
 beeline pair BUZZ-XXXX-XXXX --agent codex
 
+# New agents default to creator-only access. To delegate intake to an exact
+# set of identities, use npub or 64-character hex keys (up to 64 entries).
+# The creator is not added implicitly to an allowlist.
+beeline pair BUZZ-XXXX-XXXX --agent codex \
+  --access allowlist --allow npub1...,0123...cdef
+
 # Use the operator's own funded Codex configuration through the official ACP
 # adapter. Install once with:
 #   npm install -g @openai/codex @agentclientprotocol/codex-acp
@@ -238,16 +244,17 @@ write attaches the already-linked identity using the active Workspace ID. No
 second CLI pairing occurs. Removing that membership stops new intake, drains
 accepted turns, and releases that Room's processes.
 
-The paired Workspace-member agent creates the Room, makes the pairing human and
-a dedicated merge-worker identity admins, and immediately projects itself as a
+For an existing repository Room, pairing ensures the pairing human and the
+Room's dedicated merge-worker identity are admins, then joins the agent as a
 plain member. The worker discovers every change opened in that Room and lands a
 feature tip only after an approval for that corner from a human admin; agent-signed
 approvals remain refused. Both pairing and daemon/`serve` startup assert that the
 agent cannot push the protected branch and exit fatally on unsafe policy. The
 machine identities, known Room bindings, repo roots, and daemon state live under
-`<git-common-dir>/beeline/agents/<agent-pubkey>/` with mode `0600`. `pair`
-always generates a fresh agent key there; it never reads `BUZZ_AGENT_KEY` or
-the legacy human `BUZZ_PRIVATE_KEY`. Under systemd the daemon runs in the
+`<state-root>/beeline/agents/<agent-pubkey>/` with mode `0600`; a compatibility
+pointer may remain under a paired repository's git common directory. `pair`
+always generates a fresh agent key in machine-local state; it never reads
+`BUZZ_AGENT_KEY` or the legacy human `BUZZ_PRIVATE_KEY`. Under systemd the daemon runs in the
 foreground and is restarted by the user unit. A restart rediscovers Rooms,
 restores corner
 worktrees and durable inboxes, replays only the capped recent conversation into
@@ -286,6 +293,34 @@ intent are passed directly into ACP session instructions; they are never written
 into a repository and cannot grant permissions or approve merges. The remaining
 explicit `serve`/`open` commands are internal diagnostic compatibility surfaces,
 not part of the user pairing workflow.
+
+### Factory permissions and delegation (P1)
+
+Factory side effects use signed, versioned Room events; model prose is never
+authority. The shared scope registry assigns the required human role, executor,
+grant limits, and tier for each supported action. Tier 1 grants are standing,
+scoped envelopes with expiry, use, rate, monetary/token budget, revocation, and
+execution accounting. The deliberately narrow irreversible
+`operation.execute` scope is Tier 2 and requires a fresh per-action decision.
+Executors re-read membership, role, revocation, and usage immediately before
+publishing a `started` receipt. Concurrent decisions fold deterministically and
+only the first valid decision counts; replayed or exhausted actions fail closed.
+
+Agent-to-agent Room work uses signed delegation turns rather than inheriting the
+sender's session. Each admitted work item is addressed to one exact agent and
+runs as one ordinary read-only Room turn with its own tools, filesystem, and
+provider account. Provenance, principal/payer attribution, deadlines, depth,
+child count, turn count, reserved-token limits, cycle detection, and durable
+receipts bound the graph. Failed work publishes a failed receipt and is not
+retried through another model turn. Extending a delegation beyond its original
+envelope requires a scoped permission grant.
+
+An agent may propose deterministic invite-only Room creation only through the
+bounded `create [an] [outcome] room named "…" with @…` directive. A device-held human
+admin grants and executes the request from a durable mobile outbox, using the
+request's reserved Room UUID so crashes and concurrent admins reconcile instead
+of creating duplicates. This permission-gated factory path is separate from
+`beeline pair --repo`, which still only joins an existing repository Room.
 
 ### Repository event service
 
@@ -426,9 +461,11 @@ into the process environment.
   advisory line and spawns unwrapped, exactly as before. Set `sandbox: "off"` in
   the agent's `runtime.json` (or `BUZZY_BODY_SANDBOX=off`) on a host where
   bubblewrap misbehaves.
-- **Permission intent is authority-free:** any current human Room member may
+- **Edit-corner permission intent is authority-free:** any current human Room member may
   answer the prompt. The signed response is bound to the agent, permission UUID,
   and original request event; it changes no Room role and grants no merge power.
+  Factory permission decisions use the role and custody checks described above;
+  this rule applies only to opening an edit corner.
 - **Driving buzz-agent directly:** buzz-acp auto-approves permissions and does
   not expose `session/update` to the relay. The body owns the ACP bridge so it
   can enforce the tool boundary and project activity.

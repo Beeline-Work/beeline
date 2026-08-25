@@ -4,6 +4,7 @@ import {
   externalMcpPermissionPolicy,
   externalMcpServers,
   governedSquireCall,
+  isExternalMcpCapability,
   isExternalMcpPermissionRequest,
   isTrustySquireMcpLaunch,
 } from './external-mcp-capabilities.js';
@@ -17,23 +18,27 @@ describe('Trusty Squire launch identity', () => {
       ]),
     ).toBe(true);
     expect(
-      isTrustySquireMcpLaunch(
-        'C:\\beeline\\node_modules\\@trusty-squire\\mcp\\dist\\bin.js',
-        ['server'],
-      ),
+      isTrustySquireMcpLaunch('C:\\beeline\\node_modules\\@trusty-squire\\mcp\\dist\\bin.js', [
+        'server',
+      ]),
     ).toBe(true);
     expect(isTrustySquireMcpLaunch('node', ['/opt/project-tools/dist/bin.js'])).toBe(false);
   });
 });
 
 describe('external MCP capabilities', () => {
-  it('expands squire to an exact secret-free built-in profile', () => {
+  it('mounts one secret-free broker for either independent capability', () => {
     const broker = { name: 'squire', command: 'node', args: ['proxy.js'], env: [] };
-    expect(externalMcpServers(['squire'])).toEqual([]);
-    expect(externalMcpServers(['squire'], broker)).toEqual([broker]);
+    expect(externalMcpServers(['squire-credential-use'])).toEqual([]);
+    expect(externalMcpServers(['squire-credential-use'], broker)).toEqual([broker]);
+    expect(externalMcpServers(['squire-app-access'], broker)).toEqual([broker]);
+    expect(externalMcpServers(['squire-credential-use', 'squire-app-access'], broker)).toEqual([
+      broker,
+    ]);
+    expect(isExternalMcpCapability('squire')).toBe(false);
   });
 
-  it('allows only metadata reads and routes exact credential/egress effects through P1', () => {
+  it('keeps credential use and app access independently opt-in', () => {
     const call = (tool: string) => ({
       toolCall: {
         kind: 'other',
@@ -41,14 +46,27 @@ describe('external MCP capabilities', () => {
         rawInput: { server: 'squire', tool, arguments: {} },
       },
     });
-    for (const tool of ['list_credentials', 'list_app_access', 'audit_log']) {
-      expect(externalMcpPermissionPolicy(call(tool), ['squire']), tool).toBe('allow');
-    }
-    for (const tool of ['use_credential', 'grant_app_access', 'revoke_app_access']) {
-      expect(externalMcpPermissionPolicy(call(tool), ['squire']), tool).toBe('factory-permission');
-    }
-    expect(externalMcpPermissionPolicy(call('operate_start'), ['squire'])).toBe('deny');
-    expect(externalMcpPermissionPolicy(call('delete_vault'), ['squire'])).toBe('deny');
+    expect(externalMcpPermissionPolicy(call('list_credentials'), ['squire-credential-use'])).toBe(
+      'allow',
+    );
+    expect(externalMcpPermissionPolicy(call('use_credential'), ['squire-credential-use'])).toBe(
+      'factory-permission',
+    );
+    expect(externalMcpPermissionPolicy(call('grant_app_access'), ['squire-credential-use'])).toBe(
+      'deny',
+    );
+    expect(externalMcpPermissionPolicy(call('list_app_access'), ['squire-app-access'])).toBe(
+      'allow',
+    );
+    expect(externalMcpPermissionPolicy(call('grant_app_access'), ['squire-app-access'])).toBe(
+      'factory-permission',
+    );
+    expect(externalMcpPermissionPolicy(call('revoke_app_access'), ['squire-app-access'])).toBe(
+      'factory-permission',
+    );
+    expect(externalMcpPermissionPolicy(call('use_credential'), ['squire-app-access'])).toBe('deny');
+    expect(externalMcpPermissionPolicy(call('operate_start'), ['squire-app-access'])).toBe('deny');
+    expect(externalMcpPermissionPolicy(call('delete_vault'), ['squire-app-access'])).toBe('deny');
     expect(externalMcpPermissionPolicy(call('observe'), [])).toBe('deny');
   });
 
@@ -96,11 +114,11 @@ describe('external MCP capabilities', () => {
   });
 
   it('mounts account capabilities only for creator-scoped agents', () => {
-    expect(authorizedExternalMcpServers('everyone', ['squire'])).toEqual([]);
-    expect(authorizedExternalMcpServers(undefined, ['squire'])).toEqual([]);
-    expect(authorizedExternalMcpServers('creator', ['squire'])).toEqual([]);
+    expect(authorizedExternalMcpServers('everyone', ['squire-credential-use'])).toEqual([]);
+    expect(authorizedExternalMcpServers(undefined, ['squire-credential-use'])).toEqual([]);
+    expect(authorizedExternalMcpServers('creator', ['squire-credential-use'])).toEqual([]);
     expect(
-      authorizedExternalMcpServers('creator', ['squire'], {
+      authorizedExternalMcpServers('creator', ['squire-credential-use'], {
         name: 'squire',
         command: 'node',
         args: ['proxy.js'],
@@ -118,13 +136,13 @@ describe('external MCP capabilities', () => {
             rawInput: { server: 'squire', tool: 'list_credentials', arguments: {} },
           },
         },
-        ['squire'],
+        ['squire-credential-use'],
       ),
     ).toBe(true);
     expect(
       isExternalMcpPermissionRequest(
         { toolCall: { kind: 'other', title: 'mcp__squire__operate_start', rawInput: {} } },
-        ['squire'],
+        ['squire-credential-use'],
       ),
     ).toBe(true);
     expect(
@@ -136,7 +154,7 @@ describe('external MCP capabilities', () => {
             rawInput: { command: 'mcp__squire__operate_start' },
           },
         },
-        ['squire'],
+        ['squire-credential-use'],
       ),
     ).toBe(false);
     expect(
@@ -148,7 +166,7 @@ describe('external MCP capabilities', () => {
             rawInput: { path: '/tmp/not-squire' },
           },
         },
-        ['squire'],
+        ['squire-credential-use'],
       ),
     ).toBe(false);
   });

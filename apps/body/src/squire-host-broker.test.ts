@@ -52,7 +52,10 @@ describe('Trusty Squire host broker', () => {
       () => child as unknown as ChildProcessWithoutNullStreams,
     );
     brokers.push(broker);
-    const profile = await broker.mcpServer('room-1');
+    const profile = await broker.mcpServer(
+      'room-1',
+      new Set(['list_app_access', 'use_credential', 'grant_app_access', 'revoke_app_access']),
+    );
     expect(profile.command).toBe(process.execPath);
     expect(profile.args).not.toContain('@trusty-squire/mcp@1.1.12');
 
@@ -86,7 +89,7 @@ describe('Trusty Squire host broker', () => {
     });
     expect(child.stdin.readableLength).toBe(0);
 
-    broker.authorize('room-1', 'grant_app_access', squireArgumentsDigest(args));
+    broker.authorize('room-1', 'grant_app_access', squireArgumentsDigest(args), async () => true);
     socket.write(`${request(2)}\n`);
     const [substitution] = (await once(socket, 'data')) as [Buffer];
     expect(JSON.parse(substitution.toString())).toMatchObject({
@@ -113,7 +116,7 @@ describe('Trusty Squire host broker', () => {
       () => now,
     );
     brokers.push(broker);
-    const profile = await broker.mcpServer('room-1');
+    const profile = await broker.mcpServer('room-1', new Set(['revoke_app_access']));
     const [, host, rawPort, token] = profile.args;
     const socket = connect({ host, port: Number(rawPort) });
     await once(socket, 'connect');
@@ -129,7 +132,7 @@ describe('Trusty Squire host broker', () => {
         params: { name: 'revoke_app_access', arguments: args },
       });
 
-    broker.authorize('room-1', 'revoke_app_access', digest, now + 10);
+    broker.authorize('room-1', 'revoke_app_access', digest, async () => true, now + 10);
     now += 11;
     socket.write(`${request(1)}\n`);
     const [expired] = (await once(socket, 'data')) as [Buffer];
@@ -138,7 +141,12 @@ describe('Trusty Squire host broker', () => {
       'exact P1 factory permission is required',
     );
 
-    const authorizationId = broker.authorize('room-1', 'revoke_app_access', digest);
+    const authorizationId = broker.authorize(
+      'room-1',
+      'revoke_app_access',
+      digest,
+      async () => true,
+    );
     expect(authorizationId).toBeTruthy();
     broker.revoke('room-1', authorizationId!);
     socket.write(`${request(2)}\n`);
@@ -148,8 +156,84 @@ describe('Trusty Squire host broker', () => {
       'exact P1 factory permission is required',
     );
 
-    broker.authorize('room-1', 'revoke_app_access', digest);
+    broker.authorize('room-1', 'revoke_app_access', digest, async () => true);
     broker.revokeChannel('room-1');
     await once(socket, 'close');
+  });
+
+  it('filters inventory and reverifies current P1 authority at forwarding', async () => {
+    const child = new FakeSquireProcess();
+    const broker = new SquireHostBroker(
+      '/runtime/squire-config',
+      () => child as unknown as ChildProcessWithoutNullStreams,
+    );
+    brokers.push(broker);
+    const profile = await broker.mcpServer(
+      'room-1',
+      new Set(['list_credentials', 'use_credential']),
+    );
+    const [, host, rawPort, token] = profile.args;
+    const socket = connect({ host, port: Number(rawPort) });
+    await once(socket, 'connect');
+    socket.write(`${JSON.stringify({ token })}\n`);
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+
+    socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })}\n`);
+    await once(child.stdin, 'data');
+    child.stdout.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          tools: [
+            { name: 'use_credential' },
+            { name: 'grant_app_access' },
+            { name: 'revoke_app_access' },
+          ],
+        },
+      })}\n`,
+    );
+    const [inventory] = (await once(socket, 'data')) as [Buffer];
+    expect(JSON.parse(inventory.toString()).result.tools).toEqual([{ name: 'use_credential' }]);
+
+    socket.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'grant_app_access',
+          arguments: { service: 'github', rate_limit_per_hour: 10 },
+        },
+      })}\n`,
+    );
+    const [unselected] = (await once(socket, 'data')) as [Buffer];
+    expect(JSON.parse(unselected.toString())).toHaveProperty(
+      'error.message',
+      'Trusty Squire tool is not enabled for this capability',
+    );
+
+    const args = {
+      service: 'github',
+      http: { method: 'GET', url: 'https://api.github.com/user' },
+    };
+    let current = true;
+    broker.authorize('room-1', 'use_credential', squireArgumentsDigest(args), async () => current);
+    current = false;
+    socket.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'use_credential', arguments: args },
+      })}\n`,
+    );
+    const [revoked] = (await once(socket, 'data')) as [Buffer];
+    expect(JSON.parse(revoked.toString())).toHaveProperty(
+      'error.message',
+      'current P1 factory permission was revoked',
+    );
+    expect(child.stdin.readableLength).toBe(0);
+    socket.end();
   });
 });

@@ -44,6 +44,11 @@ interface StoredOutboundDelegation {
   delivered: boolean;
 }
 
+interface StoredPermissionReceipt {
+  event: NostrEvent;
+  delivered: boolean;
+}
+
 interface DurableBodyData {
   version: 2;
   inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;
@@ -65,6 +70,7 @@ interface DurableBodyData {
     outboundDelegations: Record<string, NostrEvent | StoredOutboundDelegation>;
     permissionActionClaims: string[];
     permissionReservations?: Record<string, StoredPermissionReservation>;
+    permissionReceiptOutbox?: Record<string, StoredPermissionReceipt>;
   };
 }
 
@@ -409,6 +415,39 @@ export class DurableBodyState {
     return 'claimed';
   }
 
+  async reservePermissionReceipt(
+    event: NostrEvent,
+  ): Promise<{ state: 'reserved' | 'pending' | 'delivered'; event: NostrEvent }> {
+    await this.load();
+    const outbox = (this.factory().permissionReceiptOutbox ??= {});
+    const existing = outbox[event.id];
+    if (existing) {
+      return { state: existing.delivered ? 'delivered' : 'pending', event: existing.event };
+    }
+    outbox[event.id] = { event, delivered: false };
+    await this.prunePermissionReceiptOutbox();
+    await this.save();
+    return { state: 'reserved', event };
+  }
+
+  async pendingPermissionReceipts(): Promise<NostrEvent[]> {
+    await this.load();
+    return Object.values(this.factory().permissionReceiptOutbox ?? {})
+      .filter((entry) => !entry.delivered)
+      .map((entry) => entry.event)
+      .sort(compareEvents);
+  }
+
+  async markPermissionReceiptDelivered(eventId: string): Promise<void> {
+    await this.load();
+    const outbox = this.factory().permissionReceiptOutbox;
+    const entry = outbox?.[eventId];
+    if (!entry) return;
+    entry.delivered = true;
+    await this.prunePermissionReceiptOutbox();
+    await this.save();
+  }
+
   async recordSessionReprime(record: SessionReprimeRecord): Promise<void> {
     await this.load();
     const records = this.data.sessionReprimes ?? [];
@@ -469,6 +508,17 @@ export class DurableBodyState {
       outboundDelegations: {},
       permissionActionClaims: [],
     });
+  }
+
+  private async prunePermissionReceiptOutbox(): Promise<void> {
+    const outbox = this.factory().permissionReceiptOutbox;
+    if (!outbox) return;
+    const delivered = Object.values(outbox)
+      .filter((entry) => entry.delivered)
+      .sort((left, right) => compareEvents(left.event, right.event));
+    for (const entry of delivered.slice(0, Math.max(0, delivered.length - MAX_FACTORY_CLAIMS))) {
+      delete outbox[entry.event.id];
+    }
   }
 
   private save(): Promise<void> {

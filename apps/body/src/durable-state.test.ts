@@ -204,6 +204,34 @@ describe('durable input inbox', () => {
 });
 
 describe('factory capacity reservations', () => {
+  it('retains undelivered permission receipts across restart and removes delivered work', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-permission-outbox-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    const identity = newIdentity('permission-agent');
+    const receipt = signEvent(
+      {
+        pubkey: identity.publicKey,
+        created_at: 1_700_000_000,
+        kind: 9,
+        tags: [['t', 'factory-permission-execution']],
+        content: JSON.stringify({ status: 'failed' }),
+      },
+      identity.secretKey,
+    );
+    const first = new DurableBodyState(path);
+    await first.reservePermissionReceipt(receipt);
+
+    const restarted = new DurableBodyState(path);
+    expect((await restarted.pendingPermissionReceipts()).map((event) => event.id)).toEqual([
+      receipt.id,
+    ]);
+    await restarted.markPermissionReceiptDelivered(receipt.id);
+
+    const delivered = new DurableBodyState(path);
+    expect(await delivered.pendingPermissionReceipts()).toEqual([]);
+  });
+
   it('atomically admits only one concurrent action into a one-use grant', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-permission-capacity-'));
     cleanup.push(root);

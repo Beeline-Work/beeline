@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import type { NostrEvent } from '@beeline/nostr';
 import {
   buildPermissionDecision,
   buildPermissionRequest,
+  buildPermissionRevocation,
   createIdentity,
   defaultPermissionGrantEnvelope,
   parsePermissionDecision,
@@ -21,7 +23,7 @@ import {
 
 const NOW = 1_900_000_000;
 
-function fixture() {
+function fixture(publishTerminalReceipt?: (event: NostrEvent) => Promise<void>) {
   const agent = createIdentity();
   const admin = createIdentity();
   const executor = createIdentity();
@@ -120,8 +122,9 @@ function fixture() {
       history.push(event);
       events.set(event.id, event);
     },
+    ...(publishTerminalReceipt ? { publishTerminalReceipt } : {}),
   });
-  return { action, history, published, runtime };
+  return { action, admin, decision, history, published, request, runtime };
 }
 
 describe('PermissionRuntime', () => {
@@ -146,6 +149,38 @@ describe('PermissionRuntime', () => {
     await expect(
       f.runtime.complete({ execution: begun.execution, status: 'unknown' }),
     ).resolves.toEqual({ status: 'duplicate' });
+  });
+
+  it('hands terminal receipts to the durable publisher while keeping started strict', async () => {
+    const terminal: ReturnType<typeof fixture>['published'] = [];
+    const f = fixture(async (event) => {
+      terminal.push(event);
+    });
+    const begun = await f.runtime.begin({ action: f.action(0), attempt: 1 });
+    if (begun.status !== 'started') throw new Error('expected started execution');
+
+    await f.runtime.complete({ execution: begun.execution, status: 'failed', result: 'provider' });
+
+    expect(f.published.map((event) => JSON.parse(event.content).status)).toEqual(['started']);
+    expect(terminal.map((event) => JSON.parse(event.content).status)).toEqual(['failed']);
+  });
+
+  it('reverifies a begun action against a later exact grant revocation', async () => {
+    const f = fixture();
+    const begun = await f.runtime.begin({ action: f.action(0), attempt: 1 });
+    if (begun.status !== 'started') throw new Error('expected started execution');
+    await expect(f.runtime.reverify(begun.execution)).resolves.toBe(true);
+    f.history.push(
+      buildPermissionRevocation(f.admin, f.request, {
+        version: 1,
+        permissionId: f.request.value.permissionId,
+        grantEventId: f.decision.event.id,
+        revokedAt: NOW + 2,
+        reason: 'owner-stopped',
+      }),
+    );
+
+    await expect(f.runtime.reverify(begun.execution)).resolves.toBe(false);
   });
 
   it('executes multiple autonomous actions inside one standing envelope', async () => {

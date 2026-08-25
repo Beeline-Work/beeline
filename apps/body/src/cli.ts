@@ -168,13 +168,13 @@ ${pc.dim('Usage:')}
                [--agent-command '<command> [args...]'] [--repo <path>]
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
                [--auto-response '<text>']
-               [--mcp <squire>]
+               [--mcp <squire-credential-use|squire-app-access>]
                [--model <model>] [--effort <level>]
 
   beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...> [--repo <path>]
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
                [--auto-response '<text>']
-               [--mcp <squire>]
+               [--mcp <squire-credential-use|squire-app-access>]
                [--model <model>] [--effort <level>]
 
 Agent choices:
@@ -231,7 +231,7 @@ Access policy (per agent, set here at invite time):
   creator   only the inviting owner may; anyone else gets the auto-response
   allowlist only identities named by --allow may address it; creator is not implicit
 
-External MCP capabilities: --mcp squire grants Trusty Squire to this agent.
+External MCP capabilities: --mcp squire-credential-use and --mcp squire-app-access are independent.
 Account capabilities require --access creator and are mounted from a built-in
 profile; Beeline never imports the operator's other personal MCP servers.
 
@@ -322,7 +322,11 @@ function parsePairOptions(args: string[]): PairOptions {
         .map((entry) => entry.trim())
         .filter(Boolean);
       const invalid = capabilities.find((capability) => !isExternalMcpCapability(capability));
-      if (invalid) throw new Error(`--mcp must contain only squire (got: ${invalid})`);
+      if (invalid) {
+        throw new Error(
+          `--mcp must contain only squire-credential-use or squire-app-access (got: ${invalid})`,
+        );
+      }
       externalMcpCapabilities = capabilities as ExternalMcpCapability[];
     } else if (token === '--access') {
       if (!isAgentAccessPolicy(value)) {
@@ -750,7 +754,7 @@ async function pairOneAgent(input: {
     throw new Error('external MCP capabilities require --access creator');
   }
   if (
-    input.externalMcpCapabilities?.includes('squire') &&
+    input.externalMcpCapabilities?.length &&
     /^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/i.test(code.trim())
   ) {
     console.log("[beeline] checking this machine's Trusty Squire vault/link…");

@@ -13,7 +13,11 @@ import {
   type PermissionRequestV1,
   type PermissionScope,
 } from '@beeline/buzz-client';
-import { PermissionKnownFailure, PermissionRuntime } from './permission-runtime.js';
+import {
+  PermissionKnownFailure,
+  PermissionRuntime,
+  parseRoomCreatePermissionDirective,
+} from './permission-runtime.js';
 
 const NOW = 1_900_000_000;
 
@@ -81,6 +85,7 @@ function fixture() {
       permissionId: request.value.permissionId,
       requestEventId: request.event.id,
       grantEventId: decision.event.id,
+      ordinal,
       actionId,
       idempotencyKey: `research:${actionId}`,
       workspaceId: request.value.workspaceId,
@@ -166,5 +171,49 @@ describe('PermissionRuntime', () => {
     await expect(
       f.runtime.execute({ action: f.action(1), attempt: 2, invoke: async () => ({}) }),
     ).resolves.toMatchObject({ status: 'succeeded' });
+  });
+});
+
+describe('room.create directive normalization', () => {
+  const principal = 'a'.repeat(64);
+  const atlas = 'b'.repeat(64);
+  const scout = 'c'.repeat(64);
+  const roster = [
+    { handle: 'owner', pubkey: principal, kind: 'human' as const },
+    { handle: 'Atlas', pubkey: atlas, kind: 'agent' as const },
+    { handle: 'Scout', pubkey: scout, kind: 'agent' as const },
+  ];
+
+  it('normalizes one exact outcome Room request with a reserved id', () => {
+    expect(parseRoomCreatePermissionDirective({
+      task: 'create an outcome Room named “Q3 launch” with @Atlas and @Scout.',
+      workspaceId: 'workspace-one',
+      reservedRoomId: 'room-reservation',
+      principalPubkey: principal,
+      roster,
+    })).toEqual({
+      type: 'room.create',
+      workspaceId: 'workspace-one',
+      roomId: 'room-reservation',
+      name: 'Q3 launch',
+      visibility: 'invite-only',
+      participantPubkeys: [principal],
+      agentPubkeys: [atlas, scout],
+    });
+  });
+
+  it.each([
+    'may I create a Room?',
+    'create an outcome Room named Q3 launch with @Atlas',
+    'create an outcome Room named “Q3 launch” with @Unknown',
+    'create an outcome Room named “Q3 launch” with @Atlas and @Atlas',
+  ])('keeps non-exact prose inert: %s', (task) => {
+    expect(parseRoomCreatePermissionDirective({
+      task,
+      workspaceId: 'workspace-one',
+      reservedRoomId: 'room-reservation',
+      principalPubkey: principal,
+      roster,
+    })).toBeUndefined();
   });
 });

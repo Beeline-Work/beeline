@@ -246,6 +246,8 @@ function parseTurnContent(value: unknown): DelegationTurnV1 | undefined {
     createdAt === undefined ||
     path[path.length - 1] !== fromAgentPubkey ||
     fromAgentPubkey === toAgentPubkey ||
+    (input.phase === 'assign' &&
+      (depth === 1 ? parentWorkItemId !== undefined : !parentWorkItemId)) ||
     (input.phase === 'return' && !parentWorkItemId)
   ) {
     return undefined;
@@ -347,6 +349,10 @@ export function parseDelegationTurn(event: NostrEvent): ParsedDelegationTurn | u
     uniqueTag(event, 'depth') !== String(value.depth) ||
     uniqueTag(event, 'deadline') !== String(value.budget.deadlineAt) ||
     event.created_at !== value.createdAt ||
+    (value.escalationGrantEventId !== undefined &&
+      uniqueTag(event, 'escalation-grant') !== value.escalationGrantEventId) ||
+    (value.escalationGrantEventId === undefined &&
+      event.tags.some((candidate) => candidate[0] === 'escalation-grant')) ||
     (value.parentWorkItemId !== undefined && uniqueTag(event, 'parent-work-item') !== value.parentWorkItemId) ||
     (value.parentWorkItemId === undefined && event.tags.some((candidate) => candidate[0] === 'parent-work-item'))
   ) {
@@ -417,6 +423,9 @@ export function buildDelegationTurn(sender: Identity, input: DelegationTurnV1): 
       ['principal', value.principalPubkey],
       ['depth', String(value.depth)],
       ['deadline', String(value.budget.deadlineAt)],
+      ...(value.escalationGrantEventId
+        ? [['escalation-grant', value.escalationGrantEventId]]
+        : []),
     ],
     value,
     value.createdAt,
@@ -590,7 +599,10 @@ export function admitDelegationTurn(input: {
   senderWorkspaceMember: boolean;
   recipientRoomMember: boolean;
   recipientWorkspaceMember: boolean;
+  principalRoomMember: boolean;
   principalWorkspaceMember: boolean;
+  rootAuthorized: boolean;
+  escalationAuthorized: boolean;
   accessPermitted: boolean;
   targetOnline: boolean;
   targetSupportsDelegationV1: boolean;
@@ -605,18 +617,29 @@ export function admitDelegationTurn(input: {
   if (!input.senderWorkspaceMember) return { admitted: false, reason: 'sender-not-member' };
   if (!input.recipientRoomMember) return { admitted: false, reason: 'recipient-not-member' };
   if (!input.recipientWorkspaceMember) return { admitted: false, reason: 'recipient-not-member' };
+  if (!input.principalRoomMember) return { admitted: false, reason: 'principal-not-member' };
   if (!input.principalWorkspaceMember) return { admitted: false, reason: 'principal-not-member' };
+  if (!input.rootAuthorized) return { admitted: false, reason: 'root-mismatch' };
   if (!input.accessPermitted) return { admitted: false, reason: 'access-denied' };
   if (!input.targetOnline) return { admitted: false, reason: 'target-offline' };
   if (!input.targetSupportsDelegationV1) return { admitted: false, reason: 'target-incompatible' };
   if (input.now > turn.budget.deadlineAt) return { admitted: false, reason: 'expired' };
-  if (turn.depth > turn.budget.maxDepth) return { admitted: false, reason: 'over-depth' };
   if (
-    !turn.escalationGrantEventId &&
-    (turn.budget.maxAgentTurns > DEFAULT_DELEGATION_MAX_AGENT_TURNS ||
-      turn.budget.maxDepth > DEFAULT_DELEGATION_MAX_DEPTH ||
-      turn.budget.maxChildren > DEFAULT_DELEGATION_MAX_CHILDREN ||
-      turn.budget.deadlineAt - turn.createdAt > DEFAULT_DELEGATION_DEADLINE_SECONDS)
+    turn.depth >
+    turn.budget.maxDepth + (turn.phase === 'return' ? 1 : 0)
+  ) {
+    return { admitted: false, reason: 'over-depth' };
+  }
+  const ungrantableBudgetShape =
+    turn.budget.maxDepth > DEFAULT_DELEGATION_MAX_DEPTH ||
+    turn.budget.maxChildren > DEFAULT_DELEGATION_MAX_CHILDREN ||
+    turn.budget.deadlineAt - turn.createdAt > DEFAULT_DELEGATION_DEADLINE_SECONDS;
+  const exceedsDefault = turn.budget.maxAgentTurns > DEFAULT_DELEGATION_MAX_AGENT_TURNS;
+  if (
+    ungrantableBudgetShape ||
+    (exceedsDefault && !turn.escalationGrantEventId) ||
+    (turn.escalationGrantEventId &&
+      (!input.escalationAuthorized || turn.phase !== 'assign' || turn.depth !== 1))
   ) {
     return { admitted: false, reason: 'escalation-required' };
   }
@@ -627,6 +650,9 @@ export function admitDelegationTurn(input: {
   }
   const root = graph[0];
   if (root) {
+    if (turn.phase === 'assign' && turn.depth === 1) {
+      return { admitted: false, reason: 'root-mismatch' };
+    }
     if (
       root.value.rootEventId !== turn.rootEventId ||
       root.value.roomId !== turn.roomId ||

@@ -10,6 +10,7 @@ import {
   buildPermissionDecision,
   buildPermissionExecution,
   buildPermissionRequest,
+  buildPermissionRevocation,
   defaultPermissionGrantEnvelope,
   parsePermissionRequest,
 } from '../permission-request.js';
@@ -72,6 +73,13 @@ describe('factory event read-model taxonomy', () => {
       at: NOW + 2,
       charge: { uses: 1 },
     });
+    const revocationEvent = buildPermissionRevocation(admin, request, {
+      version: 1,
+      permissionId: request.value.permissionId,
+      grantEventId: decisionEvent.id,
+      revokedAt: NOW + 3,
+      reason: 'owner-paused',
+    });
     const delegationEvent = buildDelegationTurn(agent, {
       version: 1,
       delegationId: randomUUID(),
@@ -121,7 +129,7 @@ describe('factory event read-model taxonomy', () => {
       channelAdmins: { 'room-one': [admin.publicKey] },
     };
     const parsed = parseRelayEvents(
-      [permissionEvent, decisionEvent, executionEvent, delegationEvent, delegationReceipt],
+      [permissionEvent, decisionEvent, executionEvent, revocationEvent, delegationEvent, delegationReceipt],
       authority,
     );
     expect(parsed.map((event) => event.type)).toEqual([
@@ -129,13 +137,15 @@ describe('factory event read-model taxonomy', () => {
       'command',
       'receipt',
       'command',
+      'command',
       'receipt',
     ]);
     expect(parsed[0]).toMatchObject({ command: { kind: 'permission.request' } });
     expect(parsed[1]).toMatchObject({ command: { kind: 'permission.decision' } });
     expect(parsed[2]).toMatchObject({ receipt: { kind: 'permission.execution' } });
-    expect(parsed[3]).toMatchObject({ command: { kind: 'delegation.turn' } });
-    expect(parsed[4]).toMatchObject({ receipt: { kind: 'delegation.receipt' } });
+    expect(parsed[3]).toMatchObject({ command: { kind: 'permission.revocation' } });
+    expect(parsed[4]).toMatchObject({ command: { kind: 'delegation.turn' } });
+    expect(parsed[5]).toMatchObject({ receipt: { kind: 'delegation.receipt' } });
 
     const snapshot = reduceWorkspaceEvents(createWorkspaceSnapshot('workspace-one'), parsed);
     expect(selectTranscript(snapshot, 'room-one')).toEqual([]);

@@ -6,10 +6,14 @@ import {
   createIdentity,
   defaultDelegationBudget,
   KIND_STREAM_MESSAGE,
+  parseDelegationTurn,
+  parsePermissionRequest,
   type DelegationTurnV1,
 } from '@beeline/buzz-client';
 import {
   DelegationRuntime,
+  buildDelegationEscalationPermission,
+  dispatchRootFactoryDirectives,
   type DelegationRuntimeDependencies,
 } from './delegation-runtime.js';
 
@@ -47,6 +51,9 @@ function fixture(overrides: Partial<DelegationRuntimeDependencies['reader']> = {
     accessPermitted: async () => true,
     targetOnline: async () => true,
     targetSupportsDelegationV1: async () => true,
+    rootAuthorized: async () => true,
+    escalationAuthorized: async () => true,
+    consumeEscalation: async () => true,
     graph: async () => ({ turns: [], receipts: [] }),
     delegatedUsage: async () => ({ calls: 0, reservedTokens: 0 }),
     ...overrides,
@@ -148,5 +155,132 @@ describe('DelegationRuntime', () => {
     });
     expect(unavailable.claimed.size).toBe(0);
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('requires and consumes a verified escalation grant before an enlarged root turn', async () => {
+    const consumeEscalation = vi.fn(async () => false);
+    const f = fixture({
+      escalationAuthorized: async () => true,
+      consumeEscalation,
+    });
+    const value: DelegationTurnV1 = {
+      ...f.value,
+      budget: { ...f.value.budget, maxAgentTurns: 9 },
+      escalationGrantEventId: '3'.repeat(64),
+    };
+    const event = buildDelegationTurn(f.sender, value);
+    const invoke = vi.fn(async () => undefined);
+    await expect(f.runtime.handleEvent(event, invoke)).resolves.toMatchObject({
+      status: 'refused',
+      reason: 'escalation-required',
+    });
+    expect(consumeEscalation).toHaveBeenCalledTimes(1);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('root factory directive dispatch', () => {
+  it('turns exact fan-out and Room prose into deterministic typed events under one root budget', async () => {
+    const atlas = createIdentity();
+    const scout = createIdentity();
+    const writer = createIdentity();
+    const owner = createIdentity();
+    const roster = [
+      { handle: 'Atlas', pubkey: atlas.publicKey, kind: 'agent' as const },
+      { handle: 'Scout', pubkey: scout.publicKey, kind: 'agent' as const },
+      { handle: 'Writer', pubkey: writer.publicKey, kind: 'agent' as const },
+      { handle: 'Owner', pubkey: owner.publicKey, kind: 'human' as const, role: 'owner' },
+    ];
+    const run = async () => {
+      const turns: DelegationTurnV1[] = [];
+      const permissions: ReturnType<typeof parsePermissionRequest>[] = [];
+      const result = await dispatchRootFactoryDirectives({
+        identity: atlas,
+        publishTurn: async (value) => turns.push(value),
+        publishPermission: async (event) => permissions.push(parsePermissionRequest(event)),
+        targetReady: async () => true,
+      }, {
+        roomId: 'room-one',
+        workspaceId: 'workspace-one',
+        principalPubkey: owner.publicKey,
+        rootEventId: '1'.repeat(64),
+        immediateTurnEventId: '2'.repeat(64),
+        completedAt: NOW,
+        finalText: [
+          '@Scout: research the market',
+          '@Writer: draft the brief',
+          '@admin: create an outcome Room named “Launch” with @Scout and @Writer.',
+        ].join('\n'),
+        roster,
+      });
+      return { turns, permissions, result };
+    };
+    const first = await run();
+    const replay = await run();
+    expect(first.result).toEqual({ delegations: 2, permissions: 1, errors: 0 });
+    expect(first.turns.map((turn) => turn.budget.maxAgentTurns)).toEqual([4, 3]);
+    expect(first.turns.reduce((sum, turn) => sum + turn.budget.maxAgentTurns, 0)).toBe(7);
+    expect(first.permissions[0]?.value.scope).toMatchObject({
+      type: 'room.create',
+      name: 'Launch',
+      agentPubkeys: [scout.publicKey, writer.publicKey],
+    });
+    expect(replay.turns.map(({ delegationId, workItemId }) => ({ delegationId, workItemId })))
+      .toEqual(first.turns.map(({ delegationId, workItemId }) => ({ delegationId, workItemId })));
+    expect(replay.permissions[0]?.event.id).toBe(first.permissions[0]?.event.id);
+  });
+
+  it('does not publish a turn for an offline or incompatible target', async () => {
+    const atlas = createIdentity();
+    const scout = createIdentity();
+    const publishTurn = vi.fn(async () => undefined);
+    await expect(dispatchRootFactoryDirectives({
+      identity: atlas,
+      publishTurn,
+      publishPermission: async () => undefined,
+      targetReady: async () => false,
+    }, {
+      roomId: 'room-one',
+      workspaceId: 'workspace-one',
+      principalPubkey: 'f'.repeat(64),
+      rootEventId: '1'.repeat(64),
+      immediateTurnEventId: '2'.repeat(64),
+      completedAt: NOW,
+      finalText: '@Scout: research',
+      roster: [{ handle: 'Scout', pubkey: scout.publicKey, kind: 'agent' }],
+    })).resolves.toMatchObject({ delegations: 0 });
+    expect(publishTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe('delegation boundary escalation request', () => {
+  it('binds the exact graph, extra budget, roster, and provenance in a typed request', () => {
+    const f = fixture();
+    const turn = parseDelegationTurn(f.event)!;
+    const event = buildDelegationEscalationPermission({
+      identity: f.recipient,
+      turn,
+      immediateTurnEventId: '4'.repeat(64),
+      requestedAt: NOW + 2,
+      extraTurns: 3,
+      extraReservedTokens: 500,
+      permittedAgentPubkeys: [f.sender.publicKey, f.recipient.publicKey],
+      eligibleHumanPubkeys: [f.principal.publicKey],
+    });
+    expect(parsePermissionRequest(event)?.value).toMatchObject({
+      requesterAgentPubkey: f.recipient.publicKey,
+      scope: {
+        type: 'delegation.escalate',
+        delegationId: f.value.delegationId,
+        extraTurns: 3,
+        extraReservedTokens: 500,
+        permittedAgentPubkeys: [f.sender.publicKey, f.recipient.publicKey],
+      },
+      provenance: {
+        immediateTurnEventId: '4'.repeat(64),
+        rootEventId: f.value.rootEventId,
+        delegationId: f.value.delegationId,
+      },
+    });
   });
 });

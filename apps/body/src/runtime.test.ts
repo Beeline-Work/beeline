@@ -548,7 +548,8 @@ describe('multi-identity guard (S0) + access policy', () => {
     supervisorRoot: string,
     agent = newIdentity('agent'),
     extra: {
-      accessPolicy?: 'everyone' | 'creator';
+      accessPolicy?: 'everyone' | 'creator' | 'allowlist';
+      accessAllowlist?: string[];
       accessAutoResponse?: string;
       externalMcpCapabilities?: ['squire'];
     } = {},
@@ -565,6 +566,7 @@ describe('multi-identity guard (S0) + access policy', () => {
         mergeWorkerIdentity: newIdentity('merge-worker'),
         supervisorRoot,
         ...(extra.accessPolicy ? { accessPolicy: extra.accessPolicy } : {}),
+        ...(extra.accessAllowlist ? { accessAllowlist: extra.accessAllowlist } : {}),
         ...(extra.accessAutoResponse ? { accessAutoResponse: extra.accessAutoResponse } : {}),
         ...(extra.externalMcpCapabilities
           ? { externalMcpCapabilities: extra.externalMcpCapabilities }
@@ -635,6 +637,35 @@ describe('multi-identity guard (S0) + access policy', () => {
     expect(stored.accessPolicy).toBe('creator');
     expect(stored.accessAutoResponse).toBe('go away, wildling');
     expect(stored.pairedBy).toBe('f'.repeat(64));
+  });
+
+  it('persists an exact allowlist without implicitly adding the inviter', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    const atlas = 'a'.repeat(64);
+    const result = await pairAgent(root, supervisorRoot, newIdentity('specialist'), {
+      accessPolicy: 'allowlist',
+      accessAllowlist: [atlas],
+    });
+    const stored = await readRuntimeRecord(result.configPath);
+    expect(stored.accessPolicy).toBe('allowlist');
+    expect(stored.accessAllowlist).toEqual([atlas]);
+    expect(isSenderPermitted(stored.accessPolicy!, atlas, stored.pairedBy, stored.accessAllowlist)).toBe(true);
+    expect(
+      isSenderPermitted(stored.accessPolicy!, stored.pairedBy, stored.pairedBy, stored.accessAllowlist),
+    ).toBe(false);
+  });
+
+  it('rejects missing or malformed allowlists before redeeming', async () => {
+    const root = await repository('https://example.com/team/project.git');
+    const supervisorRoot = await stateRoot();
+    await expect(pairAgent(root, supervisorRoot, newIdentity('missing'), {
+      accessPolicy: 'allowlist',
+    })).rejects.toThrow('allowlist access requires');
+    await expect(pairAgent(root, supervisorRoot, newIdentity('malformed'), {
+      accessPolicy: 'allowlist',
+      accessAllowlist: ['not-a-pubkey'],
+    })).rejects.toThrow('allowlist access requires');
   });
 
   it('persists a creator-only squire grant without credential material', async () => {

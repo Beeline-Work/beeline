@@ -96,6 +96,67 @@ describe('model spend accounting', () => {
     );
   });
 
+  it('attributes Atlas → Scout work to each executing provider while retaining one root principal', () => {
+    const result = {
+      stopReason: 'end_turn',
+      agentText: 'done',
+      toolCalls: [],
+      updates: [],
+    };
+    const root = 'human-root';
+    const principal = 'owner-pubkey';
+    const atlas = completedModelSpend({
+      result,
+      prompt: 'coordinate',
+      systemPromptChars: 0,
+      attribution: {
+        cause: 'room-message',
+        requestId: root,
+        originalRequestId: root,
+        trigger: 'human',
+        rootEventId: root,
+        principalPubkey: principal,
+      },
+      agentPubkey: 'atlas',
+      channelId: 'room',
+      startedAt: '2026-08-20T12:00:00.000Z',
+    });
+    const scout = completedModelSpend({
+      result,
+      prompt: 'research',
+      systemPromptChars: 0,
+      attribution: {
+        cause: 'delegation',
+        requestId: 'delegation-turn',
+        originalRequestId: root,
+        trigger: 'delegation',
+        rootEventId: root,
+        principalPubkey: principal,
+        commissionedByAgentPubkey: 'atlas',
+        delegationId: 'graph',
+        workItemId: 'work',
+        reservedTokens: 2_000,
+      },
+      agentPubkey: 'scout',
+      channelId: 'room',
+      startedAt: '2026-08-20T12:01:00.000Z',
+    });
+    expect(atlas).toMatchObject({
+      chargedAgentPubkey: 'atlas',
+      rootEventId: root,
+      principalPubkey: principal,
+    });
+    expect(scout).toMatchObject({
+      chargedAgentPubkey: 'scout',
+      commissionedByAgentPubkey: 'atlas',
+      rootEventId: root,
+      principalPubkey: principal,
+      delegationId: 'graph',
+      workItemId: 'work',
+      reservedTokens: 2_000,
+    });
+  });
+
   it('measures re-prime size and count per daemon process generation', () => {
     const reports = dailyRestartReprimes(
       [

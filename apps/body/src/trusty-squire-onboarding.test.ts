@@ -32,7 +32,7 @@ describe('Trusty Squire pair-time onboarding', () => {
     expect(calls).toEqual([
       {
         command: 'npx',
-        args: ['-y', '@trusty-squire/mcp', 'connect', '--target=codex', '--no-interactive'],
+        args: ['-y', '@trusty-squire/mcp@1.1.12', 'connect', '--target=codex', '--no-interactive'],
         timeoutMs: 30 * 60_000,
       },
     ]);

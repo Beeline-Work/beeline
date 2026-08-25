@@ -310,6 +310,7 @@ import {
   isExternalMcpPermissionRequest,
 } from './external-mcp-capabilities.js';
 import { operatorMcpServersForCorners } from './operator-mcp.js';
+import { SquireHostBroker } from './squire-host-broker.js';
 import {
   applyAgentModelSelection,
   filterAllowedModelConfigOptions,
@@ -2186,6 +2187,7 @@ export class Body {
   private governedToolRequests = new Map<string, Promise<AcpPermissionDecision>>();
   /** Started P1 actions awaiting the harness's terminal tool update. */
   private governedToolExecutions = new Map<string, PendingGovernedToolExecution>();
+  private squireBroker?: SquireHostBroker;
   /** Live authenticated Room sockets, retained only for teardown and recovery. */
   private roomSockets = new Map<string, ReturnType<typeof createBuzzClient>>();
   /**
@@ -2292,6 +2294,12 @@ export class Body {
     } = {},
   ) {
     this.config = config;
+    if (
+      config.accessPolicy === 'creator' &&
+      config.externalMcpCapabilities?.includes('squire')
+    ) {
+      this.squireBroker = new SquireHostBroker();
+    }
     this.bodyIdentity = bodyIdentity ?? newIdentity(DEFAULT_BODY_IDENTITY_NAME);
     this.agentIdentity = agentIdentity ?? newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
     this.mergeWorkerIdentity = mergeWorkerIdentity;
@@ -2901,6 +2909,48 @@ export class Body {
     }
   }
 
+  private async authorizedExternalServers(channelId: string): Promise<McpServerWire[]> {
+    const broker = this.squireBroker ? await this.squireBroker.mcpServer(channelId) : undefined;
+    return authorizedExternalMcpServers(
+      this.config.accessPolicy,
+      this.config.externalMcpCapabilities,
+      broker,
+    );
+  }
+
+  private async stopManagedSession(session: AgentSession): Promise<void> {
+    const failures: unknown[] = [];
+    await this.finalizeGovernedToolsForSession(session.sessionId).catch((error) =>
+      failures.push(error),
+    );
+    const unsubscribeGovernedTools = session.unsubscribeGovernedTools;
+    session.unsubscribeGovernedTools = undefined;
+    try {
+      unsubscribeGovernedTools?.();
+    } catch (error) {
+      failures.push(error);
+    }
+    const unsubscribeActivity = session.unsubscribeActivity;
+    session.unsubscribeActivity = undefined;
+    try {
+      unsubscribeActivity?.();
+    } catch (error) {
+      failures.push(error);
+    }
+    const unsubscribeCommands = session.unsubscribeCommands;
+    session.unsubscribeCommands = undefined;
+    try {
+      unsubscribeCommands?.();
+    } catch (error) {
+      failures.push(error);
+    }
+    session.activityProjection = undefined;
+    if (session.client.isAlive) {
+      await session.client.stop().catch((error) => failures.push(error));
+    }
+    if (failures.length) throw failures[0];
+  }
+
   private async createManagedSession(input: {
     channelId: string;
     mode: SessionMode;
@@ -3179,15 +3229,7 @@ export class Body {
       suspend: async () => {
         const plan = session.activityProjection?.currentPlan();
         if (plan) session.resumePlan = plan;
-        await this.finalizeGovernedToolsForSession(session.sessionId);
-        session.unsubscribeGovernedTools?.();
-        session.unsubscribeGovernedTools = undefined;
-        session.unsubscribeActivity?.();
-        session.unsubscribeActivity = undefined;
-        session.unsubscribeCommands?.();
-        session.unsubscribeCommands = undefined;
-        session.activityProjection = undefined;
-        if (client.isAlive) await client.stop();
+        await this.stopManagedSession(session);
       },
       ...(input.parentChannelId
         ? {
@@ -4092,12 +4134,7 @@ export class Body {
           ];
           const restoredCodegraphServer = codegraphMcpServer(this.config);
           if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
-          restoredMcpServers.push(
-            ...authorizedExternalMcpServers(
-              this.config.accessPolicy,
-              this.config.externalMcpCapabilities,
-            ),
-          );
+          restoredMcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
           const session = await this.createManagedSession({
             channelId: subchannelId,
             mode: 'edit',
@@ -4370,10 +4407,7 @@ export class Body {
     // plus explicit creator-only account capabilities. Operator config is never inherited.
     const roomMcpServers = [
       readonlyServer,
-      ...authorizedExternalMcpServers(
-        this.config.accessPolicy,
-        this.config.externalMcpCapabilities,
-      ),
+      ...(await this.authorizedExternalServers(tlcChannelId)),
     ];
     let session: AgentSession;
     try {
@@ -4605,12 +4639,7 @@ export class Body {
         env: [],
       },
     ];
-    mcpServers.push(
-      ...authorizedExternalMcpServers(
-        this.config.accessPolicy,
-        this.config.externalMcpCapabilities,
-      ),
-    );
+    mcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
     // Operator-authored tool servers (`operator-mcp.json`), same `creator`
     // authorization shape as the capability profiles above. pi ignores this
     // wire field entirely (it loads the operator's own global extensions), so
@@ -7277,6 +7306,7 @@ export class Body {
     const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
     if (begun.status !== 'started') return 'reject';
     this.governedToolExecutions.set(key, { execution: begun.execution });
+    this.squireBroker?.authorize(channelId, call.scope.argumentsDigest);
     return 'allow';
   }
 
@@ -7332,11 +7362,16 @@ export class Body {
       if (!pending) return;
       const updateKind = message.update.sessionUpdate;
       const toolStatus = message.update.status;
+      const explicitFailure =
+        toolStatus === 'failed' ||
+        toolStatus === 'error' ||
+        message.update.isError === true ||
+        message.update.error !== undefined;
       const status =
-        updateKind === 'tool_result' || toolStatus === 'completed'
-          ? 'succeeded'
-          : toolStatus === 'failed'
-            ? 'failed'
+        explicitFailure
+          ? 'failed'
+          : updateKind === 'tool_result' || toolStatus === 'completed'
+            ? 'succeeded'
             : undefined;
       if (!status) return;
       const tool = pending.execution.action.scope;
@@ -10022,17 +10057,7 @@ export class Body {
     } catch {
       // A dead session is the expected incident shape.
     }
-    try {
-      info.session.unsubscribeActivity?.();
-    } catch {
-      // Cleanup remains idempotent and retryable below.
-    }
-    try {
-      info.session.unsubscribeCommands?.();
-    } catch {
-      // Cleanup remains idempotent and retryable below.
-    }
-    await info.session.client.stop().catch(() => undefined);
+    await this.stopManagedSession(info.session).catch(() => undefined);
     await this.transitionCornerState(info, 'closed');
     await this.retractCornerActivityRecords(parentRoomId, info.subchannelId);
     await this.removeWorktree(
@@ -11749,23 +11774,7 @@ export class Body {
         console.error(`[body] archive ${subchannelId}: session cancel failed; continuing:`, error);
       }
       try {
-        session.unsubscribeActivity?.();
-      } catch (error) {
-        console.error(
-          `[body] archive ${subchannelId}: activity teardown failed; continuing:`,
-          error,
-        );
-      }
-      try {
-        session.unsubscribeCommands?.();
-      } catch (error) {
-        console.error(
-          `[body] archive ${subchannelId}: command-list teardown failed; continuing:`,
-          error,
-        );
-      }
-      try {
-        await session.client.stop();
+        await this.stopManagedSession(session);
       } catch (error) {
         console.error(`[body] archive ${subchannelId}: session stop failed; continuing:`, error);
       }
@@ -13145,6 +13154,7 @@ export class Body {
       await this.scheduler.suspend(session.channelId);
     }
     if (this.ownsScheduler) await this.scheduler.dispose();
+    await this.squireBroker?.close();
     this.workbench = undefined;
     this.sessions.clear();
     this.subchannels.clear();

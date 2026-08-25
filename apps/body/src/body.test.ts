@@ -586,7 +586,7 @@ describe('agent identity boundary', () => {
         { CLAUDE_CONFIG_DIR: '/srv/rooms/r1/agent-home/claude' },
       );
       expect(spawn.command).toBe('/usr/bin/bwrap');
-      expect(spawn.args.slice(0, 3)).toEqual(['--ro-bind', '/', '/']);
+      expect(spawn.args.slice(0, 4)).toEqual(['--unshare-pid', '--ro-bind', '/', '/']);
       // Harness state is writable (codex/pi cannot start otherwise); the Room's
       // cwd — the canonical checkout — is bound nowhere and so stays read-only.
       const binds = spawn.args
@@ -611,7 +611,7 @@ describe('agent identity boundary', () => {
         { TMPDIR: '/srv/rooms/r1/agent-home/tmp' },
       );
       expect(spawn.command).toBe('/usr/bin/bwrap');
-      expect(spawn.args.slice(0, 3)).toEqual(['--bind', '/', '/']);
+      expect(spawn.args.slice(0, 4)).toEqual(['--unshare-pid', '--bind', '/', '/']);
       const protectedAt = spawn.args.indexOf(sandboxRoot);
       expect(spawn.args.slice(protectedAt - 1, protectedAt + 2)).toEqual([
         '--ro-bind',
@@ -1145,6 +1145,55 @@ describe('agent identity boundary', () => {
         ]),
       ).resolves.toEqual(deny);
     });
+
+    it('records an explicitly failed Squire tool result as failed', async () => {
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const runtime = Reflect.get(body, 'permissionRuntime');
+      const complete = vi.spyOn(runtime, 'complete').mockResolvedValue({ status: 'succeeded' });
+      const execution = {
+        action: { scope: { type: 'operation.execute', tool: 'use_credential' } },
+      };
+      Reflect.get(body, 'governedToolExecutions').set('session-1\0tool-1', { execution });
+      const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+      const unsubscribe = Reflect.get(body, 'attachGovernedToolCompletion').call(body, client);
+
+      client.emit('session/update', {
+        sessionId: 'session-1',
+        update: { sessionUpdate: 'tool_result', toolCallId: 'tool-1', status: 'failed' },
+      });
+
+      await vi.waitFor(() =>
+        expect(complete).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'failed', result: 'squire:use_credential:failed' }),
+        ),
+      );
+      unsubscribe();
+    });
+
+    it('finalizes a pending Squire action before every managed-session stop', async () => {
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const runtime = Reflect.get(body, 'permissionRuntime');
+      const complete = vi.spyOn(runtime, 'complete').mockResolvedValue({ status: 'succeeded' });
+      const execution = {
+        action: { scope: { type: 'operation.execute', tool: 'grant_app_access' } },
+      };
+      Reflect.get(body, 'governedToolExecutions').set('session-2\0tool-2', { execution });
+      const stop = vi.fn(async () => undefined);
+      const session = {
+        sessionId: 'session-2',
+        client: { isAlive: true, stop },
+      };
+
+      await Reflect.get(body, 'stopManagedSession').call(body, session);
+
+      expect(complete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'unknown',
+          result: 'squire:session-ended-before-terminal-update',
+        }),
+      );
+      expect(complete.mock.invocationCallOrder[0]).toBeLessThan(stop.mock.invocationCallOrder[0]);
+    });
   });
 
   it('refuses to collapse the agent onto the operator identity', () => {
@@ -1307,20 +1356,22 @@ describe('agent identity boundary', () => {
 
     await body.provision('room-id', { repo: 'repo', localPath: '/paired/repo' });
 
-    expect(create.mock.calls[0]![0].mcpServers).toEqual([
+    expect(create.mock.calls[0]![0].mcpServers[0]).toEqual(
       {
         name: 'buzz-readonly-mcp',
         command: '/buzz-readonly-mcp',
         args: [],
         env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
       },
-      {
-        name: 'squire',
-        command: 'npx',
-        args: ['-y', '@trusty-squire/mcp', 'server'],
-        env: [],
-      },
-    ]);
+    );
+    expect(create.mock.calls[0]![0].mcpServers[1]).toMatchObject({
+      name: 'squire',
+      command: process.execPath,
+      env: [],
+    });
+    expect(create.mock.calls[0]![0].mcpServers[1].args[0]).toContain('squire-mcp-proxy.js');
+    expect(create.mock.calls[0]![0].mcpServers[1].args).not.toContain('@trusty-squire/mcp');
+    await body.dispose();
   });
 
   it('fails a research Room closed when buzz-readonly-mcp is unresolved', async () => {

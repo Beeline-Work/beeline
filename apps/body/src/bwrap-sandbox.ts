@@ -268,6 +268,7 @@ export function mergeGateStateDirs(home: string = homedir()): string[] {
  */
 export const KNOWN_CREDENTIAL_MASK_PATHS = [
   '.config/gh',
+  '.config/trusty-squire',
   '.ssh',
   '.netrc',
   '.git-credentials',
@@ -495,6 +496,7 @@ export function buildBwrapArgv(input: {
 }): WrappedCommand {
   const quotaTmpfs = input.plan.quotaTmpfs ?? [];
   const args = [
+    '--unshare-pid',
     ...(quotaTmpfs.length
       ? [
           '--unshare-user',
@@ -652,6 +654,6 @@ export function detectBwrapSandbox(
   }
   return {
     path: bwrapPath,
-    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp, writable only in its own harness state; known credential stores (~/.config/gh, ~/.ssh, ~/.netrc, ~/.git-credentials) are masked absent; a corner adds its worktree, git dir, and the merge gate's state root. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes, secrets not on the mask list)`,
+    advisory: `harness OS sandbox ENABLED via ${bwrapPath}: every ACP child gets a read-only filesystem plus a private /tmp and PID namespace, writable only in its own harness state; known credential stores (~/.config/gh, ~/.config/trusty-squire, ~/.ssh, ~/.netrc, ~/.git-credentials) are masked absent; a corner adds its worktree, git dir, and the merge gate's state root. Hygiene boundary, not confinement — it shapes where sessions write files and does not restrict other access this account has (e.g. sockets, container runtimes, secrets not on the mask list)`,
   };
 }

@@ -13,6 +13,7 @@ import { access, mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import type { AgentKind } from './agent-command.js';
+import { SQUIRE_MCP_PACKAGE } from './external-mcp-capabilities.js';
 
 const CONNECT_TIMEOUT_MS = 30 * 60_000;
 
@@ -140,7 +141,7 @@ export async function connectTrustySquireForPair(input: {
   const target = assertTrustySquireConnectSupported(input.agentKind);
   await (input.run ?? runConnectProcess)(
     'npx',
-    ['-y', '@trusty-squire/mcp', 'connect', `--target=${target}`, '--no-interactive'],
+    ['-y', SQUIRE_MCP_PACKAGE, 'connect', `--target=${target}`, '--no-interactive'],
     CONNECT_TIMEOUT_MS,
   );
   const operatorHome = input.operatorHome ?? homedir();

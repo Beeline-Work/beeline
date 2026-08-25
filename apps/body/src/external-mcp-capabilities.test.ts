@@ -9,14 +9,9 @@ import {
 
 describe('external MCP capabilities', () => {
   it('expands squire to an exact secret-free built-in profile', () => {
-    expect(externalMcpServers(['squire'])).toEqual([
-      {
-        name: 'squire',
-        command: 'npx',
-        args: ['-y', '@trusty-squire/mcp', 'server'],
-        env: [],
-      },
-    ]);
+    const broker = { name: 'squire', command: 'node', args: ['proxy.js'], env: [] };
+    expect(externalMcpServers(['squire'])).toEqual([]);
+    expect(externalMcpServers(['squire'], broker)).toEqual([broker]);
   });
 
   it('allows only metadata reads and routes exact credential/egress effects through P1', () => {
@@ -84,7 +79,15 @@ describe('external MCP capabilities', () => {
   it('mounts account capabilities only for creator-scoped agents', () => {
     expect(authorizedExternalMcpServers('everyone', ['squire'])).toEqual([]);
     expect(authorizedExternalMcpServers(undefined, ['squire'])).toEqual([]);
-    expect(authorizedExternalMcpServers('creator', ['squire'])).toHaveLength(1);
+    expect(authorizedExternalMcpServers('creator', ['squire'])).toEqual([]);
+    expect(
+      authorizedExternalMcpServers('creator', ['squire'], {
+        name: 'squire',
+        command: 'node',
+        args: ['proxy.js'],
+        env: [],
+      }),
+    ).toHaveLength(1);
   });
 
   it('recognizes both adapter spellings but never a shell-title spoof', () => {

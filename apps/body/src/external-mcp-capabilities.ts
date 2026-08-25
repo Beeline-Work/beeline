@@ -7,6 +7,8 @@ import type { AgentAccessPolicy } from './access-policy.js';
 export type ExternalMcpCapability = 'squire';
 
 export const EXTERNAL_MCP_CAPABILITIES = ['squire'] as const;
+export const SQUIRE_MCP_VERSION = '1.1.12';
+export const SQUIRE_MCP_PACKAGE = `@trusty-squire/mcp@${SQUIRE_MCP_VERSION}`;
 
 export function isExternalMcpCapability(value: unknown): value is ExternalMcpCapability {
   return (EXTERNAL_MCP_CAPABILITIES as readonly unknown[]).includes(value);
@@ -19,18 +21,12 @@ export function isExternalMcpCapability(value: unknown): value is ExternalMcpCap
  */
 export function externalMcpServers(
   capabilities: readonly ExternalMcpCapability[] = [],
+  squireBroker?: McpServerWire,
 ): McpServerWire[] {
-  return capabilities.map((capability) => {
+  return capabilities.flatMap((capability) => {
     switch (capability) {
       case 'squire':
-        return {
-          name: 'squire',
-          command: 'npx',
-          // `connect` is pair-time only. The explicit server subcommand keeps
-          // a headless daemon from ever falling into the browser setup path.
-          args: ['-y', '@trusty-squire/mcp', 'server'],
-          env: [],
-        };
+        return squireBroker ? [squireBroker] : [];
     }
   });
 }
@@ -39,8 +35,9 @@ export function externalMcpServers(
 export function authorizedExternalMcpServers(
   accessPolicy: AgentAccessPolicy | undefined,
   capabilities: readonly ExternalMcpCapability[] = [],
+  squireBroker?: McpServerWire,
 ): McpServerWire[] {
-  return accessPolicy === 'creator' ? externalMcpServers(capabilities) : [];
+  return accessPolicy === 'creator' ? externalMcpServers(capabilities, squireBroker) : [];
 }
 
 function shellPayload(toolCall: AcpPermissionRequest['toolCall']): boolean {
@@ -60,7 +57,7 @@ export function isExternalMcpPermissionRequest(
   request: AcpPermissionRequest,
   capabilities: readonly ExternalMcpCapability[] = [],
 ): boolean {
-  const enabled = new Set(externalMcpServers(capabilities).map((server) => server.name));
+  const enabled = new Set<string>(capabilities);
   if (enabled.size === 0 || shellPayload(request.toolCall)) return false;
   const kind = request.toolCall?.kind;
   if (kind && kind !== 'other' && kind !== 'execute') return false;
@@ -104,7 +101,11 @@ export function externalMcpToolName(request: AcpPermissionRequest): string | und
 }
 
 /** Metadata-only inventory needed to select and revoke an exact credential/grant. */
-const SQUIRE_READ_ONLY_TOOLS = new Set(['list_credentials', 'list_app_access', 'audit_log']);
+export const SQUIRE_READ_ONLY_TOOLS = new Set([
+  'list_credentials',
+  'list_app_access',
+  'audit_log',
+]);
 
 /** Every side-effecting Squire verb Beeline exposes. All others fail closed. */
 export const SQUIRE_GOVERNED_TOOLS = [
@@ -171,6 +172,10 @@ function stableJson(value: unknown): string {
 
 function digest(value: unknown): string {
   return createHash('sha256').update(stableJson(value)).digest('hex');
+}
+
+export function squireArgumentsDigest(value: unknown): string {
+  return digest(value);
 }
 
 function exactArguments(request: AcpPermissionRequest): JsonObject | undefined {

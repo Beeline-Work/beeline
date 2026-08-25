@@ -24,6 +24,7 @@ import {
   detectBwrapSandbox,
   isSandboxPolicy,
   harnessHomeStateDirs,
+  KNOWN_CREDENTIAL_MASK_PATHS,
   MERGE_GATE_HOME_STATE_DIRS,
   mergeGateStateDirs,
   resolveGitCommonDir,
@@ -31,8 +32,30 @@ import {
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
 
-const ROOM_BASE = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'];
-const CORNER_BASE = ['--bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'];
+const ROOM_BASE = [
+  '--unshare-pid',
+  '--ro-bind',
+  '/',
+  '/',
+  '--dev',
+  '/dev',
+  '--proc',
+  '/proc',
+  '--tmpfs',
+  '/tmp',
+];
+const CORNER_BASE = [
+  '--unshare-pid',
+  '--bind',
+  '/',
+  '/',
+  '--dev',
+  '/dev',
+  '--proc',
+  '/proc',
+  '--tmpfs',
+  '/tmp',
+];
 
 describe('sandbox mount plan', () => {
   it('gives a Room its own harness state and nothing else — no checkout, no host path', () => {
@@ -352,6 +375,10 @@ describe('bwrap argv construction', () => {
 });
 
 describe('credential masks — readable is usable, so known stores are absent', () => {
+  it('includes the Trusty Squire bearer store in the built-in mask set', () => {
+    expect(KNOWN_CREDENTIAL_MASK_PATHS).toContain('.config/trusty-squire');
+  });
+
   it('masks the built-in known credential homes in BOTH modes', () => {
     for (const mode of ['readonly', 'edit'] as const) {
       const plan = sandboxMountPlan({
@@ -396,8 +423,7 @@ describe('credential masks — readable is usable, so known stores are absent', 
     expect(args.slice(netrc - 2, netrc)).toEqual(['--ro-bind', '/dev/null']);
     // Masks must come after the whole-home ro-bind they override.
     expect(gh).toBeGreaterThan(0);
-    expect(args[0]).toBe('--ro-bind');
-    expect(args[1]).toBe('/');
+    expect(args.slice(0, 4)).toEqual(['--unshare-pid', '--ro-bind', '/', '/']);
   });
 
   it('writable harness-state binds are emitted AFTER masks so they win on overlap', () => {
@@ -454,7 +480,7 @@ describe('feature detection falls back rather than failing the daemon', () => {
     });
     // The probe is the real mount table, not `--version`: a bwrap that exists
     // but cannot unshare only fails when it tries.
-    expect(calls[0]?.slice(1, 4)).toEqual(['--ro-bind', '/', '/']);
+    expect(calls[0]?.slice(1, 5)).toEqual(['--unshare-pid', '--ro-bind', '/', '/']);
     expect(result.path).toBeUndefined();
     expect(result.advisory).toMatch(/self-test failed/);
     expect(result.advisory).toMatch(/No permissions to creating new namespace/);

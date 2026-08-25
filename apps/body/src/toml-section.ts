@@ -127,6 +127,7 @@ export function parseTomlTableHeader(line: string): string[] | undefined {
 export function extractTomlSections(
   source: string,
   prefixPath: readonly string[],
+  excludedChildren: readonly string[] = [],
 ): string | undefined {
   const lines = source.split(/\r?\n/);
   const collected: string[] = [];
@@ -146,7 +147,8 @@ export function extractTomlSections(
     if (header) {
       inMatchedTable =
         header.length >= prefixPath.length &&
-        prefixPath.every((segment, index) => header[index] === segment);
+        prefixPath.every((segment, index) => header[index] === segment) &&
+        !excludedChildren.includes(header[prefixPath.length] ?? '');
       if (inMatchedTable) {
         if (collected.length > 0) collected.push('');
         collected.push(rawLine.trimEnd());

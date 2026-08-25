@@ -2,8 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  KIND_CHANNEL_ADMINS,
+  KIND_CHANNEL_MEMBERS,
+  parsePermissionRequest,
+} from '@beeline/buzz-client';
 import { newIdentity } from '@beeline/gate';
-import type { NostrEvent } from '@beeline/nostr';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { Body } from './body.js';
 import {
   buildScheduledTurnReceipt,
@@ -221,12 +226,45 @@ describe('scheduled Room turn boundary', () => {
     }
   });
 
-  it('allows a scheduled send/publish/spend-shaped tool through the schedule envelope', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-action-'));
+  it('turns a scheduled send/publish/spend-shaped tool attempt into a P1 request and no invocation', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-permission-'));
     const principal = newIdentity('scheduled-principal');
     const agent = newIdentity('scheduled-action-agent');
     const roomId = 'scheduled-room';
     const workspaceId = 'scheduled-workspace';
+    const projection = (kind: number, tags: string[][]) =>
+      signEvent(
+        { pubkey: principal.publicKey, created_at: 1_900_000_000, kind, tags, content: '' },
+        principal.secretKey,
+      );
+    const members = projection(KIND_CHANNEL_MEMBERS, [
+      ['d', roomId],
+      ['p', principal.publicKey],
+      ['p', agent.publicKey],
+    ]);
+    const admins = projection(KIND_CHANNEL_ADMINS, [
+      ['d', roomId],
+      ['p', principal.publicKey, '', 'owner'],
+    ]);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          const filters = JSON.parse(String(init?.body)) as Array<{ kinds?: number[] }>;
+          const kinds = new Set(filters.flatMap((filter) => filter.kinds ?? []));
+          return new Response(
+            JSON.stringify([
+              ...(kinds.has(KIND_CHANNEL_MEMBERS) ? [members] : []),
+              ...(kinds.has(KIND_CHANNEL_ADMINS) ? [admins] : []),
+            ]),
+            { status: 200 },
+          );
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
     const body = new Body(config(root), undefined, agent);
     const runId = deterministicScheduleRunId('campaign', 1, 1_900_000_000);
     const requestId = '2'.repeat(64);
@@ -250,6 +288,7 @@ describe('scheduled Room turn boundary', () => {
         reservedTokens: 500,
       },
     });
+    const adapterInvocation = vi.fn();
     try {
       const decision = await Reflect.get(body, 'handleRoomPermissionRequest').call(
         body,
@@ -259,11 +298,24 @@ describe('scheduled Room turn boundary', () => {
             kind: 'execute',
             title: 'send publish spend campaign',
             rawInput: { recipients: ['customer@example.com'], maxMinorUnits: 500 },
+            invoke: adapterInvocation,
           },
         },
         'direct-message',
       );
-      expect(decision).toBe('allow');
+      expect(decision).toBe('reject');
+      expect(adapterInvocation).not.toHaveBeenCalled();
+      const requests = published.flatMap((event) => {
+        const parsed = parsePermissionRequest(event);
+        return parsed ? [parsed] : [];
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]!.value).toMatchObject({
+        requesterAgentPubkey: agent.publicKey,
+        audience: 'owner',
+        scope: { type: 'operation.execute', risk: 'irreversible' },
+        provenance: { immediateTurnEventId: requestId, scheduleRunId: runId },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

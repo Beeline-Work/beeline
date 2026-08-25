@@ -326,34 +326,44 @@ of creating duplicates. This permission-gated factory path is separate from
 
 Each agent daemon owns one durable `WorkCalendar` min-heap and one next-due
 timer. Signed kind:30078 schedule records describe expiring, budgeted recurring
-model turns; deterministic kind:9 run receipts and a local atomic reservation
-journal prevent duplicate activation across restarts. Every occurrence rechecks
-the current canonical revision, author role, Room/Workspace membership, agent
-access policy, expiry, run/token budgets, and any P1 `schedule.change` grant,
-including one final fresh check after the background turn wins its process slot.
-Catch-up is bounded to zero or one occurrence.
+model turns. Their replaceable key is
+`d=buzz-work-schedule:<workspaceId>:<agentPubkey>:<scheduleId>`; cron and daily
+cadences require an IANA timezone, while intervals use an explicit anchor.
+Nonexistent local times run at the next valid instant and repeated local times
+run once at their first nominal occurrence. Catch-up either skips every missed
+turn or runs only the latest one.
+
+Deterministic kind:9 run receipts and a local atomic reservation journal prevent
+duplicate activation across restarts. Every occurrence rechecks the current
+canonical revision, author and principal roles, Room/Workspace membership,
+agent access policy, expiry, run/token budgets, and any P1 `schedule.change`
+grant, including one final fresh check after the background turn wins its
+process slot.
 
 Calendar admission is deliberately separate from process capacity. A due item
 enters the ordinary Room dispatcher with `trigger='schedule'` and background
 priority, and `SessionScheduler` remains the final per-Room/Workspace queue so a
-live human turn wins. The current human-authorized schedule envelope authorizes
-each admitted occurrence, including host-mounted connector calls and attachment
-publication, without a second per-action permission ceremony. Its hard runtime
-bounds are expiry, maximum runs, per-run and daily token budgets, and the
-consecutive-failure pause. Model-emitted delegation and text-corner directives
-remain inert, so one schedule cannot amplify itself into additional recurring
-work. Every occurrence revalidates the pinned principal's current owner/admin
-role independently of the event author. Cold recovery accepts that principal
-only from daemon-signed run history or an unambiguous signed revision-1 creation
-record (including the human grant chain for agent authors); otherwise it refuses
-the schedule. A principal membership, owner/admin-role, or drive-authority lapse
-durably pauses that revision; restored authority alone cannot restart it, and a
-newer active revision must be directly authored by a currently authorized human.
-The daemon signs a monotonic runtime checkpoint with cumulative run and daily
-budget totals, latest settled occurrence, failure count, pause reason, and receipt
-cursor. Each refresh verifies that checkpoint and reads only a bounded receipt
-tail, so a million-run schedule has constant-size recovery work; a missing,
-tampered, regressing, or truncated checkpoint/tail fails closed.
+live human turn wins. A schedule authorizes only recurring read-only model turns;
+it never authorizes sending, publishing attachments, spending, editing, opening
+a corner, delegating, or using an irreversible connector. The first attempted
+irreversible action emits an exact P1 permission request and performs no side
+effect. Model-emitted delegation and text-corner directives remain inert, so one
+schedule cannot amplify itself into additional recurring work.
+
+The hard runtime bounds are expiry, maximum runs, per-run and daily token
+budgets, and the consecutive-failure pause. Every occurrence revalidates the
+pinned principal's current owner/admin role independently of the event author.
+Cold recovery accepts that principal only from daemon-signed run history or an
+unambiguous signed revision-1 creation record (including the human grant chain
+for agent authors); otherwise it refuses the schedule. A principal membership,
+owner/admin-role, or drive-authority lapse durably pauses that revision; restored
+authority alone cannot restart it, and a newer active revision must be directly
+authored by a currently authorized human. The daemon signs a monotonic runtime
+checkpoint with cumulative run and daily budget totals, latest settled
+occurrence, failure count, pause reason, and receipt cursor. Each refresh
+verifies that checkpoint and reads only a bounded receipt tail, so a million-run
+schedule has constant-size recovery work; a missing, tampered, regressing, or
+truncated checkpoint/tail fails closed.
 
 ### Repository event service
 

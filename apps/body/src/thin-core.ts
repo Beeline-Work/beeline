@@ -45,7 +45,7 @@ async function waitForNextTick(ms: number, signal?: AbortSignal): Promise<void> 
  * 2. route Workspace wake events into bounded Room reconciliation;
  * 3. drive killable Room/corner children through the Room runtime leaf;
  * 4. keep deterministic approval/review leaves reachable through those Bodies;
- * 5. publish local progress state to the supervision callback; and
+ * 5. publish local progress state to the supervision callback;
  * 6. own one bounded WorkCalendar wake source, separate from process capacity; and
  * 7. keep out-of-turn Git behind the Room runtime's JSON worker boundary.
  *

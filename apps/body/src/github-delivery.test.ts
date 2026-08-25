@@ -291,10 +291,10 @@ describe('a moved target is standing authorization to update the feature branch'
       refreshedTip,
     );
     expect(run(root, ['ls-remote', remote, 'refs/heads/main'])).toContain(refreshedTip);
-  }, // This one test performs two complete realign-and-land cycles with real
-  // Git children. Under full-suite contention it can legitimately exceed
-  // the package's ordinary 15s unit boundary while still finishing in ~5s alone.
-  30_000);
+    // This one test performs two complete realign-and-land cycles with real
+    // Git children. Under full-suite contention it can legitimately exceed
+    // the package's ordinary 15s unit boundary while still finishing in ~5s alone.
+  }, 30_000);
 
   it('truthfully reports the automatic recovery without exposing git plumbing', async () => {
     const { body, events } = await approvedCornerWithMovedTarget();

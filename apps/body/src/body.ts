@@ -3847,13 +3847,13 @@ export class Body {
     if (!reply) throw new Error('agent returned an empty reply');
     if (options.replyTo) {
       const candidate = buildAgentMessage(
-          channelId,
-          this.agentIdentity,
-          reply,
-          options.replyTo,
-          uploaded.attachments,
-          [['request', options.replyTo], ...(options.extraTags ?? [])],
-          options.replyRootId,
+        channelId,
+        this.agentIdentity,
+        reply,
+        options.replyTo,
+        uploaded.attachments,
+        [['request', options.replyTo], ...(options.extraTags ?? [])],
+        options.replyRootId,
       );
       if (options.publishReply) {
         await options.publishReply(candidate);
@@ -6599,9 +6599,7 @@ export class Body {
           ? agentExchangeTags(agentExchange, 1, agentExchange.peerPubkey)
           : undefined,
         allowAttachments: !scheduled,
-        ...(scheduled && publishScheduledOutput
-          ? { publishReply: publishScheduledOutput }
-          : {}),
+        ...(scheduled && publishScheduledOutput ? { publishReply: publishScheduledOutput } : {}),
       });
       if (!reply) throw new Error('agent returned an empty Room reply');
       if (!agentExchange && !scheduled) {

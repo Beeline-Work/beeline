@@ -141,10 +141,7 @@ async function calendarFixture(
   };
 }
 
-function checkpointFixture(
-  schedule: WorkScheduleV1,
-  updatedAt = schedule.startsAt - 1,
-) {
+function checkpointFixture(schedule: WorkScheduleV1, updatedAt = schedule.startsAt - 1) {
   return {
     version: 1 as const,
     type: 'runtime' as const,
@@ -212,9 +209,9 @@ describe('durable terminal watermark', () => {
       });
     }
     expect(await durable.runs()).toHaveLength(MAX_CALENDAR_IN_FLIGHT_RUNS);
-    expect((await durable.pendingReceipts()).filter(({ status }) => status === 'failed')).toHaveLength(
-      MAX_CALENDAR_IN_FLIGHT_RUNS,
-    );
+    expect(
+      (await durable.pendingReceipts()).filter(({ status }) => status === 'failed'),
+    ).toHaveLength(MAX_CALENDAR_IN_FLIGHT_RUNS);
     const nominalAt = schedule.startsAt + MAX_CALENDAR_IN_FLIGHT_RUNS * 60;
     await expect(
       durable.reserveRun({
@@ -714,10 +711,7 @@ describe('WorkCalendar durable execution', () => {
     const modelCall = vi.fn();
     const fixture = await calendarFixture({
       publish: async (event) => {
-        if (
-          parseScheduledTurnReceipt(event)?.value.status === 'working' &&
-          rejectWorking
-        ) {
+        if (parseScheduledTurnReceipt(event)?.value.status === 'working' && rejectWorking) {
           rejectWorking = false;
           throw new Error('relay unavailable');
         }
@@ -1032,9 +1026,7 @@ describe('WorkCalendar durable execution', () => {
     const principal = createIdentity();
     const replacement = createIdentity();
     const first = scheduleFixture(agent, principal);
-    const schedules = [
-      buildWorkSchedule(principal, first, { createdAt: first.startsAt - 20 }),
-    ];
+    const schedules = [buildWorkSchedule(principal, first, { createdAt: first.startsAt - 20 })];
     let principalLost = false;
     const fixture = await calendarFixture({
       agent,
@@ -1047,9 +1039,7 @@ describe('WorkCalendar durable execution', () => {
           : { authorized: true },
     });
     await fixture.calendar.start();
-    expect(await fixture.durable.principalForSchedule(first.scheduleId)).toBe(
-      principal.publicKey,
-    );
+    expect(await fixture.durable.principalForSchedule(first.scheduleId)).toBe(principal.publicKey);
 
     principalLost = true;
     schedules.push(
@@ -1068,9 +1058,7 @@ describe('WorkCalendar durable execution', () => {
     await fixture.calendar.wakeNow();
     expect(fixture.calendar.snapshot().schedules).toBe(0);
     expect(fixture.dispatch).not.toHaveBeenCalled();
-    expect(await fixture.durable.principalForSchedule(first.scheduleId)).toBe(
-      principal.publicKey,
-    );
+    expect(await fixture.durable.principalForSchedule(first.scheduleId)).toBe(principal.publicKey);
 
     principalLost = false;
     await fixture.calendar.refreshNow();
@@ -1124,8 +1112,16 @@ describe('WorkCalendar durable execution', () => {
       dailyReservedTokens: 0,
       receiptCursorAt: schedule.startsAt - 1,
     });
-    const tampered = { ...checkpoint, content: checkpoint.content.replace('"runCount":10', '"runCount":11') };
-    const fixture = await calendarFixture({ agent, principal, schedule, receiptEvents: [tampered] });
+    const tampered = {
+      ...checkpoint,
+      content: checkpoint.content.replace('"runCount":10', '"runCount":11'),
+    };
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      receiptEvents: [tampered],
+    });
     await fixture.calendar.start();
     await fixture.calendar.wakeNow();
     expect(fixture.calendar.snapshot().schedules).toBe(0);
@@ -1205,9 +1201,7 @@ describe('WorkCalendar durable execution', () => {
     });
     await fixture.calendar.start();
     await fixture.calendar.wakeNow();
-    expect(await fixture.durable.principalForSchedule(first.scheduleId)).toBe(
-      principal.publicKey,
-    );
+    expect(await fixture.durable.principalForSchedule(first.scheduleId)).toBe(principal.publicKey);
     expect(fixture.calendar.snapshot().schedules).toBe(0);
     expect(fixture.dispatch).not.toHaveBeenCalled();
     await fixture.calendar.dispose();
@@ -1252,9 +1246,7 @@ describe('WorkCalendar durable execution', () => {
       agent,
       principal,
       schedule,
-      scheduleEvents: [
-        buildWorkSchedule(agent, schedule, { createdAt: schedule.startsAt - 10 }),
-      ],
+      scheduleEvents: [buildWorkSchedule(agent, schedule, { createdAt: schedule.startsAt - 10 })],
       validateScheduleCreation,
     });
     await fixture.calendar.start();
@@ -1322,9 +1314,13 @@ describe('WorkCalendar durable execution', () => {
       principal,
       schedule: deleted,
       scheduleEvents: [
-        buildWorkSchedule(principal, { ...deleted, revision: 1, status: 'active' }, {
-          createdAt: deleted.startsAt - 20,
-        }),
+        buildWorkSchedule(
+          principal,
+          { ...deleted, revision: 1, status: 'active' },
+          {
+            createdAt: deleted.startsAt - 20,
+          },
+        ),
         buildWorkSchedule(principal, deleted, { createdAt: deleted.startsAt - 10 }),
       ],
     });

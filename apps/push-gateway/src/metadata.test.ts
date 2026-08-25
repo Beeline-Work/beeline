@@ -230,6 +230,139 @@ describe('NotificationMetadataResolver', () => {
     });
   });
 
+  describe('channel-naming convention presentation names', () => {
+    function metadataReader(
+      rooms: Record<string, NostrEvent[]>,
+    ): { reader: RelayEventReader; query: ReturnType<typeof vi.fn> } {
+      const query = vi.fn(async (filters: Record<string, unknown>[]) => {
+        if (
+          !filters.some((filter) =>
+            (filter.kinds as number[]).some((kind) => [39000, 9007].includes(kind)),
+          )
+        ) {
+          return [];
+        }
+        const json = JSON.stringify(filters);
+        for (const [channelId, events] of Object.entries(rooms)) {
+          if (json.includes(channelId)) return events;
+        }
+        return [];
+      });
+      return { reader: { query, disconnect: () => undefined }, query };
+    }
+
+    it('resolves a corner notification\u2019s own name and its PARENT Room\u2019s current display name', async () => {
+      const cornerCreate = unsignedEvent(9007, [
+        ['h', 'corner-1'],
+        ['name', 'fix-login-loop'],
+        ['parent', ROOM_ID],
+        ['community', COMMUNITY_ID],
+      ]);
+      const parentCreate = unsignedEvent(9007, [
+        ['h', ROOM_ID],
+        ['name', 'Old Name'],
+        ['community', COMMUNITY_ID],
+      ]);
+      // The mutable projection is the Room's CURRENT display name.
+      const parentMetadata = unsignedEvent(39000, [
+        ['d', ROOM_ID],
+        ['name', 'Launch room'],
+      ]);
+      const workspaceCreate = unsignedEvent(9007, [
+        ['h', COMMUNITY_ID],
+        ['name', 'Product Engineering'],
+        ['community', COMMUNITY_ID],
+      ]);
+      const { reader, query } = metadataReader({
+        'corner-1': [cornerCreate],
+        [ROOM_ID]: [parentCreate, parentMetadata],
+        [COMMUNITY_ID]: [workspaceCreate],
+      });
+      const resolver = new NotificationMetadataResolver();
+
+      await expect(resolver.resolve(unsignedEvent(9, [['h', 'corner-1']]), reader)).resolves.toMatchObject(
+        {
+          roomName: 'fix-login-loop',
+          isChildChannel: true,
+          parentChannelId: ROOM_ID,
+          cornerName: 'fix-login-loop',
+          parentRoomName: 'Launch room',
+        },
+      );
+      // The parent lookup rides the same per-Room cache: a second resolve
+      // issues no further metadata queries.
+      await expect(resolver.resolve(unsignedEvent(9, [['h', 'corner-1']]), reader)).resolves.toMatchObject(
+        { cornerName: 'fix-login-loop', parentRoomName: 'Launch room' },
+      );
+      // Corner room + its workspace, sender, parent room + its workspace.
+      expect(query).toHaveBeenCalledTimes(5);
+    });
+
+    it('resolves the subchannel attention target announced inside its parent Room', async () => {
+      const waitingCreate = unsignedEvent(9007, [
+        ['h', 'corner-waiting'],
+        ['name', 'waiting-corner'],
+        ['parent', ROOM_ID],
+        ['community', COMMUNITY_ID],
+      ]);
+      const parentCreate = unsignedEvent(9007, [
+        ['h', ROOM_ID],
+        ['name', 'Roadmap'],
+        ['community', COMMUNITY_ID],
+      ]);
+      const workspaceCreate = unsignedEvent(9007, [
+        ['h', COMMUNITY_ID],
+        ['name', 'Product Engineering'],
+        ['community', COMMUNITY_ID],
+      ]);
+      const { reader } = metadataReader({
+        'corner-waiting': [waitingCreate],
+        [ROOM_ID]: [parentCreate],
+        [COMMUNITY_ID]: [workspaceCreate],
+      });
+
+      await expect(
+        new NotificationMetadataResolver().resolve(
+          unsignedEvent(9, [
+            ['h', ROOM_ID],
+            ['display-status', 'needs-attention'],
+            ['subchannel', 'corner-waiting'],
+          ]),
+          reader,
+        ),
+      ).resolves.toMatchObject({
+        roomName: 'Roadmap',
+        cornerName: 'waiting-corner',
+        parentRoomName: 'Roadmap',
+      });
+    });
+
+    it('leaves the parent name unset when the parent Room metadata is absent or deleted', async () => {
+      const cornerCreate = unsignedEvent(9007, [
+        ['h', 'corner-1'],
+        ['name', 'fix-login-loop'],
+        ['parent', ROOM_ID],
+        ['community', COMMUNITY_ID],
+      ]);
+      const workspaceCreate = unsignedEvent(9007, [
+        ['h', COMMUNITY_ID],
+        ['name', 'Product Engineering'],
+        ['community', COMMUNITY_ID],
+      ]);
+      const { reader } = metadataReader({
+        'corner-1': [cornerCreate],
+        [COMMUNITY_ID]: [workspaceCreate],
+      });
+
+      const context = await new NotificationMetadataResolver().resolve(
+        unsignedEvent(9, [['h', 'corner-1']]),
+        reader,
+      );
+      expect(context.cornerName).toBe('fix-login-loop');
+      expect(context.parentRoomName).toBeUndefined();
+    });
+  });
+
   it('projects Room fixture tags into the final pre-FCM context', async () => {
     const roomCreate = unsignedEvent(9007, [
       ['h', ROOM_ID],

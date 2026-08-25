@@ -182,17 +182,34 @@ describe('operator skills + MCP passthrough', () => {
     return home;
   }
 
-  it('links operator skills into every harness home and copies codex MCP config as a REAL file', async () => {
+  it('provisions a Beeline-managed skills directory per harness home with linked operator entries', async () => {
     const operatorHome = await operatorHomeWithHarnessConfigs();
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
 
-    // Skills are symlinked to the operator's own directories.
+    // The discovery path stays <harness-home>/skills, but it is now a REAL
+    // Beeline-managed directory: each OPERATOR entry is a symlink into the
+    // operator's own tree, and the managed skill sits alongside them.
+    const operatorSkillNames: Record<string, string | undefined> = {
+      claude: 'greet',
+      codex: undefined,
+      grok: undefined,
+    };
     for (const dir of ['claude', 'codex', 'grok']) {
-      const link = resolve(roomRoot, dir, 'skills');
-      expect(lstatSync(link).isSymbolicLink()).toBe(true);
-      expect(realpathSync(link)).toBe(realpathSync(resolve(operatorHome, `.${dir}/skills`)));
+      const skillsDir = resolve(roomRoot, dir, 'skills');
+      expect(lstatSync(skillsDir).isSymbolicLink()).toBe(false);
+      expect(lstatSync(skillsDir).isDirectory()).toBe(true);
+      const operatorEntry = operatorSkillNames[dir];
+      if (operatorEntry) {
+        expect(lstatSync(resolve(skillsDir, operatorEntry)).isSymbolicLink()).toBe(true);
+        expect(realpathSync(resolve(skillsDir, operatorEntry))).toBe(
+          realpathSync(resolve(operatorHome, `.${dir}/skills/${operatorEntry}`)),
+        );
+      }
+      const managedSkill = resolve(skillsDir, 'using-beeline', 'SKILL.md');
+      expect(lstatSync(resolve(skillsDir, 'using-beeline')).isSymbolicLink()).toBe(false);
+      expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
     }
 
     // The codex MCP config is a COPY carrying only mcp_servers — never a
@@ -304,7 +321,8 @@ describe('operator skills + MCP passthrough', () => {
       roomAgentHomeEnv(roomRoot),
     );
     for (const dir of ['claude', 'codex', 'grok']) {
-      expect(existsSync(resolve(roomRoot, dir, 'skills'))).toBe(false);
+      // No operator skills to link, but the managed skill is still shipped.
+      expect(existsSync(resolve(roomRoot, dir, 'skills', 'using-beeline', 'SKILL.md'))).toBe(true);
       expect(existsSync(resolve(roomRoot, dir, 'config.toml'))).toBe(false);
     }
     expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);
@@ -318,6 +336,8 @@ describe('operator skills + MCP passthrough', () => {
       if (!existsSync(path)) await writeFile(path, 'secret');
     }
     await mkdir(resolve(operatorHome, '.codex/skills'), { recursive: true });
+    await mkdir(resolve(operatorHome, '.codex/skills/audit'), { recursive: true });
+    await writeFile(resolve(operatorHome, '.codex/skills/audit/SKILL.md'), 'operator skill\n');
     await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
 
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');

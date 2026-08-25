@@ -247,6 +247,153 @@ describe('mapEventToNotification', () => {
     });
   });
 
+  describe('channel-naming convention (captain, 2026-08)', () => {
+    const ROOM_CONTEXT = {
+      roomName: 'Roadmap',
+      workspaceName: 'Product Engineering',
+      persistentWorkspaceRoom: true,
+    };
+    const cornerContext = {
+      roomName: 'fix-login-loop',
+      parentChannelId: 'room-1',
+      parentRoomName: 'Launch room',
+      cornerName: 'fix-login-loop',
+      senderName: 'Codex',
+      persistentWorkspaceRoom: true as const,
+    };
+
+    it('titles a Room notification #<room>', () => {
+      expect(
+        mapEventToNotification(
+          event([
+            ['h', 'room-1'],
+            ['p', 'a'.repeat(64)],
+            ['t', 'agent-message'],
+          ]),
+          { ...ROOM_CONTEXT, senderName: 'Ada' },
+          { recipientMentioned: true },
+        )?.title,
+      ).toBe('#Roadmap');
+    });
+
+    it('titles a Corner notification #<room>/<corner> from the PARENT Room display name', () => {
+      const result = mapEventToNotification(
+        event(
+          [
+            ['h', 'corner-1'],
+            ['t', 'agent-message'],
+          ],
+          'Which target branch should I use?',
+        ),
+        cornerContext,
+      );
+      // The Room half is the resolved parent's current display name, not the
+      // corner name duplicated and never invented.
+      expect(result?.title).toBe('#Launch room/fix-login-loop');
+      // Body content is unchanged by the title convention.
+      expect(result?.body).toBe('Codex needs your reply: Which target branch should I use?');
+    });
+
+    it('serializes the exact routing payload a corner tap needs', () => {
+      expect(
+        mapEventToNotification(
+          event([
+            ['h', 'corner-1'],
+            ['p', 'a'.repeat(64)],
+            ['t', 'agent-message'],
+          ]),
+          { ...cornerContext, workspaceName: 'Product Engineering' },
+          { recipientMentioned: true },
+        )?.data,
+      ).toEqual({
+        type: 'mention',
+        target: 'message',
+        roomId: 'room-1',
+        channelId: 'corner-1',
+        cornerId: 'corner-1',
+        eventId: 'a'.repeat(64),
+        messageId: 'a'.repeat(64),
+        roomName: 'fix-login-loop',
+      });
+    });
+
+    it('falls back honestly when the parent Room metadata is absent or deleted', () => {
+      // No fabricated room name: the title keeps this gateway's long-standing
+      // shape — the event channel's own resolved name.
+      expect(
+        mapEventToNotification(
+          event(
+            [
+              ['h', 'corner-1'],
+              ['t', 'agent-message'],
+            ],
+            'Which target branch should I use?',
+          ),
+          { ...cornerContext, parentRoomName: undefined },
+        )?.title,
+      ).toBe('#fix-login-loop');
+      // With no resolvable name at all, the sender fallback stands.
+      expect(
+        mapEventToNotification(
+          event(
+            [
+              ['h', 'corner-1'],
+              ['t', 'agent-message'],
+            ],
+            'Which target branch should I use?',
+          ),
+          {
+            ...cornerContext,
+            parentRoomName: undefined,
+            cornerName: undefined,
+            roomName: undefined,
+          },
+        )?.title,
+      ).toBe('Codex');
+    });
+
+    it('titles a subchannel attention card #<room>/<corner> with both resolved names', () => {
+      const transition = event([
+        ['h', 'parent-room'],
+        ['t', 'body-control'],
+        ['display-status', 'needs-attention'],
+        ['subchannel', 'corner-waiting'],
+      ]);
+      expect(
+        mapEventToNotification(transition, {
+          roomName: 'Roadmap',
+          senderName: 'Ox',
+          cornerName: 'waiting-corner',
+          parentRoomName: 'Roadmap',
+        })?.title,
+      ).toBe('#Roadmap/waiting-corner');
+    });
+
+    it('leaves merge-approval and direct-message titles untouched', () => {
+      expect(
+        mapEventToNotification(
+          event([
+            ['h', 'corner-1'],
+            ['t', 'body-control'],
+            ['repo', 'owner/repo'],
+            ['branch', 'feature/x'],
+            ['tip', 'd'.repeat(40)],
+          ]),
+          cornerContext,
+        )?.title,
+      ).toBe('Merge approval requested');
+      expect(
+        mapEventToNotification(event([['h', 'dm-1']]), {
+          ...cornerContext,
+          isDirectMessage: true,
+          cornerName: undefined,
+          parentRoomName: undefined,
+          parentChannelId: undefined,
+        })?.title,
+      ).toBe('Codex');
+    });
+  });
+
   it('ignores activity frames, approval grants, and non-request control events', () => {
     const context = { roomName: 'Room' };
     expect(

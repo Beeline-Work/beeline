@@ -49,6 +49,9 @@ interface StoredPermissionReceipt {
   delivered: boolean;
 }
 
+/** Current on-disk schema version, shared with release-fixture compatibility gates. */
+export const DURABLE_BODY_STATE_VERSION = 2;
+
 interface DurableBodyData {
   version: 2;
   inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;
@@ -72,6 +75,47 @@ interface DurableBodyData {
     permissionReservations?: Record<string, StoredPermissionReservation>;
     permissionReceiptOutbox?: Record<string, StoredPermissionReceipt>;
   };
+}
+
+interface DurableBodyDataV1 extends Omit<DurableBodyData, 'version' | 'readModels'> {
+  version: 1;
+  conversations?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyData {
+  if (!isRecord(candidate)) {
+    throw new Error(`unsupported durable body state at ${path}`);
+  }
+  const parsed = candidate as Partial<DurableBodyData | DurableBodyDataV1>;
+  if (!isRecord(parsed.inboxes)) throw new Error(`unsupported durable body state at ${path}`);
+
+  switch (parsed.version) {
+    case 1: {
+      if ('readModels' in parsed) throw new Error(`unsupported durable body state at ${path}`);
+      const legacy = parsed as DurableBodyDataV1;
+      return {
+        version: 2,
+        inboxes: legacy.inboxes,
+        readModels: {},
+        modelTurns: legacy.modelTurns,
+        sessionReprimes: legacy.sessionReprimes,
+        githubEventCursors: legacy.githubEventCursors,
+        concludeEpisodes: legacy.concludeEpisodes,
+        factory: legacy.factory,
+      };
+    }
+    case 2:
+      if (!isRecord(parsed.readModels)) {
+        throw new Error(`unsupported durable body state at ${path}`);
+      }
+      return parsed as DurableBodyData;
+    default:
+      throw new Error(`unsupported durable body state at ${path}`);
+  }
 }
 
 function emptyData(): DurableBodyData {
@@ -106,10 +150,10 @@ export class DurableBodyState {
   async load(): Promise<void> {
     if (this.loaded) return;
     try {
-      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as DurableBodyData;
-      if (parsed.version !== 2 || !parsed.inboxes || !parsed.readModels) {
-        throw new Error(`unsupported durable body state at ${this.path}`);
-      }
+      const parsed = migrateDurableBodyData(
+        JSON.parse(await readFile(this.path, 'utf8')) as unknown,
+        this.path,
+      );
       for (const [channelId, candidate] of Object.entries(parsed.readModels)) {
         const guarded = guardReadModelBoot(candidate);
         if (guarded.status === 'integrity-halt') {

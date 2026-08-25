@@ -70,6 +70,11 @@ describe('Speakeasy canvas alignment', () => {
       expect(lum(theme.bgHover)).toBeGreaterThanOrEqual(lum(theme.bgHighlight));
       expect(lum(theme.bgPressed)).toBeGreaterThan(lum(theme.bgHighlight));
       expect(lum(theme.bgTexturePeak)).toBeGreaterThan(lum(theme.bgPressed));
+      // The unread-row ground lift sits exactly one step above the canvas —
+      // an area cue for unread rows that must never outrank selection
+      // (bgHighlight) or hover.
+      expect(lum(theme.bgUnread)).toBeGreaterThan(canvas);
+      expect(lum(theme.bgUnread)).toBeLessThan(lum(theme.bgHighlight));
       // Hairlines must stay visible against both the canvas and raised surfaces.
       expect(lum(theme.border)).toBeGreaterThan(canvas);
     }

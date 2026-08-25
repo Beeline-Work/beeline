@@ -76,6 +76,7 @@ import {
 } from './runtime.js';
 import { runRelayCommand } from './relay-command.js';
 import { startStoredRuntime } from './start-command.js';
+import { runMissionScaffoldCommand } from './mission-scaffold-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
 import { migrateLegacyRepositoryPaths } from './repository-truth.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
@@ -148,6 +149,9 @@ ${pc.dim('Usage:')}
   beeline events install                     Install/restart the single repository-events service
   beeline events daemon                      Internal: foreground repository-events service
   beeline corner-git-credential (internal)  Git credential helper: read-only repo token for corners
+  beeline mission-scaffold <dir> [options]  Write the three-file mission convention into an
+                                            existing dir; never overwrites existing files
+                                            (--name --objective --principal --chief)
 
 ${pc.dim('Options:')}
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
@@ -1197,6 +1201,13 @@ async function main(): Promise<void> {
 
   if (command === 'relay') {
     await runRelayCommand(args);
+    return;
+  }
+
+  // Mission Charter v2 M1: deterministic three-file mission scaffold. Pure
+  // local file generation — no provisioning, binding, relay access, or landing.
+  if (command === 'mission-scaffold') {
+    process.exitCode = await runMissionScaffoldCommand(args.slice(1));
     return;
   }
 

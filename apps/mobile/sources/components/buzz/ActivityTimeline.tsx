@@ -174,11 +174,15 @@ const styles = StyleSheet.create((theme) => {
       letterSpacing: 1.2,
     },
     thoughtText: {
-      ...Typography.default(),
+      // Thinking copy is prose, not a second voice: it shares the ledger's
+      // theme prose face (Space Grotesk in Obsidian), sits one existing step
+      // below the single message size (14, the register RoomContextPreamble's
+      // ghost lines use), recedes on ledgerQuiet, and stays upright — the
+      // shipped family has no italic cut.
+      fontFamily: groknight.proseRegular,
       color: groknight.ledgerQuiet,
-      fontSize: 13,
-      fontStyle: 'italic',
-      lineHeight: 19,
+      fontSize: 14,
+      lineHeight: 22,
     },
     messageDraft: {
       ...Typography.ledger(),

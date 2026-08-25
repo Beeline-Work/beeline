@@ -1,0 +1,15 @@
+{
+  "currentVersion": 2,
+  "fixtures": [
+    {
+      "version": 1,
+      "release": "0.2.11",
+      "file": "v1-release-0.2.11.json"
+    },
+    {
+      "version": 2,
+      "release": "0.2.18",
+      "file": "v2-release-0.2.18.json"
+    }
+  ]
+}

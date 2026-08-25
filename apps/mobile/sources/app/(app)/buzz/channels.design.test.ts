@@ -32,10 +32,14 @@ function styleBlock(text: string, name: string): string {
 }
 
 /** Every style that renders a repeating index unit: a Room row, a DM row, the
- * expanded corner rows, and their leading marks. None may become a box. */
+ * expanded corner rows, and their leading marks. None may become a box.
+ * `roomCellUnread` is the one approved repeated-row exception: a whole-ground
+ * FILL for unread rows (captain-approved 2026-08-25), never a stroke — it is
+ * listed so that stays true (no border, no radius may creep in). */
 const REPEATING_ROW_STYLES = [
   'indexRow',
   'roomCell',
+  'roomCellUnread',
   'roomRow',
   'roomPrimary',
   'rowMark',
@@ -90,7 +94,10 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(styleBlock(source, 'header')).toMatch(/borderBottomColor:\s*groknight\.border/);
     expect(styleBlock(railSource, 'rail')).toMatch(/borderRightWidth: StyleSheet\.hairlineWidth/);
     // A row declares no surface of its own either — the slab shows through.
+    // The approved unread ground lift lives on the CONDITIONAL companion
+    // style (`roomCellUnread`), never on the base cell every row shares.
     expect(styleBlock(source, 'roomCell')).not.toMatch(/backgroundColor/);
+    expect(styleBlock(source, 'roomCellUnread')).toContain('backgroundColor: groknight.bgUnread');
   });
 
   it('sources every color from the groknight token file', () => {
@@ -146,10 +153,21 @@ describe('Room list — Grok Mono Hull invariants', () => {
         'groknight.ledgerGhost',
       );
     }
-    // Names share one tone; only unread rows add semibold weight.
+    // Names share one tone; only unread rows add semibold weight, and the
+    // approved unread treatment lifts the preview one step with it and swaps
+    // the gutter's age slot for the count chip (near-white fill, dark mono
+    // numeral). The chip is the screen's one sanctioned small box: something
+    // the reader is meant to find — it is deliberately NOT a repeating row
+    // surface, so it stays out of REPEATING_ROW_STYLES.
     expect(styleBlock(source, 'rowTitle')).toContain('Typography.default()');
     expect(styleBlock(source, 'rowTitle')).toContain('fontSize: 16');
     expect(styleBlock(source, 'rowTitleUnread')).toContain("Typography.default('semiBold')");
+    expect(styleBlock(source, 'rowPreviewUnread')).toContain('groknight.textSecondary');
+    const chip = styleBlock(source, 'unreadChip');
+    expect(chip).toContain('borderRadius: 3');
+    expect(chip).toMatch(/backgroundColor: groknight\.actionFill/);
+    expect(chip).not.toMatch(/borderWidth/);
+    expect(styleBlock(source, 'unreadChipText')).toContain('groknight.textInverted');
     // The repo tag rides the title line in mono.
     expect(styleBlock(source, 'rowRepo')).toMatch(/Typography\.mono\(/);
   });
@@ -174,9 +192,12 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(styleBlock(source, 'rowAge')).not.toContain("marginLeft: 'auto'");
     expect(source).toContain('<View style={styles.rowGutter}>');
     expect(source).not.toContain('pointerEvents="box-none" style={styles.rowGutter}');
-    // Rooms and DMs use the same cell, the same gutter, and the same divider.
+    // Rooms and DMs use the same cell, the same gutter, and the same divider,
+    // and both lift the whole cell for unread through the same conditional.
     expect(source.match(/style=\{styles\.rowGutter\}/g)).toHaveLength(2);
-    expect(source.match(/style=\{styles\.roomCell\}/g)).toHaveLength(2);
+    expect(
+      source.match(/style=\{\[styles\.roomCell, \w+(?:\.unread)? && styles\.roomCellUnread\]\}/g),
+    ).toHaveLength(2);
   });
 
   it('rows are self-sizing flex containers — the overlap regression stays dead', () => {
@@ -237,11 +258,17 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).toContain("names.set(identity.publicKey, 'You')");
   });
 
-  it('drops the #-prefixed corner naming DESIGN.md retired', () => {
+  it('adds the captain’s # channel mark to Room rows through the shared display helper only', () => {
+    // Captain decision 2026-08 (supersedes the retired DESIGN.md line): Room
+    // names render as `#<name>` on the index. The prefix is added at render
+    // through `displayRoomIndexTitle` — one derivation, presentation only.
+    expect(source).toContain('displayRoomIndexTitle(item.title) ??');
+    // The helper is the ONLY place a Room `#` is minted; nothing else on this
+    // screen hand-rolls the mark, and corner rows stay unprefixed.
+    const uses = source.match(/displayRoomIndexTitle\(/g) ?? [];
+    expect(uses).toHaveLength(1); // exactly one call site — the Room row title
     expect(source).not.toContain('#${corner.name}');
     expect(source).not.toContain('└');
-    // ...and never reintroduces a `#` in front of a Room title either.
-    expect(source).not.toMatch(/>#\{/);
   });
 
   it('renders the corner count from exactly the corners the dropdown lists', () => {

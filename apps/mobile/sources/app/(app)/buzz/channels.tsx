@@ -56,7 +56,12 @@ import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
-import { NO_ACTIVITY_PREVIEW, roomListFeed, type RoomRowPresentation } from '@/buzz/room-list-row';
+import {
+  NO_ACTIVITY_PREVIEW,
+  displayRoomIndexTitle,
+  roomListFeed,
+  type RoomRowPresentation,
+} from '@/buzz/room-list-row';
 import { cornerVisualState, currentCornerStatus, type CornerSummary } from '@/buzz/corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
@@ -140,10 +145,10 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 /**
  * How many person-facing messages this Room holds past the reader's mark, or
  * `null` when that answer is only "unread" — either there is no mark yet or
- * no local transcript to count against. The pill never invents a number.
+ * no local transcript to count against. The gutter never invents a number.
  */
 function unreadCountFor(
-  room: ChannelDisplayItem,
+  room: Pick<ChannelDisplayItem, 'id' | 'latestMessageAt'>,
   viewerPubkey: string | undefined,
   readAt: Record<string, number>,
 ): number | null {
@@ -560,6 +565,8 @@ export default function BuzzChannels() {
       title: dm.peerName,
       corners: [] as ChannelDisplayItem['corners'],
       archived: false,
+      // DMs share the Room row's unread treatment, count included.
+      unreadNew: unreadCountFor(dm, identity?.publicKey, readAt),
       roomUnread: isRoomUnread(roomReadAt(readAt, viewerKey, dm.id), dm.latestMessageAt),
     }));
     return roomListFeed([...visible, ...directEntries], authorNames, { now: ageNow });
@@ -1272,7 +1279,13 @@ export default function BuzzChannels() {
       // and no expansion, while their Room remains inline in DOESN'T NEED YOU.
       const corners = row.corners;
       const canExpand = corners.length > 0;
-      const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
+      // The teaching cue is display-only: `displayRoomIndexTitle` adds the
+      // `#` channel mark to the STORED name at render. Search keys, sorting,
+      // unread state, corner labels, and identity never see the prefix, and
+      // a placeholder-id fallback gains no mark — nothing fabricated is
+      // decorated.
+      const title =
+        displayRoomIndexTitle(item.title) ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
       const expanded = canExpand && expandedRoomId === item.id;
       const age = compactRelativeTime(row.meaningfulAt, ageNow);
       // One state per row, one visual language each: needs-you (brass),
@@ -1280,7 +1293,7 @@ export default function BuzzChannels() {
       // `roomRowPresentation`; this only picks which mark renders.
       const deckState = row.state;
       return (
-        <View style={styles.roomCell}>
+        <View style={[styles.roomCell, row.unread && styles.roomCellUnread]}>
           <View style={styles.roomRow}>
             <BrittlePress
               accessibilityHint={
@@ -1326,7 +1339,10 @@ export default function BuzzChannels() {
                   )}
                   {item.archived && <Text style={styles.rowFlag}>ARCHIVED</Text>}
                 </View>
-                <Text numberOfLines={1} style={styles.rowPreview}>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.rowPreview, row.unread && styles.rowPreviewUnread]}
+                >
                   {row.fact}
                 </Text>
                 {/* The cell carries four things and nothing else: the
@@ -1343,7 +1359,17 @@ export default function BuzzChannels() {
                 an age stamp or a corner count can never reflow the copy
                 beside it and can never escape into the next row. */}
             <View style={styles.rowGutter}>
-              <Text style={styles.rowAge}>{age}</Text>
+              {/* The gutter's top slot holds ONE object, swapped by read
+                  state: the age on a read row, the unread count chip on an
+                  unread one. The corner count below it is independent of both
+                  states — the gutter never carries more than two objects. */}
+              {row.unreadBadge != null ? (
+                <View style={styles.unreadChip} testID={`room-unread-${item.id}`}>
+                  <Text style={styles.unreadChipText}>{row.unreadBadge}</Text>
+                </View>
+              ) : (
+                <Text style={styles.rowAge}>{age}</Text>
+              )}
               {canExpand && (
                 <TouchableOpacity
                   accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${corners.length} open ${
@@ -1422,7 +1448,10 @@ export default function BuzzChannels() {
       const unread = row.unread;
       const age = compactRelativeTime(dm.latestMessageAt ?? dm.updatedAt, ageNow);
       return (
-        <View style={styles.roomCell} testID={`direct-row-${dm.id}`}>
+        <View
+          style={[styles.roomCell, unread && styles.roomCellUnread]}
+          testID={`direct-row-${dm.id}`}
+        >
           <View style={styles.roomRow}>
             <TouchableOpacity
               accessibilityLabel={`Open direct message with ${dm.peerName}`}
@@ -1458,13 +1487,22 @@ export default function BuzzChannels() {
                     {dm.peerName}
                   </Text>
                 </View>
-                <Text numberOfLines={1} style={styles.rowPreview}>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.rowPreview, unread && styles.rowPreviewUnread]}
+                >
                   {dm.latestMessage ?? NO_ACTIVITY_PREVIEW}
                 </Text>
               </View>
             </TouchableOpacity>
             <View pointerEvents="none" style={styles.rowGutter}>
-              <Text style={styles.rowAge}>{age}</Text>
+              {row.unreadBadge != null ? (
+                <View style={styles.unreadChip} testID={`dm-unread-${dm.id}`}>
+                  <Text style={styles.unreadChipText}>{row.unreadBadge}</Text>
+                </View>
+              ) : (
+                <Text style={styles.rowAge}>{age}</Text>
+              )}
             </View>
           </View>
         </View>
@@ -1915,7 +1953,8 @@ const styles = StyleSheet.create((theme) => {
       letterSpacing: 0.8,
     },
     /* Always rendered, even when a Room has no timestamp to show, so the mark
-     * below it in the gutter never shifts up a line. */
+     * below it in the gutter never shifts up a line. On an unread row the
+     * unread chip takes this slot instead (see `unreadChip`). */
     rowAge: {
       ...Typography.mono(),
       minHeight: 14,
@@ -1933,6 +1972,35 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.ledgerQuiet,
       fontSize: groknight.name === 'ledger' ? 11 : 13,
       lineHeight: groknight.name === 'ledger' ? 15 : 18,
+    },
+    /* The second half of the approved unread text lift: the preview rises one
+     * luminance step with the semibold name, so an unread row reads bright at
+     * scan speed and recedes again the moment it is opened. */
+    rowPreviewUnread: { color: groknight.textSecondary },
+    /* The whole-row ground lift for an unread Room — AREA, never stroke. One
+     * luminance step above the obsidian canvas (`bgUnread`), deliberately
+     * below bgHighlight so selection still outranks freshness. No border, no
+     * radius: the slab stays continuous and the hairline divider does its job. */
+    roomCellUnread: { backgroundColor: groknight.bgUnread },
+    /* The unread-count chip that replaces the age in the gutter's top slot.
+     * Solid near-white fill, dark mono numeral, radius 3 — the one sanctioned
+     * box on this screen, because it is a thing the reader is meant to find.
+     * Its slot is exactly the age's, so read/unread rows never reflow. */
+    unreadChip: {
+      minWidth: 22,
+      minHeight: 16,
+      paddingHorizontal: 5,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 3,
+      backgroundColor: groknight.actionFill,
+    },
+    unreadChipText: {
+      ...Typography.mono(),
+      color: groknight.textInverted,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.4,
     },
     roomCell: {
       position: 'relative',

@@ -9,6 +9,12 @@
  */
 import { nip98AuthHeader, type NostrEvent } from '@beeline/nostr';
 import type { Identity, PublishResult } from './types.js';
+import {
+  RelayPublishError,
+  relayPublishErrorFromNetwork,
+  relayPublishErrorFromResponse,
+  relayPublishNegativeAck,
+} from './relay-error.js';
 
 export interface HttpBridgeOptions {
   baseUrl: string;
@@ -464,7 +470,13 @@ export async function publishEvent(
   event: NostrEvent,
 ): Promise<PublishResult> {
   if (opts.identity && opts.identity.publicKey !== event.pubkey) {
-    throw new Error(`publishEvent kind=${event.kind} signer does not match relay auth identity`);
+    throw new RelayPublishError({
+      kind: 'CLIENT_VALIDATION',
+      sentence: 'The message signer does not match the relay identity.',
+      recoveryAction: 'Reload your identity before trying again.',
+      retryable: false,
+      eventKind: event.kind,
+    });
   }
   const url = `${opts.baseUrl}/events`;
   const method = 'POST';
@@ -485,9 +497,7 @@ export async function publishEvent(
       text = await res.text();
     } catch (error) {
       if (attempt === PUBLISH_MAX_ATTEMPTS) {
-        throw new Error(
-          `publishEvent kind=${event.kind} failed after ${attempt} attempts: ${errorMessage(error)}`,
-        );
+        throw relayPublishErrorFromNetwork(error, event.kind);
       }
       const delayMs = publishRetryDelayMs(attempt);
       logPublishRetry(event, attempt, delayMs, `network/timeout: ${errorMessage(error)}`);
@@ -504,7 +514,7 @@ export async function publishEvent(
         await sleep(delayMs);
         continue;
       }
-      throw new Error(`publishEvent kind=${event.kind} failed: HTTP ${res.status} ${text}`);
+      throw relayPublishErrorFromResponse(res.status, text, event.kind);
     }
 
     let body: unknown = text;
@@ -518,13 +528,19 @@ export async function publishEvent(
         ? Boolean((body as { accepted: unknown }).accepted)
         : true;
     if (!accepted) {
-      throw new Error(`publishEvent kind=${event.kind} was not accepted: ${text}`);
+      throw relayPublishNegativeAck(text, event.kind);
     }
     invalidateQueryCache(opts, event.pubkey);
     return { status: res.status, accepted, body };
   }
 
-  throw new Error(`publishEvent kind=${event.kind} exhausted retry attempts`);
+  throw new RelayPublishError({
+    kind: 'TRANSIENT',
+    sentence: 'The relay is temporarily unavailable.',
+    recoveryAction: 'Try sending the message again.',
+    retryable: true,
+    eventKind: event.kind,
+  });
 }
 
 /** Query events. `queryPubkey` is the reader identity (X-Pubkey). */

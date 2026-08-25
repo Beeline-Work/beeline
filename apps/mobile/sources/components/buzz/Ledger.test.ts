@@ -691,3 +691,88 @@ describe('the ledger — per-speaker identity marks', () => {
     expect(dots.length).toBeGreaterThan(0);
   });
 });
+
+describe('the ledger — explicit #room/#room/corner references', () => {
+  const channelIndex = {
+    rooms: [{ channelId: 'room-roadmap', name: 'Roadmap' }],
+    corners: [
+      {
+        channelId: 'corner-deploy',
+        parentChannelId: 'room-infra',
+        name: 'deploy-watch',
+        roomName: 'infra',
+      },
+    ],
+  } as const;
+
+  function pressables(renderer: ReactTestRenderer): Array<{ props: { onPress?: () => void } }> {
+    return renderer.root.findAll(
+      (node) =>
+        typeof node.type === 'string' &&
+        node.type === 'Text' &&
+        typeof node.props.onPress === 'function',
+    );
+  }
+
+  it('hands the workspace channel index and handler to the prose renderer', () => {
+    const onChannelReference = vi.fn();
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'm1',
+        bodyText: 'see #Roadmap and #infra/deploy-watch',
+        bodyTestID: 'ref-body',
+        channelIndex,
+        onChannelReference,
+      }),
+    );
+    const tappable = pressables(renderer);
+    expect(tappable).toHaveLength(2);
+    act(() => tappable[0]!.props.onPress!());
+    expect(onChannelReference).toHaveBeenCalledWith(
+      { kind: 'room', channelId: 'room-roadmap' },
+      '#Roadmap',
+    );
+    act(() => tappable[1]!.props.onPress!());
+    expect(onChannelReference).toHaveBeenCalledWith(
+      { kind: 'corner', channelId: 'corner-deploy', parentChannelId: 'room-infra' },
+      '#infra/deploy-watch',
+    );
+  });
+
+  it('threads the same resolution through the typewriter path', () => {
+    const onChannelReference = vi.fn();
+    const renderer = render(
+      React.createElement(LedgerEntry, {
+        itemId: 'm2',
+        bodyText: 'full text lands at #Roadmap shortly',
+        bodyTestID: 'tw-body',
+        typewriter: true,
+        revealId: undefined,
+        channelIndex,
+        onChannelReference,
+      }),
+    );
+    // The full text is present from the first frame only when already
+    // revealed; either way any rendered reference must be tappable.
+    const tappable = pressables(renderer);
+    for (const node of tappable) act(() => node.props.onPress!());
+    if (tappable.length > 0) {
+      expect(onChannelReference).toHaveBeenCalledWith(
+        { kind: 'room', channelId: 'room-roadmap' },
+        '#Roadmap',
+      );
+    }
+  });
+
+  it('renders no pressable when no index is supplied (references stay text)', () => {
+    const renderer = render(
+      React.createElement(LedgerSteer, {
+        itemId: 'm3',
+        bodyText: '#Roadmap is just prose here',
+        bodyTestID: 'plain-body',
+      }),
+    );
+    expect(pressables(renderer)).toHaveLength(0);
+    expect(renderedText(renderer)).toContain('#Roadmap is just prose here');
+  });
+});

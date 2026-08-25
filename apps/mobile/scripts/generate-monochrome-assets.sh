@@ -10,20 +10,43 @@ cd "$(dirname "$0")/.."
 # Requires rsvg-convert (librsvg2-bin) and ImageMagick.
 
 brand_mark="$(node -p "require('./sources/buzz/brand.json').mark")"
-ink="#14091A"
+ink="$(sed -n "s/^[[:space:]]*bgBase: '\(#[0-9A-Fa-f]\{6\}\)',/\1/p" sources/buzz/groknight.ts | head -1)"
 white="#FFFFFF"
 image_dir="sources/assets/images"
 font_file="sources/assets/fonts/BricolageGrotesque-Bold.ttf"
 
+if [[ -z "$ink" ]] || ! grep -qi "\`$ink\`" ../../DESIGN.md; then
+  echo "Unable to prove the Obsidian bgBase token against DESIGN.md." >&2
+  exit 1
+fi
+
+# The SVGs are reviewable build inputs, but the approved JSON files remain the
+# geometry/color authorities. Refuse to rasterize if either representation has
+# drifted instead of silently shipping a redesigned mark.
+CANONICAL_INK="$ink" node <<'NODE'
+const fs = require('node:fs');
+const mark = require('./sources/buzz/beeline-mark.json');
+const brand = require('./sources/buzz/brand.json');
+
+for (const file of ['mark.svg', 'icon.svg', 'icon-adaptive.svg']) {
+  const svg = fs.readFileSync(`sources/assets/images/${file}`, 'utf8');
+  const hasApprovedInset = file === 'mark.svg' || svg.includes(mark.transform);
+  if (!svg.includes(mark.path) || !hasApprovedInset || !svg.includes(brand.mark)) {
+    throw new Error(`${file} does not match beeline-mark.json / brand.json`);
+  }
+}
+
+for (const file of ['icon.svg', 'icon-adaptive-background.svg']) {
+  const svg = fs.readFileSync(`sources/assets/images/${file}`, 'utf8');
+  if (!svg.toLowerCase().includes(process.env.CANONICAL_INK.toLowerCase())) {
+    throw new Error(`${file} does not use the canonical Obsidian bgBase token`);
+  }
+}
+NODE
+
 render_svg() {
   # $1 source svg, $2 size, $3 outfile
   rsvg-convert -w "$2" -h "$2" "$1" >"$3"
-}
-
-recolor_svg() {
-  # stdin -> stdout with one hex color swapped for another (case-insensitive)
-  local from="$1" to="$2"
-  sed "s/${from}/${to}/gI"
 }
 
 render_notification_svg() {
@@ -62,17 +85,17 @@ render_lockup() {
     "$destination"
 }
 
-# App icon: brass loop on the flat aubergine tile (owner's explicit final choice).
+# App icons: Expo consumes a 1024px source and emits every native density during
+# prebuild. Keep a distinct iOS file so app.config.js proves both platforms are
+# intentionally wired to this treatment.
 render_svg "$image_dir/icon.svg" 1024 "$image_dir/icon.png"
+cp "$image_dir/icon.png" "$image_dir/icon-ios.png"
 
 # Android adaptive icon: flat aubergine background layer + brass loop foreground.
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive-background.svg" \
   -o "$image_dir/icon-adaptive-background.png"
 rsvg-convert -w 1024 -h 1024 "$image_dir/icon-adaptive.svg" \
   -o "$image_dir/icon-adaptive.png"
-# Monochrome themed icon (Android 13): the same single silhouette in white.
-rsvg-convert -w 1024 -h 1024 < <(recolor_svg "$brand_mark" "#FFFFFF" <"$image_dir/icon-adaptive.svg") \
-  -o "$image_dir/icon-monochrome.png"
 
 # Favicon + splash share the app icon's framing: brass loop on the aubergine
 # field. The splash screens' backgroundColor in app.config.js must stay #14091A

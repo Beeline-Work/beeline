@@ -59,6 +59,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
+            icon: "./sources/assets/images/icon-ios.png",
             supportsTablet: true,
             bundleIdentifier: bundleId,
             buildNumber: "1",
@@ -87,7 +88,6 @@ export default {
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
-                monochromeImage: "./sources/assets/images/icon-monochrome.png",
                 // Owner-final treatment: brass loop on a flat aubergine field. Keep the
                 // fallback in sync if a toolchain drops the generated background image.
                 backgroundImage: "./sources/assets/images/icon-adaptive-background.png",

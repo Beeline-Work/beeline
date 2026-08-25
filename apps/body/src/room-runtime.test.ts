@@ -48,6 +48,14 @@ function storedIdentity(name: string) {
   };
 }
 
+function fakeWorkCalendar() {
+  return {
+    start: vi.fn(async () => undefined),
+    refreshNow: vi.fn(async () => undefined),
+    dispose: vi.fn(async () => undefined),
+  };
+}
+
 describe('RoomRuntimeCoordinator removal lease', () => {
   it('requires three successful membership reads before returning agent-removed', async () => {
     const agent = storedIdentity('agent');
@@ -645,6 +653,7 @@ describe('RoomRuntimeCoordinator transient relay resilience', () => {
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
+      { workCalendar: fakeWorkCalendar() },
     );
     const controller = new AbortController();
 
@@ -745,7 +754,7 @@ describe('ThinDaemonCore control-plane wake signal', () => {
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
-      { reconcileHeartbeatMs: 60_000 },
+      { reconcileHeartbeatMs: 60_000, workCalendar: fakeWorkCalendar() },
     );
     const controller = new AbortController();
 
@@ -783,7 +792,7 @@ describe('ThinDaemonCore control-plane wake signal', () => {
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
       {} as BodyConfig,
-      { reconcileHeartbeatMs: 20 },
+      { reconcileHeartbeatMs: 20, workCalendar: fakeWorkCalendar() },
     );
     const controller = new AbortController();
 

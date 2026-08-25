@@ -4,6 +4,10 @@ import type { BodyConfig } from './config.js';
 import { SharedRelaySocket } from './relay-socket.js';
 import { runtimeIdentity, type AgentRuntimeRecord } from './runtime.js';
 import { RoomRuntimeCoordinator, reconcileRetryMs } from './room-runtime.js';
+import { createDaemonWorkCalendar } from './daemon-work-calendar.js';
+import type { WorkCalendar } from './work-calendar.js';
+
+type WorkCalendarLifecycle = Pick<WorkCalendar, 'start' | 'dispose' | 'refreshNow'>;
 
 export {
   DEFAULT_DRAIN_DEADLINE_MS,
@@ -35,14 +39,15 @@ async function waitForNextTick(ms: number, signal?: AbortSignal): Promise<void> 
 }
 
 /**
- * Foreground daemon core with exactly six responsibilities:
+ * Foreground daemon core with exactly seven responsibilities:
  *
  * 1. own one authenticated relay socket;
  * 2. route Workspace wake events into bounded Room reconciliation;
  * 3. drive killable Room/corner children through the Room runtime leaf;
  * 4. keep deterministic approval/review leaves reachable through those Bodies;
  * 5. publish local progress state to the supervision callback; and
- * 6. keep out-of-turn Git behind the Room runtime's JSON worker boundary.
+ * 6. own one bounded WorkCalendar wake source, separate from process capacity; and
+ * 7. keep out-of-turn Git behind the Room runtime's JSON worker boundary.
  *
  * It contains no repository materialization, ACP protocol, approval policy,
  * self-update installer, or durable corner implementation. Those stay leaf
@@ -52,6 +57,7 @@ export class ThinDaemonCore {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private readonly relaySocket: SharedRelaySocket;
   private readonly roomRuntime: RoomRuntimeCoordinator;
+  private readonly workCalendar: WorkCalendarLifecycle;
   private readonly now: () => number;
 
   constructor(
@@ -63,6 +69,8 @@ export class ThinDaemonCore {
       watchdogStaleMs?: number;
       reconcileHeartbeatMs?: number;
       drainDeadlineMs?: number;
+      /** Test seam; production owns exactly one daemon-level WorkCalendar. */
+      workCalendar?: WorkCalendarLifecycle;
     } = {},
   ) {
     this.agent = runtimeIdentity(runtime.agent);
@@ -78,6 +86,14 @@ export class ThinDaemonCore {
       ...options,
       relaySocket: this.relaySocket,
     });
+    this.workCalendar =
+      options.workCalendar ??
+      createDaemonWorkCalendar({
+        runtime,
+        configPath,
+        roomRuntime: this.roomRuntime,
+        nowMs: this.now,
+      });
   }
 
   activeRoomIds(): string[] {
@@ -111,6 +127,7 @@ export class ThinDaemonCore {
     let nextReconcileAt = 0;
     let unsubscribeControl: (() => void) | undefined;
     let degraded = 'starting';
+    let calendarStarted = false;
 
     await opts.onEstablished?.();
     try {
@@ -147,6 +164,17 @@ export class ThinDaemonCore {
           try {
             const membership = await this.roomRuntime.reconcile();
             if (membership === 'not-member') return 'agent-removed';
+            // Reconciliation starts the active Room Bodies used for the
+            // calendar's fresh principal-access check. Starting sooner would
+            // incorrectly discard valid schedules for not-yet-served Rooms.
+            if (membership === 'member' && !calendarStarted) {
+              calendarStarted = true;
+              // Calendar relay reads have their own bounded retry/timer. They
+              // must never delay this core tick's watchdog progress.
+              void this.workCalendar
+                .start()
+                .catch((error) => console.error('[thin-core] work calendar start failed:', error));
+            }
             degraded = membership === 'unknown' ? 'relay membership degraded' : '';
             nextReconcileAt =
               this.now() +
@@ -173,6 +201,7 @@ export class ThinDaemonCore {
       return 'aborted';
     } finally {
       unsubscribeControl?.();
+      await this.workCalendar.dispose();
       await this.roomRuntime.shutdown();
       this.relaySocket.disconnect();
     }

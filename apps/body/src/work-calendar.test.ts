@@ -1,0 +1,841 @@
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { createIdentity, type Identity } from '@beeline/buzz-client';
+import type { NostrEvent } from '@beeline/nostr';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  DurableWorkCalendarState,
+  SCHEDULED_TURN_TAG,
+  WORK_SCHEDULE_PAUSED_TAG,
+  WORK_SCHEDULE_RUNTIME_TAG,
+  WorkCalendar,
+  buildScheduledTurnReceipt,
+  buildWorkSchedule,
+  buildWorkScheduleProjection,
+  deterministicScheduleRunId,
+  nextWorkOccurrence,
+  parseScheduledTurnReceipt,
+  parseWorkSchedule,
+  previousWorkOccurrence,
+  type CalendarRunReservation,
+  type ScheduleAuthorityResult,
+  type ScheduledTurnReceiptV1,
+  type WorkCalendarDependencies,
+  type WorkScheduleV1,
+} from './work-calendar.js';
+
+const roots: string[] = [];
+afterEach(async () => {
+  vi.useRealTimers();
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+async function state(): Promise<DurableWorkCalendarState> {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-work-calendar-'));
+  roots.push(root);
+  return new DurableWorkCalendarState(resolve(root, 'calendar.json'));
+}
+
+function scheduleFixture(
+  agent: Identity,
+  principal: Identity,
+  overrides: Partial<WorkScheduleV1> = {},
+): WorkScheduleV1 {
+  return {
+    version: 1,
+    scheduleId: randomUUID(),
+    revision: 1,
+    workspaceId: 'workspace-one',
+    roomId: randomUUID(),
+    agentPubkey: agent.publicKey,
+    principalPubkey: principal.publicKey,
+    prompt: 'Prepare the scheduled research draft.',
+    cadence: { type: 'interval', everySeconds: 60, anchorAt: 1_900_000_000 },
+    startsAt: 1_900_000_000,
+    expiresAt: 1_900_100_000,
+    maxRuns: 20,
+    perRunReservedTokens: 100,
+    dailyReservedTokens: 10_000,
+    catchUp: 'latest-one',
+    maxConsecutiveFailures: 3,
+    status: 'active',
+    ...overrides,
+  };
+}
+
+async function calendarFixture(
+  options: {
+    schedule?: WorkScheduleV1;
+    agent?: Identity;
+    principal?: Identity;
+    scheduleEvents?: NostrEvent[];
+    receiptEvents?: NostrEvent[];
+    now?: number;
+    store?: DurableWorkCalendarState;
+    authority?: ScheduleAuthorityResult | (() => Promise<ScheduleAuthorityResult>);
+    publish?: (event: NostrEvent) => Promise<void>;
+    dispatch?: WorkCalendarDependencies['dispatch'];
+  } = {},
+) {
+  const agent = options.agent ?? createIdentity();
+  const principal = options.principal ?? createIdentity();
+  let now = options.now ?? 1_900_000_000;
+  const schedule = options.schedule ?? scheduleFixture(agent, principal);
+  const scheduleEvents = options.scheduleEvents ?? [
+    buildWorkSchedule(principal, schedule, { createdAt: now - 10 }),
+  ];
+  const receiptEvents = options.receiptEvents ?? [];
+  const published: NostrEvent[] = [];
+  const dispatch =
+    options.dispatch ??
+    vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+    });
+  const durable = options.store ?? (await state());
+  const calendar = new WorkCalendar({
+    identity: agent,
+    workspaceId: schedule.workspaceId,
+    store: durable,
+    readSchedules: async () => scheduleEvents,
+    readReceipts: async () => receiptEvents,
+    authorize: async () =>
+      typeof options.authority === 'function'
+        ? options.authority()
+        : (options.authority ?? { authorized: true }),
+    publish: options.publish ?? (async (event) => published.push(event)),
+    dispatch,
+    now: () => now,
+    resyncSeconds: 3_600,
+    retrySeconds: 5,
+  });
+  return {
+    agent,
+    principal,
+    schedule,
+    scheduleEvents,
+    receiptEvents,
+    published,
+    dispatch,
+    durable,
+    calendar,
+    setNow(value: number) {
+      now = value;
+    },
+  };
+}
+
+describe('work schedule occurrence math', () => {
+  const agent = createIdentity();
+  const principal = createIdentity();
+  const base = scheduleFixture(agent, principal, {
+    startsAt: 0,
+    expiresAt: 2_000_000_000,
+  });
+
+  it('computes interval, cron, daily, and leap-day occurrences', () => {
+    const interval = {
+      ...base,
+      cadence: { type: 'interval' as const, everySeconds: 900, anchorAt: 100 },
+    };
+    expect(nextWorkOccurrence(interval, 999)).toBe(1_000);
+    expect(previousWorkOccurrence(interval, 1_001)).toBe(1_000);
+
+    const daily = {
+      ...base,
+      cadence: { type: 'daily' as const, localTime: '09:15', timezone: 'Europe/London' },
+    };
+    expect(
+      new Date(
+        nextWorkOccurrence(daily, Date.parse('2026-01-01T09:15:00Z') / 1_000)! * 1_000,
+      ).toISOString(),
+    ).toBe('2026-01-02T09:15:00.000Z');
+
+    const leap = {
+      ...base,
+      cadence: { type: 'cron' as const, expression: '0 0 29 2 *', timezone: 'UTC' },
+    };
+    expect(
+      new Date(
+        nextWorkOccurrence(leap, Date.parse('2023-03-01T00:00:00Z') / 1_000)! * 1_000,
+      ).toISOString(),
+    ).toBe('2024-02-29T00:00:00.000Z');
+  });
+
+  it('runs a missing spring-forward wall time at the next valid instant', () => {
+    const daily = {
+      ...base,
+      cadence: { type: 'daily' as const, localTime: '02:30', timezone: 'America/New_York' },
+    };
+    expect(
+      new Date(
+        nextWorkOccurrence(daily, Date.parse('2024-03-09T08:00:00Z') / 1_000)! * 1_000,
+      ).toISOString(),
+    ).toBe('2024-03-10T07:00:00.000Z');
+
+    const overlappingCron = {
+      ...base,
+      cadence: {
+        type: 'cron' as const,
+        expression: '30 2,3 * * *',
+        timezone: 'America/New_York',
+      },
+    };
+    const shifted = nextWorkOccurrence(
+      overlappingCron,
+      Date.parse('2024-03-10T05:00:00Z') / 1_000,
+    )!;
+    expect(new Date(shifted * 1_000).toISOString()).toBe('2024-03-10T07:00:00.000Z');
+    expect(new Date(nextWorkOccurrence(overlappingCron, shifted)! * 1_000).toISOString()).toBe(
+      '2024-03-10T07:30:00.000Z',
+    );
+    expect(
+      new Date(
+        previousWorkOccurrence(overlappingCron, Date.parse('2024-03-10T07:15:00Z') / 1_000)! *
+          1_000,
+      ).toISOString(),
+    ).toBe('2024-03-10T07:00:00.000Z');
+  });
+
+  it('runs a repeated fall-back wall time once at its first occurrence', () => {
+    const daily = {
+      ...base,
+      cadence: { type: 'daily' as const, localTime: '01:30', timezone: 'America/New_York' },
+    };
+    const first = nextWorkOccurrence(daily, Date.parse('2024-11-03T04:00:00Z') / 1_000)!;
+    expect(new Date(first * 1_000).toISOString()).toBe('2024-11-03T05:30:00.000Z');
+    expect(new Date(nextWorkOccurrence(daily, first)! * 1_000).toISOString()).toBe(
+      '2024-11-04T06:30:00.000Z',
+    );
+    expect(
+      new Date(
+        previousWorkOccurrence(daily, Date.parse('2024-11-03T06:45:00Z') / 1_000)! * 1_000,
+      ).toISOString(),
+    ).toBe('2024-11-03T05:30:00.000Z');
+  });
+
+  it('rejects invalid expressions and IANA zones through the maintained parser', () => {
+    expect(() =>
+      buildWorkSchedule(principal, {
+        ...base,
+        cadence: { type: 'cron', expression: 'not cron', timezone: 'UTC' },
+      }),
+    ).toThrow('invalid work schedule');
+    expect(() =>
+      buildWorkSchedule(principal, {
+        ...base,
+        cadence: { type: 'daily', localTime: '09:00', timezone: 'Mars/Olympus' },
+      }),
+    ).toThrow('invalid work schedule');
+  });
+
+  it('keeps daemon runtime projection replacement separate from desired configuration', () => {
+    const schedule = scheduleFixture(agent, principal);
+    const desired = buildWorkSchedule(agent, {
+      ...schedule,
+      permissionGrantEventId: 'a'.repeat(64),
+    });
+    const runtime = buildWorkScheduleProjection(agent, {
+      version: 1,
+      type: 'runtime',
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: schedule.agentPubkey,
+      principalPubkey: schedule.principalPubkey,
+      scheduleId: schedule.scheduleId,
+      revision: schedule.revision,
+      status: 'active',
+      nextAt: schedule.startsAt,
+      consecutiveFailures: 0,
+      updatedAt: schedule.startsAt,
+    });
+    expect(desired.tags.find((tag) => tag[0] === 'd')?.[1]).not.toBe(
+      runtime.tags.find((tag) => tag[0] === 'd')?.[1],
+    );
+    expect(runtime.tags).toContainEqual(['t', WORK_SCHEDULE_RUNTIME_TAG]);
+    expect(parseWorkSchedule(runtime)).toBeUndefined();
+  });
+});
+
+describe('WorkCalendar durable execution', () => {
+  it('arms one next-due timer for many schedules rather than one interval per job', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const first = scheduleFixture(agent, principal, {
+      scheduleId: 'first-job',
+      startsAt: 1_900_000_060,
+    });
+    const second = scheduleFixture(agent, principal, {
+      scheduleId: 'second-job',
+      startsAt: 1_900_000_120,
+    });
+    const calendar = new WorkCalendar({
+      identity: agent,
+      workspaceId: first.workspaceId,
+      store: await state(),
+      readSchedules: async () => [
+        buildWorkSchedule(principal, first, { createdAt: 1_900_000_000 }),
+        buildWorkSchedule(principal, second, { createdAt: 1_900_000_000 }),
+      ],
+      readReceipts: async () => [],
+      authorize: async () => ({ authorized: true }),
+      publish: async () => undefined,
+      dispatch: async () => undefined,
+      now: () => 1_900_000_000,
+      resyncSeconds: 3_600,
+    });
+    await calendar.start();
+    expect(calendar.snapshot()).toMatchObject({ schedules: 2, queued: 2, timerArmed: true });
+    expect(vi.getTimerCount()).toBe(1);
+    await calendar.dispose();
+  });
+
+  it('uses the same run id after restart and never repeats a completed model call', async () => {
+    vi.useFakeTimers();
+    const first = await calendarFixture();
+    await first.calendar.start();
+    await first.calendar.wakeNow();
+    expect(first.dispatch).toHaveBeenCalledOnce();
+    const runId = (first.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0].scheduleRunId;
+    expect(runId).toBe(
+      deterministicScheduleRunId(first.schedule.scheduleId, 1, first.schedule.startsAt),
+    );
+    await first.calendar.dispose();
+
+    const secondDispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+    });
+    const second = new WorkCalendar({
+      identity: first.agent,
+      workspaceId: first.schedule.workspaceId,
+      store: first.durable,
+      readSchedules: async () => first.scheduleEvents,
+      readReceipts: async () => first.published,
+      authorize: async () => ({ authorized: true }),
+      publish: async (event) => first.published.push(event),
+      dispatch: secondDispatch,
+      now: () => first.schedule.startsAt,
+      resyncSeconds: 3_600,
+    });
+    await second.start();
+    await second.wakeNow();
+    expect(secondDispatch).not.toHaveBeenCalled();
+    await second.dispose();
+  });
+
+  it('resumes a crash-after-reservation but refuses an ambiguous crash-after-working', async () => {
+    vi.useFakeTimers();
+    const resumable = await calendarFixture();
+    const runId = deterministicScheduleRunId(
+      resumable.schedule.scheduleId,
+      1,
+      resumable.schedule.startsAt,
+    );
+    const reservation: CalendarRunReservation = {
+      runId,
+      scheduleId: resumable.schedule.scheduleId,
+      revision: 1,
+      workspaceId: resumable.schedule.workspaceId,
+      roomId: resumable.schedule.roomId,
+      agentPubkey: resumable.agent.publicKey,
+      principalPubkey: resumable.principal.publicKey,
+      nominalAt: resumable.schedule.startsAt,
+      reservedTokens: 100,
+      reservedAt: resumable.schedule.startsAt,
+    };
+    await resumable.durable.reserveRun(reservation);
+    await resumable.calendar.start();
+    await resumable.calendar.wakeNow();
+    expect(resumable.dispatch).toHaveBeenCalledOnce();
+    await resumable.calendar.dispose();
+
+    const ambiguous = await calendarFixture();
+    const ambiguousId = deterministicScheduleRunId(
+      ambiguous.schedule.scheduleId,
+      1,
+      ambiguous.schedule.startsAt,
+    );
+    await ambiguous.durable.reserveRun({
+      ...reservation,
+      runId: ambiguousId,
+      scheduleId: ambiguous.schedule.scheduleId,
+      roomId: ambiguous.schedule.roomId,
+      agentPubkey: ambiguous.agent.publicKey,
+      principalPubkey: ambiguous.principal.publicKey,
+    });
+    const working = buildScheduledTurnReceipt(ambiguous.agent, {
+      version: 1,
+      workspaceId: ambiguous.schedule.workspaceId,
+      roomId: ambiguous.schedule.roomId,
+      agentPubkey: ambiguous.agent.publicKey,
+      principalPubkey: ambiguous.principal.publicKey,
+      scheduleId: ambiguous.schedule.scheduleId,
+      revision: 1,
+      runId: ambiguousId,
+      nominalAt: ambiguous.schedule.startsAt,
+      status: 'working',
+      at: ambiguous.schedule.startsAt,
+      reservedTokens: 100,
+    });
+    await ambiguous.durable.stageReceipt(ambiguousId, 'working', working);
+    await ambiguous.calendar.start();
+    await ambiguous.calendar.wakeNow();
+    expect(ambiguous.dispatch).not.toHaveBeenCalled();
+    expect(
+      ambiguous.published.some(
+        (event) =>
+          parseScheduledTurnReceipt(event)?.value.reason === 'outcome-unknown-after-restart',
+      ),
+    ).toBe(true);
+    await ambiguous.calendar.dispose();
+  });
+
+  it('does not activate until a failed queued receipt is durably retried', async () => {
+    vi.useFakeTimers();
+    let fail = true;
+    const fixture = await calendarFixture({
+      publish: async (event) => {
+        if (parseScheduledTurnReceipt(event)?.value.status === 'queued' && fail) {
+          fail = false;
+          throw new Error('relay unavailable');
+        }
+        fixture.published.push(event);
+      },
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    fixture.setNow(fixture.schedule.startsAt + 5);
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).toHaveBeenCalledOnce();
+    expect(
+      fixture.published.filter(
+        (event) => parseScheduledTurnReceipt(event)?.value.status === 'queued',
+      ),
+    ).toHaveLength(1);
+    await fixture.calendar.dispose();
+  });
+
+  it.each([
+    'principal-removed',
+    'agent-removed',
+    'room-archived',
+    'schedule-author-role-lost',
+    'grant-revoked',
+  ])('skips without a model call when fresh authority says %s', async (reason) => {
+    vi.useFakeTimers();
+    const fixture = await calendarFixture({
+      authority: { authorized: false, terminal: true, reason },
+    });
+    // Configuration selection also uses fresh authority, so simulate loss
+    // after the first accepted refresh and before activation.
+    let checks = 0;
+    Reflect.set(fixture.calendar, 'dependencies', {
+      ...Reflect.get(fixture.calendar, 'dependencies'),
+      authorize: async () =>
+        ++checks === 1 ? { authorized: true } : { authorized: false, terminal: true, reason },
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(
+      fixture.published.some((event) => parseScheduledTurnReceipt(event)?.value.reason === reason),
+    ).toBe(true);
+    await fixture.calendar.dispose();
+  });
+
+  it('revalidates authority after scheduler admission and before the model call', async () => {
+    vi.useFakeTimers();
+    let checks = 0;
+    const modelCall = vi.fn();
+    const fixture = await calendarFixture({
+      authority: async () =>
+        ++checks < 3
+          ? { authorized: true }
+          : { authorized: false, terminal: true, reason: 'grant-revoked' },
+      dispatch: vi.fn(async (_request, beforeModelActivation) => {
+        await beforeModelActivation();
+        modelCall();
+      }),
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).toHaveBeenCalledOnce();
+    expect(modelCall).not.toHaveBeenCalled();
+    expect(
+      fixture.published.some(
+        (event) => parseScheduledTurnReceipt(event)?.value.reason === 'grant-revoked',
+      ),
+    ).toBe(true);
+    await fixture.calendar.dispose();
+  });
+
+  it('rechecks mandatory expiry after reservation and queued publication', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, { expiresAt: 1_900_000_001 });
+    let now = schedule.startsAt;
+    let authorityChecks = 0;
+    const published: NostrEvent[] = [];
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+    });
+    const calendar = new WorkCalendar({
+      identity: agent,
+      workspaceId: schedule.workspaceId,
+      store: await state(),
+      readSchedules: async () => [
+        buildWorkSchedule(principal, schedule, { createdAt: schedule.startsAt - 1 }),
+      ],
+      readReceipts: async () => [],
+      authorize: async () => {
+        authorityChecks += 1;
+        if (authorityChecks === 2) now = schedule.expiresAt + 1;
+        return { authorized: true };
+      },
+      publish: async (event) => published.push(event),
+      dispatch,
+      now: () => now,
+      resyncSeconds: 3_600,
+    });
+    await calendar.start();
+    await calendar.wakeNow();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(
+      published.some(
+        (event) => parseScheduledTurnReceipt(event)?.value.reason === 'schedule-expired',
+      ),
+    ).toBe(true);
+    await calendar.dispose();
+  });
+
+  it('enforces max-run and daily reserved-token budgets before activation', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, {
+      maxRuns: 5,
+      perRunReservedTokens: 100,
+      dailyReservedTokens: 100,
+    });
+    const priorAt = schedule.startsAt - 60;
+    const priorId = deterministicScheduleRunId(schedule.scheduleId, 1, priorAt);
+    const prior: ScheduledTurnReceiptV1 = {
+      version: 1,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: agent.publicKey,
+      principalPubkey: principal.publicKey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      runId: priorId,
+      nominalAt: priorAt,
+      status: 'working',
+      at: priorAt,
+      reservedTokens: 100,
+    };
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      receiptEvents: [buildScheduledTurnReceipt(agent, prior)],
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(
+      fixture.published.some(
+        (event) => parseScheduledTurnReceipt(event)?.value.reason === 'daily-budget-exhausted',
+      ),
+    ).toBe(true);
+    await fixture.calendar.dispose();
+  });
+
+  it('counts prior model activations against maxRuns independently of the daily budget', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, {
+      maxRuns: 1,
+      perRunReservedTokens: 100,
+      dailyReservedTokens: 10_000,
+    });
+    const priorAt = schedule.startsAt - 86_400;
+    const priorId = deterministicScheduleRunId(schedule.scheduleId, 1, priorAt);
+    const prior = buildScheduledTurnReceipt(agent, {
+      version: 1,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: agent.publicKey,
+      principalPubkey: principal.publicKey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      runId: priorId,
+      nominalAt: priorAt,
+      status: 'complete',
+      at: priorAt,
+      reservedTokens: 100,
+    });
+    const fixture = await calendarFixture({ agent, principal, schedule, receiptEvents: [prior] });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(
+      fixture.published.some(
+        (event) => parseScheduledTurnReceipt(event)?.value.reason === 'max-runs-exhausted',
+      ),
+    ).toBe(true);
+    await fixture.calendar.dispose();
+  });
+
+  it('does not fall back to an older revision by an author whose newest record is unauthorized', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const first = scheduleFixture(agent, principal);
+    const second = { ...first, revision: 2 };
+    const firstEvent = buildWorkSchedule(principal, first, { createdAt: first.startsAt - 20 });
+    const secondEvent = buildWorkSchedule(principal, second, { createdAt: first.startsAt - 10 });
+    const durable = await state();
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+    });
+    const calendar = new WorkCalendar({
+      identity: agent,
+      workspaceId: first.workspaceId,
+      store: durable,
+      readSchedules: async () => [firstEvent, secondEvent],
+      readReceipts: async () => [],
+      authorize: async (candidate) =>
+        candidate.value.revision === 2
+          ? { authorized: false, terminal: true, reason: 'grant-revoked' }
+          : { authorized: true },
+      publish: async () => undefined,
+      dispatch,
+      now: () => first.startsAt,
+      resyncSeconds: 3_600,
+    });
+    await calendar.start();
+    await calendar.wakeNow();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(calendar.snapshot().schedules).toBe(0);
+    await calendar.dispose();
+  });
+
+  it('ignores a high-revision record by an unauthorized outside author', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const outsider = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const legitimate = buildWorkSchedule(principal, schedule, {
+      createdAt: schedule.startsAt - 20,
+    });
+    const forgedValue = { ...schedule, revision: 999, principalPubkey: outsider.publicKey };
+    const forged = buildWorkSchedule(outsider, forgedValue, { createdAt: schedule.startsAt - 10 });
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+    });
+    const calendar = new WorkCalendar({
+      identity: agent,
+      workspaceId: schedule.workspaceId,
+      store: await state(),
+      readSchedules: async () => [legitimate, forged],
+      readReceipts: async () => [],
+      authorize: async (candidate) =>
+        candidate.event.pubkey === outsider.publicKey
+          ? { authorized: false, terminal: true, reason: 'principal-removed' }
+          : { authorized: true },
+      publish: async () => undefined,
+      dispatch,
+      now: () => schedule.startsAt,
+      resyncSeconds: 3_600,
+    });
+    await calendar.start();
+    await calendar.wakeNow();
+    expect(dispatch).toHaveBeenCalledOnce();
+    await calendar.dispose();
+  });
+
+  it('bounds long-outage catch-up to zero or one model calls', async () => {
+    vi.useFakeTimers();
+    const latest = await calendarFixture({ now: 1_900_086_400 });
+    await latest.calendar.start();
+    await latest.calendar.wakeNow();
+    expect(latest.dispatch).toHaveBeenCalledOnce();
+    await latest.calendar.dispose();
+
+    const skipAgent = createIdentity();
+    const skipPrincipal = createIdentity();
+    const skipSchedule = scheduleFixture(skipAgent, skipPrincipal, { catchUp: 'skip' });
+    const skip = await calendarFixture({
+      agent: skipAgent,
+      principal: skipPrincipal,
+      schedule: skipSchedule,
+      now: 1_900_086_400,
+    });
+    await skip.calendar.start();
+    await skip.calendar.wakeNow();
+    expect(skip.dispatch).not.toHaveBeenCalled();
+    const skipped = skip.published.filter(
+      (event) => parseScheduledTurnReceipt(event)?.value.status === 'skipped',
+    );
+    expect(skipped).toHaveLength(1);
+    await skip.calendar.dispose();
+  });
+
+  it('pauses after consecutive failure and a new revision resumes with a new run id', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const firstSchedule = scheduleFixture(agent, principal, { maxConsecutiveFailures: 1 });
+    const schedules = [
+      buildWorkSchedule(principal, firstSchedule, { createdAt: firstSchedule.startsAt - 10 }),
+    ];
+    let dispatchCalls = 0;
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+      dispatchCalls += 1;
+      if (dispatchCalls === 1) throw new Error('provider down');
+    });
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule: firstSchedule,
+      scheduleEvents: schedules,
+      dispatch,
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(
+      fixture.published.some((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === WORK_SCHEDULE_PAUSED_TAG),
+      ),
+    ).toBe(true);
+    const firstRun = dispatch.mock.calls[0]![0].scheduleRunId;
+
+    const revision = { ...firstSchedule, revision: 2, status: 'active' as const };
+    schedules.push(
+      buildWorkSchedule(principal, revision, { createdAt: firstSchedule.startsAt + 1 }),
+    );
+    await fixture.calendar.refreshNow();
+    await fixture.calendar.wakeNow();
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1]![0].scheduleRunId).not.toBe(firstRun);
+    await fixture.calendar.dispose();
+  });
+
+  it('retries the one actionable failure-pause card from the durable outbox', async () => {
+    vi.useFakeTimers();
+    let refusePause = true;
+    const fixture = await calendarFixture({
+      schedule: undefined,
+      dispatch: vi.fn(async (_request, beforeModelActivation) => {
+        await beforeModelActivation();
+        throw new Error('provider unavailable');
+      }),
+      publish: async (event) => {
+        const pause = event.tags.some(
+          (tag) => tag[0] === 't' && tag[1] === WORK_SCHEDULE_PAUSED_TAG,
+        );
+        if (pause && refusePause) {
+          refusePause = false;
+          throw new Error('relay unavailable');
+        }
+        fixture.published.push(event);
+      },
+    });
+    fixture.schedule.maxConsecutiveFailures = 1;
+    fixture.scheduleEvents.splice(
+      0,
+      1,
+      buildWorkSchedule(fixture.principal, fixture.schedule, {
+        createdAt: fixture.schedule.startsAt - 10,
+      }),
+    );
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(
+      fixture.published.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === WORK_SCHEDULE_PAUSED_TAG),
+      ),
+    ).toHaveLength(0);
+    await fixture.calendar.dispose();
+
+    const restarted = new WorkCalendar({
+      identity: fixture.agent,
+      workspaceId: fixture.schedule.workspaceId,
+      store: fixture.durable,
+      readSchedules: async () => fixture.scheduleEvents,
+      readReceipts: async () => fixture.published,
+      authorize: async () => ({ authorized: true }),
+      publish: async (event) => fixture.published.push(event),
+      dispatch: async () => undefined,
+      now: () => fixture.schedule.startsAt,
+      resyncSeconds: 3_600,
+    });
+    await restarted.start();
+    expect(
+      fixture.published.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === WORK_SCHEDULE_PAUSED_TAG),
+      ),
+    ).toHaveLength(1);
+    await restarted.dispose();
+  });
+
+  it('publishes immutable scheduled receipts with the complete status progression', async () => {
+    vi.useFakeTimers();
+    const fixture = await calendarFixture();
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    const statuses = fixture.published.flatMap((event) => {
+      const parsed = parseScheduledTurnReceipt(event);
+      return parsed && event.tags.some((tag) => tag[0] === 't' && tag[1] === SCHEDULED_TURN_TAG)
+        ? [parsed.value.status]
+        : [];
+    });
+    expect(statuses).toEqual(['queued', 'working', 'complete']);
+    await fixture.calendar.dispose();
+  });
+
+  it('stays queued until the background dispatcher admits the model activation', async () => {
+    vi.useFakeTimers();
+    let admit!: () => void;
+    let dispatchStarted!: () => void;
+    const admission = new Promise<void>((resolveAdmission) => {
+      admit = resolveAdmission;
+    });
+    const started = new Promise<void>((resolveStarted) => {
+      dispatchStarted = resolveStarted;
+    });
+    const fixture = await calendarFixture({
+      dispatch: async (_request, beforeModelActivation) => {
+        dispatchStarted();
+        await admission;
+        await beforeModelActivation();
+      },
+    });
+    await fixture.calendar.start();
+    const wake = fixture.calendar.wakeNow();
+    await started;
+    expect(
+      fixture.published.flatMap((event) => {
+        const parsed = parseScheduledTurnReceipt(event);
+        return parsed ? [parsed.value.status] : [];
+      }),
+    ).toEqual(['queued']);
+    admit();
+    await wake;
+    expect(
+      fixture.published.flatMap((event) => {
+        const parsed = parseScheduledTurnReceipt(event);
+        return parsed ? [parsed.value.status] : [];
+      }),
+    ).toEqual(['queued', 'working', 'complete']);
+    await fixture.calendar.dispose();
+  });
+});

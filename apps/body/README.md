@@ -322,6 +322,26 @@ request's reserved Room UUID so crashes and concurrent admins reconcile instead
 of creating duplicates. This permission-gated factory path is separate from
 `beeline pair --repo`, which still only joins an existing repository Room.
 
+### Daemon work calendar (P2)
+
+Each agent daemon owns one durable `WorkCalendar` min-heap and one next-due
+timer. Signed kind:30078 schedule records describe expiring, budgeted recurring
+model turns; deterministic kind:9 run receipts and a local atomic reservation
+journal prevent duplicate activation across restarts. Every occurrence rechecks
+the current canonical revision, author role, Room/Workspace membership, agent
+access policy, expiry, run/token budgets, and any P1 `schedule.change` grant,
+including one final fresh check after the background turn wins its process slot.
+Catch-up is bounded to zero or one occurrence.
+
+Calendar admission is deliberately separate from process capacity. A due item
+enters the ordinary Room dispatcher with `trigger='schedule'` and background
+priority, and `SessionScheduler` remains the final per-Room/Workspace queue so a
+live human turn wins. A schedule grants only the read-only model turn: any
+scheduled attempt to send, publish, spend, edit, or invoke an irreversible
+connector is rejected before invocation and becomes a signed P1 permission
+request. Model-emitted delegation and text-corner directives are inert on a
+scheduled turn, so they cannot amplify the schedule into additional work.
+
 ### Repository event service
 
 GitHub activity is owned by one host-wide service, not by any paired agent:

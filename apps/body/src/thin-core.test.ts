@@ -136,11 +136,16 @@ describe('ThinDaemonCore', () => {
       disconnect: vi.fn(),
     };
     mocks.createBuzzClient.mockReturnValue(client);
+    const workCalendar = {
+      start: vi.fn(async () => order.push('calendar:start')),
+      refreshNow: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => order.push('calendar:dispose')),
+    };
     const core = new ThinDaemonCore(
       runtime(),
       '/tmp/beeline-thin-core-test/runtime.json',
       {} as BodyConfig,
-      { reconcileHeartbeatMs: 10 },
+      { reconcileHeartbeatMs: 10, workCalendar },
     );
 
     await core.run({
@@ -157,6 +162,9 @@ describe('ThinDaemonCore', () => {
 
     expect(order[0]).toBe('ready');
     expect(order).toContain('connect');
+    // Relay membership remained unknown, so no Room authority existed from
+    // which the calendar could safely start.
+    expect(workCalendar.start).not.toHaveBeenCalled();
     expect(order.some((value) => value.startsWith('progress:relay membership degraded'))).toBe(
       true,
     );
@@ -164,5 +172,47 @@ describe('ThinDaemonCore', () => {
     expect(order.findIndex((value) => value.startsWith('progress:'))).toBeGreaterThan(
       order.indexOf('membership'),
     );
+    expect(workCalendar.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('starts its one calendar only after Room reconciliation establishes authority', async () => {
+    const order: string[] = [];
+    const controller = new AbortController();
+    const workCalendar = {
+      start: vi.fn(async () => order.push('calendar:start')),
+      refreshNow: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => order.push('calendar:dispose')),
+    };
+    const core = new ThinDaemonCore(
+      runtime(),
+      '/tmp/beeline-thin-core-test/runtime.json',
+      {} as BodyConfig,
+      { workCalendar },
+    );
+    const roomRuntime = Reflect.get(core, 'roomRuntime') as {
+      reconcile: () => Promise<'member'>;
+      watchdogTick: () => Promise<void>;
+      activeRoomCount: () => number;
+    };
+    vi.spyOn(roomRuntime, 'reconcile').mockImplementation(async () => {
+      order.push('rooms:reconciled');
+      return 'member';
+    });
+    vi.spyOn(roomRuntime, 'watchdogTick').mockResolvedValue(undefined);
+    vi.spyOn(roomRuntime, 'activeRoomCount').mockReturnValue(0);
+    const relaySocket = Reflect.get(core, 'relaySocket') as {
+      connected: () => Promise<never>;
+    };
+    vi.spyOn(relaySocket, 'connected').mockRejectedValue(new Error('no fake socket'));
+
+    await core.run({
+      signal: controller.signal,
+      pollMs: 1,
+      onProgress: () => controller.abort(),
+    });
+
+    expect(order.indexOf('calendar:start')).toBeGreaterThan(order.indexOf('rooms:reconciled'));
+    expect(workCalendar.start).toHaveBeenCalledOnce();
+    expect(workCalendar.dispose).toHaveBeenCalledOnce();
   });
 });

@@ -24,6 +24,7 @@ import {
   getBuzzPushRegistrationState,
   registerBuzzPushNotifications,
   retryBuzzPushRegistration,
+  sendBuzzPushTestNotification,
   setBuzzPushEnabled,
 } from './buzz-push-registration';
 
@@ -113,6 +114,48 @@ describe('Buzz push preference', () => {
     expect(logged).toContain(`length=${FCM_TOKEN.length}`);
     expect(logged).toContain('POST https://push.example/registrations -> HTTP 200');
     expect(logged).not.toContain(FCM_TOKEN);
+  });
+
+  it('sends a test notification with the runtime gateway URL and current identity auth', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await sendBuzzPushTestNotification(identity);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://push.example/test-send',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ authorization: 'Nostr signed' }),
+        body: JSON.stringify({ pubkey: identity.publicKey }),
+      }),
+    );
+  });
+
+  it('surfaces the push gateway error from a rejected test notification', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: 'no registered devices' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+
+    await expect(sendBuzzPushTestNotification(identity)).rejects.toThrow('no registered devices');
+  });
+
+  it('bounds a test notification request that never settles', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+
+    const rejection = expect(sendBuzzPushTestNotification(identity)).rejects.toThrow(
+      'test notification request timed out after 7500ms',
+    );
+    await vi.advanceTimersByTimeAsync(7_500);
+
+    await rejection;
   });
 
   it('surfaces a token-acquisition timeout as a distinct retryable phase', async () => {

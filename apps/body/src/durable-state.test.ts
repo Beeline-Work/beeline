@@ -91,6 +91,7 @@ describe('durable state schema migration', () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-v2-'));
     cleanup.push(root);
     const path = resolve(root, 'state.json');
+    const readModel = createWorkspaceSnapshot({ workspaceId: 'room', identities: [] });
     const persisted = `${JSON.stringify({
       version: 2,
       inboxes: {
@@ -99,13 +100,33 @@ describe('durable state schema migration', () => {
           items: {},
         },
       },
-      readModels: {},
+      readModels: { room: readModel },
     })}\n`;
     await writeFile(path, persisted);
 
     const state = new DurableBodyState(path);
     expect(await state.cursor('room')).toEqual({ createdAt: 42, eventId: 'v2-cursor' });
+    expect(await state.readModel('room')).toEqual(readModel);
     expect(await readFile(path, 'utf8')).toBe(persisted);
+  });
+
+  it('fails closed when an existing version 2 read model fails its integrity guard', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-invalid-v2-model-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 2,
+        inboxes: {},
+        readModels: { room: { schemaVersion: 1, workspaceId: 'room' } },
+      }),
+    );
+
+    const state = new DurableBodyState(path);
+    await expect(state.readModel('room')).rejects.toThrow(
+      `read-model integrity halt for room at ${path}`,
+    );
   });
 
   it('fails closed on malformed persisted JSON', async () => {
@@ -118,22 +139,23 @@ describe('durable state schema migration', () => {
     await expect(state.cursor('room')).rejects.toBeInstanceOf(SyntaxError);
   });
 
-  it('persists a migrated version 1 file as version 2 on the next save', async () => {
+  it.each([
+    ['missing inboxes', { version: 1 }],
+    ['non-object inboxes', { version: 1, inboxes: [] }],
+  ])('fails closed on version 1 state with %s', async (_description, persisted) => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-invalid-v1-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    await writeFile(path, JSON.stringify(persisted));
+
+    const state = new DurableBodyState(path);
+    await expect(state.cursor('room')).rejects.toThrow(`unsupported durable body state at ${path}`);
+  });
+
+  it('persists only version 2 fields while preserving operational state', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-roundtrip-'));
     cleanup.push(root);
     const path = resolve(root, 'state.json');
-    await writeFile(
-      path,
-      JSON.stringify({
-        version: 1,
-        inboxes: {
-          room: {
-            cursor: { createdAt: 99, eventId: 'preserved-cursor' },
-            items: {},
-          },
-        },
-      }),
-    );
     const identity = newIdentity('migration-roundtrip');
     const event = signEvent(
       {
@@ -145,6 +167,65 @@ describe('durable state schema migration', () => {
       },
       identity.secretKey,
     );
+    const modelTurn = {
+      requestId: 'request',
+      originalRequestId: 'request',
+      cause: 'room-message',
+      agentPubkey: identity.publicKey,
+      channelId: 'room',
+      startedAt: '2026-08-25T12:00:00.000Z',
+      status: 'complete',
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      tokenSource: 'reported',
+      toolCalls: 1,
+    };
+    const sessionReprime = {
+      agentPubkey: identity.publicKey,
+      channelId: 'room',
+      processGeneration: 'generation',
+      at: '2026-08-25T12:01:00.000Z',
+      entries: 2,
+      beforeChars: 20,
+      afterChars: 10,
+      beforeTokens: 5,
+      afterTokens: 3,
+    };
+    const concludeEpisode = {
+      quietSince: 1_700_000_000,
+      nudges: 1,
+      lastNudgeAt: 1_700_000_100,
+      stalledNotified: true,
+    };
+    const factory = {
+      version: 1,
+      inboundDelegationClaims: ['delegation-claim'],
+      outboundDelegations: {
+        [event.id]: { event, delivered: false },
+      },
+      permissionActionClaims: ['permission-claim'],
+    };
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        inboxes: {
+          room: {
+            cursor: { createdAt: 99, eventId: 'preserved-cursor' },
+            items: {},
+          },
+        },
+        conversations: {
+          room: [{ role: 'agent', text: 'Retired presentation prose must not survive.' }],
+        },
+        modelTurns: [modelTurn],
+        sessionReprimes: [sessionReprime],
+        githubEventCursors: { room: 77 },
+        concludeEpisodes: { room: concludeEpisode },
+        factory,
+      }),
+    );
 
     const migrated = new DurableBodyState(path);
     await migrated.enqueue('other-room', [event]);
@@ -152,12 +233,28 @@ describe('durable state schema migration', () => {
     const persisted = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
     expect(persisted.version).toBe(2);
     expect(persisted.readModels).toEqual({});
+    expect(persisted).not.toHaveProperty('conversations');
+    expect(persisted.modelTurns).toEqual([modelTurn]);
+    expect(persisted.sessionReprimes).toEqual([sessionReprime]);
+    expect(persisted.githubEventCursors).toEqual({ room: 77 });
+    expect(persisted.concludeEpisodes).toEqual({ room: concludeEpisode });
+    expect(persisted.factory).toEqual(factory);
     const restarted = new DurableBodyState(path);
     expect(await restarted.cursor('room')).toEqual({
       createdAt: 99,
       eventId: 'preserved-cursor',
     });
     expect((await restarted.pending('other-room')).map((item) => item.id)).toEqual([event.id]);
+    expect(await restarted.modelTurns()).toEqual([modelTurn]);
+    expect(await restarted.sessionReprimes()).toEqual([sessionReprime]);
+    expect(await restarted.githubEventCursor('room')).toBe(77);
+    expect(await restarted.concludeEpisode('room')).toEqual(concludeEpisode);
+    expect(await restarted.claimDelegationInbound('delegation-claim')).toBe('duplicate');
+    expect(await restarted.claimPermissionAction('permission-claim')).toBe('duplicate');
+    expect(await restarted.reserveDelegationOutbound(event)).toEqual({
+      state: 'pending',
+      event,
+    });
   });
 });
 

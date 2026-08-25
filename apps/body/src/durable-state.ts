@@ -49,10 +49,11 @@ interface StoredPermissionReceipt {
   delivered: boolean;
 }
 
+/** Current on-disk schema version, shared with release-fixture compatibility gates. */
 export const DURABLE_BODY_STATE_VERSION = 2;
 
 interface DurableBodyData {
-  version: typeof DURABLE_BODY_STATE_VERSION;
+  version: 2;
   inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;
   /** Relay-verified normalized read models. Presentation prose is never persisted. */
   readModels: Record<string, WorkspaceSnapshot>;
@@ -78,26 +79,39 @@ interface DurableBodyData {
 
 interface DurableBodyDataV1 extends Omit<DurableBodyData, 'version' | 'readModels'> {
   version: 1;
+  conversations?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyData {
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+  if (!isRecord(candidate)) {
     throw new Error(`unsupported durable body state at ${path}`);
   }
-  const parsed = candidate as Partial<DurableBodyData | DurableBodyDataV1> &
-    Record<string, unknown>;
-  if (!parsed.inboxes) throw new Error(`unsupported durable body state at ${path}`);
+  const parsed = candidate as Partial<DurableBodyData | DurableBodyDataV1>;
+  if (!isRecord(parsed.inboxes)) throw new Error(`unsupported durable body state at ${path}`);
 
   switch (parsed.version) {
-    case 1:
+    case 1: {
       if ('readModels' in parsed) throw new Error(`unsupported durable body state at ${path}`);
+      const legacy = parsed as DurableBodyDataV1;
       return {
-        ...(parsed as DurableBodyDataV1),
-        version: DURABLE_BODY_STATE_VERSION,
+        version: 2,
+        inboxes: legacy.inboxes,
         readModels: {},
+        modelTurns: legacy.modelTurns,
+        sessionReprimes: legacy.sessionReprimes,
+        githubEventCursors: legacy.githubEventCursors,
+        concludeEpisodes: legacy.concludeEpisodes,
+        factory: legacy.factory,
       };
-    case DURABLE_BODY_STATE_VERSION:
-      if (!parsed.readModels) throw new Error(`unsupported durable body state at ${path}`);
+    }
+    case 2:
+      if (!isRecord(parsed.readModels)) {
+        throw new Error(`unsupported durable body state at ${path}`);
+      }
       return parsed as DurableBodyData;
     default:
       throw new Error(`unsupported durable body state at ${path}`);
@@ -106,7 +120,7 @@ function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyDa
 
 function emptyData(): DurableBodyData {
   return {
-    version: DURABLE_BODY_STATE_VERSION,
+    version: 2,
     inboxes: {},
     readModels: {},
     modelTurns: [],

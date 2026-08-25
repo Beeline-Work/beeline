@@ -3,12 +3,53 @@
 # candidate, then run the real Room open/send/reply Maestro smoke. The outer
 # timeout is part of the contract: a wedged emulator can never hold promotion
 # for more than ten minutes.
+#
+# Exit codes: 0 canary passed; 1 smoke/flow failure; 2 environment or setup
+# failure (the release governor PARKS promotion on this with an actionable
+# reason recorded in the ledger); 124 the ten-minute deadline fired.
 set -euo pipefail
 
 readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly DEVICE="${MAESTRO_DEVICE:-emulator-5554}"
 readonly APP_ID="app.usebeeline.mobile"
 readonly MAX_SECONDS="${OTA_CANARY_MAX_SECONDS:-540}"
+
+# The release-host runner account does not carry the emulator owner's PATH.
+# Resolve adb without assuming it is on PATH so the governed canary can run
+# wherever the sanctioned emulator lives; ANDROID_HOME/ANDROID_SDK_ROOT name
+# the SDK explicitly (the workflow pins it for the self-hosted runner).
+resolve_adb() {
+  if command -v adb >/dev/null 2>&1; then
+    command -v adb
+    return 0
+  fi
+  local candidate
+  for candidate in \
+    "${ANDROID_HOME:-}/platform-tools/adb" \
+    "${ANDROID_SDK_ROOT:-}/platform-tools/adb"; do
+    if [[ -n "${candidate%/platform-tools/adb}" && -x "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! ADB_BIN="$(resolve_adb)"; then
+  cat >&2 <<EOF
+OTA canary cannot find the Android platform-tools binary (adb).
+Searched: PATH, \$ANDROID_HOME/platform-tools/adb, \$ANDROID_SDK_ROOT/platform-tools/adb.
+Fix: install platform-tools on the release host or set ANDROID_HOME to the
+SDK root in the release-governor job, then re-run the canary step.
+Production promotion stays parked until the canary passes.
+EOF
+  exit 2
+fi
+if [[ "$ADB_BIN" == */* ]]; then
+  # Child scripts (maestro-e2e.sh, android-teardown.sh) still call bare `adb`;
+  # make our resolution visible to them instead of editing each one.
+  export PATH="$(dirname "$ADB_BIN"):$PATH"
+fi
 
 if [[ "${OTA_CANARY_DEADLINE_ACTIVE:-0}" != "1" ]]; then
   if (( MAX_SECONDS < 1 || MAX_SECONDS > 600 )); then
@@ -18,6 +59,26 @@ if [[ "${OTA_CANARY_DEADLINE_ACTIVE:-0}" != "1" ]]; then
   exec timeout --foreground --signal=TERM "${MAX_SECONDS}s" \
     env OTA_CANARY_DEADLINE_ACTIVE=1 "$0" "$@"
 fi
+
+device_state="$("$ADB_BIN" devices 2>&1 | awk -v d="$DEVICE" '$1 == d { print $2; exit }')" || {
+  echo "Canary adb could not enumerate devices. Output:" >&2
+  echo "$device_state" >&2
+  echo "Fix: check the shared adb server on the release host (adb kill-server && adb start-server as the emulator owner), then re-run." >&2
+  exit 2
+}
+case "$device_state" in
+  device) ;;
+  '')
+    echo "Canary requires the existing Android emulator $DEVICE, and none is attached to adb right now." >&2
+    echo "Fix: boot the sanctioned existing AVD ($DEVICE) on the release host under the emulator-owner account; the canary attaches to it over the shared adb server. It must be live before the release governor runs." >&2
+    exit 2
+    ;;
+  *)
+    echo "Canary emulator $DEVICE is attached but not ready (state: $device_state)." >&2
+    echo "Fix: wait for boot or re-authorize the device on the release host, then re-run." >&2
+    exit 2
+    ;;
+esac
 
 ledger=""
 while (($#)); do
@@ -35,10 +96,6 @@ done
 
 if [[ ! -f "$ledger" ]]; then
   echo "Canary ledger not found: $ledger" >&2
-  exit 1
-fi
-if ! adb devices | awk 'NR > 1 { print $1 }' | grep -Fxq "$DEVICE"; then
-  echo "Canary requires the existing Android emulator $DEVICE." >&2
   exit 1
 fi
 

@@ -151,8 +151,7 @@ async function main() {
     process.env.BEELINE_BUNDLE_COMMIT ?? capture('git', ['rev-parse', 'HEAD']) ?? '';
   if (!sourceCommit) fail('could not determine the source commit (set BEELINE_BUNDLE_COMMIT)');
   const buildVersion =
-    process.env.BEELINE_BUNDLE_VERSION ??
-    new Date().toISOString().slice(0, 10).replace(/-/g, '.');
+    process.env.BEELINE_BUNDLE_VERSION ?? new Date().toISOString().slice(0, 10).replace(/-/g, '.');
 
   run('npm', ['run', 'build', '-w', '@beeline/nostr']);
   run('npm', ['run', 'build', '-w', '@beeline/buzz-client']);

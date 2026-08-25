@@ -173,7 +173,9 @@ for dup in "$releases_root"/*-[0-9]*; do
   dup_name=$(basename "$dup")
   [ "$dup_name" != "$(basename "$target")" ] || continue
   base=${dup_name%-*}
-  [ -n "$base" ] && [ -d "$releases_root/$base" ] || continue
+  if [ -z "$base" ] || [ ! -d "$releases_root/$base" ]; then
+    continue
+  fi
   case "$previous_link_target" in
     */"$dup_name"|*/"$dup_name"/*) continue ;;
   esac

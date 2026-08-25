@@ -168,13 +168,13 @@ ${pc.dim('Usage:')}
                [--agent-command '<command> [args...]'] [--repo <path>]
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
                [--auto-response '<text>']
-               [--mcp <squire-credential-use|squire-app-access>]
+               [--mcp <capability[,capability...]>]
                [--model <model>] [--effort <level>]
 
   beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...> [--repo <path>]
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
                [--auto-response '<text>']
-               [--mcp <squire-credential-use|squire-app-access>]
+               [--mcp <capability[,capability...]>]
                [--model <model>] [--effort <level>]
 
 Agent choices:
@@ -233,7 +233,8 @@ Access policy (per agent, set here at invite time):
 
 External MCP capabilities: --mcp squire-credential-use and --mcp squire-app-access are independent.
 Account capabilities require --access creator and are mounted from a built-in
-profile; Beeline never imports the operator's other personal MCP servers.
+profile; pass a comma-separated list to opt into both. Beeline never imports
+the operator's other personal MCP servers.
 
 Interactive: on a real TTY, --access/--auto-response missing their flags are
 also offered as clack pickers (in that order, right after model/effort) —

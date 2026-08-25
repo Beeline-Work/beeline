@@ -36,7 +36,14 @@ describe('per-room harness state isolation', () => {
     const envA = await prepareRoomAgentHome({ root: roomA, operatorHome });
     const envB = await prepareRoomAgentHome({ root: roomB, operatorHome });
 
-    for (const key of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GROK_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'TMPDIR']) {
+    for (const key of [
+      'CLAUDE_CONFIG_DIR',
+      'CODEX_HOME',
+      'GROK_HOME',
+      'XDG_STATE_HOME',
+      'XDG_CACHE_HOME',
+      'TMPDIR',
+    ]) {
       expect(envA[key]).toBeTruthy();
       expect(envA[key]!.startsWith(roomA)).toBe(true);
       // Two Rooms of the same agent must not share a harness state directory.

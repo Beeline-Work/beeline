@@ -969,8 +969,7 @@ export class SelfUpdateManager {
   /** Set once a newer bundle is LIVE and the process should hand over. */
   restartPending = false;
   private unconfirmedReleaseId: string | undefined;
-  private attachedSupervisor:
-    { isWorkspaceIdle(): boolean } | undefined;
+  private attachedSupervisor: { isWorkspaceIdle(): boolean } | undefined;
 
   constructor(options: SelfUpdateManagerOptions) {
     const env = options.env ?? process.env;
@@ -1003,9 +1002,7 @@ export class SelfUpdateManager {
   }
 
   /** Wire the current daemon core instance (recreated each run loop). */
-  attachSupervisor(
-    supervisor: { isWorkspaceIdle(): boolean } | undefined,
-  ): void {
+  attachSupervisor(supervisor: { isWorkspaceIdle(): boolean } | undefined): void {
     this.attachedSupervisor = supervisor;
   }
 

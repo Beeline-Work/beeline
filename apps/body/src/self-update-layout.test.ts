@@ -18,7 +18,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { createReadStream, existsSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp as mkdtempFs, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp as mkdtempFs,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
@@ -43,7 +52,8 @@ async function tempDir(prefix: string): Promise<string> {
   return created;
 }
 afterAll(async () => {
-  for (const dir of tempDirs) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  for (const dir of tempDirs)
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
 });
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -105,7 +115,10 @@ async function buildStubBundle(commit: string, version: string): Promise<StubBun
   await mkdir(join(staging, 'lib', 'beeline'), { recursive: true });
   const cli = `console.log('beeline-stub ${version}');\n`;
   await writeFile(join(staging, 'lib', 'beeline', 'beeline-cli.mjs'), cli);
-  await writeFile(join(staging, 'lib', 'beeline', 'beeline-readonly-mcp.mjs'), 'process.exit(0);\n');
+  await writeFile(
+    join(staging, 'lib', 'beeline', 'beeline-readonly-mcp.mjs'),
+    'process.exit(0);\n',
+  );
   await writeFile(join(staging, 'lib', 'beeline', 'squire-mcp-proxy.mjs'), 'process.exit(0);\n');
   await writeFile(
     join(staging, 'lib', 'beeline', 'bundle.json'),
@@ -114,7 +127,9 @@ async function buildStubBundle(commit: string, version: string): Promise<StubBun
   await writeFile(join(staging, 'bin', 'beeline'), stubBeelineWrapper(), { mode: 0o755 });
   // Real bundles ship native binaries here; forwarder-writing probes X_OK.
   for (const tool of ['buzz-agent', 'buzz-dev-mcp']) {
-    await writeFile(join(staging, 'bin', tool), `#!/bin/sh\necho ${tool}-stub ${version}\n`, { mode: 0o755 });
+    await writeFile(join(staging, 'bin', tool), `#!/bin/sh\necho ${tool}-stub ${version}\n`, {
+      mode: 0o755,
+    });
   }
   await writeFile(
     join(staging, 'bin', 'buzz-readonly-mcp'),
@@ -122,9 +137,13 @@ async function buildStubBundle(commit: string, version: string): Promise<StubBun
     { mode: 0o755 },
   );
   const tarballPath = join(staging, `beeline-${hostPlatformKey()}.tar.gz`);
-  const tar = spawnSync('tar', ['-czf', tarballPath, '-C', staging, 'bin', 'lib'], { timeout: 30_000 });
+  const tar = spawnSync('tar', ['-czf', tarballPath, '-C', staging, 'bin', 'lib'], {
+    timeout: 30_000,
+  });
   if (tar.status !== 0) throw new Error(`tar failed: ${tar.stderr?.toString()}`);
-  const sha256 = createHash('sha256').update(await readFile(tarballPath)).digest('hex');
+  const sha256 = createHash('sha256')
+    .update(await readFile(tarballPath))
+    .digest('hex');
   await writeFile(`${tarballPath}.sha256`, `${sha256}  ${tarballPath.split('/').pop()}\n`);
   return { commit, tarballPath, sha256 };
 }
@@ -194,7 +213,10 @@ function serveBundles(bundles: Map<string, StubBundle>): Promise<{
   });
 }
 
-async function stubManager(layout: BeelineInstallLayout, manifestUrl: string): Promise<SelfUpdateManager> {
+async function stubManager(
+  layout: BeelineInstallLayout,
+  manifestUrl: string,
+): Promise<SelfUpdateManager> {
   return new SelfUpdateManager({
     layout,
     env: { BEELINE_UPDATE_MANIFEST_URL: manifestUrl },
@@ -206,13 +228,17 @@ async function stubManager(layout: BeelineInstallLayout, manifestUrl: string): P
 }
 
 /** Fresh-shell invocation, exactly as an operator's login shell would run it. */
-function runInstalledCli(prefix: string, args: string[]): { status: number; stdout: string; stderr: string } {
+function runInstalledCli(
+  prefix: string,
+  args: string[],
+): { status: number; stdout: string; stderr: string } {
   const result = spawnSync(join(prefix, 'bin', 'beeline'), args, {
     encoding: 'utf8',
     timeout: 30_000,
     env: { ...process.env, BEELINE_LIB_DIR: '' },
   });
-  if (result.error) throw new Error(`fresh-shell invocation hung or failed to spawn: ${result.error.message}`);
+  if (result.error)
+    throw new Error(`fresh-shell invocation hung or failed to spawn: ${result.error.message}`);
   return {
     status: result.status ?? -1,
     stdout: result.stdout ?? '',
@@ -316,7 +342,9 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       await writeFile(join(dir, 'beeline-cli.mjs'), 'cli');
       await writeFile(join(dir, 'bundle.json'), '{}');
       await normalizeLegacyBundleShape(dir);
-      expect((await resolveBundleEntrypoint(dir)) ?? '').toBe(join(dir, 'lib', 'beeline', 'beeline-cli.mjs'));
+      expect((await resolveBundleEntrypoint(dir)) ?? '').toBe(
+        join(dir, 'lib', 'beeline', 'beeline-cli.mjs'),
+      );
       expect(existsSync(join(dir, 'bundle.json'))).toBe(false);
       expect(existsSync(join(dir, 'lib', 'beeline', 'bundle.json'))).toBe(true);
     });
@@ -353,7 +381,10 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       await mkdir(binDir, { recursive: true });
       // Installer v1 output: FLAT files directly in the anchor directory.
       await writeFile(join(anchor, 'beeline-cli.mjs'), 'old cli');
-      await writeFile(join(anchor, 'bundle.json'), `${JSON.stringify({ commit: 'oldflat', version: '1.0.0' })}\n`);
+      await writeFile(
+        join(anchor, 'bundle.json'),
+        `${JSON.stringify({ commit: 'oldflat', version: '1.0.0' })}\n`,
+      );
       const layout = beelineInstallLayout({ BEELINE_LIB_DIR: anchor })!;
 
       const staged = await buildStubBundle('newrel1', '2.0.0');
@@ -363,15 +394,23 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       await activateRelease(layout, 'newrel1');
 
       // The preserved copy must be runnable for rollback: entrypoint resolvable.
-      const previousEntrypoint = await resolveBundleEntrypoint(join(layout.releasesRoot, 'oldflat'));
-      expect(previousEntrypoint).toBe(join(layout.releasesRoot, 'oldflat', 'lib', 'beeline', 'beeline-cli.mjs'));
+      const previousEntrypoint = await resolveBundleEntrypoint(
+        join(layout.releasesRoot, 'oldflat'),
+      );
+      expect(previousEntrypoint).toBe(
+        join(layout.releasesRoot, 'oldflat', 'lib', 'beeline', 'beeline-cli.mjs'),
+      );
       await rollbackToPreviousRelease(layout, 'oldflat');
       expect(await activeReleaseId(layout)).toBe('oldflat');
     });
   });
 
   describe('repairInstallForwarders', () => {
-    async function makeReleaseBasedInstall(): Promise<{ root: string; prefix: string; layout: BeelineInstallLayout }> {
+    async function makeReleaseBasedInstall(): Promise<{
+      root: string;
+      prefix: string;
+      layout: BeelineInstallLayout;
+    }> {
       const root = await tempDir('repair-');
       const prefix = join(root, 'prefix');
       const releaseDir = join(prefix, 'lib', 'beeline-releases', 'fix9');
@@ -382,7 +421,11 @@ describe('<prefix>/lib/beeline anchor contract', () => {
         await writeFile(join(releaseDir, 'bin', tool), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
       }
       await symlink(join('beeline-releases', 'fix9'), join(prefix, 'lib', 'beeline'));
-      return { root, prefix, layout: beelineInstallLayout({ BEELINE_LIB_DIR: join(prefix, 'lib', 'beeline') })! };
+      return {
+        root,
+        prefix,
+        layout: beelineInstallLayout({ BEELINE_LIB_DIR: join(prefix, 'lib', 'beeline') })!,
+      };
     }
 
     it('rewrites stale raw wrappers on a release-based install', async () => {
@@ -425,11 +468,15 @@ describe('<prefix>/lib/beeline anchor contract', () => {
   describe('build-beeline-bundle.mjs stays on the contract', () => {
     it('wrappers never hand node a .. component; forwarderScript and install.sh stay byte-identical', async () => {
       const source = await readFile(join(repoRoot, 'scripts', 'build-beeline-bundle.mjs'), 'utf8');
-      expect(source).toContain("script_path=$(pwd -P)/$0"); // no pwd -P on $0 itself
-      expect(source).toContain('BEELINE_BUNDLE_ROOT=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)');
+      expect(source).toContain('script_path=$(pwd -P)/$0'); // no pwd -P on $0 itself
+      expect(source).toContain(
+        'BEELINE_BUNDLE_ROOT=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)',
+      );
       expect(source).toContain('BEELINE_LIB_DIR=$BEELINE_BUNDLE_ROOT/lib/beeline');
       expect(source).toContain('exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"');
-      expect(source).toContain('exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"');
+      expect(source).toContain(
+        'exec node "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"',
+      );
       expect(source).not.toContain('exec node "$BEELINE_LIB_DIR/beeline-readonly-mcp.mjs"');
       // The old resolution shape must not come back for the CLI wrapper.
       const wrapperBlock = source.slice(source.indexOf("resolve(staging, 'bin', 'beeline')"));
@@ -483,7 +530,9 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
       // The anchor is the active bundle root; bin entries are stable forwarders.
       const anchorKind = await lstat(join(prefix, 'lib', 'beeline'));
       expect(anchorKind.isSymbolicLink()).toBe(true);
-      expect(await readlinkTarget(join(prefix, 'lib', 'beeline'))).toBe(`beeline-releases/${v1.commit}`);
+      expect(await readlinkTarget(join(prefix, 'lib', 'beeline'))).toBe(
+        `beeline-releases/${v1.commit}`,
+      );
 
       // --- 2. fresh shell on release N ---------------------------------------
       expectFreshShell(prefix, '1.0.0');
@@ -492,7 +541,9 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
       // --- 3. update N -> N+1 through the real swap, fresh shell --------------
       // (The acceptance shape: from a host at release N, apply an update,
       // then run the CLI from a fresh shell.)
-      const anchorLayout = beelineInstallLayout({ BEELINE_LIB_DIR: join(prefix, 'lib', 'beeline') })!;
+      const anchorLayout = beelineInstallLayout({
+        BEELINE_LIB_DIR: join(prefix, 'lib', 'beeline'),
+      })!;
       remote.publish(v2);
       const manager1 = await stubManager(anchorLayout, remote.manifestUrl);
       await manager1.checkAndApply();
@@ -574,7 +625,12 @@ describe('install.sh over-install swings the active anchor', () => {
     const remote = await serveBundles(new Map([[v1.commit, v1]]));
     try {
       // --- 1. fresh install of release A ------------------------------------
-      let installed = await runInstaller({ home: root, baseUrl: remote.baseUrl, binDir, libAnchor });
+      let installed = await runInstaller({
+        home: root,
+        baseUrl: remote.baseUrl,
+        binDir,
+        libAnchor,
+      });
       expect(installed.stderr).toBe('');
       expect(installed.status).toBe(0);
       expect(await readlinkTarget(libAnchor)).toBe(`beeline-releases/${v1.commit}`);
@@ -594,7 +650,9 @@ describe('install.sh over-install swings the active anchor', () => {
       // destination-following `mv`; no such litter may exist anywhere.
       expect(await collectInstallerLitter(prefix)).toEqual([]);
       const topLevelReleases = await readdir(releasesRoot, { withFileTypes: true });
-      expect(topLevelReleases.filter((entry) => entry.isSymbolicLink()).map((entry) => entry.name)).toEqual([]);
+      expect(
+        topLevelReleases.filter((entry) => entry.isSymbolicLink()).map((entry) => entry.name),
+      ).toEqual([]);
 
       // --- 3. reinstalling the SAME release is idempotent -------------------
       installed = await runInstaller({ home: root, baseUrl: remote.baseUrl, binDir, libAnchor });

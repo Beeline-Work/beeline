@@ -66,10 +66,7 @@ export function trustySquireIsolationPaths(input: {
   ].filter((path, index, all) => all.indexOf(path) === index);
 }
 
-export function trustySquireHostEnv(
-  env: NodeJS.ProcessEnv,
-  configRoot: string,
-): NodeJS.ProcessEnv {
+export function trustySquireHostEnv(env: NodeJS.ProcessEnv, configRoot: string): NodeJS.ProcessEnv {
   const allowed = new Set([
     'HOME',
     'PATH',
@@ -82,9 +79,7 @@ export function trustySquireHostEnv(
   ]);
   return {
     ...Object.fromEntries(
-      Object.entries(env).filter(
-        ([name, value]) => value !== undefined && allowed.has(name),
-      ),
+      Object.entries(env).filter(([name, value]) => value !== undefined && allowed.has(name)),
     ),
     XDG_CONFIG_HOME: resolve(configRoot),
     TRUSTY_SQUIRE_SESSION_FILE: '1',

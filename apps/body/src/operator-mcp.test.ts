@@ -105,10 +105,7 @@ describe('operatorMcpServersForCorners', () => {
   });
 
   it('never lets an operator entry shadow a Beeline-mounted server name', () => {
-    const shadowing = [
-      { name: 'buzz-dev-mcp', command: 'shadow', env: [] },
-      ...configured,
-    ];
+    const shadowing = [{ name: 'buzz-dev-mcp', command: 'shadow', env: [] }, ...configured];
     expect(operatorMcpServersForCorners('creator', shadowing)).toEqual(configured);
   });
 });

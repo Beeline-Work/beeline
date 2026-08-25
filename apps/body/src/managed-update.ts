@@ -4,16 +4,17 @@ import { dirname, resolve } from 'node:path';
 import {
   activeReleaseId,
   clearPendingUpdate,
-  confirmPendingUpdate,
   readInstalledBundleIdentity,
   readPendingUpdate,
   readUpdateState,
   rollbackToPreviousRelease,
   SelfUpdateManager,
   writePendingUpdateFixture,
+  writeUpdateState,
   type BeelineInstallLayout,
   type PendingUpdateRecord,
 } from './self-update.js';
+import type { DaemonServeProof } from './serve-health.js';
 
 export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
 export const DEFAULT_UPDATE_INTERVAL_MS = 30_000;
@@ -321,7 +322,12 @@ async function runManagedUpdateWorkerProcess(): Promise<void> {
   });
 }
 
-/** READY is valid update proof only when the process loaded the exact desired release. */
+/**
+ * Prove only that systemd launched the exact desired bundle. This is BOOT
+ * readiness, not release health: the rollback journal and per-runtime
+ * handoff deliberately remain armed until `confirmDaemonHealthy` receives a
+ * positive local SERVE proof.
+ */
 export async function proveLoadedReleaseReady(
   layout: BeelineInstallLayout,
   runtimeDir: string,
@@ -331,31 +337,163 @@ export async function proveLoadedReleaseReady(
   const handoff = await readUpdateHandoff(runtimeDir);
   const desiredRelease = handoff?.desiredRelease ?? pending?.releaseId;
   if (!desiredRelease || !loadedRelease || desiredRelease !== loadedRelease) return false;
+  if ((await activeReleaseId(layout)) !== loadedRelease) return false;
   await writeFile(
     resolve(runtimeDir, 'daemon-ready.json'),
     `${JSON.stringify({ readyAt: Date.now(), loadedRelease }, null, 2)}\n`,
     { mode: 0o600 },
   );
-  await rm(updateHandoffPath(runtimeDir), { force: true });
-  if (!pending || pending.releaseId !== loadedRelease) return true;
-  return withInstallLock(layout, () => confirmPendingUpdate(layout));
+  return true;
+}
+
+/**
+ * Convert exact-release BOOT readiness into HEALTHY only after the daemon
+ * proves its local serve path. Relay success is intentionally absent from the
+ * proof: loading a Room's durable state is enough to distinguish executable
+ * local code from a transport outage, and a genuinely empty runtime has its
+ * own explicit proof.
+ */
+export async function confirmDaemonHealthy(
+  layout: BeelineInstallLayout,
+  runtimeDir: string,
+  loadedRelease: string | undefined,
+  serveProof: DaemonServeProof,
+): Promise<boolean> {
+  return withInstallLock(layout, async () => {
+    const pending = await readPendingUpdate(layout);
+    const handoff = await readUpdateHandoff(runtimeDir);
+    const desiredRelease = handoff?.desiredRelease ?? pending?.releaseId;
+    if (!desiredRelease || !loadedRelease || desiredRelease !== loadedRelease) return false;
+    if ((await activeReleaseId(layout)) !== loadedRelease) return false;
+
+    let ready: { readyAt?: number; loadedRelease?: string } | undefined;
+    try {
+      ready = JSON.parse(
+        await readFile(resolve(runtimeDir, 'daemon-ready.json'), 'utf8'),
+      ) as typeof ready;
+    } catch {
+      return false;
+    }
+    if (ready?.loadedRelease !== loadedRelease || typeof ready.readyAt !== 'number') return false;
+
+    await writeFile(
+      resolve(runtimeDir, 'daemon-ready.json'),
+      `${JSON.stringify(
+        {
+          readyAt: ready.readyAt,
+          healthyAt: Date.now(),
+          loadedRelease,
+          serveProof,
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+    await rm(updateHandoffPath(runtimeDir), { force: true });
+    if (pending?.releaseId === loadedRelease) await clearPendingUpdate(layout);
+    return true;
+  });
+}
+
+export type PendingUpdateHealthOutcome =
+  | { kind: 'confirmed'; proof: DaemonServeProof }
+  | { kind: 'rolled-back' }
+  | { kind: 'rollback-unavailable' }
+  | { kind: 'cancelled' };
+
+/**
+ * Bound a successor's opportunity to prove SERVE health. The proof promise is
+ * driven by `ThinDaemonCore`; expiry restores the previous bundle once. An
+ * absent journal/handoff means rollback was already consumed (or never
+ * possible), so the current release is left in place rather than ping-ponged.
+ */
+export async function supervisePendingUpdateHealth(
+  layout: BeelineInstallLayout,
+  runtimeDir: string,
+  loadedRelease: string | undefined,
+  serveProof: Promise<DaemonServeProof>,
+  confirmAt: number,
+  options: { now?: () => number; signal?: AbortSignal } = {},
+): Promise<PendingUpdateHealthOutcome> {
+  const now = options.now ?? Date.now;
+  let timer: NodeJS.Timeout | undefined;
+  let removeAbortListener: (() => void) | undefined;
+  const boundary = new Promise<'expired' | 'cancelled'>((resolveBoundary) => {
+    const finish = (outcome: 'expired' | 'cancelled') => {
+      if (timer) clearTimeout(timer);
+      removeAbortListener?.();
+      resolveBoundary(outcome);
+    };
+    const onAbort = () => finish('cancelled');
+    if (options.signal?.aborted) {
+      finish('cancelled');
+      return;
+    }
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    removeAbortListener = () => options.signal?.removeEventListener('abort', onAbort);
+    timer = setTimeout(() => finish('expired'), Math.max(0, confirmAt - now()));
+    timer.unref?.();
+  });
+
+  const outcome = await Promise.race([
+    serveProof.then((proof) => ({ kind: 'proof' as const, proof })),
+    boundary.then((kind) => ({ kind })),
+  ]);
+  if (timer) clearTimeout(timer);
+  removeAbortListener?.();
+  if (outcome.kind === 'cancelled') return { kind: 'cancelled' };
+  if (outcome.kind === 'proof' && now() <= confirmAt) {
+    if (await confirmDaemonHealthy(layout, runtimeDir, loadedRelease, outcome.proof)) {
+      return { kind: 'confirmed', proof: outcome.proof };
+    }
+  }
+
+  return (await rollbackFailedSuccessor(layout, runtimeDir, {
+    reason: 'new release did not prove local Room serving inside its confirm window',
+    now,
+  }))
+    ? { kind: 'rolled-back' }
+    : { kind: 'rollback-unavailable' };
 }
 
 /** One rollback, without self-spawning; systemd owns the next process. */
 export async function rollbackFailedSuccessor(
   layout: BeelineInstallLayout,
   runtimeDir?: string,
+  options: { reason?: string; now?: () => number } = {},
 ): Promise<boolean> {
   return withInstallLock(layout, async () => {
     const pending = await readPendingUpdate(layout);
-    if (!pending) return false;
-    if (!pending.previousReleaseId) {
-      await clearPendingUpdate(layout);
+    const handoff = runtimeDir ? await readUpdateHandoff(runtimeDir) : undefined;
+    const failedRelease = pending?.releaseId ?? handoff?.desiredRelease;
+    const previousRelease = pending?.previousReleaseId ?? handoff?.loadedRelease;
+    if (!failedRelease || !previousRelease) {
+      if (pending) await clearPendingUpdate(layout);
+      if (runtimeDir) await rm(updateHandoffPath(runtimeDir), { force: true });
       return false;
     }
-    await rollbackToPreviousRelease(layout, pending.previousReleaseId);
-    await clearPendingUpdate(layout);
+    if ((await activeReleaseId(layout)) !== failedRelease) {
+      if (pending) await clearPendingUpdate(layout);
+      if (runtimeDir) await rm(updateHandoffPath(runtimeDir), { force: true });
+      return false;
+    }
+    await rollbackToPreviousRelease(layout, previousRelease);
+    if (pending) await clearPendingUpdate(layout);
     if (runtimeDir) await rm(updateHandoffPath(runtimeDir), { force: true });
+    if (runtimeDir) {
+      await rm(resolve(runtimeDir, 'daemon-ready.json'), { force: true }).catch(() => undefined);
+    }
+    const state = await readUpdateState(layout);
+    await writeUpdateState(layout, {
+      ...state,
+      lastRollback: {
+        releaseId: failedRelease,
+        toReleaseId: previousRelease,
+        reason: options.reason ?? 'new release failed before SERVE proof',
+        at: (options.now ?? Date.now)(),
+      },
+    }).catch(() => undefined);
     return true;
   });
 }

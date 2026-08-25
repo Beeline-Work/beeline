@@ -8,11 +8,13 @@ import { newIdentity } from '@beeline/gate';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activeReleaseId, readPendingUpdate, type BeelineInstallLayout } from './self-update.js';
 import {
+  confirmDaemonHealthy,
   DEFAULT_UPDATE_INTERVAL_MS,
   ManagedUpdateHandoff,
   proveLoadedReleaseReady,
   readUpdateHandoff,
   rollbackFailedSuccessor,
+  supervisePendingUpdateHealth,
 } from './managed-update.js';
 
 const roots: string[] = [];
@@ -55,7 +57,7 @@ afterEach(async () => {
 });
 
 describe('managed update handoff', () => {
-  it('converges to the exact desired release and accepts only its READY proof', async () => {
+  it('converges to the exact desired release but keeps rollback armed until SERVE proof', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
     await rm(layout.libDir);
@@ -69,12 +71,69 @@ describe('managed update handoff', () => {
     expect((await readPendingUpdate(layout))?.releaseId).toBe('new');
     expect(await proveLoadedReleaseReady(layout, runtimeDir, 'old')).toBe(false);
     expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new')).toBe(true);
+    expect(await readPendingUpdate(layout)).toBeDefined();
+    expect(
+      await confirmDaemonHealthy(layout, runtimeDir, 'new', {
+        kind: 'room-local-ready',
+        roomId: 'room-1',
+      }),
+    ).toBe(true);
     expect(await readPendingUpdate(layout)).toBeUndefined();
     expect(
       JSON.parse(await readFile(resolve(runtimeDir, 'daemon-ready.json'), 'utf8')),
     ).toMatchObject({
       loadedRelease: 'new',
+      serveProof: { kind: 'room-local-ready', roomId: 'room-1' },
     });
+  });
+
+  it('rolls back a booted successor that never proves it can serve, then refuses to ping-pong', async () => {
+    const { layout, runtimeDir } = await layoutFixture();
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+    await update.check();
+    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new')).toBe(true);
+
+    const neverServes = new Promise<never>(() => undefined);
+    await expect(
+      supervisePendingUpdateHealth(layout, runtimeDir, 'new', neverServes, Date.now() + 10),
+    ).resolves.toMatchObject({ kind: 'rolled-back' });
+    expect(await activeReleaseId(layout)).toBe('old');
+    expect(await readPendingUpdate(layout)).toBeUndefined();
+
+    await expect(
+      supervisePendingUpdateHealth(layout, runtimeDir, 'old', neverServes, Date.now() + 10),
+    ).resolves.toMatchObject({ kind: 'rollback-unavailable' });
+    expect(await activeReleaseId(layout)).toBe('old');
+  });
+
+  it.each([
+    { serveProof: { kind: 'room-served', roomId: 'room-1' } as const, label: 'a served Room' },
+    {
+      serveProof: { kind: 'room-local-ready', roomId: 'room-1' } as const,
+      label: 'a local Room during relay outage',
+    },
+    { serveProof: { kind: 'no-rooms' } as const, label: 'an explicit zero-Room state' },
+  ])('confirms normally from $label', async ({ serveProof }) => {
+    const { layout, runtimeDir } = await layoutFixture();
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+    await update.check();
+    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new')).toBe(true);
+
+    await expect(
+      supervisePendingUpdateHealth(
+        layout,
+        runtimeDir,
+        'new',
+        Promise.resolve(serveProof),
+        Date.now() + 1_000,
+      ),
+    ).resolves.toMatchObject({ kind: 'confirmed', proof: serveProof });
+    expect(await activeReleaseId(layout)).toBe('new');
+    expect(await readPendingUpdate(layout)).toBeUndefined();
   });
 
   it('rolls a bad successor back exactly once', async () => {
@@ -102,8 +161,12 @@ describe('managed update handoff', () => {
     await second.check();
 
     expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new')).toBe(true);
+    expect(await confirmDaemonHealthy(layout, runtimeDir, 'new', { kind: 'no-rooms' })).toBe(true);
     expect(await readPendingUpdate(layout)).toBeUndefined();
     expect(await proveLoadedReleaseReady(layout, secondRuntime, 'new')).toBe(true);
+    expect(await confirmDaemonHealthy(layout, secondRuntime, 'new', { kind: 'no-rooms' })).toBe(
+      true,
+    );
     expect(await readUpdateHandoff(secondRuntime)).toBeUndefined();
   });
 
@@ -234,7 +297,7 @@ describe.runIf(process.env.BEELINE_SYSTEMD_ACCEPTANCE === '1')(
         `import { existsSync } from 'node:fs';
 import { readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { ManagedUpdateHandoff, proveLoadedReleaseReady, readUpdateHandoff } from ${JSON.stringify(managedUpdateUrl)};
+import { ManagedUpdateHandoff, confirmDaemonHealthy, proveLoadedReleaseReady, readUpdateHandoff } from ${JSON.stringify(managedUpdateUrl)};
 import { RoomRuntimeCoordinator } from ${JSON.stringify(roomRuntimeUrl)};
 import { activeReleaseId } from ${JSON.stringify(selfUpdateUrl)};
 import { SystemdNotifier } from ${JSON.stringify(systemdUrl)};
@@ -252,6 +315,7 @@ if (generation > 1) {
   const handoff = await readUpdateHandoff(runtimeDir);
   if (!handoff || handoff.desiredRelease !== loadedRelease) process.exit(70);
   if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease))) process.exit(71);
+  if (!(await confirmDaemonHealthy(layout, runtimeDir, loadedRelease, { kind: 'no-rooms' }))) process.exit(73);
   const successorReadyAt = Date.now();
   await notifier.ready('ready; loaded_release=' + loadedRelease);
   await writeFile(statePath, JSON.stringify({ ...previous, generation, loadedRelease, successorReadyAt }));

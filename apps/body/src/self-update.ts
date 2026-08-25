@@ -760,9 +760,10 @@ export async function writePendingUpdateFixture(
 
 /**
  * How long a freshly-applied update is given to prove itself before the
- * daemon declares it healthy and stops keeping the rollback option hot. If
- * the supervisor throws fatally (or the process dies outright) inside this
- * window, the previous bundle comes back.
+ * daemon must produce a local SERVE proof and stop keeping the rollback
+ * option hot. Exact-release BOOT/READY is deliberately insufficient. If the
+ * supervisor throws fatally, the process dies, or no SERVE proof arrives
+ * inside this window, the previous bundle comes back.
  */
 export const DEFAULT_UPDATE_CONFIRM_WINDOW_MS = 5 * 60_000;
 
@@ -773,8 +774,9 @@ export type PendingUpdateSettle =
 
 /**
  * Called at daemon start. An unconfirmed update older than the confirm
- * window can only mean the new bundle never became healthy (crash before JS
- * ran, or repeated fatal failure) — roll back before serving anything.
+ * window can only mean the new bundle never proved healthy (crash before JS
+ * ran, repeated fatal failure, or a live process whose Room loops never
+ * reached their local serve boundary) — roll back before serving anything.
  */
 export async function settlePendingUpdateOnStart(
   layout: BeelineInstallLayout,

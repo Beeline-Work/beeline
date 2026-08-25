@@ -87,6 +87,7 @@ import { DurableBodyState } from './durable-state.js';
 import {
   activeReleaseId,
   beelineInstallLayout,
+  DEFAULT_UPDATE_CONFIRM_WINDOW_MS,
   describeIdentity,
   readInstalledBundleIdentity,
   readPendingUpdate,
@@ -107,7 +108,9 @@ import {
   readUpdateHandoff,
   rollbackFailedSuccessor,
   runManagedUpdateWorker,
+  supervisePendingUpdateHealth,
 } from './managed-update.js';
+import type { DaemonServeProof } from './serve-health.js';
 import {
   dailyAgentSpend,
   dailyRestartReprimes,
@@ -550,6 +553,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   let loadedRelease: string | undefined;
   let update: ManagedUpdateHandoff | undefined;
   let pendingSuccessor = false;
+  let pendingConfirmAt: number | undefined;
   if (layout) {
     const settle = await settlePendingUpdateOnStart(layout);
     const handoff = await readUpdateHandoff(runtimeDir);
@@ -562,6 +566,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       throw new Error('stale unconfirmed release rolled back; supervisor must restart');
     } else if (settle.kind === 'pending') {
       pendingSuccessor = true;
+      pendingConfirmAt = settle.confirmAt;
     }
     loadedRelease = await activeReleaseId(layout);
     if (handoff && settle.kind === 'none' && handoff.desiredRelease !== loadedRelease) {
@@ -571,6 +576,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       await unlink(resolve(runtimeDir, 'update-handoff.json')).catch(() => undefined);
     } else if (handoff) {
       pendingSuccessor = true;
+      pendingConfirmAt ??= handoff.requestedAt + DEFAULT_UPDATE_CONFIRM_WINDOW_MS;
     }
     update = await ManagedUpdateHandoff.create(layout, runtimeDir);
   }
@@ -581,11 +587,27 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
   console.log(`[body] ${sandbox.advisory}`);
 
-  let ready = false;
+  let bootReady = false;
   let stoppingStatus = 'daemon stopped';
+  const healthMonitorController = new AbortController();
+  let reportServeProof: ((proof: DaemonServeProof) => void) | undefined;
+  const serveProof = new Promise<DaemonServeProof>((resolveProof) => {
+    reportServeProof = resolveProof;
+  });
   try {
     const core = new ThinDaemonCore(runtime, configPath, config);
-    const result = await core.run({
+    const healthMonitor =
+      layout && pendingSuccessor && pendingConfirmAt !== undefined
+        ? supervisePendingUpdateHealth(
+            layout,
+            runtimeDir,
+            loadedRelease,
+            serveProof,
+            pendingConfirmAt,
+            { signal: healthMonitorController.signal },
+          )
+        : undefined;
+    const coreRun = core.run({
       signal: controller.signal,
       onEstablished: async () => {
         if (layout && pendingSuccessor) {
@@ -598,22 +620,29 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
             );
           }
         }
-        await notifier.ready(`ready; loaded_release=${loadedRelease ?? 'development'}`);
         if (layout && pendingSuccessor) {
           if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease))) {
             throw new Error(
               `successor loaded release ${loadedRelease ?? 'unknown'}, not the pending desired release`,
             );
           }
-          pendingSuccessor = false;
-          console.log(`[thin-core] successor READY on exact release ${loadedRelease}`);
+          console.log(
+            `[thin-core] successor BOOTED exact release ${loadedRelease}; awaiting local SERVE proof`,
+          );
         }
-        ready = true;
+        await notifier.ready(`ready; loaded_release=${loadedRelease ?? 'development'}`);
+        bootReady = true;
       },
+      ...(healthMonitor
+        ? { onServeHealthy: (proof: DaemonServeProof) => reportServeProof?.(proof) }
+        : {}),
       onProgress: async (status) => {
         // The watchdog heartbeat is coupled to this completed progress tick.
         await notifier.progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`);
-        if (await update?.check()) {
+        // Do not stage a second successor while this one still owns a live
+        // rollback deadline. Once SERVE health settles, normal update checks
+        // resume on the next completed core tick.
+        if (!pendingSuccessor && (await update?.check())) {
           const handoff = await readUpdateHandoff(runtimeDir);
           if (!handoff) throw new Error('update drift was detected without a durable handoff');
           core.setDrainDeadlineAt(handoff.drainDeadlineAt);
@@ -626,6 +655,45 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         }
       },
     });
+    const first = healthMonitor
+      ? await Promise.race([
+          coreRun.then((result) => ({ kind: 'core' as const, result })),
+          healthMonitor.then((outcome) => ({ kind: 'health' as const, outcome })),
+        ])
+      : ({ kind: 'core' as const, result: await coreRun } as const);
+    let result: Awaited<typeof coreRun>;
+    if (first.kind === 'core') {
+      result = first.result;
+    } else if (first.outcome.kind === 'confirmed') {
+      pendingSuccessor = false;
+      pendingConfirmAt = undefined;
+      console.log(
+        `[thin-core] successor HEALTHY on exact release ${loadedRelease}; ` +
+          `SERVE proof=${JSON.stringify(first.outcome.proof)}`,
+      );
+      result = await coreRun;
+    } else if (first.outcome.kind === 'rolled-back') {
+      pendingSuccessor = false;
+      pendingConfirmAt = undefined;
+      stoppingStatus =
+        `successor unhealthy; previous release restored; ` +
+        `loaded_release=${loadedRelease ?? 'unknown'}`;
+      console.error(
+        `[thin-core] successor ${loadedRelease ?? 'unknown'} did not prove SERVE health; ` +
+          'previous release restored once',
+      );
+      controller.abort();
+      await coreRun.catch(() => undefined);
+      throw new Error('successor did not prove SERVE health; supervisor must restart');
+    } else {
+      pendingSuccessor = false;
+      pendingConfirmAt = undefined;
+      console.error(
+        `[thin-core] successor ${loadedRelease ?? 'unknown'} did not prove SERVE health, ` +
+          'but rollback is unavailable or already consumed; staying on this release to prevent ping-pong',
+      );
+      result = await coreRun;
+    }
     if (result === 'agent-removed') {
       controller.abort();
       const archivedRuntime = await removeAgentRuntime(
@@ -644,16 +712,15 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       );
     }
   } catch (error) {
-    if (
-      layout &&
-      pendingSuccessor &&
-      !ready &&
-      (await rollbackFailedSuccessor(layout, runtimeDir))
-    ) {
-      console.error('[thin-core] successor failed before READY; previous release restored once');
+    if (layout && pendingSuccessor && (await rollbackFailedSuccessor(layout, runtimeDir))) {
+      console.error(
+        `[thin-core] successor failed ${bootReady ? 'after BOOT but before SERVE proof' : 'before BOOT'}; ` +
+          'previous release restored once',
+      );
     }
     throw error;
   } finally {
+    healthMonitorController.abort();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     // Only clear the pid file while it still names THIS process — a
     // self-update handover has already written the replacement's pid there.

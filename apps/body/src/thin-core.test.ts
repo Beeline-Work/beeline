@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { git, newIdentity } from '@beeline/gate';
@@ -123,6 +123,7 @@ describe('ThinDaemonCore', () => {
 
   it('declares READY before relay health and emits degraded heartbeat only after a tick', async () => {
     const order: string[] = [];
+    const serveProofs: unknown[] = [];
     const controller = new AbortController();
     const client = {
       connect: vi.fn(async () => {
@@ -149,6 +150,9 @@ describe('ThinDaemonCore', () => {
       onEstablished: () => {
         order.push('ready');
       },
+      onServeHealthy: (proof) => {
+        serveProofs.push(proof);
+      },
       onProgress: (status) => {
         order.push(`progress:${status}`);
         controller.abort();
@@ -156,6 +160,7 @@ describe('ThinDaemonCore', () => {
     });
 
     expect(order[0]).toBe('ready');
+    expect(serveProofs).toEqual([{ kind: 'no-rooms' }]);
     expect(order).toContain('connect');
     expect(order.some((value) => value.startsWith('progress:relay membership degraded'))).toBe(
       true,
@@ -163,6 +168,58 @@ describe('ThinDaemonCore', () => {
     // Relay failure degrades STATUS; it does not suppress the loop heartbeat.
     expect(order.findIndex((value) => value.startsWith('progress:'))).toBeGreaterThan(
       order.indexOf('membership'),
+    );
+  });
+
+  it.each([
+    ['valid local state proves serve health even while the relay is down', 2, true],
+    ['unsupported local state never proves serve health', 1, false],
+  ])('%s', async (_label, stateVersion, expectsProof) => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-thin-serve-proof-'));
+    const roomRoot = resolve(root, 'room-1');
+    await mkdir(roomRoot, { recursive: true });
+    await writeFile(
+      resolve(roomRoot, 'body-state.json'),
+      JSON.stringify({ version: stateVersion, inboxes: {}, readModels: {} }),
+    );
+    const roomRuntime = runtime();
+    roomRuntime.rooms = [
+      {
+        channelId: 'room-1',
+        root: roomRoot,
+        repo: {} as AgentRuntimeRecord['rooms'][number]['repo'],
+        membershipSince: 1,
+        discoveredAt: new Date(0).toISOString(),
+      },
+    ];
+    const client = {
+      connect: vi.fn(async () => {
+        throw new Error('relay outage');
+      }),
+      isMember: vi.fn(async () => {
+        throw new Error('relay outage');
+      }),
+      disconnect: vi.fn(),
+    };
+    mocks.createBuzzClient.mockReturnValue(client);
+    const core = new ThinDaemonCore(roomRuntime, resolve(root, 'runtime.json'), {} as BodyConfig, {
+      reconcileHeartbeatMs: 10,
+    });
+    const controller = new AbortController();
+    const serveProofs: unknown[] = [];
+    try {
+      await core.run({
+        signal: controller.signal,
+        pollMs: 1,
+        onServeHealthy: (proof) => serveProofs.push(proof),
+        onProgress: () => controller.abort(),
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+
+    expect(serveProofs).toEqual(
+      expectsProof ? [{ kind: 'room-local-ready', roomId: 'room-1' }] : [],
     );
   });
 });

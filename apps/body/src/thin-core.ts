@@ -4,6 +4,9 @@ import type { BodyConfig } from './config.js';
 import { SharedRelaySocket } from './relay-socket.js';
 import { runtimeIdentity, type AgentRuntimeRecord } from './runtime.js';
 import { RoomRuntimeCoordinator, reconcileRetryMs } from './room-runtime.js';
+import type { DaemonServeProof } from './serve-health.js';
+
+export type { DaemonServeProof } from './serve-health.js';
 
 export {
   DEFAULT_DRAIN_DEADLINE_MS,
@@ -94,15 +97,18 @@ export class ThinDaemonCore {
   }
 
   /**
-   * READY is requested before any relay attempt. WATCHDOG/STATUS is requested
-   * only after both bounded reconciliation and the local Room watchdog finish.
-   * Network success never controls the heartbeat.
+   * READY is requested before any relay attempt. A separate SERVE proof is
+   * emitted after local persisted Room state loads (or the runtime explicitly
+   * has no Rooms), so update health is neither boot-only nor relay-dependent.
+   * WATCHDOG/STATUS is requested only after both bounded reconciliation and
+   * the local Room watchdog finish. Network success never controls it.
    */
   async run(
     opts: {
       pollMs?: number;
       signal?: AbortSignal;
       onEstablished?: () => void | Promise<void>;
+      onServeHealthy?: (proof: DaemonServeProof) => void | Promise<void>;
       onProgress?: (status: string) => void | Promise<void>;
     } = {},
   ): Promise<'aborted' | 'agent-removed'> {
@@ -111,8 +117,18 @@ export class ThinDaemonCore {
     let nextReconcileAt = 0;
     let unsubscribeControl: (() => void) | undefined;
     let degraded = 'starting';
+    let serveHealthReported = false;
+    const reportServeHealth = async (proof: DaemonServeProof) => {
+      if (serveHealthReported) return;
+      await opts.onServeHealthy?.(proof);
+      serveHealthReported = true;
+    };
 
     await opts.onEstablished?.();
+    if (opts.onServeHealthy) {
+      const localServeProof = await this.roomRuntime.localServeProof();
+      if (localServeProof) await reportServeHealth(localServeProof);
+    }
     try {
       const client = await this.relaySocket.connected();
       const socket = client.socket;
@@ -147,6 +163,12 @@ export class ThinDaemonCore {
           try {
             const membership = await this.roomRuntime.reconcile();
             if (membership === 'not-member') return 'agent-removed';
+            const servedRoomId = opts.onServeHealthy
+              ? this.roomRuntime.activeRoomIds()[0]
+              : undefined;
+            if (servedRoomId) {
+              await reportServeHealth({ kind: 'room-served', roomId: servedRoomId });
+            }
             degraded = membership === 'unknown' ? 'relay membership degraded' : '';
             nextReconcileAt =
               this.now() +

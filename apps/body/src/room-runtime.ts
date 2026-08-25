@@ -34,6 +34,8 @@ import {
   SessionScheduler,
 } from './session-scheduler.js';
 import { RoomQuarantineStateMachine } from './room-quarantine.js';
+import { DurableBodyState } from './durable-state.js';
+import type { DaemonServeProof } from './serve-health.js';
 
 interface RunningRoom {
   body: Body;
@@ -389,6 +391,26 @@ export class RoomRuntimeCoordinator {
 
   activeRoomCount(): number {
     return this.running.size;
+  }
+
+  /**
+   * Relay-independent startup proof for update health. A persisted Room only
+   * counts after the exact durable state loader used by its Body accepts that
+   * Room's state. This catches incompatible-state crash loops before any
+   * network operation, while a relay outage cannot suppress the proof.
+   */
+  async localServeProof(): Promise<DaemonServeProof | undefined> {
+    if (this.runtime.rooms.length === 0) return { kind: 'no-rooms' };
+    for (const room of this.runtime.rooms) {
+      const statePath = resolve(this.roomRoot(room.channelId, room), 'body-state.json');
+      try {
+        await new DurableBodyState(statePath).load();
+        return { kind: 'room-local-ready', roomId: room.channelId };
+      } catch (error) {
+        console.error(`[thin-core] Room ${room.channelId} local serve preflight failed:`, error);
+      }
+    }
+    return undefined;
   }
 
   needsFastReconcile(): boolean {

@@ -9,7 +9,6 @@ import {
   type RoomRepository,
 } from '@beeline/buzz-client';
 import { git, gitAuthed, type GitResult, type Identity } from '@beeline/gate';
-import type { NostrEvent } from '@beeline/nostr';
 import { Body, type BoundRepo, type RoomEditPolicy } from './body.js';
 import type { ScheduledTurnRequest } from './work-calendar.js';
 import type { BodyConfig } from './config.js';
@@ -407,7 +406,6 @@ export class RoomRuntimeCoordinator {
   async dispatchScheduledTurn(
     request: ScheduledTurnRequest,
     beforeModelActivation: () => Promise<void>,
-    publishOutput: (event: NostrEvent) => Promise<void>,
   ): Promise<void> {
     const room = this.running.get(request.roomId);
     if (!room) throw new Error('scheduled Room is not active');
@@ -416,7 +414,6 @@ export class RoomRuntimeCoordinator {
       room.boundRepo,
       room.editPolicy,
       beforeModelActivation,
-      publishOutput,
     );
   }
 

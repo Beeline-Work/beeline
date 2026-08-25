@@ -226,7 +226,7 @@ describe('scheduled Room turn boundary', () => {
     }
   });
 
-  it('turns a scheduled send/publish/spend-shaped tool attempt into a P1 request and no invocation', async () => {
+  it('treats the human-authorized schedule as full action authority without a P1 request', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-permission-'));
     const principal = newIdentity('scheduled-principal');
     const agent = newIdentity('scheduled-action-agent');
@@ -303,139 +303,22 @@ describe('scheduled Room turn boundary', () => {
         },
         'direct-message',
       );
-      expect(decision).toBe('reject');
+      expect(decision).toBe('allow');
       expect(adapterInvocation).not.toHaveBeenCalled();
       const requests = published.flatMap((event) => {
         const parsed = parsePermissionRequest(event);
         return parsed ? [parsed] : [];
       });
-      expect(requests).toHaveLength(1);
-      expect(requests[0]!.value).toMatchObject({
-        requesterAgentPubkey: agent.publicKey,
-        audience: 'owner',
-        scope: { type: 'operation.execute', risk: 'irreversible' },
-        provenance: { immediateTurnEventId: requestId, scheduleRunId: runId },
-      });
+      expect(requests).toHaveLength(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it.each([
-    {
-      name: 'provider failure',
-      prompt: async () => {
-        throw new Error('provider unavailable');
-      },
-      publishFails: false,
-      expected: 'provider unavailable',
-    },
-    {
-      name: 'empty output',
-      prompt: async () => ({
-        stopReason: 'end_turn',
-        updates: [],
-        agentText: '',
-        toolCalls: [],
-      }),
-      publishFails: false,
-      expected: 'scheduled model returned no output',
-    },
-    {
-      name: 'output publication failure',
-      prompt: async () => ({
-        stopReason: 'end_turn',
-        updates: [],
-        agentText: 'Scheduled result',
-        toolCalls: [],
-      }),
-      publishFails: true,
-      expected: 'relay unavailable',
-    },
-  ])('propagates scheduled $name to WorkCalendar', async ({ prompt, publishFails, expected }) => {
-    const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-failure-'));
-    const agent = newIdentity(`scheduled-failure-agent-${expected}`);
-    const principal = newIdentity(`scheduled-failure-principal-${expected}`);
-    const body = new Body(config(root), undefined, agent);
-    vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
-    vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
-    body.registerSession({
-      channelId: 'scheduled-room',
-      sessionId: 'scheduled-session',
-      logicalSessionId: 'scheduled-logical',
-      client: { sessionPrompt: vi.fn(prompt), sessionCancel: vi.fn() },
-      mode: 'readonly',
-    } as never);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
-    );
-    const nominalAt = 1_900_000_000;
-    const runId = deterministicScheduleRunId('failure-job', 1, nominalAt);
-    const queuedEvent = buildScheduledTurnReceipt(agent, {
-      version: 1,
-      workspaceId: 'scheduled-workspace',
-      roomId: 'scheduled-room',
-      agentPubkey: agent.publicKey,
-      principalPubkey: principal.publicKey,
-      scheduleId: 'failure-job',
-      revision: 1,
-      runId,
-      nominalAt,
-      status: 'queued',
-      at: nominalAt,
-      reservedTokens: 100,
-    });
-    try {
-      await expect(
-        body.dispatchScheduledTurn(
-          {
-            trigger: 'schedule',
-            priority: 'background',
-            workspaceId: 'scheduled-workspace',
-            roomId: 'scheduled-room',
-            agentPubkey: agent.publicKey,
-            principalPubkey: principal.publicKey,
-            scheduleId: 'failure-job',
-            scheduleRevision: 1,
-            scheduleRunId: runId,
-            nominalAt,
-            prompt: 'Run scheduled work.',
-            artifactRefs: [],
-            reservedTokens: 100,
-            queuedEvent,
-          },
-          undefined,
-          'direct-message',
-          async () => undefined,
-          async () => {
-            if (publishFails) throw new Error('relay unavailable');
-          },
-        ),
-      ).rejects.toThrow(expected);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('keeps delegation and text-corner directives inert inside scheduled model output', async () => {
+  it('publishes scheduled attachments from pi while keeping amplification directives inert', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-directives-'));
     const agent = newIdentity('scheduled-directive-agent');
     const principal = newIdentity('scheduled-directive-principal');
-    const projection = (kind: number, tags: string[][]) =>
-      signEvent(
-        { pubkey: principal.publicKey, created_at: 1_900_000_000, kind, tags, content: '' },
-        principal.secretKey,
-      );
-    const members = projection(KIND_CHANNEL_MEMBERS, [
-      ['d', 'scheduled-room'],
-      ['p', principal.publicKey],
-      ['p', agent.publicKey],
-    ]);
-    const admins = projection(KIND_CHANNEL_ADMINS, [
-      ['d', 'scheduled-room'],
-      ['p', principal.publicKey, '', 'owner'],
-    ]);
     const body = new Body({ ...config(root), agentCommand: 'pi-acp' }, undefined, agent);
     vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
     vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
@@ -473,18 +356,7 @@ describe('scheduled Room turn boundary', () => {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        if (String(input).endsWith('/query')) {
-          const filters = JSON.parse(String(init?.body)) as Array<{ kinds?: number[] }>;
-          const kinds = new Set(filters.flatMap((filter) => filter.kinds ?? []));
-          return new Response(
-            JSON.stringify([
-              ...(kinds.has(KIND_CHANNEL_MEMBERS) ? [members] : []),
-              ...(kinds.has(KIND_CHANNEL_ADMINS) ? [admins] : []),
-            ]),
-            { status: 200 },
-          );
-        }
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
@@ -522,40 +394,23 @@ describe('scheduled Room turn boundary', () => {
       queuedEvent,
     };
     const beforeModelActivation = vi.fn(async () => undefined);
-    const publishScheduledOutput = vi.fn(async (event: NostrEvent) => published.push(event));
     try {
       await body.dispatchScheduledTurn(
         request,
         { repo: 'repo' },
         'repository',
         beforeModelActivation,
-        publishScheduledOutput,
       );
       expect(beforeModelActivation).toHaveBeenCalledOnce();
       expect(sessionPrompt).toHaveBeenCalledOnce();
       expect(corner).not.toHaveBeenCalled();
       expect(factory).not.toHaveBeenCalled();
-      expect(upload).not.toHaveBeenCalled();
-      expect(publishScheduledOutput).toHaveBeenCalledOnce();
-      expect(JSON.stringify(published)).not.toContain('https://relay.test/media/report');
-      const requests = published.flatMap((event) => {
-        const parsed = parsePermissionRequest(event);
-        return parsed ? [parsed] : [];
-      });
-      expect(requests).toHaveLength(1);
-      expect(requests[0]!.value).toMatchObject({
-        requesterAgentPubkey: agent.publicKey,
-        audience: 'owner',
-        scope: {
-          type: 'operation.execute',
-          tool: 'publish-scheduled-attachments',
-          risk: 'irreversible',
-        },
-        provenance: { immediateTurnEventId: queuedEvent.id, scheduleRunId: runId },
-      });
+      expect(upload).toHaveBeenCalledOnce();
       expect(
-        published.some((event) =>
-          event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+        published.some(
+          (event) =>
+            event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'agent-message') &&
+            JSON.stringify(event).includes('https://relay.test/media/report'),
         ),
       ).toBe(true);
     } finally {

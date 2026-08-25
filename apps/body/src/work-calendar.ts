@@ -21,7 +21,6 @@ export const WORK_SCHEDULE_VERSION = 1 as const;
 export const DEFAULT_CALENDAR_RESYNC_SECONDS = 60;
 export const DEFAULT_CALENDAR_RETRY_SECONDS = 5;
 export const MAX_CALENDAR_DUE_PER_WAKE = 16;
-export const MAX_CALENDAR_IN_FLIGHT_RUNS = 160;
 
 const HEX_64 = /^[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
@@ -53,7 +52,7 @@ export interface WorkScheduleV1 {
   dailyReservedTokens: number;
   catchUp: 'skip' | 'latest-one';
   maxConsecutiveFailures: number;
-  status: 'active' | 'paused' | 'deleted';
+  status: 'active' | 'paused';
   permissionGrantEventId?: string;
 }
 
@@ -97,29 +96,13 @@ export interface WorkScheduleProjectionV1 {
   revision: number;
   status: 'active' | 'paused';
   nextAt?: number;
-  consecutiveFailures: number;
-  updatedAt: number;
-  checkpointVersion?: 1;
-  runCount?: number;
-  budgetDay?: string;
-  dailyReservedTokens?: number;
-  latestNominalAt?: number;
-  latestRunId?: string;
-  latestRunStatus?: ScheduledTurnStatus;
-  receiptCursorAt?: number;
-  receiptCursorId?: string;
-  watermarkNominalAt?: number;
-  watermarkRunId?: string;
-  watermarkRunStatus?: 'complete' | 'failed' | 'skipped';
-  pauseReason?: string;
-}
-
-export interface WorkScheduleCheckpointV1 extends WorkScheduleProjectionV1 {
-  checkpointVersion: 1;
+  lastExecutionAt?: number;
   runCount: number;
-  budgetDay: string;
+  budgetDay?: string;
   dailyReservedTokens: number;
-  receiptCursorAt: number;
+  consecutiveFailures: number;
+  pauseReason?: string;
+  updatedAt: number;
 }
 
 export interface ScheduledTurnRequest {
@@ -164,95 +147,37 @@ export class ScheduleActivationRefusedError extends Error {
   }
 }
 
-class WorkingReceiptPendingError extends Error {}
-
-export interface CalendarRunReservation {
-  runId: string;
+export interface WorkScheduleRuntimeState {
   scheduleId: string;
-  revision: number;
-  workspaceId: string;
-  roomId: string;
-  agentPubkey: string;
   principalPubkey: string;
-  nominalAt: number;
-  reservedTokens: number;
-  reservedAt: number;
-}
-
-export interface CalendarStoredReceipt {
-  event: NostrEvent;
-  published: boolean;
-}
-
-export interface CalendarRunRecord extends CalendarRunReservation {
-  state: 'reserved' | ScheduledTurnStatus;
-  receipts: Partial<Record<ScheduledTurnStatus, CalendarStoredReceipt>>;
+  revision: number;
+  lastExecutionAt?: number;
+  runCount: number;
+  budgetDay?: string;
+  dailyReservedTokens: number;
+  consecutiveFailures: number;
+  status: 'active' | 'paused';
+  pauseReason?: string;
 }
 
 export interface WorkCalendarStore {
   load(): Promise<void>;
-  runs(): Promise<CalendarRunRecord[]>;
-  reserveRun(
-    reservation: CalendarRunReservation,
-  ): Promise<
-    { state: 'reserved' | 'existing'; record: CalendarRunRecord } | { state: 'backpressure' }
-  >;
-  stageReceipt(
-    runId: string,
-    status: ScheduledTurnStatus,
-    event: NostrEvent,
-  ): Promise<CalendarStoredReceipt>;
-  markReceiptPublished(runId: string, status: ScheduledTurnStatus, eventId: string): Promise<void>;
-  pendingReceipts(): Promise<
-    Array<{ runId: string; status: ScheduledTurnStatus; event: NostrEvent }>
-  >;
-  stageOutput(
-    key: string,
-    event: NostrEvent,
-    runId?: string,
-    replace?: boolean,
-  ): Promise<NostrEvent>;
-  pendingOutputs(): Promise<Array<{ key: string; event: NostrEvent }>>;
-  markOutputPublished(key: string, eventId: string): Promise<void>;
-  stageCompletion(
-    runId: string,
-    status: 'complete' | 'failed' | 'skipped',
-    receipt: NostrEvent,
-    outputs: readonly { key: string; event: NostrEvent }[],
-    checkpoint: WorkScheduleCheckpointV1,
-  ): Promise<void>;
-  checkpoints(): Promise<WorkScheduleCheckpointV1[]>;
-  stageCheckpoint(
-    checkpoint: WorkScheduleCheckpointV1,
-    outputs: readonly { key: string; event: NostrEvent }[],
-  ): Promise<void>;
-  principalForSchedule(scheduleId: string): Promise<string | undefined>;
-  pinSchedulePrincipal(scheduleId: string, principalPubkey: string): Promise<void>;
+  states(): Promise<WorkScheduleRuntimeState[]>;
+  put(state: WorkScheduleRuntimeState): Promise<void>;
 }
 
 interface DurableCalendarData {
-  version: 1;
-  runs: Record<string, CalendarRunRecord>;
-  outputs: Record<string, NostrEvent>;
-  principals: Record<string, string>;
-  checkpoints: Record<string, WorkScheduleCheckpointV1>;
-  outputRuns: Record<string, string>;
+  version: 2;
+  schedules: Record<string, WorkScheduleRuntimeState>;
 }
 
-function cloneRun(record: CalendarRunRecord): CalendarRunRecord {
-  return structuredClone(record);
+function cloneState(state: WorkScheduleRuntimeState): WorkScheduleRuntimeState {
+  return structuredClone(state);
 }
 
-/** Atomic local journal. A staged terminal receipt is authoritative even if relay publication fails. */
+/** Atomic local state for best-effort execution progress and failure pausing. */
 export class DurableWorkCalendarState implements WorkCalendarStore {
-  private data: DurableCalendarData = {
-    version: 1,
-    runs: {},
-    outputs: {},
-    principals: {},
-    checkpoints: {},
-    outputRuns: {},
-  };
+  private data: DurableCalendarData = { version: 2, schedules: {} };
   private loaded = false;
   private saveTail: Promise<void> = Promise.resolve();
 
@@ -261,262 +186,48 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
   async load(): Promise<void> {
     if (this.loaded) return;
     try {
-      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as DurableCalendarData;
-      if (
-        parsed.version !== 1 ||
-        !parsed.runs ||
-        typeof parsed.runs !== 'object' ||
-        (parsed.outputs !== undefined &&
-          (!parsed.outputs ||
-            typeof parsed.outputs !== 'object' ||
-            Array.isArray(parsed.outputs))) ||
-        (parsed.principals !== undefined &&
-          (!parsed.principals ||
-            typeof parsed.principals !== 'object' ||
-            Array.isArray(parsed.principals)))
-      ) {
+      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as {
+        version?: unknown;
+        schedules?: unknown;
+      };
+      // P2 was not shipped before the execution model was simplified. Drop
+      // its development-only reservation/outbox journal as a lost store; the
+      // best-effort contract intentionally reconstructs from schedule config.
+      if (parsed.version === 1) {
+        this.data = { version: 2, schedules: {} };
+        this.loaded = true;
+        await this.save();
+        return;
+      }
+      const rawSchedules = object(parsed.schedules);
+      if (parsed.version !== 2 || !rawSchedules) {
         throw new Error(`unsupported durable work calendar state at ${this.path}`);
       }
-      this.data = {
-        ...parsed,
-        outputs: parsed.outputs ?? {},
-        principals: parsed.principals ?? {},
-        checkpoints: parsed.checkpoints ?? {},
-        outputRuns: parsed.outputRuns ?? {},
-      };
+      const schedules: Record<string, WorkScheduleRuntimeState> = {};
+      for (const [key, value] of Object.entries(rawSchedules)) {
+        const state = parseRuntimeState(value);
+        if (!state || key !== state.scheduleId) {
+          throw new Error(`invalid durable work calendar state at ${this.path}`);
+        }
+        schedules[key] = state;
+      }
+      this.data = { version: 2, schedules };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     this.loaded = true;
   }
 
-  async runs(): Promise<CalendarRunRecord[]> {
+  async states(): Promise<WorkScheduleRuntimeState[]> {
     await this.load();
-    return Object.values(this.data.runs).map(cloneRun);
+    return Object.values(this.data.schedules).map(cloneState);
   }
 
-  async reserveRun(
-    reservation: CalendarRunReservation,
-  ): Promise<
-    { state: 'reserved' | 'existing'; record: CalendarRunRecord } | { state: 'backpressure' }
-  > {
+  async put(state: WorkScheduleRuntimeState): Promise<void> {
     await this.load();
-    const existing = this.data.runs[reservation.runId];
-    if (existing) return { state: 'existing', record: cloneRun(existing) };
-    const checkpoint = this.data.checkpoints[`${reservation.scheduleId}:${reservation.revision}`];
-    const watermark = checkpoint?.watermarkNominalAt ?? -1;
-    const retained = Object.values(this.data.runs).filter(
-      (run) =>
-        run.scheduleId === reservation.scheduleId &&
-        run.revision === reservation.revision &&
-        (run.nominalAt > watermark ||
-          Object.values(run.receipts).some((receipt) => receipt && !receipt.published) ||
-          Object.values(this.data.outputRuns).includes(run.runId)),
-    );
-    if (retained.length >= MAX_CALENDAR_IN_FLIGHT_RUNS) return { state: 'backpressure' };
-    const record: CalendarRunRecord = { ...reservation, state: 'reserved', receipts: {} };
-    this.data.runs[reservation.runId] = record;
-    await this.save();
-    return { state: 'reserved', record: cloneRun(record) };
-  }
-
-  async stageReceipt(
-    runId: string,
-    status: ScheduledTurnStatus,
-    event: NostrEvent,
-  ): Promise<CalendarStoredReceipt> {
-    await this.load();
-    const record = this.data.runs[runId];
-    if (!record) throw new Error(`calendar run ${runId} was not reserved`);
-    const existing = record.receipts[status];
-    if (existing) return structuredClone(existing);
-    const receipt = { event, published: false };
-    record.receipts[status] = receipt;
-    if (status !== 'working') record.state = status;
-    await this.save();
-    return structuredClone(receipt);
-  }
-
-  async markReceiptPublished(
-    runId: string,
-    status: ScheduledTurnStatus,
-    eventId: string,
-  ): Promise<void> {
-    await this.load();
-    const record = this.data.runs[runId];
-    const receipt = record?.receipts[status];
-    if (!receipt || receipt.event.id !== eventId || receipt.published) return;
-    receipt.published = true;
-    if (status === 'working' && !isTerminal(record.state)) record.state = 'working';
-    if (isTerminal(status)) this.advanceWatermark(record.scheduleId, record.revision);
-    this.compactRuns(record.scheduleId, record.revision);
-    await this.save();
-  }
-
-  async pendingReceipts(): Promise<
-    Array<{ runId: string; status: ScheduledTurnStatus; event: NostrEvent }>
-  > {
-    await this.load();
-    const pending: Array<{ runId: string; status: ScheduledTurnStatus; event: NostrEvent }> = [];
-    for (const record of Object.values(this.data.runs)) {
-      for (const status of ['queued', 'working', 'complete', 'failed', 'skipped'] as const) {
-        if (status === 'working') continue;
-        const receipt = record.receipts[status];
-        if (receipt && !receipt.published)
-          pending.push({ runId: record.runId, status, event: receipt.event });
-      }
-    }
-    return pending.sort(
-      (left, right) =>
-        left.event.created_at - right.event.created_at ||
-        left.event.id.localeCompare(right.event.id),
-    );
-  }
-
-  async stageOutput(
-    key: string,
-    event: NostrEvent,
-    runId?: string,
-    replace = false,
-  ): Promise<NostrEvent> {
-    await this.load();
-    const existing = this.data.outputs[key];
-    if (existing && !replace) return structuredClone(existing);
-    this.data.outputs[key] = event;
-    if (runId) this.data.outputRuns[key] = runId;
-    await this.save();
-    return structuredClone(event);
-  }
-
-  async pendingOutputs(): Promise<Array<{ key: string; event: NostrEvent }>> {
-    await this.load();
-    return Object.entries(this.data.outputs)
-      .map(([key, event]) => ({ key, event: structuredClone(event) }))
-      .sort(
-        (left, right) =>
-          left.event.created_at - right.event.created_at ||
-          left.event.id.localeCompare(right.event.id),
-      );
-  }
-
-  async markOutputPublished(key: string, eventId: string): Promise<void> {
-    await this.load();
-    if (this.data.outputs[key]?.id !== eventId) return;
-    const runId = this.data.outputRuns[key];
-    delete this.data.outputs[key];
-    delete this.data.outputRuns[key];
-    if (runId) {
-      const run = this.data.runs[runId];
-      if (run) this.compactRuns(run.scheduleId, run.revision);
-    }
-    await this.save();
-  }
-
-  async stageCompletion(
-    runId: string,
-    status: 'complete' | 'failed' | 'skipped',
-    event: NostrEvent,
-    outputs: readonly { key: string; event: NostrEvent }[],
-    checkpoint: WorkScheduleCheckpointV1,
-  ): Promise<void> {
-    await this.load();
-    const record = this.data.runs[runId];
-    if (!record) throw new Error(`calendar run ${runId} was not reserved`);
-    if (!record.receipts[status]) record.receipts[status] = { event, published: false };
-    record.state = status;
-    for (const output of outputs) {
-      if (!this.data.outputs[output.key]) this.data.outputs[output.key] = output.event;
-      this.data.outputRuns[output.key] = runId;
-    }
-    this.storeCheckpoint(checkpoint);
-    this.compactRuns(checkpoint.scheduleId, checkpoint.revision);
-    await this.save();
-  }
-
-  async checkpoints(): Promise<WorkScheduleCheckpointV1[]> {
-    await this.load();
-    return Object.values(this.data.checkpoints).map((checkpoint) => structuredClone(checkpoint));
-  }
-
-  async stageCheckpoint(
-    checkpoint: WorkScheduleCheckpointV1,
-    outputs: readonly { key: string; event: NostrEvent }[],
-  ): Promise<void> {
-    await this.load();
-    this.storeCheckpoint(checkpoint);
-    for (const output of outputs) {
-      if (!this.data.outputs[output.key]) this.data.outputs[output.key] = output.event;
-    }
-    await this.save();
-  }
-
-  private storeCheckpoint(checkpoint: WorkScheduleCheckpointV1): void {
-    const key = `${checkpoint.scheduleId}:${checkpoint.revision}`;
-    const existing = this.data.checkpoints[key];
-    if (
-      existing &&
-      (checkpoint.runCount < existing.runCount ||
-        checkpoint.receiptCursorAt < existing.receiptCursorAt ||
-        (checkpoint.watermarkNominalAt ?? -1) < (existing.watermarkNominalAt ?? -1) ||
-        (checkpoint.latestNominalAt ?? -1) < (existing.latestNominalAt ?? -1) ||
-        checkpoint.updatedAt < existing.updatedAt)
-    )
-      throw new Error(`regressing work calendar checkpoint for ${key}`);
-    this.data.checkpoints[key] = structuredClone(checkpoint);
-  }
-
-  private compactRuns(scheduleId: string, revision: number): void {
-    const watermark = this.data.checkpoints[`${scheduleId}:${revision}`]?.watermarkNominalAt ?? -1;
-    for (const run of Object.values(this.data.runs)) {
-      if (
-        run.scheduleId === scheduleId &&
-        run.revision === revision &&
-        run.nominalAt <= watermark &&
-        isTerminal(run.state) &&
-        Object.values(run.receipts).every((receipt) => !receipt || receipt.published) &&
-        !Object.values(this.data.outputRuns).includes(run.runId)
-      ) {
-        delete this.data.runs[run.runId];
-      }
-    }
-  }
-
-  private advanceWatermark(scheduleId: string, revision: number): void {
-    const checkpoint = this.data.checkpoints[`${scheduleId}:${revision}`];
-    if (!checkpoint) return;
-    const after = checkpoint.watermarkNominalAt ?? -1;
-    const candidates = Object.values(this.data.runs)
-      .filter(
-        (run) =>
-          run.scheduleId === scheduleId && run.revision === revision && run.nominalAt > after,
-      )
-      .sort((left, right) => left.nominalAt - right.nominalAt);
-    for (const run of candidates) {
-      if (!isTerminal(run.state)) break;
-      const status = run.state as 'complete' | 'failed' | 'skipped';
-      const terminal = run.receipts[status];
-      if (!terminal?.published) break;
-      checkpoint.watermarkNominalAt = run.nominalAt;
-      checkpoint.watermarkRunId = run.runId;
-      checkpoint.watermarkRunStatus = status;
-      checkpoint.receiptCursorAt = terminal.event.created_at;
-      checkpoint.receiptCursorId = terminal.event.id;
-      checkpoint.updatedAt = Math.max(checkpoint.updatedAt, terminal.event.created_at);
-    }
-  }
-
-  async principalForSchedule(scheduleId: string): Promise<string | undefined> {
-    await this.load();
-    return this.data.principals[scheduleId];
-  }
-
-  async pinSchedulePrincipal(scheduleId: string, principalPubkey: string): Promise<void> {
-    await this.load();
-    const existing = this.data.principals[scheduleId];
-    if (existing && existing !== principalPubkey)
-      throw new Error(`schedule ${scheduleId} is pinned to another principal`);
-    if (existing) return;
-    this.data.principals[scheduleId] = principalPubkey;
+    const parsed = parseRuntimeState(state);
+    if (!parsed) throw new Error('invalid work calendar runtime state');
+    this.data.schedules[parsed.scheduleId] = cloneState(parsed);
     await this.save();
   }
 
@@ -547,6 +258,55 @@ function nonEmpty(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
   return text && text.length <= max ? text : undefined;
+}
+
+function parseRuntimeState(value: unknown): WorkScheduleRuntimeState | undefined {
+  const input = object(value);
+  if (!input) return undefined;
+  const scheduleId = nonEmpty(input?.scheduleId, 256);
+  const principalPubkey =
+    typeof input?.principalPubkey === 'string' && HEX_64.test(input.principalPubkey)
+      ? input.principalPubkey
+      : undefined;
+  const revision = integer(input?.revision, 1);
+  const lastExecutionAt =
+    input?.lastExecutionAt === undefined ? undefined : integer(input.lastExecutionAt);
+  const runCount = integer(input?.runCount, 0, MAX_RUNS);
+  const dailyReservedTokens = integer(input?.dailyReservedTokens, 0, MAX_RESERVED_TOKENS);
+  const consecutiveFailures = integer(input?.consecutiveFailures, 0, MAX_RUNS);
+  const budgetDay =
+    input?.budgetDay === undefined || /^\d{4}-\d{2}-\d{2}$/.test(String(input.budgetDay))
+      ? (input?.budgetDay as string | undefined)
+      : undefined;
+  const pauseReason =
+    input?.pauseReason === undefined ? undefined : nonEmpty(input.pauseReason, 600);
+  if (
+    !scheduleId ||
+    !SAFE_ID.test(scheduleId) ||
+    !principalPubkey ||
+    revision === undefined ||
+    (input.lastExecutionAt !== undefined && lastExecutionAt === undefined) ||
+    runCount === undefined ||
+    dailyReservedTokens === undefined ||
+    consecutiveFailures === undefined ||
+    (input.budgetDay !== undefined && budgetDay === undefined) ||
+    !['active', 'paused'].includes(String(input.status)) ||
+    (input.pauseReason !== undefined && !pauseReason)
+  ) {
+    return undefined;
+  }
+  return {
+    scheduleId,
+    principalPubkey,
+    revision,
+    ...(lastExecutionAt !== undefined ? { lastExecutionAt } : {}),
+    runCount,
+    ...(budgetDay ? { budgetDay } : {}),
+    dailyReservedTokens,
+    consecutiveFailures,
+    status: input.status as WorkScheduleRuntimeState['status'],
+    ...(pauseReason ? { pauseReason } : {}),
+  };
 }
 
 function stable(value: unknown): string {
@@ -656,7 +416,7 @@ export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefin
     perRunReservedTokens > dailyReservedTokens ||
     maxConsecutiveFailures === undefined ||
     !['skip', 'latest-one'].includes(String(input.catchUp)) ||
-    !['active', 'paused', 'deleted'].includes(String(input.status))
+    !['active', 'paused'].includes(String(input.status))
   )
     return undefined;
   let artifactRefs: ArtifactRevisionRef[] | undefined;
@@ -1141,15 +901,10 @@ export function buildWorkScheduleProjection(
         ['revision', String(input.revision)],
         ['status', input.status],
         ['next-at', String(input.nextAt ?? 0)],
+        ['last-execution', String(input.lastExecutionAt ?? 0)],
+        ['runs', String(input.runCount)],
+        ['daily-reserved', String(input.dailyReservedTokens)],
         ['failures', String(input.consecutiveFailures)],
-        ...(input.checkpointVersion === 1
-          ? [
-              ['checkpoint', '1'],
-              ['run-count', String(input.runCount)],
-              ['cursor-at', String(input.receiptCursorAt)],
-              ['watermark', String(input.watermarkNominalAt ?? 0)],
-            ]
-          : []),
       ],
       content: JSON.stringify(input),
     },
@@ -1157,118 +912,25 @@ export function buildWorkScheduleProjection(
   );
 }
 
-export function parseWorkScheduleCheckpoint(
-  event: NostrEvent,
-): WorkScheduleCheckpointV1 | undefined {
-  if (event.kind !== WORK_SCHEDULE_KIND || event.content.length > 16_000 || !verifyEvent(event))
-    return undefined;
-  try {
-    const input = JSON.parse(event.content) as WorkScheduleCheckpointV1;
-    if (
-      input.version !== 1 ||
-      input.type !== 'runtime' ||
-      input.checkpointVersion !== 1 ||
-      input.agentPubkey !== event.pubkey ||
-      !SAFE_ID.test(input.workspaceId) ||
-      !SAFE_ID.test(input.roomId) ||
-      !SAFE_ID.test(input.scheduleId) ||
-      !HEX_64.test(input.agentPubkey) ||
-      !HEX_64.test(input.principalPubkey) ||
-      !Number.isSafeInteger(input.revision) ||
-      input.revision < 1 ||
-      !['active', 'paused'].includes(input.status) ||
-      !Number.isSafeInteger(input.consecutiveFailures) ||
-      input.consecutiveFailures < 0 ||
-      !Number.isSafeInteger(input.updatedAt) ||
-      event.created_at !== input.updatedAt ||
-      !Number.isSafeInteger(input.runCount) ||
-      input.runCount < 0 ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(input.budgetDay) ||
-      !Number.isSafeInteger(input.dailyReservedTokens) ||
-      input.dailyReservedTokens < 0 ||
-      !Number.isSafeInteger(input.receiptCursorAt) ||
-      uniqueTag(event, 'd') !== `${workScheduleKey(input)}:runtime` ||
-      uniqueTag(event, 't') !== WORK_SCHEDULE_RUNTIME_TAG ||
-      uniqueTag(event, 'projection') !== 'runtime' ||
-      uniqueTag(event, 'h') !== input.roomId ||
-      uniqueTag(event, 'agent') !== input.agentPubkey ||
-      uniqueTag(event, 'principal') !== input.principalPubkey ||
-      uniqueTag(event, 'revision') !== String(input.revision) ||
-      uniqueTag(event, 'status') !== input.status ||
-      uniqueTag(event, 'checkpoint') !== '1' ||
-      uniqueTag(event, 'run-count') !== String(input.runCount) ||
-      uniqueTag(event, 'cursor-at') !== String(input.receiptCursorAt) ||
-      uniqueTag(event, 'watermark') !== String(input.watermarkNominalAt ?? 0)
-    )
-      return undefined;
-    if (
-      (input.latestRunId !== undefined && !HEX_64.test(input.latestRunId.replace(/^wsr_/, ''))) ||
-      (input.receiptCursorId !== undefined && !HEX_64.test(input.receiptCursorId)) ||
-      (input.watermarkNominalAt !== undefined && !Number.isSafeInteger(input.watermarkNominalAt)) ||
-      (input.watermarkRunId !== undefined &&
-        !HEX_64.test(input.watermarkRunId.replace(/^wsr_/, ''))) ||
-      (input.watermarkRunStatus !== undefined &&
-        !['complete', 'failed', 'skipped'].includes(input.watermarkRunStatus)) ||
-      (input.watermarkNominalAt === undefined) !== (input.watermarkRunId === undefined) ||
-      (input.watermarkNominalAt === undefined) !== (input.watermarkRunStatus === undefined) ||
-      (input.watermarkNominalAt !== undefined &&
-        input.watermarkRunId !==
-          deterministicScheduleRunId(input.scheduleId, input.revision, input.watermarkNominalAt)) ||
-      (input.latestRunStatus !== undefined &&
-        !['queued', 'working', 'complete', 'failed', 'skipped'].includes(input.latestRunStatus)) ||
-      (input.latestNominalAt !== undefined && !Number.isSafeInteger(input.latestNominalAt)) ||
-      (input.latestNominalAt === undefined) !== (input.latestRunId === undefined) ||
-      (input.latestNominalAt === undefined) !== (input.latestRunStatus === undefined) ||
-      (input.latestNominalAt !== undefined &&
-        input.latestRunId !==
-          deterministicScheduleRunId(input.scheduleId, input.revision, input.latestNominalAt))
-    )
-      return undefined;
-    return input;
-  } catch {
-    return undefined;
-  }
-}
-
 export function buildWorkSchedulePauseCard(
   identity: Identity,
   schedule: WorkScheduleV1,
   at: number,
+  reason = 'max-consecutive-failures',
 ): NostrEvent {
+  const detail = reason.replaceAll('-', ' ');
   const content = {
     version: 1,
     scheduleId: schedule.scheduleId,
     revision: schedule.revision,
     status: 'paused',
+    reason,
     at,
-    message: `Scheduled work paused after ${schedule.maxConsecutiveFailures} consecutive failures. A Room admin must publish an active revision to resume it.`,
+    message:
+      reason === 'max-consecutive-failures'
+        ? `Scheduled work paused after ${schedule.maxConsecutiveFailures} consecutive failures. A Room admin must publish a newer active revision to resume it.`
+        : `Scheduled work paused because ${detail}. A current Room admin must restore authority and publish a newer active revision to resume it.`,
   };
-  return signEvent(
-    {
-      pubkey: identity.publicKey,
-      created_at: at,
-      kind: 9,
-      tags: [
-        ['h', schedule.roomId],
-        ['t', WORK_SCHEDULE_PAUSED_TAG],
-        ['agent', schedule.agentPubkey],
-        ['principal', schedule.principalPubkey],
-        ['schedule', schedule.scheduleId],
-        ['revision', String(schedule.revision)],
-        ['status', 'paused'],
-      ],
-      content: JSON.stringify(content),
-    },
-    identity.secretKey,
-  );
-}
-
-export function buildWorkScheduleAuthorityPauseCard(
-  identity: Identity,
-  schedule: WorkScheduleV1,
-  reason: string,
-  at: number,
-): NostrEvent {
   return signEvent(
     {
       pubkey: identity.publicKey,
@@ -1284,16 +946,7 @@ export function buildWorkScheduleAuthorityPauseCard(
         ['status', 'paused'],
         ['reason', reason],
       ],
-      content: JSON.stringify({
-        version: 1,
-        scheduleId: schedule.scheduleId,
-        revision: schedule.revision,
-        status: 'paused',
-        reason,
-        at,
-        message:
-          'Scheduled work paused because its authorizing principal lost required authority. A current owner/admin must publish a newer active revision to resume it.',
-      }),
+      content: JSON.stringify(content),
     },
     identity.secretKey,
   );
@@ -1304,8 +957,7 @@ interface HeapEntry {
   parsed: ParsedWorkSchedule;
   nominalAt: number;
   wakeAt: number;
-  action: 'run' | 'skip' | 'resume' | 'resume-relay-queued' | 'recover-unknown';
-  relayQueuedEvent?: NostrEvent;
+  action: 'run' | 'skip';
 }
 
 class ScheduleHeap {
@@ -1364,30 +1016,17 @@ export interface WorkCalendarDependencies {
   workspaceId: string;
   store: WorkCalendarStore;
   readSchedules(): Promise<readonly NostrEvent[]>;
-  readReceipts(
-    scheduleEvents: readonly NostrEvent[],
-    localCheckpoints: readonly WorkScheduleCheckpointV1[],
-  ): Promise<readonly NostrEvent[]>;
   authorize(schedule: ParsedWorkSchedule): Promise<ScheduleAuthorityResult>;
-  validateArtifacts?(artifacts: readonly ArtifactRevisionRef[]): Promise<ScheduleAuthorityResult>;
+  validateArtifacts?(schedule: ParsedWorkSchedule): Promise<ScheduleAuthorityResult>;
   validateScheduleCreation?(creation: readonly ParsedWorkSchedule[]): Promise<boolean>;
   publish(event: NostrEvent): Promise<void>;
   dispatch(
     request: ScheduledTurnRequest,
     beforeModelActivation: () => Promise<void>,
-    publishOutput: (event: NostrEvent) => Promise<void>,
   ): Promise<void>;
   now?: () => number;
   resyncSeconds?: number;
   retrySeconds?: number;
-}
-
-function currentStatus(record: CalendarRunRecord): ScheduledTurnStatus | 'reserved' {
-  return record.state;
-}
-
-function isTerminal(status: CalendarRunRecord['state'] | ScheduledTurnStatus): boolean {
-  return status === 'complete' || status === 'failed' || status === 'skipped';
 }
 
 function dayUtc(at: number): string {
@@ -1398,17 +1037,13 @@ function dayUtc(at: number): string {
 export class WorkCalendar {
   private readonly heap = new ScheduleHeap();
   private readonly schedules = new Map<string, ParsedWorkSchedule>();
-  private localRuns: CalendarRunRecord[] = [];
-  private relayReceipts: ParsedScheduledTurnReceipt[] = [];
-  private relayEvents: readonly NostrEvent[] = [];
-  private checkpointsByRevision = new Map<string, WorkScheduleCheckpointV1>();
+  private readonly states = new Map<string, WorkScheduleRuntimeState>();
   private readonly retryAt = new Map<string, number>();
   private timer?: ReturnType<typeof setTimeout>;
   private nextResyncAt = 0;
   private started = false;
   private disposed = false;
   private wakeTail: Promise<void> = Promise.resolve();
-  private readonly inFlight = new Map<string, Promise<void>>();
 
   constructor(private readonly dependencies: WorkCalendarDependencies) {}
 
@@ -1427,8 +1062,10 @@ export class WorkCalendar {
     try {
       await this.enqueueWake(async () => {
         await this.dependencies.store.load();
+        for (const state of await this.dependencies.store.states()) {
+          this.states.set(state.scheduleId, state);
+        }
         if (this.disposed) return;
-        await this.flushOutbox();
         await this.refreshSafely();
       });
     } catch (error) {
@@ -1444,7 +1081,6 @@ export class WorkCalendar {
 
   async wakeNow(): Promise<void> {
     await this.enqueueWake(async () => this.onWake());
-    await Promise.all([...this.inFlight.values()]);
   }
 
   async dispose(): Promise<void> {
@@ -1452,7 +1088,6 @@ export class WorkCalendar {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     await this.wakeTail.catch(() => undefined);
-    await Promise.all([...this.inFlight.values()]);
   }
 
   private secondsNow(): number {
@@ -1468,50 +1103,6 @@ export class WorkCalendar {
   private async refresh(): Promise<void> {
     if (this.disposed) return;
     const scheduleEvents = await this.dependencies.readSchedules();
-    const localCheckpoints = await this.dependencies.store.checkpoints();
-    const receiptEvents = await this.dependencies.readReceipts(scheduleEvents, localCheckpoints);
-    this.relayEvents = receiptEvents;
-    this.localRuns = await this.dependencies.store.runs();
-    this.checkpointsByRevision = new Map(
-      localCheckpoints.map((checkpoint) => [this.checkpointKey(checkpoint), checkpoint]),
-    );
-    for (const event of receiptEvents) {
-      const checkpoint = parseWorkScheduleCheckpoint(event);
-      if (!checkpoint) {
-        if (
-          event.pubkey === this.dependencies.identity.publicKey &&
-          uniqueTag(event, 't') === WORK_SCHEDULE_RUNTIME_TAG &&
-          uniqueTag(event, 'checkpoint') === '1'
-        )
-          throw new Error('invalid signed work calendar checkpoint');
-        continue;
-      }
-      if (
-        checkpoint.workspaceId !== this.dependencies.workspaceId ||
-        checkpoint.agentPubkey !== this.dependencies.identity.publicKey
-      )
-        continue;
-      const key = this.checkpointKey(checkpoint);
-      const local = this.checkpointsByRevision.get(key);
-      if (local && this.checkpointRegresses(checkpoint, local)) continue;
-      if (local && this.checkpointRegresses(local, checkpoint)) {
-        await this.dependencies.store.stageCheckpoint(checkpoint, []);
-      } else if (local && JSON.stringify(local) !== JSON.stringify(checkpoint)) {
-        throw new Error(`inconsistent work calendar checkpoint for ${key}`);
-      } else if (!local) {
-        await this.dependencies.store.stageCheckpoint(checkpoint, []);
-      }
-      this.checkpointsByRevision.set(key, checkpoint);
-    }
-    this.relayReceipts = receiptEvents.flatMap((event) => {
-      const parsed = parseScheduledTurnReceipt(event);
-      return parsed &&
-        parsed.event.pubkey === this.dependencies.identity.publicKey &&
-        parsed.value.workspaceId === this.dependencies.workspaceId &&
-        parsed.value.agentPubkey === this.dependencies.identity.publicKey
-        ? [parsed]
-        : [];
-    });
     const candidates = new Map<string, ParsedWorkSchedule[]>();
     for (const event of scheduleEvents) {
       const parsed = parseWorkSchedule(event);
@@ -1528,37 +1119,20 @@ export class WorkCalendar {
     }
     this.schedules.clear();
     for (const [key, list] of candidates) {
-      let pinnedPrincipal = await this.dependencies.store.principalForSchedule(
-        list[0]!.value.scheduleId,
-      );
       const plausible = list.filter(
         (candidate) =>
           candidate.event.pubkey === candidate.value.principalPubkey ||
           candidate.event.pubkey === candidate.value.agentPubkey,
       );
-      if (!pinnedPrincipal) {
-        const durablePrincipals = new Set([
-          ...this.localRuns
-            .filter((run) => run.scheduleId === list[0]!.value.scheduleId)
-            .map((run) => run.principalPubkey),
-          ...this.relayReceipts
-            .filter((receipt) => receipt.value.scheduleId === list[0]!.value.scheduleId)
-            .map((receipt) => receipt.value.principalPubkey),
-        ]);
-        if (durablePrincipals.size > 1) continue;
-        pinnedPrincipal =
-          durablePrincipals.values().next().value ??
-          (await creationPrincipalFromHistory(
-            plausible,
-            this.dependencies.validateScheduleCreation,
-          ));
-        if (!pinnedPrincipal) continue;
-        await this.dependencies.store.pinSchedulePrincipal(
-          list[0]!.value.scheduleId,
-          pinnedPrincipal,
-        );
-      }
-      const newest = plausible
+      const existing = this.states.get(list[0]!.value.scheduleId);
+      const pinnedPrincipal =
+        existing?.principalPubkey ??
+        (await creationPrincipalFromHistory(plausible, this.dependencies.validateScheduleCreation));
+      if (!pinnedPrincipal) continue;
+      // The canonical revision is selected before authorization. Never fall
+      // back to an older or differently-authored record when the newest
+      // revision is paused or has lost authority.
+      const current = plausible
         .filter((candidate) => candidate.value.principalPubkey === pinnedPrincipal)
         .sort(
           (left, right) =>
@@ -1566,27 +1140,55 @@ export class WorkCalendar {
             right.event.created_at - left.event.created_at ||
             right.event.id.localeCompare(left.event.id),
         )[0];
-      if (!newest) continue;
-      await this.reconcileCheckpoint(newest.value);
-      const latestPause = [...this.checkpointsByRevision.values()]
-        .filter(
-          (checkpoint) =>
-            checkpoint.scheduleId === newest.value.scheduleId && checkpoint.status === 'paused',
-        )
-        .sort((left, right) => right.revision - left.revision)[0];
-      if (latestPause && newest.value.revision <= latestPause.revision) continue;
-      if (
-        latestPause &&
-        (newest.event.pubkey !== newest.value.principalPubkey ||
-          newest.event.pubkey === newest.value.agentPubkey ||
-          newest.value.status !== 'active')
-      )
-        continue;
-      const authority = await this.dependencies.authorize(newest);
-      if (!authority.authorized && this.isPrincipalAuthorityLapse(authority))
-        await this.persistAuthorityPause(newest.value, authority.reason);
-      const current = authority.authorized ? newest : undefined;
       if (!current) continue;
+      // A relay read may be temporarily incomplete. Durable state has already
+      // observed a newer authenticated revision, so never roll configuration
+      // or execution semantics backward to an older projection.
+      if (existing && current.value.revision < existing.revision) continue;
+      if (existing?.status === 'paused') {
+        const humanResume =
+          current.value.revision > existing.revision &&
+          current.value.status === 'active' &&
+          current.event.pubkey === current.value.principalPubkey &&
+          current.event.pubkey !== current.value.agentPubkey;
+        if (!humanResume) continue;
+      }
+      const authority = await this.dependencies.authorize(current);
+      if (!authority.authorized) {
+        if (authority.terminal) await this.pause(current, authority.reason, true);
+        else throw new Error(`transient schedule authority failure: ${authority.reason}`);
+        continue;
+      }
+      if (current.value.status === 'paused') {
+        await this.pause(current, 'schedule-paused', false);
+        continue;
+      }
+      const artifacts = await this.validateArtifacts(current);
+      if (!artifacts.authorized) {
+        if (artifacts.terminal) await this.pause(current, artifacts.reason, true);
+        else throw new Error(`transient artifact validation failure: ${artifacts.reason}`);
+        continue;
+      }
+      if (existing && current.value.revision > existing.revision) {
+        const resumed: WorkScheduleRuntimeState = {
+          ...existing,
+          revision: current.value.revision,
+          consecutiveFailures: 0,
+          status: 'active',
+        };
+        delete resumed.pauseReason;
+        await this.persist(resumed);
+      } else if (!existing) {
+        await this.persist({
+          scheduleId: current.value.scheduleId,
+          principalPubkey: pinnedPrincipal,
+          revision: current.value.revision,
+          runCount: 0,
+          dailyReservedTokens: 0,
+          consecutiveFailures: 0,
+          status: 'active',
+        });
+      }
       this.schedules.set(key, current);
     }
     this.rebuildHeap();
@@ -1598,7 +1200,6 @@ export class WorkCalendar {
   private async refreshSafely(): Promise<void> {
     try {
       await this.refresh();
-      await this.flushOutbox();
     } catch (error) {
       console.error('[work-calendar] canonical refresh failed:', error);
       this.nextResyncAt =
@@ -1616,357 +1217,12 @@ export class WorkCalendar {
     }
   }
 
-  private recordsFor(schedule: WorkScheduleV1): CalendarRunRecord[] {
-    return this.localRuns.filter((run) => run.scheduleId === schedule.scheduleId);
-  }
-
-  private checkpointKey(value: Pick<WorkScheduleV1, 'scheduleId' | 'revision'>): string {
-    return `${value.scheduleId}:${value.revision}`;
-  }
-
-  private checkpointFor(schedule: WorkScheduleV1): WorkScheduleCheckpointV1 | undefined {
-    return this.checkpointsByRevision.get(this.checkpointKey(schedule));
-  }
-
-  private checkpointRegresses(
-    candidate: WorkScheduleCheckpointV1,
-    current: WorkScheduleCheckpointV1,
-  ): boolean {
-    return (
-      candidate.runCount < current.runCount ||
-      candidate.receiptCursorAt < current.receiptCursorAt ||
-      (candidate.watermarkNominalAt ?? -1) < (current.watermarkNominalAt ?? -1) ||
-      (candidate.latestNominalAt ?? -1) < (current.latestNominalAt ?? -1) ||
-      candidate.updatedAt < current.updatedAt
-    );
-  }
-
-  private isPrincipalAuthorityLapse(
-    authority: ScheduleAuthorityResult,
-  ): authority is { authorized: false; terminal: true; reason: string } {
-    return (
-      !authority.authorized &&
-      authority.terminal &&
-      ['principal-removed', 'principal-access-denied', 'schedule-principal-role-lost'].includes(
-        authority.reason,
-      )
-    );
-  }
-
-  private initialCheckpoint(schedule: WorkScheduleV1): WorkScheduleCheckpointV1 {
-    return {
-      version: 1,
-      type: 'runtime',
-      checkpointVersion: 1,
-      workspaceId: schedule.workspaceId,
-      roomId: schedule.roomId,
-      agentPubkey: schedule.agentPubkey,
-      principalPubkey: schedule.principalPubkey,
-      scheduleId: schedule.scheduleId,
-      revision: schedule.revision,
-      status: 'active',
-      nextAt: nextWorkOccurrence(schedule, schedule.startsAt - 1),
-      consecutiveFailures: 0,
-      updatedAt: this.secondsNow(),
-      runCount: 0,
-      budgetDay: dayUtc(this.secondsNow()),
-      dailyReservedTokens: 0,
-      receiptCursorAt: schedule.startsAt - 1,
-    };
-  }
-
-  private deriveCheckpoint(
-    schedule: WorkScheduleV1,
-    additional?: {
-      event: NostrEvent;
-      status: 'complete' | 'failed' | 'skipped';
-      runId: string;
-      nominalAt: number;
-    },
-  ): WorkScheduleCheckpointV1 {
-    const checkpoint = structuredClone(
-      this.checkpointFor(schedule) ?? this.initialCheckpoint(schedule),
-    );
-    const terminal = new Map<
-      string,
-      {
-        event: NostrEvent;
-        status: 'complete' | 'failed' | 'skipped';
-        nominalAt: number;
-        activatedAt?: number;
-      }
-    >();
-    for (const run of this.recordsFor(schedule)) {
-      if (run.revision !== schedule.revision || !isTerminal(run.state)) continue;
-      const event = run.receipts[run.state as 'complete' | 'failed' | 'skipped']?.event;
-      if (!event) continue;
-      terminal.set(run.runId, {
-        event,
-        status: run.state as 'complete' | 'failed' | 'skipped',
-        nominalAt: run.nominalAt,
-        ...(['complete', 'failed'].includes(run.state)
-          ? {
-              activatedAt: run.receipts.working?.event.created_at ?? event.created_at,
-            }
-          : {}),
-      });
-    }
-    const working = new Map(
-      this.receiptsFor(schedule)
-        .filter(
-          (receipt) =>
-            receipt.value.revision === schedule.revision && receipt.value.status === 'working',
-        )
-        .map((receipt) => [receipt.value.runId, receipt.value.at]),
-    );
-    for (const receipt of this.receiptsFor(schedule)) {
-      if (
-        receipt.value.revision !== schedule.revision ||
-        !['complete', 'failed', 'skipped'].includes(receipt.value.status)
-      )
-        continue;
-      terminal.set(receipt.value.runId, {
-        event: receipt.event,
-        status: receipt.value.status as 'complete' | 'failed' | 'skipped',
-        nominalAt: receipt.value.nominalAt,
-        ...(['complete', 'failed'].includes(receipt.value.status)
-          ? { activatedAt: working.get(receipt.value.runId) ?? receipt.value.at }
-          : {}),
-      });
-    }
-    if (additional) {
-      const run = this.localRuns.find((candidate) => candidate.runId === additional.runId);
-      terminal.set(additional.runId, {
-        event: additional.event,
-        status: additional.status,
-        nominalAt: additional.nominalAt,
-        ...(['complete', 'failed'].includes(additional.status)
-          ? {
-              activatedAt: run?.receipts.working?.event.created_at ?? additional.event.created_at,
-            }
-          : {}),
-      });
-    }
-    for (const result of [...terminal.values()].sort(
-      (left, right) => left.nominalAt - right.nominalAt,
-    )) {
-      if (result.nominalAt <= (checkpoint.latestNominalAt ?? -1)) continue;
-      if (result.activatedAt !== undefined) {
-        checkpoint.runCount += 1;
-        const runDay = dayUtc(result.activatedAt);
-        if (checkpoint.budgetDay !== runDay) {
-          checkpoint.budgetDay = runDay;
-          checkpoint.dailyReservedTokens = 0;
-        }
-        checkpoint.dailyReservedTokens += schedule.perRunReservedTokens;
-      }
-      checkpoint.consecutiveFailures =
-        result.status === 'failed'
-          ? checkpoint.consecutiveFailures + 1
-          : result.status === 'complete'
-            ? 0
-            : checkpoint.consecutiveFailures;
-      checkpoint.latestNominalAt = result.nominalAt;
-      checkpoint.latestRunId = deterministicScheduleRunId(
-        schedule.scheduleId,
-        schedule.revision,
-        result.nominalAt,
-      );
-      checkpoint.latestRunStatus = result.status;
-      checkpoint.updatedAt = result.event.created_at;
-    }
-    const watermarkCandidates = [...terminal.values()].sort(
-      (left, right) => left.nominalAt - right.nominalAt,
-    );
-    for (const result of watermarkCandidates) {
-      if (result.nominalAt <= (checkpoint.watermarkNominalAt ?? -1)) continue;
-      const local = this.localRuns.find(
-        (run) =>
-          run.runId ===
-          deterministicScheduleRunId(schedule.scheduleId, schedule.revision, result.nominalAt),
-      );
-      const published = local
-        ? local.receipts[result.status]?.published === true
-        : this.relayReceipts.some(
-            (receipt) =>
-              receipt.event.id === result.event.id && receipt.value.status === result.status,
-          );
-      if (!published) break;
-      checkpoint.watermarkNominalAt = result.nominalAt;
-      checkpoint.watermarkRunId = deterministicScheduleRunId(
-        schedule.scheduleId,
-        schedule.revision,
-        result.nominalAt,
-      );
-      checkpoint.watermarkRunStatus = result.status;
-      checkpoint.receiptCursorAt = result.event.created_at;
-      checkpoint.receiptCursorId = result.event.id;
-    }
-    if (checkpoint.consecutiveFailures >= schedule.maxConsecutiveFailures) {
-      checkpoint.status = 'paused';
-      checkpoint.pauseReason ??= 'max-consecutive-failures';
-      delete checkpoint.nextAt;
-    } else if (checkpoint.status !== 'paused') {
-      checkpoint.status = 'active';
-      const after = checkpoint.latestNominalAt ?? schedule.startsAt - 1;
-      checkpoint.nextAt = nextWorkOccurrence(schedule, after);
-    }
-    return checkpoint;
-  }
-
-  private async reconcileCheckpoint(schedule: WorkScheduleV1): Promise<void> {
-    const previous = this.checkpointFor(schedule);
-    const next = this.deriveCheckpoint(schedule);
-    const event = buildWorkScheduleProjection(this.dependencies.identity, next);
-    const hasPauseCard = this.relayEvents.some(
-      (candidate) =>
-        candidate.pubkey === this.dependencies.identity.publicKey &&
-        verifyEvent(candidate) &&
-        uniqueTag(candidate, 't') === WORK_SCHEDULE_PAUSED_TAG &&
-        uniqueTag(candidate, 'schedule') === schedule.scheduleId &&
-        uniqueTag(candidate, 'revision') === String(schedule.revision),
-    );
-    const outputs = [
-      ...(previous && JSON.stringify(previous) === JSON.stringify(next)
-        ? []
-        : [
-            {
-              key: `checkpoint:${schedule.scheduleId}:${schedule.revision}:${next.receiptCursorAt}`,
-              event,
-            },
-          ]),
-      ...(next.status === 'paused' && !hasPauseCard
-        ? [
-            {
-              key: `pause:${schedule.scheduleId}:${schedule.revision}`,
-              event: buildWorkSchedulePauseCard(
-                this.dependencies.identity,
-                schedule,
-                next.updatedAt,
-              ),
-            },
-          ]
-        : []),
-    ];
-    if (outputs.length === 0) return;
-    await this.dependencies.store.stageCheckpoint(next, outputs);
-    this.checkpointsByRevision.set(this.checkpointKey(schedule), next);
-  }
-
-  private async persistAuthorityPause(schedule: WorkScheduleV1, reason: string): Promise<void> {
-    const checkpoint = this.deriveCheckpoint(schedule);
-    checkpoint.status = 'paused';
-    checkpoint.pauseReason = reason;
-    checkpoint.updatedAt = this.secondsNow();
-    delete checkpoint.nextAt;
-    const projection = buildWorkScheduleProjection(this.dependencies.identity, checkpoint);
-    const card = buildWorkScheduleAuthorityPauseCard(
-      this.dependencies.identity,
-      schedule,
-      reason,
-      checkpoint.updatedAt,
-    );
-    const hasCard = this.relayEvents.some(
-      (event) =>
-        event.pubkey === this.dependencies.identity.publicKey &&
-        verifyEvent(event) &&
-        uniqueTag(event, 't') === WORK_SCHEDULE_PAUSED_TAG &&
-        uniqueTag(event, 'schedule') === schedule.scheduleId &&
-        uniqueTag(event, 'revision') === String(schedule.revision),
-    );
-    await this.dependencies.store.stageCheckpoint(checkpoint, [
-      {
-        key: `authority-projection:${schedule.scheduleId}:${schedule.revision}`,
-        event: projection,
-      },
-      ...(hasCard
-        ? []
-        : [{ key: `authority-pause:${schedule.scheduleId}:${schedule.revision}`, event: card }]),
-    ]);
-    this.checkpointsByRevision.set(this.checkpointKey(schedule), checkpoint);
-  }
-
-  private receiptsFor(schedule: WorkScheduleV1): ParsedScheduledTurnReceipt[] {
-    return this.relayReceipts.filter((receipt) => receipt.value.scheduleId === schedule.scheduleId);
-  }
-
-  private relayRunStates(schedule: WorkScheduleV1): ParsedScheduledTurnReceipt[] {
-    const rank: Record<ScheduledTurnStatus, number> = {
-      queued: 1,
-      working: 2,
-      complete: 3,
-      failed: 3,
-      skipped: 3,
-    };
-    const states = new Map<string, ParsedScheduledTurnReceipt>();
-    for (const receipt of this.receiptsFor(schedule)) {
-      if (receipt.value.revision !== schedule.revision) continue;
-      const current = states.get(receipt.value.runId);
-      if (
-        !current ||
-        rank[receipt.value.status] > rank[current.value.status] ||
-        (rank[receipt.value.status] === rank[current.value.status] &&
-          (receipt.value.at > current.value.at ||
-            (receipt.value.at === current.value.at && receipt.event.id > current.event.id)))
-      ) {
-        states.set(receipt.value.runId, receipt);
-      }
-    }
-    return [...states.values()];
-  }
-
   private entryFor(key: string, parsed: ParsedWorkSchedule, now: number): HeapEntry | undefined {
     const schedule = parsed.value;
-    if (
-      schedule.status !== 'active' ||
-      now > schedule.expiresAt ||
-      this.checkpointFor(schedule)?.status === 'paused'
-    )
-      return undefined;
-    const revisionRuns = this.recordsFor(schedule).filter(
-      (run) => run.revision === schedule.revision,
-    );
-    const pending = revisionRuns
-      .filter((run) => !isTerminal(currentStatus(run)))
-      .sort((left, right) => right.nominalAt - left.nominalAt)[0];
-    if (pending) {
-      const action = pending.state === 'working' ? 'recover-unknown' : 'resume';
-      return {
-        key,
-        parsed,
-        nominalAt: pending.nominalAt,
-        wakeAt: Math.max(now, this.retryAt.get(pending.runId) ?? now),
-        action,
-      };
-    }
-    const relayPending = this.relayRunStates(schedule)
-      .filter(
-        (receipt) =>
-          (receipt.value.status === 'working' || receipt.value.status === 'queued') &&
-          !revisionRuns.some((run) => run.runId === receipt.value.runId),
-      )
-      .sort((left, right) => right.value.nominalAt - left.value.nominalAt)[0];
-    if (relayPending)
-      return {
-        key,
-        parsed,
-        nominalAt: relayPending.value.nominalAt,
-        wakeAt: now,
-        action: relayPending.value.status === 'working' ? 'recover-unknown' : 'resume-relay-queued',
-        ...(relayPending.value.status === 'queued' ? { relayQueuedEvent: relayPending.event } : {}),
-      };
-    const failures = this.consecutiveFailures(schedule);
-    if (failures >= schedule.maxConsecutiveFailures) return undefined;
-    const handled = [
-      ...(this.checkpointFor(schedule)?.latestNominalAt !== undefined
-        ? [this.checkpointFor(schedule)!.latestNominalAt!]
-        : []),
-      ...revisionRuns.map((run) => run.nominalAt),
-      ...this.receiptsFor(schedule)
-        .filter((receipt) => receipt.value.revision === schedule.revision)
-        .map((receipt) => receipt.value.nominalAt),
-    ];
-    const after = handled.length ? Math.max(...handled) : schedule.startsAt - 1;
+    if (schedule.status !== 'active' || now > schedule.expiresAt) return undefined;
+    const state = this.states.get(schedule.scheduleId);
+    if (!state || state.status !== 'active' || state.runCount >= schedule.maxRuns) return undefined;
+    const after = state.lastExecutionAt ?? schedule.startsAt - 1;
     const next = nextWorkOccurrence(schedule, after);
     if (next === undefined) return undefined;
     if (next < now) {
@@ -1976,11 +1232,17 @@ export class WorkCalendar {
         key,
         parsed,
         nominalAt: latest,
-        wakeAt: now,
+        wakeAt: Math.max(now, this.retryAt.get(schedule.scheduleId) ?? now),
         action: schedule.catchUp === 'skip' ? 'skip' : 'run',
       };
     }
-    return { key, parsed, nominalAt: next, wakeAt: next, action: 'run' };
+    return {
+      key,
+      parsed,
+      nominalAt: next,
+      wakeAt: Math.max(next, this.retryAt.get(schedule.scheduleId) ?? next),
+      action: 'run',
+    };
   }
 
   private armTimer(): void {
@@ -2003,30 +1265,22 @@ export class WorkCalendar {
 
   private async onWake(): Promise<void> {
     if (this.disposed) return;
-    await this.flushOutbox();
-    let submitted = 0;
-    while (submitted < MAX_CALENDAR_DUE_PER_WAKE) {
+    const due: HeapEntry[] = [];
+    while (due.length < MAX_CALENDAR_DUE_PER_WAKE) {
       const entry = this.heap.peek();
       if (!entry || entry.wakeAt > this.secondsNow()) break;
       this.heap.pop();
-      submitted += 1;
-      const key = `${entry.key}:${entry.parsed.value.revision}:${entry.nominalAt}`;
-      if (this.inFlight.has(key)) continue;
-      const run = this.process(entry)
-        .then(async () => {
-          this.localRuns = await this.dependencies.store.runs();
-          const current = this.schedules.get(entry.key);
-          if (current && current.value.revision === entry.parsed.value.revision) {
-            const next = this.entryFor(entry.key, current, this.secondsNow());
-            if (next) this.heap.push(next);
-          }
-        })
-        .catch((error) => console.error(`[work-calendar] run ${key} failed:`, error))
-        .finally(() => {
-          this.inFlight.delete(key);
-          this.armTimer();
-        });
-      this.inFlight.set(key, run);
+      due.push(entry);
+    }
+    // Submit independently due schedules together. SessionScheduler remains
+    // the final per-Room/process capacity queue and keeps each turn background.
+    await Promise.all(due.map((entry) => this.process(entry)));
+    for (const entry of due) {
+      const current = this.schedules.get(entry.key);
+      if (current && current.value.revision === entry.parsed.value.revision) {
+        const next = this.entryFor(entry.key, current, this.secondsNow());
+        if (next) this.heap.push(next);
+      }
     }
     if (this.secondsNow() >= this.nextResyncAt) {
       await this.refreshSafely();
@@ -2042,95 +1296,39 @@ export class WorkCalendar {
       schedule.revision,
       entry.nominalAt,
     );
-    const reservation = await this.dependencies.store.reserveRun({
-      runId,
-      scheduleId: schedule.scheduleId,
-      revision: schedule.revision,
-      workspaceId: schedule.workspaceId,
-      roomId: schedule.roomId,
-      agentPubkey: schedule.agentPubkey,
-      principalPubkey: schedule.principalPubkey,
-      nominalAt: entry.nominalAt,
-      reservedTokens: schedule.perRunReservedTokens,
-      reservedAt: this.secondsNow(),
-    });
-    if (reservation.state === 'backpressure') {
-      const wakeAt =
-        this.secondsNow() + (this.dependencies.retrySeconds ?? DEFAULT_CALENDAR_RETRY_SECONDS);
-      this.retryAt.set(runId, wakeAt);
-      this.heap.push({ ...entry, wakeAt });
-      return;
-    }
-    if (reservation.state === 'reserved') this.localRuns.push(reservation.record);
-
-    if (entry.action === 'recover-unknown' || reservation.record.state === 'working') {
-      await this.finish(
-        schedule,
-        runId,
-        entry.nominalAt,
-        'failed',
-        'outcome-unknown-after-restart',
-      );
-      return;
-    }
     if (entry.action === 'skip') {
-      await this.finish(schedule, runId, entry.nominalAt, 'skipped', 'catch-up-skipped');
-      return;
-    }
-    if (isTerminal(reservation.record.state)) return;
-
-    let queued: NostrEvent | undefined;
-    if (entry.action === 'resume-relay-queued' && entry.relayQueuedEvent) {
-      await this.dependencies.store.stageReceipt(runId, 'queued', entry.relayQueuedEvent);
-      await this.dependencies.store.markReceiptPublished(
-        runId,
-        'queued',
-        entry.relayQueuedEvent.id,
-      );
-      queued = entry.relayQueuedEvent;
-    } else {
-      queued = await this.publishReceipt(schedule, runId, entry.nominalAt, 'queued');
-    }
-    if (!queued) {
-      this.retryAt.set(
-        runId,
-        this.secondsNow() + (this.dependencies.retrySeconds ?? DEFAULT_CALENDAR_RETRY_SECONDS),
-      );
+      await this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, 'catch-up-skipped');
       return;
     }
 
     const authority = await this.dependencies.authorize(entry.parsed);
     if (!authority.authorized) {
-      if (this.isPrincipalAuthorityLapse(authority)) {
-        await this.finish(
-          schedule,
-          runId,
-          entry.nominalAt,
-          'skipped',
-          authority.reason,
-          authority.reason,
-        );
-      } else if (authority.terminal)
-        await this.finish(schedule, runId, entry.nominalAt, 'skipped', authority.reason);
-      else
-        this.retryAt.set(
-          runId,
-          this.secondsNow() + (this.dependencies.retrySeconds ?? DEFAULT_CALENDAR_RETRY_SECONDS),
-        );
+      if (authority.terminal) await this.pause(entry.parsed, authority.reason, true);
+      else this.retryLater(schedule.scheduleId);
+      return;
+    }
+    const artifacts = await this.validateArtifacts(entry.parsed);
+    if (!artifacts.authorized) {
+      if (artifacts.terminal) await this.pause(entry.parsed, artifacts.reason, true);
+      else this.retryLater(schedule.scheduleId);
       return;
     }
     if (this.secondsNow() > schedule.expiresAt) {
-      await this.finish(schedule, runId, entry.nominalAt, 'skipped', 'schedule-expired');
+      await this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, 'schedule-expired');
       return;
     }
-    const budgetReason = this.budgetRefusal(schedule, runId);
+    const budgetReason = this.budgetRefusal(schedule);
     if (budgetReason) {
-      await this.finish(schedule, runId, entry.nominalAt, 'skipped', budgetReason);
+      await this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, budgetReason);
       return;
     }
 
+    // Receipts are best-effort observability only. A relay failure never gates
+    // execution and receipts are never replayed as calendar state.
+    const queued = await this.publishReceipt(schedule, runId, entry.nominalAt, 'queued');
+
+    let activated = false;
     try {
-      let activationChecked = false;
       await this.dependencies.dispatch(
         {
           trigger: 'schedule',
@@ -2149,7 +1347,7 @@ export class WorkCalendar {
           queuedEvent: queued,
         },
         async () => {
-          if (activationChecked) return;
+          if (activated) return;
           const currentAuthority = await this.dependencies.authorize(entry.parsed);
           if (!currentAuthority.authorized) {
             throw new ScheduleActivationRefusedError(
@@ -2157,222 +1355,120 @@ export class WorkCalendar {
               currentAuthority.reason,
             );
           }
+          const currentArtifacts = await this.validateArtifacts(entry.parsed);
+          if (!currentArtifacts.authorized) {
+            throw new ScheduleActivationRefusedError(
+              currentArtifacts.terminal,
+              currentArtifacts.reason,
+            );
+          }
           if (this.secondsNow() > schedule.expiresAt) {
             throw new ScheduleActivationRefusedError(true, 'schedule-expired');
           }
-          if ((schedule.artifactRefs?.length ?? 0) > 0) {
-            const artifactAuthority = this.dependencies.validateArtifacts
-              ? await this.dependencies.validateArtifacts(schedule.artifactRefs!)
-              : {
-                  authorized: false as const,
-                  terminal: true,
-                  reason: 'artifact-validation-unavailable',
-                };
-            if (!artifactAuthority.authorized) {
-              throw new ScheduleActivationRefusedError(
-                artifactAuthority.terminal,
-                artifactAuthority.reason,
-              );
-            }
-          }
-          const currentBudgetReason = this.budgetRefusal(schedule, runId);
+          const currentBudgetReason = this.budgetRefusal(schedule);
           if (currentBudgetReason) {
             throw new ScheduleActivationRefusedError(true, currentBudgetReason);
           }
-          const working = await this.publishReceipt(schedule, runId, entry.nominalAt, 'working');
-          if (!working) throw new WorkingReceiptPendingError('working-receipt-publish-pending');
-          activationChecked = true;
+          activated = true;
+          await this.publishReceipt(schedule, runId, entry.nominalAt, 'working');
         },
-        (event) => this.publishOutput(`reply:${schedule.scheduleId}:${runId}`, event, runId),
       );
-      if (!activationChecked) {
+      if (!activated) {
         throw new Error('scheduled dispatcher bypassed the activation authority check');
       }
-      await this.finish(schedule, runId, entry.nominalAt, 'complete');
     } catch (error) {
-      if (error instanceof WorkingReceiptPendingError) {
-        this.retryAt.set(
-          runId,
-          this.secondsNow() + (this.dependencies.retrySeconds ?? DEFAULT_CALENDAR_RETRY_SECONDS),
-        );
-        return;
-      }
       if (error instanceof ScheduleActivationRefusedError) {
-        if (!error.terminal) {
-          this.retryAt.set(
-            runId,
-            this.secondsNow() + (this.dependencies.retrySeconds ?? DEFAULT_CALENDAR_RETRY_SECONDS),
-          );
-          return;
-        }
-        await this.finish(
-          schedule,
-          runId,
-          entry.nominalAt,
-          'skipped',
-          error.reason,
-          this.requiresRevisionPause(error.reason) ? error.reason : undefined,
-        );
+        if (
+          ['schedule-expired', 'max-runs-exhausted', 'daily-budget-exhausted'].includes(
+            error.reason,
+          )
+        )
+          await this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, error.reason);
+        else if (error.terminal) await this.pause(entry.parsed, error.reason, true);
+        else this.retryLater(schedule.scheduleId);
         return;
       }
       const reason =
         String(error instanceof Error ? error.message : error)
           .replace(/[\r\n]+/g, ' ')
           .slice(0, 600) || 'scheduled-turn-failed';
-      await this.finish(schedule, runId, entry.nominalAt, 'failed', reason);
+      await this.finish(entry.parsed, runId, entry.nominalAt, 'failed', activated, reason);
+      return;
     }
+    // Keep the last-execution write outside the model/dispatcher catch: a
+    // durable-store failure here is a daemon crash condition, not a model
+    // failure. On restart the occurrence may run again by design.
+    await this.finish(entry.parsed, runId, entry.nominalAt, 'complete', true);
   }
 
-  private budgetRefusal(schedule: WorkScheduleV1, runId: string): string | undefined {
-    const checkpoint = this.checkpointFor(schedule) ?? this.initialCheckpoint(schedule);
-    const modelRuns = new Map<string, { at: number; reservedTokens: number }>();
-    for (const run of this.recordsFor(schedule)) {
-      if (
-        run.runId !== runId &&
-        run.nominalAt > (checkpoint.latestNominalAt ?? -1) &&
-        ['working', 'complete', 'failed'].includes(run.state)
-      ) {
-        modelRuns.set(run.runId, { at: run.reservedAt, reservedTokens: run.reservedTokens });
-      }
-    }
-    for (const receipt of this.receiptsFor(schedule)) {
-      if (
-        receipt.value.runId !== runId &&
-        receipt.value.nominalAt > (checkpoint.latestNominalAt ?? -1) &&
-        ['working', 'complete', 'failed'].includes(receipt.value.status)
-      ) {
-        modelRuns.set(receipt.value.runId, {
-          at: receipt.value.at,
-          reservedTokens: receipt.value.reservedTokens,
-        });
-      }
-    }
-    if (checkpoint.runCount + modelRuns.size >= schedule.maxRuns) return 'max-runs-exhausted';
+  private budgetRefusal(schedule: WorkScheduleV1): string | undefined {
+    const state = this.states.get(schedule.scheduleId);
+    if (!state || state.runCount >= schedule.maxRuns) return 'max-runs-exhausted';
     const day = dayUtc(this.secondsNow());
-    const daily =
-      (checkpoint.budgetDay === day ? checkpoint.dailyReservedTokens : 0) +
-      [...modelRuns.values()]
-        .filter((run) => dayUtc(run.at) === day)
-        .reduce((sum, run) => sum + run.reservedTokens, 0);
+    const daily = state.budgetDay === day ? state.dailyReservedTokens : 0;
     return daily + schedule.perRunReservedTokens > schedule.dailyReservedTokens
       ? 'daily-budget-exhausted'
       : undefined;
   }
 
-  private consecutiveFailures(
-    schedule: WorkScheduleV1,
-    additional?: {
-      runId: string;
-      nominalAt: number;
-      status: 'complete' | 'failed' | 'skipped';
-    },
-  ): number {
-    const checkpoint = this.checkpointFor(schedule) ?? this.initialCheckpoint(schedule);
-    const terminal = new Map<string, { nominalAt: number; status: ScheduledTurnStatus }>();
-    for (const run of this.recordsFor(schedule)) {
-      if (run.revision === schedule.revision && isTerminal(run.state))
-        terminal.set(run.runId, {
-          nominalAt: run.nominalAt,
-          status: run.state as ScheduledTurnStatus,
-        });
-    }
-    for (const receipt of this.receiptsFor(schedule)) {
-      if (receipt.value.revision === schedule.revision && isTerminal(receipt.value.status)) {
-        terminal.set(receipt.value.runId, {
-          nominalAt: receipt.value.nominalAt,
-          status: receipt.value.status,
-        });
-      }
-    }
-    if (additional) terminal.set(additional.runId, additional);
-    let count = checkpoint.consecutiveFailures;
-    for (const result of [...terminal.values()].sort(
-      (left, right) => left.nominalAt - right.nominalAt,
-    )) {
-      if (result.nominalAt <= (checkpoint.latestNominalAt ?? -1)) continue;
-      if (result.status === 'failed') count += 1;
-      else if (result.status === 'complete') break;
-    }
-    return count;
-  }
-
   private async finish(
-    schedule: WorkScheduleV1,
+    parsed: ParsedWorkSchedule,
     runId: string,
     nominalAt: number,
     status: 'complete' | 'failed' | 'skipped',
+    activated: boolean,
     reason?: string,
-    authorityPauseReason?: string,
   ): Promise<void> {
-    const terminalEvent = this.buildReceipt(schedule, runId, nominalAt, status, reason);
-    this.localRuns = await this.dependencies.store.runs();
-    const previous = this.checkpointFor(schedule);
-    const checkpoint = this.deriveCheckpoint(schedule, {
-      event: terminalEvent,
-      status,
-      runId,
-      nominalAt,
-    });
-    if (authorityPauseReason) {
-      checkpoint.status = 'paused';
-      checkpoint.pauseReason = authorityPauseReason;
-      delete checkpoint.nextAt;
+    const schedule = parsed.value;
+    const current = this.states.get(schedule.scheduleId);
+    if (!current) return;
+    const now = this.secondsNow();
+    const budgetDay = dayUtc(now);
+    const failures =
+      status === 'failed'
+        ? current.consecutiveFailures + 1
+        : status === 'complete'
+          ? 0
+          : current.consecutiveFailures;
+    const paused = failures >= schedule.maxConsecutiveFailures;
+    const next: WorkScheduleRuntimeState = {
+      ...current,
+      revision: schedule.revision,
+      lastExecutionAt: nominalAt,
+      runCount: current.runCount + (activated ? 1 : 0),
+      budgetDay,
+      dailyReservedTokens:
+        (current.budgetDay === budgetDay ? current.dailyReservedTokens : 0) +
+        (activated ? schedule.perRunReservedTokens : 0),
+      consecutiveFailures: failures,
+      status: paused ? 'paused' : 'active',
+      ...(paused ? { pauseReason: 'max-consecutive-failures' } : {}),
+    };
+    if (!paused) delete next.pauseReason;
+
+    // This write deliberately follows the model turn. A crash before it may
+    // repeat the occurrence; that is the calendar's documented best-effort
+    // behavior. Failure pause state, however, is durable before its card.
+    await this.persist(next);
+    this.retryAt.delete(schedule.scheduleId);
+    await this.publishReceipt(schedule, runId, nominalAt, status, reason);
+    await this.publishProjection(schedule, next);
+    if (paused) {
+      await this.publishBestEffort(
+        buildWorkSchedulePauseCard(this.dependencies.identity, schedule, now),
+        `pause card for ${schedule.scheduleId}`,
+      );
     }
-    const paused = checkpoint.status === 'paused';
-    const projectionKey = `projection:${schedule.scheduleId}:${schedule.revision}:${runId}:${status}`;
-    const projection = buildWorkScheduleProjection(this.dependencies.identity, checkpoint);
-    const outputs = [{ key: projectionKey, event: projection }];
-    if (paused && !previous?.pauseReason && !authorityPauseReason) {
-      outputs.push({
-        key: `pause:${schedule.scheduleId}:${schedule.revision}`,
-        event: buildWorkSchedulePauseCard(this.dependencies.identity, schedule, this.secondsNow()),
-      });
-    }
-    if (authorityPauseReason) {
-      outputs.push({
-        key: `authority-pause:${schedule.scheduleId}:${schedule.revision}`,
-        event: buildWorkScheduleAuthorityPauseCard(
-          this.dependencies.identity,
-          schedule,
-          authorityPauseReason,
-          checkpoint.updatedAt,
-        ),
-      });
-    }
-    await this.dependencies.store.stageCompletion(
-      runId,
-      status,
-      terminalEvent,
-      outputs,
-      checkpoint,
-    );
-    this.checkpointsByRevision.set(this.checkpointKey(schedule), checkpoint);
-    this.retryAt.delete(runId);
-    this.localRuns = await this.dependencies.store.runs();
-    const published = await this.publishReceipt(schedule, runId, nominalAt, status, reason);
-    if (!published) return;
-    const storedCheckpoint = (await this.dependencies.store.checkpoints()).find(
-      (candidate) =>
-        candidate.scheduleId === schedule.scheduleId && candidate.revision === schedule.revision,
-    );
-    if (storedCheckpoint)
-      this.checkpointsByRevision.set(this.checkpointKey(schedule), storedCheckpoint);
-    const currentProjection = storedCheckpoint
-      ? buildWorkScheduleProjection(this.dependencies.identity, storedCheckpoint)
-      : projection;
-    await this.publishOutput(projectionKey, currentProjection, runId, true);
-    for (const output of outputs.slice(1))
-      await this.publishOutput(output.key, output.event, runId);
   }
 
-  private buildReceipt(
+  private async publishReceipt(
     schedule: WorkScheduleV1,
     runId: string,
     nominalAt: number,
     status: ScheduledTurnStatus,
     reason?: string,
-  ): NostrEvent {
-    return buildScheduledTurnReceipt(this.dependencies.identity, {
+  ): Promise<NostrEvent> {
+    const event = buildScheduledTurnReceipt(this.dependencies.identity, {
       version: 1,
       workspaceId: schedule.workspaceId,
       roomId: schedule.roomId,
@@ -2387,94 +1483,96 @@ export class WorkCalendar {
       reservedTokens: schedule.perRunReservedTokens,
       ...(reason ? { reason } : {}),
     });
+    await this.publishBestEffort(event, `${status} receipt for ${runId}`);
+    return event;
   }
 
-  private async publishReceipt(
-    schedule: WorkScheduleV1,
-    runId: string,
-    nominalAt: number,
-    status: ScheduledTurnStatus,
-    reason?: string,
-  ): Promise<NostrEvent | undefined> {
-    const event = this.buildReceipt(schedule, runId, nominalAt, status, reason);
-    const staged = await this.dependencies.store.stageReceipt(runId, status, event);
-    if (staged.published) return staged.event;
-    try {
-      await this.dependencies.publish(staged.event);
-      await this.dependencies.store.markReceiptPublished(runId, status, staged.event.id);
-      return staged.event;
-    } catch (error) {
-      console.error(`[work-calendar] ${status} receipt publish failed for ${runId}:`, error);
-      return undefined;
-    }
+  private validateArtifacts(parsed: ParsedWorkSchedule): Promise<ScheduleAuthorityResult> {
+    return this.dependencies.validateArtifacts?.(parsed) ?? Promise.resolve({ authorized: true });
   }
 
-  private async flushOutbox(): Promise<void> {
-    for (const pending of await this.dependencies.store.pendingReceipts()) {
-      try {
-        await this.dependencies.publish(pending.event);
-        await this.dependencies.store.markReceiptPublished(
-          pending.runId,
-          pending.status,
-          pending.event.id,
-        );
-      } catch (error) {
-        console.error(
-          `[work-calendar] pending receipt publish failed for ${pending.runId}:`,
-          error,
-        );
-        break;
-      }
-    }
-    const checkpoints = await this.dependencies.store.checkpoints();
-    for (const pending of await this.dependencies.store.pendingOutputs()) {
-      const match = /^projection:(.+):(\d+):(wsr_[0-9a-f]{64}):(complete|failed|skipped)$/.exec(
-        pending.key,
-      );
-      if (!match) continue;
-      const checkpoint = checkpoints.find(
-        (candidate) => candidate.scheduleId === match[1] && candidate.revision === Number(match[2]),
-      );
-      if (!checkpoint) continue;
-      await this.dependencies.store.stageOutput(
-        pending.key,
-        buildWorkScheduleProjection(this.dependencies.identity, checkpoint),
-        match[3],
-        true,
-      );
-    }
-    for (const pending of await this.dependencies.store.pendingOutputs()) {
-      try {
-        await this.dependencies.publish(pending.event);
-        await this.dependencies.store.markOutputPublished(pending.key, pending.event.id);
-      } catch (error) {
-        console.error(`[work-calendar] pending output publish failed for ${pending.key}:`, error);
-        break;
-      }
-    }
-  }
-
-  private async publishOutput(
-    key: string,
-    event: NostrEvent,
-    runId?: string,
-    replace = false,
-  ): Promise<void> {
-    const staged = await this.dependencies.store.stageOutput(key, event, runId, replace);
-    try {
-      await this.dependencies.publish(staged);
-      await this.dependencies.store.markOutputPublished(key, staged.id);
-    } catch (error) {
-      console.error(`[work-calendar] output publish failed for ${key}:`, error);
-      throw error;
-    }
-  }
-
-  private requiresRevisionPause(reason: string): boolean {
-    return (
-      ['principal-removed', 'principal-access-denied', 'schedule-principal-role-lost'].includes(
-        reason,
-      ) || reason.startsWith('artifact-')
+  private retryLater(scheduleId: string): void {
+    this.retryAt.set(
+      scheduleId,
+      this.secondsNow() + (this.dependencies.retrySeconds ?? DEFAULT_CALENDAR_RETRY_SECONDS),
     );
+  }
+
+  private async persist(state: WorkScheduleRuntimeState): Promise<void> {
+    await this.dependencies.store.put(state);
+    this.states.set(state.scheduleId, cloneState(state));
+  }
+
+  private async pause(
+    parsed: ParsedWorkSchedule,
+    reason: string,
+    publishCard: boolean,
+  ): Promise<void> {
+    const schedule = parsed.value;
+    const current = this.states.get(schedule.scheduleId) ?? {
+      scheduleId: schedule.scheduleId,
+      principalPubkey: schedule.principalPubkey,
+      revision: schedule.revision,
+      runCount: 0,
+      dailyReservedTokens: 0,
+      consecutiveFailures: 0,
+      status: 'active' as const,
+    };
+    const paused: WorkScheduleRuntimeState = {
+      ...current,
+      revision: schedule.revision,
+      status: 'paused',
+      pauseReason: reason,
+    };
+    // Authority/failure pause is durable before any best-effort relay card.
+    await this.persist(paused);
+    this.retryAt.delete(schedule.scheduleId);
+    await this.publishProjection(schedule, paused);
+    if (publishCard) {
+      await this.publishBestEffort(
+        buildWorkSchedulePauseCard(this.dependencies.identity, schedule, this.secondsNow(), reason),
+        `pause card for ${schedule.scheduleId}`,
+      );
+    }
+  }
+
+  private async publishProjection(
+    schedule: WorkScheduleV1,
+    state: WorkScheduleRuntimeState,
+  ): Promise<void> {
+    const nextAt =
+      state.status === 'active'
+        ? nextWorkOccurrence(schedule, state.lastExecutionAt ?? schedule.startsAt - 1)
+        : undefined;
+    await this.publishBestEffort(
+      buildWorkScheduleProjection(this.dependencies.identity, {
+        version: 1,
+        type: 'runtime',
+        workspaceId: schedule.workspaceId,
+        roomId: schedule.roomId,
+        agentPubkey: schedule.agentPubkey,
+        principalPubkey: schedule.principalPubkey,
+        scheduleId: schedule.scheduleId,
+        revision: schedule.revision,
+        status: state.status,
+        ...(nextAt !== undefined ? { nextAt } : {}),
+        ...(state.lastExecutionAt !== undefined ? { lastExecutionAt: state.lastExecutionAt } : {}),
+        runCount: state.runCount,
+        ...(state.budgetDay ? { budgetDay: state.budgetDay } : {}),
+        dailyReservedTokens: state.dailyReservedTokens,
+        consecutiveFailures: state.consecutiveFailures,
+        ...(state.pauseReason ? { pauseReason: state.pauseReason } : {}),
+        updatedAt: this.secondsNow(),
+      }),
+      `runtime projection for ${schedule.scheduleId}`,
+    );
+  }
+
+  private async publishBestEffort(event: NostrEvent, label: string): Promise<void> {
+    try {
+      await this.dependencies.publish(event);
+    } catch (error) {
+      console.error(`[work-calendar] ${label} publish failed:`, error);
+    }
   }
 }

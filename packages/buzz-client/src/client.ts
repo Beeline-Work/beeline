@@ -95,7 +95,6 @@ import { query } from './query.js';
 import {
   getGlobalPersonProfile,
   getPersonProfile,
-  listPersonProfiles,
   setGlobalPersonProfile,
   setPersonProfile,
 } from './person-profile.js';
@@ -151,6 +150,7 @@ function hostFromBaseUrl(baseUrl: string): string {
 
 /** Bound on the lazy auth-service predecessor fetch inside communityMembers. */
 const SUCCESSION_LOAD_TIMEOUT_MS = 5_000;
+const READ_DIRECTORY_CACHE_TTL_MS = 30_000;
 
 export class BuzzClient {
   readonly identity: Identity;
@@ -162,6 +162,15 @@ export class BuzzClient {
   private ws: RelayWs | null = null;
   /** Key-succession chain cache: undefined = not loaded yet, [] = none / auth unreachable. */
   private successionPredecessors?: string[];
+  /** Short-lived, in-flight-aware directory reads shared by every mobile surface. */
+  private readonly agentListCache = new Map<
+    string,
+    { expiresAt: number; promise: Promise<Agent[]> }
+  >();
+  private readonly personProfileCache = new Map<
+    string,
+    { expiresAt: number; promise: Promise<PersonProfile | null> }
+  >();
 
   constructor(config: BuzzClientConfig) {
     this.config = config;
@@ -571,19 +580,44 @@ export class BuzzClient {
     communityId: string,
     pubkey = this.identity.publicKey,
   ): Promise<PersonProfile | null> {
-    return getPersonProfile(this.ctx, communityId, pubkey);
+    const key = `${communityId}\u0000${pubkey}`;
+    const cached = this.personProfileCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+    const entry = {
+      expiresAt: Number.POSITIVE_INFINITY,
+      promise: getPersonProfile(this.ctx, communityId, pubkey),
+    };
+    this.personProfileCache.set(key, entry);
+    void entry.promise.then(
+      () => {
+        entry.expiresAt = Date.now() + READ_DIRECTORY_CACHE_TTL_MS;
+      },
+      () => {
+        if (this.personProfileCache.get(key) === entry) this.personProfileCache.delete(key);
+      },
+    );
+    return entry.promise;
   }
 
-  listPersonProfiles(communityId: string, pubkeys: string[]): Promise<PersonProfile[]> {
-    return listPersonProfiles(this.ctx, communityId, pubkeys);
+  async listPersonProfiles(communityId: string, pubkeys: string[]): Promise<PersonProfile[]> {
+    const profiles = await Promise.all(
+      [...new Set(pubkeys)].map((pubkey) => this.getPersonProfile(communityId, pubkey)),
+    );
+    return profiles.filter((profile): profile is PersonProfile => profile !== null);
   }
 
-  setPersonProfile(communityId: string, input: PersonProfileInput): Promise<PersonProfile> {
-    return setPersonProfile(this.ctx, communityId, input);
+  async setPersonProfile(communityId: string, input: PersonProfileInput): Promise<PersonProfile> {
+    const profile = await setPersonProfile(this.ctx, communityId, input);
+    this.personProfileCache.delete(`${communityId}\u0000${this.identity.publicKey}`);
+    return profile;
   }
 
-  setGlobalPersonProfile(input: PersonProfileInput): Promise<PersonProfile> {
-    return setGlobalPersonProfile(this.ctx, input);
+  async setGlobalPersonProfile(input: PersonProfileInput): Promise<PersonProfile> {
+    const profile = await setGlobalPersonProfile(this.ctx, input);
+    for (const key of this.personProfileCache.keys()) {
+      if (key.endsWith(`\u0000${this.identity.publicKey}`)) this.personProfileCache.delete(key);
+    }
+    return profile;
   }
 
   uploadMedia(bytes: Uint8Array, mimeType: string): Promise<MediaBlob> {
@@ -593,20 +627,40 @@ export class BuzzClient {
   // ── Agent entity ops ───────────────────────────────────────────────────
 
   /** Register this client's key as a self-signed agent in a community. */
-  createAgent(communityId: string, options?: CreateAgentOptions): Promise<Agent> {
-    return createAgent(this.ctx, communityId, options);
+  async createAgent(communityId: string, options?: CreateAgentOptions): Promise<Agent> {
+    const agent = await createAgent(this.ctx, communityId, options);
+    this.agentListCache.delete(communityId);
+    return agent;
   }
 
   listAgents(communityId: string): Promise<Agent[]> {
-    return listAgents(this.ctx, communityId, 200, {
-      resolveCurrentPubkey: (pubkey) =>
-        resolveCurrentIdentityPubkey(this.baseUrl, this.identity, pubkey),
-    });
+    const cached = this.agentListCache.get(communityId);
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+    const entry = {
+      expiresAt: Number.POSITIVE_INFINITY,
+      promise: listAgents(this.ctx, communityId, 200, {
+        resolveCurrentPubkey: (pubkey) =>
+          resolveCurrentIdentityPubkey(this.baseUrl, this.identity, pubkey),
+      }),
+    };
+    this.agentListCache.set(communityId, entry);
+    void entry.promise.then(
+      () => {
+        entry.expiresAt = Date.now() + READ_DIRECTORY_CACHE_TTL_MS;
+      },
+      () => {
+        if (this.agentListCache.get(communityId) === entry) {
+          this.agentListCache.delete(communityId);
+        }
+      },
+    );
+    return entry.promise;
   }
 
   /** Unlink one agent from all Workspace channels and stop its paired host runtime. */
-  removeAgent(communityId: string, agentPubkey: string): Promise<void> {
-    return removeAgent(this.ctx, communityId, agentPubkey);
+  async removeAgent(communityId: string, agentPubkey: string): Promise<void> {
+    await removeAgent(this.ctx, communityId, agentPubkey);
+    this.agentListCache.delete(communityId);
   }
 
   /** Lightweight in-app invite for one already-linked agent and one Room. */

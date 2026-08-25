@@ -14,22 +14,27 @@ import {
   TAG_COMMUNITY,
   TAG_CORNER_STATE,
   TAG_PARENT,
+  createWorkspaceSnapshot,
   createIdentity,
   reduceWorkspaceEvents,
   selectCorners,
   selectMembers,
   selectReplyTarget,
   selectTranscript,
+  type IdentityRecord,
   type KnownMessageReference,
 } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { BuzzRigTransport } from './buzz-rig-transport';
+import { transcriptMessages } from './buzz-event-projection';
+import type { SessionEvent } from './rig-transport';
 
 const ROOM = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const CORNER = 'cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const WORKSPACE = 'workspace';
 const human = createIdentity('Captain');
 const agent = createIdentity('Buzzy');
+const peerAgent = createIdentity('Ox');
 const relay = createIdentity('Relay');
 
 function signed(
@@ -311,6 +316,110 @@ describe('BuzzRigTransport typed read-model boundary', () => {
         event: expect.objectContaining({ type: 'human-message', body: 'Live agent message' }),
       }),
     ]);
+    stop();
+  });
+
+  it('re-resolves Room authority before projecting an exchange from a newly attached peer agent', async () => {
+    const fixture = clientFixture();
+    const transport = transportWith(fixture.client);
+    const delivered: SessionEvent[] = [];
+    const stop = await transport.sessionEventsSubscribeReady(ROOM, (event) => delivered.push(event));
+
+    // The human opened the Room before Ox was attached, so the live
+    // subscription holds the older, otherwise-valid authority snapshot.
+    fixture.client.listMembers.mockResolvedValue([
+      { pubkey: human.publicKey, role: 'owner' },
+      { pubkey: agent.publicKey, role: 'member' },
+      { pubkey: peerAgent.publicKey, role: 'member' },
+    ]);
+    fixture.client.listAgents.mockResolvedValue([
+      { pubkey: agent.publicKey, displayName: 'Buzzy', raw: { id: 'agent-identity' } },
+      { pubkey: peerAgent.publicKey, displayName: 'Ox', raw: { id: 'peer-agent-identity' } },
+    ]);
+
+    fixture.deliver(message(agent, 'A proven human-to-agent reply.', 11));
+    fixture.deliver(
+      message(peerAgent, 'A human in this Room should see this exchange turn.', 12, [
+        ['t', 'agent-message'],
+        ['t', 'buzz-agent-exchange'],
+        ['exchange', 'human-authorization'],
+        ['authorizer', human.publicKey],
+        ['initiator', agent.publicKey],
+        ['peer', peerAgent.publicKey],
+        ['turn', '2'],
+        ['p', agent.publicKey],
+      ]),
+    );
+    fixture.deliver(
+      signed(peerAgent, {
+        created_at: 13,
+        kind: 9,
+        tags: [
+          ['h', 'private-room-not-opened-by-this-human'],
+          ['t', 'agent-message'],
+          ['t', 'buzz-agent-exchange'],
+        ],
+        content: 'Private out-of-Room traffic.',
+      }),
+    );
+
+    await vi.waitFor(() =>
+      expect(delivered).toContainEqual(
+        expect.objectContaining({
+          type: 'read-model',
+          event: expect.objectContaining({
+            type: 'agent-message',
+            authorPubkey: peerAgent.publicKey,
+          }),
+        }),
+      ),
+    );
+    expect(fixture.client.listMembers).toHaveBeenCalledTimes(2);
+
+    const readEvents = delivered.flatMap((event) =>
+      event.type === 'read-model' && event.event.type !== 'unknown' ? [event.event] : [],
+    );
+    const snapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({
+        workspaceId: WORKSPACE,
+        identities: [
+          {
+            kind: 'human',
+            pubkey: human.publicKey,
+            displayName: 'Captain',
+            revision: 'human-identity',
+          },
+          {
+            kind: 'agent',
+            pubkey: agent.publicKey,
+            displayName: 'Buzzy',
+            revision: 'agent-identity',
+          },
+          {
+            kind: 'agent',
+            pubkey: peerAgent.publicKey,
+            displayName: 'Ox',
+            revision: 'peer-agent-identity',
+          },
+        ] as IdentityRecord[],
+      }),
+      readEvents,
+    );
+    expect(
+      transcriptMessages(snapshot, ROOM, human.publicKey).map((item) => ({
+        text: item.text,
+        agent: item.isAgentAuthor,
+      })),
+    ).toEqual([
+      { text: 'A proven human-to-agent reply.', agent: true },
+      { text: 'A human in this Room should see this exchange turn.', agent: true },
+    ]);
+    expect(delivered).toContainEqual(
+      expect.objectContaining({
+        type: 'read-model',
+        event: expect.objectContaining({ type: 'unknown', reason: 'foreign-channel' }),
+      }),
+    );
     stop();
   });
 

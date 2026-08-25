@@ -8,14 +8,16 @@ does not detach, respawn itself, or own a second health process when
 
 ## Thin-core boundary
 
-The core has exactly six in-process responsibilities:
+The core has exactly seven in-process responsibilities:
 
 1. own one authenticated relay socket and its existing reconnect policy;
 2. route Workspace, Room, and corner events;
 3. drive bounded Room/corner ACP children and durable context;
 4. invoke the deterministic signed-approval verifier (blanket per corner);
-5. publish presence and supervision status; and
-6. delegate out-of-turn Git to a disposable worker (JSON arguments in, JSON
+5. publish presence and supervision status;
+6. own one durable WorkCalendar heap and next-due timer, whose admitted work
+   enters the ordinary Room dispatcher without bypassing session capacity; and
+7. delegate out-of-turn Git to a disposable worker (JSON arguments in, JSON
    stdout out, hard deadline, process-group kill).
 
 Repository resolution, review publication, approval verification, and the

@@ -38,7 +38,9 @@ describe('Workspace session scheduler', () => {
     const steer = scheduler.run('corner', lifecycle, async () => undefined);
     await scheduler.suspend('corner');
     expect(suspend).not.toHaveBeenCalled();
-    release.resolve(); await Promise.all([first, steer]); await scheduler.dispose();
+    release.resolve();
+    await Promise.all([first, steer]);
+    await scheduler.dispose();
   });
 
   it('honors a harness-specific idle window without weakening capacity eviction', async () => {
@@ -76,11 +78,29 @@ describe('Workspace session scheduler', () => {
 
   it('reports waiting, live, and suspended in order', async () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
-    const release = deferred(); const states: string[] = [];
-    const first = scheduler.run('a', { activate: async () => 'a', suspend: async () => undefined }, async () => release.promise);
-    const second = scheduler.run('b', { activate: async () => 'b', suspend: async () => undefined, onStateChange: (state) => { states.push(state); } }, async () => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 0)); expect(states).toEqual(['waiting-for-slot']);
-    release.resolve(); await Promise.all([first, second]); await scheduler.dispose();
+    const release = deferred();
+    const states: string[] = [];
+    const first = scheduler.run(
+      'a',
+      { activate: async () => 'a', suspend: async () => undefined },
+      async () => release.promise,
+    );
+    const second = scheduler.run(
+      'b',
+      {
+        activate: async () => 'b',
+        suspend: async () => undefined,
+        onStateChange: (state) => {
+          states.push(state);
+        },
+      },
+      async () => undefined,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(states).toEqual(['waiting-for-slot']);
+    release.resolve();
+    await Promise.all([first, second]);
+    await scheduler.dispose();
     expect(states).toEqual(['waiting-for-slot', 'live', 'suspended']);
   });
   it('caps live ACP processes, evicts only idle owners, and preserves one pin per channel', async () => {
@@ -199,12 +219,9 @@ describe('Workspace session scheduler', () => {
       { priority: 'background' },
     );
     await firstCornerStarted.promise;
-    const nextCorner = scheduler.run(
-      'corner-b',
-      lifecycle('corner-b'),
-      async () => undefined,
-      { priority: 'background' },
-    );
+    const nextCorner = scheduler.run('corner-b', lifecycle('corner-b'), async () => undefined, {
+      priority: 'background',
+    });
 
     expect(scheduler.generations('corner-b')).toHaveLength(0);
 
@@ -229,6 +246,51 @@ describe('Workspace session scheduler', () => {
     await Promise.all([firstCorner, nextCorner]);
     expect(scheduler.generations('corner-b')).toEqual(['corner-b-physical']);
     expect(maxActive).toBe(2);
+    await scheduler.dispose();
+  });
+
+  it('lets a human turn preempt calendar work that is still waiting for a slot', async () => {
+    const scheduler = new SessionScheduler({
+      maxLiveSessions: 2,
+      perRoomLiveSessions: 2,
+      idleMs: 60_000,
+      reserveInteractiveSlot: true,
+    });
+    const releaseCorner = deferred();
+    const cornerStarted = deferred();
+    const order: string[] = [];
+    const lifecycle = (key: string): SessionLifecycle => ({
+      activate: async () => `${key}-physical`,
+      suspend: async () => undefined,
+    });
+    const corner = scheduler.run(
+      'corner',
+      lifecycle('corner'),
+      async () => {
+        cornerStarted.resolve();
+        await releaseCorner.promise;
+      },
+      { priority: 'background', roomKey: 'room-a' },
+    );
+    await cornerStarted.promise;
+
+    const calendar = scheduler.run(
+      'room-b',
+      lifecycle('room-b'),
+      async () => order.push('calendar'),
+      { priority: 'background', roomKey: 'room-b' },
+    );
+    await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+    const human = scheduler.run('room-b', lifecycle('room-b'), async () => order.push('human'), {
+      priority: 'interactive',
+      roomKey: 'room-b',
+    });
+
+    await human;
+    expect(order).toEqual(['human']);
+    releaseCorner.resolve();
+    await Promise.all([corner, calendar]);
+    expect(order).toEqual(['human', 'calendar']);
     await scheduler.dispose();
   });
 });

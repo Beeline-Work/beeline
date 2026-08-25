@@ -1,0 +1,209 @@
+import { createHash } from 'node:crypto';
+import { createIdentity, type Identity } from '@beeline/buzz-client';
+import { signEvent } from '@beeline/nostr';
+import { describe, expect, it } from 'vitest';
+import {
+  authorizeDaemonWorkSchedule,
+  validateArtifactRevisionEvents,
+  type DaemonWorkScheduleAuthorityDependencies,
+  type DaemonWorkScheduleAuthorityFacts,
+} from './daemon-work-calendar.js';
+import {
+  buildWorkSchedule,
+  parseWorkSchedule,
+  type ParsedWorkSchedule,
+  type WorkScheduleV1,
+} from './work-calendar.js';
+
+function scheduleFixture(agent: Identity, principal: Identity): WorkScheduleV1 {
+  return {
+    version: 1,
+    scheduleId: 'authority-job',
+    revision: 1,
+    workspaceId: 'authority-workspace',
+    roomId: 'authority-room',
+    agentPubkey: agent.publicKey,
+    principalPubkey: principal.publicKey,
+    prompt: 'Prepare the authorized draft.',
+    cadence: { type: 'interval', everySeconds: 60, anchorAt: 1_900_000_000 },
+    startsAt: 1_900_000_000,
+    expiresAt: 1_900_100_000,
+    maxRuns: 10,
+    perRunReservedTokens: 100,
+    dailyReservedTokens: 1_000,
+    catchUp: 'latest-one',
+    maxConsecutiveFailures: 3,
+    status: 'active',
+  };
+}
+
+function parsedSchedule(author: Identity, schedule: WorkScheduleV1): ParsedWorkSchedule {
+  const parsed = parseWorkSchedule(
+    buildWorkSchedule(author, schedule, { createdAt: schedule.startsAt - 10 }),
+  );
+  if (!parsed) throw new Error('fixture schedule did not parse');
+  return parsed;
+}
+
+function authorityFixture(options: { agentAuthored?: boolean; grantValid?: boolean } = {}) {
+  const agent = createIdentity();
+  const principal = createIdentity();
+  const schedule = scheduleFixture(agent, principal);
+  if (options.agentAuthored) schedule.permissionGrantEventId = 'a'.repeat(64);
+  const parsed = parsedSchedule(options.agentAuthored ? agent : principal, schedule);
+  const facts: DaemonWorkScheduleAuthorityFacts = {
+    workspaceMemberPubkeys: [agent.publicKey, principal.publicKey],
+    roomMemberPubkeys: [agent.publicKey, principal.publicKey],
+    roomArchived: false,
+    authorIsAgent: options.agentAuthored === true,
+    principalIsAgent: false,
+    principalCanDrive: true,
+    principalRole: 'owner',
+    authorRole: options.agentAuthored ? 'member' : 'owner',
+  };
+  const dependencies: DaemonWorkScheduleAuthorityDependencies = {
+    workspaceId: schedule.workspaceId,
+    agentPubkey: agent.publicKey,
+    readCurrentEvents: async () => [parsed.event],
+    readFacts: async () => facts,
+    verifyScheduleGrant: async () => options.grantValid === true,
+  };
+  return { agent, principal, schedule, parsed, facts, dependencies };
+}
+
+describe('daemon work schedule authority', () => {
+  it('accepts current human-admin configuration and an agent change with a live P1 grant', async () => {
+    const human = authorityFixture();
+    await expect(authorizeDaemonWorkSchedule(human.parsed, human.dependencies)).resolves.toEqual({
+      authorized: true,
+    });
+
+    const agent = authorityFixture({ agentAuthored: true, grantValid: true });
+    await expect(authorizeDaemonWorkSchedule(agent.parsed, agent.dependencies)).resolves.toEqual({
+      authorized: true,
+    });
+  });
+
+  it.each([
+    {
+      reason: 'principal-removed',
+      mutate: (fixture: ReturnType<typeof authorityFixture>) => {
+        fixture.facts.roomMemberPubkeys = [fixture.agent.publicKey];
+      },
+    },
+    {
+      reason: 'agent-removed',
+      mutate: (fixture: ReturnType<typeof authorityFixture>) => {
+        fixture.facts.workspaceMemberPubkeys = [fixture.principal.publicKey];
+      },
+    },
+    {
+      reason: 'room-archived',
+      mutate: (fixture: ReturnType<typeof authorityFixture>) => {
+        fixture.facts.roomArchived = true;
+      },
+    },
+    {
+      reason: 'schedule-principal-role-lost',
+      mutate: (fixture: ReturnType<typeof authorityFixture>) => {
+        fixture.facts.principalRole = 'member';
+      },
+    },
+    {
+      reason: 'schedule-author-role-lost',
+      mutate: (fixture: ReturnType<typeof authorityFixture>) => {
+        fixture.facts.authorRole = 'member';
+      },
+    },
+    {
+      reason: 'principal-access-denied',
+      mutate: (fixture: ReturnType<typeof authorityFixture>) => {
+        fixture.facts.principalCanDrive = false;
+      },
+    },
+  ])('fails closed when fresh authority reports $reason', async ({ reason, mutate }) => {
+    const fixture = authorityFixture();
+    mutate(fixture);
+    await expect(
+      authorizeDaemonWorkSchedule(fixture.parsed, fixture.dependencies),
+    ).resolves.toEqual({ authorized: false, terminal: true, reason });
+  });
+
+  it('treats missing Room metadata as retryable rather than silently authorizing', async () => {
+    const fixture = authorityFixture();
+    fixture.facts.roomArchived = undefined;
+    await expect(
+      authorizeDaemonWorkSchedule(fixture.parsed, fixture.dependencies),
+    ).resolves.toEqual({
+      authorized: false,
+      terminal: false,
+      reason: 'room-metadata-unavailable',
+    });
+
+    fixture.facts.roomArchived = false;
+    fixture.facts.principalCanDrive = undefined;
+    await expect(
+      authorizeDaemonWorkSchedule(fixture.parsed, fixture.dependencies),
+    ).resolves.toEqual({
+      authorized: false,
+      terminal: false,
+      reason: 'principal-access-unavailable',
+    });
+  });
+
+  it('rejects a revoked agent grant and a schedule superseded while queued', async () => {
+    const revoked = authorityFixture({ agentAuthored: true, grantValid: false });
+    await expect(
+      authorizeDaemonWorkSchedule(revoked.parsed, revoked.dependencies),
+    ).resolves.toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'schedule-change-grant-invalid',
+    });
+
+    const superseded = authorityFixture();
+    const revision = parsedSchedule(superseded.principal, {
+      ...superseded.schedule,
+      revision: 2,
+    });
+    superseded.dependencies.readCurrentEvents = async () => [revision.event];
+    await expect(
+      authorizeDaemonWorkSchedule(superseded.parsed, superseded.dependencies),
+    ).resolves.toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'schedule-superseded',
+    });
+  });
+
+  it('revalidates the exact signed artifact revision and digest', () => {
+    const author = createIdentity();
+    const content = 'artifact revision contents';
+    const event = signEvent(
+      {
+        pubkey: author.publicKey,
+        created_at: 1_900_000_000,
+        kind: 30078,
+        tags: [
+          ['d', 'artifact-one'],
+          ['artifact', 'artifact-one'],
+          ['revision', '4'],
+        ],
+        content,
+      },
+      author.secretKey,
+    );
+    const ref = {
+      artifactId: 'artifact-one',
+      revision: 4,
+      eventId: event.id,
+      sha256: createHash('sha256').update(content).digest('hex'),
+    };
+    expect(validateArtifactRevisionEvents([ref], [event])).toEqual({ authorized: true });
+    expect(validateArtifactRevisionEvents([{ ...ref, sha256: '0'.repeat(64) }], [event])).toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'artifact-digest-mismatch',
+    });
+  });
+});

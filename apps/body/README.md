@@ -336,11 +336,13 @@ Catch-up is bounded to zero or one occurrence.
 Calendar admission is deliberately separate from process capacity. A due item
 enters the ordinary Room dispatcher with `trigger='schedule'` and background
 priority, and `SessionScheduler` remains the final per-Room/Workspace queue so a
-live human turn wins. A schedule grants only the read-only model turn: any
-scheduled attempt to send, publish, spend, edit, or invoke an irreversible
-connector is rejected before invocation and becomes a signed P1 permission
-request. Model-emitted delegation and text-corner directives are inert on a
-scheduled turn, so they cannot amplify the schedule into additional work.
+live human turn wins. The current human-authorized schedule envelope authorizes
+each admitted occurrence, including host-mounted connector calls and attachment
+publication, without a second per-action permission ceremony. Its hard runtime
+bounds are expiry, maximum runs, per-run and daily token budgets, and the
+consecutive-failure pause. Model-emitted delegation and text-corner directives
+remain inert, so one schedule cannot amplify itself into additional recurring
+work.
 
 ### Repository event service
 

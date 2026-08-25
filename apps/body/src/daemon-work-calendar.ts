@@ -21,7 +21,6 @@ import {
   WORK_SCHEDULE_TAG,
   WorkCalendar,
   parseWorkSchedule,
-  selectCanonicalWorkSchedule,
   workScheduleKey,
   workScheduleRevisionDigest,
   type ParsedWorkSchedule,
@@ -168,35 +167,23 @@ export async function authorizeDaemonWorkSchedule(
         return candidate &&
           candidate.value.workspaceId === schedule.workspaceId &&
           candidate.value.agentPubkey === schedule.agentPubkey &&
+          candidate.value.principalPubkey === schedule.principalPubkey &&
           workScheduleKey(candidate.value) === workScheduleKey(schedule) &&
           (candidate.event.pubkey === candidate.value.principalPubkey ||
             candidate.event.pubkey === candidate.value.agentPubkey)
           ? [candidate]
           : [];
       });
-    const authority = new Map<string, Promise<ScheduleAuthorityResult>>();
-    const current = await selectCanonicalWorkSchedule(candidates, (candidate) => {
-      let result = authority.get(candidate.event.id);
-      if (!result) {
-        result = authorizeCandidate(candidate, candidates, dependencies, true);
-        authority.set(candidate.event.id, result);
-      }
-      return result;
-    });
-    if (!current) {
-      const newest = [...candidates].sort(
-        (left, right) =>
-          right.value.revision - left.value.revision ||
-          right.event.created_at - left.event.created_at ||
-          right.event.id.localeCompare(left.event.id),
-      )[0];
-      if (newest?.event.id === parsed.event.id) return await authority.get(parsed.event.id)!;
+    const current = [...candidates].sort(
+      (left, right) =>
+        right.value.revision - left.value.revision ||
+        right.event.created_at - left.event.created_at ||
+        right.event.id.localeCompare(left.event.id),
+    )[0];
+    if (!current || current.event.id !== parsed.event.id) {
       return { authorized: false, terminal: true, reason: 'schedule-superseded' };
     }
-    if (current.event.id !== parsed.event.id) {
-      return { authorized: false, terminal: true, reason: 'schedule-superseded' };
-    }
-    return await authority.get(parsed.event.id)!;
+    return await authorizeCandidate(parsed, candidates, dependencies, true);
   } catch {
     return { authorized: false, terminal: false, reason: 'authority-unavailable' };
   }

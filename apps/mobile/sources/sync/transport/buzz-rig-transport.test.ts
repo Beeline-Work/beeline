@@ -154,6 +154,9 @@ function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {
   const client = {
     sessionEventsBackfill: vi.fn(async () => input.messages ?? []),
     getParentChannelId: vi.fn(async () => null),
+    cornerStateBackfill: vi.fn(async (cornerIds: string[]) =>
+      input.corners && cornerIds.includes(CORNER) ? [cornerState()] : [],
+    ),
     listSubchannels: vi.fn(async () => (input.corners ? [CORNER] : [])),
     listMembers: vi.fn(async () => [
       { pubkey: human.publicKey, role: 'owner' },
@@ -175,18 +178,35 @@ function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {
         raw: { id: 'human-identity' },
       },
     ]),
-    query: vi.fn(async (filters: Array<{ kinds?: number[]; '#h'?: string[] }>) => {
-      const kinds = new Set(filters.flatMap((filter) => filter.kinds ?? []));
+    query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
       const results: NostrEvent[] = [];
-      if (kinds.has(KIND_CORNER_STATE) && input.corners) results.push(cornerState());
-      if (kinds.has(KIND_CHANNEL_MEMBERS)) results.push(...projections);
-      if (kinds.has(KIND_CREATE_GROUP)) {
-        const channels = new Set(filters.flatMap((filter) => filter['#h'] ?? []));
-        results.push(
-          ...createEvents.filter((event) =>
-            event.tags.some((tag) => tag[0] === 'h' && channels.has(tag[1]!)),
-          ),
-        );
+      for (const filter of filters) {
+        const kinds = new Set((filter.kinds as number[] | undefined) ?? []);
+        // Production indexing truth: parameterized-replaceable kind:30078 is
+        // indexed by `#d` ONLY. An exact-`#d` key returns the record's
+        // current value, a bare `#t` marker enumerates records, and a `#h`
+        // filter matches NOTHING — even though every record carries an `h`
+        // tag. A stub that answers kind:30078 by any tag shape cannot catch
+        // an unanswerable discovery read (the live #488-class failure).
+        if (kinds.has(KIND_CORNER_STATE)) {
+          const dKeys = (filter['#d'] as string[] | undefined) ?? undefined;
+          const tKeys = (filter['#t'] as string[] | undefined) ?? undefined;
+          if (!input.corners) continue;
+          if (dKeys && dKeys.includes(`${TAG_CORNER_STATE}:${CORNER}`)) results.push(cornerState());
+          else if (!dKeys && !filter['#h'] && tKeys?.includes(TAG_CORNER_STATE)) {
+            results.push(cornerState());
+          }
+          continue;
+        }
+        if (kinds.has(KIND_CHANNEL_MEMBERS)) results.push(...projections);
+        if (kinds.has(KIND_CREATE_GROUP)) {
+          const channels = new Set(filters.flatMap((filter) => filter['#h'] ?? []));
+          results.push(
+            ...createEvents.filter((event) =>
+              event.tags.some((tag) => tag[0] === 'h' && channels.has(tag[1]!)),
+            ),
+          );
+        }
       }
       return [...new Map(results.map((event) => [event.id, event])).values()];
     }),
@@ -425,6 +445,32 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     ]);
   });
 
+  it('never discovers corners through an unanswerable #h-shaped kind:30078 filter', async () => {
+    // Production indexes parameterized-replaceable kind:30078 by `#d` ONLY:
+    // a `#h` filter over it matches nothing even though every record carries
+    // an `h` tag (the same relay truth as the presence and change-review
+    // read-backs). A discovery read built on that shape made every Room read
+    // as cornerless while the records sat on the relay. The stub above is
+    // filter-faithful — it refuses exactly that shape — so this passes only
+    // when discovery uses answerable filters end to end.
+    const fixture = clientFixture({ corners: true });
+    const result = await transportWith(fixture.client).readModelBackfill(ROOM);
+    expect(selectCorners(result.snapshot, ROOM)).toHaveLength(1);
+    const kindCornerStateFilters = fixture.client.query.mock.calls
+      .flatMap((call) => call[0] as Array<Record<string, unknown>>)
+      .filter((filter) =>
+        ((filter.kinds as number[] | undefined) ?? []).includes(KIND_CORNER_STATE),
+      );
+    expect(kindCornerStateFilters.length).toBeGreaterThan(0);
+    for (const filter of kindCornerStateFilters) {
+      expect(filter['#h']).toBeUndefined();
+    }
+    expect(fixture.client.cornerStateBackfill).toHaveBeenCalledWith([CORNER]);
+    // Discovery rides the marker page and exact-`#d` read-back, never the
+    // relay-wide kind:9007 child scan.
+    expect(fixture.client.listSubchannels).not.toHaveBeenCalled();
+  });
+
   it('hydrates 200+ messages plus a corner without per-channel authority fan-out', async () => {
     const messages = Array.from({ length: 240 }, (_, index) =>
       message(human, `History ${index + 1}`, 10 + index),
@@ -440,7 +486,9 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     expect(fixture.client.getChannelCommunityId).not.toHaveBeenCalled();
     expect(fixture.client.listAgents).toHaveBeenCalledTimes(1);
     expect(fixture.client.listPersonProfiles).toHaveBeenCalledTimes(1);
-    expect(fixture.client.query.mock.calls.length).toBeLessThanOrEqual(2);
+    // Marker-page discovery + one structural/projection batch + the exact-#d
+    // corner-state read-back: still bounded, still no per-channel fan-out.
+    expect(fixture.client.query.mock.calls.length).toBeLessThanOrEqual(3);
   }, 20_000);
 
   it('coalesces the transcript and corner-status snapshot reads for one Room open', async () => {

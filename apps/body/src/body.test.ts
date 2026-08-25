@@ -109,6 +109,7 @@ import {
   DEFAULT_AGENT_IDENTITY_NAME,
   deriveAgentDisplayName,
   fallbackAgentName,
+  parseAgentCommands,
   type AgentHistoryEntry,
 } from '@beeline/buzz-client';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
@@ -11146,10 +11147,12 @@ describe('agent command list publishing (composer palette source of truth)', () 
     // listener to whatever client owns the session.
     const { EventEmitter } = await import('node:events');
     const fakeClient = new EventEmitter() as unknown as AcpClient;
+    (fakeClient as unknown as { sessionCommandsFor: () => unknown }).sessionCommandsFor = () => [];
     const detach = Reflect.get(body, 'attachAgentCommandPublisher').call(
       body,
       fakeClient,
       communityId,
+      'sess-1',
     ) as () => void;
 
     fakeClient.emit('commands', {
@@ -11189,6 +11192,76 @@ describe('agent command list publishing (composer palette source of truth)', () 
     await vi.advanceTimersByTimeAsync(4_000);
     commandEvents = published.filter((event) => event.kind === 30078);
     expect(commandEvents).toHaveLength(1);
+  });
+
+  it('seeds the publisher from a session-start push that landed before the listener attached', async () => {
+    vi.useFakeTimers();
+    const agentIdentity = newIdentity('commands-agent');
+    const body = new Body(config, newIdentity('operator'), agentIdentity);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return jsonResponse({ accepted: true });
+      }),
+    );
+
+    // AcpClient's live fake-adapter test proves the session-start update is
+    // stored before this point. Body attaches only after other awaited startup
+    // work, so simulate that already-captured state with no event replay.
+    const { EventEmitter } = await import('node:events');
+    const fakeClient = new EventEmitter() as unknown as AcpClient;
+    const sessionCommandsFor = vi.fn(() => [
+      { name: 'loop', description: 'Run again and again' },
+      { name: 'review', description: 'Review the diff' },
+    ]);
+    (
+      fakeClient as unknown as { sessionCommandsFor: typeof sessionCommandsFor }
+    ).sessionCommandsFor = sessionCommandsFor;
+    const detach = Reflect.get(body, 'attachAgentCommandPublisher').call(
+      body,
+      fakeClient,
+      communityId,
+      'session-1',
+    ) as () => void;
+    expect(sessionCommandsFor).toHaveBeenCalledWith('session-1');
+    await vi.advanceTimersByTimeAsync(4_000);
+    const commandEvents = published.filter((event) => event.kind === 30078);
+    expect(commandEvents).toHaveLength(1);
+    expect(commandEvents[0]!.pubkey).toBe(agentIdentity.publicKey);
+    expect(parseAgentCommands(commandEvents[0]!)?.commands).toEqual([
+      { name: 'loop', description: 'Run again and again' },
+      { name: 'review', description: 'Review the diff' },
+    ]);
+    detach();
+  });
+
+  it('still publishes nothing when the harness advertised no commands before attach', async () => {
+    // Record absence IS the "does not advertise" signal: seeding from an empty
+    // capture must not fabricate a record for a genuinely silent harness.
+    vi.useFakeTimers();
+    const body = new Body(config, newIdentity('operator'), newIdentity('commands-agent'));
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return jsonResponse({ accepted: true });
+      }),
+    );
+    const { EventEmitter } = await import('node:events');
+    const fakeClient = new EventEmitter() as unknown as AcpClient;
+    (fakeClient as unknown as { sessionCommandsFor: () => unknown }).sessionCommandsFor = () => [];
+    const detach = Reflect.get(body, 'attachAgentCommandPublisher').call(
+      body,
+      fakeClient,
+      communityId,
+      'never-advertised-session',
+    ) as () => void;
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(published.filter((event) => event.kind === 30078)).toHaveLength(0);
+    detach();
   });
 });
 describe('harness-independent corner commit watch', () => {

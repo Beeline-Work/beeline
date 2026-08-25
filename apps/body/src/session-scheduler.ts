@@ -22,6 +22,15 @@ interface LiveSession {
   idleMs: number;
 }
 
+interface QueuedSessionRun {
+  priority: SessionRunPriority;
+  roomKey: string;
+  lifecycle: SessionLifecycle;
+  task: () => Promise<unknown>;
+  resolve(value: unknown): void;
+  reject(error: unknown): void;
+}
+
 /**
  * Concurrent live ACP processes one Room (its own session plus corners) may hold.
  * Operators can override this with `BUZZY_BODY_MAX_SESSIONS_PER_ROOM`; invalid
@@ -74,7 +83,9 @@ export class SessionScheduler {
   private readonly idleMs: number;
   private readonly live = new Map<string, LiveSession>();
   private readonly busy = new Set<string>();
-  private readonly tails = new Map<string, Promise<void>>();
+  /** Per-logical-session queue. Interactive turns sort ahead of waiting background work. */
+  private readonly queues = new Map<string, QueuedSessionRun[]>();
+  private readonly drainingKeys = new Set<string>();
   private readonly physicalHistory = new Map<string, string[]>();
   /**
    * Sessions already removed from `live` whose process is still being torn
@@ -139,39 +150,80 @@ export class SessionScheduler {
     task: () => Promise<T>,
     options: { priority?: SessionRunPriority; roomKey?: string } = {},
   ): Promise<T> {
-    const previous = this.tails.get(key) ?? Promise.resolve();
-    let releaseTail!: () => void;
-    const tail = new Promise<void>((resolveTail) => {
-      releaseTail = resolveTail;
+    const priority = options.priority ?? 'interactive';
+    const promise = new Promise<T>((resolveRun, rejectRun) => {
+      const queued: QueuedSessionRun = {
+        priority,
+        roomKey: options.roomKey ?? key,
+        lifecycle,
+        task,
+        resolve: (value) => resolveRun(value as T),
+        reject: rejectRun,
+      };
+      const queue = this.queues.get(key) ?? [];
+      if (priority === 'interactive') {
+        const firstBackground = queue.findIndex((candidate) => candidate.priority === 'background');
+        if (firstBackground < 0) queue.push(queued);
+        else queue.splice(firstBackground, 0, queued);
+      } else {
+        queue.push(queued);
+      }
+      this.queues.set(key, queue);
+      this.wakeCapacityWaiters();
+      void this.drainKey(key);
     });
-    const queuedTail = previous.catch(() => undefined).then(() => tail);
-    this.tails.set(key, queuedTail);
+    return promise;
+  }
 
-    return previous
-      .catch(() => undefined)
-      .then(async () => {
-        await this.ensureLive(
-          key,
-          lifecycle,
-          options.priority ?? 'interactive',
-          options.roomKey ?? key,
-        );
-        const session = this.live.get(key)!;
-        session.lastUsedAt = Date.now();
-        try {
-          return await task();
-        } finally {
-          this.busy.delete(key);
-          const current = this.live.get(key);
-          if (current) current.lastUsedAt = Date.now();
-          this.wakeCapacityWaiters();
+  private async drainKey(key: string): Promise<void> {
+    if (this.drainingKeys.has(key)) return;
+    this.drainingKeys.add(key);
+    try {
+      for (;;) {
+        const queue = this.queues.get(key);
+        const queued = queue?.shift();
+        if (!queued) {
+          this.queues.delete(key);
+          return;
         }
-      })
-      .finally(() => {
-        releaseTail();
-        if (this.tails.get(key) === queuedTail) this.tails.delete(key);
-        this.wakeCapacityWaiters();
-      });
+        if (queue?.length === 0) this.queues.delete(key);
+        try {
+          const admitted = await this.ensureLive(
+            key,
+            queued.lifecycle,
+            queued.priority,
+            queued.roomKey,
+            () => this.hasQueuedInteractive(key),
+          );
+          if (!admitted) {
+            const waiting = this.queues.get(key) ?? [];
+            waiting.push(queued);
+            this.queues.set(key, waiting);
+            continue;
+          }
+          const session = this.live.get(key)!;
+          session.lastUsedAt = Date.now();
+          try {
+            queued.resolve(await queued.task());
+          } finally {
+            this.busy.delete(key);
+            const current = this.live.get(key);
+            if (current) current.lastUsedAt = Date.now();
+            this.wakeCapacityWaiters();
+          }
+        } catch (error) {
+          queued.reject(error);
+        }
+      }
+    } finally {
+      this.drainingKeys.delete(key);
+      if ((this.queues.get(key)?.length ?? 0) > 0) void this.drainKey(key);
+      this.wakeCapacityWaiters();
+    }
+  }
+
+  private hasQueuedInteractive(key: string): boolean {
+    return this.queues.get(key)?.some((queued) => queued.priority === 'interactive') ?? false;
   }
 
   physicalSessionId(key: string): string | undefined {
@@ -197,14 +249,15 @@ export class SessionScheduler {
       live: this.live.size,
       pending,
       busy: this.busy.size,
-      queuedChannels: this.tails.size,
+      queuedChannels: new Set([...this.queues.keys(), ...this.drainingKeys]).size,
       maxLive: this.workspaceCapacity(),
       perRoom: this.perRoomLiveSessions,
     };
   }
 
   async suspend(key: string): Promise<void> {
-    if (this.busy.has(key) || this.tails.has(key)) return;
+    if (this.busy.has(key) || this.drainingKeys.has(key) || (this.queues.get(key)?.length ?? 0) > 0)
+      return;
     const session = this.live.get(key);
     if (!session) return;
     this.live.delete(key);
@@ -274,8 +327,12 @@ export class SessionScheduler {
     lifecycle: SessionLifecycle,
     priority: SessionRunPriority,
     roomKey: string,
-  ): Promise<void> {
+    interactiveQueued: () => boolean,
+  ): Promise<boolean> {
     for (;;) {
+      // A background activation that has not acquired a process yet remains
+      // preemptible. Put it back behind the newly arrived human turn.
+      if (priority === 'background' && interactiveQueued()) return false;
       const previousCapacity = this.capacityTail;
       let releaseCapacity!: () => void;
       const capacity = new Promise<void>((resolveCapacity) => {
@@ -288,11 +345,15 @@ export class SessionScheduler {
       let evicted: LiveSession | undefined;
       let reservation: LiveSession | undefined;
       try {
+        // `previousCapacity` may have been held while an interactive turn was
+        // enqueued. Re-check under the mutex; from here through reservation
+        // there is no await, so a background turn cannot win that race.
+        if (priority === 'background' && interactiveQueued()) return false;
         // The per-key FIFO in run() means a pending reservation for this key
         // can only belong to this call chain, never a concurrent one.
         if (this.live.has(key)) {
           this.busy.add(key);
-          return;
+          return true;
         }
 
         const reserved = priority === 'background' && this.reserveInteractiveSlot ? 1 : 0;
@@ -331,6 +392,7 @@ export class SessionScheduler {
         // A background waiter must not hold the capacity mutex while an
         // interactive Room turn can use the reserved slot.
         await waitForCapacity;
+        if (priority === 'background' && interactiveQueued()) return false;
         continue;
       }
 
@@ -352,7 +414,7 @@ export class SessionScheduler {
         const generations = this.physicalHistory.get(key) ?? [];
         generations.push(physicalSessionId);
         this.physicalHistory.set(key, generations);
-        return;
+        return true;
       } catch (error) {
         if (this.live.get(key) === reservation) this.live.delete(key);
         this.busy.delete(key);
@@ -366,10 +428,16 @@ export class SessionScheduler {
    * Remove and return the least-recently-used idle candidate, under the lock.
    * It moves straight into `suspending` so the slot it still physically holds
    * keeps counting until its actual teardown resolves outside the lock.
-    */
+   */
   private claimIdleVictim(match: (session: LiveSession) => boolean): LiveSession | undefined {
     const victim = [...this.live.entries()]
-      .filter(([candidate, session]) => !this.busy.has(candidate) && !this.tails.has(candidate) && match(session))
+      .filter(
+        ([candidate, session]) =>
+          !this.busy.has(candidate) &&
+          !this.drainingKeys.has(candidate) &&
+          (this.queues.get(candidate)?.length ?? 0) === 0 &&
+          match(session),
+      )
       .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)[0];
     if (!victim) return undefined;
     this.live.delete(victim[0]);
@@ -382,7 +450,8 @@ export class SessionScheduler {
     for (const [key, session] of [...this.live.entries()]) {
       if (
         !this.busy.has(key) &&
-        !this.tails.has(key) &&
+        !this.drainingKeys.has(key) &&
+        (this.queues.get(key)?.length ?? 0) === 0 &&
         session.lastUsedAt <= now - session.idleMs
       ) {
         await this.suspend(key);
@@ -394,7 +463,10 @@ export class SessionScheduler {
     const waiters = this.waiters.splice(0);
     for (const wake of waiters) wake();
   }
-  private async notifyState(lifecycle: SessionLifecycle, state: SessionProcessState): Promise<void> {
+  private async notifyState(
+    lifecycle: SessionLifecycle,
+    state: SessionProcessState,
+  ): Promise<void> {
     await Promise.resolve(lifecycle.onStateChange?.(state)).catch(() => undefined);
   }
 }

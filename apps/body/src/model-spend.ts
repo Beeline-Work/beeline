@@ -10,7 +10,8 @@ export type ModelTurnCause =
   | 'target-sync'
   | 'restart-continuation'
   | 'agent-exchange'
-  | 'delegation';
+  | 'delegation'
+  | 'schedule';
 
 export interface ModelTurnAttribution {
   /** Event that immediately caused this invocation. */
@@ -126,7 +127,11 @@ export function completedModelSpend(input: {
     chargedAgentPubkey: input.agentPubkey,
     trigger:
       input.attribution.trigger ??
-      (input.attribution.cause === 'delegation' ? 'delegation' : 'human'),
+      (input.attribution.cause === 'delegation'
+        ? 'delegation'
+        : input.attribution.cause === 'schedule'
+          ? 'schedule'
+          : 'human'),
     rootEventId: input.attribution.rootEventId ?? input.attribution.originalRequestId,
     channelId: input.channelId,
     startedAt: input.startedAt,
@@ -155,7 +160,11 @@ export function failedModelSpend(input: {
     chargedAgentPubkey: input.agentPubkey,
     trigger:
       input.attribution.trigger ??
-      (input.attribution.cause === 'delegation' ? 'delegation' : 'human'),
+      (input.attribution.cause === 'delegation'
+        ? 'delegation'
+        : input.attribution.cause === 'schedule'
+          ? 'schedule'
+          : 'human'),
     rootEventId: input.attribution.rootEventId ?? input.attribution.originalRequestId,
     channelId: input.channelId,
     startedAt: input.startedAt,

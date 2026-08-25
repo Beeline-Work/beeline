@@ -169,6 +169,31 @@ describe('model spend accounting', () => {
     });
   });
 
+  it('defaults scheduled accounting to schedule trigger and preserves run provenance', () => {
+    const spend = completedModelSpend({
+      result: { stopReason: 'end_turn', agentText: 'draft', toolCalls: [], updates: [] },
+      prompt: 'prepare the report',
+      systemPromptChars: 0,
+      attribution: {
+        cause: 'schedule',
+        requestId: 'queued-event',
+        originalRequestId: 'queued-event',
+        scheduleId: 'daily-report',
+        scheduleRunId: 'run-1',
+        reservedTokens: 500,
+      },
+      agentPubkey: 'reporter',
+      channelId: 'room',
+      startedAt: '2026-08-20T12:00:00.000Z',
+    });
+    expect(spend).toMatchObject({
+      trigger: 'schedule',
+      scheduleId: 'daily-report',
+      scheduleRunId: 'run-1',
+      reservedTokens: 500,
+    });
+  });
+
   it('measures re-prime size and count per daemon process generation', () => {
     const reports = dailyRestartReprimes(
       [

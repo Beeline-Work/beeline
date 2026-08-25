@@ -995,6 +995,30 @@ export interface IdentitySuccessionChain {
   predecessors: string[];
 }
 
+const IDENTITY_PREDECESSORS_TIMEOUT_MS = 5_000;
+
+function withIdentityPredecessorTimeout<T>(
+  operation: Promise<T>,
+  controller: AbortController,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new OidcBindError('offline', 'identity succession lookup timed out'));
+    }, IDENTITY_PREDECESSORS_TIMEOUT_MS);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 /**
  * Fetch this key's succession chain from the auth service: the device keys
  * that previously held the same Beeline identity (oldest first). Served only
@@ -1009,19 +1033,28 @@ export async function fetchIdentityPredecessors(
     throw new OidcBindError('invalid_identity', 'invalid public key');
   const url = endpoint(baseUrl, `/auth/oidc/predecessors/${identity.publicKey}`).toString();
   let response: Response;
+  let body: Record<string, unknown>;
+  const controller = new AbortController();
   try {
-    response = await fetch(url, {
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
-      },
-    });
+    ({ response, body } = await withIdentityPredecessorTimeout(
+      fetch(url, {
+        headers: {
+          authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
+        },
+        signal: controller.signal,
+      }).then(async (nextResponse) => ({
+        response: nextResponse,
+        body: await responseBody(nextResponse),
+      })),
+      controller,
+    ));
   } catch (error) {
+    if (error instanceof OidcBindError) throw error;
     throw new OidcBindError(
       'offline',
       error instanceof Error ? error.message : 'auth service unavailable',
     );
   }
-  const body = await responseBody(response);
   if (!response.ok) throw serviceError(body, response.status);
   if (
     !Array.isArray(body.predecessors) ||

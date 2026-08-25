@@ -73,7 +73,7 @@ vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     // Deliberately minimal: the mount refresh may fail against this stub —
     // these tests render from the seeded local cache, like a cold open.
-    ensureClient = vi.fn(async () => ({}));
+    ensureClient = vi.fn(async () => ({ isAgentIdentity: vi.fn(async () => false) }));
   },
 }));
 vi.mock('@/components/buzz/CommunityRail', async () => {
@@ -173,6 +173,7 @@ vi.mock('react-native', async () => {
 
 const { channelListCacheKey, useBuzzLocalCache } = await import('@/buzz/local-cache');
 const { useRoomReadState } = await import('@/buzz/room-read-state');
+const { prepareWorkspaceContext } = await import('@/buzz/workspace-bootstrap');
 const { default: BuzzChannels } = await import('./channels');
 
 const VIEWER = 'a'.repeat(64);
@@ -265,6 +266,36 @@ describe("the deck's one ordered feed", () => {
     navigation.push.mockClear();
     useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
     useRoomReadState.setState({ readAt: {} });
+    vi.mocked(prepareWorkspaceContext).mockImplementation(async () => workspaceContext.current);
+  });
+
+  it('turns a never-settling cold-cache relay read into a retryable empty list', async () => {
+    vi.useFakeTimers();
+    vi.mocked(prepareWorkspaceContext).mockImplementation(() => new Promise(() => undefined));
+
+    try {
+      const tree = await render();
+      expect(visibleTextOf(tree)).toContain('CONNECTING TO RELAY');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8_001);
+      });
+
+      const text = visibleTextOf(tree);
+      expect(text).not.toContain('CONNECTING TO RELAY');
+      expect(text).toContain("Couldn't reach relay");
+      expect(findAllByTestId(tree, 'room-list')).toHaveLength(1);
+
+      const retry = tree.root.find(
+        (node: any) => node.type === 'MonoButton' && node.props.label === 'RETRY',
+      );
+      expect(retry).toBeDefined();
+      await press(retry);
+      expect(prepareWorkspaceContext).toHaveBeenCalledTimes(2);
+      tree.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('pins actionable Rooms first and renders no section headers', async () => {

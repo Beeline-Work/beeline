@@ -14,6 +14,7 @@ const identity = {
 } as unknown as Pick<Identity, 'secretKey' | 'publicKey'>;
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
   resetSuccessionChainCache();
 });
@@ -35,6 +36,16 @@ describe('succession chain loader', () => {
     vi.mocked(fetchIdentityPredecessors).mockRejectedValue(new Error('offline'));
 
     await expect(loadSuccessionPredecessors('https://relay.test', identity)).resolves.toEqual([]);
+  });
+
+  it('degrades to an empty chain when the auth request never settles', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchIdentityPredecessors).mockImplementation(() => new Promise(() => undefined));
+
+    const result = loadSuccessionPredecessors('https://relay.test', identity);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await expect(result).resolves.toEqual([]);
   });
 
   it('does not cache an empty chain, so a later retry can still find it', async () => {

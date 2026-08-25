@@ -12,6 +12,26 @@ import { fetchIdentityPredecessors } from '@beeline/buzz-client';
 import type { Identity } from '@beeline/buzz-client';
 
 const cache = new Map<string, string[]>();
+const SUCCESSION_LOOKUP_TIMEOUT_MS = 5_000;
+
+function withSuccessionTimeout<T>(promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('identity succession lookup timed out')),
+      SUCCESSION_LOOKUP_TIMEOUT_MS,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 /** Reset the per-session cache (tests / explicit revalidation). */
 export function resetSuccessionChainCache(): void {
@@ -29,7 +49,7 @@ export async function loadSuccessionPredecessors(
   const cached = cache.get(identity.publicKey);
   if (cached) return cached;
   try {
-    const predecessors = await fetchIdentityPredecessors(relayUrl, identity);
+    const predecessors = await withSuccessionTimeout(fetchIdentityPredecessors(relayUrl, identity));
     if (predecessors.length > 0) cache.set(identity.publicKey, predecessors);
     return predecessors;
   } catch {

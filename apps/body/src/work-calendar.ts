@@ -10,7 +10,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { CronExpression, CronExpressionParser } from 'cron-parser';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import type { ArtifactRevisionRef, Identity } from '@beeline/buzz-client';
+import type { ArtifactRevisionRef, Identity, PermissionConcreteAction } from '@beeline/buzz-client';
 
 export const WORK_SCHEDULE_KIND = 30078;
 export const WORK_SCHEDULE_TAG = 'buzz-work-schedule';
@@ -21,15 +21,36 @@ export const WORK_SCHEDULE_VERSION = 1 as const;
 export const DEFAULT_CALENDAR_RESYNC_SECONDS = 60;
 export const DEFAULT_CALENDAR_RETRY_SECONDS = 5;
 export const MAX_CALENDAR_DUE_PER_WAKE = 16;
+export const MIN_MODEL_SCHEDULE_CADENCE_SECONDS = 15 * 60;
+export const MIN_SCRIPT_SCHEDULE_CADENCE_SECONDS = 60;
+export const MAX_MISSION_SCRIPT_CONSECUTIVE_FAILURES = 3;
 
 const HEX_64 = /^[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
 const LOCAL_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const MAX_PROMPT_CHARS = 32_000;
+const MAX_SCRIPT_CHARS = 32_000;
 const MAX_ARTIFACT_REFS = 128;
 const MAX_RUNS = 1_000_000;
 const MAX_RESERVED_TOKENS = 100_000_000;
 const MAX_INTERVAL_SECONDS = 366 * 24 * 60 * 60;
+
+export type WorkScheduleExecution =
+  | { mode: 'model' }
+  | {
+      /** Omission is the wire-level default for new mission schedules. */
+      mode?: 'script';
+      script: string;
+      scriptSha256: string;
+      timeoutSeconds: number;
+    };
+
+export interface WorkScheduleMission {
+  missionId: string;
+  grantEventId: string;
+  controllerAgentPubkey: string;
+  repository: { key: string; targetBranch: string };
+}
 
 export interface WorkScheduleV1 {
   version: 1;
@@ -38,8 +59,13 @@ export interface WorkScheduleV1 {
   workspaceId: string;
   roomId: string;
   agentPubkey: string;
+  /** Mission calendar owner remains the CoS; this names the delegated turn recipient. */
+  targetAgentPubkey?: string;
   principalPubkey: string;
   prompt: string;
+  /** Legacy v1 records omit this and retain their pre-M3 model-turn behavior. */
+  execution?: WorkScheduleExecution;
+  mission?: WorkScheduleMission;
   artifactRefs?: ArtifactRevisionRef[];
   cadence:
     | { type: 'cron'; expression: string; timezone: string }
@@ -111,15 +137,24 @@ export interface ScheduledTurnRequest {
   workspaceId: string;
   roomId: string;
   agentPubkey: string;
+  targetAgentPubkey: string;
   principalPubkey: string;
   scheduleId: string;
   scheduleRevision: number;
+  scheduleRevisionDigest: string;
   scheduleRunId: string;
   nominalAt: number;
   prompt: string;
   artifactRefs: readonly ArtifactRevisionRef[];
   reservedTokens: number;
+  maxRuns: number;
+  dailyReservedTokens: number;
   queuedEvent: NostrEvent;
+  execution:
+    | { mode: 'model' }
+    | { mode: 'script'; script: string; scriptSha256: string; timeoutSeconds: number };
+  missionAction?: PermissionConcreteAction;
+  mission?: WorkScheduleMission;
 }
 
 export type ScheduleAuthorityResult =
@@ -397,6 +432,91 @@ function parseCadence(value: unknown): WorkScheduleV1['cadence'] | undefined {
   return undefined;
 }
 
+function parseExecution(value: unknown): WorkScheduleExecution | undefined {
+  const input = object(value);
+  if (!input) return undefined;
+  if (input.mode === 'model') return { mode: 'model' };
+  if (input.mode !== undefined && input.mode !== 'script') return undefined;
+  const script = input.script;
+  const scriptSha256 = input.scriptSha256;
+  const timeoutSeconds = integer(input.timeoutSeconds, 1, 3_600);
+  if (
+    typeof script !== 'string' ||
+    !script.trim() ||
+    script.length > MAX_SCRIPT_CHARS ||
+    typeof scriptSha256 !== 'string' ||
+    !HEX_64.test(scriptSha256) ||
+    createHash('sha256').update(script).digest('hex') !== scriptSha256 ||
+    timeoutSeconds === undefined
+  ) {
+    return undefined;
+  }
+  return { mode: 'script', script, scriptSha256, timeoutSeconds };
+}
+
+function parseMission(value: unknown): WorkScheduleMission | undefined {
+  const input = object(value);
+  const repository = object(input?.repository);
+  const missionId = nonEmpty(input?.missionId, 256);
+  const repositoryKey = nonEmpty(repository?.key, 256);
+  const targetBranch = nonEmpty(repository?.targetBranch, 256);
+  if (
+    !missionId ||
+    !SAFE_ID.test(missionId) ||
+    typeof input?.grantEventId !== 'string' ||
+    !HEX_64.test(input.grantEventId) ||
+    typeof input.controllerAgentPubkey !== 'string' ||
+    !HEX_64.test(input.controllerAgentPubkey) ||
+    !repositoryKey ||
+    !SAFE_ID.test(repositoryKey) ||
+    !targetBranch ||
+    !SAFE_ID.test(targetBranch)
+  ) {
+    return undefined;
+  }
+  return {
+    missionId,
+    grantEventId: input.grantEventId,
+    controllerAgentPubkey: input.controllerAgentPubkey,
+    repository: { key: repositoryKey, targetBranch },
+  };
+}
+
+export function workScheduleExecutionMode(schedule: WorkScheduleV1): 'script' | 'model' {
+  if (!schedule.execution) return 'model';
+  return schedule.execution.mode === 'model' ? 'model' : 'script';
+}
+
+function minimumCadenceSeconds(schedule: WorkScheduleV1): number {
+  if (schedule.cadence.type === 'interval') return schedule.cadence.everySeconds;
+  if (schedule.cadence.type === 'daily') return 24 * 60 * 60;
+  const expression = CronExpressionParser.parse(schedule.cadence.expression, {
+    currentDate: new Date(0),
+    tz: schedule.cadence.timezone,
+  });
+  const times: number[] = [];
+  for (const hour of expression.fields.hour.values) {
+    for (const minute of expression.fields.minute.values) {
+      for (const second of expression.fields.second.values) {
+        times.push(hour * 3_600 + minute * 60 + second);
+      }
+    }
+  }
+  times.sort((left, right) => left - right);
+  if (times.length === 0) return 0;
+  let minimum = 24 * 60 * 60;
+  for (let index = 1; index < times.length; index += 1) {
+    minimum = Math.min(minimum, times[index]! - times[index - 1]!);
+  }
+  return Math.min(minimum, 24 * 60 * 60 - times.at(-1)! + times[0]!);
+}
+
+export function workScheduleCadenceFloorSeconds(schedule: WorkScheduleV1): number {
+  return workScheduleExecutionMode(schedule) === 'script'
+    ? MIN_SCRIPT_SCHEDULE_CADENCE_SECONDS
+    : MIN_MODEL_SCHEDULE_CADENCE_SECONDS;
+}
+
 export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefined {
   const input = object(value);
   if (!input || input.version !== 1) return undefined;
@@ -405,6 +525,8 @@ export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefin
   const workspaceId = nonEmpty(input.workspaceId, 256);
   const roomId = nonEmpty(input.roomId, 256);
   const prompt = nonEmpty(input.prompt, MAX_PROMPT_CHARS);
+  const execution = input.execution === undefined ? undefined : parseExecution(input.execution);
+  const mission = input.mission === undefined ? undefined : parseMission(input.mission);
   const cadence = parseCadence(input.cadence);
   const startsAt = integer(input.startsAt);
   const expiresAt = integer(input.expiresAt);
@@ -420,10 +542,16 @@ export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefin
     !roomId ||
     !SAFE_ID.test(roomId) ||
     !prompt ||
+    (input.execution !== undefined && !execution) ||
+    (input.mission !== undefined && !mission) ||
+    (mission !== undefined && execution === undefined) ||
+    (execution !== undefined && execution.mode !== 'model' && mission === undefined) ||
     !cadence ||
     revision === undefined ||
     typeof input.agentPubkey !== 'string' ||
     !HEX_64.test(input.agentPubkey) ||
+    (input.targetAgentPubkey !== undefined &&
+      (typeof input.targetAgentPubkey !== 'string' || !HEX_64.test(input.targetAgentPubkey))) ||
     typeof input.principalPubkey !== 'string' ||
     !HEX_64.test(input.principalPubkey) ||
     startsAt === undefined ||
@@ -438,6 +566,34 @@ export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefin
     !['active', 'paused'].includes(String(input.status))
   )
     return undefined;
+  const targetAgentPubkey =
+    typeof input.targetAgentPubkey === 'string' ? input.targetAgentPubkey : input.agentPubkey;
+  if (
+    mission &&
+    (input.agentPubkey !== mission.controllerAgentPubkey ||
+      input.targetAgentPubkey === undefined ||
+      (workScheduleExecutionMode({
+        ...(input as unknown as WorkScheduleV1),
+        ...(execution ? { execution } : {}),
+      }) === 'script' &&
+        maxConsecutiveFailures! > MAX_MISSION_SCRIPT_CONSECUTIVE_FAILURES))
+  ) {
+    return undefined;
+  }
+  const candidateForCadence = {
+    ...(input as unknown as WorkScheduleV1),
+    ...(execution ? { execution } : {}),
+    cadence,
+  };
+  // Legacy records omitted `execution` and keep their pre-M3 cadence. Every
+  // explicit M3 record is checked by the daemon parser before it can enter the heap.
+  if (
+    execution &&
+    minimumCadenceSeconds(candidateForCadence) <
+      workScheduleCadenceFloorSeconds(candidateForCadence)
+  ) {
+    return undefined;
+  }
   let artifactRefs: ArtifactRevisionRef[] | undefined;
   if (input.artifactRefs !== undefined) {
     if (!Array.isArray(input.artifactRefs) || input.artifactRefs.length > MAX_ARTIFACT_REFS)
@@ -460,8 +616,11 @@ export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefin
     workspaceId,
     roomId,
     agentPubkey: input.agentPubkey,
+    ...(input.targetAgentPubkey !== undefined ? { targetAgentPubkey } : {}),
     principalPubkey: input.principalPubkey,
     prompt,
+    ...(execution ? { execution } : {}),
+    ...(mission ? { mission } : {}),
     ...(artifactRefs ? { artifactRefs } : {}),
     cadence,
     startsAt,
@@ -492,7 +651,17 @@ export function workScheduleKey(
 /** Digest used by P1 `schedule.change`; the later grant id is excluded to avoid a circular signature. */
 export function workScheduleRevisionDigest(schedule: WorkScheduleV1): string {
   const { permissionGrantEventId: _grant, ...revision } = schedule;
-  return createHash('sha256').update(stable(revision)).digest('hex');
+  const digestible = revision.mission
+    ? {
+        ...revision,
+        mission: {
+          missionId: revision.mission.missionId,
+          controllerAgentPubkey: revision.mission.controllerAgentPubkey,
+          repository: revision.mission.repository,
+        },
+      }
+    : revision;
+  return createHash('sha256').update(stable(digestible)).digest('hex');
 }
 
 function dailyExpression(localTime: string): string {
@@ -754,9 +923,21 @@ export function buildWorkSchedule(
         ['t', WORK_SCHEDULE_TAG],
         ['h', schedule.roomId],
         ['agent', schedule.agentPubkey],
+        ...(schedule.targetAgentPubkey ? [['target-agent', schedule.targetAgentPubkey]] : []),
         ['principal', schedule.principalPubkey],
         ['revision', String(schedule.revision)],
         ['status', schedule.status],
+        ...(schedule.execution ? [['execution', workScheduleExecutionMode(schedule)]] : []),
+        ...(schedule.execution && schedule.execution.mode !== 'model'
+          ? [['script-sha256', schedule.execution.scriptSha256]]
+          : []),
+        ...(schedule.mission
+          ? [
+              ['mission', schedule.mission.missionId],
+              ['mission-grant', schedule.mission.grantEventId],
+              ['controller', schedule.mission.controllerAgentPubkey],
+            ]
+          : []),
         ['next-at', String(nextAt)],
       ],
       content: JSON.stringify(schedule),
@@ -784,9 +965,26 @@ export function parseWorkSchedule(event: NostrEvent): ParsedWorkSchedule | undef
     uniqueTag(event, 't') !== WORK_SCHEDULE_TAG ||
     uniqueTag(event, 'h') !== value.roomId ||
     uniqueTag(event, 'agent') !== value.agentPubkey ||
+    (value.targetAgentPubkey
+      ? uniqueTag(event, 'target-agent') !== value.targetAgentPubkey
+      : uniqueTag(event, 'target-agent') !== undefined) ||
     uniqueTag(event, 'principal') !== value.principalPubkey ||
     uniqueTag(event, 'revision') !== String(value.revision) ||
-    uniqueTag(event, 'status') !== value.status
+    uniqueTag(event, 'status') !== value.status ||
+    (value.execution
+      ? uniqueTag(event, 'execution') !== workScheduleExecutionMode(value)
+      : uniqueTag(event, 'execution') !== undefined) ||
+    (value.execution && value.execution.mode !== 'model'
+      ? uniqueTag(event, 'script-sha256') !== value.execution.scriptSha256
+      : uniqueTag(event, 'script-sha256') !== undefined) ||
+    (value.mission
+      ? uniqueTag(event, 'mission') !== value.mission.missionId ||
+        uniqueTag(event, 'mission-grant') !== value.mission.grantEventId ||
+        uniqueTag(event, 'controller') !== value.mission.controllerAgentPubkey ||
+        event.pubkey !== value.mission.controllerAgentPubkey
+      : uniqueTag(event, 'mission') !== undefined ||
+        uniqueTag(event, 'mission-grant') !== undefined ||
+        uniqueTag(event, 'controller') !== undefined)
   )
     return undefined;
   return { event, value, nextAt: nextAt || undefined };
@@ -1038,6 +1236,10 @@ export interface WorkCalendarDependencies {
   authorize(schedule: ParsedWorkSchedule): Promise<ScheduleAuthorityResult>;
   validateArtifacts?(schedule: ParsedWorkSchedule): Promise<ScheduleAuthorityResult>;
   validateScheduleCreation?(creation: readonly ParsedWorkSchedule[]): Promise<boolean>;
+  missionAction?(
+    schedule: ParsedWorkSchedule,
+    nominalAt: number,
+  ): Promise<PermissionConcreteAction | undefined>;
   publish(event: NostrEvent): Promise<void>;
   dispatch(
     request: ScheduledTurnRequest,
@@ -1141,7 +1343,9 @@ export class WorkCalendar {
       const plausible = list.filter(
         (candidate) =>
           candidate.event.pubkey === candidate.value.principalPubkey ||
-          candidate.event.pubkey === candidate.value.agentPubkey,
+          candidate.event.pubkey === candidate.value.agentPubkey ||
+          (candidate.value.mission !== undefined &&
+            candidate.event.pubkey === candidate.value.mission.controllerAgentPubkey),
       );
       const existing = this.states.get(list[0]!.value.scheduleId);
       const pinnedPrincipal =
@@ -1349,6 +1553,13 @@ export class WorkCalendar {
       await this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, budgetReason);
       return;
     }
+    const missionAction = schedule.mission
+      ? await this.dependencies.missionAction?.(entry.parsed, entry.nominalAt)
+      : undefined;
+    if (schedule.mission && !missionAction) {
+      await this.pause(entry.parsed, 'mission-grant-invalid', true);
+      return;
+    }
 
     // Receipts are best-effort observability only. A relay failure never gates
     // execution and receipts are never replayed as calendar state.
@@ -1363,15 +1574,30 @@ export class WorkCalendar {
           workspaceId: schedule.workspaceId,
           roomId: schedule.roomId,
           agentPubkey: schedule.agentPubkey,
+          targetAgentPubkey: schedule.targetAgentPubkey ?? schedule.agentPubkey,
           principalPubkey: schedule.principalPubkey,
           scheduleId: schedule.scheduleId,
           scheduleRevision: schedule.revision,
+          scheduleRevisionDigest: workScheduleRevisionDigest(schedule),
           scheduleRunId: runId,
           nominalAt: entry.nominalAt,
           prompt: schedule.prompt,
           artifactRefs: schedule.artifactRefs ?? [],
           reservedTokens: schedule.perRunReservedTokens,
+          maxRuns: schedule.maxRuns,
+          dailyReservedTokens: schedule.dailyReservedTokens,
           queuedEvent: queued,
+          execution:
+            schedule.execution && schedule.execution.mode !== 'model'
+              ? {
+                  mode: 'script',
+                  script: schedule.execution.script,
+                  scriptSha256: schedule.execution.scriptSha256,
+                  timeoutSeconds: schedule.execution.timeoutSeconds,
+                }
+              : { mode: 'model' },
+          ...(missionAction ? { missionAction } : {}),
+          ...(schedule.mission ? { mission: schedule.mission } : {}),
         },
         async () => {
           if (activated) return;

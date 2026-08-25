@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -91,6 +91,7 @@ async function calendarFixture(
     store?: WorkCalendarStore;
     authority?: ScheduleAuthorityResult | (() => Promise<ScheduleAuthorityResult>);
     validateArtifacts?: WorkCalendarDependencies['validateArtifacts'];
+    missionAction?: WorkCalendarDependencies['missionAction'];
     publish?: (event: NostrEvent) => Promise<void>;
     dispatch?: WorkCalendarDependencies['dispatch'];
   } = {},
@@ -119,6 +120,7 @@ async function calendarFixture(
         ? options.authority()
         : (options.authority ?? { authorized: true }),
     ...(options.validateArtifacts ? { validateArtifacts: options.validateArtifacts } : {}),
+    ...(options.missionAction ? { missionAction: options.missionAction } : {}),
     publish: options.publish ?? (async (event) => published.push(event)),
     dispatch,
     now: () => now,
@@ -210,6 +212,49 @@ describe('work schedule occurrence math', () => {
     ).toThrow('invalid work schedule');
   });
 
+  it('enforces 15-minute model and 1-minute default-script cadence floors', () => {
+    const script = 'printf \'{"version":1,"status":"complete"}\\n\'';
+    const mission = {
+      missionId: 'mission-one',
+      grantEventId: 'a'.repeat(64),
+      controllerAgentPubkey: agent.publicKey,
+      repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+    };
+    const common = {
+      ...base,
+      targetAgentPubkey: agent.publicKey,
+      mission,
+    };
+    expect(() =>
+      buildWorkSchedule(principal, {
+        ...common,
+        execution: { mode: 'model' },
+        cadence: { type: 'interval', everySeconds: 899, anchorAt: 100 },
+      }),
+    ).toThrow('invalid work schedule');
+    expect(() =>
+      buildWorkSchedule(principal, {
+        ...common,
+        execution: {
+          script,
+          scriptSha256: createHash('sha256').update(script).digest('hex'),
+          timeoutSeconds: 30,
+        },
+        cadence: { type: 'interval', everySeconds: 59, anchorAt: 100 },
+      }),
+    ).toThrow('invalid work schedule');
+    const event = buildWorkSchedule(principal, {
+      ...common,
+      execution: {
+        script,
+        scriptSha256: createHash('sha256').update(script).digest('hex'),
+        timeoutSeconds: 30,
+      },
+      cadence: { type: 'interval', everySeconds: 60, anchorAt: 100 },
+    });
+    expect(JSON.parse(event.content).execution.mode).toBe('script');
+  });
+
   it('keeps runtime projection replacement separate from desired configuration', () => {
     const schedule = scheduleFixture(agent, principal);
     const desired = buildWorkSchedule(principal, schedule, { createdAt: schedule.startsAt - 1 });
@@ -237,6 +282,50 @@ describe('work schedule occurrence math', () => {
 });
 
 describe('WorkCalendar best-effort durable execution', () => {
+  it('dispatches a mission occurrence to the exact named target agent', async () => {
+    vi.useFakeTimers();
+    const controller = createIdentity();
+    const target = createIdentity();
+    const captain = createIdentity();
+    const script = 'printf \'{"version":1,"status":"complete"}\\n\'';
+    const schedule = scheduleFixture(controller, captain, {
+      targetAgentPubkey: target.publicKey,
+      execution: {
+        script,
+        scriptSha256: createHash('sha256').update(script).digest('hex'),
+        timeoutSeconds: 30,
+      },
+      mission: {
+        missionId: 'mission-one',
+        grantEventId: 'a'.repeat(64),
+        controllerAgentPubkey: controller.publicKey,
+        repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+      },
+    });
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+    });
+    const fixture = await calendarFixture({
+      agent: controller,
+      principal: captain,
+      schedule,
+      scheduleEvents: [
+        buildWorkSchedule(controller, schedule, { createdAt: schedule.startsAt - 1 }),
+      ],
+      missionAction: async () => ({ permissionId: 'mission-action' }) as never,
+      dispatch,
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(dispatch.mock.calls[0]?.[0]).toMatchObject({
+      agentPubkey: controller.publicKey,
+      targetAgentPubkey: target.publicKey,
+      execution: { mode: 'script' },
+    });
+    await fixture.calendar.dispose();
+  });
+
   it('recovers its serialized durable save queue after a write failure', async () => {
     const durable = await durableState();
     await durable.store.load();

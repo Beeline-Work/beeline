@@ -106,6 +106,43 @@ describe('DelegationRuntime', () => {
     ]);
   });
 
+  it('wakes only the exact target daemon for a mission assignment', async () => {
+    const target = fixture();
+    const otherDaemon = fixture();
+    const event = buildDelegationTurn(target.sender, {
+      ...target.value,
+      rootEventId: 'a'.repeat(64),
+      mission: {
+        missionId: 'mission-one',
+        grantEventId: 'a'.repeat(64),
+        controllerAgentPubkey: target.sender.publicKey,
+        scheduleId: 'summary',
+        scheduleRevision: 1,
+        scheduleRevisionDigest: 'b'.repeat(64),
+        scheduleRunId: 'run-one',
+        mode: 'model',
+        targetAgentPubkey: target.recipient.publicKey,
+        maxRuns: 10,
+        perRunReservedTokens: 100,
+        dailyReservedTokens: 500,
+        totalReservedTokens: 1_000,
+        scriptRuntimeSeconds: 1,
+        repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+      },
+    });
+    const targetTurn = vi.fn(async () => undefined);
+    const wrongTurn = vi.fn(async () => undefined);
+
+    await expect(otherDaemon.runtime.handleEvent(event, wrongTurn)).resolves.toEqual({
+      status: 'ignored',
+    });
+    await expect(target.runtime.handleEvent(event, targetTurn)).resolves.toMatchObject({
+      status: 'complete',
+    });
+    expect(wrongTurn).not.toHaveBeenCalled();
+    expect(targetTurn).toHaveBeenCalledOnce();
+  });
+
   it('keeps ordinary agent-authored Room messages context-only', async () => {
     const f = fixture();
     const ordinary = signEvent(

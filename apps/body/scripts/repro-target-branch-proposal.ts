@@ -130,12 +130,12 @@ try {
       content: LIVE_PHRASING,
       createdAt: 1,
     },
-  )) as boolean;
+  )) as { openedCorner: boolean; producedReply: boolean };
 
   const cards = published.filter((event) =>
     (event.tags ?? []).some((tag) => tag[0] === 't' && tag[1] === 'buzz-target-branch-proposal'),
   );
-  check('the turn opened no corner and started no work', handled === false);
+  check('the turn opened no corner and started no work', handled.openedCorner === false);
   check('the daemon published exactly one proposal control event', cards.length === 1);
   check(
     "and authored NO Room→repository binding (that is the admin key's alone)",

@@ -540,6 +540,39 @@ describe('WorkCalendar durable execution', () => {
     await fixture.calendar.dispose();
   });
 
+  it('keeps a transient post-admission refusal queued for retry', async () => {
+    vi.useFakeTimers();
+    let authorityReads = 0;
+    const modelCall = vi.fn();
+    const fixture = await calendarFixture({
+      authority: async () => {
+        authorityReads += 1;
+        return authorityReads === 3
+          ? { authorized: false, terminal: false, reason: 'authority-unavailable' }
+          : { authorized: true };
+      },
+      dispatch: vi.fn(async (_request, beforeModelActivation) => {
+        await beforeModelActivation();
+        modelCall();
+      }),
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(modelCall).not.toHaveBeenCalled();
+    expect((await fixture.durable.runs())[0]?.state).toBe('queued');
+    expect(
+      fixture.published.some(
+        (event) => parseScheduledTurnReceipt(event)?.value.status === 'failed',
+      ),
+    ).toBe(false);
+
+    fixture.setNow(fixture.schedule.startsAt + 5);
+    await fixture.calendar.wakeNow();
+    expect(modelCall).toHaveBeenCalledOnce();
+    expect((await fixture.durable.runs())[0]?.state).toBe('complete');
+    await fixture.calendar.dispose();
+  });
+
   it.each([
     'principal-removed',
     'agent-removed',
@@ -1214,6 +1247,52 @@ describe('WorkCalendar durable execution', () => {
     await restarted.dispose();
   });
 
+  it('reconstructs relay-only failure pause outputs after local state loss', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, { maxConsecutiveFailures: 2 });
+    const receiptEvents = [schedule.startsAt, schedule.startsAt + 60].map((nominalAt) =>
+      buildScheduledTurnReceipt(agent, {
+        version: 1,
+        workspaceId: schedule.workspaceId,
+        roomId: schedule.roomId,
+        agentPubkey: agent.publicKey,
+        principalPubkey: principal.publicKey,
+        scheduleId: schedule.scheduleId,
+        revision: schedule.revision,
+        runId: deterministicScheduleRunId(schedule.scheduleId, schedule.revision, nominalAt),
+        nominalAt,
+        status: 'failed',
+        at: nominalAt + 1,
+        reservedTokens: schedule.perRunReservedTokens,
+        reason: 'provider unavailable',
+      }),
+    );
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      now: schedule.startsAt + 120,
+      receiptEvents,
+    });
+    await fixture.calendar.start();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(
+      fixture.published.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === WORK_SCHEDULE_PAUSED_TAG),
+      ),
+    ).toHaveLength(1);
+    const projection = fixture.published.find((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === WORK_SCHEDULE_RUNTIME_TAG),
+    );
+    expect(projection && JSON.parse(projection.content)).toMatchObject({
+      status: 'paused',
+      consecutiveFailures: 2,
+    });
+    await fixture.calendar.dispose();
+  });
+
   it('publishes immutable scheduled receipts with the complete status progression', async () => {
     vi.useFakeTimers();
     const fixture = await calendarFixture();
@@ -1289,6 +1368,9 @@ describe('WorkCalendar durable execution', () => {
     await first.dispose();
     expect(modelCall).toHaveBeenCalledOnce();
     expect(published.some((event) => event.content === 'durable scheduled result')).toBe(false);
+    expect(
+      published.some((event) => parseScheduledTurnReceipt(event)?.value.status === 'failed'),
+    ).toBe(true);
 
     const restarted = new WorkCalendar({
       identity: agent,

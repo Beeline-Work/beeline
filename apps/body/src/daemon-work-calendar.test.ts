@@ -1,7 +1,9 @@
 import { createIdentity, type Identity } from '@beeline/buzz-client';
+import type { NostrEvent } from '@beeline/nostr';
 import { describe, expect, it } from 'vitest';
 import {
   authorizeDaemonWorkSchedule,
+  readScheduledTurnReceiptHistory,
   type DaemonWorkScheduleAuthorityDependencies,
   type DaemonWorkScheduleAuthorityFacts,
 } from './daemon-work-calendar.js';
@@ -69,6 +71,35 @@ function authorityFixture(options: { agentAuthored?: boolean; grantValid?: boole
   };
   return { agent, principal, schedule, parsed, facts, dependencies };
 }
+
+describe('scheduled receipt history recovery', () => {
+  it('paginates each schedule without truncating older receipts', async () => {
+    const events = Array.from({ length: 7 }, (_, index): NostrEvent => ({
+      id: index.toString(16).padStart(64, '0'),
+      pubkey: 'a'.repeat(64),
+      created_at: 100 - Math.floor(index / 2),
+      kind: 9,
+      tags: [],
+      content: '',
+      sig: 'b'.repeat(128),
+    }));
+    const query = async (filters: Record<string, unknown>[]) => {
+      const filter = filters[0] as { until?: number; limit: number };
+      return events
+        .filter((event) => filter.until === undefined || event.created_at <= filter.until)
+        .slice(0, filter.limit);
+    };
+    const recovered = await readScheduledTurnReceiptHistory(
+      query,
+      'a'.repeat(64),
+      ['schedule-one'],
+      { pageSize: 3, maxEventsPerSchedule: 7 },
+    );
+    expect(new Set(recovered.map((event) => event.id))).toEqual(
+      new Set(events.map((event) => event.id)),
+    );
+  });
+});
 
 describe('daemon work schedule authority', () => {
   it('accepts current human-admin configuration and an agent change with a live P1 grant', async () => {

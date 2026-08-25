@@ -20,7 +20,7 @@
     "release:build:apk": "npm run version:check && eas build --profile production-apk --platform android --no-wait --non-interactive",
     "release:ota:release": "pnpm ota",
     "prebuild": "rm -rf android ios && expo prebuild",
-    "ota": "NODE_ENV=production tsx sources/scripts/parseChangelog.ts && pnpm typecheck && eas update --branch production",
+    "ota": "NODE_ENV=production tsx sources/scripts/parseChangelog.ts && pnpm typecheck && npx --yes eas-cli@22.2.0 update --branch beta --environment production --non-interactive",
     "typecheck": "tsc --noEmit",
     "postinstall": "patch-package || true; (command -v setup-skia-web >/dev/null && setup-skia-web public) || true",
     "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-buzz-client.json",

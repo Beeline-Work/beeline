@@ -62,7 +62,7 @@ describe('Room workbench capability', () => {
     }
   });
 
-  it('publishes a source leak through the existing typed activity ledger and nudges once', async () => {
+  it('publishes a source leak once through the typed activity ledger without shadow prose history', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-workbench-ledger-'));
     roots.push(root);
     const logicalDir = join(root, 'logical-workbench');
@@ -91,13 +91,6 @@ describe('Room workbench capability', () => {
       client: new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} }),
       mode: 'readonly',
       workbench: { dir: logicalDir, storageDir },
-    });
-    const appended: Array<{ text: string }> = [];
-    const durableState = Reflect.get(body, 'durableState') as {
-      appendConversation: (_channelId: string, entry: { text: string }) => Promise<void>;
-    };
-    vi.spyOn(durableState, 'appendConversation').mockImplementation(async (_channelId, entry) => {
-      appended.push(entry);
     });
     const published: NostrEvent[] = [];
     vi.stubGlobal(
@@ -128,8 +121,9 @@ describe('Room workbench capability', () => {
         title: 'Working in scratch — will not land — open a corner',
       }),
     );
-    expect(appended).toHaveLength(1);
-    expect(appended[0]!.text).toContain('initiate the documented one-step corner-open action');
+    expect(await readFile(new URL('./body.ts', import.meta.url), 'utf8')).not.toContain(
+      'durableState.appendConversation',
+    );
     vi.unstubAllGlobals();
   });
 

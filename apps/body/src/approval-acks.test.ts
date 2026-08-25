@@ -553,7 +553,7 @@ describe('event-driven approval pickup', () => {
 
   it('lands from the pushed corner approval and publishes the ack without a maintenance sleep', async () => {
     const fixture = await readyCorner();
-    const handlers = new Map<string, (event: { event: NostrEvent }) => void>();
+    const handlers = new Map<string, (event: NostrEvent) => void>();
     const subscriptions = new Map<string, () => void>();
     const mergeGate = { poll: vi.fn(async () => []) };
     Reflect.set(
@@ -582,7 +582,7 @@ describe('event-driven approval pickup', () => {
       );
       expect(handlers.has('corner-ack')).toBe(true);
 
-      handlers.get('corner-ack')!({ event: fixture.approval });
+      handlers.get('corner-ack')!(fixture.approval);
 
       await vi.waitFor(
         () => {
@@ -617,11 +617,11 @@ describe('event-driven approval pickup', () => {
   it('lands identically while the harness session is suspended', async () => {
     const fixture = await readyCorner({ suspended: true });
     const prompt = vi.spyOn(fixture.body as never, 'promptAgent' as never);
-    const handlers = new Map<string, (event: { event: NostrEvent }) => void>();
+    const handlers = new Map<string, (event: NostrEvent) => void>();
     const subscriptions = new Map<string, () => void>();
     const client = {
       sessionEventsSubscribe: vi.fn(
-        async (channelId: string, handler: (event: { event: NostrEvent }) => void) => {
+        async (channelId: string, handler: (event: NostrEvent) => void) => {
           handlers.set(channelId, handler);
           return () => handlers.delete(channelId);
         },
@@ -635,7 +635,7 @@ describe('event-driven approval pickup', () => {
         undefined,
         subscriptions,
       );
-      handlers.get('corner-ack')!({ event: fixture.approval });
+      handlers.get('corner-ack')!(fixture.approval);
 
       await vi.waitFor(
         () => expect(activityStages(fixture.published)).toContain('approval-received'),

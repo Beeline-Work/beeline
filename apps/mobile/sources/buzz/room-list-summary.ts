@@ -1,8 +1,4 @@
-import type { SessionEvent } from '@/sync/transport';
-import { sessionEventHasTag, sessionEventPayload } from '@/sync/transport/buzz-event-projection';
-import { isRetiredAgentStateNotice } from './retired-agent-notices';
-
-const CONTROL_TEXT = /^Agent opened(?: #| a work branch for:)/;
+import { selectRoomRow, type WorkspaceSnapshot } from '@beeline/buzz-client';
 
 /** Preview length that fills one line on the narrowest shipped phone without
  * the trailing ellipsis landing mid-word on every row. */
@@ -141,46 +137,23 @@ export function previewAuthorLabel(name: string | undefined, maxChars = 12): str
   return upper.length > maxChars ? `${upper.slice(0, maxChars - 1)}…` : upper;
 }
 
-function roomMessage(event: SessionEvent): RoomMessageSummary | null {
-  const payload = sessionEventPayload(event);
-  if (!payload || typeof payload.content !== 'string') return null;
-  if (sessionEventHasTag(event, 't', 'body-control') || sessionEventHasTag(event, 'subchannel')) {
-    return null;
-  }
-  // Land/merge summaries are structural digest sources for a Room update,
-  // never conversational unread copy.
-  if (
-    sessionEventHasTag(event, 't', 'land-summary') ||
-    sessionEventHasTag(event, 't', 'merge-summary')
-  ) {
-    return null;
-  }
-
-  const text = payload.content.trim();
-  if (!text || CONTROL_TEXT.test(text)) return null;
-  // A retired daemon state notice still sitting in relay history. It reads as
-  // an ordinary agent message, so without this an index row would keep
-  // advertising a reconnect from months ago as the Room's latest word.
-  if (isRetiredAgentStateNotice(text)) return null;
-  const preview = roomPreviewText(text);
+/** Latest person-facing Room message from the normalized snapshot. */
+export function latestRoomMessageSummary(
+  snapshot: WorkspaceSnapshot,
+  channelId: string,
+): RoomMessageSummary | null {
+  const message = selectRoomRow(snapshot, channelId).preview;
+  if (!message) return null;
+  const preview = roomPreviewText(message.body);
   if (!preview) return null;
   return {
-    id: typeof payload.id === 'string' ? payload.id : '',
+    id: message.id,
     text: preview,
-    timestamp: typeof payload.createdAt === 'number' ? payload.createdAt : 0,
-    ...(typeof payload.pubkey === 'string' ? { authorPubkey: payload.pubkey } : {}),
+    timestamp: message.timestamp,
+    authorPubkey: message.authorPubkey,
   };
 }
 
-/** Latest person-facing Room message, excluding Corner control and activity events. */
-export function latestRoomMessageSummary(events: SessionEvent[]): RoomMessageSummary | null {
-  const messages = events
-    .map(roomMessage)
-    .filter((message): message is RoomMessageSummary => Boolean(message))
-    .sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id));
-  return messages[0] ?? null;
-}
-
-export function latestRoomMessage(events: SessionEvent[]): string | null {
-  return latestRoomMessageSummary(events)?.text ?? null;
+export function latestRoomMessage(snapshot: WorkspaceSnapshot, channelId: string): string | null {
+  return latestRoomMessageSummary(snapshot, channelId)?.text ?? null;
 }

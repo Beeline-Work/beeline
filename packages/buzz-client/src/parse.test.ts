@@ -1,15 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { createIdentity } from './identity.js';
-import {
-  classifySessionEvent,
-  isAgentActivity,
-  parseMembersEvent,
-  sortEventsChronological,
-  tagValue,
-  toSessionEvent,
-} from './parse.js';
-import { KIND_CHANNEL_MEMBERS, KIND_STREAM_MESSAGE, TAG_AGENT_ACTIVITY } from './kinds.js';
+import { parseMembersEvent, sortEventsChronological, tagValue } from './parse.js';
+import { KIND_CHANNEL_MEMBERS, KIND_STREAM_MESSAGE } from './kinds.js';
 
 const id = createIdentity('t');
 
@@ -27,33 +20,6 @@ function msg(tags: string[][], content: string, created_at = 1000): NostrEvent {
 }
 
 describe('parse helpers', () => {
-  it('classifies agent-activity vs message', () => {
-    const human = msg(
-      [
-        ['h', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'],
-        ['t', 'chat'],
-      ],
-      'hi',
-    );
-    const activity = msg(
-      [
-        ['h', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'],
-        ['t', TAG_AGENT_ACTIVITY],
-      ],
-      'tool: shell',
-    );
-    expect(classifySessionEvent(human)).toBe('message');
-    expect(isAgentActivity(activity)).toBe(true);
-    expect(classifySessionEvent(activity)).toBe('agent-activity');
-  });
-
-  it('toSessionEvent requires h tag', () => {
-    const noH = msg([['t', 'x']], 'nope');
-    const withH = msg([['h', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee']], 'yep');
-    expect(toSessionEvent(noH)).toBeNull();
-    expect(toSessionEvent(withH)?.content).toBe('yep');
-  });
-
   it('parseMembersEvent reads p tags', () => {
     const ev = signEvent(
       {

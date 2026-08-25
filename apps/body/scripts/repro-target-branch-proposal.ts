@@ -11,9 +11,8 @@
  * about the daemon's own decision path — the intent recognizer, the
  * current-target re-read, and `postControlMessage` all run for real.
  *
- * Half two: hand the CAPTURED event, byte for byte, to the mobile client's own
- * `projectChatEvent` (run under apps/mobile's tsx, since that app is isolated
- * from the root workspace) and print the card it renders.
+ * Half two: hand the CAPTURED event to the mobile client's typed read-model
+ * parser and projection and print the card it renders.
  *
  * Exits non-zero if either half fails, so it is usable as a check.
  */
@@ -83,7 +82,10 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
           pubkey: admin.publicKey,
           created_at: 1_700_000_000,
           kind: KIND_CHANNEL_ADMINS,
-          tags: [['d', ROOM_ID], ['p', admin.publicKey, '', 'admin']],
+          tags: [
+            ['d', ROOM_ID],
+            ['p', admin.publicKey, '', 'admin'],
+          ],
           content: '',
         },
         admin.secretKey,
@@ -114,13 +116,20 @@ function check(label: string, ok: boolean): void {
 
 try {
   const body = new Body(config);
-  console.log(`\n[1] Room turn — a person says, in a Room that lands to master:\n    "${LIVE_PHRASING}"\n`);
+  console.log(
+    `\n[1] Room turn — a person says, in a Room that lands to master:\n    "${LIVE_PHRASING}"\n`,
+  );
 
   const handled = (await Reflect.get(body, 'replyInRoom').call(
     body,
     ROOM_ID,
     { repo: 'buzzy', repositoryKey: REPOSITORY_KEY, targetBranch: 'refs/heads/master' },
-    { eventId: 'live-request', authorPubkey: admin.publicKey, content: LIVE_PHRASING, createdAt: 1 },
+    {
+      eventId: 'live-request',
+      authorPubkey: admin.publicKey,
+      content: LIVE_PHRASING,
+      createdAt: 1,
+    },
   )) as boolean;
 
   const cards = published.filter((event) =>
@@ -129,14 +138,18 @@ try {
   check('the turn opened no corner and started no work', handled === false);
   check('the daemon published exactly one proposal control event', cards.length === 1);
   check(
-    'and authored NO Room→repository binding (that is the admin key\'s alone)',
+    "and authored NO Room→repository binding (that is the admin key's alone)",
     published.filter((event) => event.kind === 30_078).length === 0,
   );
   const card = cards[0];
   if (!card) throw new Error('no proposal control event was published');
   console.log('\n    published control event:');
   console.log(
-    JSON.stringify({ kind: card.kind, pubkey: card.pubkey, content: card.content, tags: card.tags }, null, 2)
+    JSON.stringify(
+      { kind: card.kind, pubkey: card.pubkey, content: card.content, tags: card.tags },
+      null,
+      2,
+    )
       .split('\n')
       .map((line) => `    ${line}`)
       .join('\n'),
@@ -145,7 +158,7 @@ try {
   const capturePath = join(workspaceRoot, 'proposal-event.json');
   writeFileSync(capturePath, JSON.stringify(card));
 
-  console.log('\n[2] Client — the same event through the mobile app\'s own projection:\n');
+  console.log("\n[2] Client — the same event through the mobile app's own projection:\n");
   const client = spawnSync(
     join(repoRoot, 'apps/mobile/node_modules/.bin/tsx'),
     [join(repoRoot, 'apps/mobile/scripts/repro-target-branch-card.ts'), capturePath],

@@ -50,7 +50,10 @@ function room(options: { unreleased?: string[] } = {}): {
   git(repoPath, ['add', '.']);
   git(repoPath, ['commit', '-qm', 'seed']);
   git(repoPath, ['tag', '-a', 'v1.1.0', '-m', 'v1.1.0']);
-  for (const subject of options.unreleased ?? ['add the widget picker', 'fix an empty-input crash']) {
+  for (const subject of options.unreleased ?? [
+    'add the widget picker',
+    'fix an empty-input crash',
+  ]) {
     writeFileSync(join(repoPath, subject.replace(/\W+/g, '-')), `${subject}\n`);
     git(repoPath, ['add', '.']);
     git(repoPath, ['commit', '-qm', subject]);
@@ -83,7 +86,10 @@ function room(options: { unreleased?: string[] } = {}): {
   const prompts: string[] = [];
   Reflect.set(body, 'promptAgent', async (_session: unknown, prompt: string) => {
     prompts.push(prompt);
-    return { agentText: 'Here is what is unreleased. Shall I open a corner? Say yes.', updates: [] };
+    return {
+      agentText: 'Here is what is unreleased. Shall I open a corner? Say yes.',
+      updates: [],
+    };
   });
 
   const opened: Array<{ intent?: string; prompt: string; instructions: string }> = [];
@@ -92,18 +98,26 @@ function room(options: { unreleased?: string[] } = {}): {
     opened.push({ intent, prompt: '', instructions: '' });
     return info;
   });
-  Reflect.set(body, 'startAgentTask', (_info: SubchannelInfo, prompt: string, instructions: string) => {
-    const last = opened.at(-1);
-    if (last) {
-      last.prompt = prompt;
-      last.instructions = instructions;
-    }
-  });
+  Reflect.set(
+    body,
+    'startAgentTask',
+    (_info: SubchannelInfo, prompt: string, instructions: string) => {
+      const last = opened.at(-1);
+      if (last) {
+        last.prompt = prompt;
+        last.instructions = instructions;
+      }
+    },
+  );
 
   const published: NostrEvent[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('/query')) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       published.push(JSON.parse(String(init?.body)) as NostrEvent);
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });
     }),
@@ -185,7 +199,9 @@ describe('confirming the proposal', () => {
     // Named after the release, never after the imperative that opened it.
     expect(opened[0]!.intent).toBe('release from main');
     expect(opened[0]!.prompt).toBe('cut a release from main');
-    expect(opened[0]!.instructions).toContain("Run this repository's own release process for main.");
+    expect(opened[0]!.instructions).toContain(
+      "Run this repository's own release process for main.",
+    );
     expect(opened[0]!.instructions).toContain('do not invent one');
     expect(opened[0]!.instructions).toContain('ANNOTATED tag');
     expect(opened[0]!.instructions).toContain('Do NOT push anything');

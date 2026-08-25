@@ -1,6 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { NostrEvent } from '@beeline/nostr';
+import {
+  guardReadModelBoot,
+  selectAgentHistory,
+  type WorkspaceSnapshot,
+} from '@beeline/buzz-client';
 import type { ModelTurnSpend, SessionReprimeRecord } from './model-spend.js';
 import type { ConcludeEpisode } from './conclude-watch.js';
 
@@ -18,17 +23,11 @@ interface InboxItem {
   reply?: NostrEvent;
 }
 
-export interface ConversationEntry {
-  role: 'user' | 'agent' | 'control';
-  text: string;
-  eventId?: string;
-  at: string;
-}
-
 interface DurableBodyData {
-  version: 1;
+  version: 2;
   inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;
-  conversations: Record<string, ConversationEntry[]>;
+  /** Relay-verified normalized read models. Presentation prose is never persisted. */
+  readModels: Record<string, WorkspaceSnapshot>;
   /** Bounded local audit trail for `beeline spend`; never published to the Room. */
   modelTurns?: ModelTurnSpend[];
   sessionReprimes?: SessionReprimeRecord[];
@@ -41,9 +40,9 @@ interface DurableBodyData {
 
 function emptyData(): DurableBodyData {
   return {
-    version: 1,
+    version: 2,
     inboxes: {},
-    conversations: {},
+    readModels: {},
     modelTurns: [],
     sessionReprimes: [],
     concludeEpisodes: {},
@@ -71,8 +70,16 @@ export class DurableBodyState {
     if (this.loaded) return;
     try {
       const parsed = JSON.parse(await readFile(this.path, 'utf8')) as DurableBodyData;
-      if (parsed.version !== 1 || !parsed.inboxes || !parsed.conversations) {
+      if (parsed.version !== 2 || !parsed.inboxes || !parsed.readModels) {
         throw new Error(`unsupported durable body state at ${this.path}`);
+      }
+      for (const [channelId, candidate] of Object.entries(parsed.readModels)) {
+        const guarded = guardReadModelBoot(candidate);
+        if (guarded.status === 'integrity-halt') {
+          throw new Error(
+            `read-model integrity halt for ${channelId} at ${this.path}: ${guarded.diagnostic}`,
+          );
+        }
       }
       this.data = parsed;
       this.data.modelTurns ??= [];
@@ -156,27 +163,32 @@ export class DurableBodyState {
     return { ...this.inbox(channelId).cursor };
   }
 
-  async appendConversation(channelId: string, entry: ConversationEntry): Promise<void> {
+  async replaceReadModel(channelId: string, snapshot: WorkspaceSnapshot): Promise<void> {
     await this.load();
-    const entries = this.data.conversations[channelId] ?? [];
-    if (entry.eventId && entries.some((existing) => existing.eventId === entry.eventId)) return;
-    entries.push(entry);
-    this.data.conversations[channelId] = entries.slice(-200);
+    const guarded = guardReadModelBoot(snapshot);
+    if (guarded.status === 'integrity-halt') {
+      throw new Error(
+        `refusing corrupt read-model snapshot for ${channelId}: ${guarded.diagnostic}`,
+      );
+    }
+    this.data.readModels[channelId] = guarded.snapshot;
     await this.save();
   }
 
-  async conversation(channelId: string): Promise<ConversationEntry[]> {
+  async readModel(channelId: string): Promise<WorkspaceSnapshot | undefined> {
     await this.load();
-    return [...(this.data.conversations[channelId] ?? [])];
+    return this.data.readModels[channelId];
   }
 
   /** Latest durable agent response for lifecycle surfaces that outlive a process. */
   async latestAgentMessage(channelId: string): Promise<string | undefined> {
-    const entries = await this.conversation(channelId);
-    return [...entries]
-      .reverse()
-      .find((entry) => entry.role === 'agent' && entry.text.trim())
-      ?.text.trim();
+    const snapshot = await this.readModel(channelId);
+    return snapshot
+      ? [...selectAgentHistory(snapshot, channelId)]
+          .reverse()
+          .find((entry) => entry.type === 'agent-message' && entry.body.trim())
+          ?.body.trim()
+      : undefined;
   }
 
   /** Persist one inspectable model invocation, including the human event that authorized it. */
@@ -225,7 +237,10 @@ export class DurableBodyState {
     return this.data.concludeEpisodes?.[channelId];
   }
 
-  async saveConcludeEpisode(channelId: string, episode: ConcludeEpisode | undefined): Promise<void> {
+  async saveConcludeEpisode(
+    channelId: string,
+    episode: ConcludeEpisode | undefined,
+  ): Promise<void> {
     await this.load();
     if (episode === undefined) {
       delete this.data.concludeEpisodes?.[channelId];

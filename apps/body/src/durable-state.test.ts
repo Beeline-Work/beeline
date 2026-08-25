@@ -5,6 +5,13 @@ import { resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
 import { signEvent } from '@beeline/nostr';
 import { DurableBodyState } from './durable-state.js';
+import {
+  createWorkspaceSnapshot,
+  parseRelayEvents,
+  reduceWorkspaceEvents,
+  type IdentityRecord,
+  type Pubkey,
+} from '@beeline/buzz-client';
 
 const cleanup: string[] = [];
 
@@ -62,7 +69,10 @@ describe('durable input inbox', () => {
         pubkey: agent.publicKey,
         created_at: 1_700_000_001,
         kind: 9,
-        tags: [['h', 'room'], ['e', request.id, '', 'reply']],
+        tags: [
+          ['h', 'room'],
+          ['e', request.id, '', 'reply'],
+        ],
         content: 'One reply.',
       },
       agent.secretKey,
@@ -85,22 +95,60 @@ describe('durable input inbox', () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-corner-summary-'));
     cleanup.push(root);
     const path = resolve(root, 'state.json');
+    const human = newIdentity('summary-human');
+    const agent = newIdentity('summary-agent');
     const first = new DurableBodyState(path);
-    await first.appendConversation('corner', {
-      role: 'agent',
-      text: 'Implemented the first change.',
-      at: new Date(1).toISOString(),
-    });
-    await first.appendConversation('corner', {
-      role: 'user',
-      text: 'Please also add tests.',
-      at: new Date(2).toISOString(),
-    });
-    await first.appendConversation('corner', {
-      role: 'agent',
-      text: 'Implemented the change and added regression tests.',
-      at: new Date(3).toISOString(),
-    });
+    const identities = [
+      { kind: 'human', pubkey: human.publicKey as Pubkey, displayName: 'Captain', revision: '1' },
+      { kind: 'agent', pubkey: agent.publicKey as Pubkey, displayName: 'Buzzy', revision: '1' },
+    ] satisfies IdentityRecord[];
+    const raw = [
+      signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: 1,
+          kind: 9,
+          tags: [
+            ['h', 'corner'],
+            ['t', 'agent-message'],
+          ],
+          content: 'Implemented the first change.',
+        },
+        agent.secretKey,
+      ),
+      signEvent(
+        {
+          pubkey: human.publicKey,
+          created_at: 2,
+          kind: 9,
+          tags: [['h', 'corner']],
+          content: 'Please also add tests.',
+        },
+        human.secretKey,
+      ),
+      signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: 3,
+          kind: 9,
+          tags: [
+            ['h', 'corner'],
+            ['t', 'agent-message'],
+          ],
+          content: 'Implemented the change and added regression tests.',
+        },
+        agent.secretKey,
+      ),
+    ];
+    const snapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({ workspaceId: 'room', identities }),
+      parseRelayEvents(raw, {
+        workspaceId: 'room',
+        allowedChannelIds: ['corner'],
+        identities: Object.fromEntries(identities.map((identity) => [identity.pubkey, identity])),
+      }),
+    );
+    await first.replaceReadModel('corner', snapshot);
 
     const restarted = new DurableBodyState(path);
     expect(await restarted.latestAgentMessage('corner')).toBe(

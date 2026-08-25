@@ -3,9 +3,46 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
-import { AcpClient } from './acp.js';
+import { AcpClient, agentStreamSnapshot, type SessionUpdate } from './acp.js';
 
 const temporaryDirectories: string[] = [];
+
+describe('ACP streaming lane classifier', () => {
+  const update = (sessionUpdate: string, fields: Record<string, unknown> = {}): SessionUpdate => ({
+    sessionId: 'session-1',
+    update: { sessionUpdate, ...fields },
+  });
+
+  it('maps standard message, thought, and tool shapes without folding thought into the answer', () => {
+    expect(
+      agentStreamSnapshot([
+        update('agent_thought_chunk', { content: { type: 'text', text: 'Checking ' } }),
+        update('agent_thought_chunk', { content: { type: 'text', text: 'the gate' } }),
+        update('tool_call', { toolCallId: 'gate', title: 'Certification gate' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'The answer ' } }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'persists.' } }),
+      ]),
+    ).toEqual({ messageText: 'The answer persists.', thoughtText: 'Checking the gate' });
+  });
+
+  it('moves Goose-style pre-tool message narration into the rolling thought lane', () => {
+    expect(
+      agentStreamSnapshot([
+        update('agent_message_chunk', { content: { type: 'text', text: 'Inspecting files' } }),
+        update('tool_call', { toolCallId: 'read', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'Found the answer.' } }),
+      ]),
+    ).toEqual({ messageText: 'Found the answer.', thoughtText: 'Inspecting files' });
+  });
+
+  it('maps generic harness progress narration to the ephemeral thought lane', () => {
+    expect(
+      agentStreamSnapshot([
+        update('progress_update', { content: { type: 'text', text: 'Reading the workspace' } }),
+      ]),
+    ).toEqual({ messageText: '', thoughtText: 'Reading the workspace' });
+  });
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -712,14 +749,30 @@ describe('AcpClient live steering', () => {
     try {
       const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
       const seenFullText: string[] = [];
-      const result = await client.sessionPrompt(sessionId, 'go', 5_000, (_delta, fullText) => {
-        seenFullText.push(fullText);
-      });
+      const snapshots: Array<{ messageText: string; thoughtText?: string }> = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, fullText) => {
+          seenFullText.push(fullText);
+        },
+        (snapshot) => {
+          if (snapshot) snapshots.push(snapshot);
+        },
+      );
       expect(result.agentText).not.toContain('patternsNow');
       expect(result.agentText).toBe('Now I have the full picture.');
       expect(seenFullText.at(-1)).toBe(
         '...existing test and typecheck patterns\n\nNow I have the full picture.',
       );
+      expect(snapshots).toContainEqual(
+        expect.objectContaining({ thoughtText: '...existing test and typecheck patterns' }),
+      );
+      expect(snapshots.at(-1)).toEqual({
+        messageText: 'Now I have the full picture.',
+        thoughtText: '...existing test and typecheck patterns',
+      });
     } finally {
       await client.stop();
     }

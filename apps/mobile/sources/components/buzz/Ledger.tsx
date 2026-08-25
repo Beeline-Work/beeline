@@ -378,15 +378,25 @@ export function LedgerRoomUpdate({
   line,
   stamp,
   digest,
+  tone = 'quiet',
 }: {
   id: string;
   line: string;
   stamp: string;
   digest?: string;
+  tone?: 'quiet' | 'brass';
 }) {
   return (
     <View style={styles.roomUpdate} testID={`room-update-${id}`}>
-      <Text numberOfLines={1} style={styles.roomUpdateLine} testID={`room-update-line-${id}`}>
+      <Text
+        numberOfLines={1}
+        style={
+          tone === 'brass'
+            ? [styles.roomUpdateLine, styles.roomUpdateLineBrass]
+            : styles.roomUpdateLine
+        }
+        testID={`room-update-line-${id}`}
+      >
         {line}
       </Text>
       <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`room-update-stamp-${id}`}>
@@ -540,6 +550,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 12,
     lineHeight: 17,
   },
+  roomUpdateLineBrass: { color: theme.buzz.accent },
   roomUpdateStamp: {
     ...Typography.mono(),
     position: 'absolute',

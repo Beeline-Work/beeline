@@ -14,6 +14,7 @@ import {
   TAG_AGENT,
   TAG_AGENT_ACTIVITY,
   TAG_AGENT_DRAFT,
+  TAG_AGENT_THOUGHT,
   TAG_AGENT_PRESENCE,
   TAG_CORNER_STATE,
   TAG_PARENT,
@@ -74,6 +75,7 @@ const CONTROL_MARKERS = new Set([
 const SESSION_MARKERS = new Set([
   TAG_AGENT_PRESENCE,
   TAG_AGENT_DRAFT,
+  TAG_AGENT_THOUGHT,
   'agent-turn',
   'corner-session',
 ]);
@@ -349,7 +351,18 @@ function parseActivity(
   const sessionId = text(parsed.sessionId);
   const update = record(parsed.update);
   if (!sessionId || !update) return unknown(event, 'malformed-schema');
-  const detail = activityDetail(update);
+  const batchUpdates =
+    text(update.sessionUpdate) === 'activity_batch' && Array.isArray(update.updates)
+      ? update.updates.flatMap((candidate) => {
+          const parsedUpdate = record(candidate);
+          return parsedUpdate ? [parsedUpdate] : [];
+        })
+      : [update];
+  const details = batchUpdates.flatMap((candidate) => {
+    const detail = activityDetail(candidate);
+    return detail ? [detail] : [];
+  });
+  const detail = details[0];
   if (!detail) {
     return {
       ...envelope(event, scope),
@@ -358,7 +371,13 @@ function parseActivity(
       update: { kind: 'opaque', updateType: text(update.sessionUpdate) ?? 'metadata' },
     };
   }
-  const rawStatus = text(update.status);
+  const rawStatuses = batchUpdates.map((candidate) => text(candidate.status)).filter(Boolean);
+  const rawStatus = rawStatuses.includes('failed')
+    ? 'failed'
+    : rawStatuses.length > 0 &&
+        rawStatuses.every((candidate) => candidate === 'completed' || candidate === 'complete')
+      ? 'completed'
+      : text(update.status);
   const status =
     rawStatus === 'failed'
       ? 'failed'
@@ -371,9 +390,19 @@ function parseActivity(
     ...envelope(event, scope),
     type: 'activity',
     sessionId,
-    stepId: text(update.toolCallId) ?? `${event.id}:${detail.operation ?? 'update'}`,
+    stepId: detail.toolCallId ?? `${event.id}:${detail.operation ?? 'update'}`,
     status,
+    details,
     detail,
+    ...(status === 'failed' || tag(event, 'status') === 'failed'
+      ? { durableFact: 'failure' as const }
+      : tag(event, 'delivery-stage') === 'landed' || markers(event).includes('landed')
+        ? { durableFact: 'merge' as const }
+        : markers(event).some((marker) =>
+              ['corner-open', 'room-target-branch-realign', 'branch-switch'].includes(marker),
+            )
+          ? { durableFact: 'action' as const }
+          : {}),
   };
 }
 
@@ -415,6 +444,19 @@ function parseSessionMarker(
       },
     };
   }
+  if (marker === TAG_AGENT_THOUGHT) {
+    return {
+      ...envelope(event, scope),
+      type: 'session-update',
+      sessionId: tag(event, 'session') ?? scope.channelId,
+      update: {
+        kind: 'thought',
+        agentPubkey,
+        ...(event.content.trim() ? { text: event.content } : {}),
+        closed: tag(event, 'status') === 'closed',
+      },
+    };
+  }
   if (marker === 'agent-turn') {
     const requestId = tag(event, 'request');
     const status = tag(event, 'status');
@@ -424,7 +466,7 @@ function parseSessionMarker(
     return {
       ...envelope(event, scope),
       type: 'session-update',
-      sessionId: scope.channelId,
+      sessionId: tag(event, 'session') ?? scope.channelId,
       update: {
         kind: 'turn',
         agentPubkey,

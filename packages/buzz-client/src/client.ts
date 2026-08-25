@@ -88,6 +88,7 @@ import {
   KIND_CORNER_STATE,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_DRAFT,
+  TAG_AGENT_THOUGHT,
   TAG_AGENT_PRESENCE,
 } from './kinds.js';
 import { query } from './query.js';
@@ -818,18 +819,18 @@ export class BuzzClient {
     );
   }
 
-  /** Read this Room's current live agent reply draft (parameterized-replaceable). */
+  /** Read this Room's current live message + thought lanes (replaceable). */
   agentDraftBackfill(channelId: string): Promise<SessionEvent[]> {
     return query(this.ctx, [
       {
         kinds: [KIND_AGENT_DRAFT],
-        '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
+        '#d': [`${TAG_AGENT_DRAFT}:${channelId}`, `${TAG_AGENT_THOUGHT}:${channelId}`],
         limit: 5,
       },
     ]);
   }
 
-  /** Subscribe only to this Room's live agent reply draft record. */
+  /** Subscribe only to this Room's live message + thought lane records. */
   async agentDraftSubscribe(channelId: string, handler: SessionEventHandler): Promise<Unsubscribe> {
     if (!this.ws?.connected) {
       await this.connect();
@@ -839,7 +840,7 @@ export class BuzzClient {
       [
         {
           kinds: [KIND_AGENT_DRAFT],
-          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
+          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`, `${TAG_AGENT_THOUGHT}:${channelId}`],
         },
       ],
       handler,

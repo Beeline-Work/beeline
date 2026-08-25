@@ -1,5 +1,34 @@
 import type { WorkspaceSnapshot } from './types.js';
 
+/**
+ * Remove live-only machine state before a normalized snapshot crosses a disk
+ * boundary. Conversation, control, lifecycle, membership, and consequential
+ * activity facts remain; drafts, thoughts, turn markers, presence, and routine
+ * tool telemetry are deliberately memory-only.
+ */
+export function snapshotForPersistence(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
+  let changed = false;
+  const rooms = Object.fromEntries(
+    Object.entries(snapshot.rooms).map(([channelId, room]) => {
+      let roomChanged = false;
+      const eventJournal = Object.fromEntries(
+        Object.entries(room.eventJournal).filter(([, event]) => {
+          const keep =
+            event.type !== 'session-update' &&
+            (event.type !== 'activity' || event.durableFact !== undefined);
+          if (!keep) {
+            changed = true;
+            roomChanged = true;
+          }
+          return keep;
+        }),
+      );
+      return [channelId, roomChanged ? { ...room, eventJournal } : room];
+    }),
+  );
+  return changed ? { ...snapshot, rooms } : snapshot;
+}
+
 export type ReadModelBootResult =
   | { readonly status: 'ready'; readonly snapshot: WorkspaceSnapshot }
   | {

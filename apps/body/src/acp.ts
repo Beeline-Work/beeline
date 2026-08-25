@@ -134,6 +134,16 @@ export type AcpPermissionHandler = (
 /** Invoked once per incremental `agent_message_chunk` delta during a live prompt. */
 export type AcpTextChunkHandler = (delta: string, fullTextSoFar: string) => void;
 
+export type AcpStreamSnapshot = {
+  /** The one currently accumulating durable answer run. */
+  messageText: string;
+  /** The latest replace-in-place reasoning/progress line. */
+  thoughtText?: string;
+};
+
+/** Invoked on every ACP update so a tool boundary can move progress out of message. */
+export type AcpStreamHandler = (snapshot?: AcpStreamSnapshot) => void;
+
 /** Extract the text delta of an `agent_message_chunk` update, harness-agnostic. */
 function agentMessageChunkText(update: Record<string, unknown>): string {
   if (update.sessionUpdate !== 'agent_message_chunk') return '';
@@ -207,6 +217,74 @@ function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
  * Earlier runs are progress narration around tool work and stay draft-only. */
 function finalAgentMessageText(updates: readonly SessionUpdate[]): string {
   return agentMessageRuns(updates).at(-1) ?? '';
+}
+
+function updateText(update: Record<string, unknown>): string {
+  const content = update.content as { type?: string; text?: string } | string | undefined;
+  if (typeof content === 'string') return content;
+  return content?.type === 'text' ? (content.text ?? '') : '';
+}
+
+const THOUGHT_UPDATE_TYPES = new Set([
+  'agent_thought_chunk',
+  'agent_thought',
+  'reasoning',
+  'reasoning_chunk',
+  'thinking',
+  'thinking_chunk',
+  'analysis',
+  'analysis_chunk',
+  'progress',
+  'progress_update',
+]);
+
+/** Derive the three-lane live view from the exact ordered ACP update stream. */
+export function agentStreamSnapshot(updates: readonly SessionUpdate[]): AcpStreamSnapshot {
+  const completedMessages: string[] = [];
+  let messageText = '';
+  let lastWasMessage = false;
+  let thoughtText = '';
+  let thoughtRunOpen = false;
+  for (const { update } of updates) {
+    const kind = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : '';
+    if (kind === 'agent_message_chunk') {
+      const delta = agentMessageChunkText(update);
+      if (!delta) continue;
+      if (
+        !lastWasMessage &&
+        messageText &&
+        !/\s$/.test(messageText) &&
+        !CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)
+      ) {
+        if (!completedMessages.includes(messageText)) completedMessages.push(messageText);
+        messageText = '';
+      }
+      messageText += delta;
+      lastWasMessage = true;
+      thoughtRunOpen = false;
+      continue;
+    }
+    if (lastWasMessage && messageText) {
+      if (!completedMessages.includes(messageText)) completedMessages.push(messageText);
+      messageText = '';
+    }
+    lastWasMessage = false;
+    if (THOUGHT_UPDATE_TYPES.has(kind)) {
+      const delta = updateText(update);
+      if (!delta) continue;
+      if (!thoughtRunOpen) thoughtText = '';
+      thoughtText += delta;
+      thoughtRunOpen = true;
+    } else {
+      thoughtRunOpen = false;
+    }
+  }
+  return {
+    messageText,
+    ...(thoughtText || completedMessages.length
+      ? { thoughtText: thoughtText || completedMessages.at(-1)! }
+      : {}),
+  };
 }
 
 /**
@@ -501,13 +579,15 @@ export class AcpClient extends EventEmitter {
    * regardless of kind (the same trigger that re-arms the idle timer above),
    * so a caller can drive its own shorter "still working" notice off the
    * identical genuine-activity signal without duplicating the timeout logic.
+   * It receives the current lane snapshot; existing callbacks that ignore
+   * arguments remain valid.
    */
   async sessionPrompt(
     sessionId: string,
     text: string,
     timeoutMs = 120_000,
     onChunk?: AcpTextChunkHandler,
-    onActivity?: () => void,
+    onActivity?: AcpStreamHandler,
   ): Promise<PromptResult> {
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
@@ -517,7 +597,7 @@ export class AcpClient extends EventEmitter {
       updates.push(u);
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
       if (requestId !== undefined) this.resetPendingIdleTimeout(requestId);
-      onActivity?.();
+      onActivity?.(agentStreamSnapshot(updates));
       if (onChunk) {
         const delta = agentMessageChunkText(u.update);
         if (delta) onChunk(delta, joinAgentMessageChunks(updates));

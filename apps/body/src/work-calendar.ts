@@ -21,6 +21,7 @@ export const WORK_SCHEDULE_VERSION = 1 as const;
 export const DEFAULT_CALENDAR_RESYNC_SECONDS = 60;
 export const DEFAULT_CALENDAR_RETRY_SECONDS = 5;
 export const MAX_CALENDAR_DUE_PER_WAKE = 16;
+export const MAX_CALENDAR_IN_FLIGHT_RUNS = 160;
 
 const HEX_64 = /^[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
@@ -107,6 +108,9 @@ export interface WorkScheduleProjectionV1 {
   latestRunStatus?: ScheduledTurnStatus;
   receiptCursorAt?: number;
   receiptCursorId?: string;
+  watermarkNominalAt?: number;
+  watermarkRunId?: string;
+  watermarkRunStatus?: 'complete' | 'failed' | 'skipped';
   pauseReason?: string;
 }
 
@@ -190,7 +194,10 @@ export interface WorkCalendarStore {
   runs(): Promise<CalendarRunRecord[]>;
   reserveRun(
     reservation: CalendarRunReservation,
-  ): Promise<{ state: 'reserved' | 'existing'; record: CalendarRunRecord }>;
+  ): Promise<
+    | { state: 'reserved' | 'existing'; record: CalendarRunRecord }
+    | { state: 'backpressure' }
+  >;
   stageReceipt(
     runId: string,
     status: ScheduledTurnStatus,
@@ -200,7 +207,7 @@ export interface WorkCalendarStore {
   pendingReceipts(): Promise<
     Array<{ runId: string; status: ScheduledTurnStatus; event: NostrEvent }>
   >;
-  stageOutput(key: string, event: NostrEvent): Promise<NostrEvent>;
+  stageOutput(key: string, event: NostrEvent, runId?: string, replace?: boolean): Promise<NostrEvent>;
   pendingOutputs(): Promise<Array<{ key: string; event: NostrEvent }>>;
   markOutputPublished(key: string, eventId: string): Promise<void>;
   stageCompletion(
@@ -225,6 +232,7 @@ interface DurableCalendarData {
   outputs: Record<string, NostrEvent>;
   principals: Record<string, string>;
   checkpoints: Record<string, WorkScheduleCheckpointV1>;
+  outputRuns: Record<string, string>;
 }
 
 function cloneRun(record: CalendarRunRecord): CalendarRunRecord {
@@ -239,6 +247,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     outputs: {},
     principals: {},
     checkpoints: {},
+    outputRuns: {},
   };
   private loaded = false;
   private saveTail: Promise<void> = Promise.resolve();
@@ -267,6 +276,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
         outputs: parsed.outputs ?? {},
         principals: parsed.principals ?? {},
         checkpoints: parsed.checkpoints ?? {},
+        outputRuns: parsed.outputRuns ?? {},
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -281,10 +291,24 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
 
   async reserveRun(
     reservation: CalendarRunReservation,
-  ): Promise<{ state: 'reserved' | 'existing'; record: CalendarRunRecord }> {
+  ): Promise<
+    | { state: 'reserved' | 'existing'; record: CalendarRunRecord }
+    | { state: 'backpressure' }
+  > {
     await this.load();
     const existing = this.data.runs[reservation.runId];
     if (existing) return { state: 'existing', record: cloneRun(existing) };
+    const checkpoint = this.data.checkpoints[`${reservation.scheduleId}:${reservation.revision}`];
+    const watermark = checkpoint?.watermarkNominalAt ?? -1;
+    const retained = Object.values(this.data.runs).filter(
+      (run) =>
+        run.scheduleId === reservation.scheduleId &&
+        run.revision === reservation.revision &&
+        (run.nominalAt > watermark ||
+          Object.values(run.receipts).some((receipt) => receipt && !receipt.published) ||
+          Object.values(this.data.outputRuns).includes(run.runId)),
+    );
+    if (retained.length >= MAX_CALENDAR_IN_FLIGHT_RUNS) return { state: 'backpressure' };
     const record: CalendarRunRecord = { ...reservation, state: 'reserved', receipts: {} };
     this.data.runs[reservation.runId] = record;
     await this.save();
@@ -319,6 +343,8 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     if (!receipt || receipt.event.id !== eventId || receipt.published) return;
     receipt.published = true;
     if (status === 'working' && !isTerminal(record.state)) record.state = 'working';
+    if (isTerminal(status)) this.advanceWatermark(record.scheduleId, record.revision);
+    this.compactRuns(record.scheduleId, record.revision);
     await this.save();
   }
 
@@ -342,11 +368,17 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     );
   }
 
-  async stageOutput(key: string, event: NostrEvent): Promise<NostrEvent> {
+  async stageOutput(
+    key: string,
+    event: NostrEvent,
+    runId?: string,
+    replace = false,
+  ): Promise<NostrEvent> {
     await this.load();
     const existing = this.data.outputs[key];
-    if (existing) return structuredClone(existing);
+    if (existing && !replace) return structuredClone(existing);
     this.data.outputs[key] = event;
+    if (runId) this.data.outputRuns[key] = runId;
     await this.save();
     return structuredClone(event);
   }
@@ -365,7 +397,13 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
   async markOutputPublished(key: string, eventId: string): Promise<void> {
     await this.load();
     if (this.data.outputs[key]?.id !== eventId) return;
+    const runId = this.data.outputRuns[key];
     delete this.data.outputs[key];
+    delete this.data.outputRuns[key];
+    if (runId) {
+      const run = this.data.runs[runId];
+      if (run) this.compactRuns(run.scheduleId, run.revision);
+    }
     await this.save();
   }
 
@@ -383,6 +421,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     record.state = status;
     for (const output of outputs) {
       if (!this.data.outputs[output.key]) this.data.outputs[output.key] = output.event;
+      this.data.outputRuns[output.key] = runId;
     }
     this.storeCheckpoint(checkpoint);
     this.compactRuns(checkpoint.scheduleId, checkpoint.revision);
@@ -413,6 +452,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
       existing &&
       (checkpoint.runCount < existing.runCount ||
         checkpoint.receiptCursorAt < existing.receiptCursorAt ||
+        (checkpoint.watermarkNominalAt ?? -1) < (existing.watermarkNominalAt ?? -1) ||
         (checkpoint.latestNominalAt ?? -1) < (existing.latestNominalAt ?? -1) ||
         checkpoint.updatedAt < existing.updatedAt)
     )
@@ -421,10 +461,42 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
   }
 
   private compactRuns(scheduleId: string, revision: number): void {
-    const terminal = Object.values(this.data.runs)
-      .filter((run) => run.scheduleId === scheduleId && run.revision === revision && isTerminal(run.state))
-      .sort((left, right) => right.nominalAt - left.nominalAt);
-    for (const run of terminal.slice(128)) delete this.data.runs[run.runId];
+    const watermark = this.data.checkpoints[`${scheduleId}:${revision}`]?.watermarkNominalAt ?? -1;
+    for (const run of Object.values(this.data.runs)) {
+      if (
+        run.scheduleId === scheduleId &&
+        run.revision === revision &&
+        run.nominalAt <= watermark &&
+        isTerminal(run.state) &&
+        Object.values(run.receipts).every((receipt) => !receipt || receipt.published) &&
+        !Object.values(this.data.outputRuns).includes(run.runId)
+      ) {
+        delete this.data.runs[run.runId];
+      }
+    }
+  }
+
+  private advanceWatermark(scheduleId: string, revision: number): void {
+    const checkpoint = this.data.checkpoints[`${scheduleId}:${revision}`];
+    if (!checkpoint) return;
+    const after = checkpoint.watermarkNominalAt ?? -1;
+    const candidates = Object.values(this.data.runs)
+      .filter(
+        (run) => run.scheduleId === scheduleId && run.revision === revision && run.nominalAt > after,
+      )
+      .sort((left, right) => left.nominalAt - right.nominalAt);
+    for (const run of candidates) {
+      if (!isTerminal(run.state)) break;
+      const status = run.state as 'complete' | 'failed' | 'skipped';
+      const terminal = run.receipts[status];
+      if (!terminal?.published) break;
+      checkpoint.watermarkNominalAt = run.nominalAt;
+      checkpoint.watermarkRunId = run.runId;
+      checkpoint.watermarkRunStatus = status;
+      checkpoint.receiptCursorAt = terminal.event.created_at;
+      checkpoint.receiptCursorId = terminal.event.id;
+      checkpoint.updatedAt = Math.max(checkpoint.updatedAt, terminal.event.created_at);
+    }
   }
 
   async principalForSchedule(scheduleId: string): Promise<string | undefined> {
@@ -1069,6 +1141,7 @@ export function buildWorkScheduleProjection(
               ['checkpoint', '1'],
               ['run-count', String(input.runCount)],
               ['cursor-at', String(input.receiptCursorAt)],
+              ['watermark', String(input.watermarkNominalAt ?? 0)],
             ]
           : []),
       ],
@@ -1118,12 +1191,22 @@ export function parseWorkScheduleCheckpoint(
       uniqueTag(event, 'status') !== input.status ||
       uniqueTag(event, 'checkpoint') !== '1' ||
       uniqueTag(event, 'run-count') !== String(input.runCount) ||
-      uniqueTag(event, 'cursor-at') !== String(input.receiptCursorAt)
+      uniqueTag(event, 'cursor-at') !== String(input.receiptCursorAt) ||
+      uniqueTag(event, 'watermark') !== String(input.watermarkNominalAt ?? 0)
     )
       return undefined;
     if (
       (input.latestRunId !== undefined && !HEX_64.test(input.latestRunId.replace(/^wsr_/, ''))) ||
       (input.receiptCursorId !== undefined && !HEX_64.test(input.receiptCursorId)) ||
+      (input.watermarkNominalAt !== undefined && !Number.isSafeInteger(input.watermarkNominalAt)) ||
+      (input.watermarkRunId !== undefined && !HEX_64.test(input.watermarkRunId.replace(/^wsr_/, ''))) ||
+      (input.watermarkRunStatus !== undefined &&
+        !['complete', 'failed', 'skipped'].includes(input.watermarkRunStatus)) ||
+      ((input.watermarkNominalAt === undefined) !== (input.watermarkRunId === undefined)) ||
+      ((input.watermarkNominalAt === undefined) !== (input.watermarkRunStatus === undefined)) ||
+      (input.watermarkNominalAt !== undefined &&
+        input.watermarkRunId !==
+          deterministicScheduleRunId(input.scheduleId, input.revision, input.watermarkNominalAt)) ||
       (input.latestRunStatus !== undefined &&
         !['queued', 'working', 'complete', 'failed', 'skipped'].includes(input.latestRunStatus)) ||
       (input.latestNominalAt !== undefined && !Number.isSafeInteger(input.latestNominalAt)) ||
@@ -1278,6 +1361,7 @@ export interface WorkCalendarDependencies {
     localCheckpoints: readonly WorkScheduleCheckpointV1[],
   ): Promise<readonly NostrEvent[]>;
   authorize(schedule: ParsedWorkSchedule): Promise<ScheduleAuthorityResult>;
+  validateArtifacts?(artifacts: readonly ArtifactRevisionRef[]): Promise<ScheduleAuthorityResult>;
   validateScheduleCreation?(creation: readonly ParsedWorkSchedule[]): Promise<boolean>;
   publish(event: NostrEvent): Promise<void>;
   dispatch(
@@ -1543,6 +1627,7 @@ export class WorkCalendar {
     return (
       candidate.runCount < current.runCount ||
       candidate.receiptCursorAt < current.receiptCursorAt ||
+      (candidate.watermarkNominalAt ?? -1) < (current.watermarkNominalAt ?? -1) ||
       (candidate.latestNominalAt ?? -1) < (current.latestNominalAt ?? -1) ||
       candidate.updatedAt < current.updatedAt
     );
@@ -1665,9 +1750,31 @@ export class WorkCalendar {
         result.nominalAt,
       );
       checkpoint.latestRunStatus = result.status;
+      checkpoint.updatedAt = result.event.created_at;
+    }
+    const watermarkCandidates = [...terminal.values()].sort(
+      (left, right) => left.nominalAt - right.nominalAt,
+    );
+    for (const result of watermarkCandidates) {
+      if (result.nominalAt <= (checkpoint.watermarkNominalAt ?? -1)) continue;
+      const local = this.localRuns.find(
+        (run) => run.runId === deterministicScheduleRunId(schedule.scheduleId, schedule.revision, result.nominalAt),
+      );
+      const published = local
+        ? local.receipts[result.status]?.published === true
+        : this.relayReceipts.some(
+            (receipt) => receipt.event.id === result.event.id && receipt.value.status === result.status,
+          );
+      if (!published) break;
+      checkpoint.watermarkNominalAt = result.nominalAt;
+      checkpoint.watermarkRunId = deterministicScheduleRunId(
+        schedule.scheduleId,
+        schedule.revision,
+        result.nominalAt,
+      );
+      checkpoint.watermarkRunStatus = result.status;
       checkpoint.receiptCursorAt = result.event.created_at;
       checkpoint.receiptCursorId = result.event.id;
-      checkpoint.updatedAt = result.event.created_at;
     }
     if (checkpoint.consecutiveFailures >= schedule.maxConsecutiveFailures) {
       checkpoint.status = 'paused';
@@ -1911,6 +2018,13 @@ export class WorkCalendar {
       reservedTokens: schedule.perRunReservedTokens,
       reservedAt: this.secondsNow(),
     });
+    if (reservation.state === 'backpressure') {
+      const wakeAt =
+        this.secondsNow() + (this.dependencies.retrySeconds ?? DEFAULT_CALENDAR_RETRY_SECONDS);
+      this.retryAt.set(runId, wakeAt);
+      this.heap.push({ ...entry, wakeAt });
+      return;
+    }
     if (reservation.state === 'reserved') this.localRuns.push(reservation.record);
 
     if (entry.action === 'recover-unknown' || reservation.record.state === 'working') {
@@ -2003,6 +2117,21 @@ export class WorkCalendar {
           if (this.secondsNow() > schedule.expiresAt) {
             throw new ScheduleActivationRefusedError(true, 'schedule-expired');
           }
+          if ((schedule.artifactRefs?.length ?? 0) > 0) {
+            const artifactAuthority = this.dependencies.validateArtifacts
+              ? await this.dependencies.validateArtifacts(schedule.artifactRefs!)
+              : {
+                  authorized: false as const,
+                  terminal: true,
+                  reason: 'artifact-validation-unavailable',
+                };
+            if (!artifactAuthority.authorized) {
+              throw new ScheduleActivationRefusedError(
+                artifactAuthority.terminal,
+                artifactAuthority.reason,
+              );
+            }
+          }
           const currentBudgetReason = this.budgetRefusal(schedule, runId);
           if (currentBudgetReason) {
             throw new ScheduleActivationRefusedError(true, currentBudgetReason);
@@ -2016,7 +2145,7 @@ export class WorkCalendar {
           if (!working) throw new WorkingReceiptPendingError('working-receipt-publish-pending');
           activationChecked = true;
         },
-        (event) => this.publishOutput(`reply:${schedule.scheduleId}:${runId}`, event),
+        (event) => this.publishOutput(`reply:${schedule.scheduleId}:${runId}`, event, runId),
       );
       if (!activationChecked) {
         throw new Error('scheduled dispatcher bypassed the activation authority check');
@@ -2044,9 +2173,7 @@ export class WorkCalendar {
           entry.nominalAt,
           'skipped',
           error.reason,
-          ['principal-removed', 'principal-access-denied', 'schedule-principal-role-lost'].includes(
-            error.reason,
-          )
+          this.requiresRevisionPause(error.reason)
             ? error.reason
             : undefined,
         );
@@ -2180,8 +2307,19 @@ export class WorkCalendar {
     this.checkpointsByRevision.set(this.checkpointKey(schedule), checkpoint);
     this.retryAt.delete(runId);
     this.localRuns = await this.dependencies.store.runs();
-    await this.publishReceipt(schedule, runId, nominalAt, status, reason);
-    for (const output of outputs) await this.publishOutput(output.key, output.event);
+    const published = await this.publishReceipt(schedule, runId, nominalAt, status, reason);
+    if (!published) return;
+    const storedCheckpoint = (await this.dependencies.store.checkpoints()).find(
+      (candidate) =>
+        candidate.scheduleId === schedule.scheduleId && candidate.revision === schedule.revision,
+    );
+    if (storedCheckpoint)
+      this.checkpointsByRevision.set(this.checkpointKey(schedule), storedCheckpoint);
+    const currentProjection = storedCheckpoint
+      ? buildWorkScheduleProjection(this.dependencies.identity, storedCheckpoint)
+      : projection;
+    await this.publishOutput(projectionKey, currentProjection, runId, true);
+    for (const output of outputs.slice(1)) await this.publishOutput(output.key, output.event, runId);
   }
 
   private buildReceipt(
@@ -2245,6 +2383,24 @@ export class WorkCalendar {
         break;
       }
     }
+    const checkpoints = await this.dependencies.store.checkpoints();
+    for (const pending of await this.dependencies.store.pendingOutputs()) {
+      const match = /^projection:(.+):(\d+):(wsr_[0-9a-f]{64}):(complete|failed|skipped)$/.exec(
+        pending.key,
+      );
+      if (!match) continue;
+      const checkpoint = checkpoints.find(
+        (candidate) =>
+          candidate.scheduleId === match[1] && candidate.revision === Number(match[2]),
+      );
+      if (!checkpoint) continue;
+      await this.dependencies.store.stageOutput(
+        pending.key,
+        buildWorkScheduleProjection(this.dependencies.identity, checkpoint),
+        match[3],
+        true,
+      );
+    }
     for (const pending of await this.dependencies.store.pendingOutputs()) {
       try {
         await this.dependencies.publish(pending.event);
@@ -2256,8 +2412,13 @@ export class WorkCalendar {
     }
   }
 
-  private async publishOutput(key: string, event: NostrEvent): Promise<void> {
-    const staged = await this.dependencies.store.stageOutput(key, event);
+  private async publishOutput(
+    key: string,
+    event: NostrEvent,
+    runId?: string,
+    replace = false,
+  ): Promise<void> {
+    const staged = await this.dependencies.store.stageOutput(key, event, runId, replace);
     try {
       await this.dependencies.publish(staged);
       await this.dependencies.store.markOutputPublished(key, staged.id);
@@ -2265,5 +2426,13 @@ export class WorkCalendar {
       console.error(`[work-calendar] output publish failed for ${key}:`, error);
       throw error;
     }
+  }
+
+  private requiresRevisionPause(reason: string): boolean {
+    return (
+      ['principal-removed', 'principal-access-denied', 'schedule-principal-role-lost'].includes(
+        reason,
+      ) || reason.startsWith('artifact-')
+    );
   }
 }

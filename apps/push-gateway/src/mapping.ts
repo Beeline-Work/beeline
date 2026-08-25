@@ -21,6 +21,8 @@ export interface NotificationContext {
   isDirectMessage?: boolean;
   /** True when the immutable create names a parent channel — a corner worktree channel. */
   isChildChannel?: boolean;
+  /** Immutable parent Room id for a corner worktree channel. */
+  parentChannelId?: string;
   /** True only after resolving an immutable Room create linked to a real Workspace create. */
   persistentWorkspaceRoom?: boolean;
   workspaceName?: string;
@@ -175,6 +177,15 @@ export function mapEventToNotification(
     normalizedDisplayText(context.senderName, 80) ?? fallbackPersonName(event.pubkey);
   const showMessagePreview = options.showMessagePreview ?? true;
   const preview = formatMessagePreview(event.content);
+  const cornerId =
+    isMergeRequest || context.parentChannelId
+      ? channelId
+      : type === 'agent-attention' && attentionTarget !== channelId
+        ? attentionTarget
+        : undefined;
+  const destinationChannelId = cornerId ?? channelId;
+  const roomId = context.parentChannelId ?? channelId;
+  const target = isMergeRequest ? 'approval' : type === 'agent-attention' ? 'corner' : 'message';
 
   return {
     channelId,
@@ -201,14 +212,15 @@ export function mapEventToNotification(
               ? `${senderName} needs your attention: ${preview}`
               : `${senderName} needs your attention`,
     data: {
-      channelId: type === 'agent-attention' ? attentionTarget : channelId,
+      target,
+      roomId,
+      channelId: destinationChannelId,
       roomName,
       type,
-      ...(isMergeRequest
-        ? { cornerId: channelId }
-        : type === 'agent-attention' && attentionTarget !== channelId
-          ? { cornerId: attentionTarget }
-          : {}),
+      eventId: event.id,
+      ...(cornerId ? { cornerId } : {}),
+      ...(target === 'message' ? { messageId: event.id } : {}),
+      ...(target === 'approval' ? { approvalId: event.id } : {}),
     },
   };
 }

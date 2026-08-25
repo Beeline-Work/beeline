@@ -22,23 +22,63 @@ function normalizeNotificationData(data: unknown): unknown {
   return data;
 }
 
-/** Attention pushes may name the child explicitly, so they cannot fall back to its parent Room. */
-export function getBuzzChannelIdFromNotificationData(data: unknown): string | null {
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+export type BuzzNotificationTarget = {
+  type: string;
+  target: 'message' | 'approval' | 'corner';
+  roomId: string;
+  channelId: string;
+  cornerId?: string;
+  eventId?: string;
+  messageId?: string;
+  approvalId?: string;
+};
+
+/** Parse the FCM string-only data contract without trusting arbitrary route input. */
+export function getBuzzNotificationTargetFromData(data: unknown): BuzzNotificationTarget | null {
   const normalizedData = normalizeNotificationData(data);
   if (!normalizedData || typeof normalizedData !== 'object' || Array.isArray(normalizedData)) {
     return null;
   }
-  const type = getObjectValue(normalizedData, 'type');
-  const cornerId = getObjectValue(normalizedData, 'cornerId');
-  if (
-    (type === 'merge-approval-request' || type === 'agent-attention') &&
-    typeof cornerId === 'string' &&
-    cornerId.trim()
-  ) {
-    return cornerId;
-  }
-  const channelId = getObjectValue(normalizedData, 'channelId');
-  return typeof channelId === 'string' && channelId.trim() ? channelId : null;
+  const type = nonEmptyString(getObjectValue(normalizedData, 'type'));
+  const rawChannelId = nonEmptyString(getObjectValue(normalizedData, 'channelId'));
+  if (!type || !rawChannelId) return null;
+
+  const cornerId = nonEmptyString(getObjectValue(normalizedData, 'cornerId'));
+  const targetValue = nonEmptyString(getObjectValue(normalizedData, 'target'));
+  const target: BuzzNotificationTarget['target'] =
+    targetValue === 'message' || targetValue === 'approval' || targetValue === 'corner'
+      ? targetValue
+      : type === 'merge-approval-request'
+        ? 'approval'
+        : type === 'agent-attention'
+          ? 'corner'
+          : 'message';
+  const channelId = cornerId && target !== 'message' ? cornerId : rawChannelId;
+  const roomId =
+    nonEmptyString(getObjectValue(normalizedData, 'roomId')) ??
+    (cornerId && cornerId !== rawChannelId ? rawChannelId : channelId);
+  const eventId = nonEmptyString(getObjectValue(normalizedData, 'eventId'));
+  const messageId = nonEmptyString(getObjectValue(normalizedData, 'messageId'));
+  const approvalId = nonEmptyString(getObjectValue(normalizedData, 'approvalId'));
+  return {
+    type,
+    target,
+    roomId,
+    channelId,
+    ...(cornerId ? { cornerId } : {}),
+    ...(eventId ? { eventId } : {}),
+    ...(messageId ? { messageId } : {}),
+    ...(approvalId ? { approvalId } : {}),
+  };
+}
+
+/** Backward-compatible channel-only projection for older call sites and payloads. */
+export function getBuzzChannelIdFromNotificationData(data: unknown): string | null {
+  return getBuzzNotificationTargetFromData(data)?.channelId ?? null;
 }
 
 function hasLegacySessionUrl(url: string): boolean {
@@ -108,4 +148,52 @@ export function navigateToBuzzChannelFromNotification(
     },
     { dangerouslySingular: true },
   );
+}
+
+/** Navigate to the exact push source, carrying enough context to reveal it or fall back safely. */
+export function navigateToBuzzTargetFromNotification(
+  router: Pick<Router, 'navigate'>,
+  target: BuzzNotificationTarget,
+  notificationResponseId: string,
+  options: { targetExists?: boolean } = {},
+): void {
+  const useFallback = options.targetExists === false && target.roomId !== target.channelId;
+  const channelId = useFallback ? target.roomId : target.channelId;
+  router.navigate(
+    {
+      pathname: '/buzz/chat/[channelId]',
+      params: {
+        channelId,
+        notificationResponseId,
+        ...(!useFallback && target.roomId !== target.channelId
+          ? {
+              parent: target.roomId,
+              notificationFallbackChannelId: target.roomId,
+            }
+          : {}),
+        ...(!useFallback && target.target === 'message' && target.messageId
+          ? { notificationMessageId: target.messageId }
+          : {}),
+        ...(!useFallback && target.target === 'approval' && target.approvalId
+          ? { notificationApprovalId: target.approvalId }
+          : {}),
+        ...(!useFallback ? { notificationTarget: target.target } : {}),
+      },
+    },
+    { dangerouslySingular: true },
+  );
+}
+
+/** Parse an Expo response and navigate to its exact Buzz source when supported. */
+export function navigateToBuzzNotificationResponse(
+  router: Pick<Router, 'navigate'>,
+  response: unknown,
+): BuzzNotificationTarget | null {
+  const request = getObjectValue(getObjectValue(response, 'notification'), 'request');
+  const responseId = nonEmptyString(getObjectValue(request, 'identifier'));
+  const content = getObjectValue(request, 'content');
+  const target = getBuzzNotificationTargetFromData(getObjectValue(content, 'data'));
+  if (!responseId || !target) return null;
+  navigateToBuzzTargetFromNotification(router, target, responseId);
+  return target;
 }

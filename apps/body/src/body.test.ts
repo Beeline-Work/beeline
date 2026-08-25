@@ -105,7 +105,6 @@ import {
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
   buildAgentMessage,
-  createNarrativeCommitter,
   postAgentMessage,
   postAgentPresence,
   startAgentPresence,
@@ -5329,13 +5328,8 @@ describe('first-class assistant messages', () => {
     expect(published[0]!.content.length).toBeLessThanOrEqual(CORNER_TURN_SUMMARY_MAX_CHARS);
   });
 
-  it('a narrated corner turn puts its prose in the transcript exactly once', async () => {
-    // Triplication defect: the corner narrated its prose durably AND then
-    // published the concise reduction of that same prose as a second message,
-    // which the review card then echoed a third time. The narration is the
-    // single source of truth for the transcript; the summary is computed for
-    // the status/archive card and the durable conversation, not re-inscribed.
-    const agent = newIdentity('narrated-corner-agent');
+  it('publishes a corner turn final as exactly one durable agent message', async () => {
+    const agent = newIdentity('coalesced-corner-agent');
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -5361,41 +5355,26 @@ describe('first-class assistant messages', () => {
     );
 
     const agentText = "I'll take a look at the README first.\n\nAdded the note and ran the tests.";
-    const narrator = createNarrativeCommitter('corner-id', agent);
-    narrator.onChunk(agentText);
-    await narrator.finish();
-    const narrativeFloor = narrator.lastCreatedAt();
-    expect(published.map((event) => event.content)).toEqual([
-      "I'll take a look at the README first.",
-      'Added the note and ran the tests.',
-    ]);
-
     const summary = await Reflect.get(body, 'publishAgentResult').call(
       body,
       'corner-id',
       { cwd: '/workspace' },
       { agentText, updates: [] },
       'Done.',
-      { concise: true, minCreatedAt: narrativeFloor, summaryOnly: narrativeFloor !== undefined },
+      { concise: true },
     );
 
-    // The card/archive copy still exists — it just never reaches the transcript.
     expect(summary).toContain("I'll take a look at the README first.");
-    expect(published).toHaveLength(2);
-    expect(
-      published.filter((event) => event.content.includes("I'll take a look at the README first.")),
-    ).toHaveLength(1);
+    expect(published).toHaveLength(1);
+    expect(published[0]!.kind).toBe(9);
+    expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
   });
 
-  it('all corner turn call sites share the narrated-summary suppression at the merge gate', () => {
-    // Every corner turn driver — corner-open, corner-follow-up, and the
-    // conclude watch's nudge turn — funnels through one gate helper, which
-    // keys `summaryOnly` off the narrator's own floor. A harness that
-    // streamed nothing still gets its one end-of-turn transcript message.
+  it('all corner turn call sites funnel through the one-final-message merge gate', () => {
     const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
-    const summaryPolicy = source.match(/withheldMergeClaim !== true/g) ?? [];
     const gateCallSites = source.match(/this\.finishCornerTurnAgainstMergeGate\(/g) ?? [];
-    expect(summaryPolicy).toHaveLength(1);
+    expect(source).not.toContain('summaryOnly');
+    expect(source).not.toContain('createNarrativeCommitter');
     expect(gateCallSites).toHaveLength(3);
   });
 
@@ -5925,7 +5904,10 @@ describe('corner narrative persistence', () => {
   }
 
   /** Fake ACP client that streams `agent_message_chunk`-style deltas like a real corner turn. */
-  function fakeMultiParagraphSessionPrompt(paragraphs: readonly string[]) {
+  function fakeMultiParagraphSessionPrompt(
+    paragraphs: readonly string[],
+    options: { duplicateEach?: boolean; finalOnly?: boolean } = {},
+  ) {
     return vi.fn(
       async (
         _sessionId: string,
@@ -5938,70 +5920,56 @@ describe('corner narrative persistence', () => {
           const delta = text ? `\n\n${paragraph}` : paragraph;
           text += delta;
           onChunk?.(delta, text);
+          if (options.duplicateEach) onChunk?.(delta, text);
         }
-        return { stopReason: 'end_turn', updates: [], agentText: text, toolCalls: [] };
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          agentText: options.finalOnly ? (paragraphs.at(-1) ?? '') : text,
+          toolCalls: [],
+        };
       },
     );
   }
 
-  it('BEFORE (reproduction): a long corner turn commits no durable narrative while it runs', async () => {
-    // projectActivity deliberately drops `agent_message_chunk` (activity.ts:
-    // "assistant prose is published once... after sessionPrompt completes"),
-    // and without `narrate`, promptAgent only ever live-drafts it — nothing
-    // durable lands until the caller's own end-of-turn publish.
+  it('coalesces three Goose-style progress messages into a retracted draft and one final chat message', async () => {
     const published = stubPublishing();
-    const body = newBody(newIdentity('reproduction-agent'));
-    const sessionPrompt = fakeMultiParagraphSessionPrompt([
-      'Looked at the failing test and reproduced it locally.',
-      'Found the root cause in the retry loop and pushed a fix.',
-    ]);
+    const body = newBody(newIdentity('goose-streaming-agent'));
+    const sessionPrompt = fakeMultiParagraphSessionPrompt(
+      [
+        'Looked at the failing test and reproduced it locally.',
+        'Found the root cause in the retry loop and pushed a fix.',
+        'Ran the suite again; all green.',
+        'Fixed the publisher and all tests pass.',
+      ],
+      { duplicateEach: true, finalOnly: true },
+    );
     const session = {
       channelId: 'corner-1',
       sessionId: 'session-1',
       client: { sessionPrompt, sessionCancel: vi.fn() },
     } as never;
 
-    await Reflect.get(body, 'promptAgent').call(body, session, 'do the work', {
+    const result = await Reflect.get(body, 'promptAgent').call(body, session, 'do the work', {
       channelId: 'corner-1',
       requestId: 'req-1',
       originalRequestId: 'req-1',
       cause: 'corner-follow-up',
     });
-
-    expect(agentMessages(published)).toHaveLength(0);
-  });
-
-  it('AFTER: commits the growing narrative in durable, readable segments as a long corner turn runs', async () => {
-    const published = stubPublishing();
-    const body = newBody(newIdentity('narration-agent'));
-    const sessionPrompt = fakeMultiParagraphSessionPrompt([
-      'Looked at the failing test and reproduced it locally.',
-      'Found the root cause in the retry loop and pushed a fix.',
-      'Ran the suite again; all green.',
-    ]);
-    const session = {
-      channelId: 'corner-1',
-      sessionId: 'session-1',
-      client: { sessionPrompt, sessionCancel: vi.fn() },
-    } as never;
-
-    await Reflect.get(body, 'promptAgent').call(body, session, 'do the work', {
-      channelId: 'corner-1',
-      requestId: 'req-1',
-      originalRequestId: 'req-1',
-      cause: 'corner-follow-up',
-      narrate: true,
-    });
+    await Reflect.get(body, 'publishAgentResult').call(body, 'corner-1', session, result, 'Done.');
 
     const messages = agentMessages(published);
-    expect(messages.map((event) => event.content)).toEqual([
-      'Looked at the failing test and reproduced it locally.',
-      'Found the root cause in the retry loop and pushed a fix.',
-      'Ran the suite again; all green.',
-    ]);
-    for (const event of messages) {
-      expect(event.tags).toContainEqual(['h', 'corner-1']);
-    }
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.content).toBe(result.agentText);
+    expect(messages[0]!.tags).toContainEqual(['h', 'corner-1']);
+
+    const drafts = published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-draft'),
+    );
+    expect(drafts.length).toBeGreaterThanOrEqual(2);
+    expect(drafts.at(-1)!.content).toBe('');
+    expect(drafts.at(-1)!.tags).toContainEqual(['status', 'closed']);
+    expect(drafts.slice(0, -1).every((event) => event.kind !== 9)).toBe(true);
   });
 
   it('publishes a Grok message chunk as a live draft before the ACP turn completes', async () => {
@@ -6160,12 +6128,11 @@ describe('corner narrative persistence', () => {
         'Publish the mockup through a Cloudflare tunnel.',
       ]);
       const messages = agentMessages(published);
-      expect(
-        messages.some((event) => event.content === 'Applied the requested follow-up tweak.'),
-      ).toBe(true);
-      expect(messages.some((event) => event.content === 'Ran the suite again; still green.')).toBe(
-        true,
-      );
+      expect(messages).toHaveLength(3);
+      for (const message of messages) {
+        expect(message.content).toContain('Applied the requested follow-up tweak.');
+        expect(message.content).toContain('Ran the suite again; still green.');
+      }
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

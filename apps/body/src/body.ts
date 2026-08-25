@@ -43,7 +43,6 @@ import {
   replyRootIdForEvent,
   stripAgentReplyPreamble,
   createDraftStreamer,
-  createNarrativeCommitter,
   retractAgentDraft,
   retractAgentPresence,
   relayRetryAfterMs,
@@ -597,7 +596,7 @@ export const CORNER_TARGET_SYNC_INSTRUCTION =
 export const MERGE_READY_GATE_MAX_REJECTIONS = 3;
 
 /**
- * A corner's live draft/narrative is visible before the host can inspect git.
+ * A corner's live draft is visible before the host can inspect git.
  * Hold readiness/approval claims out of that early stream; the unmodified
  * final response is published after `publishMergeReady` succeeds.
  */
@@ -3268,21 +3267,18 @@ export class Body {
    * Retire a non-returning ACP generation so the next Room turn gets a fresh
    * process instead of reusing one that has already stopped answering.
    *
-   * `stream`, when given, projects the agent's reply live as it's generated —
-   * see `createDraftStreamer` — instead of only after the whole turn resolves.
+   * Every non-silent turn projects the agent's reply live as a replaceable
+   * draft while it is generated, then retracts that draft when the turn settles.
    * Harness-agnostic: an ACP agent that never emits `agent_message_chunk`
    * deltas simply never triggers a publish, and the final message is
-   * unaffected either way. `stream.narrate` additionally commits the growing
-   * reply into the durable transcript in readable paragraph-sized segments as
-   * the turn progresses — see `createNarrativeCommitter` — so a corner's
-   * running colloquial narrative persists instead of only a vanishing draft.
+   * unaffected. Interim narration never becomes durable kind:9 chat here;
+   * the caller publishes exactly one final agent message after this resolves.
    */
   private async promptAgent(
     session: AgentSession,
     prompt: string,
     turn: ModelTurnAttribution & {
       channelId: string;
-      narrate?: boolean;
       /** Keep an internal continuation off the human transcript until its
        *  host-side verdict is known. Used by merge-gate correction turns so
        *  an agent cannot advertise approval before a target exists. */
@@ -3304,13 +3300,12 @@ export class Body {
       /**
        * Room turns only: watch the growing reply for the agent-initiated
        * edit-corner request marker (`corner-request.ts`) and strip it from
-       * everything downstream — live draft, narrative segments, final text.
+       * everything downstream — live draft and final text.
        */
       cornerRequests?: boolean;
     },
   ): Promise<
     PromptResult & {
-      narrativeFloor?: number;
       cornerRequest?: AgentCornerRequest;
       withheldMergeClaim?: boolean;
     }
@@ -3323,10 +3318,6 @@ export class Body {
           turn.requestId,
         )
       : undefined;
-    const narrator =
-      !turn.silent && turn.narrate
-        ? createNarrativeCommitter(turn.channelId, this.agentIdentity)
-        : undefined;
     const cornerRequestFilter = turn.cornerRequests ? createCornerRequestFilter() : undefined;
     let withheldMergeClaim = false;
     // Surface a stall well before ROOM_AGENT_PROMPT_TIMEOUT_MS elapses. Armed
@@ -3392,11 +3383,11 @@ export class Body {
           session.sessionId,
           wirePrompt,
           ROOM_AGENT_PROMPT_TIMEOUT_MS,
-          (draft || narrator || cornerRequestFilter) &&
+          (draft || cornerRequestFilter) &&
             ((_delta, fullText) => {
-              // The corner-request cut happens BEFORE any consumer so neither
-              // the live draft nor a durable narrative segment can leak the
-              // marker line (or anything after it) to the transcript.
+              // The corner-request cut happens BEFORE the draft consumer so
+              // the marker line (and everything after it) cannot flash in the
+              // provisional transcript.
               const visible = cornerRequestFilter
                 ? cornerRequestFilter.onChunk(fullText)
                 : fullText;
@@ -3405,7 +3396,6 @@ export class Body {
                 : visible;
               if (gateSafeVisible !== visible) withheldMergeClaim = true;
               draft?.onChunk(gateSafeVisible);
-              narrator?.onChunk(gateSafeVisible);
             }),
           armStallTimer,
         );
@@ -3485,14 +3475,9 @@ export class Body {
     } finally {
       clearStallTimer();
       await draft?.finish();
-      await narrator?.finish();
     }
-    // narrator.finish() (above) has already flushed the last segment by the
-    // time we read this, so lastCreatedAt() reflects the true final segment.
-    const narrativeFloor = narrator?.lastCreatedAt();
     return {
       ...result,
-      ...(narrativeFloor ? { narrativeFloor } : {}),
       ...(withheldMergeClaim ? { withheldMergeClaim: true } : {}),
     };
   }
@@ -3625,26 +3610,6 @@ export class Body {
       replyRootId?: string;
       extraTags?: readonly string[][];
       concise?: boolean;
-      /** Strictly-after floor for this publish's `created_at` — pass a
-       *  narrator's `lastCreatedAt()` so a corner's trailing summary always
-       *  sorts after its own narrative segments, even when both land in the
-       *  same wall-clock second. */
-      minCreatedAt?: number;
-      /**
-       * Compute the summary but do not put it in the transcript.
-       *
-       * A corner turn that narrated durably (`stream.narrate`) has already
-       * committed the agent's full prose as `#t=agent-message` segments, so
-       * publishing the concise reduction of that same prose printed the same
-       * words a second time, as bullets, directly beneath themselves. The
-       * summary is still needed — it is the corner's status/archive card copy
-       * and its durable conversation entry, both of which read this
-       * function's return value — so it is computed either way.
-       *
-       * Never honoured when the turn produced attachments (or attachment
-       * errors): those reach the human only through this message.
-       */
-      summaryOnly?: boolean;
     } = {},
   ): Promise<string> {
     const uploaded = await this.uploadAgentOutputs(session, result);
@@ -3658,12 +3623,6 @@ export class Body {
     // completed turn as a failure to report.
     if (options.concise) reply = conciseCornerTurnSummary(reply) || fallback;
     if (!reply) throw new Error('agent returned an empty reply');
-    if (options.summaryOnly && !uploaded.attachments.length && !uploaded.errors.length)
-      return reply;
-    const createdAt =
-      options.minCreatedAt !== undefined
-        ? Math.max(Math.floor(Date.now() / 1_000), options.minCreatedAt + 1)
-        : undefined;
     if (options.replyTo) {
       const event = await this.durableState.reserveReply(
         channelId,
@@ -3676,7 +3635,6 @@ export class Body {
           uploaded.attachments,
           options.extraTags,
           options.replyRootId,
-          createdAt,
         ),
       );
       await publishEvent(event, this.agentIdentity);
@@ -3689,7 +3647,6 @@ export class Body {
         uploaded.attachments,
         options.extraTags,
         undefined,
-        createdAt,
       );
     }
     return reply;
@@ -6449,7 +6406,7 @@ export class Body {
    */
   private async finishCornerTurnAgainstMergeGate(
     info: SubchannelInfo,
-    initialResult: PromptResult & { narrativeFloor?: number; withheldMergeClaim?: boolean },
+    initialResult: PromptResult & { withheldMergeClaim?: boolean },
     attribution: ModelTurnAttribution,
     fallback: string,
     options: { replyTo?: string; replyRootId?: string } = {},
@@ -6464,10 +6421,6 @@ export class Body {
         {
           ...options,
           concise: true,
-          minCreatedAt: result.narrativeFloor,
-          // A narrated opening turn is already durable. Internal gate
-          // corrections are silent and therefore always publish a summary.
-          summaryOnly: result.narrativeFloor !== undefined && result.withheldMergeClaim !== true,
         },
       );
       await this.durableState.appendConversation(info.subchannelId, {
@@ -6588,7 +6541,6 @@ export class Body {
           {
             ...attribution,
             channelId: info.subchannelId,
-            narrate: true,
             withholdMergeClaims: true,
           },
         );
@@ -9627,7 +9579,7 @@ export class Body {
   // A corner turn may end in exactly four states: still working, a fresh
   // question to the human, a reviewable change presented, or a declared
   // failure. When a turn resolves with NONE of those holding (the agent only
-  // narrated and stopped), `noteCornerTurnEnd` opens a quiet episode and the
+  // reports progress and stops), `noteCornerTurnEnd` opens a quiet episode and the
   // maintenance tick below drives the corner to a terminal outcome with a
   // bounded conclude steer through the same path human messages take.
   // ---------------------------------------------------------------------
@@ -9858,7 +9810,7 @@ export class Body {
     info.conclude = episode;
     this.persistConcludeEpisode(info);
     // The tail state word is decided off the relay's own view of the corner
-    // channel (narrative segments are relay-only); fire-and-forget with the
+    // channel (final agent messages are relay-only); fire-and-forget with the
     // epoch guard inside so a newer turn always wins.
     void this.evaluateCornerTailState(info, turnSeq);
   }
@@ -9905,8 +9857,8 @@ export class Body {
     }
     if (await this.cornerHasUnreviewedCommits(info)) return;
 
-    // State 2 — a fresh unanswered ask. Read the corner's own channel so
-    // narrative segments (relay-only) count, not just durable conversation.
+    // State 2 — a fresh unanswered ask. Read the corner's own channel so the
+    // final agent message (relay-only) counts, not just durable conversation.
     try {
       const events = await this.agentRelay.queryEvents([
         { kinds: [9], '#h': [info.subchannelId], limit: 100 },
@@ -10030,7 +9982,6 @@ export class Body {
           {
             ...attribution,
             channelId: info.subchannelId,
-            narrate: true,
             withholdMergeClaims: true,
           },
         );
@@ -10455,8 +10406,8 @@ export class Body {
         this.noteInboundMessage(subchannelId);
         let promptAttempted = false;
         try {
-          let agentResult: (PromptResult & { narrativeFloor?: number }) | undefined;
-          const promptNewTurn = async (): Promise<PromptResult & { narrativeFloor?: number }> => {
+          let agentResult: PromptResult | undefined;
+          const promptNewTurn = async (): Promise<PromptResult> => {
             // A follow-up starts a checklist, not a new corner. Keep the
             // immutable create-event objective out of ordinary chat.
             await this.startCornerPlan(session, info.taskDescription || evt.content);
@@ -10471,7 +10422,6 @@ export class Body {
                 cause: 'corner-follow-up',
                 replyToId: evt.id,
                 replyRootId: replyRootIdForEvent(evt),
-                narrate: true,
                 withholdMergeClaims: true,
               },
             );

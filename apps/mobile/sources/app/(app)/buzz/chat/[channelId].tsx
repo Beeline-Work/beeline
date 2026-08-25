@@ -50,6 +50,7 @@ import {
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
+  type KnownMessageReference,
   AGENT_PRESENCE_STALE_MS,
   CORNER_ACTIVITY_FRESHNESS_MS,
   personHandle,
@@ -1643,6 +1644,11 @@ export default function BuzzChat() {
         // lazily by the first live subscription, so this is not a round-trip.
         const client = await t.ensureClient();
         if (cancelled) return;
+        // A live Nostr REQ without `since` replays the Room's entire history.
+        // On a large Room that duplicates the HTTP backfill as hundreds of
+        // singular subscription callbacks and can starve every UI gesture.
+        // Start at screen entry; the concurrent backfill owns older history.
+        const liveSince = Math.max(0, Math.floor(Date.now() / 1_000) - 1);
 
         let cornerStateDeliveryGeneration = 0;
         const installCornerStateDelivery = (cornerIds: string[]): Promise<void> => {
@@ -1838,7 +1844,9 @@ export default function BuzzChat() {
           const presenceChannelId = parentChannelId ?? decodedId;
           const installMessages = (async () => {
             try {
-              const stop = await t.sessionEventsSubscribeReady(decodedId, handleLiveMessage);
+              const stop = await t.sessionEventsSubscribeReady(decodedId, handleLiveMessage, {
+                since: liveSince,
+              });
               if (cancelled) {
                 stop();
                 return;
@@ -1846,7 +1854,11 @@ export default function BuzzChat() {
               unsubscribe = stop;
             } catch (error) {
               console.warn(`Failed to establish live Room subscription for ${decodedId}:`, error);
-              if (!cancelled) unsubscribe = t.sessionEventsSubscribe(decodedId, handleLiveMessage);
+              if (!cancelled) {
+                unsubscribe = t.sessionEventsSubscribe(decodedId, handleLiveMessage, {
+                  since: liveSince,
+                });
+              }
             }
           })();
           const installPresence = (async () => {
@@ -2083,23 +2095,35 @@ export default function BuzzChat() {
 
   const beginReply = useCallback(
     (message: ChatDisplayMessage) => {
-      if (!cachedSnapshot) return;
-      const selected = selectReplyTarget(cachedSnapshot, decodedId, message.relayId ?? message.id);
-      if (selected.status !== 'available') return;
-      setReplyTarget({ ...replyTargetForMessage(message), reference: selected.reference });
-      setDismissedMentionKey(null);
-      void Haptics.selectionAsync();
-      requestAnimationFrame(() => composerRef.current?.focus());
+      const eventId = message.relayId ?? message.id;
+      const selected = cachedSnapshot
+        ? selectReplyTarget(cachedSnapshot, decodedId, eventId)
+        : { status: 'unavailable' as const };
+      const install = (reference: KnownMessageReference) => {
+        setReplyTarget({ ...replyTargetForMessage(message), reference });
+        setDismissedMentionKey(null);
+        void Haptics.selectionAsync();
+        requestAnimationFrame(() => composerRef.current?.focus());
+      };
+      if (selected.status === 'available') {
+        install(selected.reference);
+        return;
+      }
+      // Older pages deliberately stay outside the bounded persisted snapshot.
+      // Fetch only the exact displayed parent and let the typed selector mint
+      // the same-Room proof instead of silently ignoring the reply gesture.
+      void transport?.resolveReplyTarget(decodedId, eventId).then((reference) => {
+        if (reference) install(reference);
+      });
     },
-    [cachedSnapshot, decodedId, replyTargetForMessage],
+    [cachedSnapshot, decodedId, replyTargetForMessage, transport],
   );
 
   const handleSend = useCallback(async () => {
     const rawText = inputTextRef.current.trim();
     // State updates are committed asynchronously. A ref closes the short
     // double-tap window before `sending` can disable the native control.
-    if (sendInFlightRef.current || (!rawText && !pendingAttachment) || !transport || isArchived)
-      return;
+    if (sendInFlightRef.current || (!rawText && !pendingAttachment) || isArchived) return;
     // The daemon already refuses corner-open on a repo-less Room; this is the
     // friendly client-side path — catch the common phrasing before the
     // message is sent (and the composer text lost) rather than after a
@@ -2110,7 +2134,7 @@ export default function BuzzChat() {
       looksLikeCornerOpenIntent(rawText)
     ) {
       setCornerOpenRepoPrompt(true);
-      if (activeCommunityId && roomRepoCandidates.length === 0) {
+      if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
         void transport
           .workspaceGitHubAccess({ refresh: true })
           .then((access) => {
@@ -2131,8 +2155,19 @@ export default function BuzzChat() {
     sendInFlightRef.current = true;
     setSending(true);
     try {
+      // A warm/partial snapshot can paint before the hydration effect has
+      // published its transport state. Sending is still a valid operation:
+      // construct the shared authenticated transport on demand rather than
+      // leaving the enabled send control as a silent no-op.
+      let sendTransport = transport;
+      if (!sendTransport) {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('Beeline identity is unavailable');
+        sendTransport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+      }
+      if (!transport) setTransport(sendTransport);
       const attachments = pendingAttachment
-        ? [await uploadChatAttachment(await transport.ensureClient(), pendingAttachment)]
+        ? [await uploadChatAttachment(await sendTransport.ensureClient(), pendingAttachment)]
         : [];
       inputTextRef.current = '';
       setInputText('');
@@ -2169,14 +2204,14 @@ export default function BuzzChat() {
       // Build and sign exactly once. publishPreparedMessage retries the same
       // id on a transient failure, so the relay can dedupe an ambiguous send.
       const eventId = replyTarget
-        ? await transport.messageSubmitReply(
+        ? await sendTransport.messageSubmitReply(
             text,
             replyTarget.reference,
             mentionedAgent,
             attachments,
             mentionedPubkeys,
           )
-        : await transport.messageSubmitWithEventId(
+        : await sendTransport.messageSubmitWithEventId(
             { sessionId: decodedId, text, attachments },
             mentionedAgent || mentionedPubkeys.length
               ? {
@@ -2190,7 +2225,7 @@ export default function BuzzChat() {
       );
     } catch (err) {
       console.warn('Send failed:', err);
-      Alert.alert('Attachment not sent', err instanceof Error ? err.message : String(err));
+      Alert.alert('Message not sent', err instanceof Error ? err.message : String(err));
     } finally {
       sendInFlightRef.current = false;
       setSending(false);
@@ -4097,7 +4132,6 @@ export default function BuzzChat() {
                 <View style={styles.replyComposerCopy}>
                   <Text numberOfLines={1} style={styles.replyComposerLabel}>
                     ↩ REPLYING TO {replyTarget.authorName.toUpperCase()}
-                    {replyTarget.isAgent ? ' · AGENT WILL BE TAGGED' : ''}
                   </Text>
                   <Text numberOfLines={2} style={styles.replyComposerPreview}>
                     {replyTarget.preview}

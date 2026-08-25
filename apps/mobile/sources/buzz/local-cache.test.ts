@@ -116,6 +116,30 @@ describe('normalized Buzz cache', () => {
     expect(selectTranscript(snapshot, ROOM).map((item) => item.id)).toEqual(['same']);
   });
 
+  it('commits a large live burst with one cache notification', () => {
+    useBuzzLocalCache
+      .getState()
+      .replaceSnapshot(
+        VIEWER,
+        ROOM,
+        createWorkspaceSnapshot({ workspaceId: 'workspace' }),
+        undefined,
+      );
+    const replaceSnapshot = vi.spyOn(useBuzzLocalCache.getState(), 'replaceSnapshot');
+    const events = Array.from({ length: 240 }, (_, index) => ({
+      type: 'read-model' as const,
+      sessionId: ROOM,
+      event: humanMessage(`live-${index}`, index + 1),
+    }));
+
+    cacheLiveSessionEvents(VIEWER, ROOM, events);
+
+    expect(replaceSnapshot).toHaveBeenCalledOnce();
+    const snapshot =
+      useBuzzLocalCache.getState().channels[channelCacheKey(VIEWER, ROOM)]!.snapshot!;
+    expect(selectTranscript(snapshot, ROOM)).toHaveLength(240);
+  });
+
   it('merges a cold relay snapshot without erasing an event that arrived live first', async () => {
     const live = reduceWorkspaceSnapshot(
       createWorkspaceSnapshot({ workspaceId: 'workspace' }),
@@ -137,6 +161,35 @@ describe('normalized Buzz cache', () => {
     const snapshot =
       useBuzzLocalCache.getState().channels[channelCacheKey(VIEWER, ROOM)]!.snapshot!;
     expect(selectTranscript(snapshot, ROOM).map((item) => item.id)).toEqual(['older', 'live']);
+  });
+
+  it('queues a live message until a cold snapshot exists, then renders it', async () => {
+    const liveEvent = {
+      type: 'read-model',
+      sessionId: ROOM,
+      event: humanMessage('live-during-hydration', 3),
+    } as const;
+    cacheLiveSessionEvents(VIEWER, ROOM, [liveEvent]);
+    expect(useBuzzLocalCache.getState().channels[channelCacheKey(VIEWER, ROOM)]).toBeUndefined();
+
+    const cold = reduceWorkspaceSnapshot(
+      createWorkspaceSnapshot({ workspaceId: 'workspace' }),
+      humanMessage('older', 1),
+    );
+    const transport = {
+      readModelBackfill: vi.fn(async () => ({
+        snapshot: cold,
+        events: [{ type: 'read-model', sessionId: ROOM, event: humanMessage('older', 1) }],
+      })),
+    };
+
+    await revalidateCachedMessages(transport as never, VIEWER, ROOM);
+    const snapshot =
+      useBuzzLocalCache.getState().channels[channelCacheKey(VIEWER, ROOM)]!.snapshot!;
+    expect(selectTranscript(snapshot, ROOM).map((item) => item.id)).toEqual([
+      'older',
+      'live-during-hydration',
+    ]);
   });
 
   it('lets a Room Retry start a fresh backfill when the first hydration never settles', async () => {

@@ -9,6 +9,7 @@ readonly APP_ID="app.usebeeline.mobile"
 readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPO_DIR="$(cd "$MOBILE_DIR/../.." && pwd -P)"
 readonly APK="$MOBILE_DIR/android/app/build/outputs/apk/release/app-release.apk"
+readonly FLOW="${MAESTRO_FLOW:-$MOBILE_DIR/e2e/smoke.yaml}"
 
 reply_fixture_pid=""
 cleanup() {
@@ -16,7 +17,11 @@ cleanup() {
   if [[ -n "$reply_fixture_pid" ]]; then
     kill "$reply_fixture_pid" 2>/dev/null || true
   fi
-  "$MOBILE_DIR/scripts/android-teardown.sh" "$MOBILE_DIR/android" || true
+  local teardown_args=("$MOBILE_DIR/android")
+  if [[ "${MAESTRO_KEEP_DEVICE:-0}" == "1" ]]; then
+    teardown_args+=(--keep-emulator)
+  fi
+  "$MOBILE_DIR/scripts/android-teardown.sh" "${teardown_args[@]}" || true
   exit "$status"
 }
 trap cleanup EXIT INT TERM
@@ -30,7 +35,7 @@ if [[ "${MAESTRO_SKIP_BUILD:-0}" != "1" ]]; then
   (cd "$MOBILE_DIR" && npm run e2e:build)
 fi
 
-if [[ ! -f "$APK" ]]; then
+if [[ "${MAESTRO_REUSE_INSTALLED_APP:-0}" != "1" && ! -f "$APK" ]]; then
   echo "E2E APK not found at $APK. Re-run without MAESTRO_SKIP_BUILD=1." >&2
   exit 1
 fi
@@ -58,8 +63,10 @@ readonly SMOKE_LATEST_MESSAGE_ID="$(read_seed_value MAESTRO_SMOKE_LATEST_MESSAGE
 
 # This intentionally clears only the named app on the named disposable
 # emulator, ensuring the identity creation/import flow is exercised each run.
-adb -s "$DEVICE" uninstall "$APP_ID" >/dev/null 2>&1 || true
-adb -s "$DEVICE" install "$APK" >/dev/null
+if [[ "${MAESTRO_REUSE_INSTALLED_APP:-0}" != "1" ]]; then
+  adb -s "$DEVICE" uninstall "$APP_ID" >/dev/null 2>&1 || true
+  adb -s "$DEVICE" install "$APK" >/dev/null
+fi
 # Push registration runs as part of identity import. Grant the manifest-declared
 # permission before launch so an OS-owned modal cannot obscure a product flow.
 adb -s "$DEVICE" shell pm grant "$APP_ID" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
@@ -77,7 +84,9 @@ maestro test --device "$DEVICE" \
   --env "SMOKE_ROOM_ID=$SMOKE_ROOM_ID" \
   --env "SMOKE_CORNER_ID=$SMOKE_CORNER_ID" \
   --env "SMOKE_LATEST_MESSAGE_ID=$SMOKE_LATEST_MESSAGE_ID" \
-  "$MOBILE_DIR/e2e/smoke.yaml"
+  --env "EXPECTED_ANDROID_UPDATE_ID=${EXPECTED_ANDROID_UPDATE_ID:-}" \
+  --env "EXPECTED_UPDATE_GROUP_ID=${EXPECTED_UPDATE_GROUP_ID:-}" \
+  "$FLOW"
 
 # The fixture queries relay history after the actual device mention arrives.
 # Waiting makes duplicate-event detection part of this on-device check.

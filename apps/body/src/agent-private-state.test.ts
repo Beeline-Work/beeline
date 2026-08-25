@@ -119,4 +119,96 @@ describe('corner agent-private state', () => {
       ),
     ).toEqual(['?? packages/thing/node_modules']);
   });
+
+  it('ignores only Beeline provisioning sentinels inside real node_modules trees', async () => {
+    const { worktree } = await fixture();
+    await mkdir(resolve(worktree, 'node_modules'), { recursive: true });
+    await writeFile(resolve(worktree, 'node_modules', '.beeline-provisioned'), '');
+    await mkdir(resolve(worktree, 'apps', 'mobile', 'node_modules'), { recursive: true });
+    await writeFile(resolve(worktree, 'apps', 'mobile', 'node_modules', '.beeline-provisioned'), '');
+
+    const sentinelOnlyStatus = execFileSync(
+      'git',
+      ['-C', worktree, 'status', '--porcelain=v1', '--untracked-files=all', '-z'],
+      { encoding: 'utf8' },
+    );
+    expect(sentinelOnlyStatus.split('\0').filter(Boolean)).toEqual([
+      '?? apps/mobile/node_modules/.beeline-provisioned',
+      '?? node_modules/.beeline-provisioned',
+    ]);
+    expect(projectDirtyStatus(worktree, sentinelOnlyStatus, undefined)).toEqual([]);
+
+    await writeFile(resolve(worktree, 'node_modules', 'project-owned.txt'), 'keep visible\n');
+    await mkdir(resolve(worktree, 'packages', 'thing', 'node_modules'), { recursive: true });
+    await writeFile(
+      resolve(worktree, 'packages', 'thing', 'node_modules', '.beeline-provisioned'),
+      'keep visible\n',
+    );
+    await mkdir(resolve(worktree, 'project'), { recursive: true });
+    await writeFile(resolve(worktree, 'project', '.beeline-provisioned'), 'keep visible\n');
+    await writeFile(resolve(worktree, 'unrelated.txt'), 'keep visible\n');
+    const neighboringStatus = execFileSync(
+      'git',
+      ['-C', worktree, 'status', '--porcelain=v1', '--untracked-files=all', '-z'],
+      { encoding: 'utf8' },
+    );
+    expect(projectDirtyStatus(worktree, neighboringStatus, undefined)).toEqual([
+      '?? node_modules/project-owned.txt',
+      '?? packages/thing/node_modules/.beeline-provisioned',
+      '?? project/.beeline-provisioned',
+      '?? unrelated.txt',
+    ]);
+  });
+
+  it('keeps a tracked provisioning sentinel visible as project dirt', async () => {
+    const { worktree } = await fixture();
+    await mkdir(resolve(worktree, 'node_modules'), { recursive: true });
+    await writeFile(resolve(worktree, 'node_modules', '.beeline-provisioned'), '');
+    execFileSync('git', ['-C', worktree, 'add', 'node_modules/.beeline-provisioned']);
+
+    const status = execFileSync(
+      'git',
+      ['-C', worktree, 'status', '--porcelain=v1', '--untracked-files=all', '-z'],
+      { encoding: 'utf8' },
+    );
+    expect(projectDirtyStatus(worktree, status, undefined)).toEqual([
+      'A  node_modules/.beeline-provisioned',
+    ]);
+  });
+
+  it('does not trust non-empty files or symlinks at the provisioning sentinel paths', async () => {
+    const { worktree } = await fixture();
+    const sentinelPaths = [
+      'node_modules/.beeline-provisioned',
+      'apps/mobile/node_modules/.beeline-provisioned',
+    ];
+    for (const path of sentinelPaths) {
+      await mkdir(resolve(worktree, path, '..'), { recursive: true });
+      await writeFile(resolve(worktree, path), 'project owned\n');
+    }
+
+    const status = (): string =>
+      execFileSync(
+        'git',
+        ['-C', worktree, 'status', '--porcelain=v1', '--untracked-files=all', '-z'],
+        { encoding: 'utf8' },
+      );
+    expect(projectDirtyStatus(worktree, status(), undefined)).toEqual(
+      sentinelPaths.map((path) => `?? ${path}`).sort(),
+    );
+
+    for (const path of sentinelPaths) {
+      await rm(resolve(worktree, path));
+      await symlink(tmpdir(), resolve(worktree, path), 'dir');
+    }
+    expect(projectDirtyStatus(worktree, status(), undefined)).toEqual(
+      sentinelPaths.map((path) => `?? ${path}`).sort(),
+    );
+
+    for (const path of sentinelPaths) await rm(resolve(worktree, path));
+    const disappearedStatus = `${sentinelPaths.map((path) => `?? ${path}`).join('\0')}\0`;
+    expect(projectDirtyStatus(worktree, disappearedStatus, undefined)).toEqual(
+      sentinelPaths.map((path) => `?? ${path}`),
+    );
+  });
 });

@@ -119,10 +119,14 @@ describe('no foreground-blocking network work', () => {
     }
     expect(channelsSource).toContain('requestAnimationFrame(flush)');
     expect(chatSource).toContain('requestAnimationFrame(flushLiveEvents)');
-    // Chat must not ask Nostr to replay the entire Room history alongside the
-    // HTTP backfill, and the transport must parse a delivered burst as one
-    // page rather than rebuilding parser state once per raw callback.
+    // Neither foreground surface may ask Nostr to replay the entire Room
+    // history alongside the HTTP backfill. Re-entering a Room re-focuses the
+    // still-mounted list; an unbounded list subscription then replays every
+    // Room at once, resurrects stale WORKING events, and starves navigation.
+    expect(channelsSource).toContain('since: liveSince');
     expect(chatSource).toContain('since: liveSince');
+    // The transport must parse a delivered burst as one page rather than
+    // rebuilding parser state once per raw callback.
     expect(buzzTransportSource).toContain('this.parseReadyEvents(authority, batch)');
   });
 

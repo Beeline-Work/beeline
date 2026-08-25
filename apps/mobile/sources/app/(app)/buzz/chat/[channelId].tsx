@@ -66,6 +66,11 @@ import {
   type DeliveryRetryPosture,
 } from '@/sync/transport/buzz-event-projection';
 import {
+  buildChannelReferenceIndex,
+  type ChannelReferenceIndex,
+  type ChannelReferenceTarget,
+} from '@/buzz/channel-reference';
+import {
   channelCacheKey,
   getCachedChannel,
   type ChannelCacheEntry,
@@ -669,6 +674,72 @@ export default function BuzzChat() {
         ? transcriptMessages(cachedSnapshot, decodedId, cacheViewerPubkey)
         : [],
     [cacheViewerPubkey, cachedSnapshot, decodedId],
+  );
+  // The workspace's already-known channels, for resolving explicit
+  // `#room` / `#room/corner` references in prose. Read from the SAME local
+  // cache the Room list maintains (never a second persisted index), plus this
+  // transcript's own canonical corner list. Memoized so the object identity —
+  // and therefore MonoMarkdown's React.memo bailout — holds across unrelated
+  // renders; resolution itself is exact-only and stays silent on anything the
+  // workspace does not actually have (`buzz/channel-reference.ts`).
+  const cachedChannelList = useBuzzLocalCache((state) =>
+    selectChannelList(state, cacheViewerPubkey || null, activeCommunityId ?? undefined),
+  );
+  const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
+    const listChannels = cachedChannelList?.channels ?? [];
+    return buildChannelReferenceIndex(
+      [
+        ...listChannels
+          .filter((channel) => !channel.parentChannelId && channel.title)
+          .map((channel) => ({ channelId: channel.id, name: channel.title! })),
+        // This transcript's own channel, even when it is not in the cached
+        // list yet (a freshly created Room or Corner).
+        parentChannelId
+          ? null
+          : { channelId: decodedId, name: resolvedChannelName || routeChannelTitle || '' },
+      ].filter((room): room is { channelId: string; name: string } => room !== null),
+      [
+        ...listChannels.flatMap((channel) =>
+          (channel.corners ?? []).map((corner) => ({
+            channelId: corner.id,
+            parentChannelId: channel.id,
+            name: corner.name,
+          })),
+        ),
+        ...cornerLifecycle.map((corner) => ({
+          channelId: corner.id,
+          parentChannelId: parentChannelId ?? decodedId,
+          name: corner.name,
+        })),
+        ...(parentChannelId
+          ? [
+              {
+                channelId: decodedId,
+                parentChannelId,
+                name: resolvedChannelName || routeChannelTitle || '',
+              },
+            ]
+          : []),
+      ],
+    );
+  }, [
+    cachedChannelList,
+    cornerLifecycle,
+    decodedId,
+    parentChannelId,
+    resolvedChannelName,
+    routeChannelTitle,
+  ]);
+  /** Navigate to exactly the referenced Room/Corner through the existing
+   * conventions; a reference to the transcript you are already in is a no-op. */
+  const handleOpenChannelReference = useCallback(
+    (target: ChannelReferenceTarget) => {
+      if (!target.channelId || target.channelId === decodedId) return;
+      if (target.kind === 'corner')
+        router.push(cornerHref(target.channelId, target.parentChannelId));
+      else router.push(roomHref(target.channelId));
+    },
+    [decodedId],
   );
   useEffect(() => {
     if (cachedSnapshot) return;
@@ -3467,6 +3538,8 @@ export default function BuzzChat() {
                 byline={byline}
                 bodyText={item.text}
                 mentionHandles={mentionHandles}
+                channelIndex={channelReferenceIndex}
+                onChannelReference={handleOpenChannelReference}
                 bodyTestID={`chat-message-text-${item.id}`}
                 replyReference={replyReference}
                 attachments={attachmentElements}
@@ -3484,6 +3557,8 @@ export default function BuzzChat() {
                 typewriter={speaksAsAgent && Boolean(item.isNew)}
                 bodyText={ledgerText ? ledgerText.prose : item.text}
                 mentionHandles={mentionHandles}
+                channelIndex={channelReferenceIndex}
+                onChannelReference={handleOpenChannelReference}
                 bodyTestID={`chat-message-text-${item.id}`}
                 replyReference={replyReference}
                 machineNoise={machineNoise}
@@ -3519,6 +3594,8 @@ export default function BuzzChat() {
       beginReply,
       replyTargetForMessage,
       visibleMessageById,
+      channelReferenceIndex,
+      handleOpenChannelReference,
     ],
   );
 

@@ -284,7 +284,7 @@ describe('Workspace Settings authority', () => {
 
     act(() => renderer.root.findByProps({ testID: 'room-details-11111111-room' }).props.onPress());
     expect(nativeAlerts.alert).toHaveBeenCalledWith(
-      'beeline',
+      '#beeline',
       '11111111-room',
       expect.any(Array),
     );
@@ -305,8 +305,27 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'room-visibility-room-1' }).props).toMatchObject({
-      accessibilityLabel: 'Make atlas invite-only',
+      accessibilityLabel: 'Make #atlas invite-only',
       accessibilityRole: 'button',
     });
+  });
+
+  it('renders Room rows with the # channel mark while stored names stay unmarked', async () => {
+    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
+    client.query.mockResolvedValue([roomCreate('room-1', 'atlas', 1)]);
+    client.getChannelMetadata.mockResolvedValue({
+      channelId: 'room-1',
+      name: 'atlas',
+      visibility: 'public',
+      archived: false,
+    });
+
+    const renderer = await render();
+    const openRow = renderer.root.findByProps({ accessibilityLabel: 'Open Room #atlas' });
+    const rowText = openRow.findByType('Text').props.children;
+    // The display form carries exactly one mark...
+    expect(rowText).toBe('#atlas');
+    // ...and the duplicate-name qualifier still keys off the RAW name.
+    expect(openRow.props.accessibilityLabel).toContain('#atlas');
   });
 });

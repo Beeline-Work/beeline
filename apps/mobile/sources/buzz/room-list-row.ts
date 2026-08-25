@@ -1,4 +1,5 @@
 import {
+  cornerName,
   cornerStatusPresentation,
   cornerSuperState,
   cornerVisualState,
@@ -403,15 +404,41 @@ function projectEntries<T extends RoomRowInput>(
 
 /**
  * Captain's channel-mark convention (2026-08): Room index rows display
- * `#<name>`. Strictly presentation — the stored name, search keys, sorting,
- * unread state, and identity never see the prefix. A Room whose title fell
- * back to the placeholder id gains no mark: nothing fabricated is decorated.
+ * `#<name>`. Extended across every surface that exposes a room or corner
+ * name (2026-08): chat headers, breadcrumbs, the pinned-corner line, corner
+ * lists, Workspace settings, and Members references all render through this
+ * derivation or `displayCornerTitle` below. Strictly presentation — the
+ * stored name, search keys, sorting, unread state, navigation params, cache
+ * writes, and identity never see the prefix. A Room whose title fell back to
+ * the placeholder id gains no mark: nothing fabricated is decorated.
  */
 export function displayRoomIndexTitle(storedTitle: string | undefined): string | undefined {
   const trimmed = storedTitle?.trim();
   if (!trimmed) return undefined;
   // Idempotent: a name that already carries the mark is never double-prefixed.
   return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+}
+
+/**
+ * The corner half of the same convention: a corner renders as
+ * `#<room>/<corner>`, composed from STORED names at render time. When the
+ * parent Room's name has not resolved yet the corner still gets its own mark
+ * (`#<corner>`) rather than blocking the label — honest about what is known.
+ *
+ * Presentation-only like `displayRoomIndexTitle`: nothing here mutates a
+ * stored name, a navigation param, or a cache entry. Leading marks on either
+ * stored part are stripped before composing, so an already-decorated name can
+ * never double-prefix. A missing corner name falls through `cornerName`'s own
+ * id-slug fallback so the label is never empty.
+ */
+export function displayCornerTitle(
+  parentRoomName: string | undefined | null,
+  cornerStoredName: string | undefined,
+  cornerId: string,
+): string {
+  const corner = cornerName(cornerStoredName, cornerId);
+  const room = parentRoomName?.trim().replace(/^#+/, '');
+  return room ? `#${room}/${corner}` : `#${corner}`;
 }
 
 /**

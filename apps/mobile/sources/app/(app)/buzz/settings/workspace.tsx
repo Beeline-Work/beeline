@@ -25,6 +25,7 @@ import {
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
+import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
@@ -259,7 +260,8 @@ export default function WorkspaceSettings() {
   );
 
   const showRoomDetails = useCallback((room: WorkspaceRoomSetting) => {
-    Alert.alert(room.name, room.id, [
+    // Display-only channel mark; the stored name and copied id stay raw.
+    Alert.alert(displayRoomIndexTitle(room.name) ?? room.name, room.id, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: `Copy ${ROOM_LABEL} ID`,
@@ -427,14 +429,18 @@ export default function WorkspaceSettings() {
                   </View>
                   <View style={styles.roomCopy}>
                     <TouchableOpacity
-                      accessibilityLabel={`Open ${ROOM_LABEL} ${room.name}`}
+                      accessibilityLabel={`Open ${ROOM_LABEL} ${
+                        displayRoomIndexTitle(room.name) ?? room.name
+                      }`}
                       accessibilityRole="button"
                       onPress={() =>
                         router.push(`/buzz/chat/${encodeURIComponent(room.id)}` as Href)
                       }
                       style={styles.roomLink}
                     >
-                      <Text numberOfLines={1} style={styles.roomName}>{room.name}</Text>
+                      <Text numberOfLines={1} style={styles.roomName}>
+                        {displayRoomIndexTitle(room.name) ?? room.name}
+                      </Text>
                     </TouchableOpacity>
                     {duplicateName && (
                       <View style={styles.roomQualifierRow}>
@@ -442,7 +448,9 @@ export default function WorkspaceSettings() {
                           {roomCreatedQualifier(room.createdAt)}
                         </Text>
                         <TouchableOpacity
-                          accessibilityLabel={`View details for ${ROOM_LABEL} ${room.name}`}
+                          accessibilityLabel={`View details for ${ROOM_LABEL} ${
+                            displayRoomIndexTitle(room.name) ?? room.name
+                          }`}
                           accessibilityRole="button"
                           onPress={() => showRoomDetails(room)}
                           style={styles.roomDetailsButton}
@@ -454,7 +462,7 @@ export default function WorkspaceSettings() {
                     )}
                   </View>
                   <TouchableOpacity
-                    accessibilityLabel={`Make ${room.name} ${nextVisibility}`}
+                    accessibilityLabel={`Make ${displayRoomIndexTitle(room.name) ?? room.name} ${nextVisibility}`}
                     accessibilityRole="button"
                     accessibilityState={{ disabled: !room.canManage }}
                     disabled={!room.canManage || workingKey === `room-${room.id}`}

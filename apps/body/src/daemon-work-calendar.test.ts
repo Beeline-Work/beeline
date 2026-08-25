@@ -7,6 +7,7 @@ import {
 } from './daemon-work-calendar.js';
 import {
   buildWorkSchedule,
+  buildWorkSchedulePauseCard,
   parseWorkSchedule,
   type ParsedWorkSchedule,
   type WorkScheduleV1,
@@ -63,7 +64,7 @@ function authorityFixture(options: { agentAuthored?: boolean; grantValid?: boole
     readCurrentEvents: async () => [parsed.event],
     readFacts: async () => facts,
     verifyScheduleGrant: async () => options.grantValid === true,
-    hasFailurePause: async () => false,
+    readFailurePauses: async () => [],
   };
   return { agent, principal, schedule, parsed, facts, dependencies };
 }
@@ -179,7 +180,9 @@ describe('daemon work schedule authority', () => {
     fixture.schedule.revision = 2;
     fixture.parsed = parsedSchedule(fixture.agent, fixture.schedule);
     fixture.dependencies.readCurrentEvents = async () => [fixture.parsed.event];
-    fixture.dependencies.hasFailurePause = async () => true;
+    fixture.dependencies.readFailurePauses = async () => [
+      buildWorkSchedulePauseCard(fixture.agent, fixture.schedule, 1_900_000_001),
+    ];
     await expect(
       authorizeDaemonWorkSchedule(fixture.parsed, fixture.dependencies),
     ).resolves.toEqual({ authorized: false, terminal: true, reason: 'human-resume-required' });
@@ -197,5 +200,52 @@ describe('daemon work schedule authority', () => {
     await expect(
       authorizeDaemonWorkSchedule(fixture.parsed, fixture.dependencies),
     ).resolves.toEqual({ authorized: false, terminal: true, reason: 'schedule-superseded' });
+  });
+
+  it('ignores an ineligible outsider when selecting the canonical revision', async () => {
+    const fixture = authorityFixture();
+    const outsider = createIdentity();
+    const forged = parsedSchedule(outsider, {
+      ...fixture.schedule,
+      revision: 999,
+      principalPubkey: outsider.publicKey,
+    });
+    fixture.dependencies.readCurrentEvents = async () => [fixture.parsed.event, forged.event];
+    fixture.dependencies.readFacts = async (candidate) => ({
+      ...fixture.facts,
+      authorIsAgent: candidate.event.pubkey === fixture.agent.publicKey,
+      principalCanDrive: candidate.value.principalPubkey === fixture.principal.publicKey,
+    });
+    await expect(
+      authorizeDaemonWorkSchedule(fixture.parsed, fixture.dependencies),
+    ).resolves.toEqual({ authorized: true });
+  });
+
+  it('allows an agent revision only after a current human-admin active resume', async () => {
+    const fixture = authorityFixture({ agentAuthored: true, grantValid: true });
+    const paused = buildWorkSchedulePauseCard(fixture.agent, fixture.schedule, 1_900_000_001);
+    const humanResume = parsedSchedule(fixture.principal, {
+      ...fixture.schedule,
+      revision: 2,
+      permissionGrantEventId: undefined,
+    });
+    const agentRevision = parsedSchedule(fixture.agent, {
+      ...fixture.schedule,
+      revision: 3,
+    });
+    fixture.dependencies.readCurrentEvents = async () => [
+      fixture.parsed.event,
+      humanResume.event,
+      agentRevision.event,
+    ];
+    fixture.dependencies.readFailurePauses = async () => [paused];
+    fixture.dependencies.readFacts = async (candidate) => ({
+      ...fixture.facts,
+      authorIsAgent: candidate.event.pubkey === fixture.agent.publicKey,
+      authorRole: candidate.event.pubkey === fixture.principal.publicKey ? 'owner' : 'member',
+    });
+    await expect(
+      authorizeDaemonWorkSchedule(agentRevision, fixture.dependencies),
+    ).resolves.toEqual({ authorized: true });
   });
 });

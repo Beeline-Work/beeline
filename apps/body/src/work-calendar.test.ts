@@ -394,6 +394,83 @@ describe('WorkCalendar durable execution', () => {
     await ambiguous.calendar.dispose();
   });
 
+  it('folds relay-only terminal receipts over earlier working state', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const runId = deterministicScheduleRunId(schedule.scheduleId, 1, schedule.startsAt);
+    const receipt = (status: 'working' | 'complete') =>
+      buildScheduledTurnReceipt(agent, {
+        version: 1,
+        workspaceId: schedule.workspaceId,
+        roomId: schedule.roomId,
+        agentPubkey: agent.publicKey,
+        principalPubkey: principal.publicKey,
+        scheduleId: schedule.scheduleId,
+        revision: 1,
+        runId,
+        nominalAt: schedule.startsAt,
+        status,
+        at: schedule.startsAt + (status === 'complete' ? 1 : 0),
+        reservedTokens: 100,
+      });
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      receiptEvents: [receipt('working'), receipt('complete')],
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    expect(
+      fixture.published.some(
+        (event) =>
+          parseScheduledTurnReceipt(event)?.value.reason === 'outcome-unknown-after-restart',
+      ),
+    ).toBe(false);
+    await fixture.calendar.dispose();
+  });
+
+  it('resumes a relay-only queued run without republishing its queued receipt', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const runId = deterministicScheduleRunId(schedule.scheduleId, 1, schedule.startsAt);
+    const queued = buildScheduledTurnReceipt(agent, {
+      version: 1,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: agent.publicKey,
+      principalPubkey: principal.publicKey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      runId,
+      nominalAt: schedule.startsAt,
+      status: 'queued',
+      at: schedule.startsAt,
+      reservedTokens: 100,
+    });
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      receiptEvents: [queued],
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(fixture.dispatch).toHaveBeenCalledOnce();
+    expect(fixture.dispatch.mock.calls[0]![0].queuedEvent.id).toBe(queued.id);
+    expect(
+      fixture.published.filter(
+        (event) => parseScheduledTurnReceipt(event)?.value.status === 'queued',
+      ),
+    ).toHaveLength(0);
+    await fixture.calendar.dispose();
+  });
+
   it('does not activate until a failed queued receipt is durably retried', async () => {
     vi.useFakeTimers();
     let fail = true;

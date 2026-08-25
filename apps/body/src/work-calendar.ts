@@ -120,6 +120,31 @@ export interface ScheduledTurnRequest {
 export type ScheduleAuthorityResult =
   { authorized: true } | { authorized: false; terminal: boolean; reason: string };
 
+export async function selectCanonicalWorkSchedule(
+  candidates: readonly ParsedWorkSchedule[],
+  authorize: (schedule: ParsedWorkSchedule) => Promise<ScheduleAuthorityResult>,
+): Promise<ParsedWorkSchedule | undefined> {
+  const ordered = [...candidates].sort(
+    (left, right) =>
+      right.value.revision - left.value.revision ||
+      right.event.created_at - left.event.created_at ||
+      right.event.id.localeCompare(left.event.id),
+  );
+  for (const [index, candidate] of ordered.entries()) {
+    const authority = await authorize(candidate);
+    if (authority.authorized) return candidate;
+    if (
+      ordered.slice(index + 1).some((older) => older.event.pubkey === candidate.event.pubkey) ||
+      authority.reason === 'schedule-author-role-lost' ||
+      authority.reason === 'schedule-change-grant-invalid' ||
+      authority.reason === 'human-resume-required'
+    ) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 /** Fresh admission failed after the ordinary Room dispatcher won a process slot. */
 export class ScheduleActivationRefusedError extends Error {
   constructor(
@@ -971,7 +996,8 @@ interface HeapEntry {
   parsed: ParsedWorkSchedule;
   nominalAt: number;
   wakeAt: number;
-  action: 'run' | 'skip' | 'resume' | 'recover-unknown';
+  action: 'run' | 'skip' | 'resume' | 'resume-relay-queued' | 'recover-unknown';
+  relayQueuedEvent?: NostrEvent;
 }
 
 class ScheduleHeap {
@@ -1163,41 +1189,11 @@ export class WorkCalendar {
             candidate.event.pubkey === candidate.value.principalPubkey ||
             candidate.event.pubkey === candidate.value.agentPubkey,
         );
-      plausible.sort(
-        (left, right) =>
-          right.value.revision - left.value.revision ||
-          right.event.created_at - left.event.created_at ||
-          right.event.id.localeCompare(left.event.id),
+      const current = await selectCanonicalWorkSchedule(
+        plausible,
+        this.dependencies.authorize,
       );
-      let current: ParsedWorkSchedule | undefined;
-      for (const [index, candidate] of plausible.entries()) {
-        const authority = await this.dependencies.authorize(candidate);
-        if (authority.authorized) {
-          current = candidate;
-          break;
-        }
-        if (
-          plausible.slice(index + 1).some((older) => older.event.pubkey === candidate.event.pubkey) ||
-          authority.reason === 'schedule-author-role-lost' ||
-          authority.reason === 'schedule-change-grant-invalid' ||
-          authority.reason === 'human-resume-required'
-        ) {
-          break;
-        }
-      }
       if (!current) continue;
-      const failurePaused = plausible.some(
-        (candidate) =>
-          candidate.value.revision < current.value.revision &&
-          this.consecutiveFailures(candidate.value) >= candidate.value.maxConsecutiveFailures,
-      );
-      if (
-        failurePaused &&
-        current.value.status === 'active' &&
-        current.event.pubkey === current.value.agentPubkey
-      ) {
-        continue;
-      }
       this.schedules.set(key, current);
     }
     this.rebuildHeap();
@@ -1234,6 +1230,31 @@ export class WorkCalendar {
     return this.relayReceipts.filter((receipt) => receipt.value.scheduleId === schedule.scheduleId);
   }
 
+  private relayRunStates(schedule: WorkScheduleV1): ParsedScheduledTurnReceipt[] {
+    const rank: Record<ScheduledTurnStatus, number> = {
+      queued: 1,
+      working: 2,
+      complete: 3,
+      failed: 3,
+      skipped: 3,
+    };
+    const states = new Map<string, ParsedScheduledTurnReceipt>();
+    for (const receipt of this.receiptsFor(schedule)) {
+      if (receipt.value.revision !== schedule.revision) continue;
+      const current = states.get(receipt.value.runId);
+      if (
+        !current ||
+        rank[receipt.value.status] > rank[current.value.status] ||
+        (rank[receipt.value.status] === rank[current.value.status] &&
+          (receipt.value.at > current.value.at ||
+            (receipt.value.at === current.value.at && receipt.event.id > current.event.id)))
+      ) {
+        states.set(receipt.value.runId, receipt);
+      }
+    }
+    return [...states.values()];
+  }
+
   private entryFor(key: string, parsed: ParsedWorkSchedule, now: number): HeapEntry | undefined {
     const schedule = parsed.value;
     if (schedule.status !== 'active' || now > schedule.expiresAt) return undefined;
@@ -1253,21 +1274,23 @@ export class WorkCalendar {
         action,
       };
     }
-    const relayWorking = this.receiptsFor(schedule)
+    const relayPending = this.relayRunStates(schedule)
       .filter(
         (receipt) =>
-          receipt.value.revision === schedule.revision &&
-          receipt.value.status === 'working' &&
+          (receipt.value.status === 'working' || receipt.value.status === 'queued') &&
           !revisionRuns.some((run) => run.runId === receipt.value.runId),
       )
       .sort((left, right) => right.value.nominalAt - left.value.nominalAt)[0];
-    if (relayWorking)
+    if (relayPending)
       return {
         key,
         parsed,
-        nominalAt: relayWorking.value.nominalAt,
+        nominalAt: relayPending.value.nominalAt,
         wakeAt: now,
-        action: 'recover-unknown',
+        action: relayPending.value.status === 'working' ? 'recover-unknown' : 'resume-relay-queued',
+        ...(relayPending.value.status === 'queued'
+          ? { relayQueuedEvent: relayPending.event }
+          : {}),
       };
     const failures = this.consecutiveFailures(schedule);
     if (failures >= schedule.maxConsecutiveFailures) return undefined;
@@ -1383,7 +1406,18 @@ export class WorkCalendar {
     }
     if (isTerminal(reservation.record.state)) return;
 
-    const queued = await this.publishReceipt(schedule, runId, entry.nominalAt, 'queued');
+    let queued: NostrEvent | undefined;
+    if (entry.action === 'resume-relay-queued' && entry.relayQueuedEvent) {
+      await this.dependencies.store.stageReceipt(runId, 'queued', entry.relayQueuedEvent);
+      await this.dependencies.store.markReceiptPublished(
+        runId,
+        'queued',
+        entry.relayQueuedEvent.id,
+      );
+      queued = entry.relayQueuedEvent;
+    } else {
+      queued = await this.publishReceipt(schedule, runId, entry.nominalAt, 'queued');
+    }
     if (!queued) {
       this.retryAt.set(
         runId,

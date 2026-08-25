@@ -8261,25 +8261,39 @@ export class Body {
     tip: string,
     generation: ChangeReviewGeneration,
   ): Promise<ChangeReviewPayloadUnit[]> {
-    const events = (
-      await this.agentRelay.queryEvents([
-        {
-          kinds: [CHANGE_REVIEW_EVENT_KIND],
-          authors: [this.agentIdentity.publicKey],
-          '#h': [info.subchannelId],
-          '#r': [tip],
-          limit: 10_000,
-        },
-      ])
-    ).filter(
+    const units = [...generation.fileUnits, ...generation.manifestUnits, generation.completeUnit];
+    // Kind:30078 parameterized-replaceable records are indexed by `#d` — a
+    // `#h` (or any other tag) filter over kind 30078 matches NOTHING on the
+    // relay, even though every event carries those tags. That live-proven
+    // indexing rule (first hit by agent-presence reads) made this read-back
+    // return zero rows forever: repair republished every chunk, the relay
+    // deduplicated them, verification still saw nothing, three attempts
+    // exhausted, and the corner was terminally stopped before merge-ready
+    // despite a complete generation sitting on the relay. Enumerate each
+    // expected record's exact `d` coordinate instead, batched so very large
+    // generations never build one oversized filter.
+    const events: NostrEvent[] = [];
+    const REVIEW_READ_D_BATCH = 250;
+    for (let start = 0; start < units.length; start += REVIEW_READ_D_BATCH) {
+      const batch = units.slice(start, start + REVIEW_READ_D_BATCH);
+      events.push(
+        ...(await this.agentRelay.queryEvents([
+          {
+            kinds: [CHANGE_REVIEW_EVENT_KIND],
+            authors: [this.agentIdentity.publicKey],
+            '#d': batch.map((unit) => unit.coordinate),
+            limit: Math.max(batch.length * 2, 500),
+          },
+        ])),
+      );
+    }
+    const verified = events.filter(
       (event) =>
         event.pubkey === this.agentIdentity.publicKey &&
         tagValue(event, 'h') === info.subchannelId &&
         tagValue(event, 'tip') === tip,
     );
-    return [...generation.fileUnits, ...generation.manifestUnits, generation.completeUnit].filter(
-      (unit) => !this.reviewPayloadUnitPresent(unit, events),
-    );
+    return units.filter((unit) => !this.reviewPayloadUnitPresent(unit, verified));
   }
 
   private async publishChangeReviewUnit(

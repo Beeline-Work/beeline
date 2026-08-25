@@ -237,8 +237,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(claudeParsed).not.toHaveProperty('otherTopLevel');
 
     const grokConfig = readFileSync(resolve(roomRoot, 'grok', 'config.toml'), 'utf8');
-    expect(grokConfig).toContain('[mcp_servers.tools]');
-    expect(grokConfig).not.toContain('theme');
+    expect(tomlChildTableNames(grokConfig, ['mcp_servers'])).toEqual(['tools']);
   });
 
   it('regenerates the copied MCP configs on every prepare so operator edits reach existing rooms', async () => {

@@ -48,6 +48,7 @@ describe('Trusty Squire pair-time onboarding', () => {
         env: expect.objectContaining({
           XDG_CONFIG_HOME: configRoot,
           TRUSTY_SQUIRE_SESSION_FILE: '1',
+          TRUSTY_SQUIRE_SKIP_VERSION_CHECK: '1',
         }),
       },
     ]);

@@ -2,6 +2,7 @@
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import { constants } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -58,8 +59,23 @@ function run(command, args, options = {}) {
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => (stdout += chunk));
     child.stderr.on('data', (chunk) => (stderr += chunk));
-    child.once('error', reject);
+    let timedOut = false;
+    const timer = options.timeoutMs
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill('SIGKILL');
+        }, options.timeoutMs)
+      : undefined;
+    child.once('error', (error) => {
+      if (timer) clearTimeout(timer);
+      reject(error);
+    });
     child.once('exit', (code, signal) => {
+      if (timer) clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`${command} timed out after ${options.timeoutMs}ms`));
+        return;
+      }
       if (code === 0) resolveRun({ stdout, stderr });
       else {
         reject(
@@ -112,6 +128,42 @@ function parseMcpTools(stdout) {
   fail('installed buzz-readonly-mcp did not answer tools/list');
 }
 
+async function verifySquireProxy(proxyPath, cwd, env) {
+  const token = 'beeline-install-proxy-token';
+  let received = '';
+  const broker = createNetServer((socket) => {
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk) => {
+      received += chunk;
+      if (!received.includes('\nproxy-request\n')) return;
+      socket.end('proxy-response\n');
+    });
+  });
+  await new Promise((resolveListen, rejectListen) => {
+    broker.once('error', rejectListen);
+    broker.listen(0, '127.0.0.1', resolveListen);
+  });
+  try {
+    const address = broker.address();
+    if (!address || typeof address === 'string') fail('proxy broker did not bind');
+    const result = await run(
+      process.execPath,
+      [proxyPath, '127.0.0.1', String(address.port), token],
+      { cwd, env, input: 'proxy-request\n', timeoutMs: 10_000 },
+    );
+    const lines = received.trim().split('\n');
+    const authentication = JSON.parse(lines[0] ?? '{}');
+    if (authentication.token !== token || lines[1] !== 'proxy-request') {
+      fail('installed Squire proxy did not authenticate and forward stdin');
+    }
+    if (result.stdout !== 'proxy-response\n') {
+      fail(`installed Squire proxy did not forward broker output: ${result.stdout}`);
+    }
+  } finally {
+    await new Promise((resolveClose) => broker.close(resolveClose));
+  }
+}
+
 async function main() {
   const platform = requestedPlatform();
   if (!platform) fail('unsupported host platform');
@@ -154,7 +206,9 @@ async function main() {
     const match = stripAnsi(version.stdout).match(/^\[body\] read-only mcp: (.+)$/m);
     if (!match) fail(`beeline --version did not report the read-only MCP path:\n${version.stdout}`);
     await access(match[1], constants.X_OK);
-    await access(resolve(libDir, 'lib', 'beeline', 'squire-mcp-proxy.mjs'), constants.F_OK);
+    const squireProxy = resolve(libDir, 'lib', 'beeline', 'squire-mcp-proxy.mjs');
+    await access(squireProxy, constants.F_OK);
+    await verifySquireProxy(squireProxy, bareCwd, runtimeEnv);
 
     const probe = await run(resolve(binDir, 'buzz-readonly-mcp'), [], {
       cwd: bareCwd,

@@ -170,6 +170,110 @@ describe('Trusty Squire host broker', () => {
     await once(socket, 'close');
   });
 
+  it('fails closed when expiry or teardown wins during fresh verification', async () => {
+    const args = { grant_id: 'grant-1' };
+    const request = `${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'revoke_app_access', arguments: args },
+    })}\n`;
+
+    let now = 1_000;
+    const expiryChild = new FakeSquireProcess();
+    const expiryBroker = new SquireHostBroker(
+      '/runtime/squire-config',
+      () => expiryChild as unknown as ChildProcessWithoutNullStreams,
+      () => now,
+    );
+    brokers.push(expiryBroker);
+    const expiryProfile = await expiryBroker.mcpServer(
+      'expiry-room',
+      new Set(['revoke_app_access']),
+    );
+    const [, expiryHost, expiryPort, expiryToken] = expiryProfile.args;
+    const expirySocket = connect({ host: expiryHost, port: Number(expiryPort) });
+    await once(expirySocket, 'connect');
+    expirySocket.write(`${JSON.stringify({ token: expiryToken })}\n`);
+    const expiryConnected = once(expiryChild.stdin, 'data');
+    expirySocket.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'ping' })}\n`);
+    await expiryConnected;
+    let finishExpiryVerification!: () => void;
+    let expiryVerificationStarted!: () => void;
+    const expiryStarted = new Promise<void>((resolvePromise) => {
+      expiryVerificationStarted = resolvePromise;
+    });
+    const finishExpiry = new Promise<void>((resolvePromise) => {
+      finishExpiryVerification = resolvePromise;
+    });
+    expect(expiryBroker.authorize(
+      'expiry-room',
+      'revoke_app_access',
+      squireArgumentsDigest(args),
+      async () => {
+        expiryVerificationStarted();
+        await finishExpiry;
+        return true;
+      },
+      now + 10,
+    )).toBeTruthy();
+    expirySocket.write(request);
+    await expiryStarted;
+    now += 11;
+    finishExpiryVerification();
+    const [expired] = (await once(expirySocket, 'data')) as [Buffer];
+    expect(JSON.parse(expired.toString())).toHaveProperty(
+      'error.message',
+      'Trusty Squire authorization expired or session ended',
+    );
+    expect(expiryChild.stdin.readableLength).toBe(0);
+    expirySocket.end();
+
+    const teardownChild = new FakeSquireProcess();
+    const teardownBroker = new SquireHostBroker(
+      '/runtime/squire-config',
+      () => teardownChild as unknown as ChildProcessWithoutNullStreams,
+    );
+    brokers.push(teardownBroker);
+    const teardownProfile = await teardownBroker.mcpServer(
+      'teardown-room',
+      new Set(['revoke_app_access']),
+    );
+    const [, teardownHost, teardownPort, teardownToken] = teardownProfile.args;
+    const teardownSocket = connect({ host: teardownHost, port: Number(teardownPort) });
+    await once(teardownSocket, 'connect');
+    teardownSocket.write(`${JSON.stringify({ token: teardownToken })}\n`);
+    const teardownConnected = once(teardownChild.stdin, 'data');
+    teardownSocket.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'ping' })}\n`);
+    await teardownConnected;
+    let finishTeardownVerification!: () => void;
+    let teardownVerificationStarted!: () => void;
+    const teardownStarted = new Promise<void>((resolvePromise) => {
+      teardownVerificationStarted = resolvePromise;
+    });
+    const finishTeardown = new Promise<void>((resolvePromise) => {
+      finishTeardownVerification = resolvePromise;
+    });
+    expect(teardownBroker.authorize(
+      'teardown-room',
+      'revoke_app_access',
+      squireArgumentsDigest(args),
+      async () => {
+        teardownVerificationStarted();
+        await finishTeardown;
+        return true;
+      },
+    )).toBeTruthy();
+    teardownSocket.write(request);
+    await teardownStarted;
+    const teardownClosed = once(teardownSocket, 'close');
+    teardownBroker.revokeChannel('teardown-room');
+    await teardownClosed;
+    finishTeardownVerification();
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    expect(teardownChild.stdin.readableLength).toBe(0);
+  });
+
   it('filters inventory and reverifies current P1 authority at forwarding', async () => {
     const child = new FakeSquireProcess();
     const broker = new SquireHostBroker(

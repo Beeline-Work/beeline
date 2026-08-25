@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AcpClient } from './acp.js';
-import { Body, RELEASE_PROPOSAL_TTL_MS, type BoundRepo, type SubchannelInfo } from './body.js';
+import { Body, RELEASE_PROPOSAL_TTL_MS, type BoundRepo, type RoomReplyOutcome, type SubchannelInfo } from './body.js';
 import type { NostrEvent } from '@beeline/nostr';
 
 const cleanup: string[] = [];
@@ -38,7 +38,7 @@ function room(options: { unreleased?: string[] } = {}): {
   prompts: string[];
   opened: Array<{ intent?: string; prompt: string; instructions: string }>;
   published: NostrEvent[];
-  reply: (content: string, at?: number) => Promise<boolean>;
+  reply: (content: string, at?: number) => Promise<RoomReplyOutcome>;
 } {
   const root = mkdtempSync(join(tmpdir(), 'beeline-release-corner-'));
   cleanup.push(root);
@@ -131,13 +131,13 @@ function room(options: { unreleased?: string[] } = {}): {
     repositoryKey: 'release-corner',
   };
   let sequence = 0;
-  const reply = (content: string, at?: number): Promise<boolean> =>
+  const reply = (content: string, at?: number): Promise<RoomReplyOutcome> =>
     Reflect.get(body, 'replyInRoom').call(body, 'room-channel', boundRepo, {
       eventId: `event-${++sequence}`,
       authorPubkey: 'human-pubkey',
       content,
       createdAt: at ?? 1_700_000_000 + sequence,
-    }) as Promise<boolean>;
+    }) as Promise<RoomReplyOutcome>;
 
   return { body, boundRepo, prompts, opened, published, reply };
 }
@@ -168,7 +168,7 @@ describe('a Room asked about a release', () => {
     // The exact collision: `targetBranchChangeIntent` reads this as a Room
     // config change, and `releaseRoomIntent`'s "make … release" shape would
     // otherwise mark the turn information-only and gate that proposal out.
-    await expect(reply('make release the target branch')).resolves.toBe(false);
+    await expect(reply('make release the target branch')).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(proposed).toHaveLength(1);
     expect(proposed[0]!.at(-1)).toBe('release');
@@ -193,7 +193,7 @@ describe('confirming the proposal', () => {
     const { opened, reply } = room();
 
     await reply("what's unreleased?");
-    await expect(reply('yes')).resolves.toBe(true);
+    await expect(reply('yes')).resolves.toEqual({ openedCorner: true, producedReply: true });
 
     expect(opened).toHaveLength(1);
     // Named after the release, never after the imperative that opened it.
@@ -213,7 +213,7 @@ describe('confirming the proposal', () => {
     const { opened, reply } = room();
 
     await reply('cut release v1.2.0');
-    await expect(reply('go ahead')).resolves.toBe(true);
+    await expect(reply('go ahead')).resolves.toEqual({ openedCorner: true, producedReply: true });
 
     expect(opened[0]!.intent).toBe('release 1.2.0');
     expect(opened[0]!.instructions).toContain('Use the version the person asked for: 1.2.0.');
@@ -234,7 +234,7 @@ describe('confirming the proposal', () => {
   it('means nothing when no release was ever proposed', async () => {
     const { opened, prompts, reply } = room();
 
-    await expect(reply('yes')).resolves.toBe(false);
+    await expect(reply('yes')).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(opened).toHaveLength(0);
     expect(prompts).toHaveLength(1);
@@ -244,7 +244,7 @@ describe('confirming the proposal', () => {
     const { opened, reply } = room();
 
     await reply("what's unreleased?");
-    await expect(reply('yes, but bump the minor not the patch')).resolves.toBe(false);
+    await expect(reply('yes, but bump the minor not the patch')).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(opened).toHaveLength(0);
   });
@@ -255,7 +255,7 @@ describe('confirming the proposal', () => {
 
     const later = Date.now() + RELEASE_PROPOSAL_TTL_MS + 1;
     vi.spyOn(Date, 'now').mockReturnValue(later);
-    await expect(reply('yes')).resolves.toBe(false);
+    await expect(reply('yes')).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(opened).toHaveLength(0);
   });
@@ -268,7 +268,7 @@ describe('confirming the proposal', () => {
     expect(prompts[0]).toContain('Do not offer a corner');
 
     // Nothing was proposed, so agreement has nothing to agree to.
-    await expect(reply('yes')).resolves.toBe(false);
+    await expect(reply('yes')).resolves.toEqual({ openedCorner: false, producedReply: true });
     expect(opened).toHaveLength(0);
   });
 });

@@ -21,6 +21,7 @@ import WebSocket from 'ws';
 import {
   AcpClient,
   isMutatingPermissionRequest,
+  isPureRetryNarration,
   type AcpAvailableCommand,
   type AcpPermissionDecision,
   type AcpPermissionHandler,
@@ -1205,6 +1206,15 @@ export function roomEditPolicyInstructions(
     'After attempting it, tell the person the Room owner has to confirm that card. Open corners automatically follow the confirmed branch change; conflicts are surfaced in their activity ledger for resolution.',
     'Never say a landing-target change is in effect, saved, remembered, or held for this conversation. Only the Room owner confirming that card changes it.',
   ];
+}
+
+/** What one Room turn did, so the caller knows whether the triggering request
+ *  was actually answered. `producedReply: false` means the turn's only output
+ *  was harness retry/backoff narration — the honest fallback went out, but the
+ *  request must stay pending so the ordinary lifecycle can re-drive it. */
+export interface RoomReplyOutcome {
+  openedCorner: boolean;
+  producedReply: boolean;
 }
 
 export interface ChannelTaskRequest {
@@ -4036,6 +4046,16 @@ export class Body {
   ): Promise<string> {
     const uploaded = await this.uploadAgentOutputs(session, result);
     let reply = stripAttachmentDirectives(stripAgentReplyPreamble(result.agentText)).trim();
+    // Defense in depth: harness retry/backoff narration is machine state, not
+    // an answer. Final-text selection already refuses to pick a narration run
+    // (`finalAgentMessageText`); this guard covers results built by other
+    // paths so narration can never become a durable kind:9 message.
+    if (reply && isPureRetryNarration(reply)) {
+      console.log(
+        `[body] discarded harness retry narration instead of publishing it as a reply`,
+      );
+      reply = '';
+    }
     if (!reply) reply = uploaded.attachments.length ? 'Shared an attachment.' : fallback;
     if (uploaded.errors.length)
       reply = `${reply}\n\nAttachment unavailable: ${uploaded.errors.join('; ')}`;
@@ -6271,21 +6291,25 @@ export class Body {
             this.agentIdentity.publicKey,
             roomParticipants,
           );
-          if (
-            await this.replyInRoom(
-              tlcChannelId,
-              boundRepo,
-              request,
-              editPolicy === 'repository' && cornerWorkIntent,
-              editPolicy,
-              exchangeRequest?.kind === 'authorized' ? exchangeRequest.authorization : undefined,
-              cornerWorkIntent,
-            )
-          ) {
+          const roomReply = await this.replyInRoom(
+            tlcChannelId,
+            boundRepo,
+            request,
+            editPolicy === 'repository' && cornerWorkIntent,
+            editPolicy,
+            exchangeRequest?.kind === 'authorized' ? exchangeRequest.authorization : undefined,
+            cornerWorkIntent,
+          );
+          if (roomReply.openedCorner) {
             opened++;
           }
-          this.processedRequestIds.add(event.id);
-          await this.durableState.delivered(tlcChannelId, event.id);
+          // A narration-only turn deliberately leaves the request pending so
+          // the next poll re-drives it; consuming it here would strand the
+          // human's message behind a reply that never existed.
+          if (roomReply.producedReply) {
+            this.processedRequestIds.add(event.id);
+            await this.durableState.delivered(tlcChannelId, event.id);
+          }
         } catch (error) {
           await this.durableState.failed(tlcChannelId, event.id, error);
           throw error;
@@ -6399,7 +6423,7 @@ export class Body {
     cornerWorkIntent = explicitCornerWork,
     scheduled?: ScheduledTurnRequest,
     beforeModelActivation?: () => Promise<void>,
-  ): Promise<boolean> {
+  ): Promise<RoomReplyOutcome> {
     // Mark a slash-command-shaped message BEFORE anything else consumes it.
     // Beeline's composer commands and a harness's own `/verb` vocabulary share
     // one input box; an unrecognized verb used to pass through silently and be
@@ -6463,7 +6487,7 @@ export class Body {
           `[body] refused a duplicate corner open in ${tlcChannelId}: ` +
             `${duplicate.subchannelId} is already open for this`,
         );
-        return false;
+        return { openedCorner: false, producedReply: true };
       }
       const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
       const displayPrompt = request.attachments?.length ? userPrompt : request.content;
@@ -6473,7 +6497,7 @@ export class Body {
         originalRequestId: request.eventId,
         cause: 'corner-opening',
       });
-      return true;
+      return { openedCorner: true, producedReply: true };
     }
 
     // "land to staging from now on" is a Room CONFIG change, not work and not
@@ -6485,7 +6509,7 @@ export class Body {
       const targetChange = targetBranchChangeIntent(request.content);
       if (targetChange) {
         await this.proposeTargetBranchChange(tlcChannelId, boundRepo, request, targetChange.branch);
-        return false;
+        return { openedCorner: false, producedReply: true };
       }
     }
 
@@ -6514,7 +6538,7 @@ export class Body {
         originalRequestId: request.eventId,
         cause: 'corner-opening',
       });
-      return true;
+      return { openedCorner: true, producedReply: true };
     }
 
     // The repository belongs to the Room. An explicit open-a-corner command in
@@ -6539,7 +6563,7 @@ export class Body {
           [],
           request.replyRootId,
         );
-        return false;
+        return { openedCorner: false, producedReply: true };
       }
     }
 
@@ -6559,7 +6583,7 @@ export class Body {
         [],
         request.replyRootId,
       );
-      return false;
+      return { openedCorner: false, producedReply: true };
     }
 
     const namedRepositoryTarget =
@@ -6617,7 +6641,7 @@ export class Body {
         [],
         request.replyRootId,
       );
-      return false;
+      return { openedCorner: false, producedReply: true };
     }
     const sharedPrompt = roomTurnPrompt(
       await this.agentHistory(tlcChannelId),
@@ -6748,7 +6772,58 @@ export class Body {
           'complete',
           this.presenceGenerations.get(tlcChannelId),
         );
-        return true;
+        return { openedCorner: true, producedReply: true };
+      }
+      // A harness that flaked mid-turn can end its run having streamed only
+      // retry/backoff narration (`Retrying (attempt 1/3, waiting 2s)...Retry
+      // finished, resuming.`) and nothing else. Final-text selection already
+      // refuses to present that as `agentText`; with no substantive output of
+      // any kind left, treat the turn as FAILED: publish the honest fallback
+      // for the human, but leave the request pending (never mark it delivered)
+      // so the ordinary lifecycle re-drives it and a recovered provider's
+      // genuine answer is published exactly once. Narration itself is never
+      // published — only the fallback copy below.
+      const rawText = result.agentText.trim();
+      const substantiveText = rawText && !isPureRetryNarration(rawText) ? rawText : '';
+      const turnHadActivity = result.updates.length > 0;
+      const hasSubstantiveOutput =
+        Boolean(substantiveText) || result.toolCalls.length > 0 || !!result.cornerRequest;
+      if (
+        !hasSubstantiveOutput &&
+        !turn.permissionHandled &&
+        turnHadActivity &&
+        !scheduled &&
+        !agentExchange
+      ) {
+        console.log(
+          `[body] room ${tlcChannelId} request ${request.eventId}: turn produced only harness ` +
+            'retry narration; publishing the honest fallback and leaving the request retryable',
+        );
+        // Deliberately NOT publishAgentResult here: its inbox reservation
+        // would make a later re-drive of this still-pending request replay
+        // the fallback instead of prompting again, defeating retryability.
+        // There are no agent outputs to upload — toolCalls is empty by the
+        // branch condition above.
+        await postAgentMessage(
+          tlcChannelId,
+          this.agentIdentity,
+          "I couldn't produce a response to that message; please try again.",
+          request.eventId,
+          [],
+          [],
+          request.replyRootId,
+        );
+        await postAgentTurnStatus(
+          tlcChannelId,
+          this.agentIdentity,
+          request.eventId,
+          session.logicalSessionId ?? session.sessionId,
+          'failed',
+          this.presenceGenerations.get(tlcChannelId),
+        ).catch((statusError) =>
+          console.error('[body] failed to publish Room turn failure status:', statusError),
+        );
+        return { openedCorner: false, producedReply: false };
       }
       const fallback = turn.permissionHandled
         ? turn.transitionedToCorner
@@ -6800,7 +6875,7 @@ export class Body {
       ).catch((statusError) =>
         console.error('[body] failed to publish Room turn completion status:', statusError),
       );
-      return false;
+      return { openedCorner: false, producedReply: true };
     } catch (error) {
       if (scheduled && error instanceof ScheduleActivationRefusedError) {
         await postAgentTurnStatus(
@@ -6840,7 +6915,7 @@ export class Body {
         this.processedRequestIds.add(request.eventId);
         await this.durableState.delivered(tlcChannelId, request.eventId);
         if (scheduled) throw error;
-        return false;
+        return { openedCorner: false, producedReply: true };
       }
       throw error;
     } finally {

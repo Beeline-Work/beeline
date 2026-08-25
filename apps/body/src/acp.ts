@@ -213,10 +213,56 @@ function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
   return agentMessageRuns(updates).join('\n\n');
 }
 
-/** Only the last assistant-message run is the turn's durable final output.
- * Earlier runs are progress narration around tool work and stay draft-only. */
+/**
+ * Harness retry/backoff narration (pi flaking mid-turn is the live case:
+ * `Retrying (attempt 1/3, waiting 2s)...Retrying...Retry finished, resuming.`)
+ * arrives as ordinary `agent_message_chunk` text, so structurally it is
+ * indistinguishable from prose. Classification is therefore by CONTENT, and
+ * deliberately narrow: a message counts as pure narration only when, after
+ * removing recognized retry-narration fragments, nothing but separators
+ * remains. A genuine answer that merely mentions retries keeps most of its
+ * words and never classifies as narration.
+ */
+const RETRY_NARRATION_FRAGMENTS: RegExp[] = [
+  // `Retrying (attempt 2/3, waiting 4s)` — the pi/ox-alpha shape.
+  /retrying\s*\((?:attempt|try)\s*\d+\s*\/\s*\d+(?:,\s*(?:waiting|backoff)\s*\d+(?:\.\d+)?s)?\)/gi,
+  // A bare `(attempt 2/3...)` or `[attempt 2/3]` qualifier on its own.
+  /[([](?:attempt|try)\s*\d+\s*\/\s*\d+(?:,\s*(?:waiting|backoff)\s*\d+(?:\.\d+)?s)?[))]\s*/gi,
+  // Standalone narration words with their optional trailing ellipsis.
+  /retrying\s*\.{0,3}/gi,
+  /retried\s*\.{0,3}/gi,
+  /retry\s+finished,?\s*/gi,
+  /retry\s+failed,?\s*/gi,
+  /resuming\.?/gi,
+  /waiting\s+\d+(?:\.\d+)?s/gi,
+];
+
+/** True only when the WHOLE text is harness retry/backoff narration. Empty
+ *  text is not narration (callers treat emptiness separately), and any message
+ *  with a single word of its own content left over is genuine prose. */
+export function isPureRetryNarration(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  let rest = trimmed;
+  for (const fragment of RETRY_NARRATION_FRAGMENTS) {
+    rest = rest.replace(fragment, '');
+  }
+  return !/[\w]/.test(rest);
+}
+
+/** Only the last SUBSTANTIVE assistant-message run is the turn's durable final
+ *  output. Earlier runs are progress narration around tool work and stay
+ *  draft-only, and retry/backoff narration can never be the answer: scan back
+ *  past pure-narration runs so a turn that ends `...Retrying...resuming.`
+ *  after real prose still selects that prose, and a turn that produced ONLY
+ *  narration selects nothing (the caller then treats the turn as failed). */
 function finalAgentMessageText(updates: readonly SessionUpdate[]): string {
-  return agentMessageRuns(updates).at(-1) ?? '';
+  const runs = agentMessageRuns(updates);
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const run = runs[i];
+    if (run && !isPureRetryNarration(run)) return run;
+  }
+  return '';
 }
 
 function updateText(update: Record<string, unknown>): string {

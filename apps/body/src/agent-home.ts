@@ -17,13 +17,21 @@
  * keeps working in every Room, and a token refresh written through the link is
  * visible to every other Room.
  *
- * **Skills + MCP passthrough (owner decision 2026-08-23).** The operator's
- * skills directories are symlinked into each harness home and ordinary operator
- * MCP server declarations are COPIED into it, so every Room/corner session has
+ * **Skills + MCP passthrough (owner decision 2026-08-23).** Each harness home's
+ * `skills/` directory is a BEELINE-MANAGED composite: one symlink per entry of
+ * the operator's own skills directory plus the daemon-shipped `using-beeline`
+ * skill (`beeline-skill.ts`, regenerated from the running release on every
+ * activation). The harness-discovered path must stay exactly `<harness-home>/
+ * skills/`, and the managed skill may never be written through the operator's
+ * directory, so the whole-dir link the passthrough shipped first was migrated
+ * into this composite: operator files are only ever READ and linked, byte for
+ * byte, never written. Ordinary operator MCP server declarations are COPIED
+ * into the harness home, so every Room/corner session has
  * the tools the host offers — without them a harness boots
  * with a login but nothing to advertise over ACP. Two shapes, deliberately:
- * skills are LINKED (read-only reference data; edits through the link would be
- * the operator's own business anyway) while MCP config is COPIED — codex-acp
+ * operator skills are LINKED per entry (read-only reference data; edits through
+ * a link would be the operator's own business anyway) while MCP config is
+ * COPIED — codex-acp
  * MERGES session MCP servers into `$CODEX_HOME/config.toml`, so a symlink
  * there would let a session write into the operator's real config. Only MCP
  * declarations pass through: model/sandbox/approval settings stay out because
@@ -42,6 +50,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  readdir,
   readlink,
   rename,
   symlink,
@@ -50,6 +59,11 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
+import {
+  runningBeelineReleaseId,
+  USING_BEELINE_SKILL_NAME,
+  usingBeelineSkillMarkdown,
+} from './beeline-skill.js';
 import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
@@ -76,9 +90,10 @@ const SHARED_CREDENTIALS: Array<{
 ];
 
 /**
- * Operator skills directories shared (linked) into an isolated harness home,
- * keyed by the state directory the harness was pointed at. A missing source
- * dir is skipped, not fatal — not every host has every harness installed.
+ * Operator skills directories shared (linked per entry) into an isolated
+ * harness home's Beeline-managed skills directory, keyed by the state
+ * directory the harness was pointed at. A missing source dir is skipped, not
+ * fatal — not every host has every harness installed.
  */
 const SHARED_SKILLS: Array<{ dir: 'claude' | 'codex' | 'grok'; source: string }> = [
   { dir: 'claude', source: '.claude/skills' },
@@ -114,6 +129,12 @@ export interface RoomAgentHomeInput {
   /** Operator's real home directory; defaults to the daemon's. */
   operatorHome?: string;
   failClosed?: boolean;
+  /**
+   * Release id stamped into the managed `using-beeline` skill. Defaults to
+   * the RUNNING release (`runningBeelineReleaseId`); tests inject explicit
+   * ids to prove regeneration on version change.
+   */
+  skillReleaseId?: string;
 }
 
 /**
@@ -148,34 +169,40 @@ export async function prepareRoomAgentHome(
     await symlink(source, target).catch(() => undefined);
   }
 
-  await provisionOperatorSkillsAndMcp(root, operatorHome, input.failClosed ?? false).catch(
-    (error) => {
-      if (input.failClosed) throw error;
-      console.warn(`[body] operator skills/MCP passthrough incomplete for ${root}:`, error);
-    },
-  );
+  await provisionOperatorSkillsAndMcp(
+    root,
+    operatorHome,
+    input.skillReleaseId ?? runningBeelineReleaseId(),
+    input.failClosed ?? false,
+  ).catch((error) => {
+    if (input.failClosed) throw error;
+    console.warn(`[body] operator skills/MCP passthrough incomplete for ${root}:`, error);
+  });
 
   return roomAgentHomeEnv(root);
 }
 
 /**
- * Link the operator's skills dirs into each harness home and copy the
- * operator's MCP declarations into it. Best-effort end to end: a missing
+ * Provision each harness home's Beeline-managed skills directory and copy the
+ * operator's MCP declarations into the home. Best-effort end to end: a missing
  * source is the common case (not every host has every harness), and any
  * failure degrades to a session with fewer skills rather than failing the
- * Room. Unlike credentials, the MCP copies are REGENERATED on every prepare
- * call so a daemon restart picks up operator config edits; the skills links
- * are repaired when they point somewhere else.
+ * Room. Unlike credentials, BOTH the MCP copies and the managed skill are
+ * REGENERATED on every prepare call so a daemon restart picks up operator
+ * config edits and release upgrades; per-entry operator-skill links are
+ * repaired when they point somewhere else.
  */
 async function provisionOperatorSkillsAndMcp(
   root: string,
   operatorHome: string,
+  skillReleaseId: string,
   failClosed: boolean,
 ): Promise<void> {
+  const skillContent = usingBeelineSkillMarkdown(skillReleaseId);
   for (const skills of SHARED_SKILLS) {
     const source = resolve(operatorHome, skills.source);
     const target = resolve(root, skills.dir, 'skills');
-    await linkOperatorDir(source, target).catch((error) => {
+    await provisionManagedSkillsDir(source, target, skillContent).catch((error) => {
       console.warn(`[body] operator skills unavailable at ${target}:`, error);
     });
   }
@@ -290,26 +317,68 @@ function filteredHarnessMcpToml(source: string): string | undefined {
   return extractTomlSections(source, ['mcp_servers'], excluded);
 }
 
-async function linkOperatorDir(source: string, target: string): Promise<void> {
-  if (!existsSync(source)) {
-    const existing = await lstat(target).catch(() => undefined);
-    if (existing?.isSymbolicLink()) await unlink(target).catch(() => undefined);
-    return;
+/**
+ * Make `target` a Beeline-managed skills directory holding exactly two kinds
+ * of entries: one SYMLINK per entry of the operator's own skills directory,
+ * and the regenerated `using-beeline/SKILL.md` shipped by the running release.
+ *
+ * Trust boundary, proven by tests: the operator's directory is only ever READ
+ * (names + entry symlinks), never written, so operator files survive every
+ * activation byte-for-byte. Real (non-symlink) entries already inside the
+ * managed directory are never replaced or deleted — the daemon created this
+ * directory inside its own agent home, but unknown real data still wins.
+ * A symlink collision with the managed skill's name is refused rather than
+ * written through, so an operator skill named `using-beeline` can never turn
+ * regeneration into a write into their tree.
+ */
+async function provisionManagedSkillsDir(
+  source: string,
+  target: string,
+  skillContent: string,
+): Promise<void> {
+  // Migrate the pre-composite layout: a whole-dir symlink occupying the
+  // discovery path is Beeline's own earlier artifact — replace it with the
+  // real managed directory. Never follow or keep it: writing through it would
+  // land inside the operator's tree.
+  const existing = await lstat(target).catch(() => undefined);
+  if (existing?.isSymbolicLink()) await unlink(target);
+  await mkdir(target, { recursive: true });
+
+  const managedSkillDir = resolve(target, USING_BEELINE_SKILL_NAME);
+  const operatorNames = new Set(existsSync(source) ? await readdir(source) : []);
+
+  // Drop stale per-entry links the operator removed or renamed. Anything else
+  // — including an unexpected real entry — stays untouched.
+  for (const entry of await readdir(target)) {
+    if (operatorNames.has(entry) || entry === USING_BEELINE_SKILL_NAME) continue;
+    const entryPath = resolve(target, entry);
+    const stats = await lstat(entryPath).catch(() => undefined);
+    if (stats?.isSymbolicLink()) await unlink(entryPath).catch(() => undefined);
   }
-  let stats: Awaited<ReturnType<typeof lstat>>;
-  try {
-    stats = await lstat(target);
-  } catch {
-    // Target absent: create the link.
-    await symlink(source, target).catch(() => undefined);
-    return;
+
+  for (const name of operatorNames) {
+    const entryPath = resolve(target, name);
+    const stats = await lstat(entryPath).catch(() => undefined);
+    if (!stats) {
+      await symlink(resolve(source, name), entryPath).catch(() => undefined);
+      continue;
+    }
+    if (!stats.isSymbolicLink()) continue; // Never replace real data with a link.
+    const current = await readlinkSafe(entryPath);
+    if (current && resolve(target, current) === resolve(source, name)) continue;
+    // Repair a link left pointing somewhere else by an earlier layout.
+    await unlink(entryPath).catch(() => undefined);
+    await symlink(resolve(source, name), entryPath).catch(() => undefined);
   }
-  if (!stats.isSymbolicLink()) return; // Never replace real data with a link.
-  const current = await readlinkSafe(target);
-  if (current && resolve(dirname(target), current) === source) return;
-  // Repair a stale link left by an earlier layout.
-  await unlink(target).catch(() => undefined);
-  await symlink(source, target).catch(() => undefined);
+
+  // Regenerate the managed skill. Refuse loudly if something symlink-shaped
+  // occupies its slot: regeneration must never write through that link.
+  const skillStats = await lstat(managedSkillDir).catch(() => undefined);
+  if (skillStats?.isSymbolicLink()) {
+    throw new Error(`refusing to write the managed skill through a symlink at ${managedSkillDir}`);
+  }
+  await mkdir(managedSkillDir, { recursive: true });
+  await writeIsolatedHarnessFile(resolve(managedSkillDir, 'SKILL.md'), skillContent);
 }
 
 /**

@@ -1,5 +1,6 @@
 import {
   mergeWorkspaceSnapshots,
+  reduceWorkspaceEvents,
   reduceWorkspaceSnapshot,
   selectCorners,
   selectRoomRow,
@@ -33,6 +34,7 @@ export type MessageSyncResult = {
 
 const COLD_BACKFILL_LIMIT = 200;
 const inFlightRevalidations = new Map<string, Promise<MessageSyncResult>>();
+const pendingColdLiveEvents = new Map<string, SessionEvent[]>();
 
 export { sessionEventCursor };
 
@@ -86,6 +88,7 @@ async function performMessageRevalidation(
   viewerPubkey: string,
   channelId: string,
 ): Promise<MessageSyncResult> {
+  const key = `${viewerPubkey}:${channelId}`;
   const cached = getCachedChannel(viewerPubkey, channelId);
   const warm = Boolean(cached?.snapshot?.rooms[channelId]?.coverage.initialBackfillComplete);
   const result = await transport.readModelBackfill(
@@ -94,12 +97,22 @@ async function performMessageRevalidation(
       ? { afterSeq: cached.cursor }
       : { limit: COLD_BACKFILL_LIMIT },
   );
-  const effects = foldEffects(result.events, viewerPubkey, warm);
+  // A live subscription can authenticate before the cold snapshot commits.
+  // Preserve those typed events and fold them into the snapshot atomically;
+  // dropping them here makes a healthy responding agent look silent until a
+  // later full revalidation happens to replay the event.
+  const pendingLive = pendingColdLiveEvents.get(key) ?? [];
+  pendingColdLiveEvents.delete(key);
+  const committedEvents = [...result.events, ...pendingLive];
+  const effects = foldEffects(committedEvents, viewerPubkey, warm);
   const current = getCachedChannel(viewerPubkey, channelId);
-  const snapshot = current?.snapshot
+  let snapshot = current?.snapshot
     ? mergeWorkspaceSnapshots(current.snapshot, result.snapshot)
     : result.snapshot;
-  const eventCursor = result.events.reduce(
+  for (const event of pendingLive) {
+    if (event.type === 'read-model') snapshot = reduceWorkspaceSnapshot(snapshot, event.event);
+  }
+  const eventCursor = committedEvents.reduce(
     (maximum, event) => Math.max(maximum, sessionEventCursor(event) ?? 0),
     0,
   );
@@ -161,10 +174,28 @@ export function cacheLiveSessionEvents(
   const effects = foldEffects(events, viewerPubkey, true);
   const cached = getCachedChannel(viewerPubkey, channelId);
   let snapshot = cached?.snapshot;
-  if (snapshot) {
+  if (!snapshot) {
+    const key = `${viewerPubkey}:${channelId}`;
+    const pending = pendingColdLiveEvents.get(key) ?? [];
+    const ids = new Set(
+      pending.flatMap((event) =>
+        event.type === 'read-model' && event.event.type !== 'unknown' ? [event.event.eventId] : [],
+      ),
+    );
     for (const event of events) {
-      if (event.type === 'read-model') snapshot = reduceWorkspaceSnapshot(snapshot, event.event);
+      const id =
+        event.type === 'read-model' && event.event.type !== 'unknown'
+          ? event.event.eventId
+          : undefined;
+      if (!id || !ids.has(id)) pending.push(event);
+      if (id) ids.add(id);
     }
+    pendingColdLiveEvents.set(key, pending.slice(-500));
+  } else {
+    snapshot = reduceWorkspaceEvents(
+      snapshot,
+      events.flatMap((event) => (event.type === 'read-model' ? [event.event] : [])),
+    );
     const cursor = events.reduce(
       (maximum, event) => Math.max(maximum, sessionEventCursor(event) ?? 0),
       cached?.cursor ?? 0,

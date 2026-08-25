@@ -121,6 +121,15 @@ export type RoomRowPresentation = {
    * Artifact-backed failures remain listed and actionable.
    */
   corners: CornerSummary[];
+  /**
+   * Formatted unread-count chip for the gutter's top slot, or `null` when the
+   * row carries no unread messages (read rows keep their age stamp there).
+   * An unread-but-uncountable Room reads `NEW` rather than an invented number,
+   * and exact counts cap at `9+` so the fixed gutter never reflows. Derived
+   * from message unread only — a live agent turn lifts the row but is not a
+   * message, so it never produces a count.
+   */
+  unreadBadge: string | null;
   /** Which of the three scan zones this Room belongs to. */
   zone: RoomListZone;
   /** Newest message or lifecycle event that should affect list ordering. */
@@ -140,6 +149,22 @@ export type RoomRowPresentation = {
  * `roomPreviewText` refused to put on the index.
  */
 export const NO_ACTIVITY_PREVIEW = 'Nothing said yet';
+
+/** Highest count shown exactly; anything more compacts so the chip stays one
+ * small fixed object in the gutter (`9+`, never `12`). */
+const UNREAD_BADGE_CAP = 9;
+
+/** The chip label for one Room's unread state: exact count up to the cap,
+ * `NEW` when the Room is unread but no local transcript can count against the
+ * mark, and `null` when the row is read. Keyed on `roomUnread` (a message
+ * newer than the read mark) — never on a live conversational turn. */
+function unreadBadgeLabel(room: Pick<RoomRowInput, 'roomUnread' | 'unreadNew'>): string | null {
+  if (!room.roomUnread) return null;
+  const count = room.unreadNew;
+  if (count == null || count <= 0) return 'NEW';
+  if (count > UNREAD_BADGE_CAP) return `${UNREAD_BADGE_CAP}+`;
+  return String(count);
+}
 
 /**
  * A Room is *alive* when an agent is working in one of its corners right now.
@@ -339,6 +364,7 @@ export function roomRowPresentation(
     live: Boolean(working),
     attention: state === 'needs-you',
     corners,
+    unreadBadge: unreadBadgeLabel(room),
     zone,
     meaningfulAt,
     fact: currentCorner

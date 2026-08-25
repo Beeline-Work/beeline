@@ -37,6 +37,10 @@ export const beelineThemes = {
     bgRaised: '#190e21',
     bgCode: '#190e21',
     bgHighlight: '#1e1326',
+    // One luminance step above the canvas: an unread row's whole-ground fill
+    // (Gmail-dark-mode pattern — area, never stroke). Deliberately below
+    // bgHighlight so selection still reads brighter than freshness.
+    bgUnread: '#1a1220',
     bgHover: '#21162a',
     bgPressed: '#271c31',
     bgTexturePeak: '#3b3048',
@@ -120,6 +124,8 @@ export const beelineThemes = {
     bgRaised: '#190d1e',
     bgCode: '#190d1e',
     bgHighlight: '#1f1222',
+    // Unread-row ground lift, same one-step-above-canvas contract as Obsidian.
+    bgUnread: '#1a101f',
     bgHover: '#211424',
     bgPressed: '#291b29',
     bgTexturePeak: '#3a2b37',
@@ -198,6 +204,8 @@ export const beelineThemes = {
     bgRaised: '#180e20',
     bgCode: '#180e20',
     bgHighlight: '#1d1326',
+    // Unread-row ground lift, same one-step-above-canvas contract as Obsidian.
+    bgUnread: '#1a1120',
     bgHover: '#1d1326',
     bgPressed: '#231a2e',
     bgTexturePeak: '#39334c',

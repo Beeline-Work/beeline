@@ -90,7 +90,7 @@ export type RoomRowPill =
  * re-derive it.
  */
 export type RoomRowPresentation = {
-  /** MAX-severity rollup of corner states. Room activity never changes it. */
+  /** MAX-severity rollup of the Room-own turn and every corner state. */
   state: CornerVisualState;
   /** Unread activity affects title weight and recency only, never state. */
   unread: boolean;
@@ -204,9 +204,9 @@ export type RoomRowInput = {
    */
   roomUnread?: boolean;
   /**
-   * An agent turn is streaming in this Room's own conversation right now —
-   * seen live by the index's event subscription. Corner turns arrive through
-   * `corners`; this carries the read-only conversational turn.
+   * The newest durable lifecycle marker says an agent turn is working in this
+   * Room's own conversation. Corner turns arrive independently through
+   * `corners`; the row takes the maximum of both contributions.
    */
   agentTurnWorking?: boolean;
   /** Timestamp of the newest live Room turn event, in unix seconds. */
@@ -306,7 +306,17 @@ export function roomRowPresentation(
   // offline-stalled fact, then finished history.
   const currentCorner = needsYou ?? working ?? stalledOffline ?? finished;
   const unreadHere = Boolean(room.roomUnread || room.agentTurnWorking);
-  const state = roomState(all);
+  const cornerState = roomState(all);
+  // One verdict, maximum severity: a person-actionable corner outranks all
+  // work; otherwise either a Room-own turn or a working corner earns motion.
+  // Completion removes only the Room-own contribution and cannot demote an
+  // independently urgent corner.
+  const state: CornerVisualState =
+    cornerState === 'needs-you'
+      ? 'needs-you'
+      : room.agentTurnWorking || cornerState === 'working'
+        ? 'working'
+        : 'idle';
   const zone: RoomListZone = state;
   // The stored preview was sanitized when it was written; this is the floor
   // for one written by an older build and still sitting in the local cache.
@@ -359,9 +369,7 @@ export function roomRowPresentation(
     glyph: cornerStatusPresentation(
       state === 'working' ? 'live' : state === 'needs-you' ? 'needs-attention' : null,
     ).glyph,
-    // Useful non-visual fact for live counts; the rendered Room state remains
-    // the single max-severity `state` above, so needs-you still wins visually.
-    live: Boolean(working),
+    live: Boolean(room.agentTurnWorking || working),
     attention: state === 'needs-you',
     corners,
     unreadBadge: unreadBadgeLabel(room),
@@ -421,8 +429,9 @@ export function displayRoomIndexTitle(storedTitle: string | undefined): string |
  *
  * This is deliberately the only ordering function the screen consumes for its
  * feed: lifecycle state, fact text, age, and placement all come from the same
- * projection. (`options.now` remains accepted for call-site stability; zoning
- * no longer depends on wall-clock buckets.)
+ * projection. Live Room turns contribute working state and recency; message
+ * unread contributes recency/weight only. (`options.now` remains accepted for
+ * call-site stability; zoning no longer depends on wall-clock buckets.)
  */
 export function roomListFeed<T extends RoomRowInput>(
   rooms: readonly T[],

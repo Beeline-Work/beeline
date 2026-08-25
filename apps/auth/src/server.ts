@@ -1479,6 +1479,38 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     return reply.send({ predecessors });
   });
 
+  /**
+   * Resolve a historical device key to the current key of that identity.
+   * Any authenticated tenant actor may ask: paired agents need this narrow
+   * answer to authorize human-authored soul overlays after device recovery.
+   * The endpoint reveals no link/profile data and an unrelated key resolves
+   * to itself, preserving the registry's fail-closed equality semantics.
+   */
+  app.get<{ Params: { pubkey: string } }>('/auth/oidc/current/:pubkey', async (request, reply) => {
+    const tenant = tenantFor(request);
+    const pubkey = request.params.pubkey;
+    if (!/^[0-9a-f]{64}$/.test(pubkey))
+      throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
+    const auth = verifyNip98Header(
+      request.headers.authorization,
+      publicUrl(tenant, request),
+      'GET',
+      now(),
+    );
+    if (!auth.ok) throw new ProtocolError(401, 'unauthorized', auth.reason);
+    const authNow = now();
+    const claimed = await options.store.claimNip98Event(
+      auth.eventId,
+      new Date(authNow.getTime() + 2 * 60_000),
+      authNow,
+    );
+    if (!claimed)
+      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+    const currentPubkey = await options.store.resolveCurrentPubkey(tenant.community, pubkey);
+    noStore(reply);
+    return reply.send({ current_pubkey: currentPubkey });
+  });
+
   app.post('/auth/github/install/start', async (request, reply) => {
     if (!options.github)
       throw new ProtocolError(503, 'github_unavailable', 'GitHub App is not configured');

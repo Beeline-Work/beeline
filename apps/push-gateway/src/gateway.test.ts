@@ -143,6 +143,7 @@ describe('RegisteredEventPoller', () => {
     expect(queriedFilters[0]).toEqual([
       { kinds: [9], since: 100, limit: 1_000 },
       { kinds: [30078], '#t': ['buzz-agent-soul'], since: 100, limit: 1_000 },
+      { kinds: [30078], '#t': ['buzz-corner-state'], since: 100, limit: 1_000 },
     ]);
     await expect(poller.pollNext()).resolves.toBe('polled');
     expect(queried).toEqual([PUBKEY_A, PUBKEY_B]);
@@ -181,6 +182,95 @@ describe('RegisteredEventPoller', () => {
 });
 
 describe('PushGateway', () => {
+  it('deduplicates and rate-limits standing corner attention until lifecycle resolution', async () => {
+    let now = 1_000_000;
+    const registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    const sendEachForMulticast = vi.fn(async () => ({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'attention' }],
+    }));
+    const gateway = new PushGateway(
+      registry,
+      { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(undefined, { now: () => now }),
+      {
+        resolve: async () => ({
+          roomName: 'Peddle',
+          senderName: 'Codex',
+          workspaceName: 'Product Engineering',
+          persistentWorkspaceRoom: true,
+        }),
+        invalidate: () => undefined,
+      } as never,
+    );
+    const attention = (id: string, content: string, reason = 'review'): NostrEvent => ({
+      ...event(id, AUTHOR, 'room-peddle'),
+      tags: [
+        ['h', 'room-peddle'],
+        ['subchannel', 'corner-peddle'],
+        ['status', 'needs-attention'],
+        ['reason', reason],
+      ],
+      content,
+    });
+    const lifecycle = (id: string, state: 'working' | 'idle'): NostrEvent => ({
+      ...event('9', AUTHOR, 'room-peddle'),
+      id: id.repeat(64),
+      kind: 30078,
+      tags: [
+        ['d', 'buzz-corner-state:corner-peddle'],
+        ['h', 'room-peddle'],
+        ['t', 'buzz-corner-state'],
+        ['state', state],
+        ['at', '1000'],
+      ],
+    });
+
+    await gateway.handleRelayEvent(
+      attention('1', 'Nothing committed is ready for review.'),
+      PUBKEY_A,
+      reader,
+    );
+    await gateway.handleRelayEvent(
+      attention('2', 'Nothing committed is ready for review.'),
+      PUBKEY_A,
+      reader,
+    );
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
+
+    await gateway.handleRelayEvent(attention('3', 'Nothing ready to merge yet.'), PUBKEY_A, reader);
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
+    now += 10 * 60_000;
+    await gateway.handleRelayEvent(attention('4', 'Nothing ready to merge yet.'), PUBKEY_A, reader);
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(2);
+
+    await gateway.handleRelayEvent(
+      attention('5', 'Delivery failed. Open corner for details.', 'failure'),
+      PUBKEY_A,
+      reader,
+    );
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(3);
+
+    // An automatic retry's transient working lease is not a human resolution.
+    await gateway.handleRelayEvent(lifecycle('8', 'working'), PUBKEY_A, reader);
+    await gateway.handleRelayEvent(
+      attention('7', 'Delivery failed. Open corner for details.', 'failure'),
+      PUBKEY_A,
+      reader,
+    );
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(3);
+
+    await gateway.handleRelayEvent(lifecycle('9', 'idle'), PUBKEY_A, reader);
+    await gateway.handleRelayEvent(
+      attention('6', 'Nothing committed is ready for review.'),
+      PUBKEY_A,
+      reader,
+    );
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(4);
+  });
+
   it('coalesces retried merge-ready events for one exact corner target', async () => {
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);

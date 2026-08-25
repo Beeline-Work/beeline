@@ -125,7 +125,32 @@ export function projectDirtyStatus(
     );
     filtered = filtered.filter((entry) => entry !== `?? ${relativeLink}`);
   }
-  return filtered.filter((entry) => !isSeededToolchainLink(worktreePath, entry));
+  return filtered.filter(
+    (entry) =>
+      !isSeededToolchainLink(worktreePath, entry) &&
+      !isBodyOwnedProvisioningSentinel(worktreePath, entry),
+  );
+}
+
+/**
+ * Corner provisioning writes an empty marker after a successful root or mobile
+ * npm install. Ignore only those two exact untracked artifacts; neighboring
+ * files and every other untracked project path remain visible.
+ */
+function isBodyOwnedProvisioningSentinel(worktreePath: string, entry: string): boolean {
+  const path =
+    entry === '?? node_modules/.beeline-provisioned'
+      ? 'node_modules/.beeline-provisioned'
+      : entry === '?? apps/mobile/node_modules/.beeline-provisioned'
+        ? 'apps/mobile/node_modules/.beeline-provisioned'
+        : undefined;
+  if (!path) return false;
+  try {
+    const artifact = lstatSync(resolve(worktreePath, path));
+    return artifact.isFile() && artifact.size === 0;
+  } catch {
+    return false;
+  }
 }
 
 /**

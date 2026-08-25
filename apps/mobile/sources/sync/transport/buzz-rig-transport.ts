@@ -207,18 +207,18 @@ export class BuzzRigTransport implements RigTransport {
     return this.getClient();
   }
 
-  private async readAuthority(channelId: string): Promise<ParseAuthority> {
+  private async readAuthority(channelId: string, forceRefresh = false): Promise<ParseAuthority> {
     const client = await this.getClient();
     const cache = sharedReadCache(client);
     let cached = cache.authorities.get(channelId);
-    if (cached && Date.now() - cached.loadedAt < 15_000) {
+    if (!forceRefresh && cached && Date.now() - cached.loadedAt < 15_000) {
       return {
         ...cached.authority,
         knownMessages: Object.fromEntries(this.knownMessages),
       };
     }
     const activeBackfill = cache.backfills.get(channelId)?.[0];
-    if (activeBackfill) {
+    if (!forceRefresh && activeBackfill) {
       await activeBackfill.promise.catch(() => undefined);
       cached = cache.authorities.get(channelId);
       if (cached && Date.now() - cached.loadedAt < 15_000) {
@@ -239,6 +239,7 @@ export class BuzzRigTransport implements RigTransport {
       workspaceId,
       members.map((member) => member.pubkey),
       Boolean(communityId),
+      forceRefresh,
     );
     const admins = members
       .filter((member) => member.role === 'owner' || member.role === 'admin')
@@ -260,10 +261,12 @@ export class BuzzRigTransport implements RigTransport {
     workspaceId: string,
     memberPubkeys: readonly string[],
     hasWorkspace: boolean,
+    forceRefresh = false,
   ): Promise<Readonly<Record<string, IdentityRecord>>> {
     const cache = sharedReadCache(client);
     const cached = cache.workspaceIdentities.get(workspaceId);
     if (
+      !forceRefresh &&
       cached &&
       Date.now() - cached.loadedAt < READ_AUTHORITY_TTL_MS &&
       memberPubkeys.every((pubkey) => cached.identities[pubkey])
@@ -690,20 +693,58 @@ export class BuzzRigTransport implements RigTransport {
     let authority: ParseAuthority | undefined;
     const pending: NostrEvent[] = [];
     let stopped = false;
+    let flushing = false;
     let cancelScheduledFlush: (() => void) | undefined;
-    const flush = () => {
+    const refreshAttemptedAuthors = new Set<string>();
+    const flush = async () => {
       cancelScheduledFlush = undefined;
-      if (stopped || !authority || pending.length === 0) return;
+      if (stopped || flushing || !authority || pending.length === 0) return;
+      flushing = true;
       const batch = pending.splice(0);
-      for (const parsed of this.parseReadyEvents(authority, batch)) handler(parsed);
+      let parsed = this.parseReadyEvents(authority, batch);
+      const unresolvedAuthors = new Set(
+        parsed.flatMap((candidate) =>
+          candidate.type === 'read-model' &&
+          candidate.event.type === 'unknown' &&
+          candidate.event.reason === 'unresolved-identity' &&
+          candidate.event.authorPubkey &&
+          !refreshAttemptedAuthors.has(candidate.event.authorPubkey)
+            ? [candidate.event.authorPubkey]
+            : [],
+        ),
+      );
+      try {
+        try {
+          if (unresolvedAuthors.size > 0) {
+            for (const pubkey of unresolvedAuthors) refreshAttemptedAuthors.add(pubkey);
+            // A Room can gain a member after the human has already opened it.
+            // Re-read structural membership and Workspace identities only after
+            // the parser reports that exact stale-authority symptom, then reparse
+            // the intact batch. Raw tags remain parser-owned.
+            // The parser remains the authorization boundary: an unattached or
+            // out-of-Room signer is still quarantined after this refresh.
+            authority = await this.readAuthority(sessionId, true);
+            if (!stopped) parsed = this.parseReadyEvents(authority, batch);
+          }
+        } catch {
+          // Preserve the original diagnostic event. A failed authority refresh
+          // must not turn an unresolved signer into accepted conversation.
+        }
+        if (!stopped) {
+          for (const event of parsed) handler(event);
+        }
+      } finally {
+        flushing = false;
+        scheduleFlush();
+      }
     };
     const scheduleFlush = () => {
-      if (stopped || !authority || pending.length === 0 || cancelScheduledFlush) return;
+      if (stopped || flushing || !authority || pending.length === 0 || cancelScheduledFlush) return;
       if (typeof requestAnimationFrame === 'function') {
-        const frame = requestAnimationFrame(flush);
+        const frame = requestAnimationFrame(() => void flush());
         cancelScheduledFlush = () => cancelAnimationFrame(frame);
       } else {
-        const timer = setTimeout(flush, 0);
+        const timer = setTimeout(() => void flush(), 0);
         cancelScheduledFlush = () => clearTimeout(timer);
       }
     };

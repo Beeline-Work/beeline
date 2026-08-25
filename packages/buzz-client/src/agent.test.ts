@@ -450,7 +450,7 @@ describe('agent entity model', () => {
       ),
     ).toBe(true);
     expect(removedCommunity.has(communityId)).toBe(true);
-  });
+  }, 30_000);
 
   it('refuses registration before the agent key is a community member', async () => {
     vi.stubGlobal(

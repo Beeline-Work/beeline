@@ -158,6 +158,19 @@ describe('HTTP bridge NIP-98 auth', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('rejects when query fetches ignore abort and never settle', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const querying = queryEvents(opts, [{ kinds: [1] }], identity.publicKey);
+    const result = expect(querying).rejects.toThrow('queryEvents failed after 3 attempts');
+    await vi.runAllTimersAsync();
+    await result;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it('does not retry a non-transient queryEvents rejection', async () => {
     const fetchMock = vi.fn(async () => new Response('unauthorized', { status: 401 }));
     vi.stubGlobal('fetch', fetchMock);

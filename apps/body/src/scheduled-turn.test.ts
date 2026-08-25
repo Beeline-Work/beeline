@@ -422,6 +422,20 @@ describe('scheduled Room turn boundary', () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-directives-'));
     const agent = newIdentity('scheduled-directive-agent');
     const principal = newIdentity('scheduled-directive-principal');
+    const projection = (kind: number, tags: string[][]) =>
+      signEvent(
+        { pubkey: principal.publicKey, created_at: 1_900_000_000, kind, tags, content: '' },
+        principal.secretKey,
+      );
+    const members = projection(KIND_CHANNEL_MEMBERS, [
+      ['d', 'scheduled-room'],
+      ['p', principal.publicKey],
+      ['p', agent.publicKey],
+    ]);
+    const admins = projection(KIND_CHANNEL_ADMINS, [
+      ['d', 'scheduled-room'],
+      ['p', principal.publicKey, '', 'owner'],
+    ]);
     const body = new Body({ ...config(root), agentCommand: 'pi-acp' }, undefined, agent);
     vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
     vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
@@ -431,20 +445,18 @@ describe('scheduled Room turn boundary', () => {
     const factory = vi
       .spyOn(body as never, 'publishRootFactoryDirectives' as never)
       .mockResolvedValue(undefined as never);
-    const upload = vi
-      .spyOn(body as never, 'uploadAgentOutputs' as never)
-      .mockResolvedValue({
-        attachments: [
-          {
-            url: 'https://relay.test/media/report',
-            name: 'report.html',
-            mimeType: 'text/html',
-            size: 42,
-            sha256: 'a'.repeat(64),
-          },
-        ],
-        errors: [],
-      } as never);
+    const upload = vi.spyOn(body as never, 'uploadAgentOutputs' as never).mockResolvedValue({
+      attachments: [
+        {
+          url: 'https://relay.test/media/report',
+          name: 'report.html',
+          mimeType: 'text/html',
+          size: 42,
+          sha256: 'a'.repeat(64),
+        },
+      ],
+      errors: [],
+    } as never);
     const sessionPrompt = vi.fn(async () => ({
       stopReason: 'end_turn',
       updates: [],
@@ -461,7 +473,18 @@ describe('scheduled Room turn boundary', () => {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/query')) {
+          const filters = JSON.parse(String(init?.body)) as Array<{ kinds?: number[] }>;
+          const kinds = new Set(filters.flatMap((filter) => filter.kinds ?? []));
+          return new Response(
+            JSON.stringify([
+              ...(kinds.has(KIND_CHANNEL_MEMBERS) ? [members] : []),
+              ...(kinds.has(KIND_CHANNEL_ADMINS) ? [admins] : []),
+            ]),
+            { status: 200 },
+          );
+        }
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
@@ -512,9 +535,24 @@ describe('scheduled Room turn boundary', () => {
       expect(sessionPrompt).toHaveBeenCalledOnce();
       expect(corner).not.toHaveBeenCalled();
       expect(factory).not.toHaveBeenCalled();
-      expect(upload).toHaveBeenCalledOnce();
+      expect(upload).not.toHaveBeenCalled();
       expect(publishScheduledOutput).toHaveBeenCalledOnce();
-      expect(JSON.stringify(published)).toContain('https://relay.test/media/report');
+      expect(JSON.stringify(published)).not.toContain('https://relay.test/media/report');
+      const requests = published.flatMap((event) => {
+        const parsed = parsePermissionRequest(event);
+        return parsed ? [parsed] : [];
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]!.value).toMatchObject({
+        requesterAgentPubkey: agent.publicKey,
+        audience: 'owner',
+        scope: {
+          type: 'operation.execute',
+          tool: 'publish-scheduled-attachments',
+          risk: 'irreversible',
+        },
+        provenance: { immediateTurnEventId: queuedEvent.id, scheduleRunId: runId },
+      });
       expect(
         published.some((event) =>
           event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),

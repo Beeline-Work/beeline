@@ -125,7 +125,9 @@ export async function readScheduledTurnReceiptTail(
       },
     ]);
     if (page.length > maxEventsPerSchedule)
-      throw new Error(`scheduled receipt tail exceeds recovery bound for ${schedule.value.scheduleId}`);
+      throw new Error(
+        `scheduled receipt tail exceeds recovery bound for ${schedule.value.scheduleId}`,
+      );
     for (const event of page) all.set(event.id, event);
   }
   return [...all.values()];
@@ -180,8 +182,7 @@ async function authorizeCandidate(
   const facts = await dependencies.readFacts(parsed);
   if (facts.roomArchived === undefined)
     return { authorized: false, terminal: false, reason: 'room-metadata-unavailable' };
-  if (facts.roomArchived)
-    return { authorized: false, terminal: true, reason: 'room-archived' };
+  if (facts.roomArchived) return { authorized: false, terminal: true, reason: 'room-archived' };
   if (
     !facts.workspaceMemberPubkeys.includes(schedule.agentPubkey) ||
     !facts.roomMemberPubkeys.includes(schedule.agentPubkey)
@@ -233,19 +234,18 @@ export async function authorizeDaemonWorkSchedule(
     ) {
       return { authorized: false, terminal: true, reason: 'schedule-target-mismatch' };
     }
-    const candidates = (await dependencies.readCurrentEvents(parsed))
-      .flatMap((event) => {
-        const candidate = parseWorkSchedule(event);
-        return candidate &&
-          candidate.value.workspaceId === schedule.workspaceId &&
-          candidate.value.agentPubkey === schedule.agentPubkey &&
-          candidate.value.principalPubkey === schedule.principalPubkey &&
-          workScheduleKey(candidate.value) === workScheduleKey(schedule) &&
-          (candidate.event.pubkey === candidate.value.principalPubkey ||
-            candidate.event.pubkey === candidate.value.agentPubkey)
-          ? [candidate]
-          : [];
-      });
+    const candidates = (await dependencies.readCurrentEvents(parsed)).flatMap((event) => {
+      const candidate = parseWorkSchedule(event);
+      return candidate &&
+        candidate.value.workspaceId === schedule.workspaceId &&
+        candidate.value.agentPubkey === schedule.agentPubkey &&
+        candidate.value.principalPubkey === schedule.principalPubkey &&
+        workScheduleKey(candidate.value) === workScheduleKey(schedule) &&
+        (candidate.event.pubkey === candidate.value.principalPubkey ||
+          candidate.event.pubkey === candidate.value.agentPubkey)
+        ? [candidate]
+        : [];
+    });
     const current = [...candidates].sort(
       (left, right) =>
         right.value.revision - left.value.revision ||
@@ -462,7 +462,9 @@ export function createDaemonWorkCalendar(input: {
         return parsed && parsed.value.agentPubkey === identity.publicKey ? [parsed] : [];
       });
       const unique = [
-        ...new Map(schedules.map((schedule) => [workScheduleKey(schedule.value), schedule])).values(),
+        ...new Map(
+          schedules.map((schedule) => [workScheduleKey(schedule.value), schedule]),
+        ).values(),
       ];
       const outputFilters = unique.flatMap((schedule) => [
         {
@@ -510,7 +512,9 @@ export function createDaemonWorkCalendar(input: {
     authorize,
     validateArtifacts: async (artifacts) => {
       try {
-        const events = await rawEvents([{ ids: artifacts.map((artifact) => artifact.eventId), limit: artifacts.length + 1 }]);
+        const events = await rawEvents([
+          { ids: artifacts.map((artifact) => artifact.eventId), limit: artifacts.length + 1 },
+        ]);
         if (events.length > artifacts.length)
           return { authorized: false, terminal: true, reason: 'artifact-read-ambiguous' };
         return validateArtifactRevisionEvents(artifacts, events);

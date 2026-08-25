@@ -195,8 +195,7 @@ export interface WorkCalendarStore {
   reserveRun(
     reservation: CalendarRunReservation,
   ): Promise<
-    | { state: 'reserved' | 'existing'; record: CalendarRunRecord }
-    | { state: 'backpressure' }
+    { state: 'reserved' | 'existing'; record: CalendarRunRecord } | { state: 'backpressure' }
   >;
   stageReceipt(
     runId: string,
@@ -207,7 +206,12 @@ export interface WorkCalendarStore {
   pendingReceipts(): Promise<
     Array<{ runId: string; status: ScheduledTurnStatus; event: NostrEvent }>
   >;
-  stageOutput(key: string, event: NostrEvent, runId?: string, replace?: boolean): Promise<NostrEvent>;
+  stageOutput(
+    key: string,
+    event: NostrEvent,
+    runId?: string,
+    replace?: boolean,
+  ): Promise<NostrEvent>;
   pendingOutputs(): Promise<Array<{ key: string; event: NostrEvent }>>;
   markOutputPublished(key: string, eventId: string): Promise<void>;
   stageCompletion(
@@ -263,7 +267,9 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
         !parsed.runs ||
         typeof parsed.runs !== 'object' ||
         (parsed.outputs !== undefined &&
-          (!parsed.outputs || typeof parsed.outputs !== 'object' || Array.isArray(parsed.outputs))) ||
+          (!parsed.outputs ||
+            typeof parsed.outputs !== 'object' ||
+            Array.isArray(parsed.outputs))) ||
         (parsed.principals !== undefined &&
           (!parsed.principals ||
             typeof parsed.principals !== 'object' ||
@@ -292,8 +298,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
   async reserveRun(
     reservation: CalendarRunReservation,
   ): Promise<
-    | { state: 'reserved' | 'existing'; record: CalendarRunRecord }
-    | { state: 'backpressure' }
+    { state: 'reserved' | 'existing'; record: CalendarRunRecord } | { state: 'backpressure' }
   > {
     await this.load();
     const existing = this.data.runs[reservation.runId];
@@ -482,7 +487,8 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     const after = checkpoint.watermarkNominalAt ?? -1;
     const candidates = Object.values(this.data.runs)
       .filter(
-        (run) => run.scheduleId === scheduleId && run.revision === revision && run.nominalAt > after,
+        (run) =>
+          run.scheduleId === scheduleId && run.revision === revision && run.nominalAt > after,
       )
       .sort((left, right) => left.nominalAt - right.nominalAt);
     for (const run of candidates) {
@@ -1199,19 +1205,20 @@ export function parseWorkScheduleCheckpoint(
       (input.latestRunId !== undefined && !HEX_64.test(input.latestRunId.replace(/^wsr_/, ''))) ||
       (input.receiptCursorId !== undefined && !HEX_64.test(input.receiptCursorId)) ||
       (input.watermarkNominalAt !== undefined && !Number.isSafeInteger(input.watermarkNominalAt)) ||
-      (input.watermarkRunId !== undefined && !HEX_64.test(input.watermarkRunId.replace(/^wsr_/, ''))) ||
+      (input.watermarkRunId !== undefined &&
+        !HEX_64.test(input.watermarkRunId.replace(/^wsr_/, ''))) ||
       (input.watermarkRunStatus !== undefined &&
         !['complete', 'failed', 'skipped'].includes(input.watermarkRunStatus)) ||
-      ((input.watermarkNominalAt === undefined) !== (input.watermarkRunId === undefined)) ||
-      ((input.watermarkNominalAt === undefined) !== (input.watermarkRunStatus === undefined)) ||
+      (input.watermarkNominalAt === undefined) !== (input.watermarkRunId === undefined) ||
+      (input.watermarkNominalAt === undefined) !== (input.watermarkRunStatus === undefined) ||
       (input.watermarkNominalAt !== undefined &&
         input.watermarkRunId !==
           deterministicScheduleRunId(input.scheduleId, input.revision, input.watermarkNominalAt)) ||
       (input.latestRunStatus !== undefined &&
         !['queued', 'working', 'complete', 'failed', 'skipped'].includes(input.latestRunStatus)) ||
       (input.latestNominalAt !== undefined && !Number.isSafeInteger(input.latestNominalAt)) ||
-      ((input.latestNominalAt === undefined) !== (input.latestRunId === undefined)) ||
-      ((input.latestNominalAt === undefined) !== (input.latestRunStatus === undefined)) ||
+      (input.latestNominalAt === undefined) !== (input.latestRunId === undefined) ||
+      (input.latestNominalAt === undefined) !== (input.latestRunStatus === undefined) ||
       (input.latestNominalAt !== undefined &&
         input.latestRunId !==
           deterministicScheduleRunId(input.scheduleId, input.revision, input.latestNominalAt))
@@ -1284,7 +1291,8 @@ export function buildWorkScheduleAuthorityPauseCard(
         status: 'paused',
         reason,
         at,
-        message: 'Scheduled work paused because its authorizing principal lost required authority. A current owner/admin must publish a newer active revision to resume it.',
+        message:
+          'Scheduled work paused because its authorizing principal lost required authority. A current owner/admin must publish a newer active revision to resume it.',
       }),
     },
     identity.secretKey,
@@ -1669,12 +1677,24 @@ export class WorkCalendar {
 
   private deriveCheckpoint(
     schedule: WorkScheduleV1,
-    additional?: { event: NostrEvent; status: 'complete' | 'failed' | 'skipped'; runId: string; nominalAt: number },
+    additional?: {
+      event: NostrEvent;
+      status: 'complete' | 'failed' | 'skipped';
+      runId: string;
+      nominalAt: number;
+    },
   ): WorkScheduleCheckpointV1 {
-    const checkpoint = structuredClone(this.checkpointFor(schedule) ?? this.initialCheckpoint(schedule));
+    const checkpoint = structuredClone(
+      this.checkpointFor(schedule) ?? this.initialCheckpoint(schedule),
+    );
     const terminal = new Map<
       string,
-      { event: NostrEvent; status: 'complete' | 'failed' | 'skipped'; nominalAt: number; activatedAt?: number }
+      {
+        event: NostrEvent;
+        status: 'complete' | 'failed' | 'skipped';
+        nominalAt: number;
+        activatedAt?: number;
+      }
     >();
     for (const run of this.recordsFor(schedule)) {
       if (run.revision !== schedule.revision || !isTerminal(run.state)) continue;
@@ -1686,15 +1706,17 @@ export class WorkCalendar {
         nominalAt: run.nominalAt,
         ...(['complete', 'failed'].includes(run.state)
           ? {
-              activatedAt:
-                run.receipts.working?.event.created_at ?? event.created_at,
+              activatedAt: run.receipts.working?.event.created_at ?? event.created_at,
             }
           : {}),
       });
     }
     const working = new Map(
       this.receiptsFor(schedule)
-        .filter((receipt) => receipt.value.revision === schedule.revision && receipt.value.status === 'working')
+        .filter(
+          (receipt) =>
+            receipt.value.revision === schedule.revision && receipt.value.status === 'working',
+        )
         .map((receipt) => [receipt.value.runId, receipt.value.at]),
     );
     for (const receipt of this.receiptsFor(schedule)) {
@@ -1720,13 +1742,14 @@ export class WorkCalendar {
         nominalAt: additional.nominalAt,
         ...(['complete', 'failed'].includes(additional.status)
           ? {
-              activatedAt:
-                run?.receipts.working?.event.created_at ?? additional.event.created_at,
+              activatedAt: run?.receipts.working?.event.created_at ?? additional.event.created_at,
             }
           : {}),
       });
     }
-    for (const result of [...terminal.values()].sort((left, right) => left.nominalAt - right.nominalAt)) {
+    for (const result of [...terminal.values()].sort(
+      (left, right) => left.nominalAt - right.nominalAt,
+    )) {
       if (result.nominalAt <= (checkpoint.latestNominalAt ?? -1)) continue;
       if (result.activatedAt !== undefined) {
         checkpoint.runCount += 1;
@@ -1758,12 +1781,15 @@ export class WorkCalendar {
     for (const result of watermarkCandidates) {
       if (result.nominalAt <= (checkpoint.watermarkNominalAt ?? -1)) continue;
       const local = this.localRuns.find(
-        (run) => run.runId === deterministicScheduleRunId(schedule.scheduleId, schedule.revision, result.nominalAt),
+        (run) =>
+          run.runId ===
+          deterministicScheduleRunId(schedule.scheduleId, schedule.revision, result.nominalAt),
       );
       const published = local
         ? local.receipts[result.status]?.published === true
         : this.relayReceipts.some(
-            (receipt) => receipt.event.id === result.event.id && receipt.value.status === result.status,
+            (receipt) =>
+              receipt.event.id === result.event.id && receipt.value.status === result.status,
           );
       if (!published) break;
       checkpoint.watermarkNominalAt = result.nominalAt;
@@ -1803,12 +1829,21 @@ export class WorkCalendar {
     const outputs = [
       ...(previous && JSON.stringify(previous) === JSON.stringify(next)
         ? []
-        : [{ key: `checkpoint:${schedule.scheduleId}:${schedule.revision}:${next.receiptCursorAt}`, event }]),
+        : [
+            {
+              key: `checkpoint:${schedule.scheduleId}:${schedule.revision}:${next.receiptCursorAt}`,
+              event,
+            },
+          ]),
       ...(next.status === 'paused' && !hasPauseCard
         ? [
             {
               key: `pause:${schedule.scheduleId}:${schedule.revision}`,
-              event: buildWorkSchedulePauseCard(this.dependencies.identity, schedule, next.updatedAt),
+              event: buildWorkSchedulePauseCard(
+                this.dependencies.identity,
+                schedule,
+                next.updatedAt,
+              ),
             },
           ]
         : []),
@@ -1840,7 +1875,10 @@ export class WorkCalendar {
         uniqueTag(event, 'revision') === String(schedule.revision),
     );
     await this.dependencies.store.stageCheckpoint(checkpoint, [
-      { key: `authority-projection:${schedule.scheduleId}:${schedule.revision}`, event: projection },
+      {
+        key: `authority-projection:${schedule.scheduleId}:${schedule.revision}`,
+        event: projection,
+      },
       ...(hasCard
         ? []
         : [{ key: `authority-pause:${schedule.scheduleId}:${schedule.revision}`, event: card }]),
@@ -1915,9 +1953,7 @@ export class WorkCalendar {
         nominalAt: relayPending.value.nominalAt,
         wakeAt: now,
         action: relayPending.value.status === 'working' ? 'recover-unknown' : 'resume-relay-queued',
-        ...(relayPending.value.status === 'queued'
-          ? { relayQueuedEvent: relayPending.event }
-          : {}),
+        ...(relayPending.value.status === 'queued' ? { relayQueuedEvent: relayPending.event } : {}),
       };
     const failures = this.consecutiveFailures(schedule);
     if (failures >= schedule.maxConsecutiveFailures) return undefined;
@@ -2066,7 +2102,14 @@ export class WorkCalendar {
     const authority = await this.dependencies.authorize(entry.parsed);
     if (!authority.authorized) {
       if (this.isPrincipalAuthorityLapse(authority)) {
-        await this.finish(schedule, runId, entry.nominalAt, 'skipped', authority.reason, authority.reason);
+        await this.finish(
+          schedule,
+          runId,
+          entry.nominalAt,
+          'skipped',
+          authority.reason,
+          authority.reason,
+        );
       } else if (authority.terminal)
         await this.finish(schedule, runId, entry.nominalAt, 'skipped', authority.reason);
       else
@@ -2136,12 +2179,7 @@ export class WorkCalendar {
           if (currentBudgetReason) {
             throw new ScheduleActivationRefusedError(true, currentBudgetReason);
           }
-          const working = await this.publishReceipt(
-            schedule,
-            runId,
-            entry.nominalAt,
-            'working',
-          );
+          const working = await this.publishReceipt(schedule, runId, entry.nominalAt, 'working');
           if (!working) throw new WorkingReceiptPendingError('working-receipt-publish-pending');
           activationChecked = true;
         },
@@ -2173,9 +2211,7 @@ export class WorkCalendar {
           entry.nominalAt,
           'skipped',
           error.reason,
-          this.requiresRevisionPause(error.reason)
-            ? error.reason
-            : undefined,
+          this.requiresRevisionPause(error.reason) ? error.reason : undefined,
         );
         return;
       }
@@ -2216,8 +2252,8 @@ export class WorkCalendar {
     const daily =
       (checkpoint.budgetDay === day ? checkpoint.dailyReservedTokens : 0) +
       [...modelRuns.values()]
-      .filter((run) => dayUtc(run.at) === day)
-      .reduce((sum, run) => sum + run.reservedTokens, 0);
+        .filter((run) => dayUtc(run.at) === day)
+        .reduce((sum, run) => sum + run.reservedTokens, 0);
     return daily + schedule.perRunReservedTokens > schedule.dailyReservedTokens
       ? 'daily-budget-exhausted'
       : undefined;
@@ -2303,7 +2339,13 @@ export class WorkCalendar {
         ),
       });
     }
-    await this.dependencies.store.stageCompletion(runId, status, terminalEvent, outputs, checkpoint);
+    await this.dependencies.store.stageCompletion(
+      runId,
+      status,
+      terminalEvent,
+      outputs,
+      checkpoint,
+    );
     this.checkpointsByRevision.set(this.checkpointKey(schedule), checkpoint);
     this.retryAt.delete(runId);
     this.localRuns = await this.dependencies.store.runs();
@@ -2319,7 +2361,8 @@ export class WorkCalendar {
       ? buildWorkScheduleProjection(this.dependencies.identity, storedCheckpoint)
       : projection;
     await this.publishOutput(projectionKey, currentProjection, runId, true);
-    for (const output of outputs.slice(1)) await this.publishOutput(output.key, output.event, runId);
+    for (const output of outputs.slice(1))
+      await this.publishOutput(output.key, output.event, runId);
   }
 
   private buildReceipt(
@@ -2390,8 +2433,7 @@ export class WorkCalendar {
       );
       if (!match) continue;
       const checkpoint = checkpoints.find(
-        (candidate) =>
-          candidate.scheduleId === match[1] && candidate.revision === Number(match[2]),
+        (candidate) => candidate.scheduleId === match[1] && candidate.revision === Number(match[2]),
       );
       if (!checkpoint) continue;
       await this.dependencies.store.stageOutput(

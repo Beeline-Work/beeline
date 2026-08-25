@@ -3350,7 +3350,11 @@ export class Body {
             session,
           );
           session.unsubscribeCommands?.();
-          session.unsubscribeCommands = this.attachAgentCommandPublisher(client, input.communityId);
+          session.unsubscribeCommands = this.attachAgentCommandPublisher(
+            client,
+            input.communityId,
+            created.sessionId,
+          );
         }
         return created.sessionId;
       },
@@ -3442,8 +3446,22 @@ export class Body {
    * both. Best-effort and display-only: never blocks session startup, never
    * carries authority. An empty list is not published — record absence IS the
    * "does not advertise" signal. Mechanics: `agent-commands-publish.ts`.
+   *
+   * `sessionId` closes the session-start race: adapters push their catalog
+   * immediately after responding to `session/new`, while this activation path
+   * still has awaited durable-state writes and relay reads ahead of it — those
+   * updates fire with zero listeners attached yet and would be lost forever,
+   * leaving the palette's source record absent on the relay (which the app can
+   * only render as "does not advertise commands"). AcpClient records every
+   * update regardless of listeners, so attach seeds the debounced publisher
+   * from that capture; a list already published in this process still costs
+   * no second write.
    */
-  private attachAgentCommandPublisher(client: AcpClient, communityId: string): () => void {
+  private attachAgentCommandPublisher(
+    client: AcpClient,
+    communityId: string,
+    sessionId: string,
+  ): () => void {
     const publisher = createAgentCommandPublisher({
       publish: async (commands) => {
         await publishAgentCommands(this.agentClientContext(), communityId, commands);
@@ -3455,6 +3473,10 @@ export class Body {
       publisher.onCommands(commands);
     };
     client.on('commands', onCommands);
+    const capturedBeforeAttach = client.sessionCommandsFor(sessionId);
+    if (capturedBeforeAttach.length) {
+      publisher.onCommands(capturedBeforeAttach);
+    }
     return () => {
       client.off('commands', onCommands);
       publisher.dispose();

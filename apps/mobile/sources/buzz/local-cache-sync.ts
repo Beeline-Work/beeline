@@ -125,10 +125,14 @@ export function revalidateCachedMessages(
   transport: BuzzRigTransport,
   viewerPubkey: string,
   channelId: string,
+  options: { force?: boolean } = {},
 ): Promise<MessageSyncResult> {
   const key = `${viewerPubkey}:${channelId}`;
   const existing = inFlightRevalidations.get(key);
-  if (existing) return existing;
+  // A user-requested Retry must not join the same promise that already left
+  // the Room in its terminal error state. The older read may still settle;
+  // performMessageRevalidation's pre-commit cache re-read makes that safe.
+  if (existing && !options.force) return existing;
   const revalidation = performMessageRevalidation(transport, viewerPubkey, channelId).finally(
     () => {
       if (inFlightRevalidations.get(key) === revalidation) inFlightRevalidations.delete(key);

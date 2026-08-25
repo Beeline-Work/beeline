@@ -245,6 +245,7 @@ const COMPOSER_MAX_HEIGHT = 120;
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
 const OLDER_MESSAGES_PAGE_SIZE = 30;
+const CHAT_OPEN_HYDRATION_TIMEOUT_MS = 8_000;
 // This deliberately remains the sole color seam for the human merge decision.
 // If the product ever approves a non-monochrome exception, change only this value.
 const MERGE_APPROVAL_ACCENT = groknight.accent;
@@ -489,6 +490,9 @@ export default function BuzzChat() {
   const sendInFlightRef = useRef(false);
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
+  const [transcriptHydrationAttempt, setTranscriptHydrationAttempt] = useState(0);
+  const [transcriptHydrationFailed, setTranscriptHydrationFailed] = useState(false);
+  const [transcriptHydrationError, setTranscriptHydrationError] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
   const [replyTarget, setReplyTarget] = useState<MessageReplyTarget | null>(null);
   const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT);
@@ -662,6 +666,16 @@ export default function BuzzChat() {
         : [],
     [cacheViewerPubkey, cachedSnapshot, decodedId],
   );
+  useEffect(() => {
+    if (cachedSnapshot) return;
+    const timer = setTimeout(() => {
+      setTranscriptHydrationError(
+        `Conversation loading timed out after ${CHAT_OPEN_HYDRATION_TIMEOUT_MS / 1_000} seconds.`,
+      );
+      setTranscriptHydrationFailed(true);
+    }, CHAT_OPEN_HYDRATION_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [cachedSnapshot, decodedId, transcriptHydrationAttempt]);
   // Older pages loaded on demand via "scroll up" pagination. Kept out of the
   // shared cache (which bounds to the recent tail) and merged in only here.
   const [olderMessages, setOlderMessages] = useState<ChatDisplayMessage[]>([]);
@@ -1608,6 +1622,8 @@ export default function BuzzChat() {
     };
 
     (async () => {
+      setTranscriptHydrationFailed(false);
+      setTranscriptHydrationError(null);
       try {
         // Identity and relay URL are local storage reads, never network.
         const identity = await loadBuzzIdentity();
@@ -1899,7 +1915,10 @@ export default function BuzzChat() {
             client,
             transport: t,
             installLiveDelivery,
-            revalidateTranscript: () => revalidateCachedMessages(t, identity.publicKey, decodedId),
+            revalidateTranscript: () =>
+              revalidateCachedMessages(t, identity.publicKey, decodedId, {
+                force: transcriptHydrationAttempt > 0,
+              }),
             isCancelled,
             afterInteractions: defer,
             viewerActiveCommunityId: () => loadActiveCommunityId(identity.publicKey),
@@ -1954,6 +1973,8 @@ export default function BuzzChat() {
             // revalidateCachedMessages already wrote archive/merge state into
             // the cache; only the screen's own state is left to publish.
             onTranscriptSynced: (sync) => {
+              setTranscriptHydrationFailed(false);
+              setTranscriptHydrationError(null);
               if (sync.mergeTarget !== undefined) setMergeTarget(sync.mergeTarget);
               if (sync.previewUrl !== undefined) setPreviewUrl(sync.previewUrl);
               if (sync.archiveChannel) setIsArchived(true);
@@ -1979,13 +2000,22 @@ export default function BuzzChat() {
               if (briefing.task) setCornerTask(briefing.task);
               if (briefing.context.length) setRoomContext(briefing.context);
             },
-            onStepFailed: (step, error) =>
-              console.warn(`BuzzChat: ${step} failed for ${decodedId}:`, error),
+            onStepFailed: (step, error) => {
+              console.warn(`BuzzChat: ${step} failed for ${decodedId}:`, error);
+              if (step === 'transcript') {
+                setTranscriptHydrationError(`Could not load this conversation. ${String(error)}`);
+                setTranscriptHydrationFailed(true);
+              }
+            },
           },
           '',
         );
       } catch (err) {
         console.warn('Failed to init BuzzChat:', err);
+        if (!cancelled) {
+          setTranscriptHydrationError(`Could not open this ${ROOM_LABEL}. ${String(err)}`);
+          setTranscriptHydrationFailed(true);
+        }
       }
     })();
 
@@ -1998,7 +2028,7 @@ export default function BuzzChat() {
       if (unsubscribeDraft) unsubscribeDraft();
       if (unsubscribeCornerState) unsubscribeCornerState();
     };
-  }, [decodedId, notificationResponseId, applyAgentPresence]);
+  }, [decodedId, notificationResponseId, applyAgentPresence, transcriptHydrationAttempt]);
 
   /**
    * Who said an inherited Room line. Room context is quoted *from a Room*, so
@@ -3432,6 +3462,40 @@ export default function BuzzChat() {
   }
 
   if (channelCache?.snapshot === undefined && initialChannelCache?.snapshot === undefined) {
+    if (transcriptHydrationFailed) {
+      return (
+        <View style={[styles.container, { paddingTop: insets.top }]} testID="room-hydration-error">
+          <View style={styles.hydrationErrorHeader}>
+            <TouchableOpacity
+              accessibilityLabel="Back to Rooms"
+              onPress={handleBack}
+              style={styles.backButton}
+              testID="chat-back"
+            >
+              <Text style={styles.backText}>‹</Text>
+            </TouchableOpacity>
+            <View style={styles.headerCenter}>
+              <Text numberOfLines={1} style={styles.channelName}>
+                {displayHeaderTitle ?? routeChannelTitle ?? ROOM_LABEL}
+              </Text>
+              <HeaderMetaCaps>HISTORY UNAVAILABLE</HeaderMetaCaps>
+            </View>
+          </View>
+          <View accessibilityRole="alert" style={styles.hydrationErrorBody}>
+            <Text style={styles.errorLabel}>! ERROR</Text>
+            <Text style={styles.hydrationErrorText}>
+              {transcriptHydrationError ?? 'Could not load this conversation.'}
+            </Text>
+            <MonoButton
+              label="RETRY"
+              onPress={() => setTranscriptHydrationAttempt((attempt) => attempt + 1)}
+              style={styles.hydrationErrorRetry}
+              variant="secondary"
+            />
+          </View>
+        </View>
+      );
+    }
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />
@@ -4812,6 +4876,37 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    hydrationErrorHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      minHeight: 60,
+      paddingHorizontal: 12,
+      paddingBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    hydrationErrorBody: {
+      flex: 1,
+      alignItems: 'flex-start',
+      justifyContent: 'center',
+      paddingHorizontal: 28,
+    },
+    errorLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.accent,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.8,
+    },
+    hydrationErrorText: {
+      ...Typography.default(),
+      marginTop: 10,
+      color: groknight.textSecondary,
+      fontSize: 16,
+      lineHeight: 23,
+    },
+    hydrationErrorRetry: { marginTop: 20 },
     loadingText: {
       ...Typography.mono('semiBold'),
       marginTop: 12,

@@ -707,7 +707,7 @@ export class BuzzRigTransport implements RigTransport {
     let stopped = false;
     let flushing = false;
     let cancelScheduledFlush: (() => void) | undefined;
-    const authorityRefreshAttemptedAt = new Map<string, number>();
+    let authorityRefreshAttemptedAt = Number.NEGATIVE_INFINITY;
     const flush = async () => {
       cancelScheduledFlush = undefined;
       if (stopped || flushing || !authority || pending.length === 0) return;
@@ -720,10 +720,7 @@ export class BuzzRigTransport implements RigTransport {
           candidate.event.type === 'unknown' &&
           candidate.event.reason === 'unresolved-identity' &&
           candidate.event.authorPubkey &&
-          Date.now() -
-            (authorityRefreshAttemptedAt.get(candidate.event.authorPubkey) ??
-              Number.NEGATIVE_INFINITY) >=
-            READ_AUTHORITY_TTL_MS
+          Date.now() - authorityRefreshAttemptedAt >= READ_AUTHORITY_TTL_MS
             ? [candidate.event.authorPubkey]
             : [],
         ),
@@ -731,10 +728,7 @@ export class BuzzRigTransport implements RigTransport {
       try {
         try {
           if (unresolvedAuthors.size > 0) {
-            const attemptedAt = Date.now();
-            for (const pubkey of unresolvedAuthors) {
-              authorityRefreshAttemptedAt.set(pubkey, attemptedAt);
-            }
+            authorityRefreshAttemptedAt = Date.now();
             // A Room can gain a member after the human has already opened it.
             // Re-read structural membership and Workspace identities only after
             // the parser reports that exact stale-authority symptom, then reparse

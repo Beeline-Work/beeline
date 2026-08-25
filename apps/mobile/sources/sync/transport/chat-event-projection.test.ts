@@ -10,7 +10,13 @@ import {
   type SessionUpdate,
 } from '@beeline/buzz-client';
 import { isAgentTurnActive } from '@/buzz/agent-presence';
-import { latestAgentTurns, projectReadEvent, transcriptMessages } from './buzz-event-projection';
+import {
+  latestAgentTurns,
+  projectCornerTranscript,
+  projectReadEvent,
+  transcriptMessages,
+  type ChatDisplayMessage,
+} from './buzz-event-projection';
 
 const ROOM = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const HUMAN = '11'.repeat(32);
@@ -299,5 +305,213 @@ describe('typed mobile read-model projection', () => {
       { ...turn('working', 2), eventId: 'turn-working-replayed' },
     ]);
     expect(latestAgentTurns(replayedOldWorking, ROOM)[0]).toMatchObject({ status: 'complete' });
+  });
+
+  it('keeps a Corner live draft/thought lane while suppressing its redundant stall notice', () => {
+    const liveSnapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({ workspaceId: 'workspace', identities }),
+      [
+        {
+          type: 'session-update',
+          eventId: 'turn-working',
+          authorPubkey: AGENT,
+          createdAt: 8,
+          sourceKind: 9,
+          signature: 'verified',
+          scope: 'channel',
+          channelId: ROOM,
+          workspaceId: 'workspace',
+          sessionId: 'session-1',
+          update: {
+            kind: 'turn',
+            agentPubkey: AGENT,
+            requestId: 'request-1',
+            status: 'working',
+          },
+        } as SessionUpdate,
+        {
+          type: 'session-update',
+          eventId: 'thought-live',
+          authorPubkey: AGENT,
+          createdAt: 9,
+          sourceKind: 30078,
+          signature: 'verified',
+          scope: 'channel',
+          channelId: ROOM,
+          workspaceId: 'workspace',
+          sessionId: 'session-1',
+          update: {
+            kind: 'thought',
+            agentPubkey: AGENT,
+            text: 'Tracing the Corner flow',
+            closed: false,
+          },
+        } as SessionUpdate,
+        {
+          type: 'session-update',
+          eventId: 'draft-live',
+          authorPubkey: AGENT,
+          createdAt: 10,
+          sourceKind: 30078,
+          signature: 'verified',
+          scope: 'channel',
+          channelId: ROOM,
+          workspaceId: 'workspace',
+          sessionId: 'session-1',
+          update: {
+            kind: 'draft',
+            agentPubkey: AGENT,
+            requestId: 'request-1',
+            text: 'The answer is arriving.',
+            closed: false,
+          },
+        } as SessionUpdate,
+      ],
+    );
+    const [liveLane] = transcriptMessages(liveSnapshot, ROOM, HUMAN);
+    expect(liveLane).toMatchObject({
+      isAgentLiveTurn: true,
+      agentThought: 'Tracing the Corner flow',
+      agentMessageDraft: 'The answer is arriving.',
+    });
+    const stall: ChatDisplayMessage = {
+      id: 'stall-1',
+      text: 'Still working on this — my coding backend is taking longer than usual to respond.',
+      isUser: false,
+      timestamp: 11,
+      pubkey: AGENT,
+      isAgentAuthor: true,
+    };
+    const historicalStall = { ...stall, id: 'historical-stall', timestamp: 1 };
+    const humanCopy: ChatDisplayMessage = {
+      id: 'human-copy',
+      text: stall.text,
+      isUser: true,
+      timestamp: 2,
+      pubkey: HUMAN,
+    };
+
+    expect(
+      projectCornerTranscript([historicalStall, humanCopy, liveLane, stall], {
+        liveAgentPubkeys: new Set([AGENT]),
+      }),
+    ).toEqual([historicalStall, humanCopy, liveLane]);
+    expect(projectCornerTranscript([stall], { liveAgentPubkeys: new Set() })).toEqual([stall]);
+  });
+
+  it('suppresses a trailing stall from a bare working receipt without hiding prior history', () => {
+    const stall = (id: string, timestamp: number): ChatDisplayMessage => ({
+      id,
+      text: 'Still working on this — my coding backend is taking longer than usual to respond.',
+      isUser: false,
+      timestamp,
+      pubkey: AGENT,
+      isAgentAuthor: true,
+    });
+    const boundary: ChatDisplayMessage = {
+      id: 'new-request',
+      text: 'Try the Corner again',
+      isUser: true,
+      timestamp: 2,
+      pubkey: HUMAN,
+    };
+
+    expect(
+      projectCornerTranscript(
+        [
+          stall('historical-stall', 1),
+          boundary,
+          stall('current-stall-1', 3),
+          stall('current-stall-2', 4),
+        ],
+        { liveAgentPubkeys: new Set([AGENT]) },
+      ).map(({ id }) => id),
+    ).toEqual(['historical-stall', 'new-request']);
+  });
+
+  it('never lets another agent or an archived Corner hide a stall notice', () => {
+    const stall: ChatDisplayMessage = {
+      id: 'agent-stall',
+      text: 'Still working on this — my coding backend is taking longer than usual to respond.',
+      isUser: false,
+      timestamp: 1,
+      pubkey: AGENT,
+      isAgentAuthor: true,
+    };
+
+    expect(
+      projectCornerTranscript([stall], { liveAgentPubkeys: new Set(['33'.repeat(32)]) }),
+    ).toEqual([stall]);
+    expect(projectCornerTranscript([stall], { liveAgentPubkeys: new Set() })).toEqual([stall]);
+  });
+
+  it('transition-dedupes consecutive identical merge-not-ready cards only', () => {
+    const card = (id: string, text: string, timestamp: number): ChatDisplayMessage => {
+      const projected = projectReadEvent(
+        {
+          type: 'control',
+          eventId: id,
+          authorPubkey: AGENT,
+          createdAt: timestamp,
+          sourceKind: 9,
+          signature: 'verified',
+          scope: 'channel',
+          channelId: ROOM,
+          workspaceId: 'workspace',
+          visibility: 'card',
+          payload: { kind: 'merge', action: 'not-ready', text },
+        } as Control,
+        HUMAN,
+      ).message;
+      expect(projected?.mergeNotReadyTransition).toBe(text);
+      return projected!;
+    };
+    const human: ChatDisplayMessage = {
+      id: 'human-transition',
+      text: 'try again',
+      isUser: true,
+      timestamp: 5,
+      pubkey: HUMAN,
+    };
+    const projected = projectCornerTranscript(
+      [
+        card('same-1', 'Nothing ready to merge yet. No reviewed content.', 1),
+        card('same-2', 'Nothing ready to merge yet. No reviewed content.', 2),
+        card('changed-1', 'Nothing ready to merge yet. Worktree is dirty.', 3),
+        card('changed-2', 'Nothing ready to merge yet. Worktree is dirty.', 4),
+        human,
+        card('same-after-transition', 'Nothing ready to merge yet. No reviewed content.', 6),
+      ],
+      { liveAgentPubkeys: new Set() },
+    );
+
+    expect(projected.map(({ id }) => id)).toEqual([
+      'same-2',
+      'changed-2',
+      'human-transition',
+      'same-after-transition',
+    ]);
+  });
+
+  it('keeps the newest duplicate stable when an older transcript page is revealed', () => {
+    const card = (id: string, timestamp: number): ChatDisplayMessage => ({
+      id,
+      text: 'Nothing ready to merge yet. No reviewed content.',
+      isUser: false,
+      timestamp,
+      pubkey: AGENT,
+      mergeNotReadyTransition: 'Nothing ready to merge yet. No reviewed content.',
+    });
+    const older = card('older-publication', 1);
+    const visible = card('visible-publication', 2);
+
+    expect(
+      projectCornerTranscript([visible], { liveAgentPubkeys: new Set() }).map(({ id }) => id),
+    ).toEqual(['visible-publication']);
+    expect(
+      projectCornerTranscript([older, visible], { liveAgentPubkeys: new Set() }).map(
+        ({ id }) => id,
+      ),
+    ).toEqual(['visible-publication']);
   });
 });

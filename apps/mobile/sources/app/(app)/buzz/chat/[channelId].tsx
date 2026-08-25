@@ -59,6 +59,7 @@ import {
 } from '@beeline/buzz-client';
 import {
   latestAgentTurns,
+  projectCornerTranscript,
   projectReadEvent,
   transcriptMessages,
   mergeDisplayPages,
@@ -97,6 +98,7 @@ import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
+import { selectTurnProgressAgentPubkey } from '@/buzz/room-indicators';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 import {
   activeMentionAtCursor,
@@ -768,7 +770,7 @@ export default function BuzzChat() {
   }, [cachedMessages, olderMessages, optimisticMessages]);
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
-  const messages = useMemo(
+  const unprojectedMessages = useMemo(
     () => combinedMessages.slice(-visibleMessageCount),
     [combinedMessages, visibleMessageCount],
   );
@@ -1039,6 +1041,37 @@ export default function BuzzChat() {
     mentionSuggestions.matches.length > 0,
   );
   const isCorner = Boolean(parentChannelId);
+  // Turn receipts are channel-local for Rooms and Corners alike. Derive them
+  // before final transcript presentation so a bare signed WORKING receipt can
+  // drive both the thinking line and Corner stall suppression during the
+  // silent window before the first draft/thought/tool event.
+  const agentTurnMarkers = useMemo(
+    () => (cachedSnapshot ? latestAgentTurns(cachedSnapshot, decodedId) : []),
+    [cachedSnapshot, decodedId],
+  );
+  const activeAgentTurn = useMemo(
+    () =>
+      agentTurnMarkers.find((turn) =>
+        isAgentTurnActive(
+          turn,
+          agentPresences[turn.agentPubkey],
+          presenceNow,
+          presenceReconnectGrace[turn.agentPubkey],
+        ),
+      ),
+    [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
+  );
+  const messages = useMemo(() => {
+    if (!isCorner) return unprojectedMessages;
+    const liveAgentPubkeys = new Set<string>();
+    if (!isArchived) {
+      if (activeAgentTurn?.agentPubkey) liveAgentPubkeys.add(activeAgentTurn.agentPubkey);
+      for (const message of unprojectedMessages) {
+        if (message.isAgentLiveTurn && message.pubkey) liveAgentPubkeys.add(message.pubkey);
+      }
+    }
+    return projectCornerTranscript(unprojectedMessages, { liveAgentPubkeys });
+  }, [activeAgentTurn, isArchived, isCorner, unprojectedMessages]);
   const isDirectMessage = Boolean(directMessage);
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
@@ -1419,27 +1452,6 @@ export default function BuzzChat() {
       }),
     [displayedCornerStatus, isArchived, mergeTarget, mergeNotReadyReason, messages],
   );
-  // The daemon's own `#t=agent-turn` lifecycle, derived straight from the
-  // normalized snapshot journal — one marker per agent, newest first. This is
-  // what lights the Room's thinking indicator during the silent window
-  // between the daemon's WORKING receipt and the first streamed draft, when
-  // the transcript's live activity lane does not exist yet.
-  const agentTurnMarkers = useMemo(
-    () => (cachedSnapshot ? latestAgentTurns(cachedSnapshot, decodedId) : []),
-    [cachedSnapshot, decodedId],
-  );
-  const activeAgentTurn = useMemo(
-    () =>
-      agentTurnMarkers.find((turn) =>
-        isAgentTurnActive(
-          turn,
-          agentPresences[turn.agentPubkey],
-          presenceNow,
-          presenceReconnectGrace[turn.agentPubkey],
-        ),
-      ),
-    [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
-  );
   /**
    * The pinned corner line's whole state, resolved in one place so the words it
    * shows and the corner a tap on it opens can never disagree.
@@ -1527,31 +1539,22 @@ export default function BuzzChat() {
    * nothing else — no corner reaches it, exactly as no turn reaches the corner
    * line above.
    *
-   * A Corner uses the same progress line while its canonical WORKING lease is
-   * fresh. Drafts and ACP turns cannot light it independently.
+   * A Corner uses the same signed turn/live-lane proof as a Room. Its separate
+   * canonical Corner lease still owns the pinned Corner bar, but cannot hide a
+   * channel-local reply that is visibly streaming now.
    */
   const turnProgressLabel = useMemo(() => {
-    if (!isCorner && agentsOffline) return null;
-    if (isCorner) {
-      if (sessionState !== 'working') return null;
-      return `${cornerAgentDisplay?.name ?? 'agent'} thinking…`;
-    }
     const liveTurn = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
-    const pubkey = liveTurn?.pubkey ?? activeAgentTurn?.agentPubkey;
+    const pubkey = selectTurnProgressAgentPubkey({
+      isCorner,
+      agentsOffline,
+      ...(liveTurn?.pubkey ? { liveTurnPubkey: liveTurn.pubkey } : {}),
+      ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
+    });
     if (!pubkey) return null;
-    const subject = pubkey
-      ? resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name
-      : 'agent';
+    const subject = resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name;
     return `${subject} thinking…`;
-  }, [
-    activeAgentTurn,
-    agentByPubkey,
-    agentsOffline,
-    cornerAgentDisplay,
-    isCorner,
-    sessionState,
-    visibleMessages,
-  ]);
+  }, [activeAgentTurn, agentByPubkey, agentsOffline, isCorner, visibleMessages]);
 
   const activeActivityId = useMemo(() => {
     const latest = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);

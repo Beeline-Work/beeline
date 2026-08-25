@@ -29,10 +29,7 @@ interface RecipientCursor {
 interface StandingAttention {
   pubkey: string;
   sourceId: string;
-  kind: string;
   reason: string;
-  signature: string;
-  attemptedAt: number;
 }
 
 interface DeliveryStateFile {
@@ -47,10 +44,7 @@ export interface AttentionAttempt {
   eventCreatedAt: number;
   pubkey: string;
   sourceId: string;
-  kind: string;
   reason: string;
-  signature: string;
-  minIntervalMs: number;
 }
 
 /**
@@ -114,10 +108,7 @@ export class DeliveryState {
         if (
           PUBKEY_RE.test(attention.pubkey) &&
           attention.sourceId &&
-          attention.kind &&
-          typeof attention.reason === 'string' &&
-          attention.signature &&
-          Number.isSafeInteger(attention.attemptedAt)
+          typeof attention.reason === 'string'
         ) {
           state.attentions.set(state.attentionKey(attention), attention);
         }
@@ -170,8 +161,8 @@ export class DeliveryState {
 
   /**
    * Atomically claims both a concrete relay event and its semantic attention
-   * episode. Identical copy remains quiet until lifecycle resolution; changed
-   * copy for the same source/reason is capped by `minIntervalMs`.
+   * episode. The first attempt permanently spends the episode until an
+   * explicit lifecycle resolution clears it, regardless of copy or delivery.
    */
   async reserveAttentionAttempt(attempt: AttentionAttempt): Promise<boolean> {
     if (
@@ -184,11 +175,7 @@ export class DeliveryState {
     const key = this.attentionKey(attempt);
     const standing = this.attentions.get(key);
     const now = this.now();
-    const eligible =
-      !standing ||
-      (standing.signature !== attempt.signature &&
-        now - standing.attemptedAt >= attempt.minIntervalMs);
-    const previousAttention = standing;
+    const eligible = !standing;
     const recipients = this.events.get(attempt.eventId) ?? new Map<string, DeliveryAttempt>();
     recipients.set(attempt.pubkey, {
       pubkey: attempt.pubkey,
@@ -201,10 +188,7 @@ export class DeliveryState {
       this.attentions.set(key, {
         pubkey: attempt.pubkey,
         sourceId: attempt.sourceId,
-        kind: attempt.kind,
         reason: attempt.reason,
-        signature: attempt.signature,
-        attemptedAt: now,
       });
     }
 
@@ -218,8 +202,7 @@ export class DeliveryState {
         this.eventCreatedAt.delete(attempt.eventId);
       }
       if (eligible) {
-        if (previousAttention) this.attentions.set(key, previousAttention);
-        else this.attentions.delete(key);
+        this.attentions.delete(key);
       }
       throw error;
     }
@@ -298,9 +281,9 @@ export class DeliveryState {
   }
 
   private attentionKey(
-    attention: Pick<StandingAttention, 'pubkey' | 'sourceId' | 'kind' | 'reason'>,
+    attention: Pick<StandingAttention, 'pubkey' | 'sourceId' | 'reason'>,
   ): string {
-    return [attention.pubkey, attention.sourceId, attention.kind, attention.reason].join('\u0000');
+    return [attention.pubkey, attention.sourceId, attention.reason].join('\u0000');
   }
 
   private async persist(): Promise<void> {

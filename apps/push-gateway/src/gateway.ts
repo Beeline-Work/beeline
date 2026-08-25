@@ -22,7 +22,6 @@ const PERMANENT_TOKEN_ERRORS = new Set([
   'messaging/invalid-registration-token',
   'messaging/registration-token-not-registered',
 ]);
-const CORNER_ATTENTION_INTERVAL_MS = 10 * 60_000;
 
 export type { RelayEventReader } from './metadata.js';
 
@@ -81,12 +80,6 @@ function deliveryKey(event: NostrEvent, type: string): string {
 
 function tagValue(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
-}
-
-function attentionSignature(plan: PushNotificationPlan): string {
-  return createHash('sha256')
-    .update([plan.title.trim(), plan.body.trim()].join('\u0000'))
-    .digest('hex');
 }
 
 /**
@@ -288,14 +281,11 @@ export class PushGateway {
               eventCreatedAt: event.created_at,
               pubkey: recipientPubkey,
               sourceId: plan.data.cornerId ?? plan.channelId,
-              kind: notificationType,
               reason:
                 tagValue(event, 'reason') ??
                 tagValue(event, 'delivery') ??
                 tagValue(event, 'status') ??
                 'needs-attention',
-              signature: attentionSignature(plan),
-              minIntervalMs: CORNER_ATTENTION_INTERVAL_MS,
             })
           : await this.deliveryState.reserveAttempt(dedupeKey, event.created_at, recipientPubkey);
     } catch (error) {

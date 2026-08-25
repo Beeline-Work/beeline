@@ -182,15 +182,18 @@ describe('RegisteredEventPoller', () => {
 });
 
 describe('PushGateway', () => {
-  it('deduplicates and rate-limits standing corner attention until lifecycle resolution', async () => {
+  it('attempts a standing attention episode once despite changed copy and delivery failure', async () => {
     let now = 1_000_000;
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);
-    const sendEachForMulticast = vi.fn(async () => ({
-      successCount: 1,
-      failureCount: 0,
-      responses: [{ success: true, messageId: 'attention' }],
-    }));
+    const sendEachForMulticast = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('FCM timeout'))
+      .mockResolvedValue({
+        successCount: 1,
+        failureCount: 0,
+        responses: [{ success: true, messageId: 'later-episode' }],
+      });
     const gateway = new PushGateway(
       registry,
       { sendEachForMulticast } as unknown as Messaging,
@@ -228,47 +231,42 @@ describe('PushGateway', () => {
       ],
     });
 
-    await gateway.handleRelayEvent(
-      attention('1', 'Nothing committed is ready for review.'),
-      PUBKEY_A,
-      reader,
-    );
-    await gateway.handleRelayEvent(
-      attention('2', 'Nothing committed is ready for review.'),
-      PUBKEY_A,
-      reader,
-    );
+    await expect(
+      gateway.handleRelayEvent(
+        attention('1', 'Nothing committed is ready for review.'),
+        PUBKEY_A,
+        reader,
+      ),
+    ).rejects.toThrow('FCM timeout');
     expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
 
-    await gateway.handleRelayEvent(attention('3', 'Nothing ready to merge yet.'), PUBKEY_A, reader);
-    expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
     now += 10 * 60_000;
-    await gateway.handleRelayEvent(attention('4', 'Nothing ready to merge yet.'), PUBKEY_A, reader);
-    expect(sendEachForMulticast).toHaveBeenCalledTimes(2);
-
-    await gateway.handleRelayEvent(
-      attention('5', 'Delivery failed. Open corner for details.', 'failure'),
-      PUBKEY_A,
-      reader,
-    );
-    expect(sendEachForMulticast).toHaveBeenCalledTimes(3);
+    await gateway.handleRelayEvent(attention('2', 'Nothing ready to merge yet.'), PUBKEY_A, reader);
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
 
     // An automatic retry's transient working lease is not a human resolution.
     await gateway.handleRelayEvent(lifecycle('8', 'working'), PUBKEY_A, reader);
     await gateway.handleRelayEvent(
-      attention('7', 'Delivery failed. Open corner for details.', 'failure'),
+      attention('3', 'Still blocked. Open the corner for details.'),
       PUBKEY_A,
       reader,
     );
-    expect(sendEachForMulticast).toHaveBeenCalledTimes(3);
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
 
     await gateway.handleRelayEvent(lifecycle('9', 'idle'), PUBKEY_A, reader);
     await gateway.handleRelayEvent(
-      attention('6', 'Nothing committed is ready for review.'),
+      attention('4', 'A new review episode now needs attention.'),
       PUBKEY_A,
       reader,
     );
-    expect(sendEachForMulticast).toHaveBeenCalledTimes(4);
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(2);
+
+    await gateway.handleRelayEvent(
+      attention('5', 'Changed copy in the new episode.'),
+      PUBKEY_A,
+      reader,
+    );
+    expect(sendEachForMulticast).toHaveBeenCalledTimes(2);
   });
 
   it('coalesces retried merge-ready events for one exact corner target', async () => {

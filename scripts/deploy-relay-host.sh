@@ -233,8 +233,12 @@ place_stack_file() {
 }
 
 # Plain-docker nginx reload (the runner is in the docker group; no sudo):
-# swapping the bind-mounted nginx.conf does NOT restart relay-front, and a
-# compose-level recreate is unnecessary downtime for a content-only change.
+# an nginx-content-only change is applied with zero-downtime HUP reload
+# instead of any container churn. This only delivers current bytes because
+# prod compose.yml binds ./relay-front as a DIRECTORY (/etc/beeline-front):
+# a single-file bind of nginx.conf pins the inode at container creation, and
+# `install` below replaces that inode while the front runs, leaving the HUP
+# reload rereading orphaned pre-deploy bytes forever.
 reload_relay_front_nginx() {
   local cid
   cid=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=relay-front)

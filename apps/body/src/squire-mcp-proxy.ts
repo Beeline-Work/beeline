@@ -1,6 +1,20 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
 import { connect } from 'node:net';
 import { pathToFileURL } from 'node:url';
+
+/** Node resolves an ESM main module through symlinks, while argv keeps the invoked path. */
+export function isSquireMcpProxyMain(
+  moduleUrl: string = import.meta.url,
+  invokedPath: string | undefined = process.argv[1],
+): boolean {
+  if (!invokedPath) return false;
+  try {
+    return moduleUrl === pathToFileURL(realpathSync(invokedPath)).href;
+  } catch {
+    return false;
+  }
+}
 
 export async function runSquireMcpProxy(input: {
   host: string;
@@ -27,7 +41,7 @@ export async function runSquireMcpProxy(input: {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isSquireMcpProxyMain()) {
   const [, , host, rawPort, token] = process.argv;
   const port = Number(rawPort);
   if (!host || !Number.isSafeInteger(port) || port < 1 || port > 65_535 || !token) {

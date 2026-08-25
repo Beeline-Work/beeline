@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
@@ -17,6 +17,125 @@ const cleanup: string[] = [];
 
 afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe('durable state schema migration', () => {
+  it('migrates version 1 inboxes and cursors to version 2 in memory', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-v1-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    const identity = newIdentity('migration-inbox');
+    const pendingEvent = signEvent(
+      {
+        pubkey: identity.publicKey,
+        created_at: 1_699_999_999,
+        kind: 9,
+        tags: [['h', 'room']],
+        content: 'Preserve this pending inbox item.',
+      },
+      identity.secretKey,
+    );
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        inboxes: {
+          room: {
+            cursor: { createdAt: 1_700_000_000, eventId: 'last-delivered-event' },
+            items: {
+              [pendingEvent.id]: {
+                event: pendingEvent,
+                state: 'pending',
+                attempts: 2,
+                lastError: 'temporary relay failure',
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const state = new DurableBodyState(path);
+    expect(await state.cursor('room')).toEqual({
+      createdAt: 1_700_000_000,
+      eventId: 'last-delivered-event',
+    });
+    expect((await state.pending('room')).map((event) => event.id)).toEqual([pendingEvent.id]);
+    expect(await state.readModel('room')).toBeUndefined();
+  });
+
+  it('loads an existing version 2 file without rewriting it', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-v2-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    const persisted = `${JSON.stringify({
+      version: 2,
+      inboxes: {
+        room: {
+          cursor: { createdAt: 42, eventId: 'v2-cursor' },
+          items: {},
+        },
+      },
+      readModels: {},
+    })}\n`;
+    await writeFile(path, persisted);
+
+    const state = new DurableBodyState(path);
+    expect(await state.cursor('room')).toEqual({ createdAt: 42, eventId: 'v2-cursor' });
+    expect(await readFile(path, 'utf8')).toBe(persisted);
+  });
+
+  it('fails closed on malformed persisted JSON', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-malformed-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    await writeFile(path, '{"version": 1, definitely not valid JSON');
+
+    const state = new DurableBodyState(path);
+    await expect(state.cursor('room')).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  it('persists a migrated version 1 file as version 2 on the next save', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-roundtrip-'));
+    cleanup.push(root);
+    const path = resolve(root, 'state.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        inboxes: {
+          room: {
+            cursor: { createdAt: 99, eventId: 'preserved-cursor' },
+            items: {},
+          },
+        },
+      }),
+    );
+    const identity = newIdentity('migration-roundtrip');
+    const event = signEvent(
+      {
+        pubkey: identity.publicKey,
+        created_at: 100,
+        kind: 9,
+        tags: [['h', 'other-room']],
+        content: 'Trigger the next durable save.',
+      },
+      identity.secretKey,
+    );
+
+    const migrated = new DurableBodyState(path);
+    await migrated.enqueue('other-room', [event]);
+
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    expect(persisted.version).toBe(2);
+    expect(persisted.readModels).toEqual({});
+    const restarted = new DurableBodyState(path);
+    expect(await restarted.cursor('room')).toEqual({
+      createdAt: 99,
+      eventId: 'preserved-cursor',
+    });
+    expect((await restarted.pending('other-room')).map((item) => item.id)).toEqual([event.id]);
+  });
 });
 
 describe('durable input inbox', () => {

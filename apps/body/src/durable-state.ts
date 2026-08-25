@@ -74,6 +74,34 @@ interface DurableBodyData {
   };
 }
 
+interface DurableBodyDataV1 extends Omit<DurableBodyData, 'version' | 'readModels'> {
+  version: 1;
+}
+
+function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyData {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    throw new Error(`unsupported durable body state at ${path}`);
+  }
+  const parsed = candidate as Partial<DurableBodyData | DurableBodyDataV1> &
+    Record<string, unknown>;
+  if (!parsed.inboxes) throw new Error(`unsupported durable body state at ${path}`);
+
+  switch (parsed.version) {
+    case 1:
+      if ('readModels' in parsed) throw new Error(`unsupported durable body state at ${path}`);
+      return {
+        ...(parsed as DurableBodyDataV1),
+        version: 2,
+        readModels: {},
+      };
+    case 2:
+      if (!parsed.readModels) throw new Error(`unsupported durable body state at ${path}`);
+      return parsed as DurableBodyData;
+    default:
+      throw new Error(`unsupported durable body state at ${path}`);
+  }
+}
+
 function emptyData(): DurableBodyData {
   return {
     version: 2,
@@ -106,10 +134,10 @@ export class DurableBodyState {
   async load(): Promise<void> {
     if (this.loaded) return;
     try {
-      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as DurableBodyData;
-      if (parsed.version !== 2 || !parsed.inboxes || !parsed.readModels) {
-        throw new Error(`unsupported durable body state at ${this.path}`);
-      }
+      const parsed = migrateDurableBodyData(
+        JSON.parse(await readFile(this.path, 'utf8')) as unknown,
+        this.path,
+      );
       for (const [channelId, candidate] of Object.entries(parsed.readModels)) {
         const guarded = guardReadModelBoot(candidate);
         if (guarded.status === 'integrity-halt') {

@@ -15,7 +15,7 @@ export {
   selectRoomRow,
   selectTranscript,
 } from './selectors.js';
-export { guardReadModelBoot } from './cache.js';
+export { guardReadModelBoot, snapshotForPersistence } from './cache.js';
 export type * from './types.js';
 export type * from './selectors.js';
 export type { ReadModelBootResult } from './cache.js';

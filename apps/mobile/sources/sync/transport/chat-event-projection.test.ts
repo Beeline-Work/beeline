@@ -7,6 +7,7 @@ import {
   type Control,
   type HumanMessage,
   type IdentityRecord,
+  type SessionUpdate,
 } from '@beeline/buzz-client';
 import { projectReadEvent, transcriptMessages } from './buzz-event-projection';
 
@@ -101,6 +102,115 @@ describe('typed mobile read-model projection', () => {
       id: 'control-1',
       isSystemNotice: true,
     });
+  });
+
+  it('projects the three live lanes and removes them completely when the turn settles', () => {
+    const turn = (status: 'working' | 'complete', createdAt: number) =>
+      ({
+        type: 'session-update',
+        eventId: `turn-${status}`,
+        authorPubkey: AGENT,
+        createdAt,
+        sourceKind: 9,
+        signature: 'verified',
+        scope: 'channel',
+        channelId: ROOM,
+        workspaceId: 'workspace',
+        sessionId: 'session-1',
+        update: {
+          kind: 'turn',
+          agentPubkey: AGENT,
+          requestId: 'request-1',
+          status,
+        },
+      }) as SessionUpdate;
+    const lane = (kind: 'draft' | 'thought', text: string, createdAt: number) =>
+      ({
+        type: 'session-update',
+        eventId: `${kind}-${createdAt}`,
+        authorPubkey: AGENT,
+        createdAt,
+        sourceKind: 30078,
+        signature: 'verified',
+        scope: 'channel',
+        channelId: ROOM,
+        workspaceId: 'workspace',
+        sessionId: 'session-1',
+        update:
+          kind === 'draft'
+            ? { kind, agentPubkey: AGENT, requestId: 'request-1', text, closed: false }
+            : { kind, agentPubkey: AGENT, text, closed: false },
+      }) as SessionUpdate;
+    const activity = {
+      type: 'activity',
+      eventId: 'activity-live',
+      authorPubkey: AGENT,
+      createdAt: 3,
+      sourceKind: 9,
+      signature: 'verified',
+      scope: 'channel',
+      channelId: ROOM,
+      workspaceId: 'workspace',
+      sessionId: 'session-1',
+      stepId: 'tool-1',
+      status: 'completed',
+      details: [{ kind: 'tool', title: 'Read', operation: 'tool_activity' }],
+      detail: { kind: 'tool', title: 'Read', operation: 'tool_activity' },
+    } as Activity;
+    const liveSnapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({ workspaceId: 'workspace', identities }),
+      [
+        turn('working', 1),
+        lane('thought', 'Tracing the flow', 2),
+        activity,
+        lane('draft', 'Answer', 4),
+      ],
+    );
+    expect(transcriptMessages(liveSnapshot, ROOM, HUMAN)).toEqual([
+      expect.objectContaining({
+        isAgentLiveTurn: true,
+        agentThought: 'Tracing the flow',
+        agentMessageDraft: 'Answer',
+        activity: [expect.objectContaining({ kind: 'tool' })],
+      }),
+    ]);
+
+    const settled = reduceWorkspaceEvents(liveSnapshot, [
+      message('agent-message', 'answer', AGENT, 'Answer', 5),
+      turn('complete', 6),
+    ]);
+    expect(transcriptMessages(settled, ROOM, HUMAN).map((item) => item.id)).toEqual(['answer']);
+  });
+
+  it('projects one settled failure as a non-conversational durable fact', () => {
+    const failure = {
+      type: 'activity',
+      eventId: 'failure-fact',
+      authorPubkey: AGENT,
+      createdAt: 7,
+      sourceKind: 9,
+      signature: 'verified',
+      scope: 'channel',
+      channelId: ROOM,
+      workspaceId: 'workspace',
+      sessionId: 'session-1',
+      stepId: 'gate',
+      status: 'failed',
+      details: [{ kind: 'tool', title: 'Certification gate', status: 'failed' }],
+      detail: { kind: 'tool', title: 'Certification gate', status: 'failed' },
+      durableFact: 'failure',
+    } as Activity;
+    const snapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({ workspaceId: 'workspace', identities }),
+      [failure],
+    );
+    expect(transcriptMessages(snapshot, ROOM, HUMAN)).toEqual([
+      expect.objectContaining({
+        id: 'failure-fact',
+        durableFact: { kind: 'failure' },
+        isAgentActivity: true,
+      }),
+    ]);
   });
 
   it('projects Squire spending confirmation through the typed permission family', () => {

@@ -174,6 +174,12 @@ export type SessionUpdatePayload =
       readonly closed: boolean;
     }
   | {
+      readonly kind: 'thought';
+      readonly agentPubkey: Pubkey;
+      readonly text?: string;
+      readonly closed: boolean;
+    }
+  | {
       readonly kind: 'turn';
       readonly agentPubkey: Pubkey;
       readonly requestId: string;
@@ -283,7 +289,12 @@ export type Activity = ChannelEnvelope & {
   readonly sessionId: string;
   readonly stepId: string;
   readonly status: 'started' | 'updated' | 'completed' | 'failed';
+  /** Every typed ACP update carried by this relay batch, in wire order. */
+  readonly details: readonly ActivityDetail[];
+  /** First detail retained as a compatibility convenience for single-update callers. */
   readonly detail: ActivityDetail;
+  /** Explicitly consequential machine facts are the only activity allowed to settle. */
+  readonly durableFact?: 'failure' | 'merge' | 'action';
 };
 
 /** Immutable machine commands are typed before reducers or UI can observe them. */

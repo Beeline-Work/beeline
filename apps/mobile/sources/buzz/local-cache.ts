@@ -1,6 +1,6 @@
 import { MMKV } from 'react-native-mmkv';
 import { create } from 'zustand';
-import { guardReadModelBoot } from '@beeline/buzz-client';
+import { guardReadModelBoot, snapshotForPersistence } from '@beeline/buzz-client';
 import type {
   Agent,
   Community,
@@ -289,7 +289,14 @@ function persisted(state: BuzzCacheState): PersistedBuzzCache {
     activeViewerPubkey: state.activeViewerPubkey,
     activeListKeyByViewer: state.activeListKeyByViewer,
     channelLists: state.channelLists,
-    channels: state.channels,
+    channels: Object.fromEntries(
+      Object.entries(state.channels).map(([key, channel]) => [
+        key,
+        channel.snapshot
+          ? { ...channel, snapshot: snapshotForPersistence(channel.snapshot) }
+          : channel,
+      ]),
+    ),
     profiles: state.profiles,
   };
 }

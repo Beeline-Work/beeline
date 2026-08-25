@@ -9,7 +9,8 @@ import {
   type IdentityRecord,
   type SessionUpdate,
 } from '@beeline/buzz-client';
-import { projectReadEvent, transcriptMessages } from './buzz-event-projection';
+import { isAgentTurnActive } from '@/buzz/agent-presence';
+import { latestAgentTurns, projectReadEvent, transcriptMessages } from './buzz-event-projection';
 
 const ROOM = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const HUMAN = '11'.repeat(32);
@@ -246,5 +247,57 @@ describe('typed mobile read-model projection', () => {
         status: 'pending',
       },
     });
+  });
+
+  it('keeps a bare working receipt alive for the thinking indicator before any content streams', () => {
+    const turn = (status: 'working' | 'complete' | 'failed', createdAt: number) =>
+      ({
+        type: 'session-update',
+        eventId: `turn-${status}-${createdAt}`,
+        authorPubkey: AGENT,
+        createdAt,
+        sourceKind: 9,
+        signature: 'verified',
+        scope: 'channel',
+        channelId: ROOM,
+        workspaceId: 'workspace',
+        sessionId: 'session-1',
+        update: {
+          kind: 'turn',
+          agentPubkey: AGENT,
+          requestId: 'request-1',
+          status,
+        },
+      }) as SessionUpdate;
+
+    // The silent window: the daemon publishes its signed WORKING receipt
+    // before harness activation, so for a while the journal holds only the
+    // human message and that receipt — no draft, thought, or tool fact. The
+    // indicator's lifecycle input must survive exactly here.
+    const snapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({ workspaceId: 'workspace', identities }),
+      [message('human-message', 'human-1', HUMAN, 'please look', 1), turn('working', 2)],
+    );
+    expect(snapshot.rooms[ROOM]!.eventJournal['turn-working-2']).toBeDefined();
+    const turns = latestAgentTurns(snapshot, ROOM);
+    expect(turns).toEqual([{ requestId: 'request-1', agentPubkey: AGENT, status: 'working' }]);
+    // An absent presence snapshot is UNKNOWN, never an offline verdict.
+    expect(isAgentTurnActive(turns[0]!)).toBe(true);
+    // Lifecycle is presentation state: it spends no conversational row.
+    expect(transcriptMessages(snapshot, ROOM, HUMAN).map(({ id }) => id)).toEqual(['human-1']);
+
+    // Completion closes the indicator through the same derivation.
+    const settled = reduceWorkspaceEvents(snapshot, [turn('complete', 3)]);
+    const settledTurns = latestAgentTurns(settled, ROOM);
+    expect(settledTurns).toEqual([
+      { requestId: 'request-1', agentPubkey: AGENT, status: 'complete' },
+    ]);
+    expect(isAgentTurnActive(settledTurns[0]!)).toBe(false);
+
+    // A replayed older marker can never regress a settled status.
+    const replayedOldWorking = reduceWorkspaceEvents(settled, [
+      { ...turn('working', 2), eventId: 'turn-working-replayed' },
+    ]);
+    expect(latestAgentTurns(replayedOldWorking, ROOM)[0]).toMatchObject({ status: 'complete' });
   });
 });

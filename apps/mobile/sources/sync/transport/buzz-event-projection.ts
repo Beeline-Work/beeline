@@ -242,6 +242,62 @@ function controlProjection(
   };
 }
 
+/**
+ * Each agent's latest `#t=agent-turn` lifecycle marker in this channel, newest
+ * first.
+ *
+ * Turn markers are presentation state, never conversational rows — the typed
+ * transcript (`selectTranscript`) correctly spends no prose cell on them and
+ * synthesizes its live activity lane only once streamed content exists (a
+ * draft, a thought, or a tool fact). But between the daemon's signed WORKING
+ * receipt — published before harness activation — and that first streamed
+ * token there is nothing else on the wire to key "agent is composing" off,
+ * so the Room thinking indicator reads its lifecycle here, straight from the
+ * normalized journal.
+ *
+ * One marker per agent pubkey, latest by createdAt then eventId (mirroring
+ * the reducer's clock), so replay order and duplicate request ids cannot
+ * regress a settled status back to working.
+ */
+export function latestAgentTurns(
+  snapshot: WorkspaceSnapshot,
+  channelId: string,
+): NonNullable<ChatDisplayMessage['agentTurn']>[] {
+  const roomSnapshot = snapshot.rooms[channelId];
+  if (!roomSnapshot) return [];
+  const latest = new Map<
+    string,
+    { eventId: string; createdAt: number; turn: NonNullable<ChatDisplayMessage['agentTurn']> }
+  >();
+  for (const event of Object.values(roomSnapshot.eventJournal)) {
+    if (event.type !== 'session-update' || event.update.kind !== 'turn') continue;
+    const existing = latest.get(event.update.agentPubkey);
+    if (
+      existing &&
+      (existing.createdAt > event.createdAt ||
+        (existing.createdAt === event.createdAt && existing.eventId > event.eventId))
+    ) {
+      continue;
+    }
+    latest.set(event.update.agentPubkey, {
+      eventId: event.eventId,
+      createdAt: event.createdAt,
+      turn: {
+        requestId: event.update.requestId,
+        agentPubkey: event.update.agentPubkey,
+        status: event.update.status,
+        ...(event.update.generationId ? { generationId: event.update.generationId } : {}),
+      },
+    });
+  }
+  return [...latest.values()]
+    .sort(
+      (left, right) =>
+        right.createdAt - left.createdAt || right.eventId.localeCompare(left.eventId),
+    )
+    .map((entry) => entry.turn);
+}
+
 /** Typed-event effects for ephemeral UI state. Raw relay data is not accepted. */
 export function projectReadEvent(
   event: ReadEvent,

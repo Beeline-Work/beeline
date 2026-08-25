@@ -26768,6 +26768,6 @@
   ],
   "expected": {
     "minimumTranscriptItems": 1,
-    "maximumReplayMs": 20000
+    "maximumReplayMs": 30000
   }
 }

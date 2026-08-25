@@ -24,9 +24,9 @@ const actions = [
     scripts: ["release:build:appstore"],
   },
   {
-    id: "ota-production",
-    label: "OTA (production)",
-    description: "Publish an update to the production channel",
+    id: "ota-beta",
+    label: "OTA candidate (beta)",
+    description: "Publish an update candidate to beta; production promotion stays in the release governor",
     scripts: ["release:ota:release"],
   },
 ];
@@ -39,9 +39,9 @@ const actionAliases = {
   appstore: "appstore-build",
   store: "appstore-build",
   "appstore-build": "appstore-build",
-  "ota-production": "ota-production",
-  "ota:production": "ota-production",
-  production: "ota-production",
+  "ota-beta": "ota-beta",
+  "ota:beta": "ota-beta",
+  beta: "ota-beta",
 };
 
 function findAction(input) {

@@ -1,94 +1,253 @@
-# Mobile OTA publishing on merge ("latest from main" channel for app JS).
+# Mobile OTA release governor.
 #
-# Every push to main that changes mobile JavaScript publishes an expo-updates
-# update to the `production` branch, so channel-`production` installs (the
-# store AAB AND the `production-apk` sideload build — see apps/mobile/eas.json)
-# pick it up on next launch without a store round-trip. This is the mobile
-# counterpart of deploy-host.yml (web/auth) and beeline-bundle.yml (CLI): all
-# three ship surfaces land on merge, no human step.
-#
-# SCOPE — what OTA covers and what it cannot:
-#   - Covers JS/asset changes only. Anything native (a new native module, an
-#     app.config.js native prop, google-services.json, a NEW bundled font's
-#     native registration, a permission) needs a STORE/APK rebuild.
-#   - runtimeVersion (app.config.js, static "21") gates which binaries an
-#     update applies to. When a change needs a rebuild, bump runtimeVersion in
-#     the SAME commit so stale OTA is never served to an incompatible binary;
-#     the rebuilt binaries then receive only updates built against them.
-#
-# Credential: EAS publish authenticates with EXPO_TOKEN. It deliberately does
-# NOT live in this repo. Two supported sources, checked in order:
-#   1. a GitHub Actions secret named EXPO_TOKEN on this repo, or
-#   2. EXPO_TOKEN already present in the self-hosted runner's own service
-#      environment (actions-runner/.env).
-# /home/lunchbox/.secrets.env on the host is NOT readable by the runner user
-# (0600, lunchbox-owned), so neither step can source it from there directly.
-# If neither source is configured, the publish step fails loudly with the fix.
-name: Mobile OTA update
+# A merge creates an immutable beta candidate. Production only receives the
+# exact candidate bytes after the Android canary passes. Native/runtime-version
+# compatibility remains unchanged: native changes still require a binary build
+# and a runtimeVersion bump before any OTA can target those binaries.
+name: Mobile OTA release governor
 
 on:
   push:
     branches:
       - main
+    paths:
+      - '.github/workflows/mobile-ota.yml'
+      - 'apps/mobile/**'
+      - 'packages/buzz-client/**'
+      - 'packages/nostr/**'
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Release the checked-out commit or roll production back
+        type: choice
+        options:
+          - release
+          - rollback
+        default: release
+        required: true
+      skip_canary:
+        description: Captain-ordered emergency release without the Android canary
+        type: boolean
+        default: false
+        required: true
+      rollback_group:
+        description: Optional known-good source group; defaults to the latest release ledger predecessor
+        type: string
+        required: false
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: mobile-ota-publish
+  group: mobile-ota-release-governor
   cancel-in-progress: false
 
 jobs:
-  ota:
-    name: Publish expo-updates update to production
-    # Same host runner convention as deploy-host.yml.
+  release:
+    name: Beta, canary, and exact-group promotion
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.operation == 'release')
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 30
-    # Like deploy-host.yml this fires on the bundle bot's follow-up commit
-    # too; unlike a host deploy there is nothing to converge there (the bot
-    # touches relay-stack/web/dl only), so skip it instead of paying a
-    # ~7-minute export for byte-identical JS.
-    if: github.event.head_commit.author.username != 'beeline-bundle-bot'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20.19'
-      # apps/mobile is an isolated npm project (own lockfile, outside the root
-      # workspaces); eas update exports its bundle from these dependencies.
       - name: Install mobile dependencies and build @beeline SDKs
         working-directory: apps/mobile
-        # npm ci runs postinstall; eas-build-post-install then compiles the
-        # file-linked @beeline/* packages into their dist/ — the same step an
-        # EAS build runs, and just as required for `eas update`'s local export:
-        # without it Metro cannot resolve @beeline/buzz-client.
         run: |
           npm ci
           npm run eas-build-post-install
-      - name: Publish OTA update to channel production
+      - name: Validate candidate
+        working-directory: apps/mobile
+        run: |
+          npm run typecheck
+          npx vitest run \
+            sources/config/appBranding.test.ts \
+            sources/config/mobileOtaRelease.test.ts
+          node scripts/ota-release.mjs publish --dry-run \
+            --sha "$GITHUB_SHA" \
+            --ref "$GITHUB_REF_NAME" \
+            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
+      - name: Publish immutable beta candidate
+        id: candidate
         working-directory: apps/mobile
         env:
           EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
-          # Prefer the GitHub secret; fall back to an ambient token already in
-          # the runner's service environment. Never echo either value.
           if [ -n "$EXPO_TOKEN_SECRET" ]; then
             export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
           fi
           if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "!! EXPO_TOKEN is unavailable to this runner." >&2
-            echo "!! Fix (either suffices):" >&2
-            echo "!!   gh secret set EXPO_TOKEN -R $GITHUB_REPOSITORY" >&2
-            echo "!!   ...or add EXPO_TOKEN to the self-hosted runner's .env and restart the runner service." >&2
+            echo "EXPO_TOKEN is unavailable to the release governor." >&2
             exit 1
           fi
-          # Private temp dir per run: the host /tmp carries other users'
-          # metro caches, which eas export's cache-clear cannot rmdir.
-          export TMPDIR="$(mktemp -d)"
-          npx --yes eas-cli@latest update \
-            --branch production \
-            --environment production \
-            --non-interactive \
-            --message "ota: ${GITHUB_SHA::7} ${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          TMPDIR="$(mktemp -d)"
+          export TMPDIR
+          node scripts/ota-release.mjs publish \
+            --sha "$GITHUB_SHA" \
+            --ref "$GITHUB_REF_NAME" \
+            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
+          node - "$RUNNER_TEMP/mobile-ota-ledger.json" >> "$GITHUB_OUTPUT" <<'NODE'
+            const ledger = require(process.argv[2]);
+            console.log(`group_id=${ledger.candidateGroupId}`);
+            console.log(`android_update_id=${ledger.androidUpdateId}`);
+          NODE
+      - name: Run Android beta canary
+        if: >-
+          github.event_name != 'workflow_dispatch' ||
+          inputs.skip_canary != true
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
+          # The self-hosted runner account does not carry the emulator owner's
+          # PATH; the canary resolves adb from here against the sanctioned
+          # existing emulator-5554 on this host.
+          ANDROID_HOME: /home/lunchbox/android-sdk
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then
+            export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
+          fi
+          set +e
+          scripts/ota-canary.sh --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
+          canary_status=$?
+          set -e
+          if [ "$canary_status" -ne 0 ]; then
+            node scripts/ota-release.mjs mark-canary \
+              --ledger "$RUNNER_TEMP/mobile-ota-ledger.json" \
+              --status blocked \
+              --reason "ota-canary.sh exited ${canary_status}; promotion parked until the canary passes (see step log)"
+            exit "$canary_status"
+          fi
+          node scripts/ota-release.mjs mark-canary \
+            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json" \
+            --status passed
+      - name: Record captain-ordered canary skip
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.skip_canary == true
+        working-directory: apps/mobile
+        run: |
+          node scripts/ota-release.mjs mark-canary \
+            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json" \
+            --status skipped
+      - name: Promote the canary-proven bytes to production
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then
+            export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
+          fi
+          node scripts/ota-release.mjs promote \
+            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
+      - name: Store release ledger
+        if: always() && steps.candidate.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ota-ledger-${{ github.run_id }}
+          path: ${{ runner.temp }}/mobile-ota-ledger.json
+          if-no-files-found: error
+          retention-days: 90
+
+  rollback:
+    name: Republish last-known-good production group
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'rollback'
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19'
+      - name: Find latest successful release ledger
+        if: inputs.rollback_group == ''
+        id: ledger_run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'mobile-ota.yml',
+              status: 'success',
+              per_page: 100,
+            });
+            for (const run of runs) {
+              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+              });
+              if (artifacts.data.artifacts.some((artifact) =>
+                artifact.name.startsWith('mobile-ota-ledger-') && !artifact.expired
+              )) {
+                core.setOutput('run_id', String(run.id));
+                return;
+              }
+            }
+            core.setFailed('No non-expired successful mobile OTA release ledger was found.');
+      - name: Download last-known-good ledger
+        if: inputs.rollback_group == ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mobile-ota-ledger-*
+          path: ${{ runner.temp }}/last-good
+          merge-multiple: true
+          run-id: ${{ steps.ledger_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Resolve rollback source group
+        id: rollback_source
+        env:
+          EXPLICIT_GROUP: ${{ inputs.rollback_group }}
+        run: |
+          set -euo pipefail
+          group="$EXPLICIT_GROUP"
+          if [ -z "$group" ]; then
+            group="$(node -e '
+              const fs = require("node:fs");
+              const path = require("node:path");
+              const root = process.argv[1];
+              const file = fs.readdirSync(root, { recursive: true })
+                .find((entry) => entry.endsWith("mobile-ota-ledger.json"));
+              if (!file) throw new Error("downloaded artifact has no mobile-ota-ledger.json");
+              const ledger = JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
+              if (!ledger.previousProductionGroupId) {
+                throw new Error("release ledger has no previousProductionGroupId");
+              }
+              process.stdout.write(ledger.previousProductionGroupId);
+            ' "$RUNNER_TEMP/last-good")"
+          fi
+          echo "group_id=$group" >> "$GITHUB_OUTPUT"
+      - name: Republish rollback group to production
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
+          ROLLBACK_GROUP: ${{ steps.rollback_source.outputs.group_id }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then
+            export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
+          fi
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is unavailable to the release governor." >&2
+            exit 1
+          fi
+          node scripts/ota-release.mjs rollback \
+            --group "$ROLLBACK_GROUP" \
+            --ledger "$RUNNER_TEMP/mobile-ota-rollback.json"
+      - name: Store rollback ledger
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ota-rollback-${{ github.run_id }}
+          path: ${{ runner.temp }}/mobile-ota-rollback.json
+          if-no-files-found: error
+          retention-days: 90

@@ -223,8 +223,15 @@ row applies one reader-side floor and no more — `isMachinePreview` declines a
 preview that a cache entry from an older build already holds, rather than
 re-deriving it.
 
-Unread is weight plus one luminance step, in two places, plus a `NEW` mono
-label. It is deliberately not gold — see the accent rule below. The index is
+Unread is weight, plus one luminance step in two places — the whole row's
+ground (`bgUnread`, an area fill, never a stroke) and the preview line rising
+with the semibold name — plus a solid unread-count chip that takes the gutter's
+age slot (near-white fill, dark mono numeral, radius 3; uncountable reads
+`NEW`, exact counts cap at `9+`). The corner count keeps its own gutter slot in
+both states, so a read row is age + corner count and an unread row is chip +
+corner count. Unread never reorders: needs-you clustering and `meaningfulAt`
+recency stay the only sorting inputs. It is deliberately not gold — see the
+accent rule below. The index is
 the one surface that still spends weight, and unread is the only thing it
 spends weight on: it is scanned, not read, and the ledger's no-weight rule
 governs the transcript.
@@ -377,8 +384,13 @@ and guessing wrong shows a placeholder rather than nothing. A Room and the
 Members screen must never name the same key differently; if they do, one of them
 is reading an empty roster, not a different name.
 
-Vocabulary: "Room," never "Channel." "Members," never "People." No `#` prefix on
-names — that's someone else's product's convention.
+Vocabulary: "Room," never "Channel." "Members," never "People." Room names carry
+the `#` channel mark in exactly two places — push-notification titles
+(`#<room>`, corners as `#<room>/<corner>` with the parent Room's real name) and
+Room index rows, both added at render through one presentation-only derivation
+(`displayRoomIndexTitle`; gateway `mapping.ts` owns notification titles).
+Captain decision 2026-08, superseding the earlier no-`#` rule; corner labels,
+stored names, and every other surface stay unprefixed.
 
 ## Type
 

@@ -6,6 +6,7 @@ import { Typography } from '@/constants/Typography';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { IdentityMark } from './IdentityMark';
 import { MonoMarkdown } from './MonoMarkdown';
+import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
 
 /**
  * The one transcript primitive a Room and a Corner both render, in the
@@ -86,6 +87,10 @@ type LedgerBodyProps = {
   typewriter?: boolean;
   /** Handles backed by this message's real p-tags and current Room members. */
   mentionHandles?: readonly string[];
+  /** Known rooms/corners of THIS workspace; omitted → no `#` reference links. */
+  channelIndex?: ChannelReferenceIndex;
+  /** Invoked when a recognized `#room`/`#room/corner` reference is pressed. */
+  onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
 };
 
 const TYPEWRITER_TICK_MS = 20;
@@ -119,6 +124,8 @@ function TypewriterMarkdown({
   testID,
   revealId,
   mentionHandles,
+  channelIndex,
+  onChannelReference,
 }: {
   markdown: string;
   textStyle: React.ComponentProps<typeof MonoMarkdown>['textStyle'];
@@ -131,6 +138,8 @@ function TypewriterMarkdown({
    */
   revealId?: string;
   mentionHandles?: readonly string[];
+  channelIndex?: ChannelReferenceIndex;
+  onChannelReference?: (target: ChannelReferenceTarget, text: string) => void;
 }) {
   const reducedMotion = useReducedMotion();
   // Decided ONCE per mounted instance (same contract as `NewMessageMaterialize`):
@@ -174,6 +183,8 @@ function TypewriterMarkdown({
     <MonoMarkdown
       markdown={typewriterFrame(markdown, visibleCharacters)}
       mentionHandles={mentionHandles}
+      channelIndex={channelIndex}
+      onChannelReference={onChannelReference}
       testID={testID}
       textStyle={textStyle}
     />
@@ -283,6 +294,8 @@ export function LedgerEntry({
   machineNoise,
   typewriter = false,
   mentionHandles,
+  channelIndex,
+  onChannelReference,
 }: Omit<LedgerBodyProps, 'marginalia'> & { luminous?: boolean }) {
   const [leadText, remainingText] =
     bodyText && !continued && luminous ? splitLeadSentence(bodyText) : ['', bodyText ?? ''];
@@ -298,6 +311,8 @@ export function LedgerEntry({
         <MonoMarkdown
           markdown={leadText}
           mentionHandles={mentionHandles}
+          channelIndex={channelIndex}
+          onChannelReference={onChannelReference}
           testID={remainingText ? `${bodyTestID}-lead` : bodyTestID}
           textStyle={styles.ledgerLead}
         />
@@ -310,11 +325,15 @@ export function LedgerEntry({
             textStyle={bodyTextStyle}
             revealId={itemId}
             mentionHandles={mentionHandles}
+            channelIndex={channelIndex}
+            onChannelReference={onChannelReference}
           />
         ) : (
           <MonoMarkdown
             markdown={remainingText}
             mentionHandles={mentionHandles}
+            channelIndex={channelIndex}
+            onChannelReference={onChannelReference}
             testID={bodyTestID}
             textStyle={bodyTextStyle}
           />
@@ -344,6 +363,8 @@ export function LedgerSteer({
   replyReference,
   attachments,
   mentionHandles,
+  channelIndex,
+  onChannelReference,
 }: Omit<LedgerBodyProps, 'marginalia' | 'machineNoise' | 'typewriter'>) {
   // Deliberately NO lead split here: a human message never takes the
   // emphasized lead treatment. Weight, size, and tone are exactly the agent
@@ -359,6 +380,8 @@ export function LedgerSteer({
         <MonoMarkdown
           markdown={bodyText}
           mentionHandles={mentionHandles}
+          channelIndex={channelIndex}
+          onChannelReference={onChannelReference}
           textStyle={styles.steerText}
           testID={bodyTestID}
         />

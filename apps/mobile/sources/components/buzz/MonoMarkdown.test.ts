@@ -225,3 +225,163 @@ describe('glossMentions — a tagged handle splits into its own span', () => {
     expect(glossMentions([span], live('alan'))).toEqual([span]);
   });
 });
+
+// ── Explicit #room / #room/corner references ────────────────────────────────
+import { glossChannelReferences } from './MonoMarkdown';
+import { buildChannelReferenceIndex } from '@/buzz/channel-reference';
+
+const channelIndex = buildChannelReferenceIndex(
+  [
+    { channelId: 'room-roadmap', name: 'Roadmap' },
+    { channelId: 'room-infra', name: 'infra' },
+  ],
+  [{ channelId: 'corner-deploy', parentChannelId: 'room-infra', name: 'deploy-watch' }],
+);
+
+describe('glossChannelReferences — a resolved reference splits into its own span', () => {
+  it('tags a known room reference and leaves the rest of the prose intact', () => {
+    const spans = glossChannelReferences([plain('move this to #Roadmap please')], channelIndex);
+    expect(spans).toEqual([
+      { styles: [], text: 'move this to ', url: null },
+      {
+        styles: [],
+        text: '#Roadmap',
+        url: null,
+        channelRef: { kind: 'room', channelId: 'room-roadmap' },
+      },
+      { styles: [], text: ' please', url: null },
+    ]);
+  });
+
+  it('tags a known corner reference with its full target', () => {
+    const spans = glossChannelReferences([plain('#infra/deploy-watch is green')], channelIndex);
+    expect(spans).toEqual([
+      {
+        styles: [],
+        text: '#infra/deploy-watch',
+        url: null,
+        channelRef: { kind: 'corner', channelId: 'corner-deploy', parentChannelId: 'room-infra' },
+      },
+      { styles: [], text: ' is green', url: null },
+    ]);
+  });
+
+  it('keeps unknown tokens ordinary', () => {
+    const span = plain('no such #nowhere place');
+    expect(glossChannelReferences([span], channelIndex)).toEqual([span]);
+  });
+
+  it('returns the same spans untouched when no index is supplied', () => {
+    const span = plain('#Roadmap');
+    expect(glossChannelReferences([span], undefined)).toEqual([span]);
+  });
+
+  it('never glosses inside code spans, URLs, or an existing mention', () => {
+    const code = glossChannelReferences(
+      [{ styles: ['code'], text: '#Roadmap', url: null }],
+      channelIndex,
+    );
+    expect(code).toEqual([{ styles: ['code'], text: '#Roadmap', url: null }]);
+    const link = glossChannelReferences(
+      [{ styles: [], text: 'see #Roadmap', url: 'https://x.dev/#Roadmap' }],
+      channelIndex,
+    );
+    expect(link).toEqual([{ styles: [], text: 'see #Roadmap', url: 'https://x.dev/#Roadmap' }]);
+    const mention = glossChannelReferences(
+      [{ styles: [], text: '@beebee in #Roadmap', url: null, mention: true }],
+      channelIndex,
+    );
+    expect(mention[0]).toMatchObject({ mention: true });
+    expect(mention).toHaveLength(1);
+  });
+});
+
+describe('MonoMarkdown renders a recognized reference as one tappable internal link', () => {
+  const onPress = vi.fn();
+  type TextNode = { props: { onPress?: () => void; children?: unknown }; children?: unknown[] };
+
+  function render(markdown: string) {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(MonoMarkdown, {
+          markdown,
+          channelIndex,
+          onChannelReference: onPress,
+          textStyle: { fontSize: 16 },
+        }),
+      );
+    });
+    return renderer;
+  }
+
+  function textNodes(renderer: ReactTestRenderer): TextNode[] {
+    const nodes: TextNode[] = [];
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (!node || typeof node !== 'object') return;
+      const el = node as { type?: string; props?: TextNode['props']; children?: unknown };
+      if (el.type === 'Text') nodes.push(el as TextNode);
+      walk(el.children);
+    };
+    walk(renderer.toJSON());
+    return nodes;
+  }
+
+  it('fires onChannelReference with the exact target for a room tap', () => {
+    onPress.mockClear();
+    const renderer = render('head to #Roadmap now');
+    const tappable = textNodes(renderer).find((node) => node.props.onPress);
+    expect(tappable).toBeTruthy();
+    act(() => tappable!.props.onPress!());
+    expect(onPress).toHaveBeenCalledWith({ kind: 'room', channelId: 'room-roadmap' }, '#Roadmap');
+  });
+
+  it('fires onChannelReference with the exact corner target and parent', () => {
+    onPress.mockClear();
+    const renderer = render('check #infra/deploy-watch');
+    const tappable = textNodes(renderer).find((node) => node.props.onPress);
+    act(() => tappable!.props.onPress!());
+    expect(onPress).toHaveBeenCalledWith(
+      { kind: 'corner', channelId: 'corner-deploy', parentChannelId: 'room-infra' },
+      '#infra/deploy-watch',
+    );
+  });
+
+  it('attaches no press handler for unknown or unresolvable tokens', () => {
+    onPress.mockClear();
+    const renderer = render('#nowhere and #infra/unknown stay plain');
+    expect(textNodes(renderer).filter((node) => node.props.onPress)).toHaveLength(0);
+    expect(renderedText(renderer)).toContain('#nowhere and #infra/unknown stay plain');
+  });
+
+  it('preserves authored content byte-for-byte across the whole message', () => {
+    onPress.mockClear();
+    const markdown = 'go **#Roadmap** then `#infra` then https://x.dev and #infra/deploy-watch!';
+    const renderer = render(markdown);
+    // Every character survives; only spans gained press handlers.
+    expect(renderedText(renderer)).toBe(markdown.replace(/\*\*|`/g, ''));
+    // Three tappable spans: URL link, bold room reference, corner reference.
+    // The inline-code `#infra` stays inert.
+    const tappable = textNodes(renderer).filter((node) => node.props.onPress);
+    expect(tappable).toHaveLength(3);
+    act(() => tappable[0]!.props.onPress!());
+    expect(onPress).toHaveBeenCalledWith({ kind: 'room', channelId: 'room-roadmap' }, '#Roadmap');
+    onPress.mockClear();
+    act(() => tappable[2]!.props.onPress!());
+    expect(onPress).toHaveBeenCalledWith(
+      { kind: 'corner', channelId: 'corner-deploy', parentChannelId: 'room-infra' },
+      '#infra/deploy-watch',
+    );
+  });
+
+  it('renders multiple valid references in one message', () => {
+    onPress.mockClear();
+    const renderer = render('#Roadmap then #infra/deploy-watch then #Roadmap again');
+    const tappable = textNodes(renderer).filter((node) => node.props.onPress);
+    expect(tappable).toHaveLength(3);
+  });
+});

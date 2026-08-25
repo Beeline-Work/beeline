@@ -10,6 +10,7 @@ import type {
   MergeTarget,
   PersonProfile,
   RoomRepositoryResolution,
+  RoomSnapshot,
   WorkspaceSnapshot,
 } from '@beeline/buzz-client';
 import type { CornerSummary } from '@/buzz/corners';
@@ -17,8 +18,8 @@ import type { SessionSummary } from '@/sync/transport';
 
 // v1 treated any stream event as if it were a conversational message. Its
 // cursor can therefore outrun the preview and permanently retain old text.
-const CACHE_VERSION = 3;
-const CACHE_KEY = `buzz-local-cache-v${CACHE_VERSION}`;
+export const BUZZ_CACHE_VERSION = 3;
+export const BUZZ_CACHE_KEY = `buzz-local-cache-v${BUZZ_CACHE_VERSION}`;
 export const MAX_CACHED_CHANNELS = 30;
 const MAX_CACHED_LISTS = 12;
 const MAX_CACHED_PROFILE_SCOPES = 12;
@@ -118,7 +119,7 @@ export type ChannelCacheEntry = {
   lastAccessedAt: number;
 };
 
-type PersistedBuzzCache = {
+export type PersistedBuzzCache = {
   bootIntegrityHalt: string | null;
   activeViewerPubkey: string | null;
   activeListKeyByViewer: Record<string, string>;
@@ -214,6 +215,103 @@ function restoreChannelLists(value: unknown): Record<string, ChannelListCacheEnt
   );
 }
 
+/**
+ * Repair the cached thread index of a restored snapshot.
+ *
+ * Snapshots persisted by earlier builds can carry stale `reply.rootId` values
+ * (a mid-thread ancestor instead of the true root) whenever history was
+ * parsed from a truncated or incremental window. The stored parent links are
+ * still trustworthy — an event's `reply.eventId` comes verbatim from its raw
+ * NIP-10 `reply` tag — so the true root is re-derived by climbing parent
+ * links inside the journal before any composer reply can sign ancestry from
+ * the stale value (which the relay refuses with `root tag does not match
+ * thread ancestry`).
+ *
+ * Only chains that climb to a verified top-level message are rewritten; a
+ * chain whose top falls outside the journal keeps its existing claims, and a
+ * healthy snapshot returns byte-identical so warm restores never churn.
+ */
+export function repairCachedThreadRoots(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
+  let changed = false;
+  const rooms = Object.fromEntries(
+    Object.entries(snapshot.rooms).map(([channelId, room]) => {
+      const repairedJournal = repairedThreadJournal(room.eventJournal);
+      if (repairedJournal === room.eventJournal) return [channelId, room];
+      changed = true;
+      return [channelId, { ...room, eventJournal: repairedJournal }];
+    }),
+  );
+  return changed ? { ...snapshot, rooms } : snapshot;
+}
+
+type ThreadedJournalMessage = {
+  eventId: string;
+  reply?: { eventId?: unknown; rootId?: unknown };
+};
+
+function threadedMessage(event: unknown): ThreadedJournalMessage | undefined {
+  if (
+    event !== null &&
+    typeof event === 'object' &&
+    ((event as { type?: unknown }).type === 'human-message' ||
+      (event as { type?: unknown }).type === 'agent-message')
+  ) {
+    return event as ThreadedJournalMessage;
+  }
+  return undefined;
+}
+
+function replyParentOf(event: ThreadedJournalMessage): string | undefined {
+  const reply = event.reply;
+  return typeof reply?.eventId === 'string' ? reply.eventId : undefined;
+}
+
+function repairedThreadJournal(journal: RoomSnapshot['eventJournal']): RoomSnapshot['eventJournal'] {
+  // Memoized verdict per event id: the verified thread-root event id, or null
+  // when that id's chain cannot be verified inside this journal.
+  const verdicts = new Map<string, string | null>();
+  let next: RoomSnapshot['eventJournal'] | null = null;
+
+  const resolveVerifiedRoot = (startId: string): string | null => {
+    const memo = verdicts.get(startId);
+    if (memo !== undefined) return memo;
+    const path: string[] = [];
+    let verdict: string | null = null;
+    let cursor = startId;
+    while (true) {
+      const cached = verdicts.get(cursor);
+      if (cached !== undefined) {
+        verdict = cached;
+        break;
+      }
+      if (path.includes(cursor)) break; // cycle: unverifiable
+      path.push(cursor);
+      const event = threadedMessage(journal[cursor]);
+      if (!event) break; // non-message or missing ancestor: unverifiable
+      const parent = replyParentOf(event);
+      if (!parent) {
+        verdict = cursor; // genuine top-level message
+        break;
+      }
+      if (!journal[parent] || !threadedMessage(journal[parent])) break;
+      cursor = parent;
+    }
+    for (const id of path) verdicts.set(id, verdict);
+    return verdict;
+  };
+
+  for (const eventId of Object.keys(journal)) {
+    const event = threadedMessage(journal[eventId]);
+    if (!event || !replyParentOf(event)) continue;
+    const root = resolveVerifiedRoot(eventId);
+    if (root === null || root === eventId) continue;
+    if (event.reply?.rootId !== root) {
+      next = { ...(next ?? journal), [eventId]: { ...event, reply: { ...event.reply!, rootId: root } } } as RoomSnapshot['eventJournal'];
+    }
+  }
+  return next ?? journal;
+}
+
 function restoreChannels(value: unknown): Record<string, ChannelCacheEntry> {
   return Object.fromEntries(
     Object.entries(recordOfEntries(value)).map(([key, entry]) => {
@@ -223,7 +321,9 @@ function restoreChannels(value: unknown): Record<string, ChannelCacheEntry> {
         key,
         {
           ...rest,
-          ...(guarded?.status === 'ready' ? { snapshot: guarded.snapshot } : {}),
+          ...(guarded?.status === 'ready'
+            ? { snapshot: repairCachedThreadRoots(guarded.snapshot) }
+            : {}),
           ...(guarded?.status === 'integrity-halt' ? { integrityHalt: guarded.diagnostic } : {}),
           ...(Array.isArray(availablePeople) ? { availablePeople } : {}),
           ...(Array.isArray(availableAgents) ? { availableAgents } : {}),
@@ -256,9 +356,8 @@ function trimRecord<T extends { lastAccessedAt: number }>(
   );
 }
 
-function loadCache(): PersistedBuzzCache {
+export function decodePersistedBuzzCache(serialized: string | undefined): PersistedBuzzCache {
   try {
-    const serialized = storage.getString(CACHE_KEY);
     if (!serialized) return emptyCache();
     const parsed: unknown = JSON.parse(serialized);
     if (!isRecord(parsed)) throw new Error('Invalid Buzz local cache');
@@ -281,6 +380,10 @@ function loadCache(): PersistedBuzzCache {
       bootIntegrityHalt: `The normalized read-model cache could not be decoded: ${String(error)}`,
     };
   }
+}
+
+function loadCache(): PersistedBuzzCache {
+  return decodePersistedBuzzCache(storage.getString(BUZZ_CACHE_KEY));
 }
 
 function persisted(state: BuzzCacheState): PersistedBuzzCache {
@@ -630,7 +733,7 @@ let cacheDirty = false;
 export function flushBuzzLocalCacheForBackground(): void {
   if (!cacheDirty) return;
   cacheDirty = false;
-  storage.set(CACHE_KEY, JSON.stringify(persisted(useBuzzLocalCache.getState())));
+  storage.set(BUZZ_CACHE_KEY, JSON.stringify(persisted(useBuzzLocalCache.getState())));
 }
 
 useBuzzLocalCache.subscribe((state) => {
@@ -667,5 +770,5 @@ export function setActiveBuzzCacheViewer(viewerPubkey: string): void {
 export function clearBuzzLocalCache(): void {
   useBuzzLocalCache.getState().clear();
   cacheDirty = false;
-  storage.delete(CACHE_KEY);
+  storage.delete(BUZZ_CACHE_KEY);
 }

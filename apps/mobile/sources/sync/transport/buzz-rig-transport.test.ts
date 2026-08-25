@@ -20,6 +20,7 @@ import {
   selectMembers,
   selectReplyTarget,
   selectTranscript,
+  type KnownMessageReference,
 } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { BuzzRigTransport } from './buzz-rig-transport';
@@ -128,6 +129,28 @@ function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {
         content: body,
       }),
   );
+  const buildReplyMessage = vi.fn(
+    (
+      body: string,
+      parent: KnownMessageReference,
+      options?: {
+        mentionAgent?: string;
+        mentionPubkeys?: string[];
+        contentTags?: string[][];
+      },
+    ) =>
+      signed(human, {
+        created_at: 20,
+        kind: 9,
+        tags: [
+          ['h', parent.channelId],
+          ...(parent.rootId !== parent.eventId ? [['e', parent.rootId, '', 'root']] : []),
+          ['e', parent.eventId, '', 'reply'],
+          ...(options?.contentTags ?? []),
+        ],
+        content: body,
+      }),
+  );
   const client = {
     sessionEventsBackfill: vi.fn(async () => input.messages ?? []),
     getParentChannelId: vi.fn(async () => null),
@@ -173,6 +196,7 @@ function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {
     }),
     getChannelMetadata: vi.fn(async () => ({ archived: false })),
     buildMessage,
+    buildReplyMessage,
     publish: vi.fn(async () => undefined),
   };
   return { client, deliver: (event: NostrEvent) => liveHandler?.(event) };
@@ -282,9 +306,11 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     await transport.messageSubmitReply('Typed reply', selected.reference);
 
     expect(fixture.client.query).not.toHaveBeenCalled();
-    expect(fixture.client.buildMessage).toHaveBeenCalledWith(ROOM, 'Typed reply', {
-      extraTags: [['e', parent.id, '', 'reply']],
-    });
+    expect(fixture.client.buildReplyMessage).toHaveBeenCalledWith(
+      'Typed reply',
+      selected.reference,
+      {},
+    );
     expect(fixture.client.publish).toHaveBeenCalledTimes(1);
   });
 
@@ -312,12 +338,78 @@ describe('BuzzRigTransport typed read-model boundary', () => {
 
     await transport.messageSubmitReply('Deeper reply', selected.reference);
 
-    expect(fixture.client.buildMessage).toHaveBeenCalledWith(ROOM, 'Deeper reply', {
-      extraTags: [
-        ['e', root.id, '', 'root'],
-        ['e', threadedParent.id, '', 'reply'],
-      ],
-    });
+    // The incremental parse of the threaded parent records a mid-thread
+    // rootId, so the transport must hand the builder a proof corrected to the
+    // observed thread root — signing root=R / reply=threadedParent.
+    expect(fixture.client.buildReplyMessage).toHaveBeenCalledWith(
+      'Deeper reply',
+      { ...selected.reference, rootId: root.id },
+      {},
+    );
+  });
+
+  it('climbs observed reply ancestry before signing when remembered roots are stale', async () => {
+    // Thread R -> A -> B -> C where every remembered rootId is stale
+    // (mid-thread) but the raw-tag parent links are intact — the shape a
+    // truncated or incremental history leaves behind. Signing must derive
+    // the root by climbing parents, not by trusting any stored rootId.
+    const root = message(human, 'Thread root', 5);
+    const first = message(agent, 'First reply', 6, [
+      ['e', root.id, '', 'root'],
+      ['e', root.id, '', 'reply'],
+    ]);
+    const second = message(human, 'Second reply', 7, [
+      ['e', root.id, '', 'root'],
+      ['e', first.id, '', 'reply'],
+    ]);
+    const third = message(agent, 'Third reply', 8, [
+      ['e', root.id, '', 'root'],
+      ['e', second.id, '', 'reply'],
+    ]);
+    const fixture = clientFixture();
+    const transport = transportWith(fixture.client);
+    const fresh = await transport.readModelSnapshot(ROOM, [root, first, second, third]);
+
+    // Stale both everywhere: the session memory and the selected-from
+    // snapshot each record every reply's root as its immediate parent.
+    const staleParents = new Map([
+      [first.id, root.id],
+      [second.id, first.id],
+      [third.id, second.id],
+    ]);
+    const memory = transport as unknown as {
+      knownMessages: Map<string, { channelId: string; rootId: string; parentId?: string }>;
+    };
+    for (const [eventId, wrongRoot] of staleParents) {
+      const entry = memory.knownMessages.get(eventId);
+      if (!entry) throw new Error('threaded message was not remembered');
+      memory.knownMessages.set(eventId, { ...entry, rootId: wrongRoot });
+    }
+    const room = fresh.rooms[ROOM]!;
+    const staleJournal = Object.fromEntries(
+      Object.entries(room.eventJournal).map(([eventId, event]) => {
+        const wrongRoot = staleParents.get(eventId);
+        if (!wrongRoot || (event.type !== 'human-message' && event.type !== 'agent-message')) {
+          return [eventId, event];
+        }
+        return [eventId, { ...event, reply: { ...event.reply!, rootId: wrongRoot } }];
+      }),
+    );
+    const stale = { ...fresh, rooms: { ...fresh.rooms, [ROOM]: { ...room, eventJournal: staleJournal } } };
+
+    const selected = selectReplyTarget(stale, ROOM, third.id);
+    if (selected.status !== 'available') throw new Error('deep reply was not selected');
+
+    await transport.messageSubmitReply('Deepest reply', selected.reference);
+
+    // The builder receives the proof with the re-derived true root and signs
+    // root=R / reply=C from it.
+    expect(fixture.client.buildReplyMessage).toHaveBeenCalledWith(
+      'Deepest reply',
+      { ...selected.reference, rootId: root.id },
+      {},
+    );
+    expect(fixture.client.publish).toHaveBeenCalledTimes(1);
   });
 
   it('derives canonical corners from creator-authored lifecycle and verified membership', async () => {

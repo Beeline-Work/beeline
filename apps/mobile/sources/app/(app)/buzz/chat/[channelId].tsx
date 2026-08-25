@@ -58,12 +58,18 @@ import {
   selectReplyTarget,
 } from '@beeline/buzz-client';
 import {
+  latestAgentTurns,
   projectReadEvent,
   transcriptMessages,
   mergeDisplayPages,
   type ChatDisplayMessage,
   type DeliveryRetryPosture,
 } from '@/sync/transport/buzz-event-projection';
+import {
+  buildChannelReferenceIndex,
+  type ChannelReferenceIndex,
+  type ChannelReferenceTarget,
+} from '@/buzz/channel-reference';
 import {
   channelCacheKey,
   getCachedChannel,
@@ -75,6 +81,7 @@ import {
 } from '@/buzz/local-cache';
 import {
   cacheLiveSessionEvents,
+  drainLiveEventFrame,
   loadOlderMessages,
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
@@ -87,6 +94,7 @@ import { groknight } from '@/buzz/groknight';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
+import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -666,6 +674,72 @@ export default function BuzzChat() {
         ? transcriptMessages(cachedSnapshot, decodedId, cacheViewerPubkey)
         : [],
     [cacheViewerPubkey, cachedSnapshot, decodedId],
+  );
+  // The workspace's already-known channels, for resolving explicit
+  // `#room` / `#room/corner` references in prose. Read from the SAME local
+  // cache the Room list maintains (never a second persisted index), plus this
+  // transcript's own canonical corner list. Memoized so the object identity —
+  // and therefore MonoMarkdown's React.memo bailout — holds across unrelated
+  // renders; resolution itself is exact-only and stays silent on anything the
+  // workspace does not actually have (`buzz/channel-reference.ts`).
+  const cachedChannelList = useBuzzLocalCache((state) =>
+    selectChannelList(state, cacheViewerPubkey || null, activeCommunityId ?? undefined),
+  );
+  const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
+    const listChannels = cachedChannelList?.channels ?? [];
+    return buildChannelReferenceIndex(
+      [
+        ...listChannels
+          .filter((channel) => !channel.parentChannelId && channel.title)
+          .map((channel) => ({ channelId: channel.id, name: channel.title! })),
+        // This transcript's own channel, even when it is not in the cached
+        // list yet (a freshly created Room or Corner).
+        parentChannelId
+          ? null
+          : { channelId: decodedId, name: resolvedChannelName || routeChannelTitle || '' },
+      ].filter((room): room is { channelId: string; name: string } => room !== null),
+      [
+        ...listChannels.flatMap((channel) =>
+          (channel.corners ?? []).map((corner) => ({
+            channelId: corner.id,
+            parentChannelId: channel.id,
+            name: corner.name,
+          })),
+        ),
+        ...cornerLifecycle.map((corner) => ({
+          channelId: corner.id,
+          parentChannelId: parentChannelId ?? decodedId,
+          name: corner.name,
+        })),
+        ...(parentChannelId
+          ? [
+              {
+                channelId: decodedId,
+                parentChannelId,
+                name: resolvedChannelName || routeChannelTitle || '',
+              },
+            ]
+          : []),
+      ],
+    );
+  }, [
+    cachedChannelList,
+    cornerLifecycle,
+    decodedId,
+    parentChannelId,
+    resolvedChannelName,
+    routeChannelTitle,
+  ]);
+  /** Navigate to exactly the referenced Room/Corner through the existing
+   * conventions; a reference to the transcript you are already in is a no-op. */
+  const handleOpenChannelReference = useCallback(
+    (target: ChannelReferenceTarget) => {
+      if (!target.channelId || target.channelId === decodedId) return;
+      if (target.kind === 'corner')
+        router.push(cornerHref(target.channelId, target.parentChannelId));
+      else router.push(roomHref(target.channelId));
+    },
+    [decodedId],
   );
   useEffect(() => {
     if (cachedSnapshot) return;
@@ -1345,21 +1419,26 @@ export default function BuzzChat() {
       }),
     [displayedCornerStatus, isArchived, mergeTarget, mergeNotReadyReason, messages],
   );
+  // The daemon's own `#t=agent-turn` lifecycle, derived straight from the
+  // normalized snapshot journal — one marker per agent, newest first. This is
+  // what lights the Room's thinking indicator during the silent window
+  // between the daemon's WORKING receipt and the first streamed draft, when
+  // the transcript's live activity lane does not exist yet.
+  const agentTurnMarkers = useMemo(
+    () => (cachedSnapshot ? latestAgentTurns(cachedSnapshot, decodedId) : []),
+    [cachedSnapshot, decodedId],
+  );
   const activeAgentTurn = useMemo(
     () =>
-      [...messages]
-        .reverse()
-        .find(
-          (message) =>
-            message.agentTurn &&
-            isAgentTurnActive(
-              message.agentTurn,
-              agentPresences[message.agentTurn.agentPubkey],
-              presenceNow,
-              presenceReconnectGrace[message.agentTurn.agentPubkey],
-            ),
+      agentTurnMarkers.find((turn) =>
+        isAgentTurnActive(
+          turn,
+          agentPresences[turn.agentPubkey],
+          presenceNow,
+          presenceReconnectGrace[turn.agentPubkey],
         ),
-    [agentPresences, messages, presenceNow, presenceReconnectGrace],
+      ),
+    [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
   );
   /**
    * The pinned corner line's whole state, resolved in one place so the words it
@@ -1458,7 +1537,7 @@ export default function BuzzChat() {
       return `${cornerAgentDisplay?.name ?? 'agent'} thinking…`;
     }
     const liveTurn = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
-    const pubkey = liveTurn?.pubkey ?? activeAgentTurn?.agentTurn?.agentPubkey;
+    const pubkey = liveTurn?.pubkey ?? activeAgentTurn?.agentPubkey;
     if (!pubkey) return null;
     const subject = pubkey
       ? resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name
@@ -1696,9 +1775,10 @@ export default function BuzzChat() {
         const flushLiveEvents = () => {
           liveFlushScheduled = false;
           if (cancelled || pendingLiveEvents.length === 0) return;
-          const batch = pendingLiveEvents;
-          pendingLiveEvents = [];
-          const projections = cacheLiveSessionEvents(identity.publicKey, decodedId, batch);
+          const projections: ReturnType<typeof cacheLiveSessionEvents> = [];
+          const frame = drainLiveEventFrame(pendingLiveEvents, (batch) => {
+            projections.push(...cacheLiveSessionEvents(identity.publicKey, decodedId, batch));
+          });
           for (const projected of projections) {
             // One reducer owns every transition out of sending/delivering —
             // rejection ack, landed card, archive notice, delivery failure —
@@ -1763,6 +1843,10 @@ export default function BuzzChat() {
               setApprovalError(null);
             }
             applyAgentPresence(projected.agentPresence);
+          }
+          if (!cancelled && frame.remaining > 0 && !liveFlushScheduled) {
+            liveFlushScheduled = true;
+            requestAnimationFrame(flushLiveEvents);
           }
         };
         const handleLiveMessage = (event: Parameters<typeof cacheLiveSessionEvents>[2][number]) => {
@@ -2154,6 +2238,7 @@ export default function BuzzChat() {
 
     sendInFlightRef.current = true;
     setSending(true);
+    let optimisticId: string | undefined;
     try {
       // A warm/partial snapshot can paint before the hydration effect has
       // published its transport state. Sending is still a valid operation:
@@ -2175,7 +2260,7 @@ export default function BuzzChat() {
       setInputSelection({ start: 0, end: 0 });
       setPendingAttachment(null);
       setReplyTarget(null);
-      const optimisticId = `optimistic-${Date.now()}`;
+      optimisticId = `optimistic-${Date.now()}`;
       addMessages([
         {
           id: optimisticId,
@@ -2221,11 +2306,36 @@ export default function BuzzChat() {
               : undefined,
           );
       setOptimisticMessages((current) =>
-        reconcileOptimisticMessage(current, optimisticId, eventId),
+        reconcileOptimisticMessage(current, optimisticId!, eventId),
       );
     } catch (err) {
       console.warn('Send failed:', err);
-      Alert.alert('Message not sent', err instanceof Error ? err.message : String(err));
+      const failedOptimisticId = optimisticId;
+      if (failedOptimisticId) {
+        setOptimisticMessages((current) =>
+          current.filter((message) => message.id !== failedOptimisticId),
+        );
+      }
+      const failure = publishFailurePresentation(err);
+      Alert.alert(
+        'Message not sent',
+        failure.message,
+        failure.retryable
+          ? [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Retry',
+                onPress: () => {
+                  inputTextRef.current = rawText;
+                  setInputText(rawText);
+                  setPendingAttachment(pendingAttachment);
+                  setReplyTarget(replyTarget);
+                  requestAnimationFrame(() => void handleSend());
+                },
+              },
+            ]
+          : [{ text: 'OK' }],
+      );
     } finally {
       sendInFlightRef.current = false;
       setSending(false);
@@ -3428,6 +3538,8 @@ export default function BuzzChat() {
                 byline={byline}
                 bodyText={item.text}
                 mentionHandles={mentionHandles}
+                channelIndex={channelReferenceIndex}
+                onChannelReference={handleOpenChannelReference}
                 bodyTestID={`chat-message-text-${item.id}`}
                 replyReference={replyReference}
                 attachments={attachmentElements}
@@ -3445,6 +3557,8 @@ export default function BuzzChat() {
                 typewriter={speaksAsAgent && Boolean(item.isNew)}
                 bodyText={ledgerText ? ledgerText.prose : item.text}
                 mentionHandles={mentionHandles}
+                channelIndex={channelReferenceIndex}
+                onChannelReference={handleOpenChannelReference}
                 bodyTestID={`chat-message-text-${item.id}`}
                 replyReference={replyReference}
                 machineNoise={machineNoise}
@@ -3480,6 +3594,8 @@ export default function BuzzChat() {
       beginReply,
       replyTargetForMessage,
       visibleMessageById,
+      channelReferenceIndex,
+      handleOpenChannelReference,
     ],
   );
 

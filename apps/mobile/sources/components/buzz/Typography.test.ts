@@ -104,6 +104,12 @@ const monoStyles = new Set([
   'rowAgeUnread',
   // The supervision deck's mono micro-metadata: repo tag.
   'rowRepo',
+  // The unread-count chip numeral: a deliberate machine identifier in the
+  // gutter's top slot (captain-approved unread treatment, 2026-08-25).
+  'unreadChipText',
+  // Pre-existing (repaired alongside the unread-chip work): the settings hub's
+  // manual-update action is a deliberate machine label.
+  'updateActionText',
   'rowPreviewAuthor',
   'railCommandLabel',
   'cornerPeekCount',

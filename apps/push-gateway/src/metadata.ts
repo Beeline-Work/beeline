@@ -169,11 +169,44 @@ export class NotificationMetadataResolver {
     const senderName = await this.cached(this.senders, senderKey, () =>
       this.loadSender(event.pubkey, room.communityId, reader),
     );
+
+    // Corner presentation names (see mapping.ts's channel-naming convention):
+    // resolve the DESTINATION corner's display name and its parent Room's
+    // CURRENT display name from relay truth. The destination is either the
+    // notifying channel itself (a corner worktree channel) or the `subchannel`
+    // target an attention card announced inside its parent Room. Parent lookups
+    // reuse the same per-Room cache, and an unresolvable parent simply leaves
+    // the field unset — mapping.ts falls back honestly instead of fabricating.
+    let cornerName: string | undefined;
+    let parentRoomName: string | undefined;
+    const attentionTarget = tagValue(event, 'subchannel');
+    const cornerChannelId = room.isChildChannel
+      ? channelId
+      : attentionTarget && attentionTarget !== channelId
+        ? attentionTarget
+        : undefined;
+    if (cornerChannelId) {
+      const corner = await this.cached(
+        this.rooms,
+        `${reader.scopeKey ?? ''}:${cornerChannelId}`,
+        () => this.loadRoom(cornerChannelId, reader),
+      );
+      cornerName = corner.roomName;
+      parentRoomName =
+        corner.isChildChannel && corner.parentChannelId
+          ? await this.roomDisplayName(corner.parentChannelId, reader)
+          : // The attention target was announced inside this Room; it is the
+            // corner's parent by the gateway's own addressing contract.
+            room.roomName;
+    }
+
     return {
       ...(room.roomName ? { roomName: room.roomName } : {}),
       isDirectMessage: room.isDirectMessage,
       ...(room.isChildChannel ? { isChildChannel: true } : {}),
       ...(room.parentChannelId ? { parentChannelId: room.parentChannelId } : {}),
+      ...(cornerName ? { cornerName } : {}),
+      ...(parentRoomName ? { parentRoomName } : {}),
       persistentWorkspaceRoom: room.persistentWorkspaceRoom,
       ...(room.workspaceName ? { workspaceName: room.workspaceName } : {}),
       fixtureCandidates: room.fixtureCandidates,
@@ -193,6 +226,17 @@ export class NotificationMetadataResolver {
     return this.cached(this.senders, `${room.communityId ?? ''}:${pubkey}`, () =>
       this.loadSender(pubkey, room.communityId, reader),
     );
+  }
+
+  /** Cached current display name of one channel, shared with the full room cache. */
+  private async roomDisplayName(
+    channelId: string,
+    reader: RelayEventReader,
+  ): Promise<string | undefined> {
+    const room = await this.cached(this.rooms, `${reader.scopeKey ?? ''}:${channelId}`, () =>
+      this.loadRoom(channelId, reader),
+    );
+    return room.roomName;
   }
 
   private async loadRoom(channelId: string, reader: RelayEventReader): Promise<RoomMetadata> {

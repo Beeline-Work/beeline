@@ -1,0 +1,73 @@
+name: Client truth gates
+
+on:
+  pull_request:
+    paths:
+      - 'packages/buzz-client/**'
+      - 'apps/mobile/sources/buzz/**'
+      - 'apps/mobile/sources/sync/transport/**'
+      - 'apps/mobile/sources/app/(app)/buzz/chat/**'
+      - 'apps/body/src/durable-state.ts'
+      - 'apps/body/src/durable-state.test.ts'
+      - 'apps/body/src/fixtures/durable-state/**'
+      - '.github/workflows/client-truth-gates.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  production-corpus-replay:
+    name: PRODUCTION-CORPUS REPLAY
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client
+      - run: npm test -w @beeline/buzz-client -- --run src/read-model/relay-history-corpus.test.ts src/read-model/production-corpus-replay.test.ts
+
+  frame-budget:
+    name: FRAME-BUDGET
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client
+      # The isolated mobile app resolves `expo/tsconfig.base.json` (vitest's
+      # tsconfig parse) and its file-linked @beeline/* deps only from its own
+      # node_modules — a root-only npm ci never provides it.
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      - run: npm test --prefix apps/mobile -- --run sources/buzz/local-cache.frame-budget.test.ts
+
+  state-upgrade:
+    name: STATE-UPGRADE
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client
+      # The body durable-state suite imports @beeline/gate's package entry,
+      # which only resolves from its built dist.
+      - run: npm run build -w @beeline/gate
+      # Same isolated-app requirement as FRAME-BUDGET above.
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      - run: npm test --prefix apps/mobile -- --run sources/buzz/local-cache.upgrade.test.ts
+      - run: npm test -w @beeline/body -- --run src/durable-state.test.ts

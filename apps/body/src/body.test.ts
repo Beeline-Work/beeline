@@ -1226,6 +1226,13 @@ describe('agent identity boundary', () => {
       try {
         const operatorHome = join(root, 'operator');
         mkdirSync(join(operatorHome, '.config/trusty-squire'), { recursive: true });
+        const squireConfigRoot = join(root, 'runtime', 'squire-config');
+        mkdirSync(join(squireConfigRoot, 'trusty-squire'), { recursive: true });
+        const sessionBus = join(root, 'run', 'bus');
+        mkdirSync(join(root, 'run'), { recursive: true });
+        writeFileSync(sessionBus, 'socket placeholder');
+        const alternateConfig = join(root, 'alternate-xdg');
+        mkdirSync(join(alternateConfig, 'trusty-squire'), { recursive: true });
         const unsupported = new Body({
           ...config,
           agentKind: 'pi',
@@ -1253,6 +1260,7 @@ describe('agent identity boundary', () => {
           agentHomeRoot: blockedHome,
           operatorHome,
           bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
         });
         await expect(
           Reflect.get(unprovisioned, 'sessionAgentEnv').call(unprovisioned),
@@ -1275,10 +1283,43 @@ describe('agent identity boundary', () => {
           agentHomeRoot: isolatedRoot,
           operatorHome,
           bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+          agentEnv: {
+            ...config.agentEnv,
+            XDG_CONFIG_HOME: alternateConfig,
+            DBUS_SESSION_BUS_ADDRESS: `unix:path=${sessionBus}`,
+            DBUS_STARTER_ADDRESS: `unix:path=${sessionBus}`,
+            DBUS_STARTER_BUS_TYPE: 'session',
+          },
         });
-        await expect(
-          Reflect.get(supported, 'sessionAgentEnv').call(supported),
-        ).resolves.toMatchObject({ CODEX_HOME: join(isolatedRoot, 'codex') });
+        const supportedEnv = await Reflect.get(supported, 'sessionAgentEnv').call(supported);
+        expect(supportedEnv).toMatchObject({ CODEX_HOME: join(isolatedRoot, 'codex') });
+        expect(supportedEnv).not.toHaveProperty('DBUS_SESSION_BUS_ADDRESS');
+        expect(supportedEnv).not.toHaveProperty('DBUS_STARTER_ADDRESS');
+        const masks = Reflect.get(supported, 'sandboxCredentialMaskPaths').call(supported);
+        expect(masks).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: join(squireConfigRoot, 'trusty-squire') }),
+            expect.objectContaining({ path: join(alternateConfig, 'trusty-squire') }),
+            expect.objectContaining({ path: sessionBus }),
+          ]),
+        );
+
+        const abstractBus = new Body({
+          ...config,
+          agentKind: 'codex',
+          agentHomeRoot: join(root, 'abstract-bus-home'),
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+          agentEnv: {
+            ...config.agentEnv,
+            DBUS_SESSION_BUS_ADDRESS: 'unix:abstract=/tmp/dbus-session',
+          },
+        });
+        await expect(Reflect.get(abstractBus, 'sessionAgentEnv').call(abstractBus)).rejects.toThrow(
+          /session IPC cannot be masked safely/,
+        );
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

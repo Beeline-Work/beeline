@@ -5,7 +5,26 @@ import {
   externalMcpServers,
   governedSquireCall,
   isExternalMcpPermissionRequest,
+  isTrustySquireMcpLaunch,
 } from './external-mcp-capabilities.js';
+
+describe('Trusty Squire launch identity', () => {
+  it('recognizes stable-install absolute package paths independent of launcher form', () => {
+    expect(
+      isTrustySquireMcpLaunch('node', [
+        '/opt/beeline/node_modules/@trusty-squire/mcp/dist/bin.js',
+        'server',
+      ]),
+    ).toBe(true);
+    expect(
+      isTrustySquireMcpLaunch(
+        'C:\\beeline\\node_modules\\@trusty-squire\\mcp\\dist\\bin.js',
+        ['server'],
+      ),
+    ).toBe(true);
+    expect(isTrustySquireMcpLaunch('node', ['/opt/project-tools/dist/bin.js'])).toBe(false);
+  });
+});
 
 describe('external MCP capabilities', () => {
   it('expands squire to an exact secret-free built-in profile', () => {

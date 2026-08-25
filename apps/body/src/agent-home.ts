@@ -53,6 +53,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
+import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
 
 /**
  * Credential files shared back into an isolated harness state directory,
@@ -216,8 +217,11 @@ async function provisionOperatorSkillsAndMcp(
   }
 }
 
-export function hasLocalTrustySquireState(operatorHome = homedir()): boolean {
-  return existsSync(resolve(operatorHome, '.config', 'trusty-squire'));
+export function hasLocalTrustySquireState(
+  operatorHome = homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return trustySquireLegacyStorePaths(operatorHome, env).some(existsSync);
 }
 
 export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): boolean {

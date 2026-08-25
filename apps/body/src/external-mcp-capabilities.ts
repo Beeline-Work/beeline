@@ -14,12 +14,15 @@ export function isTrustySquireMcpLaunch(
   command: string,
   args: readonly string[] = [],
 ): boolean {
-  const values = [command, ...args];
-  return values.some(
-    (value) =>
-      /(^|[\s="'\[,])@trusty-squire\/mcp(?:@[^\s"'\],}]+)?(?=$|[\s"'\],}])/i.test(value) ||
-      /(^|[/\\])trusty-squire(?:-mcp)?(?:\.[a-z0-9]+)?$/i.test(value.trim()),
-  );
+  return [command, ...args].some((value) => {
+    const normalized = value.trim().replace(/\\/g, '/').toLowerCase();
+    return (
+      /(^|[\s/="'\[,])@trusty-squire\/mcp(?:@[^\s/"'\],}]+)?(?=$|[\s/"'\],}])/i.test(
+        normalized,
+      ) ||
+      /(^|\/)trusty-squire(?:-mcp)?(?:\.[a-z0-9]+)?$/i.test(normalized)
+    );
+  });
 }
 
 export function isExternalMcpCapability(value: unknown): value is ExternalMcpCapability {

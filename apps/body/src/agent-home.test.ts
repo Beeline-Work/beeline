@@ -93,6 +93,13 @@ describe('per-room harness state isolation', () => {
     expect(hasLocalTrustySquireState(operatorHome)).toBe(false);
     await mkdir(resolve(operatorHome, '.config/trusty-squire'), { recursive: true });
     expect(hasLocalTrustySquireState(operatorHome)).toBe(true);
+
+    const alternateOperatorHome = await scratch('beeline-alternate-operator-');
+    const alternateHome = await scratch('beeline-alternate-xdg-');
+    await mkdir(resolve(alternateHome, 'trusty-squire'), { recursive: true });
+    expect(
+      hasLocalTrustySquireState(alternateOperatorHome, { XDG_CONFIG_HOME: alternateHome }),
+    ).toBe(true);
   });
 
   it('detects ambient Trusty Squire MCP declarations without a local vault', async () => {
@@ -141,6 +148,10 @@ describe('operator skills + MCP passthrough', () => {
     'command = "npx"',
     'args = ["-y", "@trusty-squire/mcp@1.1.12"]',
     '',
+    '[mcp_servers.stable_vault]',
+    'command = "node"',
+    'args = ["/opt/node_modules/@trusty-squire/mcp/dist/bin.js", "server"]',
+    '',
     '[mcp_servers.project_tools]',
     'command = "project-tools"',
   ].join('\n');
@@ -188,6 +199,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(isolatedText).toContain('[mcp_servers.project_tools]');
     expect(isolatedText).not.toContain('[mcp_servers.squire]');
     expect(isolatedText).not.toContain('[mcp_servers.vault_tools]');
+    expect(isolatedText).not.toContain('[mcp_servers.stable_vault]');
     expect(isolatedText).not.toMatch(/model|approval_policy|sandbox_mode/);
 
     // Writing through the session cannot reach the operator's real config.

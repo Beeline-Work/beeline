@@ -318,6 +318,12 @@ import {
 import { operatorMcpServersForCorners } from './operator-mcp.js';
 import { SquireHostBroker } from './squire-host-broker.js';
 import {
+  existingTrustySquireIsolationPaths,
+  hasUnmaskableTrustySquireIpc,
+  trustySquireIsolationPaths,
+  trustySquireStorePath,
+} from './trusty-squire-storage.js';
+import {
   applyAgentModelSelection,
   filterAllowedModelConfigOptions,
   filterModelOptionsByCredentials,
@@ -2305,7 +2311,9 @@ export class Body {
       config.accessPolicy === 'creator' &&
       config.externalMcpCapabilities?.includes('squire')
     ) {
-      this.squireBroker = new SquireHostBroker();
+      if (config.squireConfigRoot) {
+        this.squireBroker = new SquireHostBroker(config.squireConfigRoot);
+      }
     }
     this.bodyIdentity = bodyIdentity ?? newIdentity(DEFAULT_BODY_IDENTITY_NAME);
     this.agentIdentity = agentIdentity ?? newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
@@ -2542,10 +2550,26 @@ export class Body {
    * must reflect operator edits on the next session start.
    */
   private squireBoundaryRequired(): boolean {
+    const env = { ...process.env, ...this.config.agentEnv };
     return Boolean(
       this.config.externalMcpCapabilities?.includes('squire') ||
-      hasLocalTrustySquireState(this.config.operatorHome) ||
+      hasLocalTrustySquireState(this.config.operatorHome, env) ||
       hasAmbientTrustySquireConfiguration(this.config.operatorHome),
+    );
+  }
+
+  private sandboxCredentialMaskPaths(): ReturnType<typeof credentialMaskPaths> {
+    const operatorHome = this.config.operatorHome ?? homedir();
+    const squirePaths = this.config.squireConfigRoot
+      ? trustySquireIsolationPaths({
+          configRoot: this.config.squireConfigRoot,
+          operatorHome,
+          env: { ...process.env, ...this.config.agentEnv },
+        })
+      : [];
+    return credentialMaskPaths(
+      [...(this.config.sandboxMaskPaths ?? []), ...squirePaths],
+      operatorHome,
     );
   }
 
@@ -2570,19 +2594,23 @@ export class Body {
           new Error('Trusty Squire requires an active bubblewrap credential-mask boundary'),
         );
       }
-      const squireStore = resolve(
-        this.config.operatorHome ?? homedir(),
-        '.config',
-        'trusty-squire',
-      );
-      if (
-        !credentialMaskPaths(
-          this.config.sandboxMaskPaths,
-          this.config.operatorHome ?? homedir(),
-        ).some((mask) => mask.path === squireStore)
-      ) {
+      if (!this.config.squireConfigRoot) {
+        return Promise.reject(new Error('Trusty Squire host-only storage is not configured'));
+      }
+      const isolationInput = {
+        configRoot: this.config.squireConfigRoot,
+        operatorHome: this.config.operatorHome ?? homedir(),
+        env: { ...process.env, ...this.config.agentEnv },
+      };
+      if (hasUnmaskableTrustySquireIpc(isolationInput.env)) {
+        return Promise.reject(new Error('Trusty Squire session IPC cannot be masked safely'));
+      }
+      const requiredPaths = existingTrustySquireIsolationPaths(isolationInput);
+      const store = trustySquireStorePath(this.config.squireConfigRoot);
+      const masked = new Set(this.sandboxCredentialMaskPaths().map((mask) => mask.path));
+      if (!requiredPaths.includes(store) || requiredPaths.some((path) => !masked.has(path))) {
         return Promise.reject(
-          new Error('Trusty Squire credential store cannot be masked from the agent sandbox'),
+          new Error('Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox'),
         );
       }
     }
@@ -2591,10 +2619,15 @@ export class Body {
       root,
       failClosed: Boolean(squireBoundaryRequired),
       ...(this.config.operatorHome ? { operatorHome: this.config.operatorHome } : {}),
-    }).then((overlay) => ({
-      ...this.config.agentEnv,
-      ...overlay,
-    }));
+    }).then((overlay) => {
+      const env = { ...this.config.agentEnv, ...overlay };
+      if (squireBoundaryRequired) {
+        delete env.DBUS_SESSION_BUS_ADDRESS;
+        delete env.DBUS_STARTER_ADDRESS;
+        delete env.DBUS_STARTER_BUS_TYPE;
+      }
+      return env;
+    });
   }
 
   /**
@@ -2805,7 +2838,7 @@ export class Body {
       harnessHomeStateDirs: homeStateDirs,
       // Credential masks (built-in known stores + owner-configured extras) in
       // BOTH modes: a session that can read a credential can use it out-of-band.
-      maskPaths: credentialMaskPaths(this.config.sandboxMaskPaths, operatorHome),
+      maskPaths: this.sandboxCredentialMaskPaths(),
       ...(tmpDir ? { tmpDir } : {}),
       ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
       ...(input.protectedPaths ? { protectedPaths: input.protectedPaths } : {}),
@@ -12657,10 +12690,7 @@ export class Body {
         ...(boundRepo.localPath ? [boundRepo.localPath] : []),
         ...(this.config.agentHomeRoot ? [this.config.agentHomeRoot] : []),
         ...(this.config.agentPrivateRoot ? [this.config.agentPrivateRoot] : []),
-        ...credentialMaskPaths(
-          this.config.sandboxMaskPaths,
-          this.config.operatorHome ?? homedir(),
-        ).map((mask) => mask.path),
+        ...this.sandboxCredentialMaskPaths().map((mask) => mask.path),
       ],
       writablePaths: [
         worktreePath,

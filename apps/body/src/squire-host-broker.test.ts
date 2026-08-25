@@ -4,7 +4,8 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { squireArgumentsDigest } from './external-mcp-capabilities.js';
-import { SquireHostBroker, squireHostEnv } from './squire-host-broker.js';
+import { SquireHostBroker } from './squire-host-broker.js';
+import { trustySquireHostEnv } from './trusty-squire-storage.js';
 
 class FakeSquireProcess extends EventEmitter {
   stdin = new PassThrough();
@@ -24,19 +25,32 @@ afterEach(async () => {
 describe('Trusty Squire host broker', () => {
   it('never hands daemon push credentials to the credential process', () => {
     expect(
-      squireHostEnv({
-        HOME: '/home/operator',
-        PATH: '/usr/bin',
-        GH_TOKEN: 'push-token',
-        GITHUB_TOKEN: 'push-token',
-        SSH_AUTH_SOCK: '/run/agent.sock',
-      }),
-    ).toEqual({ HOME: '/home/operator', PATH: '/usr/bin' });
+      trustySquireHostEnv(
+        {
+          HOME: '/home/operator',
+          PATH: '/usr/bin',
+          XDG_CONFIG_HOME: '/home/operator/alternate-config',
+          DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
+          GH_TOKEN: 'push-token',
+          GITHUB_TOKEN: 'push-token',
+          SSH_AUTH_SOCK: '/run/agent.sock',
+        },
+        '/runtime/squire-config',
+      ),
+    ).toEqual({
+      HOME: '/home/operator',
+      PATH: '/usr/bin',
+      XDG_CONFIG_HOME: '/runtime/squire-config',
+      TRUSTY_SQUIRE_SESSION_FILE: '1',
+    });
   });
 
   it('keeps the credential process host-side and forwards only an exact authorized effect', async () => {
     const child = new FakeSquireProcess();
-    const broker = new SquireHostBroker(() => child as unknown as ChildProcessWithoutNullStreams);
+    const broker = new SquireHostBroker(
+      '/runtime/squire-config',
+      () => child as unknown as ChildProcessWithoutNullStreams,
+    );
     brokers.push(broker);
     const profile = await broker.mcpServer('room-1');
     expect(profile.command).toBe(process.execPath);
@@ -94,6 +108,7 @@ describe('Trusty Squire host broker', () => {
     let now = 1_000;
     const child = new FakeSquireProcess();
     const broker = new SquireHostBroker(
+      '/runtime/squire-config',
       () => child as unknown as ChildProcessWithoutNullStreams,
       () => now,
     );

@@ -78,6 +78,7 @@ export interface BodyConfig {
    */
   agentHomeRoot?: string;
   operatorHome?: string;
+  squireConfigRoot?: string;
   /** Durable persona memory/lessons root outside corner worktrees. */
   agentPrivateRoot?: string;
   /**

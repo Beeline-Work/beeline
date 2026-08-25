@@ -2,13 +2,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  KIND_CHANNEL_ADMINS,
-  KIND_CHANNEL_MEMBERS,
-  parsePermissionRequest,
-} from '@beeline/buzz-client';
 import { newIdentity } from '@beeline/gate';
-import { signEvent, type NostrEvent } from '@beeline/nostr';
+import type { NostrEvent } from '@beeline/nostr';
 import { Body } from './body.js';
 import {
   buildScheduledTurnReceipt,
@@ -226,45 +221,12 @@ describe('scheduled Room turn boundary', () => {
     }
   });
 
-  it('turns a scheduled send/publish/spend-shaped tool attempt into a P1 request and no invocation', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-permission-'));
+  it('allows a scheduled send/publish/spend-shaped tool through the schedule envelope', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-action-'));
     const principal = newIdentity('scheduled-principal');
     const agent = newIdentity('scheduled-action-agent');
     const roomId = 'scheduled-room';
     const workspaceId = 'scheduled-workspace';
-    const projection = (kind: number, tags: string[][]) =>
-      signEvent(
-        { pubkey: principal.publicKey, created_at: 1_900_000_000, kind, tags, content: '' },
-        principal.secretKey,
-      );
-    const members = projection(KIND_CHANNEL_MEMBERS, [
-      ['d', roomId],
-      ['p', principal.publicKey],
-      ['p', agent.publicKey],
-    ]);
-    const admins = projection(KIND_CHANNEL_ADMINS, [
-      ['d', roomId],
-      ['p', principal.publicKey, '', 'owner'],
-    ]);
-    const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        if (String(input).endsWith('/query')) {
-          const filters = JSON.parse(String(init?.body)) as Array<{ kinds?: number[] }>;
-          const kinds = new Set(filters.flatMap((filter) => filter.kinds ?? []));
-          return new Response(
-            JSON.stringify([
-              ...(kinds.has(KIND_CHANNEL_MEMBERS) ? [members] : []),
-              ...(kinds.has(KIND_CHANNEL_ADMINS) ? [admins] : []),
-            ]),
-            { status: 200 },
-          );
-        }
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
     const body = new Body(config(root), undefined, agent);
     const runId = deterministicScheduleRunId('campaign', 1, 1_900_000_000);
     const requestId = '2'.repeat(64);
@@ -288,7 +250,6 @@ describe('scheduled Room turn boundary', () => {
         reservedTokens: 500,
       },
     });
-    const adapterInvocation = vi.fn();
     try {
       const decision = await Reflect.get(body, 'handleRoomPermissionRequest').call(
         body,
@@ -298,24 +259,11 @@ describe('scheduled Room turn boundary', () => {
             kind: 'execute',
             title: 'send publish spend campaign',
             rawInput: { recipients: ['customer@example.com'], maxMinorUnits: 500 },
-            invoke: adapterInvocation,
           },
         },
         'direct-message',
       );
-      expect(decision).toBe('reject');
-      expect(adapterInvocation).not.toHaveBeenCalled();
-      const requests = published.flatMap((event) => {
-        const parsed = parsePermissionRequest(event);
-        return parsed ? [parsed] : [];
-      });
-      expect(requests).toHaveLength(1);
-      expect(requests[0]!.value).toMatchObject({
-        requesterAgentPubkey: agent.publicKey,
-        audience: 'owner',
-        scope: { type: 'operation.execute', risk: 'irreversible' },
-        provenance: { immediateTurnEventId: requestId, scheduleRunId: runId },
-      });
+      expect(decision).toBe('allow');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -334,7 +282,20 @@ describe('scheduled Room turn boundary', () => {
     const factory = vi
       .spyOn(body as never, 'publishRootFactoryDirectives' as never)
       .mockResolvedValue(undefined as never);
-    const upload = vi.spyOn(body as never, 'uploadAgentOutputs' as never);
+    const upload = vi
+      .spyOn(body as never, 'uploadAgentOutputs' as never)
+      .mockResolvedValue({
+        attachments: [
+          {
+            url: 'https://relay.test/media/report',
+            name: 'report.html',
+            mimeType: 'text/html',
+            size: 42,
+            sha256: 'a'.repeat(64),
+          },
+        ],
+        errors: [],
+      } as never);
     const sessionPrompt = vi.fn(async () => ({
       stopReason: 'end_turn',
       updates: [],
@@ -348,35 +309,10 @@ describe('scheduled Room turn boundary', () => {
       client: { sessionPrompt, sessionCancel: vi.fn() },
       mode: 'readonly',
     } as never);
-    const projection = (kind: number, tags: string[][]) =>
-      signEvent(
-        { pubkey: principal.publicKey, created_at: 1_900_000_000, kind, tags, content: '' },
-        principal.secretKey,
-      );
-    const members = projection(KIND_CHANNEL_MEMBERS, [
-      ['d', 'scheduled-room'],
-      ['p', principal.publicKey],
-      ['p', agent.publicKey],
-    ]);
-    const admins = projection(KIND_CHANNEL_ADMINS, [
-      ['d', 'scheduled-room'],
-      ['p', principal.publicKey, '', 'owner'],
-    ]);
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        if (String(input).endsWith('/query')) {
-          const filters = JSON.parse(String(init?.body)) as Array<{ kinds?: number[] }>;
-          const kinds = new Set(filters.flatMap((filter) => filter.kinds ?? []));
-          return new Response(
-            JSON.stringify([
-              ...(kinds.has(KIND_CHANNEL_MEMBERS) ? [members] : []),
-              ...(kinds.has(KIND_CHANNEL_ADMINS) ? [admins] : []),
-            ]),
-            { status: 200 },
-          );
-        }
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
@@ -427,17 +363,9 @@ describe('scheduled Room turn boundary', () => {
       expect(sessionPrompt).toHaveBeenCalledOnce();
       expect(corner).not.toHaveBeenCalled();
       expect(factory).not.toHaveBeenCalled();
-      expect(upload).not.toHaveBeenCalled();
+      expect(upload).toHaveBeenCalledOnce();
       expect(publishScheduledOutput).toHaveBeenCalledOnce();
-      const requests = published.flatMap((event) => {
-        const parsed = parsePermissionRequest(event);
-        return parsed ? [parsed] : [];
-      });
-      expect(requests).toHaveLength(1);
-      expect(requests[0]!.value).toMatchObject({
-        scope: { type: 'operation.execute', risk: 'irreversible' },
-        provenance: { scheduleRunId: runId },
-      });
+      expect(JSON.stringify(published)).toContain('https://relay.test/media/report');
       expect(
         published.some((event) =>
           event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),

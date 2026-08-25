@@ -120,7 +120,7 @@ export interface ScheduledTurnRequest {
 export type ScheduleAuthorityResult =
   { authorized: true } | { authorized: false; terminal: boolean; reason: string };
 
-export async function selectCanonicalWorkSchedule(
+async function selectInitialSchedulePrincipal(
   candidates: readonly ParsedWorkSchedule[],
   authorize: (schedule: ParsedWorkSchedule) => Promise<ScheduleAuthorityResult>,
 ): Promise<ParsedWorkSchedule | undefined> {
@@ -155,6 +155,8 @@ export class ScheduleActivationRefusedError extends Error {
     this.name = 'ScheduleActivationRefusedError';
   }
 }
+
+class WorkingReceiptPendingError extends Error {}
 
 export interface CalendarRunReservation {
   runId: string;
@@ -197,12 +199,21 @@ export interface WorkCalendarStore {
   stageOutput(key: string, event: NostrEvent): Promise<NostrEvent>;
   pendingOutputs(): Promise<Array<{ key: string; event: NostrEvent }>>;
   markOutputPublished(key: string, eventId: string): Promise<void>;
+  stageCompletion(
+    runId: string,
+    status: 'complete' | 'failed' | 'skipped',
+    receipt: NostrEvent,
+    outputs: readonly { key: string; event: NostrEvent }[],
+  ): Promise<void>;
+  principalForSchedule(scheduleId: string): Promise<string | undefined>;
+  pinSchedulePrincipal(scheduleId: string, principalPubkey: string): Promise<void>;
 }
 
 interface DurableCalendarData {
   version: 1;
   runs: Record<string, CalendarRunRecord>;
   outputs: Record<string, NostrEvent>;
+  principals: Record<string, string>;
 }
 
 function cloneRun(record: CalendarRunRecord): CalendarRunRecord {
@@ -211,7 +222,7 @@ function cloneRun(record: CalendarRunRecord): CalendarRunRecord {
 
 /** Atomic local journal. A staged terminal receipt is authoritative even if relay publication fails. */
 export class DurableWorkCalendarState implements WorkCalendarStore {
-  private data: DurableCalendarData = { version: 1, runs: {}, outputs: {} };
+  private data: DurableCalendarData = { version: 1, runs: {}, outputs: {}, principals: {} };
   private loaded = false;
   private saveTail: Promise<void> = Promise.resolve();
 
@@ -226,11 +237,15 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
         !parsed.runs ||
         typeof parsed.runs !== 'object' ||
         (parsed.outputs !== undefined &&
-          (!parsed.outputs || typeof parsed.outputs !== 'object' || Array.isArray(parsed.outputs)))
+          (!parsed.outputs || typeof parsed.outputs !== 'object' || Array.isArray(parsed.outputs))) ||
+        (parsed.principals !== undefined &&
+          (!parsed.principals ||
+            typeof parsed.principals !== 'object' ||
+            Array.isArray(parsed.principals)))
       ) {
         throw new Error(`unsupported durable work calendar state at ${this.path}`);
       }
-      this.data = { ...parsed, outputs: parsed.outputs ?? {} };
+      this.data = { ...parsed, outputs: parsed.outputs ?? {}, principals: parsed.principals ?? {} };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -266,7 +281,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     if (existing) return structuredClone(existing);
     const receipt = { event, published: false };
     record.receipts[status] = receipt;
-    record.state = status;
+    if (status !== 'working') record.state = status;
     await this.save();
     return structuredClone(receipt);
   }
@@ -277,9 +292,11 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     eventId: string,
   ): Promise<void> {
     await this.load();
-    const receipt = this.data.runs[runId]?.receipts[status];
+    const record = this.data.runs[runId];
+    const receipt = record?.receipts[status];
     if (!receipt || receipt.event.id !== eventId || receipt.published) return;
     receipt.published = true;
+    if (status === 'working' && !isTerminal(record.state)) record.state = 'working';
     await this.save();
   }
 
@@ -290,6 +307,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     const pending: Array<{ runId: string; status: ScheduledTurnStatus; event: NostrEvent }> = [];
     for (const record of Object.values(this.data.runs)) {
       for (const status of ['queued', 'working', 'complete', 'failed', 'skipped'] as const) {
+        if (status === 'working') continue;
         const receipt = record.receipts[status];
         if (receipt && !receipt.published)
           pending.push({ runId: record.runId, status, event: receipt.event });
@@ -326,6 +344,38 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     await this.load();
     if (this.data.outputs[key]?.id !== eventId) return;
     delete this.data.outputs[key];
+    await this.save();
+  }
+
+  async stageCompletion(
+    runId: string,
+    status: 'complete' | 'failed' | 'skipped',
+    event: NostrEvent,
+    outputs: readonly { key: string; event: NostrEvent }[],
+  ): Promise<void> {
+    await this.load();
+    const record = this.data.runs[runId];
+    if (!record) throw new Error(`calendar run ${runId} was not reserved`);
+    if (!record.receipts[status]) record.receipts[status] = { event, published: false };
+    record.state = status;
+    for (const output of outputs) {
+      if (!this.data.outputs[output.key]) this.data.outputs[output.key] = output.event;
+    }
+    await this.save();
+  }
+
+  async principalForSchedule(scheduleId: string): Promise<string | undefined> {
+    await this.load();
+    return this.data.principals[scheduleId];
+  }
+
+  async pinSchedulePrincipal(scheduleId: string, principalPubkey: string): Promise<void> {
+    await this.load();
+    const existing = this.data.principals[scheduleId];
+    if (existing && existing !== principalPubkey)
+      throw new Error(`schedule ${scheduleId} is pinned to another principal`);
+    if (existing) return;
+    this.data.principals[scheduleId] = principalPubkey;
     await this.save();
   }
 
@@ -1181,6 +1231,9 @@ export class WorkCalendar {
     }
     this.schedules.clear();
     for (const [key, list] of candidates) {
+      const pinnedPrincipal = await this.dependencies.store.principalForSchedule(
+        list[0]!.value.scheduleId,
+      );
       const plausible = list
         // A stranger may copy a public d-tag and invent an enormous revision,
         // but can never become the desired record's author.
@@ -1188,11 +1241,30 @@ export class WorkCalendar {
           (candidate) =>
             candidate.event.pubkey === candidate.value.principalPubkey ||
             candidate.event.pubkey === candidate.value.agentPubkey,
+        )
+        .filter(
+          (candidate) =>
+            pinnedPrincipal === undefined ||
+            candidate.value.principalPubkey === pinnedPrincipal,
         );
-      const current = await selectCanonicalWorkSchedule(
-        plausible,
-        this.dependencies.authorize,
-      );
+      let current: ParsedWorkSchedule | undefined;
+      if (pinnedPrincipal) {
+        const newest = [...plausible].sort(
+          (left, right) =>
+            right.value.revision - left.value.revision ||
+            right.event.created_at - left.event.created_at ||
+            right.event.id.localeCompare(left.event.id),
+        )[0];
+        if (newest && (await this.dependencies.authorize(newest)).authorized) current = newest;
+      } else {
+        current = await selectInitialSchedulePrincipal(plausible, this.dependencies.authorize);
+        if (current) {
+          await this.dependencies.store.pinSchedulePrincipal(
+            current.value.scheduleId,
+            current.value.principalPubkey,
+          );
+        }
+      }
       if (!current) continue;
       this.schedules.set(key, current);
     }
@@ -1488,7 +1560,7 @@ export class WorkCalendar {
             entry.nominalAt,
             'working',
           );
-          if (!working) throw new Error('working-receipt-publish-failed');
+          if (!working) throw new WorkingReceiptPendingError('working-receipt-publish-pending');
           activationChecked = true;
         },
         (event) => this.publishOutput(`reply:${schedule.scheduleId}:${runId}`, event),
@@ -1498,6 +1570,13 @@ export class WorkCalendar {
       }
       await this.finish(schedule, runId, entry.nominalAt, 'complete');
     } catch (error) {
+      if (error instanceof WorkingReceiptPendingError) {
+        this.retryAt.set(
+          runId,
+          this.secondsNow() + (this.dependencies.retrySeconds ?? DEFAULT_CALENDAR_RETRY_SECONDS),
+        );
+        return;
+      }
       if (error instanceof ScheduleActivationRefusedError) {
         await this.finish(
           schedule,
@@ -1544,7 +1623,14 @@ export class WorkCalendar {
       : undefined;
   }
 
-  private consecutiveFailures(schedule: WorkScheduleV1): number {
+  private consecutiveFailures(
+    schedule: WorkScheduleV1,
+    additional?: {
+      runId: string;
+      nominalAt: number;
+      status: 'complete' | 'failed' | 'skipped';
+    },
+  ): number {
     const terminal = new Map<string, { nominalAt: number; status: ScheduledTurnStatus }>();
     for (const run of this.recordsFor(schedule)) {
       if (run.revision === schedule.revision && isTerminal(run.state))
@@ -1561,6 +1647,7 @@ export class WorkCalendar {
         });
       }
     }
+    if (additional) terminal.set(additional.runId, additional);
     let count = 0;
     for (const result of [...terminal.values()].sort(
       (left, right) => right.nominalAt - left.nominalAt,
@@ -1578,45 +1665,47 @@ export class WorkCalendar {
     status: 'complete' | 'failed' | 'skipped',
     reason?: string,
   ): Promise<void> {
-    await this.publishReceipt(schedule, runId, nominalAt, status, reason);
-    this.retryAt.delete(runId);
-    this.localRuns = await this.dependencies.store.runs();
-    const failures = this.consecutiveFailures(schedule);
+    const terminalEvent = this.buildReceipt(schedule, runId, nominalAt, status, reason);
+    const failures = this.consecutiveFailures(schedule, { runId, nominalAt, status });
     const paused = failures >= schedule.maxConsecutiveFailures;
     const nextAt = paused ? undefined : nextWorkOccurrence(schedule, nominalAt);
-    await this.publishOutput(
-      `projection:${schedule.scheduleId}:${schedule.revision}:${runId}:${status}`,
-      buildWorkScheduleProjection(this.dependencies.identity, {
-        version: 1,
-        type: 'runtime',
-        workspaceId: schedule.workspaceId,
-        roomId: schedule.roomId,
-        agentPubkey: schedule.agentPubkey,
-        principalPubkey: schedule.principalPubkey,
-        scheduleId: schedule.scheduleId,
-        revision: schedule.revision,
-        status: paused ? 'paused' : schedule.status,
-        ...(nextAt !== undefined ? { nextAt } : {}),
-        consecutiveFailures: failures,
-        updatedAt: this.secondsNow(),
-      }),
-    );
+    const projectionKey = `projection:${schedule.scheduleId}:${schedule.revision}:${runId}:${status}`;
+    const projection = buildWorkScheduleProjection(this.dependencies.identity, {
+      version: 1,
+      type: 'runtime',
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: schedule.agentPubkey,
+      principalPubkey: schedule.principalPubkey,
+      scheduleId: schedule.scheduleId,
+      revision: schedule.revision,
+      status: paused ? 'paused' : schedule.status,
+      ...(nextAt !== undefined ? { nextAt } : {}),
+      consecutiveFailures: failures,
+      updatedAt: this.secondsNow(),
+    });
+    const outputs = [{ key: projectionKey, event: projection }];
     if (paused && failures === schedule.maxConsecutiveFailures) {
-      await this.publishOutput(
-        `pause:${schedule.scheduleId}:${schedule.revision}`,
-        buildWorkSchedulePauseCard(this.dependencies.identity, schedule, this.secondsNow()),
-      );
+      outputs.push({
+        key: `pause:${schedule.scheduleId}:${schedule.revision}`,
+        event: buildWorkSchedulePauseCard(this.dependencies.identity, schedule, this.secondsNow()),
+      });
     }
+    await this.dependencies.store.stageCompletion(runId, status, terminalEvent, outputs);
+    this.retryAt.delete(runId);
+    this.localRuns = await this.dependencies.store.runs();
+    await this.publishReceipt(schedule, runId, nominalAt, status, reason);
+    for (const output of outputs) await this.publishOutput(output.key, output.event);
   }
 
-  private async publishReceipt(
+  private buildReceipt(
     schedule: WorkScheduleV1,
     runId: string,
     nominalAt: number,
     status: ScheduledTurnStatus,
     reason?: string,
-  ): Promise<NostrEvent | undefined> {
-    const event = buildScheduledTurnReceipt(this.dependencies.identity, {
+  ): NostrEvent {
+    return buildScheduledTurnReceipt(this.dependencies.identity, {
       version: 1,
       workspaceId: schedule.workspaceId,
       roomId: schedule.roomId,
@@ -1631,6 +1720,16 @@ export class WorkCalendar {
       reservedTokens: schedule.perRunReservedTokens,
       ...(reason ? { reason } : {}),
     });
+  }
+
+  private async publishReceipt(
+    schedule: WorkScheduleV1,
+    runId: string,
+    nominalAt: number,
+    status: ScheduledTurnStatus,
+    reason?: string,
+  ): Promise<NostrEvent | undefined> {
+    const event = this.buildReceipt(schedule, runId, nominalAt, status, reason);
     const staged = await this.dependencies.store.stageReceipt(runId, status, event);
     if (staged.published) return staged.event;
     try {

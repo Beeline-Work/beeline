@@ -83,6 +83,11 @@ import {
   isExternalMcpCapability,
   type ExternalMcpCapability,
 } from './external-mcp-capabilities.js';
+import { connectTrustySquireForPair } from './trusty-squire-onboarding.js';
+import {
+  trustySquireConfigRoot,
+  trustySquireConfigRootForRuntimeConfig,
+} from './trusty-squire-storage.js';
 import { DurableBodyState } from './durable-state.js';
 import {
   activeReleaseId,
@@ -163,13 +168,13 @@ ${pc.dim('Usage:')}
                [--agent-command '<command> [args...]'] [--repo <path>]
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
                [--auto-response '<text>']
-               [--mcp <squire>]
+               [--mcp <capability[,capability...]>]
                [--model <model>] [--effort <level>]
 
   beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...> [--repo <path>]
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
                [--auto-response '<text>']
-               [--mcp <squire>]
+               [--mcp <capability[,capability...]>]
                [--model <model>] [--effort <level>]
 
 Agent choices:
@@ -226,9 +231,10 @@ Access policy (per agent, set here at invite time):
   creator   only the inviting owner may; anyone else gets the auto-response
   allowlist only identities named by --allow may address it; creator is not implicit
 
-External MCP capabilities: --mcp squire grants Trusty Squire to this agent.
+External MCP capabilities: --mcp squire-credential-use and --mcp squire-app-access are independent.
 Account capabilities require --access creator and are mounted from a built-in
-profile; Beeline never imports the operator's other personal MCP servers.
+profile; pass a comma-separated list to opt into both. Beeline never imports
+the operator's other personal MCP servers.
 
 Interactive: on a real TTY, --access/--auto-response missing their flags are
 also offered as clack pickers (in that order, right after model/effort) —
@@ -317,7 +323,11 @@ function parsePairOptions(args: string[]): PairOptions {
         .map((entry) => entry.trim())
         .filter(Boolean);
       const invalid = capabilities.find((capability) => !isExternalMcpCapability(capability));
-      if (invalid) throw new Error(`--mcp must contain only squire (got: ${invalid})`);
+      if (invalid) {
+        throw new Error(
+          `--mcp must contain only squire-credential-use or squire-app-access (got: ${invalid})`,
+        );
+      }
       externalMcpCapabilities = capabilities as ExternalMcpCapability[];
     } else if (token === '--access') {
       if (!isAgentAccessPolicy(value)) {
@@ -526,6 +536,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // can exec this bundle's CLI against the exact runtime record — no state-home
   // discovery inside the sandbox, where XDG dirs are deliberately relocated.
   config.runtimeConfigPath = configPath;
+  config.squireConfigRoot = trustySquireConfigRootForRuntimeConfig(configPath);
   // OS sandbox for every ACP child (`bwrap-sandbox.ts`). Detected exactly once
   // here, at daemon start, so an unusable bwrap costs one advisory line rather
   // than a failed spawn per session — and so the operator learns the state of
@@ -742,6 +753,20 @@ async function pairOneAgent(input: {
   });
   if (input.externalMcpCapabilities?.length && access !== 'creator') {
     throw new Error('external MCP capabilities require --access creator');
+  }
+  if (
+    input.externalMcpCapabilities?.length &&
+    /^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/i.test(code.trim())
+  ) {
+    console.log("[beeline] checking this machine's Trusty Squire vault/link…");
+    const configRoot = trustySquireConfigRoot(defaultSupervisorRoot(process.env));
+    const connected = await connectTrustySquireForPair({
+      agentKind: selectedAgent.kind,
+      configRoot,
+    });
+    console.log(
+      `[beeline] Trusty Squire connected locally; skill loaded at ${connected.skillPath}`,
+    );
   }
   // Every question is answered — only now is one spinner alone on the line.
   const spinner = input.interactiveUi ? clack.spinner() : undefined;

@@ -2,15 +2,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { McpServerWire } from './acp.js';
 import type { AgentAccessPolicy } from './access-policy.js';
+import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 
 /**
  * Operator-configured MCP tool servers for corner edit sessions.
  *
  * Beeline's own inventory is fixed per surface (`buzz-readonly-mcp` for Rooms,
  * `buzz-dev-mcp` + codegraph for corners). Some work genuinely needs the
- * operator's own tool servers — Trusty Squire for account-backed signups, a
- * project-specific server, etc. This module is the "beeline runtime config
- * list" half of that: a JSON file inside the agent's runtime directory that
+ * operator's own project-specific tool servers. This module is the "beeline
+ * runtime config list" half of that: a JSON file inside the agent's runtime directory that
  * the OPERATOR authors by hand. It deliberately does NOT parse the harnesses'
  * own config locations:
  *
@@ -25,11 +25,12 @@ import type { AgentAccessPolicy } from './access-policy.js';
  * The file lives at `<runtimeDir>/operator-mcp.json`:
  *
  * ```json
- * [{ "name": "squire", "command": "npx", "args": ["-y", "@trusty-squire/mcp"] }]
+ * [{ "name": "project-tools", "command": "/opt/project-tools-mcp", "args": [] }]
  * ```
  *
  * Reading is best-effort and fail-open-to-empty: a missing or malformed file
- * never blocks a corner from opening.
+ * never blocks a corner from opening. Trusty Squire names and launch aliases
+ * are reserved for Beeline's separately governed host broker.
  */
 
 /** Names Body mounts itself; an operator entry may not shadow them. */
@@ -37,6 +38,7 @@ const RESERVED_MCP_SERVER_NAMES = new Set([
   'buzz-readonly-mcp',
   'buzz-dev-mcp',
   'codegraph',
+  'squire',
 ]);
 
 export function readOperatorMcpServers(runtimeDir: string): McpServerWire[] {
@@ -85,12 +87,18 @@ function parseOperatorMcpEntry(entry: unknown, path: string): McpServerWire | un
     console.warn(`[body] ignoring MCP server "${name}" in ${path}: missing command`);
     return undefined;
   }
+  const normalizedArgs =
+    Array.isArray(args) && args.every((a) => typeof a === 'string') ? (args as string[]) : [];
+  if (isTrustySquireMcpLaunch(command, normalizedArgs)) {
+    console.warn(
+      `[body] ignoring MCP server "${name}" in ${path}: Trusty Squire is mounted only by Beeline`,
+    );
+    return undefined;
+  }
   return {
     name,
     command,
-    ...(Array.isArray(args) && args.every((a) => typeof a === 'string')
-      ? { args: args as string[] }
-      : { args: [] }),
+    args: normalizedArgs,
     ...(Array.isArray(env) &&
     env.every(
       (pair) =>
@@ -120,5 +128,9 @@ export function operatorMcpServersForCorners(
   configured: readonly McpServerWire[] = [],
 ): McpServerWire[] {
   if (accessPolicy !== 'creator') return [];
-  return configured.filter((server) => !RESERVED_MCP_SERVER_NAMES.has(server.name));
+  return configured.filter(
+    (server) =>
+      !RESERVED_MCP_SERVER_NAMES.has(server.name) &&
+      !isTrustySquireMcpLaunch(server.command, server.args),
+  );
 }

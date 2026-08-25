@@ -14,8 +14,9 @@
  * cannot. It soft-skips when bubblewrap is unavailable.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
@@ -30,9 +31,32 @@ import {
   sandboxMountPlan,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
+import { trustySquireStorePath } from './trusty-squire-storage.js';
 
-const ROOM_BASE = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'];
-const CORNER_BASE = ['--bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp'];
+const ROOM_BASE = [
+  '--unshare-pid',
+  '--ro-bind',
+  '/',
+  '/',
+  '--dev',
+  '/dev',
+  '--proc',
+  '/proc',
+  '--tmpfs',
+  '/tmp',
+];
+const CORNER_BASE = [
+  '--unshare-pid',
+  '--bind',
+  '/',
+  '/',
+  '--dev',
+  '/dev',
+  '--proc',
+  '/proc',
+  '--tmpfs',
+  '/tmp',
+];
 
 describe('sandbox mount plan', () => {
   it('gives a Room its own harness state and nothing else — no checkout, no host path', () => {
@@ -352,6 +376,40 @@ describe('bwrap argv construction', () => {
 });
 
 describe('credential masks — readable is usable, so known stores are absent', () => {
+  it('mounts the resolved Body-owned Trusty Squire store as an empty filesystem', () => {
+    const store = trustySquireStorePath('/var/lib/beeline/squire-host-config');
+    const masks = credentialMaskPaths([store], '/home/op', (path) =>
+      path === store ? { isDirectory: true } : undefined,
+    );
+    const plan = sandboxMountPlan({ mode: 'readonly', cwd: '/srv/repo', maskPaths: masks });
+    const { args } = buildBwrapArgv({
+      bwrapPath: '/usr/bin/bwrap',
+      plan,
+      cwd: '/srv/repo',
+      command: 'codex-acp',
+    });
+    const storeAt = args.indexOf(store);
+    expect(plan.masks).toContainEqual({ path: store, kind: 'dir' });
+    expect(args[storeAt - 1]).toBe('--tmpfs');
+  });
+
+  it('creates private mountpoints for required paths absent on the host', () => {
+    const store = '/home/op/.config/trusty-squire';
+    const bus = '/run/user/1000/bus';
+    const masks = credentialMaskPaths([store, bus], '/home/op', () => undefined, [store, bus]);
+    const { args } = buildBwrapArgv({
+      bwrapPath: '/usr/bin/bwrap',
+      plan: sandboxMountPlan({ mode: 'readonly', cwd: '/srv/repo', maskPaths: masks }),
+      cwd: '/srv/repo',
+      command: 'codex-acp',
+    });
+    for (const path of [store, bus]) {
+      const mountAt = args.indexOf(path);
+      expect(masks).toContainEqual({ path, kind: 'dir', create: true });
+      expect(args.slice(mountAt - 1, mountAt + 3)).toEqual(['--dir', path, '--tmpfs', path]);
+    }
+  });
+
   it('masks the built-in known credential homes in BOTH modes', () => {
     for (const mode of ['readonly', 'edit'] as const) {
       const plan = sandboxMountPlan({
@@ -396,8 +454,7 @@ describe('credential masks — readable is usable, so known stores are absent', 
     expect(args.slice(netrc - 2, netrc)).toEqual(['--ro-bind', '/dev/null']);
     // Masks must come after the whole-home ro-bind they override.
     expect(gh).toBeGreaterThan(0);
-    expect(args[0]).toBe('--ro-bind');
-    expect(args[1]).toBe('/');
+    expect(args.slice(0, 4)).toEqual(['--unshare-pid', '--ro-bind', '/', '/']);
   });
 
   it('writable harness-state binds are emitted AFTER masks so they win on overlap', () => {
@@ -454,7 +511,7 @@ describe('feature detection falls back rather than failing the daemon', () => {
     });
     // The probe is the real mount table, not `--version`: a bwrap that exists
     // but cannot unshare only fails when it tries.
-    expect(calls[0]?.slice(1, 4)).toEqual(['--ro-bind', '/', '/']);
+    expect(calls[0]?.slice(1, 5)).toEqual(['--unshare-pid', '--ro-bind', '/', '/']);
     expect(result.path).toBeUndefined();
     expect(result.advisory).toMatch(/self-test failed/);
     expect(result.advisory).toMatch(/No permissions to creating new namespace/);
@@ -553,6 +610,68 @@ liveDescribe('the wrapper enforces Room read-only and the corner hygiene denylis
 
     // The private /tmp is the one writable surface, and it is discarded.
     expect(runWrapped(spec, 'touch /tmp/scratch && echo ok').stdout.trim()).toBe('ok');
+  });
+
+  it('keeps stores and session sockets created after activation outside the namespace', async () => {
+    const hostConfig = resolve(root, 'late-config');
+    const runtimeDir = resolve(root, 'late-run');
+    const store = resolve(hostConfig, 'trusty-squire');
+    const bus = resolve(runtimeDir, 'bus');
+    mkdirSync(hostConfig, { recursive: true });
+    mkdirSync(runtimeDir, { recursive: true });
+    const masks = credentialMaskPaths([store, bus], root, undefined, [store, bus]);
+    const wrapped = wrapAgentCommand({
+      bwrapPath: bwrap.path!,
+      spec: { mode: 'readonly', cwd: checkout, maskPaths: masks },
+      command: '/bin/sh',
+      args: [
+        '-c',
+        `echo ready; read signal; test ! -e ${JSON.stringify(resolve(store, 'session.json'))}; test ! -S ${JSON.stringify(bus)}; echo isolated`,
+      ],
+    });
+    const child = spawn(wrapped.command, wrapped.args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    let stdout = '';
+    let stderr = '';
+    let readySeen = false;
+    const exited = new Promise<number | null>((resolveExit, rejectExit) => {
+      child.once('error', rejectExit);
+      child.once('exit', resolveExit);
+    });
+    const ready = new Promise<void>((resolveReady, rejectReady) => {
+      child.stdout.on('data', (chunk: string) => {
+        stdout += chunk;
+        if (stdout.includes('ready\n')) {
+          readySeen = true;
+          resolveReady();
+        }
+      });
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk;
+      });
+      child.once('error', rejectReady);
+      child.once('exit', (status) => {
+        if (!readySeen) rejectReady(new Error(`bubblewrap exited ${status}: ${stderr}`));
+      });
+    });
+    await ready;
+    mkdirSync(store, { recursive: true });
+    writeFileSync(resolve(store, 'session.json'), 'host-secret');
+    const busServer = createServer();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      busServer.once('error', rejectListen);
+      busServer.listen(bus, resolveListen);
+    });
+    try {
+      child.stdin.end('continue\n');
+      const status = await exited;
+      expect(status).toBe(0);
+      expect(stdout).toContain('isolated\n');
+      expect(readFileSync(resolve(store, 'session.json'), 'utf8')).toBe('host-secret');
+    } finally {
+      await new Promise<void>((resolveClose) => busServer.close(() => resolveClose()));
+    }
   });
 
   it('a corner writes generally but cannot write protected checkouts or sibling corners', () => {

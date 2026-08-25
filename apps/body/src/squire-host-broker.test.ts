@@ -51,8 +51,13 @@ describe('Trusty Squire host broker', () => {
       service: 'github',
       http: { method: 'GET', url: 'https://api.github.com/user' },
     };
-    const request = (id: number) =>
-      JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'use_credential', arguments: args } });
+    const request = (id: number, name = 'use_credential') =>
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        method: 'tools/call',
+        params: { name, arguments: args },
+      });
     socket.write(`${request(1)}\n`);
     const [rejection] = (await once(socket, 'data')) as [Buffer];
     expect(JSON.parse(rejection.toString())).toMatchObject({
@@ -61,10 +66,68 @@ describe('Trusty Squire host broker', () => {
     });
     expect(child.stdin.readableLength).toBe(0);
 
-    broker.authorize('room-1', squireArgumentsDigest(args));
+    broker.authorize('room-1', 'grant_app_access', squireArgumentsDigest(args));
     socket.write(`${request(2)}\n`);
+    const [substitution] = (await once(socket, 'data')) as [Buffer];
+    expect(JSON.parse(substitution.toString())).toMatchObject({
+      id: 2,
+      error: { message: 'exact P1 factory permission is required' },
+    });
+
+    socket.write(`${request(3, 'grant_app_access')}\n`);
     const [forwarded] = (await once(child.stdin, 'data')) as [Buffer];
-    expect(JSON.parse(forwarded.toString())).toMatchObject({ id: 2, method: 'tools/call' });
+    expect(JSON.parse(forwarded.toString())).toMatchObject({
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'grant_app_access' },
+    });
     socket.end();
+  });
+
+  it('expires and explicitly revokes unused authorizations', async () => {
+    let now = 1_000;
+    const child = new FakeSquireProcess();
+    const broker = new SquireHostBroker(
+      () => child as unknown as ChildProcessWithoutNullStreams,
+      () => now,
+    );
+    brokers.push(broker);
+    const profile = await broker.mcpServer('room-1');
+    const [, host, rawPort, token] = profile.args;
+    const socket = connect({ host, port: Number(rawPort) });
+    await once(socket, 'connect');
+    socket.write(`${JSON.stringify({ token })}\n`);
+    const args = { grant_id: 'grant-1' };
+    const digest = squireArgumentsDigest(args);
+    const request = (id: number) =>
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        method: 'tools/call',
+        params: { name: 'revoke_app_access', arguments: args },
+      });
+
+    broker.authorize('room-1', 'revoke_app_access', digest, now + 10);
+    now += 11;
+    socket.write(`${request(1)}\n`);
+    const [expired] = (await once(socket, 'data')) as [Buffer];
+    expect(JSON.parse(expired.toString())).toHaveProperty(
+      'error.message',
+      'exact P1 factory permission is required',
+    );
+
+    const authorizationId = broker.authorize('room-1', 'revoke_app_access', digest);
+    expect(authorizationId).toBeTruthy();
+    broker.revoke('room-1', authorizationId!);
+    socket.write(`${request(2)}\n`);
+    const [revoked] = (await once(socket, 'data')) as [Buffer];
+    expect(JSON.parse(revoked.toString())).toHaveProperty(
+      'error.message',
+      'exact P1 factory permission is required',
+    );
+
+    broker.authorize('room-1', 'revoke_app_access', digest);
+    broker.revokeChannel('room-1');
+    await once(socket, 'close');
   });
 });

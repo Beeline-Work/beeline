@@ -258,11 +258,17 @@ describe('Room list — Grok Mono Hull invariants', () => {
     expect(source).toContain("names.set(identity.publicKey, 'You')");
   });
 
-  it('drops the #-prefixed corner naming DESIGN.md retired', () => {
+  it('adds the captain’s # channel mark to Room rows through the shared display helper only', () => {
+    // Captain decision 2026-08 (supersedes the retired DESIGN.md line): Room
+    // names render as `#<name>` on the index. The prefix is added at render
+    // through `displayRoomIndexTitle` — one derivation, presentation only.
+    expect(source).toContain('displayRoomIndexTitle(item.title) ??');
+    // The helper is the ONLY place a Room `#` is minted; nothing else on this
+    // screen hand-rolls the mark, and corner rows stay unprefixed.
+    const uses = source.match(/displayRoomIndexTitle\(/g) ?? [];
+    expect(uses).toHaveLength(1); // exactly one call site — the Room row title
     expect(source).not.toContain('#${corner.name}');
     expect(source).not.toContain('└');
-    // ...and never reintroduces a `#` in front of a Room title either.
-    expect(source).not.toMatch(/>#\{/);
   });
 
   it('renders the corner count from exactly the corners the dropdown lists', () => {

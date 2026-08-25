@@ -56,7 +56,12 @@ import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
-import { NO_ACTIVITY_PREVIEW, roomListFeed, type RoomRowPresentation } from '@/buzz/room-list-row';
+import {
+  NO_ACTIVITY_PREVIEW,
+  displayRoomIndexTitle,
+  roomListFeed,
+  type RoomRowPresentation,
+} from '@/buzz/room-list-row';
 import { cornerVisualState, currentCornerStatus, type CornerSummary } from '@/buzz/corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
@@ -1274,7 +1279,13 @@ export default function BuzzChannels() {
       // and no expansion, while their Room remains inline in DOESN'T NEED YOU.
       const corners = row.corners;
       const canExpand = corners.length > 0;
-      const title = item.title ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
+      // The teaching cue is display-only: `displayRoomIndexTitle` adds the
+      // `#` channel mark to the STORED name at render. Search keys, sorting,
+      // unread state, corner labels, and identity never see the prefix, and
+      // a placeholder-id fallback gains no mark — nothing fabricated is
+      // decorated.
+      const title =
+        displayRoomIndexTitle(item.title) ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
       const expanded = canExpand && expandedRoomId === item.id;
       const age = compactRelativeTime(row.meaningfulAt, ageNow);
       // One state per row, one visual language each: needs-you (brass),

@@ -24,13 +24,13 @@ import {
   detectBwrapSandbox,
   isSandboxPolicy,
   harnessHomeStateDirs,
-  KNOWN_CREDENTIAL_MASK_PATHS,
   MERGE_GATE_HOME_STATE_DIRS,
   mergeGateStateDirs,
   resolveGitCommonDir,
   sandboxMountPlan,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
+import { trustySquireStorePath } from './trusty-squire-storage.js';
 
 const ROOM_BASE = [
   '--unshare-pid',
@@ -375,8 +375,21 @@ describe('bwrap argv construction', () => {
 });
 
 describe('credential masks — readable is usable, so known stores are absent', () => {
-  it('includes the Trusty Squire bearer store in the built-in mask set', () => {
-    expect(KNOWN_CREDENTIAL_MASK_PATHS).toContain('.config/trusty-squire');
+  it('mounts the resolved Body-owned Trusty Squire store as an empty filesystem', () => {
+    const store = trustySquireStorePath('/var/lib/beeline/squire-host-config');
+    const masks = credentialMaskPaths([store], '/home/op', (path) =>
+      path === store ? { isDirectory: true } : undefined,
+    );
+    const plan = sandboxMountPlan({ mode: 'readonly', cwd: '/srv/repo', maskPaths: masks });
+    const { args } = buildBwrapArgv({
+      bwrapPath: '/usr/bin/bwrap',
+      plan,
+      cwd: '/srv/repo',
+      command: 'codex-acp',
+    });
+    const storeAt = args.indexOf(store);
+    expect(plan.masks).toContainEqual({ path: store, kind: 'dir' });
+    expect(args[storeAt - 1]).toBe('--tmpfs');
   });
 
   it('masks the built-in known credential homes in BOTH modes', () => {

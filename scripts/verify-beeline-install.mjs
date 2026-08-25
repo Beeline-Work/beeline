@@ -154,6 +154,7 @@ async function main() {
     const match = stripAnsi(version.stdout).match(/^\[body\] read-only mcp: (.+)$/m);
     if (!match) fail(`beeline --version did not report the read-only MCP path:\n${version.stdout}`);
     await access(match[1], constants.X_OK);
+    await access(resolve(libDir, 'lib', 'beeline', 'squire-mcp-proxy.mjs'), constants.F_OK);
 
     const probe = await run(resolve(binDir, 'buzz-readonly-mcp'), [], {
       cwd: bareCwd,

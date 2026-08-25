@@ -72,7 +72,7 @@ tar -tzf "$archive" | while IFS= read -r path; do
 done
 tar -xzf "$archive" -C "$temporary_dir"
 
-for path in bin/beeline bin/buzz-agent bin/buzz-dev-mcp bin/buzz-readonly-mcp lib/beeline/beeline-cli.mjs lib/beeline/beeline-readonly-mcp.mjs lib/beeline/bundle.json; do
+for path in bin/beeline bin/buzz-agent bin/buzz-dev-mcp bin/buzz-readonly-mcp lib/beeline/beeline-cli.mjs lib/beeline/beeline-readonly-mcp.mjs lib/beeline/squire-mcp-proxy.mjs lib/beeline/bundle.json; do
   [ -f "$temporary_dir/$path" ] || fail "bundle is missing $path"
 done
 

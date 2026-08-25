@@ -196,12 +196,16 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     raw: [],
   };
 
-  function mockCatalogAndClack(select: ReturnType<typeof vi.fn>) {
+  function mockCatalogAndClack(
+    select: ReturnType<typeof vi.fn>,
+    autocomplete: ReturnType<typeof vi.fn> = vi.fn(),
+  ) {
     vi.doMock('./model-catalog.js', () => ({
       fetchAgentModelCatalog: vi.fn(async () => catalog),
     }));
     vi.doMock('@clack/prompts', () => ({
       select,
+      autocomplete,
       text: vi.fn(),
       spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
       log: { warn: vi.fn() },
@@ -210,33 +214,36 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     }));
   }
 
-  it('offers a model picker then an effort picker from that harness catalog', async () => {
-    const select = vi
-      .fn()
-      .mockResolvedValueOnce('gpt-5.6-terra')
-      .mockResolvedValueOnce('low');
-    mockCatalogAndClack(select);
+  /** The dynamic options getter clack re-invokes per keystroke with the live prompt as `this`. */
+  function optionsFromAutocompleteCall(
+    autocomplete: ReturnType<typeof vi.fn>,
+  ): (this: { userInput: string }) => Array<{ value: string; label: string; hint?: string }> {
+    expect(autocomplete).toHaveBeenCalled();
+    const options = autocomplete.mock.calls[0]![0].options;
+    expect(typeof options).toBe('function');
+    return options;
+  }
+
+  it('offers a SEARCHABLE model picker then a plain effort picker from that harness catalog', async () => {
+    const autocomplete = vi.fn().mockResolvedValueOnce('gpt-5.6-terra');
+    const select = vi.fn().mockResolvedValueOnce('low');
+    mockCatalogAndClack(select, autocomplete);
 
     const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
     const result = await pickModelAndEffort(agent, {});
 
-    expect(select).toHaveBeenCalledTimes(2);
-    expect(select.mock.calls[0]![0]).toEqual(
+    // Model axis: searchable autocomplete with the harness default pre-selected.
+    expect(autocomplete).toHaveBeenCalledTimes(1);
+    expect(autocomplete.mock.calls[0]![0]).toEqual(
       expect.objectContaining({
         message: 'Model for this codex agent?',
         initialValue: 'gpt-5.6-sol',
-        options: [
-          { value: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
-          { value: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
-          {
-            value: '__beeline-custom__',
-            label: 'Enter a custom model id…',
-            hint: 'any id the list does not show',
-          },
-        ],
+        maxItems: expect.any(Number),
       }),
     );
-    expect(select.mock.calls[1]![0]).toEqual(
+    // Effort axis: small list, plain select with the explicit custom escape.
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select.mock.calls[0]![0]).toEqual(
       expect.objectContaining({
         message: 'Effort/thinking level for this codex agent?',
         initialValue: 'high',
@@ -254,13 +261,123 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     expect(result).toEqual({ model: 'gpt-5.6-terra', effort: 'low' });
   });
 
-  it('skips only the axis whose flag was already given', async () => {
+  it('filters the searchable model list by substring across id AND display name', async () => {
+    const autocomplete = vi.fn().mockResolvedValueOnce('gpt-5.6-terra');
+    const select = vi.fn().mockResolvedValueOnce('low');
+    mockCatalogAndClack(select, autocomplete);
+
+    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
+    await pickModelAndEffort(agent, {});
+
+    const options = optionsFromAutocompleteCall(autocomplete);
+    // Empty input: the whole catalog, no custom entry.
+    expect(options.call({ userInput: '' })).toEqual([
+      { value: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
+      { value: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
+    ]);
+    // By id fragment. A PARTIAL match is not an exact choice, so the
+    // verbatim "Use …" custom option rides along too.
+    expect(options.call({ userInput: 'terra' })).toEqual([
+      { value: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
+      { value: 'terra', label: 'Use "terra"', hint: 'custom id' },
+    ]);
+    // By display name, case-insensitively (verbatim escape rides along,
+    // since "sOL" itself is not a choice id).
+    expect(options.call({ userInput: 'sOL' })).toEqual([
+      { value: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
+      { value: 'sOL', label: 'Use "sOL"', hint: 'custom id' },
+    ]);
+    // No match at all: only the verbatim custom escape remains.
+    expect(options.call({ userInput: 'zzz' })).toEqual([
+      { value: 'zzz', label: 'Use "zzz"', hint: 'custom id' },
+    ]);
+  });
+
+  it('offers the typed text verbatim as a custom model id when it is not an exact catalog choice', async () => {
+    // pi's catalog is a stale subset of OpenRouter upstream; a model absent
+    // from it may still work (pi passes unknown ids through verbatim), so
+    // typing an unlisted id must submit that exact id — no second free-text
+    // prompt, no dead end.
+    const typedId = 'openrouter/stealth/ox-alpha';
+    const autocomplete = vi.fn().mockResolvedValueOnce(typedId);
+    const select = vi.fn().mockResolvedValueOnce('high');
+    const text = vi.fn();
+    vi.doMock('./model-catalog.js', () => ({
+      fetchAgentModelCatalog: vi.fn(async () => catalog),
+    }));
+    vi.doMock('@clack/prompts', () => ({
+      select,
+      autocomplete,
+      text,
+      spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
+      log: { warn: vi.fn() },
+      isCancel: () => false,
+      cancel: vi.fn(),
+    }));
+
+    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
+    const result = await pickModelAndEffort(agent, {});
+
+    const options = optionsFromAutocompleteCall(autocomplete);
+    expect(options.call({ userInput: typedId })).toEqual([
+      { value: typedId, label: `Use "${typedId}"`, hint: 'custom id' },
+    ]);
+    expect(text).not.toHaveBeenCalled();
+    expect(result.model).toBe(typedId);
+  });
+
+  it('never duplicates a custom option when the typed text IS a catalog choice', async () => {
+    const autocomplete = vi.fn().mockResolvedValueOnce('gpt-5.6-sol');
+    const select = vi.fn().mockResolvedValueOnce('low');
+    mockCatalogAndClack(select, autocomplete);
+
+    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
+    await pickModelAndEffort(agent, {});
+
+    const options = optionsFromAutocompleteCall(autocomplete);
+    const returned = options.call({ userInput: 'GPT-5.6-SOL' });
+    const values = returned.map((option) => option.value);
+    expect(values.filter((value) => value.toLowerCase() === 'gpt-5.6-sol')).toHaveLength(1);
+    expect(returned.some((option) => option.hint !== undefined)).toBe(false);
+  });
+
+  it('exits cleanly when the searchable model picker is cancelled (Ctrl-C)', async () => {
+    const cancelSymbol = Symbol.for('clack:cancel');
+    const autocomplete = vi.fn().mockResolvedValue(cancelSymbol);
+    const select = vi.fn();
+    vi.doMock('./model-catalog.js', () => ({
+      fetchAgentModelCatalog: vi.fn(async () => catalog),
+    }));
+    vi.doMock('@clack/prompts', () => ({
+      select,
+      autocomplete,
+      text: vi.fn(),
+      spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
+      log: { warn: vi.fn() },
+      isCancel: (value: unknown) => typeof value === 'symbol',
+      cancel: vi.fn(),
+    }));
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
+    await expect(pickModelAndEffort(agent, {})).rejects.toThrow('process.exit(1)');
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    // Cancelled before reaching the effort axis.
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it('skips only the axis whose flag was already given — --model never opens the searchable picker', async () => {
+    const autocomplete = vi.fn();
     const select = vi.fn().mockResolvedValue('low');
-    mockCatalogAndClack(select);
+    mockCatalogAndClack(select, autocomplete);
 
     const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
     const result = await pickModelAndEffort(agent, {}, { model: 'gpt-5.6-sol' });
 
+    expect(autocomplete).not.toHaveBeenCalled();
     expect(select).toHaveBeenCalledTimes(1);
     expect(select.mock.calls[0]![0].message).toContain('Effort/thinking');
     expect(result).toEqual({ model: 'gpt-5.6-sol', effort: 'low' });
@@ -272,6 +389,7 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     vi.doMock('./model-catalog.js', () => ({ fetchAgentModelCatalog }));
     vi.doMock('@clack/prompts', () => ({
       select,
+      autocomplete: vi.fn(),
       text: vi.fn(),
       spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
       log: { warn: vi.fn() },
@@ -287,48 +405,16 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     expect(result).toEqual({ model: 'gpt-5.6-sol', effort: 'high' });
   });
 
-  it('lets the user enter a CUSTOM model id the catalog does not contain, which reaches the selection intact', async () => {
-    // pi's catalog is a stale subset of OpenRouter upstream; a model absent
-    // from it may still work (pi passes unknown ids through verbatim), so
-    // the picker must offer an explicit escape rather than treat the miss
-    // as final.
-    const select = vi.fn().mockResolvedValueOnce('__beeline-custom__');
-    const text = vi
-      .fn()
-      .mockResolvedValueOnce('openrouter/stealth/ox-alpha') // custom model id
-      .mockResolvedValueOnce('high'); // effort picked from catalog below
-    vi.doMock('./model-catalog.js', () => ({
-      fetchAgentModelCatalog: vi.fn(async () => catalog),
-    }));
-    vi.doMock('@clack/prompts', () => ({
-      select,
-      text,
-      spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
-      log: { warn: vi.fn() },
-      isCancel: () => false,
-      cancel: vi.fn(),
-    }));
-
-    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
-    const result = await pickModelAndEffort(agent, {});
-
-    expect(text).toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.stringContaining('Custom model id') }),
-    );
-    expect(result.model).toBe('openrouter/stealth/ox-alpha');
-  });
-
   it('keeps the effort axis selectable alongside a custom model, including a custom effort level', async () => {
-    const select = vi.fn().mockResolvedValue('__beeline-custom__');
-    const text = vi
-      .fn()
-      .mockResolvedValueOnce('openrouter/stealth/ox-alpha') // custom model id
-      .mockResolvedValueOnce('xhigh');
+    const autocomplete = vi.fn().mockResolvedValueOnce('openrouter/stealth/ox-alpha'); // custom model id
+    const select = vi.fn().mockResolvedValueOnce('__beeline-custom__');
+    const text = vi.fn().mockResolvedValueOnce('xhigh');
     vi.doMock('./model-catalog.js', () => ({
       fetchAgentModelCatalog: vi.fn(async () => catalog),
     }));
     vi.doMock('@clack/prompts', () => ({
       select,
+      autocomplete,
       text,
       spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
       log: { warn: vi.fn() },
@@ -339,10 +425,11 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
     const result = await pickModelAndEffort(agent, {});
 
-    // The second select is the effort axis and its custom escape ran too.
-    expect(select.mock.calls[1]![0].message).toContain('Effort/thinking');
+    // The effort select is the ONLY select, and its custom escape ran.
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select.mock.calls[0]![0].message).toContain('Effort/thinking');
     expect(text).toHaveBeenNthCalledWith(
-      2,
+      1,
       expect.objectContaining({ message: expect.stringContaining('Custom effort/thinking level') }),
     );
     expect(result).toEqual({ model: 'openrouter/stealth/ox-alpha', effort: 'xhigh' });
@@ -353,6 +440,7 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
       throw new Error('ACP handshake timed out');
     });
     const select = vi.fn();
+    const autocomplete = vi.fn();
     const text = vi
       .fn()
       .mockResolvedValueOnce('openrouter/stealth/ox-alpha')
@@ -361,6 +449,7 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     vi.doMock('./model-catalog.js', () => ({ fetchAgentModelCatalog }));
     vi.doMock('@clack/prompts', () => ({
       select,
+      autocomplete,
       text,
       spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
       log: { warn },
@@ -374,6 +463,7 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     // The old behaviour returned `{}` here, silently dropping both axes.
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('ACP handshake timed out'));
     expect(select).not.toHaveBeenCalled();
+    expect(autocomplete).not.toHaveBeenCalled();
     expect(result).toEqual({ model: 'openrouter/stealth/ox-alpha', effort: 'high' });
   });
 

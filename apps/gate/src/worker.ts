@@ -22,8 +22,14 @@ import { createRelayClient, type RelayReader } from './relay.js';
 import { APPROVAL_MARKER, verifyApproval, type MergeTarget } from './approval.js';
 import { KIND_STREAM_MESSAGE } from './buzz.js';
 import { isRegisteredAgentIdentity } from './agent-identity.js';
-import { resolveChannelRole, type ChannelRole } from './provisioning.js';
+import { resolveChannelRole } from './provisioning.js';
 import { serializeRepoLanding } from './land-queue.js';
+import {
+  authorizeHumanAuthority,
+  type HumanAuthorityDependencies,
+  type HumanAuthorityResult,
+  type HumanKeyCustody,
+} from './human-authority.js';
 
 export interface MergeRequest {
   /** Dedicated push-capable merge worker identity. */
@@ -68,22 +74,9 @@ export interface MergeOutcome {
   targetTipAfter?: string;
 }
 
-export type ReviewerKeyCustody = 'device' | 'managed' | 'remote';
-
-export interface ReviewerAuthorityDependencies {
-  isRegisteredAgent(pubkey: string, relay: RelayReader): Promise<boolean>;
-  resolveRole(channelId: string, pubkey: string, relay: RelayReader): Promise<ChannelRole | null>;
-}
-
-export interface ReviewerAuthorityResult {
-  authorized: boolean;
-  reason: string;
-  /** True only for a genuine authorization refusal that a retry cannot fix
-   *  (wrong signer, non-device custody, non-admin role) — false for a
-   *  transient lookup failure (fail-closed on uncertainty, but retryable)
-   *  or when authorized. */
-  terminal: boolean;
-}
+export type ReviewerKeyCustody = HumanKeyCustody;
+export type ReviewerAuthorityDependencies = HumanAuthorityDependencies;
+export type ReviewerAuthorityResult = HumanAuthorityResult;
 
 /**
  * Enforce reviewer identity in security order: registered-agent lookup first
@@ -101,49 +94,15 @@ export async function authorizeReviewer(
     resolveRole: resolveChannelRole,
   },
 ): Promise<ReviewerAuthorityResult> {
-  let signerIsAgent: boolean;
-  try {
-    signerIsAgent = await dependencies.isRegisteredAgent(input.pubkey, input.relay);
-  } catch (error) {
-    return {
-      authorized: false,
-      terminal: false,
-      reason: `cannot prove approval signer is human; agent identity lookup failed: ${String(error)}`,
-    };
-  }
-  if (signerIsAgent) {
-    return {
-      authorized: false,
-      terminal: true,
-      reason: `merge approval REFUSED: signer ${input.pubkey} is a registered agent identity; agents can never approve merges`,
-    };
-  }
-  if (input.custody !== 'device') {
-    return {
-      authorized: false,
-      terminal: true,
-      reason: `merge approval REFUSED: trusted reviewer key custody must be device-held (custody=${input.custody})`,
-    };
-  }
-
-  let reviewerRole: ChannelRole | null;
-  try {
-    reviewerRole = await dependencies.resolveRole(input.channelId, input.pubkey, input.relay);
-  } catch (error) {
-    return {
-      authorized: false,
-      terminal: false,
-      reason: `cannot prove approval signer is a human admin; role lookup failed: ${String(error)}`,
-    };
-  }
-  if (reviewerRole !== 'owner' && reviewerRole !== 'admin') {
-    return {
-      authorized: false,
-      terminal: true,
-      reason: `merge approval REFUSED: human admin role required (signer role=${reviewerRole ?? 'none'})`,
-    };
-  }
-  return { authorized: true, terminal: false, reason: 'authorized device-held human admin' };
+  return authorizeHumanAuthority(
+    {
+      ...input,
+      minimumRole: 'admin',
+      purpose: 'approval',
+      roleDescription: 'human admin',
+    },
+    dependencies,
+  );
 }
 
 /** Clone the repo fresh as the worker and return the checkout path. */

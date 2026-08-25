@@ -116,6 +116,8 @@ export interface BodyConfig {
    */
   accessPolicy?: AgentAccessPolicy;
   accessOwnerPubkey?: string;
+  /** Exact identities authorized when `accessPolicy === 'allowlist'`. */
+  accessAllowlist?: string[];
   accessAutoResponse?: string;
   /** Explicit account capabilities mounted for this agent; never inherited from operator config. */
   externalMcpCapabilities?: ExternalMcpCapability[];

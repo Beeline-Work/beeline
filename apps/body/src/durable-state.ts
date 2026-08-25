@@ -36,6 +36,13 @@ interface DurableBodyData {
   /** Quiet-episode conclude-watch state per corner, so a restart mid-episode
    *  neither resets the spent nudge budget nor re-marks a resolved episode. */
   concludeEpisodes?: Record<string, ConcludeEpisode>;
+  /** Versioned P1 trust-spine reservations. Keys are immutable signed ids. */
+  factory?: {
+    version: 1;
+    inboundDelegationClaims: string[];
+    outboundDelegations: Record<string, NostrEvent>;
+    permissionActionClaims: string[];
+  };
 }
 
 function emptyData(): DurableBodyData {
@@ -50,6 +57,7 @@ function emptyData(): DurableBodyData {
 }
 
 const MAX_MODEL_TURNS = 20_000;
+const MAX_FACTORY_CLAIMS = 20_000;
 
 function compareEvents(a: NostrEvent, b: NostrEvent): number {
   return a.created_at - b.created_at || a.id.localeCompare(b.id);
@@ -205,6 +213,41 @@ export class DurableBodyState {
     return [...(this.data.modelTurns ?? [])];
   }
 
+  /** Atomic durable inbox linearization for concurrent WS/HTTP delegation delivery. */
+  async claimDelegationInbound(eventId: string): Promise<'claimed' | 'duplicate'> {
+    await this.load();
+    const factory = this.factory();
+    if (factory.inboundDelegationClaims.includes(eventId)) return 'duplicate';
+    factory.inboundDelegationClaims.push(eventId);
+    factory.inboundDelegationClaims = factory.inboundDelegationClaims.slice(-MAX_FACTORY_CLAIMS);
+    await this.save();
+    return 'claimed';
+  }
+
+  /** Reserve the exact signed event before relay publication. */
+  async reserveDelegationOutbound(event: NostrEvent): Promise<'claimed' | 'duplicate'> {
+    await this.load();
+    const factory = this.factory();
+    if (factory.outboundDelegations[event.id]) return 'duplicate';
+    factory.outboundDelegations[event.id] = event;
+    const ids = Object.keys(factory.outboundDelegations);
+    for (const stale of ids.slice(0, Math.max(0, ids.length - MAX_FACTORY_CLAIMS))) {
+      delete factory.outboundDelegations[stale];
+    }
+    await this.save();
+    return 'claimed';
+  }
+
+  async claimPermissionAction(key: string): Promise<'claimed' | 'duplicate'> {
+    await this.load();
+    const factory = this.factory();
+    if (factory.permissionActionClaims.includes(key)) return 'duplicate';
+    factory.permissionActionClaims.push(key);
+    factory.permissionActionClaims = factory.permissionActionClaims.slice(-MAX_FACTORY_CLAIMS);
+    await this.save();
+    return 'claimed';
+  }
+
   async recordSessionReprime(record: SessionReprimeRecord): Promise<void> {
     await this.load();
     const records = this.data.sessionReprimes ?? [];
@@ -255,6 +298,15 @@ export class DurableBodyState {
     return (this.data.inboxes[channelId] ??= {
       cursor: { createdAt: 0, eventId: '' },
       items: {},
+    });
+  }
+
+  private factory(): NonNullable<DurableBodyData['factory']> {
+    return (this.data.factory ??= {
+      version: 1,
+      inboundDelegationClaims: [],
+      outboundDelegations: {},
+      permissionActionClaims: [],
     });
   }
 

@@ -56,8 +56,15 @@ describe('access policy — sender permission (fail-closed)', () => {
   it('validates policy strings', () => {
     expect(isAgentAccessPolicy('everyone')).toBe(true);
     expect(isAgentAccessPolicy('creator')).toBe(true);
-    expect(isAgentAccessPolicy('allowlist')).toBe(false);
+    expect(isAgentAccessPolicy('allowlist')).toBe(true);
     expect(isAgentAccessPolicy(undefined)).toBe(false);
+  });
+
+  it('allows only exact listed identities, without implicitly trusting the creator', () => {
+    const atlas = 'c'.repeat(64);
+    expect(isSenderPermitted('allowlist', atlas, OWNER, [atlas])).toBe(true);
+    expect(isSenderPermitted('allowlist', OWNER, OWNER, [atlas])).toBe(false);
+    expect(isSenderPermitted('allowlist', atlas, OWNER, undefined)).toBe(false);
   });
 });
 

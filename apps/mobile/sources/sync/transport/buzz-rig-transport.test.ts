@@ -602,6 +602,48 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     stop();
   });
 
+  it('bounds unresolved-author recovery so unattached traffic cannot stall known live events', async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = clientFixture();
+      const transport = transportWith(fixture.client);
+      const delivered: SessionEvent[] = [];
+      const stop = await transport.sessionEventsSubscribeReady(ROOM, (event) =>
+        delivered.push(event),
+      );
+      fixture.client.listMembers.mockImplementationOnce(
+        () => new Promise<Array<{ pubkey: string; role: string }>>(() => undefined),
+      );
+
+      const unattached = message(unattachedAgent, 'Unattached traffic cannot hold the queue.', 35);
+      const known = message(agent, 'Known live traffic must keep moving.', 36);
+      fixture.deliver(unattached);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.client.listMembers).toHaveBeenCalledTimes(2);
+      fixture.deliver(known);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(
+        delivered.map((item) => {
+          if (item.type !== 'read-model') return undefined;
+          return {
+            eventId: item.event.eventId,
+            type: item.event.type,
+            reason: item.event.type === 'unknown' ? item.event.reason : undefined,
+          };
+        }),
+      ).toEqual([
+        { eventId: unattached.id, type: 'unknown', reason: 'unresolved-identity' },
+        { eventId: known.id, type: 'agent-message', reason: undefined },
+      ]);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('suppresses a recovered batch after the live subscription stops', async () => {
     const fixture = clientFixture();
     const transport = transportWith(fixture.client);

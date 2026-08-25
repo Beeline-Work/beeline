@@ -101,6 +101,13 @@ describe('harness retry narration is never the final answer', () => {
       const withAnswer = await client.sessionPrompt(sessionId, 'NARRATION-THEN-ANSWER', 5_000);
       expect(withAnswer.agentText).toBe('The deploy is fixed and every test passes.');
       expect(withAnswer.agentText).not.toContain('Retrying');
+
+      // Last-run-only semantics: pre-tool progress + tool work + trailing
+      // narration selects NOTHING — the progress sentence is never promoted
+      // to the durable reply just because the run after it is narration.
+      const degraded = await client.sessionPrompt(sessionId, 'PROGRESS-TOOL-NARRATION', 5_000);
+      expect(degraded.agentText).toBe('');
+      expect(degraded.toolCalls.length).toBeGreaterThan(0);
     } finally {
       await client.stop();
     }
@@ -533,6 +540,13 @@ lines.on('line', (line) => {
       chunk('Retrying (attempt 1/3, waiting 2s)');
       chunk('...Retrying...');
       chunk('Retry finished, resuming.');
+    } else if (prompt.includes('PROGRESS-TOOL-NARRATION')) {
+      // Genuine-looking pre-tool progress, real tool work, then the flaked
+      // provider degrades into pure retry narration. The progress sentence
+      // must stay draft-only: the durable answer is EMPTY.
+      chunk('Let me look at the deploy logs first.');
+      tool('read-deploy-log');
+      chunk('Retrying (attempt 1/3, waiting 2s)...Retrying...Retry finished, resuming.');
     } else {
       chunk('Retrying (attempt 1/3, waiting 2s)...');
       tool('probe-1');

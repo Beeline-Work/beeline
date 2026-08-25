@@ -6776,25 +6776,20 @@ export class Body {
       }
       // A harness that flaked mid-turn can end its run having streamed only
       // retry/backoff narration (`Retrying (attempt 1/3, waiting 2s)...Retry
-      // finished, resuming.`) and nothing else. Final-text selection already
-      // refuses to present that as `agentText`; with no substantive output of
-      // any kind left, treat the turn as FAILED: publish the honest fallback
-      // for the human, but leave the request pending (never mark it delivered)
-      // so the ordinary lifecycle re-drives it and a recovered provider's
-      // genuine answer is published exactly once. Narration itself is never
-      // published — only the fallback copy below.
+      // finished, resuming.`) — or having done real tool work after a
+      // pre-tool progress sentence and then degrading into narration. Either
+      // way there is no durable ANSWER: earlier runs are draft-only by
+      // contract and tool calls are receipts, never a reply to the human.
+      // Treat such a turn as FAILED: publish the honest fallback for the
+      // human, but leave the request pending (never mark it delivered) so the
+      // ordinary lifecycle re-drives it and the recovered answer is published
+      // exactly once. Narration itself is never published — only the fallback
+      // copy below.
       const rawText = result.agentText.trim();
       const substantiveText = rawText && !isPureRetryNarration(rawText) ? rawText : '';
       const turnHadActivity = result.updates.length > 0;
-      const hasSubstantiveOutput =
-        Boolean(substantiveText) || result.toolCalls.length > 0 || !!result.cornerRequest;
-      if (
-        !hasSubstantiveOutput &&
-        !turn.permissionHandled &&
-        turnHadActivity &&
-        !scheduled &&
-        !agentExchange
-      ) {
+      const hasAnswer = Boolean(substantiveText) || !!result.cornerRequest;
+      if (!hasAnswer && !turn.permissionHandled && turnHadActivity && !scheduled && !agentExchange) {
         console.log(
           `[body] room ${tlcChannelId} request ${request.eventId}: turn produced only harness ` +
             'retry narration; publishing the honest fallback and leaving the request retryable',

@@ -12335,6 +12335,104 @@ describe('harness retry narration never becomes the durable Room reply', () => {
     }
   });
 
+  it('keeps the request retryable when pre-tool progress and tool work end in narration', async () => {
+    // Last-run-only selection: the genuine-looking progress sentence before
+    // the tool call is draft-only by contract, so a turn that degrades into
+    // captured retry narration after real tool work has NO durable answer.
+    // Tool receipts never consume the human's request on their own.
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-narration-progress-'));
+    try {
+      const progressAndNarration = {
+        stopReason: 'end_turn',
+        updates: [
+          {
+            sessionId: 'readonly-session',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: 'Let me look at the deploy logs first.' },
+            },
+          },
+          {
+            sessionId: 'readonly-session',
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'read-deploy-log',
+              kind: 'read',
+              status: 'completed',
+            },
+          },
+          {
+            sessionId: 'readonly-session',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: NARRATION },
+            },
+          },
+        ],
+        agentText: '',
+        toolCalls: [{ id: 'read-deploy-log', kind: 'read', status: 'completed' }],
+      };
+      const promptMock = vi.fn().mockResolvedValue(progressAndNarration);
+      const { body, published, processChannelRequestEvents } = await makeBody(
+        workspaceRoot,
+        promptMock,
+      );
+      const durableState = Reflect.get(body, 'durableState') as {
+        pending: (channelId: string) => Promise<NostrEvent[]>;
+      };
+      const event = requestEvent(
+        'degraded-request',
+        body.agent.publicKey,
+        'Why did the deploy fail?',
+      );
+      const participants = [human.publicKey, body.agent.publicKey];
+
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        participants,
+      );
+
+      // Neither the progress sentence nor the narration reached the wire —
+      // only the honest fallback did — and the request stays retryable even
+      // though reads happened, because no answer was produced.
+      const messages = agentMessages(published);
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.content).toBe(
+        "I couldn't produce a response to that message; please try again.",
+      );
+      expect(messages.map((message) => message.content).join('\n')).not.toContain(
+        'deploy logs first.',
+      );
+      expect(statuses(published)).toEqual(['working', 'failed']);
+      await expect(durableState.pending('parent-channel')).resolves.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+
+      // The recovered attempt answers genuinely: exactly one real answer.
+      promptMock.mockResolvedValue(turnResult(ANSWER));
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        participants,
+      );
+
+      const afterRetry = agentMessages(published);
+      expect(afterRetry).toHaveLength(2);
+      expect(afterRetry.at(-1)!.content).toBe(ANSWER);
+      expect(statuses(published).at(-1)).toBe('complete');
+      await expect(durableState.pending('parent-channel')).resolves.not.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('delivers an ordinary prose answer through the normal path', async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-narration-prose-'));
     try {

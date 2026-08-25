@@ -164,6 +164,80 @@ describe('one repository-truth resolver', () => {
     expect(git(corner.checkoutPath, ['rev-parse', 'HEAD'])).toBe(remoteTip);
   });
 
+  it('serializes canonical refreshes from separate daemon-side resolver instances', async () => {
+    const f = fixture();
+    const repositoriesRoot = resolve(f.root, 'canonical');
+    await new RepositoryTruthResolver({ repositoriesRoot }).resolve(f.binding, 'room-join');
+
+    let releaseFirstFetch!: () => void;
+    const firstFetchReleased = new Promise<void>((resolveRelease) => {
+      releaseFirstFetch = resolveRelease;
+    });
+    let signalFirstFetch!: () => void;
+    const firstFetchEntered = new Promise<void>((resolveEntered) => {
+      signalFirstFetch = resolveEntered;
+    });
+    let fetchCalls = 0;
+    let activeFetches = 0;
+    let maxActiveFetches = 0;
+    const runRemoteGit = async (cwd: string, args: string[]) => {
+      if (args[0] === 'fetch') {
+        fetchCalls += 1;
+        activeFetches += 1;
+        maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
+        if (fetchCalls === 1) {
+          signalFirstFetch();
+          await firstFetchReleased;
+        }
+      }
+      const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+      if (args[0] === 'fetch') activeFetches -= 1;
+      return {
+        ok: result.status === 0,
+        status: result.status,
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+      };
+    };
+    const first = new RepositoryTruthResolver({ repositoriesRoot, runRemoteGit });
+    const second = new RepositoryTruthResolver({ repositoriesRoot, runRemoteGit });
+
+    const firstRefresh = first.resolve(f.binding, 'room-join');
+    await firstFetchEntered;
+    const secondRefresh = second.resolve(f.binding, 'room-join');
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+
+    expect(fetchCalls).toBe(1);
+    expect(maxActiveFetches).toBe(1);
+    releaseFirstFetch();
+    await Promise.all([firstRefresh, secondRefresh]);
+    expect(fetchCalls).toBe(2);
+    expect(maxActiveFetches).toBe(1);
+  });
+
+  it('recovers a canonical checkout lock whose daemon owner exited', async () => {
+    const f = fixture();
+    const repositoriesRoot = resolve(f.root, 'canonical');
+    const lock = resolve(
+      repositoriesRoot,
+      '.beeline-locks',
+      `${repositoryDirectoryName(f.binding.repository.key)}.lock`,
+    );
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(
+      resolve(lock, 'owner.json'),
+      JSON.stringify({ pid: 2_147_483_647, token: 'dead-owner', acquiredAt: Date.now() }),
+    );
+
+    const truth = await new RepositoryTruthResolver({ repositoriesRoot }).resolve(
+      f.binding,
+      'room-join',
+    );
+
+    expect(truth.kind).toBe('remote');
+    expect(existsSync(lock)).toBe(false);
+  });
+
   it('declares a local-only checkout itself as truth without falling back elsewhere', async () => {
     const root = mkdtempSync(join(tmpdir(), 'beeline-local-truth-'));
     cleanup.push(root);

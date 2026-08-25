@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Linking, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { ActivityIndicator, Linking, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, type Href } from 'expo-router';
 import * as Updates from 'expo-updates';
@@ -17,6 +17,13 @@ import { WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { PixelGateReveal } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
+import {
+  createManualUpdateState,
+  isManualUpdateBusy,
+  manualUpdateButtonLabel,
+  manualUpdateMessage,
+  manualUpdateReducer,
+} from './manual-update-state';
 
 /**
  * The account settings hub — the single surface the Workspace rail's YOU
@@ -32,6 +39,14 @@ export default function BuzzSettings() {
   const insets = useSafeAreaInsets();
   const [confirmForget, setConfirmForget] = useState(false);
   const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
+  const manualUpdateRunning = useRef(false);
+  const [manualUpdate, dispatchManualUpdate] = useReducer(
+    manualUpdateReducer,
+    Updates.isEnabled,
+    createManualUpdateState,
+  );
+  const manualUpdateBusy = isManualUpdateBusy(manualUpdate);
+  const manualUpdateStatus = manualUpdateMessage(manualUpdate);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +71,33 @@ export default function BuzzSettings() {
     clearBuzzLocalCache();
     router.replace('/buzz/onboarding');
   }, [confirmForget]);
+
+  const handleManualUpdate = useCallback(async () => {
+    if (!Updates.isEnabled || manualUpdateRunning.current) return;
+
+    manualUpdateRunning.current = true;
+    dispatchManualUpdate({ type: 'start-check' });
+    try {
+      const update = await Updates.checkForUpdateAsync();
+      if (!update.isAvailable) {
+        dispatchManualUpdate({ type: 'latest' });
+        return;
+      }
+
+      dispatchManualUpdate({ type: 'update-available' });
+      const fetched = await Updates.fetchUpdateAsync();
+      if (!fetched.isNew && !fetched.isRollBackToEmbedded) {
+        throw new Error('expo-updates did not download the available update');
+      }
+
+      dispatchManualUpdate({ type: 'update-downloaded' });
+      await Updates.reloadAsync();
+    } catch {
+      dispatchManualUpdate({ type: 'failed' });
+    } finally {
+      manualUpdateRunning.current = false;
+    }
+  }, []);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -150,7 +192,34 @@ export default function BuzzSettings() {
             <Text style={styles.rowSubtitle} testID="ota-update-channel">
               Channel: {Updates.channel ?? 'not configured'}
             </Text>
+            {manualUpdateStatus && (
+              <Text
+                accessibilityLiveRegion="polite"
+                style={styles.updateStatus}
+                testID="ota-update-status"
+              >
+                {manualUpdateStatus}
+              </Text>
+            )}
           </View>
+          <TouchableOpacity
+            accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
+            accessibilityRole="button"
+            accessibilityState={{
+              disabled: !Updates.isEnabled || manualUpdateBusy,
+              busy: manualUpdateBusy,
+            }}
+            disabled={!Updates.isEnabled || manualUpdateBusy}
+            onPress={() => void handleManualUpdate()}
+            style={[
+              styles.updateAction,
+              (!Updates.isEnabled || manualUpdateBusy) && styles.updateActionDisabled,
+            ]}
+            testID="ota-update-check"
+          >
+            {manualUpdateBusy && <ActivityIndicator size="small" testID="ota-update-progress" />}
+            <Text style={styles.updateActionText}>{manualUpdateButtonLabel(manualUpdate)}</Text>
+          </TouchableOpacity>
         </View>
         <TouchableOpacity
           accessibilityLabel={confirmForget ? 'Confirm sign out' : 'Sign out on this device'}
@@ -290,6 +359,31 @@ const styles = StyleSheet.create((theme) => {
     ...Typography.mono(),
     color: groknight.textSecondary,
     fontSize: 9,
+  },
+  updateAction: {
+    minWidth: 126,
+    minHeight: 44,
+    marginLeft: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 7,
+  },
+  updateActionDisabled: { opacity: 0.58 },
+  updateActionText: {
+    ...Typography.mono('semiBold'),
+    color: groknight.textSecondary,
+    fontSize: 9,
+    lineHeight: 13,
+    letterSpacing: 0.3,
+    textAlign: 'right',
+  },
+  updateStatus: {
+    ...Typography.default(), fontFamily: groknight.proseRegular,
+    marginTop: 6,
+    color: groknight.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
   },
   forgetGlyph: {
     ...Typography.default(),

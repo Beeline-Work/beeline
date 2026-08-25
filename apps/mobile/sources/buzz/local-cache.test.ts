@@ -139,6 +139,32 @@ describe('normalized Buzz cache', () => {
     expect(selectTranscript(snapshot, ROOM).map((item) => item.id)).toEqual(['older', 'live']);
   });
 
+  it('lets a Room Retry start a fresh backfill when the first hydration never settles', async () => {
+    const recovered = reduceWorkspaceSnapshot(
+      createWorkspaceSnapshot({ workspaceId: 'workspace' }),
+      humanMessage('recovered', 4, 'Recovered transcript'),
+    );
+    const transport = {
+      readModelBackfill: vi
+        .fn()
+        .mockImplementationOnce(() => new Promise(() => undefined))
+        .mockResolvedValueOnce({
+          snapshot: recovered,
+          events: [{ type: 'read-model', sessionId: ROOM, event: humanMessage('recovered', 4) }],
+        }),
+    };
+
+    const wedged = revalidateCachedMessages(transport as never, VIEWER, ROOM);
+    expect(revalidateCachedMessages(transport as never, VIEWER, ROOM)).toBe(wedged);
+
+    await revalidateCachedMessages(transport as never, VIEWER, ROOM, { force: true });
+
+    expect(transport.readModelBackfill).toHaveBeenCalledTimes(2);
+    const snapshot =
+      useBuzzLocalCache.getState().channels[channelCacheKey(VIEWER, ROOM)]!.snapshot!;
+    expect(selectTranscript(snapshot, ROOM).map((item) => item.id)).toEqual(['recovered']);
+  });
+
   it('keeps warm list enrichment while fresh structural basics arrive', () => {
     expect(
       mergeChannelBasicsWithCache(

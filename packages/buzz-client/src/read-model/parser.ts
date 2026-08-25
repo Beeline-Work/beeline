@@ -134,14 +134,15 @@ function markers(event: NostrEvent): readonly string[] {
   return tags(event, 't').flatMap((candidate) => (candidate[1] ? [candidate[1]] : []));
 }
 
-function unknown(event: Partial<NostrEvent>, reason: Unknown['reason']): Unknown {
+function unknown(event: unknown, reason: Unknown['reason']): Unknown {
+  const candidate = record(event);
   return {
     type: 'unknown',
     reason,
-    ...(typeof event.id === 'string' ? { eventId: event.id as EventId } : {}),
-    ...(typeof event.pubkey === 'string' ? { authorPubkey: event.pubkey as Pubkey } : {}),
-    ...(typeof event.created_at === 'number' ? { createdAt: event.created_at } : {}),
-    ...(typeof event.kind === 'number' ? { sourceKind: event.kind } : {}),
+    ...(typeof candidate?.id === 'string' ? { eventId: candidate.id as EventId } : {}),
+    ...(typeof candidate?.pubkey === 'string' ? { authorPubkey: candidate.pubkey as Pubkey } : {}),
+    ...(typeof candidate?.created_at === 'number' ? { createdAt: candidate.created_at } : {}),
+    ...(typeof candidate?.kind === 'number' ? { sourceKind: candidate.kind } : {}),
   };
 }
 
@@ -1030,7 +1031,7 @@ function parseIdentityControl(event: NostrEvent, authority: ParseAuthority): Con
  * member; malformed, foreign, unresolved, or unauthorized inputs return
  * Unknown, which deliberately carries no renderable content.
  */
-export function parseRelayEvent(event: NostrEvent, authority: ParseAuthority): ReadEvent {
+function parseRelayEventUnchecked(event: NostrEvent, authority: ParseAuthority): ReadEvent {
   if (!verifyEvent(event)) return unknown(event, 'invalid-signature');
   if (
     !Number.isSafeInteger(event.created_at) ||
@@ -1063,6 +1064,20 @@ export function parseRelayEvent(event: NostrEvent, authority: ParseAuthority): R
 }
 
 /**
+ * Parse one untrusted relay value without allowing a malformed envelope to
+ * abort the page around it. Runtime bridge data is not entitled to the
+ * compile-time `NostrEvent` shape: permission/delegation readers and signature
+ * serialization may otherwise throw before they can return Unknown.
+ */
+export function parseRelayEvent(event: NostrEvent, authority: ParseAuthority): ReadEvent {
+  try {
+    return parseRelayEventUnchecked(event, authority);
+  } catch {
+    return unknown(event, 'malformed-schema');
+  }
+}
+
+/**
  * Parse one delivery page without making reply validity depend on page order.
  * The first pass admits only fully verified conversation messages as possible
  * parents; the second pass is the only place reply tags become opaque typed
@@ -1078,10 +1093,16 @@ export function parseRelayEvents(
   const knownPermissionRequests = { ...authority.knownPermissionRequests };
   const knownDelegationTurns = { ...authority.knownDelegationTurns };
   for (const event of events) {
-    const request = parsePermissionRequest(event);
-    if (request) knownPermissionRequests[event.id] = request;
-    const turn = parseDelegationTurn(event);
-    if (turn) knownDelegationTurns[event.id] = turn;
+    try {
+      const request = parsePermissionRequest(event);
+      if (request) knownPermissionRequests[event.id] = request;
+      const turn = parseDelegationTurn(event);
+      if (turn) knownDelegationTurns[event.id] = turn;
+    } catch {
+      // The event itself becomes Unknown in the normal parse passes below.
+      // Its failure must not discard valid permission/delegation context from
+      // any other event in this delivery page.
+    }
   }
   const candidateAuthority = {
     ...authority,
@@ -1096,10 +1117,19 @@ export function parseRelayEvents(
   }
   const replyById = new Map(
     events.flatMap((event) => {
-      const replyId = event.tags.find(
-        (candidate) => candidate[0] === 'e' && candidate[1] && candidate[3] === 'reply',
-      )?.[1];
-      return replyId ? [[event.id, replyId] as const] : [];
+      try {
+        if (!Array.isArray(event.tags)) return [];
+        const replyId = event.tags.find(
+          (candidate) =>
+            Array.isArray(candidate) &&
+            candidate[0] === 'e' &&
+            candidate[1] &&
+            candidate[3] === 'reply',
+        )?.[1];
+        return replyId ? [[event.id, replyId] as const] : [];
+      } catch {
+        return [];
+      }
     }),
   );
   const rootFor = (eventId: string): string => {

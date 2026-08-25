@@ -213,6 +213,27 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     );
   });
 
+  it('quarantines one malformed relay envelope without losing valid transcript history', async () => {
+    const valid = message(human, 'Valid history survives', 5);
+    const malformed = {
+      ...message(human, 'Malformed transport value', 6),
+      id: 'malformed-envelope',
+      tags: null,
+    } as unknown as NostrEvent;
+    const fixture = clientFixture({ messages: [valid, malformed] });
+
+    const result = await transportWith(fixture.client).readModelBackfill(ROOM);
+
+    expect(
+      selectTranscript(result.snapshot, ROOM).map((item) =>
+        item.kind === 'human-message' || item.kind === 'agent-message' ? item.body : undefined,
+      ),
+    ).toContain('Valid history survives');
+    expect(result.snapshot.diagnostics).toContainEqual(
+      expect.objectContaining({ eventId: 'malformed-envelope' }),
+    );
+  });
+
   it('installs live delivery before yielding and emits only typed events', async () => {
     const fixture = clientFixture();
     const transport = transportWith(fixture.client);

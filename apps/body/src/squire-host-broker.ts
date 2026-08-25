@@ -9,6 +9,7 @@ import {
   SQUIRE_READ_ONLY_TOOLS,
   squireArgumentsDigest,
 } from './external-mcp-capabilities.js';
+import { trustySquireHostEnv } from './trusty-squire-storage.js';
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 export const SQUIRE_AUTHORIZATION_TTL_MS = 60_000;
@@ -28,35 +29,16 @@ interface BrokerConnection {
 
 type SpawnSquire = () => ChildProcessWithoutNullStreams;
 
-const SQUIRE_HOST_ENV_ALLOWLIST = new Set([
-  'HOME',
-  'PATH',
-  'TMPDIR',
-  'LANG',
-  'LC_ALL',
-  'XDG_CONFIG_HOME',
-  'XDG_CACHE_HOME',
-  'XDG_STATE_HOME',
-  'NODE_EXTRA_CA_CERTS',
-]);
-
-export function squireHostEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(env).filter(
-      ([name, value]) => value !== undefined && SQUIRE_HOST_ENV_ALLOWLIST.has(name),
-    ),
-  );
-}
-
 export class SquireHostBroker {
   private server?: Server;
   private readonly channels = new Map<string, BrokerChannel>();
   private readonly children = new Set<ChildProcessWithoutNullStreams>();
 
   constructor(
+    private readonly configRoot: string,
     private readonly spawnSquire: SpawnSquire = () =>
       spawn('npx', ['-y', SQUIRE_MCP_PACKAGE, 'server'], {
-        env: squireHostEnv(process.env),
+        env: trustySquireHostEnv(process.env, configRoot),
         stdio: ['pipe', 'pipe', 'pipe'],
       }),
     private readonly now: () => number = Date.now,

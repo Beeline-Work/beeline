@@ -22,6 +22,11 @@ describe('readOperatorMcpServers', () => {
       JSON.stringify([
         { name: 'squire', command: 'npx', args: ['-y', '@trusty-squire/mcp'], env: [] },
         { name: 'vault-tools', command: 'npx', args: ['-y', '@trusty-squire/mcp@1.1.12'] },
+        {
+          name: 'stable-vault',
+          command: 'node',
+          args: ['/opt/node_modules/@trusty-squire/mcp/dist/bin.js', 'server'],
+        },
         { name: 'project-tools', command: '/usr/local/bin/project-mcp' },
       ]),
     );

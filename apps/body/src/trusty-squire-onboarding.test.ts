@@ -22,11 +22,18 @@ afterEach(async () => {
 describe('Trusty Squire pair-time onboarding', () => {
   it('runs the idempotent upstream connect flow on the operator machine and loads the skill', async () => {
     const operatorHome = scratch('squire-operator-home-');
-    const calls: Array<{ command: string; args: readonly string[]; timeoutMs: number }> = [];
+    const configRoot = resolve(operatorHome, 'runtime', 'squire-config');
+    const calls: Array<{
+      command: string;
+      args: readonly string[];
+      timeoutMs: number;
+      env: NodeJS.ProcessEnv;
+    }> = [];
     const result = await connectTrustySquireForPair({
       agentKind: 'codex',
       operatorHome,
-      run: async (command, args, timeoutMs) => calls.push({ command, args, timeoutMs }),
+      configRoot,
+      run: async (command, args, timeoutMs, env) => calls.push({ command, args, timeoutMs, env }),
     });
 
     expect(calls).toEqual([
@@ -34,6 +41,10 @@ describe('Trusty Squire pair-time onboarding', () => {
         command: 'npx',
         args: ['-y', '@trusty-squire/mcp@1.1.12', 'connect', '--target=codex', '--no-interactive'],
         timeoutMs: 30 * 60_000,
+        env: expect.objectContaining({
+          XDG_CONFIG_HOME: configRoot,
+          TRUSTY_SQUIRE_SESSION_FILE: '1',
+        }),
       },
     ]);
     expect(result.skillPath).toContain('.codex/skills/trusty-squire/SKILL.md');

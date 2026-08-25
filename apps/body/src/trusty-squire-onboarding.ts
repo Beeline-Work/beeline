@@ -9,11 +9,12 @@
  */
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import type { AgentKind } from './agent-command.js';
 import { SQUIRE_MCP_PACKAGE } from './external-mcp-capabilities.js';
+import { trustySquireHostEnv } from './trusty-squire-storage.js';
 
 const CONNECT_TIMEOUT_MS = 30 * 60_000;
 
@@ -62,17 +63,23 @@ export function assertTrustySquireConnectSupported(kind: AgentKind): TrustySquir
 }
 
 export interface TrustySquireConnectRunner {
-  (command: string, args: readonly string[], timeoutMs: number): Promise<void>;
+  (
+    command: string,
+    args: readonly string[],
+    timeoutMs: number,
+    env: NodeJS.ProcessEnv,
+  ): Promise<void>;
 }
 
 async function runConnectProcess(
   command: string,
   args: readonly string[],
   timeoutMs: number,
+  env: NodeJS.ProcessEnv,
 ): Promise<void> {
   await new Promise<void>((resolvePromise, rejectPromise) => {
     let timer: NodeJS.Timeout | undefined;
-    const child = spawn(command, [...args], { stdio: 'inherit', env: process.env });
+    const child = spawn(command, [...args], { stdio: 'inherit', env });
     let settled = false;
     const finish = (error?: Error) => {
       if (settled) return;
@@ -136,13 +143,17 @@ async function ensureHarnessSkill(kind: AgentKind, operatorHome: string): Promis
 export async function connectTrustySquireForPair(input: {
   agentKind: AgentKind;
   operatorHome?: string;
+  configRoot: string;
   run?: TrustySquireConnectRunner;
 }): Promise<{ target: TrustySquireConnectTarget; skillPath: string }> {
   const target = assertTrustySquireConnectSupported(input.agentKind);
+  await mkdir(input.configRoot, { recursive: true, mode: 0o700 });
+  await chmod(input.configRoot, 0o700);
   await (input.run ?? runConnectProcess)(
     'npx',
     ['-y', SQUIRE_MCP_PACKAGE, 'connect', `--target=${target}`, '--no-interactive'],
     CONNECT_TIMEOUT_MS,
+    trustySquireHostEnv(process.env, input.configRoot),
   );
   const operatorHome = input.operatorHome ?? homedir();
   await ensureTrustySquireSkill(operatorHome);

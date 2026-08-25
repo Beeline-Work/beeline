@@ -33,6 +33,8 @@ export type ChatDisplayMessage = {
   activity?: AgentActivityItem[];
   agentThought?: string;
   agentMessageDraft?: string;
+  /** Stable presentation identity for one merge-not-ready state transition. */
+  mergeNotReadyTransition?: string;
   durableFact?: { kind: 'failure' | 'merge' | 'action' };
   attachments?: AttachmentReference[];
   mentionPubkeys?: string[];
@@ -237,7 +239,15 @@ function controlProjection(
       ? { deliveryLanded: true, ...(payload.tip ? { landedTip: payload.tip } : {}) }
       : {}),
     ...(event.visibility !== 'hidden'
-      ? { message: { ...common, isSystemNotice: event.visibility === 'system-line' } }
+      ? {
+          message: {
+            ...common,
+            isSystemNotice: event.visibility === 'system-line',
+            ...(payload.action === 'not-ready' && payload.text?.trim()
+              ? { mergeNotReadyTransition: payload.text.trim() }
+              : {}),
+          },
+        }
       : {}),
   };
 }
@@ -426,6 +436,69 @@ export function mergeDisplayPages(
   return [...byId.values()].sort(
     (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
   );
+}
+
+const AGENT_STALL_NOTICE =
+  'Still working on this — my coding backend is taking longer than usual to respond.';
+
+/**
+ * Corner-only transcript presentation policy.
+ *
+ * The normalized snapshot keeps every verified event. This final render
+ * projection hides only two kinds of redundant presentation:
+ *
+ * - Body's durable stall sentence while a signed working receipt or live
+ *   draft/thought/tool lane already gives the reader a live indication.
+ * - A consecutive merge-not-ready card whose displayed state is byte-for-byte
+ *   identical to the preceding rendered merge-not-ready transition.
+ *
+ * Any intervening row or changed reason resets the transition, so real state
+ * changes remain visible and replayable.
+ */
+export function projectCornerTranscript(
+  messages: readonly ChatDisplayMessage[],
+  options: { readonly liveAgentPubkeys: ReadonlySet<string> },
+): ChatDisplayMessage[] {
+  const hiddenLiveStallIds = new Set<string>();
+  if (options.liveAgentPubkeys.size > 0) {
+    // Only the trailing live cluster belongs to the active turn. Stop at the
+    // first ordinary row so a new turn cannot erase an older turn's history.
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.isAgentLiveTurn) continue;
+      if (
+        message.isAgentAuthor &&
+        message.pubkey &&
+        options.liveAgentPubkeys.has(message.pubkey) &&
+        message.text.trim() === AGENT_STALL_NOTICE
+      ) {
+        hiddenLiveStallIds.add(message.id);
+        continue;
+      }
+      break;
+    }
+  }
+
+  const output: ChatDisplayMessage[] = [];
+  let previousMergeNotReadyTransition: string | undefined;
+  for (const message of messages) {
+    if (hiddenLiveStallIds.has(message.id)) continue;
+
+    const transition = message.mergeNotReadyTransition?.trim();
+    if (transition) {
+      if (transition === previousMergeNotReadyTransition) {
+        // Keep the newest publication. When an older page is revealed, the
+        // already-visible newest card therefore retains its identity/position.
+        output[output.length - 1] = message;
+        continue;
+      }
+      previousMergeNotReadyTransition = transition;
+    } else {
+      previousMergeNotReadyTransition = undefined;
+    }
+    output.push(message);
+  }
+  return output;
 }
 
 /** Latest typed effects, replayed deterministically from a snapshot. */

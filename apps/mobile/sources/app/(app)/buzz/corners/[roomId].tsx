@@ -20,6 +20,7 @@ import {
   sortCorners,
   type CornerSummary,
 } from '@/buzz/corners';
+import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -91,6 +92,15 @@ export default function BuzzCorners() {
   const seed = seedFromRoomListCache(decodedId);
   const [corners, setCorners] = useState<CornerSummary[]>(seed.corners);
   const [roomName, setRoomName] = useState(seed.roomName);
+
+  // Channel-mark convention, display-only: the Room's name renders `#<name>`
+  // and each corner row renders `#<room>/<corner>`, composed from stored
+  // names at render time. The generic ROOM_LABEL fallback gains no mark — a
+  // label is not a name, and nothing fabricated is decorated.
+  const storedRoomTitle = roomName !== ROOM_LABEL ? roomName : undefined;
+  const displayRoomTitle = storedRoomTitle
+    ? (displayRoomIndexTitle(storedRoomTitle) ?? roomName)
+    : roomName;
   const [communities, setCommunities] = useState<Community[]>(seed.communities);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(seed.communityId);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -300,7 +310,7 @@ export default function BuzzCorners() {
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>{roomName}</Text>
+            <Text style={styles.eyebrow}>{displayRoomTitle}</Text>
             <Text style={styles.title}>All {CHANGES_LABEL}</Text>
           </View>
           <Text style={styles.count}>{corners.length}</Text>
@@ -336,6 +346,7 @@ export default function BuzzCorners() {
               (candidate) => candidate.pubkey === item.openerPubkey,
             );
             const display = resolveAgentDisplayIdentity(item.openerPubkey, agent);
+            const displayCorner = displayCornerTitle(storedRoomTitle, item.name, item.id);
             // Presence is a separate dot, never a replacement for the
             // lifecycle status word shown here — the same word the Room-list
             // dropdown and the in-Room corner card show for this corner.
@@ -345,7 +356,7 @@ export default function BuzzCorners() {
               isAgentPresenceOnline(agentPresences[item.openerPubkey], presenceNow);
             return (
               <TouchableOpacity
-                accessibilityLabel={`View corner ${item.name}, ${state}${
+                accessibilityLabel={`View ${displayCorner}, ${state}${
                   showsPresence ? (online ? ', agent online' : ', agent offline') : ''
                 }`}
                 style={styles.cornerRow}
@@ -371,7 +382,7 @@ export default function BuzzCorners() {
                 )}
                 <View style={styles.cornerCopy}>
                   <Text style={styles.cornerName} numberOfLines={1}>
-                    {item.name}
+                    {displayCorner}
                   </Text>
                   <Text style={styles.agent} numberOfLines={1}>
                     Opened by{' '}
@@ -408,7 +419,7 @@ export default function BuzzCorners() {
               <Text style={styles.emptyGlyph}>⌁</Text>
               <Text style={styles.emptyTitle}>No {CHANGES_LABEL} yet</Text>
               <Text style={styles.emptyText}>
-                Go back to {roomName} and ask an Agent to start work.
+                Go back to {displayRoomTitle} and ask an Agent to start work.
               </Text>
             </View>
           }

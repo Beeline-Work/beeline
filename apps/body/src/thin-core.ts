@@ -127,7 +127,7 @@ export class ThinDaemonCore {
     let nextReconcileAt = 0;
     let unsubscribeControl: (() => void) | undefined;
     let degraded = 'starting';
-    let calendarStarted = false;
+    let calendarState: 'idle' | 'starting' | 'started' = 'idle';
 
     await opts.onEstablished?.();
     try {
@@ -167,13 +167,18 @@ export class ThinDaemonCore {
             // Reconciliation starts the active Room Bodies used for the
             // calendar's fresh principal-access check. Starting sooner would
             // incorrectly discard valid schedules for not-yet-served Rooms.
-            if (membership === 'member' && !calendarStarted) {
-              calendarStarted = true;
-              // Calendar relay reads have their own bounded retry/timer. They
-              // must never delay this core tick's watchdog progress.
+            if (membership === 'member' && calendarState === 'idle') {
+              calendarState = 'starting';
               void this.workCalendar
                 .start()
-                .catch((error) => console.error('[thin-core] work calendar start failed:', error));
+                .then(() => {
+                  calendarState = 'started';
+                })
+                .catch((error) => {
+                  calendarState = 'idle';
+                  wake = true;
+                  console.error('[thin-core] work calendar start failed:', error);
+                });
             }
             degraded = membership === 'unknown' ? 'relay membership degraded' : '';
             nextReconcileAt =

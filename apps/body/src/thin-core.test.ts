@@ -215,4 +215,48 @@ describe('ThinDaemonCore', () => {
     expect(workCalendar.start).toHaveBeenCalledOnce();
     expect(workCalendar.dispose).toHaveBeenCalledOnce();
   });
+
+  it('retries calendar startup on the bounded core cadence after a state failure', async () => {
+    const controller = new AbortController();
+    const startupFailure = new Error('durable calendar state unavailable');
+    const workCalendar = {
+      start: vi.fn().mockRejectedValueOnce(startupFailure).mockResolvedValueOnce(undefined),
+      refreshNow: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined),
+    };
+    const core = new ThinDaemonCore(
+      runtime(),
+      '/tmp/beeline-thin-core-test/runtime.json',
+      {} as BodyConfig,
+      { reconcileHeartbeatMs: 60_000, workCalendar },
+    );
+    const roomRuntime = Reflect.get(core, 'roomRuntime') as {
+      reconcile: () => Promise<'member'>;
+      watchdogTick: () => Promise<void>;
+      activeRoomCount: () => number;
+    };
+    const reconcile = vi.spyOn(roomRuntime, 'reconcile').mockResolvedValue('member');
+    vi.spyOn(roomRuntime, 'watchdogTick').mockResolvedValue(undefined);
+    vi.spyOn(roomRuntime, 'activeRoomCount').mockReturnValue(0);
+    const relaySocket = Reflect.get(core, 'relaySocket') as {
+      connected: () => Promise<never>;
+    };
+    vi.spyOn(relaySocket, 'connected').mockRejectedValue(new Error('no fake socket'));
+    const startError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let progressTicks = 0;
+
+    await core.run({
+      signal: controller.signal,
+      pollMs: 1,
+      onProgress: () => {
+        progressTicks += 1;
+        if (progressTicks >= 3) controller.abort();
+      },
+    });
+
+    expect(workCalendar.start).toHaveBeenCalledTimes(2);
+    expect(reconcile).toHaveBeenCalledTimes(2);
+    expect(startError).toHaveBeenCalledWith('[thin-core] work calendar start failed:', startupFailure);
+    expect(workCalendar.dispose).toHaveBeenCalledOnce();
+  });
 });

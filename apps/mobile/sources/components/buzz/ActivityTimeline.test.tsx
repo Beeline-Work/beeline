@@ -98,13 +98,17 @@ describe('live streaming turn', () => {
     expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
   });
 
-  it('uses dim italic thought copy and brass for a failed verdict', () => {
+  it('recedes thinking copy: prose family, one step down, dimmed, upright', () => {
     const renderer = render(<ActivityTimeline active items={TOOLS} thought="Still checking" />);
     const thought = renderer.root.findByProps({ children: 'Still checking' });
     expect(thought.props.style).toMatchObject({
+      fontFamily: groknight.proseRegular,
       color: groknight.ledgerQuiet,
-      fontStyle: 'italic',
+      fontSize: 14,
+      lineHeight: 22,
     });
+    // Upright: no simulated italics — the shipped family has no italic cut.
+    expect(thought.props.style).not.toHaveProperty('fontStyle');
     const verdict = renderer.root.findByProps({ testID: 'activity-verdict-failure' });
     expect(verdict.props.children).toBe('×');
     expect(verdict.props.style).toContainEqual(

@@ -6641,6 +6641,7 @@ export class Body {
         );
         this.processedRequestIds.add(request.eventId);
         await this.durableState.delivered(tlcChannelId, request.eventId);
+        if (scheduled) throw error;
         return false;
       }
       throw error;

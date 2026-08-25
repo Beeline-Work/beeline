@@ -194,9 +194,10 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
       // its development-only reservation/outbox journal as a lost store; the
       // best-effort contract intentionally reconstructs from schedule config.
       if (parsed.version === 1) {
-        this.data = { version: 2, schedules: {} };
+        const migrated: DurableCalendarData = { version: 2, schedules: {} };
         this.loaded = true;
-        await this.save();
+        await this.save(migrated);
+        this.data = migrated;
         return;
       }
       const rawSchedules = object(parsed.schedules);
@@ -227,18 +228,36 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     await this.load();
     const parsed = parseRuntimeState(state);
     if (!parsed) throw new Error('invalid work calendar runtime state');
-    this.data.schedules[parsed.scheduleId] = cloneState(parsed);
-    await this.save();
+    await this.enqueueSave(async () => {
+      const next: DurableCalendarData = {
+        version: 2,
+        schedules: {
+          ...this.data.schedules,
+          [parsed.scheduleId]: cloneState(parsed),
+        },
+      };
+      await this.write(next);
+      this.data = next;
+    });
   }
 
-  private save(): Promise<void> {
-    this.saveTail = this.saveTail.then(async () => {
-      await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-      const temporary = resolve(dirname(this.path), `work-calendar-${process.pid}.tmp`);
-      await writeFile(temporary, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
-      await rename(temporary, this.path);
+  private save(data: DurableCalendarData): Promise<void> {
+    return this.enqueueSave(async () => {
+      await this.write(data);
     });
-    return this.saveTail;
+  }
+
+  private enqueueSave(task: () => Promise<void>): Promise<void> {
+    const run = this.saveTail.catch(() => undefined).then(task);
+    this.saveTail = run.catch(() => undefined);
+    return run;
+  }
+
+  private async write(data: DurableCalendarData): Promise<void> {
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    const temporary = resolve(dirname(this.path), `work-calendar-${process.pid}.tmp`);
+    await writeFile(temporary, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporary, this.path);
   }
 }
 
@@ -1274,8 +1293,16 @@ export class WorkCalendar {
     }
     // Submit independently due schedules together. SessionScheduler remains
     // the final per-Room/process capacity queue and keeps each turn background.
-    await Promise.all(due.map((entry) => this.process(entry)));
-    for (const entry of due) {
+    const results = await Promise.allSettled(due.map((entry) => this.process(entry)));
+    for (const [index, entry] of due.entries()) {
+      const result = results[index]!;
+      if (result.status === 'rejected') {
+        console.error(
+          `[work-calendar] occurrence ${entry.parsed.value.scheduleId} failed:`,
+          result.reason,
+        );
+        this.retryLater(entry.parsed.value.scheduleId);
+      }
       const current = this.schedules.get(entry.key);
       if (current && current.value.revision === entry.parsed.value.revision) {
         const next = this.entryFor(entry.key, current, this.secondsNow());

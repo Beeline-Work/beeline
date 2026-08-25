@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { CornerSummary, CornerStatus } from './corners';
 import {
+  displayCornerTitle,
   displayRoomIndexTitle,
   isRoomAlive,
   NO_ACTIVITY_PREVIEW,
@@ -541,6 +542,48 @@ describe('Room row presentation', () => {
       expect(displayRoomIndexTitle(undefined)).toBeUndefined();
       expect(displayRoomIndexTitle('')).toBeUndefined();
       expect(displayRoomIndexTitle('   ')).toBeUndefined();
+    });
+  });
+
+  describe('displayCornerTitle (the corner half of the same convention)', () => {
+    it('composes #<room>/<corner> from stored names', () => {
+      expect(displayCornerTitle('Roadmap', 'fix ledger drift', 'abc12345')).toBe(
+        '#Roadmap/fix-ledger-drift',
+      );
+    });
+
+    it('never double-prefixes either part', () => {
+      expect(displayCornerTitle('#Roadmap', 'fix ledger drift', 'abc12345')).toBe(
+        '#Roadmap/fix-ledger-drift',
+      );
+      // cornerName strips leading marks from a stored corner slug too.
+      expect(displayCornerTitle('Roadmap', '#fix-ledger-drift', 'abc12345')).toBe(
+        '#Roadmap/fix-ledger-drift',
+      );
+    });
+
+    it('degrades to the honest #<corner> when the parent Room name is unknown or unresolved', () => {
+      expect(displayCornerTitle(undefined, 'fix ledger drift', 'abc12345')).toBe(
+        '#fix-ledger-drift',
+      );
+      expect(displayCornerTitle(null, 'fix ledger drift', 'abc12345')).toBe('#fix-ledger-drift');
+      expect(displayCornerTitle('   ', 'fix ledger drift', 'abc12345')).toBe('#fix-ledger-drift');
+    });
+
+    it('falls through to the id-slug fallback instead of an empty label', () => {
+      expect(displayCornerTitle('Roadmap', undefined, 'abc12345ffff')).toBe(
+        '#Roadmap/corner-abc12345',
+      );
+      expect(displayCornerTitle('Roadmap', '   ', 'abc12345ffff')).toBe('#Roadmap/corner-abc12345');
+    });
+
+    it('mutates nothing: the returned string is fresh and the inputs are untouched', () => {
+      const room = 'Roadmap';
+      const corner = 'fix ledger drift';
+      const display = displayCornerTitle(room, corner, 'abc12345');
+      expect(display).toBe('#Roadmap/fix-ledger-drift');
+      expect(room).toBe('Roadmap');
+      expect(corner).toBe('fix ledger drift');
     });
   });
 });

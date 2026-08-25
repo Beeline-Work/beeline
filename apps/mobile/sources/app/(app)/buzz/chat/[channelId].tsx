@@ -122,7 +122,6 @@ import {
 } from '@/buzz/agent-display';
 import { useAgentNameCache, withKnownAgentNames } from '@/buzz/agent-name-cache';
 import {
-  cornerName,
   currentCornerStatus,
   roomListCorners,
   resolveCornerLifecycleStatus,
@@ -157,6 +156,7 @@ import {
   isPinnedCornerReadyForReview,
   selectPinnedCorner,
 } from '@/buzz/room-indicators';
+import { displayCornerTitle } from '@/buzz/room-list-row';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -1219,14 +1219,32 @@ export default function BuzzChat() {
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room
   // label as a stand-in for its own slug.
+  // The parent Room's STORED name, for a corner's `#<room>/<corner>` header.
+  // Read from the same Room-list cache the reference resolver uses — never a
+  // second index. `undefined` = not a corner; `null` = corner whose parent
+  // name has not landed yet (the header degrades to `#<corner>`, it does not
+  // block on another read).
+  const parentRoomName = useMemo(() => {
+    if (!parentChannelId) return undefined;
+    const parent = cachedChannelList?.channels.find(
+      (channel) => channel.id === parentChannelId && !channel.parentChannelId,
+    );
+    return parent?.title?.trim() ? parent.title : null;
+  }, [cachedChannelList, parentChannelId]);
   const headerTitle = channelHeaderTitle(
     resolvedChannelName,
     isCorner ? 'corner' : channelKind,
     decodedId,
+    {
+      directMessage: isDirectMessage,
+      parentRoomName,
+    },
   );
-  // Room-lifecycle copy ("Delete <name>?") only ever runs on a Room, which by
-  // then has a resolved name; the label is the safe fallback for the sentence.
+  // Room-lifecycle copy ("Delete <name>?"), rename drafts, and cache writes
+  // use the STORED name — the `#` mark is display-only and must never leak
+  // into a mutation path. The header renders through `headerTitle` instead.
   const roomName = headerTitle ?? ROOM_LABEL;
+  const storedRoomName = resolvedChannelName?.trim() || ROOM_LABEL;
   // A DM's title is its peer's identity. Derived from cached state rather
   // than resolved inside the enter-room fetch chain, so it is right on the
   // first painted frame of a warm cache instead of several relay reads later.
@@ -1516,8 +1534,13 @@ export default function BuzzChat() {
     const subject = agentPubkey
       ? resolveAgentDisplayIdentity(agentPubkey, agentByPubkey.get(agentPubkey)).name
       : 'agent';
-    const target = cornerName(
-      cornerLifecycle.find((corner) => corner.id === pinnedCorner.cornerId)?.name,
+    // The channel-mark convention: a corner names itself `#<room>/<corner>`,
+    // composed from stored names at render time. Before this Room's own name
+    // has resolved the line still marks the corner alone rather than blocking.
+    const lifecycleCorner = cornerLifecycle.find((corner) => corner.id === pinnedCorner.cornerId);
+    const target = displayCornerTitle(
+      resolvedChannelName?.trim() || undefined,
+      lifecycleCorner?.name,
       pinnedCorner.cornerId,
     );
     const live = isPinnedCornerLive(pinnedCorner.status);
@@ -1541,6 +1564,7 @@ export default function BuzzChat() {
     mergeTarget,
     pinnedCorner,
     pinnedCornerCard,
+    resolvedChannelName,
     sessionState,
   ]);
 
@@ -4689,7 +4713,9 @@ export default function BuzzChat() {
                   accessibilityRole="button"
                   disabled={renameBusy}
                   onPress={() => {
-                    setRenameDraft(roomName);
+                    // The rename draft is the STORED name; the header's `#`
+                    // mark is display-only and must never be saved back.
+                    setRenameDraft(storedRoomName);
                     setRenameError(null);
                     setRenameEditing(true);
                   }}

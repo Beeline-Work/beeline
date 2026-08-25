@@ -81,7 +81,7 @@ import {
   setCommunityVisibility,
 } from './community.js';
 import { publishEvent, type HttpBridgeOptions } from './http.js';
-import { fetchIdentityPredecessors } from './oidc-bind.js';
+import { fetchIdentityPredecessors, resolveCurrentIdentityPubkey } from './oidc-bind.js';
 import {
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
@@ -590,7 +590,10 @@ export class BuzzClient {
   }
 
   listAgents(communityId: string): Promise<Agent[]> {
-    return listAgents(this.ctx, communityId);
+    return listAgents(this.ctx, communityId, 200, {
+      resolveCurrentPubkey: (pubkey) =>
+        resolveCurrentIdentityPubkey(this.baseUrl, this.identity, pubkey),
+    });
   }
 
   /** Unlink one agent from all Workspace channels and stop its paired host runtime. */

@@ -15,6 +15,7 @@ import {
   lookupManagedIdentity,
   lookupRecovery,
   parseOidcBindCallback,
+  resolveCurrentIdentityPubkey,
   startGitHubBind,
   startGitHubInstallation,
   listGitHubRepositories,
@@ -23,6 +24,37 @@ import {
 } from './oidc-bind.js';
 
 const StandardURL = URL;
+
+describe('identity succession resolution', () => {
+  it('resolves the same predecessor deterministically for repeated session activations', async () => {
+    const agent = generateKeypair();
+    const predecessor = generateKeypair();
+    const successor = generateKeypair();
+    const authorizationHeaders: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        expect(String(input)).toBe(
+          `https://relay.example/auth/oidc/current/${predecessor.publicKey}`,
+        );
+        authorizationHeaders.push(String(new Headers(init?.headers).get('authorization')));
+        return new Response(JSON.stringify({ current_pubkey: successor.publicKey }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+
+    await expect(
+      resolveCurrentIdentityPubkey('https://relay.example', agent, predecessor.publicKey),
+    ).resolves.toBe(successor.publicKey);
+    await expect(
+      resolveCurrentIdentityPubkey('https://relay.example', agent, predecessor.publicKey),
+    ).resolves.toBe(successor.publicKey);
+    expect(authorizationHeaders).toHaveLength(2);
+    expect(authorizationHeaders[0]).not.toBe(authorizationHeaders[1]);
+  });
+});
 
 /** The URL behavior shipped by React Native, limited to the surface this module uses. */
 class ReactNativeURLFixture {

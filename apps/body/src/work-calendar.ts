@@ -1092,7 +1092,7 @@ export interface WorkCalendarDependencies {
   workspaceId: string;
   store: WorkCalendarStore;
   readSchedules(): Promise<readonly NostrEvent[]>;
-  readReceipts(): Promise<readonly NostrEvent[]>;
+  readReceipts(scheduleEvents: readonly NostrEvent[]): Promise<readonly NostrEvent[]>;
   authorize(schedule: ParsedWorkSchedule): Promise<ScheduleAuthorityResult>;
   validateScheduleCreation?(creation: readonly ParsedWorkSchedule[]): Promise<boolean>;
   publish(event: NostrEvent): Promise<void>;
@@ -1124,6 +1124,7 @@ export class WorkCalendar {
   private readonly schedules = new Map<string, ParsedWorkSchedule>();
   private localRuns: CalendarRunRecord[] = [];
   private relayReceipts: ParsedScheduledTurnReceipt[] = [];
+  private relayEvents: readonly NostrEvent[] = [];
   private readonly retryAt = new Map<string, number>();
   private timer?: ReturnType<typeof setTimeout>;
   private nextResyncAt = 0;
@@ -1189,10 +1190,9 @@ export class WorkCalendar {
 
   private async refresh(): Promise<void> {
     if (this.disposed) return;
-    const [scheduleEvents, receiptEvents] = await Promise.all([
-      this.dependencies.readSchedules(),
-      this.dependencies.readReceipts(),
-    ]);
+    const scheduleEvents = await this.dependencies.readSchedules();
+    const receiptEvents = await this.dependencies.readReceipts(scheduleEvents);
+    this.relayEvents = receiptEvents;
     this.localRuns = await this.dependencies.store.runs();
     this.relayReceipts = receiptEvents.flatMap((event) => {
       const parsed = parseScheduledTurnReceipt(event);
@@ -1262,6 +1262,7 @@ export class WorkCalendar {
       if (!current) continue;
       this.schedules.set(key, current);
     }
+    await this.reconstructRelayFailurePauses();
     this.rebuildHeap();
     this.nextResyncAt =
       this.secondsNow() + (this.dependencies.resyncSeconds ?? DEFAULT_CALENDAR_RESYNC_SECONDS);
@@ -1271,6 +1272,7 @@ export class WorkCalendar {
   private async refreshSafely(): Promise<void> {
     try {
       await this.refresh();
+      await this.flushOutbox();
     } catch (error) {
       console.error('[work-calendar] canonical refresh failed:', error);
       this.nextResyncAt =
@@ -1319,6 +1321,71 @@ export class WorkCalendar {
       }
     }
     return [...states.values()];
+  }
+
+  private async reconstructRelayFailurePauses(): Promise<void> {
+    for (const parsed of this.schedules.values()) {
+      const schedule = parsed.value;
+      const failures = this.consecutiveFailures(schedule);
+      if (failures < schedule.maxConsecutiveFailures) continue;
+      const latestFailure = this.relayRunStates(schedule)
+        .filter((receipt) => receipt.value.status === 'failed')
+        .sort(
+          (left, right) =>
+            right.value.nominalAt - left.value.nominalAt ||
+            right.value.at - left.value.at ||
+            right.event.id.localeCompare(left.event.id),
+        )[0];
+      if (!latestFailure) continue;
+      const at = latestFailure.value.at;
+      const hasProjection = this.relayEvents.some((event) => {
+        if (
+          event.kind !== WORK_SCHEDULE_KIND ||
+          event.pubkey !== this.dependencies.identity.publicKey ||
+          !verifyEvent(event) ||
+          uniqueTag(event, 't') !== WORK_SCHEDULE_RUNTIME_TAG ||
+          uniqueTag(event, 'revision') !== String(schedule.revision)
+        )
+          return false;
+        try {
+          const value = JSON.parse(event.content) as { scheduleId?: unknown; status?: unknown };
+          return value.scheduleId === schedule.scheduleId && value.status === 'paused';
+        } catch {
+          return false;
+        }
+      });
+      if (!hasProjection)
+        await this.dependencies.store.stageOutput(
+          `projection:${schedule.scheduleId}:${schedule.revision}:${latestFailure.value.runId}:failed`,
+          buildWorkScheduleProjection(this.dependencies.identity, {
+            version: 1,
+            type: 'runtime',
+            workspaceId: schedule.workspaceId,
+            roomId: schedule.roomId,
+            agentPubkey: schedule.agentPubkey,
+            principalPubkey: schedule.principalPubkey,
+            scheduleId: schedule.scheduleId,
+            revision: schedule.revision,
+            status: 'paused',
+            consecutiveFailures: failures,
+            updatedAt: at,
+          }),
+        );
+      const hasPauseCard = this.relayEvents.some(
+        (event) =>
+          event.kind === 9 &&
+          event.pubkey === this.dependencies.identity.publicKey &&
+          verifyEvent(event) &&
+          uniqueTag(event, 't') === WORK_SCHEDULE_PAUSED_TAG &&
+          uniqueTag(event, 'schedule') === schedule.scheduleId &&
+          uniqueTag(event, 'revision') === String(schedule.revision),
+      );
+      if (!hasPauseCard)
+        await this.dependencies.store.stageOutput(
+          `pause:${schedule.scheduleId}:${schedule.revision}`,
+          buildWorkSchedulePauseCard(this.dependencies.identity, schedule, at),
+        );
+    }
   }
 
   private entryFor(key: string, parsed: ParsedWorkSchedule, now: number): HeapEntry | undefined {
@@ -1572,13 +1639,14 @@ export class WorkCalendar {
         return;
       }
       if (error instanceof ScheduleActivationRefusedError) {
-        await this.finish(
-          schedule,
-          runId,
-          entry.nominalAt,
-          error.terminal ? 'skipped' : 'failed',
-          error.reason,
-        );
+        if (!error.terminal) {
+          this.retryAt.set(
+            runId,
+            this.secondsNow() + (this.dependencies.retrySeconds ?? DEFAULT_CALENDAR_RETRY_SECONDS),
+          );
+          return;
+        }
+        await this.finish(schedule, runId, entry.nominalAt, 'skipped', error.reason);
         return;
       }
       const reason =
@@ -1771,6 +1839,7 @@ export class WorkCalendar {
       await this.dependencies.store.markOutputPublished(key, staged.id);
     } catch (error) {
       console.error(`[work-calendar] output publish failed for ${key}:`, error);
+      throw error;
     }
   }
 }

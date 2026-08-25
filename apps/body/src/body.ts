@@ -6556,6 +6556,9 @@ export class Body {
         );
         return true;
       }
+      if (scheduled && !result.agentText.trim() && outputCandidates(result).length === 0) {
+        throw new Error('scheduled model returned no output');
+      }
       const fallback = turn.permissionHandled
         ? turn.transitionedToCorner
           ? 'The in-Room mutation was refused; implementation continues only in the isolated corner.'
@@ -6611,7 +6614,7 @@ export class Body {
       );
       return false;
     } catch (error) {
-      if (scheduled && error instanceof ScheduleActivationRefusedError) {
+      if (scheduled) {
         await postAgentTurnStatus(
           tlcChannelId,
           this.agentIdentity,

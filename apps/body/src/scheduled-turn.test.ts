@@ -269,6 +269,103 @@ describe('scheduled Room turn boundary', () => {
     }
   });
 
+  it.each([
+    {
+      name: 'provider failure',
+      prompt: async () => {
+        throw new Error('provider unavailable');
+      },
+      publishFails: false,
+      expected: 'provider unavailable',
+    },
+    {
+      name: 'empty output',
+      prompt: async () => ({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: '',
+        toolCalls: [],
+      }),
+      publishFails: false,
+      expected: 'scheduled model returned no output',
+    },
+    {
+      name: 'output publication failure',
+      prompt: async () => ({
+        stopReason: 'end_turn',
+        updates: [],
+        agentText: 'Scheduled result',
+        toolCalls: [],
+      }),
+      publishFails: true,
+      expected: 'relay unavailable',
+    },
+  ])('propagates scheduled $name to WorkCalendar', async ({ prompt, publishFails, expected }) => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-failure-'));
+    const agent = newIdentity(`scheduled-failure-agent-${expected}`);
+    const principal = newIdentity(`scheduled-failure-principal-${expected}`);
+    const body = new Body(config(root), undefined, agent);
+    vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
+    vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
+    body.registerSession({
+      channelId: 'scheduled-room',
+      sessionId: 'scheduled-session',
+      logicalSessionId: 'scheduled-logical',
+      client: { sessionPrompt: vi.fn(prompt), sessionCancel: vi.fn() },
+      mode: 'readonly',
+    } as never);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+    const nominalAt = 1_900_000_000;
+    const runId = deterministicScheduleRunId('failure-job', 1, nominalAt);
+    const queuedEvent = buildScheduledTurnReceipt(agent, {
+      version: 1,
+      workspaceId: 'scheduled-workspace',
+      roomId: 'scheduled-room',
+      agentPubkey: agent.publicKey,
+      principalPubkey: principal.publicKey,
+      scheduleId: 'failure-job',
+      revision: 1,
+      runId,
+      nominalAt,
+      status: 'queued',
+      at: nominalAt,
+      reservedTokens: 100,
+    });
+    try {
+      await expect(
+        body.dispatchScheduledTurn(
+          {
+            trigger: 'schedule',
+            priority: 'background',
+            workspaceId: 'scheduled-workspace',
+            roomId: 'scheduled-room',
+            agentPubkey: agent.publicKey,
+            principalPubkey: principal.publicKey,
+            scheduleId: 'failure-job',
+            scheduleRevision: 1,
+            scheduleRunId: runId,
+            nominalAt,
+            prompt: 'Run scheduled work.',
+            artifactRefs: [],
+            reservedTokens: 100,
+            queuedEvent,
+          },
+          undefined,
+          'direct-message',
+          async () => undefined,
+          async () => {
+            if (publishFails) throw new Error('relay unavailable');
+          },
+        ),
+      ).rejects.toThrow(expected);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps delegation and text-corner directives inert inside scheduled model output', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-directives-'));
     const agent = newIdentity('scheduled-directive-agent');

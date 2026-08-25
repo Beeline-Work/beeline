@@ -543,6 +543,80 @@ describe('agent identity boundary', () => {
         await scheduler.dispose();
       }
     });
+
+    it('delivers the exact pi corner marker contract in turn content', async () => {
+      const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+      try {
+        const body = new Body(
+          {
+            ...config,
+            agentCommand: '/usr/local/bin/pi-acp',
+            workspaceRoot: '/tmp/beeline-pi-corner-turn',
+          },
+          newIdentity('pi-operator'),
+          newIdentity('pi-agent'),
+          undefined,
+          { scheduler },
+        );
+        const durable = (
+          body as unknown as {
+            durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)>;
+          }
+        ).durableState;
+        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(
+          undefined as never,
+        );
+        const sessionPrompt = vi
+          .fn()
+          .mockResolvedValue({ agentText: 'No edit needed.', updates: [] });
+        const session = {
+          channelId: 'pi-room',
+          sessionId: 'pi-session-1',
+          mode: 'readonly' as const,
+          client: { sessionPrompt, sessionCancel: vi.fn() },
+        } as unknown as {
+          channelId: string;
+          sessionId: string;
+          mode: 'readonly';
+          client: { sessionPrompt: typeof sessionPrompt; sessionCancel: ReturnType<typeof vi.fn> };
+          personaTurnPrefix?: string;
+          lifecycle?: {
+            activate: () => Promise<string>;
+            suspend: () => Promise<void>;
+          };
+        };
+        session.lifecycle = {
+          activate: vi.fn(async () => {
+            session.personaTurnPrefix = roomEditPolicyInstructions('repository', 'pi-acp').join(
+              '\n',
+            );
+            return 'pi-session-1';
+          }),
+          suspend: vi.fn().mockResolvedValue(undefined),
+        };
+
+        await Reflect.get(body, 'promptAgent').call(
+          body,
+          session as never,
+          'Please change README.md.',
+          {
+            channelId: 'pi-room',
+            requestId: 'pi-request',
+            originalRequestId: 'pi-request',
+            cause: 'room-message',
+          },
+        );
+
+        const wirePrompt = sessionPrompt.mock.calls[0]![1] as string;
+        expect(wirePrompt).toContain('CORNER_REQUEST: <one-sentence task objective>');
+        expect(wirePrompt).toContain('Please change README.md.');
+        expect(wirePrompt.indexOf('CORNER_REQUEST:')).toBeLessThan(
+          wirePrompt.indexOf('Please change README.md.'),
+        );
+      } finally {
+        await scheduler.dispose();
+      }
+    });
   });
 
   describe('OS sandbox wiring', () => {

@@ -2911,6 +2911,11 @@ export class Body {
      * `stateDir` must be session-private and writable in the sandbox.
      */
     gitReadCredential?: { roomId: string; stateDir: string };
+    /**
+     * Read-only Room policy duplicated into turn content for ACP adapters that
+     * ignore `session/new.systemPrompt` (notably pi-acp and codex-acp).
+     */
+    roomEditPolicy?: RoomEditPolicy;
   }): Promise<AgentSession> {
     const workbenchTemplate = await this.sessionWorkbench();
     const workbench = workbenchTemplate ? { ...workbenchTemplate } : undefined;
@@ -3040,11 +3045,16 @@ export class Body {
         session.personaTurnPrefix = [
           personaTurnPrefixForHarness(profile, agentCommand, nativePersonaPrepared),
           // Codex/pi ignore session/new's systemPrompt. The workbench boundary
-          // must still reach every turn because it names the only writable
-          // Room capability and prevents scratch work from conscripting a corner.
+          // and Room edit/corner protocol must still reach every turn because
+          // turn content is the one instruction channel these adapters honor.
           ...(harnessHonorsSessionSystemPrompt(agentCommand)
             ? []
-            : [workbenchInstructions(workbench, input.mode)]),
+            : [
+                workbenchInstructions(workbench, input.mode),
+                ...(input.roomEditPolicy
+                  ? roomEditPolicyInstructions(input.roomEditPolicy, agentCommand)
+                  : []),
+              ]),
         ]
           .filter(Boolean)
           .join('\n\n');
@@ -3525,13 +3535,6 @@ export class Body {
       }, ROOM_AGENT_STALL_NOTICE_MS);
     };
     let result: PromptResult;
-    // Persona delivery floor: a harness that ignores `session/new`'s
-    // `systemPrompt` still receives every turn's message content verbatim,
-    // so the human-authored persona rides there for those harnesses. See
-    // `AgentSession.personaTurnPrefix`.
-    const wirePrompt = session.personaTurnPrefix
-      ? `${session.personaTurnPrefix}\n\n${prompt}`
-      : prompt;
     // Set only at the actual ACP invocation boundary. Scheduler/session
     // activation failures spent no model call and must not appear as one.
     let modelCallStartedAt: string | undefined;
@@ -3545,6 +3548,14 @@ export class Body {
           if (activeRoomTurn) this.pendingRoomTurns.set(turn.channelId, activeRoomTurn);
           try {
             await turn.beforeModelActivation?.();
+            // `runOnSession` activates a cold physical session before invoking
+            // this task. That activation resolves the soul and assembles the
+            // compatibility prefix, so read it here rather than before
+            // scheduler admission; otherwise the first pi/codex turn silently
+            // loses every instruction its adapter dropped from session/new.
+            const wirePrompt = session.personaTurnPrefix
+              ? `${session.personaTurnPrefix}\n\n${prompt}`
+              : prompt;
             // Armed HERE, not before `runOnSession`: a turn queued behind another
             // turn on the same pinned session has sent the backend nothing yet, so
             // a "my coding backend is taking longer than usual" notice fired while
@@ -4371,6 +4382,7 @@ export class Body {
         autoApprovePermissions: false,
         permissionHandler: (permission) =>
           this.handleRoomPermissionRequest(tlcChannelId, permission, editPolicy),
+        roomEditPolicy: editPolicy,
         ...(communityId ? { communityId } : {}),
         ...(roomMemory ? { agentMemory: roomMemory } : {}),
       });

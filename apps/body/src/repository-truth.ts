@@ -8,7 +8,8 @@
  * use it as an agent cwd, a corner base, a land target, or recap content.
  */
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, rename } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { git, gitAuthed, type GitResult, type Identity } from '@beeline/gate';
 import type { RepositoryBinding } from '@beeline/buzz-client';
@@ -18,7 +19,11 @@ import {
   type AgentRuntimeRecord,
   type LocalRepositoryBinding,
 } from './runtime.js';
-import { compatibleRepositoryCheckoutPath, repositoryCheckoutPaths } from './repository-path.js';
+import {
+  compatibleRepositoryCheckoutPath,
+  repositoryCheckoutPaths,
+  repositoryDirectoryName,
+} from './repository-path.js';
 
 export type RepositoryTruthCheckpoint = 'room-join' | 'corner-open' | 'land' | 'recap';
 
@@ -79,6 +84,156 @@ export interface RepositoryTruthResolverOptions {
     binding: RepositoryBinding,
     roomId?: string,
   ) => Promise<GitResult> | GitResult;
+}
+
+const REPOSITORY_LOCK_WAIT_MS = 10_000;
+const REPOSITORY_LOCK_OWNER_GRACE_MS = 5_000;
+const REPOSITORY_LOCK_POLL_MS = 100;
+const REPOSITORY_LOCKS_DIRECTORY = '.beeline-locks';
+
+interface RepositoryLockOwner {
+  pid: number;
+  token: string;
+  acquiredAt: number;
+}
+
+function repositoryLockOwner(value: string): RepositoryLockOwner | undefined {
+  try {
+    const parsed = JSON.parse(value) as Partial<RepositoryLockOwner>;
+    if (
+      !Number.isSafeInteger(parsed.pid) ||
+      Number(parsed.pid) <= 0 ||
+      typeof parsed.token !== 'string' ||
+      !parsed.token ||
+      !Number.isFinite(parsed.acquiredAt)
+    ) {
+      return undefined;
+    }
+    return parsed as RepositoryLockOwner;
+  } catch {
+    return undefined;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+/**
+ * Every Body process shares one canonical checkout store. Git's own lock
+ * files protect individual commands, but they do not serialize a multi-step
+ * fetch + ref lookup + checkout transaction across agent daemons. Keep that
+ * transaction single-writer per repository while allowing unrelated repos to
+ * refresh concurrently.
+ */
+async function withRepositoryCheckoutLock<T>(
+  repositoriesRoot: string,
+  repositoryKey: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  const locksRoot = resolve(repositoriesRoot, REPOSITORY_LOCKS_DIRECTORY);
+  const lock = resolve(locksRoot, `${repositoryDirectoryName(repositoryKey)}.lock`);
+  const reclaim = `${lock}.reclaim`;
+  const ownerPath = resolve(lock, 'owner.json');
+  const token = randomUUID();
+  const deadline = Date.now() + REPOSITORY_LOCK_WAIT_MS;
+  await mkdir(locksRoot, { recursive: true, mode: 0o700 });
+
+  for (;;) {
+    if (
+      await stat(reclaim)
+        .then(() => true)
+        .catch(() => false)
+    ) {
+      if (Date.now() >= deadline) {
+        throw new Error(`timed out waiting for canonical repository lock for ${repositoryKey}`);
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, REPOSITORY_LOCK_POLL_MS));
+      continue;
+    }
+    try {
+      await mkdir(lock, { mode: 0o700 });
+      // A stale-lock reaper may have claimed the old lock immediately after
+      // our pre-check. It owns this name until its marker disappears, so do
+      // not publish a new owner underneath it.
+      if (
+        await stat(reclaim)
+          .then(() => true)
+          .catch(() => false)
+      ) {
+        await rm(lock, { recursive: true, force: true });
+        continue;
+      }
+      try {
+        await writeFile(
+          ownerPath,
+          JSON.stringify({ pid: process.pid, token, acquiredAt: Date.now() }),
+          { encoding: 'utf8', mode: 0o600 },
+        );
+      } catch (error) {
+        await rm(lock, { recursive: true, force: true });
+        throw error;
+      }
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const owner = repositoryLockOwner(await readFile(ownerPath, 'utf8').catch(() => ''));
+      const age =
+        Date.now() -
+        (await stat(lock)
+          .then((value) => value.mtimeMs)
+          .catch(() => Date.now()));
+      if (
+        (owner && !processIsAlive(owner.pid)) ||
+        (!owner && age > REPOSITORY_LOCK_OWNER_GRACE_MS)
+      ) {
+        try {
+          await mkdir(reclaim, { mode: 0o700 });
+        } catch (reclaimError) {
+          if ((reclaimError as NodeJS.ErrnoException).code !== 'EEXIST') throw reclaimError;
+          continue;
+        }
+        try {
+          // Re-read after winning the reaper marker. Another waiter may have
+          // replaced the stale lock between our first read and this claim;
+          // never remove a new live owner's lock.
+          const currentOwner = repositoryLockOwner(
+            await readFile(ownerPath, 'utf8').catch(() => ''),
+          );
+          const currentAge =
+            Date.now() -
+            (await stat(lock)
+              .then((value) => value.mtimeMs)
+              .catch(() => Date.now()));
+          if (
+            (currentOwner && !processIsAlive(currentOwner.pid)) ||
+            (!currentOwner && currentAge > REPOSITORY_LOCK_OWNER_GRACE_MS)
+          ) {
+            await rm(lock, { recursive: true, force: true });
+          }
+        } finally {
+          await rm(reclaim, { recursive: true, force: true });
+        }
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`timed out waiting for canonical repository lock for ${repositoryKey}`);
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, REPOSITORY_LOCK_POLL_MS));
+    }
+  }
+
+  try {
+    return await work();
+  } finally {
+    const owner = repositoryLockOwner(await readFile(ownerPath, 'utf8').catch(() => ''));
+    if (owner?.token === token) await rm(lock, { recursive: true, force: true });
+  }
 }
 
 /** Best-effort GitHub rename lookup. Authenticated callers may wrap/replace it. */
@@ -169,7 +324,13 @@ export async function migrateLegacyRepositoryPaths(
   const repositoryKeys = new Set(runtime.rooms.map((room) => room.repo.repository.key));
   try {
     for (const entry of await readdir(repositoriesRoot, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name !== '.beeline-corners') repositoryKeys.add(entry.name);
+      if (
+        entry.isDirectory() &&
+        entry.name !== '.beeline-corners' &&
+        entry.name !== REPOSITORY_LOCKS_DIRECTORY
+      ) {
+        repositoryKeys.add(entry.name);
+      }
     }
   } catch {
     // A fresh daemon has no repository store yet.
@@ -319,6 +480,16 @@ export class RepositoryTruthResolver {
 
   /** Resolve and synchronize at every lifecycle checkpoint that can read code. */
   async resolve(
+    input: LocalRepositoryBinding,
+    checkpoint: RepositoryTruthCheckpoint,
+    roomId?: string,
+  ): Promise<RepositoryTruth> {
+    return withRepositoryCheckoutLock(this.#options.repositoriesRoot, input.repository.key, () =>
+      this.resolveUnlocked(input, checkpoint, roomId),
+    );
+  }
+
+  private async resolveUnlocked(
     input: LocalRepositoryBinding,
     _checkpoint: RepositoryTruthCheckpoint,
     roomId?: string,

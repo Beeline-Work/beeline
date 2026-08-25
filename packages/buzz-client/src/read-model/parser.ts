@@ -1292,7 +1292,7 @@ export function parseRelayEvents(
       if (!knownMessages[parent]) break;
       cursor = knownMessages[parent]?.rootId ?? parent;
     }
-    return cursor;
+    return knownMessages[cursor]?.rootId ?? cursor;
   };
   for (const eventId of Object.keys(knownMessages)) {
     knownMessages[eventId] = {

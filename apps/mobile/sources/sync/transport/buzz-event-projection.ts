@@ -363,7 +363,7 @@ export type ChatDisplayMessage = {
   /**
    * A daemon-published proposal to repoint this Room's landing target. The
    * agent may only ever *propose* — the binding itself is republished under a
-   * confirming Room admin's own key (`roomTargetBranchSet`), and every reader
+   * confirming Room owner's own key (`roomTargetBranchSet`), and every reader
    * re-checks that author's current role.
    */
   targetBranchProposal?: {
@@ -380,6 +380,7 @@ export type ChatDisplayMessage = {
     agentPubkey: string;
     tool: string;
     repository?: string;
+    purpose?: 'squire-spending';
     status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
     subchannelId?: string;
   };
@@ -708,6 +709,9 @@ export function projectChatEvent(
           agentPubkey: permissionAgent,
           tool: sessionEventTagValue(event, 'tool') ?? 'edit files',
           ...(repo ? { repository: repo } : {}),
+          ...(sessionEventTagValue(event, 'purpose') === 'squire-spending'
+            ? { purpose: 'squire-spending' as const }
+            : {}),
           status,
           ...(subchannelId ? { subchannelId } : {}),
         },

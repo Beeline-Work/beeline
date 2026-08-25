@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest';
  * harness of their own — same technique as `channels.repo.design.test.ts`.
  *
  * What is being pinned is *authority* and *honesty*, not looks: the confirm
- * writes under the viewer's own key through the admin-gated transport call,
- * a non-admin gets a plain refusal instead of a silently-ignored publish, and
+ * writes under the viewer's own key through the owner-gated transport call,
+ * a non-owner gets a plain refusal instead of a silently-ignored publish, and
  * the PREVIEW row exists only when a preview URL actually arrived.
  */
 const source = readFileSync(path.join(__dirname, 'chat', '[channelId].tsx'), 'utf8');
@@ -38,23 +38,23 @@ describe('the target-branch proposal card', () => {
     'handleConfirmTargetBranch',
   );
 
-  it('refuses a non-admin with a plain sentence before touching the relay', () => {
-    const guardIndex = handler.indexOf('canManageRoomRepository(viewerChannelRole)');
+  it('refuses a non-owner with a plain sentence before touching the relay', () => {
+    const guardIndex = handler.indexOf("viewerChannelRole !== 'owner'");
     const writeIndex = handler.indexOf('transport.roomTargetBranchSet(');
     expect(guardIndex, 'the admin guard must exist').toBeGreaterThanOrEqual(0);
     expect(writeIndex, 'the confirm must write through the transport').toBeGreaterThan(guardIndex);
-    expect(handler).toContain('admin can change the target branch');
+    expect(handler).toContain('owner can change the target branch');
     // The agent is never the confirming party, even if it is the viewer.
     expect(handler).toContain('viewerIsAgent');
   });
 
-  it('publishes through the admin-authored room-repository path, never a new wire', () => {
+  it('publishes through the owner-authored room-repository path, never a new wire', () => {
     expect(transport).toContain('client.setRoomTargetBranch(channelId, targetBranch)');
     // The daemon has no method here at all — this transport belongs to the app.
     expect(handler).not.toContain('postControlMessage');
   });
 
-  it('renders a Confirm control only for an admin, and an applied state otherwise', () => {
+  it('renders a Confirm control only for the owner, and an applied state otherwise', () => {
     const card = source.slice(
       source.indexOf('if (item.targetBranchProposal) {'),
       source.indexOf('if (item.corner) {'),
@@ -64,8 +64,10 @@ describe('the target-branch proposal card', () => {
     expect(card).toContain('testID="target-branch-applied"');
     // The applied state is read from published Room state, not from a local
     // "I tapped it" flag, so it survives a reload and can never lie.
-    expect(card).toContain("roomRepository?.targetBranch === proposal.to");
-    expect(card).toContain('canManageRoomRepository(viewerChannelRole)');
+    expect(card).toContain('roomRepository?.targetBranch === proposal.to');
+    expect(card).toContain("viewerChannelRole === 'owner'");
+    expect(card).toContain('automatically rebase onto');
+    expect(card).toContain('activity ledger');
   });
 });
 

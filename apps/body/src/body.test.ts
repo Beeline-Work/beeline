@@ -820,7 +820,9 @@ describe('agent identity boundary', () => {
       const workbench = join(root, 'agent-private', 'workbench');
       mkdirSync(workbench, { recursive: true });
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
-      Reflect.get(body, 'sessions').set('room-1', { workbench: { dir: workbench } });
+      Reflect.get(body, 'sessions').set('room-1', {
+        workbench: { dir: workbench, storageDir: workbench },
+      });
       const durable = Reflect.get(body, 'durableState');
       vi.spyOn(durable as never, 'appendConversation' as never).mockResolvedValue(
         undefined as never,
@@ -990,12 +992,12 @@ describe('agent identity boundary', () => {
       ).resolves.toBe('allow');
     });
 
-    it('allows an explicitly granted squire call only on a creator-scoped agent', async () => {
-      const request = {
+    it('allows safe Squire verbs only on a creator-scoped agent and owner-gates checkout', async () => {
+      const safeRequest = {
         toolCall: {
           kind: 'other',
-          title: 'mcp__squire__list_credentials',
-          rawInput: {},
+          title: 'mcp__squire__operate_start',
+          rawInput: { server: 'squire', tool: 'operate_start', arguments: {} },
         },
       };
       const creatorBody = new Body(
@@ -1019,16 +1021,95 @@ describe('agent identity boundary', () => {
         Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(
           creatorBody,
           'room-1',
-          request,
+          safeRequest,
         ),
       ).resolves.toBe('allow');
       await expect(
         Reflect.get(everyoneBody, 'handleRoomPermissionRequest').call(
           everyoneBody,
           'room-1',
-          request,
+          safeRequest,
         ),
       ).resolves.toBe('reject');
+
+      const confirm = vi
+        .spyOn(creatorBody as never, 'handleSquireOwnerConfirmation' as never)
+        .mockResolvedValue('allow' as never);
+      const checkoutRequest = {
+        toolCall: {
+          kind: 'other',
+          title: 'mcp__squire__checkout',
+          rawInput: { server: 'squire', tool: 'checkout', arguments: {} },
+        },
+      };
+      await expect(
+        Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(
+          creatorBody,
+          'room-1',
+          checkoutRequest,
+        ),
+      ).resolves.toBe('allow');
+      expect(confirm).toHaveBeenCalledWith('room-1', checkoutRequest);
+      await expect(
+        Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(creatorBody, 'room-1', {
+          toolCall: {
+            kind: 'other',
+            title: 'mcp__squire__delete_vault',
+            rawInput: { server: 'squire', tool: 'delete_vault', arguments: {} },
+          },
+        }),
+      ).resolves.toBe('reject');
+    });
+
+    it('routes a spending-capable Squire verb through an owner-only permission card', async () => {
+      const body = new Body(
+        { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire'] },
+        newIdentity('operator'),
+        newIdentity('agent'),
+      );
+      (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('room-1', {
+        request: {
+          eventId: 'squire-checkout-request',
+          authorPubkey: newIdentity('squire-requester').publicKey,
+          content: 'Complete checkout.',
+          createdAt: 1,
+        },
+      });
+      const wait = vi
+        .spyOn(body as never, 'waitForWritePermissionDecision' as never)
+        .mockResolvedValue('allow' as never);
+      const published: NostrEvent[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }),
+      );
+      const request = {
+        toolCall: {
+          kind: 'other',
+          title: 'mcp__squire__checkout',
+          rawInput: { server: 'squire', tool: 'checkout', arguments: {} },
+        },
+      };
+
+      await expect(
+        Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'room-1', request),
+      ).resolves.toBe('allow');
+      expect(wait).toHaveBeenCalledWith(
+        'room-1',
+        expect.any(String),
+        'squire-checkout-request',
+        'external:squire',
+        10 * 60_000,
+        { ownerOnly: true },
+      );
+      expect(published).toHaveLength(2);
+      expect(published[0]!.tags).toContainEqual(['t', 'buzz-write-permission-request']);
+      expect(published[0]!.tags).toContainEqual(['purpose', 'squire-spending']);
+      expect(published[0]!.tags).toContainEqual(['status', 'pending']);
+      expect(published[1]!.tags).toContainEqual(['status', 'allowed']);
     });
   });
 
@@ -2989,14 +3070,15 @@ describe('Room conversation and permission-gated work intent', () => {
     for (const harness of ['codex-acp', 'claude-agent-acp']) {
       const instructions = roomEditPolicyInstructions('repository', harness).join('\n');
       expect(instructions).toContain('session/request_permission');
-      expect(instructions).toMatch(/initiate the edit-corner request yourself/i);
+      expect(instructions).toMatch(/open the edit corner yourself in one step/i);
       expect(instructions).toMatch(/do not merely tell the human/i);
+      expect(instructions).toMatch(/needs no human approval/i);
       expect(instructions).not.toContain('CORNER_REQUEST');
     }
 
     const piInstructions = roomEditPolicyInstructions('repository', 'pi-acp').join('\n');
     expect(piInstructions).toContain('CORNER_REQUEST: <one-sentence task objective>');
-    expect(piInstructions).toContain('human');
+    expect(piInstructions).toMatch(/no human approval is needed/i);
     expect(piInstructions).toMatch(/never describe the corner as open/i);
     expect(piInstructions).not.toContain('/CORNER_REQUEST');
   });
@@ -3556,7 +3638,7 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(published.every((event) => !event.content.includes('CORNER_REQUEST'))).toBe(true);
   });
 
-  it('opens an agent-requested corner only after approval and successful creation', async () => {
+  it('opens an agent-requested corner directly and starts only after successful creation', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -3575,9 +3657,7 @@ describe('Room conversation and permission-gated work intent', () => {
       createdAt: 1,
     };
     const task = 'Preserve the final event in the retry loop';
-    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
-      'allow' as never,
-    );
+    const wait = vi.spyOn(body as never, 'waitForWritePermissionDecision' as never);
     const durableState = Reflect.get(body, 'durableState') as {
       conversation: (...args: unknown[]) => Promise<unknown[]>;
     };
@@ -3606,15 +3686,6 @@ describe('Room conversation and permission-gated work intent', () => {
     const start = vi
       .spyOn(body as never, 'startAgentTask' as never)
       .mockImplementation(() => undefined as never);
-    const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
-
     const handling = Reflect.get(body, 'handleAgentCornerRequest').call(
       body,
       'parent-channel',
@@ -3624,12 +3695,8 @@ describe('Room conversation and permission-gated work intent', () => {
     ) as Promise<void>;
     await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
 
-    expect(
-      published.filter((event) =>
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'allowed'),
-      ),
-    ).toHaveLength(0);
-    expect(published.some((event) => event.content.includes('new corner'))).toBe(false);
+    expect(wait).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
 
     finishCreation(info);
     await handling;
@@ -3647,56 +3714,56 @@ describe('Room conversation and permission-gated work intent', () => {
       expect.stringContaining(task),
       expect.objectContaining({ cause: 'corner-opening' }),
     );
-    const created = published.find((event) =>
-      event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'allowed'),
-    );
-    expect(created?.tags).toContainEqual(['subchannel', 'agent-corner-id']);
+    expect(wait).not.toHaveBeenCalled();
   });
 
-  it('does not open an agent-requested corner when a human denies it', async () => {
+  it('deduplicates concurrent agent-requested corner opens', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
       agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-agent-corner-deny-unit',
+      workspaceRoot: '/tmp/buzzy-agent-corner-dedupe-unit',
       relayBaseUrl: 'http://relay.test',
       relayHost: 'relay.test',
       relayScheme: 'http',
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
-    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
-      'deny' as never,
-    );
-    const open = vi.spyOn(body, 'openSubchannel');
-    const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    let finish!: () => void;
+    const open = vi.spyOn(body, 'openSubchannel').mockReturnValue(
+      new Promise((resolve) => {
+        finish = () =>
+          resolve({
+            subchannelId: 'deduped-corner',
+            taskDescription: 'Preserve the final event in the retry loop',
+          } as never);
       }),
     );
-
+    vi.spyOn(body as never, 'startAgentTask' as never).mockImplementation(() => undefined as never);
+    const request = {
+      eventId: 'agent-corner-deduped',
+      authorPubkey: human.publicKey,
+      content: 'Diagnose the retry issue.',
+      createdAt: 1,
+    };
+    const first = Reflect.get(body, 'handleAgentCornerRequest').call(
+      body,
+      'parent-channel',
+      { repo: 'repo' },
+      request,
+      'Preserve the final event in the retry loop',
+    ) as Promise<void>;
+    await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
     await Reflect.get(body, 'handleAgentCornerRequest').call(
       body,
       'parent-channel',
       { repo: 'repo' },
-      {
-        eventId: 'agent-corner-denied',
-        authorPubkey: human.publicKey,
-        content: 'Diagnose the retry issue.',
-        createdAt: 1,
-      },
+      request,
       'Preserve the final event in the retry loop',
     );
-
-    expect(open).not.toHaveBeenCalled();
-    expect(
-      published.find((event) =>
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'denied'),
-      ),
-    ).toBeDefined();
+    expect(open).toHaveBeenCalledOnce();
+    finish();
+    await first;
   });
 
   it('recycles the read-only ACP generation after a handled edit permission', async () => {
@@ -4066,7 +4133,7 @@ describe('Room conversation and permission-gated work intent', () => {
     await rm('/tmp/buzzy-stall-retry-cap-unit', { recursive: true, force: true });
   });
 
-  it('opens an edit corner only after a human allows the first mutating request', async () => {
+  it('opens an edit corner directly on the first mutating request', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -4092,9 +4159,7 @@ describe('Room conversation and permission-gated work intent', () => {
       readOnlyInformationRequest: false,
     };
     (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', turn);
-    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
-      'allow' as never,
-    );
+    const wait = vi.spyOn(body as never, 'waitForWritePermissionDecision' as never);
     const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     const info = {
       subchannelId: 'corner-id',
@@ -4147,13 +4212,12 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(start.mock.calls[0]![2]).toContain(request.content);
     expect(start.mock.calls[0]![2]).not.toContain('Recent Room transcript');
     expect(turn.transitionedToCorner).toBe(true);
+    expect(wait).not.toHaveBeenCalled();
     expect(
-      published.some(
-        (event) =>
-          event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'allowed') &&
-          event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-id'),
+      published.some((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-write-permission-request'),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('keeps DMs strictly read-only without publishing an edit-permission prompt', async () => {
@@ -4656,15 +4720,11 @@ describe('Room conversation and permission-gated work intent', () => {
       expect.stringContaining('Create PROOF.txt and commit it.'),
       expect.objectContaining({ cause: 'corner-opening' }),
     );
-    const pendingIndex = published.findIndex((event) =>
-      event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'pending'),
-    );
-    const allowedIndex = published.findIndex((event) =>
-      event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'allowed'),
-    );
-    expect(pendingIndex).toBeGreaterThanOrEqual(0);
-    expect(allowedIndex).toBeGreaterThan(pendingIndex);
-    expect(published[allowedIndex]?.tags).toContainEqual(['subchannel', 'native-corner-id']);
+    expect(
+      published.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-write-permission-request'),
+      ),
+    ).toHaveLength(0);
     expect(published.every((event) => !event.content.includes('CORNER_REQUEST'))).toBe(true);
     expect(provision).not.toHaveBeenCalled();
   });
@@ -5065,7 +5125,7 @@ describe('Room conversation and permission-gated work intent', () => {
     ).toContainEqual(['repo', 'lunchboxfortwo/buzzy']);
   });
 
-  it('keeps the Room read-only when the human denies editing', async () => {
+  it('does not consult a human decision when a bound Room opens its corner', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -5090,10 +5150,13 @@ describe('Room conversation and permission-gated work intent', () => {
       readOnlyInformationRequest: false,
     };
     (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', turn);
-    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockResolvedValue(
-      'deny' as never,
-    );
-    const open = vi.spyOn(body, 'openSubchannel');
+    const wait = vi.spyOn(body as never, 'waitForWritePermissionDecision' as never);
+    const info = {
+      subchannelId: 'direct-corner',
+      taskDescription: turn.request.content,
+    };
+    const open = vi.spyOn(body, 'openSubchannel').mockResolvedValue(info as never);
+    vi.spyOn(body as never, 'startAgentTask' as never).mockImplementation(() => undefined as never);
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
@@ -5103,8 +5166,9 @@ describe('Room conversation and permission-gated work intent', () => {
       toolCall: { kind: 'execute', title: 'shell' },
     });
 
-    expect(open).not.toHaveBeenCalled();
-    expect(turn.transitionedToCorner).toBe(false);
+    expect(wait).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledOnce();
+    expect(turn.transitionedToCorner).toBe(true);
   });
 
   it('refuses agent mutation escalation for research without posting ALLOW or opening a corner', async () => {
@@ -5657,7 +5721,7 @@ describe('first-class assistant messages', () => {
     try {
       const result = await Reflect.get(body, 'uploadAgentOutputs').call(
         body,
-        { cwd: repository, workbench: { dir: workbench } },
+        { cwd: repository, workbench: { dir: workbench, storageDir: workbench } },
         {
           agentText:
             `Ready. [[buzz-attachment:${htmlPath}]] ` + `[[buzz-attachment:${executablePath}]]`,
@@ -10143,7 +10207,7 @@ describe('moved-target land refusals are classified, and recaps stay readable', 
   });
 });
 
-describe('the Room target branch changes by admin confirm, never by the agent', () => {
+describe('the Room target branch changes by owner confirm, never by the agent', () => {
   const admin = newIdentity('target-branch-admin');
   const roomId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
   const repositoryKey = 'repo-key-target-branch';
@@ -10169,7 +10233,7 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     });
   }
 
-  /** The admin-authored Room→repository config event as it sits on the relay. */
+  /** The owner-authored Room→repository config event as it sits on the relay. */
   function roomRepositoryEvent(channelId: string, targetBranch: string): NostrEvent {
     return signEvent(
       {
@@ -10195,7 +10259,7 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
 
   /**
    * Relay stub scoped to what this flow reads: the Room's repository config
-   * and the admin projection that authorizes its author.
+   * and the owner projection that authorizes its author.
    */
   function stubRelay(channelId: string, targetBranch: string | null): NostrEvent[] {
     const published: NostrEvent[] = [];
@@ -10220,7 +10284,7 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
                 kind: KIND_CHANNEL_ADMINS,
                 tags: [
                   ['d', channelId],
-                  ['p', admin.publicKey, '', 'admin'],
+                  ['p', admin.publicKey, '', 'owner'],
                 ],
                 content: '',
               },
@@ -10295,7 +10359,7 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     expect(card[0]!.tags).toContainEqual(['t', 'body-control']);
 
     // THE security property: the agent never authors the Room→repository
-    // binding itself — that event may only be signed by a confirming admin.
+    // binding itself — that event may only be signed by the confirming owner.
     expect(published.filter((event) => event.kind === 30_078)).toHaveLength(0);
     rmSync(workspaceRoot, { recursive: true, force: true });
   });
@@ -10361,7 +10425,7 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     it('the Room system prompt names the exact command and forbids claiming the change', () => {
       const instructions = roomEditPolicyInstructions('repository').join('\n');
       expect(instructions).toContain('beeline-propose-target-branch --branch <branch>');
-      expect(instructions).toContain('a Room admin has to confirm that card');
+      expect(instructions).toContain('the Room owner has to confirm that card');
       expect(instructions).toMatch(/never say a landing-target change is in effect/i);
     });
 
@@ -10467,7 +10531,7 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     rmSync(workspaceRoot, { recursive: true, force: true });
   });
 
-  it('uses the confirmed target for the NEXT corner and leaves an open one alone', async () => {
+  it('uses the confirmed target for the next corner without mutating the Room snapshot', async () => {
     const { body, workspaceRoot } = makeBody();
     stubRelay(roomId, 'staging');
     const roomRepo = { repo: 'buzzy', repositoryKey, targetBranch: 'refs/heads/main' };
@@ -10477,14 +10541,14 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     ) => Promise<{ targetBranch?: string }>;
 
     // The Room's boundRepo snapshot still says main; a corner opening now
-    // picks up the admin-confirmed staging target.
+    // picks up the owner-confirmed staging target.
     await expect(cornerBoundRepo.call(body, roomId, roomRepo)).resolves.toMatchObject({
       repo: 'buzzy',
       repositoryKey,
       targetBranch: 'refs/heads/staging',
     });
-    // The Room's own snapshot object is never mutated, so a corner already
-    // open keeps the target it opened against.
+    // The Room snapshot is immutable here. The maintenance reconciler updates
+    // each registered open corner and rebases its worktree separately.
     expect(roomRepo.targetBranch).toBe('refs/heads/main');
     rmSync(workspaceRoot, { recursive: true, force: true });
   });
@@ -10539,6 +10603,26 @@ describe('the Room target branch changes by admin confirm, never by the agent', 
     await expect(
       cornerBoundRepo.call(body, roomId, { repo: 'buzzy', targetBranch: 'refs/heads/main' }),
     ).resolves.toMatchObject({ targetBranch: 'refs/heads/main' });
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  it('never rolls a confirmed switch back to the startup snapshot on a later read failure', async () => {
+    const { body, workspaceRoot } = makeBody();
+    stubRelay(roomId, 'staging');
+    const current = Reflect.get(body, 'currentRoomTargetBranch') as (
+      channelId: string,
+      repo: unknown,
+    ) => Promise<string>;
+    const roomRepo = { repo: 'buzzy', repositoryKey, targetBranch: 'refs/heads/main' };
+    await expect(current.call(body, roomId, roomRepo)).resolves.toBe('staging');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('relay unavailable');
+      }),
+    );
+    await expect(current.call(body, roomId, roomRepo)).resolves.toBe('staging');
     rmSync(workspaceRoot, { recursive: true, force: true });
   });
 });

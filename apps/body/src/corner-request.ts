@@ -12,9 +12,9 @@
  * HUMAN types into the composer (see `markSlashCommandVocabulary`), while this
  * marker is something the AGENT writes into its own reply text, so the two can
  * never collide. The host strips the line from everything it publishes — live
- * drafts, durable narrative segments, and the final message alike — posts an
- * the control line, and opens the corner directly. Opening creates no commit,
- * push, review approval, or merge authority. The agent never announces the corner:
+ * drafts and the final message alike — consumes the control line, and opens
+ * the corner directly. Opening creates no commit, push, review approval, or
+ * merge authority. The agent never announces the corner:
  * nothing it authored claims the corner exists until the host's own status
  * events say so after creation succeeded.
  */
@@ -78,7 +78,7 @@ export function extractCornerRequest(text: string): CornerRequestExtraction {
 export interface CornerRequestFilter {
   /**
    * Feed the full accumulated turn text (the same `fullText` the draft
-   * streamer and narrative committer already receive). Returns the prefix safe
+   * streamer receives). Returns the prefix safe
    * to publish downstream: once a marker line appears, everything from its
    * line start onward is withheld for the rest of the turn.
    */
@@ -89,8 +89,8 @@ export interface CornerRequestFilter {
 
 /**
  * Streaming-safe filter for a Room turn whose harness may emit a corner
- * request marker mid-reply. Downstream consumers (live draft, narrative
- * committer) must never see the marker or anything after it.
+ * request marker mid-reply. The live draft must never see the marker or
+ * anything after it.
  */
 export function createCornerRequestFilter(): CornerRequestFilter {
   let markerIndex: number | undefined;

@@ -153,30 +153,18 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
  * This is the stream-head defect that made a corner's first message render as
  * `'ll take a look at the README first.` — a non-text update landing between
  * the model's first token and its second one earned a synthetic paragraph
- * break mid-word, and `createNarrativeCommitter` then durably published the
- * one-character head (`I`) as its own transcript message.
+ * break mid-word, and the growing draft then presented the one-character head
+ * (`I`) as if it were a complete thought.
  */
 const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
 
-/**
- * Concatenate every `agent_message_chunk` delta into one running text,
- * inserting a paragraph break wherever a text run resumes after one or more
- * intervening non-text updates (a tool call, a plan update, reasoning). A
- * harness's own deltas rarely carry a separating newline when narration
- * resumes after doing something else — the model treats it as a fresh
- * thought, not literally continued prose — so joining with nothing there
- * glues two distinct sentences together mid-word (e.g. "...patterns" +
- * "Now I have..." -> "...patternsNow I have..."). Consecutive deltas within
- * one uninterrupted text run are joined as-is: that is normal token
- * streaming and already carries its own whitespace.
- *
- * The break is withheld when the resuming delta is a word continuation
- * (`CHUNK_CONTINUES_PREVIOUS_WORD`): an interruption between two tokens of a
- * single word is the harness's timing, not the model starting over, and a
- * break there splits one sentence into two durable transcript messages.
- */
-function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
-  let text = '';
+/** Group streaming text into assistant-message runs separated by tool,
+ * reasoning, or plan updates. Consecutive deltas are one message. A resuming
+ * delta that binds to the prior word remains in that message too, since some
+ * harnesses interleave metadata in the middle of a token. */
+function agentMessageRuns(updates: readonly SessionUpdate[]): string[] {
+  const runs: string[] = [];
+  let current = '';
   let lastWasText = false;
   for (const u of updates) {
     const delta = agentMessageChunkText(u.update);
@@ -184,13 +172,41 @@ function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
       lastWasText = false;
       continue;
     }
-    if (!lastWasText && text && !/\s$/.test(text) && !CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)) {
-      text += '\n\n';
+    if (
+      !lastWasText &&
+      current &&
+      !/\s$/.test(current) &&
+      !CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)
+    ) {
+      runs.push(current);
+      current = '';
     }
-    text += delta;
+    current += delta;
     lastWasText = true;
   }
-  return text;
+  if (current) runs.push(current);
+
+  // A reconnecting or noisy harness can replay a completed message run. Keep
+  // the first occurrence so both the live draft and final selection are
+  // stable for a turn, while repeated token text inside one uninterrupted run
+  // ("very very") remains untouched.
+  const seen = new Set<string>();
+  return runs.filter((run) => {
+    if (seen.has(run)) return false;
+    seen.add(run);
+    return true;
+  });
+}
+
+/** Accumulated non-chat draft text shown while the turn is still running. */
+function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
+  return agentMessageRuns(updates).join('\n\n');
+}
+
+/** Only the last assistant-message run is the turn's durable final output.
+ * Earlier runs are progress narration around tool work and stay draft-only. */
+function finalAgentMessageText(updates: readonly SessionUpdate[]): string {
+  return agentMessageRuns(updates).at(-1) ?? '';
 }
 
 /**
@@ -523,7 +539,7 @@ export class AcpClient extends EventEmitter {
         },
       )) as { stopReason?: string };
 
-      const agentText = joinAgentMessageChunks(updates);
+      const agentText = finalAgentMessageText(updates);
 
       const toolCalls: ToolCallEntry[] = updates
         .filter((u) => {

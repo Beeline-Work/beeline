@@ -400,12 +400,9 @@ function stripCodexHarnessPreamble(message: string): string {
 //
 //   ---
 //   New version available: v0.84.2 (installed v0.83.0). Run: `npm i -g @earendil-works/pi-coding-agent`
-// Quiet-mode installs skip straight to just the update-notice line. Because
-// createNarrativeCommitter cuts segments at paragraph breaks, and this block's
-// own internal blank lines land a paragraph break inside it, a segment can
-// begin mid-block (e.g. just `---\n<notice>` or `## Extensions\n- ...`) rather
-// than at the true start of the message — so this strips a recognized *leading
-// run* of boilerplate lines, not only a fixed two-line preamble.
+// Quiet-mode installs skip straight to just the update-notice line. The live
+// draft and final reply share this sanitizer so no harness startup block can
+// become either provisional or final conversation text.
 const PI_STARTUP_VERSION_LINE = /^pi v\d+(?:\.\d+)+(?:[-+][\w.]+)?\s*$/i;
 const PI_UPDATE_NOTICE_LINE =
   /^new version available:\s*v?\d+(?:\.\d+)+(?:[-+][\w.]+)?\s*\(installed\s*v?\d+(?:\.\d+)+(?:[-+][\w.]+)?\)\.\s*run:\s*`?npm i(?:nstall)? -g\s+\S+`?\.?\s*$/i;
@@ -472,7 +469,7 @@ function stripPiHarnessPreamble(message: string): string {
 }
 
 /** Remove known harness/CLI startup boilerplate from the front of an agent
- *  reply or narrative segment — never mid-reply text. Each harness's shape is
+ *  draft or final reply — never mid-reply text. Each harness's shape is
  *  matched independently; composing them is safe since a message only ever
  *  carries one harness's boilerplate. */
 export function stripAgentReplyPreamble(message: string): string {
@@ -1136,10 +1133,11 @@ export async function postAgentDraft(
 }
 
 /**
- * Replace a corner's last live draft with a terminal marker. `scopeChannelId`
- * is normally the parent Room: it remains writable even when the corner was
- * deleted out of band, while the unchanged `d` key still replaces the stale
- * corner record.
+ * Replace a channel's last live draft with a terminal marker. During ordinary
+ * turn finalization `cornerId` and `scopeChannelId` are the same channel. The
+ * separate scope remains available for corner cleanup: a parent Room stays
+ * writable even when the corner was deleted out of band, while the unchanged
+ * `d` key still replaces the stale corner record.
  */
 export async function retractAgentDraft(
   cornerId: string,
@@ -1173,8 +1171,8 @@ export async function retractAgentDraft(
  * `created_at` (unix seconds) strictly greater than the last value `lastRef`
  * produced, floored at the current wall clock. Several call sites in this
  * file can publish more than once within the same wall-clock second
- * (streaming flushes, back-to-back narrative segments, a presence heartbeat
- * plus its offline marker) — a relay's same-second NIP-33 tie-break isn't
+ * (streaming draft snapshots, a presence heartbeat plus its offline marker)
+ * — a relay's same-second NIP-33 tie-break isn't
  * guaranteed to pick the newest event, so `Date.now()` alone isn't enough.
  */
 function nextMonotonicSecond(lastRef: { value: number }): number {
@@ -1186,7 +1184,7 @@ function nextMonotonicSecond(lastRef: { value: number }): number {
 export interface DraftStreamer {
   /** Feed the latest accumulated text as it grows. Safe to call at any rate. */
   onChunk(fullTextSoFar: string): void;
-  /** Flush any buffered text once the turn settles (success, failure, or timeout). */
+  /** Flush buffered text, then replace the live draft with a terminal marker. */
   finish(): Promise<void>;
 }
 
@@ -1204,9 +1202,11 @@ export function createDraftStreamer(
 ): DraftStreamer {
   let latest = '';
   let published = '';
+  let finished = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inflight = Promise.resolve();
   const lastCreatedAt = { value: 0 };
+  const publishedSnapshots = new Set<string>();
   const flush = () => {
     timer = undefined;
     // A cold session's harness startup banner (pi/Codex boilerplate) is the
@@ -1216,146 +1216,41 @@ export function createDraftStreamer(
     // thing published to the Room. While only boilerplate has streamed in,
     // the stripped text is empty and nothing is published at all.
     const stripped = stripAgentReplyPreamble(latest).trim();
-    if (stripped === published) return;
+    if (stripped === published || publishedSnapshots.has(stripped)) return;
     published = stripped;
     if (!stripped) return;
+    publishedSnapshots.add(stripped);
+    // Capture the snapshot before queueing the publish. Reading the mutable
+    // `published` variable inside this closure lets a later flush replace it
+    // before a slow earlier relay write starts, sending the newer snapshot
+    // twice and never sending the earlier one.
+    const snapshot = stripped;
     const createdAt = nextMonotonicSecond(lastCreatedAt);
     inflight = inflight
-      .then(() => postAgentDraft(channelId, owner, sessionId, requestId, published, createdAt))
+      .then(() => postAgentDraft(channelId, owner, sessionId, requestId, snapshot, createdAt))
       .catch((error) => console.error('[body] agent draft publish failed:', error));
   };
   return {
     onChunk(fullTextSoFar) {
+      if (finished) return;
       latest = fullTextSoFar;
       timer ??= setTimeout(flush, flushMs);
     },
     async finish() {
+      if (finished) {
+        await inflight;
+        return;
+      }
+      finished = true;
       if (timer) clearTimeout(timer);
       flush();
+      if (publishedSnapshots.size > 0) {
+        const createdAt = nextMonotonicSecond(lastCreatedAt);
+        inflight = inflight
+          .then(() => retractAgentDraft(channelId, channelId, owner, createdAt))
+          .catch((error) => console.error('[body] agent draft retract failed:', error));
+      }
       await inflight;
-    },
-  };
-}
-
-/** Hard ceiling for one narrative segment: once the uncommitted tail passes
- *  this without a paragraph break, cut at the nearest sentence/line boundary
- *  so a single run-on paragraph still lands as more than one durable message. */
-export const NARRATIVE_SEGMENT_MAX_CHARS = 1_200;
-
-export interface NarrativeSegment {
-  /** Trimmed, durable-worthy text for this segment. */
-  text: string;
-  /** Length of the full accumulated text now covered by this and prior segments. */
-  consumed: number;
-}
-
-/**
- * Find the next durable-worthy chunk of a growing agent narrative, given how
- * much of `fullText` is already committed. Cuts at the last paragraph break in
- * the uncommitted tail — text is stable once the agent has moved on to a new
- * paragraph (or to a tool call, which never adds to `fullText`). Falls back to
- * a sentence/line boundary once the tail grows past NARRATIVE_SEGMENT_MAX_CHARS
- * without one, so a single long paragraph still gets flushed. Returns
- * undefined when nothing is safe to commit yet.
- */
-export function nextNarrativeSegment(
-  fullText: string,
-  committed: number,
-): NarrativeSegment | undefined {
-  const tail = fullText.slice(committed);
-  if (!tail) return undefined;
-
-  const paragraphBreak = /\n{2,}/g;
-  let lastBreakEnd: number | undefined;
-  let match: RegExpExecArray | null;
-  while ((match = paragraphBreak.exec(tail))) {
-    lastBreakEnd = match.index + match[0].length;
-  }
-  if (lastBreakEnd !== undefined) {
-    const segment = tail.slice(0, lastBreakEnd).trim();
-    if (segment) return { text: segment, consumed: committed + lastBreakEnd };
-  }
-
-  if (tail.length < NARRATIVE_SEGMENT_MAX_CHARS) return undefined;
-  const window = tail.slice(0, NARRATIVE_SEGMENT_MAX_CHARS);
-  const boundary = Math.max(
-    window.lastIndexOf('. '),
-    window.lastIndexOf('! '),
-    window.lastIndexOf('? '),
-    window.lastIndexOf('\n'),
-  );
-  const cut = boundary > NARRATIVE_SEGMENT_MAX_CHARS / 2 ? boundary + 1 : window.length;
-  const segment = tail.slice(0, cut).trim();
-  return segment ? { text: segment, consumed: committed + cut } : undefined;
-}
-
-export interface NarrativeCommitter {
-  /** Feed the latest accumulated text as it grows. Safe to call at any rate. */
-  onChunk(fullTextSoFar: string): void;
-  /** Durably commit any remaining uncommitted tail once the turn settles. */
-  finish(): Promise<void>;
-  /** The `created_at` used for the most recently committed segment, or 0 if
-   *  none has been committed yet. Callers that publish a trailing message
-   *  after this turn (e.g. the corner's concise end-of-turn summary) should
-   *  call this only after `finish()` resolves, and use it as a floor so their
-   *  publish always sorts strictly after the last narrative segment even when
-   *  both land within the same wall-clock second. */
-  lastCreatedAt(): number;
-}
-
-/**
- * Commit an agent's growing colloquial narrative into the durable transcript
- * as it happens, in readable paragraph-sized segments, instead of only a
- * vanishing live draft plus one compressed end-of-turn summary. Each segment
- * publishes as an ordinary first-class `#t=agent-message` — the same wire
- * shape a completed turn already uses — so it appears and stays in the
- * transcript like any other assistant message, in the order it was written.
- */
-export function createNarrativeCommitter(
-  channelId: string,
-  owner: Identity,
-  extraTags: readonly string[][] = [],
-): NarrativeCommitter {
-  let committed = 0;
-  let latest = '';
-  let inflight = Promise.resolve();
-  const lastCreatedAt = { value: 0 };
-  // Adjacent-only guard: a harness can resend an already-seen delta (e.g. a
-  // duplicate `agent_message_chunk` notification), which re-presents the same
-  // paragraph as a "new" segment right after it was already committed. Only
-  // compare against the immediately prior publish — never a broader
-  // history — so a legitimately repeated short line later in a long turn
-  // (e.g. two separate "Done." updates) still publishes each time.
-  let lastPublishedText: string | undefined;
-  const commit = (segment: NarrativeSegment) => {
-    committed = segment.consumed;
-    // stripAgentReplyPreamble is a no-op for any segment that doesn't open
-    // with the known Codex startup notice, so this is safe to apply
-    // unconditionally rather than only to the first segment — a harness can
-    // interleave its own boilerplate with real narration mid-stream too.
-    const text = stripAgentReplyPreamble(segment.text).trim();
-    if (!text || text === lastPublishedText) return;
-    lastPublishedText = text;
-    const createdAt = nextMonotonicSecond(lastCreatedAt);
-    inflight = inflight
-      .then(() =>
-        postAgentMessage(channelId, owner, text, undefined, [], extraTags, undefined, createdAt),
-      )
-      .catch((error) => console.error('[body] narrative segment publish failed:', error));
-  };
-  return {
-    onChunk(fullTextSoFar) {
-      latest = fullTextSoFar;
-      const segment = nextNarrativeSegment(latest, committed);
-      if (segment) commit(segment);
-    },
-    async finish() {
-      const tail = latest.slice(committed).trim();
-      if (tail) commit({ text: tail, consumed: latest.length });
-      await inflight;
-    },
-    lastCreatedAt() {
-      return lastCreatedAt.value;
     },
   };
 }

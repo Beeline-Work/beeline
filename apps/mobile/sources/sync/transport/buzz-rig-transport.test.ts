@@ -37,6 +37,7 @@ const human = createIdentity('Captain');
 const agent = createIdentity('Buzzy');
 const peerAgent = createIdentity('Ox');
 const unattachedAgent = createIdentity('Unattached');
+const rotatingUnattachedAgent = createIdentity('Rotating unattached');
 const relay = createIdentity('Relay');
 
 function signed(
@@ -637,6 +638,31 @@ describe('BuzzRigTransport typed read-model boundary', () => {
       ).toEqual([
         { eventId: unattached.id, type: 'unknown', reason: 'unresolved-identity' },
         { eventId: known.id, type: 'agent-message', reason: undefined },
+      ]);
+
+      const rotating = message(
+        rotatingUnattachedAgent,
+        'A different unattached key cannot buy another queue stall.',
+        37,
+      );
+      const laterKnown = message(agent, 'Known traffic still drains immediately.', 38);
+      fixture.deliver(rotating);
+      fixture.deliver(laterKnown);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(fixture.client.listMembers).toHaveBeenCalledTimes(2);
+      expect(
+        delivered.slice(2).map((item) => {
+          if (item.type !== 'read-model') return undefined;
+          return {
+            eventId: item.event.eventId,
+            type: item.event.type,
+            reason: item.event.type === 'unknown' ? item.event.reason : undefined,
+          };
+        }),
+      ).toEqual([
+        { eventId: rotating.id, type: 'unknown', reason: 'unresolved-identity' },
+        { eventId: laterKnown.id, type: 'agent-message', reason: undefined },
       ]);
       stop();
     } finally {

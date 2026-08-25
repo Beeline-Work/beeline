@@ -494,6 +494,25 @@ describe('Machine noise', () => {
     expect(styleDefinition(activitySource, 'stepReason')).not.toMatch(/groknight\.accent/);
   });
 
+  it('matches the thinking transcript to the prose voice, one step down and upright', () => {
+    const thought = styleDefinition(activitySource, 'thoughtText');
+    // Same type family as surrounding prose (theme prose face — Space Grotesk
+    // in Obsidian), never a second voice or a hardcoded face.
+    expect(thought).toMatch(/fontFamily:\s*groknight\.proseRegular/);
+    expect(thought).not.toMatch(/Typography\.default|IBMPlexSans/);
+    expect(thought).not.toMatch(/^\s*fontStyle:/m);
+    // One existing step below the ONE message size (16): the same register
+    // RoomContextPreamble's ghost lines use.
+    expect(thought).toMatch(/fontSize:\s*14/);
+    expect(thought).toMatch(/lineHeight:\s*22/);
+    // The dimmer text token for redundant machine noise.
+    expect(thought).toMatch(/color:\s*groknight\.ledgerQuiet/);
+    // Rail geometry is unchanged: the quiet 2px left rule stays.
+    const lane = styleDefinition(activitySource, 'thoughtLane');
+    expect(lane).toMatch(/borderLeftWidth:\s*2/);
+    expect(lane).toMatch(/borderLeftColor:\s*groknight\.borderQuiet/);
+  });
+
   it('pins the corner indicator above the composer instead of inscribing it', () => {
     const barSource = readFileSync(new URL('./CornerLiveBar.tsx', import.meta.url), 'utf8');
     // Gold, and gold only — this is the accent's own assigned meaning

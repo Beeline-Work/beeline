@@ -357,4 +357,135 @@ describe('Body realigns corners after a land', () => {
       rmSync(repo.root, { recursive: true, force: true });
     }
   });
+
+  it('applies an owner-confirmed Room branch switch and rebases every open corner', async () => {
+    const agent = newIdentity('branch-switch-agent');
+    const repo = repoWithCorner();
+    try {
+      g(repo.checkoutPath, ['checkout', '-b', 'staging']);
+      writeFileSync(join(repo.checkoutPath, 'STAGING.md'), 'new canon\n');
+      g(repo.checkoutPath, ['add', '.']);
+      g(repo.checkoutPath, ['commit', '-m', 'create staging canon']);
+      g(repo.checkoutPath, ['push', 'origin', 'staging']);
+      const stagingTip = g(repo.checkoutPath, ['rev-parse', 'HEAD']);
+      g(repo.checkoutPath, ['checkout', 'master']);
+
+      const body = newBody(agent, join(repo.root, 'state.json'));
+      body.registerSubchannel(
+        cornerShaped(agent, 'corner-switch', repo.cornerPath, 'repo-key') as never,
+      );
+      Reflect.set(body, 'currentRoomTargetBranch', async () => 'staging');
+      const published: NostrEvent[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+          if (String(input).endsWith('/query')) {
+            return new Response(JSON.stringify([]), { status: 200 });
+          }
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }),
+      );
+
+      await expect(
+        Reflect.get(body, 'reconcileRoomTargetBranch').call(body, 'room-corner-switch', {
+          repo: 'proj',
+          repositoryKey: 'repo-key',
+          localOnly: false,
+          remoteName: 'origin',
+          targetBranch: 'refs/heads/master',
+        }),
+      ).resolves.toBe(1);
+
+      const info = Reflect.get(body, 'subchannels').get('corner-switch');
+      expect(info.boundRepo.targetBranch).toBe('refs/heads/staging');
+      expect(info.session.resumeTargetRef).toBe('refs/heads/staging');
+      expect(g(repo.cornerPath, ['merge-base', '--is-ancestor', stagingTip, 'HEAD'])).toBeDefined();
+      const activity = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'room-target-branch-realign'),
+      );
+      expect(activity?.tags).toContainEqual(['t', 'agent-activity']);
+      expect(activity?.tags).toContainEqual(['status', 'completed']);
+      const envelope = JSON.parse(activity!.content) as {
+        update: { sessionUpdate: string; updates: Array<Record<string, unknown>> };
+      };
+      expect(envelope.update.sessionUpdate).toBe('activity_batch');
+      expect(envelope.update.updates[0]).toMatchObject({
+        sessionUpdate: 'tool_activity',
+        status: 'completed',
+      });
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces a branch-switch conflict as typed activity and queues one agent resolution turn', async () => {
+    const agent = newIdentity('branch-switch-conflict-agent');
+    const repo = repoWithCorner({ conflict: true });
+    try {
+      g(repo.checkoutPath, ['checkout', '-b', 'staging']);
+      writeFileSync(join(repo.checkoutPath, 'README.md'), '# Staging canon\n');
+      g(repo.checkoutPath, ['add', '.']);
+      g(repo.checkoutPath, ['commit', '-m', 'rewrite staging canon']);
+      g(repo.checkoutPath, ['push', 'origin', 'staging']);
+      g(repo.checkoutPath, ['checkout', 'master']);
+      const before = repo.featureTip();
+
+      const body = newBody(agent, join(repo.root, 'state.json'));
+      body.registerSubchannel(
+        cornerShaped(agent, 'corner-switch-conflict', repo.cornerPath, 'repo-key') as never,
+      );
+      Reflect.set(body, 'currentRoomTargetBranch', async () => 'staging');
+      const published: NostrEvent[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+          if (String(input).endsWith('/query')) {
+            return new Response(JSON.stringify([]), { status: 200 });
+          }
+          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }),
+      );
+
+      await expect(
+        Reflect.get(body, 'reconcileRoomTargetBranch').call(body, 'room-corner-switch-conflict', {
+          repo: 'proj',
+          repositoryKey: 'repo-key',
+          localOnly: false,
+          remoteName: 'origin',
+          targetBranch: 'refs/heads/master',
+        }),
+      ).resolves.toBe(0);
+
+      const info = Reflect.get(body, 'subchannels').get('corner-switch-conflict');
+      expect(info.boundRepo.targetBranch).toBe('refs/heads/staging');
+      expect(g(repo.cornerPath, ['rev-parse', 'HEAD'])).toBe(before);
+      expect(Reflect.get(body, 'branchSwitchResolutions').has('corner-switch-conflict')).toBe(true);
+      const activity = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'room-target-branch-realign'),
+      );
+      expect(activity?.tags).toContainEqual(['t', 'agent-activity']);
+      expect(activity?.tags).toContainEqual(['status', 'failed']);
+      const update = (
+        JSON.parse(activity!.content) as {
+          update: { updates: Array<Record<string, unknown>> };
+        }
+      ).update.updates[0];
+      expect(update).toMatchObject({ sessionUpdate: 'tool_activity', status: 'failed' });
+      expect(String(update?.output)).toContain('conflict');
+
+      const start = vi
+        .spyOn(body as never, 'startAgentTask' as never)
+        .mockImplementation(() => undefined as never);
+      await Reflect.get(body, 'pollBranchSwitchResolutions').call(body);
+      expect(start).toHaveBeenCalledOnce();
+      expect(start.mock.calls[0]?.[1]).toContain('Resolve the feature branch onto staging');
+      expect(Reflect.get(body, 'branchSwitchResolutions').has('corner-switch-conflict')).toBe(
+        false,
+      );
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
 });

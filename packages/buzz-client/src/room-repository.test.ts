@@ -25,6 +25,7 @@ import type { ChannelOpsContext } from './channel.js';
 const communityId = '11111111-1111-4111-8111-111111111111';
 const channelId = '22222222-2222-4222-8222-222222222222';
 const admin = createIdentity('room-admin');
+const roomAdmin = createIdentity('room-non-owner-admin');
 const member = createIdentity('room-member');
 const http = { baseUrl: 'http://relay.test', host: 'relay.test' };
 
@@ -90,7 +91,7 @@ function stubRelay(opts: {
         return jsonResponse([
           signed(admin, KIND_CHANNEL_ADMINS, [
             ['d', channelId],
-            ...admins.map((pk) => ['p', pk, '', 'admin']),
+            ...admins.map((pk) => ['p', pk, '', pk === admin.publicKey ? 'owner' : 'admin']),
           ]),
         ]);
       }
@@ -134,12 +135,17 @@ describe('room repository binding', () => {
     expect(bound.raw!.kind).toBe(KIND_ROOM_REPOSITORY);
     expect(bound.raw!.tags).toContainEqual(['t', TAG_ROOM_REPOSITORY]);
     expect(bound.source).toBe('config');
-    expect(bound.binding).toMatchObject({ key: 'repo-key', remote: 'git://github.com/lunchboxfortwo/buzzy', localOnly: false });
+    expect(bound.binding).toMatchObject({
+      key: 'repo-key',
+      remote: 'git://github.com/lunchboxfortwo/buzzy',
+      localOnly: false,
+    });
     expect(bound.targetBranch).toBe('main');
 
-    await expect(
-      getRoomRepository(ctx(admin), channelId),
-    ).resolves.toMatchObject({ source: 'config', authoredBy: admin.publicKey });
+    await expect(getRoomRepository(ctx(admin), channelId)).resolves.toMatchObject({
+      source: 'config',
+      authoredBy: admin.publicKey,
+    });
 
     await expect(
       setRoomRepository(ctx(member), channelId, {
@@ -238,7 +244,12 @@ describe('room repository binding', () => {
             ['t', TAG_ROOM_REPOSITORY],
             [TAG_COMMUNITY, communityId],
           ],
-          content: JSON.stringify({ key: 'evil', name: 'evil', remote: 'git://evil.example/x', localOnly: false }),
+          content: JSON.stringify({
+            key: 'evil',
+            name: 'evil',
+            remote: 'git://evil.example/x',
+            localOnly: false,
+          }),
         },
         member.secretKey,
       ),
@@ -287,7 +298,11 @@ describe('resolveRoomRepository', () => {
     const resolved = await resolveRoomRepository(ctx(admin), channelId);
     expect(resolved).toMatchObject({
       source: 'genesis',
-      binding: { key: 'genesis-key', remote: 'git://github.com/lunchboxfortwo/buzzy', localOnly: false },
+      binding: {
+        key: 'genesis-key',
+        remote: 'git://github.com/lunchboxfortwo/buzzy',
+        localOnly: false,
+      },
     });
   });
 
@@ -358,7 +373,9 @@ describe('a repository that cannot be confirmed is not a repository that is abse
     // `readRoomRepositoryConfig` speaks only for the mutable config, so a Room
     // carrying only its genesis binding is `none` there and `repository` after
     // the fallback.
-    await expect(readRoomRepositoryConfig(ctx(admin), channelId)).resolves.toEqual({ kind: 'none' });
+    await expect(readRoomRepositoryConfig(ctx(admin), channelId)).resolves.toEqual({
+      kind: 'none',
+    });
     await expect(resolveRoomRepositoryState(ctx(admin), channelId)).resolves.toMatchObject({
       kind: 'repository',
     });
@@ -421,9 +438,9 @@ describe('binding author resolves through the owner succession chain', () => {
   it('resolves a predecessor-authored binding through the current owner key', async () => {
     stubSuccessionRoom([bindingAuthoredBy(predecessor)]);
 
-    await expect(
-      resolveRoomRepository(ctx(successor), channelId, resolver),
-    ).resolves.toMatchObject({ source: 'config', authoredBy: predecessor.publicKey });
+    await expect(resolveRoomRepository(ctx(successor), channelId, resolver)).resolves.toMatchObject(
+      { source: 'config', authoredBy: predecessor.publicKey },
+    );
     await expect(resolveRoomRepositoryState(ctx(successor), channelId, resolver)).resolves.toEqual({
       kind: 'repository',
       repository: expect.objectContaining({ authoredBy: predecessor.publicKey }),
@@ -457,7 +474,9 @@ describe('binding author resolves through the owner succession chain', () => {
     stubSuccessionRoom([bindingAuthoredBy(stranger)]);
 
     // The stranger resolves to itself; it holds no Room role.
-    await expect(resolveRoomRepositoryState(ctx(successor), channelId, resolver)).resolves.toMatchObject({
+    await expect(
+      resolveRoomRepositoryState(ctx(successor), channelId, resolver),
+    ).resolves.toMatchObject({
       kind: 'unverified',
     });
     await expect(resolveRoomRepository(ctx(successor), channelId, resolver)).resolves.toBeNull();
@@ -468,12 +487,23 @@ describe('room target branch (chat-native change)', () => {
   it('normalizes a proposed branch name and refuses anything that is not one', () => {
     expect(normalizeTargetBranchName(' staging ')).toBe('staging');
     expect(normalizeTargetBranchName('refs/heads/release/2026-08')).toBe('release/2026-08');
-    for (const bad of ['', '   ', 'two words', 'a..b', 'a\\b', '-lead', 'x.lock', '@', 'a//b', '.hidden']) {
+    for (const bad of [
+      '',
+      '   ',
+      'two words',
+      'a..b',
+      'a\\b',
+      '-lead',
+      'x.lock',
+      '@',
+      'a//b',
+      '.hidden',
+    ]) {
       expect(normalizeTargetBranchName(bad)).toBeNull();
     }
   });
 
-  it('republishes the SAME binding under the confirming admin key with the new target', async () => {
+  it('republishes the SAME binding under the confirming owner key with the new target', async () => {
     const published: NostrEvent[] = [];
     stubRelay({ published });
     await setRoomRepository(ctx(admin), channelId, {
@@ -492,6 +522,7 @@ describe('room target branch (chat-native change)', () => {
       remote: 'git://github.com/lunchboxfortwo/buzzy',
     });
     expect(updated.raw!.pubkey).toBe(admin.publicKey);
+    expect(updated.raw!.tags).toContainEqual(['action', 'switch-target-branch']);
     await expect(getRoomRepository(ctx(admin), channelId)).resolves.toMatchObject({
       targetBranch: 'staging',
       authoredBy: admin.publicKey,
@@ -508,13 +539,13 @@ describe('room target branch (chat-native change)', () => {
     expect(updated.targetBranch).toBe('staging');
   });
 
-  it('refuses a non-admin writer, and the reader ignores the event even if it lands', async () => {
+  it('refuses a non-owner member, and the reader ignores the event even if it lands', async () => {
     const published: NostrEvent[] = [];
     stubRelay({ published, genesisRepo: true, admins: [admin.publicKey] });
 
     // Client-side: the SDK refuses to author it at all.
     await expect(setRoomTargetBranch(ctx(member), channelId, 'staging')).rejects.toThrow(
-      'only a Room admin',
+      'only the Room owner',
     );
     expect(published).toHaveLength(0);
 
@@ -539,6 +570,78 @@ describe('room target branch (chat-native change)', () => {
           }),
         },
         member.secretKey,
+      ),
+    );
+    await expect(getRoomRepository(ctx(admin), channelId)).resolves.toBeNull();
+  });
+
+  it('refuses a Room admin who is not the owner on both write and read', async () => {
+    const published: NostrEvent[] = [];
+    stubRelay({
+      published,
+      genesisRepo: true,
+      admins: [admin.publicKey, roomAdmin.publicKey],
+      members: [admin.publicKey, roomAdmin.publicKey],
+    });
+
+    await expect(setRoomTargetBranch(ctx(roomAdmin), channelId, 'staging')).rejects.toThrow(
+      'only the Room owner',
+    );
+    await expect(
+      setRoomRepository(ctx(roomAdmin), channelId, {
+        key: 'genesis-key',
+        name: 'buzzy',
+        remote: 'git://github.com/lunchboxfortwo/buzzy',
+        targetBranch: 'staging',
+      }),
+    ).rejects.toThrow('only the Room owner');
+    expect(published).toHaveLength(0);
+
+    published.push(
+      signEvent(
+        {
+          pubkey: roomAdmin.publicKey,
+          created_at: Math.floor(Date.now() / 1000) + 500,
+          kind: KIND_ROOM_REPOSITORY,
+          tags: [
+            ['d', `${TAG_ROOM_REPOSITORY}:${channelId}`],
+            ['h', channelId],
+            ['t', TAG_ROOM_REPOSITORY],
+            ['action', 'switch-target-branch'],
+          ],
+          content: JSON.stringify({
+            key: 'genesis-key',
+            name: 'buzzy',
+            remote: 'git://github.com/lunchboxfortwo/buzzy',
+            localOnly: false,
+            targetBranch: 'staging',
+          }),
+        },
+        roomAdmin.secretKey,
+      ),
+    );
+    // Omitting the action marker is not a bypass: the reader compares the
+    // target to the prior same-repository binding and still requires owner.
+    published.push(
+      signEvent(
+        {
+          pubkey: roomAdmin.publicKey,
+          created_at: Math.floor(Date.now() / 1000) + 501,
+          kind: KIND_ROOM_REPOSITORY,
+          tags: [
+            ['d', `${TAG_ROOM_REPOSITORY}:${channelId}`],
+            ['h', channelId],
+            ['t', TAG_ROOM_REPOSITORY],
+          ],
+          content: JSON.stringify({
+            key: 'genesis-key',
+            name: 'buzzy',
+            remote: 'git://github.com/lunchboxfortwo/buzzy',
+            localOnly: false,
+            targetBranch: 'staging',
+          }),
+        },
+        roomAdmin.secretKey,
       ),
     );
     await expect(getRoomRepository(ctx(admin), channelId)).resolves.toBeNull();
@@ -576,7 +679,10 @@ describe('per-Room GitHub activity toggle', () => {
     const updated = await setRoomGitHubEvents(ctx(admin), channelId, false);
     expect(updated.githubEventsEnabled).toBe(false);
     // Binding identity and target branch carried forward untouched.
-    expect(updated.binding).toMatchObject({ key: 'repo-key', remote: 'git://github.com/lunchboxfortwo/buzzy' });
+    expect(updated.binding).toMatchObject({
+      key: 'repo-key',
+      remote: 'git://github.com/lunchboxfortwo/buzzy',
+    });
     expect(updated.targetBranch).toBe('main');
     await expect(getRoomRepository(ctx(admin), channelId)).resolves.toMatchObject({
       githubEventsEnabled: false,

@@ -33,6 +33,7 @@ interface RoomMetadata {
   roomName?: string;
   isDirectMessage: boolean;
   isChildChannel: boolean;
+  parentChannelId?: string;
   communityId?: string;
   workspaceName?: string;
   persistentWorkspaceRoom: boolean;
@@ -172,6 +173,7 @@ export class NotificationMetadataResolver {
       ...(room.roomName ? { roomName: room.roomName } : {}),
       isDirectMessage: room.isDirectMessage,
       ...(room.isChildChannel ? { isChildChannel: true } : {}),
+      ...(room.parentChannelId ? { parentChannelId: room.parentChannelId } : {}),
       persistentWorkspaceRoom: room.persistentWorkspaceRoom,
       ...(room.workspaceName ? { workspaceName: room.workspaceName } : {}),
       fixtureCandidates: room.fixtureCandidates,
@@ -218,7 +220,8 @@ export class NotificationMetadataResolver {
       creation && tagValues(creation, 't').includes(TAG_DIRECT_MESSAGE),
     );
     // A corner worktree channel names its parent Room on the immutable create.
-    const isChildChannel = Boolean(creation && tagValue(creation, 'parent'));
+    const parentChannelId = creation ? tagValue(creation, 'parent') : undefined;
+    const isChildChannel = Boolean(parentChannelId);
     // Only the immutable create can establish the Workspace binding. Mutable
     // metadata may refine presentation but cannot make a standalone Room FCM-eligible.
     const communityId = creation ? tagValue(creation, TAG_COMMUNITY) : undefined;
@@ -228,6 +231,7 @@ export class NotificationMetadataResolver {
         ...(roomName ? { roomName } : {}),
         isDirectMessage,
         isChildChannel,
+        ...(parentChannelId ? { parentChannelId } : {}),
         persistentWorkspaceRoom: false,
         fixtureCandidates: fixture.candidates,
         fixtureMarkers: fixture.markers,
@@ -246,6 +250,7 @@ export class NotificationMetadataResolver {
         ...(roomName ? { roomName } : {}),
         isDirectMessage,
         isChildChannel,
+        ...(parentChannelId ? { parentChannelId } : {}),
         communityId,
         ...(roomName ? { workspaceName: roomName } : {}),
         persistentWorkspaceRoom: Boolean(roomName),
@@ -282,6 +287,7 @@ export class NotificationMetadataResolver {
       ...(roomName ? { roomName } : {}),
       isDirectMessage,
       isChildChannel,
+      ...(parentChannelId ? { parentChannelId } : {}),
       communityId,
       ...(workspaceName ? { workspaceName } : {}),
       persistentWorkspaceRoom: Boolean(workspaceCreation && workspaceName),

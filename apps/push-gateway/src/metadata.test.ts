@@ -201,6 +201,35 @@ describe('NotificationMetadataResolver', () => {
     ).resolves.toMatchObject({ roomName: 'Direct message', isDirectMessage: true });
   });
 
+  it('carries a corner immutable parent into notification routing context', async () => {
+    const cornerCreate = unsignedEvent(9007, [
+      ['h', ROOM_ID],
+      ['name', 'Push work'],
+      ['parent', 'parent-room'],
+      ['community', COMMUNITY_ID],
+    ]);
+    const workspaceCreate = unsignedEvent(9007, [
+      ['h', COMMUNITY_ID],
+      ['name', 'Product Engineering'],
+      ['community', COMMUNITY_ID],
+    ]);
+    const reader: RelayEventReader = {
+      query: async (filters) => {
+        if (!filters.some((filter) => (filter.kinds as number[]).includes(39000))) return [];
+        return JSON.stringify(filters).includes(COMMUNITY_ID) ? [workspaceCreate] : [cornerCreate];
+      },
+      disconnect: () => undefined,
+    };
+
+    await expect(
+      new NotificationMetadataResolver().resolve(unsignedEvent(9, [['h', ROOM_ID]]), reader),
+    ).resolves.toMatchObject({
+      isChildChannel: true,
+      parentChannelId: 'parent-room',
+      persistentWorkspaceRoom: true,
+    });
+  });
+
   it('projects Room fixture tags into the final pre-FCM context', async () => {
     const roomCreate = unsignedEvent(9007, [
       ['h', ROOM_ID],

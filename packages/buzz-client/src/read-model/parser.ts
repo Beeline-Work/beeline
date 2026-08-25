@@ -207,6 +207,120 @@ function role(value: string | undefined): MemberRole {
   return value === 'owner' || value === 'admin' || value === 'member' ? value : 'unknown';
 }
 
+export type RelayAuthorityFacts = {
+  readonly workspaceIdsByChannel: Readonly<Record<string, string>>;
+  readonly channelCreators: Readonly<Record<string, string>>;
+  readonly channelAdmins: Readonly<Record<string, readonly string[]>>;
+  readonly memberPubkeys: readonly string[];
+  readonly trustedProjectionPubkeys: readonly string[];
+  readonly cornerIdsByParent: Readonly<Record<string, readonly string[]>>;
+};
+
+/**
+ * Derive the parser's authority inputs from a relay page already fetched for
+ * the snapshot. This is intentionally part of the sole wire-interpretation
+ * boundary: callers can batch structural/projection reads without reaching
+ * back into raw tags (or repeating one authority query per channel).
+ */
+export function deriveRelayAuthorityFacts(events: readonly NostrEvent[]): RelayAuthorityFacts {
+  const workspaceIdsByChannel: Record<string, string> = {};
+  const channelCreators: Record<string, string> = {};
+  const channelCreatorAt: Record<string, number> = {};
+  const channelAdmins = new Map<string, Set<string>>();
+  const memberPubkeys = new Set<string>();
+  const trustedProjectionPubkeys = new Set<string>();
+  const cornerIdsByParent = new Map<string, Set<string>>();
+
+  const rememberMember = (channelId: string, pubkey: string, memberRole: MemberRole) => {
+    memberPubkeys.add(pubkey);
+    if (memberRole === 'owner' || memberRole === 'admin') {
+      const admins = channelAdmins.get(channelId) ?? new Set<string>();
+      admins.add(pubkey);
+      channelAdmins.set(channelId, admins);
+    }
+  };
+  const rememberCorner = (parentId: string, cornerId: string) => {
+    if (parentId === cornerId) return;
+    const corners = cornerIdsByParent.get(parentId) ?? new Set<string>();
+    corners.add(cornerId);
+    cornerIdsByParent.set(parentId, corners);
+  };
+
+  for (const event of events) {
+    try {
+      if (!verifyEvent(event) || !Array.isArray(event.tags)) continue;
+      const h = tag(event, 'h');
+      const d = tag(event, 'd');
+      if (event.kind === KIND_CREATE_GROUP) {
+        const channelId = h ?? d;
+        if (!channelId) continue;
+        const priorAt = channelCreatorAt[channelId];
+        if (
+          priorAt === undefined ||
+          event.created_at < priorAt ||
+          (event.created_at === priorAt && event.pubkey < (channelCreators[channelId] ?? ''))
+        ) {
+          channelCreators[channelId] = event.pubkey;
+          channelCreatorAt[channelId] = event.created_at;
+        }
+        const admins = channelAdmins.get(channelId) ?? new Set<string>();
+        admins.add(event.pubkey);
+        channelAdmins.set(channelId, admins);
+        const communityId = tag(event, 'community');
+        if (communityId) workspaceIdsByChannel[channelId] = communityId;
+        const parentId = tag(event, TAG_PARENT);
+        if (parentId) rememberCorner(parentId, channelId);
+        for (const candidate of tags(event, 'p')) {
+          const pubkey = candidate[1];
+          if (pubkey) rememberMember(channelId, pubkey, role(candidate[2]));
+        }
+        continue;
+      }
+      if (event.kind === KIND_CHANNEL_MEMBERS || event.kind === KIND_CHANNEL_ADMINS) {
+        const channelId = d ?? h;
+        if (!channelId) continue;
+        trustedProjectionPubkeys.add(event.pubkey);
+        const defaultRole: MemberRole = event.kind === KIND_CHANNEL_ADMINS ? 'admin' : 'member';
+        for (const candidate of tags(event, 'p')) {
+          const pubkey = candidate[1];
+          if (!pubkey) continue;
+          const parsedRole = role(candidate[2]);
+          rememberMember(channelId, pubkey, parsedRole === 'unknown' ? defaultRole : parsedRole);
+        }
+        continue;
+      }
+      if (event.kind === KIND_CORNER_STATE) {
+        const cornerKey = d;
+        const cornerId = cornerKey?.startsWith(`${TAG_CORNER_STATE}:`)
+          ? cornerKey.slice(TAG_CORNER_STATE.length + 1)
+          : undefined;
+        if (h && cornerId) rememberCorner(h, cornerId);
+        continue;
+      }
+      if (event.kind === KIND_STREAM_MESSAGE) {
+        const cornerId = tag(event, 'subchannel');
+        if (h && cornerId) rememberCorner(h, cornerId);
+      }
+    } catch {
+      // One malformed envelope contributes no authority. The normal parser
+      // will quarantine it without discarding the valid page around it.
+    }
+  }
+
+  return {
+    workspaceIdsByChannel,
+    channelCreators,
+    channelAdmins: Object.fromEntries(
+      [...channelAdmins].map(([channelId, pubkeys]) => [channelId, [...pubkeys]]),
+    ),
+    memberPubkeys: [...memberPubkeys],
+    trustedProjectionPubkeys: [...trustedProjectionPubkeys],
+    cornerIdsByParent: Object.fromEntries(
+      [...cornerIdsByParent].map(([parentId, cornerIds]) => [parentId, [...cornerIds]]),
+    ),
+  };
+}
+
 function attachments(event: NostrEvent): readonly AttachmentReference[] {
   if (!markers(event).includes('buzz-attachment')) return [];
   const names = new Map(
@@ -1031,8 +1145,7 @@ function parseIdentityControl(event: NostrEvent, authority: ParseAuthority): Con
  * member; malformed, foreign, unresolved, or unauthorized inputs return
  * Unknown, which deliberately carries no renderable content.
  */
-function parseRelayEventUnchecked(event: NostrEvent, authority: ParseAuthority): ReadEvent {
-  if (!verifyEvent(event)) return unknown(event, 'invalid-signature');
+function parseVerifiedRelayEventUnchecked(event: NostrEvent, authority: ParseAuthority): ReadEvent {
   if (
     !Number.isSafeInteger(event.created_at) ||
     event.created_at < 0 ||
@@ -1063,6 +1176,19 @@ function parseRelayEventUnchecked(event: NostrEvent, authority: ParseAuthority):
   return unknown(event, 'unknown-schema');
 }
 
+function parseRelayEventUnchecked(event: NostrEvent, authority: ParseAuthority): ReadEvent {
+  if (!verifyEvent(event)) return unknown(event, 'invalid-signature');
+  return parseVerifiedRelayEventUnchecked(event, authority);
+}
+
+function parseVerifiedRelayEvent(event: NostrEvent, authority: ParseAuthority): ReadEvent {
+  try {
+    return parseVerifiedRelayEventUnchecked(event, authority);
+  } catch {
+    return unknown(event, 'malformed-schema');
+  }
+}
+
 /**
  * Parse one untrusted relay value without allowing a malformed envelope to
  * abort the page around it. Runtime bridge data is not entitled to the
@@ -1087,12 +1213,34 @@ export function parseRelayEvents(
   events: readonly NostrEvent[],
   authority: ParseAuthority,
 ): readonly ReadEvent[] {
+  // Reply discovery needs two schema passes, but signature verification is a
+  // page admission decision and is intentionally paid only once per event.
+  // On a 200-message mobile backfill secp256k1 verification dominated Room
+  // open time when both passes independently called verifyEvent.
+  const admitted: Array<
+    | { readonly accepted: true; readonly event: NostrEvent }
+    | { readonly accepted: false; readonly event: NostrEvent; readonly rejected: ReadEvent }
+  > = events.map((event) => {
+    try {
+      return verifyEvent(event)
+        ? ({ accepted: true, event } as const)
+        : ({ accepted: false, event, rejected: unknown(event, 'invalid-signature') } as const);
+    } catch {
+      return {
+        accepted: false,
+        event,
+        rejected: unknown(event, 'malformed-schema'),
+      } as const;
+    }
+  });
   const knownMessages: Record<string, { channelId: string; rootId?: string }> = {
     ...authority.knownMessages,
   };
   const knownPermissionRequests = { ...authority.knownPermissionRequests };
   const knownDelegationTurns = { ...authority.knownDelegationTurns };
-  for (const event of events) {
+  for (const candidate of admitted) {
+    if (!candidate.accepted) continue;
+    const { event } = candidate;
     try {
       const request = parsePermissionRequest(event);
       if (request) knownPermissionRequests[event.id] = request;
@@ -1110,13 +1258,16 @@ export function parseRelayEvents(
     knownPermissionRequests,
     knownDelegationTurns,
   };
-  for (const event of events) {
-    const parsed = parseRelayEvent(event, candidateAuthority);
+  for (const candidate of admitted) {
+    if (!candidate.accepted) continue;
+    const parsed = parseVerifiedRelayEvent(candidate.event, candidateAuthority);
     if (parsed.type !== 'human-message' && parsed.type !== 'agent-message') continue;
     knownMessages[parsed.eventId] = { channelId: parsed.channelId };
   }
   const replyById = new Map(
-    events.flatMap((event) => {
+    admitted.flatMap((candidate) => {
+      if (!candidate.accepted) return [];
+      const { event } = candidate;
       try {
         if (!Array.isArray(event.tags)) return [];
         const replyId = event.tags.find(
@@ -1155,5 +1306,9 @@ export function parseRelayEvents(
     knownPermissionRequests,
     knownDelegationTurns,
   };
-  return events.map((event) => parseRelayEvent(event, finalAuthority));
+  return admitted.map((candidate) =>
+    candidate.accepted
+      ? parseVerifiedRelayEvent(candidate.event, finalAuthority)
+      : candidate.rejected,
+  );
 }

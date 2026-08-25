@@ -16,6 +16,7 @@ const chatSource = read('../app/(app)/buzz/chat/[channelId].tsx');
 const channelsSource = read('../app/(app)/buzz/channels.tsx');
 const cornersSource = read('../app/(app)/buzz/corners/[roomId].tsx');
 const membersSource = read('../app/(app)/buzz/MembersScreen.tsx');
+const buzzTransportSource = read('../sync/transport/buzz-rig-transport.ts');
 
 const BUZZ_SCREENS: [name: string, source: string][] = [
   ['chat/[channelId].tsx', chatSource],
@@ -118,6 +119,11 @@ describe('no foreground-blocking network work', () => {
     }
     expect(channelsSource).toContain('requestAnimationFrame(flush)');
     expect(chatSource).toContain('requestAnimationFrame(flushLiveEvents)');
+    // Chat must not ask Nostr to replay the entire Room history alongside the
+    // HTTP backfill, and the transport must parse a delivered burst as one
+    // page rather than rebuilding parser state once per raw callback.
+    expect(chatSource).toContain('since: liveSince');
+    expect(buzzTransportSource).toContain('this.parseReadyEvents(authority, batch)');
   });
 
   it('processes relay responses behind the interaction, not inside it', () => {

@@ -355,24 +355,29 @@ function addDiagnostic(snapshot: WorkspaceSnapshot, event: Unknown): WorkspaceSn
   };
 }
 
-function withIdentity(snapshot: WorkspaceSnapshot, identity: IdentityRecord): WorkspaceSnapshot {
+function withIdentity(
+  snapshot: WorkspaceSnapshot,
+  identity: IdentityRecord,
+  materializeCorners = true,
+): WorkspaceSnapshot {
   const current = snapshot.identities[identity.pubkey];
   if (current && current.revision >= identity.revision) return snapshot;
-  return materializeAllCorners({
+  const next = {
     ...snapshot,
     revision: snapshot.revision + 1,
     identities: { ...snapshot.identities, [identity.pubkey]: identity },
-  });
+  };
+  return materializeCorners ? materializeAllCorners(next) : next;
 }
 
-/** Pure, immutable, idempotent fold of one already-validated fact. */
-export function reduceWorkspaceSnapshot(
+function reduceWorkspaceSnapshotInternal(
   snapshot: WorkspaceSnapshot,
   event: ReadEvent,
+  materializeCorners: boolean,
 ): WorkspaceSnapshot {
   if (event.type === 'unknown') return addDiagnostic(snapshot, event);
   if (event.type === 'control' && event.payload.kind === 'identity') {
-    return withIdentity(snapshot, event.payload.identity);
+    return withIdentity(snapshot, event.payload.identity, materializeCorners);
   }
   if (event.scope !== 'channel') return snapshot;
   const currentRoom = snapshot.rooms[event.channelId] ?? emptyRoom(event.channelId);
@@ -416,14 +421,31 @@ export function reduceWorkspaceSnapshot(
     revision: snapshot.revision + 1,
     rooms: { ...snapshot.rooms, [event.channelId]: room },
   };
-  return materializeAllCorners(next);
+  return materializeCorners ? materializeAllCorners(next) : next;
+}
+
+/** Pure, immutable, idempotent fold of one already-validated fact. */
+export function reduceWorkspaceSnapshot(
+  snapshot: WorkspaceSnapshot,
+  event: ReadEvent,
+): WorkspaceSnapshot {
+  return reduceWorkspaceSnapshotInternal(snapshot, event, true);
 }
 
 export function reduceWorkspaceEvents(
   snapshot: WorkspaceSnapshot,
   events: readonly ReadEvent[],
 ): WorkspaceSnapshot {
-  return events.reduce(reduceWorkspaceSnapshot, snapshot);
+  // Materializing every corner after every fact turns a live burst into
+  // repeated whole-Workspace work. Fold the validated journal facts first,
+  // then derive corners once for the completed batch. The exported singular
+  // reducer keeps its immediate-materialization contract for callers that
+  // genuinely apply only one fact.
+  const reduced = events.reduce(
+    (current, event) => reduceWorkspaceSnapshotInternal(current, event, false),
+    snapshot,
+  );
+  return reduced === snapshot ? snapshot : materializeAllCorners(reduced);
 }
 
 /**

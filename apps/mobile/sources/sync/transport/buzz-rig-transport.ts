@@ -497,15 +497,10 @@ export class BuzzRigTransport implements RigTransport {
   ): Promise<string> {
     const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(attachments);
-    const replyRootId = this.knownMessages.get(parent.rootId)?.rootId ?? parent.rootId;
-    const event = client.buildMessage(parent.channelId, text, {
+    const event = client.buildReplyMessage(text, parent, {
       ...(mentionAgent ? { mentionAgent } : {}),
       ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
-      extraTags: [
-        ...(replyRootId !== parent.eventId ? [['e', replyRootId, '', 'root']] : []),
-        ['e', parent.eventId, '', 'reply'],
-        ...attachmentTags,
-      ],
+      ...(attachmentTags.length ? { contentTags: attachmentTags } : {}),
     });
     return this.publishPreparedMessage(event);
   }

@@ -76,6 +76,7 @@ import {
 } from '@/buzz/local-cache';
 import {
   cacheLiveSessionEvents,
+  drainLiveEventFrame,
   loadOlderMessages,
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
@@ -88,6 +89,7 @@ import { groknight } from '@/buzz/groknight';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { splitLedgerText } from '@/buzz/ledger-text';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
+import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
@@ -1702,9 +1704,10 @@ export default function BuzzChat() {
         const flushLiveEvents = () => {
           liveFlushScheduled = false;
           if (cancelled || pendingLiveEvents.length === 0) return;
-          const batch = pendingLiveEvents;
-          pendingLiveEvents = [];
-          const projections = cacheLiveSessionEvents(identity.publicKey, decodedId, batch);
+          const projections: ReturnType<typeof cacheLiveSessionEvents> = [];
+          const frame = drainLiveEventFrame(pendingLiveEvents, (batch) => {
+            projections.push(...cacheLiveSessionEvents(identity.publicKey, decodedId, batch));
+          });
           for (const projected of projections) {
             // One reducer owns every transition out of sending/delivering —
             // rejection ack, landed card, archive notice, delivery failure —
@@ -1769,6 +1772,10 @@ export default function BuzzChat() {
               setApprovalError(null);
             }
             applyAgentPresence(projected.agentPresence);
+          }
+          if (!cancelled && frame.remaining > 0 && !liveFlushScheduled) {
+            liveFlushScheduled = true;
+            requestAnimationFrame(flushLiveEvents);
           }
         };
         const handleLiveMessage = (event: Parameters<typeof cacheLiveSessionEvents>[2][number]) => {
@@ -2160,6 +2167,7 @@ export default function BuzzChat() {
 
     sendInFlightRef.current = true;
     setSending(true);
+    let optimisticId: string | undefined;
     try {
       // A warm/partial snapshot can paint before the hydration effect has
       // published its transport state. Sending is still a valid operation:
@@ -2181,7 +2189,7 @@ export default function BuzzChat() {
       setInputSelection({ start: 0, end: 0 });
       setPendingAttachment(null);
       setReplyTarget(null);
-      const optimisticId = `optimistic-${Date.now()}`;
+      optimisticId = `optimistic-${Date.now()}`;
       addMessages([
         {
           id: optimisticId,
@@ -2227,11 +2235,36 @@ export default function BuzzChat() {
               : undefined,
           );
       setOptimisticMessages((current) =>
-        reconcileOptimisticMessage(current, optimisticId, eventId),
+        reconcileOptimisticMessage(current, optimisticId!, eventId),
       );
     } catch (err) {
       console.warn('Send failed:', err);
-      Alert.alert('Message not sent', err instanceof Error ? err.message : String(err));
+      const failedOptimisticId = optimisticId;
+      if (failedOptimisticId) {
+        setOptimisticMessages((current) =>
+          current.filter((message) => message.id !== failedOptimisticId),
+        );
+      }
+      const failure = publishFailurePresentation(err);
+      Alert.alert(
+        'Message not sent',
+        failure.message,
+        failure.retryable
+          ? [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Retry',
+                onPress: () => {
+                  inputTextRef.current = rawText;
+                  setInputText(rawText);
+                  setPendingAttachment(pendingAttachment);
+                  setReplyTarget(replyTarget);
+                  requestAnimationFrame(() => void handleSend());
+                },
+              },
+            ]
+          : [{ text: 'OK' }],
+      );
     } finally {
       sendInFlightRef.current = false;
       setSending(false);

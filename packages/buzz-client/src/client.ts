@@ -81,6 +81,7 @@ import {
   setCommunityVisibility,
 } from './community.js';
 import { publishEvent, type HttpBridgeOptions } from './http.js';
+import { buildReplyCommand, type ReplyCommandOptions } from './reply-command.js';
 import { fetchIdentityPredecessors, resolveCurrentIdentityPubkey } from './oidc-bind.js';
 import {
   KIND_AGENT_DRAFT,
@@ -142,6 +143,7 @@ import type {
   SessionEventHandler,
   Unsubscribe,
 } from './types.js';
+import type { KnownMessageReference } from './read-model/types.js';
 
 function hostFromBaseUrl(baseUrl: string): string {
   const u = new URL(baseUrl);
@@ -757,6 +759,15 @@ export class BuzzClient {
    */
   buildMessage(channelId: string, text: string, opts?: MessageSubmitOpts): NostrEvent {
     return buildMessage(this.ctx, channelId, text, opts);
+  }
+
+  /** Build a proof-owned NIP-10 reply once for retry-safe publication. */
+  buildReplyMessage(
+    text: string,
+    parent: KnownMessageReference,
+    opts?: ReplyCommandOptions,
+  ): NostrEvent {
+    return buildReplyCommand(this.identity, text, parent, opts);
   }
 
   /** @deprecated Work now starts from an agent-originated write permission request. */

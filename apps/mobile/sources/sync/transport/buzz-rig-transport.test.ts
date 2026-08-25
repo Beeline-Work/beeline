@@ -20,6 +20,7 @@ import {
   selectMembers,
   selectReplyTarget,
   selectTranscript,
+  type KnownMessageReference,
 } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { BuzzRigTransport } from './buzz-rig-transport';
@@ -128,6 +129,28 @@ function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {
         content: body,
       }),
   );
+  const buildReplyMessage = vi.fn(
+    (
+      body: string,
+      parent: KnownMessageReference,
+      options?: {
+        mentionAgent?: string;
+        mentionPubkeys?: string[];
+        contentTags?: string[][];
+      },
+    ) =>
+      signed(human, {
+        created_at: 20,
+        kind: 9,
+        tags: [
+          ['h', parent.channelId],
+          ...(parent.rootId !== parent.eventId ? [['e', parent.rootId, '', 'root']] : []),
+          ['e', parent.eventId, '', 'reply'],
+          ...(options?.contentTags ?? []),
+        ],
+        content: body,
+      }),
+  );
   const client = {
     sessionEventsBackfill: vi.fn(async () => input.messages ?? []),
     getParentChannelId: vi.fn(async () => null),
@@ -173,6 +196,7 @@ function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {
     }),
     getChannelMetadata: vi.fn(async () => ({ archived: false })),
     buildMessage,
+    buildReplyMessage,
     publish: vi.fn(async () => undefined),
   };
   return { client, deliver: (event: NostrEvent) => liveHandler?.(event) };
@@ -282,9 +306,11 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     await transport.messageSubmitReply('Typed reply', selected.reference);
 
     expect(fixture.client.query).not.toHaveBeenCalled();
-    expect(fixture.client.buildMessage).toHaveBeenCalledWith(ROOM, 'Typed reply', {
-      extraTags: [['e', parent.id, '', 'reply']],
-    });
+    expect(fixture.client.buildReplyMessage).toHaveBeenCalledWith(
+      'Typed reply',
+      selected.reference,
+      {},
+    );
     expect(fixture.client.publish).toHaveBeenCalledTimes(1);
   });
 
@@ -312,12 +338,11 @@ describe('BuzzRigTransport typed read-model boundary', () => {
 
     await transport.messageSubmitReply('Deeper reply', selected.reference);
 
-    expect(fixture.client.buildMessage).toHaveBeenCalledWith(ROOM, 'Deeper reply', {
-      extraTags: [
-        ['e', root.id, '', 'root'],
-        ['e', threadedParent.id, '', 'reply'],
-      ],
-    });
+    expect(fixture.client.buildReplyMessage).toHaveBeenCalledWith(
+      'Deeper reply',
+      selected.reference,
+      {},
+    );
   });
 
   it('derives canonical corners from creator-authored lifecycle and verified membership', async () => {

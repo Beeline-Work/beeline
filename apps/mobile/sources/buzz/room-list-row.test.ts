@@ -463,4 +463,69 @@ describe('Room row presentation', () => {
       'Beeline · ID 22222222',
     ]);
   });
+
+  it('swaps the gutter age slot for a count chip only on message-unread rows', () => {
+    // Exact count when the local transcript can count against the mark.
+    expect(roomRowPresentation({ roomUnread: true, unreadNew: 3 }, NO_NAMES).unreadBadge).toBe('3');
+    // Uncountable unread never invents a number.
+    expect(roomRowPresentation({ roomUnread: true, unreadNew: null }, NO_NAMES).unreadBadge).toBe(
+      'NEW',
+    );
+    expect(roomRowPresentation({ roomUnread: true }, NO_NAMES).unreadBadge).toBe('NEW');
+    // Read rows keep their age stamp: no badge at all.
+    expect(roomRowPresentation({ roomUnread: false, unreadNew: 3 }, NO_NAMES).unreadBadge).toBe(
+      null,
+    );
+    expect(roomRowPresentation({}, NO_NAMES).unreadBadge).toBe(null);
+    // A live conversational turn lifts the row but is not a message, so it
+    // never produces a count in the gutter.
+    expect(roomRowPresentation({ agentTurnWorking: true }, NO_NAMES).unreadBadge).toBe(null);
+  });
+
+  it('caps compact counts so the fixed gutter chip never reflows', () => {
+    expect(roomRowPresentation({ roomUnread: true, unreadNew: 9 }, NO_NAMES).unreadBadge).toBe('9');
+    expect(roomRowPresentation({ roomUnread: true, unreadNew: 12 }, NO_NAMES).unreadBadge).toBe(
+      '9+',
+    );
+  });
+
+  it('keeps corner state and corner count stable across read/unread rows', () => {
+    const corners = [corner('open'), corner('live')];
+    const read = roomRowPresentation({ corners, roomUnread: false }, NO_NAMES);
+    const unread = roomRowPresentation({ corners, roomUnread: true, unreadNew: 2 }, NO_NAMES);
+    // The chip replaces the AGE, never the corner affordance: zone, corner
+    // set, and count stay identical across both states.
+    expect(unread.zone).toBe(read.zone);
+    expect(unread.state).toBe(read.state);
+    expect(unread.corners).toEqual(read.corners);
+    expect(unread.pills.filter((pill) => pill.kind === 'corner')).toEqual(
+      read.pills.filter((pill) => pill.kind === 'corner'),
+    );
+    expect(unread.unread).toBe(true);
+    expect(read.unread).toBe(false);
+  });
+
+  it('never partitions or pins the feed by unread — recency stays the co-driver', () => {
+    // An older unread Room must not jump a newer read one; unread affects
+    // recency through meaningfulAt already, and nothing else.
+    const feed = roomListFeed(
+      [
+        { id: 'older-unread', latestMessageAt: 10, roomUnread: true, unreadNew: 4 },
+        { id: 'newer-read', latestMessageAt: 20, roomUnread: false },
+        // Same timestamp as `newer-read`: unread must not win the stable tie.
+        { id: 'tie-unread', latestMessageAt: 20, roomUnread: true, unreadNew: 7 },
+      ],
+      NO_NAMES,
+    );
+    expect(feed.map(({ item }) => item.id)).toEqual(['newer-read', 'tie-unread', 'older-unread']);
+    // Needs-you clustering is untouched by unread either way.
+    const clustered = roomListFeed(
+      [
+        { id: 'unread-idle', latestMessageAt: TODAY_S, roomUnread: true, unreadNew: 1 },
+        { id: 'read-needs-you', corners: [{ ...corner('open'), lastActivityAt: 5 }] },
+      ],
+      NO_NAMES,
+    );
+    expect(clustered.map(({ item }) => item.id)).toEqual(['read-needs-you', 'unread-idle']);
+  });
 });

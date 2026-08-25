@@ -83,6 +83,7 @@ import {
   isExternalMcpCapability,
   type ExternalMcpCapability,
 } from './external-mcp-capabilities.js';
+import { connectTrustySquireForPair } from './trusty-squire-onboarding.js';
 import { DurableBodyState } from './durable-state.js';
 import {
   activeReleaseId,
@@ -742,6 +743,16 @@ async function pairOneAgent(input: {
   });
   if (input.externalMcpCapabilities?.length && access !== 'creator') {
     throw new Error('external MCP capabilities require --access creator');
+  }
+  if (
+    input.externalMcpCapabilities?.includes('squire') &&
+    /^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/i.test(code.trim())
+  ) {
+    console.log("[beeline] checking this machine's Trusty Squire vault/link…");
+    const connected = await connectTrustySquireForPair({ agentKind: selectedAgent.kind });
+    console.log(
+      `[beeline] Trusty Squire connected locally; skill loaded at ${connected.skillPath}`,
+    );
   }
   // Every question is answered — only now is one spinner alone on the line.
   const spinner = input.interactiveUi ? clack.spinner() : undefined;

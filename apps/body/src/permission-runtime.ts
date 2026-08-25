@@ -20,6 +20,7 @@ import {
   type PermissionScope,
   type PermissionUsage,
   type PermissionGrantEnvelopeV1,
+  type ParsedPermissionRequest,
 } from '@beeline/buzz-client';
 
 export interface PermissionDirectiveRosterEntry {
@@ -130,6 +131,30 @@ export type PermissionExecutionOutcome =
     }
   | { status: 'duplicate' };
 
+/**
+ * Opaque continuation for an adapter whose actual side effect begins only
+ * after Body returns from an ACP permission callback. The started receipt and
+ * capacity reservation already exist when this handle is returned; callers
+ * must close it with `complete` from the tool's terminal ACP update.
+ */
+export interface PermissionExecutionHandle {
+  readonly request: ParsedPermissionRequest;
+  readonly action: PermissionConcreteAction;
+  readonly attempt: number;
+  readonly attemptKey: string;
+}
+
+export type PermissionBeginOutcome =
+  | { status: 'started'; receipt: NostrEvent; execution: PermissionExecutionHandle }
+  | { status: 'failed'; receipt: NostrEvent; result: string }
+  | {
+      status: 'refused';
+      terminal: boolean;
+      reason: string;
+      receipt?: NostrEvent;
+    }
+  | { status: 'duplicate' };
+
 function boundedResult(value: unknown): string {
   const text = String(value instanceof Error ? value.message : value)
     .replace(/[\r\n]+/g, ' ')
@@ -161,6 +186,40 @@ export class PermissionRuntime {
       attempt: number;
     }) => Promise<PermissionAdapterResult>;
   }): Promise<PermissionExecutionOutcome> {
+    const begun = await this.begin({
+      action: input.action,
+      attempt: input.attempt,
+      ...(input.preflight ? { preflight: input.preflight } : {}),
+    });
+    if (begun.status !== 'started') return begun;
+
+    try {
+      const adapter = await input.invoke({
+        idempotencyKey: input.action.idempotencyKey,
+        actionId: input.action.actionId,
+        attempt: input.attempt,
+      });
+      return this.complete({
+        execution: begun.execution,
+        status: 'succeeded',
+        ...(adapter.result ? { result: adapter.result } : {}),
+      });
+    } catch (error) {
+      const known = error instanceof PermissionKnownFailure;
+      return this.complete({
+        execution: begun.execution,
+        status: known ? 'failed' : 'unknown',
+        result: known ? error.code : boundedResult(error),
+      });
+    }
+  }
+
+  /** Reserve and publish `started` immediately before an externally-run action. */
+  async begin(input: {
+    action: PermissionConcreteAction;
+    attempt: number;
+    preflight?: () => Promise<void>;
+  }): Promise<PermissionBeginOutcome> {
     const { action, attempt } = input;
     if (
       action.executorPubkey !== this.dependencies.identity.publicKey ||
@@ -172,6 +231,7 @@ export class PermissionRuntime {
     const attemptKey = `${action.grantEventId}:${action.actionId}:${attempt}`;
     if (this.inFlight.has(attemptKey)) return { status: 'duplicate' };
     this.inFlight.add(attemptKey);
+    let keepInFlight = false;
     try {
       const now = this.dependencies.now?.() ?? Math.floor(Date.now() / 1000);
       const verification = await verifyPermissionAction({
@@ -230,41 +290,49 @@ export class PermissionRuntime {
           ...(receipt ? { receipt } : {}),
         };
       }
-      await this.publishReceipt(verification.request, action, attempt, 'started', undefined, true);
-
-      try {
-        const adapter = await input.invoke({
-          idempotencyKey: action.idempotencyKey,
-          actionId: action.actionId,
-          attempt,
-        });
-        const result = adapter.result ? boundedResult(adapter.result) : undefined;
-        const receipt = await this.publishReceipt(
-          verification.request,
-          action,
-          attempt,
-          'succeeded',
-          result,
-          false,
-        );
-        return { status: 'succeeded', receipt, ...(result ? { result } : {}) };
-      } catch (error) {
-        const known = error instanceof PermissionKnownFailure;
-        const result = known ? error.code.slice(0, 600) : boundedResult(error);
-        const status: PermissionExecutionStatus = known ? 'failed' : 'unknown';
-        const receipt = await this.publishReceipt(
-          verification.request,
-          action,
-          attempt,
-          status,
-          result,
-          false,
-        );
-        return { status, receipt, result };
-      }
+      const receipt = await this.publishReceipt(
+        verification.request,
+        action,
+        attempt,
+        'started',
+        undefined,
+        true,
+      );
+      keepInFlight = true;
+      return {
+        status: 'started',
+        receipt,
+        execution: { request: verification.request, action, attempt, attemptKey },
+      };
     } finally {
-      this.inFlight.delete(attemptKey);
+      if (!keepInFlight) this.inFlight.delete(attemptKey);
     }
+  }
+
+  /** Publish one terminal receipt for an action begun with `begin`. */
+  async complete(input: {
+    execution: PermissionExecutionHandle;
+    status: Exclude<PermissionExecutionStatus, 'started'>;
+    result?: string;
+  }): Promise<PermissionExecutionOutcome> {
+    const { execution, status } = input;
+    if (!this.inFlight.has(execution.attemptKey)) return { status: 'duplicate' };
+    const result = input.result ? boundedResult(input.result) : undefined;
+    const receipt = await this.publishReceipt(
+      execution.request,
+      execution.action,
+      execution.attempt,
+      status,
+      result,
+      false,
+    );
+    // A failed relay publish leaves the execution open so its owner can retry
+    // the terminal receipt instead of permanently losing the ledger outcome.
+    this.inFlight.delete(execution.attemptKey);
+    if (status === 'succeeded') {
+      return { status, receipt, ...(result ? { result } : {}) };
+    }
+    return { status, receipt, result: result ?? 'adapter-error' };
   }
 
   private async publishRefusalIfPossible(

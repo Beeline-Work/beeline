@@ -77,7 +77,16 @@ import {
   roomTurnPrompt,
   WRITE_PERMISSION_BACKSTOP_POLL_MS,
 } from './body.js';
-import { buildMergeApproval } from '@beeline/buzz-client';
+import {
+  buildMergeApproval,
+  buildPermissionDecision,
+  buildPermissionRequest,
+  defaultPermissionGrantEnvelope,
+  parsePermissionDecision,
+  parsePermissionRequest,
+  type PermissionFreshReader,
+  type PermissionRequestV1,
+} from '@beeline/buzz-client';
 import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
@@ -960,12 +969,12 @@ describe('agent identity boundary', () => {
       ).resolves.toBe('allow');
     });
 
-    it('allows safe Squire verbs only on a creator-scoped agent and owner-gates checkout', async () => {
+    it('allows Squire inventory only for creator scope and routes exact effects to P1', async () => {
       const safeRequest = {
         toolCall: {
           kind: 'other',
-          title: 'mcp__squire__operate_start',
-          rawInput: { server: 'squire', tool: 'operate_start', arguments: {} },
+          title: 'mcp__squire__list_credentials',
+          rawInput: { server: 'squire', tool: 'list_credentials', arguments: {} },
         },
       };
       const creatorBody = new Body(
@@ -993,24 +1002,31 @@ describe('agent identity boundary', () => {
         ),
       ).resolves.toBe('reject');
 
-      const confirm = vi
-        .spyOn(creatorBody as never, 'handleSquireOwnerConfirmation' as never)
+      const govern = vi
+        .spyOn(creatorBody as never, 'handleGovernedSquirePermission' as never)
         .mockResolvedValue('allow' as never);
-      const checkoutRequest = {
+      const credentialRequest = {
         toolCall: {
           kind: 'other',
-          title: 'mcp__squire__checkout',
-          rawInput: { server: 'squire', tool: 'checkout', arguments: {} },
+          title: 'mcp__squire__use_credential',
+          rawInput: {
+            server: 'squire',
+            tool: 'use_credential',
+            arguments: {
+              service: 'github',
+              http: { method: 'GET', url: 'https://api.github.com/user' },
+            },
+          },
         },
       };
       await expect(
         Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(
           creatorBody,
           'room-1',
-          checkoutRequest,
+          credentialRequest,
         ),
       ).resolves.toBe('allow');
-      expect(confirm).toHaveBeenCalledWith('room-1', checkoutRequest);
+      expect(govern).toHaveBeenCalledWith('room-1', credentialRequest);
       await expect(
         Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(creatorBody, 'room-1', {
           toolCall: {
@@ -1022,55 +1038,112 @@ describe('agent identity boundary', () => {
       ).resolves.toBe('reject');
     });
 
-    it('routes a spending-capable Squire verb through an owner-only permission card', async () => {
+    it('never lets a corner auto-approval bypass a governed Squire effect', async () => {
       const body = new Body(
         { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire'] },
         newIdentity('operator'),
         newIdentity('agent'),
       );
-      (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('room-1', {
-        request: {
-          eventId: 'squire-checkout-request',
-          authorPubkey: newIdentity('squire-requester').publicKey,
-          content: 'Complete checkout.',
-          createdAt: 1,
-        },
-      });
-      const wait = vi
-        .spyOn(body as never, 'waitForWritePermissionDecision' as never)
+      const govern = vi
+        .spyOn(body as never, 'handleGovernedSquirePermission' as never)
         .mockResolvedValue('allow' as never);
-      const published: NostrEvent[] = [];
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-          published.push(JSON.parse(String(init?.body)) as NostrEvent);
-          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-        }),
-      );
       const request = {
+        sessionId: 'corner-session',
         toolCall: {
+          toolCallId: 'tool-1',
           kind: 'other',
-          title: 'mcp__squire__checkout',
-          rawInput: { server: 'squire', tool: 'checkout', arguments: {} },
+          title: 'mcp__squire__grant_app_access',
+          rawInput: {
+            server: 'squire',
+            tool: 'grant_app_access',
+            arguments: { service: 'github', rate_limit_per_hour: 20 },
+          },
         },
       };
+      const handler = Reflect.get(body, 'cornerPermissionHandler').call(
+        body,
+        '/worktree',
+        ['/protected'],
+        ['/worktree'],
+        'corner-1',
+      );
+      await expect(handler(request)).resolves.toBe('allow');
+      expect(govern).toHaveBeenCalledWith('corner-1', request);
+    });
+
+    it('accepts only the first current human-owner P1 decision for Squire', async () => {
+      const agent = newIdentity('squire-agent');
+      const owner = newIdentity('squire-owner');
+      const rogueAgent = newIdentity('squire-rogue-agent');
+      const body = new Body(config, newIdentity('operator'), agent);
+      const now = Math.floor(Date.now() / 1_000) - 10;
+      const scope = {
+        type: 'operation.execute' as const,
+        connectorId: 'squire',
+        tool: 'use_credential',
+        argumentsDigest: 'a'.repeat(64),
+        target: 'GET https://api.github.com/user via service:github',
+        risk: 'out-of-scope' as const,
+      };
+      const value: PermissionRequestV1 = {
+        version: 1,
+        permissionId: '11111111-1111-4111-8111-111111111111',
+        roomId: 'room-1',
+        workspaceId: 'workspace-1',
+        requesterAgentPubkey: agent.publicKey,
+        audience: 'owner',
+        summary: 'Use the exact GitHub credential call',
+        scope,
+        provenance: {
+          immediateTurnEventId: '1'.repeat(64),
+          rootEventId: '2'.repeat(64),
+        },
+        requestedAt: now,
+        requestExpiresAt: now + 600,
+      };
+      const request = parsePermissionRequest(
+        buildPermissionRequest(agent, value, [owner.publicKey]),
+      )!;
+      const decision = (
+        signer: ReturnType<typeof newIdentity>,
+        verdict: 'grant' | 'deny',
+        decidedAt: number,
+      ) =>
+        parsePermissionDecision(
+          buildPermissionDecision(signer, request, {
+            version: 1,
+            permissionId: value.permissionId,
+            requestEventId: request.event.id,
+            decision: verdict,
+            decidedAt,
+            ...(verdict === 'grant'
+              ? { grant: defaultPermissionGrantEnvelope(scope, decidedAt) }
+              : {}),
+          }),
+          request,
+        )!;
+      const rogue = decision(rogueAgent, 'grant', now + 1);
+      const deny = decision(owner, 'deny', now + 2);
+      const laterGrant = decision(owner, 'grant', now + 3);
+      const reader: PermissionFreshReader = {
+        readEvent: async () => undefined,
+        isRegisteredAgent: async (pubkey) =>
+          pubkey === agent.publicKey || pubkey === rogueAgent.publicKey,
+        isRoomMember: async () => true,
+        isWorkspaceMember: async () => true,
+        roleForRoom: async (_roomId, pubkey) => (pubkey === owner.publicKey ? 'owner' : 'member'),
+        hasDeviceCustody: async (pubkey) => pubkey === owner.publicKey,
+        permissionHistory: async () => [],
+      };
+      Reflect.set(body, 'permissionReader', reader);
 
       await expect(
-        Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'room-1', request),
-      ).resolves.toBe('allow');
-      expect(wait).toHaveBeenCalledWith(
-        'room-1',
-        expect.any(String),
-        'squire-checkout-request',
-        'external:squire',
-        10 * 60_000,
-        { ownerOnly: true },
-      );
-      expect(published).toHaveLength(2);
-      expect(published[0]!.tags).toContainEqual(['t', 'buzz-write-permission-request']);
-      expect(published[0]!.tags).toContainEqual(['purpose', 'squire-spending']);
-      expect(published[0]!.tags).toContainEqual(['status', 'pending']);
-      expect(published[1]!.tags).toContainEqual(['status', 'allowed']);
+        Reflect.get(body, 'firstGovernedSquireDecision').call(body, request, [
+          laterGrant.event,
+          rogue.event,
+          deny.event,
+        ]),
+      ).resolves.toEqual(deny);
     });
   });
 
@@ -1244,7 +1317,7 @@ describe('agent identity boundary', () => {
       {
         name: 'squire',
         command: 'npx',
-        args: ['-y', '@trusty-squire/mcp'],
+        args: ['-y', '@trusty-squire/mcp', 'server'],
         env: [],
       },
     ]);

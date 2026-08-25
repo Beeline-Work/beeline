@@ -111,6 +111,7 @@ export interface RoomAgentHomeInput {
   root: string;
   /** Operator's real home directory; defaults to the daemon's. */
   operatorHome?: string;
+  failClosed?: boolean;
 }
 
 /**
@@ -130,6 +131,7 @@ export async function prepareRoomAgentHome(
       await mkdir(resolve(root, subdir), { recursive: true, mode: 0o700 });
     }
   } catch (error) {
+    if (input.failClosed) throw error;
     console.error(`[body] per-room agent home unavailable at ${root}; using daemon state:`, error);
     return {};
   }
@@ -143,9 +145,12 @@ export async function prepareRoomAgentHome(
     await symlink(source, target).catch(() => undefined);
   }
 
-  await provisionOperatorSkillsAndMcp(root, operatorHome).catch((error) => {
-    console.warn(`[body] operator skills/MCP passthrough incomplete for ${root}:`, error);
-  });
+  await provisionOperatorSkillsAndMcp(root, operatorHome, input.failClosed ?? false).catch(
+    (error) => {
+      if (input.failClosed) throw error;
+      console.warn(`[body] operator skills/MCP passthrough incomplete for ${root}:`, error);
+    },
+  );
 
   return roomAgentHomeEnv(root);
 }
@@ -162,6 +167,7 @@ export async function prepareRoomAgentHome(
 async function provisionOperatorSkillsAndMcp(
   root: string,
   operatorHome: string,
+  failClosed: boolean,
 ): Promise<void> {
   for (const skills of SHARED_SKILLS) {
     const source = resolve(operatorHome, skills.source);
@@ -186,6 +192,7 @@ async function provisionOperatorSkillsAndMcp(
       }
       await writeIsolatedHarnessFile(target, section);
     } catch (error) {
+      if (failClosed) throw error;
       console.warn(`[body] operator MCP passthrough failed for ${config.dir}:`, error);
     }
   }
@@ -205,7 +212,38 @@ async function provisionOperatorSkillsAndMcp(
       await unlink(claudeTarget).catch(() => undefined);
     }
   } catch (error) {
+    if (failClosed) throw error;
     console.warn('[body] operator MCP passthrough failed for claude:', error);
+  }
+}
+
+export function hasLocalTrustySquireState(operatorHome = homedir()): boolean {
+  return existsSync(resolve(operatorHome, '.config', 'trusty-squire'));
+}
+
+export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): boolean {
+  for (const relativePath of ['.codex/config.toml', '.grok/config.toml']) {
+    const path = resolve(operatorHome, relativePath);
+    if (
+      existsSync(path) &&
+      extractTomlSections(readFileSync(path, 'utf8'), ['mcp_servers', 'squire'])
+    ) {
+      return true;
+    }
+  }
+  const claudePath = resolve(operatorHome, '.claude.json');
+  if (!existsSync(claudePath)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(claudePath, 'utf8')) as Record<string, unknown>;
+    const servers = parsed.mcpServers;
+    return Boolean(
+      servers &&
+        typeof servers === 'object' &&
+        !Array.isArray(servers) &&
+        Object.prototype.hasOwnProperty.call(servers, 'squire'),
+    );
+  } catch {
+    return false;
   }
 }
 

@@ -11,7 +11,15 @@ import {
 } from './external-mcp-capabilities.js';
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
+export const SQUIRE_AUTHORIZATION_TTL_MS = 60_000;
 const GOVERNED = new Set<string>(SQUIRE_GOVERNED_TOOLS);
+
+interface BrokerChannel {
+  token: string;
+  endpoint?: McpServerWire;
+  authorizations: Map<string, Array<{ id: string; expiresAt: number }>>;
+  sockets: Set<Socket>;
+}
 
 type SpawnSquire = () => ChildProcessWithoutNullStreams;
 
@@ -37,10 +45,7 @@ export function squireHostEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 export class SquireHostBroker {
   private server?: Server;
-  private readonly channels = new Map<
-    string,
-    { token: string; endpoint?: McpServerWire; authorizedDigests: Map<string, number> }
-  >();
+  private readonly channels = new Map<string, BrokerChannel>();
   private readonly children = new Set<ChildProcessWithoutNullStreams>();
 
   constructor(
@@ -49,15 +54,47 @@ export class SquireHostBroker {
         env: squireHostEnv(process.env),
         stdio: ['pipe', 'pipe', 'pipe'],
       }),
+    private readonly now: () => number = Date.now,
   ) {}
 
-  authorize(channelId: string, argumentsDigest: string): void {
+  authorize(
+    channelId: string,
+    tool: string,
+    argumentsDigest: string,
+    expiresAt = this.now() + SQUIRE_AUTHORIZATION_TTL_MS,
+  ): string | undefined {
+    const channel = this.channels.get(channelId);
+    if (!channel || expiresAt <= this.now()) return undefined;
+    const key = this.authorizationKey(tool, argumentsDigest);
+    const live = (channel.authorizations.get(key) ?? []).filter(
+      (authorization) => authorization.expiresAt > this.now(),
+    );
+    const id = randomBytes(24).toString('hex');
+    live.push({ id, expiresAt });
+    channel.authorizations.set(key, live);
+    return id;
+  }
+
+  revoke(channelId: string, authorizationId: string): void {
+    const authorizations = this.channels.get(channelId)?.authorizations;
+    if (!authorizations) return;
+    for (const [key, entries] of authorizations) {
+      const remaining = entries.filter((entry) => entry.id !== authorizationId);
+      if (remaining.length) authorizations.set(key, remaining);
+      else authorizations.delete(key);
+    }
+  }
+
+  revokeAuthorizations(channelId: string): void {
+    this.channels.get(channelId)?.authorizations.clear();
+  }
+
+  revokeChannel(channelId: string): void {
     const channel = this.channels.get(channelId);
     if (!channel) return;
-    channel.authorizedDigests.set(
-      argumentsDigest,
-      (channel.authorizedDigests.get(argumentsDigest) ?? 0) + 1,
-    );
+    this.revokeAuthorizations(channelId);
+    this.channels.delete(channelId);
+    for (const socket of channel.sockets) socket.destroy();
   }
 
   async mcpServer(channelId: string): Promise<McpServerWire> {
@@ -80,7 +117,8 @@ export class SquireHostBroker {
       existing ??
       {
         token: randomBytes(32).toString('hex'),
-        authorizedDigests: new Map<string, number>(),
+        authorizations: new Map<string, Array<{ id: string; expiresAt: number }>>(),
+        sockets: new Set<Socket>(),
       };
     const endpoint = {
       name: 'squire',
@@ -100,7 +138,7 @@ export class SquireHostBroker {
 
   private accept(socket: Socket): void {
     socket.setEncoding('utf8');
-    let channel: { authorizedDigests: Map<string, number> } | undefined;
+    let channel: BrokerChannel | undefined;
     let buffer = '';
     let child: ChildProcessWithoutNullStreams | undefined;
     const close = () => {
@@ -126,6 +164,7 @@ export class SquireHostBroker {
             this.matchesToken(token as string, candidate.token),
           );
           if (!channel) return close();
+          channel.sockets.add(socket);
           child = this.spawnSquire();
           this.children.add(child);
           child.stdout.pipe(socket);
@@ -137,12 +176,13 @@ export class SquireHostBroker {
           child.once('error', close);
           continue;
         }
-        if (child && this.allowLine(line, socket, channel.authorizedDigests)) {
+        if (child && this.allowLine(line, socket, channel.authorizations)) {
           child.stdin.write(`${line}\n`);
         }
       }
     });
     socket.once('close', () => {
+      channel?.sockets.delete(socket);
       if (child) this.children.delete(child);
       child?.kill('SIGTERM');
     });
@@ -158,7 +198,7 @@ export class SquireHostBroker {
   private allowLine(
     line: string,
     socket: Socket,
-    authorizedDigests: Map<string, number>,
+    authorizations: Map<string, Array<{ id: string; expiresAt: number }>>,
   ): boolean {
     let parsed: unknown;
     try {
@@ -191,22 +231,33 @@ export class SquireHostBroker {
       this.reject(socket, message.id, 'invalid Trusty Squire arguments');
       return false;
     }
-    const remaining = authorizedDigests.get(digest) ?? 0;
-    if (remaining < 1) {
+    const key = this.authorizationKey(name, digest);
+    const live = (authorizations.get(key) ?? []).filter(
+      (authorization) => authorization.expiresAt > this.now(),
+    );
+    if (live.length < 1) {
+      authorizations.delete(key);
       this.reject(socket, message.id, 'exact P1 factory permission is required');
       return false;
     }
-    if (remaining === 1) authorizedDigests.delete(digest);
-    else authorizedDigests.set(digest, remaining - 1);
+    live.shift();
+    if (live.length) authorizations.set(key, live);
+    else authorizations.delete(key);
     return true;
   }
 
+  private authorizationKey(tool: string, argumentsDigest: string): string {
+    return `${tool}\0${argumentsDigest}`;
+  }
+
   private reject(socket: Socket, id: unknown, message: string): void {
-    socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: id ?? null, error: { code: -32001, message } })}\n`);
+    socket.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: id ?? null, error: { code: -32001, message } })}\n`,
+    );
   }
 
   async close(): Promise<void> {
-    this.channels.clear();
+    for (const channelId of [...this.channels.keys()]) this.revokeChannel(channelId);
     for (const child of this.children) child.kill('SIGTERM');
     this.children.clear();
     if (!this.server) return;

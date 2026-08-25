@@ -248,7 +248,12 @@ import {
   parseScheduledTurnReceipt,
   type ScheduledTurnRequest,
 } from './work-calendar.js';
-import { harnessStateDirsFromEnv, prepareRoomAgentHome } from './agent-home.js';
+import {
+  harnessStateDirsFromEnv,
+  hasAmbientTrustySquireConfiguration,
+  hasLocalTrustySquireState,
+  prepareRoomAgentHome,
+} from './agent-home.js';
 import { prepareGitReadTokenHelper, resolveBeelineCliEntrypoint } from './corner-read-token.js';
 import type { RelaySocketLease, SharedRelaySocket } from './relay-socket.js';
 import {
@@ -1240,6 +1245,7 @@ interface ActivePermissionTurn {
 
 interface PendingGovernedToolExecution {
   execution: PermissionExecutionHandle;
+  brokerAuthorizationId?: string;
   completion?: Promise<void>;
 }
 
@@ -2536,8 +2542,30 @@ export class Body {
    */
   private sessionAgentEnv(): Promise<Record<string, string>> {
     const root = this.config.agentHomeRoot;
+    const squireBoundaryRequired =
+      this.config.externalMcpCapabilities?.includes('squire') ||
+      hasLocalTrustySquireState(this.config.operatorHome) ||
+      hasAmbientTrustySquireConfiguration(this.config.operatorHome);
+    if (squireBoundaryRequired) {
+      if (this.config.agentKind !== 'codex' && this.config.agentKind !== 'claude') {
+        return Promise.reject(
+          new Error(
+            'Trusty Squire requires a Codex or Claude harness with an interceptable P1 boundary',
+          ),
+        );
+      }
+      if (!root) {
+        return Promise.reject(
+          new Error('Trusty Squire requires an isolated agent home; ambient harness state is refused'),
+        );
+      }
+    }
     if (!root) return Promise.resolve(this.config.agentEnv);
-    return prepareRoomAgentHome({ root }).then((overlay) => ({
+    return prepareRoomAgentHome({
+      root,
+      failClosed: Boolean(squireBoundaryRequired),
+      ...(this.config.operatorHome ? { operatorHome: this.config.operatorHome } : {}),
+    }).then((overlay) => ({
       ...this.config.agentEnv,
       ...overlay,
     }));
@@ -2923,6 +2951,7 @@ export class Body {
     await this.finalizeGovernedToolsForSession(session.sessionId).catch((error) =>
       failures.push(error),
     );
+    this.squireBroker?.revokeAuthorizations(session.channelId);
     const unsubscribeGovernedTools = session.unsubscribeGovernedTools;
     session.unsubscribeGovernedTools = undefined;
     try {
@@ -7305,8 +7334,20 @@ export class Body {
     };
     const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
     if (begun.status !== 'started') return 'reject';
-    this.governedToolExecutions.set(key, { execution: begun.execution });
-    this.squireBroker?.authorize(channelId, call.scope.argumentsDigest);
+    const brokerAuthorizationId = this.squireBroker?.authorize(
+      channelId,
+      call.tool,
+      call.scope.argumentsDigest,
+    );
+    if (!brokerAuthorizationId) {
+      await this.permissionRuntime.complete({
+        execution: begun.execution,
+        status: 'failed',
+        result: 'squire:broker-authorization-unavailable',
+      });
+      return 'reject';
+    }
+    this.governedToolExecutions.set(key, { execution: begun.execution, brokerAuthorizationId });
     return 'allow';
   }
 
@@ -7336,6 +7377,10 @@ export class Body {
     result: string,
   ): Promise<void> {
     if (pending.completion) return pending.completion;
+    const action = pending.execution.action;
+    if (pending.brokerAuthorizationId) {
+      this.squireBroker?.revoke(action.roomId, pending.brokerAuthorizationId);
+    }
     const completion = this.permissionRuntime
       .complete({ execution: pending.execution, status, result })
       .then(() => {
@@ -10058,6 +10103,7 @@ export class Body {
       // A dead session is the expected incident shape.
     }
     await this.stopManagedSession(info.session).catch(() => undefined);
+    this.squireBroker?.revokeChannel(info.subchannelId);
     await this.transitionCornerState(info, 'closed');
     await this.retractCornerActivityRecords(parentRoomId, info.subchannelId);
     await this.removeWorktree(
@@ -11778,6 +11824,7 @@ export class Body {
       } catch (error) {
         console.error(`[body] archive ${subchannelId}: session stop failed; continuing:`, error);
       }
+      this.squireBroker?.revokeChannel(subchannelId);
 
       // CLOSED is the durable lifecycle authority. Publish it, then overwrite
       // replaceable activity records before any channel write becomes illegal.

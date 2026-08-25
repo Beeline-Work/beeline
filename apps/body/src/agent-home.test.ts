@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 import {
+  hasAmbientTrustySquireConfiguration,
+  hasLocalTrustySquireState,
   harnessStateDirsFromEnv,
   prepareRoomAgentHome,
   roomAgentHomeEnv,
@@ -83,6 +85,24 @@ describe('per-room harness state isolation', () => {
     await writeFile(root, 'not a directory');
 
     await expect(prepareRoomAgentHome({ root })).resolves.toEqual({});
+    await expect(prepareRoomAgentHome({ root, failClosed: true })).rejects.toThrow();
+  });
+
+  it('detects the local Trusty Squire state boundary', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    expect(hasLocalTrustySquireState(operatorHome)).toBe(false);
+    await mkdir(resolve(operatorHome, '.config/trusty-squire'), { recursive: true });
+    expect(hasLocalTrustySquireState(operatorHome)).toBe(true);
+  });
+
+  it('detects ambient Trusty Squire MCP declarations without a local vault', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.codex/config.toml'),
+      '[mcp_servers.squire]\ncommand = "npx"\n',
+    );
+    expect(hasAmbientTrustySquireConfiguration(operatorHome)).toBe(true);
   });
 
   it('derives the env overlay without touching the filesystem', () => {

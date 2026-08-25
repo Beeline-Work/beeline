@@ -1148,12 +1148,25 @@ describe('agent identity boundary', () => {
 
     it('records an explicitly failed Squire tool result as failed', async () => {
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const revoke = vi.fn();
+      Reflect.set(body, 'squireBroker', { revoke });
       const runtime = Reflect.get(body, 'permissionRuntime');
       const complete = vi.spyOn(runtime, 'complete').mockResolvedValue({ status: 'succeeded' });
       const execution = {
-        action: { scope: { type: 'operation.execute', tool: 'use_credential' } },
+        action: {
+          roomId: 'room-1',
+          scope: {
+            type: 'operation.execute',
+            connectorId: 'squire',
+            tool: 'use_credential',
+            argumentsDigest: 'a'.repeat(64),
+          },
+        },
       };
-      Reflect.get(body, 'governedToolExecutions').set('session-1\0tool-1', { execution });
+      Reflect.get(body, 'governedToolExecutions').set('session-1\0tool-1', {
+        execution,
+        brokerAuthorizationId: 'broker-auth-1',
+      });
       const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
       const unsubscribe = Reflect.get(body, 'attachGovernedToolCompletion').call(body, client);
 
@@ -1167,19 +1180,31 @@ describe('agent identity boundary', () => {
           expect.objectContaining({ status: 'failed', result: 'squire:use_credential:failed' }),
         ),
       );
+      expect(revoke).toHaveBeenCalledWith('room-1', 'broker-auth-1');
       unsubscribe();
     });
 
     it('finalizes a pending Squire action before every managed-session stop', async () => {
       const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const revokeAuthorizations = vi.fn();
+      Reflect.set(body, 'squireBroker', { revokeAuthorizations });
       const runtime = Reflect.get(body, 'permissionRuntime');
       const complete = vi.spyOn(runtime, 'complete').mockResolvedValue({ status: 'succeeded' });
       const execution = {
-        action: { scope: { type: 'operation.execute', tool: 'grant_app_access' } },
+        action: {
+          roomId: 'room-2',
+          scope: {
+            type: 'operation.execute',
+            connectorId: 'squire',
+            tool: 'grant_app_access',
+            argumentsDigest: 'b'.repeat(64),
+          },
+        },
       };
       Reflect.get(body, 'governedToolExecutions').set('session-2\0tool-2', { execution });
       const stop = vi.fn(async () => undefined);
       const session = {
+        channelId: 'room-2',
         sessionId: 'session-2',
         client: { isAlive: true, stop },
       };
@@ -1193,6 +1218,58 @@ describe('agent identity boundary', () => {
         }),
       );
       expect(complete.mock.invocationCallOrder[0]).toBeLessThan(stop.mock.invocationCallOrder[0]);
+      expect(revokeAuthorizations).toHaveBeenCalledWith(session.channelId);
+    });
+
+    it('fails closed before launch when Squire cannot use an isolated governable harness', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'squire-launch-boundary-'));
+      try {
+        const operatorHome = join(root, 'operator');
+        mkdirSync(join(operatorHome, '.config/trusty-squire'), { recursive: true });
+        const unsupported = new Body({
+          ...config,
+          agentKind: 'pi',
+          agentHomeRoot: join(root, 'pi-home'),
+          operatorHome,
+        });
+        await expect(Reflect.get(unsupported, 'sessionAgentEnv').call(unsupported)).rejects.toThrow(
+          /Codex or Claude/,
+        );
+
+        const ambient = new Body({
+          ...config,
+          agentKind: 'codex',
+          operatorHome,
+        });
+        await expect(Reflect.get(ambient, 'sessionAgentEnv').call(ambient)).rejects.toThrow(
+          /isolated agent home/,
+        );
+
+        const blockedHome = join(root, 'blocked-home');
+        writeFileSync(blockedHome, 'not a directory');
+        const unprovisioned = new Body({
+          ...config,
+          agentKind: 'claude',
+          agentHomeRoot: blockedHome,
+          operatorHome,
+        });
+        await expect(
+          Reflect.get(unprovisioned, 'sessionAgentEnv').call(unprovisioned),
+        ).rejects.toThrow();
+
+        const isolatedRoot = join(root, 'codex-home');
+        const supported = new Body({
+          ...config,
+          agentKind: 'codex',
+          agentHomeRoot: isolatedRoot,
+          operatorHome,
+        });
+        await expect(
+          Reflect.get(supported, 'sessionAgentEnv').call(supported),
+        ).resolves.toMatchObject({ CODEX_HOME: join(isolatedRoot, 'codex') });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
   });
 
@@ -1336,6 +1413,7 @@ describe('agent identity boundary', () => {
   it('adds only the explicitly granted squire profile to a creator Room', async () => {
     const body = new Body({
       ...config,
+      agentKind: 'codex',
       accessPolicy: 'creator',
       externalMcpCapabilities: ['squire'],
       readonlyMcpCommand: '/buzz-readonly-mcp',

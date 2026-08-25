@@ -131,6 +131,18 @@ services:
   # alias the tunnel targets, so relay.buzzrouter.com now reaches this front.
   relay-front:
     image: nginx:1.27-alpine
+    # nginx must load its config from a DIRECTORY bind-mount, not from a
+    # single-file bind-mount of nginx.conf. A single-file bind pins the inode at
+    # container creation, and deploy-relay-host.sh places new config through
+    # `install`, which replaces the file's inode while the front runs - so the
+    # container kept reading an orphaned, pre-deploy inode and every HUP reload
+    # silently re-applied the OLD bytes. A directory bind tracks member files as
+    # they are created/replaced inside it (the exact property the web tree below
+    # already relies on), so placement + HUP reload delivers current bytes.
+    # The whole ./relay-front host directory (config + web tree + timestamped
+    # web-backups) is exposed read-only at /etc/beeline-front; nginx reads only
+    # the -c path below, nothing there is served, and it holds no secrets.
+    command: ["nginx", "-g", "daemon off;", "-c", "/etc/beeline-front/nginx.conf"]
     # nginx resolves proxy_pass upstreams at boot, so the front must not start
     # before the push-gateway container exists on the network (same gate as the
     # gate stack's relay-front; replaces the old static push-host:host-gateway
@@ -141,7 +153,7 @@ services:
       relay:
         condition: service_healthy
     volumes:
-      - ./relay-front/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./relay-front:/etc/beeline-front:ro
       - ./relay-front/web:/usr/share/nginx/html:ro
     restart: unless-stopped
     networks:

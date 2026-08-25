@@ -34,14 +34,31 @@ import { projectActivity } from './activity.js';
 import type { AcpClient } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
+import type { AgentHistoryEntry } from '@beeline/buzz-client';
 
 describe('a corner opened by a bare imperative still knows what it is for', () => {
+  const entry = (body: string, type: 'human-message' | 'agent-message' = 'human-message') =>
+    ({
+      eventId: `${type}-${body}`,
+      channelId: 'room',
+      type,
+      author: {
+        pubkey: 'a'.repeat(64),
+        kind: type === 'human-message' ? 'human' : 'agent',
+        label: type === 'human-message' ? 'Captain' : 'Buzzy',
+      },
+      body,
+      attachments: [],
+      createdAt: 1,
+      provenance: 'relay-verified',
+    }) as AgentHistoryEntry;
+
   // Verbatim from the captain's Room, in order.
   const conversation = [
-    { role: 'user', text: '@Beebee the offline banner fires when you are plainly not offline' },
-    { role: 'agent', text: 'You were right — the misdiagnosis was upstream, in the daemon.' },
-    { role: 'user', text: 'fix the presence model so a reconnect blip never asserts offline' },
-    { role: 'user', text: '@beebee open corner' },
+    entry('@Beebee the offline banner fires when you are plainly not offline'),
+    entry('You were right — the misdiagnosis was upstream, in the daemon.', 'agent-message'),
+    entry('fix the presence model so a reconnect blip never asserts offline'),
+    entry('@beebee open corner'),
   ];
 
   it('confirms the trigger message really does name nothing', () => {
@@ -66,29 +83,26 @@ describe('a corner opened by a bare imperative still knows what it is for', () =
   it('never borrows the agent’s words, only the person’s', () => {
     expect(
       cornerObjectiveFromConversation([
-        { role: 'agent', text: 'I have finished the presence work and pushed it for review.' },
-        { role: 'user', text: 'open a corner' },
+        entry('I have finished the presence work and pushed it for review.', 'agent-message'),
+        entry('open a corner'),
       ]),
     ).toBe('');
   });
 
   it('says nothing rather than something empty when the Room has no substance either', () => {
     expect(
-      cornerObjectiveFromConversation([
-        { role: 'user', text: '@beebee go' },
-        { role: 'user', text: '@beebee open a corner' },
-      ]),
+      cornerObjectiveFromConversation([entry('@beebee go'), entry('@beebee open a corner')]),
     ).toBe('');
     expect(cornerObjectiveFromConversation([])).toBe('');
   });
 
-  it('strips the stored attribution preamble before reading the objective', () => {
+  it('treats message bodies as prose because attribution is no longer stored in them', () => {
     expect(
       cornerObjectiveFromConversation([
-        { role: 'user', text: 'Member @captain says: add a retry to the presence heartbeat' },
-        { role: 'user', text: 'open corner' },
+        entry('Member @captain says: add a retry to the presence heartbeat'),
+        entry('open corner'),
       ]),
-    ).toBe('add a retry to the presence heartbeat');
+    ).toBe('Member @captain says: add a retry to the presence heartbeat');
   });
 
   it('is what `openSubchannel` actually falls back to, and it names the branch too', () => {
@@ -96,10 +110,7 @@ describe('a corner opened by a bare imperative still knows what it is for', () =
     // recovery is only worth anything if the ONE place that writes the `task`
     // tag, the corner name and the feature branch is the place that uses it.
     // Proving the helper in isolation is what let the original gap ship.
-    const source = readFileSync(
-      fileURLToPath(new URL('./body.ts', import.meta.url)),
-      'utf8',
-    );
+    const source = readFileSync(fileURLToPath(new URL('./body.ts', import.meta.url)), 'utf8');
     const open = source.slice(source.indexOf('async openSubchannel('));
     const body = open.slice(0, open.indexOf('\n  }\n'));
     expect(body).toContain('cornerObjectiveFromConversation');
@@ -115,9 +126,9 @@ describe('a corner opened by a bare imperative still knows what it is for', () =
   it('prefers the newest qualifying message, not the oldest', () => {
     expect(
       cornerObjectiveFromConversation([
-        { role: 'user', text: 'first, rename the room list' },
-        { role: 'user', text: 'actually, fix the merge approval path instead' },
-        { role: 'user', text: 'ok open a corner' },
+        entry('first, rename the room list'),
+        entry('actually, fix the merge approval path instead'),
+        entry('ok open a corner'),
       ]),
     ).toBe('actually, fix the merge approval path instead');
   });

@@ -14,6 +14,12 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createWorkspaceSnapshot,
+  reduceWorkspaceEvents,
+  type CornerMachineState,
+  type ReadEvent,
+} from '@beeline/buzz-client';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
@@ -67,14 +73,15 @@ vi.mock('@/buzz/person-name', () => ({
   ensurePersonNameForWorkspace: vi.fn(async () => undefined),
 }));
 vi.mock('@/buzz/community-invite', () => ({ createCommunityInviteUrl: vi.fn(async () => 'x') }));
-vi.mock('@/buzz/local-cache-sync', () => ({
-  cacheLiveSessionEvents: vi.fn(),
-  refreshRoomCornerCache: vi.fn(
-    async (transport: any, _viewerPubkey: string, roomIds: string[]) =>
-      transport.listSubchannelLifecycleForRooms(roomIds),
-  ),
-  revalidateCachedMessages: vi.fn(async () => undefined),
-}));
+vi.mock('@/buzz/local-cache-sync', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/buzz/local-cache-sync')>();
+  return {
+    ...actual,
+    cacheLiveSessionEvents: vi.fn(),
+    refreshRoomCornerCache: vi.fn(async () => new Map()),
+    revalidateCachedMessages: vi.fn(async () => undefined),
+  };
+});
 vi.mock('@/buzz/defer-interaction', () => ({ afterInteractions: () => () => undefined }));
 
 /** Corner summaries handed to the screen by the transport mock, keyed by
@@ -287,7 +294,6 @@ function seedWorkspace() {
         updatedAt: 2_000,
         latestMessage: 'beebee: pushed the branch',
         latestMessageAt: 2_000,
-        corners: cornerFixtures['room-1'] ?? [],
       },
     ],
     directMessages: [],
@@ -299,6 +305,61 @@ function seedWorkspace() {
     updatedAt: now,
     lastAccessedAt: now,
   });
+  const lifecycle = (cornerFixtures['room-1'] ?? []).flatMap((item, index) => {
+    const state: CornerMachineState =
+      item.status === 'live'
+        ? 'working'
+        : item.status === 'merged'
+          ? 'concluded'
+          : item.status === 'archived'
+            ? 'closed'
+            : 'waiting';
+    const open = {
+      type: 'lifecycle',
+      eventId: `corner-open-${index}`,
+      authorPubkey: 'agent',
+      createdAt: index * 2 + 1,
+      sourceKind: 30078,
+      signature: 'verified',
+      scope: 'channel',
+      channelId: 'room-1',
+      workspaceId: 'shared-1',
+      lifecycle: {
+        entity: 'corner',
+        cornerId: item.id,
+        parentRoomId: 'room-1',
+        state: 'open',
+        name: item.name,
+        exists: true,
+        stateAt: index * 2 + 1,
+        initialMembers: [{ pubkey: VIEWER, role: 'owner' }],
+      },
+    } as unknown as ReadEvent;
+    if (state === 'open') return [open];
+    return [
+      open,
+      {
+        ...open,
+        eventId: `corner-state-${index}`,
+        createdAt: index * 2 + 2,
+        lifecycle: {
+          ...open.lifecycle,
+          state,
+          stateAt: index * 2 + 2,
+        },
+      } as unknown as ReadEvent,
+    ];
+  });
+  const snapshot = reduceWorkspaceEvents(
+    createWorkspaceSnapshot({
+      workspaceId: 'shared-1',
+      identities: [
+        { kind: 'human', pubkey: VIEWER, displayName: 'Captain', revision: '1' } as never,
+      ],
+    }),
+    lifecycle,
+  );
+  useBuzzLocalCache.getState().replaceSnapshot(VIEWER, 'room-1', snapshot, undefined);
   routeParams.current = { communityId: 'shared-1' };
 }
 
@@ -401,5 +462,4 @@ describe('room-list corner dropdown', () => {
     expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(0);
     expect(findAllByTestId(tree, 'room-all-corners-room-1')).toHaveLength(0);
   });
-
 });

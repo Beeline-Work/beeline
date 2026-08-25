@@ -346,18 +346,8 @@ export interface RedeemInviteResult {
   alreadyMember: boolean;
 }
 
-/** Session-facing event delivered to RigTransport subscribers. */
-export type SessionEventKind = 'message' | 'agent-activity' | 'other';
-
-export interface SessionEvent {
-  kind: SessionEventKind;
-  event: NostrEvent;
-  channelId: string;
-  content: string;
-  pubkey: string;
-  createdAt: number;
-  id: string;
-}
+/** Raw relay delivery. Semantic interpretation belongs exclusively to read-model/parser.ts. */
+export type SessionEvent = NostrEvent;
 
 export type SessionEventHandler = (ev: SessionEvent) => void;
 export type Unsubscribe = () => void;

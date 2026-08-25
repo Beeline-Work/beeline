@@ -27,6 +27,8 @@ import {
   type Identity,
   type PersonProfile,
   type GitHubInstallationAccess,
+  selectTranscript,
+  selectMembers,
 } from '@beeline/buzz-client';
 import {
   DEFAULT_RELAY_URL,
@@ -46,7 +48,7 @@ import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { loadSuccessionPredecessors } from '@/buzz/succession-chain';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
-import { formatRoomParticipantTotal, roomParticipantPubkeys } from '@/buzz/room-participants';
+import { formatRoomParticipantTotal } from '@/buzz/room-participants';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
@@ -54,14 +56,8 @@ import { useAgentNameCache } from '@/buzz/agent-name-cache';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import { isRoomRemoved, useRemovedRooms } from '@/buzz/removed-rooms';
-import { isCornerClosed, useClosedCorners } from '@/buzz/closed-corners';
 import { NO_ACTIVITY_PREVIEW, roomListFeed, type RoomRowPresentation } from '@/buzz/room-list-row';
-import {
-  cornerVisualState,
-  currentCornerStatus,
-  sortCorners,
-  type CornerSummary,
-} from '@/buzz/corners';
+import { cornerVisualState, currentCornerStatus, type CornerSummary } from '@/buzz/corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
   CHANGES_LABEL,
@@ -79,6 +75,7 @@ import { Typography } from '@/constants/Typography';
 import {
   mergedRepoName,
   selectChannelList,
+  channelCacheKey,
   channelListCacheKey,
   getCachedChannel,
   mergeChannelBasicsWithCache,
@@ -88,12 +85,10 @@ import {
   type DirectMessageDisplayItem,
   type WorkspaceMemberDisplayItem,
 } from '@/buzz/local-cache';
-import { sessionEventHasTag, sessionEventTagValue } from '@/sync/transport/buzz-event-projection';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import {
   cacheLiveSessionEvents,
-  refreshRoomCornerCache,
-  refreshRoomListCornersForUnknownSignals,
+  cornerSummariesFromSnapshot,
   revalidateCachedMessages,
 } from '@/buzz/local-cache-sync';
 import { afterInteractions } from '@/buzz/defer-interaction';
@@ -135,11 +130,13 @@ function unreadCountFor(
   if (!viewerPubkey) return null;
   const mark = roomReadAt(readAt, viewerPubkey, room.id);
   if (mark === undefined || !room.latestMessageAt || room.latestMessageAt <= mark) return null;
-  const messages = getCachedChannel(viewerPubkey, room.id)?.messages;
-  if (!messages) return null;
-  const markMs = mark * 1000;
-  const count = messages.filter(
-    (message) => !message.isUser && !message.isSystemNotice && message.timestamp > markMs,
+  const snapshot = getCachedChannel(viewerPubkey, room.id)?.snapshot;
+  if (!snapshot) return null;
+  const count = selectTranscript(snapshot, room.id).filter(
+    (message) =>
+      (message.kind === 'human-message' || message.kind === 'agent-message') &&
+      message.authorPubkey !== viewerPubkey &&
+      message.timestamp > mark,
   ).length;
   return count > 0 ? count : null;
 }
@@ -312,22 +309,9 @@ async function enrichDisplayChannels(
   viewerPubkey: string,
 ): Promise<ChannelDisplayItem[]> {
   const client = await transport.ensureClient();
-  const cachedChannels =
-    useBuzzLocalCache.getState().channelLists[channelListCacheKey(viewerPubkey, activeCommunityId)]
-      ?.channels ?? [];
-  const cachedCornersByRoom = new Map(
-    cachedChannels.map((room) => [room.id, room.corners ?? []] as const),
-  );
-  const [workspacePeople, workspaceAgents, cornersByRoom] = await Promise.all([
+  const [workspacePeople, workspaceAgents] = await Promise.all([
     activeCommunityId ? client.communityMembers(activeCommunityId) : Promise.resolve(undefined),
     activeCommunityId ? client.listAgents(activeCommunityId) : Promise.resolve(undefined),
-    // One cross-Room batched fetch for every Room's corners instead of one
-    // call graph per Room.
-    refreshRoomCornerCache(
-      transport,
-      viewerPubkey,
-      rooms.map((room) => room.id),
-    ).catch(() => undefined),
   ]);
   // One model-catalog read per registered Workspace agent (not per Room): the
   // pill strip reports which model an agent in this Room runs, straight off
@@ -363,12 +347,15 @@ async function enrichDisplayChannels(
         members.status === 'fulfilled' ? members.value.map((member) => member.pubkey) : [];
       return {
         ...room,
-        // A successful relay derivation is authoritative even when empty: it
-        // evicts locally-persisted corners that disappeared out of band. A
-        // failed derivation is unknown and preserves the cache until retry.
-        corners: cornersByRoom
-          ? sortCorners(cornersByRoom.get(room.id) ?? [])
-          : cachedCornersByRoom.get(room.id),
+        corners:
+          synced.status === 'fulfilled' && synced.value.entry.snapshot
+            ? cornerSummariesFromSnapshot(room.id, synced.value.entry.snapshot)
+            : getCachedChannel(viewerPubkey, room.id)?.snapshot
+              ? cornerSummariesFromSnapshot(
+                  room.id,
+                  getCachedChannel(viewerPubkey, room.id)!.snapshot!,
+                )
+              : [],
         latestMessage: synced.status === 'fulfilled' ? synced.value.entry.latestMessage : undefined,
         latestMessageAt:
           synced.status === 'fulfilled' ? synced.value.entry.latestMessageAt : undefined,
@@ -379,10 +366,11 @@ async function enrichDisplayChannels(
             ? (synced.value.entry.latestEventAt ?? room.createdAt ?? room.updatedAt)
             : (room.createdAt ?? room.updatedAt),
         participantCount:
-          members.status === 'fulfilled'
-            ? roomParticipantPubkeys(new Set(roomMemberPubkeys), workspacePeople, workspaceAgents)
-                .size
-            : 0,
+          synced.status === 'fulfilled' && synced.value.entry.snapshot
+            ? selectMembers(synced.value.entry.snapshot, room.id).length
+            : members.status === 'fulfilled'
+              ? members.value.length
+              : 0,
         repoName: mergedRepoName(
           room.repoName,
           repo.status === 'fulfilled' ? repo.value : undefined,
@@ -481,10 +469,6 @@ export default function BuzzChannels() {
   // us after a refused leave), so the deck itself filters these out on every
   // build — cache seed, refresh, and restart alike.
   const removedAt = useRemovedRooms((state) => state.removedAt);
-  // Closed-corner tombstones (#corner-close): a corner this viewer dismissed
-  // leaves the deck's counts and dropdowns on the frame the close lands,
-  // not a daemon maintenance tick later.
-  const closedCornerAt = useClosedCorners((state) => state.closedAt);
   // The Room the reader just left. Marking read on the way *back* — not on the
   // way in — is what keeps a message you sent, or one that arrived while you
   // were looking at it, from lighting the row up as unread on return.
@@ -492,7 +476,20 @@ export default function BuzzChannels() {
   const cachedListEntry = useBuzzLocalCache((state) =>
     selectChannelList(state, identity?.publicKey ?? state.activeViewerPubkey, requestedCommunity),
   );
-  const displayChannels = cachedListEntry?.channels ?? [];
+  const normalizedChannelCaches = useBuzzLocalCache((state) => state.channels);
+  const displayChannels = useMemo(
+    () =>
+      (cachedListEntry?.channels ?? []).map((room) => {
+        const snapshot = identity?.publicKey
+          ? normalizedChannelCaches[channelCacheKey(identity.publicKey, room.id)]?.snapshot
+          : undefined;
+        return {
+          ...room,
+          corners: snapshot ? cornerSummariesFromSnapshot(room.id, snapshot) : [],
+        };
+      }),
+    [cachedListEntry?.channels, identity?.publicKey, normalizedChannelCaches],
+  );
   const directMessages = cachedListEntry?.directMessages ?? [];
   const roomIdsKey = useMemo(
     () =>
@@ -537,9 +534,7 @@ export default function BuzzChannels() {
         roomUnread: isRoomUnread(roomReadAt(readAt, viewerKey, room.id), room.latestMessageAt),
         agentTurnWorking: liveTurnRooms.has(room.id),
         agentTurnAt: liveTurnRooms.has(room.id) ? Math.floor(ageNow / 1000) : undefined,
-        corners: (room.corners ?? []).filter(
-          (corner) => !isCornerClosed(closedCornerAt, viewerKey, room.id, corner.id),
-        ),
+        corners: room.corners ?? [],
       }));
     // DMs share the same recency feed. Their own fields ride along so the row
     // renderer can draw its identity mark.
@@ -555,7 +550,6 @@ export default function BuzzChannels() {
     ageNow,
     authorNames,
     cachedListEntry?.viewerPubkey,
-    closedCornerAt,
     displayChannels,
     identity?.publicKey,
     liveTurnRooms,
@@ -895,11 +889,13 @@ export default function BuzzChannels() {
       let flushScheduled = false;
       let stopped = false;
       const noteTurnEvent = (channelId: string, event: SessionEvent) => {
-        const isTurn = sessionEventHasTag(event, 't', 'agent-turn');
-        const isDraft = sessionEventHasTag(event, 't', 'agent-draft');
-        if (!isTurn && !isDraft) return;
-        const status = sessionEventTagValue(event, 'status');
-        const finished = status === 'complete' || status === 'failed';
+        if (event.type !== 'read-model' || event.event.type !== 'session-update') return;
+        const update = event.event.update;
+        if (update.kind !== 'turn' && update.kind !== 'draft') return;
+        const finished =
+          update.kind === 'turn'
+            ? update.status === 'complete' || update.status === 'failed'
+            : update.closed;
         setLiveTurnRooms((current) => {
           const has = current.has(channelId);
           if (finished === !has) return current; // no change
@@ -915,13 +911,7 @@ export default function BuzzChannels() {
         const batches = [...pending.entries()];
         pending.clear();
         for (const [channelId, events] of batches) {
-          const projections = cacheLiveSessionEvents(identity.publicKey, channelId, events);
-          void refreshRoomListCornersForUnknownSignals(
-            transport,
-            identity.publicKey,
-            channelId,
-            projections,
-          );
+          cacheLiveSessionEvents(identity.publicKey, channelId, events);
         }
       };
       const unsubscribes = roomIdsKey.split(',').map((channelId) =>

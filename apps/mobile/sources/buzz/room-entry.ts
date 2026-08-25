@@ -32,7 +32,6 @@
  */
 import type {
   Agent,
-  ChannelMember,
   ChannelRole,
   Community,
   CommunityMember,
@@ -48,7 +47,6 @@ import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 /** Relay reads the chat screen needs, narrowed to exactly what it calls. */
 export type RoomEntryClient = {
   getChannelMetadata(channelId: string): Promise<{ name?: string } | null>;
-  listMembers(channelId: string): Promise<ChannelMember[]>;
   listCommunities(): Promise<Community[]>;
   getChannelCommunityId(channelId: string): Promise<string | null>;
   getDirectMessage(channelId: string): Promise<DirectMessage | null>;
@@ -74,7 +72,7 @@ export type RoomEntryTransport = {
 };
 
 export type RoomTranscriptSync = {
-  entry: { messages?: unknown[]; mergeTarget?: MergeTarget | null; archived?: boolean };
+  entry: { snapshot?: unknown; mergeTarget?: MergeTarget | null; archived?: boolean };
   mergeTarget?: MergeTarget | null;
   previewUrl?: string | null;
   archiveChannel: boolean;
@@ -100,8 +98,6 @@ export type RoomEntryDeps = {
    * caller (a refresh, a retry) wants.
    */
   afterInteractions?: (run: () => void) => void;
-  /** Retry delay for a Room whose very first history read comes back empty. */
-  emptyTranscriptRetryMs?: number;
   /**
    * The viewer's own selected Workspace, for the agent-roster union below.
    * Optional: absent simply narrows the union, it never blocks it.
@@ -118,7 +114,6 @@ export type RoomEntryHandlers = {
   onParentChannelId(parentChannelId: string | null): void;
   onDirectMessage(dm: DirectMessage | null): void;
   onWorkspaceId(communityId: string | null): void;
-  onMembers(members: ChannelMember[]): void;
   onRoster(roster: {
     agents: Agent[];
     people: CommunityMember[];
@@ -158,14 +153,9 @@ export type RoomEntryHandlers = {
 
 /** Room title fallback; the screen owns the human-facing label constant. */
 export const DEFAULT_ROOM_ENTRY_NAME = 'ROOM';
-const DEFAULT_EMPTY_TRANSCRIPT_RETRY_MS = 750;
 
 function runInline(run: () => void): void {
   run();
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -204,7 +194,6 @@ export function hydrateRoomEntry(
 
   const communitiesRead = client.listCommunities();
   const steps: Promise<void>[] = [
-    step('members', client.listMembers(channelId), handlers.onMembers),
     step('communities', communitiesRead, handlers.onCommunities),
     step('viewerIsAgent', client.isAgentIdentity(viewerPubkey), handlers.onViewerIsAgent),
     step('channelRole', client.getChannelRole(channelId), handlers.onChannelRole),
@@ -242,16 +231,6 @@ export function hydrateRoomEntry(
       const sync = await deps.revalidateTranscript();
       if (deps.isCancelled()) return;
       live(() => handlers.onTranscriptSynced(sync));
-      // A freshly invited member can get a successful but empty first snapshot
-      // while the direct-membership projection converges. Retry once, off the
-      // critical path — nothing else waits on this.
-      if ((sync.entry.messages?.length ?? 0) === 0) {
-        await delay(deps.emptyTranscriptRetryMs ?? DEFAULT_EMPTY_TRANSCRIPT_RETRY_MS);
-        if (deps.isCancelled()) return;
-        const retried = await deps.revalidateTranscript();
-        if (deps.isCancelled()) return;
-        live(() => handlers.onTranscriptSynced(retried));
-      }
     } catch (error) {
       if (!deps.isCancelled()) handlers.onStepFailed('transcript', error);
     }
@@ -284,10 +263,16 @@ export function hydrateRoomEntry(
           : Promise.resolve(),
         // A Corner reads its siblings, a Room its own corners — one shared
         // short-TTL read serving both the header badge and the corner names.
-        step('cornerStatus', transport.listSubchannelLifecycle(parentId ?? channelId), (corners) => {
-          handlers.onCornerLifecycle?.(corners);
-          handlers.onCornerStatus(corners.find((corner) => corner.id === channelId)?.status ?? null);
-        }),
+        step(
+          'cornerStatus',
+          transport.listSubchannelLifecycle(parentId ?? channelId),
+          (corners) => {
+            handlers.onCornerLifecycle?.(corners);
+            handlers.onCornerStatus(
+              corners.find((corner) => corner.id === channelId)?.status ?? null,
+            );
+          },
+        ),
         // A corner opened mid-discussion must not start blank. Its own read,
         // never a link in a chain: the objective line and the inherited Room
         // window paint the moment this lands and nothing else waits on it.
@@ -364,7 +349,10 @@ export function hydrateRoomEntry(
     let agents: Agent[] = [];
     let members: CommunityMember[] = [];
     try {
-      [agents, members] = await Promise.all([primaryAgentsRead, client.communityMembers(communityId)]);
+      [agents, members] = await Promise.all([
+        primaryAgentsRead,
+        client.communityMembers(communityId),
+      ]);
     } catch (error) {
       if (!deps.isCancelled()) handlers.onStepFailed('roster', error);
       return;

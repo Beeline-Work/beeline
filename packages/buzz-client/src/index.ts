@@ -40,7 +40,6 @@ export type {
   CreateInviteOptions,
   RedeemInviteResult,
   SessionEvent,
-  SessionEventKind,
   SessionEventHandler,
   Unsubscribe,
   ChannelFilterOpts,
@@ -48,6 +47,8 @@ export type {
   MergeTarget,
   BuzzClientConfig,
 } from './types.js';
+
+export * from './read-model/index.js';
 
 export {
   DEFAULT_RELAY_HOST,
@@ -159,9 +160,6 @@ export {
   tagValue,
   tagValues,
   channelIdOf,
-  isAgentActivity,
-  classifySessionEvent,
-  toSessionEvent,
   parseMembersEvent,
   parseMetadataEvent,
   sortEventsChronological,

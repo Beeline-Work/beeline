@@ -31,12 +31,13 @@ import { HullSurface, PixelLoader, CornerGlyph } from '@/components/buzz/MonoHul
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { afterInteractions } from '@/buzz/defer-interaction';
-import { isCornerClosed, useClosedCorners } from '@/buzz/closed-corners';
 import {
+  channelCacheKey,
   selectChannelList,
   useBuzzLocalCache,
   type ChannelListCacheEntry,
 } from '@/buzz/local-cache';
+import { cornerSummariesFromSnapshot } from '@/buzz/local-cache-sync';
 import {
   agentPresenceFromSessionEvent,
   mergeAgentPresence,
@@ -56,25 +57,20 @@ function seedFromRoomListCache(channelId: string): {
   hasCache: boolean;
 } {
   const state = useBuzzLocalCache.getState();
-  // Imperative read (this is a seed helper, not a component): the closure
-  // tombstone store only ever grows monotonically for a dismissed corner,
-  // so a stale read here cannot resurrect closed work.
-  const closedCornerAt = useClosedCorners.getState().closedAt;
   const entry: ChannelListCacheEntry | undefined = selectChannelList(
     state,
     state.activeViewerPubkey,
   );
   const room = entry?.channels.find((channel) => channel.id === channelId);
-  // A corner this viewer CLOSED never renders here: not from the cache seed,
-  // not from a fresh relay read (the tombstone outlives both).
   const viewerKey = state.activeViewerPubkey;
-  const corners =
-    room?.corners?.filter(
-      (corner) =>
-        Boolean(corner.machineState) &&
-        currentCornerStatus(corner) !== 'archived' &&
-        !isCornerClosed(closedCornerAt, viewerKey, channelId, corner.id),
-    ) ?? [];
+  const snapshot = viewerKey
+    ? state.channels[channelCacheKey(viewerKey, channelId)]?.snapshot
+    : undefined;
+  const corners = snapshot
+    ? cornerSummariesFromSnapshot(channelId, snapshot).filter(
+        (corner) => Boolean(corner.machineState) && currentCornerStatus(corner) !== 'archived',
+      )
+    : [];
   return {
     corners: sortCorners(corners),
     roomName: room?.title ?? ROOM_LABEL,
@@ -131,23 +127,11 @@ export default function BuzzCorners() {
         setViewerPubkey(client.identity.publicKey);
 
         const cornersApplied = cornersRead.then((nextCorners) => {
-          // NIP-29's `closed` metadata flag means invite-only, not archived.
-          // `listSubchannelLifecycle` only marks an explicit archive as archived,
-          // so keep every live/open corner visible here — except one this
-          // viewer CLOSED, whose tombstone hides it regardless of relay state.
-          const closedAt = useClosedCorners.getState().closedAt;
-          const viewerKey = client.identity.publicKey;
-          // A successful refresh is an authoritative replacement, including
-          // the empty set. Persist it before presentation filtering so a child
-          // absent from relay derivation cannot survive another app restart.
-          useBuzzLocalCache.getState().replaceRoomCorners(viewerKey, decodedId, nextCorners);
           setCorners(
             sortCorners(
               nextCorners.filter(
                 (corner) =>
-                  Boolean(corner.machineState) &&
-                  currentCornerStatus(corner) !== 'archived' &&
-                  !isCornerClosed(closedAt, viewerKey, decodedId, corner.id),
+                  Boolean(corner.machineState) && currentCornerStatus(corner) !== 'archived',
               ),
             ),
           );

@@ -1,4 +1,6 @@
-export type MessageReplyTarget = {
+import type { KnownMessageReference } from '@beeline/buzz-client';
+
+export type MessageReplyDisplayTarget = {
   messageId: string;
   authorName: string;
   authorPubkey?: string;
@@ -6,8 +8,13 @@ export type MessageReplyTarget = {
   preview: string;
 };
 
+/** A composer reply exists only after the snapshot proved its same-Room parent. */
+export type MessageReplyTarget = MessageReplyDisplayTarget & {
+  reference: KnownMessageReference;
+};
+
 /** Agent replies are ordinary messages with the original Agent explicitly addressed first. */
-export function replyMessageText(text: string, target: MessageReplyTarget): string {
+export function replyMessageText(text: string, target: MessageReplyDisplayTarget): string {
   const trimmed = text.trim();
   if (!target.isAgent) return trimmed;
 

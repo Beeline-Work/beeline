@@ -751,6 +751,31 @@ describe('read-model invariants (property based)', () => {
     );
   });
 
+  it('PROD-CONTROL-01b reproduces that UNMARKED retry narration rides the chat path (producer obligation)', () => {
+    // Verbatim capture: Room `charles`, 18:42. The read-model filter is a
+    // MARKER boundary (`t=agent-activity/narration` classifies as control;
+    // content wording is deliberately never inspected — that stance is what
+    // keeps the closed typed-event family honest). The daemon published this
+    // text as an ordinary `#t=agent-message`, so it sailed through into chat
+    // and the request was marked delivered behind a reply that never existed.
+    // This test pins the bypass as the producer obligation: Body must never
+    // select or publish narration as final output (see apps/body's
+    // `isPureRetryNarration` / `finalAgentMessageText`), because readers will
+    // correctly trust any unmarked agent-message they are handed.
+    const capturedNarration =
+      'Retrying (attempt 1/3, waiting 2s)...Retrying...Retry finished, resuming.';
+    const unmarked = message(agent, capturedNarration, 300, [['t', 'agent-message']]);
+    const parsed = parseRelayEvent(unmarked, authority());
+    expect(parsed.type).toBe('agent-message');
+    if (parsed.type !== 'agent-message') return;
+    expect(parsed.body).toBe(capturedNarration);
+    const snapshot = replay(delivery([parsed], 7));
+    const transcript = selectTranscript(snapshot, ROOM);
+    // Reproduced: without the wire marker the narration IS chat. The fix is
+    // at the publisher, not a content sniff here.
+    expect(transcript.some((item) => item.kind === 'agent-message')).toBe(true);
+  });
+
   it('PROD-CONTROL-01 keeps harness retry/backoff narration out of chat', () => {
     fc.assert(
       fc.property(

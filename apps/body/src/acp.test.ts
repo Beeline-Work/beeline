@@ -3,7 +3,12 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
-import { AcpClient, agentStreamSnapshot, type SessionUpdate } from './acp.js';
+import {
+  AcpClient,
+  agentStreamSnapshot,
+  isPureRetryNarration,
+  type SessionUpdate,
+} from './acp.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -41,6 +46,71 @@ describe('ACP streaming lane classifier', () => {
         update('progress_update', { content: { type: 'text', text: 'Reading the workspace' } }),
       ]),
     ).toEqual({ messageText: '', thoughtText: 'Reading the workspace' });
+  });
+});
+
+describe('harness retry narration is never the final answer', () => {
+  /** Verbatim capture: Room `charles`, 18:42 — a flaked pi/ox-alpha turn whose
+   *  ONLY output was this text, which used to be published as the durable
+   *  `#t=agent-message` reply and marked the request delivered. */
+  const CAPTURED = 'Retrying (attempt 1/3, waiting 2s)...Retrying...Retry finished, resuming.';
+
+  it('classifies the captured retry-narration family as pure narration', () => {
+    expect(isPureRetryNarration(CAPTURED)).toBe(true);
+    expect(isPureRetryNarration('Retrying (attempt 2/3, waiting 4s)...')).toBe(true);
+    expect(
+      isPureRetryNarration(
+        'Retrying...\nRetrying (attempt 3/3, waiting 8s)...\nRetry finished, resuming.',
+      ),
+    ).toBe(true);
+    expect(isPureRetryNarration('(attempt 1/5, backoff 1s)')).toBe(true);
+    // Emptiness is not narration — callers treat it separately.
+    expect(isPureRetryNarration('')).toBe(false);
+    expect(isPureRetryNarration('   ')).toBe(false);
+  });
+
+  it('never suppresses genuine prose that merely mentions retries', () => {
+    expect(isPureRetryNarration('I retried the deploy twice; the second run succeeded.')).toBe(
+      false,
+    );
+    expect(
+      isPureRetryNarration('Resuming work: the fix lands in src/auth.ts and every test passes.'),
+    ).toBe(false);
+    expect(isPureRetryNarration("The retry finished, but here's what you asked for: 42.")).toBe(
+      false,
+    );
+    expect(
+      isPureRetryNarration(
+        'Retrying (attempt 1/3, waiting 2s)... the model recovered and answered: yes.',
+      ),
+    ).toBe(false);
+  });
+
+  it('selects nothing for an all-narration turn and the genuine answer exactly once after narration', async () => {
+    const client = new AcpClient({ agentBinary: await fakePiRetryAgent(), agentEnv: {} });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+
+      // The live 18:42 shape: the provider flaked and streamed only retries.
+      const narrationOnly = await client.sessionPrompt(sessionId, 'ONLY-NARRATION', 5_000);
+      expect(narrationOnly.updates.length).toBeGreaterThan(0);
+      expect(narrationOnly.agentText).toBe('');
+
+      // A later genuine answer after retry narration stays publishable, once.
+      const withAnswer = await client.sessionPrompt(sessionId, 'NARRATION-THEN-ANSWER', 5_000);
+      expect(withAnswer.agentText).toBe('The deploy is fixed and every test passes.');
+      expect(withAnswer.agentText).not.toContain('Retrying');
+
+      // Last-run-only semantics: pre-tool progress + tool work + trailing
+      // narration selects NOTHING — the progress sentence is never promoted
+      // to the durable reply just because the run after it is narration.
+      const degraded = await client.sessionPrompt(sessionId, 'PROGRESS-TOOL-NARRATION', 5_000);
+      expect(degraded.agentText).toBe('');
+      expect(degraded.toolCalls.length).toBeGreaterThan(0);
+    } finally {
+      await client.stop();
+    }
   });
 });
 
@@ -426,6 +496,64 @@ lines.on('line', (line) => {
     chunk('...existing test and typecheck patterns');
     toolCall();
     chunk('Now I have the full picture.');
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
+/** Pi-shaped flaked provider: one turn streams ONLY retry/backoff narration
+ *  (the captured Room-`charles` shape); a later turn on the same session
+ *  narrates retries around tool work and then answers genuinely. */
+async function fakePiRetryAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-pi-retry-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'fake-pi-retry-agent.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { createInterface } from 'node:readline';
+
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const update = (update) =>
+  send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'pi-retry-session', update } });
+const chunk = (text) =>
+  update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+const tool = (id) =>
+  update({ sessionUpdate: 'tool_call', toolCallId: id, kind: 'read', status: 'completed' });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'pi-retry-session' } });
+  } else if (message.method === 'session/prompt') {
+    const prompt = message.params.prompt.map((part) => part.text).join('');
+    if (prompt.includes('ONLY-NARRATION')) {
+      chunk('Retrying (attempt 1/3, waiting 2s)');
+      chunk('...Retrying...');
+      chunk('Retry finished, resuming.');
+    } else if (prompt.includes('PROGRESS-TOOL-NARRATION')) {
+      // Genuine-looking pre-tool progress, real tool work, then the flaked
+      // provider degrades into pure retry narration. The progress sentence
+      // must stay draft-only: the durable answer is EMPTY.
+      chunk('Let me look at the deploy logs first.');
+      tool('read-deploy-log');
+      chunk('Retrying (attempt 1/3, waiting 2s)...Retrying...Retry finished, resuming.');
+    } else {
+      chunk('Retrying (attempt 1/3, waiting 2s)...');
+      tool('probe-1');
+      chunk('Retrying (attempt 2/3, waiting 4s)...Retry finished, resuming.');
+      tool('probe-2');
+      chunk('The deploy is fixed and every test passes.');
+    }
     send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
   } else if (message.method === 'shutdown') {
     process.exit(0);

@@ -194,6 +194,7 @@ export {
   lookupManagedIdentity,
   adoptGitHubHandle,
   fetchIdentityPredecessors,
+  resolveCurrentIdentityPubkey,
 } from './oidc-bind.js';
 export type {
   OidcBindChallenge,

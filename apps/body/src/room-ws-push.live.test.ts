@@ -79,7 +79,7 @@ describe.runIf(reachable)('Body Room WebSocket push', () => {
       'replyInRoom',
       async (_room: string, _repo: unknown, request: { content: string }) => {
         received.push(request.content);
-        return false;
+        return { openedCorner: false, producedReply: true };
       },
     );
     const backstop = vi.spyOn(body, 'pollChannelRequests');

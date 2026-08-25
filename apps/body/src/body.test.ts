@@ -71,6 +71,7 @@ import {
   ROOM_AGENT_STALL_NOTICE_MS,
   ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   RoomPollBackoff,
+  type RoomReplyOutcome,
   codegraphMcpServer,
   readOnlyMcpServer,
   roomEditPolicyInstructions,
@@ -1711,7 +1712,7 @@ describe('agent identity boundary', () => {
           createdAt: 1,
         },
       ),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(create).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
@@ -1759,7 +1760,7 @@ describe('agent identity boundary', () => {
           createdAt: 1,
         },
       ),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(prompt).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
@@ -3894,7 +3895,7 @@ describe('Room conversation and permission-gated work intent', () => {
           createdAt: event.created_at + 3,
         },
       ),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
     expect(
       published.slice(-3).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
     ).toEqual(['working', 'failed', undefined]);
@@ -4196,7 +4197,7 @@ describe('Room conversation and permission-gated work intent', () => {
           createdAt: 1,
         },
       ),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(suspend).toHaveBeenCalledOnce();
     expect(suspend).toHaveBeenCalledWith('parent-channel');
@@ -4258,7 +4259,7 @@ describe('Room conversation and permission-gated work intent', () => {
         request,
         true,
       ),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ openedCorner: true, producedReply: true });
 
     expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
     expect(start).toHaveBeenCalledWith(
@@ -4329,7 +4330,7 @@ describe('Room conversation and permission-gated work intent', () => {
         request,
         true,
       ),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ openedCorner: true, producedReply: true });
 
     expect(start).toHaveBeenCalledOnce();
     const taskInstructions = (start.mock.calls[0] as unknown[])[2] as string;
@@ -4669,7 +4670,7 @@ describe('Room conversation and permission-gated work intent', () => {
         false,
         'direct-message',
       ),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(isRepositoryMutationRequest('Append DM-EDIT-PROOF to README.md now.')).toBe(true);
     expect(provision).not.toHaveBeenCalled();
@@ -5046,7 +5047,7 @@ describe('Room conversation and permission-gated work intent', () => {
           createdAt: 1,
         },
       ),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ openedCorner: true, producedReply: true });
 
     expect(permission).toHaveBeenCalledWith(
       'parent-channel',
@@ -5193,7 +5194,7 @@ describe('Room conversation and permission-gated work intent', () => {
         false,
         'named-repository',
       ),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(permission).toHaveBeenCalledWith(
       'repo-less-room',
@@ -7867,7 +7868,7 @@ describe('per-agent access policy', () => {
       baseConfig({ accessPolicy: 'creator', accessOwnerPubkey: owner.publicKey }),
     );
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue(true as never);
+    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue({ openedCorner: true, producedReply: true } as never);
     const published = withCapturedPublishes();
     const process = drive(body);
     const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
@@ -7901,7 +7902,7 @@ describe('per-agent access policy', () => {
       baseConfig({ accessPolicy: 'everyone', accessOwnerPubkey: owner.publicKey }),
     );
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue(true as never);
+    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue({ openedCorner: true, producedReply: true } as never);
     const published = withCapturedPublishes();
     const process = drive(body);
     const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
@@ -7920,7 +7921,7 @@ describe('per-agent access policy', () => {
   it('defaults to everyone when no policy is configured (unchanged behaviour)', async () => {
     const body = new Body(baseConfig({}));
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue(true as never);
+    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue({ openedCorner: true, producedReply: true } as never);
     withCapturedPublishes();
     const process = drive(body);
     const participants = [stranger.publicKey, body.agent.publicKey];
@@ -7940,7 +7941,7 @@ describe('per-agent access policy', () => {
       baseConfig({ accessPolicy: 'creator', accessOwnerPubkey: owner.publicKey }),
     );
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue(true as never);
+    vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue({ openedCorner: true, producedReply: true } as never);
     const published = withCapturedPublishes();
     const process = drive(body);
     const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
@@ -8381,7 +8382,7 @@ describe('room owns the repo (Stage 1)', () => {
         undefined,
         true, // but the message IS an open-a-corner intent
       ),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(open).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
@@ -10645,13 +10646,13 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
     channelId: string,
     content: string,
     boundRepo: Record<string, unknown>,
-  ): Promise<boolean> {
+  ): Promise<RoomReplyOutcome> {
     return Reflect.get(body, 'replyInRoom').call(body, channelId, boundRepo, {
       eventId: 'target-branch-request',
       authorPubkey: admin.publicKey,
       content,
       createdAt: 1,
-    }) as Promise<boolean>;
+    }) as Promise<RoomReplyOutcome>;
   }
 
   afterEach(() => vi.unstubAllGlobals());
@@ -10668,7 +10669,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
         repositoryKey,
         targetBranch: 'refs/heads/main',
       }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     // A proposal, not work: no corner, no session, no permission escalation.
     expect(open).not.toHaveBeenCalled();
@@ -10705,7 +10706,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
         repositoryKey,
         targetBranch: 'refs/heads/master',
       }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(open).not.toHaveBeenCalled();
     const card = proposals(published);
@@ -10847,7 +10848,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
         repositoryKey,
         targetBranch: 'refs/heads/main',
       }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ openedCorner: false, producedReply: true });
 
     expect(proposals(published)).toHaveLength(0);
     // The published Room state wins over the daemon's start-time snapshot.
@@ -12257,5 +12258,290 @@ describe('never-idle conclude watch', () => {
     expect(concludeWatch).toBeGreaterThan(-1);
     expect(memberPoll).toBeGreaterThan(commitWatch);
     expect(concludeWatch).toBeGreaterThan(memberPoll);
+  });
+});
+
+describe('harness retry narration never becomes the durable Room reply', () => {
+  const human = newIdentity('narration-human');
+  /** Verbatim capture: Room `charles`, 18:42 — the flaked pi/ox-alpha turn. */
+  const NARRATION = 'Retrying (attempt 1/3, waiting 2s)...Retrying...Retry finished, resuming.';
+  const ANSWER = 'The flake cleared — here is the real answer to your question.';
+
+  function requestEvent(eventId: string, agentPubkey: string, content: string) {
+    return signEvent(
+      {
+        pubkey: human.publicKey,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 9,
+        tags: [['h', 'parent-channel'], ['p', agentPubkey]],
+        content,
+      },
+      human.secretKey,
+    );
+  }
+
+  function turnResult(agentText: string) {
+    return {
+      stopReason: 'end_turn',
+      updates: [
+        {
+          sessionId: 'readonly-session',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: agentText },
+          },
+        },
+      ],
+      agentText,
+      toolCalls: [],
+    };
+  }
+
+  async function makeBody(workspaceRoot: string, promptMock: ReturnType<typeof vi.fn>) {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot,
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    stubEmptyAgentHistory(body);
+    Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(client, 'sessionPrompt').mockImplementation(promptMock);
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const processChannelRequestEvents = (
+      Reflect.get(body, 'processChannelRequestEvents') as (...args: unknown[]) => Promise<number>
+    ).bind(body);
+    return { body, published, processChannelRequestEvents };
+  }
+
+  function agentMessages(published: NostrEvent[]): NostrEvent[] {
+    return published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    );
+  }
+
+  function statuses(published: NostrEvent[]): string[] {
+    return published
+      .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn'))
+      .map((event) => event.tags.find((tag) => tag[0] === 'status')?.[1] ?? '');
+  }
+
+  it('publishes only the honest fallback and leaves the request retryable', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-narration-reply-'));
+    try {
+      const promptMock = vi.fn().mockResolvedValue(turnResult(NARRATION));
+      const { body, published, processChannelRequestEvents } = await makeBody(
+        workspaceRoot,
+        promptMock,
+      );
+      const durableState = Reflect.get(body, 'durableState') as {
+        pending: (channelId: string) => Promise<NostrEvent[]>;
+      };
+      const event = requestEvent('narration-request', body.agent.publicKey, 'What changed?');
+      const participants = [human.publicKey, body.agent.publicKey];
+
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        participants,
+      );
+
+      // Exactly one durable message reached the Room: the honest fallback.
+      // The narration itself never became a reply.
+      const messages = agentMessages(published);
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.content).toBe(
+        "I couldn't produce a response to that message; please try again.",
+      );
+      expect(messages.map((event) => event.content).join('\n')).not.toContain('Retrying');
+
+      // The turn is reported FAILED, not complete...
+      expect(statuses(published)).toEqual(['working', 'failed']);
+
+      // ...and the triggering request was NOT consumed: it stays pending so
+      // the ordinary lifecycle re-drives it (the pre-fix behavior marked it
+      // delivered behind a "reply" that was pure retry narration).
+      await expect(durableState.pending('parent-channel')).resolves.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+
+      // A later attempt answers genuinely: exactly one real answer, consumed.
+      promptMock.mockResolvedValue(turnResult(ANSWER));
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        participants,
+      );
+
+      const afterRetry = agentMessages(published);
+      expect(afterRetry).toHaveLength(2);
+      expect(afterRetry.at(-1)!.content).toBe(ANSWER);
+      expect(statuses(published).at(-1)).toBe('complete');
+      await expect(durableState.pending('parent-channel')).resolves.not.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the request retryable when pre-tool progress and tool work end in narration', async () => {
+    // Last-run-only selection: the genuine-looking progress sentence before
+    // the tool call is draft-only by contract, so a turn that degrades into
+    // captured retry narration after real tool work has NO durable answer.
+    // Tool receipts never consume the human's request on their own.
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-narration-progress-'));
+    try {
+      const progressAndNarration = {
+        stopReason: 'end_turn',
+        updates: [
+          {
+            sessionId: 'readonly-session',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: 'Let me look at the deploy logs first.' },
+            },
+          },
+          {
+            sessionId: 'readonly-session',
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'read-deploy-log',
+              kind: 'read',
+              status: 'completed',
+            },
+          },
+          {
+            sessionId: 'readonly-session',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: NARRATION },
+            },
+          },
+        ],
+        agentText: '',
+        toolCalls: [{ id: 'read-deploy-log', kind: 'read', status: 'completed' }],
+      };
+      const promptMock = vi.fn().mockResolvedValue(progressAndNarration);
+      const { body, published, processChannelRequestEvents } = await makeBody(
+        workspaceRoot,
+        promptMock,
+      );
+      const durableState = Reflect.get(body, 'durableState') as {
+        pending: (channelId: string) => Promise<NostrEvent[]>;
+      };
+      const event = requestEvent(
+        'degraded-request',
+        body.agent.publicKey,
+        'Why did the deploy fail?',
+      );
+      const participants = [human.publicKey, body.agent.publicKey];
+
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        participants,
+      );
+
+      // Neither the progress sentence nor the narration reached the wire —
+      // only the honest fallback did — and the request stays retryable even
+      // though reads happened, because no answer was produced.
+      const messages = agentMessages(published);
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.content).toBe(
+        "I couldn't produce a response to that message; please try again.",
+      );
+      expect(messages.map((message) => message.content).join('\n')).not.toContain(
+        'deploy logs first.',
+      );
+      expect(statuses(published)).toEqual(['working', 'failed']);
+      await expect(durableState.pending('parent-channel')).resolves.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+
+      // The recovered attempt answers genuinely: exactly one real answer.
+      promptMock.mockResolvedValue(turnResult(ANSWER));
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        participants,
+      );
+
+      const afterRetry = agentMessages(published);
+      expect(afterRetry).toHaveLength(2);
+      expect(afterRetry.at(-1)!.content).toBe(ANSWER);
+      expect(statuses(published).at(-1)).toBe('complete');
+      await expect(durableState.pending('parent-channel')).resolves.not.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('delivers an ordinary prose answer through the normal path', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-narration-prose-'));
+    try {
+      const prose =
+        'I retried the deploy twice; the second run succeeded and every test passes now.';
+      const promptMock = vi.fn().mockResolvedValue(turnResult(prose));
+      const { body, published, processChannelRequestEvents } = await makeBody(
+        workspaceRoot,
+        promptMock,
+      );
+      const durableState = Reflect.get(body, 'durableState') as {
+        pending: (channelId: string) => Promise<NostrEvent[]>;
+      };
+      const event = requestEvent('prose-request', body.agent.publicKey, 'Did the deploy work?');
+      const participants = [human.publicKey, body.agent.publicKey];
+
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        participants,
+      );
+
+      // Genuine prose that merely mentions retries is a real answer: one
+      // durable message with the model's own words, complete status, and the
+      // request consumed on the first attempt.
+      const messages = agentMessages(published);
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.content).toContain('every test passes now');
+      expect(statuses(published)).toEqual(['working', 'complete']);
+      await expect(durableState.pending('parent-channel')).resolves.not.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });

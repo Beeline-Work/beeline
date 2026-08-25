@@ -64,7 +64,7 @@ describe.runIf(authEnforced && reachable)('daemon relay authentication', () => {
     const detected: Array<{ prompt: string; author: string }> = [];
     Reflect.set(body, 'replyInRoom', async (_room: string, _repo: unknown, request: { authorPubkey: string; content: string }) => {
       detected.push({ prompt: request.content, author: request.authorPubkey });
-      return false;
+      return { openedCorner: false, producedReply: true };
     });
 
     const message = `two-party request ${randomUUID()}`;

@@ -102,4 +102,39 @@ describe('typed mobile read-model projection', () => {
       isSystemNotice: true,
     });
   });
+
+  it('projects Squire spending confirmation through the typed permission family', () => {
+    const control = {
+      type: 'control',
+      eventId: 'squire-checkout-confirmation',
+      authorPubkey: AGENT,
+      createdAt: 5,
+      sourceKind: 9,
+      signature: 'verified',
+      scope: 'channel',
+      channelId: ROOM,
+      workspaceId: 'workspace',
+      visibility: 'card',
+      payload: {
+        kind: 'permission',
+        permissionId: 'squire-permission',
+        requestId: 'human-request',
+        agentPubkey: AGENT,
+        tool: 'Trusty Squire checkout',
+        repository: 'external:squire',
+        purpose: 'squire-spending',
+        status: 'pending',
+      },
+    } as Control;
+
+    expect(projectReadEvent(control, HUMAN).message).toMatchObject({
+      id: 'write-permission-squire-permission',
+      writePermission: {
+        permissionId: 'squire-permission',
+        repository: 'external:squire',
+        purpose: 'squire-spending',
+        status: 'pending',
+      },
+    });
+  });
 });

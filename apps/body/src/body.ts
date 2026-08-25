@@ -249,9 +249,14 @@ import {
 } from './attachments.js';
 import {
   WORKBENCH_ENV,
+  WORKBENCH_MAX_BYTES,
+  WORKBENCH_MAX_INODES,
   WORKBENCH_SWEEP_INTERVAL_MS,
+  bindSessionWorkbenchStorage,
+  detectWorkbenchScratchLeak,
   prepareSessionWorkbench,
   sweepSessionWorkbench,
+  workbenchStoragePath,
   workbenchInstructions,
   type SessionWorkbench,
 } from './workbench.js';
@@ -259,6 +264,8 @@ import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './rea
 import { cornerToolchainNotice, ensureCornerToolchainProvisioned } from './corner-toolchain.js';
 import {
   authorizedExternalMcpServers,
+  externalMcpPermissionPolicy,
+  externalMcpToolName,
   isExternalMcpPermissionRequest,
 } from './external-mcp-capabilities.js';
 import { operatorMcpServersForCorners } from './operator-mcp.js';
@@ -371,7 +378,7 @@ export interface AgentSession {
   agentPrivateState?: CornerAgentPrivateState;
   /** Durable, writable per-(agent, workspace) memory mount (`agent-memory.ts`). */
   agentMemory?: AgentMemory;
-  /** Ephemeral writable scratch shared by this Room instance and its corners. */
+  /** Ephemeral writable scratch mounted for this physical ACP process. */
   workbench?: SessionWorkbench;
   /** Parent TLC channel ID (subchannels only). */
   parentChannelId?: string;
@@ -408,6 +415,8 @@ export interface AgentSession {
    */
   personaTurnPrefix?: string;
   resumePlan?: CompactActivityPlan;
+  /** Mutable landing base used when this physical corner session resumes. */
+  resumeTargetRef?: string;
   activationCount?: number;
   processState?: 'live' | 'suspended' | 'waiting-for-slot';
   processStateSequence?: number;
@@ -1122,12 +1131,13 @@ export function roomEditPolicyInstructions(
     ...(textCornerFallback
       ? PI_CORNER_REQUEST_INSTRUCTIONS
       : [
-          'When the requested work requires repository changes, initiate the edit-corner request yourself: attempt the appropriate built-in write/edit tool once.',
-          'A permission-capable harness sends that attempt as session/request_permission before it runs. The host rejects the in-Room mutation and turns the request into a human allow/deny card.',
-          'Do not merely tell the human to ask for a corner separately. The native permission request is the action that asks for the corner.',
+          'When the requested work requires repository changes, open the edit corner yourself in one step: attempt the appropriate built-in write/edit tool once.',
+          'A permission-capable harness sends that attempt as session/request_permission before it runs. The host rejects the in-Room mutation and directly opens an isolated corner for the same request.',
+          'Opening a corner needs no human approval because it commits, pushes, reviews, and lands nothing. Signed human merge approval remains the only path that lands code.',
+          'Do not merely tell the human to ask for a corner separately. The native permission request is the one-step corner-open action.',
         ]),
     'Never claim that work started until the host transitions you into an edit session.',
-    // The branch a Room lands to is Room configuration signed by an admin, so
+    // The branch a Room lands to is Room configuration signed by its owner, so
     // the agent has no way to change it and no memory that could hold it. Left
     // undocumented, a model answers the ask conversationally and invents one —
     // the confirmed live failure was "it holds for this conversation; to make
@@ -1135,8 +1145,8 @@ export function roomEditPolicyInstructions(
     'The branch this Room lands changes to is Room configuration. You cannot change it, and nothing you remember or write down can change it.',
     `When someone asks for changes to land on a different branch from now on, attempt this exact native command: ${TARGET_BRANCH_PROPOSAL_COMMAND} --branch <branch>`,
     'Replace <branch> with the exact branch name they asked for, and attempt it once. The host never runs that command: it rejects the command itself and posts a proposal card in this Room.',
-    'After attempting it, tell the person a Room admin has to confirm that card, and that corners already open keep landing to the current branch.',
-    'Never say a landing-target change is in effect, saved, remembered, or held for this conversation. Only an admin confirming that card changes it.',
+    'After attempting it, tell the person the Room owner has to confirm that card. Open corners automatically follow the confirmed branch change; conflicts are surfaced in their activity ledger for resolution.',
+    'Never say a landing-target change is in effect, saved, remembered, or held for this conversation. Only the Room owner confirming that card changes it.',
   ];
 }
 
@@ -1163,6 +1173,8 @@ interface PendingRoomTurn {
   readOnlyDenialNoted?: boolean;
   /** One target-branch proposal card per turn, however often the agent asks. */
   targetBranchProposed?: boolean;
+  /** One owner confirmation ceremony for a spending-capable Squire call. */
+  squireSpendingHandled?: boolean;
   /** Exact target written in this turn; absent stays fail-closed. */
   namedRepositoryTarget?: NamedRepositoryTarget;
 }
@@ -2065,17 +2077,36 @@ export class Body {
   private steerQueuedChannels = new Set<string>();
   /** Integrity halts already surfaced to operators; the typed snapshot remains the authority. */
   private readModelHalts = new Set<string>();
-  /** pi-acp Rooms with a text-fallback corner request awaiting a human
-   *  decision. One pending request per channel at a time; a second marker in
-   *  a later turn is ignored until the first resolves. */
+  /** pi-acp Rooms with a text-fallback corner open in flight. One per channel. */
   private agentCornerRequestsInFlight = new Set<string>();
   private requestCursors = new Map<string, number>();
   /** Throttle for the periodic stray-corner-worktree prune (per Body). */
   private lastWorktreePruneAt = 0;
   /** Throttle/cache for the bounded TTL/size sweep of this Room's workbench. */
   private lastWorkbenchSweepAt = 0;
+  /** Last source-shaped scratch episode projected into each Room's activity ledger. */
+  private workbenchLeakSignatures = new Map<string, string>();
   private workbench?: SessionWorkbench;
   private workbenchPreparation?: Promise<SessionWorkbench | undefined>;
+  /** Branch-switch conflicts queued for one daemon-driven resolution turn. */
+  private branchSwitchResolutions = new Map<string, { branch: string; reason: string }>();
+  /** Typed branch-switch activity that the relay has not accepted yet. */
+  private branchSwitchActivityRetries = new Map<
+    string,
+    {
+      sessionId: string;
+      channelId: string;
+      previousBranch: string;
+      branch: string;
+      success: boolean;
+      reason: string;
+    }
+  >();
+  /** Corners whose old branch-scoped review must be republished on the new target. */
+  private branchSwitchReviewRepublishes = new Set<string>();
+  /** Last owner-authorized target observed per Room; read failures may never
+   *  roll an already-switched corner back to the daemon's startup snapshot. */
+  private confirmedRoomTargetBranches = new Map<string, string>();
   private runningAgentTasks = new Map<string, Promise<void>>();
   private scheduler: SessionScheduler;
   private ownsScheduler: boolean;
@@ -2412,12 +2443,15 @@ export class Body {
     }
   }
 
-  /** Prepare the ephemeral scratch capability shared by this Room and its corners. */
+  /** Prepare the stable mountpoint used by each physical ACP scratch filesystem. */
   private sessionWorkbench(): Promise<SessionWorkbench | undefined> {
     if (this.workbench) return Promise.resolve(this.workbench);
     if (this.workbenchPreparation) return this.workbenchPreparation;
     const root = this.config.agentPrivateRoot;
-    if (!root) return Promise.resolve(undefined);
+    // No bwrap means no filesystem that can impose the hard aggregate byte and
+    // inode quotas. Fail closed by omitting scratch entirely; an advisory
+    // directory with a sweeper is exactly the boundary this feature replaces.
+    if (!root || !this.config.bwrapPath) return Promise.resolve(undefined);
     this.workbenchPreparation = prepareSessionWorkbench(root)
       .then((workbench) => {
         this.workbench = workbench;
@@ -2433,13 +2467,56 @@ export class Body {
     return this.workbenchPreparation;
   }
 
-  /** Maintenance-owned, bounded TTL and approximate size-cap enforcement. */
-  private async sweepWorkbench(): Promise<void> {
+  /**
+   * Maintenance-owned leak visibility plus TTL cleanup. Capacity itself is
+   * enforced synchronously by the quota tmpfs; the sweep never participates in
+   * whether a write succeeds.
+   */
+  private async sweepWorkbench(channelId: string): Promise<void> {
     const now = Date.now();
+    const workbench = this.sessions.get(channelId)?.workbench;
+    if (!workbench || workbench.storageDir === workbench.dir) return;
+    const leak = await detectWorkbenchScratchLeak(workbench);
+    if (!leak) {
+      this.workbenchLeakSignatures.delete(channelId);
+    } else {
+      const signature = JSON.stringify(leak);
+      if (this.workbenchLeakSignatures.get(channelId) !== signature) {
+        this.workbenchLeakSignatures.set(channelId, signature);
+        const session = this.sessions.get(channelId);
+        const sessionId = session?.logicalSessionId ?? session?.sessionId ?? `room:${channelId}`;
+        const pathDetail = leak.paths.length
+          ? ` Source-shaped paths: ${leak.paths.join(', ')}.`
+          : '';
+        const warning =
+          'Working in scratch — this will not land. Open a corner for implementation work.' +
+          pathDetail;
+        await postAgentActivityBatch(
+          channelId,
+          this.agentIdentity,
+          {
+            sessionId,
+            channelId,
+            events: [
+              {
+                sessionUpdate: 'tool_activity',
+                kind: 'error',
+                title: 'Working in scratch — will not land — open a corner',
+                status: 'failed',
+                output: warning,
+                files: leak.paths.map((path) => ({ path, status: 'untracked' })),
+              },
+            ],
+          },
+          [
+            ['t', 'scratch-leak'],
+            ['status', 'failed'],
+          ],
+        );
+      }
+    }
     if (now - this.lastWorkbenchSweepAt < WORKBENCH_SWEEP_INTERVAL_MS) return;
     this.lastWorkbenchSweepAt = now;
-    const workbench = await this.sessionWorkbench();
-    if (!workbench) return;
     const result = await sweepSessionWorkbench(workbench, { now });
     if (result.deletedFiles > 0) {
       console.log(
@@ -2471,6 +2548,7 @@ export class Body {
       worktreePath?: string;
       protectedPaths?: string[];
       additionalWritablePaths?: string[];
+      workbench?: SessionWorkbench;
       channelIdForLog?: string;
     },
     env: Record<string, string>,
@@ -2503,6 +2581,15 @@ export class Body {
       ...(input.protectedPaths ? { protectedPaths: input.protectedPaths } : {}),
       ...(input.additionalWritablePaths
         ? { additionalWritablePaths: input.additionalWritablePaths }
+        : {}),
+      ...(input.workbench
+        ? {
+            workbench: {
+              dir: input.workbench.dir,
+              maxBytes: WORKBENCH_MAX_BYTES,
+              maxInodes: WORKBENCH_MAX_INODES,
+            },
+          }
         : {}),
     };
     if (input.mode === 'edit') {
@@ -2685,7 +2772,8 @@ export class Body {
      */
     gitReadCredential?: { roomId: string; stateDir: string };
   }): Promise<AgentSession> {
-    const workbench = await this.sessionWorkbench();
+    const workbenchTemplate = await this.sessionWorkbench();
+    const workbench = workbenchTemplate ? { ...workbenchTemplate } : undefined;
     let client = new AcpClient({
       agentCommand: this.config.agentCommand ?? this.config.agentBinary,
       agentArgs: this.config.agentArgs,
@@ -2707,6 +2795,7 @@ export class Body {
       ...(input.agentMemory ? { agentMemory: input.agentMemory } : {}),
       ...(workbench ? { workbench } : {}),
       ...(input.resumePlan ? { resumePlan: input.resumePlan } : {}),
+      ...(input.resumeTargetRef ? { resumeTargetRef: input.resumeTargetRef } : {}),
       activationCount: 0,
     };
     const sessionIdleMs = harnessSessionIdleMs(this.config.agentCommand ?? this.config.agentBinary);
@@ -2735,7 +2824,6 @@ export class Body {
         const grantedWritablePaths = [
           ...(input.additionalWritablePaths ?? []),
           ...(input.agentMemory ? [input.agentMemory.dir] : []),
-          ...(workbench ? [workbench.dir] : []),
         ];
         const spawnCommand = await this.sessionSpawnCommand(
           {
@@ -2746,6 +2834,7 @@ export class Body {
             ...(grantedWritablePaths.length > 0
               ? { additionalWritablePaths: grantedWritablePaths }
               : {}),
+            ...(workbench ? { workbench } : {}),
             channelIdForLog: input.channelId,
           },
           sessionEnv,
@@ -2820,6 +2909,11 @@ export class Body {
           .filter(Boolean)
           .join('\n\n');
         await client.start();
+        if (workbench && !(await bindSessionWorkbenchStorage(workbench, client.processPid()))) {
+          console.warn(
+            `[body] could not resolve live quota workbench for session ${input.channelId}; uploads and leak inspection are unavailable for this process`,
+          );
+        }
         const transcript = (await this.agentHistory(input.channelId)).map((entry) => ({
           role: entry.type === 'agent-message' ? ('agent' as const) : ('user' as const),
           text: agentHistoryPrompt(entry),
@@ -2836,8 +2930,8 @@ export class Body {
           Boolean(input.parentChannelId) &&
           (Boolean(input.resumeOnFirstActivation) || (session.activationCount ?? 0) > 0);
         const gitState =
-          resumingCorner && input.resumeTargetRef
-            ? await readCornerGitResumeState(input.cwd, input.resumeTargetRef)
+          resumingCorner && session.resumeTargetRef
+            ? await readCornerGitResumeState(input.cwd, session.resumeTargetRef)
             : undefined;
         const reprime = measureSessionReprime(
           transcript,
@@ -3429,15 +3523,17 @@ export class Body {
         const sessionCwd = await realpath(
           session.cwd ?? session.worktreePath ?? this.config.workspaceRoot,
         );
+        const logicalCandidate = isAbsolute(candidate.path)
+          ? resolve(candidate.path)
+          : resolve(sessionCwd, candidate.path);
+        const workbenchCandidate = session.workbench
+          ? workbenchStoragePath(session.workbench, logicalCandidate)
+          : undefined;
         const allowedRoots = [
           sessionCwd,
-          ...(session.workbench ? [await realpath(session.workbench.dir)] : []),
+          ...(session.workbench ? [await realpath(session.workbench.storageDir)] : []),
         ];
-        const resolvedPath = await realpath(
-          isAbsolute(candidate.path)
-            ? resolve(candidate.path)
-            : resolve(sessionCwd, candidate.path),
-        );
+        const resolvedPath = await realpath(workbenchCandidate ?? logicalCandidate);
         const withinAllowedRoot = allowedRoots.some((root) => {
           const pathWithinRoot = relative(root, resolvedPath);
           return !pathWithinRoot.startsWith('..') && !isAbsolute(pathWithinRoot);
@@ -4049,7 +4145,7 @@ export class Body {
           'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
           'Those inspection tools are non-mutating and do not require human approval.',
           'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
-          'You CANNOT create, edit, or delete repository files until the host grants a human-approved edit session. The separately named workbench and memory directories are the only writable exceptions.',
+          'You CANNOT create, edit, or delete repository files in this Room. The separately named workbench and memory directories are the only writable exceptions; open an isolated corner yourself for any landable change.',
           `The host DENIES repository writes and every shell/execute request in this Room: ${ROOM_READ_ONLY_STEER}`,
           'Never reach outside the repository by absolute path except for the exact workbench and memory paths announced by the host, and never run builds, tests, formatters, or git commands here.',
           'An information-only request (analysis, explanation, summary, research, or a question) must be answered here and must never attempt editing unless the host prompt explicitly allows an edit-corner request.',
@@ -4144,8 +4240,7 @@ export class Body {
     request?: ChannelTaskRequest,
     options?: { objective?: string },
   ): Promise<SubchannelInfo> {
-    // Pick up an admin-confirmed target-branch change here and nowhere else:
-    // this corner snapshots the target it opened with and keeps it for life.
+    // Pick up an owner-confirmed target-branch change for a newly opened corner.
     const freshRoomRepo = this.refreshRepositoryTruth
       ? await this.refreshRepositoryTruth(roomRepo, 'corner-open')
       : roomRepo;
@@ -4302,11 +4397,9 @@ export class Body {
         'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
         'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
         `Repo: ${this.repoId(boundRepo)}`,
-        // Fixed for this corner's whole life: a later admin-confirmed change
-        // applies to the NEXT corner, never to an in-flight review.
-        `This corner will land to the target branch ${shortBranchName(boundRepo.targetBranch)}, ` +
-          'fixed when it opened. If someone asks, say so — if the Room target branch has since ' +
-          'changed, this corner still lands to the branch it opened against.',
+        `This corner currently targets ${shortBranchName(boundRepo.targetBranch)}. The Room owner ` +
+          'may rebind the Room target while this corner is open; the host will automatically rebase ' +
+          'this worktree and surface any conflict through activity plus a resolution turn.',
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
       // A corner is the agent's isolated worktree. Target landing and archive
@@ -5320,7 +5413,7 @@ export class Body {
 
     // "land to staging from now on" is a Room CONFIG change, not work and not
     // a repository mutation this agent may perform. It is answered with a
-    // typed proposal card a Room admin confirms in the app; the agent never
+    // typed proposal card the Room owner confirms in the app; the agent never
     // authors the Room→repository binding. Checked ahead of the mutation
     // escalation below because its verbs ("land", "make") are mutation verbs.
     if (boundRepo && editPolicy === 'repository' && !informationOnly) {
@@ -5484,7 +5577,7 @@ export class Body {
               'Do not attempt editing, execute a native shell, open a corner yourself, or change repository state.',
               ...(usesTextCornerRequestFallback(this.config.agentCommand ?? this.config.agentBinary)
                 ? [
-                    'If inspection reveals a concrete follow-up edit, you may request human approval using the documented pi-acp CORNER_REQUEST fallback.',
+                    'If inspection reveals a concrete follow-up edit, you may open its corner using the documented pi-acp CORNER_REQUEST one-step fallback.',
                   ]
                 : []),
               '',
@@ -5553,9 +5646,11 @@ export class Body {
         return true;
       }
       const fallback = turn.permissionHandled
-        ? 'Editing was not allowed. I’ll stay in the read-only Room conversation.'
+        ? turn.transitionedToCorner
+          ? 'The in-Room mutation was refused; implementation continues only in the isolated corner.'
+          : 'The in-Room mutation was refused, and the host could not open its edit corner. No implementation work started.'
         : result.cornerRequest
-          ? 'I found a concrete change worth making and requested human approval for an edit corner.'
+          ? 'I found a concrete change worth making and initiated its isolated edit corner.'
           : agentExchange
             ? "I don't have a grounded opening message, so I can't start the live exchange."
             : "I couldn't produce a response to that message; please try again.";
@@ -5567,12 +5662,10 @@ export class Body {
           : undefined,
       });
       if (!reply) throw new Error('agent returned an empty Room reply');
-      // A pi-acp agent asked for an edit corner through its text-only fallback.
+      // A pi-acp agent opened an edit corner through its text-only fallback.
       // Permission-capable harnesses reach the native handler above and are
-      // never parsed for this marker. The humans decide; the corner
-      // opens only on a human ALLOW, and nothing the agent authored has
-      // claimed the corner exists before that. Fire-and-forget: the reply
-      // above must not block on a decision that can take minutes.
+      // never parsed for this marker. Fire-and-forget so the Room reply does
+      // not wait for worktree/session provisioning.
       if (result.cornerRequest && boundRepo && editPolicy === 'repository') {
         void this.handleAgentCornerRequest(
           tlcChannelId,
@@ -5719,7 +5812,7 @@ export class Body {
    * system prompt tells the agent to do about a landing-target change.
    *
    * It grants the agent no authority it did not already lack: the card is a
-   * proposal, a Room ADMIN's own key signs the binding, and one card per turn
+   * proposal, the Room owner's own key signs the binding, and one card per turn
    * is the cap. A Room with no repository has nothing to repoint, so it is a
    * plain read-only denial there.
    */
@@ -5749,8 +5842,9 @@ export class Body {
    * session's cwd isolation constrains its default directory, not its absolute
    * path reach, so path-scoping a Room denial would be no boundary at all.
    *
-   * Human ALLOW never un-denies the in-place invocation; it creates the
-   * isolated edit corner and replays the same request there.
+   * For a Room that is already bound to a repository, the first repository
+   * mutation opens an isolated edit corner directly. Named-repository Rooms
+   * still require a human to confirm which external repository is in scope.
    *
    * ACP's permission response carries only an option id — there is no reason
    * field, and every adapter hard-codes its own denial text — so the corner
@@ -5767,7 +5861,12 @@ export class Body {
       this.config.accessPolicy === 'creator' &&
       isExternalMcpPermissionRequest(permission, this.config.externalMcpCapabilities)
     ) {
-      return 'allow';
+      const policy = externalMcpPermissionPolicy(permission, this.config.externalMcpCapabilities);
+      if (policy === 'allow') return 'allow';
+      if (policy === 'owner-confirm') {
+        return this.handleSquireOwnerConfirmation(tlcChannelId, permission);
+      }
+      return 'reject';
     }
     // Agent-authored memory is writable inside a read-only Room by design
     // (`agent-memory.ts`): it is agent-private state, not the repository. A
@@ -5821,6 +5920,55 @@ export class Body {
       namedTarget?.id ?? (turn.boundRepo ? this.repoId(turn.boundRepo) : undefined);
     if (!repository) return 'reject';
     turn.permissionHandled = true;
+    if (policy === 'repository' && turn.boundRepo) {
+      try {
+        const info = await this.openSubchannel(
+          tlcChannelId,
+          turn.boundRepo,
+          turn.request.content,
+          turn.request,
+        );
+        turn.transitionedToCorner = true;
+        this.startAgentTask(
+          info,
+          turn.request.content,
+          cornerOpenTaskPrompt(info.taskDescription, turn.request.content),
+          {
+            requestId: turn.request.eventId,
+            originalRequestId: turn.request.eventId,
+            cause: 'corner-opening',
+          },
+        );
+      } catch (error) {
+        const detail = this.safePermissionFailure(error);
+        const session = this.sessions.get(tlcChannelId);
+        const sessionId = session?.logicalSessionId ?? session?.sessionId ?? `room:${tlcChannelId}`;
+        await postAgentActivityBatch(
+          tlcChannelId,
+          this.agentIdentity,
+          {
+            sessionId,
+            channelId: tlcChannelId,
+            events: [
+              {
+                sessionUpdate: 'tool_activity',
+                kind: 'error',
+                title: 'Could not open edit corner',
+                status: 'failed',
+                output: detail,
+              },
+            ],
+          },
+          [
+            ['t', 'corner-open'],
+            ['status', 'failed'],
+          ],
+        ).catch(() => undefined);
+      }
+      // The attempted in-Room mutation never runs. The isolated corner is the
+      // whole effect of this one-step action.
+      return 'reject';
+    }
     const tool = this.permissionToolLabel(permission);
     const isExecute = tool !== 'edit files' && isMutatingPermissionRequest(permission);
     const description = isExecute ? `the operation '${tool}'` : `an edit corner`;
@@ -5836,7 +5984,7 @@ export class Body {
     return 'reject';
   }
 
-  /** Shared human decision and post-approval creation path for every corner request. */
+  /** Human decision path retained for a named repository outside the Room binding. */
   private async requestEditCornerApproval(input: {
     tlcChannelId: string;
     turn: PendingRoomTurn;
@@ -5949,6 +6097,61 @@ export class Body {
     return (title || kind || 'edit files').replace(/\s+/g, ' ').slice(0, 120);
   }
 
+  /**
+   * Spending-capable Trusty Squire calls pause on the existing human decision
+   * channel, but only the Room owner may satisfy them. Credentials and browser
+   * state remain in Squire's own process/vault; the Room sees only the verb.
+   */
+  private async handleSquireOwnerConfirmation(
+    tlcChannelId: string,
+    permission: AcpPermissionRequest,
+  ): Promise<AcpPermissionDecision> {
+    const turn = this.pendingRoomTurns.get(tlcChannelId);
+    if (!turn || turn.squireSpendingHandled) return 'reject';
+    turn.squireSpendingHandled = true;
+    const permissionId = randomUUID();
+    const repository = 'external:squire';
+    const toolName = externalMcpToolName(permission) ?? this.permissionToolLabel(permission);
+    const tool = `Trusty Squire ${toolName}`.slice(0, 120);
+    const tags = [
+      ['t', WRITE_PERMISSION_REQUEST_TAG],
+      ['permission', permissionId],
+      ['request', turn.request.eventId],
+      ['requester', turn.request.authorPubkey],
+      ['agent', this.agentIdentity.publicKey],
+      ['p', this.agentIdentity.publicKey],
+      ['tool', tool],
+      ['repo', repository],
+      ['purpose', 'squire-spending'],
+    ];
+    await postControlMessage(
+      tlcChannelId,
+      this.agentIdentity,
+      `${this.agentIdentity.name || 'Agent'} requests owner confirmation for the spending-capable Squire action “${toolName}”.`,
+      [...tags, ['status', 'pending']],
+    );
+    const decision = await this.waitForWritePermissionDecision(
+      tlcChannelId,
+      permissionId,
+      turn.request.eventId,
+      repository,
+      10 * 60_000,
+      { ownerOnly: true },
+    );
+    const status = decision === 'allow' ? 'allowed' : decision === 'deny' ? 'denied' : 'expired';
+    await postControlMessage(
+      tlcChannelId,
+      this.agentIdentity,
+      decision === 'allow'
+        ? `The Room owner confirmed ${toolName}; Squire may continue inside its vault-backed process.`
+        : decision === 'deny'
+          ? `The Room owner denied ${toolName}; Squire did not perform it.`
+          : `Owner confirmation for ${toolName} expired; Squire did not perform it.`,
+      [...tags, ['status', status]],
+    );
+    return decision === 'allow' ? 'allow' : 'reject';
+  }
+
   private async resolveApprovedNamedRepository(
     target: NamedRepositoryTarget | undefined,
   ): Promise<BoundRepo> {
@@ -5997,20 +6200,7 @@ export class Body {
     ]);
   }
 
-  /**
-   * The human-approved half of an agent-initiated corner request
-   * (`corner-request.ts` for the marker half). Posts the SAME approve/deny
-   * card the write-permission ceremony uses — so mobile renders it with zero
-   * new UI — and reuses `waitForWritePermissionDecision`, whose authority is
-   * already fail-closed: a decision signed by this agent, by ANY registered
-   * agent identity, or by a non-member is ignored, exactly as for merges.
-   * Only a device-held human Room member's ALLOW opens the corner.
-   *
-   * Deliberately not awaited by the reply path: a decision can take minutes,
-   * and nothing the agent authored may claim the corner exists before the
-   * host's own post-creation status does. One pending request per channel;
-   * while one waits, later markers are dropped (the card is still on screen).
-   */
+  /** pi-acp's text-only one-step corner-open compatibility path. */
   private async handleAgentCornerRequest(
     tlcChannelId: string,
     boundRepo: BoundRepo,
@@ -6020,23 +6210,14 @@ export class Body {
     if (this.agentCornerRequestsInFlight.has(tlcChannelId)) return;
     this.agentCornerRequestsInFlight.add(tlcChannelId);
     try {
-      const repository = this.repoId(boundRepo);
-      const shortTask = task.length > 200 ? `${task.slice(0, 197)}…` : task;
-      const turn: PendingRoomTurn = {
-        request,
-        boundRepo,
-        editPolicy: 'repository',
-        permissionHandled: true,
-        transitionedToCorner: false,
-        readOnlyInformationRequest: false,
-      };
-      await this.requestEditCornerApproval({
-        tlcChannelId,
-        turn,
-        repository,
-        tool: 'corner request',
+      const cornerRequest = { ...request, content: task };
+      const info = await this.openSubchannel(tlcChannelId, boundRepo, task, cornerRequest, {
         objective: task,
-        pendingMessage: `${this.agentIdentity.name || 'Agent'} requests an edit corner for: ${shortTask} — allow?`,
+      });
+      this.startAgentTask(info, task, cornerOpenTaskPrompt(info.taskDescription, task), {
+        requestId: request.eventId,
+        originalRequestId: request.eventId,
+        cause: 'corner-opening',
       });
     } finally {
       this.agentCornerRequestsInFlight.delete(tlcChannelId);
@@ -6059,6 +6240,7 @@ export class Body {
     requestId: string,
     repository: string,
     timeoutMs = 10 * 60_000,
+    options: { ownerOnly?: boolean } = {},
   ): Promise<'allow' | 'deny' | 'timeout'> {
     const startedAt = Math.floor(Date.now() / 1000) - 1;
     const deadline = Date.now() + timeoutMs;
@@ -6073,10 +6255,10 @@ export class Body {
       ) {
         return undefined;
       }
-      const members = new Set(
-        (await listMembers(this.agentClientContext(), tlcChannelId)).map((member) => member.pubkey),
+      const member = (await listMembers(this.agentClientContext(), tlcChannelId)).find(
+        (candidate) => candidate.pubkey === event.pubkey,
       );
-      if (!members.has(event.pubkey)) return undefined;
+      if (!member || (options.ownerOnly && member.role !== 'owner')) return undefined;
       if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) return undefined;
       const decision = tagValue(event, 'decision');
       return decision === 'allow' || decision === 'deny' ? decision : undefined;
@@ -8060,6 +8242,198 @@ export class Body {
   }
 
   /**
+   * Apply an owner-confirmed Room target-branch binding to every open corner.
+   * Unlike post-merge realignment, a binding change deliberately updates the
+   * corner's destination and therefore includes corners that already had a
+   * review card. Their old branch-scoped approval is cleared before rebasing;
+   * successful work is republished for review on the new branch, while a
+   * conflict is a typed activity error plus one queued agent resolution turn.
+   */
+  private async reconcileRoomTargetBranch(channelId: string, roomRepo: BoundRepo): Promise<number> {
+    await this.flushBranchSwitchActivities();
+    const branch = await this.currentRoomTargetBranch(channelId, roomRepo);
+    const targetBranch = `refs/heads/${branch}`;
+    const repoKey = this.repoId(roomRepo);
+    let changed = 0;
+    for (const info of this.subchannels.values()) {
+      if (info.archived) {
+        this.branchSwitchActivityRetries.delete(info.subchannelId);
+        this.branchSwitchReviewRepublishes.delete(info.subchannelId);
+        continue;
+      }
+      if (
+        info.session.parentChannelId !== channelId ||
+        !info.boundRepo ||
+        this.repoId(info.boundRepo) !== repoKey
+      ) {
+        continue;
+      }
+      if (shortBranchName(info.boundRepo.targetBranch) === branch) {
+        if (
+          this.branchSwitchReviewRepublishes.has(info.subchannelId) &&
+          !this.branchSwitchActivityRetries.has(info.subchannelId)
+        ) {
+          try {
+            await this.publishMergeReady(info);
+            this.branchSwitchReviewRepublishes.delete(info.subchannelId);
+          } catch (error) {
+            console.error(
+              `[body] branch-switch review republish failed for ${info.subchannelId}; will retry:`,
+              error,
+            );
+          }
+        }
+        continue;
+      }
+      const previousBranch = info.boundRepo.targetBranch ?? 'refs/heads/main';
+      const hadReview =
+        Boolean(info.mergeTarget || info.humanMergeApproval) ||
+        this.branchSwitchReviewRepublishes.has(info.subchannelId);
+      if (hadReview) this.branchSwitchReviewRepublishes.add(info.subchannelId);
+      // The binding is authoritative even when git needs help. Updating this
+      // first makes every later prompt/review target the new branch; the work
+      // itself remains intact if the automatic rebase aborts.
+      info.mergeTarget = undefined;
+      info.humanMergeApproval = undefined;
+      info.ackedApprovalId = undefined;
+      info.ackedApprovalActivityId = undefined;
+      info.lastLandFailure = undefined;
+
+      const result = await realignWorktreeOntoTarget(info.worktreePath, {
+        ...(info.boundRepo.remoteName ? { remoteName: info.boundRepo.remoteName } : {}),
+        targetBranch,
+      });
+      const success = result.status === 'rebased' || result.status === 'up-to-date';
+      const reason = success
+        ? `This corner now targets ${branch}${result.status === 'rebased' ? ` at ${(result.detail ?? '').slice(0, 12)}` : ''}.`
+        : (realignAnnouncement(result, info.featureBranch, targetBranch) ??
+          result.detail ??
+          `could not rebase onto ${branch}`);
+      const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
+      info.boundRepo = { ...info.boundRepo, targetBranch };
+      info.session.resumeTargetRef = targetBranch;
+      const activity = {
+        sessionId,
+        channelId: info.subchannelId,
+        previousBranch: shortBranchName(previousBranch),
+        branch,
+        success,
+        reason,
+      };
+      try {
+        await this.publishBranchSwitchActivity(activity);
+      } catch (error) {
+        this.branchSwitchActivityRetries.set(info.subchannelId, activity);
+        console.error(
+          `[body] branch-switch activity failed for ${info.subchannelId}; will retry:`,
+          error,
+        );
+      }
+      if (success) {
+        changed += 1;
+        if (hadReview && !this.branchSwitchActivityRetries.has(info.subchannelId)) {
+          try {
+            await this.publishMergeReady(info);
+            this.branchSwitchReviewRepublishes.delete(info.subchannelId);
+          } catch (error) {
+            console.error(
+              `[body] branch-switch review republish failed for ${info.subchannelId}; will retry:`,
+              error,
+            );
+          }
+        }
+        continue;
+      }
+      this.branchSwitchReviewRepublishes.delete(info.subchannelId);
+
+      const resolutionPrompt =
+        `The Room owner changed the canonical target from ${shortBranchName(previousBranch)} to ${branch}. ` +
+        `The host's automatic rebase was aborted safely: ${summarizeGitFailure(reason)} ` +
+        `Resolve the feature branch onto ${branch} in this corner, rerun relevant checks, commit the resolution, and publish the work for review. ` +
+        'This synchronization is already authorized; do not ask for permission and do not change the Room binding.';
+      this.branchSwitchResolutions.set(info.subchannelId, {
+        branch: targetBranch,
+        reason: resolutionPrompt,
+      });
+      await this.postParentCornerStatus(
+        info,
+        'needs-attention',
+        `Target changed to ${branch}; automatic rebase needs the agent to resolve it.`,
+      );
+    }
+    return changed;
+  }
+
+  private publishBranchSwitchActivity(activity: {
+    sessionId: string;
+    channelId: string;
+    previousBranch: string;
+    branch: string;
+    success: boolean;
+    reason: string;
+  }): Promise<void> {
+    return postAgentActivityBatch(
+      activity.channelId,
+      this.agentIdentity,
+      {
+        sessionId: activity.sessionId,
+        channelId: activity.channelId,
+        events: [
+          {
+            sessionUpdate: 'tool_activity',
+            kind: activity.success ? 'execute' : 'error',
+            title: `Room target branch: ${activity.previousBranch} → ${activity.branch}`,
+            status: activity.success ? 'completed' : 'failed',
+            command: `git rebase ${activity.branch}`,
+            output: activity.reason,
+          },
+        ],
+      },
+      [
+        ['t', 'room-target-branch-realign'],
+        ['branch', `refs/heads/${activity.branch}`],
+        ['status', activity.success ? 'completed' : 'failed'],
+      ],
+    );
+  }
+
+  /** Retry typed activity before allowing its conflict-resolution turn to run. */
+  private async flushBranchSwitchActivities(): Promise<void> {
+    for (const [subchannelId, activity] of this.branchSwitchActivityRetries) {
+      try {
+        await this.publishBranchSwitchActivity(activity);
+        this.branchSwitchActivityRetries.delete(subchannelId);
+      } catch (error) {
+        console.error(
+          `[body] branch-switch activity retry failed for ${subchannelId}; will retry:`,
+          error,
+        );
+      }
+    }
+  }
+
+  /** Start exactly one agent resolution turn for each surfaced branch conflict. */
+  private async pollBranchSwitchResolutions(): Promise<void> {
+    await this.flushBranchSwitchActivities();
+    for (const [subchannelId, pending] of this.branchSwitchResolutions) {
+      const info = this.subchannels.get(subchannelId);
+      if (!info || info.archived) {
+        this.branchSwitchResolutions.delete(subchannelId);
+        continue;
+      }
+      if (this.branchSwitchActivityRetries.has(subchannelId)) continue;
+      if (this.runningAgentTasks.has(subchannelId)) continue;
+      this.branchSwitchResolutions.delete(subchannelId);
+      const requestId = `branch-switch-${randomUUID()}`;
+      this.startAgentTask(info, pending.reason, pending.reason, {
+        requestId,
+        originalRequestId: requestId,
+        cause: 'corner-follow-up',
+      });
+    }
+  }
+
+  /**
    * Watch THIS Room's transcript for merge-landed cards authored by ANOTHER
    * agent serving the same repository, and realign our own corners in
    * response. A repository can be served by several agents at once; when one
@@ -9649,7 +10023,15 @@ export class Body {
     // Local cleanup may inspect many worktrees. Keep it behind the bounded
     // approval path so maintenance cannot delay an already-authorized land.
     await guarded('stray worktree prune', () => this.pruneStrayCornerWorktrees(boundRepo));
-    await guarded('workbench sweep', () => this.sweepWorkbench());
+    await guarded('workbench sweep', () => this.sweepWorkbench(channelId));
+    // A confirmed Room-config branch switch moves every open corner before any
+    // ordinary merge-land watching. The binding, not a git command in the
+    // read-only Room, is the authority.
+    if (boundRepo) {
+      await guarded('target branch reconciliation', () =>
+        this.reconcileRoomTargetBranch(channelId, boundRepo),
+      );
+    }
     // Another agent serving this repository may have landed a merge in this
     // Room; our own corners must follow without being asked (post-merge
     // auto-realign, cross-agent half).
@@ -9670,6 +10052,7 @@ export class Body {
       const failed = results.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
     });
+    await guarded('branch-switch resolution', () => this.pollBranchSwitchResolutions());
     // Never-idle: a corner whose latest turn ended without any of the four
     // terminal states (working / ask / review / failure) gets one bounded
     // conclude steer. Runs AFTER the member poll so a queued human message
@@ -10641,39 +11024,40 @@ export class Body {
    * The Room's CURRENT landing target, re-read from published Room state.
    *
    * The daemon's `boundRepo.targetBranch` is a snapshot taken when the Room
-   * started serving, so an admin who repointed the Room since then would
-   * otherwise be invisible until a restart. Best-effort by design: any read
-   * failure falls back to the snapshot rather than blocking a turn, and a
-   * config event bound to a DIFFERENT repository is ignored outright (repo
-   * hot-swap on a live Room is deliberately out of scope here).
+   * started serving, so an owner who repointed the Room since then would
+   * otherwise be invisible until a restart. The last confirmed value is
+   * sticky: a later failed/unverified read must never rebase corners BACK to
+   * the startup snapshot. A config event bound to a DIFFERENT repository is
+   * ignored outright (repo hot-swap on a live Room is out of scope here).
    */
   private async currentRoomTargetBranch(channelId: string, boundRepo: BoundRepo): Promise<string> {
     const fallback = shortBranchName(boundRepo.targetBranch);
+    const confirmed = this.confirmedRoomTargetBranches.get(channelId);
     try {
       const config = await getRoomRepository(this.agentClientContext(), channelId);
-      if (!config?.targetBranch) return fallback;
+      if (!config?.targetBranch) return confirmed ?? fallback;
       if (
         boundRepo.repositoryKey &&
         config.binding.key &&
         config.binding.key !== boundRepo.repositoryKey
       ) {
-        return fallback;
+        return confirmed ?? fallback;
       }
-      return shortBranchName(config.targetBranch);
+      const branch = shortBranchName(config.targetBranch);
+      this.confirmedRoomTargetBranches.set(channelId, branch);
+      return branch;
     } catch (error) {
       console.error(`[body] could not re-read the Room target branch for ${channelId}:`, error);
-      return fallback;
+      return confirmed ?? fallback;
     }
   }
 
   /**
    * The repository a corner opening RIGHT NOW should tree off and land to.
    *
-   * A corner snapshots its target at open time (`SubchannelInfo.boundRepo`) and
-   * keeps it for its whole life — an in-flight review must never silently
-   * change what it is proposing to land onto. This is the one place the newer
-   * admin-confirmed target is picked up, so the change takes effect on the
-   * NEXT corner and never on an open one.
+   * A new corner starts from the current binding immediately. Open corners are
+   * updated separately by `reconcileRoomTargetBranch`, which rebases them and
+   * makes conflicts visible through typed activity before any new landing.
    */
   private async cornerBoundRepo(channelId: string, boundRepo: BoundRepo): Promise<BoundRepo> {
     const current = await this.currentRoomTargetBranch(channelId, boundRepo);
@@ -10688,8 +11072,8 @@ export class Body {
    * Answer a "land to staging from now on" ask with a typed proposal card.
    *
    * The agent proposes; it never authors the binding. The card carries the
-   * exact from/to pair and the requester, and a Room ADMIN confirms it in the
-   * app, which republishes the Room→repository event under the admin's own key
+   * exact from/to pair and the requester, and the Room owner confirms it in the
+   * app, which republishes the Room→repository event under the owner's own key
    * (`setRoomTargetBranch`). Returns false when nothing needed proposing.
    */
   private async proposeTargetBranchChange(
@@ -11533,6 +11917,7 @@ export class Body {
       await this.scheduler.suspend(session.channelId);
     }
     if (this.ownsScheduler) await this.scheduler.dispose();
+    this.workbench = undefined;
     this.sessions.clear();
     this.subchannels.clear();
   }

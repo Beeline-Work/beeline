@@ -131,12 +131,7 @@ export class SquireHostBroker {
     const endpoint = {
       name: 'squire',
       command: process.execPath,
-      args: [
-        this.proxyEntrypoint,
-        '127.0.0.1',
-        String(address.port),
-        channel.token,
-      ],
+      args: [this.proxyEntrypoint, '127.0.0.1', String(address.port), channel.token],
       env: [],
     };
     channel.endpoint = endpoint;

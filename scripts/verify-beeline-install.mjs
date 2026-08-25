@@ -193,7 +193,11 @@ async function main() {
       cwd: bareCwd,
       env,
     });
-    if (!stripAnsi(installed.stdout).includes('beeline, buzz-agent, buzz-dev-mcp, and buzz-readonly-mcp')) {
+    if (
+      !stripAnsi(installed.stdout).includes(
+        'beeline, buzz-agent, buzz-dev-mcp, and buzz-readonly-mcp',
+      )
+    ) {
       fail(`installer success line omitted the read-only helper:\n${installed.stdout}`);
     }
 

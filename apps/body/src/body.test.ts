@@ -1574,6 +1574,7 @@ describe('agent identity boundary', () => {
       agentKind: 'codex',
       accessPolicy: 'creator',
       externalMcpCapabilities: ['squire-credential-use'],
+      squireConfigRoot: join(tmpdir(), 'beeline-squire-config-unit'),
       readonlyMcpCommand: '/buzz-readonly-mcp',
     });
     vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);

@@ -206,17 +206,19 @@ describe('Trusty Squire host broker', () => {
     const finishExpiry = new Promise<void>((resolvePromise) => {
       finishExpiryVerification = resolvePromise;
     });
-    expect(expiryBroker.authorize(
-      'expiry-room',
-      'revoke_app_access',
-      squireArgumentsDigest(args),
-      async () => {
-        expiryVerificationStarted();
-        await finishExpiry;
-        return true;
-      },
-      now + 10,
-    )).toBeTruthy();
+    expect(
+      expiryBroker.authorize(
+        'expiry-room',
+        'revoke_app_access',
+        squireArgumentsDigest(args),
+        async () => {
+          expiryVerificationStarted();
+          await finishExpiry;
+          return true;
+        },
+        now + 10,
+      ),
+    ).toBeTruthy();
     expirySocket.write(request);
     await expiryStarted;
     now += 11;
@@ -254,16 +256,18 @@ describe('Trusty Squire host broker', () => {
     const finishTeardown = new Promise<void>((resolvePromise) => {
       finishTeardownVerification = resolvePromise;
     });
-    expect(teardownBroker.authorize(
-      'teardown-room',
-      'revoke_app_access',
-      squireArgumentsDigest(args),
-      async () => {
-        teardownVerificationStarted();
-        await finishTeardown;
-        return true;
-      },
-    )).toBeTruthy();
+    expect(
+      teardownBroker.authorize(
+        'teardown-room',
+        'revoke_app_access',
+        squireArgumentsDigest(args),
+        async () => {
+          teardownVerificationStarted();
+          await finishTeardown;
+          return true;
+        },
+      ),
+    ).toBeTruthy();
     teardownSocket.write(request);
     await teardownStarted;
     const teardownClosed = once(teardownSocket, 'close');

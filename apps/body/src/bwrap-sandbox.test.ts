@@ -16,14 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import {
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
@@ -403,12 +396,7 @@ describe('credential masks — readable is usable, so known stores are absent', 
   it('creates private mountpoints for required paths absent on the host', () => {
     const store = '/home/op/.config/trusty-squire';
     const bus = '/run/user/1000/bus';
-    const masks = credentialMaskPaths(
-      [store, bus],
-      '/home/op',
-      () => undefined,
-      [store, bus],
-    );
+    const masks = credentialMaskPaths([store, bus], '/home/op', () => undefined, [store, bus]);
     const { args } = buildBwrapArgv({
       bwrapPath: '/usr/bin/bwrap',
       plan: sandboxMountPlan({ mode: 'readonly', cwd: '/srv/repo', maskPaths: masks }),
@@ -631,12 +619,7 @@ liveDescribe('the wrapper enforces Room read-only and the corner hygiene denylis
     const bus = resolve(runtimeDir, 'bus');
     mkdirSync(hostConfig, { recursive: true });
     mkdirSync(runtimeDir, { recursive: true });
-    const masks = credentialMaskPaths(
-      [store, bus],
-      root,
-      undefined,
-      [store, bus],
-    );
+    const masks = credentialMaskPaths([store, bus], root, undefined, [store, bus]);
     const wrapped = wrapAgentCommand({
       bwrapPath: bwrap.path!,
       spec: { mode: 'readonly', cwd: checkout, maskPaths: masks },

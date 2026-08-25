@@ -9,9 +9,8 @@ import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
  *
  * Beeline's own inventory is fixed per surface (`buzz-readonly-mcp` for Rooms,
  * `buzz-dev-mcp` + codegraph for corners). Some work genuinely needs the
- * operator's own tool servers — Trusty Squire for account-backed signups, a
- * project-specific server, etc. This module is the "beeline runtime config
- * list" half of that: a JSON file inside the agent's runtime directory that
+ * operator's own project-specific tool servers. This module is the "beeline
+ * runtime config list" half of that: a JSON file inside the agent's runtime directory that
  * the OPERATOR authors by hand. It deliberately does NOT parse the harnesses'
  * own config locations:
  *
@@ -30,7 +29,8 @@ import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
  * ```
  *
  * Reading is best-effort and fail-open-to-empty: a missing or malformed file
- * never blocks a corner from opening.
+ * never blocks a corner from opening. Trusty Squire names and launch aliases
+ * are reserved for Beeline's separately governed host broker.
  */
 
 /** Names Body mounts itself; an operator entry may not shadow them. */

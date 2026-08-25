@@ -118,9 +118,10 @@ export interface RoomAgentHomeInput {
 
 /**
  * Create the room-instance's harness state directories, share the operator's
- * credentials into them, and return the env overlay that points the harness at
- * them. Never throws: an unwritable or already-populated path degrades to the
- * daemon's ambient state rather than failing the Room.
+ * harness login into them, and return the env overlay that points the harness at
+ * them. Normally an unwritable or already-populated path degrades to the
+ * daemon's ambient state; `failClosed` propagates setup errors for governed
+ * credential sessions that may not fall back to ambient state.
  */
 export async function prepareRoomAgentHome(
   input: RoomAgentHomeInput,
@@ -183,7 +184,9 @@ async function provisionOperatorSkillsAndMcp(
     try {
       const source = resolve(operatorHome, config.toml);
       const target = resolve(root, config.dir, 'config.toml');
-      const section = existsSync(source) ? filteredHarnessMcpToml(readFileSync(source, 'utf8')) : undefined;
+      const section = existsSync(source)
+        ? filteredHarnessMcpToml(readFileSync(source, 'utf8'))
+        : undefined;
       // Regeneration is also deletion: if the operator removes the config or
       // its last MCP table, do not leave stale servers active in a Room.
       if (!section) {
@@ -204,10 +207,7 @@ async function provisionOperatorSkillsAndMcp(
       ? readClaudeUserScopeMcpServers(claudeJson)
       : undefined;
     if (mcpServers && Object.keys(mcpServers).length > 0) {
-      await writeIsolatedHarnessFile(
-        claudeTarget,
-        `${JSON.stringify({ mcpServers }, null, 2)}\n`,
-      );
+      await writeIsolatedHarnessFile(claudeTarget, `${JSON.stringify({ mcpServers }, null, 2)}\n`);
     } else {
       await unlink(claudeTarget).catch(() => undefined);
     }
@@ -245,13 +245,13 @@ export function hasAmbientTrustySquireConfiguration(operatorHome = homedir()): b
       const server = value as Record<string, unknown> | null;
       return Boolean(
         server &&
-          typeof server.command === 'string' &&
-          isTrustySquireMcpLaunch(
-            server.command,
-            Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
-              ? (server.args as string[])
-              : [],
-          ),
+        typeof server.command === 'string' &&
+        isTrustySquireMcpLaunch(
+          server.command,
+          Array.isArray(server.args) && server.args.every((arg) => typeof arg === 'string')
+            ? (server.args as string[])
+            : [],
+        ),
       );
     });
   } catch {

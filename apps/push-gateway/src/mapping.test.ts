@@ -182,13 +182,20 @@ describe('mapEventToNotification', () => {
         ['branch', 'feature/push'],
         ['tip', 'd'.repeat(40)],
       ]),
-      { roomName: 'Push work', senderName: 'Ada' },
+      { roomName: 'Push work', senderName: 'Ada', parentChannelId: 'room-123' },
     );
 
     expect(result?.title).toBe('Merge approval requested');
     expect(result?.body).toBe('Review requested in Push work');
-    expect(result?.data.type).toBe('merge-approval-request');
-    expect(result?.data.cornerId).toBe('channel-123');
+    expect(result?.data).toMatchObject({
+      type: 'merge-approval-request',
+      target: 'approval',
+      roomId: 'room-123',
+      channelId: 'channel-123',
+      cornerId: 'channel-123',
+      eventId: 'a'.repeat(64),
+      approvalId: 'a'.repeat(64),
+    });
   });
 
   it('maps a fresh agent question and needs-attention transition to attention', () => {
@@ -201,10 +208,22 @@ describe('mapEventToNotification', () => {
     );
     expect(isWaitingOnHumanEvent(question)).toBe(true);
     expect(
-      mapEventToNotification(question, { roomName: 'Question', senderName: 'Codex' }),
+      mapEventToNotification(question, {
+        roomName: 'Question',
+        senderName: 'Codex',
+        parentChannelId: 'parent-room',
+      }),
     ).toMatchObject({
       body: 'Codex needs your reply: Which target branch should I use?',
-      data: { type: 'agent-question', channelId: 'corner-question' },
+      data: {
+        type: 'agent-question',
+        target: 'message',
+        roomId: 'parent-room',
+        channelId: 'corner-question',
+        cornerId: 'corner-question',
+        eventId: 'a'.repeat(64),
+        messageId: 'a'.repeat(64),
+      },
     });
 
     const transition = event([
@@ -219,8 +238,11 @@ describe('mapEventToNotification', () => {
     ).toMatchObject({
       data: {
         type: 'agent-attention',
+        target: 'corner',
+        roomId: 'parent-room',
         channelId: 'corner-waiting',
         cornerId: 'corner-waiting',
+        eventId: 'a'.repeat(64),
       },
     });
   });
@@ -371,7 +393,14 @@ describe('mention mapping', () => {
     ).toMatchObject({
       title: '#Roadmap',
       body: 'Ada mentioned you: Ship the preview now.',
-      data: { type: 'mention', channelId: 'room' },
+      data: {
+        type: 'mention',
+        target: 'message',
+        roomId: 'room',
+        channelId: 'room',
+        eventId: 'a'.repeat(64),
+        messageId: 'a'.repeat(64),
+      },
     });
     expect(
       mapEventToNotification(

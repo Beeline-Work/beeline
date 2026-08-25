@@ -972,7 +972,11 @@ export default function BuzzChat() {
   const pendingCornerRequest = useMemo(() => {
     for (let index = combinedMessages.length - 1; index >= 0; index -= 1) {
       const message = combinedMessages[index];
-      if (message.writePermission?.status === 'pending' && message.writePermission.repository) {
+      if (
+        message.writePermission?.status === 'pending' &&
+        message.writePermission.repository &&
+        message.writePermission.purpose !== 'squire-spending'
+      ) {
         return message;
       }
     }
@@ -2375,7 +2379,8 @@ export default function BuzzChat() {
         !permission ||
         !permission.repository ||
         permission.status !== 'pending' ||
-        viewerIsAgent
+        viewerIsAgent ||
+        (permission.purpose === 'squire-spending' && viewerChannelRole !== 'owner')
       )
         return;
       setPermissionActionId(permission.permissionId);
@@ -2412,7 +2417,7 @@ export default function BuzzChat() {
         setPermissionActionId(null);
       }
     },
-    [cacheViewerPubkey, decodedId, transport, viewerIsAgent],
+    [cacheViewerPubkey, decodedId, transport, viewerChannelRole, viewerIsAgent],
   );
 
   /**
@@ -2428,10 +2433,10 @@ export default function BuzzChat() {
     async (message: ChatDisplayMessage) => {
       const proposal = message.targetBranchProposal;
       if (!transport || !proposal || targetBranchActionId) return;
-      if (viewerIsAgent || !canManageRoomRepository(viewerChannelRole)) {
+      if (viewerIsAgent || viewerChannelRole !== 'owner') {
         setTargetBranchNotice({
           proposalId: proposal.proposalId,
-          text: `Only a ${ROOM_LABEL} admin can change the target branch.`,
+          text: `Only the ${ROOM_LABEL} owner can change the target branch.`,
         });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         return;
@@ -3178,6 +3183,7 @@ export default function BuzzChat() {
 
       if (item.writePermission) {
         const permission = item.writePermission;
+        const squireSpending = permission.purpose === 'squire-spending';
         const permissionAgent = agentByPubkey.get(permission.agentPubkey);
         const display = resolveAgentDisplayIdentity(permission.agentPubkey, permissionAgent);
         const pending = permission.status === 'pending';
@@ -3204,31 +3210,38 @@ export default function BuzzChat() {
               />
               <View style={styles.writePermissionCopy}>
                 <Text style={styles.writePermissionTitle}>
-                  {permission.repository
-                    ? `${display.name} requests a new edit corner`
-                    : `${display.name} needs to change repository files`}
+                  {squireSpending
+                    ? `${display.name} requests owner confirmation`
+                    : permission.repository
+                      ? `${display.name} requests a new edit corner`
+                      : `${display.name} needs to change repository files`}
                 </Text>
                 <Text style={styles.writePermissionIntent} numberOfLines={2}>
                   {describeWriteRequest(permission.tool)}
                 </Text>
               </View>
             </View>
-            {permission.repository && (
+            {permission.repository && !squireSpending && (
               <Text style={styles.writePermissionRepository} testID="write-permission-repository">
                 EDIT CORNER ON {permission.repository}
               </Text>
             )}
             <Text style={styles.writePermissionBoundary}>
-              {permission.repository
-                ? `The write is refused here. Allowing grants isolated edit access to exactly ${permission.repository}; merge authority stays human-only.`
-                : 'This write request is missing its repository target and cannot be allowed.'}
+              {squireSpending
+                ? 'Trusty Squire stays in its vault-backed process. Only the Room owner can confirm this spending or checkout-capable action.'
+                : permission.repository
+                  ? `The write is refused here. Allowing grants isolated edit access to exactly ${permission.repository}; merge authority stays human-only.`
+                  : 'This write request is missing its repository target and cannot be allowed.'}
             </Text>
             {permission.status === 'failed' && (
               <Text style={styles.writePermissionFailure}>
                 The requested edit could not start. This Room remains read-only.
               </Text>
             )}
-            {pending && !viewerIsAgent && permission.repository ? (
+            {pending &&
+            !viewerIsAgent &&
+            permission.repository &&
+            (!squireSpending || viewerChannelRole === 'owner') ? (
               <View style={styles.writePermissionActions}>
                 <MonoButton
                   label="Deny"
@@ -3238,12 +3251,14 @@ export default function BuzzChat() {
                   style={styles.writePermissionButton}
                 />
                 <MonoButton
-                  label="Open edit corner"
+                  label={squireSpending ? 'Confirm Squire action' : 'Open edit corner'}
                   loading={busy}
                   onPress={() => void handleWritePermission(item, 'allow')}
                   style={styles.writePermissionButton}
                 />
               </View>
+            ) : pending && !viewerIsAgent && squireSpending ? (
+              <Text style={styles.writePermissionStatus}>ROOM OWNER CONFIRMATION REQUIRED</Text>
             ) : pending && !viewerIsAgent ? (
               <Text style={styles.writePermissionStatus}>MISSING TARGET · CANNOT APPROVE</Text>
             ) : (
@@ -3263,7 +3278,7 @@ export default function BuzzChat() {
         const busy = targetBranchActionId === proposal.proposalId;
         const notice =
           targetBranchNotice?.proposalId === proposal.proposalId ? targetBranchNotice.text : null;
-        const canConfirm = !viewerIsAgent && canManageRoomRepository(viewerChannelRole);
+        const canConfirm = !viewerIsAgent && viewerChannelRole === 'owner';
         return (
           <HullSurface
             strength="raised"
@@ -3276,7 +3291,7 @@ export default function BuzzChat() {
             </Text>
             <Text style={styles.targetBranchBoundary}>
               {`Confirming republishes this ${ROOM_LABEL}'s repository binding under your key. ` +
-                `${CORNER_LABEL}s already open keep landing to ${proposal.from}.`}
+                `${CORNER_LABEL}s already open automatically rebase onto ${proposal.to}; any conflict appears in their activity ledger for the agent to resolve.`}
             </Text>
             {applied ? (
               <Text style={styles.targetBranchStatus} testID="target-branch-applied">
@@ -3295,7 +3310,7 @@ export default function BuzzChat() {
               </View>
             ) : (
               <Text style={styles.targetBranchStatus} testID="target-branch-denied">
-                {`ONLY A ${ROOM_LABEL.toUpperCase()} ADMIN CAN CONFIRM THIS`}
+                {`ONLY THE ${ROOM_LABEL.toUpperCase()} OWNER CAN CONFIRM THIS`}
               </Text>
             )}
             {notice ? (

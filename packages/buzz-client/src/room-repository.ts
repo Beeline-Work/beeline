@@ -6,7 +6,7 @@
  * the same binding, and any member's corner trees off it. The binding has two
  * possible sources, resolved in order by {@link resolveRoomRepository}:
  *
- *   1. `config` — a mutable, admin-authored kind:30078 room-config event
+ *   1. `config` — a mutable, human-authored kind:30078 room-config event
  *      (`d = buzz-room-repository:<channelId>`). This is the writable path:
  *      Stage 2's repo picker / "link a repo" / change-repo all publish here.
  *      Authority is room-scoped and reader-verified, mirroring `setAgentSoul`
@@ -62,7 +62,7 @@ function roomRepositoryKey(channelId: string): string {
 }
 
 /**
- * Parse a verified, admin-authored room-repository config event.
+ * Parse a verified, human-authored room-repository config event.
  *
  * Structural validation only; authorization (author is a *current* Room
  * admin/owner) is a reader-side check in {@link getRoomRepository}, exactly
@@ -126,7 +126,10 @@ export function parseRoomRepository(event: NostrEvent): RoomRepository | null {
 export async function setRoomRepository(
   ctx: ChannelOpsContext,
   channelId: string,
-  input: RoomRepositoryInput & { communityId?: string },
+  input: RoomRepositoryInput & {
+    communityId?: string;
+    action?: 'switch-target-branch';
+  },
 ): Promise<RoomRepository> {
   // Repo binding follows the room-creation rule: it is a HUMAN decision. The
   // admin-role check below is not enough on its own — an agent can be granted
@@ -147,6 +150,18 @@ export async function setRoomRepository(
   if (!key || !name) throw new Error('room repository requires a key and name');
   if (!remote) throw new Error('room repository requires a git remote URL');
   const targetBranch = input.targetBranch?.trim();
+  if (role !== 'owner' && targetBranch) {
+    const current = await resolveRoomRepository(ctx, channelId);
+    const currentTarget = normalizeTargetBranchName(current?.targetBranch ?? 'main');
+    const requestedTarget = normalizeTargetBranchName(targetBranch);
+    const sameRepository = current?.binding.key === key;
+    if (
+      input.action === 'switch-target-branch' ||
+      (sameRepository && requestedTarget !== currentTarget)
+    ) {
+      throw new Error('only the Room owner can change the target branch');
+    }
+  }
   const githubInstallationId = input.githubInstallationId;
   if (
     githubInstallationId !== undefined &&
@@ -165,6 +180,7 @@ export async function setRoomRepository(
         ['d', roomRepositoryKey(channelId)],
         ['h', channelId],
         ['t', TAG_ROOM_REPOSITORY],
+        ...(input.action ? [['action', input.action]] : []),
         ...(communityId ? [[TAG_COMMUNITY, communityId]] : []),
       ],
       content: JSON.stringify({
@@ -266,13 +282,31 @@ export async function readRoomRepositoryConfig(
         (b.updatedAt ?? 0) - (a.updatedAt ?? 0) ||
         (a.raw && b.raw ? b.raw.id.localeCompare(a.raw.id) : 0),
     );
-  for (const candidate of candidates) {
+  const genesis = await getChannelRepositoryBinding(ctx, channelId);
+  let current: RoomRepository | undefined;
+  let currentBinding = genesis ? { key: genesis.key, targetBranch: 'main' } : undefined;
+  // Validate oldest → newest so an admin cannot omit the action tag (or emit a
+  // second cover event) to disguise a same-repository target change. Repo
+  // linkage remains admin-capable; changing one repo's canon branch is owner-only.
+  for (const candidate of [...candidates].reverse()) {
+    let role: Awaited<ReturnType<typeof getChannelRole>> | null = null;
     for (const authorKey of await authorKeysForRoleCheck(candidate.authoredBy!, options)) {
-      const role = await getChannelRole(ctx, channelId, authorKey);
-      if (role === 'owner' || role === 'admin') {
-        return { kind: 'repository', repository: candidate };
-      }
+      const candidateRole = await getChannelRole(ctx, channelId, authorKey);
+      if (candidateRole === 'owner' || candidateRole === 'admin') role = candidateRole;
+      if (role === 'owner') break;
     }
+    if (!role) continue;
+    const candidateTarget = normalizeTargetBranchName(candidate.targetBranch ?? 'main') ?? 'main';
+    const ownerOnlySwitch =
+      tagValue(candidate.raw!, 'action') === 'switch-target-branch' ||
+      (currentBinding?.key === candidate.binding.key &&
+        currentBinding.targetBranch !== candidateTarget);
+    if (ownerOnlySwitch && role !== 'owner') continue;
+    current = candidate;
+    currentBinding = { key: candidate.binding.key, targetBranch: candidateTarget };
+  }
+  if (current) {
+    return { kind: 'repository', repository: current };
   }
   if (candidates.length > 0) {
     return {
@@ -358,8 +392,8 @@ export function normalizeTargetBranchName(value: string | undefined | null): str
  *
  * This is the write half of the chat-native "land to staging from now on"
  * flow: the agent only ever *proposes* the change (a typed proposal card), and
- * this runs under the confirming ADMIN's key — `setRoomRepository` re-checks
- * that the author is a current Room admin/owner, and `getRoomRepository`
+ * this runs under the confirming OWNER's key — the setter and reader both
+ * enforce that owner-only action independently, and `getRoomRepository`
  * independently re-checks it again on every read, so an agent-authored or
  * demoted-member event can never take effect.
  *
@@ -374,6 +408,8 @@ export async function setRoomTargetBranch(
 ): Promise<RoomRepository> {
   const branch = normalizeTargetBranchName(targetBranch);
   if (!branch) throw new Error('that is not a valid git branch name');
+  const role = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
+  if (role !== 'owner') throw new Error('only the Room owner can change the target branch');
   const current = await resolveRoomRepository(ctx, channelId);
   if (!current) {
     throw new Error('this Room has no repository linked, so it has no target branch to change');
@@ -387,6 +423,7 @@ export async function setRoomTargetBranch(
     name: binding.name,
     remote: binding.remote,
     targetBranch: branch,
+    action: 'switch-target-branch',
     ...(binding.githubInstallationId ? { githubInstallationId: binding.githubInstallationId } : {}),
     ...(current.communityId ? { communityId: current.communityId } : {}),
   });
@@ -410,7 +447,9 @@ export async function setRoomGitHubEvents(
   }
   const current = await resolveRoomRepository(ctx, channelId);
   if (!current) {
-    throw new Error('this Room has no repository linked, so there is no repository activity to toggle');
+    throw new Error(
+      'this Room has no repository linked, so there is no repository activity to toggle',
+    );
   }
   const { binding } = current;
   if (binding.localOnly || !binding.remote) {

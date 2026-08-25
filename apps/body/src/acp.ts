@@ -412,6 +412,11 @@ export class AcpClient extends EventEmitter {
     return this.alive;
   }
 
+  /** Host pid of the harness wrapper (bwrap when enabled). */
+  processPid(): number | undefined {
+    return this.child?.pid;
+  }
+
   /** The latest command list this harness advertised for a session, if any. */
   sessionCommandsFor(sessionId: string): AcpAvailableCommand[] {
     return this.sessionCommands.get(sessionId) ?? [];

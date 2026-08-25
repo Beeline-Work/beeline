@@ -357,6 +357,6 @@ describe('key-succession membership migration', () => {
     });
     await expect(
       migrateSuccessorMemberships(ctxFor(successor), [oldKey.publicKey]),
-    ).rejects.toThrow(/publishEvent/);
+    ).rejects.toMatchObject({ kind: 'INVALID_EVENT', retryable: false });
   });
 });

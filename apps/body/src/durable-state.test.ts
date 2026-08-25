@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
 import { signEvent } from '@beeline/nostr';
-import { DurableBodyState } from './durable-state.js';
+import { DURABLE_BODY_STATE_VERSION, DurableBodyState } from './durable-state.js';
+import fixtureManifest from './fixtures/durable-state/manifest.json';
 import {
   createWorkspaceSnapshot,
   parseRelayEvents,
@@ -20,6 +21,28 @@ afterEach(async () => {
 });
 
 describe('durable state schema migration', () => {
+  it('keeps a golden fixture for the current durable format', () => {
+    expect(fixtureManifest.currentVersion).toBe(DURABLE_BODY_STATE_VERSION);
+    expect(fixtureManifest.fixtures.map((fixture) => fixture.version)).toContain(
+      DURABLE_BODY_STATE_VERSION,
+    );
+  });
+
+  it.each(fixtureManifest.fixtures)(
+    'loads release $release golden state v$version with the current migration registry',
+    async ({ file, version }) => {
+      const root = await mkdtemp(resolve(tmpdir(), `beeline-golden-v${version}-`));
+      cleanup.push(root);
+      const path = resolve(root, 'state.json');
+      const fixture = resolve(import.meta.dirname, 'fixtures', 'durable-state', file);
+      await writeFile(path, await readFile(fixture));
+
+      const state = new DurableBodyState(path);
+      expect((await state.cursor('released-room')).eventId).toBe(`released-v${version}-cursor`);
+      expect(await state.pending('released-room')).toEqual([]);
+    },
+  );
+
   it('migrates version 1 inboxes and cursors to version 2 in memory', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-v1-'));
     cleanup.push(root);

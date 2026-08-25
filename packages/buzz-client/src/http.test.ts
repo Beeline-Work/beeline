@@ -111,7 +111,11 @@ describe('HTTP bridge NIP-98 auth', () => {
     const fetchMock = vi.fn(async () => new Response('unauthorized', { status: 401 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(publishEvent(opts, signedEvent())).rejects.toThrow('HTTP 401');
+    await expect(publishEvent(opts, signedEvent())).rejects.toMatchObject({
+      kind: 'UNAUTHORIZED',
+      status: 401,
+      retryable: false,
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -249,9 +253,10 @@ describe('HTTP bridge NIP-98 auth', () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
 
-    await expect(publishEvent(opts, mismatched)).rejects.toThrow(
-      'signer does not match relay auth identity',
-    );
+    await expect(publishEvent(opts, mismatched)).rejects.toMatchObject({
+      kind: 'CLIENT_VALIDATION',
+      retryable: false,
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -266,7 +271,10 @@ describe('HTTP bridge NIP-98 auth', () => {
       ),
     );
 
-    await expect(publishEvent(opts, signedEvent())).rejects.toThrow('was not accepted');
+    await expect(publishEvent(opts, signedEvent())).rejects.toMatchObject({
+      kind: 'NEGATIVE_ACK',
+      retryable: false,
+    });
   });
 
   it('deduplicates concurrent projection reads without caching mutable state', async () => {

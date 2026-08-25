@@ -49,8 +49,10 @@ interface StoredPermissionReceipt {
   delivered: boolean;
 }
 
+export const DURABLE_BODY_STATE_VERSION = 2;
+
 interface DurableBodyData {
-  version: 2;
+  version: typeof DURABLE_BODY_STATE_VERSION;
   inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;
   /** Relay-verified normalized read models. Presentation prose is never persisted. */
   readModels: Record<string, WorkspaceSnapshot>;
@@ -91,10 +93,10 @@ function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyDa
       if ('readModels' in parsed) throw new Error(`unsupported durable body state at ${path}`);
       return {
         ...(parsed as DurableBodyDataV1),
-        version: 2,
+        version: DURABLE_BODY_STATE_VERSION,
         readModels: {},
       };
-    case 2:
+    case DURABLE_BODY_STATE_VERSION:
       if (!parsed.readModels) throw new Error(`unsupported durable body state at ${path}`);
       return parsed as DurableBodyData;
     default:
@@ -104,7 +106,7 @@ function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyDa
 
 function emptyData(): DurableBodyData {
   return {
-    version: 2,
+    version: DURABLE_BODY_STATE_VERSION,
     inboxes: {},
     readModels: {},
     modelTurns: [],

@@ -1,4 +1,9 @@
-export { parseRelayEvent, parseRelayEvents } from './parser.js';
+export {
+  deriveRelayAuthorityFacts,
+  parseRelayEvent,
+  parseRelayEvents,
+  type RelayAuthorityFacts,
+} from './parser.js';
 export {
   commitRoomCoverage,
   createWorkspaceSnapshot,

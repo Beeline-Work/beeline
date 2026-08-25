@@ -164,7 +164,11 @@ export interface RigTransport {
   runAbort(sessionId: SessionId): Promise<void>;
 
   // --- Realtime + permissions ---
-  sessionEventsSubscribe(sessionId: SessionId, handler: (event: SessionEvent) => void): () => void;
+  sessionEventsSubscribe(
+    sessionId: SessionId,
+    handler: (event: SessionEvent) => void,
+    opts?: { since?: number },
+  ): () => void;
   sessionEventsBackfill(
     sessionId: SessionId,
     opts?: { beforeSeq?: number; afterSeq?: number; limit?: number },

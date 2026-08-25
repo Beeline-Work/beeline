@@ -11,6 +11,7 @@ import {
   KIND_CORNER_STATE,
   KIND_CREATE_GROUP,
   TAG_AGENT_ACTIVITY,
+  TAG_COMMUNITY,
   TAG_CORNER_STATE,
   TAG_PARENT,
   createIdentity,
@@ -51,6 +52,7 @@ function roomCreate(): NostrEvent {
     kind: KIND_CREATE_GROUP,
     tags: [
       ['h', ROOM],
+      [TAG_COMMUNITY, WORKSPACE],
       ['name', 'Core Room'],
       ['p', human.publicKey, 'owner'],
       ['p', agent.publicKey, 'member'],
@@ -151,15 +153,18 @@ function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {
     ]),
     query: vi.fn(async (filters: Array<{ kinds?: number[]; '#h'?: string[] }>) => {
       const kinds = new Set(filters.flatMap((filter) => filter.kinds ?? []));
-      if (kinds.has(KIND_CORNER_STATE)) return input.corners ? [cornerState()] : [];
-      if (kinds.has(KIND_CHANNEL_MEMBERS)) return projections;
+      const results: NostrEvent[] = [];
+      if (kinds.has(KIND_CORNER_STATE) && input.corners) results.push(cornerState());
+      if (kinds.has(KIND_CHANNEL_MEMBERS)) results.push(...projections);
       if (kinds.has(KIND_CREATE_GROUP)) {
         const channels = new Set(filters.flatMap((filter) => filter['#h'] ?? []));
-        return createEvents.filter((event) =>
-          event.tags.some((tag) => tag[0] === 'h' && channels.has(tag[1]!)),
+        results.push(
+          ...createEvents.filter((event) =>
+            event.tags.some((tag) => tag[0] === 'h' && channels.has(tag[1]!)),
+          ),
         );
       }
-      return [];
+      return [...new Map(results.map((event) => [event.id, event])).values()];
     }),
     sessionEventsSubscribe: vi.fn(async (_id: string, handler: (event: NostrEvent) => void) => {
       liveHandler = handler;
@@ -234,19 +239,31 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     );
   });
 
-  it('installs live delivery before yielding and emits only typed events', async () => {
+  it('starts live delivery at a bounded cursor and frame-coalesces a burst', async () => {
     const fixture = clientFixture();
     const transport = transportWith(fixture.client);
     const delivered: unknown[] = [];
-    const stop = await transport.sessionEventsSubscribeReady(ROOM, (event) =>
-      delivered.push(event),
+    const stop = await transport.sessionEventsSubscribeReady(
+      ROOM,
+      (event) => delivered.push(event),
+      { since: 9 },
     );
 
     fixture.deliver(message(human, 'Live human message', 10));
+    fixture.deliver(message(human, 'Live agent message', 11));
+    expect(fixture.client.sessionEventsSubscribe).toHaveBeenCalledWith(ROOM, expect.any(Function), {
+      since: 9,
+    });
+    expect(delivered).toEqual([]);
+    await vi.waitFor(() => expect(delivered).toHaveLength(2));
     expect(delivered).toEqual([
       expect.objectContaining({
         type: 'read-model',
         event: expect.objectContaining({ type: 'human-message', body: 'Live human message' }),
+      }),
+      expect.objectContaining({
+        type: 'read-model',
+        event: expect.objectContaining({ type: 'human-message', body: 'Live agent message' }),
       }),
     ]);
     stop();
@@ -282,6 +299,41 @@ describe('BuzzRigTransport typed read-model boundary', () => {
       }),
     ]);
   });
+
+  it('hydrates 200+ messages plus a corner without per-channel authority fan-out', async () => {
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      message(human, `History ${index + 1}`, 10 + index),
+    );
+    const fixture = clientFixture({ messages, corners: true });
+
+    const result = await transportWith(fixture.client).readModelBackfill(ROOM, { limit: 240 });
+
+    expect(selectTranscript(result.snapshot, ROOM)).toHaveLength(240);
+    expect(selectCorners(result.snapshot, ROOM)).toHaveLength(1);
+    expect(fixture.client.listSubchannels).not.toHaveBeenCalled();
+    expect(fixture.client.listMembers).not.toHaveBeenCalled();
+    expect(fixture.client.getChannelCommunityId).not.toHaveBeenCalled();
+    expect(fixture.client.listAgents).toHaveBeenCalledTimes(1);
+    expect(fixture.client.listPersonProfiles).toHaveBeenCalledTimes(1);
+    expect(fixture.client.query.mock.calls.length).toBeLessThanOrEqual(2);
+  }, 20_000);
+
+  it('coalesces the transcript and corner-status snapshot reads for one Room open', async () => {
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      message(human, `Concurrent history ${index + 1}`, 10 + index),
+    );
+    const fixture = clientFixture({ messages, corners: true });
+    const transport = transportWith(fixture.client);
+
+    const [result, corners] = await Promise.all([
+      transport.readModelBackfill(ROOM, { limit: 240 }),
+      transport.listSubchannelLifecycle(ROOM),
+    ]);
+
+    expect(selectTranscript(result.snapshot, ROOM)).toHaveLength(240);
+    expect(corners).toHaveLength(1);
+    expect(fixture.client.sessionEventsBackfill).toHaveBeenCalledTimes(1);
+  }, 20_000);
 
   it('uses metadata as the sole archive authority instead of scanning chat tags', async () => {
     const fixture = clientFixture();

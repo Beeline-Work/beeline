@@ -7,6 +7,7 @@ import {
   OidcBindError,
   buildOidcBindEvent,
   finishOidcBind,
+  fetchIdentityPredecessors,
   recoverOidcBind,
   getAuthCapabilities,
   getGitHubRoomInstallationToken,
@@ -53,6 +54,23 @@ describe('identity succession resolution', () => {
     ).resolves.toBe(successor.publicKey);
     expect(authorizationHeaders).toHaveLength(2);
     expect(authorizationHeaders[0]).not.toBe(authorizationHeaders[1]);
+  });
+
+  it('times out a predecessor fetch even when the native fetch never settles', async () => {
+    vi.useFakeTimers();
+    const identity = generateKeypair();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
+
+    const fetching = fetchIdentityPredecessors('https://relay.example', identity);
+    const result = expect(fetching).rejects.toMatchObject({
+      code: 'offline',
+      message: 'identity succession lookup timed out',
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await result;
   });
 });
 
@@ -165,7 +183,10 @@ function callbackUrl(overrides: Record<string, string> = {}): string {
   return url.toString();
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe('OIDC device-key bind protocol', () => {
   it.each([

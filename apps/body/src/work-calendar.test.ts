@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { createIdentity, type Identity } from '@beeline/buzz-client';
@@ -237,6 +237,30 @@ describe('work schedule occurrence math', () => {
 });
 
 describe('WorkCalendar best-effort durable execution', () => {
+  it('recovers its serialized durable save queue after a write failure', async () => {
+    const durable = await durableState();
+    await durable.store.load();
+    await mkdir(durable.path);
+    const principal = createIdentity();
+    const first: WorkScheduleRuntimeState = {
+      scheduleId: 'recover-save-queue',
+      principalPubkey: principal.publicKey,
+      revision: 1,
+      runCount: 0,
+      dailyReservedTokens: 0,
+      consecutiveFailures: 0,
+      status: 'active',
+    };
+    await expect(durable.store.put(first)).rejects.toThrow();
+    await rm(durable.path, { recursive: true });
+    await durable.store.put({ ...first, runCount: 1, lastExecutionAt: 1_900_000_000 });
+    expect(JSON.parse(await readFile(durable.path, 'utf8'))).toMatchObject({
+      schedules: {
+        'recover-save-queue': { runCount: 1, lastExecutionAt: 1_900_000_000 },
+      },
+    });
+  });
+
   it('uses one heap timer and submits independently due schedules without serializing them', async () => {
     vi.useFakeTimers();
     const agent = createIdentity();
@@ -314,28 +338,25 @@ describe('WorkCalendar best-effort durable execution', () => {
     await restarted.dispose();
   });
 
-  it('accepts a duplicate after a crash between model completion and timestamp persistence', async () => {
+  it('retries after timestamp persistence fails without stalling its sole timer', async () => {
     vi.useFakeTimers();
     const store = new MemoryStore();
     const first = await calendarFixture({ store });
     await first.calendar.start();
     store.failNextPut = true;
-    await expect(first.calendar.wakeNow()).rejects.toThrow('simulated durable write crash');
+    await expect(first.calendar.wakeNow()).resolves.toBeUndefined();
     expect(first.dispatch).toHaveBeenCalledOnce();
     expect(store.values.get(first.schedule.scheduleId)?.lastExecutionAt).toBeUndefined();
-    await first.calendar.dispose();
+    expect(first.calendar.snapshot()).toMatchObject({ queued: 1, timerArmed: true });
+    expect(vi.getTimerCount()).toBe(1);
 
-    const second = await calendarFixture({
-      agent: first.agent,
-      principal: first.principal,
-      schedule: first.schedule,
-      scheduleEvents: first.scheduleEvents,
-      store,
-    });
-    await second.calendar.start();
-    await second.calendar.wakeNow();
-    expect(second.dispatch).toHaveBeenCalledOnce();
-    await second.calendar.dispose();
+    first.setNow(first.schedule.startsAt + 5);
+    await first.calendar.wakeNow();
+    expect(first.dispatch).toHaveBeenCalledTimes(2);
+    expect(store.values.get(first.schedule.scheduleId)?.lastExecutionAt).toBe(
+      first.schedule.startsAt,
+    );
+    await first.calendar.dispose();
   });
 
   it('does not gate or replay execution when relay receipt publication fails', async () => {

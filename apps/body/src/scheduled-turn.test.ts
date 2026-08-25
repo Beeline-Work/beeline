@@ -417,4 +417,73 @@ describe('scheduled Room turn boundary', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it('propagates a scheduled model failure to the calendar dispatcher', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-failure-'));
+    const agent = newIdentity('scheduled-failure-agent');
+    const principal = newIdentity('scheduled-failure-principal');
+    const body = new Body(config(root), undefined, agent);
+    vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
+    vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
+    const sessionPrompt = vi.fn(async () => {
+      throw new Error('provider unavailable');
+    });
+    body.registerSession({
+      channelId: 'scheduled-room',
+      sessionId: 'scheduled-session',
+      client: { sessionPrompt, sessionCancel: vi.fn() },
+      mode: 'readonly',
+    } as never);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
+    );
+    const nominalAt = 1_900_000_000;
+    const scheduleId = 'failing-report';
+    const runId = deterministicScheduleRunId(scheduleId, 1, nominalAt);
+    const queuedEvent = buildScheduledTurnReceipt(agent, {
+      version: 1,
+      workspaceId: 'scheduled-workspace',
+      roomId: 'scheduled-room',
+      agentPubkey: agent.publicKey,
+      principalPubkey: principal.publicKey,
+      scheduleId,
+      revision: 1,
+      runId,
+      nominalAt,
+      status: 'queued',
+      at: nominalAt,
+      reservedTokens: 100,
+    });
+    const beforeModelActivation = vi.fn(async () => undefined);
+    try {
+      await expect(
+        body.dispatchScheduledTurn(
+          {
+            trigger: 'schedule',
+            priority: 'background',
+            workspaceId: 'scheduled-workspace',
+            roomId: 'scheduled-room',
+            agentPubkey: agent.publicKey,
+            principalPubkey: principal.publicKey,
+            scheduleId,
+            scheduleRevision: 1,
+            scheduleRunId: runId,
+            nominalAt,
+            prompt: 'Prepare the report.',
+            artifactRefs: [],
+            reservedTokens: 100,
+            queuedEvent,
+          },
+          undefined,
+          'direct-message',
+          beforeModelActivation,
+        ),
+      ).rejects.toThrow('provider unavailable');
+      expect(beforeModelActivation).toHaveBeenCalledOnce();
+      expect(sessionPrompt).toHaveBeenCalledOnce();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

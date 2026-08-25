@@ -320,6 +320,69 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     });
   });
 
+  it('climbs observed reply ancestry before signing when remembered roots are stale', async () => {
+    // Thread R -> A -> B -> C where every remembered rootId is stale
+    // (mid-thread) but the raw-tag parent links are intact — the shape a
+    // truncated or incremental history leaves behind. Signing must derive
+    // the root by climbing parents, not by trusting any stored rootId.
+    const root = message(human, 'Thread root', 5);
+    const first = message(agent, 'First reply', 6, [
+      ['e', root.id, '', 'root'],
+      ['e', root.id, '', 'reply'],
+    ]);
+    const second = message(human, 'Second reply', 7, [
+      ['e', root.id, '', 'root'],
+      ['e', first.id, '', 'reply'],
+    ]);
+    const third = message(agent, 'Third reply', 8, [
+      ['e', root.id, '', 'root'],
+      ['e', second.id, '', 'reply'],
+    ]);
+    const fixture = clientFixture();
+    const transport = transportWith(fixture.client);
+    const fresh = await transport.readModelSnapshot(ROOM, [root, first, second, third]);
+
+    // Stale both everywhere: the session memory and the selected-from
+    // snapshot each record every reply's root as its immediate parent.
+    const staleParents = new Map([
+      [first.id, root.id],
+      [second.id, first.id],
+      [third.id, second.id],
+    ]);
+    const memory = transport as unknown as {
+      knownMessages: Map<string, { channelId: string; rootId: string; parentId?: string }>;
+    };
+    for (const [eventId, wrongRoot] of staleParents) {
+      const entry = memory.knownMessages.get(eventId);
+      if (!entry) throw new Error('threaded message was not remembered');
+      memory.knownMessages.set(eventId, { ...entry, rootId: wrongRoot });
+    }
+    const room = fresh.rooms[ROOM]!;
+    const staleJournal = Object.fromEntries(
+      Object.entries(room.eventJournal).map(([eventId, event]) => {
+        const wrongRoot = staleParents.get(eventId);
+        if (!wrongRoot || (event.type !== 'human-message' && event.type !== 'agent-message')) {
+          return [eventId, event];
+        }
+        return [eventId, { ...event, reply: { ...event.reply!, rootId: wrongRoot } }];
+      }),
+    );
+    const stale = { ...fresh, rooms: { ...fresh.rooms, [ROOM]: { ...room, eventJournal: staleJournal } } };
+
+    const selected = selectReplyTarget(stale, ROOM, third.id);
+    if (selected.status !== 'available') throw new Error('deep reply was not selected');
+
+    await transport.messageSubmitReply('Deepest reply', selected.reference);
+
+    expect(fixture.client.buildMessage).toHaveBeenCalledWith(ROOM, 'Deepest reply', {
+      extraTags: [
+        ['e', root.id, '', 'root'],
+        ['e', third.id, '', 'reply'],
+      ],
+    });
+    expect(fixture.client.publish).toHaveBeenCalledTimes(1);
+  });
+
   it('derives canonical corners from creator-authored lifecycle and verified membership', async () => {
     const fixture = clientFixture({ corners: true });
     const result = await transportWith(fixture.client).readModelBackfill(ROOM);

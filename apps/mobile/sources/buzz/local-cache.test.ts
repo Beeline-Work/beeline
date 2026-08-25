@@ -263,3 +263,121 @@ describe('normalized Buzz cache', () => {
     expect(useBuzzLocalCache.getState().channelLists[`${VIEWER}:workspace`]!.channels).toEqual([]);
   });
 });
+
+describe('stale cached thread roots', () => {
+  const ROOT = 'root-event';
+  const S1 = 'reply-one';
+  const S2 = 'reply-two';
+  const S3 = 'reply-three';
+
+  function threaded(id: string, createdAt: number, parent?: { eventId: string; rootId: string }) {
+    return {
+      ...humanMessage(id, createdAt, `body-${id}`),
+      ...(parent
+        ? {
+            reply: {
+              channelId: ROOM,
+              eventId: parent.eventId,
+              rootId: parent.rootId,
+            },
+          }
+        : {}),
+    } as HumanMessage;
+  }
+
+  /** R -> S1 -> S2 -> S3 with the stale mid-thread roots a pre-fix build
+   * persisted for messages parsed from truncated or incremental windows. */
+  function staleThreadedSnapshot() {
+    let snapshot = reduceWorkspaceSnapshot(
+      createWorkspaceSnapshot({ workspaceId: 'workspace' }),
+      threaded(ROOT, 1),
+    );
+    snapshot = reduceWorkspaceSnapshot(
+      snapshot,
+      threaded(S1, 2, { eventId: ROOT, rootId: ROOT }),
+    );
+    snapshot = reduceWorkspaceSnapshot(
+      snapshot,
+      threaded(S2, 3, { eventId: S1, rootId: S1 }),
+    );
+    return reduceWorkspaceSnapshot(snapshot, threaded(S3, 4, { eventId: S2, rootId: S2 }));
+  }
+
+  function persistedCachePayload(snapshot: unknown): string {
+    return JSON.stringify({
+      bootIntegrityHalt: null,
+      activeViewerPubkey: null,
+      activeListKeyByViewer: {},
+      channelLists: {},
+      channels: {
+        [`${VIEWER}:${ROOM}`]: {
+          viewerPubkey: VIEWER,
+          channelId: ROOM,
+          updatedAt: 1,
+          lastAccessedAt: 1,
+          snapshot,
+        },
+      },
+      profiles: {},
+    });
+  }
+
+  it('repairs stale persisted thread roots when the v3 cache is restored at boot', async () => {
+    vi.resetModules();
+    mmkvValues.set('buzz-local-cache-v3', persistedCachePayload(staleThreadedSnapshot()));
+    const restored = await import('./local-cache');
+    const journal = restored.useBuzzLocalCache.getState().channels[`${VIEWER}:${ROOM}`]!.snapshot!
+      .rooms[ROOM]!.eventJournal;
+    expect((journal[S2] as HumanMessage).reply!.rootId).toBe(ROOT);
+    expect((journal[S3] as HumanMessage).reply!.rootId).toBe(ROOT);
+    // Already-correct claims stay untouched.
+    expect((journal[S1] as HumanMessage).reply!.rootId).toBe(ROOT);
+    expect((journal[ROOT] as HumanMessage).reply).toBeUndefined();
+  });
+
+  it('leaves healthy snapshots byte-identical and unverifiable chains alone', async () => {
+    vi.resetModules();
+    mmkvValues.set('buzz-local-cache-v3', persistedCachePayload(staleThreadedSnapshot()));
+    const { repairCachedThreadRoots } = await import('./local-cache');
+
+    // A chain that climbs to its true root inside the journal is rewritten...
+    const journal = repairCachedThreadRoots(staleThreadedSnapshot()).rooms[ROOM]!.eventJournal;
+    expect((journal[S3] as HumanMessage).reply!.rootId).toBe(ROOT);
+
+    // ...a fully healthy snapshot returns the same reference (no churn)...
+    let healthy = reduceWorkspaceSnapshot(
+      createWorkspaceSnapshot({ workspaceId: 'workspace' }),
+      threaded(ROOT, 1),
+    );
+    healthy = reduceWorkspaceSnapshot(
+      healthy,
+      threaded(S1, 2, { eventId: ROOT, rootId: ROOT }),
+    );
+    healthy = reduceWorkspaceSnapshot(
+      healthy,
+      threaded(S2, 3, { eventId: S1, rootId: ROOT }),
+    );
+    expect(repairCachedThreadRoots(healthy)).toBe(healthy);
+
+    // ...and a chain whose top falls outside the journal keeps its claims.
+    const orphaned = reduceWorkspaceSnapshot(
+      createWorkspaceSnapshot({ workspaceId: 'workspace' }),
+      threaded(S3, 4, { eventId: S2, rootId: S2 }),
+    );
+    expect(repairCachedThreadRoots(orphaned)).toBe(orphaned);
+  });
+
+  it('does not loop on a cyclic stored thread index', async () => {
+    vi.resetModules();
+    const { repairCachedThreadRoots } = await import('./local-cache');
+    let cyclic = reduceWorkspaceSnapshot(
+      createWorkspaceSnapshot({ workspaceId: 'workspace' }),
+      threaded('cycle-a', 1, { eventId: 'cycle-b', rootId: 'cycle-b' }),
+    );
+    cyclic = reduceWorkspaceSnapshot(
+      cyclic,
+      threaded('cycle-b', 2, { eventId: 'cycle-a', rootId: 'cycle-a' }),
+    );
+    expect(repairCachedThreadRoots(cyclic)).toBe(cyclic);
+  });
+});

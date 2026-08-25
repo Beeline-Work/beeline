@@ -120,29 +120,15 @@ export interface ScheduledTurnRequest {
 export type ScheduleAuthorityResult =
   { authorized: true } | { authorized: false; terminal: boolean; reason: string };
 
-async function selectInitialSchedulePrincipal(
+async function creationPrincipalFromHistory(
   candidates: readonly ParsedWorkSchedule[],
-  authorize: (schedule: ParsedWorkSchedule) => Promise<ScheduleAuthorityResult>,
-): Promise<ParsedWorkSchedule | undefined> {
-  const ordered = [...candidates].sort(
-    (left, right) =>
-      right.value.revision - left.value.revision ||
-      right.event.created_at - left.event.created_at ||
-      right.event.id.localeCompare(left.event.id),
-  );
-  for (const [index, candidate] of ordered.entries()) {
-    const authority = await authorize(candidate);
-    if (authority.authorized) return candidate;
-    if (
-      ordered.slice(index + 1).some((older) => older.event.pubkey === candidate.event.pubkey) ||
-      authority.reason === 'schedule-author-role-lost' ||
-      authority.reason === 'schedule-change-grant-invalid' ||
-      authority.reason === 'human-resume-required'
-    ) {
-      return undefined;
-    }
-  }
-  return undefined;
+  validate?: (creation: readonly ParsedWorkSchedule[]) => Promise<boolean>,
+): Promise<string | undefined> {
+  const creation = candidates.filter((candidate) => candidate.value.revision === 1);
+  const principals = new Set(creation.map((candidate) => candidate.value.principalPubkey));
+  if (creation.length === 0 || principals.size !== 1) return undefined;
+  if (validate && !(await validate(creation))) return undefined;
+  return creation[0]!.value.principalPubkey;
 }
 
 /** Fresh admission failed after the ordinary Room dispatcher won a process slot. */
@@ -1108,6 +1094,7 @@ export interface WorkCalendarDependencies {
   readSchedules(): Promise<readonly NostrEvent[]>;
   readReceipts(): Promise<readonly NostrEvent[]>;
   authorize(schedule: ParsedWorkSchedule): Promise<ScheduleAuthorityResult>;
+  validateScheduleCreation?(creation: readonly ParsedWorkSchedule[]): Promise<boolean>;
   publish(event: NostrEvent): Promise<void>;
   dispatch(
     request: ScheduledTurnRequest,
@@ -1210,6 +1197,7 @@ export class WorkCalendar {
     this.relayReceipts = receiptEvents.flatMap((event) => {
       const parsed = parseScheduledTurnReceipt(event);
       return parsed &&
+        parsed.event.pubkey === this.dependencies.identity.publicKey &&
         parsed.value.workspaceId === this.dependencies.workspaceId &&
         parsed.value.agentPubkey === this.dependencies.identity.publicKey
         ? [parsed]
@@ -1231,40 +1219,46 @@ export class WorkCalendar {
     }
     this.schedules.clear();
     for (const [key, list] of candidates) {
-      const pinnedPrincipal = await this.dependencies.store.principalForSchedule(
+      let pinnedPrincipal = await this.dependencies.store.principalForSchedule(
         list[0]!.value.scheduleId,
       );
-      const plausible = list
-        // A stranger may copy a public d-tag and invent an enormous revision,
-        // but can never become the desired record's author.
-        .filter(
-          (candidate) =>
-            candidate.event.pubkey === candidate.value.principalPubkey ||
-            candidate.event.pubkey === candidate.value.agentPubkey,
-        )
-        .filter(
-          (candidate) =>
-            pinnedPrincipal === undefined ||
-            candidate.value.principalPubkey === pinnedPrincipal,
+      const plausible = list.filter(
+        (candidate) =>
+          candidate.event.pubkey === candidate.value.principalPubkey ||
+          candidate.event.pubkey === candidate.value.agentPubkey,
+      );
+      if (!pinnedPrincipal) {
+        const durablePrincipals = new Set([
+          ...this.localRuns
+            .filter((run) => run.scheduleId === list[0]!.value.scheduleId)
+            .map((run) => run.principalPubkey),
+          ...this.relayReceipts
+            .filter((receipt) => receipt.value.scheduleId === list[0]!.value.scheduleId)
+            .map((receipt) => receipt.value.principalPubkey),
+        ]);
+        if (durablePrincipals.size > 1) continue;
+        pinnedPrincipal =
+          durablePrincipals.values().next().value ??
+          (await creationPrincipalFromHistory(
+            plausible,
+            this.dependencies.validateScheduleCreation,
+          ));
+        if (!pinnedPrincipal) continue;
+        await this.dependencies.store.pinSchedulePrincipal(
+          list[0]!.value.scheduleId,
+          pinnedPrincipal,
         );
-      let current: ParsedWorkSchedule | undefined;
-      if (pinnedPrincipal) {
-        const newest = [...plausible].sort(
+      }
+      const newest = plausible
+        .filter((candidate) => candidate.value.principalPubkey === pinnedPrincipal)
+        .sort(
           (left, right) =>
             right.value.revision - left.value.revision ||
             right.event.created_at - left.event.created_at ||
             right.event.id.localeCompare(left.event.id),
         )[0];
-        if (newest && (await this.dependencies.authorize(newest)).authorized) current = newest;
-      } else {
-        current = await selectInitialSchedulePrincipal(plausible, this.dependencies.authorize);
-        if (current) {
-          await this.dependencies.store.pinSchedulePrincipal(
-            current.value.scheduleId,
-            current.value.principalPubkey,
-          );
-        }
-      }
+      const current =
+        newest && (await this.dependencies.authorize(newest)).authorized ? newest : undefined;
       if (!current) continue;
       this.schedules.set(key, current);
     }

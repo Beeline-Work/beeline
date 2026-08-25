@@ -49,6 +49,7 @@ export interface DaemonWorkScheduleAuthorityFacts {
   authorIsAgent: boolean;
   principalIsAgent: boolean;
   principalCanDrive: boolean | undefined;
+  principalRole: string | undefined;
   authorRole: string | undefined;
 }
 
@@ -128,6 +129,8 @@ async function authorizeCandidate(
     return { authorized: false, terminal: true, reason: 'principal-access-denied' };
   if (facts.principalIsAgent)
     return { authorized: false, terminal: true, reason: 'principal-is-agent' };
+  if (facts.principalRole !== 'owner' && facts.principalRole !== 'admin')
+    return { authorized: false, terminal: true, reason: 'schedule-principal-role-lost' };
   if (parsed.event.pubkey === schedule.agentPubkey) {
     if (!facts.authorIsAgent || !(await dependencies.verifyScheduleGrant(parsed)))
       return { authorized: false, terminal: true, reason: 'schedule-change-grant-invalid' };
@@ -326,6 +329,7 @@ export function createDaemonWorkCalendar(input: {
             authorIsAgent,
             principalIsAgent,
             principalCanDrive,
+            principalRole,
             authorRole,
           ] = await Promise.all([
             client.listMembers(schedule.value.workspaceId),
@@ -338,6 +342,7 @@ export function createDaemonWorkCalendar(input: {
               schedule.value.workspaceId,
               schedule.value.principalPubkey,
             ),
+            client.getChannelRole(schedule.value.roomId, schedule.value.principalPubkey),
             client.getChannelRole(schedule.value.roomId, schedule.event.pubkey),
           ]);
           return {
@@ -347,6 +352,7 @@ export function createDaemonWorkCalendar(input: {
             authorIsAgent,
             principalIsAgent,
             principalCanDrive,
+            principalRole: principalRole ?? undefined,
             authorRole: authorRole ?? undefined,
           };
         } finally {
@@ -385,6 +391,20 @@ export function createDaemonWorkCalendar(input: {
       rawEvents([
         { kinds: [9], '#t': [SCHEDULED_TURN_TAG], '#agent': [identity.publicKey], limit: 5_000 },
       ]),
+    validateScheduleCreation: async (creation) => {
+      for (const candidate of creation) {
+        if (candidate.event.pubkey === candidate.value.agentPubkey) {
+          if (!candidate.value.permissionGrantEventId || !(await verifyScheduleGrant(candidate)))
+            return false;
+        } else if (
+          candidate.event.pubkey !== candidate.value.principalPubkey ||
+          candidate.value.permissionGrantEventId
+        ) {
+          return false;
+        }
+      }
+      return true;
+    },
     authorize,
     publish: async (event) => {
       await relay.publishEvent(event);

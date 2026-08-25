@@ -78,6 +78,7 @@ async function calendarFixture(
     authority?:
       | ScheduleAuthorityResult
       | ((schedule: ParsedWorkSchedule) => Promise<ScheduleAuthorityResult>);
+    validateScheduleCreation?: WorkCalendarDependencies['validateScheduleCreation'];
     publish?: (event: NostrEvent) => Promise<void>;
     dispatch?: WorkCalendarDependencies['dispatch'];
   } = {},
@@ -107,6 +108,9 @@ async function calendarFixture(
       typeof options.authority === 'function'
         ? options.authority(candidate)
         : (options.authority ?? { authorized: true }),
+    ...(options.validateScheduleCreation
+      ? { validateScheduleCreation: options.validateScheduleCreation }
+      : {}),
     publish: options.publish ?? (async (event) => published.push(event)),
     dispatch,
     now: () => now,
@@ -820,12 +824,155 @@ describe('WorkCalendar durable execution', () => {
     await fixture.calendar.dispose();
   });
 
+  it('recovers the creation principal before evaluating newer cold-start revisions', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const replacement = createIdentity();
+    const first = scheduleFixture(agent, principal);
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule: first,
+      scheduleEvents: [
+        buildWorkSchedule(principal, first, { createdAt: first.startsAt - 30 }),
+        buildWorkSchedule(principal, { ...first, revision: 2 }, { createdAt: first.startsAt - 20 }),
+        buildWorkSchedule(
+          replacement,
+          { ...first, revision: 999, principalPubkey: replacement.publicKey },
+          { createdAt: first.startsAt - 10 },
+        ),
+      ],
+      authority: async (candidate) =>
+        candidate.value.principalPubkey === principal.publicKey
+          ? { authorized: false, terminal: true, reason: 'principal-removed' }
+          : { authorized: true },
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(await fixture.durable.principalForSchedule(first.scheduleId)).toBe(
+      principal.publicKey,
+    );
+    expect(fixture.calendar.snapshot().schedules).toBe(0);
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    await fixture.calendar.dispose();
+  });
+
+  it('fails closed when signed creation history names multiple principals', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const replacement = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      scheduleEvents: [
+        buildWorkSchedule(principal, schedule, { createdAt: schedule.startsAt - 20 }),
+        buildWorkSchedule(
+          replacement,
+          { ...schedule, principalPubkey: replacement.publicKey },
+          { createdAt: schedule.startsAt - 10 },
+        ),
+      ],
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(await fixture.durable.principalForSchedule(schedule.scheduleId)).toBeUndefined();
+    expect(fixture.calendar.snapshot().schedules).toBe(0);
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    await fixture.calendar.dispose();
+  });
+
+  it('requires an agent-authored creation to have a valid human authorization chain', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, {
+      permissionGrantEventId: 'a'.repeat(64),
+    });
+    const validateScheduleCreation = vi.fn(async () => false);
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      scheduleEvents: [
+        buildWorkSchedule(agent, schedule, { createdAt: schedule.startsAt - 10 }),
+      ],
+      validateScheduleCreation,
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(validateScheduleCreation).toHaveBeenCalledOnce();
+    expect(await fixture.durable.principalForSchedule(schedule.scheduleId)).toBeUndefined();
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    await fixture.calendar.dispose();
+  });
+
+  it('ignores forged relay receipts when recovering the creation principal', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const outsider = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const forgedRunId = deterministicScheduleRunId(schedule.scheduleId, 1, schedule.startsAt - 60);
+    const receiptValue = {
+      version: 1,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: agent.publicKey,
+      principalPubkey: outsider.publicKey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      runId: forgedRunId,
+      nominalAt: schedule.startsAt - 60,
+      status: 'complete',
+      at: schedule.startsAt - 60,
+      reservedTokens: 100,
+    } as const;
+    const receiptShape = buildScheduledTurnReceipt(agent, receiptValue);
+    const forgedReceipt = signEvent(
+      {
+        pubkey: outsider.publicKey,
+        created_at: receiptShape.created_at,
+        kind: receiptShape.kind,
+        tags: receiptShape.tags,
+        content: receiptShape.content,
+      },
+      outsider.secretKey,
+    );
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      receiptEvents: [forgedReceipt],
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(await fixture.durable.principalForSchedule(schedule.scheduleId)).toBe(
+      principal.publicKey,
+    );
+    expect(fixture.dispatch).toHaveBeenCalledOnce();
+    await fixture.calendar.dispose();
+  });
+
   it('accepts an authorized delete tombstone without dispatching work', async () => {
     vi.useFakeTimers();
     const agent = createIdentity();
     const principal = createIdentity();
     const deleted = scheduleFixture(agent, principal, { revision: 2, status: 'deleted' });
-    const fixture = await calendarFixture({ agent, principal, schedule: deleted });
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule: deleted,
+      scheduleEvents: [
+        buildWorkSchedule(principal, { ...deleted, revision: 1, status: 'active' }, {
+          createdAt: deleted.startsAt - 20,
+        }),
+        buildWorkSchedule(principal, deleted, { createdAt: deleted.startsAt - 10 }),
+      ],
+    });
     await fixture.calendar.start();
     await fixture.calendar.wakeNow();
     expect(fixture.calendar.snapshot().schedules).toBe(1);

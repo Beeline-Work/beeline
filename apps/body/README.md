@@ -342,7 +342,11 @@ publication, without a second per-action permission ceremony. Its hard runtime
 bounds are expiry, maximum runs, per-run and daily token budgets, and the
 consecutive-failure pause. Model-emitted delegation and text-corner directives
 remain inert, so one schedule cannot amplify itself into additional recurring
-work.
+work. Every occurrence revalidates the pinned principal's current owner/admin
+role independently of the event author. Cold recovery accepts that principal
+only from daemon-signed run history or an unambiguous signed revision-1 creation
+record (including the human grant chain for agent authors); otherwise it refuses
+the schedule.
 
 ### Repository event service
 

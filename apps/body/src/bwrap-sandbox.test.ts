@@ -14,8 +14,16 @@
  * cannot. It soft-skips when bubblewrap is unavailable.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
@@ -392,6 +400,28 @@ describe('credential masks — readable is usable, so known stores are absent', 
     expect(args[storeAt - 1]).toBe('--tmpfs');
   });
 
+  it('creates private mountpoints for required paths absent on the host', () => {
+    const store = '/home/op/.config/trusty-squire';
+    const bus = '/run/user/1000/bus';
+    const masks = credentialMaskPaths(
+      [store, bus],
+      '/home/op',
+      () => undefined,
+      [store, bus],
+    );
+    const { args } = buildBwrapArgv({
+      bwrapPath: '/usr/bin/bwrap',
+      plan: sandboxMountPlan({ mode: 'readonly', cwd: '/srv/repo', maskPaths: masks }),
+      cwd: '/srv/repo',
+      command: 'codex-acp',
+    });
+    for (const path of [store, bus]) {
+      const mountAt = args.indexOf(path);
+      expect(masks).toContainEqual({ path, kind: 'dir', create: true });
+      expect(args.slice(mountAt - 1, mountAt + 3)).toEqual(['--dir', path, '--tmpfs', path]);
+    }
+  });
+
   it('masks the built-in known credential homes in BOTH modes', () => {
     for (const mode of ['readonly', 'edit'] as const) {
       const plan = sandboxMountPlan({
@@ -592,6 +622,73 @@ liveDescribe('the wrapper enforces Room read-only and the corner hygiene denylis
 
     // The private /tmp is the one writable surface, and it is discarded.
     expect(runWrapped(spec, 'touch /tmp/scratch && echo ok').stdout.trim()).toBe('ok');
+  });
+
+  it('keeps stores and session sockets created after activation outside the namespace', async () => {
+    const hostConfig = resolve(root, 'late-config');
+    const runtimeDir = resolve(root, 'late-run');
+    const store = resolve(hostConfig, 'trusty-squire');
+    const bus = resolve(runtimeDir, 'bus');
+    mkdirSync(hostConfig, { recursive: true });
+    mkdirSync(runtimeDir, { recursive: true });
+    const masks = credentialMaskPaths(
+      [store, bus],
+      root,
+      undefined,
+      [store, bus],
+    );
+    const wrapped = wrapAgentCommand({
+      bwrapPath: bwrap.path!,
+      spec: { mode: 'readonly', cwd: checkout, maskPaths: masks },
+      command: '/bin/sh',
+      args: [
+        '-c',
+        `echo ready; read signal; test ! -e ${JSON.stringify(resolve(store, 'session.json'))}; test ! -S ${JSON.stringify(bus)}; echo isolated`,
+      ],
+    });
+    const child = spawn(wrapped.command, wrapped.args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    let stdout = '';
+    let stderr = '';
+    let readySeen = false;
+    const exited = new Promise<number | null>((resolveExit, rejectExit) => {
+      child.once('error', rejectExit);
+      child.once('exit', resolveExit);
+    });
+    const ready = new Promise<void>((resolveReady, rejectReady) => {
+      child.stdout.on('data', (chunk: string) => {
+        stdout += chunk;
+        if (stdout.includes('ready\n')) {
+          readySeen = true;
+          resolveReady();
+        }
+      });
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk;
+      });
+      child.once('error', rejectReady);
+      child.once('exit', (status) => {
+        if (!readySeen) rejectReady(new Error(`bubblewrap exited ${status}: ${stderr}`));
+      });
+    });
+    await ready;
+    mkdirSync(store, { recursive: true });
+    writeFileSync(resolve(store, 'session.json'), 'host-secret');
+    const busServer = createServer();
+    await new Promise<void>((resolveListen, rejectListen) => {
+      busServer.once('error', rejectListen);
+      busServer.listen(bus, resolveListen);
+    });
+    try {
+      child.stdin.end('continue\n');
+      const status = await exited;
+      expect(status).toBe(0);
+      expect(stdout).toContain('isolated\n');
+      expect(readFileSync(resolve(store, 'session.json'), 'utf8')).toBe('host-secret');
+    } finally {
+      await new Promise<void>((resolveClose) => busServer.close(() => resolveClose()));
+    }
   });
 
   it('a corner writes generally but cannot write protected checkouts or sibling corners', () => {

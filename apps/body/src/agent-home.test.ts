@@ -100,7 +100,7 @@ describe('per-room harness state isolation', () => {
     await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
     await writeFile(
       resolve(operatorHome, '.codex/config.toml'),
-      '[mcp_servers.squire]\ncommand = "npx"\n',
+      '[mcp_servers.vault]\ncommand = "npx"\nargs = ["-y", "@trusty-squire/mcp@1.1.12"]\n',
     );
     expect(hasAmbientTrustySquireConfiguration(operatorHome)).toBe(true);
   });
@@ -136,6 +136,10 @@ describe('operator skills + MCP passthrough', () => {
     '[mcp_servers.squire]',
     'command = "npx"',
     'args = ["-y", "@trusty-squire/mcp"]',
+    '',
+    '[mcp_servers.vault_tools]',
+    'command = "npx"',
+    'args = ["-y", "@trusty-squire/mcp@1.1.12"]',
     '',
     '[mcp_servers.project_tools]',
     'command = "project-tools"',
@@ -183,6 +187,7 @@ describe('operator skills + MCP passthrough', () => {
     const isolatedText = readFileSync(isolatedConfig, 'utf8');
     expect(isolatedText).toContain('[mcp_servers.project_tools]');
     expect(isolatedText).not.toContain('[mcp_servers.squire]');
+    expect(isolatedText).not.toContain('[mcp_servers.vault_tools]');
     expect(isolatedText).not.toMatch(/model|approval_policy|sandbox_mode/);
 
     // Writing through the session cannot reach the operator's real config.
@@ -202,6 +207,7 @@ describe('operator skills + MCP passthrough', () => {
         mcpServers: {
           files: { command: 'files-mcp' },
           squire: { command: 'npx', args: ['-y', '@trusty-squire/mcp'] },
+          vault: { command: 'npx', args: ['-y', '@trusty-squire/mcp@1.1.12'] },
         },
       }),
     );

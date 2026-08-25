@@ -21,6 +21,7 @@ describe('readOperatorMcpServers', () => {
     const dir = runtimeDirWith(
       JSON.stringify([
         { name: 'squire', command: 'npx', args: ['-y', '@trusty-squire/mcp'], env: [] },
+        { name: 'vault-tools', command: 'npx', args: ['-y', '@trusty-squire/mcp@1.1.12'] },
         { name: 'project-tools', command: '/usr/local/bin/project-mcp' },
       ]),
     );

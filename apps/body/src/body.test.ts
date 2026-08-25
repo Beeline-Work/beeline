@@ -1252,17 +1252,29 @@ describe('agent identity boundary', () => {
           agentKind: 'claude',
           agentHomeRoot: blockedHome,
           operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
         });
         await expect(
           Reflect.get(unprovisioned, 'sessionAgentEnv').call(unprovisioned),
         ).rejects.toThrow();
 
         const isolatedRoot = join(root, 'codex-home');
+        const unwrapped = new Body({
+          ...config,
+          agentKind: 'codex',
+          agentHomeRoot: isolatedRoot,
+          operatorHome,
+        });
+        await expect(Reflect.get(unwrapped, 'sessionAgentEnv').call(unwrapped)).rejects.toThrow(
+          /bubblewrap credential-mask boundary/,
+        );
+
         const supported = new Body({
           ...config,
           agentKind: 'codex',
           agentHomeRoot: isolatedRoot,
           operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
         });
         await expect(
           Reflect.get(supported, 'sessionAgentEnv').call(supported),

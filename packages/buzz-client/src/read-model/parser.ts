@@ -216,6 +216,14 @@ function isProjectionAuthority(authority: ParseAuthority, pubkey: string): boole
   return authority.trustedProjectionPubkeys?.includes(pubkey) ?? false;
 }
 
+function isHistoricalMessageAuthor(
+  authority: ParseAuthority,
+  channelId: string,
+  pubkey: string,
+): boolean {
+  return authority.historicalMessagePubkeys?.[channelId]?.includes(pubkey) ?? false;
+}
+
 function role(value: string | undefined): MemberRole {
   return value === 'owner' || value === 'admin' || value === 'member' ? value : 'unknown';
 }
@@ -950,6 +958,38 @@ function parseFactoryMessage(
   };
 }
 
+function parseConversationMessage(
+  event: NostrEvent,
+  scope: ChannelScope,
+  agentAuthor: boolean,
+  authority: ParseAuthority,
+): HumanMessage | AgentMessage | Unknown {
+  if (!event.content.trim() && attachments(event).length === 0) {
+    return unknown(event, 'malformed-schema');
+  }
+  const reply = replyReference(event, scope.channelId, authority);
+  const conversation = {
+    body: event.content,
+    attachments: attachments(event),
+    mentionPubkeys: mentionPubkeys(event),
+    ...(reply && !isUnknown(reply) ? { reply } : {}),
+    ...(tag(event, 'client-nonce') ? { clientNonce: tag(event, 'client-nonce') } : {}),
+  };
+  if (agentAuthor) {
+    return {
+      ...envelope(event, scope),
+      type: 'agent-message',
+      ...conversation,
+      ...(tag(event, 'request') ? { requestId: tag(event, 'request') } : {}),
+    } satisfies AgentMessage;
+  }
+  return {
+    ...envelope(event, scope),
+    type: 'human-message',
+    ...conversation,
+  } satisfies HumanMessage;
+}
+
 function parseMessage(event: NostrEvent, authority: ParseAuthority): ReadEvent {
   const scope = channelScope(event, authority);
   if (isUnknown(scope)) return scope;
@@ -957,7 +997,24 @@ function parseMessage(event: NostrEvent, authority: ParseAuthority): ReadEvent {
   const markerSet = new Set(markers(event));
   const factory = parseFactoryMessage(event, scope, author, markerSet, authority);
   if (factory) return factory;
-  if (!author || author.kind === 'infrastructure') return unknown(event, 'unresolved-identity');
+  if (!author) {
+    if (!isHistoricalMessageAuthor(authority, scope.channelId, event.pubkey)) {
+      return unknown(event, 'unresolved-identity');
+    }
+    const reservedMarker = [...markerSet].some(
+      (candidate) =>
+        FACTORY_MARKERS.has(candidate) ||
+        SESSION_MARKERS.has(candidate) ||
+        CONTROL_MARKERS.has(candidate) ||
+        candidate === TAG_AGENT ||
+        candidate === TAG_AGENT_ACTIVITY ||
+        candidate === TAG_MERGE_APPROVAL ||
+        candidate === 'body-control',
+    );
+    if (reservedMarker || tag(event, 'subchannel')) return unknown(event, 'unauthorized');
+    return parseConversationMessage(event, scope, false, authority);
+  }
+  if (author.kind === 'infrastructure') return unknown(event, 'unresolved-identity');
   const agentAuthor = author.kind === 'agent';
 
   if (markerSet.has(TAG_MERGE_APPROVAL) && !agentAuthor) {
@@ -1022,30 +1079,7 @@ function parseMessage(event: NostrEvent, authority: ParseAuthority): ReadEvent {
     }
   }
 
-  if (!event.content.trim() && attachments(event).length === 0) {
-    return unknown(event, 'malformed-schema');
-  }
-  const reply = replyReference(event, scope.channelId, authority);
-  const conversation = {
-    body: event.content,
-    attachments: attachments(event),
-    mentionPubkeys: mentionPubkeys(event),
-    ...(reply && !isUnknown(reply) ? { reply } : {}),
-    ...(tag(event, 'client-nonce') ? { clientNonce: tag(event, 'client-nonce') } : {}),
-  };
-  if (agentAuthor) {
-    return {
-      ...envelope(event, scope),
-      type: 'agent-message',
-      ...conversation,
-      ...(tag(event, 'request') ? { requestId: tag(event, 'request') } : {}),
-    } satisfies AgentMessage;
-  }
-  return {
-    ...envelope(event, scope),
-    type: 'human-message',
-    ...conversation,
-  } satisfies HumanMessage;
+  return parseConversationMessage(event, scope, agentAuthor, authority);
 }
 
 function parseMembership(event: NostrEvent, authority: ParseAuthority): Membership | Unknown {

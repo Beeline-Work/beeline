@@ -300,6 +300,7 @@ describe('ChannelSnapshotMaterializer', () => {
   it('retains historical messages after their author leaves the Room', async () => {
     const owner = createIdentity('snapshot-current-owner');
     const departed = createIdentity('snapshot-departed-member');
+    const profileless = createIdentity('snapshot-profileless-departed-member');
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
       TENANT,
       CHANNEL,
@@ -307,10 +308,26 @@ describe('ChannelSnapshotMaterializer', () => {
     await database.query(
       `INSERT INTO channel_members (community_id, channel_id, pubkey, removed_at)
        VALUES ($1, $2, decode($3, 'hex'), NULL),
-              ($1, $2, decode($4, 'hex'), now())`,
-      [TENANT, CHANNEL, owner.publicKey, departed.publicKey],
+              ($1, $2, decode($4, 'hex'), now()),
+              ($1, $2, decode($5, 'hex'), now())`,
+      [TENANT, CHANNEL, owner.publicKey, departed.publicKey, profileless.publicKey],
     );
     const base = Math.floor(Date.now() / 1_000) - 10;
+    const unauthorizedApproval = signEvent(
+      {
+        pubkey: profileless.publicKey,
+        created_at: base + 3,
+        kind: 9,
+        tags: [
+          ['h', CHANNEL],
+          ['t', 'buzz-merge-approval'],
+          ['repo', 'lunchboxfortwo/beeline'],
+          ['branch', 'main'],
+        ],
+        content: 'APPROVE',
+      },
+      profileless.secretKey,
+    );
     await insertEvents([
       signEvent(
         {
@@ -322,6 +339,7 @@ describe('ChannelSnapshotMaterializer', () => {
             ['community', 'verified-application-workspace'],
             ['p', owner.publicKey, 'owner'],
             ['p', departed.publicKey, 'member'],
+            ['p', profileless.publicKey, 'admin'],
           ],
           content: '',
         },
@@ -337,12 +355,23 @@ describe('ChannelSnapshotMaterializer', () => {
         },
         departed.secretKey,
       ),
+      signEvent(
+        {
+          pubkey: profileless.publicKey,
+          created_at: base + 2,
+          kind: 9,
+          tags: [['h', CHANNEL]],
+          content: 'Profileless history remains after I leave.',
+        },
+        profileless.secretKey,
+      ),
+      unauthorizedApproval,
     ]);
     await insertEvent(
       signEvent(
         {
           pubkey: departed.publicKey,
-          created_at: base + 2,
+          created_at: base + 4,
           kind: 0,
           tags: [],
           content: JSON.stringify({ display_name: 'Former Member' }),
@@ -356,7 +385,7 @@ describe('ChannelSnapshotMaterializer', () => {
         signEvent(
           {
             pubkey: owner.publicKey,
-            created_at: base + 3 + index,
+            created_at: base + 5 + index,
             kind: 0,
             tags: [],
             content: JSON.stringify({ display_name: `Current Owner ${index}` }),
@@ -391,13 +420,22 @@ describe('ChannelSnapshotMaterializer', () => {
       selectTranscript(served!.payload!.snapshot, CHANNEL)
         .filter((row) => row.kind === 'human-message')
         .map((row) => row.body),
-    ).toEqual(['History remains after I leave.']);
+    ).toEqual([
+      'History remains after I leave.',
+      'Profileless history remains after I leave.',
+    ]);
+    expect(
+      served?.payload?.snapshot.rooms[CHANNEL]?.eventJournal[unauthorizedApproval.id],
+    ).toBeUndefined();
     expect(served?.payload?.snapshot.rooms[CHANNEL]?.membership).toMatchObject({
       status: 'known',
       members: { [owner.publicKey]: { pubkey: owner.publicKey } },
     });
     expect(served?.payload?.snapshot.rooms[CHANNEL]?.membership).not.toMatchObject({
       members: { [departed.publicKey]: expect.anything() },
+    });
+    expect(served?.payload?.snapshot.rooms[CHANNEL]?.membership).not.toMatchObject({
+      members: { [profileless.publicKey]: expect.anything() },
     });
   }, 30_000);
 

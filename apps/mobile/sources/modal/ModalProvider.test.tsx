@@ -109,15 +109,19 @@ describe('ModalProvider Hull integration', () => {
     await act(async () => {
       Modal.actionSheet(
         'Room',
-        [{ text: 'Copy ID', disabled: false, metadata: 'room-123', onPress: selected }],
+        [
+          { text: 'Copy ID', disabled: false, metadata: 'room-123', onPress: selected },
+          { text: 'Unavailable', disabled: true, onPress: selected },
+        ],
         { cancelText: 'Cancel', message: 'Room details' },
       );
     });
 
     const sheet = renderer.root.findByType('HullActionSheetModal' as any);
     expect(sheet.props).toMatchObject({ subtitle: 'Room details', title: 'Room', visible: true });
-    const row = renderer.root.findByType('HullActionSheetRow' as any);
+    const [row, disabledRow] = renderer.root.findAllByType('HullActionSheetRow' as any);
     expect(row.props).toMatchObject({ disabled: false, label: 'Copy ID', metadata: 'room-123' });
+    expect(disabledRow.props).toMatchObject({ disabled: true, label: 'Unavailable' });
     await act(async () => row.props.onPress());
     expect(selected).toHaveBeenCalledOnce();
     expect(renderer.root.findAllByType('HullActionSheetModal' as any)).toHaveLength(0);

@@ -13,7 +13,11 @@ vi.mock('react-native-mmkv', () => ({
   },
 }));
 
-import { PERSONAL_WORKSPACE_NAME, prepareWorkspaceContext } from './workspace-bootstrap';
+import {
+  PERSONAL_WORKSPACE_NAME,
+  personalWorkspaceIdForPubkey,
+  prepareWorkspaceContext,
+} from './workspace-bootstrap';
 
 function workspace(communityId: string, name = 'Personal') {
   return { communityId, name } as any;
@@ -31,11 +35,18 @@ function storage(overrides: Record<string, unknown> = {}) {
 
 describe('Workspace bootstrap', () => {
   it('creates and lands a fresh person in a real personal Workspace', async () => {
-    const personal = workspace('personal-1');
+    const personalId = personalWorkspaceIdForPubkey('person-pubkey');
+    const personal = workspace(personalId);
     const client = {
-      listCommunities: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([personal]),
-      getCommunity: vi.fn(),
-      createCommunity: vi.fn().mockResolvedValue('personal-1'),
+      // Two consecutive confirmed-empty discovery answers are required before
+      // the creation door may fire; the third read is the post-create re-list.
+      listCommunities: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([personal]),
+      getCommunity: vi.fn().mockResolvedValue(null),
+      createCommunity: vi.fn().mockResolvedValue(personalId),
       waitUntilMember: vi.fn().mockResolvedValue(undefined),
     } as any;
     const memory = storage();
@@ -44,20 +55,26 @@ describe('Workspace bootstrap', () => {
       prepareWorkspaceContext(client, 'person-pubkey', undefined, memory),
     ).resolves.toEqual({
       workspaces: [personal],
-      activeWorkspaceId: 'personal-1',
-      personalWorkspaceId: 'personal-1',
+      activeWorkspaceId: personalId,
+      personalWorkspaceId: personalId,
     });
 
-    expect(client.createCommunity).toHaveBeenCalledWith(PERSONAL_WORKSPACE_NAME);
-    expect(memory.savePersonalId).toHaveBeenCalledWith('person-pubkey', 'personal-1');
-    expect(client.waitUntilMember).toHaveBeenCalledWith('personal-1', 'person-pubkey');
-    expect(memory.saveActiveId).toHaveBeenCalledWith('person-pubkey', 'personal-1');
+    expect(client.createCommunity).toHaveBeenCalledWith(PERSONAL_WORKSPACE_NAME, {
+      communityId: personalId,
+    });
+    expect(memory.savePersonalId).toHaveBeenCalledWith('person-pubkey', personalId);
+    expect(client.waitUntilMember).toHaveBeenCalledWith(personalId, 'person-pubkey');
+    expect(memory.saveActiveId).toHaveBeenCalledWith('person-pubkey', personalId);
   });
 
   it('recovers a remembered personal Workspace instead of creating a duplicate', async () => {
     const personal = workspace('personal-1');
     const client = {
-      listCommunities: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([personal]),
+      listCommunities: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([personal]),
       getCommunity: vi.fn().mockResolvedValue(personal),
       createCommunity: vi.fn(),
       waitUntilMember: vi.fn().mockResolvedValue(undefined),
@@ -175,5 +192,146 @@ describe('Workspace bootstrap with key-succession predecessors', () => {
 
     expect(verdicts.loadAndSeed).toHaveBeenCalled();
     expect(verdicts.persist).not.toHaveBeenCalled();
+    expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+});
+
+describe('the personal-Workspace creation door never fires on unconfirmed absence', () => {
+  function quietClient() {
+    return {
+      listCommunities: vi.fn(),
+      getCommunity: vi.fn(),
+      createCommunity: vi.fn(),
+      waitUntilMember: vi.fn().mockResolvedValue(undefined),
+    } as any;
+  }
+
+  it('a single empty discovery answer never creates; a confirming non-empty re-read wins', async () => {
+    // Production shape (captain's key, 2026-08-26): one transient discovery
+    // miss took bootstrap straight into creation and minted junk "Personal"
+    // Workspaces signed by the human key.
+    const tubing = workspace('tubing-1', 'Tubing Crew');
+    const client = quietClient();
+    client.listCommunities
+      .mockResolvedValueOnce([]) // the partial/unconfirmed miss
+      .mockResolvedValueOnce([tubing]); // the confirming re-read
+
+    const result = await prepareWorkspaceContext(client, 'person-pubkey', undefined, storage());
+
+    expect(result.activeWorkspaceId).toBe('tubing-1');
+    expect(result.personalWorkspaceId).toBeNull();
+    expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+
+  it('a remembered-but-unloadable personal Workspace refuses creation instead of duplicating', async () => {
+    const client = quietClient();
+    client.listCommunities.mockResolvedValue([]);
+    client.getCommunity.mockResolvedValue(null); // partial read OR deleted: unknown either way
+    const memory = storage({ loadPersonalId: vi.fn().mockResolvedValue('personal-old') });
+
+    await expect(
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, memory),
+    ).rejects.toThrow(/Remembered Personal/);
+
+    expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+
+  it('never creates when the deterministic reconcile read is unavailable', async () => {
+    const client = quietClient();
+    client.listCommunities.mockResolvedValue([]);
+    client.getCommunity.mockRejectedValue(new Error('exact read failed'));
+
+    await expect(
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, storage()),
+    ).rejects.toThrow('exact read failed');
+
+    expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+
+  it('creates exactly once when two concurrent onboardings race in one process', async () => {
+    const deterministicId = personalWorkspaceIdForPubkey('person-pubkey');
+    const published = workspace(deterministicId);
+    const client = quietClient();
+    // Two confirmed-empty discovery reads per racing caller, then the
+    // post-create re-list sees the minted record.
+    client.listCommunities
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([published]);
+    client.getCommunity.mockResolvedValue(null);
+    client.createCommunity.mockImplementation(
+      async () =>
+        await new Promise<string>((resolve) => setTimeout(() => resolve(deterministicId), 10)),
+    );
+
+    const [a, b] = await Promise.all([
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, storage()),
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, storage()),
+    ]);
+
+    expect(client.createCommunity).toHaveBeenCalledTimes(1);
+    expect(client.createCommunity).toHaveBeenCalledWith(PERSONAL_WORKSPACE_NAME, {
+      communityId: deterministicId,
+    });
+    expect(a.activeWorkspaceId).toBe(deterministicId);
+    expect(b.activeWorkspaceId).toBe(deterministicId);
+  });
+
+  it('reconciles a rejected create response when the deterministic record landed', async () => {
+    const deterministicId = personalWorkspaceIdForPubkey('person-pubkey');
+    const published = workspace(deterministicId);
+    const client = quietClient();
+    client.listCommunities
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([published]);
+    client.getCommunity.mockResolvedValueOnce(null).mockResolvedValueOnce(published);
+    client.createCommunity.mockRejectedValue(new Error('publish response lost'));
+
+    const result = await prepareWorkspaceContext(client, 'person-pubkey', undefined, storage());
+
+    expect(result.activeWorkspaceId).toBe(deterministicId);
+    expect(client.createCommunity).toHaveBeenCalledTimes(1);
+  });
+
+  it('converges lost persistence onto the already-published record across an app restart', async () => {
+    // Session 1: the create publishes to the relay, but the persisted id is
+    // lost. Session 2 is a fresh module registry — no shared
+    // in-flight state survives — so only the durable deterministic id can
+    // converge the retry onto the same record instead of minting a twin.
+    const deterministicId = personalWorkspaceIdForPubkey('person-pubkey');
+    const lostResponseStorage = storage({
+      savePersonalId: vi.fn().mockRejectedValue(new Error('storage write lost')),
+    });
+    const firstClient = quietClient();
+    firstClient.listCommunities.mockResolvedValue([]);
+    firstClient.getCommunity.mockResolvedValue(null);
+    firstClient.createCommunity.mockResolvedValue(deterministicId);
+
+    await expect(
+      prepareWorkspaceContext(firstClient, 'person-pubkey', undefined, lostResponseStorage),
+    ).rejects.toThrow('storage write lost');
+    expect(firstClient.createCommunity).toHaveBeenCalledTimes(1);
+    expect(firstClient.createCommunity).toHaveBeenCalledWith(PERSONAL_WORKSPACE_NAME, {
+      communityId: deterministicId,
+    });
+
+    vi.resetModules();
+    const { prepareWorkspaceContext: freshSession } = await import('./workspace-bootstrap');
+    const published = workspace(deterministicId);
+    const secondClient = quietClient();
+    secondClient.listCommunities
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([published]); // post-adoption re-list sees the record
+    secondClient.getCommunity.mockResolvedValue(published); // authoritative reconcile hit
+
+    const result = await freshSession(secondClient, 'person-pubkey', undefined, storage());
+
+    expect(result.activeWorkspaceId).toBe(deterministicId);
+    expect(result.personalWorkspaceId).toBe(deterministicId);
+    expect(secondClient.createCommunity).not.toHaveBeenCalled();
   });
 });

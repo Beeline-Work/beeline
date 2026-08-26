@@ -23,12 +23,6 @@ const actions = [
     description: "Run production store builds and auto-submit",
     scripts: ["release:build:appstore"],
   },
-  {
-    id: "ota-beta",
-    label: "OTA candidate (beta)",
-    description: "Publish an update candidate to beta; production promotion stays in the release governor",
-    scripts: ["release:ota:release"],
-  },
 ];
 
 const actionAliases = {
@@ -39,9 +33,6 @@ const actionAliases = {
   appstore: "appstore-build",
   store: "appstore-build",
   "appstore-build": "appstore-build",
-  "ota-beta": "ota-beta",
-  "ota:beta": "ota-beta",
-  beta: "ota-beta",
 };
 
 function findAction(input) {

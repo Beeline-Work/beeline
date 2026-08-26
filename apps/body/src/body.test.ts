@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -1637,12 +1638,44 @@ describe('agent identity boundary', () => {
       }
     });
 
+    it('reserves an empty legacy Squire mask mountpoint idempotently across activations', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'squire-legacy-concurrent-'));
+      try {
+        const operatorHome = join(root, 'operator');
+        mkdirSync(join(operatorHome, '.config/trusty-squire'), { recursive: true });
+        const squireConfigRoot = join(root, 'runtime', 'squire-host-config');
+        const makeBody = (name: string) =>
+          new Body({
+            ...config,
+            agentKind: 'pi',
+            externalMcpCapabilities: [],
+            agentHomeRoot: join(root, name),
+            operatorHome,
+            bwrapPath: '/usr/bin/bwrap',
+            squireConfigRoot,
+          });
+        const first = makeBody('first');
+        const second = makeBody('second');
+
+        await expect(
+          Promise.all([
+            Reflect.get(first, 'sessionAgentEnv').call(first),
+            Reflect.get(second, 'sessionAgentEnv').call(second),
+          ]),
+        ).resolves.toHaveLength(2);
+        expect(readdirSync(join(squireConfigRoot, 'trusty-squire'))).toEqual([]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     it('keeps the owned Squire store isolated after capability removal and downgrade', async () => {
       const root = mkdtempSync(join(tmpdir(), 'squire-owned-store-boundary-'));
       try {
         const operatorHome = join(root, 'operator');
         const squireConfigRoot = join(root, 'beeline', 'squire-host-config');
         mkdirSync(join(squireConfigRoot, 'trusty-squire'), { recursive: true });
+        writeFileSync(join(squireConfigRoot, 'trusty-squire/credential-state.json'), '{}');
 
         const removed = new Body({
           ...config,

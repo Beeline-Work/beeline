@@ -11,7 +11,7 @@
  * agent-authored config event is refused by the reader's role re-check even if
  * it reaches the relay.
  */
-import { normalizeTargetBranchName } from '@beeline/buzz-client';
+import { matchSlashCommand, normalizeTargetBranchName } from '@beeline/buzz-client';
 import type { AcpPermissionRequest } from './acp.js';
 import { permissionRequestStrings } from './repository-target.js';
 
@@ -28,7 +28,10 @@ export const TARGET_BRANCH_PROPOSAL_TAG = 'buzz-target-branch-proposal';
  * misses can take, and unlike free-form agent text it carries exactly one
  * typed argument this file validates.
  */
-export const TARGET_BRANCH_PROPOSAL_COMMAND = 'beeline-propose-target-branch';
+export const TARGET_BRANCH_PROPOSAL_COMMAND = '/change-target-branch';
+
+/** Kept for physical Room sessions whose prompt predates the slash command. */
+const LEGACY_TARGET_BRANCH_PROPOSAL_COMMAND = 'beeline-propose-target-branch';
 
 /** A standing change ("from now on"), as opposed to one about this change. */
 const STANDING_CHANGE =
@@ -178,7 +181,7 @@ export function shortBranchName(ref: string | undefined): string {
 /**
  * The branch a Room agent's own native-command marker asks to repoint to.
  *
- * `beeline-propose-target-branch --branch staging`. This is the agent's ONLY
+ * `/change-target-branch --branch staging`. This is the agent's ONLY
  * way to raise the proposal card, and it raises nothing else: the command is
  * never executed, the value is validated as a git branch name here, and the
  * card it produces still has to be confirmed by a Room admin whose own key
@@ -192,16 +195,44 @@ export function targetBranchProposalFromPermission(
     permission.toolCall?.title,
     ...permissionRequestStrings(permission.toolCall?.rawInput),
   ].filter((value): value is string => typeof value === 'string');
+  const markerCommands = [
+    String.raw`\/change-target-branch`,
+    LEGACY_TARGET_BRANCH_PROPOSAL_COMMAND,
+  ].join('|');
   const marker = new RegExp(
     // The branch name ends the command: nothing may follow it but closing
     // quotes/parens from a harness's own wrapper. A chained shell payload
     // (`--branch staging && rm -rf /`) is therefore not this marker at all and
     // gets the ordinary read-only denial, exactly like any other command.
-    String.raw`(?:^|\s)${TARGET_BRANCH_PROPOSAL_COMMAND}\s+--branch(?:=|\s+)(['"\x60]?)([A-Za-z0-9._\/-]+)\1['"\x60)\s]*$`,
+    String.raw`(?:^|\s)(?:${markerCommands})\s+--branch(?:=|\s+)(['"\x60]?)([A-Za-z0-9._\/-]+)\1['"\x60)\s]*$`,
   );
   for (const candidate of candidates) {
     const branch = normalizeTargetBranchName(candidate.match(marker)?.[2]);
     if (branch) return branch;
+  }
+  return undefined;
+}
+
+/**
+ * Read the native slash invocation from a completed agent reply.
+ *
+ * Some harnesses expose an unknown slash command to the model as text instead
+ * of sending `session/request_permission`. The slash parser remains the one
+ * authority for deciding whether a line is a command; this layer only unwraps
+ * the small Markdown shapes agents use when presenting that command and
+ * validates its one typed argument.
+ */
+export function targetBranchProposalFromAgentText(content: string): string | undefined {
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim().replace(/^(?:[-*+>][ \t]+)+/, '');
+    const candidates = [trimmed, ...[...trimmed.matchAll(/`([^`]+)`/g)].map((match) => match[1]!)];
+    for (const candidate of candidates) {
+      const slash = matchSlashCommand(candidate);
+      if (slash?.command !== TARGET_BRANCH_PROPOSAL_COMMAND.slice(1)) continue;
+      const argument = /^--branch(?:=|\s+)(['"\x60]?)([A-Za-z0-9._\/-]+)\1$/.exec(slash.args);
+      const branch = normalizeTargetBranchName(argument?.[2]);
+      if (branch) return branch;
+    }
   }
   return undefined;
 }

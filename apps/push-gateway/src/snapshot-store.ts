@@ -28,6 +28,8 @@ export type ProjectionInput = {
   readonly cursor: ChannelSnapshotCursorV1;
   readonly messageCursor?: MessagePageCursor;
   readonly messagesExhausted: boolean;
+  readonly repositoryCursor?: MessagePageCursor;
+  readonly repositoriesExhausted: boolean;
 };
 
 export type MessagePageCursor = {
@@ -40,6 +42,8 @@ export type ChannelMessagePage = {
   readonly cursor?: MessagePageCursor;
   readonly exhausted: boolean;
 };
+
+export type RepositoryPage = ChannelMessagePage;
 
 export type MessageScanContinuation = {
   readonly cursor: MessagePageCursor;
@@ -94,6 +98,8 @@ CREATE TABLE IF NOT EXISTS beeline_snapshot_dirty (
   scan_cursor_created_at bigint,
   scan_cursor_event_id text,
   scan_event_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  repository_cursor_created_at bigint,
+  repository_cursor_event_id text,
   PRIMARY KEY (relay_tenant_id, channel_id)
 );
 
@@ -115,6 +121,12 @@ ALTER TABLE beeline_snapshot_dirty
 ALTER TABLE beeline_snapshot_dirty
   ADD COLUMN IF NOT EXISTS scan_event_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
 
+ALTER TABLE beeline_snapshot_dirty
+  ADD COLUMN IF NOT EXISTS repository_cursor_created_at bigint;
+
+ALTER TABLE beeline_snapshot_dirty
+  ADD COLUMN IF NOT EXISTS repository_cursor_event_id text;
+
 CREATE TABLE IF NOT EXISTS beeline_snapshot_nip98_replays (
   event_id text PRIMARY KEY,
   expires_at timestamptz NOT NULL
@@ -132,7 +144,9 @@ RETURNS void LANGUAGE sql AS $$
     last_error = NULL,
     scan_cursor_created_at = NULL,
     scan_cursor_event_id = NULL,
-    scan_event_ids = '[]'::jsonb
+    scan_event_ids = '[]'::jsonb,
+    repository_cursor_created_at = NULL,
+    repository_cursor_event_id = NULL
 $$;
 
 CREATE OR REPLACE FUNCTION beeline_mark_snapshot_family_dirty(p_tenant uuid, p_channel uuid)
@@ -397,8 +411,11 @@ export class ChannelSnapshotStore {
       scan_cursor_created_at: string | number | null;
       scan_cursor_event_id: string | null;
       scan_event_ids: unknown;
+      repository_cursor_created_at: string | number | null;
+      repository_cursor_event_id: string | null;
     }>(
-      `SELECT scan_cursor_created_at, scan_cursor_event_id, scan_event_ids
+      `SELECT scan_cursor_created_at, scan_cursor_event_id, scan_event_ids,
+              repository_cursor_created_at, repository_cursor_event_id
        FROM beeline_snapshot_dirty
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
          AND dirty_revision = $3 AND claimed_token = $4`,
@@ -421,6 +438,16 @@ export class ChannelSnapshotStore {
             eventId: continuationRow.scan_cursor_event_id,
           }
         : undefined;
+    const repositoryCursor =
+      continuationRow?.repository_cursor_created_at !== null &&
+      continuationRow?.repository_cursor_created_at !== undefined &&
+      continuationRow.repository_cursor_event_id &&
+      /^[0-9a-f]{64}$/.test(continuationRow.repository_cursor_event_id)
+        ? {
+            createdAt: numberValue(continuationRow.repository_cursor_created_at),
+            eventId: continuationRow.repository_cursor_event_id,
+          }
+        : undefined;
 
     const [
       messages,
@@ -429,6 +456,7 @@ export class ChannelSnapshotStore {
       statusControls,
       structural,
       durableStructural,
+      repositoryPage,
       cornerStates,
       createAnchors,
       cursorRows,
@@ -557,40 +585,16 @@ export class ChannelSnapshotStore {
              SELECT 'deleted' WHERE e.kind = 9008
            ) semantic
            WHERE e.kind IN (9002, 9008)
-         ), repository_candidates AS (
-           SELECT e.*,
-                  row_number() OVER (
-                    PARTITION BY repository_key.repository_key
-                    ORDER BY e.created_at DESC, e.id DESC
-                  ) AS semantic_rank
-           FROM family_events e
-           CROSS JOIN LATERAL (
-             SELECT repository_tag->>1 AS repository_key
-             FROM jsonb_array_elements(e.tags) AS repository_tag
-             WHERE repository_tag->>0 = 'd'
-               AND repository_tag->>1 = ANY(
-                 SELECT 'buzz-room-repository:' || channel_id
-                 FROM unnest($2::text[]) AS channel_id
-               )
-             LIMIT 1
-           ) repository_key
-           WHERE e.kind = 30078
-             AND EXISTS (
-               SELECT 1 FROM jsonb_array_elements(e.tags) AS marker
-               WHERE marker->>0 = 't' AND marker->>1 = 'buzz-room-repository'
-             )
          ), durable_events AS (
            SELECT community_id, id, pubkey, created_at, kind, tags, content, sig
            FROM lifecycle_candidates WHERE semantic_rank = 1
-           UNION
-           SELECT community_id, id, pubkey, created_at, kind, tags, content, sig
-           FROM repository_candidates WHERE semantic_rank <= 20
          )
          SELECT community_id, id, pubkey, created_at, kind, tags, content, sig
          FROM durable_events
          ORDER BY created_at DESC, id ASC`,
         [claim.tenantId, channelIds],
       ),
+      this.loadRepositoryPage(claim.tenantId, channelIds, repositoryCursor),
       this.database.query<EventRow>(
         `WITH requested_channels AS (
            SELECT unnest($2::uuid[]) AS channel_id
@@ -691,6 +695,7 @@ export class ChannelSnapshotStore {
       byId.set(event.id, event);
     }
     for (const event of messages.events) byId.set(event.id, event);
+    for (const event of repositoryPage.events) byId.set(event.id, event);
     for (const row of [
       ...statusControls.rows,
       ...structural.rows,
@@ -709,6 +714,52 @@ export class ChannelSnapshotStore {
       cursor,
       ...(messages.cursor ? { messageCursor: messages.cursor } : {}),
       messagesExhausted: messages.exhausted,
+      ...(repositoryPage.cursor ? { repositoryCursor: repositoryPage.cursor } : {}),
+      repositoriesExhausted: repositoryPage.exhausted,
+    };
+  }
+
+  async loadRepositoryPage(
+    tenantId: string,
+    channelIds: readonly string[],
+    cursor?: MessagePageCursor,
+    limit = 20,
+  ): Promise<RepositoryPage> {
+    if (channelIds.length === 0) return { events: [], exhausted: true };
+    const pageSize = Math.max(1, Math.min(100, Math.floor(limit)));
+    const result = await this.database.query<EventRow>(
+      `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+       FROM events e
+       WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind = 30078
+         AND octet_length(e.content) <= 131072
+         AND (e.channel_id = ANY($2::uuid[]) OR EXISTS (
+           SELECT 1 FROM jsonb_array_elements(e.tags) AS room_tag
+           WHERE room_tag->>0 = 'h' AND room_tag->>1 = ANY($2::text[])
+         ))
+         AND EXISTS (
+           SELECT 1 FROM jsonb_array_elements(e.tags) AS marker
+           WHERE marker->>0 = 't' AND marker->>1 = 'buzz-room-repository'
+         )
+         AND EXISTS (
+           SELECT 1 FROM jsonb_array_elements(e.tags) AS repository_tag
+           WHERE repository_tag->>0 = 'd'
+             AND repository_tag->>1 = ANY(
+               SELECT 'buzz-room-repository:' || channel_id
+               FROM unnest($2::text[]) AS channel_id
+             )
+         )
+         AND ($3::bigint IS NULL
+           OR e.created_at < to_timestamp($3)
+           OR (e.created_at = to_timestamp($3) AND e.id > decode($4, 'hex')))
+       ORDER BY e.created_at DESC, e.id ASC LIMIT $5`,
+      [tenantId, channelIds, cursor?.createdAt ?? null, cursor?.eventId ?? null, pageSize + 1],
+    );
+    const events = result.rows.slice(0, pageSize).map(eventFromRow);
+    const last = events.at(-1);
+    return {
+      events,
+      ...(last ? { cursor: { createdAt: last.created_at, eventId: last.id } } : {}),
+      exhausted: result.rows.length <= pageSize,
     };
   }
 
@@ -861,6 +912,35 @@ export class ChannelSnapshotStore {
         continuation.cursor.createdAt,
         continuation.cursor.eventId,
         JSON.stringify(continuation.eventIds),
+      ],
+    );
+    await this.database.query(
+      `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,
+      [claim.tenantId, claim.channelId, claim.claimToken],
+    );
+  }
+
+  async continueRepositoryScan(
+    claim: DirtyChannelClaim,
+    cursor: MessagePageCursor,
+  ): Promise<void> {
+    await this.database.query(
+      `UPDATE beeline_snapshot_dirty SET
+         repository_cursor_created_at = $5,
+         repository_cursor_event_id = $6,
+         claimed_until = NULL,
+         claimed_token = NULL,
+         next_attempt_at = now()
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
+         AND dirty_revision = $3 AND claimed_token = $4`,
+      [
+        claim.tenantId,
+        claim.channelId,
+        claim.dirtyRevision,
+        claim.claimToken,
+        cursor.createdAt,
+        cursor.eventId,
       ],
     );
     await this.database.query(

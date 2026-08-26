@@ -111,6 +111,42 @@ describe('typed mobile read-model projection', () => {
     });
   });
 
+  it('projects a native target-branch proposal into the chat card model', () => {
+    const control = {
+      type: 'control',
+      eventId: 'target-branch-proposal-1',
+      authorPubkey: AGENT,
+      createdAt: 5,
+      sourceKind: 9,
+      signature: 'verified',
+      scope: 'channel',
+      channelId: ROOM,
+      workspaceId: 'workspace',
+      visibility: 'card',
+      payload: {
+        kind: 'target-branch-proposal',
+        proposalId: 'target-branch-proposal-1',
+        from: 'master',
+        to: 'staging',
+        repository: 'github:repository',
+        agentPubkey: AGENT,
+        requesterPubkey: HUMAN,
+      },
+    } as Control;
+
+    expect(projectReadEvent(control, HUMAN).message).toMatchObject({
+      id: 'target-branch-target-branch-proposal-1',
+      targetBranchProposal: {
+        proposalId: 'target-branch-proposal-1',
+        from: 'master',
+        to: 'staging',
+        repository: 'github:repository',
+        agentPubkey: AGENT,
+        requesterPubkey: HUMAN,
+      },
+    });
+  });
+
   it('projects the three live lanes and removes them completely when the turn settles', () => {
     const turn = (status: 'working' | 'complete', createdAt: number) =>
       ({

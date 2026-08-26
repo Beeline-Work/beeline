@@ -42,7 +42,10 @@ import {
   runGitHubInstallationSession,
 } from '@/auth/github-auth-session';
 import { authSessionOptions } from '@/auth/auth-session';
-import { saveLastViewedChannel } from '@/buzz/community-storage';
+import {
+  reconcileStoredWorkspaceSelection,
+  saveLastViewedChannel,
+} from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { loadSuccessionPredecessors } from '@/buzz/succession-chain';
@@ -496,9 +499,13 @@ export default function BuzzChannels() {
   // way in — is what keeps a message you sent, or one that arrived while you
   // were looking at it, from lighting the row up as unread on return.
   const returningFromChannelId = useRef<string | null>(null);
-  const cachedListEntry = useBuzzLocalCache((state) =>
-    selectChannelList(state, identity?.publicKey ?? state.activeViewerPubkey, requestedCommunity),
-  );
+  const cachedListEntry = useBuzzLocalCache((state) => {
+    const viewerPubkey = identity?.publicKey ?? state.activeViewerPubkey;
+    return (
+      selectChannelList(state, viewerPubkey, requestedCommunity) ??
+      selectChannelList(state, viewerPubkey)
+    );
+  });
   const normalizedChannelCaches = useBuzzLocalCache((state) => state.channels);
   const displayChannels = useMemo(
     () =>
@@ -647,6 +654,7 @@ export default function BuzzChannels() {
         const bootstrapOptions = {
           loadPredecessors: () => loadSuccessionPredecessors(url, currentIdentity),
           knownWorkspaces: knownCommunities,
+          deferSelectionPersistence: true,
         };
         const [workspaceContext, identityIsAgent] = await withBootstrapStepTimeout(
           Promise.all([
@@ -665,7 +673,15 @@ export default function BuzzChannels() {
           workspaces: available,
           activeWorkspaceId: active,
           personalWorkspaceId: personal,
+          cacheReconciliation,
         } = workspaceContext;
+        if (!isCurrent()) return;
+        await workspaceContext.commitSelection?.();
+        if (cacheReconciliation === 'authoritative' && isCurrent()) {
+          useBuzzLocalCache
+            .getState()
+            .reconcileWorkspaceSet(currentIdentity.publicKey, available, active);
+        }
         await withBootstrapStepTimeout(
           ensurePersonNameForWorkspace(client, active, currentIdentity.publicKey),
           'Loading profile',
@@ -796,26 +812,49 @@ export default function BuzzChannels() {
               setLeavingWorkspaceId(communityId);
               void transport
                 .leaveWorkspace(communityId)
-                .then(() => {
+                .then(async () => {
                   const remaining = communities.filter(
                     (entry) => entry.communityId !== communityId,
                   );
-                  setCommunities(remaining);
                   const nextActive =
                     activeCommunityId === communityId
                       ? (remaining[0]?.communityId ?? null)
                       : activeCommunityId;
-                  if (nextActive) {
-                    useBuzzLocalCache.getState().patchChannelList(identity.publicKey, nextActive, {
-                      communities: remaining,
-                    });
-                  }
+                  // A refresh started before the leave is now stale even if
+                  // the route stays put (leaving an inactive Workspace).
+                  // Invalidate it before either persistence or cache mutation
+                  // can let its pre-leave result resurrect this Workspace.
+                  loadGeneration.current += 1;
+                  useBuzzLocalCache
+                    .getState()
+                    .reconcileWorkspaceSet(identity.publicKey, remaining, nextActive);
+                  setCommunities(remaining);
+                  setActiveCommunityId(nextActive);
+                  setPersonalWorkspaceId((current) =>
+                    current && remaining.some((entry) => entry.communityId === current)
+                      ? current
+                      : null,
+                  );
                   if (activeCommunityId === communityId) {
                     setExpandedRoomId(null);
                     router.replace({
                       pathname: '/buzz/channels',
                       ...(nextActive ? { params: { communityId: nextActive } } : {}),
                     });
+                  }
+                  try {
+                    const nextPersonal = await reconcileStoredWorkspaceSelection(
+                      identity.publicKey,
+                      remaining,
+                      nextActive,
+                      undefined,
+                    );
+                    setPersonalWorkspaceId(nextPersonal);
+                  } catch (err) {
+                    Alert.alert(
+                      `Exited ${community?.name ?? WORKSPACE_LABEL}, but could not save selection`,
+                      `The ${WORKSPACE_LABEL} was removed from this device. ${String(err)}`,
+                    );
                   }
                 })
                 .catch((err) => {
@@ -827,7 +866,13 @@ export default function BuzzChannels() {
         ],
       );
     },
-    [activeCommunityId, communities, identity, leavingWorkspaceId, transport],
+    [
+      activeCommunityId,
+      communities,
+      identity,
+      leavingWorkspaceId,
+      transport,
+    ],
   );
 
   const handleRefresh = useCallback(
@@ -842,11 +887,7 @@ export default function BuzzChannels() {
       setError(null);
       try {
         const client = await transport.ensureClient();
-        const {
-          workspaces: available,
-          activeWorkspaceId: active,
-          personalWorkspaceId: personal,
-        } = await prepareWorkspaceContext(
+        const workspaceContext = await prepareWorkspaceContext(
           client,
           identity.publicKey,
           activeCommunityId ?? undefined,
@@ -863,8 +904,20 @@ export default function BuzzChannels() {
                   : await getEffectiveRelayUrl(),
                 identity,
               ),
+            deferSelectionPersistence: true,
           },
         );
+        const {
+          workspaces: available,
+          activeWorkspaceId: active,
+          personalWorkspaceId: personal,
+          cacheReconciliation,
+        } = workspaceContext;
+        if (!isCurrent()) return;
+        await workspaceContext.commitSelection?.();
+        if (cacheReconciliation === 'authoritative' && isCurrent()) {
+          useBuzzLocalCache.getState().reconcileWorkspaceSet(identity.publicKey, available, active);
+        }
         await ensurePersonNameForWorkspace(client, active, identity.publicKey);
         if (!isCurrent()) return;
         setCommunities(available);

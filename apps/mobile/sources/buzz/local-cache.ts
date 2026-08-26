@@ -158,6 +158,12 @@ type BuzzCacheState = PersistedBuzzCache & {
     summary?: RoomSummaryPatch,
   ) => void;
   replaceProfiles: (viewerPubkey: string, communityId: string, profiles: PersonProfile[]) => void;
+  /** Replace one viewer's cached Workspace set after a complete authoritative discovery. */
+  reconcileWorkspaceSet: (
+    viewerPubkey: string,
+    workspaces: readonly Community[],
+    activeWorkspaceId: string | null,
+  ) => void;
   /** Purge a deleted/left Room from every cached list row of this viewer and
    * drop its transcript cache. Pairs with the durable tombstone in
    * `removed-rooms.ts`: the purge makes removal immediate, the tombstone is
@@ -699,6 +705,95 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
           [...retained, key].map((candidate) => [candidate, updated[candidate]]),
         ),
       };
+    }),
+  reconcileWorkspaceSet: (viewerPubkey, workspaces, activeWorkspaceId) =>
+    set((state) => {
+      const confirmedIds = new Set(workspaces.map((workspace) => workspace.communityId));
+      const staleWorkspaceIds = new Set<string>();
+      const removedRoomIds = new Set<string>();
+      for (const entry of Object.values(state.channelLists)) {
+        if (entry.viewerPubkey !== viewerPubkey) continue;
+        for (const workspace of entry.communities) {
+          if (!confirmedIds.has(workspace.communityId)) {
+            staleWorkspaceIds.add(workspace.communityId);
+          }
+        }
+        if (entry.communityId && !confirmedIds.has(entry.communityId)) {
+          staleWorkspaceIds.add(entry.communityId);
+          for (const channel of entry.channels) removedRoomIds.add(channel.id);
+        }
+      }
+
+      const channelLists = Object.fromEntries(
+        Object.entries(state.channelLists).flatMap(([key, entry]) => {
+          if (
+            entry.viewerPubkey === viewerPubkey &&
+            entry.communityId &&
+            !confirmedIds.has(entry.communityId)
+          ) {
+            return [];
+          }
+          if (entry.viewerPubkey !== viewerPubkey) return [[key, entry]];
+          return [
+            [
+              key,
+              {
+                ...entry,
+                communities: [...workspaces],
+                personalWorkspaceId:
+                  entry.personalWorkspaceId && confirmedIds.has(entry.personalWorkspaceId)
+                    ? entry.personalWorkspaceId
+                    : null,
+              },
+            ],
+          ];
+        }),
+      ) as Record<string, ChannelListCacheEntry>;
+      const activeKey = activeWorkspaceId
+        ? channelListCacheKey(viewerPubkey, activeWorkspaceId)
+        : null;
+      if (activeKey && !channelLists[activeKey]) {
+        const template =
+          state.channelLists[state.activeListKeyByViewer[viewerPubkey] ?? ''] ??
+          Object.values(state.channelLists).find((entry) => entry.viewerPubkey === viewerPubkey);
+        if (template) {
+          const now = Date.now();
+          channelLists[activeKey] = {
+            ...template,
+            communityId: activeWorkspaceId,
+            channels: [],
+            directMessages: [],
+            workspaceMembers: [],
+            communities: [...workspaces],
+            personalWorkspaceId:
+              template.personalWorkspaceId && confirmedIds.has(template.personalWorkspaceId)
+                ? template.personalWorkspaceId
+                : null,
+            updatedAt: now,
+            lastAccessedAt: now,
+          };
+        }
+      }
+      const channels = Object.fromEntries(
+        Object.entries(state.channels).filter(([, channel]) => {
+          if (channel.viewerPubkey !== viewerPubkey) return true;
+          if (channel.communityId) return confirmedIds.has(channel.communityId);
+          return !removedRoomIds.has(channel.channelId);
+        }),
+      );
+      const profiles = Object.fromEntries(
+        Object.entries(state.profiles).filter(([key]) => {
+          for (const workspaceId of staleWorkspaceIds) {
+            if (key === profileCacheKey(viewerPubkey, workspaceId)) return false;
+          }
+          return true;
+        }),
+      );
+      const activeListKeyByViewer = { ...state.activeListKeyByViewer };
+      if (activeKey && channelLists[activeKey]) activeListKeyByViewer[viewerPubkey] = activeKey;
+      else delete activeListKeyByViewer[viewerPubkey];
+
+      return { channelLists, channels, profiles, activeListKeyByViewer };
     }),
   removeChannel: (viewerPubkey, channelId) =>
     set((state) => {

@@ -584,6 +584,41 @@ describe('community model', () => {
     ]);
   });
 
+  it('rejects a partial discovery when a projected Workspace cannot be recovered', async () => {
+    const missingWorkspaceId = '33333333-3333-4333-8333-333333333333';
+    const danglingMembers = signed(owner, KIND_CHANNEL_MEMBERS, [
+      ['d', missingWorkspaceId],
+      ['p', owner.publicKey],
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = filterFrom(init);
+        const kinds = (filter.kinds ?? []) as number[];
+        if (kinds.includes(KIND_CHANNEL_MEMBERS) && kinds.includes(KIND_CHANNEL_ADMINS)) {
+          return jsonResponse([danglingMembers]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(listCommunities(ctx(), owner.publicKey)).rejects.toThrow(
+      /Workspace discovery was incomplete/,
+    );
+  });
+
+  it('rejects discovery that saturates its membership limit', async () => {
+    const projected = signed(owner, KIND_CHANNEL_MEMBERS, [
+      ['d', communityId],
+      ['p', owner.publicKey],
+    ]);
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse([projected])));
+
+    await expect(listCommunities(ctx(), owner.publicKey, 1)).rejects.toThrow(
+      /membership result reached its limit/,
+    );
+  });
+
   it('never ambiently repairs a registered agent into Workspace Rooms', async () => {
     const agentMarker = signed(invitee, KIND_STREAM_MESSAGE, [
       ['h', communityId],

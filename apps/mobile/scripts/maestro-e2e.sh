@@ -35,6 +35,14 @@ if [[ "${MAESTRO_SKIP_BUILD:-0}" != "1" ]]; then
   (cd "$MOBILE_DIR" && npm run e2e:build)
 fi
 
+# scripts/provision-smoke.ts and publish-smoke-replies.ts live at the repo
+# root but import the workspace SDKs; Node resolves upward from each script's
+# real path and never reaches apps/mobile/node_modules. One explicit bridge
+# gives them the SDK links plus their hoisted runtime dependencies (@noble/*,
+# nostr-tools) — proven as the release-runner user against a checkout with no
+# root node_modules.
+export NODE_PATH="$MOBILE_DIR/node_modules${NODE_PATH:+:$NODE_PATH}"
+
 if [[ "${MAESTRO_REUSE_INSTALLED_APP:-0}" != "1" && ! -f "$APK" ]]; then
   echo "E2E APK not found at $APK. Re-run without MAESTRO_SKIP_BUILD=1." >&2
   exit 1

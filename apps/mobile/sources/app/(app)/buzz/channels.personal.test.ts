@@ -290,6 +290,13 @@ function has(tree: ReactTestRenderer, testID: string): boolean {
   );
 }
 
+function hostByTestID(tree: ReactTestRenderer, testID: string) {
+  return tree.root.findAll(
+    (node: any) => typeof node.type === 'string' && node.props?.testID === testID,
+    { deep: true },
+  )[0];
+}
+
 const HOME_SURFACE_IDS = ['room-list', 'workspace-members', 'create-room'];
 
 describe('one home surface for every Workspace kind', () => {
@@ -356,6 +363,46 @@ describe('one home surface for every Workspace kind', () => {
 
     expect((await inviteProps('personal-1', 'personal-1')).allowPeopleInvites).toBe(false);
     expect((await inviteProps('shared-1', 'personal-1')).allowPeopleInvites).toBe(true);
+  });
+
+  it('opens New Room as a Hull input dialog with empty-name gating and both dismissal paths', async () => {
+    seedWorkspace('shared-1', 'Night Shift', 'personal-1');
+    const tree = await render();
+
+    await act(async () => hostByTestID(tree, 'create-room').props.onPress());
+    let dialog = tree.root.findByType('HullDialog' as any);
+    expect(dialog.props).toMatchObject({
+      body: 'In Night Shift. One Room, one repo. Corners branch from here.',
+      testID: 'new-room-dialog',
+      title: 'New Room',
+      visible: true,
+    });
+    expect(dialog.props.actions[1]).toMatchObject({
+      disabled: true,
+      label: 'Create',
+      testID: 'new-room-create',
+      variant: 'primary',
+    });
+    const input = tree.root.findByType('HullDialogInput' as any);
+    expect(input.props).toMatchObject({
+      accessibilityLabel: 'Room name',
+      editable: true,
+      placeholder: '#room-name',
+      testID: 'new-room-input',
+    });
+    expect(hostByTestID(tree, 'create-room-repo-row')).toBeDefined();
+
+    await act(async () => input.props.onChangeText('launch-room'));
+    dialog = tree.root.findByType('HullDialog' as any);
+    expect(dialog.props.actions[1].disabled).toBe(false);
+
+    await act(async () => dialog.props.actions[0].onPress());
+    expect(tree.root.findAllByType('HullDialog' as any)).toHaveLength(0);
+
+    await act(async () => hostByTestID(tree, 'create-room').props.onPress());
+    dialog = tree.root.findByType('HullDialog' as any);
+    await act(async () => dialog.props.onRequestClose());
+    expect(tree.root.findAllByType('HullDialog' as any)).toHaveLength(0);
   });
 });
 

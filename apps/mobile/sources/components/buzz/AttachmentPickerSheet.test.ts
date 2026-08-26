@@ -17,6 +17,9 @@ vi.mock('./HullActionSheet', async () => {
 
 const { AttachmentPickerSheet } = await import('./AttachmentPickerSheet');
 
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+  true;
+
 const source = readFileSync(new URL('./AttachmentPickerSheet.tsx', import.meta.url), 'utf8');
 const chatSource = readFileSync(
   new URL('../../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),

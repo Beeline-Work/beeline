@@ -70,4 +70,26 @@ describe('Hull alert and confirm adapter', () => {
     act(() => dialog.props.onRequestClose());
     expect(onConfirm.mock.calls).toEqual([[false], [true], [false]]);
   });
+
+  it('maps a non-destructive confirm to one quiet action and one brass affirmative action', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <WebAlertModal
+          config={{
+            cancelText: 'Not now',
+            confirmText: 'Continue',
+            id: 'confirm-2',
+            title: 'Continue?',
+            type: 'confirm',
+          }}
+          onClose={vi.fn()}
+          onConfirm={vi.fn()}
+        />,
+      );
+    });
+    const actions = renderer!.root.findByType('HullDialog' as any).props.actions;
+    expect(actions.map((action: any) => action.variant)).toEqual(['quiet', 'primary']);
+    expect(actions.filter((action: any) => action.variant === 'primary')).toHaveLength(1);
+  });
 });

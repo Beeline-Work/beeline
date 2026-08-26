@@ -38,6 +38,50 @@ env:
     visible:
       id: room-${SMOKE_ROOM_ID}
     timeout: 20000
+
+# Two successive successful creates must both land in the deck immediately.
+# This specifically catches a relay list projection that is one create behind:
+# the second create may reconcile the first, but must not evict itself.
+- tapOn:
+    id: room-deck-compose-fab
+- tapOn:
+    id: room-deck-compose-room
+- tapOn:
+    id: create-room-name
+- inputText: 'SMOKE CREATE ONE'
+- tapOn:
+    id: create-room-submit
+- extendedWaitUntil:
+    visible: '#SMOKE CREATE ONE'
+    timeout: 5000
+- tapOn:
+    id: room-deck-compose-fab
+- tapOn:
+    id: room-deck-compose-room
+- tapOn:
+    id: create-room-name
+- inputText: 'SMOKE CREATE TWO'
+- tapOn:
+    id: create-room-submit
+- extendedWaitUntil:
+    visible: '#SMOKE CREATE TWO'
+    timeout: 5000
+- assertVisible: '#SMOKE CREATE ONE'
+
+# Pull refresh owns only the structural list swap. Its idle boundary must
+# return inside five seconds while both just-created Rooms remain visible;
+# transcript/repository/member hydration is deliberately outside this gate.
+- swipe:
+    start: 50%, 35%
+    end: 50%, 85%
+    duration: 400
+- extendedWaitUntil:
+    visible:
+      id: room-list-idle
+    timeout: 5000
+- assertVisible: '#SMOKE CREATE ONE'
+- assertVisible: '#SMOKE CREATE TWO'
+
 - tapOn:
     id: room-${SMOKE_ROOM_ID}
 # The transcript is the route-ready boundary. Android exposes the bottom-edge

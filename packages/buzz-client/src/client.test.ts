@@ -58,6 +58,44 @@ function streamEvent(id: string, createdAt: number, content: string): NostrEvent
   };
 }
 
+function replaceableEvent(id: string, dKey: string, kind = 30078): NostrEvent {
+  return {
+    id,
+    pubkey: 'a'.repeat(64),
+    created_at: 100,
+    kind,
+    tags: [['d', dKey]],
+    content: '',
+    sig: 'b'.repeat(128),
+  };
+}
+
+function firstKeyOnlyMatches(
+  filters: readonly Record<string, unknown>[],
+  events: readonly NostrEvent[],
+): NostrEvent[] {
+  const matched = filters.flatMap((filter) => {
+    const requested = (filter['#d'] as string[] | undefined) ?? [];
+    const answered = requested.length > 1 ? requested.slice(0, 1) : requested;
+    return events.filter((event) =>
+      event.tags.some((tag) => tag[0] === 'd' && answered.includes(tag[1]!)),
+    );
+  });
+  return [...new Map(matched.map((event) => [event.id, event])).values()];
+}
+
+function deliverFirstKeyOnlyMatches(
+  socket: ReconnectingTestWebSocket,
+  events: readonly NostrEvent[],
+): void {
+  const request = socket.sent.find((frame) => frame[0] === 'REQ')!;
+  const subscriptionId = request[1] as string;
+  const filters = request.slice(2) as Record<string, unknown>[];
+  for (const event of firstKeyOnlyMatches(filters, events)) {
+    socket.receive(['EVENT', subscriptionId, event]);
+  }
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -139,6 +177,97 @@ describe('Agent presence', () => {
         limit: 20,
       },
     ]);
+  });
+});
+
+describe('replaceable multi-lane reads', () => {
+  it('backfills both draft lanes through one batch when multi-key #d filters answer partially', async () => {
+    const identity = createIdentity('draft-reader');
+    const events = [
+      replaceableEvent('draft', 'agent-draft:room'),
+      replaceableEvent('thought', 'agent-thought:room'),
+    ];
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+      return new Response(JSON.stringify(firstKeyOnlyMatches(filters, events)), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = createBuzzClient({ baseUrl: 'https://relay.test', identity });
+
+    await expect(client.agentDraftBackfill('room')).resolves.toEqual(events);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('backfills every corner state through one batch when multi-key #d filters answer partially', async () => {
+    const identity = createIdentity('corner-state-reader');
+    const events = [
+      replaceableEvent('corner-1', 'buzz-corner-state:corner-1'),
+      replaceableEvent('corner-2', 'buzz-corner-state:corner-2'),
+    ];
+    let requestedFilters: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      requestedFilters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+      return new Response(JSON.stringify(firstKeyOnlyMatches(requestedFilters, events)), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = createBuzzClient({ baseUrl: 'https://relay.test', identity });
+
+    await expect(
+      client.cornerStateBackfill(['corner-1', 'corner-1', 'corner-2']),
+    ).resolves.toEqual(events);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(requestedFilters).toHaveLength(2);
+  });
+
+  it('subscribes to both draft lanes with independently answerable filters', async () => {
+    const client = createBuzzClient({
+      baseUrl: 'https://relay.test',
+      identity: createIdentity('draft-subscriber'),
+      skipAuth: true,
+      WebSocketImpl: ReconnectingTestWebSocket,
+    });
+    const events = [
+      replaceableEvent('draft', 'agent-draft:room'),
+      replaceableEvent('thought', 'agent-thought:room'),
+    ];
+    const received: string[] = [];
+    const unsubscribe = await client.agentDraftSubscribe('room', (event) =>
+      received.push(event.id),
+    );
+
+    deliverFirstKeyOnlyMatches(ReconnectingTestWebSocket.instances[0]!, events);
+    expect(received).toEqual(['draft', 'thought']);
+
+    unsubscribe();
+    client.disconnect();
+  });
+
+  it('subscribes to every corner state with independently answerable filters', async () => {
+    const client = createBuzzClient({
+      baseUrl: 'https://relay.test',
+      identity: createIdentity('corner-state-subscriber'),
+      skipAuth: true,
+      WebSocketImpl: ReconnectingTestWebSocket,
+    });
+    const events = [
+      replaceableEvent('corner-1', 'buzz-corner-state:corner-1'),
+      replaceableEvent('corner-2', 'buzz-corner-state:corner-2'),
+    ];
+    const received: string[] = [];
+    const unsubscribe = await client.cornerStateSubscribe(
+      ['corner-1', 'corner-1', 'corner-2'],
+      (event) => received.push(event.id),
+    );
+
+    const socket = ReconnectingTestWebSocket.instances[0]!;
+    deliverFirstKeyOnlyMatches(socket, events);
+    expect(received).toEqual(['corner-1', 'corner-2']);
+    expect(socket.sent.find((frame) => frame[0] === 'REQ')!.slice(2)).toHaveLength(2);
+
+    unsubscribe();
+    client.disconnect();
   });
 });
 

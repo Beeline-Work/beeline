@@ -1212,10 +1212,7 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
     const repositoryScope = tag(event, 'repo-scope');
     const repositoryInstallation = integer(tag(event, 'repo-github-installation'));
     const repository =
-      repositoryKey &&
-      repositoryName &&
-      repositoryRemote &&
-      repositoryScope === 'remote'
+      repositoryKey && repositoryName && repositoryRemote && repositoryScope === 'remote'
         ? {
             key: repositoryKey,
             name: repositoryName,
@@ -1583,8 +1580,8 @@ export function parseRelayEvents(
     const role = isOwner(authority, event.channelId, event.authorPubkey)
       ? 'owner'
       : isAdmin(authority, event.channelId, event.authorPubkey)
-          ? 'admin'
-          : null;
+        ? 'admin'
+        : null;
     const decision = advanceRoomRepositorySequence(
       repositoryBindings.get(event.channelId),
       repository,

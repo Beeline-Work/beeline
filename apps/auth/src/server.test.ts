@@ -259,11 +259,15 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
   // Optional per-test detail for the App-JWT enumeration; when unset the
   // default octocat/acme mapping above keeps older tests unchanged.
   let githubAppInstallationDetail:
-    | Array<{ installationId: number; accountId: string; login: string; type: 'User' | 'Organization' }>
+    | Array<{
+        installationId: number;
+        accountId: string;
+        login: string;
+        type: 'User' | 'Organization';
+      }>
     | undefined;
   let githubAppRepositoryDetail:
-    | Record<number, Array<{ id: number; name: string; fullName: string }>>
-    | undefined;
+    Record<number, Array<{ id: number; name: string; fullName: string }>> | undefined;
   let githubInstallationListCalls: number;
   let githubRepositoryListError: Error | undefined;
   let githubInstallationAccess: boolean | Error;
@@ -352,15 +356,17 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
             githubInstallationListCalls += 1;
             if (githubAppInstallations instanceof Error) throw githubAppInstallations;
             if (githubAppInstallationDetail) {
-              return githubAppInstallationDetail.map(({ installationId, accountId, login, type }) => ({
-                installationId,
-                account: {
-                  id: accountId,
-                  login,
-                  type,
-                  repositorySelection: 'all' as const,
-                },
-              }));
+              return githubAppInstallationDetail.map(
+                ({ installationId, accountId, login, type }) => ({
+                  installationId,
+                  account: {
+                    id: accountId,
+                    login,
+                    type,
+                    repositorySelection: 'all' as const,
+                  },
+                }),
+              );
             }
             return githubAppInstallations.map((installationId) => ({
               installationId,
@@ -572,12 +578,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: '/nip05/claim',
       headers: {
         host: alphaTenant.host,
-        authorization: nip98AuthHeader(
-          identity.secretKey,
-          identity.publicKey,
-          claimUrl,
-          'POST',
-        ),
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, claimUrl, 'POST'),
       },
       payload: { name: 'local-handle' },
     });
@@ -603,12 +604,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: `/auth/identity/${identity.publicKey}/github-handle`,
       headers: {
         host: alphaTenant.host,
-        authorization: nip98AuthHeader(
-          identity.secretKey,
-          identity.publicKey,
-          renameUrl,
-          'POST',
-        ),
+        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, renameUrl, 'POST'),
       },
       payload: { confirm_rename: true },
     });
@@ -764,7 +760,6 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
     expect(roomTokenMint).toEqual({ installationId: 77, repositoryIds: [42] });
 
-
     const refusalCases = [
       {
         reason: 'tenant_room_community_mismatch',
@@ -897,10 +892,10 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     });
   });
 
-    // Key succession: the binding was authored by a key that was later
-    // replaced (device lost, identity recovered onto the successor). GitHub
-    // installations exist for the SUCCESSOR key only; authority lookups run
-    // against the resolved current key and the daemon learns it.
+  // Key succession: the binding was authored by a key that was later
+  // replaced (device lost, identity recovered onto the successor). GitHub
+  // installations exist for the SUCCESSOR key only; authority lookups run
+  // against the resolved current key and the daemon learns it.
   it('honors successor-key requests against old-key-authored bindings', async () => {
     const agent = generateKeypair();
     const predecessorKey = 'a'.repeat(64);
@@ -992,13 +987,17 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
         pubkey: unrelated.publicKey,
         room_id: 'room-1',
         relay_authorizations: Array.from({ length: 16 }, () =>
-          nip98AuthHeader(unrelated.secretKey, unrelated.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+          nip98AuthHeader(
+            unrelated.secretKey,
+            unrelated.publicKey,
+            `${alphaTenant.origin}/query`,
+            'POST',
+          ),
         ),
       },
     });
     expect(refused.statusCode).toBe(403);
   });
-
 
   it('mints a read-only token when the Room token request asks for read_only', async () => {
     const owner = generateKeypair();
@@ -1055,7 +1054,12 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
           pubkey: agent.publicKey,
           room_id: 'room-1',
           relay_authorizations: Array.from({ length: 16 }, () =>
-            nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+            nip98AuthHeader(
+              agent.secretKey,
+              agent.publicKey,
+              `${alphaTenant.origin}/query`,
+              'POST',
+            ),
           ),
           ...payload,
         },
@@ -1127,7 +1131,10 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     ]);
     const warnings = logLines
       .map((line) => JSON.parse(line) as Record<string, unknown>)
-      .filter((line) => line.msg === 'GitHub installation listing unavailable for organization verification');
+      .filter(
+        (line) =>
+          line.msg === 'GitHub installation listing unavailable for organization verification',
+      );
     expect(warnings).toHaveLength(1);
   });
 
@@ -1193,9 +1200,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     // cookie, no installation persisted under any identity.
     expect(response.headers['set-cookie']).toBeUndefined();
     expect(roomTokenMint).toBeUndefined();
-    await expect(
-      store.githubInstallation(alphaTenant.community, 77),
-    ).resolves.toBeNull();
+    await expect(store.githubInstallation(alphaTenant.community, 77)).resolves.toBeNull();
   });
 
   it('answers a stateless install return on the legacy alias routes too', async () => {
@@ -1231,9 +1236,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(() => JSON.parse(response.body)).toThrow();
     // Still no session or token side effects on the failed path.
     expect(roomTokenMint).toBeUndefined();
-    await expect(
-      store.githubInstallation(alphaTenant.community, 77),
-    ).resolves.toBeNull();
+    await expect(store.githubInstallation(alphaTenant.community, 77)).resolves.toBeNull();
   });
 
   it('re-mints Room tokens for a repository that transferred after its Room binding was written', async () => {
@@ -1337,7 +1340,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(roomTokenMint).toEqual({ installationId: 90, repositoryIds: [42] });
   });
 
-  it('follows GitHub\'s rename redirect once, persists it, and names the uncovered destination', async () => {
+  it("follows GitHub's rename redirect once, persists it, and names the uncovered destination", async () => {
     const owner = generateKeypair();
     const agent = generateKeypair();
     await store.saveGitHubInstallation(
@@ -1374,7 +1377,12 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
           pubkey: pubkey.publicKey,
           room_id: 'room-1',
           relay_authorizations: Array.from({ length: 16 }, () =>
-            nip98AuthHeader(pubkey.secretKey, pubkey.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+            nip98AuthHeader(
+              pubkey.secretKey,
+              pubkey.publicKey,
+              `${alphaTenant.origin}/query`,
+              'POST',
+            ),
           ),
         },
       });
@@ -1478,7 +1486,12 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: '/auth/github/room-token',
       headers: {
         host: alphaTenant.host,
-        authorization: nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/auth/github/room-token`, 'POST'),
+        authorization: nip98AuthHeader(
+          agent.secretKey,
+          agent.publicKey,
+          `${alphaTenant.origin}/auth/github/room-token`,
+          'POST',
+        ),
       },
       payload: {
         pubkey: agent.publicKey,
@@ -1567,12 +1580,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: '/auth/github/room-token',
       headers: {
         host: alphaTenant.host,
-        authorization: nip98AuthHeader(
-          agent.secretKey,
-          agent.publicKey,
-          url,
-          'POST',
-        ),
+        authorization: nip98AuthHeader(agent.secretKey, agent.publicKey, url, 'POST'),
       },
       payload: {
         pubkey: agent.publicKey,
@@ -1652,9 +1660,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       install_url: 'https://github.test/apps/beeline/installations/new',
       repository: expect.any(String),
     });
-    await expect(
-      store.githubInstallation(alphaTenant.community, 90),
-    ).resolves.toBeNull();
+    await expect(store.githubInstallation(alphaTenant.community, 90)).resolves.toBeNull();
   });
 
   it('marks the stored user token stale when GitHub rejects it and clears that on a fresh bind', async () => {
@@ -1742,13 +1748,23 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
         url: '/auth/github/room-token',
         headers: {
           host: alphaTenant.host,
-          authorization: nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/auth/github/room-token`, 'POST'),
+          authorization: nip98AuthHeader(
+            agent.secretKey,
+            agent.publicKey,
+            `${alphaTenant.origin}/auth/github/room-token`,
+            'POST',
+          ),
         },
         payload: {
           pubkey: agent.publicKey,
           room_id: 'room-1',
           relay_authorizations: Array.from({ length: 16 }, () =>
-            nip98AuthHeader(agent.secretKey, agent.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+            nip98AuthHeader(
+              agent.secretKey,
+              agent.publicKey,
+              `${alphaTenant.origin}/query`,
+              'POST',
+            ),
           ),
         },
       });
@@ -2222,12 +2238,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: '/auth/github/room-token',
       headers: {
         host: alphaTenant.host,
-        authorization: nip98AuthHeader(
-          requester.secretKey,
-          requester.publicKey,
-          tokenUrl,
-          'POST',
-        ),
+        authorization: nip98AuthHeader(requester.secretKey, requester.publicKey, tokenUrl, 'POST'),
       },
       payload: {
         pubkey: requester.publicKey,
@@ -2259,12 +2270,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: `/auth/github/repo-access/${requester.publicKey}?full_name=bananaman%2Fwidget&room_id=room-foreign`,
       headers: {
         host: alphaTenant.host,
-        authorization: nip98AuthHeader(
-          requester.secretKey,
-          requester.publicKey,
-          accessUrl,
-          'GET',
-        ),
+        authorization: nip98AuthHeader(requester.secretKey, requester.publicKey, accessUrl, 'GET'),
       },
     });
     expect(probe.statusCode).toBe(200);
@@ -2360,9 +2366,9 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     // ...and the pending link flips active with exactly one feed announcement.
     // A duplicate grant (redelivery or reconcile) is idempotent.
     const announcements = await store.githubRepoEvents('octocat/widget', 0, 100);
-    expect(
-      announcements.filter((event) => event.eventType === 'beeline_room_link'),
-    ).toHaveLength(1);
+    expect(announcements.filter((event) => event.eventType === 'beeline_room_link')).toHaveLength(
+      1,
+    );
     expect(announcements.at(-1)).toMatchObject({
       eventType: 'beeline_room_link',
       summary: 'Beeline access granted: octocat/widget is now linked.',
@@ -2725,7 +2731,6 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(replay.json().error).toBe('replayed_auth');
   });
 
-
   it('serves the succession chain only to the successor key itself', async () => {
     const challenge = await ceremony();
     const oldKey = generateKeypair();
@@ -2806,12 +2811,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: currentUrl,
       headers: {
         host: alphaTenant.host,
-        authorization: nip98AuthHeader(
-          resolver.secretKey,
-          resolver.publicKey,
-          currentUrl,
-          'GET',
-        ),
+        authorization: nip98AuthHeader(resolver.secretKey, resolver.publicKey, currentUrl, 'GET'),
       },
     });
     expect(current.statusCode).toBe(200);
@@ -2824,12 +2824,7 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
       url: unrelatedUrl,
       headers: {
         host: alphaTenant.host,
-        authorization: nip98AuthHeader(
-          resolver.secretKey,
-          resolver.publicKey,
-          unrelatedUrl,
-          'GET',
-        ),
+        authorization: nip98AuthHeader(resolver.secretKey, resolver.publicKey, unrelatedUrl, 'GET'),
       },
     });
     expect(unrelatedResolution.statusCode).toBe(200);
@@ -3462,36 +3457,35 @@ describe('GitHub repository events in Rooms', () => {
 
   /** Deliver one of each shipped event type against `octocat/widget`. */
   async function deliverSampleEvents(prefix = 'd'): Promise<void> {
-    await webhook(
-      'star',
-      `${prefix}-star-1`,
-      {
-        action: 'created',
-        starred_at: '2026-01-01T00:00:00Z',
-        repository: { id: 42, full_name: REPO },
-        sender: { login: 'lena' },
+    await webhook('star', `${prefix}-star-1`, {
+      action: 'created',
+      starred_at: '2026-01-01T00:00:00Z',
+      repository: { id: 42, full_name: REPO },
+      sender: { login: 'lena' },
+    });
+    await webhook('issues', `${prefix}-issue-1`, {
+      action: 'opened',
+      issue: {
+        number: 12,
+        title: 'Fix login',
+        html_url: `https://github.com/${REPO}/issues/12`,
+        user: { login: 'lena' },
       },
-    );
-    await webhook(
-      'issues',
-      `${prefix}-issue-1`,
-      {
-        action: 'opened',
-        issue: { number: 12, title: 'Fix login', html_url: `https://github.com/${REPO}/issues/12`, user: { login: 'lena' } },
-        repository: { id: 42, full_name: REPO },
-        sender: { login: 'lena' },
+      repository: { id: 42, full_name: REPO },
+      sender: { login: 'lena' },
+    });
+    await webhook('pull_request', `${prefix}-pr-1`, {
+      action: 'opened',
+      pull_request: {
+        number: 34,
+        title: 'Add dark mode',
+        html_url: `https://github.com/${REPO}/pull/34`,
+        user: { login: 'lena' },
+        merged: false,
       },
-    );
-    await webhook(
-      'pull_request',
-      `${prefix}-pr-1`,
-      {
-        action: 'opened',
-        pull_request: { number: 34, title: 'Add dark mode', html_url: `https://github.com/${REPO}/pull/34`, user: { login: 'lena' }, merged: false },
-        repository: { id: 42, full_name: REPO },
-        sender: { login: 'lena' },
-      },
-    );
+      repository: { id: 42, full_name: REPO },
+      sender: { login: 'lena' },
+    });
   }
 
   function roomEventsUrl(): string {
@@ -3515,7 +3509,12 @@ describe('GitHub repository events in Rooms', () => {
         pubkey: identity.publicKey,
         room_id: roomId,
         relay_authorizations: Array.from({ length: 16 }, () =>
-          nip98AuthHeader(identity.secretKey, identity.publicKey, `${alphaTenant.origin}/query`, 'POST'),
+          nip98AuthHeader(
+            identity.secretKey,
+            identity.publicKey,
+            `${alphaTenant.origin}/query`,
+            'POST',
+          ),
         ),
         ...(options.since !== undefined ? { since: options.since } : {}),
         ...(options.waitMs !== undefined ? { wait_ms: options.waitMs } : {}),
@@ -3614,11 +3613,16 @@ describe('GitHub repository events in Rooms', () => {
   });
 
   it('rejects a webhook with an invalid signature before storing anything', async () => {
-    const badSignature = await webhook('star', 'sig-star-1', {
-      action: 'created',
-      repository: { id: 42, full_name: REPO },
-      sender: { login: 'lena' },
-    }, 'wrong-secret');
+    const badSignature = await webhook(
+      'star',
+      'sig-star-1',
+      {
+        action: 'created',
+        repository: { id: 42, full_name: REPO },
+        sender: { login: 'lena' },
+      },
+      'wrong-secret',
+    );
     expect(badSignature.statusCode).toBe(401);
 
     roomTokenAuthority = async () => ({
@@ -3735,9 +3739,7 @@ describe('GitHub App manifest setup + drift endpoints', () => {
   let database: PgliteDatabase;
   let store: AuthStore;
   let app: FastifyInstance;
-  let liveApp:
-    | { slug: string; events?: unknown; permissions?: unknown }
-    | Error;
+  let liveApp: { slug: string; events?: unknown; permissions?: unknown } | Error;
   const SETUP_TOKEN = 'operator-setup-secret';
 
   beforeEach(async () => {
@@ -3849,19 +3851,20 @@ describe('GitHub App manifest setup + drift endpoints', () => {
     const pem = '-----BEGIN RSA PRIVATE KEY-----\nabc\ndef\n-----END RSA PRIVATE KEY-----';
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            id: 42,
-            slug: 'beeline-fresh',
-            html_url: 'https://github.com/apps/beeline-fresh',
-            client_id: 'Iv1.fresh',
-            client_secret: 'fresh-secret',
-            webhook_secret: 'fresh-webhook-secret',
-            pem,
-          }),
-          { status: 201 },
-        ),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              id: 42,
+              slug: 'beeline-fresh',
+              html_url: 'https://github.com/apps/beeline-fresh',
+              client_id: 'Iv1.fresh',
+              client_secret: 'fresh-secret',
+              webhook_secret: 'fresh-webhook-secret',
+              pem,
+            }),
+            { status: 201 },
+          ),
       ),
     );
     const result = await app.inject({

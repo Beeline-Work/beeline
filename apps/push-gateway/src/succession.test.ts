@@ -64,10 +64,9 @@ describe('SnapshotSuccessionClient', () => {
       requests.push(body.pubkeys);
       return requests.length === 1
         ? new Response(JSON.stringify({ mappings: { [OLD]: OLD } }), { status: 200 })
-        : new Response(
-            JSON.stringify({ mappings: { [OLD]: newCurrent, [CURRENT]: newCurrent } }),
-            { status: 200 },
-          );
+        : new Response(JSON.stringify({ mappings: { [OLD]: newCurrent, [CURRENT]: newCurrent } }), {
+            status: 200,
+          });
     });
     const client = new SnapshotSuccessionClient({
       baseUrl: 'http://auth:8789',

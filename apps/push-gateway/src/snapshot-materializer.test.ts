@@ -246,10 +246,11 @@ describe('ChannelSnapshotMaterializer', () => {
   it('pages past an authorized sibling repository to the parent Room binding', async () => {
     const owner = createIdentity('snapshot-repository-owner');
     const member = createIdentity('snapshot-repository-member');
-    await database.query(
-      `INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3)`,
-      [TENANT, CHANNEL, CORNER],
-    );
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3)`, [
+      TENANT,
+      CHANNEL,
+      CORNER,
+    ]);
     await database.query(
       `INSERT INTO channel_members (community_id, channel_id, pubkey)
        VALUES ($1, $2, decode($4, 'hex')),
@@ -650,10 +651,11 @@ describe('ChannelSnapshotMaterializer', () => {
 
   it('materializes an empty Corner from its parent lifecycle and live roster', async () => {
     const owner = createIdentity('snapshot-empty-corner-owner');
-    await database.query(
-      `INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3)`,
-      [TENANT, CHANNEL, CORNER],
-    );
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3)`, [
+      TENANT,
+      CHANNEL,
+      CORNER,
+    ]);
     await database.query(
       `INSERT INTO channel_members (community_id, channel_id, pubkey)
        VALUES ($1, $2, decode($4, 'hex')), ($1, $3, decode($4, 'hex'))`,
@@ -858,10 +860,7 @@ describe('ChannelSnapshotMaterializer', () => {
       selectTranscript(served!.payload!.snapshot, CHANNEL)
         .filter((row) => row.kind === 'human-message')
         .map((row) => row.body),
-    ).toEqual([
-      'History remains after I leave.',
-      'Profileless history remains after I leave.',
-    ]);
+    ).toEqual(['History remains after I leave.', 'Profileless history remains after I leave.']);
     expect(
       served?.payload?.snapshot.rooms[CHANNEL]?.eventJournal[unauthorizedApproval.id],
     ).toBeUndefined();

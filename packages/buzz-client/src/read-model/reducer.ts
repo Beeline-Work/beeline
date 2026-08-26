@@ -527,8 +527,7 @@ export function canonicalizeWorkspaceMembership(
           event?.type === 'lifecycle' &&
           (event.lifecycle.entity === 'room'
             ? event.lifecycle.roomId === channelId && event.lifecycle.state === 'created'
-            : event.lifecycle.cornerId === channelId &&
-              event.lifecycle.createdAt !== undefined),
+            : event.lifecycle.cornerId === channelId && event.lifecycle.createdAt !== undefined),
       )
       .sort(compareClock)
       .at(-1);

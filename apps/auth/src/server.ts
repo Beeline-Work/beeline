@@ -460,21 +460,19 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       // org install behind exactly that blindness. The App JWT sees every
       // installation, so an install whose callback never persisted is
       // discovered here without the owner re-running the install flow.
-      const installations = await options.github!.app.listInstallations();;
+      const installations = await options.github!.app.listInstallations();
       // One user-token listing answers "which installations does this user
       // administer" for every candidate at once; computed only when a
       // not-yet-recorded installation actually needs the ownership gate.
       let userInstallationIds: Promise<Set<number> | 'unavailable'> | undefined;
       const administeredByUser = async (): Promise<Set<number> | 'unavailable'> => {
         if (!userInstallationIds) {
-          userInstallationIds = options.github!.app
-            .listUserInstallationIds(decryptGitHubToken(sealedUserToken))
+          userInstallationIds = options
+            .github!.app.listUserInstallationIds(decryptGitHubToken(sealedUserToken))
             .then(
               (ids) => {
                 // The stored credential demonstrably still works.
-                void options.store
-                  .clearGitHubUserTokenStale(community, subject)
-                  .catch(() => {});
+                void options.store.clearGitHubUserTokenStale(community, subject).catch(() => {});
                 return new Set(ids);
               },
               (error: unknown) => {
@@ -505,7 +503,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
           // follows the install-callback precedent — GitHub's state-bound
           // redirect is absent here, but an unavailable listing is logged
           // and proceeded with, while a definitive denial refuses.
-          const administered = await administeredByUser();;
+          const administered = await administeredByUser();
           if (administered !== 'unavailable') {
             if (!administered.has(installationId)) continue;
           } else if (account.type !== 'Organization') {
@@ -788,12 +786,11 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ProtocolError) {
-      void
-        reply.status(error.statusCode).send({
-          error: error.code,
-          message: error.message,
-          ...(error.details ?? {}),
-        });
+      void reply.status(error.statusCode).send({
+        error: error.code,
+        message: error.message,
+        ...(error.details ?? {}),
+      });
       return;
     }
     if (error && typeof error === 'object' && 'statusCode' in error && error.statusCode === 413) {
@@ -1502,36 +1499,39 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
    * rediscover the Workspaces its predecessor's key authored/joined and
    * migrate its own memberships in — zero re-inviting after a replace.
    */
-  app.get<{ Params: { pubkey: string } }>('/auth/oidc/predecessors/:pubkey', async (request, reply) => {
-    const tenant = tenantFor(request);
-    const pubkey = request.params.pubkey;
-    if (!/^[0-9a-f]{64}$/.test(pubkey))
-      throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
-    const auth = verifyNip98Header(
-      request.headers.authorization,
-      publicUrl(tenant, request),
-      'GET',
-      now(),
-    );
-    if (!auth.ok || auth.pubkey !== pubkey) {
-      throw new ProtocolError(
-        401,
-        'unauthorized',
-        auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+  app.get<{ Params: { pubkey: string } }>(
+    '/auth/oidc/predecessors/:pubkey',
+    async (request, reply) => {
+      const tenant = tenantFor(request);
+      const pubkey = request.params.pubkey;
+      if (!/^[0-9a-f]{64}$/.test(pubkey))
+        throw new ProtocolError(400, 'invalid_pubkey', 'invalid public key');
+      const auth = verifyNip98Header(
+        request.headers.authorization,
+        publicUrl(tenant, request),
+        'GET',
+        now(),
       );
-    }
-    const authNow = now();
-    const claimed = await options.store.claimNip98Event(
-      auth.eventId,
-      new Date(authNow.getTime() + 2 * 60_000),
-      authNow,
-    );
-    if (!claimed)
-      throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
-    const predecessors = await options.store.successionPredecessors(tenant.community, pubkey);
-    noStore(reply);
-    return reply.send({ predecessors });
-  });
+      if (!auth.ok || auth.pubkey !== pubkey) {
+        throw new ProtocolError(
+          401,
+          'unauthorized',
+          auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+        );
+      }
+      const authNow = now();
+      const claimed = await options.store.claimNip98Event(
+        auth.eventId,
+        new Date(authNow.getTime() + 2 * 60_000),
+        authNow,
+      );
+      if (!claimed)
+        throw new ProtocolError(401, 'replayed_auth', 'NIP-98 authentication was already used');
+      const predecessors = await options.store.successionPredecessors(tenant.community, pubkey);
+      noStore(reply);
+      return reply.send({ predecessors });
+    },
+  );
 
   /**
    * Resolve a historical device key to the current key of that identity.
@@ -1696,11 +1696,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       );
       return reply.status(400).type('text/html; charset=utf-8').send(githubInstallErrorPage());
     };
-    if (
-      typeof state !== 'string' ||
-      !Number.isSafeInteger(installationId) ||
-      installationId <= 0
-    ) {
+    if (typeof state !== 'string' || !Number.isSafeInteger(installationId) || installationId <= 0) {
       return flowInvalid();
     }
     const flow = await options.store.consumeGitHubInstallFlow(sha256(state), now());
@@ -1750,9 +1746,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       );
     }
     const accessConfirmed =
-      installedAccount.type === 'User'
-        ? userCanAdminister === true
-        : userCanAdminister !== false;
+      installedAccount.type === 'User' ? userCanAdminister === true : userCanAdminister !== false;
     if (!accessConfirmed) {
       throw new ProtocolError(
         403,
@@ -2026,11 +2020,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         throw new ProtocolError(400, 'invalid_request', 'invalid room_id');
       }
       noStore(reply);
-      const access = await options.store.githubRepositoryAccess(
-        tenant.community,
-        pubkey,
-        fullName,
-      );
+      const access = await options.store.githubRepositoryAccess(tenant.community, pubkey, fullName);
       if (!access.accessible && access.reason !== 'revoked') {
         const installUrl = options.github.app.publicInstallUrl;
         if (roomId) {
@@ -2043,7 +2033,10 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
               now(),
             );
           } catch (error) {
-            request.log.warn({ err: error, roomId, repository: fullName }, 'Room link request not recorded');
+            request.log.warn(
+              { err: error, roomId, repository: fullName },
+              'Room link request not recorded',
+            );
           }
         }
         return reply.send({ ...access, grant_needed: true, install_url: installUrl });
@@ -2347,7 +2340,11 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       now(),
     );
     if (!auth.ok || auth.pubkey !== pubkey) {
-      throw new ProtocolError(401, 'unauthorized', auth.ok ? 'NIP-98 signer mismatch' : auth.reason);
+      throw new ProtocolError(
+        401,
+        'unauthorized',
+        auth.ok ? 'NIP-98 signer mismatch' : auth.reason,
+      );
     }
     for (const relayAuthorization of relayAuthorizations) {
       const relayAuth = verifyNip98Header(
@@ -2379,11 +2376,10 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     // releases everything stored after it (delivered late to a daemon that
     // was offline when the events arrived), oldest first.
     const sinceRaw = body.since;
-    let since:
-      | number
-      | undefined = typeof sinceRaw === 'number' && Number.isSafeInteger(sinceRaw) && sinceRaw >= 0
-      ? sinceRaw
-      : undefined;
+    let since: number | undefined =
+      typeof sinceRaw === 'number' && Number.isSafeInteger(sinceRaw) && sinceRaw >= 0
+        ? sinceRaw
+        : undefined;
     const waitMsRaw = body.wait_ms;
     const waitMs = Math.max(
       0,
@@ -2420,7 +2416,11 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
         'GitHub Room events authority refused request',
       );
       if (authority.reason === 'agent_not_room_member') {
-        throw new ProtocolError(403, 'room_membership_required', 'agent is not a member of this Room');
+        throw new ProtocolError(
+          403,
+          'room_membership_required',
+          'agent is not a member of this Room',
+        );
       }
       throw new ProtocolError(
         403,
@@ -2461,10 +2461,20 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
     }
 
     let events =
-      since === undefined ? [] : await options.store.githubRepoEvents(eventsFullName, since, GITHUB_REPO_EVENT_FETCH_LIMIT);
+      since === undefined
+        ? []
+        : await options.store.githubRepoEvents(
+            eventsFullName,
+            since,
+            GITHUB_REPO_EVENT_FETCH_LIMIT,
+          );
     if (since !== undefined && events.length === 0 && waitMs > 0) {
       await waitForGitHubRepoEvent(eventsFullName, waitMs);
-      events = await options.store.githubRepoEvents(eventsFullName, since, GITHUB_REPO_EVENT_FETCH_LIMIT);
+      events = await options.store.githubRepoEvents(
+        eventsFullName,
+        since,
+        GITHUB_REPO_EVENT_FETCH_LIMIT,
+      );
     }
     const head = await options.store.latestGitHubRepoEventId(eventsFullName);
     noStore(reply);
@@ -2522,10 +2532,7 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
       try {
         const record = extractGitHubRepoEvent(event, body);
         if (record) {
-          await options.store.saveGitHubRepoEvents(
-            [{ ...record, deliveryId }],
-            now(),
-          );
+          await options.store.saveGitHubRepoEvents([{ ...record, deliveryId }], now());
           wakeGitHubRepoEventWaiters(record.fullName);
         }
       } catch (error) {

@@ -31,22 +31,28 @@ required are documented in the header of `scripts/deploy-relay-host.sh`; if a
 rule is missing the deploy fails loudly at that step rather than working
 around it.
 
-## Push and snapshot gateway topology
+## Materializer topology
 
-Production has one gateway. `relay-front` sends `/push/` to
-`push-gateway:8788`; that container accepts registrations and tails Postgres
-over the private `buzz-net` network. It bind-mounts the durable registry and
-delivery state from `/home/lunchbox/buzzy-push-gateway/state/`. The retired
-`buzzy-push-gateway.service` must remain disabled; see
-`apps/push-gateway/deploy/README.md` for the one-time cutover checks.
+Production has one DB-tail process. `relay-front` sends `/push/` and
+`/snapshot/` to `materializer:8788`; that container hosts push delivery,
+repository-event ingestion, and channel snapshot projection over the private
+`buzz-net` network. It reads paired-agent runtime records read-only and keeps
+the existing FCM registry plus repository-events signing identity on their
+host volumes.
 
-The same process serves path-preserving `/snapshot/` requests and runs the
-durable Postgres-backed channel materializer. Its internal succession calls go
+Push and repository-event legacy JSON reservations are imported into the same
+Postgres reservation store used by the process. Their transition semantics and
+the snapshot dirty queue remain separately namespaced. Internal succession calls go
 directly to `auth:8789` with `BUZZY_SNAPSHOT_INTERNAL_TOKEN`; nginx never routes
 the `/internal/` endpoint. Compose health uses `/snapshot/health`, while public
 deployment verification checks both snapshot health and the independent
 `/push/health` FCM surface. A Firebase initialization failure can therefore
 leave snapshot reads available while push health reports unavailable.
+
+The deploy script disables the superseded `beeline-events.service` before the
+first converged Compose reconciliation and restores it if that rollout fails.
+Its fixed sudo command shapes are documented at the top of
+`scripts/deploy-relay-host.sh`.
 
 ## Preview-origin operator provisioning
 

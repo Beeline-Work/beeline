@@ -70,29 +70,27 @@ Node version does not replace the operator-selected fnm/nvm runtime. A manual
 systemd PATH drop-in is no longer needed; the next `beeline start` or
 `beeline pair` regenerates the template with the pinned runtime.
 
-## Repository event service
+## Repository event consumer
 
-Repository event ingestion is deliberately outside `ThinDaemonCore`. The
-single non-template `beeline-events.service` runs `beeline events daemon` under
-the same foreground lifecycle: `Type=notify`, READY after configuration and
-local discovery, WATCHDOG only after a complete bounded poll tick, bounded
-SIGTERM drain, control-group kill, and restart backoff. It owns one durable
-single-writer lock and one dedicated non-agent signing identity. Agent units do
-not receive GitHub App credentials; only this unit reads
-`~/.config/beeline/events.env`.
+Repository event ingestion remains outside `ThinDaemonCore`, but is hosted by
+the relay stack's single `materializer` Compose process beside push and snapshot
+consumers. Compose owns its lifecycle and bounded SIGTERM drain. The consumer
+keeps its dedicated non-agent signing identity while its delivery reservations
+live in the materializer's shared Postgres store. Agent units do not receive
+GitHub App credentials.
 The Room's dedicated merge-gate admin enrolls the service key as a member
 during discovery; it is never used to author repository activity. A legacy
 Room with no persisted admin remains visibly degraded instead of silently
 advancing its GitHub cursor.
 
-The service's status lists the last successful poll for every discovered
+The materializer log lists the last successful poll for every discovered
 workspace/repository. GitHub failures are isolated and backed off per
 repository, while relay deliveries are durably reserved before publication.
 Each fleet tick has a 90-second aggregate deadline and rotates repository
 priority, so a large group of slow repositories cannot outrun WATCHDOG or
 permanently starve the tail of the queue.
 See `apps/body/src/events-service.ts`, `events-state.ts`, and
-`github-events.ts`.
+`github-events.ts`; hosting lives in `apps/push-gateway/src/hosted-events.ts`.
 
 ## One-time host migration after merge and deploy
 

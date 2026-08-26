@@ -9,7 +9,6 @@ const execFileAsync = promisify(execFile);
 
 export const DELIBERATE_REMOVAL_EXIT_STATUS = 78;
 export const SYSTEMD_UNIT_NAME = 'beeline-agent@.service';
-export const EVENTS_SYSTEMD_UNIT_NAME = 'beeline-events.service';
 export const SYSTEMD_COMMAND_TIMEOUT_MS = 15_000;
 export const MINIMUM_SYSTEMD_NODE_VERSION = '20.11.0';
 /** Unit stop ceiling plus a small window for the successor to enter active. */
@@ -62,49 +61,6 @@ WantedBy=default.target
 `;
 }
 
-/** Single-instance repository event ingestion under the thin-core lifecycle contract. */
-export function eventsServiceUnit(
-  entrypoint = resolve(homedir(), '.local', 'bin', 'beeline'),
-  nodePath = process.execPath,
-  inheritedPath = process.env.PATH ?? '',
-): string {
-  if (!isAbsolute(nodePath)) throw new Error('systemd Node path must be absolute');
-  const nodeDir = dirname(nodePath);
-  const path = [
-    nodeDir,
-    ...inheritedPath.split(delimiter).filter((part) => part && part !== nodeDir),
-  ].join(delimiter);
-  return `[Unit]
-Description=Beeline repository event ingestion
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=5min
-StartLimitBurst=10
-
-[Service]
-Type=notify
-NotifyAccess=all
-Environment=BEELINE_MANAGED_BY_SYSTEMD=1
-Environment=${systemdQuote(`PATH=${path}`)}
-EnvironmentFile=-%h/.config/beeline/events.env
-ExecStart=${systemdQuote(entrypoint)} events daemon
-Restart=always
-RestartSec=5s
-RestartSteps=5
-RestartMaxDelaySec=60s
-WatchdogSec=180s
-TimeoutStartSec=90s
-TimeoutStopSec=90s
-KillMode=control-group
-UMask=0077
-NoNewPrivileges=yes
-PrivateTmp=yes
-
-[Install]
-WantedBy=default.target
-`;
-}
-
 function assertSupportedNodeVersion(version: string): void {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
   const [major, minor, patch] = match?.slice(1, 4).map(Number) ?? [];
@@ -125,11 +81,6 @@ function assertSupportedNodeVersion(version: string): void {
 export function systemdUserUnitPath(env: NodeJS.ProcessEnv = process.env): string {
   const configRoot = env.XDG_CONFIG_HOME?.trim() || resolve(homedir(), '.config');
   return resolve(configRoot, 'systemd', 'user', SYSTEMD_UNIT_NAME);
-}
-
-export function eventsSystemdUserUnitPath(env: NodeJS.ProcessEnv = process.env): string {
-  const configRoot = env.XDG_CONFIG_HOME?.trim() || resolve(homedir(), '.config');
-  return resolve(configRoot, 'systemd', 'user', EVENTS_SYSTEMD_UNIT_NAME);
 }
 
 export interface SystemdRunner {
@@ -232,35 +183,6 @@ export async function disableAgentService(
   // 15-second command deadline. The service cgroup and TimeoutStopSec own the
   // asynchronous stop job from here.
   if (options.stop !== false) await run(['stop', '--no-block', service]);
-}
-
-export async function installEventsService(
-  options: {
-    entrypoint?: string;
-    env?: NodeJS.ProcessEnv;
-    run?: SystemdRunner;
-    start?: boolean;
-    nodePath?: string;
-    nodeVersion?: string;
-  } = {},
-): Promise<void> {
-  const nodePath = options.nodePath ?? process.execPath;
-  assertSupportedNodeVersion(options.nodeVersion ?? process.versions.node);
-  const path = eventsSystemdUserUnitPath(options.env);
-  const content = eventsServiceUnit(
-    options.entrypoint,
-    nodePath,
-    options.env?.PATH ?? process.env.PATH,
-  );
-  const existing = await readFile(path, 'utf8').catch(() => '');
-  if (existing !== content) {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(path, content, { mode: 0o600 });
-  }
-  const run = options.run ?? runSystemctl;
-  await run(['daemon-reload']);
-  await run(['enable', EVENTS_SYSTEMD_UNIT_NAME]);
-  if (options.start !== false) await run(['restart', '--no-block', EVENTS_SYSTEMD_UNIT_NAME]);
 }
 
 export interface DaemonNotifier {

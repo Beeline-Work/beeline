@@ -9,6 +9,12 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  createWorkspaceSnapshot,
+  reduceWorkspaceEvents,
+  type SessionUpdate,
+} from '@beeline/buzz-client';
+
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 const mmkvValues = vi.hoisted(() => new Map<string, string>());
@@ -61,7 +67,8 @@ vi.mock('@/buzz/person-name', () => ({
   ensurePersonNameForWorkspace: vi.fn(async () => undefined),
 }));
 vi.mock('@/buzz/community-invite', () => ({ createCommunityInviteUrl: vi.fn(async () => 'x') }));
-vi.mock('@/buzz/local-cache-sync', () => ({
+vi.mock('@/buzz/local-cache-sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/buzz/local-cache-sync')>()),
   cacheLiveSessionEvents: vi.fn(),
   revalidateCachedMessages: vi.fn(async () => undefined),
 }));
@@ -216,6 +223,36 @@ function seedRooms(rooms: SeedRoom[]) {
   routeParams.current = { communityId: 'shared-1' };
 }
 
+function agentTurn(roomId: string, status: 'working' | 'complete', createdAt: number): SessionUpdate {
+  const agentPubkey = 'b'.repeat(64);
+  return {
+    type: 'session-update',
+    eventId: `${roomId}-turn-${status}-${createdAt}`,
+    authorPubkey: agentPubkey,
+    createdAt,
+    sourceKind: 9,
+    signature: 'verified',
+    scope: 'channel',
+    channelId: roomId,
+    workspaceId: 'shared-1',
+    sessionId: `${roomId}-session`,
+    update: {
+      kind: 'turn',
+      agentPubkey,
+      requestId: `${roomId}-request`,
+      status,
+    },
+  } as SessionUpdate;
+}
+
+function roomDeckState(tree: ReactTestRenderer, roomId: string): string {
+  const row = findAllByTestId(tree, `room-${roomId}`)[0];
+  if (!row) throw new Error(`room row not found: ${roomId}`);
+  const marks = row.findAll((node: any) => node.type === 'HullDeckMark', { deep: true });
+  if (marks.length !== 1) throw new Error(`expected one deck mark for ${roomId}`);
+  return marks[0]!.props.state;
+}
+
 async function render(): Promise<ReactTestRenderer> {
   let tree!: ReactTestRenderer;
   await act(async () => {
@@ -319,6 +356,30 @@ describe("the deck's one ordered feed", () => {
     expect(joined).not.toContain("DOESN'T NEED YOU ·");
     expect(joined.indexOf('Review room')).toBeLessThan(joined.indexOf('Working room'));
     expect(joined.indexOf('Working room')).toBeLessThan(joined.indexOf('Quiet room'));
+  });
+
+  it('paints a stored Room-own working turn on first paint and settles on completion', async () => {
+    const roomId = 'already-working-room';
+    seedRooms([{ id: roomId, title: 'Already working' }]);
+    const working = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({ workspaceId: 'shared-1' }),
+      [agentTurn(roomId, 'working', 3_000)],
+    );
+    // Store the lifecycle before mount. `useFocusEffect` is a no-op in this
+    // harness, so the row cannot pass by witnessing a live transition.
+    useBuzzLocalCache.getState().replaceSnapshot(VIEWER, roomId, working, 3_000);
+
+    const tree = await render();
+    expect(roomDeckState(tree, roomId)).toBe('working');
+    expect(findByAclPrefix(tree, 'Open #Already working')[0].props.accessibilityLabel).toContain(
+      'agent working',
+    );
+
+    const complete = reduceWorkspaceEvents(working, [agentTurn(roomId, 'complete', 3_001)]);
+    await act(async () => {
+      useBuzzLocalCache.getState().replaceSnapshot(VIEWER, roomId, complete, 3_001);
+    });
+    expect(roomDeckState(tree, roomId)).toBe('idle');
   });
 
   it('pins an asked corner ahead of a merely idle one', async () => {

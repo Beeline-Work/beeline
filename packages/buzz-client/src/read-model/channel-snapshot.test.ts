@@ -363,6 +363,7 @@ describe('channel snapshot v1 contract', () => {
     const owner = createIdentity('review-owner');
     const agent = createIdentity('review-agent');
     const tip = '1'.repeat(40);
+    const approvedTip = '4'.repeat(40);
     const base = '2'.repeat(40);
     const patchId = '3'.repeat(40);
     const signed = (
@@ -399,7 +400,7 @@ describe('channel snapshot v1 contract', () => {
         ['t', 'buzz-merge-approval'],
         ['repo', 'lunchboxfortwo/beeline'],
         ['branch', 'main'],
-        ['tip', tip],
+        ['tip', approvedTip],
       ],
       'APPROVE 0',
     );
@@ -413,7 +414,7 @@ describe('channel snapshot v1 contract', () => {
           ['t', 'buzz-merge-approval'],
           ['repo', 'lunchboxfortwo/beeline'],
           ['branch', 'main'],
-          ['tip', tip],
+          ['tip', approvedTip],
         ],
         `APPROVE ${nonce}`,
       );

@@ -10,7 +10,12 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { CronExpression, CronExpressionParser } from 'cron-parser';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import type { ArtifactRevisionRef, Identity, PermissionConcreteAction } from '@beeline/buzz-client';
+import {
+  MAX_MISSION_RESERVED_TOKENS,
+  type ArtifactRevisionRef,
+  type Identity,
+  type PermissionConcreteAction,
+} from '@beeline/buzz-client';
 
 export const WORK_SCHEDULE_KIND = 30078;
 export const WORK_SCHEDULE_TAG = 'buzz-work-schedule';
@@ -32,7 +37,7 @@ const MAX_PROMPT_CHARS = 32_000;
 const MAX_SCRIPT_CHARS = 32_000;
 const MAX_ARTIFACT_REFS = 128;
 const MAX_RUNS = 1_000_000;
-const MAX_RESERVED_TOKENS = 100_000_000;
+const MAX_RESERVED_TOKENS = MAX_MISSION_RESERVED_TOKENS;
 const MAX_INTERVAL_SECONDS = 366 * 24 * 60 * 60;
 
 export type WorkScheduleExecution =
@@ -199,11 +204,15 @@ export interface WorkCalendarStore {
   load(): Promise<void>;
   states(): Promise<WorkScheduleRuntimeState[]>;
   put(state: WorkScheduleRuntimeState): Promise<void>;
+  reserveReceipt(event: NostrEvent): Promise<void>;
+  pendingReceipts(): Promise<NostrEvent[]>;
+  markReceiptDelivered(eventId: string): Promise<void>;
 }
 
 interface DurableCalendarData {
-  version: 2;
+  version: 3;
   schedules: Record<string, WorkScheduleRuntimeState>;
+  pendingReceipts: Record<string, NostrEvent>;
 }
 
 function cloneState(state: WorkScheduleRuntimeState): WorkScheduleRuntimeState {
@@ -212,7 +221,7 @@ function cloneState(state: WorkScheduleRuntimeState): WorkScheduleRuntimeState {
 
 /** Atomic local state for best-effort execution progress and failure pausing. */
 export class DurableWorkCalendarState implements WorkCalendarStore {
-  private data: DurableCalendarData = { version: 2, schedules: {} };
+  private data: DurableCalendarData = { version: 3, schedules: {}, pendingReceipts: {} };
   private loaded = false;
   private saveTail: Promise<void> = Promise.resolve();
 
@@ -224,19 +233,24 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
       const parsed = JSON.parse(await readFile(this.path, 'utf8')) as {
         version?: unknown;
         schedules?: unknown;
+        pendingReceipts?: unknown;
       };
       // P2 was not shipped before the execution model was simplified. Drop
       // its development-only reservation/outbox journal as a lost store; the
       // best-effort contract intentionally reconstructs from schedule config.
       if (parsed.version === 1) {
-        const migrated: DurableCalendarData = { version: 2, schedules: {} };
+        const migrated: DurableCalendarData = {
+          version: 3,
+          schedules: {},
+          pendingReceipts: {},
+        };
         this.loaded = true;
         await this.save(migrated);
         this.data = migrated;
         return;
       }
       const rawSchedules = object(parsed.schedules);
-      if (parsed.version !== 2 || !rawSchedules) {
+      if ((parsed.version !== 2 && parsed.version !== 3) || !rawSchedules) {
         throw new Error(`unsupported durable work calendar state at ${this.path}`);
       }
       const schedules: Record<string, WorkScheduleRuntimeState> = {};
@@ -247,7 +261,19 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
         }
         schedules[key] = state;
       }
-      this.data = { version: 2, schedules };
+      const pendingReceipts: Record<string, NostrEvent> = {};
+      if (parsed.version === 3) {
+        const rawReceipts = object(parsed.pendingReceipts);
+        if (!rawReceipts) throw new Error(`invalid durable work calendar state at ${this.path}`);
+        for (const [eventId, candidate] of Object.entries(rawReceipts)) {
+          const event = candidate as NostrEvent;
+          if (event?.id !== eventId || !parseScheduledTurnReceipt(event)) {
+            throw new Error(`invalid durable work calendar receipt at ${this.path}`);
+          }
+          pendingReceipts[eventId] = event;
+        }
+      }
+      this.data = { version: 3, schedules, pendingReceipts };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -265,12 +291,45 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     if (!parsed) throw new Error('invalid work calendar runtime state');
     await this.enqueueSave(async () => {
       const next: DurableCalendarData = {
-        version: 2,
+        version: 3,
         schedules: {
           ...this.data.schedules,
           [parsed.scheduleId]: cloneState(parsed),
         },
+        pendingReceipts: { ...this.data.pendingReceipts },
       };
+      await this.write(next);
+      this.data = next;
+    });
+  }
+
+  async reserveReceipt(event: NostrEvent): Promise<void> {
+    await this.load();
+    if (!parseScheduledTurnReceipt(event)) throw new Error('invalid scheduled receipt outbox event');
+    await this.enqueueSave(async () => {
+      const next: DurableCalendarData = {
+        ...this.data,
+        pendingReceipts: { ...this.data.pendingReceipts, [event.id]: event },
+      };
+      await this.write(next);
+      this.data = next;
+    });
+  }
+
+  async pendingReceipts(): Promise<NostrEvent[]> {
+    await this.load();
+    return Object.values(this.data.pendingReceipts).sort(
+      (left, right) => left.created_at - right.created_at || left.id.localeCompare(right.id),
+    );
+  }
+
+  async markReceiptDelivered(eventId: string): Promise<void> {
+    await this.load();
+    if (!this.data.pendingReceipts[eventId]) return;
+    await this.enqueueSave(async () => {
+      const pendingReceipts = { ...this.data.pendingReceipts };
+      delete pendingReceipts[eventId];
+      const next: DurableCalendarData = { ...this.data, pendingReceipts };
       await this.write(next);
       this.data = next;
     });
@@ -1286,6 +1345,7 @@ export class WorkCalendar {
         for (const state of await this.dependencies.store.states()) {
           this.states.set(state.scheduleId, state);
         }
+        await this.flushPendingReceipts();
         if (this.disposed) return;
         await this.refreshSafely();
       });
@@ -1488,6 +1548,7 @@ export class WorkCalendar {
 
   private async onWake(): Promise<void> {
     if (this.disposed) return;
+    await this.flushPendingReceipts();
     const due: HeapEntry[] = [];
     while (due.length < MAX_CALENDAR_DUE_PER_WAKE) {
       const entry = this.heap.peek();
@@ -1736,8 +1797,29 @@ export class WorkCalendar {
       reservedTokens: schedule.perRunReservedTokens,
       ...(reason ? { reason } : {}),
     });
-    await this.publishBestEffort(event, `${status} receipt for ${runId}`);
+    if (status === 'complete' || status === 'failed' || status === 'skipped') {
+      await this.dependencies.store.reserveReceipt(event);
+      try {
+        await this.dependencies.publish(event);
+        await this.dependencies.store.markReceiptDelivered(event.id);
+      } catch (error) {
+        console.error(`[work-calendar] ${status} receipt for ${runId} publish failed:`, error);
+      }
+    } else {
+      await this.publishBestEffort(event, `${status} receipt for ${runId}`);
+    }
     return event;
+  }
+
+  private async flushPendingReceipts(): Promise<void> {
+    for (const event of await this.dependencies.store.pendingReceipts()) {
+      try {
+        await this.dependencies.publish(event);
+        await this.dependencies.store.markReceiptDelivered(event.id);
+      } catch (error) {
+        console.error(`[work-calendar] pending receipt ${event.id} publish failed:`, error);
+      }
+    }
   }
 
   private validateArtifacts(parsed: ParsedWorkSchedule): Promise<ScheduleAuthorityResult> {

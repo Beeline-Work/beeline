@@ -66,6 +66,18 @@ function admission(turn: ParsedDelegationTurn, history: ParsedDelegationTurn[] =
 }
 
 describe('delegation codecs', () => {
+  it('round-trips the full mission reservation bound', () => {
+    const atlas = createIdentity('Atlas');
+    const scout = createIdentity('Scout');
+    const event = buildDelegationTurn(
+      atlas,
+      turnValue(atlas.publicKey, scout.publicKey, {
+        budget: defaultDelegationBudget(NOW, 100_000_000),
+      }),
+    );
+    expect(parseDelegationTurn(event)?.value.budget.reservedTokens).toBe(100_000_000);
+  });
+
   it('round-trips exact signed turn and receipt objects', () => {
     const atlas = createIdentity('Atlas');
     const scout = createIdentity('Scout');

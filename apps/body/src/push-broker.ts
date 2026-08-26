@@ -77,6 +77,8 @@ export interface MissionStandingLandAuthorization {
   controllerAgentPubkey: string;
   repositoryKey: string;
   targetRef: string;
+  cornerId: string;
+  sourceSha: string;
 }
 
 export type BrokerProtectedAuthorization =
@@ -261,13 +263,16 @@ export function evaluateBrokeredPush(input: EvaluateBrokeredPushInput): BrokerDe
       authorization.roomId !== input.repository.roomId ||
       authorization.repositoryKey !== input.repository.repositoryKey ||
       authorization.controllerAgentPubkey !== input.repository.controllerAgentPubkey ||
-      normalizeBranchRef(authorization.targetRef) !== normalizeBranchRef(dst!)
+      normalizeBranchRef(authorization.targetRef) !== normalizeBranchRef(dst!) ||
+      !input.cornerId ||
+      authorization.cornerId !== input.cornerId ||
+      authorization.sourceSha !== boundTip
     ) {
       return {
         action: 'refuse',
         refClass,
         reason:
-          'The mission grant does not bind the fresh Room, repository key, controller, and protected ref.',
+          'The mission grant does not bind the fresh Room, repository key, controller, corner, source commit, and protected ref.',
       };
     }
   }

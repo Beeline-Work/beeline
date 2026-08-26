@@ -101,7 +101,10 @@ export interface MissionControlScope {
   scheduleAllocations: MissionScheduleAllocation[];
   /** Standing land authority is exact to `repository`; false grants none. */
   land: boolean;
+  landBinding?: { cornerId: string; sourceSha: string };
 }
+
+export const MAX_MISSION_RESERVED_TOKENS = 100_000_000;
 
 export type PermissionScope =
   | {
@@ -639,7 +642,7 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
         const maxReservedTokensPerDay = integer(
           allocation?.maxReservedTokensPerDay,
           0,
-          100_000_000,
+          MAX_MISSION_RESERVED_TOKENS,
         );
         const maxTotalReservedTokens = integer(
           allocation?.maxTotalReservedTokens,
@@ -673,12 +676,12 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
         const maxReservedTokensPerRun = integer(
           allocation?.maxReservedTokensPerRun,
           0,
-          100_000_000,
+          MAX_MISSION_RESERVED_TOKENS,
         );
         const maxReservedTokensPerDay = integer(
           allocation?.maxReservedTokensPerDay,
           0,
-          100_000_000,
+          MAX_MISSION_RESERVED_TOKENS,
         );
         const maxTotalReservedTokens = integer(
           allocation?.maxTotalReservedTokens,

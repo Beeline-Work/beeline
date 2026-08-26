@@ -978,6 +978,7 @@ export interface SubchannelInfo {
    * which archives as soon as neither reports activity.
    */
   archiveWhenSessionRetires?: boolean;
+  missionCloseAdmitted?: boolean;
   /** Relay existence failed authoritatively. Cleanup retries use the missing-
    * channel reap path rather than trying to archive a channel that is gone. */
   missingFromRelay?: boolean;
@@ -5676,9 +5677,17 @@ export class Body {
       'working',
       this.presenceGenerations.get(channelId),
     );
-    let session: AgentSession;
+    let session: AgentSession | undefined;
     let releaseMissionWork: (() => void) | undefined;
     try {
+      if (turn.value.mission) {
+        releaseMissionWork = this.registerMissionWork(turn.value.mission.grantEventId, {
+          fresh: () => this.delegationRootAuthorized(turn),
+          cancel: () => {
+            if (session) session.client.sessionCancel(session.sessionId);
+          },
+        });
+      }
       session =
         this.sessions.get(channelId) ?? (await this.provision(channelId, boundRepo, editPolicy));
       if (session.mode !== 'readonly') {
@@ -5686,11 +5695,8 @@ export class Body {
           'read-only tools unavailable: refusing an edit session for delegation',
         );
       }
-      if (turn.value.mission) {
-        releaseMissionWork = this.registerMissionWork(turn.value.mission.grantEventId, {
-          fresh: () => this.delegationRootAuthorized(turn),
-          cancel: () => session.client.sessionCancel(session.sessionId),
-        });
+      if (turn.value.mission && !(await this.delegationRootAuthorized(turn))) {
+        throw new ScheduleActivationRefusedError(true, 'mission-grant-invalid');
       }
       const current = attachmentPrompt(
         turn.value.fromAgentPubkey,
@@ -6684,20 +6690,7 @@ export class Body {
     if (!info?.mission || info.mission.targetAgentPubkey !== this.agentIdentity.publicKey) {
       throw new Error('mission corner lineage is unavailable');
     }
-    const execution = await this.beginMissionCornerAction(
-      info.mission,
-      'close',
-      `${subchannelId}:${Date.now()}`,
-    );
-    try {
-      await this.archiveSubchannel(subchannelId);
-    } finally {
-      await this.permissionRuntime.complete({
-        execution,
-        status: 'succeeded',
-        result: 'mission-corner-close-attempted',
-      });
-    }
+    await this.archiveSubchannel(subchannelId);
   }
 
   async dispatchScheduledTurn(
@@ -9657,7 +9650,11 @@ export class Body {
         principalPubkey: info.mission.principalPubkey,
         repository: info.mission.repository,
         executorPubkey: this.agentIdentity.publicKey,
-        exercise: { kind: 'land' },
+        exercise: {
+          kind: 'land',
+          cornerId: info.subchannelId,
+          sourceSha: target.tip,
+        },
         ordinal: missionActionOrdinal(`land:${info.subchannelId}:${target.tip}`),
         idempotencyKey: `mission-land:${info.subchannelId}:${target.tip}`,
       });
@@ -9687,6 +9684,8 @@ export class Body {
               controllerAgentPubkey: info.mission.controllerAgentPubkey,
               repositoryKey: info.mission.repository.key,
               targetRef: info.mission.repository.targetBranch,
+              cornerId: info.subchannelId,
+              sourceSha: target.tip,
             }
           : {
               kind: 'corner-approval',
@@ -12655,6 +12654,7 @@ export class Body {
   async archiveSubchannel(subchannelId: string): Promise<void> {
     if (this.archivingSubchannels.has(subchannelId)) return;
     this.archivingSubchannels.add(subchannelId);
+    let missionCloseExecution: PermissionExecutionHandle | undefined;
     try {
       const info = this.subchannels.get(subchannelId);
       if (!info) {
@@ -12667,6 +12667,36 @@ export class Body {
           return;
         }
         throw new Error(`Subchannel ${subchannelId} not found`);
+      }
+
+      if (info.mission && !info.archived && !info.missionCloseAdmitted) {
+        const action = await resolveMissionAction({
+          reader: this.permissionReader,
+          reference: info.mission,
+          workspaceId: info.mission.workspaceId,
+          roomId: info.mission.roomId,
+          principalPubkey: info.mission.principalPubkey,
+          repository: info.mission.repository,
+          executorPubkey: this.agentIdentity.publicKey,
+          exercise: {
+            kind: 'corner',
+            operation: 'close',
+            targetAgentPubkey: info.mission.targetAgentPubkey,
+          },
+          ordinal: missionActionOrdinal(`corner-close:${subchannelId}`),
+          idempotencyKey: `mission-corner:close:${subchannelId}`,
+        });
+        if (!action) throw new ScheduleActivationRefusedError(true, 'mission-corner-mismatch');
+        const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
+        if (begun.status === 'started') {
+          missionCloseExecution = begun.execution;
+        } else if (begun.status !== 'duplicate') {
+          throw new ScheduleActivationRefusedError(
+            begun.status === 'refused' ? begun.terminal : true,
+            begun.status === 'refused' ? begun.reason : `mission-corner-${begun.status}`,
+          );
+        }
+        info.missionCloseAdmitted = true;
       }
 
       // The map name is not authority. Confirm both the in-memory session and
@@ -12768,6 +12798,13 @@ export class Body {
       this.abandonedCorners.delete(subchannelId);
       this.abandonedCornerScanAt.delete(subchannelId);
     } finally {
+      if (missionCloseExecution) {
+        await this.permissionRuntime.complete({
+          execution: missionCloseExecution,
+          status: 'succeeded',
+          result: 'mission-corner-close-attempted',
+        });
+      }
       this.archivingSubchannels.delete(subchannelId);
     }
   }

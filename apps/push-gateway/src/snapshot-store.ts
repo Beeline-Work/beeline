@@ -39,6 +39,11 @@ export type ChannelMessagePage = {
   readonly exhausted: boolean;
 };
 
+export type MessageScanContinuation = {
+  readonly cursor: MessagePageCursor;
+  readonly eventIds: readonly string[];
+};
+
 export type CurrentChannelMember = {
   readonly channelId: string;
   readonly pubkey: string;
@@ -84,6 +89,9 @@ CREATE TABLE IF NOT EXISTS beeline_snapshot_dirty (
   last_claimed_at timestamptz,
   attempts integer NOT NULL DEFAULT 0,
   last_error text,
+  scan_cursor_created_at bigint,
+  scan_cursor_event_id text,
+  scan_event_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
   PRIMARY KEY (relay_tenant_id, channel_id)
 );
 
@@ -95,6 +103,15 @@ ALTER TABLE beeline_snapshot_dirty
 
 ALTER TABLE beeline_snapshot_dirty
   ADD COLUMN IF NOT EXISTS claimed_token text;
+
+ALTER TABLE beeline_snapshot_dirty
+  ADD COLUMN IF NOT EXISTS scan_cursor_created_at bigint;
+
+ALTER TABLE beeline_snapshot_dirty
+  ADD COLUMN IF NOT EXISTS scan_cursor_event_id text;
+
+ALTER TABLE beeline_snapshot_dirty
+  ADD COLUMN IF NOT EXISTS scan_event_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS beeline_snapshot_nip98_replays (
   event_id text PRIMARY KEY,
@@ -110,7 +127,10 @@ RETURNS void LANGUAGE sql AS $$
     dirty_at = LEAST(beeline_snapshot_dirty.dirty_at, now()),
     next_attempt_at = LEAST(beeline_snapshot_dirty.next_attempt_at, now()),
     attempts = 0,
-    last_error = NULL
+    last_error = NULL,
+    scan_cursor_created_at = NULL,
+    scan_cursor_event_id = NULL,
+    scan_event_ids = '[]'::jsonb
 $$;
 
 CREATE OR REPLACE FUNCTION beeline_snapshot_event_dirty_trigger()
@@ -322,10 +342,50 @@ export class ChannelSnapshotStore {
     const channelIds = [...new Set(channels.rows.map((row) => row.channel_id))];
     if (channelIds.length === 0) return null;
 
-    const [messages, statusControls, structural, createAnchors] = await Promise.all([
-      this.loadMessagePage(claim.tenantId, claim.channelId),
-      this.database.query<EventRow>(
-        `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+    const continuationResult = await this.database.query<{
+      scan_cursor_created_at: string | number | null;
+      scan_cursor_event_id: string | null;
+      scan_event_ids: unknown;
+    }>(
+      `SELECT scan_cursor_created_at, scan_cursor_event_id, scan_event_ids
+       FROM beeline_snapshot_dirty
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
+         AND dirty_revision = $3 AND claimed_token = $4`,
+      [claim.tenantId, claim.channelId, claim.dirtyRevision, claim.claimToken],
+    );
+    const continuationRow = continuationResult.rows[0];
+    const continuationEventIds = Array.isArray(continuationRow?.scan_event_ids)
+      ? continuationRow.scan_event_ids.filter(
+          (eventId): eventId is string =>
+            typeof eventId === 'string' && /^[0-9a-f]{64}$/.test(eventId),
+        )
+      : [];
+    const continuationCursor =
+      continuationRow?.scan_cursor_created_at !== null &&
+      continuationRow?.scan_cursor_created_at !== undefined &&
+      continuationRow.scan_cursor_event_id &&
+      /^[0-9a-f]{64}$/.test(continuationRow.scan_cursor_event_id)
+        ? {
+            createdAt: numberValue(continuationRow.scan_cursor_created_at),
+            eventId: continuationRow.scan_cursor_event_id,
+          }
+        : undefined;
+
+    const [messages, headMessages, carriedMessages, statusControls, structural, createAnchors] =
+      await Promise.all([
+        this.loadMessagePage(claim.tenantId, claim.channelId, continuationCursor),
+        continuationCursor
+          ? this.loadMessagePage(claim.tenantId, claim.channelId)
+          : Promise.resolve(undefined),
+        this.database.query<EventRow>(
+          `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+           FROM events e
+           WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL
+             AND encode(e.id, 'hex') = ANY($2::text[])`,
+          [claim.tenantId, continuationEventIds],
+        ),
+        this.database.query<EventRow>(
+          `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
          FROM events e
          WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind = 9
            AND octet_length(e.content) <= 65536
@@ -338,21 +398,21 @@ export class ChannelSnapshotStore {
              WHERE marker->>0 = 't' AND marker->>1 = ANY($3::text[])
            )
          ORDER BY e.created_at DESC, e.id ASC LIMIT 256`,
-        [
-          claim.tenantId,
-          claim.channelId,
           [
-            'body-control',
-            'merge-ready',
-            'merge-not-ready',
-            'landed',
-            'buzz-merge-approval',
-            'buzz-merge-approval-ack',
+            claim.tenantId,
+            claim.channelId,
+            [
+              'body-control',
+              'merge-ready',
+              'merge-not-ready',
+              'landed',
+              'buzz-merge-approval',
+              'buzz-merge-approval-ack',
+            ],
           ],
-        ],
-      ),
-      this.database.query<EventRow>(
-        `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+        ),
+        this.database.query<EventRow>(
+          `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
          FROM events e
          WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind <> 9
            AND octet_length(e.content) <= 131072
@@ -373,10 +433,10 @@ export class ChannelSnapshotStore {
                 ))
            ))
          ORDER BY e.created_at DESC, e.id ASC LIMIT 2500`,
-        [claim.tenantId, channelIds],
-      ),
-      this.database.query<EventRow>(
-        `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+          [claim.tenantId, channelIds],
+        ),
+        this.database.query<EventRow>(
+          `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
          FROM events e
          WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind = 9007
            AND (e.channel_id = ANY($2::uuid[]) OR EXISTS (
@@ -384,16 +444,17 @@ export class ChannelSnapshotStore {
              WHERE tag->>0 = 'h' AND tag->>1 = ANY($2::text[])
            ))
          ORDER BY e.created_at ASC, e.id ASC LIMIT 1024`,
-        [claim.tenantId, channelIds],
-      ),
-    ]);
+          [claim.tenantId, channelIds],
+        ),
+      ]);
     const byId = new Map<string, NostrEvent>();
+    for (const event of headMessages?.events ?? []) byId.set(event.id, event);
+    for (const row of carriedMessages.rows) {
+      const event = eventFromRow(row);
+      byId.set(event.id, event);
+    }
     for (const event of messages.events) byId.set(event.id, event);
-    for (const row of [
-      ...statusControls.rows,
-      ...structural.rows,
-      ...createAnchors.rows,
-    ]) {
+    for (const row of [...statusControls.rows, ...structural.rows, ...createAnchors.rows]) {
       const event = eventFromRow(row);
       byId.set(event.id, event);
     }
@@ -427,13 +488,7 @@ export class ChannelSnapshotStore {
            OR e.created_at < to_timestamp($3)
            OR (e.created_at = to_timestamp($3) AND e.id > decode($4, 'hex')))
        ORDER BY e.created_at DESC, e.id ASC LIMIT $5`,
-      [
-        tenantId,
-        channelId,
-        cursor?.createdAt ?? null,
-        cursor?.eventId ?? null,
-        pageSize + 1,
-      ],
+      [tenantId, channelId, cursor?.createdAt ?? null, cursor?.eventId ?? null, pageSize + 1],
     );
     const events = result.rows.slice(0, pageSize).map(eventFromRow);
     const last = events.at(-1);
@@ -489,6 +544,37 @@ export class ChannelSnapshotStore {
       [tenantId, channelId],
     );
     return numberValue(result.rows[0]?.revision ?? 1);
+  }
+
+  async continueScan(
+    claim: DirtyChannelClaim,
+    continuation: MessageScanContinuation,
+  ): Promise<void> {
+    await this.database.query(
+      `UPDATE beeline_snapshot_dirty SET
+         scan_cursor_created_at = $5,
+         scan_cursor_event_id = $6,
+         scan_event_ids = $7::jsonb,
+         claimed_until = NULL,
+         claimed_token = NULL,
+         next_attempt_at = now()
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
+         AND dirty_revision = $3 AND claimed_token = $4`,
+      [
+        claim.tenantId,
+        claim.channelId,
+        claim.dirtyRevision,
+        claim.claimToken,
+        continuation.cursor.createdAt,
+        continuation.cursor.eventId,
+        JSON.stringify(continuation.eventIds),
+      ],
+    );
+    await this.database.query(
+      `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,
+      [claim.tenantId, claim.channelId, claim.claimToken],
+    );
   }
 
   async complete(

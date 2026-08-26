@@ -44,6 +44,13 @@ export interface SnapshotMaterializerStore {
     tenantId: string,
     pubkeys: readonly string[],
   ): Promise<readonly import('@beeline/nostr').NostrEvent[]>;
+  continueScan(
+    claim: DirtyChannelClaim,
+    continuation: {
+      readonly cursor: NonNullable<ProjectionInput['messageCursor']>;
+      readonly eventIds: readonly string[];
+    },
+  ): Promise<void>;
   nextRevision(tenantId: string, channelId: string): Promise<number>;
   complete(
     claim: DirtyChannelClaim,
@@ -59,6 +66,7 @@ export interface SnapshotMaterializerOptions {
   readonly leaseMs?: number;
   readonly pollIntervalMs?: number;
   readonly burstCoalesceMs?: number;
+  readonly maxMessagePagesPerClaim?: number;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
 }
@@ -134,6 +142,7 @@ export class ChannelSnapshotMaterializer {
   private readonly leaseMs: number;
   private readonly pollIntervalMs: number;
   private readonly burstCoalesceMs: number;
+  private readonly maxMessagePagesPerClaim: number;
   private readonly now: () => number;
   private readonly log: (line: string) => void;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -150,6 +159,10 @@ export class ChannelSnapshotMaterializer {
     this.leaseMs = options.leaseMs ?? 30_000;
     this.pollIntervalMs = options.pollIntervalMs ?? 1_000;
     this.burstCoalesceMs = options.burstCoalesceMs ?? 75;
+    this.maxMessagePagesPerClaim = Math.max(
+      1,
+      Math.min(16, Math.floor(options.maxMessagePagesPerClaim ?? 4)),
+    );
     this.now = options.now ?? Date.now;
     this.log = options.log ?? console.log;
   }
@@ -217,6 +230,7 @@ export class ChannelSnapshotMaterializer {
       const relayEvents = new Map(input.events.map((event) => [event.id, event]));
       let messageCursor = input.messageCursor;
       let messagesExhausted = input.messagesExhausted;
+      let messagePagesRead = 1;
       let projection:
         | {
             readonly parsed: readonly ReadEvent[];
@@ -277,13 +291,35 @@ export class ChannelSnapshotMaterializer {
           succession.mappings,
         );
         projection = { parsed, cursor, snapshot, succession };
-        if (
-          messagesExhausted ||
-          selectTranscript(snapshot, input.channelId, {
-            limit: CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
-          }).length >= CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS
-        ) {
+        const transcript = selectTranscript(snapshot, input.channelId, {
+          limit: CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
+        });
+        if (messagesExhausted || transcript.length >= CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS) {
           break;
+        }
+        if (messagePagesRead >= this.maxMessagePagesPerClaim) {
+          if (!messageCursor) throw new Error('snapshot message scan lost its continuation cursor');
+          const rawById = new Map(currentEvents.map((event) => [event.id, event]));
+          const carryIds = new Set(
+            transcript.map((item) => item.id).filter((eventId) => rawById.has(eventId)),
+          );
+          for (const event of parsed) {
+            if (event.type === 'unknown' && event.reason === 'orphan-reply' && event.eventId) {
+              carryIds.add(event.eventId);
+            }
+          }
+          const eventIds = [...carryIds]
+            .sort((left, right) => {
+              const leftEvent = rawById.get(left)!;
+              const rightEvent = rawById.get(right)!;
+              return rightEvent.created_at - leftEvent.created_at || left.localeCompare(right);
+            })
+            .slice(0, CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS);
+          await this.store.continueScan(claim, { cursor: messageCursor, eventIds });
+          this.log(
+            `[snapshot] yielded tenant=${input.tenantId} channel=${input.channelId} pages=${messagePagesRead} retained=${eventIds.length}`,
+          );
+          return;
         }
         const page = await this.store.loadMessagePage(
           input.tenantId,
@@ -293,6 +329,7 @@ export class ChannelSnapshotMaterializer {
         for (const event of page.events) relayEvents.set(event.id, event);
         messageCursor = page.cursor;
         messagesExhausted = page.exhausted;
+        messagePagesRead += 1;
       }
       if (!projection) throw new Error('snapshot projection did not run');
       const { parsed, cursor, succession } = projection;

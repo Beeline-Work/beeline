@@ -214,14 +214,18 @@ describe('ChannelSnapshotStore dirty worklist', () => {
         ],
       );
     }
-    const dirtyAfterBurst = await database.query<{ dirty_at: Date }>(
-      `SELECT dirty_at FROM beeline_snapshot_dirty
+    const dirtyAfterBurst = await database.query<{
+      dirty_at: Date;
+      post_boundary_dirty_at: Date | null;
+    }>(
+      `SELECT dirty_at, post_boundary_dirty_at FROM beeline_snapshot_dirty
        WHERE relay_tenant_id = $1 AND channel_id = $2`,
       [TENANT, HOT],
     );
-    expect(dirtyAfterBurst.rows[0]!.dirty_at.getTime()).toBeGreaterThan(
+    expect(dirtyAfterBurst.rows[0]!.dirty_at.getTime()).toBe(
       dirtyBeforeBurst.rows[0]!.dirty_at.getTime(),
     );
+    expect(dirtyAfterBurst.rows[0]!.post_boundary_dirty_at).not.toBeNull();
     await store.discard(hotClaim!);
 
     expect((await store.status()).depth).toBe(2);
@@ -267,6 +271,37 @@ describe('ChannelSnapshotStore dirty worklist', () => {
     expect(Number(dirty.rows[0]?.dirty_revision)).toBeGreaterThan(claim!.dirtyRevision);
     expect(dirty.rows[0]?.claimed_token).toBeNull();
     expect(dirty.rows[0]!.dirty_at.getTime()).toBeGreaterThan(claimed.rows[0]!.dirty_at.getTime());
+  });
+
+  it('preserves stale age when a redirtied projection fails', async () => {
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
+    await database.query(
+      `UPDATE beeline_snapshot_dirty SET dirty_at = now() - interval '1 hour'
+       WHERE relay_tenant_id = $1 AND channel_id = $2`,
+      [TENANT, HOT],
+    );
+    const before = await database.query<{ dirty_at: Date }>(
+      `SELECT dirty_at FROM beeline_snapshot_dirty
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid`,
+      [TENANT, HOT],
+    );
+    const [claim] = await store.claimDirty(1, 60_000);
+    expect(claim).toBeDefined();
+
+    await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [TENANT, HOT]);
+    await store.fail(claim!, new Error('projection failed'));
+
+    const after = await database.query<{
+      dirty_at: Date;
+      post_boundary_dirty_at: Date | null;
+    }>(
+      `SELECT dirty_at, post_boundary_dirty_at FROM beeline_snapshot_dirty
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid`,
+      [TENANT, HOT],
+    );
+    expect(after.rows[0]!.dirty_at.getTime()).toBe(before.rows[0]!.dirty_at.getTime());
+    expect(after.rows[0]!.post_boundary_dirty_at).toBeNull();
+    expect((await store.status()).oldestDirtyAgeMs).toBeGreaterThan(30_000);
   });
 
   it('drops deleted channels without acknowledging a newer dirty generation', async () => {

@@ -92,22 +92,41 @@ function boundedRoom(
   if (!transcriptRoom) {
     return { ...roomSnapshot, eventJournal: {}, membershipEvents: [], lifecycleEvents: [] };
   }
-  const keep = new Set<string>(
-    selectTranscript(snapshot, roomSnapshot.channelId, { limit: transcriptLimit }).map(
-      (item) => item.id,
-    ),
-  );
+  const keep = new Set<string>();
+  const transcript = selectTranscript(snapshot, roomSnapshot.channelId);
+  for (const item of [...transcript].reverse()) {
+    const required = new Set<string>();
+    const pending = [{ eventId: item.id as string, requireMessage: false }];
+    let complete = true;
+    while (pending.length > 0) {
+      const { eventId, requireMessage } = pending.pop()!;
+      if (required.has(eventId) || keep.has(eventId)) continue;
+      const event = roomSnapshot.eventJournal[eventId];
+      if (
+        !event ||
+        (requireMessage && event.type !== 'human-message' && event.type !== 'agent-message')
+      ) {
+        complete = false;
+        break;
+      }
+      required.add(eventId);
+      if ((event.type === 'human-message' || event.type === 'agent-message') && event.reply) {
+        if (event.reply.channelId !== roomSnapshot.channelId) {
+          complete = false;
+          break;
+        }
+        pending.push(
+          { eventId: event.reply.eventId, requireMessage: true },
+          { eventId: event.reply.rootId, requireMessage: true },
+        );
+      }
+    }
+    if (!complete || keep.size + required.size > transcriptLimit) continue;
+    for (const eventId of required) keep.add(eventId);
+    if (keep.size >= transcriptLimit) break;
+  }
   for (const event of Object.values(roomSnapshot.eventJournal)) {
     if (retainedControl(event)) keep.add(event.eventId);
-  }
-  for (const eventId of [...keep]) {
-    const event = roomSnapshot.eventJournal[eventId];
-    if (
-      (event?.type === 'human-message' || event?.type === 'agent-message') &&
-      event.reply?.eventId
-    ) {
-      keep.add(event.reply.eventId);
-    }
   }
   return {
     ...roomSnapshot,
@@ -774,6 +793,23 @@ function validCorner(value: unknown, expectedId: string): boolean {
   );
 }
 
+function validReplyGraph(journal: Record<string, unknown>, expectedChannelId: string): boolean {
+  const message = (eventId: unknown): Record<string, unknown> | undefined => {
+    if (typeof eventId !== 'string') return undefined;
+    const event = record(journal[eventId]);
+    return event?.type === 'human-message' || event?.type === 'agent-message' ? event : undefined;
+  };
+  return Object.values(journal).every((value) => {
+    const event = record(value);
+    if (event?.type !== 'human-message' && event?.type !== 'agent-message') return true;
+    if (event.reply === undefined) return true;
+    const reply = record(event.reply);
+    return Boolean(
+      reply?.channelId === expectedChannelId && message(reply.eventId) && message(reply.rootId),
+    );
+  });
+}
+
 function validRoom(value: unknown, expectedChannelId: string): boolean {
   const room = record(value);
   const metadata = record(room?.metadata);
@@ -806,6 +842,7 @@ function validRoom(value: unknown, expectedChannelId: string): boolean {
     !Object.entries(journal).every(([eventId, event]) =>
       validReadEvent(event, eventId, expectedChannelId),
     ) ||
+    !validReplyGraph(journal, expectedChannelId) ||
     !stringArray(room.membershipEvents, HEX_ID) ||
     !stringArray(room.lifecycleEvents, HEX_ID) ||
     !membership ||

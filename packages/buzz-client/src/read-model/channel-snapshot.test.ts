@@ -88,6 +88,26 @@ function manyMessageSnapshot(count: number, bodyBytes = 0): WorkspaceSnapshot {
   };
 }
 
+function manyReplySnapshot(count: number): WorkspaceSnapshot {
+  const snapshot = manyMessageSnapshot(count * 2);
+  const journal = snapshot.rooms[CHANNEL]!.eventJournal as unknown as Record<string, HumanMessage>;
+  for (let index = 0; index < count; index += 1) {
+    const parentId = index.toString(16).padStart(64, '0') as EventId;
+    const replyId = (count + index).toString(16).padStart(64, '0') as EventId;
+    const reply = journal[replyId] as HumanMessage;
+    journal[replyId] = {
+      ...reply,
+      body: `reply ${index}`,
+      reply: {
+        channelId: CHANNEL,
+        eventId: parentId,
+        rootId: parentId,
+      } as NonNullable<HumanMessage['reply']>,
+    };
+  }
+  return snapshot;
+}
+
 describe('channel snapshot v1 contract', () => {
   it('accepts the one shared golden JSON fixture and verifies its digest', () => {
     const guarded = guardChannelSnapshotViewV1(fixture());
@@ -122,6 +142,27 @@ describe('channel snapshot v1 contract', () => {
     expect(new TextEncoder().encode(`${JSON.stringify(view)}\n`).length).toBeLessThanOrEqual(
       CHANNEL_SNAPSHOT_MAX_BYTES,
     );
+  });
+
+  it('counts retained reply context against the transcript row cap', () => {
+    const stored = buildStoredChannelSnapshotV1({
+      snapshot: manyReplySnapshot(30),
+      channelId: CHANNEL,
+      revision: 1,
+      projectedAt: 10_000,
+      cursor: { createdAt: 159, eventIds: ['3b'.padStart(64, '0')] },
+      identitiesStale: false,
+    });
+    const room = stored.snapshot.rooms[CHANNEL]!;
+    const transcript = Object.values(room.eventJournal).filter(
+      (event) => event.type === 'human-message' || event.type === 'agent-message',
+    );
+    expect(transcript).toHaveLength(CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS);
+    for (const event of transcript) {
+      if (!event.reply) continue;
+      expect(room.eventJournal[event.reply.eventId]).toBeDefined();
+      expect(room.eventJournal[event.reply.rootId]).toBeDefined();
+    }
   });
 
   it('reduces transcript rows against the complete response byte cap', () => {
@@ -233,6 +274,42 @@ describe('channel snapshot v1 contract', () => {
       };
     });
     expect(guardChannelSnapshotViewV1(invalidReviewSemantics).status).toBe('integrity-halt');
+
+    const danglingReply = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      const journal = rooms[CHANNEL]!.eventJournal as Record<string, Record<string, unknown>>;
+      journal['1'.repeat(64)]!.reply = {
+        channelId: CHANNEL,
+        eventId: '1'.repeat(64),
+        rootId: 'f'.repeat(64),
+      };
+    });
+    expect(guardChannelSnapshotViewV1(danglingReply).status).toBe('integrity-halt');
+
+    const missingReplyParent = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      const journal = rooms[CHANNEL]!.eventJournal as Record<string, Record<string, unknown>>;
+      journal['1'.repeat(64)]!.reply = {
+        channelId: CHANNEL,
+        eventId: 'f'.repeat(64),
+        rootId: '1'.repeat(64),
+      };
+    });
+    expect(guardChannelSnapshotViewV1(missingReplyParent).status).toBe('integrity-halt');
+
+    const crossRoomReply = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      const journal = rooms[CHANNEL]!.eventJournal as Record<string, Record<string, unknown>>;
+      journal['1'.repeat(64)]!.reply = {
+        channelId: 'f0000000-0000-4000-8000-000000000001',
+        eventId: '1'.repeat(64),
+        rootId: '1'.repeat(64),
+      };
+    });
+    expect(guardChannelSnapshotViewV1(crossRoomReply).status).toBe('integrity-halt');
   });
 
   it('projects review manifests and human approval through shared typed facts', () => {

@@ -24,21 +24,6 @@ function blockFrom(text: string, marker: string, label: string): string {
   throw new Error(`unclosed ${label}`);
 }
 
-/** Same idea, but for a JSX `{cond && (...)}` block whose top-level nesting is parens. */
-function parenBlockFrom(text: string, marker: string, label: string): string {
-  const start = text.indexOf(marker);
-  expect(start, `missing ${label}`).toBeGreaterThanOrEqual(0);
-  let depth = 0;
-  for (let index = text.indexOf('(', start); index < text.length; index += 1) {
-    if (text[index] === '(') depth += 1;
-    if (text[index] === ')') {
-      depth -= 1;
-      if (depth === 0) return text.slice(start, index + 1);
-    }
-  }
-  throw new Error(`unclosed ${label}`);
-}
-
 describe('Room creation — optional repo step', () => {
   it('creates the Room unconditionally, and only links a repo when one was picked', () => {
     const handler = blockFrom(
@@ -61,7 +46,12 @@ describe('Room creation — optional repo step', () => {
   });
 
   it('renders the repo row inside the create panel, defaulting to none', () => {
-    const panel = parenBlockFrom(source, 'showCreateChannel && !viewerIsAgent && (', 'create Room panel');
+    const marker = source.indexOf('testID="new-room-dialog"');
+    const start = source.lastIndexOf('<HullDialog', marker);
+    const end = source.indexOf('</HullDialog>', marker);
+    expect(start, 'missing create Room Hull dialog').toBeGreaterThanOrEqual(0);
+    expect(end, 'unclosed create Room Hull dialog').toBeGreaterThan(start);
+    const panel = source.slice(start, end);
     expect(panel).toContain('testID="create-room-repo-row"');
     expect(panel).toContain("pendingRepo ? `▢ ${pendingRepo.name}` : 'none");
   });

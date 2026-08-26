@@ -2,16 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   FlatList,
   AppState,
-  Alert,
   Linking,
   Platform,
+  ScrollView,
   Share,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import * as WebBrowser from 'expo-web-browser';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -117,6 +116,8 @@ import {
   type RoomDeckComposeAction,
 } from '@/components/buzz/RoomDeckComposeMenu';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
+import { Modal } from '@/modal';
+import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 
 /** Relative ages only change on the minute, so the index re-derives them on a
  * one-minute tick while it is the focused screen and never on a render loop. */
@@ -424,7 +425,6 @@ async function loadDisplayChannels(
 }
 
 export default function BuzzChannels() {
-  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     communityId?: string | string[];
@@ -781,51 +781,41 @@ export default function BuzzChannels() {
    * projection to drop it, so a refusal (e.g. the sole owner of a Workspace)
    * surfaces here as an honest dialog instead of a silent no-op. */
   const handleLeaveWorkspace = useCallback(
-    (communityId: string) => {
+    async (communityId: string) => {
       const community = communities.find((entry) => entry.communityId === communityId);
-      Alert.alert(
+      const confirmed = await Modal.confirm(
         `Exit ${community?.name ?? WORKSPACE_LABEL}?`,
         `Leaving removes this ${WORKSPACE_LABEL} from your list. Its ${ROOMS_LABEL.toLowerCase()} and agents are unaffected for other members, and you can be re-invited later.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Exit',
-            style: 'destructive',
-            onPress: () => {
-              if (!transport || !identity || leavingWorkspaceId) return;
-              setLeavingWorkspaceId(communityId);
-              void transport
-                .leaveWorkspace(communityId)
-                .then(() => {
-                  const remaining = communities.filter(
-                    (entry) => entry.communityId !== communityId,
-                  );
-                  setCommunities(remaining);
-                  const nextActive =
-                    activeCommunityId === communityId
-                      ? (remaining[0]?.communityId ?? null)
-                      : activeCommunityId;
-                  if (nextActive) {
-                    useBuzzLocalCache.getState().patchChannelList(identity.publicKey, nextActive, {
-                      communities: remaining,
-                    });
-                  }
-                  if (activeCommunityId === communityId) {
-                    setExpandedRoomId(null);
-                    router.replace({
-                      pathname: '/buzz/channels',
-                      ...(nextActive ? { params: { communityId: nextActive } } : {}),
-                    });
-                  }
-                })
-                .catch((err) => {
-                  Alert.alert(`Could not exit ${community?.name ?? WORKSPACE_LABEL}`, String(err));
-                })
-                .finally(() => setLeavingWorkspaceId(null));
-            },
-          },
-        ],
+        { cancelText: 'Cancel', confirmText: 'Exit', destructive: true },
       );
+      if (!confirmed || !transport || !identity || leavingWorkspaceId) return;
+      setLeavingWorkspaceId(communityId);
+      void transport
+        .leaveWorkspace(communityId)
+        .then(() => {
+          const remaining = communities.filter((entry) => entry.communityId !== communityId);
+          setCommunities(remaining);
+          const nextActive =
+            activeCommunityId === communityId
+              ? (remaining[0]?.communityId ?? null)
+              : activeCommunityId;
+          if (nextActive) {
+            useBuzzLocalCache.getState().patchChannelList(identity.publicKey, nextActive, {
+              communities: remaining,
+            });
+          }
+          if (activeCommunityId === communityId) {
+            setExpandedRoomId(null);
+            router.replace({
+              pathname: '/buzz/channels',
+              ...(nextActive ? { params: { communityId: nextActive } } : {}),
+            });
+          }
+        })
+        .catch((err) => {
+          Modal.alert(`Could not exit ${community?.name ?? WORKSPACE_LABEL}`, String(err));
+        })
+        .finally(() => setLeavingWorkspaceId(null));
     },
     [activeCommunityId, communities, identity, leavingWorkspaceId, transport],
   );
@@ -1613,59 +1603,77 @@ export default function BuzzChannels() {
           )}
         </View>
 
-        {showCreateChannel && !viewerIsAgent && (
-          <PixelGateReveal style={styles.actionPanel}>
-            <Text style={styles.panelTitle}>
-              New {ROOM_LABEL} in {activeCommunity?.name ?? WORKSPACE_LABEL}
-            </Text>
-            <View style={styles.inlineForm}>
-              <TextInput
+        {!viewerIsAgent && (
+          <HullDialog
+            actions={[
+              {
+                label: 'Cancel',
+                onPress: () => setShowCreateChannel(false),
+                variant: 'quiet',
+              },
+              {
+                busy: creatingChannel,
+                disabled: !channelName.trim() || creatingChannel,
+                label: creatingChannel ? 'Creating' : 'Create',
+                onPress: () => void handleCreateChannel(),
+                testID: 'new-room-create',
+                variant: 'primary',
+              },
+            ]}
+            body={`In ${activeCommunity?.name ?? WORKSPACE_LABEL}. One Room, one repo. Corners branch from here.`}
+            onRequestClose={() => setShowCreateChannel(false)}
+            surfaceStyle={styles.createRoomDialog}
+            testID="new-room-dialog"
+            title={`New ${ROOM_LABEL}`}
+            visible={showCreateChannel}
+          >
+            <ScrollView keyboardShouldPersistTaps="handled" style={styles.createRoomContent}>
+              <HullDialogInput
+                accessibilityLabel={`${ROOM_LABEL} name`}
                 autoFocus
-                style={styles.input}
-                value={channelName}
+                editable={!creatingChannel}
                 onChangeText={setChannelName}
                 onSubmitEditing={() => void handleCreateChannel()}
-                placeholder={`${ROOM_LABEL.toLowerCase()} name`}
-                placeholderTextColor={theme.buzz.dim}
-                editable={!creatingChannel}
+                placeholder="#room-name"
+                testID="new-room-input"
+                value={channelName}
               />
-              <MonoButton
-                disabled={!channelName.trim()}
-                label={creatingChannel ? 'CREATING' : 'CREATE'}
-                loading={creatingChannel}
-                onPress={() => void handleCreateChannel()}
-              />
-            </View>
-            <TouchableOpacity
-              accessibilityRole="button"
-              disabled={creatingChannel}
-              onPress={() => void handleToggleRepoPicker()}
-              style={styles.repoRow}
-              testID="create-room-repo-row"
-            >
-              <Text style={styles.repoRowLabel}>REPO</Text>
-              <Text numberOfLines={1} style={styles.repoRowValue}>
-                {pendingRepo ? `▢ ${pendingRepo.name}` : 'none — chat only'}
-              </Text>
-              <Text style={styles.repoRowChevron}>{showRepoPicker ? '⌄' : '›'}</Text>
-            </TouchableOpacity>
-            {showRepoPicker && (
-              <RepoPicker
-                candidates={repoCandidates}
-                installations={githubInstallations}
-                currentKey={pendingRepo?.key ?? null}
-                error={repoPickerError}
-                notice={repoPickerNotice}
-                onAddAccount={() => void handleAddGitHubAccount()}
-                onCreateRepository={handleCreateGitHubRepository}
-                onManageInstallation={(installation) =>
-                  void handleManageGitHubInstallation(installation)
-                }
-                onSelect={handleSelectRepoCandidate}
-                testIDPrefix="create-room-repo-picker"
-              />
-            )}
-          </PixelGateReveal>
+              <TouchableOpacity
+                accessibilityRole="button"
+                disabled={creatingChannel}
+                onPress={() => void handleToggleRepoPicker()}
+                style={styles.repoRow}
+                testID="create-room-repo-row"
+              >
+                <Text style={styles.repoRowLabel}>REPO</Text>
+                <Text numberOfLines={1} style={styles.repoRowValue}>
+                  {pendingRepo ? `▢ ${pendingRepo.name}` : 'none — chat only'}
+                </Text>
+                <Text style={styles.repoRowChevron}>{showRepoPicker ? '⌄' : '›'}</Text>
+              </TouchableOpacity>
+              {showRepoPicker && (
+                <RepoPicker
+                  candidates={repoCandidates}
+                  installations={githubInstallations}
+                  currentKey={pendingRepo?.key ?? null}
+                  error={repoPickerError}
+                  notice={repoPickerNotice}
+                  onAddAccount={() => void handleAddGitHubAccount()}
+                  onCreateRepository={handleCreateGitHubRepository}
+                  onManageInstallation={(installation) =>
+                    void handleManageGitHubInstallation(installation)
+                  }
+                  onSelect={handleSelectRepoCandidate}
+                  testIDPrefix="create-room-repo-picker"
+                />
+              )}
+              {error ? (
+                <Text accessibilityRole="alert" style={styles.dialogError}>
+                  ! {error}
+                </Text>
+              ) : null}
+            </ScrollView>
+          </HullDialog>
         )}
 
         {error && (
@@ -1823,20 +1831,8 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 14,
       letterSpacing: 0.8,
     },
-    actionPanel: {
-      paddingHorizontal: SCREEN_INSET,
-      paddingVertical: 14,
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-      backgroundColor: groknight.bgTerminal,
-    },
-    panelTitle: {
-      ...Typography.default('semiBold'),
-      marginBottom: 10,
-      color: groknight.textPrimary,
-      fontSize: 15,
-    },
-    inlineForm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    createRoomDialog: { maxHeight: '88%' },
+    createRoomContent: { maxHeight: 520 },
     repoRow: {
       marginTop: 10,
       minHeight: 40,
@@ -1858,19 +1854,12 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 12,
     },
     repoRowChevron: { ...Typography.default(), color: groknight.chrome, fontSize: 18 },
-    input: {
+    dialogError: {
       ...Typography.default(),
-      flex: 1,
-      minWidth: 0,
-      minHeight: 46,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 3,
-      borderWidth: 1,
-      borderColor: groknight.border,
-      color: groknight.textPrimary,
-      backgroundColor: groknight.bgBase,
-      fontSize: 13,
+      marginTop: 10,
+      color: groknight.dialogDanger,
+      fontSize: 12,
+      lineHeight: 17,
     },
     /* A transient failure is a notice on the slab, not a panel laid over it: one
      * hairline, the `! ERROR` label, and its own retry button carry it. */

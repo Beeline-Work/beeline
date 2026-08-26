@@ -118,6 +118,17 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialog: (props: any) =>
+      props.visible ? ReactModule.createElement('HullDialog', props, props.children) : null,
+    HullDialogInput: (props: any) => ReactModule.createElement('HullDialogInput', props),
+  };
+});
+vi.mock('@/modal', () => ({
+  Modal: { alert: vi.fn(), confirm: vi.fn(async () => false) },
+}));
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -185,6 +196,7 @@ vi.mock('react-native', async () => {
     SectionList,
     Platform: { OS: 'ios', select: (o: Record<string, unknown>) => o.ios ?? o.default },
     RefreshControl: host('RefreshControl'),
+    ScrollView: host('ScrollView'),
     Share: { share: vi.fn() },
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),

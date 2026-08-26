@@ -12,7 +12,8 @@ describe('AttachmentPickerSheet', () => {
     expect(source).toContain('testID="attachment-picker-sheet"');
     expect(source).toContain('testID="attachment-picker-photo"');
     expect(source).toContain('testID="attachment-picker-document"');
-    expect(source).toContain('<HullSurface strength="raised"');
+    expect(source).toContain('<HullActionSheetModal');
+    expect(source).toContain('<HullActionSheetCancel');
   });
 
   it('replaces the composer attachment alert while preserving both picker actions', () => {

@@ -738,6 +738,7 @@ function validCorner(value: unknown, expectedId: string, expectedParentRoomId: s
     !CHANNEL_ID.test(expectedId) ||
     typeof corner.parentRoomId !== 'string' ||
     !CHANNEL_ID.test(corner.parentRoomId) ||
+    expectedId === expectedParentRoomId ||
     corner.parentRoomId !== expectedParentRoomId ||
     !optionalString(corner, 'name') ||
     !optionalString(corner, 'task') ||

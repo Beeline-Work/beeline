@@ -721,6 +721,24 @@ esac
     );
   });
 
+  it('claims the imported identity prefilled handle in every Maestro onboarding flow', () => {
+    const flowNames = ['smoke.yaml', 'live-agent-send-once.yaml', 'live-chat-layout.yaml'];
+    for (const flowName of flowNames) {
+      const flow = readFileSync(join(mobileRoot, 'e2e', flowName), 'utf8');
+      const ceremony = flow.indexOf('id: onboarding-handle-ceremony');
+      const dismissIme = flow.indexOf('pressKey: back', ceremony);
+      const claim = flow.indexOf('id: onboarding-claim-handle', dismissIme);
+
+      expect(ceremony, `${flowName} waits for the current handle ceremony`).toBeGreaterThan(-1);
+      expect(dismissIme, `${flowName} dismisses the auto-focused IME`).toBeGreaterThan(ceremony);
+      expect(claim, `${flowName} claims the prefilled handle`).toBeGreaterThan(dismissIme);
+      expect(flow).not.toContain('onboarding-person-name-step');
+      expect(flow).not.toContain('onboarding-person-name-input');
+      expect(flow).not.toContain('onboarding-enter-workspace');
+      expect(flow).not.toMatch(/inputText: (Maestro Smoke|Live device|Layout device)/);
+    }
+  });
+
   it('runs the governor on a node with a global WebSocket for relay provisioning', () => {
     // scripts/provision-smoke.ts connects through BuzzClient, which needs
     // globalThis.WebSocket; node 20 lacks it and died at connect time after

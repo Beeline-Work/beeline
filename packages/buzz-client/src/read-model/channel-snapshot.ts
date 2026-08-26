@@ -812,6 +812,18 @@ function validReplyGraph(journal: Record<string, unknown>, expectedChannelId: st
   });
 }
 
+function validEventIndex(
+  value: unknown,
+  journal: Record<string, unknown>,
+  expectedType: 'membership' | 'lifecycle',
+): boolean {
+  if (!Array.isArray(value) || new Set(value).size !== value.length) return false;
+  return value.every((eventId) => {
+    if (typeof eventId !== 'string' || !HEX_ID.test(eventId)) return false;
+    return record(journal[eventId])?.type === expectedType;
+  });
+}
+
 function validRoom(value: unknown, expectedChannelId: string): boolean {
   const room = record(value);
   const metadata = record(room?.metadata);
@@ -845,8 +857,8 @@ function validRoom(value: unknown, expectedChannelId: string): boolean {
       validReadEvent(event, eventId, expectedChannelId),
     ) ||
     !validReplyGraph(journal, expectedChannelId) ||
-    !stringArray(room.membershipEvents, HEX_ID) ||
-    !stringArray(room.lifecycleEvents, HEX_ID) ||
+    !validEventIndex(room.membershipEvents, journal, 'membership') ||
+    !validEventIndex(room.lifecycleEvents, journal, 'lifecycle') ||
     !membership ||
     !corners ||
     !Object.entries(corners).every(([cornerId, corner]) =>
@@ -858,6 +870,13 @@ function validRoom(value: unknown, expectedChannelId: string): boolean {
     !optionalNonnegativeInteger(coverage, 'newest') ||
     typeof coverage.initialBackfillComplete !== 'boolean' ||
     !nonnegativeInteger(coverage.epoch)
+  ) {
+    return false;
+  }
+  if (
+    typeof coverage.oldest === 'number' &&
+    typeof coverage.newest === 'number' &&
+    coverage.oldest > coverage.newest
   ) {
     return false;
   }

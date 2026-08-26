@@ -9,6 +9,7 @@ import { SnapshotSuccessionClient } from './succession.js';
 
 const TENANT = 'e8299f28-f095-472f-941a-80d1195b9a24';
 const CHANNEL = '9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6';
+const CORNER = '7d111868-52eb-43ab-98ae-8a6c49b92da8';
 const COLD_CHANNEL = 'f0000000-0000-4000-8000-000000000001';
 
 class PgliteDatabase implements DatabaseTransactional {
@@ -207,6 +208,95 @@ describe('ChannelSnapshotMaterializer', () => {
     await expect(
       store.readForViewer('3f37b271-1a12-4d2a-b002-202b3f3582b9', owner.publicKey),
     ).resolves.toBeNull();
+  });
+
+  it('materializes an empty Corner from its parent lifecycle and live roster', async () => {
+    const owner = createIdentity('snapshot-empty-corner-owner');
+    await database.query(
+      `INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3)`,
+      [TENANT, CHANNEL, CORNER],
+    );
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey)
+       VALUES ($1, $2, decode($4, 'hex')), ($1, $3, decode($4, 'hex'))`,
+      [TENANT, CHANNEL, CORNER, owner.publicKey],
+    );
+    const base = Math.floor(Date.now() / 1_000) - 10;
+    const roomCreate = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: base,
+        kind: 9007,
+        tags: [
+          ['h', CHANNEL],
+          ['community', 'verified-application-workspace'],
+          ['name', 'Snapshot Room'],
+          ['p', owner.publicKey, 'owner'],
+        ],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    const cornerCreate = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: base + 1,
+        kind: 9007,
+        tags: [
+          ['h', CORNER],
+          ['parent', CHANNEL],
+          ['community', 'verified-application-workspace'],
+          ['name', 'Empty Corner'],
+          ['p', owner.publicKey, 'owner'],
+        ],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    await insertEvent(roomCreate, CHANNEL);
+    await insertEvent(cornerCreate, CORNER);
+    await database.query(`DELETE FROM beeline_snapshot_dirty`);
+    await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [
+      TENANT,
+      CORNER,
+    ]);
+    const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+      return new Response(
+        JSON.stringify({
+          mappings: Object.fromEntries(body.pubkeys.map((pubkey) => [pubkey, pubkey])),
+        }),
+        { status: 200 },
+      );
+    });
+    const logs: string[] = [];
+    const materializer = new ChannelSnapshotMaterializer(
+      store,
+      new SnapshotSuccessionClient({
+        baseUrl: 'http://auth:8789',
+        token: 'secret',
+        fetch: fetchImpl,
+      }),
+      { burstCoalesceMs: 0, log: (line) => logs.push(line) },
+    );
+
+    expect(await materializer.runOnce()).toBe(1);
+    const served = await store.readForViewer(CORNER, owner.publicKey);
+    expect(served?.payload, logs.join('\n')).toBeDefined();
+    const cornerRoom = served?.payload?.snapshot.rooms[CORNER];
+    expect(cornerRoom?.membership).toMatchObject({
+      status: 'known',
+      members: { [owner.publicKey]: { pubkey: owner.publicKey, role: 'owner' } },
+      sourceEventId: cornerCreate.id,
+      observedAt: base + 1,
+    });
+    expect(cornerRoom?.eventJournal).toEqual({});
+    expect(served?.payload?.snapshot.rooms[CHANNEL]?.corners[CORNER]).toMatchObject({
+      kind: 'active',
+      id: CORNER,
+      parentRoomId: CHANNEL,
+      name: 'Empty Corner',
+    });
   });
 
   it('pages past hidden machine traffic to retain 30 conversation rows', async () => {

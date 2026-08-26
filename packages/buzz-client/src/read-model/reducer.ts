@@ -517,11 +517,43 @@ export function canonicalizeWorkspaceMembership(
   succession: Readonly<Record<string, string>>,
 ): WorkspaceSnapshot {
   let changed = false;
-  const rooms = Object.fromEntries(
-    Object.entries(snapshot.rooms).map(([channelId, room]) => {
-      const allowed = currentMembers[channelId];
-      const membership = room.membership;
-      if (!allowed || membership.status !== 'known') return [channelId, room];
+  const seededMembership = (channelId: string): KnownMembership | undefined => {
+    const existing = snapshot.rooms[channelId]?.membership;
+    if (existing?.status === 'known') return existing;
+    const source = Object.values(snapshot.rooms)
+      .flatMap((room) => room.lifecycleEvents.map((eventId) => room.eventJournal[eventId]))
+      .filter(
+        (event): event is Lifecycle =>
+          event?.type === 'lifecycle' &&
+          event.lifecycle.initialMembers !== undefined &&
+          (event.lifecycle.entity === 'room'
+            ? event.lifecycle.roomId === channelId
+            : event.lifecycle.cornerId === channelId),
+      )
+      .sort(compareClock)
+      .at(-1);
+    if (!source) return undefined;
+    return {
+      status: 'known',
+      members: Object.fromEntries(
+        (source.lifecycle.initialMembers ?? []).map((member) => [member.pubkey, member]),
+      ),
+      sourceEventId: source.eventId,
+      observedAt: source.createdAt,
+    };
+  };
+  const rooms: Record<string, RoomSnapshot> = {};
+  const channelIds = new Set([...Object.keys(snapshot.rooms), ...Object.keys(currentMembers)]);
+  for (const channelId of channelIds) {
+    const existingRoom = snapshot.rooms[channelId];
+    const membership = seededMembership(channelId);
+    if (!existingRoom && !membership) continue;
+    const room = existingRoom ?? emptyRoom(channelId as ChannelId);
+    const allowed = currentMembers[channelId];
+    if (!allowed || !membership) {
+      rooms[channelId] = room;
+      continue;
+    }
       const allowedSet = new Set(allowed);
       const members: Record<string, { pubkey: Pubkey; role: MemberRole }> = {};
       for (const member of Object.values(membership.members)) {
@@ -540,20 +572,22 @@ export function canonicalizeWorkspaceMembership(
         members[pubkey] ??= { pubkey: pubkey as Pubkey, role: 'unknown' };
       }
       if (
+        existingRoom &&
+        room.membership.status === 'known' &&
         Object.keys(members).length === Object.keys(membership.members).length &&
         Object.entries(members).every(
           ([pubkey, member]) => membership.members[pubkey]?.role === member.role,
         )
       ) {
-        return [channelId, room];
+        rooms[channelId] = room;
+        continue;
       }
       changed = true;
-      return [
-        channelId,
-        { ...room, membership: { ...membership, members } } satisfies RoomSnapshot,
-      ];
-    }),
-  );
+      rooms[channelId] = {
+        ...room,
+        membership: { ...membership, members },
+      } satisfies RoomSnapshot;
+  }
   return changed
     ? materializeAllCorners({ ...snapshot, revision: snapshot.revision + 1, rooms })
     : snapshot;

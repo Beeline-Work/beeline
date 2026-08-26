@@ -133,9 +133,10 @@ export function createRegistrationServer(
       if (snapshotMatch && hooks.snapshot) {
         const startedAt = performance.now();
         let status = 500;
-        const channelId = snapshotMatch[1]!.toLowerCase();
+        const requestedChannelId = snapshotMatch[1]!;
+        const channelId = requestedChannelId.toLowerCase();
         try {
-          if (!CHANNEL_ID.test(channelId)) {
+          if (!CHANNEL_ID.test(requestedChannelId) || requestedChannelId !== channelId) {
             status = 404;
             json(response, status, { error: 'not_found' }, SNAPSHOT_PRIVATE_HEADERS);
             return;

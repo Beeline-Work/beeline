@@ -756,6 +756,22 @@ export function selectChannelList(
   return activeKey ? state.channelLists[activeKey] : undefined;
 }
 
+/** Workspace metadata is viewer-wide even though Room decks are cached per Workspace. */
+export function selectKnownCommunities(
+  state: BuzzCacheState,
+  viewerPubkey: string | null,
+): Community[] {
+  if (!viewerPubkey) return [];
+  const known = new Map<string, Community>();
+  for (const entry of Object.values(state.channelLists)) {
+    if (entry.viewerPubkey !== viewerPubkey) continue;
+    for (const community of entry.communities) {
+      known.set(community.communityId, { ...known.get(community.communityId), ...community });
+    }
+  }
+  return [...known.values()];
+}
+
 export function getCachedChannel(
   viewerPubkey: string,
   channelId: string,

@@ -33,6 +33,7 @@ export {
   boundChannelWorkspaceSnapshot,
   buildStoredChannelSnapshotV1,
   channelSnapshotDigest,
+  guardStoredChannelSnapshotV1,
   guardChannelSnapshotViewV1,
   snapshotViewerOverlay,
 } from './channel-snapshot.js';

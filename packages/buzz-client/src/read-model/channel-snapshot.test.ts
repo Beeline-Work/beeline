@@ -8,6 +8,7 @@ import {
   buildStoredChannelSnapshotV1,
   channelSnapshotDigest,
   guardChannelSnapshotViewV1,
+  snapshotViewerOverlay,
 } from './channel-snapshot.js';
 import { parseRelayEvents } from './parser.js';
 import { createWorkspaceSnapshot, reduceWorkspaceEvents } from './reducer.js';
@@ -23,7 +24,7 @@ function fixture(): unknown {
   ) as unknown;
 }
 
-function manyMessageSnapshot(count: number): WorkspaceSnapshot {
+function manyMessageSnapshot(count: number, bodyBytes = 0): WorkspaceSnapshot {
   const messages = Object.fromEntries(
     Array.from({ length: count }, (_, index) => {
       const eventId = index.toString(16).padStart(64, '0') as EventId;
@@ -37,7 +38,7 @@ function manyMessageSnapshot(count: number): WorkspaceSnapshot {
         channelId: CHANNEL as HumanMessage['channelId'],
         workspaceId: 'verified-workspace',
         type: 'human-message',
-        body: `message ${index}`,
+        body: bodyBytes > 0 ? 'x'.repeat(bodyBytes) : `message ${index}`,
         attachments: [],
         mentionPubkeys: [],
       };
@@ -93,8 +94,52 @@ describe('channel snapshot v1 contract', () => {
     const events = Object.values(stored.snapshot.rooms[CHANNEL]!.eventJournal);
     expect(events).toHaveLength(CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS);
     expect(events.every((event) => event.type === 'human-message')).toBe(true);
-    expect(new TextEncoder().encode(JSON.stringify(stored)).length).toBeLessThanOrEqual(
+    const view = {
+      ...stored,
+      lagMs: 12,
+      viewer: snapshotViewerOverlay(stored, MEMBER),
+      integrity: {
+        algorithm: 'sha256' as const,
+        scope: 'stored-channel-snapshot-v1' as const,
+        digest: channelSnapshotDigest(stored),
+      },
+    };
+    expect(new TextEncoder().encode(`${JSON.stringify(view)}\n`).length).toBeLessThanOrEqual(
       CHANNEL_SNAPSHOT_MAX_BYTES,
+    );
+  });
+
+  it('reduces transcript rows against the complete response byte cap', () => {
+    const maxBytes = 10_000;
+    const stored = buildStoredChannelSnapshotV1({
+      snapshot: manyMessageSnapshot(40, 500),
+      channelId: CHANNEL,
+      revision: 1,
+      projectedAt: 10_000,
+      cursor: { createdAt: 139, eventIds: ['27'.padStart(64, '0')] },
+      identitiesStale: false,
+      maxBytes,
+    });
+    const view = {
+      ...stored,
+      lagMs: Number.MAX_SAFE_INTEGER,
+      viewer: {
+        pubkey: 'f'.repeat(64),
+        membership: 'active' as const,
+        role: 'unknown' as const,
+        kind: 'infrastructure' as const,
+        approval: 'not-applicable' as const,
+      },
+      integrity: {
+        algorithm: 'sha256' as const,
+        scope: 'stored-channel-snapshot-v1' as const,
+        digest: 'f'.repeat(64),
+      },
+    };
+
+    expect(Object.keys(stored.snapshot.rooms[CHANNEL]!.eventJournal).length).toBeLessThan(30);
+    expect(new TextEncoder().encode(`${JSON.stringify(view)}\n`).length).toBeLessThanOrEqual(
+      maxBytes,
     );
   });
 

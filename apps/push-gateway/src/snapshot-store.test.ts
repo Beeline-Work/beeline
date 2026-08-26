@@ -75,13 +75,34 @@ describe('ChannelSnapshotStore dirty worklist', () => {
     await postgres.close();
   });
 
-  it('coalesces a hot channel to one dirty row and lets a cold channel claim next', async () => {
+  it('releases redirtied hot claims and selects a cold channel within two claims', async () => {
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, COLD]);
     const dirtyBeforeBurst = await database.query<{ dirty_at: Date }>(
       `SELECT dirty_at FROM beeline_snapshot_dirty
        WHERE relay_tenant_id = $1 AND channel_id = $2`,
       [TENANT, HOT],
     );
+    const initialClaims = await store.claimDirty(2, 60_000);
+    expect(initialClaims.map((claim) => claim.channelId)).toEqual([HOT, COLD]);
+
+    for (const [index, claim] of initialClaims.entries()) {
+      await database.query(
+        `INSERT INTO events
+           (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+         VALUES ($1, decode($2, 'hex'), decode($3, 'hex'), now(), 9, $4::jsonb, '', decode($5, 'hex'), $6)`,
+        [
+          TENANT,
+          (index + 1).toString(16).padStart(64, '0'),
+          'a'.repeat(64),
+          JSON.stringify([['h', claim.channelId]]),
+          'f'.repeat(128),
+          claim.channelId,
+        ],
+      );
+      await store.discard(claim);
+    }
+
     const [hotClaim] = await store.claimDirty(1, 60_000);
     expect(hotClaim?.channelId).toBe(HOT);
 
@@ -92,7 +113,7 @@ describe('ChannelSnapshotStore dirty worklist', () => {
          VALUES ($1, decode($2, 'hex'), decode($3, 'hex'), now(), 9, $4::jsonb, '', decode($5, 'hex'), $6)`,
         [
           TENANT,
-          index.toString(16).padStart(64, '0'),
+          (index + 100).toString(16).padStart(64, '0'),
           'a'.repeat(64),
           JSON.stringify([['h', HOT]]),
           'f'.repeat(128),
@@ -106,7 +127,7 @@ describe('ChannelSnapshotStore dirty worklist', () => {
       [TENANT, HOT],
     );
     expect(dirtyAfterBurst.rows[0]?.dirty_at).toEqual(dirtyBeforeBurst.rows[0]?.dirty_at);
-    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, COLD]);
+    await store.discard(hotClaim!);
 
     expect((await store.status()).depth).toBe(2);
     const [next] = await store.claimDirty(1, 60_000);

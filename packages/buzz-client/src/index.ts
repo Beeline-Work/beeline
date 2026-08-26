@@ -129,11 +129,20 @@ export * from './scheduled-turn.js';
 export {
   AGENT_PRESENCE_HEARTBEAT_MS,
   AGENT_PRESENCE_STALE_MS,
+  AGENT_PRESENCE_DORMANT_MS,
   isAgentPresenceOnline,
+  resolveAgentPresenceTier,
+  resolveAgentRosterStanding,
   newerAgentPresence,
   agentPresenceKey,
 } from './agent-presence.js';
-export type { AgentPresence, AgentPresenceStatus } from './agent-presence.js';
+export type {
+  AgentPresence,
+  AgentPresenceStatus,
+  AgentPresenceTier,
+  AgentRosterStanding,
+  RoomMembershipStanding,
+} from './agent-presence.js';
 
 export {
   CORNER_ASK_FRESH_WINDOW_MS,

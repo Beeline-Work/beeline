@@ -186,6 +186,14 @@ esac
           sourceSha: '1234567890abcdef',
           candidateGroupId: 'candidate-group',
           androidUpdateId: 'beta-android',
+          candidateUpdates: [
+            {
+              id: 'beta-android',
+              platform: 'android',
+              group: 'candidate-group',
+              runtimeVersion: '21',
+            },
+          ],
           canary: { status: 'pending' },
         }),
       );
@@ -219,15 +227,19 @@ esac
       const ledger = writeBetaLedger(directory);
 
       // A missing APK proves the run got past adb resolution AND the device
-      // gate without touching a real emulator or the network.
+      // gate without touching a real emulator or the network. The missing
+      // operator-supplied APK itself is a setup failure, so the run parks
+      // (exit 2) naming the path instead of dying as an opaque flow error.
       const result = runCanary(['--ledger', ledger], {
         ANDROID_HOME: sdkRoot,
         BEELINE_BETA_APK: join(directory, 'missing.apk'),
       });
 
       expect(result.stderr).not.toContain('platform-tools binary');
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain('Beta APK not found');
+      expect(result.stderr).not.toContain('not attached to the shared adb server');
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('BEELINE_BETA_APK');
+      expect(result.stderr).toContain('missing.apk');
     });
 
     it('parks when the sanctioned emulator is not attached to the adb server', () => {
@@ -253,6 +265,145 @@ esac
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('offline');
       expect(result.stderr).toContain('not ready');
+    });
+
+    it('writes the parked reason to OTA_CANARY_REASON_FILE on a device-gate failure', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-reason-file-'));
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached');
+      const reasonFile = join(directory, 'reason.txt');
+
+      const result = runCanary([], {
+        ANDROID_HOME: sdkRoot,
+        OTA_CANARY_REASON_FILE: reasonFile,
+      });
+
+      expect(result.status).toBe(2);
+      const reason = readFileSync(reasonFile, 'utf8').trim();
+      expect(reason).toContain('emulator-5554');
+      expect(reason).toContain('not attached to the shared adb server');
+      // Exactly one line so the workflow can quote it verbatim.
+      expect(reason.split('\n')).toHaveLength(1);
+    });
+
+    // Stubs for the APK-acquisition preflight. The stub npx/curl sit earlier
+    // on PATH than /usr/bin, so no real EAS call or download ever happens.
+    function stubReleaseTools(
+      directory: string,
+      options: {
+        buildListStdout?: string;
+        buildListExit?: number;
+        curlExit?: number;
+      } = {},
+    ): string {
+      const bin = join(directory, 'stub-bin');
+      mkdirSync(bin, { recursive: true });
+      const stdout = (options.buildListStdout ?? '[]').replaceAll("'", '');
+      const buildListExit = options.buildListExit ?? 0;
+      writeFileSync(
+        join(bin, 'npx'),
+        `#!/bin/sh\nprintf '%s\\n' '${stdout}'\nexit ${buildListExit}\n`,
+      );
+      chmodSync(join(bin, 'npx'), 0o755);
+      const curlExit = options.curlExit ?? 0;
+      if (curlExit !== 0) {
+        writeFileSync(
+          join(bin, 'curl'),
+          `#!/bin/sh\necho 'curl: stub network failure' >&2\nexit ${curlExit}\n`,
+        );
+        chmodSync(join(bin, 'curl'), 0o755);
+      }
+      return bin;
+    }
+
+    it('parks with a self-describing reason when EAS has no finished beta-apk build for the runtime', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-no-beta-build-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\nemulator-5554\tdevice',
+      );
+      const stubBin = stubReleaseTools(directory, { buildListStdout: '[]' });
+      const ledger = writeBetaLedger(directory);
+      const reasonFile = join(directory, 'reason.txt');
+
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: sdkRoot,
+        PATH: `${stubBin}:${barePath}`,
+        OTA_CANARY_REASON_FILE: reasonFile,
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('no finished beta-apk Android build');
+      expect(result.stderr).toContain('runtime version 21');
+      expect(result.stderr).toContain('build --profile beta-apk');
+
+      const reason = readFileSync(reasonFile, 'utf8').trim();
+      expect(reason).toContain('no finished beta-apk Android build for runtime version 21');
+      expect(reason).toContain('build --profile beta-apk --platform android');
+
+      // The broken canary must never be recorded as success or silently
+      // consumed: the beta ledger stays pending for the governor to park.
+      expect(JSON.parse(readFileSync(ledger, 'utf8')).canary).toMatchObject({
+        status: 'pending',
+      });
+    });
+
+    it('parks when the EAS build listing itself fails', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-eas-fail-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\nemulator-5554\tdevice',
+      );
+      const stubBin = stubReleaseTools(directory, { buildListExit: 7 });
+      const ledger = writeBetaLedger(directory);
+
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: sdkRoot,
+        PATH: `${stubBin}:${barePath}`,
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('could not list EAS builds');
+      expect(result.stderr).toContain('exited 7');
+      expect(result.stderr).toContain('EXPO_TOKEN');
+    });
+
+    it('parks when the ledger is unreadable by the canary process', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-ledger-eacces-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\nemulator-5554\tdevice',
+      );
+      const ledger = writeBetaLedger(directory);
+      chmodSync(ledger, 0o000);
+
+      const result = runCanary(['--ledger', ledger], { ANDROID_HOME: sdkRoot });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('unreadable or malformed JSON');
+      // Restore so the temp directory can be cleaned up afterwards.
+      chmodSync(ledger, 0o600);
+    });
+
+    it('parks when the beta APK download fails after a successful build lookup', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-download-fail-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\nemulator-5554\tdevice',
+      );
+      const stubBin = stubReleaseTools(directory, {
+        buildListStdout:
+          '[{"id":"b1","artifacts":{"buildUrl":"https://example.invalid/beeline-beta.apk"}}]',
+        curlExit: 22,
+      });
+      const ledger = writeBetaLedger(directory);
+
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: sdkRoot,
+        PATH: `${stubBin}:${barePath}`,
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('could not download the beta APK');
     });
   });
 
@@ -308,5 +459,40 @@ esac
       workflow.indexOf('node scripts/ota-release.mjs promote'),
     );
     expect(workflow).toMatch(/Store release ledger[\s\S]*?if: always\(\) && steps\.candidate\.outcome == 'success'/);
+  });
+
+  it('the workflow records a self-describing parked reason even when the canary dies before its own handlers', () => {
+    // The canary is told where to publish its one-line parked reason...
+    expect(workflow).toContain('OTA_CANARY_REASON_FILE:');
+    // ...stale reasons are cleared before the run...
+    expect(workflow).toMatch(/rm -f "\$RUNNER_TEMP\/ota-canary-reason\.txt"/);
+    // ...and a failure folds that line into the ledger reason, falling back to
+    // an exit-code classification when the shell died before writing anything.
+    const canaryStep = workflow.slice(
+      workflow.indexOf('Run Android beta canary'),
+      workflow.indexOf('Record captain-ordered canary skip'),
+    );
+    expect(canaryStep).toMatch(/head -n 1 "\$RUNNER_TEMP\/ota-canary-reason\.txt"/);
+    expect(canaryStep).toContain('environment/setup failure');
+    expect(canaryStep).toContain('ten-minute canary deadline fired');
+    expect(canaryStep).toContain('canary flow failure');
+    // Blocked is recorded BEFORE the step re-exits with the canary's status.
+    expect(canaryStep.indexOf('--status blocked')).toBeLessThan(
+      canaryStep.indexOf('exit "$canary_status"'),
+    );
+  });
+
+  it('the canary script owns the parked-reason contract for every preflight stage', () => {
+    // One funnel prints AND persists every environment/setup reason.
+    expect(canaryScript).toMatch(/park\(\) \{/);
+    expect(canaryScript).toContain('OTA_CANARY_REASON_FILE');
+    const parkCalls = canaryScript.match(/\bpark "/g)?.length ?? 0;
+    // adb unresolvable, adb enumeration, emulator missing/not-ready, deadline
+    // config, ledger missing/shape, EAS listing, empty build list, download,
+    // supplied APK missing, install/pm-clear/launch/warm-up device failures.
+    expect(parkCalls).toBeGreaterThanOrEqual(14);
+    // The empty-beta-apk-build parking names the exact remediation.
+    expect(canaryScript).toContain('no finished beta-apk Android build');
+    expect(canaryScript).toContain('build --profile beta-apk --platform android --non-interactive');
   });
 });

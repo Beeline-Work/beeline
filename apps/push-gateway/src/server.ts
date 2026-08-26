@@ -94,6 +94,15 @@ function snapshotUnavailable(response: ServerResponse, reason: string): void {
   );
 }
 
+function logSnapshot(
+  snapshot: NonNullable<RegistrationServerHooks['snapshot']>,
+  line: string,
+): void {
+  try {
+    snapshot.log?.(line);
+  } catch {}
+}
+
 export function createRegistrationServer(
   registry: TokenRegistry,
   hooks: RegistrationServerHooks = {},
@@ -156,7 +165,7 @@ export function createRegistrationServer(
             json(response, status, { error: 'not_found' }, SNAPSHOT_PRIVATE_HEADERS);
             return;
           }
-          if (!row.payload || !row.digest) {
+          if (!Object.hasOwn(row, 'payload') || !Object.hasOwn(row, 'digest')) {
             status = 503;
             snapshotUnavailable(response, 'missing');
             return;
@@ -166,7 +175,8 @@ export function createRegistrationServer(
             snapshotUnavailable(response, 'stale');
             return;
           }
-          const stored = guardStoredChannelSnapshotV1(row.payload, channelId, row.digest);
+          const digest = typeof row.digest === 'string' ? row.digest : '';
+          const stored = guardStoredChannelSnapshotV1(row.payload, channelId, digest);
           if (stored.status !== 'ready') {
             status = 503;
             snapshotUnavailable(response, 'incompatible_or_corrupt');
@@ -179,7 +189,7 @@ export function createRegistrationServer(
             integrity: {
               algorithm: 'sha256' as const,
               scope: 'stored-channel-snapshot-v1' as const,
-              digest: row.digest,
+              digest,
             },
           };
           const serialized = `${JSON.stringify(view)}\n`;
@@ -194,12 +204,26 @@ export function createRegistrationServer(
             ...SNAPSHOT_PRIVATE_HEADERS,
             'x-beeline-snapshot-schema': String(stored.payload.schemaVersion),
             'x-beeline-snapshot-projection': String(stored.payload.projectionVersion),
-            'x-beeline-snapshot-integrity': row.digest,
+            'x-beeline-snapshot-integrity': digest,
           });
           response.end(serialized);
           return;
+        } catch (error) {
+          status = 503;
+          let detail = 'unknown snapshot failure';
+          try {
+            detail = error instanceof Error ? error.message : String(error);
+          } catch {}
+          logSnapshot(
+            hooks.snapshot,
+            `[snapshot] get failed channel=${channelId} error=${JSON.stringify(detail)}`,
+          );
+          if (response.headersSent) response.destroy();
+          else snapshotUnavailable(response, 'temporarily_unavailable');
+          return;
         } finally {
-          hooks.snapshot.log?.(
+          logSnapshot(
+            hooks.snapshot,
             `[snapshot] get channel=${channelId} status=${status} duration_ms=${Math.round(performance.now() - startedAt)}`,
           );
         }

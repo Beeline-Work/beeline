@@ -324,6 +324,8 @@ describe('GET /snapshot/channel/:channelId', () => {
     options: {
       pushHealth?: RegistrationServerHooks['pushHealth'];
       snapshotStatus?: NonNullable<RegistrationServerHooks['snapshot']>['status'];
+      snapshotClaim?: NonNullable<RegistrationServerHooks['snapshot']>['claimNip98Event'];
+      snapshotLog?: NonNullable<RegistrationServerHooks['snapshot']>['log'];
     } = {},
   ) {
     const registry = await TokenRegistry.load();
@@ -333,12 +335,15 @@ describe('GET /snapshot/channel/:channelId', () => {
       snapshot: {
         publicOrigin: PUBLIC_ORIGIN,
         readForViewer,
-        claimNip98Event: async (eventId) => {
-          if (claimed.has(eventId)) return false;
-          claimed.add(eventId);
-          return true;
-        },
+        claimNip98Event:
+          options.snapshotClaim ??
+          (async (eventId) => {
+            if (claimed.has(eventId)) return false;
+            claimed.add(eventId);
+            return true;
+          }),
         ...(options.snapshotStatus ? { status: options.snapshotStatus } : {}),
+        ...(options.snapshotLog ? { log: options.snapshotLog } : {}),
       },
     });
     servers.push(server);
@@ -530,12 +535,18 @@ describe('GET /snapshot/channel/:channelId', () => {
       { tenantId: 'tenant', lagMs: 0 },
       { tenantId: 'tenant', lagMs: 0, payload, digest: '0'.repeat(64) },
       { tenantId: 'tenant', lagMs: 0, payload: {}, digest },
+      { tenantId: 'tenant', lagMs: 0, payload: false, digest },
+      { tenantId: 'tenant', lagMs: 0, payload: 0, digest },
+      { tenantId: 'tenant', lagMs: 0, payload: '', digest },
     ];
     const base = await listen(async () => rows.shift()!);
     const path = `/snapshot/channel/${CHANNEL}`;
     for (const reason of [
       'stale',
       'missing',
+      'incompatible_or_corrupt',
+      'incompatible_or_corrupt',
+      'incompatible_or_corrupt',
       'incompatible_or_corrupt',
       'incompatible_or_corrupt',
     ]) {
@@ -545,6 +556,44 @@ describe('GET /snapshot/channel/:channelId', () => {
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toEqual({ error: 'snapshot_not_ready', reason });
     }
+  });
+
+  it('returns a private retryable 503 for snapshot operational failures', async () => {
+    const identity = createIdentity('snapshot-operational-failure');
+    const logs: string[] = [];
+    let claimAttempts = 0;
+    const base = await listen(
+      async () => {
+        throw new Error('membership query exposed detail');
+      },
+      {
+        snapshotClaim: async () => {
+          claimAttempts += 1;
+          if (claimAttempts === 1) throw new Error('replay ledger exposed detail');
+          return true;
+        },
+        snapshotLog: (line) => logs.push(line),
+      },
+    );
+    const path = `/snapshot/channel/${CHANNEL}`;
+
+    for (const leakedDetail of ['replay ledger exposed detail', 'membership query exposed detail']) {
+      const response = await fetch(`${base}${path}`, {
+        headers: { authorization: authorization(identity, path) },
+      });
+      expect(response.status).toBe(503);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(response.headers.get('vary')).toBe('Authorization');
+      expect(response.headers.get('retry-after')).toBe('1');
+      const body = await response.json();
+      expect(body).toEqual({
+        error: 'snapshot_not_ready',
+        reason: 'temporarily_unavailable',
+      });
+      expect(JSON.stringify(body)).not.toContain(leakedDetail);
+    }
+    expect(logs.join('\n')).toContain('replay ledger exposed detail');
+    expect(logs.join('\n')).toContain('membership query exposed detail');
   });
 
   it('rejects a validly hashed snapshot whose complete response exceeds the byte cap', async () => {

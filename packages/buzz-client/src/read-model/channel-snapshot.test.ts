@@ -278,6 +278,25 @@ describe('channel snapshot v1 contract', () => {
     });
     expect(guardChannelSnapshotViewV1(malformedRepository).status).toBe('integrity-halt');
 
+    for (const repository of [
+      { key: '', name: 'beeline', remote: 'git://github.com/lunchboxfortwo/beeline' },
+      { key: 'beeline', name: ' ', remote: 'git://github.com/lunchboxfortwo/beeline' },
+      { key: 'beeline', name: 'beeline', remote: ' ' },
+      {
+        key: 'beeline',
+        name: 'beeline',
+        remote: 'git://github.com/lunchboxfortwo/beeline',
+        githubInstallationId: 0,
+      },
+    ]) {
+      const malformedRepositoryValue = correctlyHashedMutation((value) => {
+        value.repository = repository;
+      });
+      expect(guardChannelSnapshotViewV1(malformedRepositoryValue).status).toBe(
+        'integrity-halt',
+      );
+    }
+
     const malformedReview = correctlyHashedMutation((value) => {
       const review = value.review as Record<string, unknown>;
       review.files = [42];
@@ -411,6 +430,41 @@ describe('channel snapshot v1 contract', () => {
       };
     });
     expect(guardChannelSnapshotViewV1(crossRoomReply).status).toBe('integrity-halt');
+
+    const unrelatedReplyRoot = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      const journal = rooms[CHANNEL]!.eventJournal as Record<string, Record<string, unknown>>;
+      const original = journal['1'.repeat(64)]!;
+      journal['2'.repeat(64)] = {
+        ...original,
+        eventId: '2'.repeat(64),
+        createdAt: Number(original.createdAt) + 1,
+      };
+      journal['3'.repeat(64)] = {
+        ...original,
+        eventId: '3'.repeat(64),
+        createdAt: Number(original.createdAt) + 2,
+        reply: {
+          channelId: CHANNEL,
+          eventId: '1'.repeat(64),
+          rootId: '2'.repeat(64),
+        },
+      };
+    });
+    expect(guardChannelSnapshotViewV1(unrelatedReplyRoot).status).toBe('integrity-halt');
+
+    const cyclicReply = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      const journal = rooms[CHANNEL]!.eventJournal as Record<string, Record<string, unknown>>;
+      journal['1'.repeat(64)]!.reply = {
+        channelId: CHANNEL,
+        eventId: '1'.repeat(64),
+        rootId: '1'.repeat(64),
+      };
+    });
+    expect(guardChannelSnapshotViewV1(cyclicReply).status).toBe('integrity-halt');
 
     const crossRoomCorner = correctlyHashedMutation((value) => {
       const snapshot = value.snapshot as Record<string, unknown>;

@@ -1,22 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AGENT_PRESENCE_DORMANT_MS,
   AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   type ReadEvent,
 } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import {
+  activeMentionCandidates,
   agentPresenceFromSessionEvent,
+  agentPresenceTier,
+  AGENT_PRESENCE_BACKGROUND_GRACE_MS,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
+  nextAgentPresenceTransitionAt,
   onlineVerdicts,
   presenceMapFromSessionEvents,
-  presenceWithMessageLiveness,
   reconnectPresenceAfterForeground,
 } from './agent-presence';
-import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 
 const agent = 'b'.repeat(64);
 
@@ -133,7 +136,7 @@ describe('mobile agent presence projection', () => {
     expect(isAgentPresenceOnline(map[agent])).toBe(true);
   });
 
-  it('keeps last-known online through foreground reconnect without masking real offline', () => {
+  it('never extends a lapsed lease through foreground reconnect', () => {
     const now = 1_700_000_000_000;
     const staleOnline = agentPresenceFromSessionEvent(
       presence('online', Math.floor((now - AGENT_PRESENCE_STALE_MS - 1) / 1_000)),
@@ -141,7 +144,7 @@ describe('mobile agent presence projection', () => {
     const explicitOffline = agentPresenceFromSessionEvent(presence('offline', now / 1_000));
     const graceUntil = now + AGENT_PRESENCE_STALE_MS;
 
-    expect(isAgentPresenceOnlineWithReconnectGrace(staleOnline, now, graceUntil)).toBe(true);
+    expect(isAgentPresenceOnlineWithReconnectGrace(staleOnline, now, graceUntil)).toBe(false);
     expect(isAgentPresenceOnlineWithReconnectGrace(explicitOffline, now, graceUntil)).toBe(false);
     expect(isAgentPresenceOnlineWithReconnectGrace(staleOnline, graceUntil + 1, graceUntil)).toBe(
       false,
@@ -181,6 +184,78 @@ describe('mobile agent presence projection', () => {
 
     expect(order).toEqual(['subscribe', 'backfill']);
     expect(refreshed[agent]).toMatchObject({ status: 'online' });
+  });
+});
+
+describe('the tiered lifecycle at the mobile door', () => {
+  const dormant: Record<string, RoomAgentPresence> = {
+    [agent]: { agentPubkey: agent, status: 'online', observedAt: 0 },
+  };
+
+  it('reads the lease lapsed instantly offline and dormant only past the grace', () => {
+    const now = AGENT_PRESENCE_STALE_MS + 1;
+    expect(agentPresenceTier(dormant[agent], now)).toBe('offline');
+    expect(agentPresenceTier(dormant[agent], AGENT_PRESENCE_DORMANT_MS)).toBe('dormant');
+    expect(
+      agentPresenceTier({ ...dormant[agent]!, status: 'offline' }, AGENT_PRESENCE_DORMANT_MS),
+    ).toBe('dormant');
+    expect(agentPresenceTier(undefined, Date.now())).toBe('offline');
+  });
+
+  it('schedules both lease lapse and dormancy transitions without unrelated state changes', () => {
+    expect(nextAgentPresenceTransitionAt(dormant, 0)).toBe(AGENT_PRESENCE_STALE_MS);
+    expect(nextAgentPresenceTransitionAt(dormant, AGENT_PRESENCE_STALE_MS + 1)).toBe(
+      AGENT_PRESENCE_DORMANT_MS,
+    );
+    expect(
+      nextAgentPresenceTransitionAt(
+        { [agent]: { ...dormant[agent]!, status: 'offline' } },
+        AGENT_PRESENCE_STALE_MS + 1,
+      ),
+    ).toBe(AGENT_PRESENCE_DORMANT_MS);
+    expect(nextAgentPresenceTransitionAt(dormant, AGENT_PRESENCE_DORMANT_MS)).toBeUndefined();
+  });
+
+  it('excludes dormant agents from active mention targets, keeps recent ones addressable', () => {
+    const alan = 'c'.repeat(64);
+    const candidates = [
+      { pubkey: agent, name: 'Clara', handle: 'clara' },
+      { pubkey: alan, name: 'Alan', handle: 'alan' },
+    ];
+    const now = AGENT_PRESENCE_DORMANT_MS * 2;
+    const presences: Record<string, RoomAgentPresence> = {
+      // Clara: dark for two days past her last heartbeat — omitted.
+      [agent]: { agentPubkey: agent, status: 'online', observedAt: 0 },
+      // Alan: lease lapsed minutes ago — still addressable (his daemon may
+      // simply be mid-reconnect; messages wait).
+      [alan]: {
+        agentPubkey: alan,
+        status: 'online',
+        observedAt: now - (AGENT_PRESENCE_STALE_MS + 5_000),
+      },
+    };
+    const targets = activeMentionCandidates(candidates, presences, now);
+    expect(targets.map((candidate) => candidate.name)).toEqual(['Alan']);
+    // An unknown presence is unknown, never dormant — stay mentionable.
+    expect(activeMentionCandidates(candidates, {}, now)).toHaveLength(2);
+  });
+
+  it('never extends online from stale cached state across background grace', () => {
+    // The background grace is bounded by the lease window — not
+    // MAX_SAFE_INTEGER, which rendered a reaped daemon online forever when
+    // the resume event was missed.
+    expect(AGENT_PRESENCE_BACKGROUND_GRACE_MS).toBeLessThan(Number.MAX_SAFE_INTEGER);
+    expect(AGENT_PRESENCE_BACKGROUND_GRACE_MS).toBe(AGENT_PRESENCE_STALE_MS);
+    // And even inside any grace window, an already-expired lease cannot read
+    // online through the tier door.
+    const graceUntil = Date.now() + AGENT_PRESENCE_BACKGROUND_GRACE_MS;
+    expect(
+      isAgentPresenceOnlineWithReconnectGrace(
+        { ...dormant[agent] },
+        AGENT_PRESENCE_STALE_MS + 1,
+        graceUntil,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -235,104 +310,33 @@ describe('recovering from a stale presence lease', () => {
   });
 });
 
-/**
- * An agent's own visible output is evidence about the agent.
- *
- * The heartbeat is a best-effort publish: `publishEvent` does not retry a
- * relay quota rejection, and the captain's daemon log opens with
- * `agent presence online failed: HTTP 429 rate-limited`. Two of those against a
- * 120s lease is enough to accuse an agent that is answering in the transcript
- * at that very moment.
- */
-describe('an agent message counts as liveness', () => {
-  const agentPubkeys = new Set([agent]);
-  function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
-    return {
-      id: 'm1',
-      text: 'here is the answer',
-      isUser: false,
-      timestamp: 0,
-      pubkey: agent,
-      isAgentAuthor: true,
-      ...overrides,
-    } as ChatDisplayMessage;
-  }
+describe('kind:30078 is the sole mobile liveness truth', () => {
+  it('does not renew an expired presence lease from a newer signed chat event', () => {
+    const staleHeartbeat = presence('online', 1_000);
+    const newerAgentMessage = {
+      type: 'read-model',
+      sessionId: 'room',
+      event: {
+        type: 'message',
+        eventId: 'agent-answer',
+        authorPubkey: agent,
+        createdAt: 5_000,
+        sourceKind: 9,
+        signature: 'verified',
+        scope: 'channel',
+        channelId: 'room',
+        workspaceId: 'workspace',
+        content: 'Here is the answer.',
+      },
+    } as unknown as SessionEvent;
 
-  it('keeps an agent online whose heartbeat was swallowed but who just spoke', () => {
-    const now = 5_000_000;
-    const stale = {
-      [agent]: { agentPubkey: agent, status: 'online' as const, observedAt: now - 10 * 60_000 },
-    };
-    expect(isAgentPresenceOnlineWithReconnectGrace(stale[agent], now)).toBe(false);
-
-    const corrected = presenceWithMessageLiveness(
-      stale,
-      [message({ timestamp: now - 1_000 })],
-      agentPubkeys,
-    );
-    expect(isAgentPresenceOnlineWithReconnectGrace(corrected[agent], now)).toBe(true);
-  });
-
-  it('never lets an old message override a newer explicit offline marker', () => {
-    const now = 5_000_000;
-    const marked = {
-      [agent]: { agentPubkey: agent, status: 'offline' as const, observedAt: now - 1_000 },
-    };
-    const corrected = presenceWithMessageLiveness(
-      marked,
-      [message({ timestamp: now - 60_000 })],
-      agentPubkeys,
-    );
-    expect(corrected[agent]!.status).toBe('offline');
-  });
-
-  it('does let a message after an offline marker bring the agent back', () => {
-    const now = 5_000_000;
-    const marked = {
-      [agent]: { agentPubkey: agent, status: 'offline' as const, observedAt: now - 60_000 },
-    };
-    const corrected = presenceWithMessageLiveness(
-      marked,
-      [message({ timestamp: now - 1_000 })],
-      agentPubkeys,
-    );
-    expect(isAgentPresenceOnlineWithReconnectGrace(corrected[agent], now)).toBe(true);
-  });
-
-  it('ignores rows the agent did not sign', () => {
-    const now = 5_000_000;
-    const corrected = presenceWithMessageLiveness(
-      {},
-      [
-        // The client-only offline notice itself: rendered into the transcript
-        // by this device, never published by anyone.
-        message({ timestamp: now, isSystemNotice: true }),
-        // A person's message, and a message from an unrelated key.
-        message({ id: 'm2', timestamp: now, pubkey: 'c'.repeat(64), isAgentAuthor: false }),
-      ],
-      agentPubkeys,
-    );
-    expect(corrected[agent]).toBeUndefined();
-  });
-
-  it('is a no-op when the Room has no registered agents', () => {
-    const presences = {};
-    expect(presenceWithMessageLiveness(presences, [message({ timestamp: 1 })], new Set())).toBe(
-      presences,
-    );
-  });
-
-  it("takes the agent's most recent message, not the first one it finds", () => {
-    const now = 5_000_000;
-    const corrected = presenceWithMessageLiveness(
-      {},
-      [
-        message({ id: 'old', timestamp: now - 10 * 60_000 }),
-        message({ id: 'new', timestamp: now - 1_000 }),
-      ],
-      agentPubkeys,
-    );
-    expect(isAgentPresenceOnlineWithReconnectGrace(corrected[agent], now)).toBe(true);
+    const projected = presenceMapFromSessionEvents([staleHeartbeat, newerAgentMessage]);
+    expect(projected[agent]).toEqual({
+      agentPubkey: agent,
+      status: 'online',
+      observedAt: 1_000_000,
+    });
+    expect(isAgentPresenceOnlineWithReconnectGrace(projected[agent], 5_000_000)).toBe(false);
   });
 });
 
@@ -345,7 +349,7 @@ describe('flat online verdicts for the transcript render path', () => {
     const presences = presenceMapFromSessionEvents([
       presence('online', 999),
       presence('offline', 998, 'c'.repeat(64)),
-      // Long past its lease — only the reconnect grace below keeps it online.
+      // Long past its lease — reconnect grace cannot keep it online.
       presence('online', 100, 'd'.repeat(64)),
     ]);
     const freshAgent = agent;
@@ -359,8 +363,7 @@ describe('flat online verdicts for the transcript render path', () => {
     );
     expect(verdicts[freshAgent]).toBe(true);
     expect(verdicts[staleGraceAgent]).toBe(false);
-    // Reconnect grace keeps a previously-online agent optimistic.
-    expect(verdicts[graceAgent]).toBe(true);
+    expect(verdicts[graceAgent]).toBe(false);
     // An absent presence is UNKNOWN-liveness → false, never a crash.
     expect(verdicts['unknown-agent']).toBe(false);
   });

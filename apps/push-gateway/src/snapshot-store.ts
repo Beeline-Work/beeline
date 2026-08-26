@@ -156,6 +156,24 @@ RETURNS void LANGUAGE sql AS $$
     repository_event_id = NULL
 $$;
 
+CREATE OR REPLACE FUNCTION beeline_mark_snapshot_dirty_preserving_repository(
+  p_tenant uuid,
+  p_channel uuid
+)
+RETURNS void LANGUAGE sql AS $$
+  INSERT INTO beeline_snapshot_dirty (relay_tenant_id, channel_id)
+  VALUES (p_tenant, p_channel)
+  ON CONFLICT (relay_tenant_id, channel_id) DO UPDATE SET
+    dirty_revision = nextval('beeline_snapshot_dirty_revision_seq'),
+    dirty_at = LEAST(beeline_snapshot_dirty.dirty_at, now()),
+    next_attempt_at = LEAST(beeline_snapshot_dirty.next_attempt_at, now()),
+    attempts = 0,
+    last_error = NULL,
+    scan_cursor_created_at = NULL,
+    scan_cursor_event_id = NULL,
+    scan_event_ids = '[]'::jsonb
+$$;
+
 CREATE OR REPLACE FUNCTION beeline_mark_snapshot_family_dirty(p_tenant uuid, p_channel uuid)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
@@ -193,6 +211,46 @@ BEGIN
 END
 $$;
 
+CREATE OR REPLACE FUNCTION beeline_mark_snapshot_family_dirty_preserving_repository(
+  p_tenant uuid,
+  p_channel uuid
+)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  affected_channel uuid;
+BEGIN
+  FOR affected_channel IN
+    WITH target_parent AS (
+      SELECT (tag->>1)::uuid AS channel_id
+      FROM events e
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(e.tags, '[]'::jsonb)) AS tag
+      WHERE e.community_id = p_tenant AND e.channel_id = p_channel
+        AND e.kind = 9007 AND e.deleted_at IS NULL
+        AND tag->>0 = 'parent'
+        AND tag->>1 ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      ORDER BY e.created_at ASC, e.id ASC
+      LIMIT 1
+    ), family_root AS (
+      SELECT COALESCE((SELECT channel_id FROM target_parent), p_channel) AS channel_id
+    )
+    SELECT p_channel
+    UNION
+    SELECT root.channel_id FROM family_root root
+    UNION
+    SELECT e.channel_id
+    FROM events e, family_root root
+    WHERE e.community_id = p_tenant AND e.channel_id IS NOT NULL
+      AND e.kind = 9007 AND e.deleted_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(COALESCE(e.tags, '[]'::jsonb)) AS tag
+        WHERE tag->>0 = 'parent' AND tag->>1 = root.channel_id::text
+      )
+  LOOP
+    PERFORM beeline_mark_snapshot_dirty_preserving_repository(p_tenant, affected_channel);
+  END LOOP;
+END
+$$;
+
 CREATE OR REPLACE FUNCTION beeline_snapshot_event_dirty_trigger()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
@@ -201,6 +259,7 @@ DECLARE
   source_pubkey bytea;
   source_kind integer;
   source_tags jsonb;
+  reset_repository_scan boolean;
   candidate text;
   affected record;
 BEGIN
@@ -217,6 +276,18 @@ BEGIN
     source_kind := NEW.kind;
     source_tags := NEW.tags;
   END IF;
+  reset_repository_scan :=
+    source_kind IN (0, 9007, 39001, 39002)
+    OR (source_kind = 30078 AND EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(COALESCE(source_tags, '[]'::jsonb)) AS marker
+      WHERE marker->>0 = 't' AND marker->>1 = 'buzz-room-repository'
+    ))
+    OR (source_kind = 9 AND EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(COALESCE(source_tags, '[]'::jsonb)) AS marker
+      WHERE marker->>0 = 't' AND marker->>1 = 'buzz-agent'
+    ));
   IF source_channel IS NULL THEN
     FOR affected IN
       SELECT DISTINCT cm.community_id, cm.channel_id
@@ -233,7 +304,14 @@ BEGIN
           ))
         )
     LOOP
-      PERFORM beeline_mark_snapshot_family_dirty(affected.community_id, affected.channel_id);
+      IF reset_repository_scan THEN
+        PERFORM beeline_mark_snapshot_family_dirty(affected.community_id, affected.channel_id);
+      ELSE
+        PERFORM beeline_mark_snapshot_family_dirty_preserving_repository(
+          affected.community_id,
+          affected.channel_id
+        );
+      END IF;
     END LOOP;
   END IF;
   IF source_tenant IS NULL THEN
@@ -241,7 +319,14 @@ BEGIN
     RETURN NEW;
   END IF;
   IF source_channel IS NOT NULL THEN
-    PERFORM beeline_mark_snapshot_family_dirty(source_tenant, source_channel);
+    IF reset_repository_scan THEN
+      PERFORM beeline_mark_snapshot_family_dirty(source_tenant, source_channel);
+    ELSE
+      PERFORM beeline_mark_snapshot_family_dirty_preserving_repository(
+        source_tenant,
+        source_channel
+      );
+    END IF;
   END IF;
   FOR candidate IN
     SELECT DISTINCT tag->>1
@@ -249,7 +334,14 @@ BEGIN
     WHERE tag->>0 IN ('h', 'parent', 'subchannel')
       AND tag->>1 ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
   LOOP
-    PERFORM beeline_mark_snapshot_family_dirty(source_tenant, candidate::uuid);
+    IF reset_repository_scan THEN
+      PERFORM beeline_mark_snapshot_family_dirty(source_tenant, candidate::uuid);
+    ELSE
+      PERFORM beeline_mark_snapshot_family_dirty_preserving_repository(
+        source_tenant,
+        candidate::uuid
+      );
+    END IF;
   END LOOP;
   FOR candidate IN
     SELECT substring(
@@ -260,7 +352,14 @@ BEGIN
     WHERE tag->>0 = 'd' AND tag->>1 LIKE 'buzz-corner-state:%'
   LOOP
     IF candidate IS NOT NULL THEN
-      PERFORM beeline_mark_snapshot_family_dirty(source_tenant, candidate::uuid);
+      IF reset_repository_scan THEN
+        PERFORM beeline_mark_snapshot_family_dirty(source_tenant, candidate::uuid);
+      ELSE
+        PERFORM beeline_mark_snapshot_family_dirty_preserving_repository(
+          source_tenant,
+          candidate::uuid
+        );
+      END IF;
     END IF;
   END LOOP;
   IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;

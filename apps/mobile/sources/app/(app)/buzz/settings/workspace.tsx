@@ -1,12 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import {
-  Alert,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
@@ -34,6 +27,7 @@ import { RoomGlyph } from '@/components/buzz/RoomGlyph';
 import { Typography } from '@/constants/Typography';
 import { BuzzRigTransport } from '@/sync/transport';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { Modal } from '@/modal';
 
 type WorkspaceRoomSetting = {
   id: string;
@@ -68,7 +62,8 @@ async function loadWorkspaceRooms(
   const roomCreates = new Map<string, (typeof creates)[number]>();
   for (const create of creates) {
     if (tagValue(create, TAG_COMMUNITY) !== communityId) continue;
-    if (tagValue(create, TAG_PARENT) || tagValues(create, 't').includes(TAG_DIRECT_MESSAGE)) continue;
+    if (tagValue(create, TAG_PARENT) || tagValues(create, 't').includes(TAG_DIRECT_MESSAGE))
+      continue;
     const id = tagValue(create, 'h') ?? tagValue(create, 'd');
     if (!id || id === communityId) continue;
     const current = roomCreates.get(id);
@@ -159,7 +154,11 @@ export default function WorkspaceSettings() {
           setWorkspaceName(scopedCommunity.name);
           if (!isWorkspaceManagerRole(viewerRole)) return;
 
-          const nextRooms = await loadWorkspaceRooms(currentClient, communityId, currentIdentity.publicKey);
+          const nextRooms = await loadWorkspaceRooms(
+            currentClient,
+            communityId,
+            currentIdentity.publicKey,
+          );
           if (!cancelled) {
             setRooms(nextRooms);
           }
@@ -181,7 +180,10 @@ export default function WorkspaceSettings() {
     setError(null);
     try {
       const updated = await client.renameCommunity(communityId, workspaceName);
-      setCommunity((current) => ({ ...updated, ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}) }));
+      setCommunity((current) => ({
+        ...updated,
+        ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}),
+      }));
       setWorkspaceName(updated.name);
     } catch (caught) {
       setError(`Could not rename ${WORKSPACE_LABEL}: ${String(caught)}`);
@@ -198,7 +200,10 @@ export default function WorkspaceSettings() {
       const avatar = await pickAndUploadAvatar(client);
       if (!avatar) return;
       const updated = await client.setCommunityAvatar(communityId, avatar);
-      setCommunity((current) => ({ ...updated, ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}) }));
+      setCommunity((current) => ({
+        ...updated,
+        ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}),
+      }));
     } catch (caught) {
       setError(`Could not set ${WORKSPACE_LABEL} picture: ${String(caught)}`);
     } finally {
@@ -212,7 +217,10 @@ export default function WorkspaceSettings() {
     setError(null);
     try {
       const updated = await client.setCommunityAvatar(communityId, '');
-      setCommunity((current) => ({ ...updated, ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}) }));
+      setCommunity((current) => ({
+        ...updated,
+        ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}),
+      }));
     } catch (caught) {
       setError(`Could not reset ${WORKSPACE_LABEL} picture: ${String(caught)}`);
     } finally {
@@ -227,7 +235,10 @@ export default function WorkspaceSettings() {
       setError(null);
       try {
         const updated = await client.setCommunityVisibility(communityId, visibility);
-        setCommunity((current) => ({ ...updated, ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}) }));
+        setCommunity((current) => ({
+          ...updated,
+          ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}),
+        }));
       } catch (caught) {
         setError(`Could not change ${WORKSPACE_LABEL} visibility: ${String(caught)}`);
       } finally {
@@ -261,15 +272,19 @@ export default function WorkspaceSettings() {
 
   const showRoomDetails = useCallback((room: WorkspaceRoomSetting) => {
     // Display-only channel mark; the stored name and copied id stay raw.
-    Alert.alert(displayRoomIndexTitle(room.name) ?? room.name, room.id, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: `Copy ${ROOM_LABEL} ID`,
-        onPress: () => {
-          void Clipboard.setStringAsync(room.id);
+    Modal.actionSheet(
+      displayRoomIndexTitle(room.name) ?? room.name,
+      [
+        {
+          text: `Copy ${ROOM_LABEL} ID`,
+          metadata: room.id,
+          onPress: () => {
+            void Clipboard.setStringAsync(room.id);
+          },
         },
-      },
-    ]);
+      ],
+      { cancelText: 'Cancel' },
+    );
   }, []);
 
   if (loading) {
@@ -283,7 +298,11 @@ export default function WorkspaceSettings() {
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
-        <TouchableOpacity accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}>
+        <TouchableOpacity
+          accessibilityLabel="Back"
+          onPress={() => router.back()}
+          style={styles.back}
+        >
           <Text style={styles.backText}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerCopy}>
@@ -308,40 +327,44 @@ export default function WorkspaceSettings() {
           <View style={styles.section} testID="workspace-overview-settings">
             <Text style={styles.sectionLabel}>WORKSPACE</Text>
             {WORKSPACE_PICTURES_ENABLED && (
-            <View style={styles.workspaceIdentityRow}>
-              <IdentityMark
-                kind="workspace"
-                seed={community?.communityId ?? 'workspace-loading'}
-                avatarUrl={community?.avatar}
-                name={community?.name}
-                size={72}
-              />
-              <View style={styles.workspaceIdentityCopy}>
-                <Text style={styles.sectionTitle}>Picture</Text>
-                <View style={styles.inlineActions}>
-                  <TouchableOpacity
-                    disabled={workingKey === 'picture'}
-                    onPress={() => void changeWorkspacePicture()}
-                    style={styles.textButton}
-                    testID="workspace-picture-change"
-                  >
-                    <Text style={styles.textButtonLabel}>
-                      {workingKey === 'picture' ? 'Working…' : community?.avatar ? 'Change' : 'Set picture'}
-                    </Text>
-                  </TouchableOpacity>
-                  {community?.avatar && (
+              <View style={styles.workspaceIdentityRow}>
+                <IdentityMark
+                  kind="workspace"
+                  seed={community?.communityId ?? 'workspace-loading'}
+                  avatarUrl={community?.avatar}
+                  name={community?.name}
+                  size={72}
+                />
+                <View style={styles.workspaceIdentityCopy}>
+                  <Text style={styles.sectionTitle}>Picture</Text>
+                  <View style={styles.inlineActions}>
                     <TouchableOpacity
                       disabled={workingKey === 'picture'}
-                      onPress={() => void resetWorkspacePicture()}
+                      onPress={() => void changeWorkspacePicture()}
                       style={styles.textButton}
-                      testID="workspace-picture-clear"
+                      testID="workspace-picture-change"
                     >
-                      <Text style={styles.textButtonLabel}>Use generated mark</Text>
+                      <Text style={styles.textButtonLabel}>
+                        {workingKey === 'picture'
+                          ? 'Working…'
+                          : community?.avatar
+                            ? 'Change'
+                            : 'Set picture'}
+                      </Text>
                     </TouchableOpacity>
-                  )}
+                    {community?.avatar && (
+                      <TouchableOpacity
+                        disabled={workingKey === 'picture'}
+                        onPress={() => void resetWorkspacePicture()}
+                        style={styles.textButton}
+                        testID="workspace-picture-clear"
+                      >
+                        <Text style={styles.textButtonLabel}>Use generated mark</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
               </View>
-            </View>
             )}
             <TextInput
               accessibilityLabel={`${WORKSPACE_LABEL} name`}
@@ -400,9 +423,10 @@ export default function WorkspaceSettings() {
               label={MEMBERS_LABEL}
               supportingCopy="Invite people, connect agents, and manage roles."
               onPress={() =>
-                router.push(
-                  { pathname: '/buzz/members', params: { communityId } } as unknown as Href,
-                )
+                router.push({
+                  pathname: '/buzz/members',
+                  params: { communityId },
+                } as unknown as Href)
               }
               testID="open-members"
             />
@@ -493,250 +517,293 @@ export default function WorkspaceSettings() {
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  container: { flex: 1, backgroundColor: groknight.bgTerminal },
-  center: { alignItems: 'center', justifyContent: 'center' },
-  header: {
-    minHeight: 66,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, lineHeight: 34 },
-  headerCopy: { flex: 1, minWidth: 0, paddingRight: 44 },
-  title: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.textPrimary, fontSize: 18 },
-  headerMeta: {
-    ...Typography.mono('semiBold'),
-    marginTop: 3,
-    color: groknight.textMuted,
-    fontSize: 9,
-    letterSpacing: 0.7,
-  },
-  content: { paddingHorizontal: 18, paddingTop: 24, paddingBottom: 48 },
-  section: {
-    paddingBottom: 28,
-    marginBottom: 28,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  sectionLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 10,
-    letterSpacing: 0.8,
-  },
-  sectionTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    marginTop: 8,
-    color: groknight.textPrimary,
-    fontSize: 17,
-  },
-  sectionBody: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 7,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  workspaceIdentityRow: { marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 14 },
-  workspaceIdentityCopy: { flex: 1, minWidth: 0 },
-  inlineActions: { marginTop: 4, flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
-  input: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    minHeight: 48,
-    marginTop: 14,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: groknight.radius,
-    color: groknight.textPrimary,
-    backgroundColor: groknight.bgBase,
-    fontSize: 14,
-  },
-  primaryAction: { marginTop: 10 },
-  textButton: { minHeight: 44, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
-  textButtonLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    letterSpacing: 0.6,
-  },
-  segmented: { marginTop: 14, flexDirection: 'row', gap: 8 },
-  segment: {
-    flex: 1,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: groknight.radius,
-    backgroundColor: groknight.bgBase,
-  },
-  segmentSelected: { borderColor: groknight.selectedBorder, backgroundColor: groknight.bgHighlight },
-  segmentText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 10,
-    letterSpacing: 0.5,
-  },
-  segmentTextSelected: { color: groknight.textPrimary },
-  addMemberRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  memberInput: { flex: 1, minWidth: 0 },
-  compactAction: {
-    minWidth: 58,
-    minHeight: 48,
-    marginTop: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: groknight.radius,
-    backgroundColor: groknight.actionFill,
-  },
-  compactActionText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textInverted,
-    fontSize: 10,
-    letterSpacing: 0.7,
-  },
-  memberList: { marginTop: 14, borderBottomWidth: 1, borderBottomColor: groknight.border },
-  memberRow: {
-    minHeight: 94,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  memberCopy: { flex: 1, minWidth: 0 },
-  memberName: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.textPrimary, fontSize: 13 },
-  memberHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 9 },
-  roleRow: { marginTop: 7, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  roleButton: {
-    minHeight: 30,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: groknight.radius,
-  },
-  roleButtonSelected: { borderColor: groknight.selectedBorder, backgroundColor: groknight.bgHighlight },
-  roleText: { ...Typography.mono('semiBold'), color: groknight.textMuted, fontSize: 8 },
-  roleTextSelected: { color: groknight.textPrimary },
-  removeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  removeText: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.steel, fontSize: 22 },
-  inviteRow: {
-    minHeight: 62,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  settingCopy: { flex: 1, minWidth: 0, paddingVertical: 10 },
-  inviteTitle: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    letterSpacing: 0.5,
-  },
-  inviteMeta: { ...Typography.default(), fontFamily: groknight.proseRegular, marginTop: 4, color: groknight.textMuted, fontSize: 10 },
-  roomRow: {
-    minHeight: 66,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-  },
-  roomMark: {
-    width: 30,
-    flexShrink: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roomCopy: { flex: 1, minWidth: 0, paddingHorizontal: 10 },
-  roomLink: { minHeight: 44, justifyContent: 'center' },
-  roomName: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.textPrimary, fontSize: 13 },
-  roomQualifierRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center' },
-  roomQualifier: {
-    ...Typography.default(),
-    fontFamily: groknight.proseRegular,
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-  },
-  roomDetailsButton: {
-    minWidth: 54,
-    minHeight: 44,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
-  roomDetailsText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 8,
-    letterSpacing: 0.5,
-  },
-  visibilityButton: {
-    minWidth: 88,
-    minHeight: 44,
-    paddingHorizontal: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    borderRadius: groknight.radius,
-  },
-  disabledButton: { opacity: 0.45 },
-  visibilityButtonText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 8,
-  },
-  denied: { flex: 1, paddingHorizontal: 28, alignItems: 'center', justifyContent: 'center' },
-  deniedGlyph: { ...Typography.default(), color: groknight.steel, fontSize: 34 },
-  deniedTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    marginTop: 14,
-    color: groknight.textPrimary,
-    fontSize: 18,
-  },
-  deniedBody: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    maxWidth: 360,
-    marginTop: 8,
-    color: groknight.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: 'center',
-  },
-  errorPanel: {
-    padding: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  errorLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 10,
-    letterSpacing: 0.7,
-  },
-  errorText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 4,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  });
+  return {
+    container: { flex: 1, backgroundColor: groknight.bgTerminal },
+    center: { alignItems: 'center', justifyContent: 'center' },
+    header: {
+      minHeight: 66,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, lineHeight: 34 },
+    headerCopy: { flex: 1, minWidth: 0, paddingRight: 44 },
+    title: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 18,
+    },
+    headerMeta: {
+      ...Typography.mono('semiBold'),
+      marginTop: 3,
+      color: groknight.textMuted,
+      fontSize: 9,
+      letterSpacing: 0.7,
+    },
+    content: { paddingHorizontal: 18, paddingTop: 24, paddingBottom: 48 },
+    section: {
+      paddingBottom: 28,
+      marginBottom: 28,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    sectionLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 10,
+      letterSpacing: 0.8,
+    },
+    sectionTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      marginTop: 8,
+      color: groknight.textPrimary,
+      fontSize: 17,
+    },
+    sectionBody: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 7,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    workspaceIdentityRow: { marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 14 },
+    workspaceIdentityCopy: { flex: 1, minWidth: 0 },
+    inlineActions: { marginTop: 4, flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+    input: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      minHeight: 48,
+      marginTop: 14,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: groknight.radius,
+      color: groknight.textPrimary,
+      backgroundColor: groknight.bgBase,
+      fontSize: 14,
+    },
+    primaryAction: { marginTop: 10 },
+    textButton: {
+      minHeight: 44,
+      paddingHorizontal: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    textButtonLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 10,
+      letterSpacing: 0.6,
+    },
+    segmented: { marginTop: 14, flexDirection: 'row', gap: 8 },
+    segment: {
+      flex: 1,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: groknight.radius,
+      backgroundColor: groknight.bgBase,
+    },
+    segmentSelected: {
+      borderColor: groknight.selectedBorder,
+      backgroundColor: groknight.bgHighlight,
+    },
+    segmentText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 10,
+      letterSpacing: 0.5,
+    },
+    segmentTextSelected: { color: groknight.textPrimary },
+    addMemberRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    memberInput: { flex: 1, minWidth: 0 },
+    compactAction: {
+      minWidth: 58,
+      minHeight: 48,
+      marginTop: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: groknight.radius,
+      backgroundColor: groknight.actionFill,
+    },
+    compactActionText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textInverted,
+      fontSize: 10,
+      letterSpacing: 0.7,
+    },
+    memberList: { marginTop: 14, borderBottomWidth: 1, borderBottomColor: groknight.border },
+    memberRow: {
+      minHeight: 94,
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    memberCopy: { flex: 1, minWidth: 0 },
+    memberName: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 13,
+    },
+    memberHandle: { ...Typography.mono(), marginTop: 2, color: groknight.textMuted, fontSize: 9 },
+    roleRow: { marginTop: 7, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+    roleButton: {
+      minHeight: 30,
+      paddingHorizontal: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: groknight.radius,
+    },
+    roleButtonSelected: {
+      borderColor: groknight.selectedBorder,
+      backgroundColor: groknight.bgHighlight,
+    },
+    roleText: { ...Typography.mono('semiBold'), color: groknight.textMuted, fontSize: 8 },
+    roleTextSelected: { color: groknight.textPrimary },
+    removeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    removeText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.steel,
+      fontSize: 22,
+    },
+    inviteRow: {
+      minHeight: 62,
+      paddingHorizontal: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    settingCopy: { flex: 1, minWidth: 0, paddingVertical: 10 },
+    inviteTitle: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 10,
+      letterSpacing: 0.5,
+    },
+    inviteMeta: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 4,
+      color: groknight.textMuted,
+      fontSize: 10,
+    },
+    roomRow: {
+      minHeight: 66,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+    },
+    roomMark: {
+      width: 30,
+      flexShrink: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roomCopy: { flex: 1, minWidth: 0, paddingHorizontal: 10 },
+    roomLink: { minHeight: 44, justifyContent: 'center' },
+    roomName: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 13,
+    },
+    roomQualifierRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center' },
+    roomQualifier: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      flex: 1,
+      minWidth: 0,
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 14,
+    },
+    roomDetailsButton: {
+      minWidth: 54,
+      minHeight: 44,
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+    },
+    roomDetailsText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 8,
+      letterSpacing: 0.5,
+    },
+    visibilityButton: {
+      minWidth: 88,
+      minHeight: 44,
+      paddingHorizontal: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      borderRadius: groknight.radius,
+    },
+    disabledButton: { opacity: 0.45 },
+    visibilityButtonText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 8,
+    },
+    denied: { flex: 1, paddingHorizontal: 28, alignItems: 'center', justifyContent: 'center' },
+    deniedGlyph: { ...Typography.default(), color: groknight.steel, fontSize: 34 },
+    deniedTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      marginTop: 14,
+      color: groknight.textPrimary,
+      fontSize: 18,
+    },
+    deniedBody: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      maxWidth: 360,
+      marginTop: 8,
+      color: groknight.textSecondary,
+      fontSize: 13,
+      lineHeight: 19,
+      textAlign: 'center',
+    },
+    errorPanel: {
+      padding: 12,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    errorLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 10,
+      letterSpacing: 0.7,
+    },
+    errorText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 4,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+  };
 });

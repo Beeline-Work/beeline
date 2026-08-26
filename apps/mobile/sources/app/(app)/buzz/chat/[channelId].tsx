@@ -5,14 +5,12 @@
  */
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
-  Alert,
   AppState,
   View,
   Text,
   Image,
   FlatList,
   Linking,
-  Modal as RNModal,
   Pressable,
   ScrollView,
   Share,
@@ -224,6 +222,7 @@ import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
 import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
+import { HullFloatingSurface, HullModal } from '@/components/buzz/HullDialog';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import {
@@ -364,7 +363,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
   const image = attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
   const open = () => {
     void Linking.openURL(attachmentOpenUrl(attachment)).catch(() => {
-      Alert.alert('Could not open attachment', 'The file link could not be opened on this device.');
+      Modal.alert('Could not open attachment', 'The file link could not be opened on this device.');
     });
   };
   return (
@@ -2418,7 +2417,7 @@ export default function BuzzChat() {
         );
       }
       const failure = publishFailurePresentation(err);
-      Alert.alert(
+      Modal.alert(
         'Message not sent',
         failure.message,
         failure.retryable
@@ -2472,7 +2471,7 @@ export default function BuzzChat() {
     if (Platform.OS === 'ios') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (permission.status !== 'granted') {
-        Alert.alert('Photo access needed', 'Allow photo access to attach an image.');
+        Modal.alert('Photo access needed', 'Allow photo access to attach an image.');
         return;
       }
     }
@@ -2668,38 +2667,31 @@ export default function BuzzChat() {
   );
 
   const handleRemoveRoomMember = useCallback(
-    (participant: RoomMemberOption) => {
+    async (participant: RoomMemberOption) => {
       const targetRole = normalizedRoomRole(roomMemberByPubkey.get(participant.pubkey));
       if (
         !transport ||
         !canRemoveRoomParticipant(viewerRoomRole, targetRole, participant.pubkey === userPubkey)
       )
         return;
-      Alert.alert(
+      const confirmed = await Modal.confirm(
         `Remove ${participant.name}?`,
         `Their membership will be removed and this ${ROOM_LABEL} will disappear from their workspace list.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Remove',
-            style: 'destructive',
-            onPress: () => {
-              setMembershipActionPubkey(participant.pubkey);
-              setMembershipError(null);
-              void transport
-                .removeRoomMember(decodedId, participant.pubkey)
-                .then(async () => {
-                  await revalidateCachedMessages(transport, cacheViewerPubkey, decodedId);
-                  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                })
-                .catch((err) => {
-                  setMembershipError(`Could not remove ${participant.name}: ${String(err)}`);
-                })
-                .finally(() => setMembershipActionPubkey(null));
-            },
-          },
-        ],
+        { cancelText: 'Cancel', confirmText: 'Remove', destructive: true },
       );
+      if (!confirmed) return;
+      setMembershipActionPubkey(participant.pubkey);
+      setMembershipError(null);
+      void transport
+        .removeRoomMember(decodedId, participant.pubkey)
+        .then(async () => {
+          await revalidateCachedMessages(transport, cacheViewerPubkey, decodedId);
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        })
+        .catch((err) => {
+          setMembershipError(`Could not remove ${participant.name}: ${String(err)}`);
+        })
+        .finally(() => setMembershipActionPubkey(null));
     },
     [cacheViewerPubkey, decodedId, roomMemberByPubkey, transport, userPubkey, viewerRoomRole],
   );
@@ -2713,52 +2705,47 @@ export default function BuzzChat() {
     });
   }, [activeCommunityId]);
 
-  const handleRoomLifecycle = useCallback(() => {
+  const handleRoomLifecycle = useCallback(async () => {
     if (!transport || !lifecycleAction || roomLifecycleBusy) return;
     const deleting = lifecycleAction === 'delete';
-    Alert.alert(
+    const confirmed = await Modal.confirm(
       deleting ? `Delete ${displayRoomName}?` : `Leave ${displayRoomName}?`,
       deleting
         ? `This ${ROOM_LABEL} and its workspace data will be permanently deleted.`
         : `You will lose access to this ${ROOM_LABEL}. Other members will keep their access.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: deleting ? `Delete ${ROOM_LABEL}` : `Leave ${ROOM_LABEL}`,
-          style: 'destructive',
-          onPress: () => {
-            setRoomLifecycleBusy(true);
-            setMembershipError(null);
-            const operation = deleting
-              ? transport.deleteRoom(decodedId)
-              : transport.leaveRoom(decodedId);
-            void operation
-              .then(() => {
-                // Delete is authoritative relay teardown (kind:9008 retracts
-                // the Room's discovery projections); only leave needs a local
-                // durable dismissal. Both paths purge the warm cache before
-                // navigating so no stale row flashes on the next frame.
-                const viewerPubkey = useBuzzLocalCache.getState().activeViewerPubkey;
-                if (viewerPubkey) {
-                  if (deleting) {
-                    useBuzzLocalCache.getState().removeChannel(viewerPubkey, decodedId);
-                  } else {
-                    markRoomRemovedAndPurge(viewerPubkey, decodedId);
-                  }
-                }
-                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                returnToRoomList();
-              })
-              .catch((err) => {
-                setMembershipError(
-                  `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`,
-                );
-              })
-              .finally(() => setRoomLifecycleBusy(false));
-          },
-        },
-      ],
+      {
+        cancelText: 'Cancel',
+        confirmText: deleting ? `Delete ${ROOM_LABEL}` : `Leave ${ROOM_LABEL}`,
+        destructive: true,
+      },
     );
+    if (!confirmed) return;
+    setRoomLifecycleBusy(true);
+    setMembershipError(null);
+    const operation = deleting ? transport.deleteRoom(decodedId) : transport.leaveRoom(decodedId);
+    void operation
+      .then(() => {
+        // Delete is authoritative relay teardown (kind:9008 retracts
+        // the Room's discovery projections); only leave needs a local
+        // durable dismissal. Both paths purge the warm cache before
+        // navigating so no stale row flashes on the next frame.
+        const viewerPubkey = useBuzzLocalCache.getState().activeViewerPubkey;
+        if (viewerPubkey) {
+          if (deleting) {
+            useBuzzLocalCache.getState().removeChannel(viewerPubkey, decodedId);
+          } else {
+            markRoomRemovedAndPurge(viewerPubkey, decodedId);
+          }
+        }
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        returnToRoomList();
+      })
+      .catch((err) => {
+        setMembershipError(
+          `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`,
+        );
+      })
+      .finally(() => setRoomLifecycleBusy(false));
   }, [decodedId, displayRoomName, lifecycleAction, returnToRoomList, roomLifecycleBusy, transport]);
 
   const patchCachedRoomName = useCallback(
@@ -3012,18 +2999,13 @@ export default function BuzzChat() {
     (candidate: RepoCandidate) => {
       const hasOpenCorners = roomListCorners(cornerLifecycle).length > 0;
       if (roomRepository && hasOpenCorners) {
-        Alert.alert(
+        void Modal.confirm(
           `Change ${ROOM_LABEL} repo?`,
           `This ${ROOM_LABEL} has ${CORNER_LABEL}s still open on ${roomRepository.binding.name}. Changing the repo will not move them — they stay bound to the old repo.`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Change anyway',
-              style: 'destructive',
-              onPress: () => void applyRoomRepository(candidate),
-            },
-          ],
-        );
+          { cancelText: 'Cancel', confirmText: 'Change anyway', destructive: true },
+        ).then((confirmed) => {
+          if (confirmed) void applyRoomRepository(candidate);
+        });
         return;
       }
       void applyRoomRepository(candidate);
@@ -3075,16 +3057,14 @@ export default function BuzzChat() {
       setCornerOpenRepoPrompt(false);
       return;
     }
-    Alert.alert('Choose repositories on GitHub', GITHUB_REPOSITORY_SELECTION_INSTRUCTION, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Continue to GitHub',
-        onPress: () => {
-          if (plan.kind === 'manage') void handleManageGitHubInstallation(plan.installation);
-          else void handleAddGitHubAccount();
-        },
-      },
-    ]);
+    const confirmed = await Modal.confirm(
+      'Choose repositories on GitHub',
+      GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
+      { cancelText: 'Cancel', confirmText: 'Continue to GitHub' },
+    );
+    if (!confirmed) return;
+    if (plan.kind === 'manage') void handleManageGitHubInstallation(plan.installation);
+    else void handleAddGitHubAccount();
   }, [handleAddGitHubAccount, handleManageGitHubInstallation, roomRepoAccessIssue, transport]);
 
   const handleStartDirectMessage = useCallback(
@@ -4503,609 +4483,573 @@ export default function BuzzChat() {
         onPickPhoto={() => void pickPhoto()}
       />
 
-      <RNModal
-        animationType="fade"
+      <HullModal
+        accessibilityLabel={`Close ${ROOM_LABEL} roster`}
+        contentStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 18) }}
         onRequestClose={() => setRosterVisible(false)}
-        transparent
+        placement="bottom"
         visible={rosterVisible}
       >
-        <View style={styles.rosterModalRoot}>
-          <Pressable
-            accessibilityLabel={`Close ${ROOM_LABEL} roster`}
-            onPress={() => setRosterVisible(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <HullSurface strength="raised" style={styles.rosterModal} testID="room-roster-sheet">
-            <View style={styles.rosterModalHeading}>
-              <View style={styles.rosterModalHeadingCopy}>
-                <Text style={styles.rosterModalEyebrow}>IN THIS ROOM</Text>
-                <Text style={styles.rosterModalTitle}>
-                  {formatRoomParticipantTotal(roomParticipantTotal)}
-                </Text>
-              </View>
-              <TouchableOpacity
-                accessibilityLabel={`Close ${ROOM_LABEL} roster`}
-                onPress={() => setRosterVisible(false)}
-                style={styles.rosterModalClose}
-              >
-                <Text style={styles.rosterModalCloseText}>×</Text>
-              </TouchableOpacity>
+        <HullFloatingSurface style={styles.rosterModal} testID="room-roster-sheet">
+          <View style={styles.rosterModalHeading}>
+            <View style={styles.rosterModalHeadingCopy}>
+              <Text style={styles.rosterModalEyebrow}>IN THIS ROOM</Text>
+              <Text style={styles.rosterModalTitle}>
+                {formatRoomParticipantTotal(roomParticipantTotal)}
+              </Text>
             </View>
-
-            <ScrollView
-              contentContainerStyle={styles.rosterContent}
-              showsVerticalScrollIndicator={false}
+            <TouchableOpacity
+              accessibilityLabel={`Close ${ROOM_LABEL} roster`}
+              onPress={() => setRosterVisible(false)}
+              style={styles.rosterModalClose}
             >
-              {[
-                { key: 'people', label: 'PEOPLE', options: visibleRosterSections.people },
-                { key: 'agents', label: 'AGENTS', options: visibleRosterSections.agents },
-              ].map((section, sectionIndex) =>
-                section.options.length > 0 ? (
-                  <View key={section.key}>
-                    <Text
-                      style={[
-                        styles.rosterSectionLabel,
-                        sectionIndex > 0 && styles.rosterSectionLabelSpaced,
-                      ]}
-                    >
-                      {section.label} {section.options.length}
-                    </Text>
-                    {section.options.map((participant) => {
-                      const display = participant.agent
-                        ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
-                        : undefined;
-                      const displayName = display
-                        ? display.name
-                        : participant.pubkey === userPubkey
-                          ? 'You'
-                          : participant.name;
-                      const handle = display?.handle ?? shortMemberNpub(participant.pubkey);
-                      const targetRole = normalizedRoomRole(
-                        roomMemberByPubkey.get(participant.pubkey),
-                      );
-                      const canRemove =
-                        !parentChannelId &&
-                        !isDirectMessage &&
-                        canRemoveRoomParticipant(
-                          viewerRoomRole,
-                          targetRole,
-                          participant.pubkey === userPubkey,
-                        );
-                      const removing = membershipActionPubkey === participant.pubkey;
-                      const agentOnline =
-                        participant.kind === 'agent' &&
-                        isAgentPresenceOnlineWithReconnectGrace(
-                          agentPresences[participant.pubkey],
-                          presenceNow,
-                          presenceReconnectGrace[participant.pubkey],
-                        );
-                      return (
-                        <View
-                          accessibilityLabel={`${displayName}, ${participant.kind}${
-                            participant.kind === 'agent'
-                              ? agentOnline
-                                ? ', online'
-                                : ', offline'
-                              : ''
-                          }, at ${handle}`}
-                          key={participant.pubkey}
-                          style={styles.rosterRow}
-                          testID={`room-roster-${participant.kind}-${participant.pubkey}`}
-                        >
-                          {display ? (
-                            <IdentityMark
-                              kind="agent"
-                              seed={display.avatarSeed ?? participant.pubkey}
-                              avatarUrl={display.avatarUrl}
-                              name={display.name}
-                              size={38}
-                              alive={agentOnline}
-                            />
-                          ) : (
-                            <IdentityMark
-                              kind="human"
-                              seed={participant.pubkey}
-                              avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                              name={displayName}
-                              size={38}
-                            />
-                          )}
-                          <View style={styles.rosterIdentity}>
-                            <View style={styles.rosterNameRow}>
-                              {participant.kind === 'agent' ? (
-                                <AgentPresenceLight
-                                  online={agentOnline}
-                                  testID={`agent-presence-light-${participant.pubkey}`}
-                                />
-                              ) : null}
-                              <Text numberOfLines={1} style={styles.rosterName}>
-                                {displayName}
-                              </Text>
-                            </View>
-                            <Text numberOfLines={1} style={styles.rosterHandle}>
-                              @{handle}
-                            </Text>
-                          </View>
-                          <View style={styles.rosterActions}>
-                            <Text style={styles.rosterKind}>
-                              {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
-                              {targetRole && targetRole !== 'member'
-                                ? ` · ${targetRole.toUpperCase()}`
-                                : ''}
-                            </Text>
-                            {canRemove && (
-                              <TouchableOpacity
-                                accessibilityLabel={`Remove ${displayName} from this ${ROOM_LABEL}`}
-                                accessibilityRole="button"
-                                disabled={Boolean(membershipActionPubkey)}
-                                onPress={() => handleRemoveRoomMember(participant)}
-                                style={styles.rosterRemoveButton}
-                                testID={`remove-room-member-${participant.pubkey}`}
-                              >
-                                <Text style={styles.rosterRemoveText}>
-                                  {removing ? 'REMOVING…' : 'REMOVE'}
-                                </Text>
-                              </TouchableOpacity>
-                            )}
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                ) : null,
-              )}
-              {roomParticipantTotal === 0 && (
-                <Text style={styles.rosterEmpty}>No visible members</Text>
-              )}
-            </ScrollView>
-            {membershipError && (
-              <View accessibilityRole="alert" style={styles.membershipError}>
-                <Text style={styles.membershipErrorText}>! {membershipError}</Text>
-              </View>
-            )}
-          </HullSurface>
-        </View>
-      </RNModal>
+              <Text style={styles.rosterModalCloseText}>×</Text>
+            </TouchableOpacity>
+          </View>
 
-      <RNModal
-        animationType="fade"
+          <ScrollView
+            contentContainerStyle={styles.rosterContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {[
+              { key: 'people', label: 'PEOPLE', options: visibleRosterSections.people },
+              { key: 'agents', label: 'AGENTS', options: visibleRosterSections.agents },
+            ].map((section, sectionIndex) =>
+              section.options.length > 0 ? (
+                <View key={section.key}>
+                  <Text
+                    style={[
+                      styles.rosterSectionLabel,
+                      sectionIndex > 0 && styles.rosterSectionLabelSpaced,
+                    ]}
+                  >
+                    {section.label} {section.options.length}
+                  </Text>
+                  {section.options.map((participant) => {
+                    const display = participant.agent
+                      ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
+                      : undefined;
+                    const displayName = display
+                      ? display.name
+                      : participant.pubkey === userPubkey
+                        ? 'You'
+                        : participant.name;
+                    const handle = display?.handle ?? shortMemberNpub(participant.pubkey);
+                    const targetRole = normalizedRoomRole(
+                      roomMemberByPubkey.get(participant.pubkey),
+                    );
+                    const canRemove =
+                      !parentChannelId &&
+                      !isDirectMessage &&
+                      canRemoveRoomParticipant(
+                        viewerRoomRole,
+                        targetRole,
+                        participant.pubkey === userPubkey,
+                      );
+                    const removing = membershipActionPubkey === participant.pubkey;
+                    const agentOnline =
+                      participant.kind === 'agent' &&
+                      isAgentPresenceOnlineWithReconnectGrace(
+                        agentPresences[participant.pubkey],
+                        presenceNow,
+                        presenceReconnectGrace[participant.pubkey],
+                      );
+                    return (
+                      <View
+                        accessibilityLabel={`${displayName}, ${participant.kind}${
+                          participant.kind === 'agent'
+                            ? agentOnline
+                              ? ', online'
+                              : ', offline'
+                            : ''
+                        }, at ${handle}`}
+                        key={participant.pubkey}
+                        style={styles.rosterRow}
+                        testID={`room-roster-${participant.kind}-${participant.pubkey}`}
+                      >
+                        {display ? (
+                          <IdentityMark
+                            kind="agent"
+                            seed={display.avatarSeed ?? participant.pubkey}
+                            avatarUrl={display.avatarUrl}
+                            name={display.name}
+                            size={38}
+                            alive={agentOnline}
+                          />
+                        ) : (
+                          <IdentityMark
+                            kind="human"
+                            seed={participant.pubkey}
+                            avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
+                            name={displayName}
+                            size={38}
+                          />
+                        )}
+                        <View style={styles.rosterIdentity}>
+                          <View style={styles.rosterNameRow}>
+                            {participant.kind === 'agent' ? (
+                              <AgentPresenceLight
+                                online={agentOnline}
+                                testID={`agent-presence-light-${participant.pubkey}`}
+                              />
+                            ) : null}
+                            <Text numberOfLines={1} style={styles.rosterName}>
+                              {displayName}
+                            </Text>
+                          </View>
+                          <Text numberOfLines={1} style={styles.rosterHandle}>
+                            @{handle}
+                          </Text>
+                        </View>
+                        <View style={styles.rosterActions}>
+                          <Text style={styles.rosterKind}>
+                            {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
+                            {targetRole && targetRole !== 'member'
+                              ? ` · ${targetRole.toUpperCase()}`
+                              : ''}
+                          </Text>
+                          {canRemove && (
+                            <TouchableOpacity
+                              accessibilityLabel={`Remove ${displayName} from this ${ROOM_LABEL}`}
+                              accessibilityRole="button"
+                              disabled={Boolean(membershipActionPubkey)}
+                              onPress={() => handleRemoveRoomMember(participant)}
+                              style={styles.rosterRemoveButton}
+                              testID={`remove-room-member-${participant.pubkey}`}
+                            >
+                              <Text style={styles.rosterRemoveText}>
+                                {removing ? 'REMOVING…' : 'REMOVE'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null,
+            )}
+            {roomParticipantTotal === 0 && (
+              <Text style={styles.rosterEmpty}>No visible members</Text>
+            )}
+          </ScrollView>
+          {membershipError && (
+            <View accessibilityRole="alert" style={styles.membershipError}>
+              <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+            </View>
+          )}
+        </HullFloatingSurface>
+      </HullModal>
+
+      <HullModal
+        accessibilityLabel={`Close ${ROOM_LABEL} actions`}
+        contentStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 18) }}
+        dismissOnBackdrop={!renameBusy}
         onRequestClose={() => {
           if (renameBusy) return;
           setRenameEditing(false);
           setRenameError(null);
           setRoomActionsVisible(false);
         }}
-        transparent
+        placement="bottom"
         visible={roomActionsVisible}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
-          style={[styles.roomActionsModalRoot, { paddingBottom: Math.max(insets.bottom, 18) }]}
-        >
-          <Pressable
-            accessibilityLabel={`Close ${ROOM_LABEL} actions`}
-            disabled={renameBusy}
-            onPress={() => {
-              setRenameEditing(false);
-              setRenameError(null);
-              setRoomActionsVisible(false);
-            }}
-            style={StyleSheet.absoluteFill}
-          />
-          <HullSurface strength="raised" style={styles.roomActionsModal}>
-            <View style={styles.roomActionsModalHeading}>
-              <View style={styles.roomActionsModalCopy}>
-                <Text style={styles.roomActionsModalEyebrow}>{ROOM_LABEL.toUpperCase()}</Text>
-                <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
-                  {displayRoomName}
-                </Text>
+        <HullFloatingSurface style={styles.roomActionsModal}>
+          <View style={styles.roomActionsModalHeading}>
+            <View style={styles.roomActionsModalCopy}>
+              <Text style={styles.roomActionsModalEyebrow}>{ROOM_LABEL.toUpperCase()}</Text>
+              <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
+                {displayRoomName}
+              </Text>
+            </View>
+            <TouchableOpacity
+              accessibilityLabel={`Close ${ROOM_LABEL} actions`}
+              disabled={renameBusy}
+              onPress={() => {
+                setRenameEditing(false);
+                setRenameError(null);
+                setRoomActionsVisible(false);
+              }}
+              style={styles.roomActionsModalClose}
+            >
+              <Text style={styles.roomActionsModalCloseText}>×</Text>
+            </TouchableOpacity>
+          </View>
+          {canRenameRoom(viewerChannelRole) &&
+            (renameEditing ? (
+              <View style={styles.roomRenameEditor} testID="rename-room-editor">
+                <Text style={styles.roomRenameLabel}>NEW {ROOM_LABEL.toUpperCase()} NAME</Text>
+                <TextInput
+                  accessibilityLabel={`New ${ROOM_LABEL} name`}
+                  autoCapitalize="sentences"
+                  autoCorrect
+                  editable={!renameBusy}
+                  onChangeText={(value) => {
+                    setRenameDraft(value);
+                    if (value.trim()) setRenameError(null);
+                  }}
+                  onSubmitEditing={() => void handleRenameRoom()}
+                  returnKeyType="done"
+                  selectTextOnFocus
+                  style={styles.roomRenameInput}
+                  testID="rename-room-input"
+                  value={renameDraft}
+                />
+                <View style={styles.roomRenameControls}>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    disabled={renameBusy}
+                    onPress={() => {
+                      setRenameEditing(false);
+                      setRenameError(null);
+                    }}
+                    style={styles.roomRenameCancel}
+                  >
+                    <Text style={styles.roomRenameCancelText}>CANCEL</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    disabled={renameBusy || !renameDraft.trim()}
+                    onPress={() => void handleRenameRoom()}
+                    style={[
+                      styles.roomRenameApply,
+                      (renameBusy || !renameDraft.trim()) && styles.roomRenameApplyDisabled,
+                    ]}
+                    testID="apply-room-rename"
+                  >
+                    <Text style={styles.roomRenameApplyText}>
+                      {renameBusy ? 'RENAMING…' : 'APPLY'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
+            ) : (
               <TouchableOpacity
-                accessibilityLabel={`Close ${ROOM_LABEL} actions`}
+                accessibilityLabel={`Rename ${ROOM_LABEL}`}
+                accessibilityRole="button"
                 disabled={renameBusy}
                 onPress={() => {
-                  setRenameEditing(false);
+                  // The rename draft is the STORED name; the header's `#`
+                  // mark is display-only and must never be saved back.
+                  setRenameDraft(storedRoomName);
                   setRenameError(null);
-                  setRoomActionsVisible(false);
+                  setRenameEditing(true);
                 }}
-                style={styles.roomActionsModalClose}
+                style={styles.roomRenameAction}
+                testID="rename-room-action"
               >
-                <Text style={styles.roomActionsModalCloseText}>×</Text>
-              </TouchableOpacity>
-            </View>
-            {canRenameRoom(viewerChannelRole) &&
-              (renameEditing ? (
-                <View style={styles.roomRenameEditor} testID="rename-room-editor">
-                  <Text style={styles.roomRenameLabel}>NEW {ROOM_LABEL.toUpperCase()} NAME</Text>
-                  <TextInput
-                    accessibilityLabel={`New ${ROOM_LABEL} name`}
-                    autoCapitalize="sentences"
-                    autoCorrect
-                    editable={!renameBusy}
-                    onChangeText={(value) => {
-                      setRenameDraft(value);
-                      if (value.trim()) setRenameError(null);
-                    }}
-                    onSubmitEditing={() => void handleRenameRoom()}
-                    returnKeyType="done"
-                    selectTextOnFocus
-                    style={styles.roomRenameInput}
-                    testID="rename-room-input"
-                    value={renameDraft}
-                  />
-                  <View style={styles.roomRenameControls}>
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      disabled={renameBusy}
-                      onPress={() => {
-                        setRenameEditing(false);
-                        setRenameError(null);
-                      }}
-                      style={styles.roomRenameCancel}
-                    >
-                      <Text style={styles.roomRenameCancelText}>CANCEL</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      disabled={renameBusy || !renameDraft.trim()}
-                      onPress={() => void handleRenameRoom()}
-                      style={[
-                        styles.roomRenameApply,
-                        (renameBusy || !renameDraft.trim()) && styles.roomRenameApplyDisabled,
-                      ]}
-                      testID="apply-room-rename"
-                    >
-                      <Text style={styles.roomRenameApplyText}>
-                        {renameBusy ? 'RENAMING…' : 'APPLY'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+                <View style={styles.roomLifecycleCopy}>
+                  <Text style={styles.roomLifecycleTitle}>RENAME {ROOM_LABEL.toUpperCase()}</Text>
+                  <Text style={styles.roomLifecycleHint}>Change its display name.</Text>
                 </View>
-              ) : (
-                <TouchableOpacity
-                  accessibilityLabel={`Rename ${ROOM_LABEL}`}
-                  accessibilityRole="button"
-                  disabled={renameBusy}
-                  onPress={() => {
-                    // The rename draft is the STORED name; the header's `#`
-                    // mark is display-only and must never be saved back.
-                    setRenameDraft(storedRoomName);
-                    setRenameError(null);
-                    setRenameEditing(true);
-                  }}
-                  style={styles.roomRenameAction}
-                  testID="rename-room-action"
-                >
-                  <View style={styles.roomLifecycleCopy}>
-                    <Text style={styles.roomLifecycleTitle}>RENAME {ROOM_LABEL.toUpperCase()}</Text>
-                    <Text style={styles.roomLifecycleHint}>Change its display name.</Text>
-                  </View>
-                  <Text style={styles.roomLifecycleGlyph}>✎</Text>
-                </TouchableOpacity>
-              ))}
-            {canManageRoomRepository(viewerChannelRole) ? (
-              <>
+                <Text style={styles.roomLifecycleGlyph}>✎</Text>
+              </TouchableOpacity>
+            ))}
+          {canManageRoomRepository(viewerChannelRole) ? (
+            <>
+              <TouchableOpacity
+                accessibilityLabel={
+                  roomRepository
+                    ? `Change repo, currently ${roomRepository.binding.name}`
+                    : 'Link a repo'
+                }
+                accessibilityRole="button"
+                disabled={roomRepoBusy}
+                onPress={() => void handleToggleRoomRepoPicker()}
+                style={styles.roomRenameAction}
+                testID="room-repo-action"
+              >
+                <View style={styles.roomLifecycleCopy}>
+                  <Text style={styles.roomLifecycleTitle}>
+                    REPO{' '}
+                    {roomRepository ? `· ${roomRepository.binding.name} · CHANGE` : '· NONE · LINK'}
+                  </Text>
+                  <Text style={styles.roomLifecycleHint}>
+                    {roomRepository
+                      ? `${CORNER_LABEL}s in this ${ROOM_LABEL} tree off this repo.`
+                      : `A ${ROOM_LABEL} needs a repo before a ${CORNER_LABEL} can open.`}
+                  </Text>
+                </View>
+                <Text style={styles.roomLifecycleGlyph}>{showRoomRepoPicker ? '⌄' : '▢'}</Text>
+              </TouchableOpacity>
+              {showRoomRepoPicker && (
+                <RepoPicker
+                  busy={roomRepoBusy}
+                  candidates={roomRepoCandidates}
+                  installations={githubInstallations}
+                  currentKey={roomRepository?.binding.key ?? null}
+                  error={roomRepoError}
+                  notice={roomRepoNotice}
+                  ownerGrant={ownerGrant}
+                  uncoveredOwners={uncoveredOwnersRef.current}
+                  onAddAccount={() => void handleAddGitHubAccount()}
+                  onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
+                  onCreateRepository={handleCreateGitHubRepository}
+                  onManageInstallation={(installation) =>
+                    void handleManageGitHubInstallation(installation)
+                  }
+                  onSelect={handleSelectRoomRepoCandidate}
+                  testIDPrefix="room-repo-picker"
+                />
+              )}
+              {roomRepository && (
                 <TouchableOpacity
                   accessibilityLabel={
-                    roomRepository
-                      ? `Change repo, currently ${roomRepository.binding.name}`
-                      : 'Link a repo'
+                    roomRepository.githubEventsEnabled === false
+                      ? 'Turn repository activity notices on'
+                      : 'Turn repository activity notices off'
                   }
                   accessibilityRole="button"
                   disabled={roomRepoBusy}
-                  onPress={() => void handleToggleRoomRepoPicker()}
+                  onPress={() => void handleToggleGitHubEvents()}
                   style={styles.roomRenameAction}
-                  testID="room-repo-action"
+                  testID="room-github-events-toggle"
                 >
                   <View style={styles.roomLifecycleCopy}>
                     <Text style={styles.roomLifecycleTitle}>
-                      REPO{' '}
-                      {roomRepository
-                        ? `· ${roomRepository.binding.name} · CHANGE`
-                        : '· NONE · LINK'}
+                      REPO ACTIVITY{'\u00b7'}
+                      {roomRepository.githubEventsEnabled === false ? ' OFF' : ' ON'}
                     </Text>
                     <Text style={styles.roomLifecycleHint}>
-                      {roomRepository
-                        ? `${CORNER_LABEL}s in this ${ROOM_LABEL} tree off this repo.`
-                        : `A ${ROOM_LABEL} needs a repo before a ${CORNER_LABEL} can open.`}
+                      Pushes, pull requests, issues, CI, and reviews posted here.
                     </Text>
                   </View>
-                  <Text style={styles.roomLifecycleGlyph}>{showRoomRepoPicker ? '⌄' : '▢'}</Text>
+                  <Text style={styles.roomLifecycleGlyph}>
+                    {roomRepository.githubEventsEnabled === false ? '○' : '●'}
+                  </Text>
                 </TouchableOpacity>
-                {showRoomRepoPicker && (
-                  <RepoPicker
-                    busy={roomRepoBusy}
-                    candidates={roomRepoCandidates}
-                    installations={githubInstallations}
-                    currentKey={roomRepository?.binding.key ?? null}
-                    error={roomRepoError}
-                    notice={roomRepoNotice}
-                    ownerGrant={ownerGrant}
-                    uncoveredOwners={uncoveredOwnersRef.current}
-                    onAddAccount={() => void handleAddGitHubAccount()}
-                    onAskOwnerGrant={(fullName) => void handleAskOwnerGrant(fullName)}
-                    onCreateRepository={handleCreateGitHubRepository}
-                    onManageInstallation={(installation) =>
-                      void handleManageGitHubInstallation(installation)
-                    }
-                    onSelect={handleSelectRoomRepoCandidate}
-                    testIDPrefix="room-repo-picker"
-                  />
-                )}
-                {roomRepository && (
-                  <TouchableOpacity
-                    accessibilityLabel={
-                      roomRepository.githubEventsEnabled === false
-                        ? 'Turn repository activity notices on'
-                        : 'Turn repository activity notices off'
-                    }
-                    accessibilityRole="button"
-                    disabled={roomRepoBusy}
-                    onPress={() => void handleToggleGitHubEvents()}
-                    style={styles.roomRenameAction}
-                    testID="room-github-events-toggle"
-                  >
-                    <View style={styles.roomLifecycleCopy}>
-                      <Text style={styles.roomLifecycleTitle}>
-                        REPO ACTIVITY{'\u00b7'}
-                        {roomRepository.githubEventsEnabled === false ? ' OFF' : ' ON'}
-                      </Text>
-                      <Text style={styles.roomLifecycleHint}>
-                        Pushes, pull requests, issues, CI, and reviews posted here.
-                      </Text>
-                    </View>
-                    <Text style={styles.roomLifecycleGlyph}>
-                      {roomRepository.githubEventsEnabled === false ? '○' : '●'}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            ) : (
-              <View style={styles.roomRenameAction} testID="room-repo-readonly">
-                <View style={styles.roomLifecycleCopy}>
-                  <Text style={styles.roomLifecycleTitle}>
-                    REPO {roomRepository ? `· ${roomRepository.binding.name}` : '· NONE'}
-                  </Text>
-                </View>
-              </View>
-            )}
-            {lifecycleAction === 'delete' ? (
-              <TouchableOpacity
-                accessibilityLabel={`Delete ${ROOM_LABEL}`}
-                accessibilityRole="button"
-                disabled={roomLifecycleBusy}
-                onPress={handleRoomLifecycle}
-                style={styles.roomLifecycleAction}
-                testID="delete-room-action"
-              >
-                <View style={styles.roomLifecycleCopy}>
-                  <Text style={styles.roomLifecycleTitle}>
-                    {roomLifecycleBusy ? 'DELETING…' : `DELETE ${ROOM_LABEL.toUpperCase()}`}
-                  </Text>
-                  <Text style={styles.roomLifecycleHint}>Permanently remove this Room.</Text>
-                </View>
-                <Text style={styles.roomLifecycleGlyph}>□</Text>
-              </TouchableOpacity>
-            ) : lifecycleAction === 'leave' ? (
-              <TouchableOpacity
-                accessibilityLabel={`Leave ${ROOM_LABEL}`}
-                accessibilityRole="button"
-                disabled={roomLifecycleBusy}
-                onPress={handleRoomLifecycle}
-                style={styles.roomLifecycleAction}
-                testID="leave-room-action"
-              >
-                <View style={styles.roomLifecycleCopy}>
-                  <Text style={styles.roomLifecycleTitle}>
-                    {roomLifecycleBusy ? 'LEAVING…' : `LEAVE ${ROOM_LABEL.toUpperCase()}`}
-                  </Text>
-                  <Text style={styles.roomLifecycleHint}>Other members keep their access.</Text>
-                </View>
-                <Text style={styles.roomLifecycleGlyph}>↗</Text>
-              </TouchableOpacity>
-            ) : null}
-            {(renameError || membershipError) && (
-              <View accessibilityRole="alert" style={styles.membershipError}>
-                <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
-              </View>
-            )}
-          </HullSurface>
-        </KeyboardAvoidingView>
-      </RNModal>
-
-      <RNModal
-        animationType="fade"
-        onRequestClose={() => setCornerActionsVisible(false)}
-        transparent
-        visible={cornerActionsVisible}
-      >
-        <View style={[styles.roomActionsModalRoot, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-          <Pressable
-            accessibilityLabel={`Close ${CORNER_LABEL} actions`}
-            onPress={() => setCornerActionsVisible(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <HullSurface
-            strength="raised"
-            style={styles.roomActionsModal}
-            testID="corner-actions-sheet"
-          >
-            <View style={styles.roomActionsModalHeading}>
-              <View style={styles.roomActionsModalCopy}>
-                <Text style={styles.roomActionsModalEyebrow}>{CORNER_LABEL.toUpperCase()}</Text>
-                <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
-                  {headerTitle ?? cornerAgentDisplay?.name ?? CORNER_LABEL}
+              )}
+            </>
+          ) : (
+            <View style={styles.roomRenameAction} testID="room-repo-readonly">
+              <View style={styles.roomLifecycleCopy}>
+                <Text style={styles.roomLifecycleTitle}>
+                  REPO {roomRepository ? `· ${roomRepository.binding.name}` : '· NONE'}
                 </Text>
               </View>
-              <TouchableOpacity
-                accessibilityLabel={`Close ${CORNER_LABEL} actions`}
-                onPress={() => setCornerActionsVisible(false)}
-                style={styles.roomActionsModalClose}
-              >
-                <Text style={styles.roomActionsModalCloseText}>×</Text>
-              </TouchableOpacity>
             </View>
+          )}
+          {lifecycleAction === 'delete' ? (
             <TouchableOpacity
-              accessibilityLabel={`Close ${CORNER_LABEL}`}
+              accessibilityLabel={`Delete ${ROOM_LABEL}`}
               accessibilityRole="button"
-              onPress={() => {
-                setCornerActionsVisible(false);
-                void handleCloseCorner();
-              }}
+              disabled={roomLifecycleBusy}
+              onPress={handleRoomLifecycle}
               style={styles.roomLifecycleAction}
-              testID="close-corner-action"
+              testID="delete-room-action"
             >
               <View style={styles.roomLifecycleCopy}>
-                <Text style={styles.roomLifecycleTitle}>CLOSE {CORNER_LABEL.toUpperCase()}</Text>
-                <Text style={styles.roomLifecycleHint}>
-                  Ends the edit session and archives this {CORNER_LABEL}. Unmerged work is lost.
+                <Text style={[styles.roomLifecycleTitle, styles.roomLifecycleDanger]}>
+                  {roomLifecycleBusy ? 'DELETING…' : `DELETE ${ROOM_LABEL.toUpperCase()}`}
                 </Text>
+                <Text style={styles.roomLifecycleHint}>Permanently remove this Room.</Text>
               </View>
-              <Text style={styles.roomLifecycleGlyph}>■</Text>
+              <Text style={[styles.roomLifecycleGlyph, styles.roomLifecycleDanger]}>□</Text>
             </TouchableOpacity>
-          </HullSurface>
-        </View>
-      </RNModal>
+          ) : lifecycleAction === 'leave' ? (
+            <TouchableOpacity
+              accessibilityLabel={`Leave ${ROOM_LABEL}`}
+              accessibilityRole="button"
+              disabled={roomLifecycleBusy}
+              onPress={handleRoomLifecycle}
+              style={styles.roomLifecycleAction}
+              testID="leave-room-action"
+            >
+              <View style={styles.roomLifecycleCopy}>
+                <Text style={[styles.roomLifecycleTitle, styles.roomLifecycleDanger]}>
+                  {roomLifecycleBusy ? 'LEAVING…' : `LEAVE ${ROOM_LABEL.toUpperCase()}`}
+                </Text>
+                <Text style={styles.roomLifecycleHint}>Other members keep their access.</Text>
+              </View>
+              <Text style={[styles.roomLifecycleGlyph, styles.roomLifecycleDanger]}>↗</Text>
+            </TouchableOpacity>
+          ) : null}
+          {(renameError || membershipError) && (
+            <View accessibilityRole="alert" style={styles.membershipError}>
+              <Text style={styles.membershipErrorText}>! {renameError ?? membershipError}</Text>
+            </View>
+          )}
+        </HullFloatingSurface>
+      </HullModal>
 
-      <RNModal
-        animationType="fade"
+      <HullModal
+        accessibilityLabel={`Close ${CORNER_LABEL} actions`}
+        contentStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 18) }}
+        onRequestClose={() => setCornerActionsVisible(false)}
+        placement="bottom"
+        visible={cornerActionsVisible}
+      >
+        <HullFloatingSurface style={styles.roomActionsModal} testID="corner-actions-sheet">
+          <View style={styles.roomActionsModalHeading}>
+            <View style={styles.roomActionsModalCopy}>
+              <Text style={styles.roomActionsModalEyebrow}>{CORNER_LABEL.toUpperCase()}</Text>
+              <Text numberOfLines={1} style={styles.roomActionsModalTitle}>
+                {headerTitle ?? cornerAgentDisplay?.name ?? CORNER_LABEL}
+              </Text>
+            </View>
+            <TouchableOpacity
+              accessibilityLabel={`Close ${CORNER_LABEL} actions`}
+              onPress={() => setCornerActionsVisible(false)}
+              style={styles.roomActionsModalClose}
+            >
+              <Text style={styles.roomActionsModalCloseText}>×</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            accessibilityLabel={`Close ${CORNER_LABEL}`}
+            accessibilityRole="button"
+            onPress={() => {
+              setCornerActionsVisible(false);
+              void handleCloseCorner();
+            }}
+            style={styles.roomLifecycleAction}
+            testID="close-corner-action"
+          >
+            <View style={styles.roomLifecycleCopy}>
+              <Text style={[styles.roomLifecycleTitle, styles.roomLifecycleDanger]}>
+                CLOSE {CORNER_LABEL.toUpperCase()}
+              </Text>
+              <Text style={styles.roomLifecycleHint}>
+                Ends the edit session and archives this {CORNER_LABEL}. Unmerged work is lost.
+              </Text>
+            </View>
+            <Text style={[styles.roomLifecycleGlyph, styles.roomLifecycleDanger]}>■</Text>
+          </TouchableOpacity>
+        </HullFloatingSurface>
+      </HullModal>
+
+      <HullModal
+        accessibilityLabel="Close Room member picker"
         onRequestClose={() => setParticipantPickerVisible(false)}
-        transparent
+        placement="center"
         visible={participantPickerVisible}
       >
-        <View style={styles.memberModalRoot}>
-          <Pressable
-            accessibilityLabel="Close Room member picker"
-            onPress={() => setParticipantPickerVisible(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <HullSurface strength="raised" style={styles.memberModal}>
-            <View style={styles.memberModalHeading}>
-              <View style={styles.memberModalHeadingCopy}>
-                <Text style={styles.memberModalTitle}>
-                  {participantPickerKind === 'agent'
-                    ? 'Add an Agent'
-                    : participantPickerKind === 'person'
-                      ? 'Invite a person'
-                      : 'Add people or Agents'}
-                </Text>
-              </View>
-              <TouchableOpacity
-                accessibilityLabel="Close Room member picker"
-                onPress={() => setParticipantPickerVisible(false)}
-                style={styles.memberModalClose}
-              >
-                <Text style={styles.memberModalCloseText}>×</Text>
-              </TouchableOpacity>
+        <HullFloatingSurface style={styles.memberModal}>
+          <View style={styles.memberModalHeading}>
+            <View style={styles.memberModalHeadingCopy}>
+              <Text style={styles.memberModalTitle}>
+                {participantPickerKind === 'agent'
+                  ? 'Add an Agent'
+                  : participantPickerKind === 'person'
+                    ? 'Invite a person'
+                    : 'Add people or Agents'}
+              </Text>
             </View>
-
-            <ScrollView
-              contentContainerStyle={styles.memberPickerContent}
-              showsVerticalScrollIndicator={false}
+            <TouchableOpacity
+              accessibilityLabel="Close Room member picker"
+              onPress={() => setParticipantPickerVisible(false)}
+              style={styles.memberModalClose}
             >
-              {[
-                { key: 'in-room', label: 'IN ROOM', options: participantPickerSections.inRoom },
-                {
-                  key: 'addable',
-                  label: 'ADD',
-                  options: participantPickerSections.addable,
-                },
-              ].map((section, sectionIndex) =>
-                section.options.length > 0 ? (
-                  <View key={section.key}>
-                    <Text
-                      style={[
-                        styles.memberSectionLabel,
-                        sectionIndex > 0 && styles.memberSectionLabelSpaced,
-                      ]}
-                    >
-                      {section.label}
-                    </Text>
-                    {section.options.map((option) => {
-                      const inRoom = section.key === 'in-room';
-                      const adding = addingMemberPubkey === option.pubkey;
-                      const isSelf = option.pubkey === userPubkey;
-                      const display = option.agent
-                        ? resolveAgentDisplayIdentity(option.pubkey, option.agent)
-                        : undefined;
-                      return (
-                        <View
-                          key={option.pubkey}
-                          style={[styles.memberPickerRow, inRoom && styles.memberPickerRowPlaced]}
-                          testID={`add-room-member-${option.pubkey}`}
-                        >
-                          <View style={styles.memberPickerIdentity}>
-                            {display ? (
-                              <IdentityMark
-                                kind="agent"
-                                seed={display.avatarSeed ?? option.pubkey}
-                                avatarUrl={display.avatarUrl}
-                                name={display.name}
-                                size={28}
-                              />
-                            ) : (
-                              <IdentityMark
-                                kind="human"
-                                seed={option.pubkey}
-                                avatarUrl={personProfileByPubkey.get(option.pubkey)?.avatar}
-                                name={option.name}
-                                size={28}
-                              />
-                            )}
-                            <View style={styles.memberPickerCopy}>
-                              <Text numberOfLines={1} style={styles.memberPickerName}>
-                                @{option.name}
-                              </Text>
-                              <Text style={styles.memberPickerNpub}>
-                                {option.kind === 'agent' ? 'AGENT' : 'PERSON'}
-                              </Text>
-                            </View>
-                          </View>
-                          <View style={styles.memberPickerActions}>
-                            {!isSelf && (
-                              <TouchableOpacity
-                                accessibilityLabel={`Message ${option.name}`}
-                                disabled={Boolean(addingMemberPubkey)}
-                                onPress={() => void handleStartDirectMessage(option)}
-                                style={styles.memberPickerActionButton}
-                                testID={`message-room-member-${option.pubkey}`}
-                              >
-                                <Text style={styles.memberPickerAction}>MESSAGE</Text>
-                              </TouchableOpacity>
-                            )}
-                            {!inRoom && (
-                              <TouchableOpacity
-                                accessibilityLabel={`Add ${option.name}`}
-                                disabled={Boolean(addingMemberPubkey)}
-                                onPress={() => void handleAddRoomMember(option)}
-                                style={styles.memberPickerActionButton}
-                              >
-                                <Text style={styles.memberPickerAction}>
-                                  {adding ? 'ADDING…' : '＋ ADD'}
-                                </Text>
-                              </TouchableOpacity>
-                            )}
-                            {isSelf && <Text style={styles.memberPickerAction}>YOU</Text>}
+              <Text style={styles.memberModalCloseText}>×</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={styles.memberPickerContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {[
+              { key: 'in-room', label: 'IN ROOM', options: participantPickerSections.inRoom },
+              {
+                key: 'addable',
+                label: 'ADD',
+                options: participantPickerSections.addable,
+              },
+            ].map((section, sectionIndex) =>
+              section.options.length > 0 ? (
+                <View key={section.key}>
+                  <Text
+                    style={[
+                      styles.memberSectionLabel,
+                      sectionIndex > 0 && styles.memberSectionLabelSpaced,
+                    ]}
+                  >
+                    {section.label}
+                  </Text>
+                  {section.options.map((option) => {
+                    const inRoom = section.key === 'in-room';
+                    const adding = addingMemberPubkey === option.pubkey;
+                    const isSelf = option.pubkey === userPubkey;
+                    const display = option.agent
+                      ? resolveAgentDisplayIdentity(option.pubkey, option.agent)
+                      : undefined;
+                    return (
+                      <View
+                        key={option.pubkey}
+                        style={[styles.memberPickerRow, inRoom && styles.memberPickerRowPlaced]}
+                        testID={`add-room-member-${option.pubkey}`}
+                      >
+                        <View style={styles.memberPickerIdentity}>
+                          {display ? (
+                            <IdentityMark
+                              kind="agent"
+                              seed={display.avatarSeed ?? option.pubkey}
+                              avatarUrl={display.avatarUrl}
+                              name={display.name}
+                              size={28}
+                            />
+                          ) : (
+                            <IdentityMark
+                              kind="human"
+                              seed={option.pubkey}
+                              avatarUrl={personProfileByPubkey.get(option.pubkey)?.avatar}
+                              name={option.name}
+                              size={28}
+                            />
+                          )}
+                          <View style={styles.memberPickerCopy}>
+                            <Text numberOfLines={1} style={styles.memberPickerName}>
+                              @{option.name}
+                            </Text>
+                            <Text style={styles.memberPickerNpub}>
+                              {option.kind === 'agent' ? 'AGENT' : 'PERSON'}
+                            </Text>
                           </View>
                         </View>
-                      );
-                    })}
-                  </View>
-                ) : null,
-              )}
-              {participantPickerOptions.length === 0 && (
-                <Text style={styles.memberPickerEmpty}>Workspace roster is empty</Text>
-              )}
-            </ScrollView>
-
-            {membershipError && (
-              <View accessibilityRole="alert" style={styles.membershipError}>
-                <Text style={styles.membershipErrorText}>! {membershipError}</Text>
-              </View>
+                        <View style={styles.memberPickerActions}>
+                          {!isSelf && (
+                            <TouchableOpacity
+                              accessibilityLabel={`Message ${option.name}`}
+                              disabled={Boolean(addingMemberPubkey)}
+                              onPress={() => void handleStartDirectMessage(option)}
+                              style={styles.memberPickerActionButton}
+                              testID={`message-room-member-${option.pubkey}`}
+                            >
+                              <Text style={styles.memberPickerAction}>MESSAGE</Text>
+                            </TouchableOpacity>
+                          )}
+                          {!inRoom && (
+                            <TouchableOpacity
+                              accessibilityLabel={`Add ${option.name}`}
+                              disabled={Boolean(addingMemberPubkey)}
+                              onPress={() => void handleAddRoomMember(option)}
+                              style={styles.memberPickerActionButton}
+                            >
+                              <Text style={styles.memberPickerAction}>
+                                {adding ? 'ADDING…' : '＋ ADD'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                          {isSelf && <Text style={styles.memberPickerAction}>YOU</Text>}
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null,
             )}
-          </HullSurface>
-        </View>
-      </RNModal>
+            {participantPickerOptions.length === 0 && (
+              <Text style={styles.memberPickerEmpty}>Workspace roster is empty</Text>
+            )}
+          </ScrollView>
+
+          {membershipError && (
+            <View accessibilityRole="alert" style={styles.membershipError}>
+              <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+            </View>
+          )}
+        </HullFloatingSurface>
+      </HullModal>
     </BuzzCommunityShell>
   );
 }
@@ -5266,14 +5210,6 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 15,
     },
     // ── Read-only Room roster ──────────────────────────────────────
-    rosterModalRoot: {
-      flex: 1,
-      paddingHorizontal: 16,
-      paddingBottom: 18,
-      alignItems: 'center',
-      justifyContent: 'flex-end',
-      backgroundColor: 'rgba(5, 5, 6, 0.84)',
-    },
     rosterModal: {
       width: '100%',
       maxWidth: 460,
@@ -5363,7 +5299,7 @@ const styles = StyleSheet.create((theme) => {
     },
     rosterRemoveText: {
       ...Typography.mono('semiBold'),
-      color: groknight.chrome,
+      color: groknight.dialogDanger,
       fontSize: 9,
       lineHeight: 13,
       letterSpacing: 0.4,
@@ -5376,14 +5312,6 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'center',
     },
     // ── Room lifecycle menu ─────────────────────────────────────────
-    roomActionsModalRoot: {
-      flex: 1,
-      paddingHorizontal: 16,
-      paddingBottom: 18,
-      alignItems: 'center',
-      justifyContent: 'flex-end',
-      backgroundColor: 'rgba(5, 5, 6, 0.84)',
-    },
     roomActionsModal: {
       width: '100%',
       maxWidth: 460,
@@ -5455,11 +5383,10 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default('semiBold'),
       minHeight: 44,
       marginTop: 8,
-      paddingHorizontal: 10,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
+      paddingHorizontal: 0,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: groknight.borderStrong,
       color: groknight.textPrimary,
-      backgroundColor: groknight.bgRaised,
       fontSize: 16,
     },
     roomRenameControls: {
@@ -5486,13 +5413,13 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: groknight.textPrimary,
-      backgroundColor: groknight.textPrimary,
+      borderColor: groknight.accent,
+      backgroundColor: groknight.accent,
     },
     roomRenameApplyDisabled: { opacity: 0.45 },
     roomRenameApplyText: {
       ...Typography.mono('semiBold'),
-      color: groknight.bgBase,
+      color: groknight.textInverted,
       fontSize: 10,
       letterSpacing: 0.6,
     },
@@ -5528,14 +5455,8 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 17,
       lineHeight: 22,
     },
+    roomLifecycleDanger: { color: groknight.dialogDanger },
     // ── Room membership picker ─────────────────────────────────────
-    memberModalRoot: {
-      flex: 1,
-      paddingHorizontal: 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: 'rgba(5, 5, 6, 0.84)',
-    },
     memberModal: {
       width: '100%',
       maxWidth: 460,

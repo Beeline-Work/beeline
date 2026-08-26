@@ -255,6 +255,12 @@ export type Lifecycle = ChannelEnvelope & {
         readonly name?: string;
         readonly about?: string;
         readonly avatar?: string;
+        readonly repository?: {
+          readonly key: string;
+          readonly name: string;
+          readonly remote: string;
+          readonly githubInstallationId?: number;
+        };
         readonly initialMembers?: readonly LifecycleMemberSeed[];
       }
     | {

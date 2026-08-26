@@ -16,6 +16,7 @@ import { selectReviewSummary, selectTranscript } from './selectors.js';
 import type { Control, EventId, HumanMessage, Pubkey, WorkspaceSnapshot } from './types.js';
 
 const CHANNEL = '9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6';
+const CORNER = '7d111868-52eb-43ab-98ae-8a6c49b92da8';
 const MEMBER = 'a'.repeat(64) as Pubkey;
 
 function fixture(): unknown {
@@ -357,6 +358,93 @@ describe('channel snapshot v1 contract', () => {
       };
     });
     expect(guardChannelSnapshotViewV1(crossRoomReply).status).toBe('integrity-halt');
+
+    const crossRoomCorner = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      rooms[CHANNEL]!.corners = {
+        [CORNER]: {
+          kind: 'terminal',
+          id: CORNER,
+          parentRoomId: 'f0000000-0000-4000-8000-000000000001',
+          state: 'closed',
+          stateAt: 1,
+        },
+      };
+    });
+    expect(guardChannelSnapshotViewV1(crossRoomCorner).status).toBe('integrity-halt');
+  });
+
+  it('inherits the parent Room genesis repository in Corner snapshots', () => {
+    const owner = createIdentity('genesis-repository-owner');
+    const parent = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: 1,
+        kind: 9007,
+        tags: [
+          ['h', CHANNEL],
+          ['name', 'Repository Room'],
+          ['p', owner.publicKey, 'owner'],
+          ['repo-key', 'genesis-repository-key'],
+          ['repo-name', 'beeline'],
+          ['repo-scope', 'remote'],
+          ['repo-remote', 'git://github.com/lunchboxfortwo/beeline'],
+          ['repo-github-installation', '42'],
+        ],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    const corner = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: 2,
+        kind: 9007,
+        tags: [
+          ['h', CORNER],
+          ['parent', CHANNEL],
+          ['name', 'Snapshot Corner'],
+          ['p', owner.publicKey, 'owner'],
+        ],
+        content: '',
+      },
+      owner.secretKey,
+    );
+    const identities = {
+      [owner.publicKey]: {
+        kind: 'human' as const,
+        pubkey: owner.publicKey as Pubkey,
+        revision: 'owner',
+      },
+    };
+    const parsed = parseRelayEvents([parent, corner], {
+      workspaceId: 'verified-workspace',
+      allowedChannelIds: [CHANNEL, CORNER],
+      identities,
+    });
+    const snapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({
+        workspaceId: 'verified-workspace',
+        identities: Object.values(identities),
+      }),
+      parsed,
+    );
+    const stored = buildStoredChannelSnapshotV1({
+      snapshot,
+      channelId: CORNER,
+      revision: 1,
+      projectedAt: 10,
+      cursor: { createdAt: 2, eventIds: [corner.id] },
+      identitiesStale: false,
+    });
+
+    expect(stored.repository).toEqual({
+      key: 'genesis-repository-key',
+      name: 'beeline',
+      remote: 'git://github.com/lunchboxfortwo/beeline',
+      githubInstallationId: 42,
+    });
   });
 
   it('projects same-second review approval through shared typed facts', () => {

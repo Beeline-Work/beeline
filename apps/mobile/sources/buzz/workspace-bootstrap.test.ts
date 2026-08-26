@@ -223,6 +223,44 @@ describe('the personal-Workspace creation door never fires on unconfirmed absenc
     expect(client.createCommunity).not.toHaveBeenCalled();
   });
 
+  it('adopts a warm stored active Workspace after two empty discovery reads', async () => {
+    const tubing = workspace('tubing-1', 'Tubing Crew');
+    const client = quietClient();
+    client.listCommunities.mockResolvedValue([]);
+    client.getCommunity.mockImplementation(async (workspaceId: string) =>
+      workspaceId === 'tubing-1' ? tubing : null,
+    );
+    const memory = storage({ loadActiveId: vi.fn().mockResolvedValue('tubing-1') });
+
+    await expect(
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, memory),
+    ).resolves.toEqual({
+      workspaces: [tubing],
+      activeWorkspaceId: 'tubing-1',
+      personalWorkspaceId: null,
+    });
+
+    expect(client.listCommunities).toHaveBeenCalledTimes(2);
+    expect(client.getCommunity).toHaveBeenCalledWith('tubing-1');
+    expect(client.createCommunity).not.toHaveBeenCalled();
+    expect(client.waitUntilMember).not.toHaveBeenCalled();
+  });
+
+  it('refuses creation when a warm stored active Workspace cannot be loaded', async () => {
+    const client = quietClient();
+    client.listCommunities.mockResolvedValue([]);
+    client.getCommunity.mockResolvedValue(null);
+    const memory = storage({ loadActiveId: vi.fn().mockResolvedValue('tubing-1') });
+
+    await expect(
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, memory),
+    ).rejects.toThrow(/Remembered active Workspace/);
+
+    expect(client.listCommunities).toHaveBeenCalledTimes(2);
+    expect(client.getCommunity).toHaveBeenCalledWith('tubing-1');
+    expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+
   it('a remembered-but-unloadable personal Workspace refuses creation instead of duplicating', async () => {
     const client = quietClient();
     client.listCommunities.mockResolvedValue([]);

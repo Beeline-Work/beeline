@@ -15,6 +15,7 @@ import {
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
+  nextAgentPresenceTransitionAt,
   onlineVerdicts,
   presenceMapFromSessionEvents,
   presenceWithMessageLiveness,
@@ -137,7 +138,7 @@ describe('mobile agent presence projection', () => {
     expect(isAgentPresenceOnline(map[agent])).toBe(true);
   });
 
-  it('keeps last-known online through foreground reconnect without masking real offline', () => {
+  it('never extends a lapsed lease through foreground reconnect', () => {
     const now = 1_700_000_000_000;
     const staleOnline = agentPresenceFromSessionEvent(
       presence('online', Math.floor((now - AGENT_PRESENCE_STALE_MS - 1) / 1_000)),
@@ -145,7 +146,7 @@ describe('mobile agent presence projection', () => {
     const explicitOffline = agentPresenceFromSessionEvent(presence('offline', now / 1_000));
     const graceUntil = now + AGENT_PRESENCE_STALE_MS;
 
-    expect(isAgentPresenceOnlineWithReconnectGrace(staleOnline, now, graceUntil)).toBe(true);
+    expect(isAgentPresenceOnlineWithReconnectGrace(staleOnline, now, graceUntil)).toBe(false);
     expect(isAgentPresenceOnlineWithReconnectGrace(explicitOffline, now, graceUntil)).toBe(false);
     expect(isAgentPresenceOnlineWithReconnectGrace(staleOnline, graceUntil + 1, graceUntil)).toBe(
       false,
@@ -196,10 +197,25 @@ describe('the tiered lifecycle at the mobile door', () => {
   it('reads the lease lapsed instantly offline and dormant only past the grace', () => {
     const now = AGENT_PRESENCE_STALE_MS + 1;
     expect(agentPresenceTier(dormant[agent], now)).toBe('offline');
+    expect(agentPresenceTier(dormant[agent], AGENT_PRESENCE_DORMANT_MS)).toBe('dormant');
     expect(
-      agentPresenceTier(dormant[agent], AGENT_PRESENCE_DORMANT_MS),
+      agentPresenceTier({ ...dormant[agent]!, status: 'offline' }, AGENT_PRESENCE_DORMANT_MS),
     ).toBe('dormant');
     expect(agentPresenceTier(undefined, Date.now())).toBe('offline');
+  });
+
+  it('schedules both lease lapse and dormancy transitions without unrelated state changes', () => {
+    expect(nextAgentPresenceTransitionAt(dormant, 0)).toBe(AGENT_PRESENCE_STALE_MS);
+    expect(nextAgentPresenceTransitionAt(dormant, AGENT_PRESENCE_STALE_MS + 1)).toBe(
+      AGENT_PRESENCE_DORMANT_MS,
+    );
+    expect(
+      nextAgentPresenceTransitionAt(
+        { [agent]: { ...dormant[agent]!, status: 'offline' } },
+        AGENT_PRESENCE_STALE_MS + 1,
+      ),
+    ).toBe(AGENT_PRESENCE_DORMANT_MS);
+    expect(nextAgentPresenceTransitionAt(dormant, AGENT_PRESENCE_DORMANT_MS)).toBeUndefined();
   });
 
   it('excludes dormant agents from active mention targets, keeps recent ones addressable', () => {
@@ -235,8 +251,13 @@ describe('the tiered lifecycle at the mobile door', () => {
     // And even inside any grace window, an already-expired lease cannot read
     // online through the tier door.
     const graceUntil = Date.now() + AGENT_PRESENCE_BACKGROUND_GRACE_MS;
-    expect(isAgentPresenceOnlineWithReconnectGrace({ ...dormant[agent] }, AGENT_PRESENCE_DORMANT_MS)).toBe(false);
-    void graceUntil;
+    expect(
+      isAgentPresenceOnlineWithReconnectGrace(
+        { ...dormant[agent] },
+        AGENT_PRESENCE_STALE_MS + 1,
+        graceUntil,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -401,7 +422,7 @@ describe('flat online verdicts for the transcript render path', () => {
     const presences = presenceMapFromSessionEvents([
       presence('online', 999),
       presence('offline', 998, 'c'.repeat(64)),
-      // Long past its lease — only the reconnect grace below keeps it online.
+      // Long past its lease — reconnect grace cannot keep it online.
       presence('online', 100, 'd'.repeat(64)),
     ]);
     const freshAgent = agent;
@@ -415,8 +436,7 @@ describe('flat online verdicts for the transcript render path', () => {
     );
     expect(verdicts[freshAgent]).toBe(true);
     expect(verdicts[staleGraceAgent]).toBe(false);
-    // Reconnect grace keeps a previously-online agent optimistic.
-    expect(verdicts[graceAgent]).toBe(true);
+    expect(verdicts[graceAgent]).toBe(false);
     // An absent presence is UNKNOWN-liveness → false, never a crash.
     expect(verdicts['unknown-agent']).toBe(false);
   });

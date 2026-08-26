@@ -1236,6 +1236,67 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     expect(materialize).toHaveBeenCalledTimes(2);
   });
 
+  it('closes a visible repository-access failure when the Room later recovers', async () => {
+    const runtime = runtimeNoRooms('repository-recovery-agent');
+    const room: RoomRuntimeRecord = {
+      channelId: '3f37b271-1a12-4d2a-b002-202b3f3582b9',
+      repo: {
+        root: '/tmp/beeline-peddle-cache',
+        gitCommonDir: '/tmp/beeline-peddle-cache/.git',
+        targetBranch: 'main',
+        repository: {
+          key: 'github:1330313701',
+          name: 'bananaman614305/peddle',
+          remote: 'git://github.com/bananaman614305/peddle',
+          localOnly: false,
+          githubInstallationId: 156013969,
+        },
+      },
+      membershipSince: 20,
+      discoveredAt: new Date(0).toISOString(),
+    };
+    runtime.rooms.push(room);
+    const client = discoveryClient(runtime);
+    client.listMyChannels.mockResolvedValue([
+      { channelId: '3f37b271-1a12-4d2a-b002-202b3f3582b9', event: { created_at: 20 } },
+    ]);
+    client.resolveRoomRepositoryState.mockResolvedValue({
+      kind: 'repository',
+      repository: { binding: room.repo.repository },
+    });
+    mocks.createBuzzClient.mockReturnValue(client);
+    let now = 1_000_000;
+    const supervisor = new RoomRuntimeCoordinator(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+      { now: () => now },
+    );
+    vi.spyOn(supervisor as never, 'startRepositoryRoom' as never)
+      .mockRejectedValueOnce(
+        new Error(
+          "could not reset canonical cache for bananaman614305/peddle: fatal: Unable to create '.git/index.lock': File exists.",
+        ) as never,
+      )
+      .mockResolvedValue(undefined as never);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await supervisor.reconcile();
+    expect(client.messageSubmit).toHaveBeenCalledWith(
+      '3f37b271-1a12-4d2a-b002-202b3f3582b9',
+      expect.stringContaining("I could not access this Room's repository"),
+    );
+
+    now += Math.ceil(DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS * 1.2) + 1;
+    await supervisor.reconcile();
+
+    expect(client.messageSubmit).toHaveBeenCalledWith(
+      '3f37b271-1a12-4d2a-b002-202b3f3582b9',
+      expect.stringContaining('repository access recovered'),
+    );
+    expect(client.messageSubmit).toHaveBeenCalledTimes(2);
+  });
+
   it('publishes the visible Room notice when the token broker returns its 403', async () => {
     const runtime = runtimeNoRooms('broker-denied-agent');
     const client = discoveryClient(runtime);

@@ -249,6 +249,21 @@ function materializeCorner(
     ...(createdAt !== undefined ? { createdAt } : {}),
     stateAt: latest.lifecycle.stateAt ?? latest.createdAt,
   };
+  // A child Room tombstone is relay truth about the corner's existence. It
+  // must beat an older daemon state record just as a canonical CLOSED record
+  // does; otherwise a channel archived while its daemon was absent can remain
+  // projected as WAITING/READY forever. Keep this verdict at the existing
+  // corner materialization door so every selector sees the same terminal row.
+  const child = snapshot.rooms[cornerId];
+  if (child?.metadata.archived || child?.metadata.deleted) {
+    return {
+      kind: 'terminal',
+      id: cornerId,
+      parentRoomId: parent.channelId,
+      state: 'closed',
+      ...facts,
+    } satisfies TerminalCorner;
+  }
   if (!valid) {
     return haltCorner(cornerId, parent.channelId, 'invalid-corner-transition', facts);
   }

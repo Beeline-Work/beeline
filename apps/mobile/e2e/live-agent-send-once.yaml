@@ -2,6 +2,7 @@ appId: app.usebeeline.mobile
 name: Live agent mention sends once
 env:
   LIVE_NSEC: ${LIVE_NSEC}
+  LIVE_HANDLE: ${LIVE_HANDLE}
   LIVE_ROOM_ID: ${LIVE_ROOM_ID}
   LIVE_AGENT_HANDLE: ${LIVE_AGENT_HANDLE}
   LIVE_REPLY: ${LIVE_REPLY}
@@ -23,6 +24,7 @@ env:
       visible:
         id: onboarding-handle-ceremony
     commands:
+      - inputText: ${LIVE_HANDLE}
       - pressKey: back
       - tapOn:
           id: onboarding-claim-handle

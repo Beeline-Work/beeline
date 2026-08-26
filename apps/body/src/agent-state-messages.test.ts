@@ -5,8 +5,9 @@ import { readFileSync, existsSync } from 'node:fs';
  * The broad daemon-published agent state-notice feature is DELETED and must
  * stay deleted. Repository join refusal is the one narrow exception: if the
  * daemon never joins, presence alone looks like an ignored mention, so the
- * Room runtime publishes one deduplicated, factual retry notice. Routine
- * update, restart, join-success, and self-update progress belong in status
+ * Room runtime publishes one deduplicated, factual retry notice and, after a
+ * failed join actually recovers, one matching closure. Routine update,
+ * restart, ordinary join-success, and self-update progress belong in status
  * records and logs, never Room chat.
  *
  * `agent-state-messages.ts` (#231) mapped five real daemon states —
@@ -90,7 +91,7 @@ describe('the daemon-published agent state notices stay deleted', () => {
     }
   });
 
-  it('keeps routine update, restart, and join-success chatter out of Room chat', () => {
+  it('keeps routine update, restart, and ordinary join-success chatter out of Room chat', () => {
     const selfUpdate = src('./self-update.ts');
     for (const symbol of ['notifyRooms', 'broadcastDaemonNotice', 'pendingOwnerGrantNotice']) {
       expect(`${selfUpdate}\n${daemon}`, `daemon sources still reference ${symbol}`).not.toContain(
@@ -119,7 +120,7 @@ describe('the daemon-published agent state notices stay deleted', () => {
     expect(reconnectCatch).not.toContain('postControlMessage');
   });
 
-  it('uses one quiet runtime notice for an unservable repository Room', () => {
+  it('pairs an unservable repository notice with one recovery closure', () => {
     const reconcile = daemon.slice(
       daemon.indexOf('async reconcile('),
       daemon.indexOf('private roomRoot('),
@@ -131,6 +132,7 @@ describe('the daemon-published agent state notices stay deleted', () => {
     expect(reconcile).toContain('I will retry automatically in ${discovery.retryLabel}.');
     expect(reconcile).toContain("'10 minutes'");
     expect(reconcile).not.toContain("I can't get to this room's repo");
-    expect(reconcile.match(/\.messageSubmit\(/g)).toHaveLength(1);
+    expect(reconcile).toContain('Agent available again: repository access recovered');
+    expect(reconcile.match(/\.messageSubmit\(/g)).toHaveLength(2);
   });
 });

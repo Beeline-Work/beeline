@@ -543,9 +543,34 @@ describe('GET /snapshot/channel/:channelId', () => {
   it('fails closed for stale, missing, or corrupt snapshots', async () => {
     const identity = createIdentity('snapshot-stale');
     const { payload, digest } = golden();
+    const unknownMembership = structuredClone(payload) as unknown as {
+      snapshot: { rooms: Record<string, { membership: unknown }> };
+    };
+    unknownMembership.snapshot.rooms[CHANNEL]!.membership = {
+      status: 'unknown',
+      reason: 'not-loaded',
+    };
+    const incompleteCoverage = structuredClone(payload) as unknown as {
+      snapshot: {
+        rooms: Record<string, { coverage: { initialBackfillComplete: boolean } }>;
+      };
+    };
+    incompleteCoverage.snapshot.rooms[CHANNEL]!.coverage.initialBackfillComplete = false;
     const rows = [
       { tenantId: 'tenant', lagMs: 30_001, payload, digest },
       { tenantId: 'tenant', lagMs: 0 },
+      {
+        tenantId: 'tenant',
+        lagMs: 0,
+        payload: unknownMembership,
+        digest: channelSnapshotDigest(unknownMembership as unknown as StoredChannelSnapshotV1),
+      },
+      {
+        tenantId: 'tenant',
+        lagMs: 0,
+        payload: incompleteCoverage,
+        digest: channelSnapshotDigest(incompleteCoverage as unknown as StoredChannelSnapshotV1),
+      },
       { tenantId: 'tenant', lagMs: 0, payload, digest: '0'.repeat(64) },
       { tenantId: 'tenant', lagMs: 0, payload: {}, digest },
       { tenantId: 'tenant', lagMs: 0, payload: false, digest },
@@ -557,6 +582,8 @@ describe('GET /snapshot/channel/:channelId', () => {
     for (const reason of [
       'stale',
       'missing',
+      'incompatible_or_corrupt',
+      'incompatible_or_corrupt',
       'incompatible_or_corrupt',
       'incompatible_or_corrupt',
       'incompatible_or_corrupt',

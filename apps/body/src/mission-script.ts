@@ -33,8 +33,7 @@ export type MissionScriptFailureCode =
   | 'timeout'
   | 'output-truncated'
   | 'nonzero-exit'
-  | 'invalid-output'
-  | 'cancelled';
+  | 'invalid-output';
 
 export class MissionScriptFailure extends Error {
   constructor(
@@ -176,7 +175,6 @@ export async function runMissionScript(input: {
   timeoutSeconds: number;
   maskPaths: MaskedPath[];
   env?: NodeJS.ProcessEnv;
-  signal?: AbortSignal;
 }): Promise<MissionScriptResult> {
   if (!input.bwrapPath) throw new MissionScriptFailure('sandbox-unavailable');
   if (!missionScriptHashMatches(input.script, input.scriptSha256)) {
@@ -211,17 +209,13 @@ export async function runMissionScript(input: {
         MISSION_SCRIPT_KILL_GRACE_MS,
       );
     };
-    const onAbort = () => terminate('cancelled');
     const deadline = setTimeout(() => terminate('timeout'), input.timeoutSeconds * 1_000);
     deadline.unref?.();
-    input.signal?.addEventListener('abort', onAbort, { once: true });
-    if (input.signal?.aborted) onAbort();
     const finish = (result?: MissionScriptResult, error?: MissionScriptFailure) => {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
       if (killTimer) clearTimeout(killTimer);
-      input.signal?.removeEventListener('abort', onAbort);
       if (error) rejectPromise(error);
       else resolvePromise(result!);
     };

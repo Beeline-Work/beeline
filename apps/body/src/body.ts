@@ -2232,11 +2232,6 @@ export class Body {
   private delegationRuntime: DelegationRuntime;
   private permissionRuntime: PermissionRuntime;
   private permissionReader: PermissionFreshReader;
-  /** Best-effort stop requests for work already admitted under one mission grant. */
-  private activeMissionWork = new Map<
-    string,
-    Set<{ fresh: () => Promise<boolean>; cancel: () => void }>
-  >();
   private agentRelay: RelayClient;
   private mergeWorkerRelay?: RelayClient;
   private pendingRoomTurns = new Map<string, PendingRoomTurn>();
@@ -2512,29 +2507,6 @@ export class Body {
   /** Fresh paired-owner policy check used by daemon-level scheduled admission. */
   currentPrincipalCanDrive(workspaceId: string, principalPubkey: string): Promise<boolean> {
     return this.senderAccessAllowedFresh(workspaceId, principalPubkey);
-  }
-
-  private registerMissionWork(
-    grantEventId: string,
-    work: { fresh: () => Promise<boolean>; cancel: () => void },
-  ): () => void {
-    const active = this.activeMissionWork.get(grantEventId) ?? new Set();
-    active.add(work);
-    this.activeMissionWork.set(grantEventId, active);
-    return () => {
-      active.delete(work);
-      if (active.size === 0) this.activeMissionWork.delete(grantEventId);
-    };
-  }
-
-  private async cancelRevokedMissionWork(): Promise<void> {
-    for (const [grantEventId, active] of [...this.activeMissionWork]) {
-      for (const work of [...active]) {
-        const fresh = await work.fresh().catch(() => false);
-        if (!fresh) work.cancel();
-      }
-      if (active.size === 0) this.activeMissionWork.delete(grantEventId);
-    }
   }
 
   /** Remote git authority for this repository. GitHub production bindings are
@@ -3829,7 +3801,6 @@ export class Body {
       }, ROOM_AGENT_STALL_NOTICE_MS);
     };
     let result: PromptResult;
-    let releaseMissionWork: (() => void) | undefined;
     // Set only at the actual ACP invocation boundary. Scheduler/session
     // activation failures spent no model call and must not appear as one.
     let modelCallStartedAt: string | undefined;
@@ -3848,10 +3819,6 @@ export class Body {
               if (!(await this.missionCornerFresh(missionCorner))) {
                 throw new Error('mission grant is no longer valid for this corner turn');
               }
-              releaseMissionWork = this.registerMissionWork(missionCorner.mission.grantEventId, {
-                fresh: () => this.missionCornerFresh(missionCorner),
-                cancel: () => session.client.sessionCancel(session.sessionId),
-              });
             }
             // `runOnSession` activates a cold physical session before invoking
             // this task. That activation resolves the soul and assembles the
@@ -4004,7 +3971,6 @@ export class Body {
       }
       throw error;
     } finally {
-      releaseMissionWork?.();
       clearStallTimer();
       if (this.activePermissionTurns.get(turn.channelId) === permissionTurn) {
         this.activePermissionTurns.delete(turn.channelId);
@@ -5681,25 +5647,13 @@ export class Body {
       this.presenceGenerations.get(channelId),
     );
     let session: AgentSession | undefined;
-    let releaseMissionWork: (() => void) | undefined;
     try {
-      if (turn.value.mission) {
-        releaseMissionWork = this.registerMissionWork(turn.value.mission.grantEventId, {
-          fresh: () => this.delegationRootAuthorized(turn),
-          cancel: () => {
-            if (session) session.client.sessionCancel(session.sessionId);
-          },
-        });
-      }
       session =
         this.sessions.get(channelId) ?? (await this.provision(channelId, boundRepo, editPolicy));
       if (session.mode !== 'readonly') {
         throw new ReadOnlyToolsUnavailableError(
           'read-only tools unavailable: refusing an edit session for delegation',
         );
-      }
-      if (turn.value.mission && !(await this.delegationRootAuthorized(turn))) {
-        throw new ScheduleActivationRefusedError(true, 'mission-grant-invalid');
       }
       const current = attachmentPrompt(
         turn.value.fromAgentPubkey,
@@ -5750,15 +5704,6 @@ export class Body {
           workItemId: turn.value.workItemId,
           reservedTokens: turn.value.budget.reservedTokens,
           replyToId: turn.event.id,
-          ...(turn.value.mission
-            ? {
-                beforeModelActivation: async () => {
-                  if (!(await this.delegationRootAuthorized(turn))) {
-                    throw new ScheduleActivationRefusedError(true, 'mission-grant-invalid');
-                  }
-                },
-              }
-            : {}),
         },
         pendingTurn,
       );
@@ -5816,8 +5761,6 @@ export class Body {
         this.presenceGenerations.get(channelId),
       ).catch(() => undefined);
       throw error;
-    } finally {
-      releaseMissionWork?.();
     }
   }
 
@@ -6320,9 +6263,6 @@ export class Body {
             TAG_DELEGATION_RECEIPT,
           ].includes(typedControlMarker)
         ) {
-          if (typedControlMarker === TAG_PERMISSION_REVOCATION) {
-            await this.cancelRevokedMissionWork();
-          }
           this.processedRequestIds.add(event.id);
           await this.durableState.delivered(tlcChannelId, event.id);
           continue;
@@ -6763,11 +6703,6 @@ export class Body {
       }
       await beforeModelActivation?.();
       const execution = await this.beginMissionScheduleFire(scheduled);
-      const abort = new AbortController();
-      const releaseMissionWork = this.registerMissionWork(scheduled.mission.grantEventId, {
-        fresh: () => this.permissionRuntime.reverify(execution),
-        cancel: () => abort.abort(),
-      });
       let resultCode = 'mission-script-fired';
       try {
         const result = await runMissionScript({
@@ -6778,14 +6713,10 @@ export class Body {
           scriptSha256: scheduled.execution.scriptSha256,
           timeoutSeconds: scheduled.execution.timeoutSeconds,
           maskPaths: this.sandboxCredentialMaskPaths(),
-          signal: abort.signal,
         });
         if (result.wake) {
           if (result.wake.agentPubkey !== scheduled.targetAgentPubkey) {
             throw new ScheduleActivationRefusedError(true, 'mission-wake-target-mismatch');
-          }
-          if (!(await this.permissionRuntime.reverify(execution))) {
-            throw new ScheduleActivationRefusedError(true, 'mission-grant-invalid');
           }
           const pointerTask =
             `Mission schedule ${scheduled.scheduleId} produced repository pointer ` +
@@ -6801,11 +6732,6 @@ export class Body {
               },
               boundRepo,
               editPolicy,
-              async () => {
-                if (!(await this.permissionRuntime.reverify(execution))) {
-                  throw new ScheduleActivationRefusedError(true, 'mission-grant-invalid');
-                }
-              },
             );
           } else {
             await this.publishScheduledDelegation(scheduled, pointerTask, 'script');
@@ -6817,7 +6743,6 @@ export class Body {
         ).slice(0, 300)}`;
         throw error;
       } finally {
-        releaseMissionWork();
         await this.permissionRuntime.complete({
           execution,
           status: 'succeeded',
@@ -6933,7 +6858,6 @@ export class Body {
       : '';
     const principalName = fallbackPersonName(scheduled.principalPubkey);
     let missionExecution: PermissionExecutionHandle | undefined;
-    let releaseMissionWork: (() => void) | undefined;
     let fired = false;
     try {
       await this.replyInRoom(
@@ -6960,22 +6884,11 @@ export class Body {
           await beforeModelActivation?.();
           if (scheduled.missionAction) {
             missionExecution = await this.beginMissionScheduleFire(scheduled);
-            if (scheduled.mission) {
-              const execution = missionExecution;
-              releaseMissionWork = this.registerMissionWork(scheduled.mission.grantEventId, {
-                fresh: () => this.permissionRuntime.reverify(execution!),
-                cancel: () => {
-                  const session = this.sessions.get(scheduled.roomId);
-                  if (session) session.client.sessionCancel(session.sessionId);
-                },
-              });
-            }
           }
           fired = true;
         },
       );
     } finally {
-      releaseMissionWork?.();
       if (missionExecution) {
         await this.permissionRuntime.complete({
           execution: missionExecution,

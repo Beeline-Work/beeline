@@ -401,31 +401,6 @@ describe('scheduled Room turn boundary', () => {
     }
   });
 
-  it('best-effort cancels every active derived action when its fresh grant check fails', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'beeline-mission-revocation-cancel-'));
-    const body = new Body(config(root), undefined, newIdentity('mission-cancel-agent'));
-    const cancelScript = vi.fn();
-    const cancelModel = vi.fn();
-    const register = Reflect.get(body, 'registerMissionWork').bind(body);
-    const releaseScript = register('a'.repeat(64), {
-      fresh: async () => false,
-      cancel: cancelScript,
-    });
-    const releaseModel = register('a'.repeat(64), {
-      fresh: async () => false,
-      cancel: cancelModel,
-    });
-    try {
-      await Reflect.get(body, 'cancelRevokedMissionWork').call(body);
-      expect(cancelScript).toHaveBeenCalledOnce();
-      expect(cancelModel).toHaveBeenCalledOnce();
-    } finally {
-      releaseScript();
-      releaseModel();
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
   it('publishes scheduled attachments from pi while keeping amplification directives inert', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-directives-'));
     const agent = newIdentity('scheduled-directive-agent');

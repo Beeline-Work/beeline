@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildPermissionDecision,
   buildPermissionRequest,
@@ -12,6 +12,7 @@ import {
   type PermissionFreshReader,
 } from '@beeline/buzz-client';
 import { resolveMissionAction, verifyMissionAction } from './mission-authority.js';
+import { PermissionRuntime } from './permission-runtime.js';
 
 const NOW = 2_000_000_000;
 
@@ -141,6 +142,7 @@ function fixture() {
   };
   return {
     captain,
+    controller,
     request,
     decision,
     reader,
@@ -205,6 +207,56 @@ describe('mission authority funnel', () => {
       terminal: true,
       reason: 'expired',
     });
+  });
+
+  it('lets admitted work finish and refuses every post-revocation admission', async () => {
+    const fx = fixture();
+    const first = await resolveMissionAction(fx.input);
+    const second = await resolveMissionAction({
+      ...fx.input,
+      ordinal: 2,
+      idempotencyKey: 'mission-fire-two',
+    });
+    if (!first || !second) throw new Error('mission action fixture did not resolve');
+    let now = NOW + 2;
+    const published: unknown[] = [];
+    const reservations = new Set<string>();
+    const runtime = new PermissionRuntime({
+      identity: fx.controller,
+      reader: fx.reader,
+      now: () => now,
+      claim: async () => 'claimed',
+      reserveCapacity: async (input) => {
+        if (reservations.has(input.key)) return 'duplicate';
+        reservations.add(input.key);
+        return 'claimed';
+      },
+      publish: async (event) => {
+        published.push(event);
+      },
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const admittedInvoke = vi.fn(async () => {
+      await held;
+      return { result: 'finished' };
+    });
+    const admitted = runtime.execute({ action: first, attempt: 1, invoke: admittedInvoke });
+    await vi.waitFor(() => expect(admittedInvoke).toHaveBeenCalledOnce());
+
+    fx.revoke();
+    now = NOW + 4;
+    release();
+    await expect(admitted).resolves.toMatchObject({ status: 'succeeded', result: 'finished' });
+
+    const refusedInvoke = vi.fn(async () => ({ result: 'must-not-run' }));
+    await expect(
+      runtime.execute({ action: second, attempt: 1, invoke: refusedInvoke }),
+    ).resolves.toMatchObject({ status: 'refused', reason: 'revoked' });
+    expect(refusedInvoke).not.toHaveBeenCalled();
+    expect(published).toHaveLength(3);
   });
 
   it('binds a derived landing action to one corner and source commit', async () => {

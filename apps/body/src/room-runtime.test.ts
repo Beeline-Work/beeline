@@ -1131,6 +1131,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
           : null,
       ),
       messageSubmit: vi.fn().mockResolvedValue({}),
+      query: vi.fn().mockResolvedValue([]),
       getChannelMetadata: vi.fn().mockResolvedValue(null),
       disconnect: vi.fn(),
     };
@@ -1189,6 +1190,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     expect(client.messageSubmit).toHaveBeenCalledWith(
       'unservable-room',
       expect.stringContaining('I will retry automatically in 10 minutes'),
+      expect.objectContaining({ extraTags: expect.any(Array) }),
     );
 
     // Past the retry cadence it is tried again — an operator who fixes the
@@ -1227,6 +1229,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     expect(client.messageSubmit).toHaveBeenCalledWith(
       'unservable-room',
       expect.stringContaining('I will retry automatically in 30 seconds.'),
+      expect.objectContaining({ extraTags: expect.any(Array) }),
     );
 
     // Past the SHORT cadence it is tried again — not held for ten minutes.
@@ -1236,7 +1239,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     expect(materialize).toHaveBeenCalledTimes(2);
   });
 
-  it('closes a visible repository-access failure when the Room later recovers', async () => {
+  it('closes a durable legacy repository failure after restart exactly once', async () => {
     const runtime = runtimeNoRooms('repository-recovery-agent');
     const room: RoomRuntimeRecord = {
       channelId: '3f37b271-1a12-4d2a-b002-202b3f3582b9',
@@ -1264,6 +1267,107 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
       kind: 'repository',
       repository: { binding: room.repo.repository },
     });
+    const relayEvents = [
+      {
+        id: 'f'.repeat(64),
+        pubkey: runtime.agent.publicKey,
+        created_at: 900,
+        kind: 9,
+        tags: [['h', room.channelId]],
+        content:
+          "Agent unavailable: I could not access this Room's repository. " +
+          'I will retry automatically in 30 seconds.',
+        sig: 'e'.repeat(128),
+      },
+    ];
+    client.query.mockImplementation(async () => [...relayEvents]);
+    client.messageSubmit.mockImplementation(async (channelId, content, options) => {
+      const event = {
+        id: `${relayEvents.length}`.padStart(64, '0'),
+        pubkey: runtime.agent.publicKey,
+        created_at: 1_000 + relayEvents.length,
+        kind: 9,
+        tags: [['h', channelId], ...(options?.extraTags ?? [])],
+        content,
+        sig: 'd'.repeat(128),
+      };
+      relayEvents.push(event);
+      return event;
+    });
+    mocks.createBuzzClient.mockReturnValue(client);
+    const firstCoordinator = new RoomRuntimeCoordinator(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    vi.spyOn(firstCoordinator as never, 'startRepositoryRoom' as never).mockResolvedValue(
+      undefined as never,
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await firstCoordinator.reconcile();
+    expect(client.messageSubmit).toHaveBeenCalledWith(
+      '3f37b271-1a12-4d2a-b002-202b3f3582b9',
+      expect.stringContaining('repository access recovered'),
+      expect.objectContaining({
+        extraTags: expect.arrayContaining([
+          ['t', 'buzz-agent-room-join-notice'],
+          ['status', 'repository-recovered'],
+          ['failure', 'f'.repeat(64)],
+        ]),
+      }),
+    );
+    expect(client.query).toHaveBeenCalledWith([
+      expect.objectContaining({
+        '#h': [room.channelId],
+        '#t': ['buzz-agent-room-join-notice'],
+        limit: 20,
+      }),
+      expect.objectContaining({ '#h': [room.channelId], limit: 20 }),
+    ]);
+    expect(client.messageSubmit).toHaveBeenCalledTimes(1);
+
+    const restartedCoordinator = new RoomRuntimeCoordinator(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    );
+    vi.spyOn(restartedCoordinator as never, 'startRepositoryRoom' as never).mockResolvedValue(
+      undefined as never,
+    );
+    await restartedCoordinator.reconcile();
+
+    expect(client.messageSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not publish an orphan recovery for a join failure that never produced a notice', async () => {
+    const runtime = runtimeNoRooms('repository-orphan-recovery-agent');
+    const room: RoomRuntimeRecord = {
+      channelId: 'unservable-room',
+      repo: {
+        root: '/tmp/beeline-peddle-cache',
+        gitCommonDir: '/tmp/beeline-peddle-cache/.git',
+        targetBranch: 'main',
+        repository: {
+          key: 'github:1330313701',
+          name: 'bananaman614305/peddle',
+          remote: 'git://github.com/bananaman614305/peddle',
+          localOnly: false,
+          githubInstallationId: 156013969,
+        },
+      },
+      membershipSince: 20,
+      discoveredAt: new Date(0).toISOString(),
+    };
+    runtime.rooms.push(room);
+    const client = discoveryClient(runtime);
+    client.listMyChannels.mockResolvedValue([
+      { channelId: 'unservable-room', event: { created_at: 20 } },
+    ]);
+    client.resolveRoomRepositoryState.mockResolvedValue({
+      kind: 'repository',
+      repository: { binding: room.repo.repository },
+    });
     mocks.createBuzzClient.mockReturnValue(client);
     let now = 1_000_000;
     const supervisor = new RoomRuntimeCoordinator(
@@ -1272,29 +1376,20 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
       {} as BodyConfig,
       { now: () => now },
     );
-    vi.spyOn(supervisor as never, 'startRepositoryRoom' as never)
-      .mockRejectedValueOnce(
-        new Error(
-          "could not reset canonical cache for bananaman614305/peddle: fatal: Unable to create '.git/index.lock': File exists.",
-        ) as never,
-      )
-      .mockResolvedValue(undefined as never);
+    vi.spyOn(supervisor as never, 'startRepositoryRoom' as never).mockResolvedValue(
+      undefined as never,
+    );
+    Reflect.get(supervisor, 'quarantine').noteFailure(
+      room.channelId,
+      new Error('Room join deadline exceeded after 75000ms'),
+    );
+    now += Math.ceil(DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS * 1.2) + 1;
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await supervisor.reconcile();
-    expect(client.messageSubmit).toHaveBeenCalledWith(
-      '3f37b271-1a12-4d2a-b002-202b3f3582b9',
-      expect.stringContaining("I could not access this Room's repository"),
-    );
 
-    now += Math.ceil(DEFAULT_ROOM_DISCOVERY_TRANSIENT_RETRY_MS * 1.2) + 1;
-    await supervisor.reconcile();
-
-    expect(client.messageSubmit).toHaveBeenCalledWith(
-      '3f37b271-1a12-4d2a-b002-202b3f3582b9',
-      expect.stringContaining('repository access recovered'),
-    );
-    expect(client.messageSubmit).toHaveBeenCalledTimes(2);
+    expect(client.query).toHaveBeenCalled();
+    expect(client.messageSubmit).not.toHaveBeenCalled();
   });
 
   it('publishes the visible Room notice when the token broker returns its 403', async () => {
@@ -1323,6 +1418,7 @@ describe('RoomRuntimeCoordinator per-Room discovery isolation', () => {
     expect(client.messageSubmit).toHaveBeenCalledWith(
       'unservable-room',
       expect.stringContaining("I could not access this Room's repository"),
+      expect.objectContaining({ extraTags: expect.any(Array) }),
     );
   });
 });

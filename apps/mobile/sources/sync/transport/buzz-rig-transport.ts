@@ -918,15 +918,15 @@ export class BuzzRigTransport implements RigTransport {
     // corner whose newest record is older than the marker page covers.
     //
     // Production relay truth (measured live, round-2 corner-discovery
-    // failure): a single filter naming MULTIPLE tag values is answered
+    // failure): a single filter naming MULTIPLE `#h` values is answered
     // with an unreliable subset of the matching events — a whole corner
     // family's kind:9007 create events can collapse to one row, which left
     // every corner-state record signer-unverifiable (no creator fact) and
-    // quarantined the corners out of the snapshot. The same partiality was
-    // later observed for multi-value `#d` arrays (live change-review and
-    // corner-wipe evidence), so EVERY multi-key read here expands into
-    // per-channel single-value filters. They stay inside THIS one `query`
-    // call, so the transport still spends one round trip.
+    // quarantined the corners out of the snapshot. Multi-value `#d` has
+    // separately proven proper OR semantics and is not evidence for this
+    // sweep. Every `#h` fan-out below therefore expands into per-channel
+    // single-value filters inside THIS one `query` call, preserving one
+    // structural/projection round trip.
     const [authorityEvents, cornerStates] = await Promise.all([
       client.query([
         ...channelIds.map(
@@ -954,9 +954,8 @@ export class BuzzRigTransport implements RigTransport {
             }) as Record<string, unknown>,
         ),
       ]),
-      // Corner-state records are exact-`#d` replaceables; one filter per
-      // corner key inside the SAME batched call — never a multi-value `#d`
-      // array this relay may answer with only the first key's matches.
+      // Corner-state records are exact-`#d` replaceables. This existing
+      // coordinate read is intentionally outside the `#h` sweep.
       client.query(
         cornerIds.map((cornerId) => ({
           kinds: [KIND_CORNER_STATE],
@@ -1043,11 +1042,10 @@ export class BuzzRigTransport implements RigTransport {
    * Read presence across every Room in a Workspace, not just one — the Agents
    * directory has no single Room context, unlike a Corner list or Room roster.
    * Presence is published per (agent, Room) with no workspace-wide record, so
-   * this fans a single multi-`#h` query (same proven pattern as
-   * `fetchManyRoomsLifecycle`'s cross-Room corner reads) across every Room the
-   * Workspace has, and callers merge to newest-per-agent via
-   * `presenceMapFromSessionEvents`. An agent with no live daemon anywhere in
-   * the Workspace correctly yields no record, i.e. offline.
+   * this batches exact presence coordinates for every Room into one query call.
+   * Callers merge to newest-per-agent via `presenceMapFromSessionEvents`. An
+   * agent with no live daemon anywhere in the Workspace correctly yields no
+   * record, i.e. offline.
    */
   async agentPresenceBackfillForWorkspace(communityId: string): Promise<SessionEvent[]> {
     const client = await this.getClient();
@@ -1061,10 +1059,9 @@ export class BuzzRigTransport implements RigTransport {
     // events for every Workspace, always, and this directory reported every
     // agent OFFLINE regardless of what its daemon was doing. Confirmed against
     // the live relay: `#h` → 0 events, `#d` → the same agent's four-second-old
-    // `online` heartbeat. One filter per Room key, inside THIS one `query`
-    // call: a multi-value `#d` array is answered unreliably by production
-    // (same partiality class as multi-value `#h`), which would read whole
-    // Rooms' agents offline from one partial page.
+    // `online` heartbeat. The existing exact-`#d` filters stay inside THIS one
+    // query call; multi-value `#d` has separately proven proper OR semantics
+    // and is intentionally outside this `#h` sweep.
     const buzzEvents = await client.query(
       roomIds.map((roomId) => ({
         kinds: [KIND_AGENT_PRESENCE],
@@ -1778,12 +1775,11 @@ export class BuzzRigTransport implements RigTransport {
   }
 
   /**
-   * Cross-Room batched corner lifecycle projection: one multi-`#h` round trip
-   * for every corner's create event and one multi-`#h` round trip for
-   * merge-summary events, regardless of how many parent Rooms are requested —
-   * instead of one call graph per Room. Reads and populates the same cache as
-   * `listSubchannelLifecycle`, so a Room already warmed by an earlier call
-   * (either direction) is a cache hit here too.
+   * Cross-Room lifecycle projection through the same normalized snapshot path
+   * as Room entry. Room reads start concurrently and remain failure-isolated;
+   * each structural query uses only single-value `#h` filters. The Room-list
+   * caller treats this enrichment as background work, so it never gates the
+   * foreground shell.
    */
   async listSubchannelLifecycleForRooms(
     parentChannelIds: string[],

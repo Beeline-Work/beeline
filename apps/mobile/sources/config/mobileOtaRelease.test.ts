@@ -721,21 +721,33 @@ esac
     );
   });
 
-  it('claims the imported identity prefilled handle in every Maestro onboarding flow', () => {
-    const flowNames = ['smoke.yaml', 'live-agent-send-once.yaml', 'live-chat-layout.yaml'];
-    for (const flowName of flowNames) {
+  it('types a unique valid handle before claiming in every Maestro onboarding flow', () => {
+    const provisionScript = readFileSync(resolve(mobileRoot, '../../scripts/provision-smoke.ts'), 'utf8');
+    const maestroScript = readFileSync(join(mobileRoot, 'scripts/maestro-e2e.sh'), 'utf8');
+    expect(provisionScript).toContain('MAESTRO_SMOKE_HANDLE=smoke-${identity.publicKey.slice(0, 12)}');
+    expect(maestroScript).toContain('read_seed_value MAESTRO_SMOKE_HANDLE');
+    expect(maestroScript).toContain('--env "SMOKE_HANDLE=$SMOKE_HANDLE"');
+
+    const flows = [
+      ['smoke.yaml', 'inputText: ${SMOKE_HANDLE}'],
+      ['live-agent-send-once.yaml', 'inputText: ${LIVE_HANDLE}'],
+      ['live-chat-layout.yaml', 'inputText: ${LIVE_HANDLE}'],
+    ] as const;
+    for (const [flowName, uniqueInput] of flows) {
       const flow = readFileSync(join(mobileRoot, 'e2e', flowName), 'utf8');
       const ceremony = flow.indexOf('id: onboarding-handle-ceremony');
-      const dismissIme = flow.indexOf('pressKey: back', ceremony);
+      const typeHandle = flow.indexOf(uniqueInput, ceremony);
+      const dismissIme = flow.indexOf('pressKey: back', typeHandle);
       const claim = flow.indexOf('id: onboarding-claim-handle', dismissIme);
 
       expect(ceremony, `${flowName} waits for the current handle ceremony`).toBeGreaterThan(-1);
-      expect(dismissIme, `${flowName} dismisses the auto-focused IME`).toBeGreaterThan(ceremony);
-      expect(claim, `${flowName} claims the prefilled handle`).toBeGreaterThan(dismissIme);
+      expect(typeHandle, `${flowName} fills the captured empty handle input`).toBeGreaterThan(ceremony);
+      expect(dismissIme, `${flowName} dismisses the auto-focused IME`).toBeGreaterThan(typeHandle);
+      expect(claim, `${flowName} claims the generated handle`).toBeGreaterThan(dismissIme);
       expect(flow).not.toContain('onboarding-person-name-step');
       expect(flow).not.toContain('onboarding-person-name-input');
       expect(flow).not.toContain('onboarding-enter-workspace');
-      expect(flow).not.toMatch(/inputText: (Maestro Smoke|Live device|Layout device)/);
+      expect(flow).not.toMatch(/inputText: (Maestro Smoke|Live device|Layout device|ada-labs)/);
     }
   });
 

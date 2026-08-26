@@ -8,6 +8,7 @@ import {
   KIND_AGENT_DRAFT,
   KIND_CORNER_STATE,
   KIND_CREATE_GROUP,
+  KIND_EDIT_METADATA,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_ACTIVITY,
   TAG_AGENT_DRAFT,
@@ -128,6 +129,18 @@ function cornerState(state: string, createdAt: number): NostrEvent {
       ['h', ROOM],
       ['state', state],
       ['at', String(createdAt)],
+    ],
+    content: '',
+  });
+}
+
+function archiveCorner(createdAt: number): NostrEvent {
+  return signed(agent, {
+    created_at: createdAt,
+    kind: KIND_EDIT_METADATA,
+    tags: [
+      ['h', CORNER],
+      ['archived', 'true'],
     ],
     content: '',
   });
@@ -387,6 +400,21 @@ describe('read-model invariants (property based)', () => {
         expect(selectRoomRow(snapshot, ROOM).pinnedCorner).toBeUndefined();
       }),
     );
+  });
+
+  it('RM-09 lets an archived child tombstone override a stale waiting/review record', () => {
+    const snapshot = replay(
+      parse([
+        cornerCreate(),
+        cornerState('waiting', 3),
+        memberSnapshot(CORNER, [human.publicKey, agent.publicKey], 2),
+        archiveCorner(4),
+      ]),
+    );
+
+    expect(selectCorners(snapshot, ROOM)).toEqual([]);
+    expect(selectRoomRow(snapshot, ROOM).cornerCount).toBe(0);
+    expect(selectRoomRow(snapshot, ROOM).pinnedCorner).toBeUndefined();
   });
 
   it('RM-10 resolves identities late and cannot retain a stale handle', () => {

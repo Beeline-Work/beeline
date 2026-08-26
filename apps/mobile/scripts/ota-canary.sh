@@ -52,6 +52,28 @@ resolve_adb() {
   return 1
 }
 
+# GitHub Actions starts the self-hosted runner with a non-login PATH, while the
+# supported Maestro installer places the executable under ~/.maestro/bin.
+# Resolve that installation explicitly and expose it to maestro-e2e.sh, whose
+# bare `maestro` invocation must never fail as an opaque exit 127.
+resolve_maestro() {
+  if [[ -n "${MAESTRO_BIN:-}" ]]; then
+    [[ -x "$MAESTRO_BIN" ]] || return 1
+    printf '%s' "$MAESTRO_BIN"
+    return 0
+  fi
+  if command -v maestro >/dev/null 2>&1; then
+    command -v maestro
+    return 0
+  fi
+  local candidate="${MAESTRO_HOME:-${HOME:-}/.maestro}/bin/maestro"
+  if [[ -x "$candidate" ]]; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
 if ! ADB_BIN="$(resolve_adb)"; then
   cat >&2 <<EOF
 OTA canary cannot find the Android platform-tools binary (adb).
@@ -66,6 +88,13 @@ if [[ "$ADB_BIN" == */* ]]; then
   # Child scripts (maestro-e2e.sh, android-teardown.sh) still call bare `adb`;
   # make our resolution visible to them instead of editing each one.
   export PATH="$(dirname "$ADB_BIN"):$PATH"
+fi
+
+if ! MAESTRO_BIN_RESOLVED="$(resolve_maestro)"; then
+  park "Maestro is not executable on the release-host runner (searched MAESTRO_BIN, PATH, and \${MAESTRO_HOME:-\$HOME/.maestro}/bin/maestro). Install Maestro for the runner account or set MAESTRO_BIN to its executable, then re-run the governor"
+fi
+if [[ "$MAESTRO_BIN_RESOLVED" == */* ]]; then
+  export PATH="$(dirname "$MAESTRO_BIN_RESOLVED"):$PATH"
 fi
 
 if [[ "${OTA_CANARY_DEADLINE_ACTIVE:-0}" != "1" ]]; then

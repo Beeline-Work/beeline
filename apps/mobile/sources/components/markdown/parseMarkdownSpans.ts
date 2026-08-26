@@ -1,7 +1,9 @@
 import type { MarkdownSpan } from "./parseMarkdown";
 
-// Updated pattern to handle nested markdown and asterisks
-const pattern = /(\*\*(.*?)(?:\*\*|$))|(\*(.*?)(?:\*|$))|(\[([^\]]+)\](?:\(([^)]+)\))?)|(`(.*?)(?:`|$))/g;
+// Streaming text may end in the middle of a construct. Match only completed
+// delimiters so a later chunk can turn the original plain text into Markdown
+// instead of permanently consuming its opening syntax.
+const pattern = /(\*\*(.*?)\*\*)|((?<!\*)\*(?!\*)(.*?)\*(?!\*))|(\[([^\]]+)\]\(([^)]+)\))|(`(.*?)`)/g;
 
 function pushTextWithAutoLinks(spans: MarkdownSpan[], text: string, styles: MarkdownSpan['styles']) {
     const urlPattern = /https?:\/\/[^\s<]+/g;

@@ -123,7 +123,11 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
             <PixelLoader compact />
             <Text style={styles.thoughtEyebrow}>THINKING</Text>
           </View>
-          <Text style={styles.thoughtText}>{thought}</Text>
+          <MonoMarkdown
+            markdown={thought}
+            textStyle={styles.thoughtText}
+            testID="activity-thought-draft"
+          />
         </View>
       ) : null}
       {steps.map((step, index) => (

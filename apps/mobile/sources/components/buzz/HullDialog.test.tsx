@@ -193,6 +193,10 @@ describe('Hull dialog family', () => {
 
     const details = hostByTestID(renderer, 'details', 'Pressable');
     expect(details.props.accessibilityLabel).toBe('Details. Current run');
+    const heading = renderer.root
+      .findAllByProps({ accessibilityRole: 'header' })
+      .find((node: any) => node.type === 'Text')!;
+    expect(heading.children).toContain('Session');
     const archiveRow = hostByTestID(renderer, 'archive', 'Pressable');
     expect(archiveRow.props.accessibilityState).toEqual({ disabled: true, selected: false });
     expect(archiveRow.findByType('Text' as any).props.style).toContainEqual({

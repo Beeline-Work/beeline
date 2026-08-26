@@ -18,6 +18,7 @@ describe('native dialog enforcement', () => {
     const violations = productionSources(sourceRoot).flatMap((file) => {
       const source = readFileSync(file, 'utf8');
       return [
+        /import\s*\{[^}]*\bAlert(?:\s+as\s+\w+)?\b[^}]*\}\s*from\s*['"]react-native['"]/,
         /\bAlert\.(?:alert|prompt)\b/,
         /\bActionSheetIOS\b/,
         /\bshowActionSheetWithOptions\b/,

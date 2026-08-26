@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { PGlite, type Transaction } from '@electric-sql/pglite';
+import { channelSnapshotDigest, type StoredChannelSnapshotV1 } from '@beeline/buzz-client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseQueryable, DatabaseTransactional } from './database.js';
 import { ChannelSnapshotStore } from './snapshot-store.js';
@@ -6,6 +8,20 @@ import { ChannelSnapshotStore } from './snapshot-store.js';
 const TENANT = 'e8299f28-f095-472f-941a-80d1195b9a24';
 const HOT = '9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6';
 const COLD = '3f37b271-1a12-4d2a-b002-202b3f3582b9';
+
+function goldenPayload(): StoredChannelSnapshotV1 {
+  const view = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../packages/buzz-client/src/read-model/fixtures/channel-snapshot-v1.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ) as Record<string, unknown>;
+  const { lagMs: _lag, viewer: _viewer, integrity: _integrity, ...payload } = view;
+  return payload as StoredChannelSnapshotV1;
+}
 
 class PgliteDatabase implements DatabaseTransactional {
   constructor(private readonly postgres: PGlite) {}
@@ -132,6 +148,33 @@ describe('ChannelSnapshotStore dirty worklist', () => {
     expect((await store.status()).depth).toBe(2);
     const [next] = await store.claimDirty(1, 60_000);
     expect(next?.channelId).toBe(COLD);
+  });
+
+  it('does not publish a projection after its claim is redirtied', async () => {
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
+    const [claim] = await store.claimDirty(1, 60_000);
+    expect(claim).toBeDefined();
+
+    await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [TENANT, HOT]);
+    const payload = goldenPayload();
+    await store.complete(claim!, payload, channelSnapshotDigest(payload));
+
+    const snapshots = await database.query<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM beeline_channel_snapshot_v1
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid`,
+      [TENANT, HOT],
+    );
+    const dirty = await database.query<{
+      dirty_revision: string | number;
+      claimed_token: string | null;
+    }>(
+      `SELECT dirty_revision, claimed_token FROM beeline_snapshot_dirty
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid`,
+      [TENANT, HOT],
+    );
+    expect(Number(snapshots.rows[0]?.count)).toBe(0);
+    expect(Number(dirty.rows[0]?.dirty_revision)).toBeGreaterThan(claim!.dirtyRevision);
+    expect(dirty.rows[0]?.claimed_token).toBeNull();
   });
 
   it('drops deleted channels without acknowledging a newer dirty generation', async () => {

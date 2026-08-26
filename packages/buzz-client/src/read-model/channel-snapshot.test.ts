@@ -12,8 +12,8 @@ import {
 } from './channel-snapshot.js';
 import { parseRelayEvents } from './parser.js';
 import { createWorkspaceSnapshot, reduceWorkspaceEvents } from './reducer.js';
-import { selectReviewSummary } from './selectors.js';
-import type { EventId, HumanMessage, Pubkey, WorkspaceSnapshot } from './types.js';
+import { selectReviewSummary, selectTranscript } from './selectors.js';
+import type { Control, EventId, HumanMessage, Pubkey, WorkspaceSnapshot } from './types.js';
 
 const CHANNEL = '9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6';
 const MEMBER = 'a'.repeat(64) as Pubkey;
@@ -108,6 +108,37 @@ function manyReplySnapshot(count: number): WorkspaceSnapshot {
   return snapshot;
 }
 
+function manyVisibleControlSnapshot(messageCount: number, controlCount: number): WorkspaceSnapshot {
+  const snapshot = manyMessageSnapshot(messageCount);
+  const journal = snapshot.rooms[CHANNEL]!.eventJournal as unknown as Record<
+    string,
+    HumanMessage | Control
+  >;
+  for (let index = 0; index < controlCount; index += 1) {
+    const eventId = (messageCount + index).toString(16).padStart(64, '0') as EventId;
+    journal[eventId] = {
+      eventId,
+      authorPubkey: MEMBER,
+      createdAt: 1_000 + index,
+      sourceKind: 9,
+      signature: 'verified',
+      scope: 'channel',
+      channelId: CHANNEL as HumanMessage['channelId'],
+      workspaceId: 'verified-workspace',
+      type: 'control',
+      visibility: 'card',
+      payload: {
+        kind: 'merge',
+        action: 'ready',
+        repository: 'lunchboxfortwo/beeline',
+        branch: 'main',
+        tip: index.toString(16).padStart(40, '0'),
+      },
+    };
+  }
+  return snapshot;
+}
+
 describe('channel snapshot v1 contract', () => {
   it('accepts the one shared golden JSON fixture and verifies its digest', () => {
     const guarded = guardChannelSnapshotViewV1(fixture());
@@ -163,6 +194,22 @@ describe('channel snapshot v1 contract', () => {
       expect(room.eventJournal[event.reply.eventId]).toBeDefined();
       expect(room.eventJournal[event.reply.rootId]).toBeDefined();
     }
+  });
+
+  it('counts visible status controls against the transcript row cap', () => {
+    const stored = buildStoredChannelSnapshotV1({
+      snapshot: manyVisibleControlSnapshot(30, 50),
+      channelId: CHANNEL,
+      revision: 1,
+      projectedAt: 10_000,
+      cursor: { createdAt: 1_049, eventIds: ['4f'.padStart(64, '0')] },
+      identitiesStale: false,
+    });
+
+    expect(selectTranscript(stored.snapshot, CHANNEL)).toHaveLength(
+      CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
+    );
+    expect(stored.review.target?.tip).toBe((49).toString(16).padStart(40, '0'));
   });
 
   it('reduces transcript rows against the complete response byte cap', () => {
@@ -312,7 +359,7 @@ describe('channel snapshot v1 contract', () => {
     expect(guardChannelSnapshotViewV1(crossRoomReply).status).toBe('integrity-halt');
   });
 
-  it('projects review manifests and human approval through shared typed facts', () => {
+  it('projects same-second review approval through shared typed facts', () => {
     const owner = createIdentity('review-owner');
     const agent = createIdentity('review-agent');
     const tip = '1'.repeat(40);
@@ -329,21 +376,51 @@ describe('channel snapshot v1 contract', () => {
         { pubkey: identity.publicKey, created_at: createdAt, kind, tags, content },
         identity.secretKey,
       );
-    const events = [
-      signed(
-        agent,
-        1,
+    const ready = signed(
+      agent,
+      4,
+      9,
+      [
+        ['h', CHANNEL],
+        ['t', 'merge-ready'],
+        ['repo', 'lunchboxfortwo/beeline'],
+        ['branch', 'main'],
+        ['tip', tip],
+        ['patch-id', patchId],
+      ],
+      'Ready for review',
+    );
+    let approval = signed(
+      owner,
+      4,
+      9,
+      [
+        ['h', CHANNEL],
+        ['t', 'buzz-merge-approval'],
+        ['repo', 'lunchboxfortwo/beeline'],
+        ['branch', 'main'],
+        ['tip', tip],
+      ],
+      'APPROVE 0',
+    );
+    for (let nonce = 1; approval.id > ready.id && nonce <= 1_024; nonce += 1) {
+      approval = signed(
+        owner,
+        4,
         9,
         [
           ['h', CHANNEL],
-          ['t', 'merge-ready'],
+          ['t', 'buzz-merge-approval'],
           ['repo', 'lunchboxfortwo/beeline'],
           ['branch', 'main'],
           ['tip', tip],
-          ['patch-id', patchId],
         ],
-        'Ready for review',
-      ),
+        `APPROVE ${nonce}`,
+      );
+    }
+    expect(approval.id < ready.id).toBe(true);
+    const events = [
+      ready,
       signed(
         agent,
         2,
@@ -385,19 +462,7 @@ describe('channel snapshot v1 contract', () => {
           fileCount: 1,
         }),
       ),
-      signed(
-        owner,
-        4,
-        9,
-        [
-          ['h', CHANNEL],
-          ['t', 'buzz-merge-approval'],
-          ['repo', 'lunchboxfortwo/beeline'],
-          ['branch', 'main'],
-          ['tip', tip],
-        ],
-        'APPROVE',
-      ),
+      approval,
       signed(
         agent,
         5,

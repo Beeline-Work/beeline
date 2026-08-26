@@ -126,7 +126,7 @@ function boundedRoom(
     if (keep.size >= transcriptLimit) break;
   }
   for (const event of Object.values(roomSnapshot.eventJournal)) {
-    if (retainedControl(event)) keep.add(event.eventId);
+    if (retainedControl(event) && event.visibility === 'hidden') keep.add(event.eventId);
   }
   return {
     ...roomSnapshot,

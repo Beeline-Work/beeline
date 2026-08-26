@@ -63,6 +63,7 @@ read_seed_value() {
 }
 
 readonly SMOKE_NSEC="$(read_seed_value MAESTRO_SMOKE_NSEC)"
+readonly SMOKE_HANDLE="$(read_seed_value MAESTRO_SMOKE_HANDLE)"
 readonly SMOKE_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_WORKSPACE_ID)"
 readonly SMOKE_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_ROOM_ID)"
 readonly SMOKE_AGENT_NSEC="$(read_seed_value MAESTRO_SMOKE_AGENT_NSEC)"
@@ -88,6 +89,7 @@ reply_fixture_pid=$!
 
 maestro test --device "$DEVICE" \
   --env "SMOKE_NSEC=$SMOKE_NSEC" \
+  --env "SMOKE_HANDLE=$SMOKE_HANDLE" \
   --env "SMOKE_WORKSPACE_ID=$SMOKE_WORKSPACE_ID" \
   --env "SMOKE_ROOM_ID=$SMOKE_ROOM_ID" \
   --env "SMOKE_CORNER_ID=$SMOKE_CORNER_ID" \

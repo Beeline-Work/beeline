@@ -50,6 +50,7 @@ import {
   TAG_COMMUNITY,
   TAG_PARENT,
   TAG_DIRECT_MESSAGE,
+  TAG_AGENT,
   TAG_AGENT_PRESENCE,
   parseChangeReviewManifest,
   parseChangeReviewGenerationComplete,
@@ -1029,6 +1030,187 @@ export class BuzzRigTransport implements RigTransport {
         })
       : reduced;
     return { snapshot, events: parsed.map(toRigEvent) };
+  }
+
+  /**
+   * Cold-open fast path: exactly ONE bounded relay read feeds first paint.
+   *
+   * `performReadModelBackfill` is the full reconciliation shape — sibling
+   * corner discovery, family-wide authority, workspace identities — and that
+   * is exactly the machinery a Corner open must NOT pay before its first
+   * painted frame (the eight-second cold-open timeout, corr=be47dcd6c6622d21).
+   * This method issues ONE batched `query` (per-key single-value tag
+   * filters, per this relay's measured multi-value partiality) carrying only
+   * what first paint cannot defer: the message tail, this channel's immutable
+   * create event (the snapshot's Workspace binding — see the filter comment),
+   * and the agent registry page the parser bootstraps identity from.
+   * Everything else — authority projections, siblings, membership enrichment,
+   * presence — hydrates later through independent, bounded, nonblocking steps
+   * and merges into the snapshot without ever erasing what first paint showed
+   * (`mergeWorkspaceSnapshots` never wipes).
+   *
+   * Identity honesty: with no Workspace directory round trip available on
+   * the critical path, signer classification is BOOTSTRAPPED BY THE PARSER
+   * ITSELF from the same single page: a first parse/reduce pass lets
+   * `parseIdentityControl` fold each self-signed `#t=buzz-agent` registry
+   * record into an agent IdentityRecord (it requires no prior identity), and
+   * the final authority is then built from those reduced records before the
+   * page is parsed again for transcript/control classification. No raw tag
+   * is ever interpreted client-side and no second relay read exists.
+   * Registered agents therefore classify exactly as with directory-backed
+   * authority — their control markers stay control, activity stays activity,
+   * never prose. Only a signer neither the registry page nor a warm
+   * Workspace-identity cache covers falls back to a minimal human placeholder
+   * so ordinary verified member messages still parse as conversation instead
+   * of being quarantined as `unresolved-identity` (a blank transcript is a
+   * worse failure than one bounded unknown). That fallback carries a revision
+   * every real record outranks, so the deferred full reconciliation replaces
+   * it wholesale.
+   */
+  async readModelTail(
+    sessionId: SessionId,
+    opts: { limit: number },
+  ): Promise<ReadModelBackfillResult> {
+    const client = await this.getClient();
+    // ONE batched relay round trip carrying EXACTLY what first paint needs —
+    // nothing more, per the corner-open contract (authority, sibling states,
+    // projections, membership, and presence are all deferred):
+    //   1. the bounded message tail of THIS channel;
+    //   2. this channel's IMMUTABLE create event — not general structural
+    //      history. Its `community` tag is the only source for the snapshot's
+    //      Workspace id; without it the tail snapshot would bind to a
+    //      session-id pseudo-workspace and `mergeWorkspaceSnapshots` would
+    //      refuse every later deferred commit outright;
+    //   3. the self-signed agent registry page, relay-side tag-matched.
+    //      parseIdentityControl consumes these before any identity check, so
+    //      the bootstrap pass derives agent records without prior authority
+    //      and without client-side tag reads. Membership/admin projections
+    //      are deliberately NOT fetched here: message signers resolve through
+    //      registry/bootstrap/cache/placeholder identity records alone.
+    const events = await client.query([
+      {
+        kinds: [KIND_STREAM_MESSAGE],
+        '#h': [sessionId],
+        limit: Math.max(1, opts.limit),
+      },
+      {
+        kinds: [KIND_CREATE_GROUP],
+        '#h': [sessionId],
+        limit: 5,
+      },
+      {
+        kinds: [KIND_STREAM_MESSAGE],
+        '#t': [TAG_AGENT],
+        limit: CORNER_STATE_DISCOVERY_LIMIT,
+      },
+    ]);
+    // Scope through the parser boundary only: facts come from
+    // `deriveRelayAuthorityFacts`, raw tags are never interpreted here.
+    const uniqueEvents = events.filter(
+      (event, index, all) => all.findIndex((candidate) => candidate.id === event.id) === index,
+    );
+    const facts = deriveRelayAuthorityFacts(uniqueEvents);
+    const workspaceId = facts.workspaceIdsByChannel[sessionId] ?? sessionId;
+    // Bootstrap pass: the parser itself classifies the registry page.
+    // `parseIdentityControl` consumes self-signed `#t=buzz-agent` records
+    // before any identity check, so this pass yields agent IdentityRecords
+    // without prior authority and without client-side tag reads. Only the
+    // reduced identity records are consumed; anything this pass could not
+    // resolve (messages whose signers are not yet known) is discarded.
+    const bootstrapped = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({ workspaceId }),
+      parseRelayEvents(uniqueEvents, {
+        workspaceId,
+        identities: {},
+        knownMessages: {},
+      }).filter((event) => event.type !== 'unknown'),
+    );
+    const identities = this.tailIdentities(
+      client,
+      workspaceId,
+      uniqueEvents,
+      facts,
+      bootstrapped.identities,
+    );
+    const authority: ParseAuthority = {
+      workspaceId,
+      expectedChannelId: sessionId,
+      identities,
+      channelCreators: facts.channelCreators,
+      channelAdmins: facts.channelAdmins,
+      trustedProjectionPubkeys: facts.trustedProjectionPubkeys,
+      knownMessages: Object.fromEntries(this.knownMessages),
+    };
+    // Warm the shared per-channel authority cache so live delivery's first
+    // flush parses from it instead of issuing its own authority round trip.
+    sharedReadCache(client).authorities.set(sessionId, {
+      loadedAt: Date.now(),
+      authority,
+    });
+    const parsed = parseRelayEvents(
+      events.filter(
+        (event, index, all) =>
+          all.findIndex((candidate) => candidate.id === event.id) === index,
+      ),
+      authority,
+    );
+    this.rememberMessages(parsed);
+    const reduced = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({
+        workspaceId: authority.workspaceId,
+        identities: Object.values(identities),
+      }),
+      parsed,
+    );
+    const channelEvents = parsed.flatMap((event) =>
+      event.type === 'unknown' || event.scope === 'workspace' ? [] : [event.createdAt],
+    );
+    const oldest = [...channelEvents].sort((a, b) => a - b)[0];
+    const newest = [...channelEvents].sort((a, b) => b - a)[0];
+    const snapshot = reduced.rooms[sessionId]
+      ? commitRoomCoverage(reduced, sessionId, {
+          epoch: Date.now(),
+          initialBackfillComplete: true,
+          ...(oldest !== undefined ? { oldest } : {}),
+          ...(newest !== undefined ? { newest } : {}),
+        })
+      : reduced;
+    return { snapshot, events: parsed.map(toRigEvent) };
+  }
+
+  /** Minimal signer identities for the fast path — see `readModelTail`. */
+  private tailIdentities(
+    client: BuzzClient,
+    workspaceId: string,
+    events: readonly NostrEvent[],
+    facts: ReturnType<typeof deriveRelayAuthorityFacts>,
+    bootstrapped: WorkspaceSnapshot['identities'],
+  ): Record<string, IdentityRecord> {
+    const memberPubkeys = new Set<string>(facts.memberPubkeys);
+    // A message's own signer must always resolve, even if the membership
+    // projection lags one write behind; otherwise the row it came to paint is
+    // quarantined and first paint shows less than the tail actually fetched.
+    for (const event of events) {
+      if (event.kind === KIND_STREAM_MESSAGE) memberPubkeys.add(event.pubkey);
+    }
+    const cached = sharedReadCache(client).workspaceIdentities.get(workspaceId)?.identities;
+    const identities: Record<string, IdentityRecord> = {};
+    for (const pubkey of memberPubkeys) {
+      const known = cached?.[pubkey] ?? bootstrapped[pubkey];
+      if (known) {
+        identities[pubkey] = known;
+        continue;
+      }
+      identities[pubkey] = {
+        kind: 'human',
+        pubkey: pubkey as IdentityRecord['pubkey'],
+        // `-` sorts below every real revision (hex event ids, `member:`), so
+        // the deferred full reconciliation always outranks this record in
+        // `mergeWorkspaceSnapshots`' identity fold.
+        revision: `-tail:${pubkey}`,
+      };
+    }
+    return identities;
   }
 
   /** Read the current parameterized-replaceable presence record(s) for a Room. */

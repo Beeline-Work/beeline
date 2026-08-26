@@ -268,7 +268,6 @@ const COMPOSER_MAX_HEIGHT = 120;
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
 const OLDER_MESSAGES_PAGE_SIZE = 30;
-const CHAT_OPEN_HYDRATION_TIMEOUT_MS = 8_000;
 // This deliberately remains the sole color seam for the human merge decision.
 // If the product ever approves a non-monochrome exception, change only this value.
 const MERGE_APPROVAL_ACCENT = groknight.accent;
@@ -767,16 +766,11 @@ export default function BuzzChat() {
     },
     [decodedId],
   );
-  useEffect(() => {
-    if (cachedSnapshot) return;
-    const timer = setTimeout(() => {
-      setTranscriptHydrationError(
-        `Conversation loading timed out after ${CHAT_OPEN_HYDRATION_TIMEOUT_MS / 1_000} seconds.`,
-      );
-      setTranscriptHydrationFailed(true);
-    }, CHAT_OPEN_HYDRATION_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [cachedSnapshot, decodedId, transcriptHydrationAttempt]);
+  // The cold-open deadline lives on the ONE critical-path read itself
+  // (`COLD_TAIL_DEADLINE_MS` in local-cache-sync): the eight-second budget
+  // bounds exactly the single bounded tail read, never the deferred
+  // authority/sibling/projection/membership/presence hydration. A rejected
+  // tail read surfaces through `onStepFailed('transcript')` below.
   // Older pages loaded on demand via "scroll up" pagination. Kept out of the
   // shared cache (which bounds to the recent tail) and merged in only here.
   const [olderMessages, setOlderMessages] = useState<ChatDisplayMessage[]>([]);

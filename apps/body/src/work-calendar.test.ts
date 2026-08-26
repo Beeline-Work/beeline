@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -13,6 +13,7 @@ import {
   WorkCalendar,
   buildWorkSchedule,
   buildWorkScheduleProjection,
+  buildScheduledTurnReceipt,
   deterministicScheduleRunId,
   nextWorkOccurrence,
   parseScheduledTurnReceipt,
@@ -39,6 +40,7 @@ async function durableState(): Promise<{ store: DurableWorkCalendarState; path: 
 
 class MemoryStore implements WorkCalendarStore {
   readonly values = new Map<string, WorkScheduleRuntimeState>();
+  readonly receipts = new Map<string, NostrEvent>();
   failNextPut = false;
 
   async load(): Promise<void> {}
@@ -51,6 +53,23 @@ class MemoryStore implements WorkCalendarStore {
       throw new Error('simulated durable write crash');
     }
     this.values.set(value.scheduleId, structuredClone(value));
+  }
+  async putWithReceipt(value: WorkScheduleRuntimeState, event: NostrEvent): Promise<void> {
+    if (this.failNextPut) {
+      this.failNextPut = false;
+      throw new Error('simulated durable write crash');
+    }
+    this.values.set(value.scheduleId, structuredClone(value));
+    this.receipts.set(event.id, event);
+  }
+  async reserveReceipt(event: NostrEvent): Promise<void> {
+    this.receipts.set(event.id, event);
+  }
+  async pendingReceipts(): Promise<NostrEvent[]> {
+    return [...this.receipts.values()];
+  }
+  async markReceiptDelivered(eventId: string): Promise<void> {
+    this.receipts.delete(eventId);
   }
 }
 
@@ -91,6 +110,7 @@ async function calendarFixture(
     store?: WorkCalendarStore;
     authority?: ScheduleAuthorityResult | (() => Promise<ScheduleAuthorityResult>);
     validateArtifacts?: WorkCalendarDependencies['validateArtifacts'];
+    missionAction?: WorkCalendarDependencies['missionAction'];
     publish?: (event: NostrEvent) => Promise<void>;
     dispatch?: WorkCalendarDependencies['dispatch'];
   } = {},
@@ -119,6 +139,7 @@ async function calendarFixture(
         ? options.authority()
         : (options.authority ?? { authorized: true }),
     ...(options.validateArtifacts ? { validateArtifacts: options.validateArtifacts } : {}),
+    ...(options.missionAction ? { missionAction: options.missionAction } : {}),
     publish: options.publish ?? (async (event) => published.push(event)),
     dispatch,
     now: () => now,
@@ -210,6 +231,49 @@ describe('work schedule occurrence math', () => {
     ).toThrow('invalid work schedule');
   });
 
+  it('enforces 15-minute model and 1-minute default-script cadence floors', () => {
+    const script = 'printf \'{"version":1,"status":"complete"}\\n\'';
+    const mission = {
+      missionId: 'mission-one',
+      grantEventId: 'a'.repeat(64),
+      controllerAgentPubkey: agent.publicKey,
+      repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+    };
+    const common = {
+      ...base,
+      targetAgentPubkey: agent.publicKey,
+      mission,
+    };
+    expect(() =>
+      buildWorkSchedule(principal, {
+        ...common,
+        execution: { mode: 'model' },
+        cadence: { type: 'interval', everySeconds: 899, anchorAt: 100 },
+      }),
+    ).toThrow('invalid work schedule');
+    expect(() =>
+      buildWorkSchedule(principal, {
+        ...common,
+        execution: {
+          script,
+          scriptSha256: createHash('sha256').update(script).digest('hex'),
+          timeoutSeconds: 30,
+        },
+        cadence: { type: 'interval', everySeconds: 59, anchorAt: 100 },
+      }),
+    ).toThrow('invalid work schedule');
+    const event = buildWorkSchedule(principal, {
+      ...common,
+      execution: {
+        script,
+        scriptSha256: createHash('sha256').update(script).digest('hex'),
+        timeoutSeconds: 30,
+      },
+      cadence: { type: 'interval', everySeconds: 60, anchorAt: 100 },
+    });
+    expect(JSON.parse(event.content).execution.mode).toBe('script');
+  });
+
   it('keeps runtime projection replacement separate from desired configuration', () => {
     const schedule = scheduleFixture(agent, principal);
     const desired = buildWorkSchedule(principal, schedule, { createdAt: schedule.startsAt - 1 });
@@ -237,6 +301,50 @@ describe('work schedule occurrence math', () => {
 });
 
 describe('WorkCalendar best-effort durable execution', () => {
+  it('dispatches a mission occurrence to the exact named target agent', async () => {
+    vi.useFakeTimers();
+    const controller = createIdentity();
+    const target = createIdentity();
+    const captain = createIdentity();
+    const script = 'printf \'{"version":1,"status":"complete"}\\n\'';
+    const schedule = scheduleFixture(controller, captain, {
+      targetAgentPubkey: target.publicKey,
+      execution: {
+        script,
+        scriptSha256: createHash('sha256').update(script).digest('hex'),
+        timeoutSeconds: 30,
+      },
+      mission: {
+        missionId: 'mission-one',
+        grantEventId: 'a'.repeat(64),
+        controllerAgentPubkey: controller.publicKey,
+        repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+      },
+    });
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+    });
+    const fixture = await calendarFixture({
+      agent: controller,
+      principal: captain,
+      schedule,
+      scheduleEvents: [
+        buildWorkSchedule(controller, schedule, { createdAt: schedule.startsAt - 1 }),
+      ],
+      missionAction: async () => ({ permissionId: 'mission-action' }) as never,
+      dispatch,
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(dispatch.mock.calls[0]?.[0]).toMatchObject({
+      agentPubkey: controller.publicKey,
+      targetAgentPubkey: target.publicKey,
+      execution: { mode: 'script' },
+    });
+    await fixture.calendar.dispose();
+  });
+
   it('recovers its serialized durable save queue after a write failure', async () => {
     const durable = await durableState();
     await durable.store.load();
@@ -258,6 +366,47 @@ describe('WorkCalendar best-effort durable execution', () => {
       schedules: {
         'recover-save-queue': { runCount: 1, lastExecutionAt: 1_900_000_000 },
       },
+    });
+  });
+
+  it('commits terminal occurrence state and its receipt in one durable snapshot', async () => {
+    const durable = await durableState();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, { scheduleId: 'atomic-terminal' });
+    const state: WorkScheduleRuntimeState = {
+      scheduleId: schedule.scheduleId,
+      principalPubkey: principal.publicKey,
+      revision: 1,
+      lastExecutionAt: schedule.startsAt,
+      runCount: 1,
+      dailyReservedTokens: schedule.perRunReservedTokens,
+      consecutiveFailures: 1,
+      status: 'paused',
+      pauseReason: 'max-consecutive-failures',
+    };
+    const runId = deterministicScheduleRunId(schedule.scheduleId, 1, schedule.startsAt);
+    const receipt = buildScheduledTurnReceipt(agent, {
+      version: 1,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: schedule.agentPubkey,
+      principalPubkey: schedule.principalPubkey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      runId,
+      nominalAt: schedule.startsAt,
+      status: 'failed',
+      at: schedule.startsAt,
+      reservedTokens: schedule.perRunReservedTokens,
+      reason: 'provider-down',
+    });
+
+    await durable.store.putWithReceipt(state, receipt);
+
+    expect(JSON.parse(await readFile(durable.path, 'utf8'))).toMatchObject({
+      schedules: { 'atomic-terminal': state },
+      pendingReceipts: { [receipt.id]: { id: receipt.id } },
     });
   });
 
@@ -310,7 +459,7 @@ describe('WorkCalendar best-effort durable execution', () => {
     await first.calendar.dispose();
 
     const persisted = JSON.parse(await readFile(durable.path, 'utf8')) as Record<string, unknown>;
-    expect(persisted).toMatchObject({ version: 2 });
+    expect(persisted).toMatchObject({ version: 3 });
     expect(persisted).toHaveProperty(
       `schedules.${first.schedule.scheduleId}.lastExecutionAt`,
       first.schedule.startsAt,
@@ -336,6 +485,71 @@ describe('WorkCalendar best-effort durable execution', () => {
     await restarted.wakeNow();
     expect(secondDispatch).not.toHaveBeenCalled();
     await restarted.dispose();
+  });
+
+  it('retries a persisted terminal receipt after restart', async () => {
+    const durable = await durableState();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const receipt = buildScheduledTurnReceipt(agent, {
+      version: 1,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: agent.publicKey,
+      principalPubkey: principal.publicKey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      runId: deterministicScheduleRunId(schedule.scheduleId, 1, schedule.startsAt),
+      nominalAt: schedule.startsAt,
+      status: 'failed',
+      at: schedule.startsAt,
+      reservedTokens: schedule.perRunReservedTokens,
+      reason: 'mission-script-fired:exit-1',
+    });
+    await durable.store.reserveReceipt(receipt);
+
+    const delivered: NostrEvent[] = [];
+    const restarted = new WorkCalendar({
+      identity: agent,
+      workspaceId: schedule.workspaceId,
+      store: new DurableWorkCalendarState(durable.path),
+      readSchedules: async () => [],
+      authorize: async () => ({ authorized: true }),
+      publish: async (event) => delivered.push(event),
+      dispatch: async () => undefined,
+      now: () => schedule.startsAt,
+    });
+    await restarted.start();
+    expect(delivered.map((event) => event.id)).toEqual([receipt.id]);
+    expect(await new DurableWorkCalendarState(durable.path).pendingReceipts()).toEqual([]);
+    await restarted.dispose();
+  });
+
+  it('retries a failed terminal receipt on the next calendar wake', async () => {
+    const store = new MemoryStore();
+    let rejectTerminal = true;
+    const delivered: NostrEvent[] = [];
+    const fixture = await calendarFixture({
+      store,
+      publish: async (event) => {
+        const receipt = parseScheduledTurnReceipt(event);
+        if (receipt?.value.status === 'complete' && rejectTerminal) {
+          rejectTerminal = false;
+          throw new Error('relay unavailable');
+        }
+        delivered.push(event);
+      },
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(store.receipts.size).toBe(1);
+    await fixture.calendar.wakeNow();
+    expect(store.receipts.size).toBe(0);
+    expect(
+      delivered.filter((event) => parseScheduledTurnReceipt(event)?.value.status === 'complete'),
+    ).toHaveLength(1);
+    await fixture.calendar.dispose();
   });
 
   it('retries after timestamp persistence fails without stalling its sole timer', async () => {
@@ -609,6 +823,61 @@ describe('WorkCalendar best-effort durable execution', () => {
     expect(dispatch.mock.calls[1]![0].scheduleRunId).toBe(
       deterministicScheduleRunId(first.scheduleId, 3, first.startsAt + 60),
     );
+    await fixture.calendar.dispose();
+  });
+
+  it('resumes a failure-paused mission from a freshly authorized controller revision', async () => {
+    vi.useFakeTimers();
+    const controller = createIdentity();
+    const captain = createIdentity();
+    const script = 'printf \'{"version":1,"status":"complete"}\\n\'';
+    const first = scheduleFixture(controller, captain, {
+      maxConsecutiveFailures: 1,
+      targetAgentPubkey: controller.publicKey,
+      execution: {
+        mode: 'script',
+        script,
+        scriptSha256: createHash('sha256').update(script).digest('hex'),
+        timeoutSeconds: 30,
+      },
+      mission: {
+        missionId: 'mission-resume',
+        grantEventId: 'b'.repeat(64),
+        controllerAgentPubkey: controller.publicKey,
+        repository: { key: 'github:resume', targetBranch: 'refs/heads/main' },
+      },
+    });
+    const schedules = [buildWorkSchedule(controller, first, { createdAt: first.startsAt - 10 })];
+    let calls = 0;
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+      calls += 1;
+      if (calls === 1) throw new Error('provider down');
+    });
+    const fixture = await calendarFixture({
+      agent: controller,
+      principal: captain,
+      schedule: first,
+      scheduleEvents: schedules,
+      dispatch,
+      missionAction: async () => ({ permissionId: 'mission-action' }) as never,
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect((await fixture.store.states())[0]).toMatchObject({ status: 'paused' });
+
+    const resumed = { ...first, revision: 2, status: 'active' as const };
+    schedules.push(buildWorkSchedule(controller, resumed, { createdAt: first.startsAt + 1 }));
+    fixture.setNow(first.startsAt + 60);
+    await fixture.calendar.refreshNow();
+    await fixture.calendar.wakeNow();
+
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect((await fixture.store.states())[0]).toMatchObject({
+      revision: 2,
+      status: 'active',
+      consecutiveFailures: 0,
+    });
     await fixture.calendar.dispose();
   });
 

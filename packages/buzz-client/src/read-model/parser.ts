@@ -1,6 +1,7 @@
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { normalizeAttachmentReference, type AttachmentReference } from '../attachment.js';
 import type { CornerMachineState } from '../corner-state.js';
+import { parseScheduledTurnReceipt } from '../scheduled-turn.js';
 import {
   DELEGATION_RECEIPT_MARKER,
   DELEGATION_TURN_MARKER,
@@ -82,6 +83,8 @@ const CONTROL_MARKERS = new Set([
   'buzz-write-permission-response',
   'buzz-agent-cancel',
   'buzz-corner-close',
+  'buzz-scheduled-turn',
+  'buzz-work-schedule-paused',
   'change-review-manifest',
   'change-review-file',
   // Harness retry/backoff narration is machine state, never an agent's
@@ -643,6 +646,38 @@ function controlPayload(
   visibility: Control['visibility'];
   payload: ControlPayload;
 } {
+  if (markerSet.has('buzz-scheduled-turn')) {
+    const parsed = parseScheduledTurnReceipt(event);
+    const status = parsed?.value.status;
+    const reason = parsed?.value.reason?.replace(/[\r\n]+/g, ' ').slice(0, 600);
+    return status === 'failed'
+      ? {
+          visibility: 'system-line',
+          payload: {
+            kind: 'system',
+            status,
+            text: reason ? `Scheduled work failed: ${reason}` : 'Scheduled work failed.',
+          },
+        }
+      : {
+          visibility: 'hidden',
+          payload: { kind: 'record', recordType: 'buzz-scheduled-turn' },
+        };
+  }
+  if (markerSet.has('buzz-work-schedule-paused')) {
+    const parsed = parseJson(event.content);
+    const reason = text(parsed?.reason)
+      ?.replace(/[\r\n]+/g, ' ')
+      .slice(0, 600);
+    return {
+      visibility: 'card',
+      payload: {
+        kind: 'system',
+        status: 'paused',
+        text: reason ? `Schedule paused: ${reason}` : 'Schedule paused.',
+      },
+    };
+  }
   if (markerSet.has('buzz-write-permission-request')) {
     const status = tag(event, 'status');
     return {
@@ -891,6 +926,9 @@ function parseMessage(event: NostrEvent, authority: ParseAuthority): ReadEvent {
   const controlMarker = [...markerSet].find((candidate) => CONTROL_MARKERS.has(candidate));
   const isExplicitBodyControl = markerSet.has('body-control') || Boolean(tag(event, 'subchannel'));
   if ((controlMarker || isExplicitBodyControl) && agentAuthor) {
+    if (markerSet.has('buzz-scheduled-turn') && !parseScheduledTurnReceipt(event)) {
+      return unknown(event, 'malformed-schema');
+    }
     const projected = controlPayload(event, markerSet);
     return {
       ...envelope(event, scope),

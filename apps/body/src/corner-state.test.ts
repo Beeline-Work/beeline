@@ -489,7 +489,7 @@ describe('Body corner state funnel', () => {
           parentChannelId: 'room-1',
           sessionId: 'session-1',
           archived: false,
-          client: { sessionCancel, stop },
+          client: { sessionCancel, stop, isAlive: true },
           unsubscribeActivity: vi.fn(),
           unsubscribeCommands: vi.fn(),
         },
@@ -578,21 +578,23 @@ describe('Body corner state funnel', () => {
     });
 
     it('startup reaps the exact no-session ghost named only by a parent corner-open card', async () => {
-      const queryEvents = vi.fn().mockImplementation(async (filters: Array<{ kinds?: number[] }>) =>
-        filters[0]?.kinds?.[0] === 9
-          ? [
-              {
-                id: 'parent-corner-open',
-                tags: [
-                  ['h', 'room-1'],
-                  ['t', 'body-control'],
-                  ['subchannel', 'corner-06ac8027'],
-                  ['status', 'open'],
-                ],
-              },
-            ]
-          : [],
-      );
+      const queryEvents = vi
+        .fn()
+        .mockImplementation(async (filters: Array<{ kinds?: number[] }>) =>
+          filters[0]?.kinds?.[0] === 9
+            ? [
+                {
+                  id: 'parent-corner-open',
+                  tags: [
+                    ['h', 'room-1'],
+                    ['t', 'body-control'],
+                    ['subchannel', 'corner-06ac8027'],
+                    ['status', 'open'],
+                  ],
+                },
+              ]
+            : [],
+        );
       stubRelay(queryEvents);
       const internals = body as unknown as {
         retractCornerActivityRecords: (parentId: string, cornerId: string) => Promise<void>;
@@ -608,9 +610,7 @@ describe('Body corner state funnel', () => {
       const terminal = await internals.sweepTerminalCornerRecords('room-1', {
         getChannelMetadata: vi
           .fn()
-          .mockImplementation(async (id: string) =>
-            id === 'room-1' ? { archived: false } : null,
-          ),
+          .mockImplementation(async (id: string) => (id === 'room-1' ? { archived: false } : null)),
       });
 
       expect(terminal).toEqual(new Set(['corner-06ac8027']));

@@ -1,4 +1,5 @@
 import type { AttachmentReference } from '../attachment.js';
+import type { ChangeReviewFile } from '../change-review.js';
 import type { CornerMachineReason, CornerMachineState } from '../corner-state.js';
 import type {
   DelegationReceiptV1,
@@ -30,6 +31,7 @@ export type IdentityRecord =
       readonly pubkey: Pubkey;
       readonly displayName?: string;
       readonly handle?: string;
+      readonly avatar?: string;
       readonly revision: string;
     }
   | {
@@ -37,6 +39,7 @@ export type IdentityRecord =
       readonly pubkey: Pubkey;
       readonly displayName?: string;
       readonly handle?: string;
+      readonly avatar?: string;
       readonly revision: string;
     }
   | {
@@ -150,6 +153,40 @@ export type ControlPayload =
       readonly about?: string;
       readonly archived?: boolean;
     }
+  | {
+      readonly kind: 'merge-approval';
+      readonly repository: string;
+      readonly branch: string;
+      readonly tip?: string;
+      readonly patchId?: string;
+    }
+  | {
+      readonly kind: 'review-manifest';
+      readonly base: string;
+      readonly tip: string;
+      readonly files: readonly ChangeReviewFile[];
+      readonly chunk: number;
+      readonly chunks: number;
+      readonly transactional: boolean;
+    }
+  | {
+      readonly kind: 'review-complete';
+      readonly base: string;
+      readonly tip: string;
+      readonly patchId: string;
+      readonly summary: string;
+      readonly manifestChunks: number;
+      readonly fileCount: number;
+    }
+  | {
+      readonly kind: 'repository';
+      readonly key: string;
+      readonly name: string;
+      readonly remote: string;
+      readonly targetBranch?: string;
+      readonly githubInstallationId?: number;
+      readonly githubEventsEnabled?: boolean;
+    }
   | { readonly kind: 'identity'; readonly identity: IdentityRecord }
   | { readonly kind: 'record'; readonly recordType: string; readonly recordId?: string };
 
@@ -217,6 +254,7 @@ export type Lifecycle = ChannelEnvelope & {
         readonly state: RoomLifecycleState;
         readonly name?: string;
         readonly about?: string;
+        readonly avatar?: string;
         readonly initialMembers?: readonly LifecycleMemberSeed[];
       }
     | {
@@ -429,6 +467,7 @@ export type RoomSnapshot = {
   readonly metadata: {
     readonly name?: string;
     readonly about?: string;
+    readonly avatar?: string;
     readonly archived: boolean;
     readonly deleted: boolean;
   };

@@ -140,12 +140,14 @@ function metadataFromEvents(room: RoomSnapshot): RoomSnapshot['metadata'] {
     .sort(compareClock);
   let name: string | undefined;
   let about: string | undefined;
+  let avatar: string | undefined;
   let archived = false;
   let deleted = false;
   for (const event of lifecycle) {
     if (event.lifecycle.entity !== 'room') continue;
     name = event.lifecycle.name ?? name;
     about = event.lifecycle.about ?? about;
+    avatar = event.lifecycle.avatar ?? avatar;
     archived =
       archived || event.lifecycle.state === 'archived' || event.lifecycle.state === 'deleted';
     deleted = deleted || event.lifecycle.state === 'deleted';
@@ -153,6 +155,7 @@ function metadataFromEvents(room: RoomSnapshot): RoomSnapshot['metadata'] {
   return {
     ...(name ? { name } : {}),
     ...(about ? { about } : {}),
+    ...(avatar ? { avatar } : {}),
     archived,
     deleted,
   };
@@ -501,6 +504,59 @@ export function replaceIdentitySnapshot(
     revision: snapshot.revision + 1,
     identities: byPubkey,
   });
+}
+
+/**
+ * Canonicalize the materialized roster through server-verified succession and
+ * the live relational member set. This changes presentation only: signed event
+ * authors and the immutable journal remain untouched.
+ */
+export function canonicalizeWorkspaceMembership(
+  snapshot: WorkspaceSnapshot,
+  currentMembers: Readonly<Record<string, readonly string[]>>,
+  succession: Readonly<Record<string, string>>,
+): WorkspaceSnapshot {
+  let changed = false;
+  const rooms = Object.fromEntries(
+    Object.entries(snapshot.rooms).map(([channelId, room]) => {
+      const allowed = currentMembers[channelId];
+      const membership = room.membership;
+      if (!allowed || membership.status !== 'known') return [channelId, room];
+      const allowedSet = new Set(allowed);
+      const members: Record<string, { pubkey: Pubkey; role: MemberRole }> = {};
+      for (const member of Object.values(membership.members)) {
+        const current = succession[member.pubkey] ?? member.pubkey;
+        if (!allowedSet.has(current)) continue;
+        const existing = members[current];
+        const role =
+          existing?.role === 'owner' || member.role === 'owner'
+            ? 'owner'
+            : existing?.role === 'admin' || member.role === 'admin'
+              ? 'admin'
+              : member.role;
+        members[current] = { pubkey: current as Pubkey, role };
+      }
+      for (const pubkey of allowed) {
+        members[pubkey] ??= { pubkey: pubkey as Pubkey, role: 'unknown' };
+      }
+      if (
+        Object.keys(members).length === Object.keys(membership.members).length &&
+        Object.entries(members).every(
+          ([pubkey, member]) => membership.members[pubkey]?.role === member.role,
+        )
+      ) {
+        return [channelId, room];
+      }
+      changed = true;
+      return [
+        channelId,
+        { ...room, membership: { ...membership, members } } satisfies RoomSnapshot,
+      ];
+    }),
+  );
+  return changed
+    ? materializeAllCorners({ ...snapshot, revision: snapshot.revision + 1, rooms })
+    : snapshot;
 }
 
 /** Merge concurrent cache/backfill snapshots without ever replacing a journal. */

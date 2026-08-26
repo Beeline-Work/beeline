@@ -214,6 +214,7 @@ async function withPublicServer(fn) {
     else if (req.url?.startsWith('/.well-known/')) { res.statusCode = 200; res.end('{}'); }
     else if (req.url === '/auth/capabilities') { res.statusCode = 200; res.end('{}'); }
     else if (req.url === '/push/health') { res.statusCode = 200; res.end('ok'); }
+    else if (req.url === '/snapshot/health') { res.statusCode = 200; res.end('ok'); }
     else { res.statusCode = 404; res.end(); }
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));

@@ -2,6 +2,7 @@ appId: app.usebeeline.mobile
 name: Workspace and chat smoke
 env:
   SMOKE_NSEC: ${SMOKE_NSEC}
+  SMOKE_HANDLE: ${SMOKE_HANDLE}
   SMOKE_ROOM_ID: ${SMOKE_ROOM_ID}
   SMOKE_LATEST_MESSAGE_ID: ${SMOKE_LATEST_MESSAGE_ID}
 ---
@@ -22,8 +23,9 @@ env:
     visible:
       id: onboarding-handle-ceremony
     timeout: 15000
-# Import pre-fills a unique valid handle and auto-focuses its field. Dismiss
-# only the keyboard so the claim control is visible, then claim that handle.
+# The app intentionally starts with an empty input and an example placeholder;
+# type this run's identity-derived unique handle before claiming it.
+- inputText: ${SMOKE_HANDLE}
 - pressKey: back
 - tapOn:
     id: onboarding-claim-handle

@@ -129,6 +129,7 @@ import {
   SLASH_COMMAND_NOTICE_TAG,
 } from './activity.js';
 import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
+import { targetBranchProposalFromAgentText } from './target-branch.js';
 import { CONCLUDE_NUDGE_SPACING_MS, MAX_CONCLUDE_NUDGES_PER_EPISODE } from './conclude-watch.js';
 import {
   CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
@@ -5581,6 +5582,122 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(await readFile(source, 'utf8')).toBe('# Evidence\n');
     await rm(root, { recursive: true, force: true });
   });
+  /** Drive one Room turn whose backend requests a mutation mid-turn, so the
+   *  permission handler opens a corner and marks the turn
+   *  transitionedToCorner exactly as production does. */
+  async function replyInRoomWithMidTurnCornerTransition(options: {
+    readonly agentText: string;
+  }): Promise<{ readonly published: NostrEvent[]; readonly eventId: string }> {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: mkdtempSync(join(tmpdir(), 'buzzy-corner-transition-')),
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    stubEmptyAgentHistory(body);
+    const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(client, 'sessionPrompt').mockImplementation(async () => {
+      // The model attempts a repository mutation mid-turn; the daemon's real
+      // permission handler opens an isolated corner for it.
+      await Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'parent-channel', {
+        sessionId: 'readonly-session',
+        toolCall: { kind: 'edit', title: 'str_replace README.md' },
+      });
+      return { stopReason: 'end_turn', updates: [], agentText: options.agentText, toolCalls: [] };
+    });
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client,
+      mode: 'readonly',
+    });
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const event = requestEvent([['p', body.agent.publicKey]], human, 'Fix this in a corner');
+    const info = {
+      subchannelId: 'corner-id',
+      worktreePath: '/tmp/worktree',
+      featureBranch: 'feature/corner',
+      role: body.agent,
+      taskDescription: 'Fix the retry loop',
+      cornerName: 'fix-the-retry-loop',
+      // Production openSubchannel records the triggering request on the
+      // corner; the continuation fallback uses it to name the corner.
+      request: { eventId: event.id } as never,
+      session: {
+        channelId: 'corner-id',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    vi.spyOn(body, 'openSubchannel').mockResolvedValue(info);
+    // Production openSubchannel registers the corner actor; the reply path
+    // looks it up by triggering request id to name the corner.
+    (Reflect.get(body, 'subchannels') as Map<string, unknown>).set('corner-id', info);
+    vi.spyOn(body as never, 'startAgentTask' as never).mockImplementation(() => undefined as never);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    await Reflect.get(body, 'replyInRoom').call(body, 'parent-channel', { repo: 'repo' }, {
+      eventId: event.id,
+      authorPubkey: event.pubkey,
+      content: event.content,
+      createdAt: event.created_at,
+    });
+    return { published, eventId: event.id };
+  }
+
+  function turnStatuses(published: readonly NostrEvent[]): (string | undefined)[] {
+    return published
+      .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn'))
+      .map((event) => event.tags.find((tag) => tag[0] === 'status')?.[1]);
+  }
+
+  it('answers the Room when a mid-turn mutation moves the work into a corner', async () => {
+    // Production evidence (Room 9d5e2285, 2026-08-25): the stall notice was
+    // already on the wire when the daemon opened the corner and settled the
+    // turn with only a complete receipt — no visible reply ever followed, so
+    // "Still working on this" stayed the agent's last words in the Room for
+    // 5+ hours while the request was silently consumed.
+    const { published, eventId } = await replyInRoomWithMidTurnCornerTransition({
+      agentText:
+        'Yes — I diagnosed it and started the fix in an isolated corner so the Room stays read-only.',
+    });
+    expect(turnStatuses(published)).toEqual(['working', 'complete']);
+    const replies = published.filter(
+      (event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    );
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.content).toBe(
+      'Yes — I diagnosed it and started the fix in an isolated corner so the Room stays read-only.',
+    );
+    // The answer threads to the human request like every other Room reply.
+    expect(replies[0]!.tags).toContainEqual(['e', eventId, '', 'reply']);
+    expect(replies[0]!.tags).toContainEqual(['h', 'parent-channel']);
+  });
+
+  it('still announces the corner when the transition turn produced no text', async () => {
+    const { published } = await replyInRoomWithMidTurnCornerTransition({ agentText: '' });
+    expect(turnStatuses(published)).toEqual(['working', 'complete']);
+    const replies = published.filter(
+      (event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    );
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.content).toContain('fix-the-retry-loop');
+    expect(replies[0]!.content).toMatch(/corner/i);
+  });
 });
 
 describe('first-class assistant messages', () => {
@@ -10648,13 +10765,29 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
    * Relay stub scoped to what this flow reads: the Room's repository config
    * and the owner projection that authorizes its author.
    */
-  function stubRelay(channelId: string, targetBranch: string | null): NostrEvent[] {
+  function stubRelay(
+    channelId: string,
+    targetBranch: string | null,
+    rejectTargetBranchProposal = false,
+  ): NostrEvent[] {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         if (String(input).endsWith('/events')) {
-          published.push(JSON.parse(String(init?.body)) as NostrEvent);
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (
+            rejectTargetBranchProposal &&
+            (event.tags ?? []).some(
+              (tag) => tag[0] === 't' && tag[1] === 'buzz-target-branch-proposal',
+            )
+          ) {
+            return new Response(JSON.stringify({ error: 'proposal refused' }), {
+              status: 400,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
           return jsonResponse({ accepted: true });
         }
         const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0] ?? {};
@@ -10808,7 +10941,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
 
     it('the Room system prompt names the exact command and forbids claiming the change', () => {
       const instructions = roomEditPolicyInstructions('repository').join('\n');
-      expect(instructions).toContain('beeline-propose-target-branch --branch <branch>');
+      expect(instructions).toContain('/change-target-branch --branch <branch>');
       expect(instructions).toContain('the Room owner has to confirm that card');
       expect(instructions).toMatch(/never say a landing-target change is in effect/i);
     });
@@ -10819,9 +10952,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       const open = vi.spyOn(body, 'openSubchannel');
       armTurn(body);
 
-      await expect(handle(body, 'beeline-propose-target-branch --branch staging')).resolves.toBe(
-        'reject',
-      );
+      await expect(handle(body, '/change-target-branch --branch staging')).resolves.toBe('reject');
 
       const card = proposals(published);
       expect(card).toHaveLength(1);
@@ -10840,14 +10971,179 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       rmSync(workspaceRoot, { recursive: true, force: true });
     });
 
+    it('turns the captured prose slash command into the native proposal card', async () => {
+      const { body, workspaceRoot } = makeBody();
+      const published = stubRelay(roomId, 'master');
+      Reflect.get(body, 'sessions').set(roomId, {
+        channelId: roomId,
+        sessionId: 'target-branch-session',
+        logicalSessionId: `${body.agent.publicKey}:${roomId}`,
+        mode: 'readonly',
+        client: {},
+      });
+      vi.spyOn(body as never, 'promptAgent' as never).mockResolvedValue({
+        stopReason: 'end_turn',
+        updates: [],
+        toolCalls: [],
+        agentText: [
+          'I can propose that change with `/change-target-branch --branch staging`.',
+          '',
+          'The target does not change until the proposal is confirmed.',
+        ].join('\n'),
+      } as never);
+
+      await expect(
+        reply(body, roomId, 'please arrange for future changes to go through staging', {
+          repo: 'buzzy',
+          repositoryKey,
+          targetBranch: 'refs/heads/master',
+        }),
+      ).resolves.toEqual({ openedCorner: false, producedReply: true });
+
+      const card = proposals(published);
+      expect(card).toHaveLength(1);
+      expect(card[0]!.content).toBe('Change target branch: master → staging');
+      expect(card[0]!.tags).toContainEqual(['requester', admin.publicKey]);
+      expect(published.filter((event) => event.kind === 30_078)).toHaveLength(0);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    });
+
+    it('replaces stale proposal prose when the Room already uses that branch', async () => {
+      const { body, workspaceRoot } = makeBody();
+      const published = stubRelay(roomId, 'staging');
+      Reflect.get(body, 'sessions').set(roomId, {
+        channelId: roomId,
+        sessionId: 'target-branch-session',
+        logicalSessionId: `${body.agent.publicKey}:${roomId}`,
+        mode: 'readonly',
+        client: {},
+      });
+      vi.spyOn(body as never, 'promptAgent' as never).mockResolvedValue({
+        stopReason: 'end_turn',
+        updates: [],
+        toolCalls: [],
+        agentText:
+          'I can propose that change with `/change-target-branch --branch staging`; the owner must confirm the card.',
+      } as never);
+
+      await expect(
+        reply(body, roomId, 'please arrange for future changes to go through staging', {
+          repo: 'buzzy',
+          repositoryKey,
+          targetBranch: 'refs/heads/staging',
+        }),
+      ).resolves.toEqual({ openedCorner: false, producedReply: true });
+
+      expect(proposals(published)).toHaveLength(0);
+      expect(
+        published.filter(
+          (event) =>
+            event.content ===
+            'This Room already lands to staging, so there is nothing to change.',
+        ),
+      ).toHaveLength(1);
+      expect(published.some((event) => event.content.includes('owner must confirm'))).toBe(false);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    });
+
+    it('keeps that no-op truthful when permission and prose expose the same command', async () => {
+      const { body, workspaceRoot } = makeBody();
+      const published = stubRelay(roomId, 'staging');
+      Reflect.get(body, 'sessions').set(roomId, {
+        channelId: roomId,
+        sessionId: 'target-branch-session',
+        logicalSessionId: `${body.agent.publicKey}:${roomId}`,
+        mode: 'readonly',
+        client: {},
+      });
+      vi.spyOn(body as never, 'promptAgent' as never).mockImplementation((async () => {
+        await handle(body, '/change-target-branch --branch staging');
+        return {
+          stopReason: 'end_turn',
+          updates: [],
+          toolCalls: [],
+          agentText:
+            'I can propose that change with `/change-target-branch --branch staging`; the owner must confirm the card.',
+        };
+      }) as never);
+
+      await expect(
+        reply(body, roomId, 'please arrange for future changes to go through staging', {
+          repo: 'buzzy',
+          repositoryKey,
+          targetBranch: 'refs/heads/staging',
+        }),
+      ).resolves.toEqual({ openedCorner: false, producedReply: true });
+
+      expect(proposals(published)).toHaveLength(0);
+      expect(
+        published.filter(
+          (event) =>
+            event.content ===
+            'This Room already lands to staging, so there is nothing to change.',
+        ),
+      ).toHaveLength(1);
+      expect(published.some((event) => event.content.includes('owner must confirm'))).toBe(false);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    });
+
+    it('keeps the Room request retryable when the native proposal is refused', async () => {
+      const { body, workspaceRoot } = makeBody();
+      const published = stubRelay(roomId, 'master', true);
+      Reflect.get(body, 'sessions').set(roomId, {
+        channelId: roomId,
+        sessionId: 'target-branch-session',
+        logicalSessionId: `${body.agent.publicKey}:${roomId}`,
+        mode: 'readonly',
+        client: {},
+      });
+      vi.spyOn(body as never, 'promptAgent' as never).mockResolvedValue({
+        stopReason: 'end_turn',
+        updates: [],
+        toolCalls: [],
+        agentText:
+          'I can propose that change with `/change-target-branch --branch staging`; the owner must confirm the card.',
+      } as never);
+
+      await expect(
+        reply(body, roomId, 'please arrange for future changes to go through staging', {
+          repo: 'buzzy',
+          repositoryKey,
+          targetBranch: 'refs/heads/master',
+        }),
+      ).resolves.toEqual({ openedCorner: false, producedReply: false });
+
+      expect(proposals(published).length).toBeGreaterThan(0);
+      expect(
+        published.filter(
+          (event) =>
+            event.content === "I couldn't publish the target-branch proposal; please try again.",
+        ),
+      ).toHaveLength(1);
+      expect(published.some((event) => event.content.includes('owner must confirm'))).toBe(false);
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    });
+
+    it('does not classify a malformed or chained prose slash command', () => {
+      for (const text of [
+        '/change-target-branch',
+        '/change-target-branch staging',
+        '/change-target-branch --branch ..',
+        '/change-target-branch --branch staging && echo nope',
+        'Use `/change-target-branch --branch <branch>` when a branch is known.',
+      ]) {
+        expect(targetBranchProposalFromAgentText(text), text).toBeUndefined();
+      }
+    });
+
     it('caps the card at one per turn however often the agent attempts it', async () => {
       const { body, workspaceRoot } = makeBody();
       const published = stubRelay(roomId, 'master');
       armTurn(body);
 
-      await handle(body, 'beeline-propose-target-branch --branch staging');
-      await handle(body, 'beeline-propose-target-branch --branch staging');
-      await handle(body, 'beeline-propose-target-branch --branch other');
+      await handle(body, '/change-target-branch --branch staging');
+      await handle(body, '/change-target-branch --branch staging');
+      await handle(body, '/change-target-branch --branch other');
 
       expect(proposals(published)).toHaveLength(1);
       rmSync(workspaceRoot, { recursive: true, force: true });
@@ -10860,7 +11156,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       const published = stubRelay(roomId, 'master');
       armTurn(body, { readOnlyInformationRequest: true });
 
-      await handle(body, 'beeline-propose-target-branch --branch staging');
+      await handle(body, '/change-target-branch --branch staging');
 
       expect(proposals(published)).toHaveLength(1);
       rmSync(workspaceRoot, { recursive: true, force: true });
@@ -10871,9 +11167,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       const published = stubRelay(roomId, 'master');
       armTurn(body, { boundRepo: undefined, editPolicy: 'direct-message' });
 
-      await expect(handle(body, 'beeline-propose-target-branch --branch staging')).resolves.toBe(
-        'reject',
-      );
+      await expect(handle(body, '/change-target-branch --branch staging')).resolves.toBe('reject');
       expect(proposals(published)).toHaveLength(0);
       rmSync(workspaceRoot, { recursive: true, force: true });
     });
@@ -10888,7 +11182,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       armTurn(body, { permissionHandled: true });
 
       await expect(
-        handle(body, 'beeline-propose-target-branch --branch staging; rm -rf /tmp/x'),
+        handle(body, '/change-target-branch --branch staging; rm -rf /tmp/x'),
       ).resolves.toBe('reject');
       expect(proposals(published)).toHaveLength(0);
       rmSync(workspaceRoot, { recursive: true, force: true });

@@ -140,7 +140,7 @@ change it, and nothing you remember or write down can change it. When someone
 asks for changes to land on a different branch from now on, attempt this exact
 command once:
 
-    beeline-propose-target-branch --branch <branch>
+    /change-target-branch --branch <branch>
 
 Replace \`<branch>\` with the exact branch name they asked for. The host never
 runs it: it rejects the command itself and posts a proposal card in the Room.

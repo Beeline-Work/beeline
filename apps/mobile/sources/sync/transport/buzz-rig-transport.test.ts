@@ -10,6 +10,7 @@ import {
   KIND_CHANNEL_MEMBERS,
   KIND_CORNER_STATE,
   KIND_CREATE_GROUP,
+  KIND_STREAM_MESSAGE,
   TAG_AGENT_ACTIVITY,
   TAG_AGENT_PRESENCE,
   TAG_COMMUNITY,
@@ -183,6 +184,7 @@ function cornerState2(): NostrEvent {
 function clientFixture(
   input: {
     messages?: NostrEvent[];
+    exactMessages?: NostrEvent[];
     corners?: boolean;
     secondCorner?: boolean;
     draftLanes?: NostrEvent[];
@@ -336,7 +338,20 @@ function clientFixture(
           const matches = createEvents.filter((event) =>
             event.tags.some((tag) => tag[0] === 'h' && (hKeys ?? []).includes(tag[1]!)),
           );
-          results.push(...(hKeys !== undefined && hKeys.length > 1 ? matches.slice(0, 1) : matches));
+          results.push(
+            ...(hKeys !== undefined && hKeys.length > 1 ? matches.slice(0, 1) : matches),
+          );
+        }
+        if (kinds.has(KIND_STREAM_MESSAGE)) {
+          const ids = (filter.ids as string[] | undefined) ?? [];
+          const hKeys = (filter['#h'] as string[] | undefined) ?? [];
+          results.push(
+            ...(input.exactMessages ?? []).filter(
+              (event) =>
+                ids.includes(event.id) &&
+                event.tags.some((tag) => tag[0] === 'h' && hKeys.includes(tag[1]!)),
+            ),
+          );
         }
       }
       return [...new Map(results.map((event) => [event.id, event])).values()];
@@ -944,6 +959,116 @@ describe('BuzzRigTransport typed read-model boundary', () => {
       {},
     );
     expect(fixture.client.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('exact-fetches absent cold-cache ancestry before signing a nested reply', async () => {
+    const root = message(human, 'Thread root', 5);
+    const first = message(agent, 'First reply', 6, [
+      ['e', root.id, '', 'root'],
+      ['e', root.id, '', 'reply'],
+    ]);
+    const nested = message(agent, 'Nested reply', 7, [
+      ['e', root.id, '', 'root'],
+      ['e', first.id, '', 'reply'],
+    ]);
+
+    // Build the projection through the production parser, then model a cold,
+    // truncated persisted Room: the visible nested message survives, its
+    // parent/root rows do not, and its stored root is the mid-thread guess.
+    const warmFixture = clientFixture();
+    const warmTransport = transportWith(warmFixture.client);
+    const firstPage = await warmTransport.readModelSnapshot(ROOM, [root, first]);
+    const nestedPage = await warmTransport.readModelSnapshot(ROOM, [nested]);
+    const complete = reduceWorkspaceEvents(
+      firstPage,
+      Object.values(nestedPage.rooms[ROOM]!.eventJournal),
+    );
+    const completeRoom = complete.rooms[ROOM]!;
+    const nestedEvent = completeRoom.eventJournal[nested.id];
+    if (
+      !nestedEvent ||
+      (nestedEvent.type !== 'human-message' && nestedEvent.type !== 'agent-message')
+    ) {
+      throw new Error('nested fixture message was not parsed');
+    }
+    const cold = {
+      ...complete,
+      rooms: {
+        ...complete.rooms,
+        [ROOM]: {
+          ...completeRoom,
+          eventJournal: {
+            [nested.id]: {
+              ...nestedEvent,
+              reply: { ...nestedEvent.reply!, rootId: first.id },
+            },
+          },
+        },
+      },
+    };
+    const selected = selectReplyTarget(cold, ROOM, nested.id);
+    if (selected.status !== 'available') throw new Error('cold cached reply was not selected');
+    expect(selected.reference.rootId).toBe(first.id);
+
+    // A fresh transport has no in-memory ancestry, but the exact parent and
+    // true root remain fetchable from the relay before construction.
+    const coldFixture = clientFixture({ exactMessages: [nested, first, root] });
+    const coldTransport = transportWith(coldFixture.client);
+    expect(
+      (coldTransport as unknown as { knownMessages: Map<string, unknown> }).knownMessages.size,
+    ).toBe(0);
+
+    await coldTransport.messageSubmitReply('Captain reply', selected.reference);
+
+    expect(coldFixture.client.query).toHaveBeenCalledWith([
+      { ids: [nested.id], kinds: [KIND_STREAM_MESSAGE], '#h': [ROOM], limit: 1 },
+    ]);
+    expect(coldFixture.client.query).toHaveBeenCalledWith([
+      { ids: [first.id], kinds: [KIND_STREAM_MESSAGE], '#h': [ROOM], limit: 1 },
+    ]);
+    expect(coldFixture.client.query).toHaveBeenCalledWith([
+      { ids: [root.id], kinds: [KIND_STREAM_MESSAGE], '#h': [ROOM], limit: 1 },
+    ]);
+    expect(coldFixture.client.buildReplyMessage).toHaveBeenCalledWith(
+      'Captain reply',
+      { ...selected.reference, rootId: root.id },
+      {},
+    );
+    expect(coldFixture.client.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps exact-fetch failure typed and retryable without signing or publishing', async () => {
+    const root = message(human, 'Unavailable root', 5);
+    const first = message(agent, 'Unavailable first reply', 6, [['e', root.id, '', 'reply']]);
+    const nested = message(agent, 'Nested reply with missing root', 7, [
+      ['e', root.id, '', 'root'],
+      ['e', first.id, '', 'reply'],
+    ]);
+    const fixture = clientFixture({ exactMessages: [nested, first] });
+    const transport = transportWith(fixture.client);
+    const coldReference = {
+      channelId: ROOM,
+      eventId: nested.id,
+      rootId: first.id,
+    } as KnownMessageReference;
+
+    await expect(transport.messageSubmitReply('Do not sign', coldReference)).rejects.toMatchObject({
+      name: 'RelayPublishError',
+      kind: 'TRANSIENT',
+      retryable: true,
+    });
+
+    expect(fixture.client.query).toHaveBeenCalledWith([
+      { ids: [nested.id], kinds: [KIND_STREAM_MESSAGE], '#h': [ROOM], limit: 1 },
+    ]);
+    expect(fixture.client.query).toHaveBeenCalledWith([
+      { ids: [first.id], kinds: [KIND_STREAM_MESSAGE], '#h': [ROOM], limit: 1 },
+    ]);
+    expect(fixture.client.query).toHaveBeenCalledWith([
+      { ids: [root.id], kinds: [KIND_STREAM_MESSAGE], '#h': [ROOM], limit: 1 },
+    ]);
+    expect(fixture.client.buildReplyMessage).not.toHaveBeenCalled();
+    expect(fixture.client.publish).not.toHaveBeenCalled();
   });
 
   it('derives canonical corners from creator-authored lifecycle and verified membership', async () => {

@@ -17,6 +17,7 @@ export type DirtyChannelClaim = {
   readonly tenantId: string;
   readonly channelId: string;
   readonly dirtyRevision: number;
+  readonly repositoryScanRevision: number;
   readonly claimToken: string;
 };
 
@@ -90,6 +91,7 @@ CREATE TABLE IF NOT EXISTS beeline_snapshot_dirty (
   relay_tenant_id uuid NOT NULL,
   channel_id uuid NOT NULL,
   dirty_revision bigint NOT NULL DEFAULT nextval('beeline_snapshot_dirty_revision_seq'),
+  repository_scan_revision bigint NOT NULL DEFAULT nextval('beeline_snapshot_dirty_revision_seq'),
   dirty_at timestamptz NOT NULL DEFAULT now(),
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
   claimed_until timestamptz,
@@ -111,6 +113,19 @@ CREATE INDEX IF NOT EXISTS beeline_snapshot_dirty_due_idx
 
 ALTER TABLE beeline_snapshot_dirty
   ALTER COLUMN dirty_revision SET DEFAULT nextval('beeline_snapshot_dirty_revision_seq');
+
+ALTER TABLE beeline_snapshot_dirty
+  ADD COLUMN IF NOT EXISTS repository_scan_revision bigint;
+
+UPDATE beeline_snapshot_dirty
+SET repository_scan_revision = nextval('beeline_snapshot_dirty_revision_seq')
+WHERE repository_scan_revision IS NULL;
+
+ALTER TABLE beeline_snapshot_dirty
+  ALTER COLUMN repository_scan_revision SET DEFAULT nextval('beeline_snapshot_dirty_revision_seq');
+
+ALTER TABLE beeline_snapshot_dirty
+  ALTER COLUMN repository_scan_revision SET NOT NULL;
 
 ALTER TABLE beeline_snapshot_dirty
   ADD COLUMN IF NOT EXISTS claimed_token text;
@@ -144,6 +159,7 @@ RETURNS void LANGUAGE sql AS $$
   VALUES (p_tenant, p_channel)
   ON CONFLICT (relay_tenant_id, channel_id) DO UPDATE SET
     dirty_revision = nextval('beeline_snapshot_dirty_revision_seq'),
+    repository_scan_revision = nextval('beeline_snapshot_dirty_revision_seq'),
     dirty_at = LEAST(beeline_snapshot_dirty.dirty_at, now()),
     next_attempt_at = LEAST(beeline_snapshot_dirty.next_attempt_at, now()),
     attempts = 0,
@@ -448,8 +464,9 @@ export class ChannelSnapshotStore {
         relay_tenant_id: string;
         channel_id: string;
         dirty_revision: string | number;
+        repository_scan_revision: string | number;
       }>(
-        `SELECT relay_tenant_id, channel_id, dirty_revision
+        `SELECT relay_tenant_id, channel_id, dirty_revision, repository_scan_revision
          FROM beeline_snapshot_dirty
          WHERE next_attempt_at <= now()
            AND dirty_at <= now() - ($2::text || ' milliseconds')::interval
@@ -462,6 +479,7 @@ export class ChannelSnapshotStore {
         tenantId: row.relay_tenant_id,
         channelId: row.channel_id,
         dirtyRevision: numberValue(row.dirty_revision),
+        repositoryScanRevision: numberValue(row.repository_scan_revision),
         claimToken: randomUUID(),
       }));
       for (const claim of claims) {
@@ -470,8 +488,16 @@ export class ChannelSnapshotStore {
            SET claimed_until = now() + ($3::text || ' milliseconds')::interval,
                claimed_token = $4,
                last_claimed_at = now()
-           WHERE relay_tenant_id = $1 AND channel_id = $2 AND dirty_revision = $5`,
-          [claim.tenantId, claim.channelId, leaseMs, claim.claimToken, claim.dirtyRevision],
+           WHERE relay_tenant_id = $1 AND channel_id = $2
+             AND dirty_revision = $5 AND repository_scan_revision = $6`,
+          [
+            claim.tenantId,
+            claim.channelId,
+            leaseMs,
+            claim.claimToken,
+            claim.dirtyRevision,
+            claim.repositoryScanRevision,
+          ],
         );
       }
       return claims;
@@ -519,6 +545,8 @@ export class ChannelSnapshotStore {
     if (channelIds.length === 0 || !repositoryChannelId) return null;
 
     const continuationResult = await this.database.query<{
+      dirty_revision: string | number;
+      repository_scan_revision: string | number;
       scan_cursor_created_at: string | number | null;
       scan_cursor_event_id: string | null;
       scan_event_ids: unknown;
@@ -526,24 +554,32 @@ export class ChannelSnapshotStore {
       repository_cursor_event_id: string | null;
       repository_event_id: string | null;
     }>(
-      `SELECT scan_cursor_created_at, scan_cursor_event_id, scan_event_ids,
+      `SELECT dirty_revision, repository_scan_revision,
+              scan_cursor_created_at, scan_cursor_event_id, scan_event_ids,
               repository_cursor_created_at, repository_cursor_event_id,
               repository_event_id
        FROM beeline_snapshot_dirty
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
-         AND dirty_revision = $3 AND claimed_token = $4`,
-      [claim.tenantId, claim.channelId, claim.dirtyRevision, claim.claimToken],
+         AND claimed_token = $3`,
+      [claim.tenantId, claim.channelId, claim.claimToken],
     );
     const continuationRow = continuationResult.rows[0];
-    const continuationEventIds = Array.isArray(continuationRow?.scan_event_ids)
+    const messageContinuationCurrent =
+      continuationRow !== undefined &&
+      numberValue(continuationRow.dirty_revision) === claim.dirtyRevision;
+    const repositoryContinuationCurrent =
+      continuationRow !== undefined &&
+      numberValue(continuationRow.repository_scan_revision) === claim.repositoryScanRevision;
+    const continuationEventIds =
+      messageContinuationCurrent && Array.isArray(continuationRow.scan_event_ids)
       ? continuationRow.scan_event_ids.filter(
           (eventId): eventId is string =>
             typeof eventId === 'string' && /^[0-9a-f]{64}$/.test(eventId),
         )
       : [];
     const continuationCursor =
-      continuationRow?.scan_cursor_created_at !== null &&
-      continuationRow?.scan_cursor_created_at !== undefined &&
+      messageContinuationCurrent &&
+      continuationRow.scan_cursor_created_at !== null &&
       continuationRow.scan_cursor_event_id &&
       /^[0-9a-f]{64}$/.test(continuationRow.scan_cursor_event_id)
         ? {
@@ -552,8 +588,8 @@ export class ChannelSnapshotStore {
           }
         : undefined;
     const repositoryCursor =
-      continuationRow?.repository_cursor_created_at !== null &&
-      continuationRow?.repository_cursor_created_at !== undefined &&
+      repositoryContinuationCurrent &&
+      continuationRow.repository_cursor_created_at !== null &&
       continuationRow.repository_cursor_event_id &&
       /^[0-9a-f]{64}$/.test(continuationRow.repository_cursor_event_id)
         ? {
@@ -562,7 +598,8 @@ export class ChannelSnapshotStore {
           }
         : undefined;
     const repositoryEventId =
-      continuationRow?.repository_event_id &&
+      repositoryContinuationCurrent &&
+      continuationRow.repository_event_id &&
       /^[0-9a-f]{64}$/.test(continuationRow.repository_event_id)
         ? continuationRow.repository_event_id
         : undefined;
@@ -1070,11 +1107,11 @@ export class ChannelSnapshotStore {
          claimed_token = NULL,
          next_attempt_at = now()
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
-         AND dirty_revision = $3 AND claimed_token = $4`,
+         AND repository_scan_revision = $3 AND claimed_token = $4`,
       [
         claim.tenantId,
         claim.channelId,
-        claim.dirtyRevision,
+        claim.repositoryScanRevision,
         claim.claimToken,
         cursor.createdAt,
         cursor.eventId,
@@ -1095,11 +1132,11 @@ export class ChannelSnapshotStore {
     await this.database.query(
       `UPDATE beeline_snapshot_dirty SET repository_event_id = $5
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
-         AND dirty_revision = $3 AND claimed_token = $4`,
+         AND repository_scan_revision = $3 AND claimed_token = $4`,
       [
         claim.tenantId,
         claim.channelId,
-        claim.dirtyRevision,
+        claim.repositoryScanRevision,
         claim.claimToken,
         repositoryEventId ?? null,
       ],

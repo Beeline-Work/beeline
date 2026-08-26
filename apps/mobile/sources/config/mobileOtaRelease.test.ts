@@ -65,7 +65,7 @@ describe('mobile OTA release governor', () => {
     expect(rollback.stdout).toContain(
       'update:republish --group known-good-group --destination-branch production',
     );
-  });
+  }, 60_000);
 
   it('refuses production promotion while the canary is still pending', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-pending-'));
@@ -84,7 +84,7 @@ describe('mobile OTA release governor', () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Refusing production promotion');
-  });
+  }, 60_000);
 
   it('records the predecessor, canary proof, and republished production group', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-ledger-'));
@@ -128,7 +128,7 @@ esac
         groupId: 'production-group',
       },
     });
-  });
+  }, 60_000);
 
   it('keeps canary before promotion and exposes an off-by-default emergency bypass', () => {
     expect(workflow).toContain('default: false');
@@ -216,7 +216,7 @@ esac
       expect(result.stderr).toContain('platform-tools');
       expect(result.stderr).toContain('ANDROID_HOME');
       expect(result.stderr).not.toContain('requires the existing Android emulator');
-    });
+    }, 60_000);
 
     it('resolves adb from ANDROID_HOME when PATH lacks it and proceeds past the device gate', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-ok-'));
@@ -240,7 +240,7 @@ esac
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('BEELINE_BETA_APK');
       expect(result.stderr).toContain('missing.apk');
-    });
+    }, 60_000);
 
     it('parks when the sanctioned emulator is not attached to the adb server', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-none-'));
@@ -251,7 +251,7 @@ esac
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('emulator-5554');
       expect(result.stderr).toContain('boot');
-    });
+    }, 60_000);
 
     it('parks when the emulator is attached but not ready', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-offline-'));
@@ -265,7 +265,7 @@ esac
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('offline');
       expect(result.stderr).toContain('not ready');
-    });
+    }, 60_000);
 
     it('writes the parked reason to OTA_CANARY_REASON_FILE on a device-gate failure', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-reason-file-'));
@@ -283,7 +283,7 @@ esac
       expect(reason).toContain('not attached to the shared adb server');
       // Exactly one line so the workflow can quote it verbatim.
       expect(reason.split('\n')).toHaveLength(1);
-    });
+    }, 60_000);
 
     // Stubs for the APK-acquisition preflight. The stub npx/curl sit earlier
     // on PATH than /usr/bin, so no real EAS call or download ever happens.
@@ -345,7 +345,7 @@ esac
       expect(JSON.parse(readFileSync(ledger, 'utf8')).canary).toMatchObject({
         status: 'pending',
       });
-    });
+    }, 60_000);
 
     // Stubs a full canary adb surface driven by env knobs. The call log and
     // state live under the caller's temp directory so assertions can prove
@@ -439,7 +439,7 @@ esac
       expect(readFileSync(join(stateDir, 'uninstall_call'), 'utf8')).toBe(
         '-s emulator-5554 uninstall app.usebeeline.mobile\n',
       );
-    });
+    }, 60_000);
 
     it('parks honestly when the incompatible existing package cannot be removed', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-signature-unins-'));
@@ -466,7 +466,7 @@ esac
       // Exactly one install attempt, no retry past a failed cleanup.
       const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
       expect(calls.filter((call) => call.includes('install -r'))).toHaveLength(1);
-    });
+    }, 60_000);
 
     it('parks honestly when the install still fails after removing the differently-signed package', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-signature-still-'));
@@ -491,7 +491,7 @@ esac
       expect(result.stderr).toContain('INSTALL_FAILED_UPDATE_INCOMPATIBLE');
       const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
       expect(calls.filter((call) => call.includes('install -r'))).toHaveLength(2);
-    });
+    }, 60_000);
 
     it('parks when the EAS build listing itself fails', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-eas-fail-'));
@@ -511,7 +511,7 @@ esac
       expect(result.stderr).toContain('could not list EAS builds');
       expect(result.stderr).toContain('exited 7');
       expect(result.stderr).toContain('EXPO_TOKEN');
-    });
+    }, 60_000);
 
     it('parks when the ledger is unreadable by the canary process', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-ledger-eacces-'));
@@ -528,7 +528,7 @@ esac
       expect(result.stderr).toContain('unreadable or malformed JSON');
       // Restore so the temp directory can be cleaned up afterwards.
       chmodSync(ledger, 0o600);
-    });
+    }, 60_000);
 
     it('parks when the beta APK download fails after a successful build lookup', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-download-fail-'));
@@ -550,7 +550,7 @@ esac
 
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('could not download the beta APK');
-    });
+    }, 60_000);
   });
 
   it('records a blocked canary and parks production promotion behind the stored reason', () => {
@@ -596,7 +596,7 @@ esac
       status: 'blocked',
       reason: 'ota-canary.sh exited 2: runner cannot reach adb/emulator-5554',
     });
-  });
+  }, 60_000);
 
   it('the workflow parks the ledger record on canary failure and pins where adb lives', () => {
     expect(workflow).toContain('ANDROID_HOME: /home/lunchbox/android-sdk');

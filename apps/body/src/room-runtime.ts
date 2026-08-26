@@ -54,6 +54,9 @@ interface RunningRoom {
   recovering: boolean;
 }
 
+/** Leave the rest of systemd's cleanup reserve intact if the relay is wedged. */
+const FORCED_UPDATE_NOTICE_TIMEOUT_MS = 5_000;
+
 interface DesiredChannel {
   membershipSince: number;
   kind: 'repository' | 'named-repository' | 'direct-message';
@@ -478,6 +481,37 @@ export class RoomRuntimeCoordinator {
       if (typeof room.body.isBusy === 'function' && room.body.isBusy()) return false;
     }
     return true;
+  }
+
+  /** Atomically prove idle and close Room intake before handoff can race a new turn. */
+  quiesceForUpdateIfIdle(): boolean {
+    if (!this.isWorkspaceIdle()) return false;
+    for (const room of this.running.values()) room.controller.abort();
+    return true;
+  }
+
+  /** Record the bounded forced-update state before any active ACP run is cancelled. */
+  async prepareForForcedUpdateRestart(): Promise<void> {
+    const rooms = [...this.running.entries()];
+    const notices = rooms.map(([channelId, room]) =>
+      typeof room.body.isBusy === 'function' && room.body.isBusy()
+        ? room.body.prepareForForcedUpdateRestart(channelId)
+        : Promise.resolve(),
+    );
+    // Every Body sets its forced-update flag synchronously before its notice
+    // publish awaits. Abort intake only after those flags exist, so an event
+    // already queued on the socket remains retryable if cancellation wins.
+    for (const [, room] of rooms) room.controller.abort();
+    let timer: NodeJS.Timeout | undefined;
+    const noticeDeadline = new Promise<void>((resolveDeadline) => {
+      timer = setTimeout(resolveDeadline, FORCED_UPDATE_NOTICE_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    try {
+      await Promise.race([Promise.allSettled(notices).then(() => undefined), noticeDeadline]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**

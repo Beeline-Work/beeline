@@ -87,6 +87,77 @@ describe('ThinDaemonCore', () => {
     expect(process.pid).toBe(daemonPid);
   });
 
+  it('uses the Body turn registry to quiesce update intake only after active work settles', () => {
+    let turnActive = true;
+    const controller = new AbortController();
+    const coordinator = new RoomRuntimeCoordinator(
+      runtime(),
+      '/tmp/beeline-thin-core-test/runtime.json',
+      {} as BodyConfig,
+    ) as unknown as {
+      running: Map<string, unknown>;
+      quiesceForUpdateIfIdle(): boolean;
+    };
+    coordinator.running.set('active-room', {
+      body: { isBusy: () => turnActive },
+      controller,
+      promise: Promise.resolve(),
+      lastPollAt: 0,
+      lastPresenceAt: 0,
+      presence: 'online',
+      backoffUntil: 0,
+      recovering: false,
+    });
+
+    expect(coordinator.quiesceForUpdateIfIdle()).toBe(false);
+    expect(controller.signal.aborted).toBe(false);
+
+    turnActive = false;
+    expect(coordinator.quiesceForUpdateIfIdle()).toBe(true);
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it('bounds the forced-update restart notice when its relay publish never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const coordinator = new RoomRuntimeCoordinator(
+        runtime(),
+        '/tmp/beeline-thin-core-test/runtime.json',
+        {} as BodyConfig,
+      ) as unknown as {
+        running: Map<string, unknown>;
+        prepareForForcedUpdateRestart(): Promise<void>;
+      };
+      coordinator.running.set('active-room', {
+        body: {
+          isBusy: () => true,
+          prepareForForcedUpdateRestart: () => new Promise<void>(() => undefined),
+        },
+        controller,
+        promise: Promise.resolve(),
+        lastPollAt: 0,
+        lastPresenceAt: 0,
+        presence: 'online',
+        backoffUntil: 0,
+        recovering: false,
+      });
+
+      let settled = false;
+      const preparation = coordinator.prepareForForcedUpdateRestart().then(() => {
+        settled = true;
+      });
+      expect(controller.signal.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await preparation;
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('quiesces and force-recovers continuous work at the absolute drain deadline', async () => {
     let finishRoom!: () => void;
     const roomPromise = new Promise<void>((resolveRoom) => {

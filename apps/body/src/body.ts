@@ -13,7 +13,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, readFile, realpath, stat } from 'node:fs/promises';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -335,6 +335,7 @@ import { SquireHostBroker } from './squire-host-broker.js';
 import {
   hasUnmaskableTrustySquireIpc,
   trustySquireIsolationPaths,
+  trustySquireLegacyStorePaths,
   trustySquireStorePath,
 } from './trusty-squire-storage.js';
 import {
@@ -622,6 +623,34 @@ export function isAcpPromptStallError(error: unknown): boolean {
     String(error),
   );
 }
+
+/** One bounded, credential-safe journal detail for a failed Room turn. */
+export function agentTurnFailureJournalDetail(error: unknown): string {
+  if (!(error instanceof Error)) return 'non-Error';
+  const firstLine = error.message.split(/\r?\n/, 1)[0]?.trim() ?? '';
+  const knownActivationFailures = new Set([
+    'Trusty Squire requires a Codex or Claude harness with an interceptable P1 boundary',
+    'Trusty Squire requires an active bubblewrap credential-mask boundary',
+    'Trusty Squire requires an isolated agent home; ambient harness state is refused',
+    'Trusty Squire host-only storage is not configured',
+    'Trusty Squire session IPC cannot be masked safely',
+    'Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox',
+    'Trusty Squire activation refused without bubblewrap isolation',
+    'Trusty Squire activation refused because sandbox mounts are incomplete',
+  ]);
+  if (
+    knownActivationFailures.has(firstLine) ||
+    /^ACP (?:initialize|session\/new) timed out after \d+ms(?: of inactivity)?$/.test(firstLine) ||
+    /^ACP session\/prompt timed out after \d+ms of inactivity$/.test(firstLine) ||
+    /^ACP turn hard deadline exceeded after \d+ms$/.test(firstLine) ||
+    /^session [A-Za-z0-9:._-]+ was suspended while activating$/.test(firstLine)
+  ) {
+    return firstLine.slice(0, 512);
+  }
+  return 'Error';
+}
+
+const SQUIRE_MASK_PLACEHOLDER = '.beeline-sandbox-mask-placeholder';
 
 /**
  * Default cadence for the WS-push loop's low-rate maintenance/liveness tick
@@ -2638,12 +2667,35 @@ export class Body {
    * every child activation: the env paths are stable, while copied MCP config
    * must reflect operator edits on the next session start.
    */
-  private squireBoundaryRequired(): boolean {
+  private squireOwnedStoreHasState(): boolean {
+    if (!this.config.squireConfigRoot) return false;
+    const store = trustySquireStorePath(this.config.squireConfigRoot);
+    if (!existsSync(store)) return false;
+    try {
+      const entries = readdirSync(store);
+      return !(entries.length === 1 && entries[0] === SQUIRE_MASK_PLACEHOLDER);
+    } catch {
+      // An unreadable owned store may contain credentials. Fail closed.
+      return true;
+    }
+  }
+
+  private squireGovernedBoundaryRequired(): boolean {
+    return Boolean(
+      Boolean(this.config.externalMcpCapabilities?.length) || this.squireOwnedStoreHasState(),
+    );
+  }
+
+  /**
+   * Legacy operator Squire state is evidence to scrub and mask, not evidence
+   * that this agent was granted Beeline's governed Squire capability. Keep the
+   * isolation boundary active for both shapes while reserving the host-store
+   * and interceptable-harness requirements for an owned/governed store.
+   */
+  private squireIsolationRequired(): boolean {
     const env = { ...process.env, ...this.config.agentEnv };
     return Boolean(
-      Boolean(this.config.externalMcpCapabilities?.length) ||
-      (this.config.squireConfigRoot &&
-        existsSync(trustySquireStorePath(this.config.squireConfigRoot))) ||
+      this.squireGovernedBoundaryRequired() ||
       hasLocalTrustySquireState(this.config.operatorHome, env) ||
       hasAmbientTrustySquireConfiguration(this.config.operatorHome),
     );
@@ -2668,9 +2720,14 @@ export class Body {
 
   private sessionAgentEnv(): Promise<Record<string, string>> {
     const root = this.config.agentHomeRoot;
-    const squireBoundaryRequired = this.squireBoundaryRequired();
-    if (squireBoundaryRequired) {
-      if (this.config.agentKind !== 'codex' && this.config.agentKind !== 'claude') {
+    const squireIsolationRequired = this.squireIsolationRequired();
+    const squireGovernedBoundaryRequired = this.squireGovernedBoundaryRequired();
+    if (squireIsolationRequired) {
+      if (
+        squireGovernedBoundaryRequired &&
+        this.config.agentKind !== 'codex' &&
+        this.config.agentKind !== 'claude'
+      ) {
         return Promise.reject(
           new Error(
             'Trusty Squire requires a Codex or Claude harness with an interceptable P1 boundary',
@@ -2697,13 +2754,45 @@ export class Body {
         operatorHome: this.config.operatorHome ?? homedir(),
         env: { ...process.env, ...this.config.agentEnv },
       };
+      const store = trustySquireStorePath(this.config.squireConfigRoot);
+      if (squireGovernedBoundaryRequired && !this.squireOwnedStoreHasState()) {
+        return Promise.reject(
+          new Error(
+            'Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox',
+          ),
+        );
+      }
+      // Bubblewrap cannot create a missing mountpoint beneath its read-only
+      // root bind. For legacy isolation, reserve an empty Beeline-owned leaf
+      // before spawn. A marker distinguishes that namespace-only mountpoint
+      // from an owner-created (even empty) governed store on later activations.
+      try {
+        const reserveStoreMountpoint = !existsSync(store);
+        mkdirSync(store, { recursive: true });
+        if (reserveStoreMountpoint) {
+          writeFileSync(resolve(store, SQUIRE_MASK_PLACEHOLDER), 'sandbox mountpoint\n', {
+            flag: 'wx',
+          });
+        }
+        for (const legacyStore of trustySquireLegacyStorePaths(
+          isolationInput.operatorHome,
+          isolationInput.env,
+        )) {
+          mkdirSync(legacyStore, { recursive: true });
+        }
+      } catch {
+        return Promise.reject(
+          new Error(
+            'Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox',
+          ),
+        );
+      }
       if (hasUnmaskableTrustySquireIpc(isolationInput.env)) {
         return Promise.reject(new Error('Trusty Squire session IPC cannot be masked safely'));
       }
       const requiredPaths = trustySquireIsolationPaths(isolationInput);
-      const store = trustySquireStorePath(this.config.squireConfigRoot);
       const masked = new Set(this.sandboxCredentialMaskPaths().map((mask) => mask.path));
-      if (!existsSync(store) || requiredPaths.some((path) => !masked.has(path))) {
+      if (requiredPaths.some((path) => !masked.has(path))) {
         return Promise.reject(
           new Error(
             'Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox',
@@ -2714,11 +2803,11 @@ export class Body {
     if (!root) return Promise.resolve(this.config.agentEnv);
     return prepareRoomAgentHome({
       root,
-      failClosed: Boolean(squireBoundaryRequired),
+      failClosed: Boolean(squireIsolationRequired),
       ...(this.config.operatorHome ? { operatorHome: this.config.operatorHome } : {}),
     }).then((overlay) => {
       const env = { ...this.config.agentEnv, ...overlay };
-      if (squireBoundaryRequired) {
+      if (squireIsolationRequired) {
         delete env.DBUS_SESSION_BUS_ADDRESS;
         delete env.DBUS_STARTER_ADDRESS;
         delete env.DBUS_STARTER_BUS_TYPE;
@@ -2910,7 +2999,7 @@ export class Body {
     const command = this.config.agentCommand ?? this.config.agentBinary;
     const args = this.config.agentArgs;
     if (!this.config.bwrapPath) {
-      if (this.squireBoundaryRequired()) {
+      if (this.squireIsolationRequired()) {
         throw new Error('Trusty Squire activation refused without bubblewrap isolation');
       }
       return { command, args: [...(args ?? [])] };
@@ -2955,7 +3044,7 @@ export class Body {
     if (input.mode === 'edit') {
       const gitCommonDir = await resolveGitCommonDir(input.worktreePath ?? input.cwd);
       if (!gitCommonDir) {
-        if (this.squireBoundaryRequired()) {
+        if (this.squireIsolationRequired()) {
           throw new Error('Trusty Squire activation refused because sandbox mounts are incomplete');
         }
         console.warn(
@@ -3964,6 +4053,11 @@ export class Body {
         .catch((error) => console.error('[body] failed to record model spend:', error));
     } catch (error) {
       clearStallTimer();
+      console.error(
+        `[body] room ${turn.channelId} request ${turn.requestId}: ` +
+          `ACP ${modelCallStartedAt ? 'model turn' : 'session activation'} failed: ` +
+          agentTurnFailureJournalDetail(error),
+      );
       if (modelCallStartedAt) {
         await this.durableState
           .recordModelTurn(

@@ -1106,23 +1106,30 @@ describe('readModelTail cold-open fast path', () => {
     const client = {
       query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
         queryCalls += 1;
-        expect(filters).toHaveLength(5);
+        // Exactly three filters: the bounded message tail, this channel's
+        // immutable create event, and the agent registry page. Membership,
+        // admin projections, and general structural history are DEFERRED —
+        // they must not ride the first-paint read.
+        expect(filters).toHaveLength(3);
+        expect(filters.some((filter) => (filter.kinds as number[]).includes(KIND_CHANNEL_MEMBERS))).toBe(false);
         const results: NostrEvent[] = [];
         for (const filter of filters) {
           const kinds = filter.kinds as number[];
-          if (!kinds.includes(9)) {
+          if (filter['#h'] ?? filter['#d']) {
             // Per-key single-value filters only, all scoped to THIS channel:
-            // never a multi-value array this relay answers lossily.
+            // never a multi-value array this relay answers lossily. The
+            // registry page is the one relay-side-tag-matched exception.
             const values = ((filter['#h'] ?? filter['#d']) as string[] | undefined) ?? [];
             expect(values).toHaveLength(1);
             expect(values[0]).toBe(CORNER);
+          } else {
+            expect(filter['#t']).toEqual(['buzz-agent']);
           }
           if (kinds.includes(9)) {
             if (filter['#h']) results.push(...messages);
             else results.push(agentRegistryEvent());
           }
           if (kinds.includes(KIND_CREATE_GROUP)) results.push(cornerCreate());
-          if (kinds.includes(KIND_CHANNEL_MEMBERS)) results.push(memberProjection(CORNER));
         }
         return results;
       }),
@@ -1180,7 +1187,6 @@ describe('readModelTail cold-open fast path', () => {
             else results.push(agentRegistryEvent());
           }
           if (kinds.includes(KIND_CREATE_GROUP)) results.push(cornerCreate());
-          if (kinds.includes(KIND_CHANNEL_MEMBERS)) results.push(memberProjection(CORNER));
         }
         return results;
       }),

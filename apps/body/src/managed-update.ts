@@ -32,6 +32,13 @@ export interface UpdateHandoffRecord {
   drainDeadlineAt: number;
 }
 
+export type ManagedUpdateHandoffProgress = 'none' | 'waiting-for-idle' | 'restarting';
+
+export interface ManagedUpdateRestartRequest {
+  handoff: UpdateHandoffRecord;
+  forced: boolean;
+}
+
 export function updateHandoffPath(runtimeDir: string): string {
   return resolve(runtimeDir, 'update-handoff.json');
 }
@@ -231,6 +238,47 @@ export class ManagedUpdateHandoff {
     );
     return true;
   }
+
+  /**
+   * Resolve one handoff tick against the daemon's authoritative turn registry.
+   * The staged release may already be active, but restart stays deferred while
+   * accepted work is running. `quiesceIfIdle` closes intake in the same
+   * synchronous transition that proves idle, so a new turn cannot race the
+   * handoff. The persisted wall-clock deadline is the only override, so a
+   * wedged turn cannot block convergence forever.
+   */
+  async restartRequest(quiesceIfIdle: () => boolean): Promise<
+    | { kind: 'none' }
+    | { kind: 'waiting'; handoff: UpdateHandoffRecord }
+    | {
+        kind: 'restart';
+        request: ManagedUpdateRestartRequest;
+      }
+  > {
+    if (!(await this.check())) return { kind: 'none' };
+    const handoff = await readUpdateHandoff(this.#runtimeDir);
+    if (!handoff) throw new Error('update drift was detected without a durable handoff');
+    if (quiesceIfIdle()) return { kind: 'restart', request: { handoff, forced: false } };
+    if (this.#now() < handoff.drainDeadlineAt) return { kind: 'waiting', handoff };
+    return { kind: 'restart', request: { handoff, forced: true } };
+  }
+}
+
+/** One funnel from a completed core tick to the process handoff callback. */
+export async function coordinateManagedUpdateHandoff(
+  update: ManagedUpdateHandoff,
+  quiesceIfIdle: () => boolean,
+  restart: (request: ManagedUpdateRestartRequest) => Promise<void>,
+  waiting: (handoff: UpdateHandoffRecord) => Promise<void> = async () => undefined,
+): Promise<ManagedUpdateHandoffProgress> {
+  const next = await update.restartRequest(quiesceIfIdle);
+  if (next.kind === 'none') return 'none';
+  if (next.kind === 'waiting') {
+    await waiting(next.handoff);
+    return 'waiting-for-idle';
+  }
+  await restart(next.request);
+  return 'restarting';
 }
 
 function numberEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {

@@ -388,6 +388,32 @@ describe('channel snapshot v1 contract', () => {
       };
     });
     expect(guardChannelSnapshotViewV1(selfParentCorner).status).toBe('integrity-halt');
+
+    const mismatchedMembershipIndex = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      rooms[CHANNEL]!.membershipEvents = ['1'.repeat(64)];
+    });
+    expect(guardChannelSnapshotViewV1(mismatchedMembershipIndex).status).toBe('integrity-halt');
+
+    const mismatchedLifecycleIndex = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      rooms[CHANNEL]!.lifecycleEvents = ['1'.repeat(64)];
+    });
+    expect(guardChannelSnapshotViewV1(mismatchedLifecycleIndex).status).toBe('integrity-halt');
+
+    const invertedCoverage = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      rooms[CHANNEL]!.coverage = {
+        oldest: 2,
+        newest: 1,
+        initialBackfillComplete: true,
+        epoch: 1,
+      };
+    });
+    expect(guardChannelSnapshotViewV1(invertedCoverage).status).toBe('integrity-halt');
   });
 
   it('rejects self-parent Corner creation before reduction', () => {

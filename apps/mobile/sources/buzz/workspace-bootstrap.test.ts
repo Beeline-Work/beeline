@@ -261,6 +261,60 @@ describe('the personal-Workspace creation door never fires on unconfirmed absenc
     expect(client.createCommunity).not.toHaveBeenCalled();
   });
 
+  it('retains a cached Workspace when live discovery throws', async () => {
+    const tubing = workspace('tubing-1', 'Tubing Crew');
+    const client = quietClient();
+    client.listCommunities.mockRejectedValue(new Error('relay unavailable'));
+
+    await expect(
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, storage(), {
+        knownWorkspaces: [tubing],
+      }),
+    ).resolves.toMatchObject({
+      workspaces: [tubing],
+      activeWorkspaceId: 'tubing-1',
+    });
+
+    expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+
+  it('retains a cached Workspace through phantom-empty discovery', async () => {
+    const tubing = workspace('tubing-1', 'Tubing Crew');
+    const client = quietClient();
+    client.listCommunities.mockResolvedValue([]);
+    client.getCommunity.mockResolvedValue(null);
+
+    await expect(
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, storage(), {
+        knownWorkspaces: [tubing],
+      }),
+    ).resolves.toMatchObject({
+      workspaces: [tubing],
+      activeWorkspaceId: 'tubing-1',
+    });
+
+    expect(client.listCommunities).toHaveBeenCalledTimes(2);
+    expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+
+  it('merges a partial live result into cached Workspace knowledge', async () => {
+    const tubing = workspace('tubing-1', 'Tubing Crew');
+    const personal = workspace('personal-1');
+    const client = quietClient();
+    client.listCommunities.mockResolvedValue([personal]);
+
+    await expect(
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, storage(), {
+        knownWorkspaces: [tubing],
+      }),
+    ).resolves.toMatchObject({
+      workspaces: [tubing, personal],
+      activeWorkspaceId: 'tubing-1',
+    });
+
+    expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+
   it('a remembered-but-unloadable personal Workspace refuses creation instead of duplicating', async () => {
     const client = quietClient();
     client.listCommunities.mockResolvedValue([]);

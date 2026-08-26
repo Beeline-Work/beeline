@@ -24,6 +24,12 @@ type WorkspaceClient = Pick<
 
 export type WorkspaceBootstrapOptions = {
   /**
+   * Viewer-scoped Workspace metadata already proven by an earlier successful
+   * read. Live discovery merges into this set; an error, partial answer, or
+   * phantom empty may never erase it or reopen the Personal creation door.
+   */
+  knownWorkspaces?: readonly Community[];
+  /**
    * Key-succession chain loader: predecessor pubkeys of this identity
    * (oldest first). When provided, Workspace discovery also finds — and the
    * client migrates into — everything a replaced device key held.
@@ -41,6 +47,20 @@ export type WorkspaceBootstrapOptions = {
     persist: (viewerPubkey: string) => void;
   };
 };
+
+function mergeWorkspaceKnowledge(
+  known: readonly Community[],
+  discovered: readonly Community[],
+): Community[] {
+  const merged = new Map(known.map((workspace) => [workspace.communityId, workspace]));
+  for (const workspace of discovered) {
+    merged.set(workspace.communityId, {
+      ...merged.get(workspace.communityId),
+      ...workspace,
+    });
+  }
+  return [...merged.values()];
+}
 
 const defaultUnmigratableVerdicts = {
   loadAndSeed: (viewerPubkey: string): void => {
@@ -161,10 +181,19 @@ export async function prepareWorkspaceContext(
   const predecessors = options.loadPredecessors ? await options.loadPredecessors() : [];
   const verdicts = options.unmigratableVerdicts ?? defaultUnmigratableVerdicts;
   verdicts.loadAndSeed(pubkey);
-  let workspaces = await client.listCommunities(pubkey, predecessors);
-  // Persist any verdict learned during THIS pass (migration + membership
-  // repair both record them) so the next launch skips those rooms instantly.
-  verdicts.persist(pubkey);
+  const knownWorkspaces = options.knownWorkspaces ?? [];
+  let discoveredWorkspaces: Community[];
+  let discoveryFailed = false;
+  try {
+    discoveredWorkspaces = await client.listCommunities(pubkey, predecessors);
+    // Persist any verdict learned during THIS pass (migration + membership
+    // repair both record them) so the next launch skips those rooms instantly.
+    verdicts.persist(pubkey);
+  } catch (error) {
+    if (knownWorkspaces.length === 0) throw error;
+    discoveryFailed = true;
+    discoveredWorkspaces = [];
+  }
   const storedWorkspaceId = await storage.loadActiveId(pubkey);
   let personalWorkspaceId = await storage.loadPersonalId(pubkey);
 
@@ -175,10 +204,16 @@ export async function prepareWorkspaceContext(
   // create after a second consecutive confirmed-empty answer; anything else
   // (throw, timeout, a partial answer confirmed non-empty) must arrive here
   // or leave without writing anything.
-  if (workspaces.length === 0) {
-    const confirmation = await client.listCommunities(pubkey, predecessors);
-    if (confirmation.length > 0) workspaces = confirmation;
+  if (!discoveryFailed && discoveredWorkspaces.length === 0) {
+    try {
+      const confirmation = await client.listCommunities(pubkey, predecessors);
+      if (confirmation.length > 0) discoveredWorkspaces = confirmation;
+    } catch (error) {
+      if (knownWorkspaces.length === 0) throw error;
+    }
   }
+
+  let workspaces = mergeWorkspaceKnowledge(knownWorkspaces, discoveredWorkspaces);
 
   if (workspaces.length === 0 && storedWorkspaceId) {
     const storedWorkspace = await client.getCommunity(storedWorkspaceId);
@@ -214,7 +249,10 @@ export async function prepareWorkspaceContext(
     if (!personalId) throw new Error(`Personal ${WORKSPACE_LABEL} could not be created.`);
 
     await client.waitUntilMember(personalId, pubkey);
-    workspaces = await client.listCommunities(pubkey, predecessors);
+    workspaces = mergeWorkspaceKnowledge(
+      knownWorkspaces,
+      await client.listCommunities(pubkey, predecessors),
+    );
 
     if (!workspaces.some((workspace) => workspace.communityId === personalId)) {
       personalWorkspace = await client.getCommunity(personalId);

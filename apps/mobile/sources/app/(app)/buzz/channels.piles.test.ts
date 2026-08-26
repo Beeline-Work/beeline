@@ -223,6 +223,45 @@ function seedRooms(rooms: SeedRoom[]) {
   routeParams.current = { communityId: 'shared-1' };
 }
 
+function seedSplitWorkspaceCache() {
+  const now = Date.now();
+  const tubing = { communityId: 'tubing-1', name: 'Tubing Crew' } as never;
+  const personal = { communityId: 'personal-1', name: 'Personal' } as never;
+  const cache = useBuzzLocalCache.getState();
+  cache.setChannelList({
+    viewerPubkey: VIEWER,
+    communityId: 'tubing-1',
+    channels: [],
+    directMessages: [],
+    workspaceMembers: [],
+    communities: [tubing],
+    personalWorkspaceId: null,
+    viewerIsAgent: false,
+    canEditWorkspaceAvatar: true,
+    updatedAt: now,
+    lastAccessedAt: now,
+  });
+  cache.setChannelList({
+    viewerPubkey: VIEWER,
+    communityId: 'personal-1',
+    channels: [],
+    directMessages: [],
+    workspaceMembers: [],
+    communities: [personal],
+    personalWorkspaceId: 'personal-1',
+    viewerIsAgent: false,
+    canEditWorkspaceAvatar: true,
+    updatedAt: now,
+    lastAccessedAt: now,
+  });
+  routeParams.current = {};
+}
+
+function shellWorkspaceIds(tree: ReactTestRenderer): string[] {
+  const shell = tree.root.find((node: any) => node.type === 'BuzzCommunityShell');
+  return shell.props.communities.map((community: { communityId: string }) => community.communityId);
+}
+
 function agentTurn(roomId: string, status: 'working' | 'complete', createdAt: number): SessionUpdate {
   const agentPubkey = 'b'.repeat(64);
   return {
@@ -329,6 +368,29 @@ describe("the deck's one ordered feed", () => {
       expect(retry).toBeDefined();
       await press(retry);
       expect(prepareWorkspaceContext).toHaveBeenCalledTimes(2);
+      tree.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['throws', () => Promise.reject(new Error('relay unavailable'))],
+    ['times out', () => new Promise(() => undefined)],
+  ])('keeps every locally cached Workspace visible when live discovery %s', async (_, failure) => {
+    vi.useFakeTimers();
+    seedSplitWorkspaceCache();
+    vi.mocked(prepareWorkspaceContext).mockImplementation(failure as never);
+
+    try {
+      const tree = await render();
+      expect(shellWorkspaceIds(tree)).toEqual(['tubing-1', 'personal-1']);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8_001);
+      });
+
+      expect(shellWorkspaceIds(tree)).toEqual(['tubing-1', 'personal-1']);
       tree.unmount();
     } finally {
       vi.useRealTimers();

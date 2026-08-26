@@ -216,6 +216,13 @@ function isAdmin(authority: ParseAuthority, channelId: string, pubkey: string): 
   return authority.channelAdmins?.[channelId]?.includes(pubkey) ?? false;
 }
 
+function isOwner(authority: ParseAuthority, channelId: string, pubkey: string): boolean {
+  return (
+    authority.channelCreators?.[channelId] === pubkey ||
+    (authority.channelOwners?.[channelId]?.includes(pubkey) ?? false)
+  );
+}
+
 function isProjectionAuthority(authority: ParseAuthority, pubkey: string): boolean {
   return authority.trustedProjectionPubkeys?.includes(pubkey) ?? false;
 }
@@ -1573,10 +1580,9 @@ export function parseRelayEvents(
     if (!candidate?.accepted) continue;
     const repository = parseRoomRepository(candidate.event);
     if (!repository) continue;
-    const role =
-      authority.channelCreators?.[event.channelId] === event.authorPubkey
-        ? 'owner'
-        : isAdmin(authority, event.channelId, event.authorPubkey)
+    const role = isOwner(authority, event.channelId, event.authorPubkey)
+      ? 'owner'
+      : isAdmin(authority, event.channelId, event.authorPubkey)
           ? 'admin'
           : null;
     const decision = advanceRoomRepositorySequence(

@@ -66,7 +66,9 @@ export interface SnapshotMaterializerStore {
   continueRepositoryScan(
     claim: DirtyChannelClaim,
     cursor: NonNullable<ProjectionInput['repositoryCursor']>,
+    repositoryEventId?: string,
   ): Promise<void>;
+  recordRepositoryEvent(claim: DirtyChannelClaim, repositoryEventId?: string): Promise<void>;
   nextRevision(tenantId: string, channelId: string): Promise<number>;
   complete(
     claim: DirtyChannelClaim,
@@ -134,6 +136,22 @@ function aliasAuthority(
         if (expanded.has(current)) expanded.add(historical);
       }
       return [channelId, [...expanded]];
+    }),
+  );
+}
+
+function currentOwnerAuthority(
+  channelCreators: Readonly<Record<string, string>>,
+  succession: SuccessionResolution,
+  members: readonly CurrentChannelMember[],
+): Readonly<Record<string, readonly string[]>> {
+  const currentMembers = currentMemberPubkeys(members);
+  return Object.fromEntries(
+    Object.entries(channelCreators).map(([channelId, creator]) => {
+      const owners = new Set([creator]);
+      const successor = succession.mappings[creator];
+      if (successor && currentMembers.has(successor)) owners.add(successor);
+      return [channelId, [...owners]];
     }),
   );
 }
@@ -292,28 +310,42 @@ export class ChannelSnapshotMaterializer {
           allowedChannelIds: input.channelIds,
           identities,
           channelCreators: facts.channelCreators,
+          channelOwners: currentOwnerAuthority(facts.channelCreators, succession, members),
           channelAdmins: aliasAuthority(facts.channelAdmins, succession),
           trustedProjectionPubkeys: facts.trustedProjectionPubkeys,
           historicalMessagePubkeys,
         };
         const parsed = parseRelayEvents(events, authority);
-        const authorizedRepositoryFound = parsed.some(
-          (event) =>
-            event.type === 'control' &&
-            event.payload.kind === 'repository' &&
-            'channelId' in event &&
-            event.channelId === input.repositoryChannelId,
-        );
-        if (!authorizedRepositoryFound && !input.repositoriesExhausted) {
+        const acceptedRepositoryEventId = parsed
+          .filter(
+            (event) =>
+              event.type === 'control' &&
+              event.payload.kind === 'repository' &&
+              'channelId' in event &&
+              event.channelId === input.repositoryChannelId,
+          )
+          .sort(
+            (a, b) =>
+              (a.createdAt ?? Number.MAX_SAFE_INTEGER) -
+                (b.createdAt ?? Number.MAX_SAFE_INTEGER) ||
+              (a.eventId ?? '').localeCompare(b.eventId ?? ''),
+          )
+          .at(-1)?.eventId;
+        if (!input.repositoriesExhausted) {
           if (!input.repositoryCursor) {
             throw new Error('snapshot repository scan lost its continuation cursor');
           }
-          await this.store.continueRepositoryScan(claim, input.repositoryCursor);
+          await this.store.continueRepositoryScan(
+            claim,
+            input.repositoryCursor,
+            acceptedRepositoryEventId,
+          );
           this.log(
             `[snapshot] yielded tenant=${input.tenantId} channel=${input.channelId} repository_scan=true`,
           );
           return;
         }
+        await this.store.recordRepositoryEvent(claim, acceptedRepositoryEventId);
         const cursor = input.cursor;
         let snapshot = reduceWorkspaceEvents(
           createWorkspaceSnapshot({ workspaceId, identities: Object.values(identities) }),

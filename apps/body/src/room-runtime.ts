@@ -701,7 +701,32 @@ export class RoomRuntimeCoordinator {
                 } else {
                   this.startConversationRoom(channelId, target.kind);
                 }
+                const previousFailure = this.quarantine.get(channelId);
                 this.quarantine.noteSuccess(channelId);
+                if (
+                  previousFailure &&
+                  previousFailure.kind !== 'active' &&
+                  previousFailure.kind !== 'terminal-inert'
+                ) {
+                  await client
+                    .messageSubmit(
+                      channelId,
+                      'Agent available again: repository access recovered and this Room is ready.',
+                    )
+                    .catch((noticeError: unknown) => {
+                      if (isArchivedChannelError(noticeError)) {
+                        this.noteArchivedRoom(
+                          channelId,
+                          'join-recovery notice was refused: channel is archived',
+                        );
+                      } else {
+                        console.warn(
+                          `[thin-core] Room ${channelId} join-recovery notice could not be sent:`,
+                          noticeError,
+                        );
+                      }
+                    });
+                }
               } catch (error) {
                 const discovery = this.noteRoomDiscoveryFailure(channelId, error);
                 if (discovery.announced) {

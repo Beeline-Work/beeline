@@ -24,6 +24,21 @@ function fixture(): unknown {
   ) as unknown;
 }
 
+function correctlyHashedMutation(
+  mutate: (value: Record<string, unknown>) => void,
+): Record<string, unknown> {
+  const value = fixture() as Record<string, unknown>;
+  mutate(value);
+  const stored = Object.fromEntries(
+    Object.entries(value).filter(([key]) => !['lagMs', 'viewer', 'integrity'].includes(key)),
+  );
+  value.integrity = {
+    ...(value.integrity as Record<string, unknown>),
+    digest: channelSnapshotDigest(stored as never),
+  };
+  return value;
+}
+
 function manyMessageSnapshot(count: number, bodyBytes = 0): WorkspaceSnapshot {
   const messages = Object.fromEntries(
     Array.from({ length: count }, (_, index) => {
@@ -166,6 +181,33 @@ describe('channel snapshot v1 contract', () => {
     const missingReview = fixture() as Record<string, unknown>;
     delete missingReview.review;
     expect(guardChannelSnapshotViewV1(missingReview).status).toBe('integrity-halt');
+  });
+
+  it('rejects correctly hashed malformed stored envelope fields', () => {
+    const malformedRepository = correctlyHashedMutation((value) => {
+      value.repository = {};
+    });
+    expect(guardChannelSnapshotViewV1(malformedRepository).status).toBe('integrity-halt');
+
+    const malformedReview = correctlyHashedMutation((value) => {
+      const review = value.review as Record<string, unknown>;
+      review.files = [42];
+      review.fileCount = 1;
+    });
+    expect(guardChannelSnapshotViewV1(malformedReview).status).toBe('integrity-halt');
+
+    const malformedCursor = correctlyHashedMutation((value) => {
+      (value.cursor as Record<string, unknown>).eventIds = ['not-an-event-id'];
+    });
+    expect(guardChannelSnapshotViewV1(malformedCursor).status).toBe('integrity-halt');
+
+    const malformedPersistedRow = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      const journal = rooms[CHANNEL]!.eventJournal as Record<string, Record<string, unknown>>;
+      journal['1'.repeat(64)]!.body = 42;
+    });
+    expect(guardChannelSnapshotViewV1(malformedPersistedRow).status).toBe('integrity-halt');
   });
 
   it('projects review manifests and human approval through shared typed facts', () => {

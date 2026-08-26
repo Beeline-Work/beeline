@@ -9,6 +9,7 @@ import { SnapshotSuccessionClient } from './succession.js';
 
 const TENANT = 'e8299f28-f095-472f-941a-80d1195b9a24';
 const CHANNEL = '9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6';
+const COLD_CHANNEL = 'f0000000-0000-4000-8000-000000000001';
 
 class PgliteDatabase implements DatabaseTransactional {
   constructor(private readonly postgres: PGlite) {}
@@ -78,11 +79,11 @@ describe('ChannelSnapshotMaterializer', () => {
     await postgres.close();
   });
 
-  async function insertEvent(event: NostrEvent): Promise<void> {
-    await insertEvents([event]);
+  async function insertEvent(event: NostrEvent, channelId = CHANNEL): Promise<void> {
+    await insertEvents([event], channelId);
   }
 
-  async function insertEvents(events: readonly NostrEvent[]): Promise<void> {
+  async function insertEvents(events: readonly NostrEvent[], channelId = CHANNEL): Promise<void> {
     await database.query(
       `INSERT INTO events
          (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
@@ -90,7 +91,7 @@ describe('ChannelSnapshotMaterializer', () => {
               to_timestamp((event->>'created_at')::bigint), (event->>'kind')::integer,
               event->'tags', event->>'content', decode(event->>'sig', 'hex'), $3
        FROM jsonb_array_elements($2::jsonb) AS event`,
-      [TENANT, JSON.stringify(events), CHANNEL],
+      [TENANT, JSON.stringify(events), channelId],
     );
   }
 
@@ -223,7 +224,15 @@ describe('ChannelSnapshotMaterializer', () => {
         ],
         '',
       ),
-      signed(base + 1, 39002, [['d', CHANNEL], ['p', owner.publicKey, 'owner']], ''),
+      signed(
+        base + 1,
+        39002,
+        [
+          ['d', CHANNEL],
+          ['p', owner.publicKey, 'owner'],
+        ],
+        '',
+      ),
       ...Array.from({ length: 30 }, (_, index) =>
         signed(base + 2 + index, 9, [['h', CHANNEL]], `message ${index}`),
       ),
@@ -265,6 +274,139 @@ describe('ChannelSnapshotMaterializer', () => {
     const served = await store.readForViewer(CHANNEL, owner.publicKey);
     expect(
       selectTranscript(served!.payload!.snapshot, CHANNEL)
+        .filter((row) => row.kind === 'human-message')
+        .map((row) => row.body),
+    ).toEqual(Array.from({ length: 30 }, (_, index) => `message ${index}`));
+  }, 30_000);
+
+  it('yields a deep hidden-history scan so a cold channel runs next', async () => {
+    const owner = createIdentity('snapshot-bounded-owner');
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3)`, [
+      TENANT,
+      CHANNEL,
+      COLD_CHANNEL,
+    ]);
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey)
+       VALUES ($1, $2, decode($4, 'hex')), ($1, $3, decode($4, 'hex'))`,
+      [TENANT, CHANNEL, COLD_CHANNEL, owner.publicKey],
+    );
+    const base = Math.floor(Date.now() / 1_000) - 2_000;
+    const signed = (
+      _channelId: string,
+      createdAt: number,
+      kind: number,
+      tags: string[][],
+      content: string,
+    ) =>
+      signEvent(
+        { pubkey: owner.publicKey, created_at: createdAt, kind, tags, content },
+        owner.secretKey,
+      );
+    await insertEvents(
+      [
+        signed(
+          CHANNEL,
+          base,
+          9007,
+          [
+            ['h', CHANNEL],
+            ['community', 'verified-application-workspace'],
+            ['p', owner.publicKey, 'owner'],
+          ],
+          '',
+        ),
+        signed(
+          CHANNEL,
+          base + 1,
+          39002,
+          [
+            ['d', CHANNEL],
+            ['p', owner.publicKey, 'owner'],
+          ],
+          '',
+        ),
+        ...Array.from({ length: 30 }, (_, index) =>
+          signed(CHANNEL, base + 2 + index, 9, [['h', CHANNEL]], `message ${index}`),
+        ),
+        ...Array.from({ length: 321 }, (_, index) =>
+          signed(
+            CHANNEL,
+            base + 100 + index,
+            9,
+            [
+              ['h', CHANNEL],
+              ['t', 'buzz-merge-approval'],
+              ['repo', 'lunchboxfortwo/beeline'],
+              ['branch', 'main'],
+            ],
+            'APPROVE',
+          ),
+        ),
+      ],
+      CHANNEL,
+    );
+    await insertEvents(
+      [
+        signed(
+          COLD_CHANNEL,
+          base,
+          9007,
+          [
+            ['h', COLD_CHANNEL],
+            ['community', 'verified-application-workspace'],
+            ['p', owner.publicKey, 'owner'],
+          ],
+          '',
+        ),
+        signed(
+          COLD_CHANNEL,
+          base + 1,
+          39002,
+          [
+            ['d', COLD_CHANNEL],
+            ['p', owner.publicKey, 'owner'],
+          ],
+          '',
+        ),
+        signed(COLD_CHANNEL, base + 2, 9, [['h', COLD_CHANNEL]], 'cold message'),
+      ],
+      COLD_CHANNEL,
+    );
+    const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+      return new Response(
+        JSON.stringify({
+          mappings: Object.fromEntries(body.pubkeys.map((pubkey) => [pubkey, pubkey])),
+        }),
+        { status: 200 },
+      );
+    });
+    const materializer = new ChannelSnapshotMaterializer(
+      store,
+      new SnapshotSuccessionClient({
+        baseUrl: 'http://auth:8789',
+        token: 'secret',
+        fetch: fetchImpl,
+      }),
+      {
+        batchSize: 1,
+        burstCoalesceMs: 0,
+        maxMessagePagesPerClaim: 2,
+        log: () => undefined,
+      },
+    );
+
+    expect(await materializer.runOnce()).toBe(1);
+    expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload).toBeUndefined();
+
+    expect(await materializer.runOnce()).toBe(1);
+    expect((await store.readForViewer(COLD_CHANNEL, owner.publicKey))?.payload).toBeDefined();
+
+    expect(await materializer.runOnce()).toBe(1);
+    const hot = await store.readForViewer(CHANNEL, owner.publicKey);
+    expect(
+      selectTranscript(hot!.payload!.snapshot, CHANNEL)
         .filter((row) => row.kind === 'human-message')
         .map((row) => row.body),
     ).toEqual(Array.from({ length: 30 }, (_, index) => `message ${index}`));

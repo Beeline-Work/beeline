@@ -4,11 +4,11 @@ This directory is the **production** stack config, deployed by
 `scripts/deploy-relay-host.sh` on every merge to `main`. It is NOT the same
 stack as `relay-stack/compose.yml` + `relay-stack/nginx.conf` one level up:
 
-| | `relay-stack/` (gate) | `relay-stack/prod/` (this dir) |
-| --- | --- | --- |
-| compose project | `buzzy-gate` | `buzz-router-prod` |
-| purpose | isolated Phase-0 merge-gate proof | the live relay behind usebeeline.app |
-| deploy path | `npm run stack:up` (manual/local) | CI via `scripts/deploy-relay-host.sh` |
+|                 | `relay-stack/` (gate)             | `relay-stack/prod/` (this dir)        |
+| --------------- | --------------------------------- | ------------------------------------- |
+| compose project | `buzzy-gate`                      | `buzz-router-prod`                    |
+| purpose         | isolated Phase-0 merge-gate proof | the live relay behind usebeeline.app  |
+| deploy path     | `npm run stack:up` (manual/local) | CI via `scripts/deploy-relay-host.sh` |
 
 Keep them separate on purpose: the gate stack serves the merge-gate proof and
 must stay untouched by production deploys; this directory reproduces the
@@ -31,7 +31,7 @@ required are documented in the header of `scripts/deploy-relay-host.sh`; if a
 rule is missing the deploy fails loudly at that step rather than working
 around it.
 
-## Push gateway topology
+## Push and snapshot gateway topology
 
 Production has one gateway. `relay-front` sends `/push/` to
 `push-gateway:8788`; that container accepts registrations and tails Postgres
@@ -39,6 +39,14 @@ over the private `buzz-net` network. It bind-mounts the durable registry and
 delivery state from `/home/lunchbox/buzzy-push-gateway/state/`. The retired
 `buzzy-push-gateway.service` must remain disabled; see
 `apps/push-gateway/deploy/README.md` for the one-time cutover checks.
+
+The same process serves path-preserving `/snapshot/` requests and runs the
+durable Postgres-backed channel materializer. Its internal succession calls go
+directly to `auth:8789` with `BUZZY_SNAPSHOT_INTERNAL_TOKEN`; nginx never routes
+the `/internal/` endpoint. Compose health uses `/snapshot/health`, while public
+deployment verification checks both snapshot health and the independent
+`/push/health` FCM surface. A Firebase initialization failure can therefore
+leave snapshot reads available while push health reports unavailable.
 
 ## Preview-origin operator provisioning
 

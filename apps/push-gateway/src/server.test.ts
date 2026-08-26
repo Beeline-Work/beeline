@@ -524,6 +524,14 @@ describe('GET /snapshot/channel/:channelId', () => {
       headers: { authorization: authorization(identity, path) },
     });
     expect(caseAlias.status).toBe(404);
+    const hostAlias = await fetch(`${base}${path}`, {
+      headers: {
+        authorization: authorization(identity, path),
+        host: 'relay.buzzrouter.com',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    expect(hostAlias.status).toBe(401);
 
     const proof = authorization(identity, path);
     const accepted = await fetch(`${base}${path}`, { headers: { authorization: proof } });
@@ -582,7 +590,10 @@ describe('GET /snapshot/channel/:channelId', () => {
     );
     const path = `/snapshot/channel/${CHANNEL}`;
 
-    for (const leakedDetail of ['replay ledger exposed detail', 'membership query exposed detail']) {
+    for (const leakedDetail of [
+      'replay ledger exposed detail',
+      'membership query exposed detail',
+    ]) {
       const response = await fetch(`${base}${path}`, {
         headers: { authorization: authorization(identity, path) },
       });

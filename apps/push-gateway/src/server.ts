@@ -103,6 +103,17 @@ function logSnapshot(
   } catch {}
 }
 
+function matchesSnapshotOrigin(request: IncomingMessage, publicOrigin: string): boolean {
+  const forwardedProtocol = request.headers['x-forwarded-proto'];
+  if (forwardedProtocol === undefined) return true;
+  if (Array.isArray(forwardedProtocol)) return false;
+  const expected = new URL(publicOrigin);
+  return (
+    forwardedProtocol.toLowerCase() === expected.protocol.slice(0, -1) &&
+    request.headers.host?.toLowerCase() === expected.host.toLowerCase()
+  );
+}
+
 export function createRegistrationServer(
   registry: TokenRegistry,
   hooks: RegistrationServerHooks = {},
@@ -139,6 +150,16 @@ export function createRegistrationServer(
           if (!CHANNEL_ID.test(requestedChannelId) || requestedChannelId !== channelId) {
             status = 404;
             json(response, status, { error: 'not_found' }, SNAPSHOT_PRIVATE_HEADERS);
+            return;
+          }
+          if (!matchesSnapshotOrigin(request, hooks.snapshot.publicOrigin)) {
+            status = 401;
+            json(
+              response,
+              status,
+              { error: 'valid_identity_authorization_required' },
+              SNAPSHOT_PRIVATE_HEADERS,
+            );
             return;
           }
           const path = `/snapshot/channel/${channelId}`;

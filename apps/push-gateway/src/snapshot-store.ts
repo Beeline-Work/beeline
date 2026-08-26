@@ -655,6 +655,14 @@ export class ChannelSnapshotStore {
         [claim.tenantId, claim.channelId, claim.claimToken],
       );
       if (current.rows.length !== 1) return;
+      if (numberValue(current.rows[0]!.dirty_revision) !== claim.dirtyRevision) {
+        await transaction.query(
+          `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL
+           WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,
+          [claim.tenantId, claim.channelId, claim.claimToken],
+        );
+        return;
+      }
       await transaction.query(
         `INSERT INTO beeline_channel_snapshot_v1
            (relay_tenant_id, channel_id, schema_version, projection_version, revision,

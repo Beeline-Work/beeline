@@ -331,6 +331,11 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
   let acknowledgement: ReviewSummary['daemonAcknowledgement'];
   let outcome: ReviewSummary['outcome'];
   let approvedBy = new Set<Pubkey>();
+  let pendingApprovalSecond: number | undefined;
+  let pendingApprovals: {
+    readonly event: Control;
+    readonly payload: Extract<Control['payload'], { readonly kind: 'merge-approval' }>;
+  }[] = [];
   const manifests = new Map<
     string,
     Map<number, Extract<Control['payload'], { kind: 'review-manifest' }>>
@@ -338,6 +343,10 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
   const completions = new Map<string, Extract<Control['payload'], { kind: 'review-complete' }>>();
 
   for (const event of orderedEvents(roomSnapshot)) {
+    if (pendingApprovalSecond !== event.createdAt) {
+      pendingApprovalSecond = event.createdAt;
+      pendingApprovals = [];
+    }
     if (event.type !== 'control') continue;
     const payload = event.payload;
     if (payload.kind === 'review-manifest') {
@@ -354,6 +363,8 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
     if (payload.kind === 'merge-approval') {
       if (target && payload.repository === target.repository && payload.branch === target.branch) {
         approvedBy.add(event.authorPubkey);
+      } else {
+        pendingApprovals.push({ event, payload });
       }
       continue;
     }
@@ -372,12 +383,22 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
       state = 'ready';
       acknowledgement = undefined;
       outcome = undefined;
+      for (const approval of pendingApprovals) {
+        if (
+          approval.payload.repository === target.repository &&
+          approval.payload.branch === target.branch &&
+          (!approval.payload.tip || approval.payload.tip === target.tip)
+        ) {
+          approvedBy.add(approval.event.authorPubkey);
+        }
+      }
       continue;
     }
     if (payload.action === 'not-ready') {
       target = undefined;
       state = 'none';
       approvedBy = new Set();
+      pendingApprovals = [];
       acknowledgement = undefined;
       outcome = undefined;
       continue;

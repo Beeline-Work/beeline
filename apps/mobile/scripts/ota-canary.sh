@@ -228,12 +228,28 @@ adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null || {
   park "adb could not relaunch $APP_ID on $DEVICE after warm-up; the installed beta binary failed to restart"
 }
 
+smoke_log="$temporary/maestro-smoke.log"
+set +e
 MAESTRO_REUSE_INSTALLED_APP=1 \
 MAESTRO_SKIP_BUILD=1 \
 MAESTRO_KEEP_DEVICE=1 \
 MAESTRO_FLOW="$MOBILE_DIR/e2e/ota-canary.yaml" \
 EXPECTED_ANDROID_UPDATE_ID="$android_update" \
 EXPECTED_UPDATE_GROUP_ID="$candidate_group" \
-  "$MOBILE_DIR/scripts/maestro-e2e.sh"
+  "$MOBILE_DIR/scripts/maestro-e2e.sh" 2>&1 | tee "$smoke_log"
+smoke_status=$?
+set -e
+if (( smoke_status != 0 )); then
+  # A provisioning-bootstrap death (e.g. the runner checkout missing the
+  # workspace prerequisites scripts/provision-smoke.ts imports) is an
+  # environment failure and must park self-describingly, not exit as a
+  # generic smoke failure. Anything else keeps the genuine smoke-failure
+  # exit code.
+  bootstrap_line="$(grep -m1 -E 'Cannot find module|MODULE_NOT_FOUND' "$smoke_log" 2>/dev/null || true)"
+  if [[ -n "$bootstrap_line" ]]; then
+    park "the canary smoke could not start: its provisioning bootstrap failed before Maestro ran (${bootstrap_line})"
+  fi
+  exit "$smoke_status"
+fi
 
 echo "OTA canary passed for beta group $candidate_group (Android update $android_update)."

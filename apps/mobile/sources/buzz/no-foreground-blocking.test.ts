@@ -156,4 +156,84 @@ describe('no foreground-blocking network work', () => {
       );
     }
   });
+
+  describe('corner-screen interaction paths stay on the coalesced pump', () => {
+    /** The corner-lifecycle subscription installer inside the chat screen. */
+    function cornerStateDelivery(): string {
+      const start = chatSource.indexOf('const installCornerStateDelivery = (cornerIds: string[])');
+      expect(start, 'installCornerStateDelivery not found').toBeGreaterThanOrEqual(0);
+      // The pump machinery that follows legitimately calls
+      // `cacheLiveSessionEvents` — only its per-event bypass is banned here.
+      const end = chatSource.indexOf('let pendingLiveEvents', start);
+      expect(end, 'installCornerStateDelivery end not found').toBeGreaterThan(start);
+      return chatSource.slice(start, end);
+    }
+
+    function composerSendPath(): string {
+      const start = chatSource.indexOf('const handleSend = useCallback');
+      expect(start, 'handleSend not found').toBeGreaterThanOrEqual(0);
+      const end = chatSource.indexOf('const pickPhoto', start);
+      expect(end, 'handleSend end not found').toBeGreaterThan(start);
+      return chatSource.slice(start, end);
+    }
+
+    it('delivers corner-state events through the frame pump, never one cache write per event', () => {
+      const delivery = cornerStateDelivery();
+      // Corner-state records churn with the daemon's WORKING lease; feeding
+      // each one straight into `cacheLiveSessionEvents` performed one full
+      // snapshot reduce + store notify PER EVENT, plus one uncoalesced relay
+      // read and a setState cascade per event. They join the same pump as
+      // every other live stream instead.
+      expect(delivery).not.toMatch(/cacheLiveSessionEvents\(/);
+      expect(delivery).toContain('handleLiveMessage(event)');
+      // The membership/lifecycle refresh coalesces to one trailing read per
+      // animation frame rather than one relay read per event.
+      expect(delivery).toContain('requestAnimationFrame');
+      expect(delivery.match(/listSubchannelLifecycle/g)?.length).toBe(1);
+    });
+
+    it('yields a frame after the optimistic row before signing/publishing', () => {
+      const send = composerSendPath();
+      // @noble/curves signs synchronously; the optimistic row and cleared
+      // composer must reach the screen first or the send reads as a freeze.
+      const optimistic = send.indexOf('addMessages([');
+      const publish = send.indexOf('messageSubmitReply(');
+      expect(optimistic).toBeGreaterThanOrEqual(0);
+      expect(publish).toBeGreaterThan(optimistic);
+      const yieldFrame = send.indexOf('requestAnimationFrame(() => resolve())', optimistic);
+      expect(yieldFrame).toBeGreaterThanOrEqual(0);
+      expect(yieldFrame).toBeLessThan(publish);
+      // No serialization/MMKV work may sit on the send path.
+      expect(send).not.toMatch(/JSON\.stringify|storage\.set/);
+    });
+
+    it('keeps raw presence maps out of renderItem\u2019s dependencies', () => {
+      // renderItem's callback is recreated whenever any dependency changes,
+      // forcing VirtualizedList to re-invoke it for every visible row. The
+      // heartbeat map, wall clock, and grace record churn on every tick and
+      // every streamed batch; only their collapsed VERDICT record belongs in
+      // the dependency array.
+      const start = chatSource.indexOf('const renderItem = useCallback');
+      expect(start).toBeGreaterThanOrEqual(0);
+      const end = chatSource.indexOf('const readModelIntegrityHalt', start);
+      expect(end).toBeGreaterThan(start);
+      const body = chatSource.slice(start, end);
+      expect(body).toMatch(/speakerOnline\[/);
+      expect(body).not.toMatch(/agentPresences\[|presenceNow|presenceReconnectGrace\[/);
+      expect(chatSource).toMatch(/onlineVerdicts\(agentPresences/);
+      // …and the verdicts preserve identity through useStable while no
+      // verdict actually flips.
+      expect(chatSource).toMatch(/useStable\(rawSpeakerOnline, shallowEqualRecord\)/);
+    });
+
+    it('opens the corner actions modal without touching transport or cache', () => {
+      // The modal-open press handler is pure state. Anything async here would
+      // run inside the tap gesture — exactly where a freeze is indistinguishable
+      // from broken.
+      const press = chatSource.indexOf("onPress={() => setCornerActionsVisible(true)}");
+      expect(press).toBeGreaterThanOrEqual(0);
+      expect(chatSource.slice(press, press + 80)).toContain('setCornerActionsVisible(true)');
+      expect(chatSource.slice(press, press + 120)).not.toMatch(/transport|cache|await/);
+    });
+  });
 });

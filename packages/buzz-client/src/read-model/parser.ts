@@ -1481,3 +1481,30 @@ export function parseRelayEvents(
       : candidate.rejected,
   );
 }
+
+export function unresolvedReplyParentIds(
+  events: readonly NostrEvent[],
+  parsed: readonly ReadEvent[],
+): readonly string[] {
+  const conversations = new Map(
+    parsed.flatMap((event) =>
+      event.type === 'human-message' || event.type === 'agent-message'
+        ? [[event.eventId, event] as const]
+        : [],
+    ),
+  );
+  const unresolved = new Set<string>();
+  for (const event of events) {
+    const conversation = conversations.get(event.id as EventId);
+    if (!conversation || conversation.reply || !Array.isArray(event.tags)) continue;
+    const parentId = event.tags.find(
+      (candidate) =>
+        Array.isArray(candidate) &&
+        candidate[0] === 'e' &&
+        typeof candidate[1] === 'string' &&
+        candidate[3] === 'reply',
+    )?.[1];
+    if (parentId && /^[0-9a-f]{64}$/.test(parentId)) unresolved.add(parentId);
+  }
+  return [...unresolved].sort();
+}

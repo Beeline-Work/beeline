@@ -1,4 +1,5 @@
 import {
+  boundChannelWorkspaceSnapshot,
   buildStoredChannelSnapshotV1,
   canonicalizeWorkspaceMembership,
   CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
@@ -9,6 +10,7 @@ import {
   parseRelayEvents,
   reduceWorkspaceEvents,
   selectTranscript,
+  unresolvedReplyParentIds,
   type IdentityRecord,
   type ParseAuthority,
   type Pubkey,
@@ -36,6 +38,11 @@ export interface SnapshotMaterializerStore {
     channelId: string,
     cursor?: ProjectionInput['messageCursor'],
   ): Promise<ChannelMessagePage>;
+  loadMessageEvents(
+    tenantId: string,
+    channelId: string,
+    eventIds: readonly string[],
+  ): Promise<readonly import('@beeline/nostr').NostrEvent[]>;
   loadCurrentMembers(
     tenantId: string,
     channelIds: readonly string[],
@@ -231,6 +238,7 @@ export class ChannelSnapshotMaterializer {
       let messageCursor = input.messageCursor;
       let messagesExhausted = input.messagesExhausted;
       let messagePagesRead = 1;
+      const attemptedReplyParentIds = new Set<string>();
       let projection:
         | {
             readonly parsed: readonly ReadEvent[];
@@ -291,7 +299,28 @@ export class ChannelSnapshotMaterializer {
           succession.mappings,
         );
         projection = { parsed, cursor, snapshot, succession };
-        const transcript = selectTranscript(snapshot, input.channelId, {
+        const unresolvedParentIds = unresolvedReplyParentIds(currentEvents, parsed).filter(
+          (eventId) => !relayEvents.has(eventId) && !attemptedReplyParentIds.has(eventId),
+        );
+        if (unresolvedParentIds.length > 0 && messagePagesRead < this.maxMessagePagesPerClaim) {
+          for (const eventId of unresolvedParentIds) attemptedReplyParentIds.add(eventId);
+          const parents = await this.store.loadMessageEvents(
+            input.tenantId,
+            input.channelId,
+            unresolvedParentIds,
+          );
+          messagePagesRead += 1;
+          if (parents.length > 0) {
+            for (const event of parents) relayEvents.set(event.id, event);
+            continue;
+          }
+        }
+        const persistedSnapshot = boundChannelWorkspaceSnapshot(
+          snapshot,
+          input.channelId,
+          CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
+        );
+        const transcript = selectTranscript(persistedSnapshot, input.channelId, {
           limit: CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
         });
         if (messagesExhausted || transcript.length >= CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS) {
@@ -300,12 +329,18 @@ export class ChannelSnapshotMaterializer {
         if (messagePagesRead >= this.maxMessagePagesPerClaim) {
           if (!messageCursor) throw new Error('snapshot message scan lost its continuation cursor');
           const rawById = new Map(currentEvents.map((event) => [event.id, event]));
-          const carryIds = new Set(
+          const carryIds = new Set<string>(
             transcript.map((item) => item.id).filter((eventId) => rawById.has(eventId)),
           );
-          for (const event of parsed) {
-            if (event.type === 'unknown' && event.reason === 'orphan-reply' && event.eventId) {
-              carryIds.add(event.eventId);
+          const persistedRoom = persistedSnapshot.rooms[input.channelId];
+          for (const item of transcript) {
+            const event = persistedRoom?.eventJournal[item.id];
+            if (
+              (event?.type === 'human-message' || event?.type === 'agent-message') &&
+              event.reply?.eventId &&
+              rawById.has(event.reply.eventId)
+            ) {
+              carryIds.add(event.reply.eventId);
             }
           }
           const eventIds = [...carryIds]
@@ -314,7 +349,7 @@ export class ChannelSnapshotMaterializer {
               const rightEvent = rawById.get(right)!;
               return rightEvent.created_at - leftEvent.created_at || left.localeCompare(right);
             })
-            .slice(0, CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS);
+            .slice(0, CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS * 2);
           await this.store.continueScan(claim, { cursor: messageCursor, eventIds });
           this.log(
             `[snapshot] yielded tenant=${input.tenantId} channel=${input.channelId} pages=${messagePagesRead} retained=${eventIds.length}`,
@@ -351,6 +386,7 @@ export class ChannelSnapshotMaterializer {
         projectedAt: this.now(),
         cursor,
         identitiesStale: succession.stale,
+        canonicalPubkeys: succession.mappings,
       });
       const digest = channelSnapshotDigest(payload);
       await this.store.complete(claim, payload, digest);

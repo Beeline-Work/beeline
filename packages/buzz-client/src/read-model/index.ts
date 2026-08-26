@@ -2,6 +2,7 @@ export {
   deriveRelayAuthorityFacts,
   parseRelayEvent,
   parseRelayEvents,
+  unresolvedReplyParentIds,
   type RelayAuthorityFacts,
 } from './parser.js';
 export {

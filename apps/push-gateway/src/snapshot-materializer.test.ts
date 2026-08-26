@@ -79,11 +79,14 @@ describe('ChannelSnapshotMaterializer', () => {
     await postgres.close();
   });
 
-  async function insertEvent(event: NostrEvent, channelId = CHANNEL): Promise<void> {
+  async function insertEvent(event: NostrEvent, channelId: string | null = CHANNEL): Promise<void> {
     await insertEvents([event], channelId);
   }
 
-  async function insertEvents(events: readonly NostrEvent[], channelId = CHANNEL): Promise<void> {
+  async function insertEvents(
+    events: readonly NostrEvent[],
+    channelId: string | null = CHANNEL,
+  ): Promise<void> {
     await database.query(
       `INSERT INTO events
          (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
@@ -277,6 +280,239 @@ describe('ChannelSnapshotMaterializer', () => {
         .filter((row) => row.kind === 'human-message')
         .map((row) => row.body),
     ).toEqual(Array.from({ length: 30 }, (_, index) => `message ${index}`));
+  }, 30_000);
+
+  it('counts only persisted transcript rows before ending the message scan', async () => {
+    const owner = createIdentity('snapshot-persisted-count-owner');
+    const agent = createIdentity('snapshot-persisted-count-agent');
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey)
+       VALUES ($1, $2, decode($3, 'hex')), ($1, $2, decode($4, 'hex'))`,
+      [TENANT, CHANNEL, owner.publicKey, agent.publicKey],
+    );
+    const base = Math.floor(Date.now() / 1_000) - 5_000;
+    const signed = (
+      source: typeof owner,
+      createdAt: number,
+      kind: number,
+      tags: string[][],
+      content: string,
+    ) =>
+      signEvent(
+        { pubkey: source.publicKey, created_at: createdAt, kind, tags, content },
+        source.secretKey,
+      );
+    await insertEvents([
+      signed(
+        owner,
+        base,
+        9007,
+        [
+          ['h', CHANNEL],
+          ['community', 'verified-application-workspace'],
+          ['p', owner.publicKey, 'owner'],
+          ['p', agent.publicKey, 'member'],
+        ],
+        '',
+      ),
+      signed(
+        owner,
+        base + 1,
+        39002,
+        [
+          ['d', CHANNEL],
+          ['p', owner.publicKey, 'owner'],
+          ['p', agent.publicKey, 'member'],
+        ],
+        '',
+      ),
+      ...Array.from({ length: 30 }, (_, index) =>
+        signed(owner, base + 2 + index, 9, [['h', CHANNEL]], `message ${index}`),
+      ),
+      ...Array.from({ length: 130 }, (_, index) =>
+        signed(
+          owner,
+          base + 100 + index,
+          9,
+          [
+            ['h', CHANNEL],
+            ['t', 'buzz-merge-approval'],
+            ['repo', 'lunchboxfortwo/beeline'],
+            ['branch', 'main'],
+          ],
+          'APPROVE',
+        ),
+      ),
+      signed(
+        agent,
+        base + 300,
+        9,
+        [
+          ['h', CHANNEL],
+          ['t', 'body-control'],
+          ['t', 'agent-turn'],
+          ['request', 'request-1'],
+          ['session', 'session-1'],
+          ['agent', agent.publicKey],
+          ['status', 'working'],
+        ],
+        'working',
+      ),
+      signed(
+        agent,
+        base + 301,
+        30078,
+        [
+          ['d', `agent-draft:${CHANNEL}`],
+          ['h', CHANNEL],
+          ['t', 'agent-draft'],
+          ['agent', agent.publicKey],
+          ['session', 'session-1'],
+          ['request', 'request-1'],
+        ],
+        'draft in progress',
+      ),
+    ]);
+    await insertEvent(
+      signed(
+        agent,
+        base + 50,
+        9,
+        [
+          ['t', 'buzz-agent'],
+          ['agent', agent.publicKey],
+        ],
+        JSON.stringify({ displayName: 'Snapshot Agent' }),
+      ),
+      null,
+    );
+    const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+      return new Response(
+        JSON.stringify({
+          mappings: Object.fromEntries(body.pubkeys.map((pubkey) => [pubkey, pubkey])),
+        }),
+        { status: 200 },
+      );
+    });
+    const materializer = new ChannelSnapshotMaterializer(
+      store,
+      new SnapshotSuccessionClient({
+        baseUrl: 'http://auth:8789',
+        token: 'secret',
+        fetch: fetchImpl,
+      }),
+      { burstCoalesceMs: 0, log: () => undefined },
+    );
+
+    expect(await materializer.runOnce()).toBe(1);
+    const served = await store.readForViewer(CHANNEL, owner.publicKey);
+    const transcript = selectTranscript(served!.payload!.snapshot, CHANNEL);
+    expect(transcript.map((row) => row.kind)).toEqual(Array(30).fill('human-message'));
+    expect(transcript.map((row) => ('body' in row ? row.body : undefined))).toEqual(
+      Array.from({ length: 30 }, (_, index) => `message ${index}`),
+    );
+  }, 30_000);
+
+  it('exact-loads same-Room reply parents outside the transcript page', async () => {
+    const owner = createIdentity('snapshot-reply-owner');
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey)
+       VALUES ($1, $2, decode($3, 'hex'))`,
+      [TENANT, CHANNEL, owner.publicKey],
+    );
+    const base = Math.floor(Date.now() / 1_000) - 5_000;
+    const signed = (createdAt: number, kind: number, tags: string[][], content: string) =>
+      signEvent(
+        { pubkey: owner.publicKey, created_at: createdAt, kind, tags, content },
+        owner.secretKey,
+      );
+    const parents = Array.from({ length: 30 }, (_, index) =>
+      signed(base + 2 + index, 9, [['h', CHANNEL]], `parent ${index}`),
+    );
+    const replies = parents.map((parent, index) =>
+      signed(
+        base + 100 + index,
+        9,
+        [
+          ['h', CHANNEL],
+          ['e', parent.id, '', 'reply'],
+        ],
+        `reply ${index}`,
+      ),
+    );
+    await insertEvents([
+      signed(
+        base,
+        9007,
+        [
+          ['h', CHANNEL],
+          ['community', 'verified-application-workspace'],
+          ['p', owner.publicKey, 'owner'],
+        ],
+        '',
+      ),
+      signed(
+        base + 1,
+        39002,
+        [
+          ['d', CHANNEL],
+          ['p', owner.publicKey, 'owner'],
+        ],
+        '',
+      ),
+      ...parents,
+      ...replies,
+      ...Array.from({ length: 130 }, (_, index) =>
+        signed(
+          base + 200 + index,
+          9,
+          [
+            ['h', CHANNEL],
+            ['t', 'buzz-merge-approval'],
+            ['repo', 'lunchboxfortwo/beeline'],
+            ['branch', 'main'],
+          ],
+          'APPROVE',
+        ),
+      ),
+    ]);
+    const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+      return new Response(
+        JSON.stringify({
+          mappings: Object.fromEntries(body.pubkeys.map((pubkey) => [pubkey, pubkey])),
+        }),
+        { status: 200 },
+      );
+    });
+    const materializer = new ChannelSnapshotMaterializer(
+      store,
+      new SnapshotSuccessionClient({
+        baseUrl: 'http://auth:8789',
+        token: 'secret',
+        fetch: fetchImpl,
+      }),
+      { burstCoalesceMs: 0, log: () => undefined },
+    );
+
+    expect(await materializer.runOnce()).toBe(1);
+    const served = await store.readForViewer(CHANNEL, owner.publicKey);
+    const transcript = selectTranscript(served!.payload!.snapshot, CHANNEL, { limit: 30 });
+    expect(transcript.map((row) => ('body' in row ? row.body : undefined))).toEqual(
+      Array.from({ length: 30 }, (_, index) => `reply ${index}`),
+    );
+    expect(transcript.map((row) => ('reply' in row ? row.reply?.eventId : undefined))).toEqual(
+      parents.map((parent) => parent.id),
+    );
   }, 30_000);
 
   it('yields a deep hidden-history scan so a cold channel runs next', async () => {

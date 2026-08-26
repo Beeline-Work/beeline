@@ -1,5 +1,10 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { normalizeAttachmentReference, type AttachmentReference } from '../attachment.js';
+import {
+  parseChangeReviewGenerationComplete,
+  parseChangeReviewManifest,
+} from '../change-review.js';
 import { snapshotForPersistence } from './cache.js';
 import {
   selectRepositorySummary,
@@ -176,6 +181,7 @@ export type BuildStoredChannelSnapshotInput = {
   readonly projectedAt: number;
   readonly cursor: ChannelSnapshotCursorV1;
   readonly identitiesStale: boolean;
+  readonly canonicalPubkeys?: Readonly<Record<string, string>>;
   readonly maxBytes?: number;
 };
 
@@ -184,6 +190,17 @@ export function buildStoredChannelSnapshotV1(
   input: BuildStoredChannelSnapshotInput,
 ): StoredChannelSnapshotV1 {
   const maxBytes = input.maxBytes ?? CHANNEL_SNAPSHOT_MAX_BYTES;
+  const selectedReview = selectReviewSummary(input.snapshot, input.channelId);
+  const review: ReviewSummary = {
+    ...selectedReview,
+    approvedBy: [
+      ...new Set(
+        selectedReview.approvedBy.map(
+          (pubkey) => (input.canonicalPubkeys?.[pubkey] ?? pubkey) as Pubkey,
+        ),
+      ),
+    ].sort(),
+  };
   for (let limit = CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS; limit >= 0; limit -= 1) {
     const bounded = boundChannelWorkspaceSnapshot(input.snapshot, input.channelId, limit);
     const payload: StoredChannelSnapshotV1 = {
@@ -199,7 +216,7 @@ export function buildStoredChannelSnapshotV1(
       ...(selectRepositorySummary(input.snapshot, input.channelId)
         ? { repository: selectRepositorySummary(input.snapshot, input.channelId) }
         : {}),
-      review: selectReviewSummary(input.snapshot, input.channelId),
+      review,
     };
     const largestView: ChannelSnapshotViewV1 = {
       ...payload,
@@ -312,9 +329,18 @@ function validAttachment(value: unknown): boolean {
   ) {
     return false;
   }
+  if (
+    attachment.sha256 !== undefined &&
+    (typeof attachment.sha256 !== 'string' || !HEX_ID.test(attachment.sha256))
+  ) {
+    return false;
+  }
+  const normalized = normalizeAttachmentReference(attachment as unknown as AttachmentReference);
+  if (!normalized) return false;
+  const normalizedRecord = normalized as unknown as Record<string, unknown>;
   return (
-    attachment.sha256 === undefined ||
-    (typeof attachment.sha256 === 'string' && HEX_ID.test(attachment.sha256))
+    Object.keys(normalizedRecord).length === Object.keys(attachment).length &&
+    Object.entries(attachment).every(([key, value]) => normalizedRecord[key] === value)
   );
 }
 
@@ -717,7 +743,8 @@ function validCorner(value: unknown, expectedId: string): boolean {
     return (
       exactKeys(corner, [...common, 'reason', 'humanMembers', 'leaseUntil']) &&
       ['open', 'working', 'waiting', 'idle'].includes(String(corner.state)) &&
-      (corner.reason === undefined || ['review', 'question', 'failure'].includes(String(corner.reason))) &&
+      (corner.reason === undefined ||
+        ['review', 'question', 'failure'].includes(String(corner.reason))) &&
       optionalNonnegativeInteger(corner, 'leaseUntil') &&
       Array.isArray(corner.humanMembers) &&
       corner.humanMembers.length > 0 &&
@@ -931,6 +958,46 @@ function validReview(value: unknown): boolean {
       typeof target.tip !== 'string' ||
       !optionalString(target, 'patchId') ||
       !optionalString(target, 'previewUrl'))
+  ) {
+    return false;
+  }
+  if (
+    target &&
+    (!target.repository ||
+      !target.branch ||
+      !/^[0-9a-f]{40}$/.test(target.tip as string) ||
+      (target.patchId !== undefined && !/^[0-9a-f]{40}$/.test(target.patchId as string)))
+  ) {
+    return false;
+  }
+  if (
+    review.files.length > 0 &&
+    (!target ||
+      !parseChangeReviewManifest(
+        JSON.stringify({
+          version: 1,
+          base: target.tip,
+          tip: target.tip,
+          files: review.files.map((path) => ({ path, status: 'modified' })),
+        }),
+      ))
+  ) {
+    return false;
+  }
+  if (
+    review.previewSummary !== undefined &&
+    (!target?.patchId ||
+      !parseChangeReviewGenerationComplete(
+        JSON.stringify({
+          version: 1,
+          base: target.tip,
+          tip: target.tip,
+          patchId: target.patchId,
+          summary: review.previewSummary,
+          manifestChunks: 1,
+          fileCount: review.fileCount,
+        }),
+      ))
   ) {
     return false;
   }

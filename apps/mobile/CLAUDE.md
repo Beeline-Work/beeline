@@ -23,7 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - No existing tests in the codebase yet
 
 ### Production
-- `pnpm ota` - Publish an OTA candidate to `beta`; production promotion and rollback are governed by `.github/workflows/mobile-ota.yml`
+- OTA releases and rollbacks run only through `.github/workflows/mobile-ota.yml`
 
 ## Architecture Overview
 

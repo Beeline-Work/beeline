@@ -53,17 +53,9 @@ Every successful release stores `candidateGroupId`, the republished production
 group, and `previousProductionGroupId` in the `mobile-ota-ledger-<run-id>`
 workflow artifact. Choose `rollback` in the workflow dispatch UI to republish
 that recorded predecessor; `rollback_group` can override it with another known
-good group. The captain-only emergency path is a manual `release` dispatch with
-`skip_canary=true`; it defaults to false and is recorded in the ledger.
-
-The direct rollback one-liner is:
-
-```sh
-cd apps/mobile && npx --yes eas-cli@22.2.0 update:republish --group <LAST_GOOD_GROUP_ID> --destination-branch production --platform all --message "captain rollback" --json --non-interactive
-```
-
-`--destination-branch production` is intentional: with `--group`, current EAS
-CLI uses `--branch` to select a source rather than to name the destination.
+good group. The only emergency publish path is a captain-only manual `release`
+dispatch with `skip_canary=true`; it defaults to false and is recorded in the
+ledger.
 Native changes still require a binary rebuild and runtimeVersion bump; the
 governor does not relax that compatibility boundary.
 

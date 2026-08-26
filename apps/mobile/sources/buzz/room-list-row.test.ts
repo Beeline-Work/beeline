@@ -156,20 +156,23 @@ describe('Room row presentation', () => {
     expect(row.live).toBe(true);
   });
 
-  it('never invents an independent Room state from a conversational turn', () => {
-    // Room state is only max(corner states); a Room-level stream is not a
-    // fourth input to the rollup.
+  it('takes the maximum of the Room-own turn and every corner state', () => {
     expect(roomRowPresentation({ agentTurnWorking: true }, NO_NAMES)).toMatchObject({
-      zone: 'idle',
-      live: false,
+      zone: 'working',
+      live: true,
       attention: false,
     });
-    // But a person's decision outranks it.
+    // A person's decision is the stronger verdict even while the Room itself
+    // is working, so the corner contribution cannot be masked.
     expect(
       roomRowPresentation({ agentTurnWorking: true, corners: [corner('open')] }, NO_NAMES).zone,
     ).toBe('needs-you');
-    // And it never survives into idle.
+    // Completion removes only the Room-own contribution. Independent corner
+    // work still wins, while a Room with no live corner returns to idle.
     expect(roomRowPresentation({ agentTurnWorking: false }, NO_NAMES).zone).toBe('idle');
+    expect(
+      roomRowPresentation({ agentTurnWorking: false, corners: [corner('live')] }, NO_NAMES).zone,
+    ).toBe('working');
   });
 
   it('ignores a legacy active word when no canonical working record exists', () => {
@@ -435,7 +438,7 @@ describe('Room row presentation', () => {
       NO_NAMES,
     );
     expect(active.map(({ item }) => item.id)).toEqual(['older', 'newer']);
-    expect(active[0]?.row).toMatchObject({ state: 'idle', attention: false, unread: true });
+    expect(active[0]?.row).toMatchObject({ state: 'working', attention: false, unread: true });
   });
 
   it('is stable for equal state and activity and returns one flat feed', () => {

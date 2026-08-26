@@ -45,7 +45,11 @@ import {
   parsePermissionRequest,
   parsePermissionRevocation,
 } from '../permission-request.js';
-import { parseRoomRepository } from '../room-repository.js';
+import {
+  advanceRoomRepositorySequence,
+  parseRoomRepository,
+  type RoomRepositorySequenceBinding,
+} from '../room-repository.js';
 import type {
   Activity,
   ActivityDetail,
@@ -1529,11 +1533,72 @@ export function parseRelayEvents(
     knownPermissionRequests,
     knownDelegationTurns,
   };
-  return admitted.map((candidate) =>
+  const parsed = admitted.map((candidate) =>
     candidate.accepted
       ? parseVerifiedRelayEvent(candidate.event, finalAuthority)
       : candidate.rejected,
   );
+  const repositoryBindings = new Map<string, RoomRepositorySequenceBinding>();
+  for (const event of [...parsed].sort(
+    (a, b) =>
+      (a.createdAt ?? Number.MAX_SAFE_INTEGER) - (b.createdAt ?? Number.MAX_SAFE_INTEGER) ||
+      (a.eventId ?? '').localeCompare(b.eventId ?? ''),
+  )) {
+    if (
+      event.type === 'lifecycle' &&
+      event.lifecycle.entity === 'room' &&
+      event.lifecycle.state === 'created' &&
+      event.lifecycle.repository &&
+      !repositoryBindings.has(event.channelId)
+    ) {
+      repositoryBindings.set(event.channelId, {
+        key: event.lifecycle.repository.key,
+        targetBranch: 'main',
+      });
+    }
+  }
+  const acceptedRepositories = new Set<number>();
+  const repositoryCandidates = parsed
+    .flatMap((event, index) =>
+      event.type === 'control' && event.payload.kind === 'repository' && 'channelId' in event
+        ? [{ event, index }]
+        : [],
+    )
+    .sort(
+      (a, b) =>
+        a.event.createdAt - b.event.createdAt || a.event.eventId.localeCompare(b.event.eventId),
+    );
+  for (const { event, index } of repositoryCandidates) {
+    const candidate = admitted[index];
+    if (!candidate?.accepted) continue;
+    const repository = parseRoomRepository(candidate.event);
+    if (!repository) continue;
+    const role =
+      authority.channelCreators?.[event.channelId] === event.authorPubkey
+        ? 'owner'
+        : isAdmin(authority, event.channelId, event.authorPubkey)
+          ? 'admin'
+          : null;
+    const decision = advanceRoomRepositorySequence(
+      repositoryBindings.get(event.channelId),
+      repository,
+      role,
+    );
+    if (!decision.accepted) continue;
+    repositoryBindings.set(event.channelId, decision.binding);
+    acceptedRepositories.add(index);
+  }
+  return parsed.map((event, index) => {
+    if (
+      event.type !== 'control' ||
+      event.payload.kind !== 'repository' ||
+      acceptedRepositories.has(index)
+    ) {
+      return event;
+    }
+    const candidate = admitted[index];
+    return candidate ? unknown(candidate.event, 'unauthorized') : event;
+  });
 }
 
 export function unresolvedReplyParentIds(

@@ -297,16 +297,12 @@ export class ChannelSnapshotMaterializer {
           historicalMessagePubkeys,
         };
         const parsed = parseRelayEvents(events, authority);
-        const repositoryChannelId =
-          Object.entries(facts.cornerIdsByParent).find(([, cornerIds]) =>
-            cornerIds.includes(input.channelId),
-          )?.[0] ?? input.channelId;
         const authorizedRepositoryFound = parsed.some(
           (event) =>
             event.type === 'control' &&
             event.payload.kind === 'repository' &&
             'channelId' in event &&
-            event.channelId === repositoryChannelId,
+            event.channelId === input.repositoryChannelId,
         );
         if (!authorizedRepositoryFound && !input.repositoriesExhausted) {
           if (!input.repositoryCursor) {

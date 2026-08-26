@@ -24,6 +24,7 @@ export type ProjectionInput = {
   readonly tenantId: string;
   readonly channelId: string;
   readonly channelIds: readonly string[];
+  readonly repositoryChannelId: string;
   readonly events: readonly NostrEvent[];
   readonly cursor: ChannelSnapshotCursorV1;
   readonly messageCursor?: MessagePageCursor;
@@ -373,7 +374,10 @@ export class ChannelSnapshotStore {
   }
 
   async loadProjectionInput(claim: DirtyChannelClaim): Promise<ProjectionInput | null> {
-    const channels = await this.database.query<{ channel_id: string }>(
+    const channels = await this.database.query<{
+      channel_id: string;
+      repository_channel_id: string;
+    }>(
       `WITH target_channel AS (
          SELECT c.id FROM channels c
          WHERE c.community_id = $1::uuid AND c.id = $2::uuid AND c.deleted_at IS NULL
@@ -390,7 +394,7 @@ export class ChannelSnapshotStore {
          SELECT COALESCE((SELECT channel_id FROM parent), target.id::text) AS channel_id
          FROM target_channel target
        )
-       SELECT DISTINCT family.channel_id FROM (
+       SELECT DISTINCT family.channel_id, root.channel_id AS repository_channel_id FROM (
          SELECT id::text AS channel_id FROM target_channel
          UNION ALL SELECT channel_id FROM family_root
          UNION ALL
@@ -401,11 +405,13 @@ export class ChannelSnapshotStore {
              WHERE tag->>0 = 'parent' AND tag->>1 = root.channel_id
            )
        ) family
+       CROSS JOIN family_root root
        WHERE family.channel_id IS NOT NULL`,
       [claim.tenantId, claim.channelId],
     );
     const channelIds = [...new Set(channels.rows.map((row) => row.channel_id))];
-    if (channelIds.length === 0) return null;
+    const repositoryChannelId = channels.rows[0]?.repository_channel_id;
+    if (channelIds.length === 0 || !repositoryChannelId) return null;
 
     const continuationResult = await this.database.query<{
       scan_cursor_created_at: string | number | null;
@@ -710,6 +716,7 @@ export class ChannelSnapshotStore {
       tenantId: claim.tenantId,
       channelId: claim.channelId,
       channelIds,
+      repositoryChannelId,
       events: [...byId.values()],
       cursor,
       ...(messages.cursor ? { messageCursor: messages.cursor } : {}),

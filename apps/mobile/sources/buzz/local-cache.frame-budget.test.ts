@@ -93,4 +93,62 @@ describe('FRAME-BUDGET gate', () => {
       useBuzzLocalCache.getState().channels[channelCacheKey(VIEWER, ROOM)]!.snapshot!;
     expect(selectTranscript(snapshot, ROOM)).toHaveLength(1_000);
   });
+
+  it('keeps corner-state churn inside the same budget as message traffic', () => {
+    // A working corner republishes its kind:30078 state lease and activity
+    // receipts continuously alongside its streamed reply. Those session-update
+    // records ride the SAME drainLiveEventFrame pump, so the gate must hold
+    // for a burst that mixes them with ordinary message rows.
+    const queue = Array.from({ length: 400 }, (_, index) => {
+      const message = index % 2 === 0;
+      return {
+        type: 'read-model' as const,
+        sessionId: ROOM,
+        event: message
+          ? humanMessage(index)
+          : ({
+              type: 'session-update',
+              eventId: `corner-state-${index}`,
+              channelId: ROOM,
+              workspaceId: 'workspace',
+              scope: 'channel',
+              authorPubkey: 'agent-1',
+              createdAt: 5_000 + index,
+              sourceKind: 30078,
+              signature: 'verified',
+              sessionId: ROOM,
+              update: {
+                kind: 'corner-state',
+                cornerId: 'corner-1',
+                state: 'working',
+                sequence: index,
+              },
+            } as unknown),
+      };
+    });
+    let clock = 0;
+    const now = () => clock;
+    let writes = 0;
+    let frames = 0;
+    while (queue.length > 0) {
+      clock = 0;
+      frames += 1;
+      drainLiveEventFrame(
+        queue,
+        (batch) => {
+          cacheLiveSessionEvents(VIEWER, ROOM, batch);
+          writes += 1;
+          clock += 2;
+        },
+        { now, budgetMs: 5 },
+      );
+    }
+    // Every frame stayed within the budget (2ms per 16-event chunk against
+    // the 5ms cap), so no single frame can hold an interaction hostage.
+    expect(writes).toBe(Math.ceil(400 / LIVE_EVENT_CHUNK_SIZE));
+    expect(frames).toBeGreaterThan(1);
+    const snapshot =
+      useBuzzLocalCache.getState().channels[channelCacheKey(VIEWER, ROOM)]!.snapshot!;
+    expect(selectTranscript(snapshot, ROOM)).toHaveLength(200);
+  });
 });

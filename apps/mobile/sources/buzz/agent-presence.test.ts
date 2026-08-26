@@ -11,6 +11,7 @@ import {
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
+  onlineVerdicts,
   presenceMapFromSessionEvents,
   presenceWithMessageLiveness,
   reconnectPresenceAfterForeground,
@@ -332,5 +333,55 @@ describe('an agent message counts as liveness', () => {
       agentPubkeys,
     );
     expect(isAgentPresenceOnlineWithReconnectGrace(corrected[agent], now)).toBe(true);
+  });
+});
+
+describe('flat online verdicts for the transcript render path', () => {
+  // Presence leases compare milliseconds against `observedAt`, which this
+  // helper derives from the event's SECOND-resolution createdAt.
+  const now = 1_000_000;
+
+  it('resolves one boolean per requested pubkey through the shared liveness helper', () => {
+    const presences = presenceMapFromSessionEvents([
+      presence('online', 999),
+      presence('offline', 998, 'c'.repeat(64)),
+      // Long past its lease — only the reconnect grace below keeps it online.
+      presence('online', 100, 'd'.repeat(64)),
+    ]);
+    const freshAgent = agent;
+    const staleGraceAgent = 'c'.repeat(64);
+    const graceAgent = 'd'.repeat(64);
+    const verdicts = onlineVerdicts(
+      presences,
+      [freshAgent, staleGraceAgent, graceAgent, 'unknown-agent'],
+      now,
+      { [graceAgent]: now + AGENT_PRESENCE_STALE_MS },
+    );
+    expect(verdicts[freshAgent]).toBe(true);
+    expect(verdicts[staleGraceAgent]).toBe(false);
+    // Reconnect grace keeps a previously-online agent optimistic.
+    expect(verdicts[graceAgent]).toBe(true);
+    // An absent presence is UNKNOWN-liveness → false, never a crash.
+    expect(verdicts['unknown-agent']).toBe(false);
+  });
+
+  it('flips only when a verdict genuinely changes, so identity can gate re-renders', () => {
+    const pubkeys = [agent];
+    const beforeHeartbeat = onlineVerdicts(presenceMapFromSessionEvents([]), pubkeys, now);
+    // An ONLINE heartbeat lands the agent inside its lease...
+    const afterHeartbeat = onlineVerdicts(
+      presenceMapFromSessionEvents([presence('online', 999)]),
+      pubkeys,
+      now,
+    );
+    expect(beforeHeartbeat[agent]).toBe(false);
+    expect(afterHeartbeat[agent]).toBe(true);
+    // ...and an explicit OFFLINE marker flips it back.
+    const afterOffline = onlineVerdicts(
+      presenceMapFromSessionEvents([presence('offline', 999)]),
+      pubkeys,
+      now,
+    );
+    expect(afterOffline[agent]).not.toBe(afterHeartbeat[agent]);
   });
 });

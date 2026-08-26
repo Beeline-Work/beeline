@@ -1,21 +1,50 @@
 import { once } from 'node:events';
 import { type AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
+import { PGlite, type Transaction } from '@electric-sql/pglite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nip98AuthHeader, type NostrEvent } from '@beeline/nostr';
 import type { Messaging } from 'firebase-admin/messaging';
 import {
   createIdentity,
+  CHANNEL_SNAPSHOT_MAX_BYTES,
+  channelSnapshotDigest,
   guardChannelSnapshotViewV1,
   type StoredChannelSnapshotV1,
 } from '@beeline/buzz-client';
+import type { DatabaseQueryable, DatabaseTransactional } from './database.js';
 import { DeliveryState } from './delivery-state.js';
 import { PushGateway } from './gateway.js';
 import { TokenRegistry } from './registry.js';
 import { createRegistrationServer, type RegistrationServerHooks } from './server.js';
+import { ChannelSnapshotStore } from './snapshot-store.js';
 
 const PUBKEY = 'a'.repeat(64);
 const TOKEN = 'fcm-token-A_12345678901234567890';
+
+class PgliteDatabase implements DatabaseTransactional {
+  constructor(private readonly postgres: PGlite) {}
+
+  async query<Row>(text: string, values?: unknown[]) {
+    if (values === undefined && text.includes('CREATE TABLE')) {
+      await this.postgres.exec(text);
+      return { rows: [] as Row[] };
+    }
+    const result = await this.postgres.query<Row>(text, values as never[] | undefined);
+    return { rows: result.rows };
+  }
+
+  async transaction<T>(work: (database: DatabaseQueryable) => Promise<T>): Promise<T> {
+    return this.postgres.transaction(async (transaction: Transaction) =>
+      work({
+        query: async <Row>(text: string, values?: unknown[]) => {
+          const result = await transaction.query<Row>(text, values as never[] | undefined);
+          return { rows: result.rows };
+        },
+      }),
+    );
+  }
+}
 
 describe('registration server', () => {
   const servers: ReturnType<typeof createRegistrationServer>[] = [];
@@ -273,6 +302,23 @@ describe('GET /snapshot/channel/:channelId', () => {
     };
   }
 
+  function normalizedStoredPayload(value: unknown): StoredChannelSnapshotV1 {
+    const candidate = value as StoredChannelSnapshotV1;
+    return {
+      capability: candidate.capability,
+      schemaVersion: candidate.schemaVersion,
+      projectionVersion: candidate.projectionVersion,
+      channelId: candidate.channelId,
+      revision: candidate.revision,
+      projectedAt: candidate.projectedAt,
+      cursor: candidate.cursor,
+      identitiesStale: candidate.identitiesStale,
+      snapshot: candidate.snapshot,
+      ...(candidate.repository ? { repository: candidate.repository } : {}),
+      review: candidate.review,
+    };
+  }
+
   async function listen(
     readForViewer: NonNullable<RegistrationServerHooks['snapshot']>['readForViewer'],
     options: {
@@ -329,29 +375,100 @@ describe('GET /snapshot/channel/:channelId', () => {
     );
   }
 
-  it('serves the shared golden contract with private headers in under 300ms', async () => {
+  it('serves a membership-gated PostgreSQL snapshot in under 300ms', async () => {
     const identity = createIdentity('snapshot-member');
     const { payload, digest } = golden();
-    const base = await listen(async () => ({
-      tenantId: 'e8299f28-f095-472f-941a-80d1195b9a24',
-      payload,
-      digest,
-      lagMs: 12,
-    }));
-    const path = `/snapshot/channel/${CHANNEL}`;
-    const startedAt = performance.now();
-    const response = await fetch(`${base}${path}`, {
-      headers: { authorization: authorization(identity, path) },
-    });
-    const elapsed = performance.now() - startedAt;
+    const postgres = new PGlite();
+    await postgres.waitReady;
+    const database = new PgliteDatabase(postgres);
+    await postgres.exec(`
+      CREATE TABLE channels (
+        community_id uuid NOT NULL,
+        id uuid NOT NULL,
+        visibility text NOT NULL DEFAULT 'private',
+        deleted_at timestamptz,
+        PRIMARY KEY (community_id, id)
+      );
+      CREATE TABLE channel_members (
+        community_id uuid NOT NULL,
+        channel_id uuid NOT NULL,
+        pubkey bytea NOT NULL,
+        removed_at timestamptz
+      );
+      CREATE TABLE events (
+        community_id uuid NOT NULL,
+        id bytea NOT NULL,
+        pubkey bytea NOT NULL,
+        created_at timestamptz NOT NULL,
+        kind integer NOT NULL,
+        tags jsonb NOT NULL,
+        content text NOT NULL,
+        sig bytea NOT NULL,
+        channel_id uuid,
+        deleted_at timestamptz
+      );
+    `);
+    const store = new ChannelSnapshotStore(database);
+    await store.migrate();
+    try {
+      await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
+        'e8299f28-f095-472f-941a-80d1195b9a24',
+        CHANNEL,
+      ]);
+      await database.query(
+        `INSERT INTO channel_members (community_id, channel_id, pubkey)
+         VALUES ($1, $2, decode($3, 'hex'))`,
+        ['e8299f28-f095-472f-941a-80d1195b9a24', CHANNEL, identity.publicKey],
+      );
+      const [claim] = await store.claimDirty(1, 60_000);
+      await store.complete(claim!, payload, digest);
+      const roundTripped = await store.readForViewer(CHANNEL, identity.publicKey);
+      const databaseDigest = channelSnapshotDigest(normalizedStoredPayload(roundTripped!.payload));
+      await database.query(
+        `UPDATE beeline_channel_snapshot_v1 SET payload_sha256 = $1
+         WHERE relay_tenant_id = $2 AND channel_id = $3`,
+        [databaseDigest, 'e8299f28-f095-472f-941a-80d1195b9a24', CHANNEL],
+      );
 
-    expect(response.status).toBe(200);
-    expect(elapsed).toBeLessThan(300);
-    expect(response.headers.get('cache-control')).toBe('private, no-store');
-    expect(response.headers.get('vary')).toBe('Authorization');
-    expect(response.headers.get('x-beeline-snapshot-integrity')).toBe(digest);
-    expect(guardChannelSnapshotViewV1(await response.json())).toMatchObject({ status: 'ready' });
-  });
+      const registry = await TokenRegistry.load();
+      const server = createRegistrationServer(registry, {
+        snapshot: {
+          publicOrigin: PUBLIC_ORIGIN,
+          readForViewer: (channelId, pubkey) => store.readForViewer(channelId, pubkey),
+          claimNip98Event: (eventId) => store.claimNip98Event(eventId),
+        },
+      });
+      servers.push(server);
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const path = `/snapshot/channel/${CHANNEL}`;
+      const startedAt = performance.now();
+      const response = await fetch(`${base}${path}`, {
+        headers: { authorization: authorization(identity, path) },
+      });
+      const elapsed = performance.now() - startedAt;
+
+      expect(response.status).toBe(200);
+      expect(elapsed).toBeLessThan(300);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(response.headers.get('vary')).toBe('Authorization');
+      expect(response.headers.get('x-beeline-snapshot-integrity')).toBe(databaseDigest);
+      expect(guardChannelSnapshotViewV1(await response.json())).toMatchObject({ status: 'ready' });
+
+      await database.query(
+        `UPDATE channel_members SET removed_at = now()
+         WHERE community_id = $1 AND channel_id = $2 AND pubkey = decode($3, 'hex')`,
+        ['e8299f28-f095-472f-941a-80d1195b9a24', CHANNEL, identity.publicKey],
+      );
+      const removed = await fetch(`${base}${path}`, {
+        headers: { authorization: authorization(identity, path) },
+      });
+      expect(removed.status).toBe(404);
+    } finally {
+      await postgres.close();
+    }
+  }, 30_000);
 
   it('returns an indistinguishable 404 for a non-member and a nonexistent channel', async () => {
     const identity = createIdentity('snapshot-outsider');
@@ -412,15 +529,47 @@ describe('GET /snapshot/channel/:channelId', () => {
       { tenantId: 'tenant', lagMs: 30_001, payload, digest },
       { tenantId: 'tenant', lagMs: 0 },
       { tenantId: 'tenant', lagMs: 0, payload, digest: '0'.repeat(64) },
+      { tenantId: 'tenant', lagMs: 0, payload: {}, digest },
     ];
     const base = await listen(async () => rows.shift()!);
     const path = `/snapshot/channel/${CHANNEL}`;
-    for (const reason of ['stale', 'missing', 'incompatible_or_corrupt']) {
+    for (const reason of [
+      'stale',
+      'missing',
+      'incompatible_or_corrupt',
+      'incompatible_or_corrupt',
+    ]) {
       const response = await fetch(`${base}${path}`, {
         headers: { authorization: authorization(identity, path) },
       });
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toEqual({ error: 'snapshot_not_ready', reason });
     }
+  });
+
+  it('rejects a validly hashed snapshot whose complete response exceeds the byte cap', async () => {
+    const identity = createIdentity('snapshot-byte-cap');
+    const { payload } = golden();
+    const oversized = structuredClone(payload);
+    (oversized.snapshot as unknown as { diagnostics: unknown[] }).diagnostics = [
+      'x'.repeat(CHANNEL_SNAPSHOT_MAX_BYTES),
+    ];
+    const digest = channelSnapshotDigest(oversized);
+    const base = await listen(async () => ({
+      tenantId: 'tenant',
+      lagMs: 0,
+      payload: oversized,
+      digest,
+    }));
+    const path = `/snapshot/channel/${CHANNEL}`;
+    const response = await fetch(`${base}${path}`, {
+      headers: { authorization: authorization(identity, path) },
+    });
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: 'snapshot_not_ready',
+      reason: 'incompatible_or_corrupt',
+    });
   });
 });

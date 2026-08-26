@@ -1,11 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { NIP98_KIND, verifyEvent, verifyNip98Header, type NostrEvent } from '@beeline/nostr';
 import {
-  CHANNEL_SNAPSHOT_PROJECTION_VERSION,
-  CHANNEL_SNAPSHOT_SCHEMA_VERSION,
-  channelSnapshotDigest,
+  CHANNEL_SNAPSHOT_MAX_BYTES,
+  guardStoredChannelSnapshotV1,
   snapshotViewerOverlay,
-  type StoredChannelSnapshotV1,
 } from '@beeline/buzz-client';
 import { TokenRegistry } from './registry.js';
 import type { TestSendReport } from './gateway.js';
@@ -96,24 +94,6 @@ function snapshotUnavailable(response: ServerResponse, reason: string): void {
   );
 }
 
-function validStoredSnapshot(
-  payload: StoredChannelSnapshotV1,
-  channelId: string,
-  digest: string,
-): boolean {
-  return (
-    payload.capability === 'channel-snapshot-v1' &&
-    payload.schemaVersion === CHANNEL_SNAPSHOT_SCHEMA_VERSION &&
-    payload.projectionVersion === CHANNEL_SNAPSHOT_PROJECTION_VERSION &&
-    payload.channelId === channelId &&
-    payload.cursor.createdAt >= 0 &&
-    payload.cursor.eventIds.length > 0 &&
-    Boolean(payload.snapshot.rooms[channelId]) &&
-    /^[0-9a-f]{64}$/.test(digest) &&
-    channelSnapshotDigest(payload) === digest
-  );
-}
-
 export function createRegistrationServer(
   registry: TokenRegistry,
   hooks: RegistrationServerHooks = {},
@@ -186,32 +166,37 @@ export function createRegistrationServer(
             snapshotUnavailable(response, 'stale');
             return;
           }
-          if (!validStoredSnapshot(row.payload, channelId, row.digest)) {
+          const stored = guardStoredChannelSnapshotV1(row.payload, channelId, row.digest);
+          if (stored.status !== 'ready') {
+            status = 503;
+            snapshotUnavailable(response, 'incompatible_or_corrupt');
+            return;
+          }
+          const view = {
+            ...stored.payload,
+            lagMs: row.lagMs,
+            viewer: snapshotViewerOverlay(stored.payload, auth.pubkey),
+            integrity: {
+              algorithm: 'sha256' as const,
+              scope: 'stored-channel-snapshot-v1' as const,
+              digest: row.digest,
+            },
+          };
+          const serialized = `${JSON.stringify(view)}\n`;
+          if (Buffer.byteLength(serialized) > CHANNEL_SNAPSHOT_MAX_BYTES) {
             status = 503;
             snapshotUnavailable(response, 'incompatible_or_corrupt');
             return;
           }
           status = 200;
-          json(
-            response,
-            status,
-            {
-              ...row.payload,
-              lagMs: row.lagMs,
-              viewer: snapshotViewerOverlay(row.payload, auth.pubkey),
-              integrity: {
-                algorithm: 'sha256',
-                scope: 'stored-channel-snapshot-v1',
-                digest: row.digest,
-              },
-            },
-            {
-              ...SNAPSHOT_PRIVATE_HEADERS,
-              'x-beeline-snapshot-schema': String(row.payload.schemaVersion),
-              'x-beeline-snapshot-projection': String(row.payload.projectionVersion),
-              'x-beeline-snapshot-integrity': row.digest,
-            },
-          );
+          response.writeHead(status, {
+            'content-type': 'application/json',
+            ...SNAPSHOT_PRIVATE_HEADERS,
+            'x-beeline-snapshot-schema': String(stored.payload.schemaVersion),
+            'x-beeline-snapshot-projection': String(stored.payload.projectionVersion),
+            'x-beeline-snapshot-integrity': row.digest,
+          });
+          response.end(serialized);
           return;
         } finally {
           hooks.snapshot.log?.(

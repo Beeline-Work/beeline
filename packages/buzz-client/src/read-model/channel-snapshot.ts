@@ -201,9 +201,25 @@ export function buildStoredChannelSnapshotV1(
         : {}),
       review: selectReviewSummary(input.snapshot, input.channelId),
     };
-    if (utf8ToBytes(JSON.stringify(payload)).length <= maxBytes) return payload;
+    const largestView: ChannelSnapshotViewV1 = {
+      ...payload,
+      lagMs: Number.MAX_SAFE_INTEGER,
+      viewer: {
+        pubkey: 'f'.repeat(64),
+        membership: 'active',
+        role: 'unknown',
+        kind: 'infrastructure',
+        approval: 'not-applicable',
+      },
+      integrity: {
+        algorithm: 'sha256',
+        scope: 'stored-channel-snapshot-v1',
+        digest: 'f'.repeat(64),
+      },
+    };
+    if (utf8ToBytes(`${JSON.stringify(largestView)}\n`).length <= maxBytes) return payload;
   }
-  throw new Error(`channel snapshot structural state exceeds ${maxBytes} bytes`);
+  throw new Error(`channel snapshot structural state exceeds ${maxBytes} response bytes`);
 }
 
 export function channelSnapshotDigest(payload: StoredChannelSnapshotV1): string {
@@ -220,32 +236,95 @@ export type ChannelSnapshotGuardResult =
   | { readonly status: 'ready'; readonly view: ChannelSnapshotViewV1 }
   | { readonly status: 'integrity-halt'; readonly diagnostic: string };
 
+export type StoredChannelSnapshotGuardResult =
+  | { readonly status: 'ready'; readonly payload: StoredChannelSnapshotV1 }
+  | { readonly status: 'integrity-halt'; readonly diagnostic: string };
+
+function invalidStoredSnapshot(): StoredChannelSnapshotGuardResult {
+  return { status: 'integrity-halt', diagnostic: 'Invalid stored channel snapshot.' };
+}
+
+export function guardStoredChannelSnapshotV1(
+  value: unknown,
+  expectedChannelId: string,
+  expectedDigest: string,
+): StoredChannelSnapshotGuardResult {
+  try {
+    const candidate = record(value);
+    const cursor = record(candidate?.cursor);
+    const review = record(candidate?.review);
+    const repository =
+      candidate?.repository === undefined ? undefined : record(candidate.repository);
+    if (
+      candidate?.capability !== CHANNEL_SNAPSHOT_CAPABILITY ||
+      candidate.schemaVersion !== CHANNEL_SNAPSHOT_SCHEMA_VERSION ||
+      candidate.projectionVersion !== CHANNEL_SNAPSHOT_PROJECTION_VERSION ||
+      candidate.channelId !== expectedChannelId ||
+      !Number.isSafeInteger(candidate.revision) ||
+      (candidate.revision as number) < 1 ||
+      !Number.isSafeInteger(candidate.projectedAt) ||
+      (candidate.projectedAt as number) < 0 ||
+      typeof candidate.identitiesStale !== 'boolean' ||
+      !cursor ||
+      !Number.isSafeInteger(cursor.createdAt) ||
+      (cursor.createdAt as number) < 0 ||
+      !Array.isArray(cursor.eventIds) ||
+      cursor.eventIds.length === 0 ||
+      cursor.eventIds.some((eventId) => typeof eventId !== 'string') ||
+      !review ||
+      !['none', 'ready', 'landing', 'realigning', 'landed', 'failed'].includes(
+        String(review.state),
+      ) ||
+      !Array.isArray(review.files) ||
+      !Number.isSafeInteger(review.fileCount) ||
+      !Array.isArray(review.approvedBy) ||
+      (candidate.repository !== undefined && !repository) ||
+      !/^[0-9a-f]{64}$/.test(expectedDigest)
+    ) {
+      return invalidStoredSnapshot();
+    }
+    const boot = guardReadModelBoot(candidate.snapshot);
+    if (boot.status !== 'ready') return invalidStoredSnapshot();
+    const room = record(boot.snapshot.rooms[expectedChannelId]);
+    const membership = record(room?.membership);
+    if (
+      !room ||
+      !membership ||
+      (membership.status === 'known' && !record(membership.members)) ||
+      (membership.status !== 'known' && membership.status !== 'unknown')
+    ) {
+      return invalidStoredSnapshot();
+    }
+    const payload = {
+      capability: candidate.capability,
+      schemaVersion: candidate.schemaVersion,
+      projectionVersion: candidate.projectionVersion,
+      channelId: candidate.channelId,
+      revision: candidate.revision,
+      projectedAt: candidate.projectedAt,
+      cursor: candidate.cursor,
+      identitiesStale: candidate.identitiesStale,
+      snapshot: boot.snapshot,
+      ...(candidate.repository ? { repository: candidate.repository } : {}),
+      review: candidate.review,
+    } as StoredChannelSnapshotV1;
+    return channelSnapshotDigest(payload) === expectedDigest
+      ? { status: 'ready', payload }
+      : invalidStoredSnapshot();
+  } catch {
+    return invalidStoredSnapshot();
+  }
+}
+
 /** Client/server golden contract guard. Incomplete or corrupt state never becomes an empty Room. */
 export function guardChannelSnapshotViewV1(value: unknown): ChannelSnapshotGuardResult {
   const candidate = record(value);
-  const cursor = record(candidate?.cursor);
   const viewer = record(candidate?.viewer);
   const integrity = record(candidate?.integrity);
-  const review = record(candidate?.review);
-  const repository = candidate?.repository === undefined ? undefined : record(candidate.repository);
   if (
-    candidate?.capability !== CHANNEL_SNAPSHOT_CAPABILITY ||
-    candidate.schemaVersion !== CHANNEL_SNAPSHOT_SCHEMA_VERSION ||
-    candidate.projectionVersion !== CHANNEL_SNAPSHOT_PROJECTION_VERSION ||
-    typeof candidate.channelId !== 'string' ||
-    !Number.isSafeInteger(candidate.revision) ||
-    (candidate.revision as number) < 1 ||
-    !Number.isSafeInteger(candidate.projectedAt) ||
-    (candidate.projectedAt as number) < 0 ||
-    typeof candidate.identitiesStale !== 'boolean' ||
+    typeof candidate?.channelId !== 'string' ||
     !Number.isFinite(candidate.lagMs) ||
     (candidate.lagMs as number) < 0 ||
-    !cursor ||
-    !Number.isSafeInteger(cursor.createdAt) ||
-    (cursor.createdAt as number) < 0 ||
-    !Array.isArray(cursor.eventIds) ||
-    cursor.eventIds.length === 0 ||
-    cursor.eventIds.some((eventId) => typeof eventId !== 'string') ||
     !viewer ||
     typeof viewer.pubkey !== 'string' ||
     !/^[0-9a-f]{64}$/.test(viewer.pubkey) ||
@@ -253,14 +332,6 @@ export function guardChannelSnapshotViewV1(value: unknown): ChannelSnapshotGuard
     !['owner', 'admin', 'member', 'unknown'].includes(String(viewer.role)) ||
     !['human', 'agent', 'infrastructure', 'unresolved'].includes(String(viewer.kind)) ||
     !['approved', 'not-approved', 'not-applicable'].includes(String(viewer.approval)) ||
-    !review ||
-    !['none', 'ready', 'landing', 'realigning', 'landed', 'failed'].includes(
-      String(review.state),
-    ) ||
-    !Array.isArray(review.files) ||
-    !Number.isSafeInteger(review.fileCount) ||
-    !Array.isArray(review.approvedBy) ||
-    (candidate.repository !== undefined && !repository) ||
     !integrity ||
     integrity.algorithm !== 'sha256' ||
     integrity.scope !== 'stored-channel-snapshot-v1' ||
@@ -268,36 +339,23 @@ export function guardChannelSnapshotViewV1(value: unknown): ChannelSnapshotGuard
   ) {
     return { status: 'integrity-halt', diagnostic: 'Invalid channel snapshot envelope.' };
   }
-  const boot = guardReadModelBoot(candidate.snapshot);
-  if (boot.status !== 'ready' || !boot.snapshot.rooms[candidate.channelId as string]) {
-    return {
-      status: 'integrity-halt',
-      diagnostic:
-        boot.status === 'ready'
-          ? 'Channel snapshot does not contain its requested Room.'
-          : boot.diagnostic,
-    };
-  }
-  const stored = {
-    capability: candidate.capability,
-    schemaVersion: candidate.schemaVersion,
-    projectionVersion: candidate.projectionVersion,
-    channelId: candidate.channelId,
-    revision: candidate.revision,
-    projectedAt: candidate.projectedAt,
-    cursor: candidate.cursor,
-    identitiesStale: candidate.identitiesStale,
-    snapshot: boot.snapshot,
-    ...(candidate.repository ? { repository: candidate.repository } : {}),
-    review: candidate.review,
-  } as StoredChannelSnapshotV1;
-  if (
-    !/^[0-9a-f]{64}$/.test(integrity.digest as string) ||
-    channelSnapshotDigest(stored) !== integrity.digest
-  ) {
+  const stored = guardStoredChannelSnapshotV1(
+    candidate,
+    candidate.channelId,
+    integrity.digest as string,
+  );
+  if (stored.status !== 'ready') {
     return { status: 'integrity-halt', diagnostic: 'Channel snapshot integrity check failed.' };
   }
-  return { status: 'ready', view: candidate as ChannelSnapshotViewV1 };
+  return {
+    status: 'ready',
+    view: {
+      ...stored.payload,
+      lagMs: candidate.lagMs as number,
+      viewer: candidate.viewer as ChannelSnapshotViewerV1,
+      integrity: candidate.integrity as ChannelSnapshotViewV1['integrity'],
+    },
+  };
 }
 
 export function snapshotViewerOverlay(

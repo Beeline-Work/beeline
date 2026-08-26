@@ -33,7 +33,7 @@ export type CurrentChannelMember = {
 
 export type ViewerSnapshotRow = {
   readonly tenantId: string;
-  readonly payload?: StoredChannelSnapshotV1;
+  readonly payload?: unknown;
   readonly digest?: string;
   readonly lagMs: number;
 };
@@ -208,10 +208,6 @@ function numberValue(value: unknown): number {
   if (!Number.isSafeInteger(parsed))
     throw new Error('snapshot database returned an invalid integer');
   return parsed;
-}
-
-function payloadValue(value: unknown): StoredChannelSnapshotV1 {
-  return (typeof value === 'string' ? JSON.parse(value) : value) as StoredChannelSnapshotV1;
 }
 
 /** Postgres is the durable worklist, projection source, replay ledger, and snapshot store. */
@@ -581,7 +577,7 @@ export class ChannelSnapshotStore {
     const dirtyAt = row.dirty_at ? new Date(row.dirty_at).getTime() : undefined;
     return {
       tenantId: row.community_id,
-      ...(row.payload ? { payload: payloadValue(row.payload) } : {}),
+      ...(row.payload !== null && row.payload !== undefined ? { payload: row.payload } : {}),
       ...(row.payload_sha256 ? { digest: row.payload_sha256 } : {}),
       lagMs: dirtyAt === undefined ? 0 : Math.max(0, this.now() - dirtyAt),
     };

@@ -107,6 +107,10 @@ Required configuration:
 - `BUZZY_AUTH_OIDC_JWKS_URI`
 - `BUZZY_AUTH_OIDC_CLIENT_ID`
 - `BUZZY_AUTH_OIDC_CLIENT_SECRET` (mandatory when `NODE_ENV=production`)
+- `BUZZY_SNAPSHOT_INTERNAL_TOKEN` (mandatory when `NODE_ENV=production`) —
+  shared only with the private-network snapshot materializer. It gates the
+  bounded, read-only relay-tenant-to-current-key lookup at
+  `/internal/snapshot/current-identities`; relay-front does not expose that path.
 - `BEELINE_GITHUB_CLIENT_ID`
 - `BEELINE_GITHUB_CLIENT_SECRET`
 - `BEELINE_GITHUB_APP_ID`

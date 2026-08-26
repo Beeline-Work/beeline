@@ -1,0 +1,94 @@
+{
+  "capability": "channel-snapshot-v1",
+  "schemaVersion": 1,
+  "projectionVersion": 1,
+  "channelId": "9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6",
+  "revision": 7,
+  "projectedAt": 1787709600000,
+  "cursor": {
+    "createdAt": 1787709599,
+    "eventIds": ["1111111111111111111111111111111111111111111111111111111111111111"]
+  },
+  "identitiesStale": false,
+  "snapshot": {
+    "schemaVersion": 1,
+    "workspaceId": "verified-application-workspace",
+    "revision": 4,
+    "identities": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        "kind": "human",
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "displayName": "Captain",
+        "handle": "captain",
+        "revision": "profile:captain"
+      }
+    },
+    "rooms": {
+      "9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6": {
+        "channelId": "9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6",
+        "metadata": {
+          "name": "Launch Room",
+          "about": "Ship the networking debloat",
+          "archived": false,
+          "deleted": false
+        },
+        "eventJournal": {
+          "1111111111111111111111111111111111111111111111111111111111111111": {
+            "eventId": "1111111111111111111111111111111111111111111111111111111111111111",
+            "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "createdAt": 1787709599,
+            "sourceKind": 9,
+            "signature": "verified",
+            "scope": "channel",
+            "channelId": "9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6",
+            "workspaceId": "verified-application-workspace",
+            "type": "human-message",
+            "body": "Paint this snapshot immediately.",
+            "attachments": [],
+            "mentionPubkeys": []
+          }
+        },
+        "membershipEvents": [],
+        "lifecycleEvents": [],
+        "membership": {
+          "status": "known",
+          "members": {
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+              "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "role": "owner"
+            }
+          },
+          "sourceEventId": "2222222222222222222222222222222222222222222222222222222222222222",
+          "observedAt": 1787709598
+        },
+        "corners": {},
+        "coverage": {
+          "oldest": 1787709599,
+          "newest": 1787709599,
+          "initialBackfillComplete": true,
+          "epoch": 1
+        }
+      }
+    },
+    "diagnostics": []
+  },
+  "review": {
+    "state": "none",
+    "files": [],
+    "fileCount": 0,
+    "approvedBy": []
+  },
+  "lagMs": 12,
+  "viewer": {
+    "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "membership": "active",
+    "role": "owner",
+    "kind": "human",
+    "approval": "not-applicable"
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "scope": "stored-channel-snapshot-v1",
+    "digest": "e875796ba720fba4c019a9bdadcdd64dc8964d6b0724871e54076756c88eba51"
+  }
+}

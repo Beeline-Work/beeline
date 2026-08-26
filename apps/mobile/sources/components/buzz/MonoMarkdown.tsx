@@ -192,10 +192,44 @@ function InlineMarkdown({
  * Memoized: this renders once per transcript row inside FlatList's renderItem,
  * which is recreated on every presence tick (room-enter and live updates) —
  * without this, every row's markdown-to-JSX tree gets rebuilt on updates
- * unrelated to that row's own text. Props are primitives/stable style
- * references, so a shallow compare correctly bails when this row's own
- * markdown didn't change.
+ * unrelated to that row's own text.
+ *
+ * The memo needs more than a shallow compare: the transcript's renderItem
+ * derives `mentionHandles` with `.filter().map()` INSIDE the row builder, so
+ * every presence-tick re-invocation hands down a NEW array with EQUAL
+ * contents. A default shallow compare fails on that identity churn and
+ * defeats the bailout for every visible row on every tick — the confirmed
+ * enter-Room freeze family. The comparator below value-compares only that
+ * one array prop; everything else stays a strict identity check so any real
+ * change (text, style, callback, index) still re-renders.
  */
+function mentionHandlesEqual(
+  previous: readonly string[] | undefined,
+  next: readonly string[] | undefined,
+): boolean {
+  if (previous === next) return true;
+  if (!previous || !next || previous.length !== next.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    if (previous[index] !== next[index]) return false;
+  }
+  return true;
+}
+
+export function monoMarkdownPropsAreEqual(
+  previous: MonoMarkdownProps,
+  next: MonoMarkdownProps,
+): boolean {
+  return (
+    previous.markdown === next.markdown &&
+    previous.textStyle === next.textStyle &&
+    previous.leadingInline === next.leadingInline &&
+    previous.channelIndex === next.channelIndex &&
+    previous.onChannelReference === next.onChannelReference &&
+    previous.testID === next.testID &&
+    mentionHandlesEqual(previous.mentionHandles, next.mentionHandles)
+  );
+}
+
 export const MonoMarkdown = React.memo(function MonoMarkdown({
   markdown,
   textStyle,
@@ -346,7 +380,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
       })}
     </View>
   );
-});
+}, monoMarkdownPropsAreEqual);
 
 const styles = StyleSheet.create((theme) => ({
   root: { width: '100%', minWidth: 0 },

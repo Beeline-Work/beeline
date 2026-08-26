@@ -36,7 +36,7 @@ env:
     id: room-${LIVE_ROOM_ID}
 - extendedWaitUntil:
     visible:
-      id: chat-input
+      id: chat-messages
     timeout: 20000
 - tapOn:
     id: chat-input

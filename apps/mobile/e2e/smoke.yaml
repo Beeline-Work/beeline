@@ -20,17 +20,13 @@ env:
     id: onboarding-import-key
 - extendedWaitUntil:
     visible:
-      id: onboarding-person-name-step
+      id: onboarding-handle-ceremony
     timeout: 15000
-- tapOn:
-    id: onboarding-person-name-input
-- eraseText
-- inputText: Maestro Smoke
-# Android's soft keyboard covers the primary action on compact emulator
-# windows; this back only dismisses that keyboard because the input is focused.
+# Import pre-fills a unique valid handle and auto-focuses its field. Dismiss
+# only the keyboard so the claim control is visible, then claim that handle.
 - pressKey: back
 - tapOn:
-    id: onboarding-enter-workspace
+    id: onboarding-claim-handle
 - extendedWaitUntil:
     visible:
       id: room-list

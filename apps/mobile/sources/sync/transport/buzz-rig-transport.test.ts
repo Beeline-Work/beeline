@@ -1077,3 +1077,153 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     await expect(transportWith(fixture.client).isChannelArchived(ROOM)).resolves.toBe(true);
   });
 });
+
+describe('readModelTail cold-open fast path', () => {
+  const cornerMessage = (source: typeof human | typeof agent, body: string, at: number): NostrEvent =>
+    signed(source, { created_at: at, kind: 9, tags: [['h', CORNER]], content: body });
+
+  function agentRegistryEvent(): NostrEvent {
+    return signed(agent, {
+      created_at: 4,
+      kind: 9,
+      tags: [
+        ['t', 'buzz-agent'],
+        ['agent', agent.publicKey],
+        ['community', WORKSPACE],
+      ],
+      content: JSON.stringify({ displayName: 'Buzzy' }),
+    });
+  }
+
+  it('paints the corner transcript from exactly ONE channel-scoped batched relay read', async () => {
+    const messages = [
+      cornerMessage(human, 'first', 5),
+      cornerMessage(agent, 'second', 6),
+      cornerMessage(human, 'third', 7),
+      cornerMessage(agent, 'fourth', 8),
+    ];
+    let queryCalls = 0;
+    const client = {
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        queryCalls += 1;
+        expect(filters).toHaveLength(5);
+        const results: NostrEvent[] = [];
+        for (const filter of filters) {
+          const kinds = filter.kinds as number[];
+          if (!kinds.includes(9)) {
+            // Per-key single-value filters only, all scoped to THIS channel:
+            // never a multi-value array this relay answers lossily.
+            const values = ((filter['#h'] ?? filter['#d']) as string[] | undefined) ?? [];
+            expect(values).toHaveLength(1);
+            expect(values[0]).toBe(CORNER);
+          }
+          if (kinds.includes(9)) {
+            if (filter['#h']) results.push(...messages);
+            else results.push(agentRegistryEvent());
+          }
+          if (kinds.includes(KIND_CREATE_GROUP)) results.push(cornerCreate());
+          if (kinds.includes(KIND_CHANNEL_MEMBERS)) results.push(memberProjection(CORNER));
+        }
+        return results;
+      }),
+    };
+    const transport = transportWith(client as never);
+
+    const result = await transport.readModelTail(CORNER, { limit: 200 });
+
+    // The whole fast path is ONE relay round trip — no sibling discovery, no
+    // family authority, no workspace directory on the critical path.
+    expect(queryCalls).toBe(1);
+    expect(client.query).toHaveBeenCalledTimes(1);
+    const transcript = selectTranscript(result.snapshot, CORNER);
+    expect(transcript.map((item) => item.id)).toEqual(
+      expect.arrayContaining(messages.map((event) => event.id)),
+    );
+    expect(transcript).toHaveLength(4);
+    // The parser bootstrapped the registry page into an agent IdentityRecord,
+    // so the agent's own rows classify as agent conversation, not prose.
+    expect(result.snapshot.identities[agent.publicKey]?.kind).toBe('agent');
+    const agentRows = result.events.filter(
+      (event) =>
+        event.type === 'read-model' &&
+        event.event.type === 'agent-message' &&
+        event.event.authorPubkey === agent.publicKey,
+    );
+    expect(agentRows.map((row) => (row.event as { body?: string }).body)).toEqual([
+      'second',
+      'fourth',
+    ]);
+    // Coverage marks the tail as the initial backfill so later revalidations
+    // delta instead of re-running cold machinery.
+    expect(result.snapshot.rooms[CORNER]?.coverage.initialBackfillComplete).toBe(true);
+  }, 20_000);
+
+  it('classifies a registered agent control marker as control, never as prose', async () => {
+    const controlCard = signed(agent, {
+      created_at: 9,
+      kind: 9,
+      tags: [
+        ['h', CORNER],
+        ['t', 'body-control'],
+        ['subchannel', CORNER],
+        ['status', 'working'],
+      ],
+      content: 'corner status working',
+    });
+    const client = {
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        const results: NostrEvent[] = [];
+        for (const filter of filters) {
+          const kinds = filter.kinds as number[];
+          if (kinds.includes(9)) {
+            if (filter['#h']) results.push(controlCard);
+            else results.push(agentRegistryEvent());
+          }
+          if (kinds.includes(KIND_CREATE_GROUP)) results.push(cornerCreate());
+          if (kinds.includes(KIND_CHANNEL_MEMBERS)) results.push(memberProjection(CORNER));
+        }
+        return results;
+      }),
+    };
+    const result = await transportWith(client as never).readModelTail(CORNER, { limit: 200 });
+
+    const parsed = result.events.find(
+      (event) => event.type === 'read-model' && event.event.eventId === controlCard.id,
+    );
+    expect(parsed && parsed.type === 'read-model' ? parsed.event.type : undefined).toBe('control');
+    // And its text never became agent/human conversation prose — at most a
+    // typed card projection, which is the correct rendering of a status card.
+    const rows = selectTranscript(result.snapshot, CORNER);
+    expect(rows.every((row) => !('body' in row && row.body === 'corner status working'))).toBe(
+      true,
+    );
+    expect(rows.every((row) => row.kind === 'card')).toBe(true);
+  }, 20_000);
+
+  it('still classifies every fetched message even when its signer is missing from a lagging membership projection', async () => {
+    const lateSignerMessage = cornerMessage(agent, 'posted before projection caught up', 9);
+    const client = {
+      query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
+        const results: NostrEvent[] = [];
+        for (const filter of filters) {
+          const kinds = filter.kinds as number[];
+          if (kinds.includes(9)) results.push(lateSignerMessage);
+          if (kinds.includes(KIND_CREATE_GROUP)) results.push(cornerCreate());
+          // Membership projection deliberately omits the message signer.
+          if (kinds.includes(KIND_CHANNEL_MEMBERS)) continue;
+        }
+        return results;
+      }),
+    };
+    const transport = transportWith(client as never);
+
+    const result = await transport.readModelTail(CORNER, { limit: 200 });
+
+    // A lagging projection must not quarantine the row first paint came for.
+    const unknown = result.events.filter(
+      (event) => event.type === 'read-model' && event.event.type === 'unknown',
+    );
+    expect(unknown).toHaveLength(0);
+    expect(selectTranscript(result.snapshot, CORNER)).toHaveLength(1);
+  }, 20_000);
+});

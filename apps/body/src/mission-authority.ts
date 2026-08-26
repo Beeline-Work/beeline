@@ -54,7 +54,7 @@ export type MissionExercise =
       scriptRuntimeSeconds: number;
     }
   | { kind: 'corner'; operation: 'open' | 'close'; targetAgentPubkey: string }
-  | { kind: 'land' };
+  | { kind: 'land'; cornerId: string; sourceSha: string };
 
 export interface MissionActionInput {
   reader: PermissionFreshReader;
@@ -193,6 +193,7 @@ export function attenuateMissionScope(
     targetAllocations: [zeroControllerAllocation(boundary)],
     scheduleAllocations: [],
     land: true,
+    landBinding: { cornerId: exercise.cornerId, sourceSha: exercise.sourceSha },
   };
 }
 

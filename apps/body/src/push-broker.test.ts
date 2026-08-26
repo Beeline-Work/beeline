@@ -204,6 +204,8 @@ describe('evaluateBrokeredPush — decision only', () => {
       controllerAgentPubkey: 'b'.repeat(64),
       repositoryKey: 'github:123',
       targetRef: 'refs/heads/main',
+      cornerId: channel,
+      sourceSha: 'c'.repeat(40),
     };
     const base = {
       remote: 'origin',
@@ -219,6 +221,7 @@ describe('evaluateBrokeredPush — decision only', () => {
           repositoryKey: 'github:123',
           controllerAgentPubkey: 'b'.repeat(64),
         },
+        cornerId: channel,
       }).action,
     ).toBe('perform-with-mission-grant');
     expect(
@@ -229,6 +232,7 @@ describe('evaluateBrokeredPush — decision only', () => {
           repositoryKey: 'github:not-the-mission-repo',
           controllerAgentPubkey: 'b'.repeat(64),
         },
+        cornerId: channel,
       }).action,
     ).toBe('refuse');
     expect(
@@ -236,6 +240,30 @@ describe('evaluateBrokeredPush — decision only', () => {
         ...base,
         repository: {
           roomId: 'another-room',
+          repositoryKey: 'github:123',
+          controllerAgentPubkey: 'b'.repeat(64),
+        },
+        cornerId: channel,
+      }).action,
+    ).toBe('refuse');
+    expect(
+      evaluateBrokeredPush({
+        ...base,
+        cornerId: 'another-corner',
+        repository: {
+          roomId: 'room-one',
+          repositoryKey: 'github:123',
+          controllerAgentPubkey: 'b'.repeat(64),
+        },
+      }).action,
+    ).toBe('refuse');
+    expect(
+      evaluateBrokeredPush({
+        ...base,
+        cornerId: channel,
+        refspecs: [`${'d'.repeat(40)}:refs/heads/main`],
+        repository: {
+          roomId: 'room-one',
           repositoryKey: 'github:123',
           controllerAgentPubkey: 'b'.repeat(64),
         },

@@ -190,7 +190,7 @@ describe('mission authority funnel', () => {
         operation: 'close' as const,
         targetAgentPubkey: fx.input.exercise.targetAgentPubkey,
       },
-      { kind: 'land' as const },
+      { kind: 'land' as const, cornerId: 'corner-one', sourceSha: 'b'.repeat(40) },
     ]) {
       await expect(verifyMissionAction({ ...fx.input, exercise, now: NOW + 4 })).resolves.toEqual({
         authorized: false,
@@ -205,6 +205,23 @@ describe('mission authority funnel', () => {
       terminal: true,
       reason: 'expired',
     });
+  });
+
+  it('binds a derived landing action to one corner and source commit', async () => {
+    const fx = fixture();
+    const action = await resolveMissionAction({
+      ...fx.input,
+      exercise: { kind: 'land', cornerId: 'corner-one', sourceSha: 'b'.repeat(40) },
+    });
+    expect(action?.scope).toMatchObject({
+      land: true,
+      landBinding: { cornerId: 'corner-one', sourceSha: 'b'.repeat(40) },
+    });
+    const other = await resolveMissionAction({
+      ...fx.input,
+      exercise: { kind: 'land', cornerId: 'corner-two', sourceSha: 'c'.repeat(40) },
+    });
+    expect(other?.actionId).not.toBe(action?.actionId);
   });
 
   it('refuses a different repository, target allocation, or schedule slice', async () => {

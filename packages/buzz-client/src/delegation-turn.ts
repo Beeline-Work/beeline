@@ -9,7 +9,10 @@
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { KIND_STREAM_MESSAGE, TAG_DELEGATION_RECEIPT, TAG_DELEGATION_TURN } from './kinds.js';
 import type { Identity } from './types.js';
-import type { ArtifactRevisionRef } from './permission-request.js';
+import {
+  MAX_MISSION_RESERVED_TOKENS,
+  type ArtifactRevisionRef,
+} from './permission-request.js';
 
 export const DELEGATION_TURN_MARKER = TAG_DELEGATION_TURN;
 export const DELEGATION_RECEIPT_MARKER = TAG_DELEGATION_RECEIPT;
@@ -21,7 +24,7 @@ export const DEFAULT_DELEGATION_MAX_CHILDREN = 4;
 export const DEFAULT_DELEGATION_DEADLINE_SECONDS = 30 * 60;
 export const MAX_DELEGATION_TASK_CHARS = 1_200;
 export const MAX_DELEGATION_DIRECTIVES_PER_TURN = 4;
-export const MAX_DELEGATION_RESERVED_TOKENS = 10_000_000;
+export const MAX_DELEGATION_RESERVED_TOKENS = MAX_MISSION_RESERVED_TOKENS;
 export const MAX_DELEGATION_CONTENT_CHARS = 32_000;
 
 const HEX_64 = /^[0-9a-f]{64}$/;

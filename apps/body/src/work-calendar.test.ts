@@ -13,6 +13,7 @@ import {
   WorkCalendar,
   buildWorkSchedule,
   buildWorkScheduleProjection,
+  buildScheduledTurnReceipt,
   deterministicScheduleRunId,
   nextWorkOccurrence,
   parseScheduledTurnReceipt,
@@ -39,6 +40,7 @@ async function durableState(): Promise<{ store: DurableWorkCalendarState; path: 
 
 class MemoryStore implements WorkCalendarStore {
   readonly values = new Map<string, WorkScheduleRuntimeState>();
+  readonly receipts = new Map<string, NostrEvent>();
   failNextPut = false;
 
   async load(): Promise<void> {}
@@ -51,6 +53,15 @@ class MemoryStore implements WorkCalendarStore {
       throw new Error('simulated durable write crash');
     }
     this.values.set(value.scheduleId, structuredClone(value));
+  }
+  async reserveReceipt(event: NostrEvent): Promise<void> {
+    this.receipts.set(event.id, event);
+  }
+  async pendingReceipts(): Promise<NostrEvent[]> {
+    return [...this.receipts.values()];
+  }
+  async markReceiptDelivered(eventId: string): Promise<void> {
+    this.receipts.delete(eventId);
   }
 }
 
@@ -399,7 +410,7 @@ describe('WorkCalendar best-effort durable execution', () => {
     await first.calendar.dispose();
 
     const persisted = JSON.parse(await readFile(durable.path, 'utf8')) as Record<string, unknown>;
-    expect(persisted).toMatchObject({ version: 2 });
+    expect(persisted).toMatchObject({ version: 3 });
     expect(persisted).toHaveProperty(
       `schedules.${first.schedule.scheduleId}.lastExecutionAt`,
       first.schedule.startsAt,
@@ -425,6 +436,72 @@ describe('WorkCalendar best-effort durable execution', () => {
     await restarted.wakeNow();
     expect(secondDispatch).not.toHaveBeenCalled();
     await restarted.dispose();
+  });
+
+  it('retries a persisted terminal receipt after restart', async () => {
+    const durable = await durableState();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const receipt = buildScheduledTurnReceipt(agent, {
+      version: 1,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: agent.publicKey,
+      principalPubkey: principal.publicKey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      runId: deterministicScheduleRunId(schedule.scheduleId, 1, schedule.startsAt),
+      nominalAt: schedule.startsAt,
+      status: 'failed',
+      at: schedule.startsAt,
+      reservedTokens: schedule.perRunReservedTokens,
+      reason: 'mission-script-fired:exit-1',
+    });
+    await durable.store.reserveReceipt(receipt);
+
+    const delivered: NostrEvent[] = [];
+    const restarted = new WorkCalendar({
+      identity: agent,
+      workspaceId: schedule.workspaceId,
+      store: new DurableWorkCalendarState(durable.path),
+      readSchedules: async () => [],
+      authorize: async () => ({ authorized: true }),
+      publish: async (event) => delivered.push(event),
+      dispatch: async () => undefined,
+      now: () => schedule.startsAt,
+    });
+    await restarted.start();
+    expect(delivered.map((event) => event.id)).toEqual([receipt.id]);
+    expect(
+      await new DurableWorkCalendarState(durable.path).pendingReceipts(),
+    ).toEqual([]);
+    await restarted.dispose();
+  });
+
+  it('retries a failed terminal receipt on the next calendar wake', async () => {
+    const store = new MemoryStore();
+    let rejectTerminal = true;
+    const delivered: NostrEvent[] = [];
+    const fixture = await calendarFixture({
+      store,
+      publish: async (event) => {
+        const receipt = parseScheduledTurnReceipt(event);
+        if (receipt?.value.status === 'complete' && rejectTerminal) {
+          rejectTerminal = false;
+          throw new Error('relay unavailable');
+        }
+        delivered.push(event);
+      },
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect(store.receipts.size).toBe(1);
+    await fixture.calendar.wakeNow();
+    expect(store.receipts.size).toBe(0);
+    expect(delivered.filter((event) => parseScheduledTurnReceipt(event)?.value.status === 'complete'))
+      .toHaveLength(1);
+    await fixture.calendar.dispose();
   });
 
   it('retries after timestamp persistence fails without stalling its sole timer', async () => {

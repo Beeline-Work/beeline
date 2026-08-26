@@ -4,11 +4,15 @@ import { resolve } from 'node:path';
 import {
   createBuzzClient,
   KIND_AGENT_ACCESS_CONFIG,
+  KIND_STREAM_MESSAGE,
+  TAG_AGENT,
+  TAG_AGENT_PAIRING,
   agentAccessConfigKey,
   parseAgentAccessConfig,
   parsePermissionDecision,
   parsePermissionRequest,
   permissionActionId,
+  resolveCurrentIdentityPubkey,
   verifyPermissionAction,
   type ArtifactRevisionRef,
   type PermissionConcreteAction,
@@ -436,37 +440,87 @@ export function createDaemonWorkCalendar(input: {
           const targetAgentPubkey = schedule.value.targetAgentPubkey ?? schedule.value.agentPubkey;
           if (schedule.value.mission && targetAgentPubkey !== schedule.value.agentPubkey) {
             try {
-              const accessEvents = await rawEvents([
+              const agentRecords = await rawEvents([
                 {
-                  kinds: [KIND_AGENT_ACCESS_CONFIG],
-                  '#d': [agentAccessConfigKey(schedule.value.workspaceId, targetAgentPubkey)],
+                  kinds: [KIND_STREAM_MESSAGE],
+                  '#p': [targetAgentPubkey],
+                  '#t': [TAG_AGENT],
                   limit: 20,
                 },
               ]);
-              targetAccessPermitted = false;
-              for (const event of accessEvents.sort(
-                (left, right) =>
-                  right.created_at - left.created_at || right.id.localeCompare(left.id),
-              )) {
-                const parsed = parseAgentAccessConfig(event);
+              const agentRecord = agentRecords
+                .filter(
+                  (event) =>
+                    verifyEvent(event) &&
+                    event.pubkey === targetAgentPubkey &&
+                    uniqueArtifactTag(event, 'h') === schedule.value.workspaceId,
+                )
+                .sort(
+                  (left, right) =>
+                    right.created_at - left.created_at || right.id.localeCompare(left.id),
+                )[0];
+              const pairingHash = agentRecord
+                ? uniqueArtifactTag(agentRecord, 'pairing')
+                : undefined;
+              if (!pairingHash) throw new Error('target pairing authority unavailable');
+              const pairingEvents = await rawEvents([
+                {
+                  kinds: [KIND_STREAM_MESSAGE],
+                  '#d': [pairingHash],
+                  '#t': [TAG_AGENT_PAIRING],
+                  limit: 20,
+                },
+              ]);
+              const pairing = pairingEvents.find(
+                (event) =>
+                  verifyEvent(event) &&
+                  uniqueArtifactTag(event, 'd') === pairingHash &&
+                  uniqueArtifactTag(event, 'h') === schedule.value.workspaceId,
+              );
+              if (!pairing) throw new Error('target paired owner unavailable');
+              const currentOwner = await resolveCurrentIdentityPubkey(
+                input.runtime.relayBaseUrl,
+                identity,
+                pairing.pubkey,
+              );
+              if (
+                !hasMember(workspaceMembers, currentOwner) ||
+                !hasMember(roomMembers, currentOwner) ||
+                (await client.isAgentIdentity(currentOwner)) ||
+                (await client.getChannelRole(schedule.value.roomId, currentOwner)) !== 'owner'
+              ) {
+                targetAccessPermitted = false;
+              } else {
+                const accessEvents = await rawEvents([
+                  {
+                    kinds: [KIND_AGENT_ACCESS_CONFIG],
+                    '#d': [agentAccessConfigKey(schedule.value.workspaceId, targetAgentPubkey)],
+                    limit: 20,
+                  },
+                ]);
+                const ownerEvents = accessEvents
+                  .filter((event) => event.pubkey === currentOwner)
+                  .sort(
+                    (left, right) =>
+                      right.created_at - left.created_at || right.id.localeCompare(left.id),
+                  );
+                const parsed = ownerEvents[0]
+                  ? parseAgentAccessConfig(ownerEvents[0])
+                  : undefined;
                 if (
-                  !parsed ||
-                  parsed.workspaceId !== schedule.value.workspaceId ||
-                  parsed.agentPubkey !== targetAgentPubkey ||
-                  !hasMember(workspaceMembers, event.pubkey) ||
-                  !hasMember(roomMembers, event.pubkey) ||
-                  (await client.isAgentIdentity(event.pubkey)) ||
-                  (await client.getChannelRole(schedule.value.roomId, event.pubkey)) !== 'owner'
+                  parsed &&
+                  parsed.workspaceId === schedule.value.workspaceId &&
+                  parsed.agentPubkey === targetAgentPubkey
                 ) {
-                  continue;
+                  targetAccessPermitted = isSenderPermitted(
+                    parsed.policy,
+                    schedule.value.agentPubkey,
+                    currentOwner,
+                    parsed.allowlist,
+                  );
+                } else {
+                  targetAccessPermitted = undefined;
                 }
-                targetAccessPermitted = isSenderPermitted(
-                  parsed.policy,
-                  schedule.value.agentPubkey,
-                  event.pubkey,
-                  parsed.allowlist,
-                );
-                break;
               }
             } catch {
               targetAccessPermitted = undefined;

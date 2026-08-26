@@ -72,6 +72,43 @@ function authorityFixture(options: { agentAuthored?: boolean; grantValid?: boole
 }
 
 describe('daemon work schedule authority', () => {
+  it('requires the target agent access decision for a cross-agent mission', async () => {
+    const fixture = authorityFixture();
+    const target = createIdentity();
+    fixture.schedule.targetAgentPubkey = target.publicKey;
+    fixture.schedule.execution = { mode: 'model' };
+    fixture.schedule.cadence = {
+      type: 'interval',
+      everySeconds: 15 * 60,
+      anchorAt: fixture.schedule.startsAt,
+    };
+    fixture.schedule.mission = {
+      missionId: 'mission-one',
+      grantEventId: 'a'.repeat(64),
+      controllerAgentPubkey: fixture.agent.publicKey,
+      repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+    };
+    fixture.facts.workspaceMemberPubkeys = [
+      ...fixture.facts.workspaceMemberPubkeys,
+      target.publicKey,
+    ];
+    fixture.facts.roomMemberPubkeys = [...fixture.facts.roomMemberPubkeys, target.publicKey];
+    fixture.facts.authorIsAgent = true;
+    fixture.facts.targetAccessPermitted = false;
+    fixture.dependencies.verifyMissionGrant = async () => true;
+    const parsed = parsedSchedule(fixture.agent, fixture.schedule);
+    fixture.dependencies.readCurrentEvents = async () => [parsed.event];
+    await expect(authorizeDaemonWorkSchedule(parsed, fixture.dependencies)).resolves.toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'mission-target-access-denied',
+    });
+    fixture.facts.targetAccessPermitted = true;
+    await expect(authorizeDaemonWorkSchedule(parsed, fixture.dependencies)).resolves.toEqual({
+      authorized: true,
+    });
+  });
+
   it('accepts current human-admin configuration and an agent change with a live P1 grant', async () => {
     const human = authorityFixture();
     await expect(authorizeDaemonWorkSchedule(human.parsed, human.dependencies)).resolves.toEqual({

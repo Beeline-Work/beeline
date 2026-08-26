@@ -386,8 +386,7 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
       for (const approval of pendingApprovals) {
         if (
           approval.payload.repository === target.repository &&
-          approval.payload.branch === target.branch &&
-          (!approval.payload.tip || approval.payload.tip === target.tip)
+          approval.payload.branch === target.branch
         ) {
           approvedBy.add(approval.event.authorPubkey);
         }

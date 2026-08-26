@@ -33,6 +33,51 @@ export async function savePersonalCommunityId(pubkey: string, communityId: strin
   await AsyncStorage.setItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`, communityId);
 }
 
+export async function clearPersonalCommunityId(pubkey: string): Promise<void> {
+  await AsyncStorage.removeItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`);
+}
+
+export type WorkspaceSelectionStorage = {
+  loadPersonalId: (pubkey: string) => Promise<string | null>;
+  saveActiveId: (pubkey: string, workspaceId: string | null) => Promise<void>;
+  clearPersonalId: (pubkey: string) => Promise<void>;
+};
+
+/**
+ * Persist the selection produced by the single Workspace-set reconciliation
+ * door. The returned Personal id is the value callers may safely project into
+ * a later channel-list cache commit; an absent marker is cleared first so a
+ * stale value cannot be written back from an older in-memory context.
+ */
+export async function reconcileStoredWorkspaceSelection(
+  pubkey: string,
+  workspaces: readonly { communityId: string }[],
+  activeWorkspaceId: string | null,
+  personalWorkspaceId: string | null | undefined,
+  storage: WorkspaceSelectionStorage = {
+    loadPersonalId: loadPersonalCommunityId,
+    saveActiveId: saveActiveCommunityId,
+    clearPersonalId: clearPersonalCommunityId,
+  },
+  reconciliation: 'authoritative' | 'preserve' = 'authoritative',
+): Promise<string | null> {
+  const persistedPersonalWorkspaceId =
+    personalWorkspaceId === undefined
+      ? await storage.loadPersonalId(pubkey)
+      : personalWorkspaceId;
+  const confirmedIds = new Set(workspaces.map((workspace) => workspace.communityId));
+  const nextPersonalWorkspaceId =
+    reconciliation === 'preserve' ||
+    (persistedPersonalWorkspaceId && confirmedIds.has(persistedPersonalWorkspaceId))
+      ? persistedPersonalWorkspaceId
+      : null;
+  if (persistedPersonalWorkspaceId && !nextPersonalWorkspaceId) {
+    await storage.clearPersonalId(pubkey);
+  }
+  await storage.saveActiveId(pubkey, activeWorkspaceId);
+  return nextPersonalWorkspaceId;
+}
+
 export async function loadLastViewedChannel(
   pubkey: string,
   communityId: string | null,

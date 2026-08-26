@@ -461,9 +461,19 @@ export async function listCommunities(
   predecessors: readonly string[] = [],
 ): Promise<Community[]> {
   const discoveryKeys = [pubkey, ...predecessors.filter((key) => key !== pubkey)];
+  const discoveryLimit = Math.max(0, limit);
   const memberEvents = await query(ctx, [
-    { kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS], '#p': discoveryKeys, limit },
+    {
+      kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+      '#p': discoveryKeys,
+      limit: discoveryLimit,
+    },
   ]);
+  if (discoveryLimit > 0 && memberEvents.length >= discoveryLimit) {
+    throw new Error(
+      'Workspace discovery was incomplete because the membership result reached its limit.',
+    );
+  }
   const ids = [
     ...new Set(
       memberEvents
@@ -486,6 +496,12 @@ export async function listCommunities(
   ]);
   const createEvents = communityEvents.filter((event) => event.kind === KIND_CREATE_GROUP);
   const metadataEvents = communityEvents.filter((event) => event.kind === KIND_CHANNEL_METADATA);
+  const confirmedNonWorkspaceIds = new Set(
+    createEvents
+      .filter((event) => !isCommunityCreate(event))
+      .map((event) => tagValue(event, 'h') ?? tagValue(event, 'd'))
+      .filter((id): id is string => Boolean(id)),
+  );
 
   const wanted = new Set(ids);
   const byId = new Map<string, Community>();
@@ -508,7 +524,7 @@ export async function listCommunities(
   // The scoped create/metadata read above still relies on a `#d`-tagged
   // metadata event; fall back to exact per-id reads (which also try the
   // older `#h`-only metadata convention) for anything it missed.
-  const exactIds = ids.filter((id) => !byId.has(id));
+  const exactIds = ids.filter((id) => !byId.has(id) && !confirmedNonWorkspaceIds.has(id));
   const recovered = await Promise.all(exactIds.map((id) => getCommunity(ctx, id)));
   for (const community of recovered) {
     if (community) {
@@ -523,6 +539,12 @@ export async function listCommunities(
         ...(viewerRole ? { viewerRole } : {}),
       });
     }
+  }
+  const unresolvedIds = exactIds.filter((id) => !byId.has(id));
+  if (unresolvedIds.length > 0) {
+    throw new Error(
+      `Workspace discovery was incomplete for ${unresolvedIds.length} projected Workspace${unresolvedIds.length === 1 ? '' : 's'}.`,
+    );
   }
 
   return [...byId.values()]

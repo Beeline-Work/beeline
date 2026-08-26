@@ -17,6 +17,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 const mmkvValues = vi.hoisted(() => new Map<string, string>());
+const mmkvWrites = vi.hoisted(() => vi.fn());
+const asyncStorage = vi.hoisted(() => ({
+  getItem: vi.fn<(key: string) => Promise<string | null>>(),
+  setItem: vi.fn<(key: string, value: string) => Promise<void>>(),
+  removeItem: vi.fn<(key: string) => Promise<void>>(),
+}));
 const workspaceContext = vi.hoisted(() => ({
   current: {
     workspaces: [] as unknown[],
@@ -31,6 +37,7 @@ vi.mock('react-native-mmkv', () => ({
       return mmkvValues.get(key);
     }
     set(key: string, value: string) {
+      mmkvWrites(key, value);
       mmkvValues.set(key, value);
     }
     delete(key: string) {
@@ -38,6 +45,7 @@ vi.mock('react-native-mmkv', () => ({
     }
   },
 }));
+vi.mock('@react-native-async-storage/async-storage', () => ({ default: asyncStorage }));
 vi.mock('expo-router', () => ({
   router: navigation,
   useLocalSearchParams: () => routeParams.current,
@@ -220,7 +228,9 @@ vi.mock('react-native', async () => {
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { channelListCacheKey, useBuzzLocalCache } = await import('@/buzz/local-cache');
+const { channelCacheKey, channelListCacheKey, selectChannelList, useBuzzLocalCache } =
+  await import('@/buzz/local-cache');
+const { prepareWorkspaceContext } = await import('@/buzz/workspace-bootstrap');
 const { Alert } = await import('react-native');
 const { default: BuzzChannels } = await import('./channels');
 
@@ -234,25 +244,57 @@ function seedWorkspace() {
       { communityId: 'other-2', name: 'Day Shift' },
     ],
     activeWorkspaceId: 'shared-1',
-    personalWorkspaceId: 'personal-1',
+    personalWorkspaceId: 'shared-1',
   };
   useBuzzLocalCache.getState().setChannelList({
     viewerPubkey: VIEWER,
     communityId: 'shared-1',
-    channels: [],
+    channels: [{ id: 'shared-room', name: 'Private Room', communityId: 'shared-1' }],
     directMessages: [],
     workspaceMembers: [],
     communities: [
       { communityId: 'shared-1', name: 'Night Shift' },
       { communityId: 'other-2', name: 'Day Shift' },
     ] as never[],
-    personalWorkspaceId: 'personal-1',
+    personalWorkspaceId: 'shared-1',
     viewerIsAgent: false,
     canEditWorkspaceAvatar: false,
     updatedAt: now,
     lastAccessedAt: now,
   });
+  useBuzzLocalCache.getState().patchChannel(VIEWER, 'shared-room', {
+    communityId: 'shared-1',
+  });
+  // The route and only warm deck both start on the Workspace being left;
+  // reconciliation must create the survivor's empty active deck itself.
   routeParams.current = { communityId: 'shared-1' };
+}
+
+function seedNonActivePersonalWorkspace() {
+  const now = Date.now();
+  const tubing = { communityId: 'tubing-1', name: 'Tubing Crew' };
+  const personal = { communityId: 'personal-1', name: 'Personal' };
+  workspaceContext.current = {
+    workspaces: [tubing, personal],
+    activeWorkspaceId: 'tubing-1',
+    // Reproduce the masking shape: the active Tubing deck does not know the
+    // durable AsyncStorage Personal marker.
+    personalWorkspaceId: null,
+  };
+  useBuzzLocalCache.getState().setChannelList({
+    viewerPubkey: VIEWER,
+    communityId: 'tubing-1',
+    channels: [],
+    directMessages: [],
+    workspaceMembers: [],
+    communities: [tubing, personal] as never[],
+    personalWorkspaceId: null,
+    viewerIsAgent: false,
+    canEditWorkspaceAvatar: false,
+    updatedAt: now,
+    lastAccessedAt: now,
+  });
+  routeParams.current = { communityId: 'tubing-1' };
 }
 
 async function render(): Promise<ReactTestRenderer> {
@@ -297,9 +339,13 @@ async function openConfirmDialog(tree: ReactTestRenderer, communityId: string) {
 describe('workspace exit gesture', () => {
   beforeEach(() => {
     mmkvValues.clear();
+    mmkvWrites.mockClear();
     navigation.replace.mockClear();
     vi.mocked(Alert.alert).mockClear();
     leaveWorkspace.mockClear();
+    asyncStorage.getItem.mockReset().mockResolvedValue('shared-1');
+    asyncStorage.setItem.mockReset().mockResolvedValue(undefined);
+    asyncStorage.removeItem.mockReset().mockResolvedValue(undefined);
     useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
   });
 
@@ -352,7 +398,7 @@ describe('workspace exit gesture', () => {
     expect(navigation.replace).not.toHaveBeenCalled();
   });
 
-  it('confirm publishes the leave and removes the workspace locally', async () => {
+  it('successful leave reconciles the switcher, cache, active selection, and Personal marker', async () => {
     seedWorkspace();
     const tree = await render();
     const { buttons } = await openConfirmDialog(tree, 'shared-1');
@@ -362,6 +408,16 @@ describe('workspace exit gesture', () => {
     });
 
     expect(leaveWorkspace).toHaveBeenCalledWith('shared-1');
+    expect(asyncStorage.getItem).toHaveBeenCalledWith(
+      `@beeline/workspace/personal/${VIEWER}`,
+    );
+    expect(asyncStorage.removeItem).toHaveBeenCalledWith(
+      `@beeline/workspace/personal/${VIEWER}`,
+    );
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      `@beeline/community/active/${VIEWER}`,
+      'other-2',
+    );
 
     // The left workspace is gone from the nav; the other remains.
     const shell = tree.root.findByProps({ testID: 'workspace-avatar-trigger' });
@@ -379,8 +435,134 @@ describe('workspace exit gesture', () => {
     expect(findAllByTestId(tree, 'community-rail-shared-1')).toHaveLength(0);
     expect(findAllByTestId(tree, 'community-rail-other-2').length).toBeGreaterThan(0);
 
-    // Leaving the ACTIVE workspace switches to a remaining one.
-    expect(navigation.replace).toHaveBeenCalled();
+    const cache = useBuzzLocalCache.getState();
+    expect(cache.channelLists[channelListCacheKey(VIEWER, 'shared-1')]).toBeUndefined();
+    expect(cache.channels[channelCacheKey(VIEWER, 'shared-room')]).toBeUndefined();
+    expect(selectChannelList(cache, VIEWER)?.communityId).toBe('other-2');
+    expect(cache.channelLists[channelListCacheKey(VIEWER, 'other-2')]?.communities).toEqual([
+      { communityId: 'other-2', name: 'Day Shift' },
+    ]);
+    expect(cache.channelLists[channelListCacheKey(VIEWER, 'other-2')]?.personalWorkspaceId).toBeNull();
+    expect(mmkvWrites).not.toHaveBeenCalled();
+
+    // Leaving the ACTIVE workspace switches to and persists the survivor.
+    expect(navigation.replace).toHaveBeenCalledWith({
+      pathname: '/buzz/channels',
+      params: { communityId: 'other-2' },
+    });
+  });
+
+  it('keeps a successful server leave visible when preference persistence rejects', async () => {
+    seedWorkspace();
+    asyncStorage.setItem.mockRejectedValueOnce(new Error('AsyncStorage unavailable'));
+    const tree = await render();
+    const { buttons } = await openConfirmDialog(tree, 'shared-1');
+
+    await act(async () => {
+      buttons.find((button) => button.text === 'Exit')?.onPress?.();
+    });
+
+    expect(leaveWorkspace).toHaveBeenCalledWith('shared-1');
+    expect(
+      useBuzzLocalCache.getState().channelLists[channelListCacheKey(VIEWER, 'shared-1')],
+    ).toBeUndefined();
+    expect(selectChannelList(useBuzzLocalCache.getState(), VIEWER)?.communityId).toBe('other-2');
+    if (findAllByTestId(tree, 'community-drawer-overlay').length === 0) {
+      await press(findAllByTestId(tree, 'workspace-avatar-trigger')[0]);
+    }
+    expect(findAllByTestId(tree, 'community-rail-shared-1')).toHaveLength(0);
+    expect(findAllByTestId(tree, 'community-rail-other-2').length).toBeGreaterThan(0);
+    const notice = vi.mocked(Alert.alert).mock.calls.at(-1)!;
+    expect(String(notice[0])).toMatch(/Exited Night Shift, but could not save selection/);
+    expect(String(notice[1])).toMatch(/was removed from this device/);
+    expect(String(notice[1])).toMatch(/AsyncStorage unavailable/);
+    expect(mmkvWrites).not.toHaveBeenCalled();
+  });
+
+  it('does not let an in-flight refresh resurrect an inactive Personal leave', async () => {
+    seedNonActivePersonalWorkspace();
+    asyncStorage.getItem.mockResolvedValueOnce('personal-1');
+    const tree = await render();
+    let resolveRefresh!: (value: typeof workspaceContext.current & {
+      cacheReconciliation: 'authoritative';
+      commitSelection: () => Promise<void>;
+    }) => void;
+    const refreshCommit = vi.fn(async () => undefined);
+    vi.mocked(prepareWorkspaceContext).mockImplementationOnce(
+      () => new Promise((resolve) => (resolveRefresh = resolve)),
+    );
+
+    const roomList = tree.root.findByProps({ testID: 'room-list' });
+    await act(async () => {
+      roomList.props.onRefresh?.();
+    });
+
+    const { buttons } = await openConfirmDialog(tree, 'personal-1');
+    await act(async () => {
+      buttons.find((button) => button.text === 'Exit')?.onPress?.();
+    });
+
+    expect(asyncStorage.getItem).toHaveBeenCalledWith(
+      `@beeline/workspace/personal/${VIEWER}`,
+    );
+    expect(asyncStorage.removeItem).toHaveBeenCalledWith(
+      `@beeline/workspace/personal/${VIEWER}`,
+    );
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      `@beeline/community/active/${VIEWER}`,
+      'tubing-1',
+    );
+    expect(findAllByTestId(tree, 'community-rail-personal-1')).toHaveLength(0);
+    expect(navigation.replace).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveRefresh({
+        workspaces: [
+          { communityId: 'tubing-1', name: 'Tubing Crew' },
+          { communityId: 'personal-1', name: 'Personal' },
+        ],
+        activeWorkspaceId: 'tubing-1',
+        personalWorkspaceId: 'personal-1',
+        cacheReconciliation: 'authoritative',
+        commitSelection: refreshCommit,
+      });
+    });
+
+    expect(refreshCommit).not.toHaveBeenCalled();
+    expect(
+      useBuzzLocalCache.getState().channelLists[channelListCacheKey(VIEWER, 'tubing-1')]
+        ?.communities,
+    ).toEqual([{ communityId: 'tubing-1', name: 'Tubing Crew' }]);
+  });
+
+  it('clears the active pointer when the last Workspace is successfully left', async () => {
+    seedWorkspace();
+    workspaceContext.current = {
+      workspaces: [{ communityId: 'shared-1', name: 'Night Shift' }],
+      activeWorkspaceId: 'shared-1',
+      personalWorkspaceId: 'shared-1',
+    };
+    useBuzzLocalCache.getState().patchChannelList(VIEWER, 'shared-1', {
+      communities: [{ communityId: 'shared-1', name: 'Night Shift' }] as never[],
+    });
+    const tree = await render();
+    const { buttons } = await openConfirmDialog(tree, 'shared-1');
+
+    await act(async () => {
+      buttons.find((button) => button.text === 'Exit')?.onPress?.();
+    });
+
+    expect(asyncStorage.removeItem).toHaveBeenCalledWith(
+      `@beeline/workspace/personal/${VIEWER}`,
+    );
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      `@beeline/community/active/${VIEWER}`,
+      'standalone',
+    );
+    expect(useBuzzLocalCache.getState().activeListKeyByViewer[VIEWER]).toBeUndefined();
+    expect(Object.keys(useBuzzLocalCache.getState().channelLists)).toHaveLength(0);
+    expect(navigation.replace).toHaveBeenCalledWith({ pathname: '/buzz/channels' });
+    expect(mmkvWrites).not.toHaveBeenCalled();
   });
 
   it('a failed leave surfaces honestly instead of removing anything', async () => {
@@ -410,6 +592,12 @@ describe('workspace exit gesture', () => {
       await press(findAllByTestId(tree, 'workspace-avatar-trigger')[0]);
     }
     expect(findAllByTestId(tree, 'community-rail-shared-1').length).toBeGreaterThan(0);
+    expect(asyncStorage.removeItem).not.toHaveBeenCalled();
+    expect(asyncStorage.setItem).not.toHaveBeenCalled();
+    expect(
+      useBuzzLocalCache.getState().channelLists[channelListCacheKey(VIEWER, 'shared-1')],
+    ).toBeDefined();
+    expect(mmkvWrites).not.toHaveBeenCalled();
     expect(navigation.replace).not.toHaveBeenCalled();
   });
 });

@@ -351,6 +351,21 @@ describe('ChannelSnapshotMaterializer', () => {
       ),
       null,
     );
+    await insertEvents(
+      Array.from({ length: 1_000 }, (_, index) =>
+        signEvent(
+          {
+            pubkey: owner.publicKey,
+            created_at: base + 3 + index,
+            kind: 0,
+            tags: [],
+            content: JSON.stringify({ display_name: `Current Owner ${index}` }),
+          },
+          owner.secretKey,
+        ),
+      ),
+      null,
+    );
     const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
       return new Response(
@@ -384,7 +399,7 @@ describe('ChannelSnapshotMaterializer', () => {
     expect(served?.payload?.snapshot.rooms[CHANNEL]?.membership).not.toMatchObject({
       members: { [departed.publicKey]: expect.anything() },
     });
-  });
+  }, 30_000);
 
   it('pages past hidden machine traffic to retain 30 conversation rows', async () => {
     const owner = createIdentity('snapshot-tail-owner');

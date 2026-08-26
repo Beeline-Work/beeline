@@ -606,16 +606,24 @@ export class ChannelSnapshotStore {
   ): Promise<readonly NostrEvent[]> {
     if (pubkeys.length === 0) return [];
     const result = await this.database.query<EventRow>(
-      `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
-       FROM events e
-       WHERE (e.community_id = $1::uuid OR e.community_id IS NULL) AND e.deleted_at IS NULL
-         AND encode(e.pubkey, 'hex') = ANY($2::text[])
-         AND octet_length(e.content) <= 65536
-         AND (e.kind = 0 OR (e.kind = 9 AND EXISTS (
-           SELECT 1 FROM jsonb_array_elements(e.tags) AS tag
-           WHERE tag->>0 = 't' AND tag->>1 = 'buzz-agent'
-         )))
-       ORDER BY e.created_at DESC, e.id ASC LIMIT 1000`,
+      `SELECT ranked.community_id, ranked.id, ranked.pubkey, ranked.created_at,
+              ranked.kind, ranked.tags, ranked.content, ranked.sig
+       FROM (
+         SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig,
+                row_number() OVER (
+                  PARTITION BY e.pubkey, e.kind ORDER BY e.created_at DESC, e.id DESC
+                ) AS identity_rank
+         FROM events e
+         WHERE (e.community_id = $1::uuid OR e.community_id IS NULL) AND e.deleted_at IS NULL
+           AND encode(e.pubkey, 'hex') = ANY($2::text[])
+           AND octet_length(e.content) <= 65536
+           AND (e.kind = 0 OR (e.kind = 9 AND EXISTS (
+             SELECT 1 FROM jsonb_array_elements(e.tags) AS tag
+             WHERE tag->>0 = 't' AND tag->>1 = 'buzz-agent'
+           )))
+       ) ranked
+       WHERE ranked.identity_rank = 1
+       ORDER BY ranked.created_at DESC, ranked.id ASC`,
       [tenantId, [...new Set(pubkeys)]],
     );
     return result.rows.map(eventFromRow);

@@ -61,6 +61,49 @@ function roomRepositoryKey(channelId: string): string {
   return `${TAG_ROOM_REPOSITORY}:${channelId}`;
 }
 
+export type NormalizedRoomRepositoryContent = {
+  readonly key: string;
+  readonly name: string;
+  readonly remote: string;
+  readonly targetBranch?: string;
+  readonly githubInstallationId?: number;
+  readonly githubEventsEnabled?: boolean;
+};
+
+export function normalizeRoomRepositoryContent(
+  value: unknown,
+): NormalizedRoomRepositoryContent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const content = value as Record<string, unknown>;
+  const key = typeof content.key === 'string' ? content.key.trim() : '';
+  const name = typeof content.name === 'string' ? content.name.trim() : '';
+  const remote = typeof content.remote === 'string' ? content.remote.trim() : '';
+  // A published room-repo binding is remote-first: the remote is the source of
+  // truth every daemon can clone. Local-only bindings are non-convergent and
+  // stay on the genesis path, so a config event without a remote is invalid.
+  if (!key || !name || !remote) return null;
+  const targetBranch =
+    typeof content.targetBranch === 'string' && content.targetBranch.trim()
+      ? content.targetBranch.trim()
+      : undefined;
+  const githubInstallationId =
+    typeof content.githubInstallationId === 'number' &&
+    Number.isSafeInteger(content.githubInstallationId) &&
+    content.githubInstallationId > 0
+      ? content.githubInstallationId
+      : undefined;
+  const githubEventsEnabled =
+    typeof content.githubEventsEnabled === 'boolean' ? content.githubEventsEnabled : undefined;
+  return {
+    key,
+    name,
+    remote,
+    ...(targetBranch ? { targetBranch } : {}),
+    ...(githubInstallationId ? { githubInstallationId } : {}),
+    ...(githubEventsEnabled === undefined ? {} : { githubEventsEnabled }),
+  };
+}
+
 /**
  * Parse a verified, human-authored room-repository config event.
  *
@@ -73,31 +116,15 @@ export function parseRoomRepository(event: NostrEvent): RoomRepository | null {
   if (tagValue(event, 't') !== TAG_ROOM_REPOSITORY) return null;
   const channelId = tagValue(event, 'h');
   if (!channelId || tagValue(event, 'd') !== roomRepositoryKey(channelId)) return null;
-  let content: Record<string, unknown>;
+  let content: unknown;
   try {
-    content = JSON.parse(event.content) as Record<string, unknown>;
+    content = JSON.parse(event.content);
   } catch {
     return null;
   }
-  const key = typeof content.key === 'string' ? content.key.trim() : '';
-  const name = typeof content.name === 'string' ? content.name.trim() : '';
-  const remote = typeof content.remote === 'string' ? content.remote.trim() : '';
-  const githubInstallationId =
-    typeof content.githubInstallationId === 'number' &&
-    Number.isSafeInteger(content.githubInstallationId) &&
-    content.githubInstallationId > 0
-      ? content.githubInstallationId
-      : undefined;
-  // A published room-repo binding is remote-first: the remote is the source of
-  // truth every daemon can clone. Local-only bindings are non-convergent and
-  // stay on the genesis path, so a config event without a remote is invalid.
-  if (!key || !name || !remote) return null;
-  const targetBranch =
-    typeof content.targetBranch === 'string' && content.targetBranch.trim()
-      ? content.targetBranch.trim()
-      : undefined;
-  const githubEventsEnabled =
-    typeof content.githubEventsEnabled === 'boolean' ? content.githubEventsEnabled : undefined;
+  const normalized = normalizeRoomRepositoryContent(content);
+  if (!normalized) return null;
+  const { key, name, remote, targetBranch, githubInstallationId, githubEventsEnabled } = normalized;
   const communityId = tagValue(event, TAG_COMMUNITY);
   return {
     channelId,

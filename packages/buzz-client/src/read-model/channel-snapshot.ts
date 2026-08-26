@@ -5,6 +5,7 @@ import {
   parseChangeReviewGenerationComplete,
   parseChangeReviewManifest,
 } from '../change-review.js';
+import { normalizeRoomRepositoryContent } from '../room-repository.js';
 import { snapshotForPersistence } from './cache.js';
 import {
   selectRepositorySummary,
@@ -801,14 +802,34 @@ function validReplyGraph(journal: Record<string, unknown>, expectedChannelId: st
     const event = record(journal[eventId]);
     return event?.type === 'human-message' || event?.type === 'agent-message' ? event : undefined;
   };
-  return Object.values(journal).every((value) => {
+  return Object.entries(journal).every(([eventId, value]) => {
     const event = record(value);
     if (event?.type !== 'human-message' && event?.type !== 'agent-message') return true;
-    if (event.reply === undefined) return true;
-    const reply = record(event.reply);
-    return Boolean(
-      reply?.channelId === expectedChannelId && message(reply.eventId) && message(reply.rootId),
-    );
+    const seen = new Set<string>();
+    let cursorId = eventId;
+    let expectedRootId: string | undefined;
+    while (true) {
+      if (seen.has(cursorId)) return false;
+      seen.add(cursorId);
+      const cursor = message(cursorId);
+      if (!cursor) return false;
+      if (cursor.reply === undefined) {
+        return expectedRootId === undefined || cursorId === expectedRootId;
+      }
+      const reply = record(cursor.reply);
+      if (
+        reply?.channelId !== expectedChannelId ||
+        typeof reply.eventId !== 'string' ||
+        typeof reply.rootId !== 'string' ||
+        !message(reply.eventId) ||
+        !message(reply.rootId)
+      ) {
+        return false;
+      }
+      expectedRootId ??= reply.rootId;
+      if (reply.rootId !== expectedRootId) return false;
+      cursorId = reply.eventId;
+    }
   });
 }
 
@@ -962,9 +983,9 @@ function validWorkspaceSnapshot(value: unknown): value is WorkspaceSnapshot {
 
 function validRepository(value: unknown, controlPayload = false): boolean {
   const repository = record(value);
-  return Boolean(
-    repository &&
-    exactKeys(repository, [
+  if (
+    !repository ||
+    !exactKeys(repository, [
       ...(controlPayload ? ['kind'] : []),
       'key',
       'name',
@@ -972,14 +993,22 @@ function validRepository(value: unknown, controlPayload = false): boolean {
       'targetBranch',
       'githubInstallationId',
       'githubEventsEnabled',
-    ]) &&
-    (!controlPayload || repository.kind === 'repository') &&
-    typeof repository.key === 'string' &&
-    typeof repository.name === 'string' &&
-    typeof repository.remote === 'string' &&
-    optionalString(repository, 'targetBranch') &&
-    optionalNonnegativeInteger(repository, 'githubInstallationId') &&
-    optionalBoolean(repository, 'githubEventsEnabled'),
+    ]) ||
+    (controlPayload && repository.kind !== 'repository')
+  ) {
+    return false;
+  }
+  const candidate = Object.fromEntries(
+    Object.entries(repository).filter(([key]) => key !== 'kind'),
+  );
+  const normalized = normalizeRoomRepositoryContent(candidate);
+  if (!normalized) return false;
+  const normalizedRecord = normalized as unknown as Record<string, unknown>;
+  return (
+    Object.keys(candidate).length === Object.keys(normalizedRecord).length &&
+    Object.entries(candidate).every(
+      ([key, candidateValue]) => normalizedRecord[key] === candidateValue,
+    )
   );
 }
 

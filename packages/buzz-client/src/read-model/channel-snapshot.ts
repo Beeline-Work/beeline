@@ -1139,11 +1139,14 @@ export function guardStoredChannelSnapshotV1(
     const snapshot = candidate.snapshot as WorkspaceSnapshot;
     const room = record(snapshot.rooms[expectedChannelId]);
     const membership = record(room?.membership);
+    const coverage = record(room?.coverage);
     if (
       !room ||
       !membership ||
-      (membership.status === 'known' && !record(membership.members)) ||
-      (membership.status !== 'known' && membership.status !== 'unknown')
+      membership.status !== 'known' ||
+      !record(membership.members) ||
+      !coverage ||
+      coverage.initialBackfillComplete !== true
     ) {
       return invalidStoredSnapshot();
     }

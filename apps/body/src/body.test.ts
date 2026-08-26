@@ -12802,6 +12802,108 @@ describe('harness retry narration never becomes the durable Room reply', () => {
       .map((event) => event.tags.find((tag) => tag[0] === 'status')?.[1] ?? '');
   }
 
+  it('keeps a deadline-forced update interruption visible and retryable', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-forced-update-reply-'));
+    try {
+      let rejectTurn!: (error: Error) => void;
+      const promptMock = vi.fn().mockImplementation(
+        () =>
+          new Promise((_, reject) => {
+            rejectTurn = reject;
+          }),
+      );
+      const { body, published, processChannelRequestEvents } = await makeBody(
+        workspaceRoot,
+        promptMock,
+      );
+      const durableState = Reflect.get(body, 'durableState') as {
+        pending: (channelId: string) => Promise<NostrEvent[]>;
+      };
+      const event = requestEvent(
+        'forced-update-request',
+        body.agent.publicKey,
+        'Please finish this long-running analysis.',
+      );
+      const participants = [human.publicKey, body.agent.publicKey];
+
+      const interrupted = processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        participants,
+      );
+      await vi.waitFor(() => expect(promptMock).toHaveBeenCalledOnce());
+      await body.prepareForForcedUpdateRestart('parent-channel');
+      rejectTurn(new Error('ACP session cancelled for update deadline'));
+      await interrupted;
+
+      expect(agentMessages(published).map((message) => message.content)).toEqual([
+        'Beeline is restarting for an update — resend in a moment. This request was not marked delivered.',
+      ]);
+      expect(statuses(published)).toEqual(['working']);
+      await expect(durableState.pending('parent-channel')).resolves.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+
+      // A successor starts without the old process's forced-restart flag and
+      // consumes the still-pending request through the ordinary reply path.
+      Reflect.set(body, 'forcedUpdateRestart', false);
+      promptMock.mockResolvedValue(turnResult(ANSWER));
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        participants,
+      );
+      expect(agentMessages(published).at(-1)?.content).toBe(ANSWER);
+      expect(statuses(published).at(-1)).toBe('complete');
+      await expect(durableState.pending('parent-channel')).resolves.not.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves the honest terminal fallback for failures unrelated to an update', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-terminal-turn-fallback-'));
+    try {
+      const promptMock = vi.fn().mockRejectedValue(new Error('ordinary adapter failure'));
+      const { body, published, processChannelRequestEvents } = await makeBody(
+        workspaceRoot,
+        promptMock,
+      );
+      const durableState = Reflect.get(body, 'durableState') as {
+        pending: (channelId: string) => Promise<NostrEvent[]>;
+      };
+      const event = requestEvent(
+        'ordinary-failure-request',
+        body.agent.publicKey,
+        'Can you answer this?',
+      );
+
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        [human.publicKey, body.agent.publicKey],
+      );
+
+      expect(agentMessages(published).map((message) => message.content)).toEqual([
+        "That turn stopped before I could deliver a reply. I won't retry it without another message from you.",
+      ]);
+      expect(statuses(published)).toEqual(['working', 'failed']);
+      await expect(durableState.pending('parent-channel')).resolves.not.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('publishes only the honest fallback and leaves the request retryable', async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-narration-reply-'));
     try {

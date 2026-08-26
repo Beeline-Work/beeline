@@ -4,7 +4,16 @@
  */
 import { afterAll, afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +41,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 import {
   AGENT_REQUEST_TAG,
   AGENT_EXCHANGE_MAX_MESSAGES,
+  agentTurnFailureJournalDetail,
   agentExchangeTurnPrompt,
   abandonedCornerCloseRetryDelayMs,
   ABANDONED_CORNER_CLOSE_REFUSED,
@@ -275,6 +285,28 @@ describe('config', () => {
 });
 
 describe('acp', () => {
+  it('journals known activation failures without leaking unknown error text', () => {
+    expect(
+      agentTurnFailureJournalDetail(
+        new Error('Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox'),
+      ),
+    ).toBe('Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox');
+    expect(
+      agentTurnFailureJournalDetail(
+        new Error('ACP session/prompt timed out after 8000ms of inactivity'),
+      ),
+    ).toBe('ACP session/prompt timed out after 8000ms of inactivity');
+    expect(agentTurnFailureJournalDetail(new Error('provider token=must-not-appear'))).toBe(
+      'Error',
+    );
+    expect(agentTurnFailureJournalDetail(new Error('Trusty Squire bearer skLiveSecret'))).toBe(
+      'Error',
+    );
+    const named = new Error('unknown');
+    named.name = 'token=must-not-appear';
+    expect(agentTurnFailureJournalDetail(named)).toBe('Error');
+  });
+
   it('AcpClient must be started before use', async () => {
     const { AcpClient } = await import('./acp.js');
     const client = new AcpClient({
@@ -1362,6 +1394,7 @@ describe('agent identity boundary', () => {
         const alternateConfig = join(root, 'alternate-xdg');
         const unsupported = new Body({
           ...config,
+          externalMcpCapabilities: ['squire-credential-use'],
           agentKind: 'pi',
           agentHomeRoot: join(root, 'pi-home'),
           operatorHome,
@@ -1455,12 +1488,194 @@ describe('agent identity boundary', () => {
       }
     });
 
+    it.each(['legacy-store', 'ambient-config'] as const)(
+      'scrubs %s Squire state without requiring a governed store',
+      async (legacyShape) => {
+        const root = mkdtempSync(join(tmpdir(), 'squire-legacy-scrub-'));
+        try {
+          const operatorHome = join(root, 'operator');
+          mkdirSync(join(operatorHome, '.codex'), { recursive: true });
+          writeFileSync(join(operatorHome, '.codex/auth.json'), '{"test":"opaque"}');
+          if (legacyShape === 'legacy-store') {
+            mkdirSync(join(operatorHome, '.config/trusty-squire'), { recursive: true });
+          }
+          writeFileSync(
+            join(operatorHome, '.codex/config.toml'),
+            legacyShape === 'ambient-config'
+              ? [
+                  '[mcp_servers.squire]',
+                  'command = "npx"',
+                  'args = ["-y", "@trusty-squire/mcp"]',
+                  '',
+                  '[mcp_servers.project_tools]',
+                  'command = "project-tools"',
+                ].join('\n')
+              : '[mcp_servers.project_tools]\ncommand = "project-tools"\n',
+          );
+          const agentHomeRoot = join(root, 'agent-home');
+          const squireConfigRoot = join(root, 'runtime', 'squire-host-config');
+          const body = new Body({
+            ...config,
+            agentBinary: '/bin/true',
+            agentCommand: '/bin/true',
+            externalMcpCapabilities: [],
+            agentKind: 'codex',
+            agentHomeRoot,
+            operatorHome,
+            bwrapPath: '/usr/bin/bwrap',
+            squireConfigRoot,
+          });
+
+          const sessionEnv = await Reflect.get(body, 'sessionAgentEnv').call(body);
+          expect(sessionEnv).toMatchObject({
+            CODEX_HOME: join(agentHomeRoot, 'codex'),
+          });
+          const spawnCommand = await Reflect.get(body, 'sessionSpawnCommand').call(
+            body,
+            { mode: 'readonly', cwd: root },
+            sessionEnv,
+          );
+          expect(spawnCommand.command).toBe('/usr/bin/bwrap');
+          expect(spawnCommand.args).toContain('--unshare-pid');
+          expect(spawnCommand.args).toContain(join(agentHomeRoot, 'codex'));
+          expect(existsSync(squireConfigRoot)).toBe(true);
+          const launched = spawnSync(spawnCommand.command, spawnCommand.args, {
+            cwd: root,
+            env: sessionEnv,
+            encoding: 'utf8',
+          });
+          expect({
+            status: launched.status,
+            signal: launched.signal,
+            stderr: launched.stderr,
+          }).toEqual({ status: 0, signal: null, stderr: '' });
+          expect(readlinkSync(join(agentHomeRoot, 'codex/auth.json'))).toBe(
+            join(operatorHome, '.codex/auth.json'),
+          );
+          const isolatedConfig = readFileSync(join(agentHomeRoot, 'codex/config.toml'), 'utf8');
+          expect(isolatedConfig).toContain('[mcp_servers.project_tools]');
+          expect(isolatedConfig).not.toContain('[mcp_servers.squire]');
+          expect(Reflect.get(body, 'sandboxCredentialMaskPaths').call(body)).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                path: join(operatorHome, '.config/trusty-squire'),
+                kind: 'dir',
+              }),
+              expect.objectContaining({
+                path: join(squireConfigRoot, 'trusty-squire'),
+                kind: 'dir',
+              }),
+            ]),
+          );
+
+          const governed = new Body({
+            ...config,
+            externalMcpCapabilities: ['squire-credential-use'],
+            agentKind: 'codex',
+            agentHomeRoot: join(root, 'governed-agent-home'),
+            operatorHome,
+            bwrapPath: '/usr/bin/bwrap',
+            squireConfigRoot,
+          });
+          await expect(Reflect.get(governed, 'sessionAgentEnv').call(governed)).rejects.toThrow(
+            /storage or IPC boundary/,
+          );
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      },
+    );
+
+    it('treats legacy Squire state as isolation-only for Pi while governed Pi fails closed', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'squire-legacy-pi-'));
+      try {
+        const operatorHome = join(root, 'operator');
+        mkdirSync(join(operatorHome, '.config/trusty-squire'), { recursive: true });
+        const squireConfigRoot = join(root, 'runtime', 'squire-host-config');
+        const isolated = new Body({
+          ...config,
+          agentBinary: '/bin/true',
+          agentCommand: '/bin/true',
+          agentKind: 'pi',
+          externalMcpCapabilities: [],
+          agentHomeRoot: join(root, 'pi-home'),
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+        });
+        const env = await Reflect.get(isolated, 'sessionAgentEnv').call(isolated);
+        const spawnCommand = await Reflect.get(isolated, 'sessionSpawnCommand').call(
+          isolated,
+          { mode: 'readonly', cwd: root },
+          env,
+        );
+        const launched = spawnSync(spawnCommand.command, spawnCommand.args, {
+          cwd: root,
+          env,
+          encoding: 'utf8',
+        });
+        expect({
+          status: launched.status,
+          signal: launched.signal,
+          stderr: launched.stderr,
+        }).toEqual({ status: 0, signal: null, stderr: '' });
+        expect(spawnCommand.args).toContain('--unshare-pid');
+
+        const governed = new Body({
+          ...config,
+          agentKind: 'pi',
+          externalMcpCapabilities: ['squire-credential-use'],
+          agentHomeRoot: join(root, 'governed-pi-home'),
+          operatorHome,
+          bwrapPath: '/usr/bin/bwrap',
+          squireConfigRoot,
+        });
+        await expect(Reflect.get(governed, 'sessionAgentEnv').call(governed)).rejects.toThrow(
+          /Codex or Claude harness/,
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('reserves an empty legacy Squire mask mountpoint idempotently across activations', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'squire-legacy-concurrent-'));
+      try {
+        const operatorHome = join(root, 'operator');
+        mkdirSync(join(operatorHome, '.config/trusty-squire'), { recursive: true });
+        const squireConfigRoot = join(root, 'runtime', 'squire-host-config');
+        const makeBody = (name: string) =>
+          new Body({
+            ...config,
+            agentKind: 'pi',
+            externalMcpCapabilities: [],
+            agentHomeRoot: join(root, name),
+            operatorHome,
+            bwrapPath: '/usr/bin/bwrap',
+            squireConfigRoot,
+          });
+        const first = makeBody('first');
+        const second = makeBody('second');
+
+        await expect(
+          Promise.all([
+            Reflect.get(first, 'sessionAgentEnv').call(first),
+            Reflect.get(second, 'sessionAgentEnv').call(second),
+          ]),
+        ).resolves.toHaveLength(2);
+        expect(readdirSync(join(squireConfigRoot, 'trusty-squire'))).toEqual([]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     it('keeps the owned Squire store isolated after capability removal and downgrade', async () => {
       const root = mkdtempSync(join(tmpdir(), 'squire-owned-store-boundary-'));
       try {
         const operatorHome = join(root, 'operator');
         const squireConfigRoot = join(root, 'beeline', 'squire-host-config');
         mkdirSync(join(squireConfigRoot, 'trusty-squire'), { recursive: true });
+        writeFileSync(join(squireConfigRoot, 'trusty-squire/credential-state.json'), '{}');
 
         const removed = new Body({
           ...config,

@@ -18,11 +18,13 @@ import {
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 const mmkvValues = vi.hoisted(() => new Map<string, string>());
+const transportHarness = vi.hoisted(() => ({ completeBootstrap: false }));
 const workspaceContext = vi.hoisted(() => ({
   current: {
     workspaces: [] as unknown[],
     activeWorkspaceId: null as string | null,
     personalWorkspaceId: null as string | null,
+    cacheReconciliation: undefined as 'authoritative' | 'preserve' | undefined,
   },
 }));
 
@@ -78,9 +80,35 @@ vi.mock('@/buzz/community-storage', () => ({
 }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
-    // Deliberately minimal: the mount refresh may fail against this stub —
-    // these tests render from the seeded local cache, like a cold open.
-    ensureClient = vi.fn(async () => ({ isAgentIdentity: vi.fn(async () => false) }));
+    ensureClient = vi.fn(async () => {
+      const base = { isAgentIdentity: vi.fn(async () => false) };
+      if (!transportHarness.completeBootstrap) return base;
+      return {
+        ...base,
+        query: vi.fn(async () => [
+          {
+            id: 'tubing-room-create',
+            pubkey: 'a'.repeat(64),
+            created_at: 1_000,
+            kind: 9_007,
+            tags: [
+              ['h', 'tubing-room'],
+              ['community', 'tubing-1'],
+              ['name', 'Tubing Room'],
+            ],
+            content: '',
+            sig: 'verified',
+          },
+        ]),
+        listMyChannels: vi.fn(async () => [{ channelId: 'tubing-room' }]),
+        getChannelMetadata: vi.fn(async () => ({ name: 'Tubing Room' })),
+        communityMembers: vi.fn(async () => []),
+        listAgents: vi.fn(async () => []),
+        getPersonProfile: vi.fn(async () => null),
+        listPersonProfiles: vi.fn(async () => []),
+        listDirectMessages: vi.fn(async () => []),
+      };
+    });
   },
 }));
 vi.mock('@/components/buzz/CommunityRail', async () => {
@@ -209,6 +237,7 @@ function seedRooms(rooms: SeedRoom[]) {
     workspaces: [{ communityId: 'shared-1', name: 'Night Shift', viewerRole: 'owner' }],
     activeWorkspaceId: 'shared-1',
     personalWorkspaceId: 'personal-1',
+    cacheReconciliation: undefined,
   };
   useBuzzLocalCache.getState().setChannelList({
     viewerPubkey: VIEWER,
@@ -243,7 +272,15 @@ function seedSplitWorkspaceCache() {
   cache.setChannelList({
     viewerPubkey: VIEWER,
     communityId: 'tubing-1',
-    channels: [],
+    channels: [
+      {
+        id: 'tubing-room',
+        title: 'Tubing Room',
+        communityId: 'tubing-1',
+        createdAt: 1_000,
+        updatedAt: 2_000,
+      },
+    ],
     directMessages: [],
     workspaceMembers: [],
     communities: [tubing],
@@ -266,7 +303,7 @@ function seedSplitWorkspaceCache() {
     updatedAt: now,
     lastAccessedAt: now,
   });
-  routeParams.current = {};
+  routeParams.current = { communityId: 'personal-1' };
 }
 
 function shellWorkspaceIds(tree: ReactTestRenderer): string[] {
@@ -356,6 +393,7 @@ describe("the deck's one ordered feed", () => {
   beforeEach(() => {
     mmkvValues.clear();
     navigation.push.mockClear();
+    transportHarness.completeBootstrap = false;
     useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
     useRoomReadState.setState({ readAt: {} });
     vi.mocked(prepareWorkspaceContext).mockImplementation(async () => workspaceContext.current);
@@ -411,6 +449,71 @@ describe("the deck's one ordered feed", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('does not commit a discovery that settles after the cold-open timeout', async () => {
+    vi.useFakeTimers();
+    seedSplitWorkspaceCache();
+    const commitSelection = vi.fn(async () => undefined);
+    const tubing = { communityId: 'tubing-1', name: 'Tubing Crew' } as never;
+    vi.mocked(prepareWorkspaceContext).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                workspaces: [tubing],
+                activeWorkspaceId: 'tubing-1',
+                personalWorkspaceId: null,
+                cacheReconciliation: 'authoritative',
+                commitSelection,
+              }),
+            8_100,
+          );
+        }),
+    );
+
+    try {
+      const tree = await render();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8_001);
+      });
+      expect(shellWorkspaceIds(tree)).toEqual(['tubing-1', 'personal-1']);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+      });
+      expect(commitSelection).not.toHaveBeenCalled();
+      expect(shellWorkspaceIds(tree)).toEqual(['tubing-1', 'personal-1']);
+      expect(useBuzzLocalCache.getState().channelLists[`${VIEWER}:personal-1`]).toBeDefined();
+      tree.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows only authoritative Workspaces and evicts a stale active deck', async () => {
+    seedSplitWorkspaceCache();
+    transportHarness.completeBootstrap = true;
+    const tubing = { communityId: 'tubing-1', name: 'Tubing Crew' } as never;
+    workspaceContext.current = {
+      workspaces: [tubing],
+      activeWorkspaceId: 'tubing-1',
+      personalWorkspaceId: null,
+      cacheReconciliation: 'authoritative',
+    };
+
+    const tree = await render();
+
+    expect(shellWorkspaceIds(tree)).toEqual(['tubing-1']);
+    const shell = tree.root.find((node: any) => node.type === 'BuzzCommunityShell');
+    expect(shell.props.activeCommunityId).toBe('tubing-1');
+    expect(visibleTextOf(tree)).toContain('Tubing Room');
+    const cache = useBuzzLocalCache.getState();
+    expect(cache.channelLists[`${VIEWER}:personal-1`]).toBeUndefined();
+    expect(cache.activeListKeyByViewer[VIEWER]).toBe(`${VIEWER}:tubing-1`);
+    expect(cache.channelLists[`${VIEWER}:tubing-1`]?.personalWorkspaceId).toBeNull();
+    tree.unmount();
   });
 
   it('pins actionable Rooms first and renders no section headers', async () => {

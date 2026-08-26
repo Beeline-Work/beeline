@@ -279,6 +279,19 @@ describe('ChannelSnapshotMaterializer', () => {
       },
       owner.secretKey,
     );
+    const spoofedTopology = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: base + 22,
+        kind: 9,
+        tags: [
+          ['h', CORNER],
+          ['subchannel', CHANNEL],
+        ],
+        content: 'This message cannot redefine repository ownership.',
+      },
+      owner.secretKey,
+    );
     await insertEvents([
       signEvent(
         {
@@ -319,6 +332,7 @@ describe('ChannelSnapshotMaterializer', () => {
       ],
       CORNER,
     );
+    await insertEvent(spoofedTopology, CHANNEL);
     await database.query(`DELETE FROM beeline_snapshot_dirty`);
     await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [
       TENANT,
@@ -353,6 +367,103 @@ describe('ChannelSnapshotMaterializer', () => {
       key: 'github:authorized',
       name: 'Authorized repository',
       remote: 'https://example.test/authorized.git',
+    });
+  });
+
+  it('rejects an admin-authored target branch change from snapshot metadata', async () => {
+    const owner = createIdentity('snapshot-target-owner');
+    const admin = createIdentity('snapshot-target-admin');
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey)
+       VALUES ($1, $2, decode($3, 'hex')), ($1, $2, decode($4, 'hex'))`,
+      [TENANT, CHANNEL, owner.publicKey, admin.publicKey],
+    );
+    const base = Math.floor(Date.now() / 1_000) - 10;
+    const repositoryTags = [
+      ['d', `buzz-room-repository:${CHANNEL}`],
+      ['h', CHANNEL],
+      ['t', 'buzz-room-repository'],
+    ];
+    await insertEvents([
+      signEvent(
+        {
+          pubkey: owner.publicKey,
+          created_at: base,
+          kind: 9007,
+          tags: [
+            ['h', CHANNEL],
+            ['community', 'verified-application-workspace'],
+            ['p', owner.publicKey, 'owner'],
+            ['p', admin.publicKey, 'admin'],
+          ],
+          content: '',
+        },
+        owner.secretKey,
+      ),
+      signEvent(
+        {
+          pubkey: owner.publicKey,
+          created_at: base + 1,
+          kind: 30078,
+          tags: repositoryTags,
+          content: JSON.stringify({
+            key: 'github:target-authority',
+            name: 'Target authority',
+            remote: 'https://example.test/target-authority.git',
+            targetBranch: 'main',
+          }),
+        },
+        owner.secretKey,
+      ),
+      signEvent(
+        {
+          pubkey: admin.publicKey,
+          created_at: base + 2,
+          kind: 30078,
+          tags: repositoryTags,
+          content: JSON.stringify({
+            key: 'github:target-authority',
+            name: 'Target authority',
+            remote: 'https://example.test/target-authority.git',
+            targetBranch: 'staging',
+          }),
+        },
+        admin.secretKey,
+      ),
+    ]);
+    await database.query(`DELETE FROM beeline_snapshot_dirty`);
+    await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    const materializer = new ChannelSnapshotMaterializer(
+      store,
+      new SnapshotSuccessionClient({
+        baseUrl: 'http://auth:8789',
+        token: 'secret',
+        fetch: vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+          return new Response(
+            JSON.stringify({
+              mappings: Object.fromEntries(body.pubkeys.map((pubkey) => [pubkey, pubkey])),
+            }),
+            { status: 200 },
+          );
+        }),
+      }),
+      { burstCoalesceMs: 0, log: () => undefined },
+    );
+
+    expect(await materializer.runOnce()).toBe(1);
+    expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload?.repository).toEqual({
+      key: 'github:target-authority',
+      name: 'Target authority',
+      remote: 'https://example.test/target-authority.git',
+      targetBranch: 'main',
     });
   });
 

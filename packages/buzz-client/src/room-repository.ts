@@ -145,6 +145,33 @@ export function parseRoomRepository(event: NostrEvent): RoomRepository | null {
   };
 }
 
+export type RoomRepositorySequenceBinding = {
+  readonly key: string;
+  readonly targetBranch: string;
+};
+
+export function advanceRoomRepositorySequence(
+  currentBinding: RoomRepositorySequenceBinding | undefined,
+  candidate: RoomRepository,
+  role: 'owner' | 'admin' | null,
+):
+  | { readonly accepted: false; readonly binding: RoomRepositorySequenceBinding | undefined }
+  | { readonly accepted: true; readonly binding: RoomRepositorySequenceBinding } {
+  if (!role) return { accepted: false, binding: currentBinding };
+  const candidateTarget = normalizeTargetBranchName(candidate.targetBranch ?? 'main') ?? 'main';
+  const ownerOnlySwitch =
+    (candidate.raw && tagValue(candidate.raw, 'action') === 'switch-target-branch') ||
+    (currentBinding?.key === candidate.binding.key &&
+      currentBinding.targetBranch !== candidateTarget);
+  if (ownerOnlySwitch && role !== 'owner') {
+    return { accepted: false, binding: currentBinding };
+  }
+  return {
+    accepted: true,
+    binding: { key: candidate.binding.key, targetBranch: candidateTarget },
+  };
+}
+
 /**
  * Bind (or re-bind) a repository to a Room. Room-scoped authority: only a
  * current Room admin/owner may author this. Rejects a local-only binding — a
@@ -316,21 +343,16 @@ export async function readRoomRepositoryConfig(
   // second cover event) to disguise a same-repository target change. Repo
   // linkage remains admin-capable; changing one repo's canon branch is owner-only.
   for (const candidate of [...candidates].reverse()) {
-    let role: Awaited<ReturnType<typeof getChannelRole>> | null = null;
+    let role: 'owner' | 'admin' | null = null;
     for (const authorKey of await authorKeysForRoleCheck(candidate.authoredBy!, options)) {
       const candidateRole = await getChannelRole(ctx, channelId, authorKey);
       if (candidateRole === 'owner' || candidateRole === 'admin') role = candidateRole;
       if (role === 'owner') break;
     }
-    if (!role) continue;
-    const candidateTarget = normalizeTargetBranchName(candidate.targetBranch ?? 'main') ?? 'main';
-    const ownerOnlySwitch =
-      tagValue(candidate.raw!, 'action') === 'switch-target-branch' ||
-      (currentBinding?.key === candidate.binding.key &&
-        currentBinding.targetBranch !== candidateTarget);
-    if (ownerOnlySwitch && role !== 'owner') continue;
+    const decision = advanceRoomRepositorySequence(currentBinding, candidate, role);
+    if (!decision.accepted) continue;
     current = candidate;
-    currentBinding = { key: candidate.binding.key, targetBranch: candidateTarget };
+    currentBinding = decision.binding;
   }
   if (current) {
     return { kind: 'repository', repository: current };

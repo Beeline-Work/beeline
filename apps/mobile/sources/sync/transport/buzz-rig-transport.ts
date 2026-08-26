@@ -918,14 +918,15 @@ export class BuzzRigTransport implements RigTransport {
     // corner whose newest record is older than the marker page covers.
     //
     // Production relay truth (measured live, round-2 corner-discovery
-    // failure): a single filter naming MULTIPLE `#h` values is answered
+    // failure): a single filter naming MULTIPLE tag values is answered
     // with an unreliable subset of the matching events — a whole corner
     // family's kind:9007 create events can collapse to one row, which left
     // every corner-state record signer-unverifiable (no creator fact) and
-    // quarantined the corners out of the snapshot. Multi-value `#d` IS
-    // answered with proper OR semantics on this relay, so only the `#h`
-    // reads expand into per-channel single-value filters. They stay inside
-    // THIS one `query` call, so the transport still spends one round trip.
+    // quarantined the corners out of the snapshot. The same partiality was
+    // later observed for multi-value `#d` arrays (live change-review and
+    // corner-wipe evidence), so EVERY multi-key read here expands into
+    // per-channel single-value filters. They stay inside THIS one `query`
+    // call, so the transport still spends one round trip.
     const [authorityEvents, cornerStates] = await Promise.all([
       client.query([
         ...channelIds.map(
@@ -936,11 +937,14 @@ export class BuzzRigTransport implements RigTransport {
               limit: STRUCTURAL_PAGE_LIMIT_PER_CHANNEL,
             }) as Record<string, unknown>,
         ),
-        {
-          kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-          '#d': channelIds,
-          limit: channelIds.length * 4,
-        },
+        ...channelIds.map(
+          (channelId) =>
+            ({
+              kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+              '#d': [channelId],
+              limit: 4,
+            }) as Record<string, unknown>,
+        ),
         ...channelIds.map(
           (channelId) =>
             ({
@@ -950,7 +954,16 @@ export class BuzzRigTransport implements RigTransport {
             }) as Record<string, unknown>,
         ),
       ]),
-      client.cornerStateBackfill(cornerIds),
+      // Corner-state records are exact-`#d` replaceables; one filter per
+      // corner key inside the SAME batched call — never a multi-value `#d`
+      // array this relay may answer with only the first key's matches.
+      client.query(
+        cornerIds.map((cornerId) => ({
+          kinds: [KIND_CORNER_STATE],
+          '#d': [`${TAG_CORNER_STATE}:${cornerId}`],
+          limit: 5,
+        })),
+      ),
     ]);
     const authorityFacts = deriveRelayAuthorityFacts([...authorityEvents, ...cornerStates]);
     const workspaceId =
@@ -1048,9 +1061,12 @@ export class BuzzRigTransport implements RigTransport {
     // events for every Workspace, always, and this directory reported every
     // agent OFFLINE regardless of what its daemon was doing. Confirmed against
     // the live relay: `#h` → 0 events, `#d` → the same agent's four-second-old
-    // `online` heartbeat.
-    const buzzEvents = await client.query([
-      {
+    // `online` heartbeat. One filter per Room key, inside THIS one `query`
+    // call: a multi-value `#d` array is answered unreliably by production
+    // (same partiality class as multi-value `#h`), which would read whole
+    // Rooms' agents offline from one partial page.
+    const buzzEvents = await client.query(
+      roomIds.map((roomId) => ({
         kinds: [KIND_AGENT_PRESENCE],
         // Built from `TAG_AGENT_PRESENCE`, a long-standing export, rather
         // than from the newer `agentPresenceKey` helper. Metro resolves
@@ -1059,10 +1075,10 @@ export class BuzzRigTransport implements RigTransport {
         // a stale build — and this read is best-effort, so the resulting
         // TypeError is swallowed and every agent reads OFFLINE. A fix must not
         // depend on a rebuild it cannot verify.
-        '#d': roomIds.map((roomId) => `${TAG_AGENT_PRESENCE}:${roomId}`),
-        limit: Math.max(200, roomIds.length * 10),
-      },
-    ]);
+        '#d': [`${TAG_AGENT_PRESENCE}:${roomId}`],
+        limit: 10,
+      })),
+    );
     const authority = await this.readAuthorityForChannels(roomIds);
     return this.parseReadyEvents(authority, buzzEvents);
   }
@@ -1713,11 +1729,26 @@ export class BuzzRigTransport implements RigTransport {
   /** Person-facing projection of the canonical snapshot corner union. */
   async listSubchannelLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
     const client = await this.getClient();
-    const recent = sharedReadCache(client).recentSnapshots.get(parentChannelId);
-    const { snapshot } =
-      recent && Date.now() - recent.loadedAt < 15_000
-        ? recent.result
-        : await this.readModelBackfill(parentChannelId, { limit: 1 });
+    const cache = sharedReadCache(client);
+    const prior = cache.recentSnapshots.get(parentChannelId);
+    const priorCorners =
+      prior && selectCorners(prior.result.snapshot, parentChannelId).length > 0;
+    const recent = prior && Date.now() - prior.loadedAt < 15_000 ? prior : undefined;
+    let result = recent ? recent.result : await this.readModelBackfill(parentChannelId, { limit: 1 });
+    // Completeness guard: a relay that answers batched tag filters partially
+    // can make a whole corner family vanish from one re-read (the live
+    // close-one-corner wipe). An EMPTY answer that would overwrite a family
+    // the previous read proved non-empty is never committed on first sight —
+    // one confirming re-read decides. Bounded: at most one extra batched read,
+    // only on that non-empty→empty transition, and lifecycle enrichment never
+    // blocks navigation.
+    if (!recent && priorCorners) {
+      const freshCorners = selectCorners(result.snapshot, parentChannelId);
+      if (freshCorners.length === 0) {
+        result = await this.readModelBackfill(parentChannelId, { limit: 1 });
+      }
+    }
+    const { snapshot } = result;
     return selectCorners(snapshot, parentChannelId).map((corner) => {
       const status =
         corner.kind === 'active'
@@ -1757,14 +1788,19 @@ export class BuzzRigTransport implements RigTransport {
   async listSubchannelLifecycleForRooms(
     parentChannelIds: string[],
   ): Promise<Map<string, CornerSummary[]>> {
-    return new Map(
-      await Promise.all(
-        parentChannelIds.map(
-          async (parentChannelId) =>
-            [parentChannelId, await this.listSubchannelLifecycle(parentChannelId)] as const,
-        ),
-      ),
+    // Per-Room calls stay independent so one Room's partial/failed read can
+    // never blank its siblings' committed summaries; each Room's own guard
+    // decides whether its empty answer is believable.
+    const entries = await Promise.all(
+      parentChannelIds.map(async (parentChannelId) => {
+        try {
+          return [parentChannelId, await this.listSubchannelLifecycle(parentChannelId)] as const;
+        } catch {
+          return null;
+        }
+      }),
     );
+    return new Map(entries.filter((entry) => entry !== null));
   }
 
   async getChannelCreator(channelId: string): Promise<string | null> {
@@ -1876,4 +1912,11 @@ export class BuzzRigTransport implements RigTransport {
       this.client = null;
     }
   }
+}
+
+/** Test-only hook: backdate the shared recent-snapshot entry so time-based
+ *  guards (completeness re-read) take the stale-cache path deterministically. */
+export function __backdateRecentSnapshotForTests(client: object, channelId: string): void {
+  const entry = sharedReadCache(client).recentSnapshots.get(channelId);
+  if (entry) entry.loadedAt -= 60_000;
 }

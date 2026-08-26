@@ -160,6 +160,67 @@ describe('MonoMarkdown memoization', () => {
       (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type = original;
     }
   });
+
+  // The transcript's renderItem derives mentionHandles with .filter().map()
+  // inside the row builder, so every presence-tick re-invocation hands down a
+  // NEW array with EQUAL contents. A plain shallow memo compare fails on that
+  // identity churn and rebuilds every row's markdown-to-JSX tree on every
+  // tick — the confirmed enter-Room freeze family. The memo comparator must
+  // value-compare this one array prop.
+  it('still bails when a caller rebuilds an equal mentionHandles array each render', () => {
+    const original = (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type;
+    const spy = vi.fn(original);
+    (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type = spy as any;
+    try {
+      function Parent({ tick }: { tick: number }) {
+        void tick;
+        return React.createElement(MonoMarkdown, {
+          markdown: 'hello **world**',
+          mentionHandles: ['lena', 'beebee'],
+        });
+      }
+
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(React.createElement(Parent, { tick: 0 }));
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        renderer.update(React.createElement(Parent, { tick: 1 }));
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type = original;
+    }
+  });
+
+  it('re-renders when the handles contents genuinely change', () => {
+    const original = (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type;
+    const spy = vi.fn(original);
+    (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type = spy as any;
+    try {
+      function Parent({ names }: { names: string[] }) {
+        return React.createElement(MonoMarkdown, {
+          markdown: 'hello **world**',
+          mentionHandles: names,
+        });
+      }
+
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(React.createElement(Parent, { names: ['lena'] }));
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        renderer.update(React.createElement(Parent, { names: ['lena', 'beebee'] }));
+      });
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      (MonoMarkdown as unknown as { type: typeof MonoMarkdown }).type = original;
+    }
+  });
 });
 
 // ── Brass mention glossing (Speakeasy alignment) ─────────────────────────────

@@ -5,6 +5,7 @@ import {
   parsePermissionRequest,
   permissionActionId,
   verifyPermissionAction,
+  verifyMissionPermissionActionAuthority,
   type MissionControlScope,
   type MissionScheduleMode,
   type MissionScheduleOperation,
@@ -250,6 +251,18 @@ export async function verifyMissionAction(
     const action = await resolveMissionAction(input);
     if (!action) return { authorized: false, terminal: true, reason: 'action-mismatch' };
     return verifyPermissionAction({ reader: input.reader, action, now: input.now });
+  } catch {
+    return { authorized: false, terminal: false, reason: 'authority-unavailable' };
+  }
+}
+
+export async function verifyMissionActionAuthority(
+  input: MissionActionInput & { now: number },
+): Promise<PermissionVerificationResult> {
+  try {
+    const action = await resolveMissionAction(input);
+    if (!action) return { authorized: false, terminal: true, reason: 'action-mismatch' };
+    return verifyMissionPermissionActionAuthority({ reader: input.reader, action, now: input.now });
   } catch {
     return { authorized: false, terminal: false, reason: 'authority-unavailable' };
   }

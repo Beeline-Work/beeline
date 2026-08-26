@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildPermissionDecision,
+  buildPermissionExecution,
   buildPermissionRequest,
   buildPermissionRevocation,
   createIdentity,
@@ -11,7 +12,11 @@ import {
   type MissionControlScope,
   type PermissionFreshReader,
 } from '@beeline/buzz-client';
-import { resolveMissionAction, verifyMissionAction } from './mission-authority.js';
+import {
+  resolveMissionAction,
+  verifyMissionAction,
+  verifyMissionActionAuthority,
+} from './mission-authority.js';
 import { PermissionRuntime } from './permission-runtime.js';
 
 const NOW = 2_000_000_000;
@@ -83,6 +88,8 @@ function fixture() {
   )!;
   const grant = defaultPermissionGrantEnvelope(scope, NOW + 1);
   grant.expiresAt = NOW + 5;
+  grant.maxUses = 1;
+  grant.rate.maxUses = 1;
   const decision = parsePermissionDecision(
     buildPermissionDecision(captain, request, {
       version: 1,
@@ -99,6 +106,7 @@ function fixture() {
     [decision.event.id, decision.event],
   ]);
   let revocations = [] as ReturnType<typeof buildPermissionRevocation>[];
+  const history = [decision.event];
   const reader: PermissionFreshReader = {
     readEvent: async (id) => events.get(id),
     isRegisteredAgent: async (pubkey) =>
@@ -107,7 +115,7 @@ function fixture() {
     isWorkspaceMember: async () => true,
     roleForRoom: async (_room, pubkey) => (pubkey === captain.publicKey ? 'owner' : 'member'),
     hasDeviceCustody: async (pubkey) => pubkey === captain.publicKey,
-    permissionHistory: async () => [decision.event],
+    permissionHistory: async () => history,
     permissionRevocations: async () => revocations,
   };
   const reference = {
@@ -145,6 +153,7 @@ function fixture() {
     controller,
     request,
     decision,
+    history,
     reader,
     input,
     revoke() {
@@ -257,6 +266,47 @@ describe('mission authority funnel', () => {
     ).resolves.toMatchObject({ status: 'refused', reason: 'revoked' });
     expect(refusedInvoke).not.toHaveBeenCalled();
     expect(published).toHaveLength(3);
+  });
+
+  it('fresh-checks an already-charged child without reserving the schedule slice again', async () => {
+    const fx = fixture();
+    const action = await resolveMissionAction(fx.input);
+    if (!action) throw new Error('mission action fixture did not resolve');
+    fx.history.push(
+      buildPermissionExecution(fx.controller, fx.request, {
+        version: 1,
+        permissionId: fx.request.value.permissionId,
+        grantEventId: fx.decision.event.id,
+        actionId: action.actionId,
+        idempotencyKey: action.idempotencyKey,
+        attempt: 1,
+        status: 'succeeded',
+        at: NOW + 2,
+        charge: action.charge,
+      }),
+    );
+    const child = {
+      ...fx.input,
+      ordinal: 2,
+      idempotencyKey: 'mission-child-activation',
+      now: NOW + 2,
+    };
+
+    await expect(verifyMissionAction(child)).resolves.toMatchObject({
+      authorized: false,
+      reason: 'exhausted',
+    });
+    await expect(verifyMissionActionAuthority(child)).resolves.toMatchObject({
+      authorized: true,
+      usage: { uses: 1, reservedTokens: 1_000 },
+    });
+
+    fx.revoke();
+    await expect(verifyMissionActionAuthority({ ...child, now: NOW + 4 })).resolves.toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'revoked',
+    });
   });
 
   it('binds a derived landing action to one corner and source commit', async () => {

@@ -200,6 +200,7 @@ export interface WorkCalendarStore {
   load(): Promise<void>;
   states(): Promise<WorkScheduleRuntimeState[]>;
   put(state: WorkScheduleRuntimeState): Promise<void>;
+  putWithReceipt(state: WorkScheduleRuntimeState, event: NostrEvent): Promise<void>;
   reserveReceipt(event: NostrEvent): Promise<void>;
   pendingReceipts(): Promise<NostrEvent[]>;
   markReceiptDelivered(eventId: string): Promise<void>;
@@ -293,6 +294,25 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
           [parsed.scheduleId]: cloneState(parsed),
         },
         pendingReceipts: { ...this.data.pendingReceipts },
+      };
+      await this.write(next);
+      this.data = next;
+    });
+  }
+
+  async putWithReceipt(state: WorkScheduleRuntimeState, event: NostrEvent): Promise<void> {
+    await this.load();
+    const parsed = parseRuntimeState(state);
+    if (!parsed) throw new Error('invalid work calendar runtime state');
+    if (!parseScheduledTurnReceipt(event)) throw new Error('invalid scheduled receipt outbox event');
+    await this.enqueueSave(async () => {
+      const next: DurableCalendarData = {
+        version: 3,
+        schedules: {
+          ...this.data.schedules,
+          [parsed.scheduleId]: cloneState(parsed),
+        },
+        pendingReceipts: { ...this.data.pendingReceipts, [event.id]: event },
       };
       await this.write(next);
       this.data = next;
@@ -1308,7 +1328,12 @@ export class WorkCalendar {
           current.value.status === 'active' &&
           current.event.pubkey === current.value.principalPubkey &&
           current.event.pubkey !== current.value.agentPubkey;
-        if (!humanResume) continue;
+        const missionControllerResume =
+          current.value.revision > existing.revision &&
+          current.value.status === 'active' &&
+          current.value.mission !== undefined &&
+          current.event.pubkey === current.value.mission.controllerAgentPubkey;
+        if (!humanResume && !missionControllerResume) continue;
       }
       const authority = await this.dependencies.authorize(current);
       if (!authority.authorized) {
@@ -1637,9 +1662,11 @@ export class WorkCalendar {
     // This write deliberately follows the model turn. A crash before it may
     // repeat the occurrence; that is the calendar's documented best-effort
     // behavior. Failure pause state, however, is durable before its card.
-    await this.persist(next);
+    const receipt = this.buildReceipt(schedule, runId, nominalAt, status, reason);
+    await this.dependencies.store.putWithReceipt(next, receipt);
+    this.states.set(next.scheduleId, cloneState(next));
     this.retryAt.delete(schedule.scheduleId);
-    await this.publishReceipt(schedule, runId, nominalAt, status, reason);
+    await this.publishReservedReceipt(receipt, status, runId);
     await this.publishProjection(schedule, next);
     if (paused) {
       await this.publishBestEffort(
@@ -1656,7 +1683,24 @@ export class WorkCalendar {
     status: ScheduledTurnStatus,
     reason?: string,
   ): Promise<NostrEvent> {
-    const event = buildScheduledTurnReceipt(this.dependencies.identity, {
+    const event = this.buildReceipt(schedule, runId, nominalAt, status, reason);
+    if (status === 'complete' || status === 'failed' || status === 'skipped') {
+      await this.dependencies.store.reserveReceipt(event);
+      await this.publishReservedReceipt(event, status, runId);
+    } else {
+      await this.publishBestEffort(event, `${status} receipt for ${runId}`);
+    }
+    return event;
+  }
+
+  private buildReceipt(
+    schedule: WorkScheduleV1,
+    runId: string,
+    nominalAt: number,
+    status: ScheduledTurnStatus,
+    reason?: string,
+  ): NostrEvent {
+    return buildScheduledTurnReceipt(this.dependencies.identity, {
       version: 1,
       workspaceId: schedule.workspaceId,
       roomId: schedule.roomId,
@@ -1671,18 +1715,19 @@ export class WorkCalendar {
       reservedTokens: schedule.perRunReservedTokens,
       ...(reason ? { reason } : {}),
     });
-    if (status === 'complete' || status === 'failed' || status === 'skipped') {
-      await this.dependencies.store.reserveReceipt(event);
-      try {
-        await this.dependencies.publish(event);
-        await this.dependencies.store.markReceiptDelivered(event.id);
-      } catch (error) {
-        console.error(`[work-calendar] ${status} receipt for ${runId} publish failed:`, error);
-      }
-    } else {
-      await this.publishBestEffort(event, `${status} receipt for ${runId}`);
+  }
+
+  private async publishReservedReceipt(
+    event: NostrEvent,
+    status: ScheduledTurnStatus,
+    runId: string,
+  ): Promise<void> {
+    try {
+      await this.dependencies.publish(event);
+      await this.dependencies.store.markReceiptDelivered(event.id);
+    } catch (error) {
+      console.error(`[work-calendar] ${status} receipt for ${runId} publish failed:`, error);
     }
-    return event;
   }
 
   private async flushPendingReceipts(): Promise<void> {

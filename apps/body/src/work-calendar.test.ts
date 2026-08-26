@@ -54,6 +54,14 @@ class MemoryStore implements WorkCalendarStore {
     }
     this.values.set(value.scheduleId, structuredClone(value));
   }
+  async putWithReceipt(value: WorkScheduleRuntimeState, event: NostrEvent): Promise<void> {
+    if (this.failNextPut) {
+      this.failNextPut = false;
+      throw new Error('simulated durable write crash');
+    }
+    this.values.set(value.scheduleId, structuredClone(value));
+    this.receipts.set(event.id, event);
+  }
   async reserveReceipt(event: NostrEvent): Promise<void> {
     this.receipts.set(event.id, event);
   }
@@ -358,6 +366,47 @@ describe('WorkCalendar best-effort durable execution', () => {
       schedules: {
         'recover-save-queue': { runCount: 1, lastExecutionAt: 1_900_000_000 },
       },
+    });
+  });
+
+  it('commits terminal occurrence state and its receipt in one durable snapshot', async () => {
+    const durable = await durableState();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, { scheduleId: 'atomic-terminal' });
+    const state: WorkScheduleRuntimeState = {
+      scheduleId: schedule.scheduleId,
+      principalPubkey: principal.publicKey,
+      revision: 1,
+      lastExecutionAt: schedule.startsAt,
+      runCount: 1,
+      dailyReservedTokens: schedule.perRunReservedTokens,
+      consecutiveFailures: 1,
+      status: 'paused',
+      pauseReason: 'max-consecutive-failures',
+    };
+    const runId = deterministicScheduleRunId(schedule.scheduleId, 1, schedule.startsAt);
+    const receipt = buildScheduledTurnReceipt(agent, {
+      version: 1,
+      workspaceId: schedule.workspaceId,
+      roomId: schedule.roomId,
+      agentPubkey: schedule.agentPubkey,
+      principalPubkey: schedule.principalPubkey,
+      scheduleId: schedule.scheduleId,
+      revision: 1,
+      runId,
+      nominalAt: schedule.startsAt,
+      status: 'failed',
+      at: schedule.startsAt,
+      reservedTokens: schedule.perRunReservedTokens,
+      reason: 'provider-down',
+    });
+
+    await durable.store.putWithReceipt(state, receipt);
+
+    expect(JSON.parse(await readFile(durable.path, 'utf8'))).toMatchObject({
+      schedules: { 'atomic-terminal': state },
+      pendingReceipts: { [receipt.id]: { id: receipt.id } },
     });
   });
 
@@ -775,6 +824,61 @@ describe('WorkCalendar best-effort durable execution', () => {
     expect(dispatch.mock.calls[1]![0].scheduleRunId).toBe(
       deterministicScheduleRunId(first.scheduleId, 3, first.startsAt + 60),
     );
+    await fixture.calendar.dispose();
+  });
+
+  it('resumes a failure-paused mission from a freshly authorized controller revision', async () => {
+    vi.useFakeTimers();
+    const controller = createIdentity();
+    const captain = createIdentity();
+    const script = 'printf \'{"version":1,"status":"complete"}\\n\'';
+    const first = scheduleFixture(controller, captain, {
+      maxConsecutiveFailures: 1,
+      targetAgentPubkey: controller.publicKey,
+      execution: {
+        mode: 'script',
+        script,
+        scriptSha256: createHash('sha256').update(script).digest('hex'),
+        timeoutSeconds: 30,
+      },
+      mission: {
+        missionId: 'mission-resume',
+        grantEventId: 'b'.repeat(64),
+        controllerAgentPubkey: controller.publicKey,
+        repository: { key: 'github:resume', targetBranch: 'refs/heads/main' },
+      },
+    });
+    const schedules = [buildWorkSchedule(controller, first, { createdAt: first.startsAt - 10 })];
+    let calls = 0;
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => {
+      await beforeModelActivation();
+      calls += 1;
+      if (calls === 1) throw new Error('provider down');
+    });
+    const fixture = await calendarFixture({
+      agent: controller,
+      principal: captain,
+      schedule: first,
+      scheduleEvents: schedules,
+      dispatch,
+      missionAction: async () => ({ permissionId: 'mission-action' }) as never,
+    });
+    await fixture.calendar.start();
+    await fixture.calendar.wakeNow();
+    expect((await fixture.store.states())[0]).toMatchObject({ status: 'paused' });
+
+    const resumed = { ...first, revision: 2, status: 'active' as const };
+    schedules.push(buildWorkSchedule(controller, resumed, { createdAt: first.startsAt + 1 }));
+    fixture.setNow(first.startsAt + 60);
+    await fixture.calendar.refreshNow();
+    await fixture.calendar.wakeNow();
+
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect((await fixture.store.states())[0]).toMatchObject({
+      revision: 2,
+      status: 'active',
+      consecutiveFailures: 0,
+    });
     await fixture.calendar.dispose();
   });
 

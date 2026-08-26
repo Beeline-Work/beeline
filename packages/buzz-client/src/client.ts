@@ -154,6 +154,14 @@ function hostFromBaseUrl(baseUrl: string): string {
 const SUCCESSION_LOAD_TIMEOUT_MS = 5_000;
 const READ_DIRECTORY_CACHE_TTL_MS = 30_000;
 
+function cornerStateFilters(cornerIds: readonly string[], limit?: number) {
+  return [...new Set(cornerIds)].map((id) => ({
+    kinds: [KIND_CORNER_STATE],
+    '#d': [cornerStateKey(id)],
+    ...(limit === undefined ? {} : { limit }),
+  }));
+}
+
 export class BuzzClient {
   readonly identity: Identity;
   readonly baseUrl: string;
@@ -897,7 +905,12 @@ export class BuzzClient {
     return query(this.ctx, [
       {
         kinds: [KIND_AGENT_DRAFT],
-        '#d': [`${TAG_AGENT_DRAFT}:${channelId}`, `${TAG_AGENT_THOUGHT}:${channelId}`],
+        '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
+        limit: 5,
+      },
+      {
+        kinds: [KIND_AGENT_DRAFT],
+        '#d': [`${TAG_AGENT_THOUGHT}:${channelId}`],
         limit: 5,
       },
     ]);
@@ -913,7 +926,11 @@ export class BuzzClient {
       [
         {
           kinds: [KIND_AGENT_DRAFT],
-          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`, `${TAG_AGENT_THOUGHT}:${channelId}`],
+          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`],
+        },
+        {
+          kinds: [KIND_AGENT_DRAFT],
+          '#d': [`${TAG_AGENT_THOUGHT}:${channelId}`],
         },
       ],
       handler,
@@ -923,13 +940,7 @@ export class BuzzClient {
   /** Read canonical lifecycle records for the exact corners named by `d`. */
   cornerStateBackfill(cornerIds: string[]): Promise<NostrEvent[]> {
     if (cornerIds.length === 0) return Promise.resolve([]);
-    return query(this.ctx, [
-      {
-        kinds: [KIND_CORNER_STATE],
-        '#d': cornerIds.map((id) => cornerStateKey(id)),
-        limit: Math.max(20, cornerIds.length * 5),
-      },
-    ]);
+    return query(this.ctx, cornerStateFilters(cornerIds, 5));
   }
 
   /** Subscribe to canonical lifecycle records, never parent history cards. */
@@ -939,15 +950,7 @@ export class BuzzClient {
   ): Promise<Unsubscribe> {
     if (cornerIds.length === 0) return () => undefined;
     if (!this.ws?.connected) await this.connect();
-    return this.ws!.subscribe(
-      [
-        {
-          kinds: [KIND_CORNER_STATE],
-          '#d': cornerIds.map((id) => cornerStateKey(id)),
-        },
-      ],
-      handler,
-    );
+    return this.ws!.subscribe(cornerStateFilters(cornerIds), handler);
   }
 
   /** Low-level publish (already-signed event) via HTTP. */

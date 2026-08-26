@@ -66,7 +66,10 @@ function jsonResponse(body: unknown): Response {
  * stores a kind:9000 member-add but never updates kind:39002 for rooms where
  * no living admin exists to author it — publish acks, projection frozen.
  */
-function buildRelayState(stuckChannels: ReadonlySet<string> = new Set()) {
+function buildRelayState(
+  stuckChannels: ReadonlySet<string> = new Set(),
+  partialMultiKeyReads = false,
+) {
   const members = new Map<string, string[][]>();
   const admins = new Map<string, string[][]>();
 
@@ -155,8 +158,16 @@ function buildRelayState(stuckChannels: ReadonlySet<string> = new Set()) {
         return [];
       }
       const pFilter = (filter['#p'] as string[] | undefined) ?? [];
-      const hFilter = (filter['#h'] as string[] | undefined) ?? undefined;
-      const dFilter = (filter['#d'] as string[] | undefined) ?? undefined;
+      const requestedH = (filter['#h'] as string[] | undefined) ?? undefined;
+      const requestedD = (filter['#d'] as string[] | undefined) ?? undefined;
+      const hFilter =
+        partialMultiKeyReads && requestedH && requestedH.length > 1
+          ? requestedH.slice(0, 1)
+          : requestedH;
+      const dFilter =
+        partialMultiKeyReads && requestedD && requestedD.length > 1
+          ? requestedD.slice(0, 1)
+          : requestedD;
       if (kinds.includes(KIND_CREATE_GROUP)) {
         return creates.filter((event) => {
           const channelId = tagValue(event, 'h') ?? '';
@@ -187,6 +198,11 @@ function buildRelayState(stuckChannels: ReadonlySet<string> = new Set()) {
 
 let relay: ReturnType<typeof buildRelayState>;
 
+async function queryRelayBatch(filters: readonly Record<string, unknown>[]): Promise<NostrEvent[]> {
+  const events = (await Promise.all(filters.map((filter) => relay.query(filter)))).flat();
+  return [...new Map(events.map((event) => [event.id, event])).values()];
+}
+
 beforeEach(() => {
   // Verdicts are session-scoped by design; each test starts clean.
   resetUnmigratableRooms();
@@ -205,7 +221,9 @@ function stubRelayFetch(options?: { publishStatusFor?: (event: NostrEvent) => nu
         return jsonResponse({ accepted: true });
       }
       if (url.endsWith('/query')) {
-        return jsonResponse(await relay.query(JSON.parse(String(init?.body))[0] ?? {}));
+        return jsonResponse(
+          await queryRelayBatch(JSON.parse(String(init?.body)) as Record<string, unknown>[]),
+        );
       }
       throw new Error(`unexpected fetch ${url}`);
     }),
@@ -230,8 +248,7 @@ describe('key-succession membership migration', () => {
         }
         if (url.endsWith('/query')) {
           const filters = JSON.parse(body) as Record<string, unknown>[];
-          const result = await relay.query(filters[0] ?? {});
-          return jsonResponse(result);
+          return jsonResponse(await queryRelayBatch(filters));
         }
         throw new Error(`unexpected fetch ${url}`);
       }),
@@ -265,6 +282,17 @@ describe('key-succession membership migration', () => {
     expect(communities.find((c) => c.communityId === workspaceId)?.viewerRole).toBe('owner');
   });
 
+  it('classifies every successor target when multi-key #h filters answer partially', async () => {
+    relay = buildRelayState(new Set(), true);
+    stubRelayFetch();
+
+    await expect(
+      migrateSuccessorMemberships(ctxFor(successor), [oldKey.publicKey]),
+    ).resolves.toEqual(expect.arrayContaining([workspaceId, roomId]));
+    expect(relay.successorJoinedWorkspace).toBe(true);
+    expect(relay.successorJoinedRoom).toBe(true);
+  });
+
   it('is idempotent: already-migrated channels are not rewritten', async () => {
     relay = buildRelayState();
     vi.stubGlobal(
@@ -276,7 +304,9 @@ describe('key-succession membership migration', () => {
           return jsonResponse({ accepted: true });
         }
         if (url.endsWith('/query')) {
-          return jsonResponse(await relay.query(JSON.parse(String(init?.body))[0] ?? {}));
+          return jsonResponse(
+            await queryRelayBatch(JSON.parse(String(init?.body)) as Record<string, unknown>[]),
+          );
         }
         throw new Error(`unexpected fetch ${url}`);
       }),

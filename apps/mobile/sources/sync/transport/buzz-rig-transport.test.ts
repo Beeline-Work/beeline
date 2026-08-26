@@ -15,6 +15,9 @@ import {
   TAG_COMMUNITY,
   TAG_CORNER_STATE,
   TAG_PARENT,
+  KIND_AGENT_DRAFT,
+  TAG_AGENT_DRAFT,
+  TAG_AGENT_THOUGHT,
   createWorkspaceSnapshot,
   createIdentity,
   reduceWorkspaceEvents,
@@ -117,6 +120,23 @@ function cornerState(): NostrEvent {
 
 const CORNER_2 = 'dddddddd-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 
+function agentDraftRecord(laneKey: string, body: string, at: number): NostrEvent {
+  const laneMarker = laneKey.split(':')[0]!;
+  return signed(agent, {
+    created_at: at,
+    kind: KIND_AGENT_DRAFT,
+    tags: [
+      ['d', laneKey],
+      ['h', ROOM],
+      ['t', laneMarker],
+      ['agent', agent.publicKey],
+      ['session', ROOM],
+      ['request', 'req-1'],
+    ],
+    content: body,
+  });
+}
+
 function cornerCreate2(): NostrEvent {
   return signed(agent, {
     created_at: 3,
@@ -161,8 +181,18 @@ function cornerState2(): NostrEvent {
 }
 
 function clientFixture(
-  input: { messages?: NostrEvent[]; corners?: boolean; secondCorner?: boolean } = {},
+  input: {
+    messages?: NostrEvent[];
+    corners?: boolean;
+    secondCorner?: boolean;
+    draftLanes?: NostrEvent[];
+  } = {},
 ) {
+  const draftEvents = new Map<string, NostrEvent>();
+  for (const draft of input.draftLanes ?? []) {
+    const key = draft.tags.find((tag) => tag[0] === 'd')?.[1];
+    if (key) draftEvents.set(key, draft);
+  }
   const createEvents = input.corners
     ? [roomCreate(), cornerCreate(), ...(input.secondCorner ? [cornerCreate2()] : [])]
     : [roomCreate()];
@@ -245,6 +275,23 @@ function clientFixture(
       const results: NostrEvent[] = [];
       for (const filter of filters) {
         const kinds = new Set((filter.kinds as number[] | undefined) ?? []);
+        const dKeys = (filter['#d'] as string[] | undefined) ?? undefined;
+        if (
+          kinds.has(KIND_AGENT_DRAFT) &&
+          dKeys?.some(
+            (key) =>
+              key.startsWith(`${TAG_AGENT_DRAFT}:`) || key.startsWith(`${TAG_AGENT_THOUGHT}:`),
+          )
+        ) {
+          // Relay-faithful partiality: multi-value `#d` is answered with
+          // first-key matches only; single-value keys are proper exact hits.
+          const answered = dKeys.length > 1 ? [dKeys[0]!] : dKeys;
+          for (const key of answered) {
+            const draft = draftEvents.get(key);
+            if (draft) results.push(draft);
+          }
+          continue;
+        }
         // Production indexing truth: parameterized-replaceable kind:30078 is
         // indexed by `#d` ONLY. An exact-`#d` key returns the record's
         // current value, a bare `#t` marker enumerates records, and a `#h`
@@ -252,14 +299,15 @@ function clientFixture(
         // tag. A stub that answers kind:30078 by any tag shape cannot catch
         // an unanswerable discovery read (the live #488-class failure).
         if (kinds.has(KIND_CORNER_STATE)) {
-          const dKeys = (filter['#d'] as string[] | undefined) ?? undefined;
           const tKeys = (filter['#t'] as string[] | undefined) ?? undefined;
           if (!input.corners) continue;
           if (dKeys && dKeys.length > 0) {
-            // Production evidence distinguishes this from `#h`: multi-value
-            // `#d` has proper OR semantics, so answer every requested key.
-            if (dKeys.includes(`${TAG_CORNER_STATE}:${CORNER}`)) results.push(cornerState());
-            if (dKeys.includes(`${TAG_CORNER_STATE}:${CORNER_2}`)) results.push(cornerState2());
+            // Relay-faithful partiality: a MULTI-value `#d` array is answered
+            // with matches for the FIRST key only; a single-value key is a
+            // proper exact hit.
+            const answered = dKeys.length > 1 ? [dKeys[0]!] : dKeys;
+            if (answered.includes(`${TAG_CORNER_STATE}:${CORNER}`)) results.push(cornerState());
+            if (answered.includes(`${TAG_CORNER_STATE}:${CORNER_2}`)) results.push(cornerState2());
           } else if (!dKeys && !filter['#h'] && tKeys?.includes(TAG_CORNER_STATE)) {
             results.push(cornerState());
             if (input.secondCorner) results.push(cornerState2());
@@ -268,12 +316,11 @@ function clientFixture(
         }
         if (kinds.has(KIND_CHANNEL_MEMBERS)) {
           const dKeys = (filter['#d'] as string[] | undefined) ?? undefined;
-          if (dKeys && dKeys.length > 0) {
-            results.push(
-              ...projections.filter((event) =>
-                event.tags.some((tag) => tag[0] === 'd' && dKeys.includes(tag[1]!)),
-              ),
-            );
+          if (dKeys && dKeys.length > 1) {
+            // Same relay-faithful partiality for multi-value `#d`.
+            results.push(...projections.filter((event) => event.tags.some((tag) => tag[0] === 'd' && tag[1] === dKeys[0])));
+          } else if (dKeys && dKeys.length === 1) {
+            results.push(...projections.filter((event) => event.tags.some((tag) => tag[0] === 'd' && tag[1] === dKeys[0])));
           } else {
             results.push(...projections);
           }
@@ -303,6 +350,17 @@ function clientFixture(
     buildReplyMessage,
     publish: vi.fn(async () => undefined),
   };
+  Object.assign(client, {
+    agentDraftBackfill: vi.fn(async (channelId: string) =>
+      client.query([
+        {
+          kinds: [KIND_AGENT_DRAFT],
+          '#d': [`${TAG_AGENT_DRAFT}:${channelId}`, `${TAG_AGENT_THOUGHT}:${channelId}`],
+          limit: 5,
+        },
+      ]),
+    ),
+  });
   return { client, deliver: (event: NostrEvent) => liveHandler?.(event) };
 }
 
@@ -930,15 +988,16 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     expect(fixture.client.listSubchannels).not.toHaveBeenCalled();
   });
 
-  it('recovers a multi-corner family through one batch of single-#h structural filters', async () => {
+  it('recovers a multi-corner family through one batch of single-key tag filters', async () => {
     // Production relay truth (round-2 corner-discovery failure): one filter
     // naming MULTIPLE `#h` values is answered with an unreliable subset —
     // measured live, eight corners' create events collapsed to one row. With
     // its creator fact missing, every corner-state record failed the parser's
     // signer check and the Room rendered cornerless while `listSubchannels`
     // stayed healthy. The stub above now reproduces that lossy shape
-    // faithfully, so this passes only when the structural read expands into
-    // per-channel single-value filters (inside ONE query call).
+    // faithfully. Production later showed the same first-key-only partiality
+    // for multi-value `#d`; this passes only when both tag families expand
+    // into per-channel single-value filters inside one query call.
     const fixture = clientFixture({ corners: true, secondCorner: true });
     const result = await transportWith(fixture.client).readModelBackfill(ROOM);
     expect(selectCorners(result.snapshot, ROOM).map((corner) => corner.id)).toEqual(
@@ -1001,6 +1060,44 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     for (const filter of filters) {
       const hKeys = filter['#h'] as string[] | undefined;
       if (hKeys) expect(hKeys).toHaveLength(1);
+    }
+  });
+
+  it('recovers both agent-draft lanes when multi-value #d arrays answer partially', async () => {
+    // The SDK draft helper packed the reply-draft and thought lanes into ONE
+    // multi-value `#d` array. The stub models production's first-key-only
+    // partial answer; pre-fix, one lane silently
+    // vanished from the streaming view. This passes only when the read
+    // expands into per-lane single-value filters inside its ONE query call.
+    const draft = agentDraftRecord(`${TAG_AGENT_DRAFT}:${ROOM}`, 'partial answer so far', 30);
+    const thought = agentDraftRecord(
+      `${TAG_AGENT_THOUGHT}:${ROOM}`,
+      JSON.stringify({ text: 'thinking in the open' }),
+      31,
+    );
+    const fixture = clientFixture({ draftLanes: [draft, thought] });
+    const events = await transportWith(fixture.client).agentDraftBackfill(ROOM);
+    const texts = events
+      .flatMap((event) => (event.type === 'read-model' ? [event.event] : []))
+      .map((event) =>
+        event.type === 'session-update' && 'update' in event && event.update
+          ? ((event.update as { text?: string }).text ?? '')
+          : 'body' in event
+            ? (event as { body: string }).body
+            : '',
+      );
+    expect(texts).toContain('partial answer so far');
+    expect(texts.join('\n')).toContain('thinking in the open');
+
+    const draftFilters = fixture.client.query.mock.calls
+      .flatMap((call) => call[0] as Array<Record<string, unknown>>)
+      .filter((filter) =>
+        ((filter.kinds as number[] | undefined) ?? []).includes(KIND_AGENT_DRAFT),
+      );
+    expect(draftFilters.length).toBeGreaterThan(0);
+    for (const filter of draftFilters) {
+      const dKeys = filter['#d'] as string[] | undefined;
+      if (dKeys) expect(dKeys).toHaveLength(1);
     }
   });
 

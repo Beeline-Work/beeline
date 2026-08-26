@@ -536,6 +536,76 @@ describe('community model', () => {
     );
   });
 
+  it('lists every community in one scoped batch when multi-key tag filters answer partially', async () => {
+    const secondCommunityId = '33333333-3333-4333-8333-333333333333';
+    const firstCreate = communityCreate();
+    const secondCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', secondCommunityId],
+      ['name', 'Operators'],
+      [TAG_COMMUNITY, secondCommunityId],
+    ]);
+    const firstMetadata = signed(owner, KIND_CHANNEL_METADATA, [
+      ['d', communityId],
+      ['name', 'Builders projected'],
+      ['picture', 'https://media.example.test/builders.png'],
+    ]);
+    const secondMetadata = signed(owner, KIND_CHANNEL_METADATA, [
+      ['d', secondCommunityId],
+      ['name', 'Operators projected'],
+      ['picture', 'https://media.example.test/operators.png'],
+    ]);
+    const firstMembers = memberState();
+    const secondMembers = signed(owner, KIND_CHANNEL_MEMBERS, [
+      ['d', secondCommunityId],
+      ['p', owner.publicKey],
+    ]);
+    const queryBodies: Record<string, unknown>[][] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+        queryBodies.push(filters);
+        if (
+          filters.some((filter) =>
+            ((filter.kinds as number[] | undefined) ?? []).includes(KIND_CHANNEL_MEMBERS),
+          )
+        ) {
+          return jsonResponse([firstMembers, secondMembers]);
+        }
+        const candidates = [firstCreate, secondCreate, firstMetadata, secondMetadata];
+        const results = filters.flatMap((filter) => {
+          const hKeys = (filter['#h'] as string[] | undefined) ?? [];
+          const dKeys = (filter['#d'] as string[] | undefined) ?? [];
+          const requested = hKeys.length > 0 ? hKeys : dKeys;
+          const answered = requested.length > 1 ? requested.slice(0, 1) : requested;
+          const kinds = (filter.kinds as number[] | undefined) ?? [];
+          return candidates.filter(
+            (event) =>
+              kinds.includes(event.kind) &&
+              answered.includes(tagValue(event, hKeys.length > 0 ? 'h' : 'd') ?? ''),
+          );
+        });
+        return jsonResponse([...new Map(results.map((event) => [event.id, event])).values()]);
+      }),
+    );
+
+    await expect(listCommunities(ctx(), owner.publicKey)).resolves.toMatchObject([
+      {
+        communityId,
+        name: 'Builders projected',
+        avatar: 'https://media.example.test/builders.png',
+      },
+      {
+        communityId: secondCommunityId,
+        name: 'Operators projected',
+        avatar: 'https://media.example.test/operators.png',
+      },
+    ]);
+    // Membership discovery + one scoped create/metadata batch. A lossy
+    // multi-key filter would force per-community recovery round trips.
+    expect(queryBodies).toHaveLength(2);
+  });
+
   it('resolves a non-creator owner marked at admin-tag index 3, not just index 2', async () => {
     // Regression: `channel.ts`'s listMembers and `repo-room.ts`'s
     // projectedRoomRole both accept the owner marker at tag[3] OR tag[2];

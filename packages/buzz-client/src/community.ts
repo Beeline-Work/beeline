@@ -490,10 +490,13 @@ export async function listCommunities(
   // getCommunityMetadata's fallback below), so any metadata event that only
   // ever carried the older `#h` convention falls through to the existing
   // per-id `getCommunity` recovery path further down, same as before.
-  const communityEvents = await query(ctx, [
-    { kinds: [KIND_CREATE_GROUP], '#h': ids, limit: Math.max(500, ids.length * 20) },
-    { kinds: [KIND_CHANNEL_METADATA], '#d': ids, limit: Math.max(500, ids.length * 5) },
-  ]);
+  const communityEvents = await query(
+    ctx,
+    ids.flatMap((id) => [
+      { kinds: [KIND_CREATE_GROUP], '#h': [id], limit: 20 },
+      { kinds: [KIND_CHANNEL_METADATA], '#d': [id], limit: 5 },
+    ]),
+  );
   const createEvents = communityEvents.filter((event) => event.kind === KIND_CREATE_GROUP);
   const metadataEvents = communityEvents.filter((event) => event.kind === KIND_CHANNEL_METADATA);
   const confirmedNonWorkspaceIds = new Set(
@@ -791,9 +794,14 @@ export async function migrateSuccessorMemberships(
   if (candidateIds.length === 0) return [];
 
   // Classify candidates off their kind:9007 create events in one batched read.
-  const creates = await query(ctx, [
-    { kinds: [KIND_CREATE_GROUP], '#h': candidateIds, limit: Math.max(500, candidateIds.length * 5) },
-  ]);
+  const creates = await query(
+    ctx,
+    candidateIds.map((channelId) => ({
+      kinds: [KIND_CREATE_GROUP],
+      '#h': [channelId],
+      limit: 5,
+    })),
+  );
   const createByChannel = new Map<string, NostrEvent>();
   for (const event of creates) {
     const channelId = tagValue(event, 'h') ?? tagValue(event, 'd');

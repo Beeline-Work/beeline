@@ -82,6 +82,7 @@ import { Typography } from '@/constants/Typography';
 import {
   mergedRepoName,
   selectChannelList,
+  selectKnownCommunities,
   channelCacheKey,
   channelListCacheKey,
   getCachedChannel,
@@ -437,10 +438,14 @@ export default function BuzzChannels() {
     initialCacheState.activeViewerPubkey,
     requestedCommunity,
   );
+  const initialKnownCommunities = selectKnownCommunities(
+    initialCacheState,
+    initialCacheState.activeViewerPubkey,
+  );
 
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const [communities, setCommunities] = useState<Community[]>(initialListCache?.communities ?? []);
+  const [communities, setCommunities] = useState<Community[]>(initialKnownCommunities);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
     initialListCache?.communityId ?? null,
   );
@@ -613,9 +618,13 @@ export default function BuzzChannels() {
           currentIdentity.publicKey,
           requestedCommunity,
         );
+        const knownCommunities = selectKnownCommunities(
+          useBuzzLocalCache.getState(),
+          currentIdentity.publicKey,
+        );
         if (isCurrent()) {
           setIdentity(currentIdentity);
-          setCommunities(cached?.communities ?? []);
+          setCommunities(knownCommunities);
           setActiveCommunityId(cached?.communityId ?? null);
           setPersonalWorkspaceId(cached?.personalWorkspaceId ?? null);
           setViewerIsAgent(cached?.viewerIsAgent ?? false);
@@ -637,6 +646,7 @@ export default function BuzzChannels() {
         );
         const bootstrapOptions = {
           loadPredecessors: () => loadSuccessionPredecessors(url, currentIdentity),
+          knownWorkspaces: knownCommunities,
         };
         const [workspaceContext, identityIsAgent] = await withBootstrapStepTimeout(
           Promise.all([
@@ -842,6 +852,10 @@ export default function BuzzChannels() {
           activeCommunityId ?? undefined,
           undefined,
           {
+            knownWorkspaces: selectKnownCommunities(
+              useBuzzLocalCache.getState(),
+              identity.publicKey,
+            ),
             loadPredecessors: async () =>
               loadSuccessionPredecessors(
                 relayUrl && relayUrl !== DEFAULT_RELAY_URL

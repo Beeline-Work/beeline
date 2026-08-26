@@ -65,6 +65,8 @@ read_seed_value() {
 readonly SMOKE_NSEC="$(read_seed_value MAESTRO_SMOKE_NSEC)"
 readonly SMOKE_HANDLE="$(read_seed_value MAESTRO_SMOKE_HANDLE)"
 readonly SMOKE_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_WORKSPACE_ID)"
+readonly SMOKE_SWITCH_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_SWITCH_WORKSPACE_ID)"
+readonly SMOKE_SWITCH_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_SWITCH_ROOM_ID)"
 readonly SMOKE_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_ROOM_ID)"
 readonly SMOKE_AGENT_NSEC="$(read_seed_value MAESTRO_SMOKE_AGENT_NSEC)"
 readonly SMOKE_CORNER_ID="$(read_seed_value MAESTRO_SMOKE_CORNER_ID)"
@@ -91,6 +93,8 @@ maestro test --device "$DEVICE" \
   --env "SMOKE_NSEC=$SMOKE_NSEC" \
   --env "SMOKE_HANDLE=$SMOKE_HANDLE" \
   --env "SMOKE_WORKSPACE_ID=$SMOKE_WORKSPACE_ID" \
+  --env "SMOKE_SWITCH_WORKSPACE_ID=$SMOKE_SWITCH_WORKSPACE_ID" \
+  --env "SMOKE_SWITCH_ROOM_ID=$SMOKE_SWITCH_ROOM_ID" \
   --env "SMOKE_ROOM_ID=$SMOKE_ROOM_ID" \
   --env "SMOKE_CORNER_ID=$SMOKE_CORNER_ID" \
   --env "SMOKE_LATEST_MESSAGE_ID=$SMOKE_LATEST_MESSAGE_ID" \

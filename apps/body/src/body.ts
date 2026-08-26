@@ -650,8 +650,6 @@ export function agentTurnFailureJournalDetail(error: unknown): string {
   return 'Error';
 }
 
-const SQUIRE_MASK_PLACEHOLDER = '.beeline-sandbox-mask-placeholder';
-
 /**
  * Default cadence for the WS-push loop's low-rate maintenance/liveness tick
  * (child steering, merge closure, and — for a Room with zero pushed events —
@@ -2691,8 +2689,7 @@ export class Body {
     const store = trustySquireStorePath(this.config.squireConfigRoot);
     if (!existsSync(store)) return false;
     try {
-      const entries = readdirSync(store);
-      return !(entries.length === 1 && entries[0] === SQUIRE_MASK_PLACEHOLDER);
+      return readdirSync(store).length > 0;
     } catch {
       // An unreadable owned store may contain credentials. Fail closed.
       return true;
@@ -2783,16 +2780,10 @@ export class Body {
       }
       // Bubblewrap cannot create a missing mountpoint beneath its read-only
       // root bind. For legacy isolation, reserve an empty Beeline-owned leaf
-      // before spawn. A marker distinguishes that namespace-only mountpoint
-      // from an owner-created (even empty) governed store on later activations.
+      // before spawn. Directory creation is idempotent across agent units; an
+      // empty leaf is isolation-only, while any real entry is governed state.
       try {
-        const reserveStoreMountpoint = !existsSync(store);
         mkdirSync(store, { recursive: true });
-        if (reserveStoreMountpoint) {
-          writeFileSync(resolve(store, SQUIRE_MASK_PLACEHOLDER), 'sandbox mountpoint\n', {
-            flag: 'wx',
-          });
-        }
         for (const legacyStore of trustySquireLegacyStorePaths(
           isolationInput.operatorHome,
           isolationInput.env,

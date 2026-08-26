@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AGENT_PRESENCE_DORMANT_MS,
   AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   type ReadEvent,
 } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import {
+  activeMentionCandidates,
   agentPresenceFromSessionEvent,
+  agentPresenceTier,
+  AGENT_PRESENCE_BACKGROUND_GRACE_MS,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
@@ -181,6 +185,58 @@ describe('mobile agent presence projection', () => {
 
     expect(order).toEqual(['subscribe', 'backfill']);
     expect(refreshed[agent]).toMatchObject({ status: 'online' });
+  });
+});
+
+describe('the tiered lifecycle at the mobile door', () => {
+  const dormant: Record<string, RoomAgentPresence> = {
+    [agent]: { agentPubkey: agent, status: 'online', observedAt: 0 },
+  };
+
+  it('reads the lease lapsed instantly offline and dormant only past the grace', () => {
+    const now = AGENT_PRESENCE_STALE_MS + 1;
+    expect(agentPresenceTier(dormant[agent], now)).toBe('offline');
+    expect(
+      agentPresenceTier(dormant[agent], AGENT_PRESENCE_DORMANT_MS),
+    ).toBe('dormant');
+    expect(agentPresenceTier(undefined, Date.now())).toBe('offline');
+  });
+
+  it('excludes dormant agents from active mention targets, keeps recent ones addressable', () => {
+    const alan = 'c'.repeat(64);
+    const candidates = [
+      { pubkey: agent, name: 'Clara', handle: 'clara' },
+      { pubkey: alan, name: 'Alan', handle: 'alan' },
+    ];
+    const now = AGENT_PRESENCE_DORMANT_MS * 2;
+    const presences: Record<string, RoomAgentPresence> = {
+      // Clara: dark for two days past her last heartbeat — omitted.
+      [agent]: { agentPubkey: agent, status: 'online', observedAt: 0 },
+      // Alan: lease lapsed minutes ago — still addressable (his daemon may
+      // simply be mid-reconnect; messages wait).
+      [alan]: {
+        agentPubkey: alan,
+        status: 'online',
+        observedAt: now - (AGENT_PRESENCE_STALE_MS + 5_000),
+      },
+    };
+    const targets = activeMentionCandidates(candidates, presences, now);
+    expect(targets.map((candidate) => candidate.name)).toEqual(['Alan']);
+    // An unknown presence is unknown, never dormant — stay mentionable.
+    expect(activeMentionCandidates(candidates, {}, now)).toHaveLength(2);
+  });
+
+  it('never extends online from stale cached state across background grace', () => {
+    // The background grace is bounded by the lease window — not
+    // MAX_SAFE_INTEGER, which rendered a reaped daemon online forever when
+    // the resume event was missed.
+    expect(AGENT_PRESENCE_BACKGROUND_GRACE_MS).toBeLessThan(Number.MAX_SAFE_INTEGER);
+    expect(AGENT_PRESENCE_BACKGROUND_GRACE_MS).toBe(AGENT_PRESENCE_STALE_MS);
+    // And even inside any grace window, an already-expired lease cannot read
+    // online through the tier door.
+    const graceUntil = Date.now() + AGENT_PRESENCE_BACKGROUND_GRACE_MS;
+    expect(isAgentPresenceOnlineWithReconnectGrace({ ...dormant[agent] }, AGENT_PRESENCE_DORMANT_MS)).toBe(false);
+    void graceUntil;
   });
 });
 

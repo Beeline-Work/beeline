@@ -206,6 +206,8 @@ import {
   mergeAgentPresence,
   onlineVerdicts,
   presenceMapFromSessionEvents,
+  activeMentionCandidates,
+  AGENT_PRESENCE_BACKGROUND_GRACE_MS,
   type RoomAgentPresence,
 } from '@/buzz/agent-presence';
 import {
@@ -1052,14 +1054,18 @@ export default function BuzzChat() {
   const lifecycleAction = roomLifecycleAction(viewerRoomRole);
   const mentionableAgents = useMemo(
     () =>
-      roomParticipants
-        .filter((participant) => participant.kind === 'agent')
-        .map((participant) => ({
-          pubkey: participant.pubkey,
-          name: participant.name,
-          handle: participant.handle,
-        })),
-    [roomParticipants],
+      activeMentionCandidates(
+        roomParticipants
+          .filter((participant) => participant.kind === 'agent')
+          .map((participant) => ({
+            pubkey: participant.pubkey,
+            name: participant.name,
+            handle: participant.handle,
+          })),
+        agentPresences,
+        presenceNow,
+      ),
+    [roomParticipants, agentPresences, presenceNow],
   );
   const activeMention = useMemo(
     () =>
@@ -1074,9 +1080,12 @@ export default function BuzzChat() {
   const mentionSuggestions = useMemo(
     () =>
       activeMention
-        ? filterMentionCandidates(roomParticipants, activeMention.query)
+        ? filterMentionCandidates(
+            activeMentionCandidates(roomParticipants, agentPresences, presenceNow),
+            activeMention.query,
+          )
         : { matches: [], overflow: 0 },
-    [activeMention, roomParticipants],
+    [activeMention, roomParticipants, agentPresences, presenceNow],
   );
   const mentionMenuVisible = Boolean(
     composerFocused &&
@@ -1984,7 +1993,14 @@ export default function BuzzChat() {
                   .map(([pubkey]) => pubkey),
               );
               const backgroundGrace = Object.fromEntries(
-                [...onlineBeforeBackground].map((pubkey) => [pubkey, Number.MAX_SAFE_INTEGER]),
+                [...onlineBeforeBackground].map((pubkey) => [
+                  pubkey,
+                  // Bounded by the lease, never MAX_SAFE_INTEGER: an
+                  // unbounded grace extended "online" from stale cached
+                  // state forever if the foreground handler missed its
+                  // event — a lapsed lease can never render online.
+                  now + AGENT_PRESENCE_BACKGROUND_GRACE_MS,
+                ]),
               );
               presenceReconnectGraceRef.current = backgroundGrace;
               setPresenceReconnectGrace(backgroundGrace);

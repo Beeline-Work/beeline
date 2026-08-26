@@ -1,12 +1,64 @@
 import {
+  AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   newerAgentPresence,
+  resolveAgentPresenceTier,
   type AgentPresence,
+  type AgentPresenceTier,
 } from '@beeline/buzz-client';
 import type { SessionEvent } from '@/sync/transport';
 import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
+
+/**
+ * Background presence grace is BOUNDED by the lease window itself.
+ *
+ * While backgrounded nobody can see the transcript, so grace exists only to
+ * cover the resume moment (subscription re-establishment) and split-screen
+ * visibility — both comfortably inside one lease. The previous
+ * `Number.MAX_SAFE_INTEGER` background grace was an unbounded "online"
+ * extension from stale cached state: if the foreground handler ever failed to
+ * run (resume without an AppState change event), the agent rendered online
+ * FOREVER — the exact Clara shape of a Room showing a reaped daemon alive
+ * 27 hours later. An expired lease can never render online, so the bound is
+ * the lease.
+ */
+export const AGENT_PRESENCE_BACKGROUND_GRACE_MS = AGENT_PRESENCE_STALE_MS;
+
+/**
+ * One tier answer for every surface. Thin over the canonical SDK door so all
+ * consumers share the same invariants; kept here because mobile resolves the
+ * SDK through its built `dist/` and every screen already imports this module.
+ */
+export function agentPresenceTier(
+  presence: AgentPresence | undefined,
+  now = Date.now(),
+): AgentPresenceTier {
+  return resolveAgentPresenceTier(presence, now);
+}
+
+/**
+ * Active mention/autocomplete targets: candidates minus DORMANT agents.
+ *
+ * A merely-offline agent stays addressable (messages wait for its daemon to
+ * reconnect); a dormant one has been dark past the sustained-absence grace,
+ * so affordances implying it can receive work right now omit it. Historical
+ * references are untouched — transcript rows resolve identity late-bound from
+ * the signer pubkey and never consult this list.
+ */
+export function activeMentionCandidates<T extends { pubkey: string }>(
+  candidates: readonly T[],
+  presences: Readonly<Record<string, RoomAgentPresence | AgentPresence>>,
+  now = Date.now(),
+): T[] {
+  return candidates.filter((candidate) => {
+    const presence = presences[candidate.pubkey];
+    // Unknown presence is NOT dormant (dormancy requires a measurable
+    // last-seen instant), so an unobserved agent stays mentionable.
+    return !presence || agentPresenceTier(presence, now) !== 'dormant';
+  });
+}
 
 /** Keep only a previously-online agent optimistic while foreground reconnection is pending. */
 export function isAgentPresenceOnlineWithReconnectGrace(

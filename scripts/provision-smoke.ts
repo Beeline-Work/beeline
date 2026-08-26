@@ -154,6 +154,9 @@ async function main() {
   // Keep the human-friendly transcript above while giving the Maestro runner
   // stable values to pass through without parsing prose.
   console.log(`MAESTRO_SMOKE_NSEC=${identityNsec(identity)}`);
+  // Hosted handles are globally unique. Tie this valid suggestion to the
+  // freshly generated smoke identity so repeated governor runs cannot collide.
+  console.log(`MAESTRO_SMOKE_HANDLE=smoke-${identity.publicKey.slice(0, 12)}`);
   console.log(`MAESTRO_SMOKE_WORKSPACE_ID=${workspaceId}`);
   console.log(`MAESTRO_SMOKE_ROOM_ID=${channelId}`);
   console.log(`MAESTRO_SMOKE_AGENT_NSEC=${identityNsec(agentIdentity)}`);

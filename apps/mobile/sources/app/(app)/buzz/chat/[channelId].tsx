@@ -204,9 +204,17 @@ import {
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
+  onlineVerdicts,
   presenceMapFromSessionEvents,
   type RoomAgentPresence,
 } from '@/buzz/agent-presence';
+import {
+  sameMessageRefMap,
+  sameSelectedMembers,
+  sameStringSet,
+  shallowEqualRecord,
+  useStable,
+} from '@/buzz/use-stable';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
@@ -689,6 +697,10 @@ export default function BuzzChat() {
         : [],
     [cacheViewerPubkey, cachedSnapshot, decodedId],
   );
+  // Latest-snapshot read for callbacks that must not depend on the snapshot
+  // reference (see `beginReply`): the reference moves on every pump chunk.
+  const cachedSnapshotRef = useRef(cachedSnapshot);
+  cachedSnapshotRef.current = cachedSnapshot;
   // The workspace's already-known channels, for resolving explicit
   // `#room` / `#room/corner` references in prose. Read from the SAME local
   // cache the Room list maintains (never a second persisted index), plus this
@@ -849,10 +861,15 @@ export default function BuzzChat() {
     [knownAgentNames, channelCache?.availableAgents],
   );
   const availablePeople = channelCache?.availablePeople ?? [];
-  const selectedMembers = useMemo(
+  const selectedMembersRaw = useMemo(
     () => (cachedSnapshot ? selectMembers(cachedSnapshot, decodedId) : []),
     [cachedSnapshot, decodedId],
   );
+  // The membership projection rebuilds every wrapper object on each snapshot
+  // commit. Downstream memos (memberOptions, roomParticipants) and ultimately
+  // renderItem's dependency array only care about the VALUE, so preserve the
+  // previous reference until a member/role/identity actually moved.
+  const selectedMembers = useStable(selectedMembersRaw, sameSelectedMembers);
   const roomMembers = useMemo(
     () => selectedMembers.map((member) => ({ pubkey: member.pubkey, role: member.role })),
     [selectedMembers],
@@ -1002,6 +1019,27 @@ export default function BuzzChat() {
       presenceReconnectGrace[agent.pubkey],
     ),
   ).length;
+  // One flat liveness verdict per agent pubkey for the transcript's byline
+  // rings. renderItem previously read the three raw inputs directly, so every
+  // heartbeat and every streamed batch recreated the callback and rebuilt
+  // every visible ledger row; a boolean record only changes identity through
+  // `useStable` when a verdict genuinely flips.
+  const speakerPresenceKeys = useMemo(
+    () => [
+      ...new Set([
+        ...roomAgents.map((agent) => agent.pubkey),
+        ...Object.keys(agentPresences),
+        ...Object.keys(presenceReconnectGrace),
+        ...agentByPubkey.keys(),
+      ]),
+    ],
+    [agentByPubkey, agentPresences, presenceReconnectGrace, roomAgents],
+  );
+  const rawSpeakerOnline = useMemo(
+    () => onlineVerdicts(agentPresences, speakerPresenceKeys, presenceNow, presenceReconnectGrace),
+    [agentPresences, presenceNow, presenceReconnectGrace, speakerPresenceKeys],
+  );
+  const speakerOnline = useStable(rawSpeakerOnline, shallowEqualRecord);
   const knownAgentPresenceCount = roomAgents.filter((agent) => agentPresences[agent.pubkey]).length;
   const agentsOffline = isAgentOfflineAfterPresenceResolved(
     presenceResolved,
@@ -1353,20 +1391,25 @@ export default function BuzzChat() {
   // run carries its mark and name (see `buzz/ledger-attribution.ts`). Corners
   // attribute exactly like Rooms — several people can sit in one corner, so
   // bare turns are indistinguishable there too.
-  const continuedAttributionIds = useMemo(
+  const rawContinuedAttributionIds = useMemo(
     () =>
-      continuedSpeakerIds(
-        visibleMessages.map((message) => ({
-          id: message.id,
-          speaker: ledgerSpeakerKey(message, knownAgentPubkeysFor(agentByPubkey)),
-          // A collapsed tool/thought run is mechanism, not prose: it may fold
-          // into the voice above it, but the prose below it must re-announce
-          // (its byline was never allowed to be spent on the tool block).
-          isMachine: message.isAgentActivity,
-        })),
+      new Set(
+        continuedSpeakerIds(
+          visibleMessages.map((message) => ({
+            id: message.id,
+            speaker: ledgerSpeakerKey(message, knownAgentPubkeysFor(agentByPubkey)),
+            // A collapsed tool/thought run is mechanism, not prose: it may fold
+            // into the voice above it, but the prose below it must re-announce
+            // (its byline was never allowed to be spent on the tool block).
+            isMachine: message.isAgentActivity,
+          })),
+        ),
       ),
     [agentByPubkey, visibleMessages],
   );
+  // renderItem consumes this set; preserve its identity across commits that
+  // did not change any run boundary so rows are not rebuilt for nothing.
+  const continuedAttributionIds = useStable(rawContinuedAttributionIds, sameStringSet);
   // Newest-first for the inverted FlatList; chronological visibleMessages
   // above stays the source of truth for everything else that reads order.
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
@@ -1424,7 +1467,7 @@ export default function BuzzChat() {
   // A reconciled draft/final bubble keeps a stable display `id` across the
   // turn, so it also needs to resolve by its real relay event id — the id
   // any NIP-10 reply on another client actually references.
-  const visibleMessageById = useMemo(() => {
+  const rawVisibleMessageById = useMemo(() => {
     const map = new Map<string, ChatDisplayMessage>();
     for (const message of visibleMessages) {
       map.set(message.id, message);
@@ -1432,13 +1475,18 @@ export default function BuzzChat() {
     }
     return map;
   }, [visibleMessages]);
-  const immediatelyPrecedingVisibleMessageById = useMemo(() => {
+  const visibleMessageById = useStable(rawVisibleMessageById, sameMessageRefMap);
+  const rawImmediatelyPrecedingVisibleMessageById = useMemo(() => {
     const map = new Map<string, ChatDisplayMessage>();
     for (let index = 1; index < visibleMessages.length; index += 1) {
       map.set(visibleMessages[index].id, visibleMessages[index - 1]);
     }
     return map;
   }, [visibleMessages]);
+  const immediatelyPrecedingVisibleMessageById = useStable(
+    rawImmediatelyPrecedingVisibleMessageById,
+    sameMessageRefMap,
+  );
   // The one corner the pinned line may name: open, not terminal in *any*
   // source, and chosen by how much it is being worked on. `null` for a Room
   // with no live corner, however busy its agent is right now.
@@ -1776,24 +1824,46 @@ export default function BuzzChat() {
           unsubscribeCornerState = undefined;
           return t.getParentChannelId(decodedId).then(async (knownParent) => {
             const lifecycleParent = knownParent ?? decodedId;
-            const unsubscribe = await t.cornerLifecycleSubscribeReady(
-              lifecycleParent,
-              ids,
-              (event) => {
+            // Corner lifecycle state churns with the daemon's WORKING lease
+            // and every activity receipt. Feeding each event straight into
+            // the cache (one full snapshot reduce + store notify per event)
+            // and firing one relay read + setState cascade per event made the
+            // corner screen saturate the JS thread exactly while a reader
+            // was sending or opening the actions modal. Corner-state events
+            // therefore join the SAME frame-coalesced pump as every other
+            // live stream, and the membership/lifecycle refresh coalesces to
+            // one trailing read per animation frame.
+            let lifecycleRefreshScheduled = false;
+            const scheduleCornerLifecycleRefresh = () => {
+              if (lifecycleRefreshScheduled) return;
+              lifecycleRefreshScheduled = true;
+              requestAnimationFrame(() => {
+                lifecycleRefreshScheduled = false;
                 if (cancelled || generation !== cornerStateDeliveryGeneration) return;
-                cacheLiveSessionEvents(identity.publicKey, decodedId, [event]);
                 void t.listSubchannelLifecycle(lifecycleParent).then((corners) => {
                   if (cancelled || generation !== cornerStateDeliveryGeneration) return;
                   setCornerLifecycle(corners);
                   const current = corners.find((corner) => corner.id === decodedId);
                   if (current) {
                     setCornerLifecycleStatus(current.status);
-                    if (current.machineState === 'closed' || current.machineState === 'concluded') {
+                    if (
+                      current.machineState === 'closed' ||
+                      current.machineState === 'concluded'
+                    ) {
                       setIsArchived(true);
                     }
                   }
                   setCornerStateNow(Date.now());
                 });
+              });
+            };
+            const unsubscribe = await t.cornerLifecycleSubscribeReady(
+              lifecycleParent,
+              ids,
+              (event) => {
+                if (cancelled || generation !== cornerStateDeliveryGeneration) return;
+                handleLiveMessage(event);
+                scheduleCornerLifecycleRefresh();
               },
             );
             if (cancelled || generation !== cornerStateDeliveryGeneration) {
@@ -2219,8 +2289,12 @@ export default function BuzzChat() {
   const beginReply = useCallback(
     (message: ChatDisplayMessage) => {
       const eventId = message.relayId ?? message.id;
-      const selected = cachedSnapshot
-        ? selectReplyTarget(cachedSnapshot, decodedId, eventId)
+      // Read through a ref: the snapshot reference moves on every pump chunk,
+      // and a dependency here recreated this callback (and with it renderItem,
+      // and with it every visible ledger row) on every streamed batch.
+      const snapshot = cachedSnapshotRef.current;
+      const selected = snapshot
+        ? selectReplyTarget(snapshot, decodedId, eventId)
         : { status: 'unavailable' as const };
       const install = (reference: KnownMessageReference) => {
         setReplyTarget({ ...replyTargetForMessage(message), reference });
@@ -2239,7 +2313,7 @@ export default function BuzzChat() {
         if (reference) install(reference);
       });
     },
-    [cachedSnapshot, decodedId, replyTargetForMessage, transport],
+    [decodedId, replyTargetForMessage, transport],
   );
 
   const handleSend = useCallback(async () => {
@@ -3481,13 +3555,7 @@ export default function BuzzChat() {
       const markSeed =
         item.pubkey ?? (isSelfSteer ? cacheViewerPubkey || 'self' : 'unknown-person');
       const speakerAlive =
-        speaksAsAgent &&
-        Boolean(item.pubkey) &&
-        isAgentPresenceOnlineWithReconnectGrace(
-          item.pubkey ? agentPresences[item.pubkey] : undefined,
-          presenceNow,
-          item.pubkey ? presenceReconnectGrace[item.pubkey] : undefined,
-        );
+        speaksAsAgent && Boolean(item.pubkey) && Boolean(speakerOnline[item.pubkey ?? '']);
       const byline: LedgerByline | undefined = attributionContinued
         ? undefined
         : {
@@ -3627,9 +3695,7 @@ export default function BuzzChat() {
       targetBranchNotice,
       viewerChannelRole,
       viewerIsAgent,
-      agentPresences,
-      presenceNow,
-      presenceReconnectGrace,
+      speakerOnline,
       beginReply,
       replyTargetForMessage,
       visibleMessageById,

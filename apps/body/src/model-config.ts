@@ -152,7 +152,35 @@ export function assertModelConfigOptionAllowed(
     throw new DisallowedModelConfigOptionError(configId);
   }
   if (!axis.options.some((choice) => choice.id === value)) {
-    throw new Error(`model config value "${value}" is not one of "${configId}"'s advertised options`);
+    throw new Error(
+      `model config value "${value}" is not one of "${configId}"'s advertised options`,
+    );
+  }
+}
+
+export type ModelSelectionLabel = 'model' | 'effort';
+
+export class ModelSelectionUnavailableError extends Error {
+  readonly label: ModelSelectionLabel;
+  readonly value: string;
+  readonly reason: 'axis-missing' | 'not-advertised' | 'provider-refused';
+  readonly guidance?: string;
+
+  constructor(input: {
+    label: ModelSelectionLabel;
+    value: string;
+    reason: 'axis-missing' | 'not-advertised' | 'provider-refused';
+    guidance?: string;
+  }) {
+    const recovery = input.guidance
+      ? ` ${input.guidance}`
+      : ' Choose one of the values in the live harness catalog.';
+    super(`${input.label} "${input.value}" is unavailable.${recovery}`);
+    this.name = 'ModelSelectionUnavailableError';
+    this.label = input.label;
+    this.value = input.value;
+    this.reason = input.reason;
+    this.guidance = input.guidance;
   }
 }
 
@@ -186,9 +214,10 @@ export function withEffectiveCurrentValues(
  * category name, not the harness, decides the match, so no per-harness
  * branching is needed here or in any caller.
  */
-function modelSelectionTargets(
-  selection: { model?: string; effort?: string },
-): Array<{ categories: readonly string[]; label: string; value: string | undefined }> {
+function modelSelectionTargets(selection: {
+  model?: string;
+  effort?: string;
+}): Array<{ categories: readonly string[]; label: string; value: string | undefined }> {
   return [
     { categories: ['model'], label: 'model', value: selection.model },
     {
@@ -200,12 +229,42 @@ function modelSelectionTargets(
 }
 
 /**
+ * The one value-level authority for pair-time, daemon-start, and live-session
+ * application. A selection is valid only when the selected harness advertises
+ * both its axis and its exact value in the current credential-filtered catalog.
+ */
+export function assertModelSelectionAdvertised(
+  advertisedOptions: AgentModelConfigOption[],
+  selection: { model?: string; effort?: string },
+): void {
+  for (const target of modelSelectionTargets(selection)) {
+    if (!target.value) continue;
+    const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
+    if (!axis) {
+      throw new ModelSelectionUnavailableError({
+        label: target.label as ModelSelectionLabel,
+        value: target.value,
+        reason: 'axis-missing',
+        guidance: `This harness does not advertise a selectable ${target.label} axis.`,
+      });
+    }
+    assertModelConfigAxisAllowed(axis.id, advertisedOptions);
+    if (!axis.options.some((choice) => choice.id === target.value)) {
+      throw new ModelSelectionUnavailableError({
+        label: target.label as ModelSelectionLabel,
+        value: target.value,
+        reason: 'not-advertised',
+      });
+    }
+  }
+}
+
+/**
  * The set path's axis-level security gate: `configId` must exist in the raw
  * advertised catalog AND its category must be picker allow-listed. Unlike
- * `assertModelConfigOptionAllowed` it says nothing about the VALUE — a model
- * id the harness does not list is a legitimate custom id (pi passes unknown
- * ids through verbatim), while a `mode`/`fast-mode` axis is refused whatever
- * value it would carry.
+ * `assertModelConfigOptionAllowed` it says nothing about the value because
+ * `assertModelSelectionAdvertised` owns that check; a `mode`/`fast-mode` axis
+ * is refused whatever value it would carry.
  */
 export function assertModelConfigAxisAllowed(
   configId: string,
@@ -215,40 +274,6 @@ export function assertModelConfigAxisAllowed(
   if (!axis || !isAllowedAgentModelConfigCategory(axis.category)) {
     throw new DisallowedModelConfigOptionError(configId);
   }
-}
-
-/** One selection value the agent's own catalog does not list. */
-export interface UnadvertisedModelSelectionValue {
-  label: 'model' | 'effort';
-  value: string;
-  /** True when the harness advertises no selectable axis for this label at all. */
-  axisMissing: boolean;
-}
-
-/**
- * Which values of a `{model, effort}` selection fall outside the RAW
- * advertised catalog — i.e. which ones would be passed through as CUSTOM
- * ids. A catalog miss is NOT evidence that a model is unusable (pi accepts
- * unknown ids as custom model ids), so callers WARN on these instead of
- * blocking; nothing here can be validated beyond what the catalog lists.
- */
-export function unadvertisedModelSelectionValues(
-  advertisedOptions: AgentModelConfigOption[],
-  selection: { model?: string; effort?: string },
-): UnadvertisedModelSelectionValue[] {
-  const result: UnadvertisedModelSelectionValue[] = [];
-  for (const target of modelSelectionTargets(selection)) {
-    if (!target.value) continue;
-    const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
-    if (!axis) {
-      result.push({ label: target.label as 'model' | 'effort', value: target.value, axisMissing: true });
-      continue;
-    }
-    if (!axis.options.some((choice) => choice.id === target.value)) {
-      result.push({ label: target.label as 'model' | 'effort', value: target.value, axisMissing: false });
-    }
-  }
-  return result;
 }
 
 /** Minimal shape `applyAgentModelSelection` needs from an ACP client. */
@@ -263,11 +288,10 @@ export interface ModelConfigSettable {
  * immediately before every call — a `mode`/`fast-mode` axis is refused here
  * even if an upstream filtering step were skipped.
  *
- * A value the harness's catalog does NOT list is still passed through: a
- * catalog miss is not evidence a model is unusable (pi accepts unknown ids
- * verbatim as custom model ids). Such a set is best-effort — the harness's
- * own refusal (or acceptance) is logged with the value named, never thrown
- * past this point, so one bad axis can't abort session startup.
+ * Values are checked before any setter call. A harness refusal for an exact
+ * advertised value is surfaced as typed unavailability so provider retirement
+ * redirects and other useful recovery guidance are not collapsed into a
+ * generic turn failure.
  */
 export async function applyAgentModelSelection(
   client: ModelConfigSettable,
@@ -275,35 +299,21 @@ export async function applyAgentModelSelection(
   advertisedOptions: AgentModelConfigOption[],
   selection: { model?: string; effort?: string },
 ): Promise<void> {
+  assertModelSelectionAdvertised(advertisedOptions, selection);
   for (const target of modelSelectionTargets(selection)) {
     if (!target.value) continue;
     const axis = advertisedOptions.find((option) => target.categories.includes(option.category));
-    if (!axis) {
-      console.error(
-        `[body] not applying ${target.label} "${target.value}": this harness advertises no selectable ${target.label} axis`,
-      );
-      continue;
-    }
-    try {
-      assertModelConfigAxisAllowed(axis.id, advertisedOptions);
-    } catch (error) {
-      console.error('[body] refusing to apply disallowed model config option:', error);
-      continue;
-    }
-    const custom = !axis.options.some((choice) => choice.id === target.value);
+    if (!axis) continue;
+    assertModelConfigAxisAllowed(axis.id, advertisedOptions);
     try {
       await client.setConfigOption(sessionId, axis.id, target.value);
-      if (custom) {
-        console.warn(
-          `[body] applied custom ${target.label} "${target.value}" — not in this harness's advertised catalog`,
-        );
-      }
     } catch (error) {
-      console.error(
-        `[body] harness refused ${target.label} "${target.value}"${
-          custom ? ' (custom id)' : ''
-        }: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new ModelSelectionUnavailableError({
+        label: target.label as ModelSelectionLabel,
+        value: target.value,
+        reason: 'provider-refused',
+        guidance: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

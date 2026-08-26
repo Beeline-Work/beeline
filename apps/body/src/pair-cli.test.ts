@@ -61,6 +61,8 @@ lines.on('line', (line) => {
         ],
       },
     });
+  } else if (message.method === 'session/set_config_option') {
+    send({ jsonrpc: '2.0', id: message.id, result: {} });
   } else if (message.method === 'shutdown') {
     process.exit(0);
   }
@@ -223,11 +225,7 @@ describe('beeline pair — one live spinner at a time', () => {
 });
 
 describe('beeline pair — --model/--effort validation', () => {
-  it('passes an unadvertised model through with a warning instead of blocking pairing', async () => {
-    // A catalog miss is not evidence a model is unusable (pi accepts unknown
-    // ids verbatim as custom model ids), so the old hard failure here was a
-    // false wall: the value warns and proceeds, and whatever the harness
-    // makes of it surfaces at launch with the value named.
+  it('rejects an unadvertised model before consuming the pairing code', async () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
     const stateHome = await tmpDir('beeline-pair-cli-state-');
@@ -249,14 +247,11 @@ describe('beeline pair — --model/--effort validation', () => {
     );
 
     expect(status).toBe(1);
-    expect(stderr).not.toContain('--model/--effort check failed');
-    expect(stderr).toContain('passed through as a custom id');
-    // Proves validation no longer blocks: the run reached redemption and
-    // failed on the malformed code, not on the model.
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('model "gpt-nonexistent" is unavailable');
+    expect(stderr).not.toContain('invalid agent pairing code');
   });
 
-  it('passes an unadvertised effort through with a warning instead of blocking pairing', async () => {
+  it('rejects an unadvertised effort before consuming the pairing code', async () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
     const stateHome = await tmpDir('beeline-pair-cli-state-');
@@ -278,10 +273,8 @@ describe('beeline pair — --model/--effort validation', () => {
     );
 
     expect(status).toBe(1);
-    expect(stderr).not.toContain('--model/--effort check failed');
-    expect(stderr).toContain('effort "ultra-max" is not in');
-    expect(stderr).toContain('passed through as a custom id');
-    expect(stderr).toContain('invalid agent pairing code');
+    expect(stderr).toContain('effort "ultra-max" is unavailable');
+    expect(stderr).not.toContain('invalid agent pairing code');
   });
   it('accepts a Codex-shaped catalog that spells choices as `value`, not `id`', async () => {
     // Real codex-acp advertises { value, name } with no `id`. The #226 pickers
@@ -328,6 +321,8 @@ lines.on('line', (line) => {
         ],
       },
     });
+  } else if (message.method === 'session/set_config_option') {
+    send({ jsonrpc: '2.0', id: message.id, result: {} });
   } else if (message.method === 'shutdown') {
     process.exit(0);
   }

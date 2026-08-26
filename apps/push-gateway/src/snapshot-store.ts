@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS beeline_snapshot_dirty (
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
   claimed_until timestamptz,
   claimed_token text,
+  post_boundary_dirty_at timestamptz,
   last_claimed_at timestamptz,
   attempts integer NOT NULL DEFAULT 0,
   last_error text,
@@ -131,6 +132,9 @@ ALTER TABLE beeline_snapshot_dirty
   ADD COLUMN IF NOT EXISTS claimed_token text;
 
 ALTER TABLE beeline_snapshot_dirty
+  ADD COLUMN IF NOT EXISTS post_boundary_dirty_at timestamptz;
+
+ALTER TABLE beeline_snapshot_dirty
   ADD COLUMN IF NOT EXISTS scan_cursor_created_at bigint;
 
 ALTER TABLE beeline_snapshot_dirty
@@ -160,12 +164,11 @@ RETURNS void LANGUAGE sql AS $$
   ON CONFLICT (relay_tenant_id, channel_id) DO UPDATE SET
     dirty_revision = nextval('beeline_snapshot_dirty_revision_seq'),
     repository_scan_revision = nextval('beeline_snapshot_dirty_revision_seq'),
-    dirty_at = CASE
+    dirty_at = LEAST(beeline_snapshot_dirty.dirty_at, clock_timestamp()),
+    post_boundary_dirty_at = CASE
       WHEN beeline_snapshot_dirty.claimed_token IS NOT NULL
-        AND beeline_snapshot_dirty.last_claimed_at IS NOT NULL
-        AND beeline_snapshot_dirty.dirty_at <= beeline_snapshot_dirty.last_claimed_at
-      THEN clock_timestamp()
-      ELSE LEAST(beeline_snapshot_dirty.dirty_at, clock_timestamp())
+      THEN COALESCE(beeline_snapshot_dirty.post_boundary_dirty_at, clock_timestamp())
+      ELSE NULL
     END,
     next_attempt_at = LEAST(beeline_snapshot_dirty.next_attempt_at, now()),
     attempts = 0,
@@ -187,12 +190,11 @@ RETURNS void LANGUAGE sql AS $$
   VALUES (p_tenant, p_channel)
   ON CONFLICT (relay_tenant_id, channel_id) DO UPDATE SET
     dirty_revision = nextval('beeline_snapshot_dirty_revision_seq'),
-    dirty_at = CASE
+    dirty_at = LEAST(beeline_snapshot_dirty.dirty_at, clock_timestamp()),
+    post_boundary_dirty_at = CASE
       WHEN beeline_snapshot_dirty.claimed_token IS NOT NULL
-        AND beeline_snapshot_dirty.last_claimed_at IS NOT NULL
-        AND beeline_snapshot_dirty.dirty_at <= beeline_snapshot_dirty.last_claimed_at
-      THEN clock_timestamp()
-      ELSE LEAST(beeline_snapshot_dirty.dirty_at, clock_timestamp())
+      THEN COALESCE(beeline_snapshot_dirty.post_boundary_dirty_at, clock_timestamp())
+      ELSE NULL
     END,
     next_attempt_at = LEAST(beeline_snapshot_dirty.next_attempt_at, now()),
     attempts = 0,
@@ -511,6 +513,7 @@ export class ChannelSnapshotStore {
           `UPDATE beeline_snapshot_dirty
            SET claimed_until = now() + ($3::text || ' milliseconds')::interval,
                claimed_token = $4,
+               post_boundary_dirty_at = NULL,
                last_claimed_at = now()
            WHERE relay_tenant_id = $1 AND channel_id = $2
              AND dirty_revision = $5 AND repository_scan_revision = $6`,
@@ -1097,6 +1100,7 @@ export class ChannelSnapshotStore {
          scan_event_ids = $7::jsonb,
          claimed_until = NULL,
          claimed_token = NULL,
+         post_boundary_dirty_at = NULL,
          next_attempt_at = now()
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
          AND dirty_revision = $3 AND claimed_token = $4`,
@@ -1111,7 +1115,8 @@ export class ChannelSnapshotStore {
       ],
     );
     await this.database.query(
-      `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL
+      `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL,
+         post_boundary_dirty_at = NULL
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,
       [claim.tenantId, claim.channelId, claim.claimToken],
     );
@@ -1129,6 +1134,7 @@ export class ChannelSnapshotStore {
          repository_event_id = $7,
          claimed_until = NULL,
          claimed_token = NULL,
+         post_boundary_dirty_at = NULL,
          next_attempt_at = now()
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
          AND repository_scan_revision = $3 AND claimed_token = $4`,
@@ -1143,7 +1149,8 @@ export class ChannelSnapshotStore {
       ],
     );
     await this.database.query(
-      `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL
+      `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL,
+         post_boundary_dirty_at = NULL
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,
       [claim.tenantId, claim.channelId, claim.claimToken],
     );
@@ -1170,8 +1177,11 @@ export class ChannelSnapshotStore {
     digest: string,
   ): Promise<void> {
     await this.database.transaction(async (transaction) => {
-      const current = await transaction.query<{ dirty_revision: string | number }>(
-        `SELECT dirty_revision FROM beeline_snapshot_dirty
+      const current = await transaction.query<{
+        dirty_revision: string | number;
+        post_boundary_dirty_at: Date | string | null;
+      }>(
+        `SELECT dirty_revision, post_boundary_dirty_at FROM beeline_snapshot_dirty
          WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
            AND claimed_token = $3
          FOR UPDATE`,
@@ -1214,7 +1224,11 @@ export class ChannelSnapshotStore {
         );
       }
       await transaction.query(
-        `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL
+        `UPDATE beeline_snapshot_dirty SET
+           dirty_at = COALESCE(post_boundary_dirty_at, dirty_at),
+           post_boundary_dirty_at = NULL,
+           claimed_until = NULL,
+           claimed_token = NULL
          WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,
         [claim.tenantId, claim.channelId, claim.claimToken],
       );
@@ -1229,6 +1243,7 @@ export class ChannelSnapshotStore {
          last_error = $4,
          claimed_until = NULL,
          claimed_token = NULL,
+         post_boundary_dirty_at = NULL,
          next_attempt_at = now() + (LEAST(60, POWER(2, LEAST(attempts, 6)))::text || ' seconds')::interval
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,
       [claim.tenantId, claim.channelId, claim.claimToken, detail],
@@ -1247,7 +1262,8 @@ export class ChannelSnapshotStore {
       if (current.rows.length !== 1) return;
       if (numberValue(current.rows[0]!.dirty_revision) !== claim.dirtyRevision) {
         await transaction.query(
-          `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL
+          `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL,
+             post_boundary_dirty_at = NULL
            WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,
           [claim.tenantId, claim.channelId, claim.claimToken],
         );

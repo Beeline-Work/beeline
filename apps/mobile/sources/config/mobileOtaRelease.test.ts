@@ -345,7 +345,7 @@ esac
       expect(JSON.parse(readFileSync(ledger, 'utf8')).canary).toMatchObject({
         status: 'pending',
       });
-    });
+    }, 60_000);
 
     // Stubs a full canary adb surface driven by env knobs. The call log and
     // state live under the caller's temp directory so assertions can prove

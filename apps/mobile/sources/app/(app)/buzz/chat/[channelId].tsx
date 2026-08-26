@@ -196,7 +196,6 @@ import { mentionKeyboardAction } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
-  presenceWithMessageLiveness,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
@@ -992,20 +991,9 @@ export default function BuzzChat() {
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
     [roomParticipants],
   );
-  // What the heartbeat stream says, corrected by what the agents have visibly
-  // said. A heartbeat is the weaker of the two signals — it is a best-effort
-  // publish the relay may reject on quota — so an agent that is answering in
-  // the transcript must never read offline. Every "is it online" decision
-  // below reads this map, not the raw heartbeat one.
-  const agentPresences = useMemo(
-    () =>
-      presenceWithMessageLiveness(
-        heartbeatPresences,
-        combinedMessages,
-        new Set(roomAgents.map((agent) => agent.pubkey)),
-      ),
-    [heartbeatPresences, combinedMessages, roomAgents],
-  );
+  // kind:30078 is the sole liveness truth. Transcript/activity events can
+  // describe work, but they never mint or renew a presence lease.
+  const agentPresences = heartbeatPresences;
   const onlineAgentCount = roomAgents.filter((agent) =>
     isAgentPresenceOnlineWithReconnectGrace(
       agentPresences[agent.pubkey],

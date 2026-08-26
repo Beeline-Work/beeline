@@ -114,6 +114,7 @@ vi.mock('react-native', async () => {
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { shortMemberNpub } from '@/buzz/member-display';
 import { useBuzzLocalCache } from '@/buzz/local-cache';
+import { AGENT_PRESENCE_DORMANT_MS } from '@beeline/buzz-client';
 import MembersScreen from './MembersScreen';
 
 const originalConsoleError = console.error;
@@ -261,8 +262,9 @@ describe('Members screen', () => {
     expect(renderer.root.findByProps({ testID: `member-${target}-role-label` })).toBeDefined();
   });
 
-  it('shows a live agent as online and a dormant agent as offline without dropping either identity', async () => {
+  it('renders ONLINE, OFFLINE, and DORMANT from real lease ages without dropping identities', async () => {
     const liveAgentPubkey = 'f'.repeat(64);
+    const offlineAgentPubkey = '2'.repeat(64);
     const dormantAgentPubkey = '1'.repeat(64);
     const nowSeconds = Math.floor(Date.now() / 1000);
     client.listAgents.mockResolvedValue([
@@ -275,6 +277,14 @@ describe('Members screen', () => {
         raw: {},
       },
       {
+        agentId: 'offline',
+        communityId: 'workspace-1',
+        displayName: 'joy',
+        pubkey: offlineAgentPubkey,
+        createdAt: 0,
+        raw: {},
+      },
+      {
         agentId: 'dormant',
         communityId: 'workspace-1',
         displayName: 'sumo',
@@ -283,9 +293,8 @@ describe('Members screen', () => {
         raw: {},
       },
     ]);
-    // Only the live agent has a fresh presence heartbeat in any Room; the
-    // dormant one has none anywhere in the Workspace (paired, but its daemon
-    // is stopped) — the real distinguishing signal, not a made-up flag.
+    // The screen receives the same replaceable lease record at three ages;
+    // missing state remains a separate unknown/offline case elsewhere.
     agentPresenceBackfillForWorkspace.mockResolvedValue([
       {
         type: 'read-model',
@@ -304,6 +313,40 @@ describe('Members screen', () => {
           update: { kind: 'presence', agentPubkey: liveAgentPubkey, status: 'online' },
         },
       } as never,
+      {
+        type: 'read-model',
+        sessionId: 'room-1',
+        event: {
+          type: 'session-update',
+          eventId: 'presence-offline',
+          authorPubkey: offlineAgentPubkey,
+          createdAt: nowSeconds - 121,
+          sourceKind: 30078,
+          signature: 'verified',
+          scope: 'channel',
+          channelId: 'room-1',
+          workspaceId: 'workspace-1',
+          sessionId: 'room-1',
+          update: { kind: 'presence', agentPubkey: offlineAgentPubkey, status: 'online' },
+        },
+      } as never,
+      {
+        type: 'read-model',
+        sessionId: 'room-1',
+        event: {
+          type: 'session-update',
+          eventId: 'presence-dormant',
+          authorPubkey: dormantAgentPubkey,
+          createdAt: nowSeconds - AGENT_PRESENCE_DORMANT_MS / 1_000 - 1,
+          sourceKind: 30078,
+          signature: 'verified',
+          scope: 'channel',
+          channelId: 'room-1',
+          workspaceId: 'workspace-1',
+          sessionId: 'room-1',
+          update: { kind: 'presence', agentPubkey: dormantAgentPubkey, status: 'online' },
+        },
+      } as never,
     ]);
 
     const renderer = await render();
@@ -320,6 +363,9 @@ describe('Members screen', () => {
       renderer.root.findByProps({ testID: `agent-${liveAgentPubkey}-identity` }),
     ).toBeDefined();
     expect(
+      renderer.root.findByProps({ testID: `agent-${offlineAgentPubkey}-identity` }),
+    ).toBeDefined();
+    expect(
       renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-identity` }),
     ).toBeDefined();
     expect(
@@ -327,9 +373,13 @@ describe('Members screen', () => {
         .children,
     ).toBe('ONLINE');
     expect(
-      renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-presence-label` }).props
+      renderer.root.findByProps({ testID: `agent-${offlineAgentPubkey}-presence-label` }).props
         .children,
     ).toBe('OFFLINE');
+    expect(
+      renderer.root.findByProps({ testID: `agent-${dormantAgentPubkey}-presence-label` }).props
+        .children,
+    ).toBe('DORMANT');
   });
 
   it('accepts an operator-chosen compound agent name, not just one spoken word', async () => {

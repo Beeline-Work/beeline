@@ -4191,7 +4191,14 @@ export default function BuzzChat() {
           <CornerLiveBar
             label={cornerLiveBar.label}
             live={cornerLiveBar.live}
-            onPress={cornerLiveBar.cornerId ? () => openCorner(cornerLiveBar.cornerId!) : undefined}
+            onPress={
+              // A truthy READY id can still be unroutable when it names the
+              // current route. openCorner rejects that self-target; do not
+              // advertise the downstream no-op as `view →` in the first place.
+              cornerLiveBar.cornerId && cornerLiveBar.cornerId !== decodedId
+                ? () => openCorner(cornerLiveBar.cornerId!)
+                : undefined
+            }
             testID="corner-live-bar"
           />
         )}

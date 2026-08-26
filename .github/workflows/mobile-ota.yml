@@ -108,20 +108,39 @@ jobs:
           # PATH; the canary resolves adb from here against the sanctioned
           # existing emulator-5554 on this host.
           ANDROID_HOME: /home/lunchbox/android-sdk
+          # Self-describing park contract: ota-canary.sh writes one actionable
+          # line here for every preflight/environment failure; it is recorded
+          # verbatim as the ledger's parked reason below.
+          OTA_CANARY_REASON_FILE: ${{ runner.temp }}/ota-canary-reason.txt
         run: |
           set -euo pipefail
           if [ -n "$EXPO_TOKEN_SECRET" ]; then
             export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
           fi
+          rm -f "$RUNNER_TEMP/ota-canary-reason.txt"
           set +e
           scripts/ota-canary.sh --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
           canary_status=$?
           set -e
           if [ "$canary_status" -ne 0 ]; then
+            canary_reason=""
+            if [ -s "$RUNNER_TEMP/ota-canary-reason.txt" ]; then
+              canary_reason="$(head -n 1 "$RUNNER_TEMP/ota-canary-reason.txt" | cut -c1-400)"
+            fi
+            case "$canary_status" in
+              2) canary_class="environment/setup failure" ;;
+              124) canary_class="ten-minute canary deadline fired" ;;
+              *) canary_class="canary flow failure" ;;
+            esac
+            if [ -n "$canary_reason" ]; then
+              parked_reason="ota-canary.sh exited ${canary_status} (${canary_class}): ${canary_reason}"
+            else
+              parked_reason="ota-canary.sh exited ${canary_status} (${canary_class}); promotion parked until the canary passes (see step log)"
+            fi
             node scripts/ota-release.mjs mark-canary \
               --ledger "$RUNNER_TEMP/mobile-ota-ledger.json" \
               --status blocked \
-              --reason "ota-canary.sh exited ${canary_status}; promotion parked until the canary passes (see step log)"
+              --reason "$parked_reason"
             exit "$canary_status"
           fi
           node scripts/ota-release.mjs mark-canary \

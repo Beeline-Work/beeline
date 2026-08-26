@@ -15,8 +15,10 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  commitRoomCoverage,
   createWorkspaceSnapshot,
   reduceWorkspaceEvents,
+  selectCorners,
   type CornerMachineState,
   type ReadEvent,
 } from '@beeline/buzz-client';
@@ -259,7 +261,7 @@ vi.mock('react-native', async () => {
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { useBuzzLocalCache } = await import('@/buzz/local-cache');
+const { useBuzzLocalCache, getCachedChannel } = await import('@/buzz/local-cache');
 const { default: BuzzChannels } = await import('./channels');
 
 const VIEWER = 'a'.repeat(64);
@@ -574,5 +576,103 @@ describe('room-list corner dropdown', () => {
     const tree = await render();
 
     expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(1);
+  });
+
+  // Round-2 corner-discovery failure (prime regression): the Room's persisted
+  // cache held a WARM, successful-but-empty snapshot, every lifecycle read was
+  // healthy, and the relay still returned live corners — yet no refresh ever
+  // repopulated the cache, so every Room rendered cornerless forever. A healthy
+  // read must fill an empty cache; only a THROWN or partial read may preserve
+  // what is already there.
+  it('a healthy first-focus refresh fills a warm successful-but-empty corner cache', async () => {
+    seedWorkspace();
+    // Overwrite the seed with a warm empty snapshot: a previous refresh
+    // completed successfully and committed an honest zero-corner answer.
+    const warmEmpty = commitRoomCoverage(
+      createWorkspaceSnapshot({ workspaceId: 'shared-1', identities: [] }),
+      'room-1',
+      { epoch: Date.now(), initialBackfillComplete: true },
+    );
+    useBuzzLocalCache.getState().replaceSnapshot(VIEWER, 'room-1', warmEmpty, undefined);
+    routeParams.current = { communityId: 'shared-1' };
+
+    const entries = [
+      corner('corner-f', 'stream the ledger', 'live'),
+      corner('corner-g', 'unblock review', 'needs-attention'),
+    ];
+    backfillBehavior.mode = 'snapshot';
+    backfillBehavior.snapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({
+        workspaceId: 'shared-1',
+        identities: [
+          { kind: 'human', pubkey: VIEWER, displayName: 'Captain', revision: '1' } as never,
+        ],
+      }),
+      cornerLifecycleEvents(entries),
+    );
+
+    const tree = await render();
+
+    expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(1);
+    await press(findAllByTestId(tree, 'room-corners-toggle-room-1')[0]);
+    for (const displayName of ['stream-the-ledger', 'unblock-review']) {
+      expect(
+        findByAclPrefix(tree, `Open #Ledger rewrite/${displayName} corner`),
+        `missing dropdown row for ${displayName}`,
+      ).toHaveLength(1);
+    }
+
+    // The display Room exposing the corners is not enough: the persisted
+    // snapshot itself must have been repopulated, so the NEXT cold open of the
+    // list starts from real state instead of the stale warm-empty entry.
+    const cached = getCachedChannel(VIEWER, 'room-1');
+    expect(selectCorners(cached!.snapshot!, 'room-1')).toHaveLength(2);
+  });
+
+  it('a later pull-to-refresh over a warm empty snapshot repopulates the corners too', async () => {
+    seedWorkspace();
+    const warmEmpty = commitRoomCoverage(
+      createWorkspaceSnapshot({ workspaceId: 'shared-1', identities: [] }),
+      'room-1',
+      { epoch: Date.now(), initialBackfillComplete: true },
+    );
+    useBuzzLocalCache.getState().replaceSnapshot(VIEWER, 'room-1', warmEmpty, undefined);
+    routeParams.current = { communityId: 'shared-1' };
+
+    // First focus: reads are healthy and honestly return nothing. Warm-empty
+    // stays warm-empty — an empty answer is not an error.
+    const tree = await render();
+    expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(0);
+
+    // Later refresh: the corners exist now. Pull-to-refresh drives the same
+    // handleRefresh path a person uses.
+    const entries = [
+      corner('corner-f', 'stream the ledger', 'live'),
+      corner('corner-g', 'unblock review', 'needs-attention'),
+    ];
+    backfillBehavior.mode = 'snapshot';
+    backfillBehavior.snapshot = reduceWorkspaceEvents(
+      createWorkspaceSnapshot({
+        workspaceId: 'shared-1',
+        identities: [
+          { kind: 'human', pubkey: VIEWER, displayName: 'Captain', revision: '1' } as never,
+        ],
+      }),
+      cornerLifecycleEvents(entries),
+    );
+    // The deck's list carries the pull-to-refresh handler directly (RN builds
+    // the RefreshControl from onRefresh/refreshing): drive exactly what a pull
+    // calls — handleRefresh(true).
+    const lists = tree.root.findAll(
+      (node: any) => node.type === 'FlatList' && typeof node.props?.onRefresh === 'function',
+    );
+    expect(lists.length).toBeGreaterThan(0);
+    await act(async () => {
+      lists[0].props.onRefresh();
+    });
+
+    expect(findAllByTestId(tree, 'room-corners-toggle-room-1')).toHaveLength(1);
+    const cached = getCachedChannel(VIEWER, 'room-1');
+    expect(selectCorners(cached!.snapshot!, 'room-1')).toHaveLength(2);
   });
 });

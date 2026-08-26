@@ -111,6 +111,12 @@ const ROOM_REPOSITORY_MARKER = 'buzz-room-repository';
  * the Room's own message page plus the exact-`#d` state read-back. */
 const CORNER_STATE_DISCOVERY_LIMIT = 500;
 
+/** Per-channel structural page bound for the expanded authority read. Each
+ * channel's create/membership-mutation/metadata history is small and bounded
+ * by its own membership churn; N channels cost N × this, replacing the old
+ * shared multi-`#h` page that production answers lossily. */
+const STRUCTURAL_PAGE_LIMIT_PER_CHANNEL = 200;
+
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
 const READ_AUTHORITY_TTL_MS = 60_000;
@@ -910,23 +916,39 @@ export class BuzzRigTransport implements RigTransport {
     // returns the record's current replaceable value regardless of any
     // recency window, so this is the authoritative state source even for a
     // corner whose newest record is older than the marker page covers.
+    //
+    // Production relay truth (measured live, round-2 corner-discovery
+    // failure): a single filter naming MULTIPLE `#h` values is answered
+    // with an unreliable subset of the matching events — a whole corner
+    // family's kind:9007 create events can collapse to one row, which left
+    // every corner-state record signer-unverifiable (no creator fact) and
+    // quarantined the corners out of the snapshot. Multi-value `#d` IS
+    // answered with proper OR semantics on this relay, so only the `#h`
+    // reads expand into per-channel single-value filters. They stay inside
+    // THIS one `query` call, so the transport still spends one round trip.
     const [authorityEvents, cornerStates] = await Promise.all([
       client.query([
-        {
-          kinds: [KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA],
-          '#h': channelIds,
-          limit: Math.max(2_000, channelIds.length * 200),
-        },
+        ...channelIds.map(
+          (channelId) =>
+            ({
+              kinds: [KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA],
+              '#h': [channelId],
+              limit: STRUCTURAL_PAGE_LIMIT_PER_CHANNEL,
+            }) as Record<string, unknown>,
+        ),
         {
           kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
           '#d': channelIds,
           limit: channelIds.length * 4,
         },
-        {
-          kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-          '#h': channelIds,
-          limit: channelIds.length * 4,
-        },
+        ...channelIds.map(
+          (channelId) =>
+            ({
+              kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+              '#h': [channelId],
+              limit: 4,
+            }) as Record<string, unknown>,
+        ),
       ]),
       client.cornerStateBackfill(cornerIds),
     ]);

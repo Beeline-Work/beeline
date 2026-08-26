@@ -32,6 +32,13 @@ cd apps/mobile
 npx --yes eas-cli@22.2.0 build --profile beta-apk --platform android --non-interactive
 ```
 
+A beta-channel binary is the only possible canary vehicle: the OTA update
+channel is baked into the APK at build time (`EXPO_UPDATES_CHANNEL`), so a
+production-channel binary for the same runtimeVersion cannot fetch the beta
+candidate group. Until that build exists, the governor parks promotion with
+that exact remediation recorded in the release ledger (`canary.status:
+"blocked"` plus `reason`), and never records a broken canary as success.
+
 The canary is locally runnable and self-limits to nine minutes. It reuses the
 named AVD and either downloads the latest successful `beta-apk` or installs an
 operator-supplied APK:

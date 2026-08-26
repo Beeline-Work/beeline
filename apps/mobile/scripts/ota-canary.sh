@@ -7,12 +7,29 @@
 # Exit codes: 0 canary passed; 1 smoke/flow failure; 2 environment or setup
 # failure (the release governor PARKS promotion on this with an actionable
 # reason recorded in the ledger); 124 the ten-minute deadline fired.
+#
+# Parked-reason contract (round-2 hardening of #490): every preflight or
+# runner-environment failure must be SELF-DESCRIBING. park() prints one
+# actionable line and, when OTA_CANARY_REASON_FILE is set (the workflow pins it
+# to a file under RUNNER_TEMP), writes that same single line there so the
+# governor records it verbatim in the release ledger even if nothing else in
+# this run is readable. A failure that kills the shell before any handler runs
+# is still classified by exit code at the workflow layer.
 set -euo pipefail
 
 readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly DEVICE="${MAESTRO_DEVICE:-emulator-5554}"
 readonly APP_ID="app.usebeeline.mobile"
 readonly MAX_SECONDS="${OTA_CANARY_MAX_SECONDS:-540}"
+
+park() {
+  local reason="${1:-unknown OTA canary environment or setup failure}"
+  echo "OTA canary parked promotion: $reason" >&2
+  if [[ -n "${OTA_CANARY_REASON_FILE:-}" ]]; then
+    printf '%s\n' "$reason" > "$OTA_CANARY_REASON_FILE" 2>/dev/null || true
+  fi
+  exit 2
+}
 
 # The release-host runner account does not carry the emulator owner's PATH.
 # Resolve adb without assuming it is on PATH so the governed canary can run
@@ -43,7 +60,7 @@ Fix: install platform-tools on the release host or set ANDROID_HOME to the
 SDK root in the release-governor job, then re-run the canary step.
 Production promotion stays parked until the canary passes.
 EOF
-  exit 2
+  park "adb is not resolvable on the release-host runner (searched PATH, ANDROID_HOME/platform-tools/adb, ANDROID_SDK_ROOT/platform-tools/adb)"
 fi
 if [[ "$ADB_BIN" == */* ]]; then
   # Child scripts (maestro-e2e.sh, android-teardown.sh) still call bare `adb`;
@@ -53,8 +70,7 @@ fi
 
 if [[ "${OTA_CANARY_DEADLINE_ACTIVE:-0}" != "1" ]]; then
   if (( MAX_SECONDS < 1 || MAX_SECONDS > 600 )); then
-    echo "OTA_CANARY_MAX_SECONDS must be between 1 and 600." >&2
-    exit 1
+    park "OTA_CANARY_MAX_SECONDS must be between 1 and 600 (got ${MAX_SECONDS})"
   fi
   exec timeout --foreground --signal=TERM "${MAX_SECONDS}s" \
     env OTA_CANARY_DEADLINE_ACTIVE=1 "$0" "$@"
@@ -64,19 +80,19 @@ device_state="$("$ADB_BIN" devices 2>&1 | awk -v d="$DEVICE" '$1 == d { print $2
   echo "Canary adb could not enumerate devices. Output:" >&2
   echo "$device_state" >&2
   echo "Fix: check the shared adb server on the release host (adb kill-server && adb start-server as the emulator owner), then re-run." >&2
-  exit 2
+  park "adb devices could not enumerate devices on the release host; the shared adb server on port 5037 is unreachable or unhealthy"
 }
 case "$device_state" in
   device) ;;
   '')
     echo "Canary requires the existing Android emulator $DEVICE, and none is attached to adb right now." >&2
     echo "Fix: boot the sanctioned existing AVD ($DEVICE) on the release host under the emulator-owner account; the canary attaches to it over the shared adb server. It must be live before the release governor runs." >&2
-    exit 2
+    park "the sanctioned Android emulator $DEVICE is not attached to the shared adb server on the release host; boot it under the emulator-owner account before the governor runs"
     ;;
   *)
     echo "Canary emulator $DEVICE is attached but not ready (state: $device_state)." >&2
     echo "Fix: wait for boot or re-authorize the device on the release host, then re-run." >&2
-    exit 2
+    park "canary emulator $DEVICE is attached but not ready (state: $device_state); wait for boot or re-authorize the device on the release host"
     ;;
 esac
 
@@ -95,16 +111,20 @@ while (($#)); do
 done
 
 if [[ ! -f "$ledger" ]]; then
-  echo "Canary ledger not found: $ledger" >&2
-  exit 1
+  park "canary ledger not found: $ledger; the beta-candidate publish step must succeed before the canary runs"
 fi
 
+set +e
 candidate_group="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.candidateGroupId || "")' "$ledger")"
 android_update="$(node -e 'const x=require(process.argv[1]); process.stdout.write(x.androidUpdateId || "")' "$ledger")"
 android_runtime="$(node -e 'const x=require(process.argv[1]); const update=x.candidateUpdates?.find((item) => item.platform === "android"); process.stdout.write(update?.runtimeVersion || "")' "$ledger")"
+ledger_status=$?
+set -e
+if (( ledger_status != 0 )); then
+  park "canary ledger at $ledger is unreadable or malformed JSON (node exited ${ledger_status}); the release-governor candidate step must produce a readable mobile-ota-ledger.json"
+fi
 if [[ -z "$candidate_group" || -z "$android_update" ]]; then
-  echo "Canary ledger is missing candidateGroupId or androidUpdateId." >&2
-  exit 1
+  park "canary ledger is missing candidateGroupId or androidUpdateId: $ledger"
 fi
 
 temporary="$(mktemp -d)"
@@ -130,7 +150,14 @@ if [[ -z "$apk" ]]; then
   if [[ -n "$android_runtime" ]]; then
     build_args+=(--runtime-version "$android_runtime")
   fi
+  set +e
   npx --yes eas-cli@22.2.0 "${build_args[@]}" > "$build_json"
+  build_status=$?
+  set -e
+  if (( build_status != 0 )); then
+    park "could not list EAS builds (npx eas-cli@22.2.0 exited ${build_status}); check EXPO_TOKEN and network access on the release host, then re-run the governor"
+  fi
+  set +e
   build_url="$(node -e '
     const builds = require(process.argv[1]);
     const build = Array.isArray(builds) ? builds[0] : builds?.data?.[0];
@@ -138,26 +165,42 @@ if [[ -z "$apk" ]]; then
     if (typeof url !== "string" || !url) process.exit(1);
     process.stdout.write(url);
   ' "$build_json")"
+  url_status=$?
+  set -e
+  if (( url_status != 0 )) || [[ -z "$build_url" ]]; then
+    park "EAS has no finished beta-apk Android build for runtime version ${android_runtime:-unknown}. A beta-channel binary is the only possible canary vehicle because the OTA update channel is baked into the APK at build time; production-channel binaries cannot fetch the beta candidate group. Fix once per runtime version: cd apps/mobile && npx --yes eas-cli@22.2.0 build --profile beta-apk --platform android --non-interactive, then re-run the release governor."
+  fi
   apk="$temporary/beeline-beta.apk"
-  curl --fail --location --silent --show-error "$build_url" --output "$apk"
+  if ! curl --fail --location --silent --show-error "$build_url" --output "$apk"; then
+    park "could not download the beta APK from EAS (curl failed fetching the recorded buildUrl); check network access on the release host and that the build artifact still exists, then re-run the governor"
+  fi
 fi
 
 if [[ ! -f "$apk" ]]; then
-  echo "Beta APK not found: $apk" >&2
-  exit 1
+  park "operator-supplied BEELINE_BETA_APK does not exist: $apk; point it at a beta-channel (EXPO_UPDATES_CHANNEL=beta) APK built for runtime version ${android_runtime:-unknown}, or unset it to let the canary download the latest EAS beta-apk build"
 fi
 
 # -r preserves the dedicated beta binary registration while replacing any
 # older beta build. pm clear then gives the smoke its normal cold-device state.
-adb -s "$DEVICE" install -r "$apk" >/dev/null
-adb -s "$DEVICE" shell pm clear "$APP_ID" >/dev/null
-adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null
+adb -s "$DEVICE" install -r "$apk" >/dev/null || {
+  park "adb install of the beta APK failed on $DEVICE; the emulator may be wedged or out of storage on the release host"
+}
+adb -s "$DEVICE" shell pm clear "$APP_ID" >/dev/null || {
+  park "adb pm clear failed on $DEVICE for $APP_ID; the emulator is reachable but the app data could not be reset"
+}
+adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null || {
+  park "adb could not launch $APP_ID on $DEVICE; the installed beta binary failed to start"
+}
 
 # Give expo-updates one bounded cold fetch, then relaunch so Maestro starts on
 # the candidate even when reload scheduling was delayed by initial app setup.
 sleep "${OTA_CANARY_WARMUP_SECONDS:-20}"
-adb -s "$DEVICE" shell am force-stop "$APP_ID" >/dev/null
-adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null
+adb -s "$DEVICE" shell am force-stop "$APP_ID" >/dev/null || {
+  park "adb am force-stop failed on $DEVICE for $APP_ID during canary warm-up; the emulator stopped responding between launch and relaunch"
+}
+adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null || {
+  park "adb could not relaunch $APP_ID on $DEVICE after warm-up; the installed beta binary failed to restart"
+}
 
 MAESTRO_REUSE_INSTALLED_APP=1 \
 MAESTRO_SKIP_BUILD=1 \

@@ -3,6 +3,7 @@ import { ReactNode, ComponentType } from 'react';
 export type ModalType = 'alert' | 'confirm' | 'prompt' | 'action-sheet' | 'custom';
 
 export interface AlertButton {
+  disabled?: boolean;
   text: string;
   metadata?: string;
   onPress?: () => void;

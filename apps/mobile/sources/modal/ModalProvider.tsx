@@ -126,6 +126,7 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
               {currentModal.actions.map((action, index) => (
                 <HullActionSheetRow
                   destructive={action.style === 'destructive'}
+                  disabled={action.disabled}
                   key={`${action.text}:${index}`}
                   label={action.text}
                   metadata={action.metadata}

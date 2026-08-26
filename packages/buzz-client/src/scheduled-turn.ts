@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { MAX_MISSION_RESERVED_TOKENS } from './permission-request.js';
 import type { Identity } from './types.js';
@@ -109,7 +110,9 @@ export function deterministicScheduleRunId(
   ) {
     throw new Error('invalid scheduled run identity');
   }
-  return `wsr_${createHash('sha256').update(`buzz-work-run:v1:${scheduleId}:${revision}:${nominalAt}`).digest('hex')}`;
+  return `wsr_${bytesToHex(
+    sha256(utf8ToBytes(`buzz-work-run:v1:${scheduleId}:${revision}:${nominalAt}`)),
+  )}`;
 }
 
 export function buildScheduledTurnReceipt(

@@ -27,6 +27,10 @@ const workspaceContext = vi.hoisted(() => ({
     cacheReconciliation: undefined as 'authoritative' | 'preserve' | undefined,
   },
 }));
+const transportState = vi.hoisted(() => ({
+  client: { isAgentIdentity: vi.fn(async () => false) } as Record<string, any>,
+  roomRepositoryState: vi.fn(async () => ({ kind: 'none' })),
+}));
 
 vi.mock('react-native-mmkv', () => ({
   MMKV: class {
@@ -72,7 +76,13 @@ vi.mock('@/buzz/community-invite', () => ({ createCommunityInviteUrl: vi.fn(asyn
 vi.mock('@/buzz/local-cache-sync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/buzz/local-cache-sync')>()),
   cacheLiveSessionEvents: vi.fn(),
-  revalidateCachedMessages: vi.fn(async () => undefined),
+  revalidateCachedMessages: vi.fn(async (_transport, _viewer, roomId) => ({
+    entry: {
+      snapshot: createWorkspaceSnapshot({ workspaceId: 'shared-1' }),
+      latestEventAt: 0,
+      roomName: roomId,
+    },
+  })),
 }));
 vi.mock('@/buzz/defer-interaction', () => ({ afterInteractions: () => () => undefined }));
 vi.mock('@/buzz/community-storage', () => ({
@@ -81,8 +91,10 @@ vi.mock('@/buzz/community-storage', () => ({
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => {
+      if ('query' in transportState.client || !transportHarness.completeBootstrap) {
+        return transportState.client;
+      }
       const base = { isAgentIdentity: vi.fn(async () => false) };
-      if (!transportHarness.completeBootstrap) return base;
       return {
         ...base,
         query: vi.fn(async () => [
@@ -109,6 +121,7 @@ vi.mock('@/sync/transport', () => ({
         listDirectMessages: vi.fn(async () => []),
       };
     });
+    roomRepositoryState = (...args: unknown[]) => transportState.roomRepositoryState(...args);
   },
 }));
 vi.mock('@/components/buzz/CommunityRail', async () => {
@@ -380,7 +393,119 @@ describe("the deck's one ordered feed", () => {
     transportHarness.completeBootstrap = false;
     useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
     useRoomReadState.setState({ readAt: {} });
+    vi.mocked(prepareWorkspaceContext).mockClear();
     vi.mocked(prepareWorkspaceContext).mockImplementation(async () => workspaceContext.current);
+    transportState.client = { isAgentIdentity: vi.fn(async () => false) };
+    transportState.roomRepositoryState = vi.fn(async () => ({ kind: 'none' }));
+  });
+
+  it('keeps both successively created Rooms visible when relay list reads are one create behind', async () => {
+    seedRooms([]);
+    const created: { id: string; name: string }[] = [];
+    transportState.client = {
+      identity: { publicKey: VIEWER },
+      isAgentIdentity: vi.fn(async () => false),
+      createChannel: vi.fn(async (name: string) => {
+        const room = { id: `created-${created.length + 1}`, name };
+        created.push(room);
+        return room.id;
+      }),
+      waitUntilMember: vi.fn(async () => undefined),
+      query: vi.fn(async () =>
+        created.slice(0, -1).map((room, index) => ({
+          id: `event-${room.id}`,
+          pubkey: VIEWER,
+          created_at: index + 2,
+          kind: 9007,
+          content: '',
+          sig: '',
+          tags: [
+            ['h', room.id],
+            ['name', room.name],
+            ['community', 'shared-1'],
+          ],
+        })),
+      ),
+      listMyChannels: vi.fn(async () =>
+        created.map((room) => ({ channelId: room.id, role: 'owner' })),
+      ),
+      getChannelMetadata: vi.fn(async (roomId: string) => ({
+        name: created.find((room) => room.id === roomId)?.name,
+      })),
+      communityMembers: vi.fn(async () => [{ pubkey: VIEWER, role: 'owner' }]),
+      listAgents: vi.fn(async () => []),
+      listPersonProfiles: vi.fn(async () => []),
+      getPersonProfile: vi.fn(async () => undefined),
+      listDirectMessages: vi.fn(async () => []),
+    };
+    const tree = await render();
+
+    const createRoom = async (name: string) => {
+      await act(async () => {
+        tree.root.findByType('RoomDeckComposeMenu').props.onSelect('room');
+      });
+      const input = tree.root.findByType('TextInput');
+      await act(async () => input.props.onChangeText(name));
+      await press(
+        tree.root.find((node: any) => node.type === 'MonoButton' && node.props.label === 'CREATE'),
+      );
+    };
+
+    await createRoom('Tubing capital');
+    await createRoom('Brrr');
+
+    expect(findAllByTestId(tree, 'room-created-1')).toHaveLength(1);
+    expect(findAllByTestId(tree, 'room-created-2')).toHaveLength(1);
+  });
+
+  it('ends pull refresh before independent Room hydration and keeps the fresh Room', async () => {
+    seedRooms([]);
+    let exposeRoom = false;
+    transportState.client = {
+      identity: { publicKey: VIEWER },
+      isAgentIdentity: vi.fn(async () => false),
+      query: vi.fn(async () =>
+        exposeRoom
+          ? [
+              {
+                id: 'fresh-event',
+                pubkey: VIEWER,
+                created_at: 4,
+                kind: 9007,
+                content: '',
+                sig: '',
+                tags: [
+                  ['h', 'fresh-room'],
+                  ['name', 'Fresh room'],
+                  ['community', 'shared-1'],
+                ],
+              },
+            ]
+          : [],
+      ),
+      listMyChannels: vi.fn(async () =>
+        exposeRoom ? [{ channelId: 'fresh-room', role: 'owner' }] : [],
+      ),
+      getChannelMetadata: vi.fn(async () => ({ name: 'Fresh room' })),
+      communityMembers: vi.fn(async () => [{ pubkey: VIEWER, role: 'owner' }]),
+      listAgents: vi.fn(async () => []),
+      listPersonProfiles: vi.fn(async () => []),
+      getPersonProfile: vi.fn(async () => undefined),
+      listDirectMessages: vi.fn(async () => []),
+    };
+    const tree = await render();
+    exposeRoom = true;
+    transportState.roomRepositoryState = vi.fn(() => new Promise(() => undefined));
+
+    await act(async () => {
+      tree.root.findByType('FlatList').props.onRefresh();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(tree.root.findByType('FlatList').props.refreshing).toBe(false);
+    expect(findAllByTestId(tree, 'room-fresh-room')).toHaveLength(1);
+    tree.unmount();
   });
 
   it('turns a never-settling cold-cache relay read into a retryable empty list', async () => {

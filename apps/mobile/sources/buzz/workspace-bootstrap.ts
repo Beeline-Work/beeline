@@ -4,8 +4,10 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import {
+  clearPersonalCommunityId,
   loadActiveCommunityId,
   loadPersonalCommunityId,
+  reconcileStoredWorkspaceSelection,
   saveActiveCommunityId,
   savePersonalCommunityId,
 } from './community-storage';
@@ -25,8 +27,9 @@ type WorkspaceClient = Pick<
 export type WorkspaceBootstrapOptions = {
   /**
    * Viewer-scoped Workspace metadata already proven by an earlier successful
-   * read. Live discovery merges into this set; an error, partial answer, or
-   * phantom empty may never erase it or reopen the Personal creation door.
+   * read. Only a complete, first-pass non-empty discovery replaces this set;
+   * an error, partial/confirming answer, or phantom empty may never erase it
+   * or reopen the Personal creation door.
    */
   knownWorkspaces?: readonly Community[];
   /**
@@ -46,6 +49,12 @@ export type WorkspaceBootstrapOptions = {
     loadAndSeed: (viewerPubkey: string) => void;
     persist: (viewerPubkey: string) => void;
   };
+  /**
+   * Let a bounded caller accept discovery before any durable selection write.
+   * The returned `commitSelection` must be awaited only after that caller's
+   * timeout/generation gate succeeds.
+   */
+  deferSelectionPersistence?: boolean;
 };
 
 function mergeWorkspaceKnowledge(
@@ -74,8 +83,9 @@ const defaultUnmigratableVerdicts = {
 type WorkspaceStorage = {
   loadActiveId: (pubkey: string) => Promise<string | null>;
   loadPersonalId: (pubkey: string) => Promise<string | null>;
-  saveActiveId: (pubkey: string, workspaceId: string) => Promise<void>;
+  saveActiveId: (pubkey: string, workspaceId: string | null) => Promise<void>;
   savePersonalId: (pubkey: string, workspaceId: string) => Promise<void>;
+  clearPersonalId: (pubkey: string) => Promise<void>;
 };
 
 /** One in-flight personal-Workspace creation per human key.
@@ -156,12 +166,17 @@ const defaultStorage: WorkspaceStorage = {
   loadPersonalId: loadPersonalCommunityId,
   saveActiveId: saveActiveCommunityId,
   savePersonalId: savePersonalCommunityId,
+  clearPersonalId: clearPersonalCommunityId,
 };
 
 export type WorkspaceContext = {
   workspaces: Community[];
   activeWorkspaceId: string;
   personalWorkspaceId: string | null;
+  /** Only a complete, first-pass non-empty discovery may replace cached knowledge. */
+  cacheReconciliation?: 'authoritative' | 'preserve';
+  /** Present only when the caller requested a post-timeout-gate commit. */
+  commitSelection?: () => Promise<void>;
 };
 
 /**
@@ -184,8 +199,10 @@ export async function prepareWorkspaceContext(
   const knownWorkspaces = options.knownWorkspaces ?? [];
   let discoveredWorkspaces: Community[];
   let discoveryFailed = false;
+  let cacheReconciliation: WorkspaceContext['cacheReconciliation'] = 'preserve';
   try {
     discoveredWorkspaces = await client.listCommunities(pubkey, predecessors);
+    if (discoveredWorkspaces.length > 0) cacheReconciliation = 'authoritative';
     // Persist any verdict learned during THIS pass (migration + membership
     // repair both record them) so the next launch skips those rooms instantly.
     verdicts.persist(pubkey);
@@ -195,15 +212,16 @@ export async function prepareWorkspaceContext(
     discoveredWorkspaces = [];
   }
   const storedWorkspaceId = await storage.loadActiveId(pubkey);
-  let personalWorkspaceId = await storage.loadPersonalId(pubkey);
+  const storedPersonalWorkspaceId = await storage.loadPersonalId(pubkey);
+  let personalWorkspaceId = storedPersonalWorkspaceId;
 
   // A single empty answer is NOT authoritative absence. Production evidence:
   // a transient discovery miss took this function straight into the creation
   // fallback and minted junk "Personal" Workspaces signed by the human's own
   // key (three within eight seconds across retries). Discovery may only
   // create after a second consecutive confirmed-empty answer; anything else
-  // (throw, timeout, a partial answer confirmed non-empty) must arrive here
-  // or leave without writing anything.
+  // (throw, timeout, or a partial answer confirmed non-empty) preserves local
+  // knowledge and never authorizes cache eviction.
   if (!discoveryFailed && discoveredWorkspaces.length === 0) {
     try {
       const confirmation = await client.listCommunities(pubkey, predecessors);
@@ -213,7 +231,20 @@ export async function prepareWorkspaceContext(
     }
   }
 
-  let workspaces = mergeWorkspaceKnowledge(knownWorkspaces, discoveredWorkspaces);
+  let workspaces =
+    cacheReconciliation === 'authoritative'
+      ? [...discoveredWorkspaces]
+      : mergeWorkspaceKnowledge(knownWorkspaces, discoveredWorkspaces);
+  if (
+    cacheReconciliation === 'authoritative' &&
+    personalWorkspaceId &&
+    !workspaces.some((workspace) => workspace.communityId === personalWorkspaceId)
+  ) {
+    // The Personal record is no longer server-confirmed. Do not project its
+    // stale identity back into the newly reconciled Room-deck cache or let a
+    // later launch treat the deleted record as an unresolved Personal claim.
+    personalWorkspaceId = null;
+  }
 
   if (workspaces.length === 0 && storedWorkspaceId) {
     const storedWorkspace = await client.getCommunity(storedWorkspaceId);
@@ -275,6 +306,30 @@ export async function prepareWorkspaceContext(
     throw new Error(`No ${WORKSPACE_LABEL} is available for this identity.`);
   }
 
-  await storage.saveActiveId(pubkey, activeWorkspaceId);
-  return { workspaces, activeWorkspaceId, personalWorkspaceId };
+  let selectionCommitted = false;
+  const commitSelection = async (): Promise<void> => {
+    if (selectionCommitted) return;
+    personalWorkspaceId = await reconcileStoredWorkspaceSelection(
+      pubkey,
+      workspaces,
+      activeWorkspaceId,
+      cacheReconciliation === 'authoritative'
+        ? storedPersonalWorkspaceId
+        : personalWorkspaceId,
+      storage,
+      cacheReconciliation,
+    );
+    selectionCommitted = true;
+  };
+  if (options.deferSelectionPersistence) {
+    return {
+      workspaces,
+      activeWorkspaceId,
+      personalWorkspaceId,
+      cacheReconciliation,
+      commitSelection,
+    };
+  }
+  await commitSelection();
+  return { workspaces, activeWorkspaceId, personalWorkspaceId, cacheReconciliation };
 }

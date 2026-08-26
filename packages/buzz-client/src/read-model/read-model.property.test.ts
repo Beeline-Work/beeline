@@ -43,6 +43,12 @@ const secondHuman = createIdentity('read-model-human-two');
 const agent = createIdentity('read-model-agent');
 const relay = createIdentity('read-model-relay');
 
+it('keeps scheduled run IDs byte-compatible with the published SHA-256 derivation', () => {
+  expect(deterministicScheduleRunId('nightly', 2, 1_900_000_000)).toBe(
+    'wsr_660dbb52acbd43d8b6c344d984d248bd3d53ca36566dd8fd192f4de7e96f9128',
+  );
+});
+
 function identityRecord(
   source: typeof human,
   kind: 'human' | 'agent',

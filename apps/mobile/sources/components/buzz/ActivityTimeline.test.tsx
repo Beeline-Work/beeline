@@ -98,17 +98,43 @@ describe('live streaming turn', () => {
     expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
   });
 
+  it('routes complete streamed Markdown through the same transcript renderer in both lanes', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active
+        items={[]}
+        thought="**Analyzing trading economics and risks**"
+        messageDraft="**The reply is ready**"
+      />,
+    );
+
+    expect(
+      renderer.root
+        .findAllByType('MonoMarkdown')
+        .map((node: { props: { markdown: string; testID?: string } }) => ({
+          markdown: node.props.markdown,
+          testID: node.props.testID,
+        })),
+    ).toEqual([
+      {
+        markdown: '**Analyzing trading economics and risks**',
+        testID: 'activity-thought-draft',
+      },
+      { markdown: '**The reply is ready**', testID: 'activity-message-draft' },
+    ]);
+  });
+
   it('recedes thinking copy: prose family, one step down, dimmed, upright', () => {
     const renderer = render(<ActivityTimeline active items={TOOLS} thought="Still checking" />);
-    const thought = renderer.root.findByProps({ children: 'Still checking' });
-    expect(thought.props.style).toMatchObject({
+    const thought = renderer.root.findByProps({ testID: 'activity-thought-draft' });
+    expect(thought.props.textStyle).toMatchObject({
       fontFamily: groknight.proseRegular,
       color: groknight.ledgerQuiet,
       fontSize: 14,
       lineHeight: 22,
     });
     // Upright: no simulated italics — the shipped family has no italic cut.
-    expect(thought.props.style).not.toHaveProperty('fontStyle');
+    expect(thought.props.textStyle).not.toHaveProperty('fontStyle');
     const verdict = renderer.root.findByProps({ testID: 'activity-verdict-failure' });
     expect(verdict.props.children).toBe('×');
     expect(verdict.props.style).toContainEqual(

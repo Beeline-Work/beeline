@@ -1159,6 +1159,23 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
         },
       };
     }
+    const repositoryKey = tag(event, 'repo-key');
+    const repositoryName = tag(event, 'repo-name');
+    const repositoryRemote = tag(event, 'repo-remote');
+    const repositoryScope = tag(event, 'repo-scope');
+    const repositoryInstallation = integer(tag(event, 'repo-github-installation'));
+    const repository =
+      repositoryKey &&
+      repositoryName &&
+      repositoryRemote &&
+      repositoryScope === 'remote'
+        ? {
+            key: repositoryKey,
+            name: repositoryName,
+            remote: repositoryRemote,
+            ...(repositoryInstallation ? { githubInstallationId: repositoryInstallation } : {}),
+          }
+        : undefined;
     return {
       ...envelope(event, scope),
       type: 'lifecycle',
@@ -1171,6 +1188,7 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
         ...(tag(event, 'avatar') || tag(event, 'picture')
           ? { avatar: tag(event, 'avatar') ?? tag(event, 'picture') }
           : {}),
+        ...(repository ? { repository } : {}),
         ...(initialMembers.length ? { initialMembers } : {}),
       },
     };

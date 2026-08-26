@@ -730,7 +730,7 @@ function validReadEvent(
   return false;
 }
 
-function validCorner(value: unknown, expectedId: string): boolean {
+function validCorner(value: unknown, expectedId: string, expectedParentRoomId: string): boolean {
   const corner = record(value);
   if (
     !corner ||
@@ -738,6 +738,7 @@ function validCorner(value: unknown, expectedId: string): boolean {
     !CHANNEL_ID.test(expectedId) ||
     typeof corner.parentRoomId !== 'string' ||
     !CHANNEL_ID.test(corner.parentRoomId) ||
+    corner.parentRoomId !== expectedParentRoomId ||
     !optionalString(corner, 'name') ||
     !optionalString(corner, 'task') ||
     (corner.creatorPubkey !== undefined &&
@@ -847,7 +848,9 @@ function validRoom(value: unknown, expectedChannelId: string): boolean {
     !stringArray(room.lifecycleEvents, HEX_ID) ||
     !membership ||
     !corners ||
-    !Object.entries(corners).every(([cornerId, corner]) => validCorner(corner, cornerId)) ||
+    !Object.entries(corners).every(([cornerId, corner]) =>
+      validCorner(corner, cornerId, expectedChannelId),
+    ) ||
     !coverage ||
     !exactKeys(coverage, ['oldest', 'newest', 'initialBackfillComplete', 'epoch']) ||
     !optionalNonnegativeInteger(coverage, 'oldest') ||

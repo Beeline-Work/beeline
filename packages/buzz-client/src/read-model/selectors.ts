@@ -276,26 +276,39 @@ export function selectRepositorySummary(
   snapshot: WorkspaceSnapshot,
   channelId: string,
 ): RepositorySummary | undefined {
-  const roomSnapshot = room(snapshot, channelId);
+  const roomSnapshot =
+    Object.values(snapshot.rooms).find((candidate) => candidate.corners[channelId]) ??
+    room(snapshot, channelId);
   if (!roomSnapshot) return undefined;
-  const repository = orderedEvents(roomSnapshot)
+  const events = orderedEvents(roomSnapshot);
+  const repository = events
     .filter(
       (event): event is Control => event.type === 'control' && event.payload.kind === 'repository',
     )
     .at(-1)?.payload;
-  if (!repository || repository.kind !== 'repository') return undefined;
-  return {
-    key: repository.key,
-    name: repository.name,
-    remote: repository.remote,
-    ...(repository.targetBranch ? { targetBranch: repository.targetBranch } : {}),
-    ...(repository.githubInstallationId
-      ? { githubInstallationId: repository.githubInstallationId }
-      : {}),
-    ...(repository.githubEventsEnabled === undefined
-      ? {}
-      : { githubEventsEnabled: repository.githubEventsEnabled }),
-  };
+  if (repository?.kind === 'repository') {
+    return {
+      key: repository.key,
+      name: repository.name,
+      remote: repository.remote,
+      ...(repository.targetBranch ? { targetBranch: repository.targetBranch } : {}),
+      ...(repository.githubInstallationId
+        ? { githubInstallationId: repository.githubInstallationId }
+        : {}),
+      ...(repository.githubEventsEnabled === undefined
+        ? {}
+        : { githubEventsEnabled: repository.githubEventsEnabled }),
+    };
+  }
+  const genesis = events.find(
+    (event) =>
+      event.type === 'lifecycle' &&
+      event.lifecycle.entity === 'room' &&
+      event.lifecycle.state === 'created' &&
+      event.lifecycle.repository,
+  );
+  if (genesis?.type !== 'lifecycle' || genesis.lifecycle.entity !== 'room') return undefined;
+  return genesis.lifecycle.repository;
 }
 
 export type ReviewSummary = {

@@ -1,0 +1,51 @@
+appId: app.usebeeline.mobile
+name: Workspace switch stays navigable
+env:
+  SMOKE_WORKSPACE_ID: ${SMOKE_WORKSPACE_ID}
+  SMOKE_SWITCH_WORKSPACE_ID: ${SMOKE_SWITCH_WORKSPACE_ID}
+  SMOKE_ROOM_ID: ${SMOKE_ROOM_ID}
+  SMOKE_SWITCH_ROOM_ID: ${SMOKE_SWITCH_ROOM_ID}
+---
+# Regression guard for the production P0 where app load flipped the selected
+# Workspace to a junk "Personal" record (glyph/picture gone) and switching to
+# any Workspace hung on CONNECTING TO RELAY before timing out into an
+# error-only screen. The scenario must run with ≥2 relay-backed Workspaces in
+# the fixture (provision-smoke.ts reuses both fixed records).
+#
+# 1. Land on the Room index (smoke.yaml ends inside a Room transcript) and
+#    assert the initial Workspace keeps its identity: the rail renders THIS
+#    device's workspace mark (deterministic glyph/picture).
+- openLink: beeline://buzz/channels?communityId=${SMOKE_WORKSPACE_ID}
+- extendedWaitUntil:
+    visible:
+      id: room-list
+    timeout: 10000
+- assertVisible:
+    id: workspace-avatar-${SMOKE_WORKSPACE_ID}
+- assertVisible: Buzzy Maestro Smoke Workspace
+
+# 2. Switching to another real Workspace connects and renders. A cold target
+#    has no local cache entry, so the screen legitimately passes through
+#    CONNECTING TO RELAY — but it must LAND on the rendered room list, never
+#    park there, and never surface the error panel.
+- tapOn:
+    id: community-rail-${SMOKE_SWITCH_WORKSPACE_ID}
+- extendedWaitUntil:
+    visible:
+      id: room-${SMOKE_SWITCH_ROOM_ID}
+    timeout: 20000
+- assertVisible: Buzzy Maestro Switch Workspace
+- assertNotVisible: '! ERROR'
+
+# 3. Switching back proves round-trip navigation and that the original
+#    Workspace identity is still intact after the switch.
+- tapOn:
+    id: community-rail-${SMOKE_WORKSPACE_ID}
+- extendedWaitUntil:
+    visible:
+      id: room-${SMOKE_ROOM_ID}
+    timeout: 20000
+- assertVisible:
+    id: workspace-avatar-${SMOKE_WORKSPACE_ID}
+- assertVisible: Buzzy Maestro Smoke Workspace
+- assertNotVisible: '! ERROR'

@@ -8980,11 +8980,14 @@ export class Body {
     tip: string,
     patchId: string,
     files: ChangeReviewFile[],
+    onMissing?: () => Promise<void>,
   ): Promise<ChangeReviewGeneration> {
     const generation = await this.buildChangeReviewGeneration(info, base, tip, patchId, files);
-    if (info.reviewGenerationVerifiedTip === tip) return generation;
-
     let missing = await this.missingChangeReviewUnits(info, tip, generation);
+    // A process-local success bit is not current relay truth. Parameterized
+    // review records can be missing or superseded after the first proof; make
+    // the standing READY state fail closed before repairing that generation.
+    if (missing.length > 0) await onMissing?.();
     const missingCoordinates = new Set(missing.map((unit) => unit.coordinate));
     for (const unit of generation.fileUnits) {
       if (missingCoordinates.has(unit.coordinate)) await this.publishChangeReviewUnit(info, unit);
@@ -9016,12 +9019,43 @@ export class Body {
     );
   }
 
+  /**
+   * Withdraw the one daemon-owned READY fact. Cards and cached review fields
+   * are history; this canonical IDLE transition is what every Room/corner
+   * projection consumes when current forge or relay truth no longer proves a
+   * human-actionable change.
+   */
+  private async withdrawMergeReadiness(info: SubchannelInfo): Promise<void> {
+    info.mergeTarget = undefined;
+    info.reviewGenerationVerifiedTip = undefined;
+    info.reviewGenerationSummary = undefined;
+    info.mergeReadySummaryPublishedTip = undefined;
+    info.observedReviewTip = undefined;
+    // A few narrow unit fixtures exercise review narration without modelling
+    // a parent Room. Real registered corners always have one; only they can
+    // publish the durable state edge.
+    if (!info.session.parentChannelId) return;
+    if (!info.archived && (!info.cornerState || !isCornerTerminalState(info.cornerState.state))) {
+      await this.transitionCornerState(info, 'idle');
+    }
+  }
+
   /** Push the agent's feature tip and publish the corner's current review. */
   private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
     const boundRepo = info.boundRepo;
     if (!boundRepo || info.archived) return false;
     const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return false;
+    // A restored WAITING/review word without its daemon-owned merge target is
+    // already unproved. Drop it before any forge or relay I/O so a slow or
+    // failed revalidation cannot leave stale READY presentation standing.
+    if (
+      info.cornerState?.state === 'waiting' &&
+      info.cornerState.reason === 'review' &&
+      !info.mergeTarget
+    ) {
+      await this.withdrawMergeReadiness(info);
+    }
 
     const target = {
       repo: this.repoId(boundRepo),
@@ -9058,7 +9092,6 @@ export class Body {
       // uncommitted, or when it made no committed change. An older ready tip
       // must be withdrawn too, otherwise a human could approve stale work.
       const withdrawnTarget = info.mergeTarget;
-      info.mergeTarget = undefined;
       const commitCount =
         Number(
           (await git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`])).stdout.trim(),
@@ -9085,6 +9118,7 @@ export class Body {
                 ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
                 : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
       info.lastMergeNotReadyReason = detail;
+      await this.withdrawMergeReadiness(info);
       await postControlMessage(
         info.subchannelId,
         this.agentIdentity,
@@ -9119,16 +9153,31 @@ export class Body {
       files: files.slice(0, 5).map((file) => file.path),
     };
     const existingReviewTarget = info.mergeTarget?.tip === tip;
+    // A newer commit supersedes the old card immediately. Delivery of its
+    // replacement may fail, but the previous tip is no longer the current
+    // live change and therefore cannot remain READY while that work runs.
+    if (info.mergeTarget && !existingReviewTarget) {
+      await this.withdrawMergeReadiness(info);
+    }
     let reviewGeneration: ChangeReviewGeneration | undefined;
     if (existingReviewTarget) {
-      reviewGeneration = await this.ensureChangeReviewGeneration(
-        info,
-        base,
-        tip,
-        target.patchId!,
-        files,
-      );
-      if (info.mergeReadySummaryPublishedTip === tip) return true;
+      try {
+        reviewGeneration = await this.ensureChangeReviewGeneration(
+          info,
+          base,
+          tip,
+          target.patchId!,
+          files,
+          () => this.withdrawMergeReadiness(info),
+        );
+      } catch (error) {
+        await this.withdrawMergeReadiness(info);
+        throw error;
+      }
+      if (info.mergeReadySummaryPublishedTip === tip) {
+        await this.transitionCornerState(info, 'waiting', 'review');
+        return true;
+      }
     }
 
     // A human-commissioned rebase can rewrite this corner's feature history,
@@ -9191,13 +9240,18 @@ export class Body {
     // The complete marker is written and read back only after every file
     // chunk and manifest shard is readable from this daemon's configured
     // relay. Any failure throws here, before the merge-ready card exists.
-    reviewGeneration ??= await this.ensureChangeReviewGeneration(
-      info,
-      base,
-      tip,
-      target.patchId!,
-      files,
-    );
+    try {
+      reviewGeneration ??= await this.ensureChangeReviewGeneration(
+        info,
+        base,
+        tip,
+        target.patchId!,
+        files,
+      );
+    } catch (error) {
+      await this.withdrawMergeReadiness(info);
+      throw error;
+    }
 
     // Branch/PR preview deployments only exist because of the push above, so
     // this is the earliest the URL can be known. Strictly best-effort: no
@@ -11689,13 +11743,23 @@ export class Body {
     if (info.session.client?.activeRunId?.(info.session.sessionId)) return;
     const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return;
-    if (
-      info.observedReviewTip === tip ||
-      (info.mergeTarget?.tip === tip && info.reviewGenerationVerifiedTip === tip) ||
-      info.landedTip === tip
-    ) {
+    if (info.landedTip === tip) return;
+    // An advertised tip is not exempt from the gate. Re-enter the exact same
+    // merge-ready door so current target access, ancestry/diff, and relay
+    // review-generation proof can withdraw a phantom READY without another
+    // agent turn. The gate's publication guards prevent duplicate cards.
+    if (info.mergeTarget?.tip === tip) {
+      const ready = await this.publishMergeReady(info);
+      info.observedReviewTip = tip;
+      info.commitWatchFailure = undefined;
+      console.log(
+        `[body] corner ${info.subchannelId} commit watch: ${
+          ready ? 'revalidated review' : 'withdrew stale review'
+        } at ${tip.slice(0, 12)}`,
+      );
       return;
     }
+    if (info.observedReviewTip === tip) return;
 
     // Cheap local pre-checks so a mid-work worktree never reaches the gate
     // from this path. The authoritative remote-target check still happens

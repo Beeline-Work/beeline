@@ -237,6 +237,58 @@ describe('normalized Buzz cache', () => {
     ).toMatchObject({ title: 'Fresh', latestMessage: 'hello', repoName: 'beeline' });
   });
 
+  it('keeps two successively confirmed Rooms visible through one-behind snapshot swaps', () => {
+    const store = useBuzzLocalCache.getState();
+    store.setChannelList({
+      viewerPubkey: VIEWER,
+      communityId: 'workspace',
+      channels: [],
+      directMessages: [],
+      workspaceMembers: [],
+      communities: [],
+      personalWorkspaceId: null,
+      viewerIsAgent: false,
+      canEditWorkspaceAvatar: false,
+      updatedAt: 1,
+      lastAccessedAt: 1,
+    });
+
+    store.upsertConfirmedChannel(VIEWER, 'workspace', {
+      id: 'first-room',
+      active: true,
+      title: 'Tubing capital',
+      createdAt: 2,
+      updatedAt: 2,
+    });
+    store.patchChannelList(VIEWER, 'workspace', {
+      channels: mergeChannelBasicsWithCache(
+        [],
+        useBuzzLocalCache.getState().channelLists[`${VIEWER}:workspace`]!.channels,
+      ),
+    });
+
+    store.upsertConfirmedChannel(VIEWER, 'workspace', {
+      id: 'second-room',
+      active: true,
+      title: 'Brrr',
+      createdAt: 3,
+      updatedAt: 3,
+    });
+    const reconciled = mergeChannelBasicsWithCache(
+      [{ id: 'first-room', active: true, title: 'Tubing capital', createdAt: 2, updatedAt: 2 }],
+      useBuzzLocalCache.getState().channelLists[`${VIEWER}:workspace`]!.channels,
+    );
+
+    expect(reconciled.map((room) => room.id)).toEqual(['second-room', 'first-room']);
+    expect(reconciled.find((room) => room.id === 'first-room')).not.toHaveProperty(
+      'awaitingListReconciliation',
+    );
+    expect(reconciled.find((room) => room.id === 'second-room')).toMatchObject({
+      awaitingListReconciliation: true,
+    });
+    expect(mmkvWrites).not.toHaveBeenCalled();
+  });
+
   it('bounds cached Rooms and removes a Room from every list for only that viewer', () => {
     const store = useBuzzLocalCache.getState();
     for (let index = 0; index <= MAX_CACHED_CHANNELS; index += 1) {

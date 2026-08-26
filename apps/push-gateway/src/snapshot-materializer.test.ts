@@ -100,6 +100,7 @@ describe('ChannelSnapshotMaterializer', () => {
 
   it('rebuilds relay rows through the shared parser/reducer into one persisted view', async () => {
     const owner = createIdentity('snapshot-owner');
+    const outsider = createIdentity('snapshot-outsider');
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
       TENANT,
       CHANNEL,
@@ -142,18 +143,27 @@ describe('ChannelSnapshotMaterializer', () => {
         owner.secretKey,
       ),
     );
-    await insertEvent(
-      signEvent(
-        {
-          pubkey: owner.publicKey,
-          created_at: base + 2,
-          kind: 9,
-          tags: [['h', CHANNEL]],
-          content: 'One projected request paints this row.',
-        },
-        owner.secretKey,
-      ),
+    const projected = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: base + 2,
+        kind: 9,
+        tags: [['h', CHANNEL]],
+        content: 'One projected request paints this row.',
+      },
+      owner.secretKey,
     );
+    const quarantined = signEvent(
+      {
+        pubkey: outsider.publicKey,
+        created_at: base + 3,
+        kind: 9,
+        tags: [['h', CHANNEL]],
+        content: 'This unauthorized row must not enter the projection.',
+      },
+      outsider.secretKey,
+    );
+    await insertEvents([projected, quarantined]);
     const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
       return new Response(
@@ -183,8 +193,8 @@ describe('ChannelSnapshotMaterializer', () => {
         .map((row) => row.body),
     ).toEqual(['One projected request paints this row.']);
     expect(served?.payload?.cursor).toEqual({
-      createdAt: base + 2,
-      eventIds: [expect.stringMatching(/^[0-9a-f]{64}$/)],
+      createdAt: base + 3,
+      eventIds: [quarantined.id],
     });
     expect(served?.digest).toMatch(/^[0-9a-f]{64}$/);
 

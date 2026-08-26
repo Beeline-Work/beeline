@@ -3,6 +3,7 @@ import type { NostrEvent } from '@beeline/nostr';
 import {
   CHANNEL_SNAPSHOT_PROJECTION_VERSION,
   CHANNEL_SNAPSHOT_SCHEMA_VERSION,
+  type ChannelSnapshotCursorV1,
   type StoredChannelSnapshotV1,
 } from '@beeline/buzz-client';
 import {
@@ -24,6 +25,7 @@ export type ProjectionInput = {
   readonly channelId: string;
   readonly channelIds: readonly string[];
   readonly events: readonly NostrEvent[];
+  readonly cursor: ChannelSnapshotCursorV1;
   readonly messageCursor?: MessagePageCursor;
   readonly messagesExhausted: boolean;
 };
@@ -371,21 +373,28 @@ export class ChannelSnapshotStore {
           }
         : undefined;
 
-    const [messages, headMessages, carriedMessages, statusControls, structural, createAnchors] =
-      await Promise.all([
-        this.loadMessagePage(claim.tenantId, claim.channelId, continuationCursor),
-        continuationCursor
-          ? this.loadMessagePage(claim.tenantId, claim.channelId)
-          : Promise.resolve(undefined),
-        this.database.query<EventRow>(
-          `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+    const [
+      messages,
+      headMessages,
+      carriedMessages,
+      statusControls,
+      structural,
+      createAnchors,
+      cursorRows,
+    ] = await Promise.all([
+      this.loadMessagePage(claim.tenantId, claim.channelId, continuationCursor),
+      continuationCursor
+        ? this.loadMessagePage(claim.tenantId, claim.channelId)
+        : Promise.resolve(undefined),
+      this.database.query<EventRow>(
+        `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
            FROM events e
            WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL
              AND encode(e.id, 'hex') = ANY($2::text[])`,
-          [claim.tenantId, continuationEventIds],
-        ),
-        this.database.query<EventRow>(
-          `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+        [claim.tenantId, continuationEventIds],
+      ),
+      this.database.query<EventRow>(
+        `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
          FROM events e
          WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind = 9
            AND octet_length(e.content) <= 65536
@@ -398,21 +407,21 @@ export class ChannelSnapshotStore {
              WHERE marker->>0 = 't' AND marker->>1 = ANY($3::text[])
            )
          ORDER BY e.created_at DESC, e.id ASC LIMIT 256`,
+        [
+          claim.tenantId,
+          claim.channelId,
           [
-            claim.tenantId,
-            claim.channelId,
-            [
-              'body-control',
-              'merge-ready',
-              'merge-not-ready',
-              'landed',
-              'buzz-merge-approval',
-              'buzz-merge-approval-ack',
-            ],
+            'body-control',
+            'merge-ready',
+            'merge-not-ready',
+            'landed',
+            'buzz-merge-approval',
+            'buzz-merge-approval-ack',
           ],
-        ),
-        this.database.query<EventRow>(
-          `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+        ],
+      ),
+      this.database.query<EventRow>(
+        `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
          FROM events e
          WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind <> 9
            AND octet_length(e.content) <= 131072
@@ -433,10 +442,10 @@ export class ChannelSnapshotStore {
                 ))
            ))
          ORDER BY e.created_at DESC, e.id ASC LIMIT 2500`,
-          [claim.tenantId, channelIds],
-        ),
-        this.database.query<EventRow>(
-          `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+        [claim.tenantId, channelIds],
+      ),
+      this.database.query<EventRow>(
+        `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
          FROM events e
          WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind = 9007
            AND (e.channel_id = ANY($2::uuid[]) OR EXISTS (
@@ -444,9 +453,37 @@ export class ChannelSnapshotStore {
              WHERE tag->>0 = 'h' AND tag->>1 = ANY($2::text[])
            ))
          ORDER BY e.created_at ASC, e.id ASC LIMIT 1024`,
-          [claim.tenantId, channelIds],
-        ),
-      ]);
+        [claim.tenantId, channelIds],
+      ),
+      this.database.query<{ created_at: string | number; event_id: string }>(
+        `SELECT EXTRACT(EPOCH FROM e.created_at)::bigint AS created_at,
+                  encode(e.id, 'hex') AS event_id
+           FROM events e
+           WHERE e.community_id = $1::uuid AND e.channel_id = $2::uuid
+             AND e.deleted_at IS NULL
+             AND e.created_at = (
+               SELECT MAX(latest.created_at)
+               FROM events latest
+               WHERE latest.community_id = $1::uuid AND latest.channel_id = $2::uuid
+                 AND latest.deleted_at IS NULL
+             )
+           ORDER BY e.id ASC`,
+        [claim.tenantId, claim.channelId],
+      ),
+    ]);
+    const cursorCreatedAt = cursorRows.rows[0]?.created_at;
+    const cursorEventIds = cursorRows.rows.map((row) => row.event_id);
+    if (
+      cursorCreatedAt === undefined ||
+      cursorEventIds.length === 0 ||
+      cursorEventIds.some((eventId) => !/^[0-9a-f]{64}$/.test(eventId))
+    ) {
+      throw new Error('snapshot projection has no authoritative channel cursor');
+    }
+    const cursor: ChannelSnapshotCursorV1 = {
+      createdAt: numberValue(cursorCreatedAt),
+      eventIds: [...new Set(cursorEventIds)].sort(),
+    };
     const byId = new Map<string, NostrEvent>();
     for (const event of headMessages?.events ?? []) byId.set(event.id, event);
     for (const row of carriedMessages.rows) {
@@ -463,6 +500,7 @@ export class ChannelSnapshotStore {
       channelId: claim.channelId,
       channelIds,
       events: [...byId.values()],
+      cursor,
       ...(messages.cursor ? { messageCursor: messages.cursor } : {}),
       messagesExhausted: messages.exhausted,
     };

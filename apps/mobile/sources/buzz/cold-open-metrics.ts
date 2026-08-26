@@ -55,6 +55,16 @@ export type ColdOpenRecorder = {
   deferredSettled(elapsedMs: number | undefined, error: unknown | undefined): void;
 };
 
+/** One bounded, greppable telemetry line per phase; visible in adb logcat
+ * (`ReactNativeJS`) so a canary run can prove read counts and tail-vs-deferred
+ * latency without a debugger. At most two lines per open. */
+function emitColdOpenLine(phase: string, sample: ColdOpenSample, extra: string): void {
+  // eslint-disable-next-line no-console
+  console.log(
+    `[cold-open] phase=${phase} channel=${sample.channelId} elapsed=${Date.now() - sample.startedAt}ms${extra}`,
+  );
+}
+
 export function beginColdOpenSample(channelId: string): ColdOpenRecorder {
   const sample: ColdOpenSample = { channelId, startedAt: Date.now() };
   samples.push(sample);
@@ -64,16 +74,24 @@ export function beginColdOpenSample(channelId: string): ColdOpenRecorder {
     tailSettled: (tailMs, tailEventCount) => {
       sample.tailMs = tailMs;
       sample.tailEventCount = tailEventCount;
+      emitColdOpenLine('tail', sample, ` tailMs=${tailMs} events=${tailEventCount}`);
     },
     tailTimedOut: (tailTimedOutAfterMs) => {
       sample.tailTimedOutAfterMs = tailTimedOutAfterMs;
+      emitColdOpenLine('tail-timeout', sample, ` deadlineMs=${tailTimedOutAfterMs}`);
     },
     tailFailed: (error) => {
       sample.tailError = String(error);
+      emitColdOpenLine('tail-error', sample, ` error=${sample.tailError.slice(0, 160)}`);
     },
     deferredSettled: (deferredMs, error) => {
-      if (error !== undefined) sample.deferredError = String(error);
-      else if (deferredMs !== undefined) sample.deferredMs = deferredMs;
+      if (error !== undefined) {
+        sample.deferredError = String(error);
+        emitColdOpenLine('deferred-error', sample, ` error=${sample.deferredError.slice(0, 160)}`);
+      } else if (deferredMs !== undefined) {
+        sample.deferredMs = deferredMs;
+        emitColdOpenLine('deferred', sample, ` deferredMs=${deferredMs}`);
+      }
     },
   };
 }

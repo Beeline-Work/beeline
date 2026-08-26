@@ -222,6 +222,59 @@ describe('corner-open fast path: one bounded tail read is the whole critical pat
     expect(sample.tailError).toBeUndefined();
   }, 20_000);
 
+  it('takes the fast path for a cached shell whose coverage never completed', async () => {
+    // A warm EMPTY/incomplete entry (snapshot shell, initialBackfillComplete
+    // false) is not a painted transcript: it must take the same one bounded
+    // tail read as no cache at all, never the full machinery.
+    let shell = reduceWorkspaceSnapshot(
+      createWorkspaceSnapshot({ workspaceId: 'workspace' }),
+      humanMessage('stale-shell-row', 1),
+    );
+    shell = commitRoomCoverage(shell, CORNER, {
+      epoch: Date.now(),
+      initialBackfillComplete: false,
+    });
+    useBuzzLocalCache.getState().replaceSnapshot(VIEWER, CORNER, shell, 1);
+    const transport: TailTransport = {
+      readModelTail: vi.fn(async () => tailResult(4)),
+      readModelBackfill: vi.fn(() => new Promise(() => undefined)),
+    };
+
+    await revalidateCachedMessages(transport as never, VIEWER, CORNER);
+
+    // First paint came from the tail read alone; the full-machinery read may
+    // only ever run as the later deferred step, never before it.
+    expect(transport.readModelTail).toHaveBeenCalledTimes(1);
+    expect(
+      transport.readModelTail.mock.invocationCallOrder[0] <
+        (transport.readModelBackfill.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER),
+    ).toBe(true);
+    // Gap-fill merge: the painted tail plus nothing erased (the shell row is
+    // older, so it sorts into place rather than being wiped).
+    expect(snapshotMessages()).toEqual(['m0', 'stale-shell-row', 'm1', 'm2', 'm3']);
+  });
+
+  it('emits one bounded telemetry line per phase for canary observability', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const transport: TailTransport = {
+        readModelTail: vi.fn(async () => tailResult(4)),
+        readModelBackfill: vi.fn(async () => tailResult(2)),
+      };
+      await revalidateCachedMessages(transport as never, VIEWER, CORNER);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const phases = logSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.startsWith('[cold-open]'));
+      expect(phases.some((line) => line.includes('phase=tail') && line.includes('events=4'))).toBe(
+        true,
+      );
+      expect(phases.some((line) => line.includes('phase=deferred'))).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it('keeps the legacy single-read shape when the transport has no fast path', async () => {
     const transport = {
       readModelBackfill: vi.fn(async () => tailResult(4)),

@@ -1039,14 +1039,15 @@ export class BuzzRigTransport implements RigTransport {
    * corner discovery, family-wide authority, workspace identities — and that
    * is exactly the machinery a Corner open must NOT pay before its first
    * painted frame (the eight-second cold-open timeout, corr=be47dcd6c6622d21).
-   * This method issues ONE batched `query` whose filters are all scoped to the
-   * opening channel itself (per-key single-value tag filters, per this relay's
-   * measured multi-value partiality): the message tail plus the minimal
-   * structural/projection facts the parser needs to classify THIS channel's
-   * own messages. Everything else — siblings, projections across the family,
-   * membership enrichment, presence — hydrates later through independent,
-   * bounded, nonblocking steps and merges into the snapshot without ever
-   * erasing what first paint showed (`mergeWorkspaceSnapshots` never wipes).
+   * This method issues ONE batched `query` (per-key single-value tag
+   * filters, per this relay's measured multi-value partiality) carrying only
+   * what first paint cannot defer: the message tail, this channel's immutable
+   * create event (the snapshot's Workspace binding — see the filter comment),
+   * and the agent registry page the parser bootstraps identity from.
+   * Everything else — authority projections, siblings, membership enrichment,
+   * presence — hydrates later through independent, bounded, nonblocking steps
+   * and merges into the snapshot without ever erasing what first paint showed
+   * (`mergeWorkspaceSnapshots` never wipes).
    *
    * Identity honesty: with no Workspace directory round trip available on
    * the critical path, signer classification is BOOTSTRAPPED BY THE PARSER
@@ -1071,6 +1072,21 @@ export class BuzzRigTransport implements RigTransport {
     opts: { limit: number },
   ): Promise<ReadModelBackfillResult> {
     const client = await this.getClient();
+    // ONE batched relay round trip carrying EXACTLY what first paint needs —
+    // nothing more, per the corner-open contract (authority, sibling states,
+    // projections, membership, and presence are all deferred):
+    //   1. the bounded message tail of THIS channel;
+    //   2. this channel's IMMUTABLE create event — not general structural
+    //      history. Its `community` tag is the only source for the snapshot's
+    //      Workspace id; without it the tail snapshot would bind to a
+    //      session-id pseudo-workspace and `mergeWorkspaceSnapshots` would
+    //      refuse every later deferred commit outright;
+    //   3. the self-signed agent registry page, relay-side tag-matched.
+    //      parseIdentityControl consumes these before any identity check, so
+    //      the bootstrap pass derives agent records without prior authority
+    //      and without client-side tag reads. Membership/admin projections
+    //      are deliberately NOT fetched here: message signers resolve through
+    //      registry/bootstrap/cache/placeholder identity records alone.
     const events = await client.query([
       {
         kinds: [KIND_STREAM_MESSAGE],
@@ -1078,23 +1094,10 @@ export class BuzzRigTransport implements RigTransport {
         limit: Math.max(1, opts.limit),
       },
       {
-        kinds: [KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA],
+        kinds: [KIND_CREATE_GROUP],
         '#h': [sessionId],
-        limit: STRUCTURAL_PAGE_LIMIT_PER_CHANNEL,
+        limit: 5,
       },
-      {
-        kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-        '#d': [sessionId],
-        limit: 4,
-      },
-      {
-        kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-        '#h': [sessionId],
-        limit: 4,
-      },
-      // Self-signed agent registry. parseIdentityControl consumes these
-      // before any identity check, so the bootstrap pass below derives agent
-      // records without prior authority and without client-side tag reads.
       {
         kinds: [KIND_STREAM_MESSAGE],
         '#t': [TAG_AGENT],

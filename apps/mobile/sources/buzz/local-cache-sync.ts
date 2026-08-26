@@ -289,10 +289,16 @@ async function performMessageRevalidation(
 ): Promise<MessageSyncResult> {
   const key = `${viewerPubkey}:${channelId}`;
   const cached = getCachedChannel(viewerPubkey, channelId);
-  const warm = Boolean(cached?.snapshot?.rooms[channelId]?.coverage.initialBackfillComplete);
-  // Cold open through a fast-path-capable transport: the single bounded tail
-  // read below IS first paint; nothing else is awaited before it commits.
-  if (!cached?.snapshot && supportsColdTail(transport)) {
+  const complete = Boolean(
+    cached?.snapshot?.rooms[channelId]?.coverage.initialBackfillComplete,
+  );
+  // Cold or INCOMPLETE open through a fast-path-capable transport: a cached
+  // shell (entry present, snapshot empty or coverage never completed) is not
+  // a painted transcript — it takes the same single bounded tail read as no
+  // cache at all, instead of the full machinery that reproduced the captain's
+  // eight-second timeout. The tail merge is gap-fill-only, so nothing already
+  // cached can be erased.
+  if (!complete && supportsColdTail(transport)) {
     return performColdTailRevalidation(
       transport as BuzzRigTransport & { readModelTail: BuzzRigTransport['readModelTail'] },
       viewerPubkey,
@@ -301,7 +307,7 @@ async function performMessageRevalidation(
   }
   const result = await transport.readModelBackfill(
     channelId,
-    warm && cached?.cursor !== undefined
+    complete && cached?.cursor !== undefined
       ? { afterSeq: cached.cursor }
       : { limit: COLD_BACKFILL_LIMIT },
   );

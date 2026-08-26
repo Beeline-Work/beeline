@@ -21,14 +21,11 @@ env:
 - runFlow:
     when:
       visible:
-        id: onboarding-person-name-step
+        id: onboarding-handle-ceremony
     commands:
-      - tapOn:
-          id: onboarding-person-name-input
-      - inputText: Live device
       - pressKey: back
       - tapOn:
-          id: onboarding-enter-workspace
+          id: onboarding-claim-handle
 - extendedWaitUntil:
     visible:
       id: room-${LIVE_ROOM_ID}

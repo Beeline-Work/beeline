@@ -10,6 +10,7 @@ import {
   AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   isReasonableAgentName,
+  resolveAgentPresenceTier,
   type Agent,
   type AgentModelConfigInput,
   type AgentModelConfigOption,
@@ -996,6 +997,14 @@ export default function BuzzAgents() {
               const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
               const online = isAgentPresenceOnline(agentPresences[agent.pubkey], presenceNow);
               const presenceKnown = presenceResolved || Boolean(agentPresences[agent.pubkey]);
+              // The tier door, not a screen-local reinterpretation: the same
+              // lease record every surface reads. DORMANT means the lease has
+              // been dark past the sustained-absence grace — identity stays
+              // in the roster, but this label never claims liveness.
+              const tier = presenceKnown
+                ? resolveAgentPresenceTier(agentPresences[agent.pubkey], presenceNow)
+                : undefined;
+              const presenceWord = online ? 'ONLINE' : tier === 'dormant' ? 'DORMANT' : presenceKnown ? 'OFFLINE' : '—';
               return (
                 <TouchableOpacity
                   key={agent.agentId}
@@ -1039,7 +1048,7 @@ export default function BuzzAgents() {
                       ]}
                       testID={`agent-${agent.pubkey}-presence-label`}
                     >
-                      {online ? 'ONLINE' : presenceKnown ? 'OFFLINE' : '—'}
+                      {presenceWord}
                     </Text>
                   </View>
                   <Text style={styles.chevron}>›</Text>
@@ -1071,9 +1080,15 @@ export default function BuzzAgents() {
               {(presenceResolved || Boolean(agentPresences[selected.pubkey])) &&
                 !isAgentPresenceOnline(agentPresences[selected.pubkey], presenceNow) && (
                 <View style={styles.agentOfflineNotice} testID={`agent-${selected.pubkey}-offline-notice`}>
-                  <Text style={styles.agentOfflineNoticeTitle}>○ OFFLINE</Text>
+                  <Text style={styles.agentOfflineNoticeTitle}>
+                    {resolveAgentPresenceTier(agentPresences[selected.pubkey], presenceNow) === 'dormant'
+                      ? '○ DORMANT'
+                      : '○ OFFLINE'}
+                  </Text>
                   <Text style={styles.agentOfflineNoticeText}>
-                    No daemon is reporting in. Messages will wait until it reconnects.
+                    {resolveAgentPresenceTier(agentPresences[selected.pubkey], presenceNow) === 'dormant'
+                      ? 'No daemon has reported in for over a day. Reconnect it, or re-pair the Agent to replace this key.'
+                      : 'No daemon is reporting in. Messages will wait until it reconnects.'}
                   </Text>
                 </View>
               )}

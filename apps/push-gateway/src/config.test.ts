@@ -16,7 +16,7 @@ describe('loadPushGatewayConfig', () => {
     });
   });
 
-  it('requires exact HTTPS snapshot/auth boundaries in production', () => {
+  it('requires exact HTTPS or loopback snapshot boundaries in production', () => {
     expect(
       loadPushGatewayConfig({
         NODE_ENV: 'production',
@@ -40,6 +40,14 @@ describe('loadPushGatewayConfig', () => {
         BUZZY_SNAPSHOT_INTERNAL_TOKEN: 'shared-secret',
       }),
     ).toThrow('must use https');
+    expect(
+      loadPushGatewayConfig({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgres://test',
+        BUZZY_SNAPSHOT_PUBLIC_ORIGIN: 'http://127.0.0.1:3010',
+        BUZZY_SNAPSHOT_INTERNAL_TOKEN: 'shared-secret',
+      }),
+    ).toMatchObject({ snapshotPublicOrigin: 'http://127.0.0.1:3010' });
     expect(() =>
       loadPushGatewayConfig({
         NODE_ENV: 'production',

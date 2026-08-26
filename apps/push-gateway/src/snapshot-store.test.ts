@@ -8,6 +8,7 @@ import { ChannelSnapshotStore } from './snapshot-store.js';
 const TENANT = 'e8299f28-f095-472f-941a-80d1195b9a24';
 const HOT = '9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6';
 const COLD = '3f37b271-1a12-4d2a-b002-202b3f3582b9';
+const SIBLING = '550e8400-e29b-41d4-a716-446655440000';
 
 function goldenPayload(): StoredChannelSnapshotV1 {
   const view = JSON.parse(
@@ -89,6 +90,50 @@ describe('ChannelSnapshotStore dirty worklist', () => {
 
   afterEach(async () => {
     await postgres.close();
+  });
+
+  it('redirties every snapshot that embeds a changed family member', async () => {
+    await database.query(
+      `INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3), ($1, $4)`,
+      [TENANT, HOT, COLD, SIBLING],
+    );
+    for (const [index, channelId] of [COLD, SIBLING].entries()) {
+      await database.query(
+        `INSERT INTO events
+           (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+         VALUES ($1, decode($2, 'hex'), decode($3, 'hex'), now(), 9007,
+                 $4::jsonb, '', decode($5, 'hex'), $6)`,
+        [
+          TENANT,
+          (index + 1).toString(16).padStart(64, '0'),
+          'a'.repeat(64),
+          JSON.stringify([
+            ['h', channelId],
+            ['parent', HOT],
+          ]),
+          'f'.repeat(128),
+          channelId,
+        ],
+      );
+    }
+    await database.query(`DELETE FROM beeline_snapshot_dirty`);
+
+    await database.query(
+      `INSERT INTO events
+         (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+       VALUES ($1, decode($2, 'hex'), decode($3, 'hex'), now(), 30078,
+               '[]'::jsonb, '{}', decode($4, 'hex'), $5)`,
+      [TENANT, 'c'.repeat(64), 'a'.repeat(64), 'f'.repeat(128), SIBLING],
+    );
+
+    const dirty = await database.query<{ channel_id: string }>(
+      `SELECT channel_id::text AS channel_id
+       FROM beeline_snapshot_dirty
+       WHERE relay_tenant_id = $1
+       ORDER BY channel_id`,
+      [TENANT],
+    );
+    expect(dirty.rows.map((row) => row.channel_id)).toEqual([HOT, COLD, SIBLING].sort());
   });
 
   it('releases redirtied hot claims and selects a cold channel within two claims', async () => {

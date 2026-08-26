@@ -40,7 +40,15 @@ export function loadPushGatewayConfig(env: NodeJS.ProcessEnv = process.env): Pus
     env.BUZZY_SNAPSHOT_PUBLIC_ORIGIN ?? `http://${host}:${port}`,
     'BUZZY_SNAPSHOT_PUBLIC_ORIGIN',
   );
-  if (env.NODE_ENV === 'production' && new URL(snapshotPublicOrigin).protocol !== 'https:') {
+  const snapshotOriginUrl = new URL(snapshotPublicOrigin);
+  const loopbackSnapshotOrigin =
+    snapshotOriginUrl.protocol === 'http:' &&
+    ['127.0.0.1', 'localhost', '[::1]'].includes(snapshotOriginUrl.hostname);
+  if (
+    env.NODE_ENV === 'production' &&
+    snapshotOriginUrl.protocol !== 'https:' &&
+    !loopbackSnapshotOrigin
+  ) {
     throw new Error('BUZZY_SNAPSHOT_PUBLIC_ORIGIN must use https in production');
   }
   if (env.NODE_ENV === 'production' && !env.BUZZY_SNAPSHOT_INTERNAL_TOKEN) {

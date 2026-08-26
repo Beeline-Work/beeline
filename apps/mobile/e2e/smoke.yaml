@@ -40,9 +40,12 @@ env:
     timeout: 20000
 - tapOn:
     id: room-${SMOKE_ROOM_ID}
+# The transcript is the route-ready boundary. Android exposes the bottom-edge
+# composer in its hierarchy even when Maestro's 100%-visible predicate rejects
+# it, so composer usability is proven by the later tap/input/send sequence.
 - extendedWaitUntil:
     visible:
-      id: chat-input
+      id: chat-messages
     timeout: 10000
 - extendedWaitUntil:
     # The unique message row proves the actual newest seeded event is visible,
@@ -67,7 +70,7 @@ env:
     id: room-${SMOKE_ROOM_ID}
 - extendedWaitUntil:
     visible:
-      id: chat-input
+      id: chat-messages
     timeout: 5000
 
 # A Room send must reach the remote participant, whose fixture reply is only
@@ -90,7 +93,7 @@ env:
 - pressKey: back
 - extendedWaitUntil:
     visible:
-      id: chat-input
+      id: chat-messages
     timeout: 1000
 - pressKey: back
 - extendedWaitUntil:
@@ -102,7 +105,7 @@ env:
     id: room-${SMOKE_ROOM_ID}
 - extendedWaitUntil:
     visible:
-      id: chat-input
+      id: chat-messages
     timeout: 10000
 - assertVisible: SMOKE AGENT ROOM REPLY.*
 - assertNotVisible:
@@ -207,10 +210,10 @@ env:
 - pressKey: back
 - extendedWaitUntil:
     visible:
-      id: chat-input
+      id: chat-messages
     timeout: 1000
 - pressKey: back
 - extendedWaitUntil:
     visible:
-      id: chat-input
+      id: chat-messages
     timeout: 1000

@@ -25,7 +25,7 @@ import {
   type KnownMessageReference,
 } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
-import { BuzzRigTransport } from './buzz-rig-transport';
+import { BuzzRigTransport, __backdateRecentSnapshotForTests } from './buzz-rig-transport';
 import { transcriptMessages } from './buzz-event-projection';
 import type { SessionEvent } from './rig-transport';
 
@@ -114,10 +114,63 @@ function cornerState(): NostrEvent {
   });
 }
 
-function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {}) {
-  const createEvents = input.corners ? [roomCreate(), cornerCreate()] : [roomCreate()];
+const CORNER_2 = 'dddddddd-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+function cornerCreate2(): NostrEvent {
+  return signed(agent, {
+    created_at: 3,
+    kind: KIND_CREATE_GROUP,
+    tags: [
+      ['h', CORNER_2],
+      [TAG_PARENT, ROOM],
+      ['name', 'Second corner'],
+      ['p', human.publicKey, 'member'],
+      ['p', agent.publicKey, 'member'],
+    ],
+    content: '',
+  });
+}
+
+function memberProjection2(): NostrEvent {
+  return signed(relay, {
+    created_at: 4,
+    kind: KIND_CHANNEL_MEMBERS,
+    tags: [
+      ['d', CORNER_2],
+      ['p', human.publicKey, 'owner'],
+      ['p', agent.publicKey, 'member'],
+    ],
+    content: '',
+  });
+}
+
+function cornerState2(): NostrEvent {
+  return signed(agent, {
+    created_at: 5,
+    kind: KIND_CORNER_STATE,
+    tags: [
+      ['d', `${TAG_CORNER_STATE}:${CORNER_2}`],
+      ['h', ROOM],
+      ['t', TAG_CORNER_STATE],
+      ['state', 'working'],
+      ['at', '5'],
+    ],
+    content: '',
+  });
+}
+
+function clientFixture(
+  input: { messages?: NostrEvent[]; corners?: boolean; secondCorner?: boolean } = {},
+) {
+  const createEvents = input.corners
+    ? [roomCreate(), cornerCreate(), ...(input.secondCorner ? [cornerCreate2()] : [])]
+    : [roomCreate()];
   const projections = input.corners
-    ? [memberProjection(ROOM), memberProjection(CORNER)]
+    ? [
+        memberProjection(ROOM),
+        memberProjection(CORNER),
+        ...(input.secondCorner ? [memberProjection2()] : []),
+      ]
     : [memberProjection(ROOM)];
   let liveHandler: ((event: NostrEvent) => void) | undefined;
   const buildMessage = vi.fn(
@@ -200,13 +253,30 @@ function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {
           const dKeys = (filter['#d'] as string[] | undefined) ?? undefined;
           const tKeys = (filter['#t'] as string[] | undefined) ?? undefined;
           if (!input.corners) continue;
-          if (dKeys && dKeys.includes(`${TAG_CORNER_STATE}:${CORNER}`)) results.push(cornerState());
-          else if (!dKeys && !filter['#h'] && tKeys?.includes(TAG_CORNER_STATE)) {
+          if (dKeys && dKeys.length > 0) {
+            // Relay-faithful partiality: a MULTI-value `#d` array is answered
+            // with matches for the FIRST key only (live change-review /
+            // corner-wipe evidence); a single-value key is a proper exact hit.
+            const answered = dKeys.length > 1 ? [dKeys[0]!] : dKeys;
+            if (answered.includes(`${TAG_CORNER_STATE}:${CORNER}`)) results.push(cornerState());
+            if (answered.includes(`${TAG_CORNER_STATE}:${CORNER_2}`)) results.push(cornerState2());
+          } else if (!dKeys && !filter['#h'] && tKeys?.includes(TAG_CORNER_STATE)) {
             results.push(cornerState());
+            if (input.secondCorner) results.push(cornerState2());
           }
           continue;
         }
-        if (kinds.has(KIND_CHANNEL_MEMBERS)) results.push(...projections);
+        if (kinds.has(KIND_CHANNEL_MEMBERS)) {
+          const dKeys = (filter['#d'] as string[] | undefined) ?? undefined;
+          if (dKeys && dKeys.length > 1) {
+            // Same relay-faithful partiality for multi-value `#d`.
+            results.push(...projections.filter((event) => event.tags.some((tag) => tag[0] === 'd' && tag[1] === dKeys[0])));
+          } else if (dKeys && dKeys.length === 1) {
+            results.push(...projections.filter((event) => event.tags.some((tag) => tag[0] === 'd' && tag[1] === dKeys[0])));
+          } else {
+            results.push(...projections);
+          }
+        }
         if (kinds.has(KIND_CREATE_GROUP)) {
           // Production indexing truth (measured live, round-2 corner-discovery
           // failure): a filter naming MULTIPLE `#h` values is answered with an
@@ -849,8 +919,14 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     expect(kindCornerStateFilters.length).toBeGreaterThan(0);
     for (const filter of kindCornerStateFilters) {
       expect(filter['#h']).toBeUndefined();
+      const dKeys = filter['#d'] as string[] | undefined;
+      if (dKeys) expect(dKeys).toHaveLength(1);
     }
-    expect(fixture.client.cornerStateBackfill).toHaveBeenCalledWith([CORNER]);
+    // The exact-`#d` state read-back rides the same batched call shape, one
+    // single-value key per corner — never a multi-`#d` array this relay may
+    // answer with only the first key's matches.
+    const exactKeyStateFilters = kindCornerStateFilters.filter((filter) => filter['#d']);
+    expect(exactKeyStateFilters.length).toBeGreaterThan(0);
     // Discovery rides the marker page and exact-`#d` read-back, never the
     // relay-wide kind:9007 child scan.
     expect(fixture.client.listSubchannels).not.toHaveBeenCalled();
@@ -876,6 +952,66 @@ describe('BuzzRigTransport typed read-model boundary', () => {
       const hKeys = filter['#h'] as string[] | undefined;
       if (hKeys) expect(hKeys).toHaveLength(1);
     }
+  });
+
+  it('recovers every corner of a family when multi-value #d arrays answer partially', async () => {
+    // Live evidence (change-review assembly + close-one-corner wipe, 2026-08):
+    // the relay's partial-answer behavior is NOT confined to multi-value `#h`
+    // — a multi-value `#d` array can also be answered with matches for only
+    // the first key. Pre-fix, that collapsed the second corner's membership
+    // projection and canonical state read-back, so its records failed the
+    // parser's authority checks and the whole family degraded. The stub above
+    // reproduces that lossy `#d` shape faithfully; this passes only when both
+    // the members/admins and corner-state reads expand into per-key
+    // single-value filters inside their ONE batched query call.
+    const fixture = clientFixture({ corners: true, secondCorner: true });
+    const result = await transportWith(fixture.client).readModelBackfill(ROOM);
+    expect(selectCorners(result.snapshot, ROOM).map((corner) => corner.id)).toEqual(
+      expect.arrayContaining([CORNER, CORNER_2]),
+    );
+
+    const allFilters = fixture.client.query.mock.calls.flatMap(
+      (call) => call[0] as Array<Record<string, unknown>>,
+    );
+    for (const filter of allFilters) {
+      for (const key of ['#h', '#d'] as const) {
+        const values = filter[key] as string[] | undefined;
+        if (values) expect(values).toHaveLength(1);
+      }
+    }
+    // Still one batched structural/projection round trip plus the batched
+    // corner-state read-back — bounded, never a sequential per-channel fan-out.
+    expect(fixture.client.query.mock.calls.length).toBeLessThanOrEqual(3);
+  });
+
+  it('never commits an empty corner family over a proven non-empty one', async () => {
+    // Close-one-corner wipe root: a partial/failed re-read answered EMPTY and
+    // that answer was committed as authoritative over a family the previous
+    // read proved non-empty. The completeness guard re-reads once before
+    // believing an empty answer; the confirming read recovers the survivors.
+    const fixture = clientFixture({ corners: true });
+    const transport = transportWith(fixture.client);
+    await transport.readModelBackfill(ROOM); // warm: prior family is non-empty
+    __backdateRecentSnapshotForTests(fixture.client, ROOM);
+
+    let calls = 0;
+    const original = transport.readModelBackfill.bind(transport);
+    vi.spyOn(transport as unknown as {
+      readModelBackfill: typeof transport.readModelBackfill;
+    }, 'readModelBackfill').mockImplementation((...args) => {
+      calls += 1;
+      if (calls === 1) {
+        // One transiently empty (partial) re-read...
+        return Promise.resolve({
+          snapshot: createWorkspaceSnapshot(ROOM as unknown as Parameters<typeof createWorkspaceSnapshot>[0]),
+        } as Awaited<ReturnType<typeof transport.readModelBackfill>>);
+      }
+      return original(...(args as Parameters<typeof transport.readModelBackfill>));
+    });
+
+    const corners = await transport.listSubchannelLifecycle(ROOM);
+    expect(corners.map((corner) => corner.id)).toContain(CORNER);
+    expect(calls).toBe(2);
   });
 
   it('hydrates 200+ messages plus a corner without per-channel authority fan-out', async () => {

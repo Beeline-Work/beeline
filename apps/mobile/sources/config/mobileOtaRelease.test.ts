@@ -641,4 +641,39 @@ esac
     expect(canaryScript).toContain('no finished beta-apk Android build');
     expect(canaryScript).toContain('build --profile beta-apk --platform android --non-interactive');
   });
+
+  it('a provisioning-bootstrap death parks self-describingly instead of exiting as a generic smoke failure', () => {
+    // The smoke stage is captured to a log...
+    expect(canaryScript).toMatch(/maestro-e2e\.sh" 2>&1 \| tee "\$smoke_log"/);
+    // ...its failure is classified against bootstrap signatures...
+    expect(canaryScript).toMatch(/grep -m1 -E 'Cannot find module\|MODULE_NOT_FOUND' "\$smoke_log"/);
+    expect(canaryScript).toContain(
+      'its provisioning bootstrap failed before Maestro ran',
+    );
+    // ...and only a bootstrap match parks (exit 2); everything else re-exits
+    // with the genuine smoke status.
+    expect(canaryScript).toContain('if [[ -n "$bootstrap_line" ]]; then');
+    expect(canaryScript.indexOf('if [[ -n "$bootstrap_line" ]]; then')).toBeLessThan(
+      canaryScript.indexOf('exit "$smoke_status"'),
+    );
+  });
+
+  it('bridges the root smoke scripts to the mobile workspace modules they import', () => {
+    const maestroScript = readFileSync(join(mobileRoot, 'scripts/maestro-e2e.sh'), 'utf8');
+    // Node resolves upward from each script's real path (repo root) and never
+    // reaches apps/mobile/node_modules; the bridge is declared before the
+    // first provisioning invocation.
+    expect(maestroScript).toMatch(/export NODE_PATH="\$MOBILE_DIR\/node_modules/);
+    expect(maestroScript.indexOf('NODE_PATH')).toBeLessThan(
+      maestroScript.indexOf('npx tsx scripts/provision-smoke.ts'),
+    );
+  });
+
+  it('runs the governor on a node with a global WebSocket for relay provisioning', () => {
+    // scripts/provision-smoke.ts connects through BuzzClient, which needs
+    // globalThis.WebSocket; node 20 lacks it and died at connect time after
+    // module resolution was fixed. 22 is the floor that has it.
+    const releaseJob = workflow.slice(0, workflow.indexOf('  rollback:'));
+    expect(releaseJob).toContain("node-version: '22'");
+  });
 });

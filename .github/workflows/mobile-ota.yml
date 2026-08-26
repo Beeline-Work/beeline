@@ -55,7 +55,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20.19'
+          # 22 is the floor with a global WebSocket: the canary's Maestro stage
+          # provisions relay fixtures through scripts/provision-smoke.ts, whose
+          # BuzzClient.connect() needs globalThis.WebSocket.
+          node-version: '22'
       - name: Install mobile dependencies and build @beeline SDKs
         working-directory: apps/mobile
         run: |

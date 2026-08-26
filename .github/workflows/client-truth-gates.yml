@@ -16,6 +16,27 @@ permissions:
   contents: read
 
 jobs:
+  mobile-export-reachability:
+    name: MOBILE-EXPORT REACHABILITY
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      # Exercise Metro's real package-export graph. Source-only unit tests do
+      # not catch a Node builtin imported by the built buzz-client barrel.
+      - name: Export Android bundle
+        working-directory: apps/mobile
+        run: npx expo export --platform android --output-dir "$RUNNER_TEMP/mobile-export" --clear
+
   production-corpus-replay:
     name: PRODUCTION-CORPUS REPLAY
     runs-on: ubuntu-latest

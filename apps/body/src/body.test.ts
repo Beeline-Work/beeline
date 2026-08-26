@@ -92,6 +92,7 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
+  CHANGE_REVIEW_COMPLETE_TAG,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_EVENT_KIND,
@@ -6733,10 +6734,11 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
-  it('distinguishes no committed change, an empty committed diff, and a withdrawn stale target', async () => {
+  it('withdraws READY for no change, empty diff, stale target, and denied target access', async () => {
     const agent = newIdentity('merge-not-ready-reasons-agent');
     const published = stubPublishing();
     const paths = [
+      committedFeatureWorktree(),
       committedFeatureWorktree(),
       committedFeatureWorktree(),
       committedFeatureWorktree(),
@@ -6765,6 +6767,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(Reflect.get(noChangeInfo, 'lastMergeNotReadyReason')).toContain(
         'No committed change is available for this turn',
       );
+      expect(Reflect.get(noChangeInfo, 'cornerState')).toEqual({ state: 'idle' });
 
       gitCommand(paths[1]!, ['reset', '--hard', 'main']);
       gitCommand(paths[1]!, ['commit', '--allow-empty', '-m', 'empty feature commit']);
@@ -6775,6 +6778,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(Reflect.get(emptyInfo, 'lastMergeNotReadyReason')).toContain(
         'combined diff against refs/heads/main is empty',
       );
+      expect(Reflect.get(emptyInfo, 'cornerState')).toEqual({ state: 'idle' });
 
       const staleBody = newBody(agent);
       const staleInfo = infoFor(paths[2]!, 'corner-stale-target');
@@ -6788,11 +6792,24 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(Reflect.get(staleInfo, 'lastMergeNotReadyReason')).toContain(
         'stale and has been withdrawn',
       );
+      expect(Reflect.get(staleInfo, 'cornerState')).toEqual({ state: 'idle' });
+
+      const deniedBody = newBody(agent);
+      const deniedInfo = infoFor(paths[3]!, 'corner-target-access-denied');
+      deniedBody.registerSubchannel(deniedInfo);
+      await Reflect.get(deniedBody, 'publishMergeReady').call(deniedBody, deniedInfo);
+      vi.spyOn(deniedBody as never, 'currentReviewTargetTip' as never).mockResolvedValue({
+        reason: 'permission denied while reading the landing remote',
+      } as never);
+      await Reflect.get(deniedBody, 'publishMergeReady').call(deniedBody, deniedInfo);
+      expect(Reflect.get(deniedInfo, 'mergeTarget')).toBeUndefined();
+      expect(Reflect.get(deniedInfo, 'lastMergeNotReadyReason')).toContain('permission denied');
+      expect(Reflect.get(deniedInfo, 'cornerState')).toEqual({ state: 'idle' });
 
       const notReadyCards = published.filter((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
       );
-      expect(notReadyCards).toHaveLength(3);
+      expect(notReadyCards).toHaveLength(4);
     } finally {
       await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
     }
@@ -11349,7 +11366,9 @@ describe('harness-independent corner commit watch', () => {
     );
   }
 
-  function stubPublishing(options: { failManifestOnce?: boolean } = {}): NostrEvent[] {
+  function stubPublishing(
+    options: { failManifestOnce?: boolean; refuseReviewRepair?: () => boolean } = {},
+  ): NostrEvent[] {
     const published: NostrEvent[] = [];
     let failManifest = options.failManifestOnce === true;
     vi.stubGlobal(
@@ -11363,6 +11382,19 @@ describe('harness-independent corner commit watch', () => {
           return new Response(JSON.stringify(matches), { status: 200 });
         }
         const event = JSON.parse(String(init?.body)) as NostrEvent;
+        if (
+          options.refuseReviewRepair?.() === true &&
+          event.kind === CHANGE_REVIEW_EVENT_KIND &&
+          event.tags.some((tag) =>
+            [
+              CHANGE_REVIEW_FILE_TAG,
+              CHANGE_REVIEW_MANIFEST_TAG,
+              CHANGE_REVIEW_COMPLETE_TAG,
+            ].includes(tag[1]!),
+          )
+        ) {
+          return new Response(JSON.stringify({ error: 'review repair denied' }), { status: 400 });
+        }
         if (
           failManifest &&
           event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_MANIFEST_TAG)
@@ -11867,6 +11899,85 @@ describe('harness-independent corner commit watch', () => {
     }
   });
 
+  it('revalidates an advertised tip through the same merge-ready gate', async () => {
+    const agent = newIdentity('commit-watch-revalidation-agent');
+    const body = newBody(agent);
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const tip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+      const info = watchInfo(body, agent, worktreePath, {
+        observedReviewTip: tip,
+        reviewGenerationVerifiedTip: tip,
+        mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip },
+      });
+      const publishMergeReady = vi
+        .spyOn(
+          body as unknown as {
+            publishMergeReady(info: SubchannelInfoFixture): Promise<boolean>;
+          },
+          'publishMergeReady',
+        )
+        .mockResolvedValue(true);
+
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+
+      expect(publishMergeReady).toHaveBeenCalledOnce();
+      expect(publishMergeReady).toHaveBeenCalledWith(info);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('withdraws READY when the current relay review generation is missing and cannot be repaired', async () => {
+    const agent = newIdentity('commit-watch-missing-review-agent');
+    const body = newBody(agent);
+    let refuseReviewRepair = false;
+    const published = stubPublishing({ refuseReviewRepair: () => refuseReviewRepair });
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const info = watchInfo(body, agent, worktreePath);
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+      expect(info.mergeTarget).toBeDefined();
+      expect(info.cornerState).toEqual({ state: 'waiting', reason: 'review' });
+
+      const file = published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_FILE_TAG),
+      );
+      expect(file).toBeDefined();
+      published.splice(published.indexOf(file!), 1);
+      refuseReviewRepair = true;
+
+      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
+
+      expect(info.mergeTarget).toBeUndefined();
+      expect(info.reviewGenerationVerifiedTip).toBeUndefined();
+      expect(info.cornerState).toEqual({ state: 'idle' });
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('withdraws a restored review state that has no live merge target', async () => {
+    const agent = newIdentity('commit-watch-orphaned-review-agent');
+    const body = newBody(agent);
+    stubPublishing({ refuseReviewRepair: () => true });
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const info = watchInfo(body, agent, worktreePath, {
+        cornerState: { state: 'waiting', reason: 'review' },
+      });
+
+      await expect(
+        Reflect.get(body, 'publishMergeReady').call(body, info),
+      ).rejects.toBeInstanceOf(Error);
+
+      expect(info.mergeTarget).toBeUndefined();
+      expect(info.cornerState).toEqual({ state: 'idle' });
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it('stays silent while a turn is still running in the corner', async () => {
     const agent = newIdentity('commit-watch-busy-agent');
     const body = newBody(agent);
@@ -11890,7 +12001,7 @@ describe('harness-independent corner commit watch', () => {
     }
   });
 
-  it('never re-advertises a tip that already landed or is already the live review target', async () => {
+  it('never re-advertises a tip that already landed', async () => {
     const agent = newIdentity('commit-watch-landed-agent');
     const body = newBody(agent);
     const published = stubPublishing();

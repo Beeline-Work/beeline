@@ -10,6 +10,7 @@ import {
   AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   isReasonableAgentName,
+  resolveAgentPresenceTier,
   type Agent,
   type AgentModelConfigInput,
   type AgentModelConfigOption,
@@ -263,7 +264,9 @@ export default function BuzzAgents() {
 
   useEffect(() => {
     let cancelled = false;
-    resolveNip05StatusMap(profiles.map((profile) => ({ pubkey: profile.pubkey, nip05: profile.nip05 })))
+    resolveNip05StatusMap(
+      profiles.map((profile) => ({ pubkey: profile.pubkey, nip05: profile.nip05 })),
+    )
       .then((map) => {
         if (!cancelled) setNip05Status(map);
       })
@@ -329,29 +332,28 @@ export default function BuzzAgents() {
     return [{ pubkey: viewerPubkey, role: 'member' as const }, ...people];
   }, [agents, cachedViewerPubkey, identity?.publicKey, people]);
 
-  const refreshPeople = useCallback(async (
-    currentTransport: BuzzRigTransport,
-    id: string,
-    viewerPubkey?: string,
-  ) => {
-    const client = await currentTransport.ensureClient();
-    const [allMembers, knownAgents] = await Promise.all([
-      client.communityMembers(id),
-      client.listAgents(id),
-    ]);
-    const agentPubkeys = new Set(knownAgents.map((agent) => agent.pubkey));
-    const nextPeople = allMembers.filter((member) => !agentPubkeys.has(member.pubkey));
-    const nextProfiles = await client.listPersonProfiles(
-      id,
-      nextPeople.map((member) => member.pubkey),
-    );
-    setPeople(nextPeople);
-    setProfiles(nextProfiles);
-    if (viewerPubkey) {
-      const viewerRole = allMembers.find((member) => member.pubkey === viewerPubkey)?.role;
-      setCanManageWorkspace(isWorkspaceManagerRole(viewerRole));
-    }
-  }, []);
+  const refreshPeople = useCallback(
+    async (currentTransport: BuzzRigTransport, id: string, viewerPubkey?: string) => {
+      const client = await currentTransport.ensureClient();
+      const [allMembers, knownAgents] = await Promise.all([
+        client.communityMembers(id),
+        client.listAgents(id),
+      ]);
+      const agentPubkeys = new Set(knownAgents.map((agent) => agent.pubkey));
+      const nextPeople = allMembers.filter((member) => !agentPubkeys.has(member.pubkey));
+      const nextProfiles = await client.listPersonProfiles(
+        id,
+        nextPeople.map((member) => member.pubkey),
+      );
+      setPeople(nextPeople);
+      setProfiles(nextProfiles);
+      if (viewerPubkey) {
+        const viewerRole = allMembers.find((member) => member.pubkey === viewerPubkey)?.role;
+        setCanManageWorkspace(isWorkspaceManagerRole(viewerRole));
+      }
+    },
+    [],
+  );
 
   /**
    * Presence is published per (agent, Room), not per Workspace — this
@@ -506,11 +508,7 @@ export default function BuzzAgents() {
   // visible Add agent button. Run it once when the cached or live role says
   // this viewer may manage the Workspace; no second pairing implementation.
   useEffect(() => {
-    if (
-      requestedAction !== 'add-agent' ||
-      requestedActionHandled.current ||
-      !canManageWorkspace
-    ) {
+    if (requestedAction !== 'add-agent' || requestedActionHandled.current || !canManageWorkspace) {
       return;
     }
     requestedActionHandled.current = true;
@@ -607,7 +605,11 @@ export default function BuzzAgents() {
         ]);
         if (cancelled) return;
         setModelCatalog(catalog?.options ?? null);
-        setAgentSelection(catalog?.selection ? { model: catalog.selection.model, effort: catalog.selection.effort } : null);
+        setAgentSelection(
+          catalog?.selection
+            ? { model: catalog.selection.model, effort: catalog.selection.effort }
+            : null,
+        );
         setModelSelection(config ? { model: config.model, effort: config.effort } : null);
       } catch {
         if (!cancelled) {
@@ -778,9 +780,10 @@ export default function BuzzAgents() {
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(id) =>
-        router.push(
-          { pathname: '/buzz/settings/workspace', params: { communityId: id } } as unknown as Href,
-        )
+        router.push({
+          pathname: '/buzz/settings/workspace',
+          params: { communityId: id },
+        } as unknown as Href)
       }
       canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
@@ -880,8 +883,8 @@ export default function BuzzAgents() {
                   const actorCanChange =
                     !immutableOwner &&
                     !isSelf &&
-                    (canManageWorkspace &&
-                      (activeCommunity?.viewerRole === 'owner' || person.role === 'member'));
+                    canManageWorkspace &&
+                    (activeCommunity?.viewerRole === 'owner' || person.role === 'member');
                   return (
                     <View key={person.pubkey} style={styles.personRow}>
                       <IdentityMark
@@ -897,7 +900,11 @@ export default function BuzzAgents() {
                           style={styles.personName}
                           testID={`member-${person.pubkey}-identity`}
                         >
-                          {personIdentityLabel(profile, person.pubkey, nip05Status.get(person.pubkey))}
+                          {personIdentityLabel(
+                            profile,
+                            person.pubkey,
+                            nip05Status.get(person.pubkey),
+                          )}
                           {isSelf ? ' (you)' : ''}
                         </Text>
                       </View>
@@ -911,14 +918,20 @@ export default function BuzzAgents() {
                                 (activeCommunity?.viewerRole === 'owner' || role !== 'owner');
                               return (
                                 <TouchableOpacity
-                                  accessibilityState={{ selected: selectedRole, disabled: !allowed }}
+                                  accessibilityState={{
+                                    selected: selectedRole,
+                                    disabled: !allowed,
+                                  }}
                                   disabled={!allowed || selectedRole || busy}
                                   key={role}
                                   onPress={() => {
                                     setRoleEditorPubkey(null);
                                     void setPersonRole(person.pubkey, role);
                                   }}
-                                  style={[styles.roleSegmentButton, index > 0 && styles.roleSegmentDivider]}
+                                  style={[
+                                    styles.roleSegmentButton,
+                                    index > 0 && styles.roleSegmentDivider,
+                                  ]}
                                   testID={`member-${person.pubkey}-${role}`}
                                 >
                                   <Text
@@ -942,7 +955,10 @@ export default function BuzzAgents() {
                             testID={`member-${person.pubkey}-role-label`}
                           >
                             <Text
-                              style={[styles.roleLabelText, { color: roleAccentColor(person.role, theme.buzz) }]}
+                              style={[
+                                styles.roleLabelText,
+                                { color: roleAccentColor(person.role, theme.buzz) },
+                              ]}
                             >
                               {roleLabel(person.role)}
                             </Text>
@@ -984,69 +1000,86 @@ export default function BuzzAgents() {
               )}
             </View>
             {agents.length === 0 ? (
-            <View style={styles.empty}>
-              <Text style={styles.emptyGlyph}>{MEMBERS_GLYPH}</Text>
-              <Text style={styles.emptyTitle}>No agents yet</Text>
-              <Text style={styles.emptyCopy}>
-                Connect once, then use the Agent in every {ROOM_LABEL}.
-              </Text>
-            </View>
-          ) : (
-            agents.map((agent) => {
-              const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
-              const online = isAgentPresenceOnline(agentPresences[agent.pubkey], presenceNow);
-              const presenceKnown = presenceResolved || Boolean(agentPresences[agent.pubkey]);
-              return (
-                <TouchableOpacity
-                  key={agent.agentId}
-                  accessibilityLabel={`${display.name}, ${display.personality}, ${online ? 'online' : 'offline'}`}
-                  style={[
-                    styles.agentRow,
-                    selectedPubkey === agent.pubkey && styles.agentRowActive,
-                  ]}
-                  onPress={() => chooseAgent(agent)}
-                >
-                  <IdentityMark
-                    kind="agent"
-                    seed={display.avatarSeed ?? agent.pubkey}
-                    avatarUrl={display.avatarUrl}
-                    name={display.name}
-                    size={44}
-                    alive={online}
-                  />
-                  <View style={styles.agentCopy}>
-                    <Text
-                      style={styles.agentName}
-                      numberOfLines={1}
-                      testID={`agent-${agent.pubkey}-identity`}
-                    >
-                      {display.name}
-                    </Text>
-                    <Text style={styles.personality} numberOfLines={2}>
-                      {display.personality}
-                    </Text>
-                  </View>
-                  <View style={styles.agentPresence} testID={`agent-${agent.pubkey}-presence`}>
-                    <Text
-                      style={[styles.presenceDot, online ? styles.presenceOnline : styles.presenceOffline]}
-                    >
-                      {online ? '●' : '○'}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.presenceLabel,
-                        online ? styles.presenceOnlineLabel : styles.presenceOfflineLabel,
-                      ]}
-                      testID={`agent-${agent.pubkey}-presence-label`}
-                    >
-                      {online ? 'ONLINE' : presenceKnown ? 'OFFLINE' : '—'}
-                    </Text>
-                  </View>
-                  <Text style={styles.chevron}>›</Text>
-                </TouchableOpacity>
-              );
-            })
-          )}
+              <View style={styles.empty}>
+                <Text style={styles.emptyGlyph}>{MEMBERS_GLYPH}</Text>
+                <Text style={styles.emptyTitle}>No agents yet</Text>
+                <Text style={styles.emptyCopy}>
+                  Connect once, then use the Agent in every {ROOM_LABEL}.
+                </Text>
+              </View>
+            ) : (
+              agents.map((agent) => {
+                const display = resolveAgentDisplayIdentity(agent.pubkey, agent);
+                const online = isAgentPresenceOnline(agentPresences[agent.pubkey], presenceNow);
+                const presenceKnown = presenceResolved || Boolean(agentPresences[agent.pubkey]);
+                // The tier door, not a screen-local reinterpretation: the same
+                // lease record every surface reads. DORMANT means the lease has
+                // been dark past the sustained-absence grace — identity stays
+                // in the roster, but this label never claims liveness.
+                const tier = presenceKnown
+                  ? resolveAgentPresenceTier(agentPresences[agent.pubkey], presenceNow)
+                  : undefined;
+                const presenceWord = online
+                  ? 'ONLINE'
+                  : tier === 'dormant'
+                    ? 'DORMANT'
+                    : presenceKnown
+                      ? 'OFFLINE'
+                      : '—';
+                return (
+                  <TouchableOpacity
+                    key={agent.agentId}
+                    accessibilityLabel={`${display.name}, ${display.personality}, ${online ? 'online' : 'offline'}`}
+                    style={[
+                      styles.agentRow,
+                      selectedPubkey === agent.pubkey && styles.agentRowActive,
+                    ]}
+                    onPress={() => chooseAgent(agent)}
+                  >
+                    <IdentityMark
+                      kind="agent"
+                      seed={display.avatarSeed ?? agent.pubkey}
+                      avatarUrl={display.avatarUrl}
+                      name={display.name}
+                      size={44}
+                      alive={online}
+                    />
+                    <View style={styles.agentCopy}>
+                      <Text
+                        style={styles.agentName}
+                        numberOfLines={1}
+                        testID={`agent-${agent.pubkey}-identity`}
+                      >
+                        {display.name}
+                      </Text>
+                      <Text style={styles.personality} numberOfLines={2}>
+                        {display.personality}
+                      </Text>
+                    </View>
+                    <View style={styles.agentPresence} testID={`agent-${agent.pubkey}-presence`}>
+                      <Text
+                        style={[
+                          styles.presenceDot,
+                          online ? styles.presenceOnline : styles.presenceOffline,
+                        ]}
+                      >
+                        {online ? '●' : '○'}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.presenceLabel,
+                          online ? styles.presenceOnlineLabel : styles.presenceOfflineLabel,
+                        ]}
+                        testID={`agent-${agent.pubkey}-presence-label`}
+                      >
+                        {presenceWord}
+                      </Text>
+                    </View>
+                    <Text style={styles.chevron}>›</Text>
+                  </TouchableOpacity>
+                );
+              })
+            )}
           </View>
 
           {selected && canManageWorkspace && (
@@ -1054,7 +1087,10 @@ export default function BuzzAgents() {
               <View style={styles.editorTitleRow}>
                 <IdentityMark
                   kind="agent"
-                  seed={resolveAgentDisplayIdentity(selected.pubkey, selected).avatarSeed ?? selected.pubkey}
+                  seed={
+                    resolveAgentDisplayIdentity(selected.pubkey, selected).avatarSeed ??
+                    selected.pubkey
+                  }
                   avatarUrl={avatarUrl}
                   name={resolveAgentDisplayIdentity(selected.pubkey, selected).name}
                   size={42}
@@ -1070,13 +1106,24 @@ export default function BuzzAgents() {
               </View>
               {(presenceResolved || Boolean(agentPresences[selected.pubkey])) &&
                 !isAgentPresenceOnline(agentPresences[selected.pubkey], presenceNow) && (
-                <View style={styles.agentOfflineNotice} testID={`agent-${selected.pubkey}-offline-notice`}>
-                  <Text style={styles.agentOfflineNoticeTitle}>○ OFFLINE</Text>
-                  <Text style={styles.agentOfflineNoticeText}>
-                    No daemon is reporting in. Messages will wait until it reconnects.
-                  </Text>
-                </View>
-              )}
+                  <View
+                    style={styles.agentOfflineNotice}
+                    testID={`agent-${selected.pubkey}-offline-notice`}
+                  >
+                    <Text style={styles.agentOfflineNoticeTitle}>
+                      {resolveAgentPresenceTier(agentPresences[selected.pubkey], presenceNow) ===
+                      'dormant'
+                        ? '○ DORMANT'
+                        : '○ OFFLINE'}
+                    </Text>
+                    <Text style={styles.agentOfflineNoticeText}>
+                      {resolveAgentPresenceTier(agentPresences[selected.pubkey], presenceNow) ===
+                      'dormant'
+                        ? 'No daemon has reported in for over a day. Reconnect it, or re-pair the Agent to replace this key.'
+                        : 'No daemon is reporting in. Messages will wait until it reconnects.'}
+                    </Text>
+                  </View>
+                )}
               <View style={styles.avatarActions}>
                 <TouchableOpacity
                   accessibilityLabel={`Message ${resolveAgentDisplayIdentity(selected.pubkey, selected).name}`}
@@ -1091,15 +1138,15 @@ export default function BuzzAgents() {
                     nothing while PHOTO_OVERRIDES_ENABLED is false. changeAvatar/
                     resetAvatar stay intact for revival. */}
                 {PHOTO_OVERRIDES_ENABLED && (
-                <TouchableOpacity
-                  style={styles.secondaryButton}
-                  disabled={busy}
-                  onPress={() => void changeAvatar()}
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    {avatarUrl ? 'Change picture' : 'Set picture'}
-                  </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    disabled={busy}
+                    onPress={() => void changeAvatar()}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {avatarUrl ? 'Change picture' : 'Set picture'}
+                    </Text>
+                  </TouchableOpacity>
                 )}
                 {PHOTO_OVERRIDES_ENABLED && avatarUrl && (
                   <TouchableOpacity
@@ -1132,17 +1179,14 @@ export default function BuzzAgents() {
                 autoCapitalize="words"
               />
               <Text style={styles.fieldHint}>
-                A short spoken name — one word or a compound like "Quiet
-                Keeper". Mention as @
+                A short spoken name — one word or a compound like "Quiet Keeper". Mention as @
                 {name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'name'}.
               </Text>
               <View style={styles.editorActions}>
                 <MonoButton
                   label="Save"
                   style={[styles.primaryButton, styles.flexButton]}
-                  disabled={
-                    !soul.trim() || !isReasonableAgentName(name) || busy
-                  }
+                  disabled={!soul.trim() || !isReasonableAgentName(name) || busy}
                   onPress={() => void saveSoul()}
                 />
                 <TouchableOpacity
@@ -1154,17 +1198,25 @@ export default function BuzzAgents() {
                 </TouchableOpacity>
               </View>
               {selected && (
-                <View style={styles.modelConfigSection} testID={`agent-${selected.pubkey}-model-config`}>
+                <View
+                  style={styles.modelConfigSection}
+                  testID={`agent-${selected.pubkey}-model-config`}
+                >
                   <Text style={styles.label}>Model / Effort</Text>
                   {!modelCatalog && (
                     <Text style={styles.modelConfigHint} testID="model-catalog-missing">
-                      This agent has not reported its model catalog yet. You can still set a
-                      value by hand — it applies on the agent's next session.
+                      This agent has not reported its model catalog yet. You can still set a value
+                      by hand — it applies on the agent's next session.
                     </Text>
                   )}
-                  {(modelCatalog && modelCatalog.length > 0 ? modelCatalog : MODEL_FALLBACK_AXES).map((axis) => {
-                    const persisted = axis.category === 'model' ? modelSelection?.model : modelSelection?.effort;
-                    const configured = axis.category === 'model' ? agentSelection?.model : agentSelection?.effort;
+                  {(modelCatalog && modelCatalog.length > 0
+                    ? modelCatalog
+                    : MODEL_FALLBACK_AXES
+                  ).map((axis) => {
+                    const persisted =
+                      axis.category === 'model' ? modelSelection?.model : modelSelection?.effort;
+                    const configured =
+                      axis.category === 'model' ? agentSelection?.model : agentSelection?.effort;
                     // A human in-app pick wins, then what the agent itself
                     // reports running with (a CLI `beeline pair --model`/
                     // `--effort` default), then the harness's own snapshot.
@@ -1194,7 +1246,10 @@ export default function BuzzAgents() {
                             {isEffortAxis ? 'Effort' : 'Model'}
                           </Text>
                           <Text
-                            style={[styles.modelAxisValue, !currentValue && styles.modelAxisValueUnset]}
+                            style={[
+                              styles.modelAxisValue,
+                              !currentValue && styles.modelAxisValueUnset,
+                            ]}
                             numberOfLines={1}
                             testID={`model-axis-value-${axis.id}`}
                           >
@@ -1222,7 +1277,9 @@ export default function BuzzAgents() {
                               >
                                 {choice.name ?? choice.id}
                               </Text>
-                              {choice.id === currentValue && <Text style={styles.modelOptionCheck}>✓</Text>}
+                              {choice.id === currentValue && (
+                                <Text style={styles.modelOptionCheck}>✓</Text>
+                              )}
                             </TouchableOpacity>
                           ))}
                         {/* Custom-id escape, MODEL ONLY: a catalog miss is not
@@ -1243,7 +1300,12 @@ export default function BuzzAgents() {
                               }}
                               testID={`model-custom-${axis.id}`}
                             >
-                              <Text style={[styles.modelOptionText, isCustomOpen && styles.modelOptionTextActive]}>
+                              <Text
+                                style={[
+                                  styles.modelOptionText,
+                                  isCustomOpen && styles.modelOptionTextActive,
+                                ]}
+                              >
                                 Enter a custom id…
                               </Text>
                             </TouchableOpacity>
@@ -1255,20 +1317,29 @@ export default function BuzzAgents() {
                                   onChangeText={setCustomModelText}
                                   autoCapitalize="none"
                                   autoCorrect={false}
-                                  placeholder={axis.category === 'model' ? 'provider/model-id' : 'low | medium | high | …'}
+                                  placeholder={
+                                    axis.category === 'model'
+                                      ? 'provider/model-id'
+                                      : 'low | medium | high | …'
+                                  }
                                   placeholderTextColor={theme.buzz.textMuted}
                                   editable={!modelConfigWorking}
                                   testID={`model-custom-input-${axis.id}`}
                                 />
                                 <TouchableOpacity
-                                  disabled={modelConfigWorking || customModelText.trim().length === 0}
-                                  onPress={() => void chooseModelOption(axis, customModelText.trim())}
+                                  disabled={
+                                    modelConfigWorking || customModelText.trim().length === 0
+                                  }
+                                  onPress={() =>
+                                    void chooseModelOption(axis, customModelText.trim())
+                                  }
                                   testID={`model-custom-submit-${axis.id}`}
                                 >
                                   <Text
                                     style={[
                                       styles.modelCustomApply,
-                                      customModelText.trim().length > 0 && styles.modelOptionTextActive,
+                                      customModelText.trim().length > 0 &&
+                                        styles.modelOptionTextActive,
                                     ]}
                                   >
                                     Apply
@@ -1332,441 +1403,498 @@ export default function BuzzAgents() {
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  loading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: groknight.bgTerminal,
-  },
-  container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
-  header: {
-    minHeight: 58,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: groknight.bgTerminal,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
-  headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
-  title: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 20,
-    lineHeight: 24,
-  },
-  headerMeta: { ...Typography.default(), fontFamily: groknight.proseRegular, marginTop: 2, color: groknight.muted, fontSize: 11 },
-  scrollContent: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 56 },
-  pairPanel: {
-    paddingBottom: 24,
-    marginBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  pairNote: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.textSecondary, fontSize: 13, lineHeight: 19 },
-  stepLabel: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    marginTop: 14,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  commandRow: {
-    marginTop: 6,
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: groknight.name === 'ledger' ? 8 : 13,
-    backgroundColor: groknight.bgBase,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-  },
-  command: {
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textPrimary,
-    ...Typography.mono('semiBold'),
-    fontSize: 13,
-  },
-  copyText: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    marginLeft: 10,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  waitingRow: { marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  expiry: { ...Typography.mono(), color: groknight.textMuted, fontSize: 11, lineHeight: 15 },
-  errorPanel: {
-    padding: 10,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  errorLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
-  },
-  error: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 4,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  memberSection: { marginBottom: 32 },
-  sectionHeader: { marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  sectionTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    flex: 1,
-    color: groknight.textPrimary,
-    fontSize: 14,
-  },
-  count: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.muted, fontSize: 12 },
-  sectionAction: { alignSelf: 'center' },
-  sectionEmpty: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    paddingVertical: 18,
-    color: groknight.textMuted,
-    fontSize: 13,
-  },
-  peopleList: {},
-  personRow: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 13,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  personCopy: { flex: 1, minWidth: 0 },
-  personName: { ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold, color: groknight.textPrimary, fontSize: groknight.name === 'ledger' ? 13 : 15 },
-  personTrailing: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  roleLabelButton: {
-    minHeight: 28,
-    minWidth: 44,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roleLabelText: {
-    ...Typography.mono('semiBold'),
-    fontSize: 10,
-    letterSpacing: 0.5,
-  },
-  roleSegment: {
-    flexDirection: 'row',
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  roleSegmentButton: {
-    minHeight: 28,
-    paddingHorizontal: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  roleSegmentDivider: { borderLeftWidth: 1, borderLeftColor: groknight.border },
-  roleText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 8,
-    letterSpacing: 0.4,
-  },
-  roleTextSelected: { color: groknight.textPrimary },
-  removePersonButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  removePersonText: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.steel, fontSize: 22 },
-  empty: {
-    alignItems: 'center',
-    paddingTop: 46,
-    paddingBottom: 34,
-    paddingHorizontal: 22,
-  },
-  emptyGlyph: {
-    ...Typography.default(),
-    width: 44,
-    height: 44,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    borderRadius: 3,
-    color: groknight.steel,
-    fontSize: 26,
-    lineHeight: 42,
-    textAlign: 'center',
-  },
-  emptyTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    marginTop: 10,
-    color: groknight.textPrimary,
-    fontSize: 16,
-  },
-  emptyCopy: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 7,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-    textAlign: 'center',
-  },
-  agentRow: {
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: groknight.name === 'ledger' ? 8 : 13,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  agentRowActive: { backgroundColor: groknight.bgBase },
-  agentCopy: { flex: 1, minWidth: 0 },
-  agentName: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 15,
-  },
-  personality: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 3,
-    color: groknight.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
-  },
-  agentPresence: { flexShrink: 0, alignItems: 'flex-end' },
-  presenceDot: { ...Typography.default(), fontSize: 8 },
-  presenceOnline: { color: groknight.accent },
-  presenceOffline: { color: groknight.textMuted },
-  presenceLabel: {
-    ...Typography.mono('semiBold'),
-    marginTop: 2,
-    fontSize: 9,
-    letterSpacing: 0.5,
-  },
-  presenceOnlineLabel: { color: groknight.accent },
-  presenceOfflineLabel: { color: groknight.textMuted },
-  agentOfflineNotice: {
-    marginBottom: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
-  },
-  agentOfflineNoticeTitle: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 0.55,
-  },
-  agentOfflineNoticeText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 3,
-    color: groknight.textSecondary,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  chevron: { ...Typography.default(), color: groknight.chrome, fontSize: 24 },
-  editor: {
-    marginTop: 24,
-    paddingTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-  },
-  editorTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
-  editorTitleCopy: { flex: 1, minWidth: 0 },
-  avatarActions: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
-  avatarReset: { minHeight: 44, justifyContent: 'center' },
-  avatarResetText: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textSecondary,
-    fontSize: 12,
-  },
-  fieldHint: {
-    ...Typography.mono(),
-    marginTop: 6,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 15,
-  },
-  editorTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 16,
-  },
-  editorHint: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 4,
-    color: groknight.steel,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  label: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    marginTop: 10,
-    marginBottom: 6,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  input: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    minHeight: 44,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: groknight.textPrimary,
-    fontSize: 13,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgTerminal,
-  },
-  soulInput: { minHeight: 112, textAlignVertical: 'top' },
-  primaryButton: {
-    marginTop: 10,
-  },
-  secondaryButton: {
-    marginTop: 10,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    backgroundColor: 'transparent',
-  },
-  secondaryButtonText: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  editorActions: { flexDirection: 'row', gap: 8 },
-  flexButton: { flex: 1, minWidth: 0 },
-  modelConfigSection: { marginTop: 12 },
-  modelConfigHint: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    color: groknight.textMuted,
-    fontSize: 12,
-    paddingBottom: 8,
-  },
-  modelAxisBlock: { borderBottomWidth: 1, borderBottomColor: groknight.border },
-  modelAxisRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-  },
-  modelAxisLabel: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  modelAxisValue: {
-    ...Typography.mono(),
-    flex: 1,
-    minWidth: 0,
-    textAlign: 'right',
-    color: groknight.textPrimary,
-    fontSize: 12,
-  },
-  modelAxisValueUnset: { color: groknight.textMuted },
-  modelCustomBlock: { paddingBottom: 8 },
-  modelCustomEntry: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingLeft: 12,
-    paddingRight: 12,
-    paddingBottom: 8,
-  },
-  modelCustomInput: {
-    ...Typography.mono(),
-    flex: 1,
-    minWidth: 0,
-    color: groknight.textPrimary,
-    fontSize: 12,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-  },
-  modelCustomApply: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textMuted,
-    fontSize: 12,
-    paddingHorizontal: 4,
-  },
-  modelOptionRow: {
-    minHeight: 38,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    paddingLeft: 12,
-  },
-  modelOptionText: { ...Typography.mono(), color: groknight.textMuted, fontSize: 12 },
-  modelOptionTextActive: { color: groknight.accent },
-  modelOptionCheck: { ...Typography.default(), fontFamily: groknight.proseRegular, color: groknight.accent, fontSize: 12 },
-  removeButton: {
-    marginTop: 22,
-    minHeight: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgBase,
-  },
-  removeButtonLabel: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 12,
-    letterSpacing: 0.3,
-  },
-  removeButtonHint: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 3,
-    color: groknight.textMuted,
-    fontSize: 9,
-    letterSpacing: 0.4,
-  },
-  removeConfirm: {
-    marginTop: 8,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: groknight.textPrimary,
-    backgroundColor: groknight.bgHighlight,
-  },
-  removeConfirmFlag: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 9,
-    letterSpacing: 1.4,
-  },
-  removeConfirmTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    marginTop: 7,
-    color: groknight.textPrimary,
-    fontSize: 16,
-  },
-  removeConfirmCopy: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 6,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  removeConfirmActions: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  disabled: { backgroundColor: groknight.bgBase },
-  });
+  return {
+    loading: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: groknight.bgTerminal,
+    },
+    container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
+    header: {
+      minHeight: 58,
+      paddingHorizontal: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: groknight.bgTerminal,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
+    headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
+    title: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 20,
+      lineHeight: 24,
+    },
+    headerMeta: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 2,
+      color: groknight.muted,
+      fontSize: 11,
+    },
+    scrollContent: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 56 },
+    pairPanel: {
+      paddingBottom: 24,
+      marginBottom: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    pairNote: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.textSecondary,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    stepLabel: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      marginTop: 14,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    commandRow: {
+      marginTop: 6,
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: groknight.name === 'ledger' ? 8 : 13,
+      backgroundColor: groknight.bgBase,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+    },
+    command: {
+      flex: 1,
+      minWidth: 0,
+      color: groknight.textPrimary,
+      ...Typography.mono('semiBold'),
+      fontSize: 13,
+    },
+    copyText: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      marginLeft: 10,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    waitingRow: { marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 7 },
+    expiry: { ...Typography.mono(), color: groknight.textMuted, fontSize: 11, lineHeight: 15 },
+    errorPanel: {
+      padding: 10,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    errorLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
+    },
+    error: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 4,
+      color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    memberSection: { marginBottom: 32 },
+    sectionHeader: { marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 },
+    sectionTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      flex: 1,
+      color: groknight.textPrimary,
+      fontSize: 14,
+    },
+    count: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.muted,
+      fontSize: 12,
+    },
+    sectionAction: { alignSelf: 'center' },
+    sectionEmpty: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      paddingVertical: 18,
+      color: groknight.textMuted,
+      fontSize: 13,
+    },
+    peopleList: {},
+    personRow: {
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 13,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    personCopy: { flex: 1, minWidth: 0 },
+    personName: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: groknight.name === 'ledger' ? 13 : 15,
+    },
+    personTrailing: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
+    roleLabelButton: {
+      minHeight: 28,
+      minWidth: 44,
+      paddingHorizontal: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roleLabelText: {
+      ...Typography.mono('semiBold'),
+      fontSize: 10,
+      letterSpacing: 0.5,
+    },
+    roleSegment: {
+      flexDirection: 'row',
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: 3,
+      overflow: 'hidden',
+    },
+    roleSegmentButton: {
+      minHeight: 28,
+      paddingHorizontal: 7,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    roleSegmentDivider: { borderLeftWidth: 1, borderLeftColor: groknight.border },
+    roleText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 8,
+      letterSpacing: 0.4,
+    },
+    roleTextSelected: { color: groknight.textPrimary },
+    removePersonButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    removePersonText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.steel,
+      fontSize: 22,
+    },
+    empty: {
+      alignItems: 'center',
+      paddingTop: 46,
+      paddingBottom: 34,
+      paddingHorizontal: 22,
+    },
+    emptyGlyph: {
+      ...Typography.default(),
+      width: 44,
+      height: 44,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      borderRadius: 3,
+      color: groknight.steel,
+      fontSize: 26,
+      lineHeight: 42,
+      textAlign: 'center',
+    },
+    emptyTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      marginTop: 10,
+      color: groknight.textPrimary,
+      fontSize: 16,
+    },
+    emptyCopy: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 7,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+      textAlign: 'center',
+    },
+    agentRow: {
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: groknight.name === 'ledger' ? 8 : 13,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    agentRowActive: { backgroundColor: groknight.bgBase },
+    agentCopy: { flex: 1, minWidth: 0 },
+    agentName: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 15,
+    },
+    personality: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 3,
+      color: groknight.textSecondary,
+      fontSize: 11,
+      lineHeight: 16,
+    },
+    agentPresence: { flexShrink: 0, alignItems: 'flex-end' },
+    presenceDot: { ...Typography.default(), fontSize: 8 },
+    presenceOnline: { color: groknight.accent },
+    presenceOffline: { color: groknight.textMuted },
+    presenceLabel: {
+      ...Typography.mono('semiBold'),
+      marginTop: 2,
+      fontSize: 9,
+      letterSpacing: 0.5,
+    },
+    presenceOnlineLabel: { color: groknight.accent },
+    presenceOfflineLabel: { color: groknight.textMuted },
+    agentOfflineNotice: {
+      marginBottom: 14,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgBase,
+    },
+    agentOfflineNoticeTitle: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.55,
+    },
+    agentOfflineNoticeText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 3,
+      color: groknight.textSecondary,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    chevron: { ...Typography.default(), color: groknight.chrome, fontSize: 24 },
+    editor: {
+      marginTop: 24,
+      paddingTop: 20,
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+    },
+    editorTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+    editorTitleCopy: { flex: 1, minWidth: 0 },
+    avatarActions: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
+    avatarReset: { minHeight: 44, justifyContent: 'center' },
+    avatarResetText: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textSecondary,
+      fontSize: 12,
+    },
+    fieldHint: {
+      ...Typography.mono(),
+      marginTop: 6,
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 15,
+    },
+    editorTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 16,
+    },
+    editorHint: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 4,
+      color: groknight.steel,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    label: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      marginTop: 10,
+      marginBottom: 6,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    input: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      minHeight: 44,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      color: groknight.textPrimary,
+      fontSize: 13,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      backgroundColor: groknight.bgTerminal,
+    },
+    soulInput: { minHeight: 112, textAlignVertical: 'top' },
+    primaryButton: {
+      marginTop: 10,
+    },
+    secondaryButton: {
+      marginTop: 10,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+      backgroundColor: 'transparent',
+    },
+    secondaryButtonText: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    editorActions: { flexDirection: 'row', gap: 8 },
+    flexButton: { flex: 1, minWidth: 0 },
+    modelConfigSection: { marginTop: 12 },
+    modelConfigHint: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.textMuted,
+      fontSize: 12,
+      paddingBottom: 8,
+    },
+    modelAxisBlock: { borderBottomWidth: 1, borderBottomColor: groknight.border },
+    modelAxisRow: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 10,
+    },
+    modelAxisLabel: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    modelAxisValue: {
+      ...Typography.mono(),
+      flex: 1,
+      minWidth: 0,
+      textAlign: 'right',
+      color: groknight.textPrimary,
+      fontSize: 12,
+    },
+    modelAxisValueUnset: { color: groknight.textMuted },
+    modelCustomBlock: { paddingBottom: 8 },
+    modelCustomEntry: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingLeft: 12,
+      paddingRight: 12,
+      paddingBottom: 8,
+    },
+    modelCustomInput: {
+      ...Typography.mono(),
+      flex: 1,
+      minWidth: 0,
+      color: groknight.textPrimary,
+      fontSize: 12,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: 3,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+    },
+    modelCustomApply: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textMuted,
+      fontSize: 12,
+      paddingHorizontal: 4,
+    },
+    modelOptionRow: {
+      minHeight: 38,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 8,
+      paddingLeft: 12,
+    },
+    modelOptionText: { ...Typography.mono(), color: groknight.textMuted, fontSize: 12 },
+    modelOptionTextActive: { color: groknight.accent },
+    modelOptionCheck: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.accent,
+      fontSize: 12,
+    },
+    removeButton: {
+      marginTop: 22,
+      minHeight: 52,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgBase,
+    },
+    removeButtonLabel: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 12,
+      letterSpacing: 0.3,
+    },
+    removeButtonHint: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 3,
+      color: groknight.textMuted,
+      fontSize: 9,
+      letterSpacing: 0.4,
+    },
+    removeConfirm: {
+      marginTop: 8,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: groknight.textPrimary,
+      backgroundColor: groknight.bgHighlight,
+    },
+    removeConfirmFlag: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 9,
+      letterSpacing: 1.4,
+    },
+    removeConfirmTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      marginTop: 7,
+      color: groknight.textPrimary,
+      fontSize: 16,
+    },
+    removeConfirmCopy: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 6,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    removeConfirmActions: { flexDirection: 'row', gap: 8, marginTop: 8 },
+    disabled: { backgroundColor: groknight.bgBase },
+  };
 });

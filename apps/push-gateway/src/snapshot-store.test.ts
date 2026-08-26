@@ -166,6 +166,11 @@ describe('ChannelSnapshotStore dirty worklist', () => {
   it('releases redirtied hot claims and selects a cold channel within two claims', async () => {
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, COLD]);
+    await database.query(
+      `UPDATE beeline_snapshot_dirty SET dirty_at = now() - interval '1 hour'
+       WHERE relay_tenant_id = $1 AND channel_id = $2`,
+      [TENANT, HOT],
+    );
     const dirtyBeforeBurst = await database.query<{ dirty_at: Date }>(
       `SELECT dirty_at FROM beeline_snapshot_dirty
        WHERE relay_tenant_id = $1 AND channel_id = $2`,
@@ -214,7 +219,9 @@ describe('ChannelSnapshotStore dirty worklist', () => {
        WHERE relay_tenant_id = $1 AND channel_id = $2`,
       [TENANT, HOT],
     );
-    expect(dirtyAfterBurst.rows[0]?.dirty_at).toEqual(dirtyBeforeBurst.rows[0]?.dirty_at);
+    expect(dirtyAfterBurst.rows[0]!.dirty_at.getTime()).toBeGreaterThan(
+      dirtyBeforeBurst.rows[0]!.dirty_at.getTime(),
+    );
     await store.discard(hotClaim!);
 
     expect((await store.status()).depth).toBe(2);
@@ -222,10 +229,21 @@ describe('ChannelSnapshotStore dirty worklist', () => {
     expect(next?.channelId).toBe(COLD);
   });
 
-  it('does not publish a projection after its claim is redirtied', async () => {
+  it('publishes a projection and retains work that arrived after its boundary', async () => {
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
+    await database.query(
+      `UPDATE beeline_snapshot_dirty SET dirty_at = now() - interval '1 hour'
+       WHERE relay_tenant_id = $1 AND channel_id = $2`,
+      [TENANT, HOT],
+    );
     const [claim] = await store.claimDirty(1, 60_000);
     expect(claim).toBeDefined();
+
+    const claimed = await database.query<{ dirty_at: Date }>(
+      `SELECT dirty_at FROM beeline_snapshot_dirty
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid`,
+      [TENANT, HOT],
+    );
 
     await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [TENANT, HOT]);
     const payload = goldenPayload();
@@ -239,14 +257,16 @@ describe('ChannelSnapshotStore dirty worklist', () => {
     const dirty = await database.query<{
       dirty_revision: string | number;
       claimed_token: string | null;
+      dirty_at: Date;
     }>(
-      `SELECT dirty_revision, claimed_token FROM beeline_snapshot_dirty
+      `SELECT dirty_revision, claimed_token, dirty_at FROM beeline_snapshot_dirty
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid`,
       [TENANT, HOT],
     );
-    expect(Number(snapshots.rows[0]?.count)).toBe(0);
+    expect(Number(snapshots.rows[0]?.count)).toBe(1);
     expect(Number(dirty.rows[0]?.dirty_revision)).toBeGreaterThan(claim!.dirtyRevision);
     expect(dirty.rows[0]?.claimed_token).toBeNull();
+    expect(dirty.rows[0]!.dirty_at.getTime()).toBeGreaterThan(claimed.rows[0]!.dirty_at.getTime());
   });
 
   it('drops deleted channels without acknowledging a newer dirty generation', async () => {

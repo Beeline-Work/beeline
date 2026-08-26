@@ -26,13 +26,7 @@ import {
   type ProjectionInput,
 } from './snapshot-store.js';
 
-export interface SnapshotMaterializerStore {
-  enqueueBackfill(): Promise<void>;
-  claimDirty(
-    limit: number,
-    leaseMs: number,
-    coalesceMs?: number,
-  ): Promise<readonly DirtyChannelClaim[]>;
+export interface SnapshotProjectionReader {
   loadProjectionInput(claim: DirtyChannelClaim): Promise<ProjectionInput | null>;
   loadMessagePage(
     tenantId: string,
@@ -56,6 +50,17 @@ export interface SnapshotMaterializerStore {
     tenantId: string,
     pubkeys: readonly string[],
   ): Promise<readonly import('@beeline/nostr').NostrEvent[]>;
+  nextRevision(tenantId: string, channelId: string): Promise<number>;
+}
+
+export interface SnapshotMaterializerStore extends SnapshotProjectionReader {
+  enqueueBackfill(): Promise<void>;
+  claimDirty(
+    limit: number,
+    leaseMs: number,
+    coalesceMs?: number,
+  ): Promise<readonly DirtyChannelClaim[]>;
+  withProjectionBoundary<T>(work: (reader: ChannelSnapshotStore) => Promise<T>): Promise<T>;
   continueScan(
     claim: DirtyChannelClaim,
     continuation: {
@@ -69,7 +74,6 @@ export interface SnapshotMaterializerStore {
     repositoryEventId?: string,
   ): Promise<void>;
   recordRepositoryEvent(claim: DirtyChannelClaim, repositoryEventId?: string): Promise<void>;
-  nextRevision(tenantId: string, channelId: string): Promise<number>;
   complete(
     claim: DirtyChannelClaim,
     payload: ReturnType<typeof buildStoredChannelSnapshotV1>,
@@ -78,6 +82,30 @@ export interface SnapshotMaterializerStore {
   discard(claim: DirtyChannelClaim): Promise<void>;
   fail(claim: DirtyChannelClaim, error: unknown): Promise<void>;
 }
+
+type SnapshotProjectionResult =
+  | { readonly kind: 'discard' }
+  | {
+      readonly kind: 'repository-continuation';
+      readonly input: ProjectionInput;
+      readonly repositoryEventId?: string;
+    }
+  | {
+      readonly kind: 'message-continuation';
+      readonly input: ProjectionInput;
+      readonly cursor: NonNullable<ProjectionInput['messageCursor']>;
+      readonly eventIds: readonly string[];
+      readonly pages: number;
+    }
+  | {
+      readonly kind: 'complete';
+      readonly input: ProjectionInput;
+      readonly payload: ReturnType<typeof buildStoredChannelSnapshotV1>;
+      readonly digest: string;
+      readonly repositoryEventId?: string;
+      readonly quarantines: number;
+      readonly identitiesStale: boolean;
+    };
 
 export interface SnapshotMaterializerOptions {
   readonly batchSize?: number;
@@ -241,232 +269,261 @@ export class ChannelSnapshotMaterializer {
   private async rebuild(claim: DirtyChannelClaim): Promise<void> {
     const startedAt = this.now();
     try {
-      const input = await this.store.loadProjectionInput(claim);
-      if (!input) {
+      const result = await this.store.withProjectionBoundary((reader) =>
+        this.project(claim, reader),
+      );
+      if (result.kind === 'discard') {
         await this.store.discard(claim);
-        return;
-      }
-      const [members, memberHistory] = await Promise.all([
-        this.store.loadCurrentMembers(input.tenantId, input.channelIds),
-        this.store.loadMemberHistory(input.tenantId, input.channelIds),
-      ]);
-      const historicalMessagePubkeys = Object.fromEntries(
-        input.channelIds.map((channelId) => [
-          channelId,
-          [
-            ...new Set(
-              memberHistory
-                .filter((member) => member.channelId === channelId)
-                .map((member) => member.pubkey),
-            ),
-          ],
-        ]),
-      );
-      const relayEvents = new Map(input.events.map((event) => [event.id, event]));
-      let messageCursor = input.messageCursor;
-      let messagesExhausted = input.messagesExhausted;
-      let messagePagesRead = 1;
-      const attemptedReplyParentIds = new Set<string>();
-      let projection:
-        | {
-            readonly parsed: readonly ReadEvent[];
-            readonly cursor: ChannelSnapshotCursorV1;
-            readonly snapshot: ReturnType<typeof createWorkspaceSnapshot>;
-            readonly succession: SuccessionResolution;
-          }
-        | undefined;
-      while (true) {
-        const currentEvents = [...relayEvents.values()];
-        const initialFacts = deriveRelayAuthorityFacts(currentEvents);
-        const identityKeys = [
-          ...new Set([
-            ...members.map((member) => member.pubkey),
-            ...initialFacts.memberPubkeys,
-            ...currentEvents.map((event) => event.pubkey),
-          ]),
-        ];
-        const [identityEvents, succession] = await Promise.all([
-          this.store.loadIdentityEvents(input.tenantId, identityKeys),
-          this.succession.resolve(input.tenantId, identityKeys),
-        ]);
-        const events = [
-          ...new Map(
-            [...currentEvents, ...identityEvents].map((event) => [event.id, event]),
-          ).values(),
-        ];
-        const facts = deriveRelayAuthorityFacts(events);
-        const workspaceId = input.channelIds
-          .map((channelId) => facts.workspaceIdsByChannel[channelId])
-          .find((candidate): candidate is string => Boolean(candidate));
-        if (!workspaceId) throw new Error('snapshot projection lacks a verified Workspace id');
-        const identities = identityAuthority(
-          members,
-          currentEvents.map((event) => event.pubkey),
-          facts.identityHints,
-          succession,
+      } else if (result.kind === 'repository-continuation') {
+        await this.store.continueRepositoryScan(
+          claim,
+          result.input.repositoryCursor!,
+          result.repositoryEventId,
         );
-        const authority: ParseAuthority = {
-          workspaceId,
-          allowedChannelIds: input.channelIds,
-          identities,
-          channelCreators: facts.channelCreators,
-          channelOwners: currentOwnerAuthority(facts.channelCreators, succession, members),
-          channelAdmins: aliasAuthority(facts.channelAdmins, succession),
-          trustedProjectionPubkeys: facts.trustedProjectionPubkeys,
-          historicalMessagePubkeys,
-        };
-        const parsed = parseRelayEvents(events, authority);
-        const acceptedRepositoryEventId = parsed
-          .filter(
-            (event) =>
-              event.type === 'control' &&
-              event.payload.kind === 'repository' &&
-              'channelId' in event &&
-              event.channelId === input.repositoryChannelId,
-          )
-          .sort(
-            (a, b) =>
-              (a.createdAt ?? Number.MAX_SAFE_INTEGER) -
-                (b.createdAt ?? Number.MAX_SAFE_INTEGER) ||
-              (a.eventId ?? '').localeCompare(b.eventId ?? ''),
-          )
-          .at(-1)?.eventId;
-        if (!input.repositoriesExhausted) {
-          if (!input.repositoryCursor) {
-            throw new Error('snapshot repository scan lost its continuation cursor');
-          }
-          await this.store.continueRepositoryScan(
-            claim,
-            input.repositoryCursor,
-            acceptedRepositoryEventId,
-          );
-          this.log(
-            `[snapshot] yielded tenant=${input.tenantId} channel=${input.channelId} repository_scan=true`,
-          );
-          return;
-        }
-        await this.store.recordRepositoryEvent(claim, acceptedRepositoryEventId);
-        const cursor = input.cursor;
-        let snapshot = reduceWorkspaceEvents(
-          createWorkspaceSnapshot({ workspaceId, identities: Object.values(identities) }),
-          parsed,
+        this.log(
+          `[snapshot] yielded tenant=${result.input.tenantId} channel=${result.input.channelId} repository_scan=true`,
         );
-        snapshot = canonicalizeWorkspaceMembership(
-          snapshot,
-          Object.fromEntries(
-            input.channelIds.map((channelId) => [
-              channelId,
-              members
-                .filter((member) => member.channelId === channelId)
-                .map((member) => member.pubkey),
-            ]),
-          ),
-          succession.mappings,
-        );
-        projection = { parsed, cursor, snapshot, succession };
-        const unresolvedParentIds = unresolvedReplyParentIds(currentEvents, parsed).filter(
-          (eventId) => !relayEvents.has(eventId) && !attemptedReplyParentIds.has(eventId),
-        );
-        if (unresolvedParentIds.length > 0 && messagePagesRead < this.maxMessagePagesPerClaim) {
-          for (const eventId of unresolvedParentIds) attemptedReplyParentIds.add(eventId);
-          const parents = await this.store.loadMessageEvents(
-            input.tenantId,
-            input.channelId,
-            unresolvedParentIds,
-          );
-          messagePagesRead += 1;
-          if (parents.length > 0) {
-            for (const event of parents) relayEvents.set(event.id, event);
-            continue;
-          }
-        }
-        const persistedSnapshot = boundChannelWorkspaceSnapshot(
-          snapshot,
-          input.channelId,
-          CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
-        );
-        const transcript = selectTranscript(persistedSnapshot, input.channelId, {
-          limit: CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
+      } else if (result.kind === 'message-continuation') {
+        await this.store.continueScan(claim, {
+          cursor: result.cursor,
+          eventIds: result.eventIds,
         });
-        if (messagesExhausted || transcript.length >= CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS) {
-          break;
-        }
-        if (messagePagesRead >= this.maxMessagePagesPerClaim) {
-          if (!messageCursor) throw new Error('snapshot message scan lost its continuation cursor');
-          const rawById = new Map(currentEvents.map((event) => [event.id, event]));
-          const carryIds = new Set<string>(
-            transcript.map((item) => item.id).filter((eventId) => rawById.has(eventId)),
-          );
-          const persistedRoom = persistedSnapshot.rooms[input.channelId];
-          for (const item of transcript) {
-            const event = persistedRoom?.eventJournal[item.id];
-            if (
-              (event?.type === 'human-message' || event?.type === 'agent-message') &&
-              event.reply?.eventId &&
-              rawById.has(event.reply.eventId)
-            ) {
-              carryIds.add(event.reply.eventId);
-            }
-          }
-          const eventIds = [...carryIds]
-            .sort((left, right) => {
-              const leftEvent = rawById.get(left)!;
-              const rightEvent = rawById.get(right)!;
-              return rightEvent.created_at - leftEvent.created_at || left.localeCompare(right);
-            })
-            .slice(0, CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS * 2);
-          await this.store.continueScan(claim, { cursor: messageCursor, eventIds });
-          this.log(
-            `[snapshot] yielded tenant=${input.tenantId} channel=${input.channelId} pages=${messagePagesRead} retained=${eventIds.length}`,
-          );
-          return;
-        }
-        const page = await this.store.loadMessagePage(
-          input.tenantId,
-          input.channelId,
-          messageCursor,
+        this.log(
+          `[snapshot] yielded tenant=${result.input.tenantId} channel=${result.input.channelId} pages=${result.pages} retained=${result.eventIds.length}`,
         );
-        for (const event of page.events) relayEvents.set(event.id, event);
-        messageCursor = page.cursor;
-        messagesExhausted = page.exhausted;
-        messagePagesRead += 1;
+      } else {
+        await this.store.recordRepositoryEvent(claim, result.repositoryEventId);
+        await this.store.complete(claim, result.payload, result.digest);
+        const durationMs = this.now() - startedAt;
+        const bytes = Buffer.byteLength(JSON.stringify(result.payload));
+        this.log(
+          `[snapshot] rebuilt tenant=${result.input.tenantId} channel=${result.input.channelId} duration_ms=${durationMs} bytes=${bytes} quarantines=${result.quarantines} identities_stale=${result.identitiesStale}`,
+        );
       }
-      if (!projection) throw new Error('snapshot projection did not run');
-      const { parsed, cursor, succession } = projection;
-      let { snapshot } = projection;
-      snapshot = commitRoomCoverage(snapshot, input.channelId, {
-        epoch: claim.dirtyRevision,
-        initialBackfillComplete: true,
-        oldest: Math.min(...parsed.map((event) => event.createdAt ?? cursor.createdAt)),
-        newest: cursor.createdAt,
-      });
-      if (!snapshot.rooms[input.channelId]) {
-        throw new Error('snapshot projection did not materialize the requested Room');
-      }
-      const revision = await this.store.nextRevision(input.tenantId, input.channelId);
-      const payload = buildStoredChannelSnapshotV1({
-        snapshot,
-        channelId: input.channelId,
-        revision,
-        projectedAt: this.now(),
-        cursor,
-        identitiesStale: succession.stale,
-        canonicalPubkeys: succession.mappings,
-      });
-      const digest = channelSnapshotDigest(payload);
-      await this.store.complete(claim, payload, digest);
-      const durationMs = this.now() - startedAt;
-      const bytes = Buffer.byteLength(JSON.stringify(payload));
-      const quarantines = snapshot.diagnostics.length;
-      this.log(
-        `[snapshot] rebuilt tenant=${input.tenantId} channel=${input.channelId} duration_ms=${durationMs} bytes=${bytes} quarantines=${quarantines} identities_stale=${succession.stale}`,
-      );
     } catch (error) {
       await this.store.fail(claim, error);
       this.log(
         `[snapshot] rebuild failed tenant=${claim.tenantId} channel=${claim.channelId} error=${JSON.stringify(error instanceof Error ? error.message : String(error))}`,
       );
     }
+  }
+
+  private async project(
+    claim: DirtyChannelClaim,
+    reader: SnapshotProjectionReader,
+  ): Promise<SnapshotProjectionResult> {
+    const input = await reader.loadProjectionInput(claim);
+    if (!input) return { kind: 'discard' };
+    const [members, memberHistory] = await Promise.all([
+      reader.loadCurrentMembers(input.tenantId, input.channelIds),
+      reader.loadMemberHistory(input.tenantId, input.channelIds),
+    ]);
+    const historicalMessagePubkeys = Object.fromEntries(
+      input.channelIds.map((channelId) => [
+        channelId,
+        [
+          ...new Set(
+            memberHistory
+              .filter((member) => member.channelId === channelId)
+              .map((member) => member.pubkey),
+          ),
+        ],
+      ]),
+    );
+    const relayEvents = new Map(input.events.map((event) => [event.id, event]));
+    let messageCursor = input.messageCursor;
+    let messagesExhausted = input.messagesExhausted;
+    let messagePagesRead = 1;
+    let repositoryEventId = input.repositoryEventId;
+    const attemptedReplyParentIds = new Set<string>();
+    let projection:
+      | {
+          readonly parsed: readonly ReadEvent[];
+          readonly cursor: ChannelSnapshotCursorV1;
+          readonly snapshot: ReturnType<typeof createWorkspaceSnapshot>;
+          readonly succession: SuccessionResolution;
+        }
+      | undefined;
+    while (true) {
+      const currentEvents = [...relayEvents.values()];
+      const initialFacts = deriveRelayAuthorityFacts(currentEvents);
+      const identityKeys = [
+        ...new Set([
+          ...members.map((member) => member.pubkey),
+          ...initialFacts.memberPubkeys,
+          ...currentEvents.map((event) => event.pubkey),
+        ]),
+      ];
+      const [identityEvents, succession] = await Promise.all([
+        reader.loadIdentityEvents(input.tenantId, identityKeys),
+        this.succession.resolve(input.tenantId, identityKeys),
+      ]);
+      const events = [
+        ...new Map(
+          [...currentEvents, ...identityEvents].map((event) => [event.id, event]),
+        ).values(),
+      ];
+      const facts = deriveRelayAuthorityFacts(events);
+      const workspaceId = input.channelIds
+        .map((channelId) => facts.workspaceIdsByChannel[channelId])
+        .find((candidate): candidate is string => Boolean(candidate));
+      if (!workspaceId) throw new Error('snapshot projection lacks a verified Workspace id');
+      const identities = identityAuthority(
+        members,
+        currentEvents.map((event) => event.pubkey),
+        facts.identityHints,
+        succession,
+      );
+      const authority: ParseAuthority = {
+        workspaceId,
+        allowedChannelIds: input.channelIds,
+        identities,
+        channelCreators: facts.channelCreators,
+        channelOwners: currentOwnerAuthority(facts.channelCreators, succession, members),
+        channelAdmins: aliasAuthority(facts.channelAdmins, succession),
+        trustedProjectionPubkeys: facts.trustedProjectionPubkeys,
+        historicalMessagePubkeys,
+      };
+      const parsed = parseRelayEvents(events, authority);
+      repositoryEventId = parsed
+        .filter(
+          (event) =>
+            event.type === 'control' &&
+            event.payload.kind === 'repository' &&
+            'channelId' in event &&
+            event.channelId === input.repositoryChannelId,
+        )
+        .sort(
+          (a, b) =>
+            (a.createdAt ?? Number.MAX_SAFE_INTEGER) - (b.createdAt ?? Number.MAX_SAFE_INTEGER) ||
+            (a.eventId ?? '').localeCompare(b.eventId ?? ''),
+        )
+        .at(-1)?.eventId;
+      if (!input.repositoriesExhausted) {
+        if (!input.repositoryCursor) {
+          throw new Error('snapshot repository scan lost its continuation cursor');
+        }
+        return {
+          kind: 'repository-continuation',
+          input,
+          ...(repositoryEventId ? { repositoryEventId } : {}),
+        };
+      }
+      const cursor = input.cursor;
+      let snapshot = reduceWorkspaceEvents(
+        createWorkspaceSnapshot({ workspaceId, identities: Object.values(identities) }),
+        parsed,
+      );
+      snapshot = canonicalizeWorkspaceMembership(
+        snapshot,
+        Object.fromEntries(
+          input.channelIds.map((channelId) => [
+            channelId,
+            members
+              .filter((member) => member.channelId === channelId)
+              .map((member) => member.pubkey),
+          ]),
+        ),
+        succession.mappings,
+      );
+      projection = { parsed, cursor, snapshot, succession };
+      const unresolvedParentIds = unresolvedReplyParentIds(currentEvents, parsed).filter(
+        (eventId) => !relayEvents.has(eventId) && !attemptedReplyParentIds.has(eventId),
+      );
+      if (unresolvedParentIds.length > 0 && messagePagesRead < this.maxMessagePagesPerClaim) {
+        for (const eventId of unresolvedParentIds) attemptedReplyParentIds.add(eventId);
+        const parents = await reader.loadMessageEvents(
+          input.tenantId,
+          input.channelId,
+          unresolvedParentIds,
+        );
+        messagePagesRead += 1;
+        if (parents.length > 0) {
+          for (const event of parents) relayEvents.set(event.id, event);
+          continue;
+        }
+      }
+      const persistedSnapshot = boundChannelWorkspaceSnapshot(
+        snapshot,
+        input.channelId,
+        CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
+      );
+      const transcript = selectTranscript(persistedSnapshot, input.channelId, {
+        limit: CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
+      });
+      if (messagesExhausted || transcript.length >= CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS) {
+        break;
+      }
+      if (messagePagesRead >= this.maxMessagePagesPerClaim) {
+        if (!messageCursor) throw new Error('snapshot message scan lost its continuation cursor');
+        const rawById = new Map(currentEvents.map((event) => [event.id, event]));
+        const carryIds = new Set<string>(
+          transcript.map((item) => item.id).filter((eventId) => rawById.has(eventId)),
+        );
+        const persistedRoom = persistedSnapshot.rooms[input.channelId];
+        for (const item of transcript) {
+          const event = persistedRoom?.eventJournal[item.id];
+          if (
+            (event?.type === 'human-message' || event?.type === 'agent-message') &&
+            event.reply?.eventId &&
+            rawById.has(event.reply.eventId)
+          ) {
+            carryIds.add(event.reply.eventId);
+          }
+        }
+        const eventIds = [...carryIds]
+          .sort((left, right) => {
+            const leftEvent = rawById.get(left)!;
+            const rightEvent = rawById.get(right)!;
+            return rightEvent.created_at - leftEvent.created_at || left.localeCompare(right);
+          })
+          .slice(0, CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS * 2);
+        return {
+          kind: 'message-continuation',
+          input,
+          cursor: messageCursor,
+          eventIds,
+          pages: messagePagesRead,
+        };
+      }
+      const page = await reader.loadMessagePage(input.tenantId, input.channelId, messageCursor);
+      for (const event of page.events) relayEvents.set(event.id, event);
+      messageCursor = page.cursor;
+      messagesExhausted = page.exhausted;
+      messagePagesRead += 1;
+    }
+    if (!projection) throw new Error('snapshot projection did not run');
+    const { parsed, cursor, succession } = projection;
+    let { snapshot } = projection;
+    snapshot = commitRoomCoverage(snapshot, input.channelId, {
+      epoch: claim.dirtyRevision,
+      initialBackfillComplete: true,
+      oldest: Math.min(...parsed.map((event) => event.createdAt ?? cursor.createdAt)),
+      newest: cursor.createdAt,
+    });
+    if (!snapshot.rooms[input.channelId]) {
+      throw new Error('snapshot projection did not materialize the requested Room');
+    }
+    const revision = await reader.nextRevision(input.tenantId, input.channelId);
+    const payload = buildStoredChannelSnapshotV1({
+      snapshot,
+      channelId: input.channelId,
+      revision,
+      projectedAt: this.now(),
+      cursor,
+      identitiesStale: succession.stale,
+      canonicalPubkeys: succession.mappings,
+    });
+    const digest = channelSnapshotDigest(payload);
+    return {
+      kind: 'complete',
+      input,
+      payload,
+      digest,
+      ...(repositoryEventId ? { repositoryEventId } : {}),
+      quarantines: snapshot.diagnostics.length,
+      identitiesStale: succession.stale,
+    };
   }
 }
 

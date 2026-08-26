@@ -4,7 +4,7 @@ import { createIdentity, selectTranscript } from '@beeline/buzz-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseQueryable, DatabaseTransactional } from './database.js';
 import { ChannelSnapshotMaterializer } from './snapshot-materializer.js';
-import { ChannelSnapshotStore, type DirtyChannelClaim } from './snapshot-store.js';
+import { ChannelSnapshotStore } from './snapshot-store.js';
 import { SnapshotSuccessionClient } from './succession.js';
 
 const TENANT = 'e8299f28-f095-472f-941a-80d1195b9a24';
@@ -165,6 +165,16 @@ describe('ChannelSnapshotMaterializer', () => {
       outsider.secretKey,
     );
     await insertEvents([projected, quarantined]);
+    const overlapping = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: base + 4,
+        kind: 9,
+        tags: [['h', CHANNEL]],
+        content: 'Traffic after the boundary remains queued.',
+      },
+      owner.secretKey,
+    );
     const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
       return new Response(
@@ -179,12 +189,26 @@ describe('ChannelSnapshotMaterializer', () => {
       token: 'secret',
       fetch: fetchImpl,
     });
-    const materializer = new ChannelSnapshotMaterializer(store, succession, {
+    let injectedTraffic = false;
+    const racingStore = new (class extends ChannelSnapshotStore {
+      override async withProjectionBoundary<T>(
+        work: (reader: ChannelSnapshotStore) => Promise<T>,
+      ): Promise<T> {
+        const result = await super.withProjectionBoundary(work);
+        if (!injectedTraffic) {
+          injectedTraffic = true;
+          await insertEvent(overlapping);
+        }
+        return result;
+      }
+    })(database);
+    const materializer = new ChannelSnapshotMaterializer(racingStore, succession, {
       burstCoalesceMs: 0,
       log: () => undefined,
     });
 
     expect(await materializer.runOnce()).toBe(1);
+    expect(injectedTraffic).toBe(true);
     const served = await store.readForViewer(CHANNEL, owner.publicKey);
     expect(served?.payload?.snapshot.workspaceId).toBe('verified-application-workspace');
     expect(served?.payload?.snapshot.rooms[CHANNEL]?.metadata.name).toBe('Snapshot Room');
@@ -198,6 +222,15 @@ describe('ChannelSnapshotMaterializer', () => {
       eventIds: [quarantined.id],
     });
     expect(served?.digest).toMatch(/^[0-9a-f]{64}$/);
+    expect((await store.status()).depth).toBe(1);
+
+    expect(await materializer.runOnce()).toBe(1);
+    const refreshed = await store.readForViewer(CHANNEL, owner.publicKey);
+    expect(refreshed?.payload?.cursor).toEqual({
+      createdAt: base + 4,
+      eventIds: [overlapping.id],
+    });
+    expect((await store.status()).depth).toBe(0);
 
     await database.query(
       `UPDATE channel_members SET removed_at = now()
@@ -461,9 +494,11 @@ describe('ChannelSnapshotMaterializer', () => {
     ]);
     let injectedTraffic = false;
     const racingStore = new (class extends ChannelSnapshotStore {
-      override async loadProjectionInput(claim: DirtyChannelClaim) {
-        const input = await super.loadProjectionInput(claim);
-        if (!injectedTraffic && input && !input.repositoriesExhausted) {
+      override async withProjectionBoundary<T>(
+        work: (reader: ChannelSnapshotStore) => Promise<T>,
+      ): Promise<T> {
+        const result = await super.withProjectionBoundary(work);
+        if (!injectedTraffic) {
           injectedTraffic = true;
           await insertEvent(
             signEvent(
@@ -478,7 +513,7 @@ describe('ChannelSnapshotMaterializer', () => {
             ),
           );
         }
-        return input;
+        return result;
       }
     })(database);
     const materializer = new ChannelSnapshotMaterializer(

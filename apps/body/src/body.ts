@@ -7291,6 +7291,40 @@ export class Body {
         );
       }
       if (turn.transitionedToCorner) {
+        // The work moved into a corner, but the Room turn still owes the human
+        // a visible answer. Publishing nothing here is what left a stalled
+        // turn's earlier "Still working on this" stall notice as the agent's
+        // LAST durable words in the Room forever: the complete receipt closed
+        // the thinking indicator, the corner's status cards never render as
+        // transcript rows, and `producedReply: true` below consumes the
+        // request, so nothing ever follows up. Publish the model's own final
+        // text when it produced one; otherwise one deterministic continuation
+        // line naming the corner that took the work.
+        const openedCorner = [...this.subchannels.values()].find(
+          (candidate) => candidate.request?.eventId === request.eventId,
+        );
+        try {
+          await this.publishAgentResult(
+            tlcChannelId,
+            session,
+            result,
+            openedCorner?.cornerName
+              ? `This needs repository edits, so I moved it into the ${openedCorner.cornerName} corner — follow the work there.`
+              : 'This needs repository edits, so it continues in an isolated edit corner.',
+            {
+              replyTo: request.eventId,
+              ...(request.replyRootId ? { replyRootId: request.replyRootId } : {}),
+            },
+          );
+        } catch (publishError) {
+          // The corner is already running and the request must not re-drive
+          // (a redrive would race a duplicate corner); a failed announcement
+          // is logged and the turn still settles.
+          console.error(
+            '[body] failed to publish Room reply after corner transition:',
+            publishError,
+          );
+        }
         await postAgentTurnStatus(
           tlcChannelId,
           this.agentIdentity,

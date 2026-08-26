@@ -1,4 +1,5 @@
 import {
+  AGENT_PRESENCE_DORMANT_MS,
   AGENT_PRESENCE_STALE_MS,
   isAgentPresenceOnline,
   newerAgentPresence,
@@ -11,19 +12,7 @@ import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection'
 
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
 
-/**
- * Background presence grace is BOUNDED by the lease window itself.
- *
- * While backgrounded nobody can see the transcript, so grace exists only to
- * cover the resume moment (subscription re-establishment) and split-screen
- * visibility — both comfortably inside one lease. The previous
- * `Number.MAX_SAFE_INTEGER` background grace was an unbounded "online"
- * extension from stale cached state: if the foreground handler ever failed to
- * run (resume without an AppState change event), the agent rendered online
- * FOREVER — the exact Clara shape of a Room showing a reaped daemon alive
- * 27 hours later. An expired lease can never render online, so the bound is
- * the lease.
- */
+/** Maximum lifetime of reconnect bookkeeping; it never extends the lease verdict. */
 export const AGENT_PRESENCE_BACKGROUND_GRACE_MS = AGENT_PRESENCE_STALE_MS;
 
 /**
@@ -60,14 +49,32 @@ export function activeMentionCandidates<T extends { pubkey: string }>(
   });
 }
 
-/** Keep only a previously-online agent optimistic while foreground reconnection is pending. */
+/** Preserve the existing call shape while resolving liveness strictly from the lease. */
 export function isAgentPresenceOnlineWithReconnectGrace(
   presence: RoomAgentPresence | undefined,
   now = Date.now(),
   reconnectGraceUntil = 0,
 ): boolean {
-  if (presence?.status !== 'online') return false;
-  return isAgentPresenceOnline(presence, now) || now <= reconnectGraceUntil;
+  void reconnectGraceUntil;
+  return isAgentPresenceOnline(presence, now);
+}
+
+export function nextAgentPresenceTransitionAt(
+  presences: Readonly<Record<string, RoomAgentPresence | AgentPresence>>,
+  now = Date.now(),
+): number | undefined {
+  let next: number | undefined;
+  for (const presence of Object.values(presences)) {
+    const deadlines = [
+      ...(presence.status === 'online' ? [presence.observedAt + AGENT_PRESENCE_STALE_MS] : []),
+      presence.observedAt + AGENT_PRESENCE_DORMANT_MS,
+    ];
+    for (const deadline of deadlines) {
+      if (!Number.isFinite(deadline) || deadline <= now) continue;
+      next = next === undefined ? deadline : Math.min(next, deadline);
+    }
+  }
+  return next;
 }
 
 /**

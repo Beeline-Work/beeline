@@ -32,7 +32,7 @@ export type AgentPresenceStatus = 'online' | 'offline';
  * The three presence tiers every consumer must share.
  *
  * - `online`: the lease is currently held.
- * - `offline`: the lease has lapsed (or an explicit offline marker stands).
+ * - `offline`: the lease has recently lapsed or an explicit offline marker is recent.
  * - `dormant`: the lease has been dark past AGENT_PRESENCE_DORMANT_MS — the
  *   roster identity stays, but affordances implying the agent can receive
  *   work right now (mention autocomplete, active-target lists) omit it.
@@ -77,8 +77,7 @@ export function isAgentPresenceOnline(
   // look "future" forever whenever the daemon's clock merely runs ahead,
   // which reads as a permanently offline agent that is actually live.
   return (
-    presence?.status === 'online' &&
-    Math.abs(now - presence.observedAt) <= AGENT_PRESENCE_STALE_MS
+    presence?.status === 'online' && Math.abs(now - presence.observedAt) <= AGENT_PRESENCE_STALE_MS
   );
 }
 
@@ -103,11 +102,13 @@ export function resolveAgentPresenceTier(
   presence: AgentPresence | undefined,
   now = Date.now(),
 ): AgentPresenceTier {
-  if (!presence || presence.status !== 'online') return 'offline';
+  if (!presence) return 'offline';
   const elapsed = now - presence.observedAt;
   // Same two-sided lease check as `isAgentPresenceOnline`: |now - observedAt|
   // within the window means the heartbeat still speaks.
-  if (Math.abs(elapsed) <= AGENT_PRESENCE_STALE_MS) return 'online';
+  if (presence.status === 'online' && Math.abs(elapsed) <= AGENT_PRESENCE_STALE_MS) {
+    return 'online';
+  }
   if (elapsed >= AGENT_PRESENCE_DORMANT_MS) return 'dormant';
   return 'offline';
 }

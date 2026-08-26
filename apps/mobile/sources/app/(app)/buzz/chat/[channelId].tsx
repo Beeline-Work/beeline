@@ -80,10 +80,7 @@ import {
   setActiveBuzzCacheViewer,
   useBuzzLocalCache,
 } from '@/buzz/local-cache';
-import {
-  pushOpenBuzzChannelId,
-  releaseOpenBuzzChannelId,
-} from '@/buzz/open-room-tracker';
+import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import {
   cacheLiveSessionEvents,
   drainLiveEventFrame,
@@ -204,6 +201,7 @@ import {
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
+  nextAgentPresenceTransitionAt,
   onlineVerdicts,
   presenceMapFromSessionEvents,
   activeMentionCandidates,
@@ -1667,21 +1665,16 @@ export default function BuzzChat() {
   }, [canonicalCorner?.machineState, canonicalCorner?.stateAt]);
 
   useEffect(() => {
-    // Presence only changes at a lease/grace deadline. A five-second clock here
+    // Presence only changes at a lease/dormancy deadline. A five-second clock here
     // recreated FlatList's renderItem (and every visible message) while someone
     // was typing, which made the foreground intermittently unresponsive.
     const now = Date.now();
-    const deadlines = [
-      ...Object.values(agentPresences).map(
-        (presence) => presence.observedAt + AGENT_PRESENCE_STALE_MS,
-      ),
-      ...Object.values(presenceReconnectGrace),
-    ].filter((deadline) => Number.isFinite(deadline) && deadline > now);
-    if (deadlines.length === 0) return;
-    const delay = Math.max(1, Math.min(...deadlines) - now + 1);
+    const deadline = nextAgentPresenceTransitionAt(agentPresences, now);
+    if (deadline === undefined) return;
+    const delay = Math.max(1, deadline - now + 1);
     const timer = setTimeout(() => setPresenceNow(Date.now()), delay);
     return () => clearTimeout(timer);
-  }, [agentPresences, presenceReconnectGrace]);
+  }, [agentPresences, presenceNow]);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
@@ -1849,10 +1842,7 @@ export default function BuzzChat() {
                   const current = corners.find((corner) => corner.id === decodedId);
                   if (current) {
                     setCornerLifecycleStatus(current.status);
-                    if (
-                      current.machineState === 'closed' ||
-                      current.machineState === 'concluded'
-                    ) {
+                    if (current.machineState === 'closed' || current.machineState === 'concluded') {
                       setIsArchived(true);
                     }
                   }

@@ -297,6 +297,95 @@ describe('ChannelSnapshotMaterializer', () => {
     });
   });
 
+  it('retains historical messages after their author leaves the Room', async () => {
+    const owner = createIdentity('snapshot-current-owner');
+    const departed = createIdentity('snapshot-departed-member');
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, removed_at)
+       VALUES ($1, $2, decode($3, 'hex'), NULL),
+              ($1, $2, decode($4, 'hex'), now())`,
+      [TENANT, CHANNEL, owner.publicKey, departed.publicKey],
+    );
+    const base = Math.floor(Date.now() / 1_000) - 10;
+    await insertEvents([
+      signEvent(
+        {
+          pubkey: owner.publicKey,
+          created_at: base,
+          kind: 9007,
+          tags: [
+            ['h', CHANNEL],
+            ['community', 'verified-application-workspace'],
+            ['p', owner.publicKey, 'owner'],
+            ['p', departed.publicKey, 'member'],
+          ],
+          content: '',
+        },
+        owner.secretKey,
+      ),
+      signEvent(
+        {
+          pubkey: departed.publicKey,
+          created_at: base + 1,
+          kind: 9,
+          tags: [['h', CHANNEL]],
+          content: 'History remains after I leave.',
+        },
+        departed.secretKey,
+      ),
+    ]);
+    await insertEvent(
+      signEvent(
+        {
+          pubkey: departed.publicKey,
+          created_at: base + 2,
+          kind: 0,
+          tags: [],
+          content: JSON.stringify({ display_name: 'Former Member' }),
+        },
+        departed.secretKey,
+      ),
+      null,
+    );
+    const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+      return new Response(
+        JSON.stringify({
+          mappings: Object.fromEntries(body.pubkeys.map((pubkey) => [pubkey, pubkey])),
+        }),
+        { status: 200 },
+      );
+    });
+    const materializer = new ChannelSnapshotMaterializer(
+      store,
+      new SnapshotSuccessionClient({
+        baseUrl: 'http://auth:8789',
+        token: 'secret',
+        fetch: fetchImpl,
+      }),
+      { burstCoalesceMs: 0, log: () => undefined },
+    );
+
+    expect(await materializer.runOnce()).toBe(1);
+    const served = await store.readForViewer(CHANNEL, owner.publicKey);
+    expect(
+      selectTranscript(served!.payload!.snapshot, CHANNEL)
+        .filter((row) => row.kind === 'human-message')
+        .map((row) => row.body),
+    ).toEqual(['History remains after I leave.']);
+    expect(served?.payload?.snapshot.rooms[CHANNEL]?.membership).toMatchObject({
+      status: 'known',
+      members: { [owner.publicKey]: { pubkey: owner.publicKey } },
+    });
+    expect(served?.payload?.snapshot.rooms[CHANNEL]?.membership).not.toMatchObject({
+      members: { [departed.publicKey]: expect.anything() },
+    });
+  });
+
   it('pages past hidden machine traffic to retain 30 conversation rows', async () => {
     const owner = createIdentity('snapshot-tail-owner');
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [

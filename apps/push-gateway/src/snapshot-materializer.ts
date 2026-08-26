@@ -85,11 +85,15 @@ function currentMemberPubkeys(members: readonly CurrentChannelMember[]): Set<str
 
 function identityAuthority(
   members: readonly CurrentChannelMember[],
+  historicalAuthors: readonly string[],
   hints: Readonly<Record<string, IdentityRecord>>,
   succession: SuccessionResolution,
 ): Readonly<Record<string, IdentityRecord>> {
   const currentMembers = currentMemberPubkeys(members);
   const identities: Record<string, IdentityRecord> = {};
+  for (const author of historicalAuthors) {
+    if (hints[author]) identities[author] = hints[author];
+  }
   for (const member of currentMembers) {
     identities[member] =
       hints[member] ??
@@ -254,7 +258,12 @@ export class ChannelSnapshotMaterializer {
           .map((channelId) => facts.workspaceIdsByChannel[channelId])
           .find((candidate): candidate is string => Boolean(candidate));
         if (!workspaceId) throw new Error('snapshot projection lacks a verified Workspace id');
-        const identities = identityAuthority(members, facts.identityHints, succession);
+        const identities = identityAuthority(
+          members,
+          currentEvents.map((event) => event.pubkey),
+          facts.identityHints,
+          succession,
+        );
         const authority: ParseAuthority = {
           workspaceId,
           allowedChannelIds: input.channelIds,

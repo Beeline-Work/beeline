@@ -1077,15 +1077,46 @@ function validReview(value: unknown): boolean {
     return false;
   }
   const outcome = review.outcome === undefined ? undefined : record(review.outcome);
-  return (
-    review.outcome === undefined ||
-    Boolean(
-      outcome &&
-      exactKeys(outcome, ['kind', 'detail']) &&
-      ['landed', 'failed'].includes(String(outcome.kind)) &&
-      optionalString(outcome, 'detail'),
-    )
-  );
+  if (
+    review.outcome !== undefined &&
+    (!outcome ||
+      !exactKeys(outcome, ['kind', 'detail']) ||
+      !['landed', 'failed'].includes(String(outcome.kind)) ||
+      !optionalString(outcome, 'detail'))
+  ) {
+    return false;
+  }
+  if (review.state === 'none') {
+    return (
+      !target &&
+      review.files.length === 0 &&
+      review.fileCount === 0 &&
+      review.previewSummary === undefined &&
+      review.approvedBy.length === 0 &&
+      !acknowledgement &&
+      !outcome
+    );
+  }
+  if (!target) return false;
+  if (review.state === 'ready') return !acknowledgement && !outcome;
+  if (review.state === 'landing') {
+    return (
+      acknowledgement?.decision === 'accepted' &&
+      (acknowledgement.state === undefined || acknowledgement.state === 'landing') &&
+      !outcome
+    );
+  }
+  if (review.state === 'realigning') {
+    return (
+      acknowledgement?.decision === 'accepted' &&
+      (acknowledgement.state === 'realigning' || acknowledgement.state === 'realigned') &&
+      !outcome
+    );
+  }
+  if (review.state === 'landed') {
+    return outcome?.kind === 'landed' && acknowledgement?.decision !== 'rejected';
+  }
+  return outcome?.kind === 'failed';
 }
 
 export type ChannelSnapshotGuardResult =

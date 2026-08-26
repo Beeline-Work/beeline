@@ -323,6 +323,59 @@ describe('channel snapshot v1 contract', () => {
     });
     expect(guardChannelSnapshotViewV1(invalidReviewSemantics).status).toBe('integrity-halt');
 
+    const readyWithoutTarget = correctlyHashedMutation((value) => {
+      (value.review as Record<string, unknown>).state = 'ready';
+    });
+    expect(guardChannelSnapshotViewV1(readyWithoutTarget).status).toBe('integrity-halt');
+
+    const noneWithActiveReview = correctlyHashedMutation((value) => {
+      value.review = {
+        state: 'none',
+        target: {
+          repository: 'lunchboxfortwo/beeline',
+          branch: 'main',
+          tip: 'a'.repeat(40),
+        },
+        files: [],
+        fileCount: 0,
+        approvedBy: ['b'.repeat(64)],
+      };
+    });
+    expect(guardChannelSnapshotViewV1(noneWithActiveReview).status).toBe('integrity-halt');
+
+    const landingWithoutAcknowledgement = correctlyHashedMutation((value) => {
+      value.review = {
+        state: 'landing',
+        target: {
+          repository: 'lunchboxfortwo/beeline',
+          branch: 'main',
+          tip: 'a'.repeat(40),
+        },
+        files: [],
+        fileCount: 0,
+        approvedBy: [],
+      };
+    });
+    expect(guardChannelSnapshotViewV1(landingWithoutAcknowledgement).status).toBe(
+      'integrity-halt',
+    );
+
+    const landedWithFailedOutcome = correctlyHashedMutation((value) => {
+      value.review = {
+        state: 'landed',
+        target: {
+          repository: 'lunchboxfortwo/beeline',
+          branch: 'main',
+          tip: 'a'.repeat(40),
+        },
+        files: [],
+        fileCount: 0,
+        approvedBy: [],
+        outcome: { kind: 'failed' },
+      };
+    });
+    expect(guardChannelSnapshotViewV1(landedWithFailedOutcome).status).toBe('integrity-halt');
+
     const danglingReply = correctlyHashedMutation((value) => {
       const snapshot = value.snapshot as Record<string, unknown>;
       const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;

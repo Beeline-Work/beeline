@@ -751,6 +751,34 @@ esac
     }
   });
 
+  it('reuses fixed relay Workspaces and exercises a real round-trip Workspace switch', () => {
+    const provisionScript = readFileSync(
+      resolve(mobileRoot, '../../scripts/provision-smoke.ts'),
+      'utf8',
+    );
+    const maestroScript = readFileSync(join(mobileRoot, 'scripts/maestro-e2e.sh'), 'utf8');
+    const canaryFlow = readFileSync(join(mobileRoot, 'e2e', 'ota-canary.yaml'), 'utf8');
+    const switchFlow = readFileSync(join(mobileRoot, 'e2e', 'workspace-switch.yaml'), 'utf8');
+
+    // The runner-local state owns one fixture key and stable ids. Exclusive,
+    // mode-0600 creation prevents concurrent first runs from splitting it.
+    expect(provisionScript).toContain('loadOrCreateFixtureState');
+    expect(provisionScript).toContain("open(path, 'wx', 0o600)");
+    expect(provisionScript).toContain('await client.getCommunity(communityId)');
+    expect(provisionScript).toContain('await client.createCommunity(name, { communityId })');
+    expect(provisionScript).not.toMatch(/createCommunity\('Buzzy Maestro/);
+
+    expect(maestroScript).toContain('read_seed_value MAESTRO_SMOKE_SWITCH_WORKSPACE_ID');
+    expect(maestroScript).toContain('read_seed_value MAESTRO_SMOKE_SWITCH_ROOM_ID');
+    expect(maestroScript).toContain('--env "SMOKE_SWITCH_WORKSPACE_ID=$SMOKE_SWITCH_WORKSPACE_ID"');
+    expect(canaryFlow).toContain('runFlow: workspace-switch.yaml');
+    expect(switchFlow).toContain('id: community-rail-${SMOKE_SWITCH_WORKSPACE_ID}');
+    expect(switchFlow).toContain('id: community-rail-${SMOKE_WORKSPACE_ID}');
+    expect(switchFlow).toContain('id: room-${SMOKE_SWITCH_ROOM_ID}');
+    expect(switchFlow).toContain('id: room-${SMOKE_ROOM_ID}');
+    expect(switchFlow).toContain("assertNotVisible: '! ERROR'");
+  });
+
   it('waits for the transcript surface before interacting with its bottom-edge composer', () => {
     const flows = ['smoke.yaml', 'live-agent-send-once.yaml', 'live-chat-layout.yaml'] as const;
     for (const flowName of flows) {

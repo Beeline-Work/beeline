@@ -4,6 +4,7 @@ env:
   EXPECTED_ANDROID_UPDATE_ID: ${EXPECTED_ANDROID_UPDATE_ID}
 ---
 - runFlow: smoke.yaml
+- runFlow: workspace-switch.yaml
 - openLink: beeline://buzz/settings
 - extendedWaitUntil:
     visible:

@@ -153,6 +153,10 @@ esac
 
   describe('canary runner environment classification', () => {
     const barePath = '/usr/bin:/bin';
+    const defaultMaestroDirectory = mkdtempSync(join(tmpdir(), 'beeline-maestro-stub-'));
+    const defaultMaestro = join(defaultMaestroDirectory, 'maestro');
+    writeFileSync(defaultMaestro, '#!/bin/sh\nexit 0\n');
+    chmodSync(defaultMaestro, 0o755);
 
     function runCanary(
       args: string[] = [],
@@ -170,6 +174,10 @@ esac
             ...process.env,
             ANDROID_HOME: '',
             ANDROID_SDK_ROOT: '',
+            // Most environment tests exercise later gates. Pin a known
+            // executable so they do not depend on the developer/CI account's
+            // optional ~/.maestro installation.
+            MAESTRO_BIN: defaultMaestro,
             PATH: barePath,
             ...env,
           },
@@ -240,6 +248,50 @@ esac
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('BEELINE_BETA_APK');
       expect(result.stderr).toContain('missing.apk');
+    }, 60_000);
+
+    it('resolves the runner-local Maestro install when the non-login PATH omits it', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-maestro-ok-'));
+      const sdkRoot = stubAdbSdk(directory, 'List of devices attached');
+      const maestro = join(directory, '.maestro/bin/maestro');
+      mkdirSync(join(directory, '.maestro/bin'), { recursive: true });
+      writeFileSync(maestro, '#!/bin/sh\nexit 0\n');
+      chmodSync(maestro, 0o755);
+
+      const result = runCanary([], {
+        ANDROID_HOME: sdkRoot,
+        HOME: directory,
+        MAESTRO_BIN: undefined,
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).not.toContain('Maestro is not executable');
+      expect(result.stderr).toContain('emulator-5554');
+      expect(result.stderr).toContain('not attached');
+    }, 60_000);
+
+    it('parks with an actionable persisted reason when Maestro is absent', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-maestro-missing-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\\nemulator-5554\\tdevice',
+      );
+      const reasonFile = join(directory, 'reason.txt');
+
+      const result = runCanary([], {
+        ANDROID_HOME: sdkRoot,
+        HOME: directory,
+        MAESTRO_BIN: undefined,
+        OTA_CANARY_REASON_FILE: reasonFile,
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('Maestro is not executable');
+      expect(result.stderr).toContain('Install Maestro for the runner account');
+      const reason = readFileSync(reasonFile, 'utf8').trim();
+      expect(reason).toContain('Maestro is not executable');
+      expect(reason).toContain('MAESTRO_BIN');
+      expect(reason.split('\n')).toHaveLength(1);
     }, 60_000);
 
     it('parks when the sanctioned emulator is not attached to the adb server', () => {

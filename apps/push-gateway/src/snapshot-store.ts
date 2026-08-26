@@ -135,6 +135,43 @@ RETURNS void LANGUAGE sql AS $$
     scan_event_ids = '[]'::jsonb
 $$;
 
+CREATE OR REPLACE FUNCTION beeline_mark_snapshot_family_dirty(p_tenant uuid, p_channel uuid)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  affected_channel uuid;
+BEGIN
+  FOR affected_channel IN
+    WITH target_parent AS (
+      SELECT (tag->>1)::uuid AS channel_id
+      FROM events e
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(e.tags, '[]'::jsonb)) AS tag
+      WHERE e.community_id = p_tenant AND e.channel_id = p_channel
+        AND e.kind = 9007 AND e.deleted_at IS NULL
+        AND tag->>0 = 'parent'
+        AND tag->>1 ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      ORDER BY e.created_at ASC, e.id ASC
+      LIMIT 1
+    ), family_root AS (
+      SELECT COALESCE((SELECT channel_id FROM target_parent), p_channel) AS channel_id
+    )
+    SELECT p_channel
+    UNION
+    SELECT root.channel_id FROM family_root root
+    UNION
+    SELECT e.channel_id
+    FROM events e, family_root root
+    WHERE e.community_id = p_tenant AND e.channel_id IS NOT NULL
+      AND e.kind = 9007 AND e.deleted_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements(COALESCE(e.tags, '[]'::jsonb)) AS tag
+        WHERE tag->>0 = 'parent' AND tag->>1 = root.channel_id::text
+      )
+  LOOP
+    PERFORM beeline_mark_snapshot_dirty(p_tenant, affected_channel);
+  END LOOP;
+END
+$$;
+
 CREATE OR REPLACE FUNCTION beeline_snapshot_event_dirty_trigger()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
@@ -163,7 +200,7 @@ BEGIN
       WHERE cm.pubkey = source_pubkey AND cm.removed_at IS NULL
         AND (source_tenant IS NULL OR cm.community_id = source_tenant)
     LOOP
-      PERFORM beeline_mark_snapshot_dirty(affected.community_id, affected.channel_id);
+      PERFORM beeline_mark_snapshot_family_dirty(affected.community_id, affected.channel_id);
     END LOOP;
   END IF;
   IF source_tenant IS NULL THEN
@@ -171,7 +208,7 @@ BEGIN
     RETURN NEW;
   END IF;
   IF source_channel IS NOT NULL THEN
-    PERFORM beeline_mark_snapshot_dirty(source_tenant, source_channel);
+    PERFORM beeline_mark_snapshot_family_dirty(source_tenant, source_channel);
   END IF;
   FOR candidate IN
     SELECT DISTINCT tag->>1
@@ -179,7 +216,7 @@ BEGIN
     WHERE tag->>0 IN ('h', 'parent', 'subchannel')
       AND tag->>1 ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
   LOOP
-    PERFORM beeline_mark_snapshot_dirty(source_tenant, candidate::uuid);
+    PERFORM beeline_mark_snapshot_family_dirty(source_tenant, candidate::uuid);
   END LOOP;
   FOR candidate IN
     SELECT substring(
@@ -190,7 +227,7 @@ BEGIN
     WHERE tag->>0 = 'd' AND tag->>1 LIKE 'buzz-corner-state:%'
   LOOP
     IF candidate IS NOT NULL THEN
-      PERFORM beeline_mark_snapshot_dirty(source_tenant, candidate::uuid);
+      PERFORM beeline_mark_snapshot_family_dirty(source_tenant, candidate::uuid);
     END IF;
   END LOOP;
   IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
@@ -202,10 +239,10 @@ CREATE OR REPLACE FUNCTION beeline_snapshot_channel_dirty_trigger()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    PERFORM beeline_mark_snapshot_dirty(OLD.community_id, OLD.id);
+    PERFORM beeline_mark_snapshot_family_dirty(OLD.community_id, OLD.id);
     RETURN OLD;
   END IF;
-  PERFORM beeline_mark_snapshot_dirty(NEW.community_id, NEW.id);
+  PERFORM beeline_mark_snapshot_family_dirty(NEW.community_id, NEW.id);
   RETURN NEW;
 END
 $$;
@@ -214,10 +251,10 @@ CREATE OR REPLACE FUNCTION beeline_snapshot_member_dirty_trigger()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    PERFORM beeline_mark_snapshot_dirty(OLD.community_id, OLD.channel_id);
+    PERFORM beeline_mark_snapshot_family_dirty(OLD.community_id, OLD.channel_id);
     RETURN OLD;
   END IF;
-  PERFORM beeline_mark_snapshot_dirty(NEW.community_id, NEW.channel_id);
+  PERFORM beeline_mark_snapshot_family_dirty(NEW.community_id, NEW.channel_id);
   RETURN NEW;
 END
 $$;

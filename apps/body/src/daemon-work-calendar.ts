@@ -69,7 +69,9 @@ export function targetAccessSeedFromPresence(
         uniqueArtifactTag(candidate, 't') === TAG_AGENT_PRESENCE &&
         uniqueArtifactTag(candidate, 'agent') === targetAgentPubkey,
     )
-    .sort((left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id))[0];
+    .sort(
+      (left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id),
+    )[0];
   const policy = event ? uniqueArtifactTag(event, 'access-policy') : undefined;
   if (policy !== 'everyone' && policy !== 'creator' && policy !== 'allowlist') return undefined;
   const allowlist = event!.tags
@@ -77,9 +79,11 @@ export function targetAccessSeedFromPresence(
     .map((tag) => tag[1])
     .filter((pubkey): pubkey is string => Boolean(pubkey && /^[0-9a-f]{64}$/.test(pubkey)));
   if (
-    (policy === 'allowlist' && (allowlist.length === 0 || new Set(allowlist).size !== allowlist.length)) ||
+    (policy === 'allowlist' &&
+      (allowlist.length === 0 || new Set(allowlist).size !== allowlist.length)) ||
     (policy !== 'allowlist' && allowlist.length > 0)
-  ) return undefined;
+  )
+    return undefined;
   return { policy, ...(allowlist.length ? { allowlist } : {}) };
 }
 
@@ -548,12 +552,28 @@ export function createDaemonWorkCalendar(input: {
                 identity,
                 pairing.pubkey,
               );
-              if (!hasMember(workspaceMembers, currentOwner) || (await client.isAgentIdentity(currentOwner))) {
+              if (
+                !hasMember(workspaceMembers, currentOwner) ||
+                (await client.isAgentIdentity(currentOwner))
+              ) {
                 targetAccessPermitted = false;
               } else {
                 const [accessEvents, presenceEvents] = await Promise.all([
-                  rawEvents([{ kinds: [KIND_AGENT_ACCESS_CONFIG], '#d': [agentAccessConfigKey(schedule.value.workspaceId, targetAgentPubkey)], limit: 20 }]),
-                  rawEvents([{ kinds: [KIND_AGENT_PRESENCE], authors: [targetAgentPubkey], '#d': [`${TAG_AGENT_PRESENCE}:${schedule.value.roomId}`], limit: 5 }]),
+                  rawEvents([
+                    {
+                      kinds: [KIND_AGENT_ACCESS_CONFIG],
+                      '#d': [agentAccessConfigKey(schedule.value.workspaceId, targetAgentPubkey)],
+                      limit: 20,
+                    },
+                  ]),
+                  rawEvents([
+                    {
+                      kinds: [KIND_AGENT_PRESENCE],
+                      authors: [targetAgentPubkey],
+                      '#d': [`${TAG_AGENT_PRESENCE}:${schedule.value.roomId}`],
+                      limit: 5,
+                    },
+                  ]),
                 ]);
                 targetAccessPermitted = targetAgentAccessPermitted({
                   accessEvents,

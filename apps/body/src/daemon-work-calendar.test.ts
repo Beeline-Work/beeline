@@ -83,20 +83,23 @@ describe('daemon work schedule authority', () => {
     const target = createIdentity();
     const owner = createIdentity();
     const controller = createIdentity();
-    const presence = signEvent({
-      pubkey: target.publicKey,
-      created_at: 10,
-      kind: KIND_AGENT_PRESENCE,
-      tags: [
-        ['d', `${TAG_AGENT_PRESENCE}:authority-room`],
-        ['h', 'authority-room'],
-        ['t', TAG_AGENT_PRESENCE],
-        ['agent', target.publicKey],
-        ['status', 'online'],
-        ['access-policy', 'everyone'],
-      ],
-      content: 'online',
-    }, target.secretKey);
+    const presence = signEvent(
+      {
+        pubkey: target.publicKey,
+        created_at: 10,
+        kind: KIND_AGENT_PRESENCE,
+        tags: [
+          ['d', `${TAG_AGENT_PRESENCE}:authority-room`],
+          ['h', 'authority-room'],
+          ['t', TAG_AGENT_PRESENCE],
+          ['agent', target.publicKey],
+          ['status', 'online'],
+          ['access-policy', 'everyone'],
+        ],
+        content: 'online',
+      },
+      target.secretKey,
+    );
     const input = {
       accessEvents: [],
       presenceEvents: [presence],

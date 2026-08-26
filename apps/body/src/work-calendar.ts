@@ -111,7 +111,6 @@ export interface ParsedWorkSchedule {
   nextAt: number | undefined;
 }
 
-
 export interface WorkScheduleProjectionV1 {
   version: 1;
   type: 'runtime';
@@ -304,7 +303,8 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     await this.load();
     const parsed = parseRuntimeState(state);
     if (!parsed) throw new Error('invalid work calendar runtime state');
-    if (!parseScheduledTurnReceipt(event)) throw new Error('invalid scheduled receipt outbox event');
+    if (!parseScheduledTurnReceipt(event))
+      throw new Error('invalid scheduled receipt outbox event');
     await this.enqueueSave(async () => {
       const next: DurableCalendarData = {
         version: 3,
@@ -321,7 +321,8 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
 
   async reserveReceipt(event: NostrEvent): Promise<void> {
     await this.load();
-    if (!parseScheduledTurnReceipt(event)) throw new Error('invalid scheduled receipt outbox event');
+    if (!parseScheduledTurnReceipt(event))
+      throw new Error('invalid scheduled receipt outbox event');
     await this.enqueueSave(async () => {
       const next: DurableCalendarData = {
         ...this.data,

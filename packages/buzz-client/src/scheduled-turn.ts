@@ -36,7 +36,11 @@ function object(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function integer(value: unknown, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): number | undefined {
+function integer(
+  value: unknown,
+  minimum = 0,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number | undefined {
   return Number.isSafeInteger(value) && (value as number) >= minimum && (value as number) <= maximum
     ? (value as number)
     : undefined;
@@ -74,7 +78,8 @@ function parseReceiptValue(value: unknown): ScheduledTurnReceiptV1 | undefined {
     integer(input.at) === undefined ||
     integer(input.reservedTokens, 0, MAX_MISSION_RESERVED_TOKENS) === undefined ||
     (input.reason !== undefined && !reason)
-  ) return undefined;
+  )
+    return undefined;
   return {
     version: 1,
     workspaceId: input.workspaceId,
@@ -92,44 +97,82 @@ function parseReceiptValue(value: unknown): ScheduledTurnReceiptV1 | undefined {
   };
 }
 
-export function deterministicScheduleRunId(scheduleId: string, revision: number, nominalAt: number): string {
-  if (!SAFE_ID.test(scheduleId) || integer(revision, 1) === undefined || integer(nominalAt) === undefined) {
+export function deterministicScheduleRunId(
+  scheduleId: string,
+  revision: number,
+  nominalAt: number,
+): string {
+  if (
+    !SAFE_ID.test(scheduleId) ||
+    integer(revision, 1) === undefined ||
+    integer(nominalAt) === undefined
+  ) {
     throw new Error('invalid scheduled run identity');
   }
   return `wsr_${createHash('sha256').update(`buzz-work-run:v1:${scheduleId}:${revision}:${nominalAt}`).digest('hex')}`;
 }
 
-export function buildScheduledTurnReceipt(identity: Identity, input: ScheduledTurnReceiptV1): NostrEvent {
+export function buildScheduledTurnReceipt(
+  identity: Identity,
+  input: ScheduledTurnReceiptV1,
+): NostrEvent {
   const value = parseReceiptValue(input);
-  if (!value || identity.publicKey !== value.agentPubkey || deterministicScheduleRunId(value.scheduleId, value.revision, value.nominalAt) !== value.runId) {
+  if (
+    !value ||
+    identity.publicKey !== value.agentPubkey ||
+    deterministicScheduleRunId(value.scheduleId, value.revision, value.nominalAt) !== value.runId
+  ) {
     throw new Error('invalid scheduled turn receipt');
   }
-  return signEvent({
-    pubkey: identity.publicKey,
-    created_at: value.at,
-    kind: 9,
-    tags: [
-      ['h', value.roomId], ['t', SCHEDULED_TURN_TAG], ['workspace', value.workspaceId],
-      ['agent', value.agentPubkey], ['principal', value.principalPubkey],
-      ['schedule', value.scheduleId], ['revision', String(value.revision)], ['run', value.runId],
-      ['nominal', String(value.nominalAt)], ['status', value.status],
-    ],
-    content: JSON.stringify(value),
-  }, identity.secretKey);
+  return signEvent(
+    {
+      pubkey: identity.publicKey,
+      created_at: value.at,
+      kind: 9,
+      tags: [
+        ['h', value.roomId],
+        ['t', SCHEDULED_TURN_TAG],
+        ['workspace', value.workspaceId],
+        ['agent', value.agentPubkey],
+        ['principal', value.principalPubkey],
+        ['schedule', value.scheduleId],
+        ['revision', String(value.revision)],
+        ['run', value.runId],
+        ['nominal', String(value.nominalAt)],
+        ['status', value.status],
+      ],
+      content: JSON.stringify(value),
+    },
+    identity.secretKey,
+  );
 }
 
-export function parseScheduledTurnReceipt(event: NostrEvent): ParsedScheduledTurnReceipt | undefined {
+export function parseScheduledTurnReceipt(
+  event: NostrEvent,
+): ParsedScheduledTurnReceipt | undefined {
   if (event.kind !== 9 || event.content.length > 8_000 || !verifyEvent(event)) return undefined;
   let value: ScheduledTurnReceiptV1 | undefined;
-  try { value = parseReceiptValue(JSON.parse(event.content)); } catch { return undefined; }
+  try {
+    value = parseReceiptValue(JSON.parse(event.content));
+  } catch {
+    return undefined;
+  }
   if (
-    !value || event.pubkey !== value.agentPubkey || event.created_at !== value.at ||
+    !value ||
+    event.pubkey !== value.agentPubkey ||
+    event.created_at !== value.at ||
     deterministicScheduleRunId(value.scheduleId, value.revision, value.nominalAt) !== value.runId ||
-    uniqueTag(event, 'h') !== value.roomId || uniqueTag(event, 't') !== SCHEDULED_TURN_TAG ||
-    uniqueTag(event, 'workspace') !== value.workspaceId || uniqueTag(event, 'agent') !== value.agentPubkey ||
-    uniqueTag(event, 'principal') !== value.principalPubkey || uniqueTag(event, 'schedule') !== value.scheduleId ||
-    uniqueTag(event, 'revision') !== String(value.revision) || uniqueTag(event, 'run') !== value.runId ||
-    uniqueTag(event, 'nominal') !== String(value.nominalAt) || uniqueTag(event, 'status') !== value.status
-  ) return undefined;
+    uniqueTag(event, 'h') !== value.roomId ||
+    uniqueTag(event, 't') !== SCHEDULED_TURN_TAG ||
+    uniqueTag(event, 'workspace') !== value.workspaceId ||
+    uniqueTag(event, 'agent') !== value.agentPubkey ||
+    uniqueTag(event, 'principal') !== value.principalPubkey ||
+    uniqueTag(event, 'schedule') !== value.scheduleId ||
+    uniqueTag(event, 'revision') !== String(value.revision) ||
+    uniqueTag(event, 'run') !== value.runId ||
+    uniqueTag(event, 'nominal') !== String(value.nominalAt) ||
+    uniqueTag(event, 'status') !== value.status
+  )
+    return undefined;
   return { event, value };
 }

@@ -41,7 +41,11 @@ export function resolveAgentAccessAuthority(input: {
   const newestOwner = relevant.find((event) => event.pubkey === input.currentOwnerPubkey);
   if (newestOwner) {
     const parsed = parseAgentAccessConfig(newestOwner);
-    if (!parsed || parsed.workspaceId !== input.workspaceId || parsed.agentPubkey !== input.agentPubkey) {
+    if (
+      !parsed ||
+      parsed.workspaceId !== input.workspaceId ||
+      parsed.agentPubkey !== input.agentPubkey
+    ) {
       return 'denied';
     }
     return {
@@ -53,7 +57,8 @@ export function resolveAgentAccessAuthority(input: {
   if (
     input.currentOwnerPubkey !== input.pairedOwnerPubkey &&
     relevant.some((event) => event.pubkey === input.pairedOwnerPubkey)
-  ) return 'denied';
+  )
+    return 'denied';
   if (!input.seed) return undefined;
   return {
     policy: input.seed.policy,

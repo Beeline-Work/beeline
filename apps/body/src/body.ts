@@ -1105,8 +1105,15 @@ function missionCornerAuthorityFromEvent(
   const roomId = tagValue(event, 'mission-room');
   const repositoryKey = tagValue(event, 'mission-repo');
   const targetBranch = tagValue(event, 'mission-ref');
-  return missionId && grantEventId && controllerAgentPubkey && principalPubkey &&
-    targetAgentPubkey && workspaceId && roomId === parentChannelId && repositoryKey && targetBranch
+  return missionId &&
+    grantEventId &&
+    controllerAgentPubkey &&
+    principalPubkey &&
+    targetAgentPubkey &&
+    workspaceId &&
+    roomId === parentChannelId &&
+    repositoryKey &&
+    targetBranch
     ? {
         missionId,
         grantEventId,
@@ -6645,7 +6652,11 @@ export class Body {
       principalPubkey: mission.principalPubkey,
       repository: mission.repository,
       executorPubkey: this.agentIdentity.publicKey,
-      exercise: { kind: 'corner', operation: 'close', targetAgentPubkey: mission.targetAgentPubkey },
+      exercise: {
+        kind: 'corner',
+        operation: 'close',
+        targetAgentPubkey: mission.targetAgentPubkey,
+      },
       ordinal: missionActionOrdinal(`corner-close:${subchannelId}`),
       idempotencyKey: `mission-corner:close:${subchannelId}`,
     });

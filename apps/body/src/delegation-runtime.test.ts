@@ -188,7 +188,9 @@ describe('DelegationRuntime', () => {
     reader.accessPermitted = accessPermitted;
     reader.graph = async () => ({ turns: [parseDelegationTurn(assignment)!], receipts: [] });
     const invoke = vi.fn(async () => undefined);
-    await expect(f.runtime.handleEvent(returned, invoke)).resolves.toMatchObject({ status: 'complete' });
+    await expect(f.runtime.handleEvent(returned, invoke)).resolves.toMatchObject({
+      status: 'complete',
+    });
     expect(accessPermitted).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenCalledOnce();
   });

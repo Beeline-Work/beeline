@@ -370,7 +370,7 @@ describe('ChannelSnapshotMaterializer', () => {
     });
   });
 
-  it('rejects an admin-authored target branch change from snapshot metadata', async () => {
+  it('preserves repository sequence across traffic and rejects an admin target change', async () => {
     const owner = createIdentity('snapshot-target-owner');
     const admin = createIdentity('snapshot-target-admin');
     const member = createIdentity('snapshot-target-member');
@@ -479,6 +479,18 @@ describe('ChannelSnapshotMaterializer', () => {
 
     expect(await materializer.runOnce()).toBe(1);
     expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload).toBeUndefined();
+    await insertEvent(
+      signEvent(
+        {
+          pubkey: owner.publicKey,
+          created_at: base + 23,
+          kind: 9,
+          tags: [['h', CHANNEL]],
+          content: 'Ordinary traffic must not restart repository paging.',
+        },
+        owner.secretKey,
+      ),
+    );
     expect(await materializer.runOnce()).toBe(1);
     expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload?.repository).toEqual({
       key: 'github:target-authority',

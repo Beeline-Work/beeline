@@ -12,6 +12,10 @@ const emptyLedgerSource = readFileSync(new URL('./EmptyLedgerState.tsx', import.
 // Enter-room hydration lives here, not inline in the screen: every read is
 // fanned out concurrently so none can be held hostage by another.
 const roomEntrySource = readFileSync(new URL('../../buzz/room-entry.ts', import.meta.url), 'utf8');
+const agentPresenceSource = readFileSync(
+  new URL('../../buzz/agent-presence.ts', import.meta.url),
+  'utf8',
+);
 
 function styleDefinition(source: string, name: string): string {
   const start = source.indexOf(`  ${name}: {`);
@@ -358,9 +362,18 @@ describe('Speaker identity', () => {
     );
     expect(branch).toContain("kind: speaksAsAgent ? 'agent' : 'human'");
     // An agent carries the gold ring only while its presence lease says alive;
-    // the presence read is the SAME helper every other online/offline verdict
-    // on this screen uses.
-    expect(branch).toMatch(/speakerAlive[\s\S]{0,400}isAgentPresenceOnlineWithReconnectGrace/);
+    // the verdict comes from `onlineVerdicts`, whose only liveness helper is
+    // the SAME `isAgentPresenceOnlineWithReconnectGrace` every other
+    // online/offline decision on this screen uses. The flat boolean record is
+    // what lets renderItem stay identity-stable across heartbeats instead of
+    // rebuilding every visible ledger row per tick.
+    expect(branch).toMatch(
+      /speakerAlive =\n\s*speaksAsAgent && Boolean\(item\.pubkey\) && Boolean\(speakerOnline\[item\.pubkey \?\? ''\]\)/,
+    );
+    expect(chatSource).toContain('onlineVerdicts(agentPresences');
+    expect(agentPresenceSource).toMatch(
+      /export function onlineVerdicts[\s\S]{0,600}isAgentPresenceOnlineWithReconnectGrace/,
+    );
     // And the ledger renders it through the one identity-mark component.
     expect(ledgerSource).toContain("import { IdentityMark } from './IdentityMark'");
     expect(ledgerSource).toContain('testID="chat-byline-mark"');

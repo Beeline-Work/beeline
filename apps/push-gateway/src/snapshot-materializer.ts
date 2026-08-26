@@ -1,12 +1,14 @@
 import {
   buildStoredChannelSnapshotV1,
   canonicalizeWorkspaceMembership,
+  CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
   channelSnapshotDigest,
   commitRoomCoverage,
   createWorkspaceSnapshot,
   deriveRelayAuthorityFacts,
   parseRelayEvents,
   reduceWorkspaceEvents,
+  selectTranscript,
   type IdentityRecord,
   type ParseAuthority,
   type Pubkey,
@@ -15,6 +17,7 @@ import {
 import type { SnapshotSuccessionClient, SuccessionResolution } from './succession.js';
 import {
   ChannelSnapshotStore,
+  type ChannelMessagePage,
   type CurrentChannelMember,
   type DirtyChannelClaim,
   type ProjectionInput,
@@ -28,6 +31,11 @@ export interface SnapshotMaterializerStore {
     coalesceMs?: number,
   ): Promise<readonly DirtyChannelClaim[]>;
   loadProjectionInput(claim: DirtyChannelClaim): Promise<ProjectionInput | null>;
+  loadMessagePage(
+    tenantId: string,
+    channelId: string,
+    cursor?: ProjectionInput['messageCursor'],
+  ): Promise<ChannelMessagePage>;
   loadCurrentMembers(
     tenantId: string,
     channelIds: readonly string[],
@@ -206,51 +214,89 @@ export class ChannelSnapshotMaterializer {
         return;
       }
       const members = await this.store.loadCurrentMembers(input.tenantId, input.channelIds);
-      const initialFacts = deriveRelayAuthorityFacts(input.events);
-      const identityKeys = [
-        ...new Set([
-          ...members.map((member) => member.pubkey),
-          ...initialFacts.memberPubkeys,
-          ...input.events.map((event) => event.pubkey),
-        ]),
-      ];
-      const [identityEvents, succession] = await Promise.all([
-        this.store.loadIdentityEvents(input.tenantId, identityKeys),
-        this.succession.resolve(input.tenantId, identityKeys),
-      ]);
-      const events = [...input.events, ...identityEvents];
-      const facts = deriveRelayAuthorityFacts(events);
-      const workspaceId = input.channelIds
-        .map((channelId) => facts.workspaceIdsByChannel[channelId])
-        .find((candidate): candidate is string => Boolean(candidate));
-      if (!workspaceId) throw new Error('snapshot projection lacks a verified Workspace id');
-      const identities = identityAuthority(members, facts.identityHints, succession);
-      const authority: ParseAuthority = {
-        workspaceId,
-        allowedChannelIds: input.channelIds,
-        identities,
-        channelCreators: facts.channelCreators,
-        channelAdmins: aliasAuthority(facts.channelAdmins, succession),
-        trustedProjectionPubkeys: facts.trustedProjectionPubkeys,
-      };
-      const parsed = parseRelayEvents(events, authority);
-      const cursor = relayCursor(parsed, input.channelId);
-      let snapshot = reduceWorkspaceEvents(
-        createWorkspaceSnapshot({ workspaceId, identities: Object.values(identities) }),
-        parsed,
-      );
-      snapshot = canonicalizeWorkspaceMembership(
-        snapshot,
-        Object.fromEntries(
-          input.channelIds.map((channelId) => [
-            channelId,
-            members
-              .filter((member) => member.channelId === channelId)
-              .map((member) => member.pubkey),
+      const relayEvents = new Map(input.events.map((event) => [event.id, event]));
+      let messageCursor = input.messageCursor;
+      let messagesExhausted = input.messagesExhausted;
+      let projection:
+        | {
+            readonly parsed: readonly ReadEvent[];
+            readonly cursor: ReturnType<typeof relayCursor>;
+            readonly snapshot: ReturnType<typeof createWorkspaceSnapshot>;
+            readonly succession: SuccessionResolution;
+          }
+        | undefined;
+      while (true) {
+        const currentEvents = [...relayEvents.values()];
+        const initialFacts = deriveRelayAuthorityFacts(currentEvents);
+        const identityKeys = [
+          ...new Set([
+            ...members.map((member) => member.pubkey),
+            ...initialFacts.memberPubkeys,
+            ...currentEvents.map((event) => event.pubkey),
           ]),
-        ),
-        succession.mappings,
-      );
+        ];
+        const [identityEvents, succession] = await Promise.all([
+          this.store.loadIdentityEvents(input.tenantId, identityKeys),
+          this.succession.resolve(input.tenantId, identityKeys),
+        ]);
+        const events = [
+          ...new Map(
+            [...currentEvents, ...identityEvents].map((event) => [event.id, event]),
+          ).values(),
+        ];
+        const facts = deriveRelayAuthorityFacts(events);
+        const workspaceId = input.channelIds
+          .map((channelId) => facts.workspaceIdsByChannel[channelId])
+          .find((candidate): candidate is string => Boolean(candidate));
+        if (!workspaceId) throw new Error('snapshot projection lacks a verified Workspace id');
+        const identities = identityAuthority(members, facts.identityHints, succession);
+        const authority: ParseAuthority = {
+          workspaceId,
+          allowedChannelIds: input.channelIds,
+          identities,
+          channelCreators: facts.channelCreators,
+          channelAdmins: aliasAuthority(facts.channelAdmins, succession),
+          trustedProjectionPubkeys: facts.trustedProjectionPubkeys,
+        };
+        const parsed = parseRelayEvents(events, authority);
+        const cursor = relayCursor(parsed, input.channelId);
+        let snapshot = reduceWorkspaceEvents(
+          createWorkspaceSnapshot({ workspaceId, identities: Object.values(identities) }),
+          parsed,
+        );
+        snapshot = canonicalizeWorkspaceMembership(
+          snapshot,
+          Object.fromEntries(
+            input.channelIds.map((channelId) => [
+              channelId,
+              members
+                .filter((member) => member.channelId === channelId)
+                .map((member) => member.pubkey),
+            ]),
+          ),
+          succession.mappings,
+        );
+        projection = { parsed, cursor, snapshot, succession };
+        if (
+          messagesExhausted ||
+          selectTranscript(snapshot, input.channelId, {
+            limit: CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS,
+          }).length >= CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS
+        ) {
+          break;
+        }
+        const page = await this.store.loadMessagePage(
+          input.tenantId,
+          input.channelId,
+          messageCursor,
+        );
+        for (const event of page.events) relayEvents.set(event.id, event);
+        messageCursor = page.cursor;
+        messagesExhausted = page.exhausted;
+      }
+      if (!projection) throw new Error('snapshot projection did not run');
+      const { parsed, cursor, succession } = projection;
+      let { snapshot } = projection;
       snapshot = commitRoomCoverage(snapshot, input.channelId, {
         epoch: claim.dirtyRevision,
         initialBackfillComplete: true,

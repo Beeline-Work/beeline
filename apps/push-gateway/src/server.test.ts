@@ -519,6 +519,11 @@ describe('GET /snapshot/channel/:channelId', () => {
       headers: { authorization: authorization(identity, `${path}?alias=1`) },
     });
     expect(query.status).toBe(404);
+    const uppercasePath = `/snapshot/channel/${CHANNEL.toUpperCase()}`;
+    const caseAlias = await fetch(`${base}${uppercasePath}`, {
+      headers: { authorization: authorization(identity, path) },
+    });
+    expect(caseAlias.status).toBe(404);
 
     const proof = authorization(identity, path);
     const accepted = await fetch(`${base}${path}`, { headers: { authorization: proof } });

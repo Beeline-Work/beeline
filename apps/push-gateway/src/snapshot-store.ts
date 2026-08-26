@@ -24,6 +24,19 @@ export type ProjectionInput = {
   readonly channelId: string;
   readonly channelIds: readonly string[];
   readonly events: readonly NostrEvent[];
+  readonly messageCursor?: MessagePageCursor;
+  readonly messagesExhausted: boolean;
+};
+
+export type MessagePageCursor = {
+  readonly createdAt: number;
+  readonly eventId: string;
+};
+
+export type ChannelMessagePage = {
+  readonly events: readonly NostrEvent[];
+  readonly cursor?: MessagePageCursor;
+  readonly exhausted: boolean;
 };
 
 export type CurrentChannelMember = {
@@ -310,18 +323,7 @@ export class ChannelSnapshotStore {
     if (channelIds.length === 0) return null;
 
     const [messages, statusControls, structural, createAnchors] = await Promise.all([
-      this.database.query<EventRow>(
-        `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
-         FROM events e
-         WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind = 9
-           AND octet_length(e.content) <= 65536
-           AND (e.channel_id = $2::uuid OR EXISTS (
-             SELECT 1 FROM jsonb_array_elements(e.tags) AS tag
-             WHERE tag->>0 = 'h' AND tag->>1 = $2::text
-           ))
-         ORDER BY e.created_at DESC, e.id ASC LIMIT 160`,
-        [claim.tenantId, claim.channelId],
-      ),
+      this.loadMessagePage(claim.tenantId, claim.channelId),
       this.database.query<EventRow>(
         `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
          FROM events e
@@ -386,8 +388,8 @@ export class ChannelSnapshotStore {
       ),
     ]);
     const byId = new Map<string, NostrEvent>();
+    for (const event of messages.events) byId.set(event.id, event);
     for (const row of [
-      ...messages.rows,
       ...statusControls.rows,
       ...structural.rows,
       ...createAnchors.rows,
@@ -400,6 +402,45 @@ export class ChannelSnapshotStore {
       channelId: claim.channelId,
       channelIds,
       events: [...byId.values()],
+      ...(messages.cursor ? { messageCursor: messages.cursor } : {}),
+      messagesExhausted: messages.exhausted,
+    };
+  }
+
+  async loadMessagePage(
+    tenantId: string,
+    channelId: string,
+    cursor?: MessagePageCursor,
+    limit = 160,
+  ): Promise<ChannelMessagePage> {
+    const pageSize = Math.max(1, Math.min(500, Math.floor(limit)));
+    const result = await this.database.query<EventRow>(
+      `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+       FROM events e
+       WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind = 9
+         AND octet_length(e.content) <= 65536
+         AND (e.channel_id = $2::uuid OR EXISTS (
+           SELECT 1 FROM jsonb_array_elements(e.tags) AS tag
+           WHERE tag->>0 = 'h' AND tag->>1 = $2::text
+         ))
+         AND ($3::bigint IS NULL
+           OR e.created_at < to_timestamp($3)
+           OR (e.created_at = to_timestamp($3) AND e.id > decode($4, 'hex')))
+       ORDER BY e.created_at DESC, e.id ASC LIMIT $5`,
+      [
+        tenantId,
+        channelId,
+        cursor?.createdAt ?? null,
+        cursor?.eventId ?? null,
+        pageSize + 1,
+      ],
+    );
+    const events = result.rows.slice(0, pageSize).map(eventFromRow);
+    const last = events.at(-1);
+    return {
+      events,
+      ...(last ? { cursor: { createdAt: last.created_at, eventId: last.id } } : {}),
+      exhausted: result.rows.length <= pageSize,
     };
   }
 

@@ -79,22 +79,18 @@ describe('ChannelSnapshotMaterializer', () => {
   });
 
   async function insertEvent(event: NostrEvent): Promise<void> {
+    await insertEvents([event]);
+  }
+
+  async function insertEvents(events: readonly NostrEvent[]): Promise<void> {
     await database.query(
       `INSERT INTO events
          (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
-       VALUES ($1, decode($2, 'hex'), decode($3, 'hex'), to_timestamp($4), $5,
-               $6::jsonb, $7, decode($8, 'hex'), $9)`,
-      [
-        TENANT,
-        event.id,
-        event.pubkey,
-        event.created_at,
-        event.kind,
-        JSON.stringify(event.tags),
-        event.content,
-        event.sig,
-        CHANNEL,
-      ],
+       SELECT $1, decode(event->>'id', 'hex'), decode(event->>'pubkey', 'hex'),
+              to_timestamp((event->>'created_at')::bigint), (event->>'kind')::integer,
+              event->'tags', event->>'content', decode(event->>'sig', 'hex'), $3
+       FROM jsonb_array_elements($2::jsonb) AS event`,
+      [TENANT, JSON.stringify(events), CHANNEL],
     );
   }
 
@@ -198,4 +194,79 @@ describe('ChannelSnapshotMaterializer', () => {
       store.readForViewer('3f37b271-1a12-4d2a-b002-202b3f3582b9', owner.publicKey),
     ).resolves.toBeNull();
   });
+
+  it('pages past hidden machine traffic to retain 30 conversation rows', async () => {
+    const owner = createIdentity('snapshot-tail-owner');
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey)
+       VALUES ($1, $2, decode($3, 'hex'))`,
+      [TENANT, CHANNEL, owner.publicKey],
+    );
+    const base = Math.floor(Date.now() / 1_000) - 1_000;
+    const signed = (createdAt: number, kind: number, tags: string[][], content: string) =>
+      signEvent(
+        { pubkey: owner.publicKey, created_at: createdAt, kind, tags, content },
+        owner.secretKey,
+      );
+    const events = [
+      signed(
+        base,
+        9007,
+        [
+          ['h', CHANNEL],
+          ['community', 'verified-application-workspace'],
+          ['p', owner.publicKey, 'owner'],
+        ],
+        '',
+      ),
+      signed(base + 1, 39002, [['d', CHANNEL], ['p', owner.publicKey, 'owner']], ''),
+      ...Array.from({ length: 30 }, (_, index) =>
+        signed(base + 2 + index, 9, [['h', CHANNEL]], `message ${index}`),
+      ),
+      ...Array.from({ length: 160 }, (_, index) =>
+        signed(
+          base + 100 + index,
+          9,
+          [
+            ['h', CHANNEL],
+            ['t', 'buzz-merge-approval'],
+            ['repo', 'lunchboxfortwo/beeline'],
+            ['branch', 'main'],
+          ],
+          'APPROVE',
+        ),
+      ),
+    ];
+    await insertEvents(events);
+    const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+      return new Response(
+        JSON.stringify({
+          mappings: Object.fromEntries(body.pubkeys.map((pubkey) => [pubkey, pubkey])),
+        }),
+        { status: 200 },
+      );
+    });
+    const materializer = new ChannelSnapshotMaterializer(
+      store,
+      new SnapshotSuccessionClient({
+        baseUrl: 'http://auth:8789',
+        token: 'secret',
+        fetch: fetchImpl,
+      }),
+      { burstCoalesceMs: 0, log: () => undefined },
+    );
+
+    expect(await materializer.runOnce()).toBe(1);
+    const served = await store.readForViewer(CHANNEL, owner.publicKey);
+    expect(
+      selectTranscript(served!.payload!.snapshot, CHANNEL)
+        .filter((row) => row.kind === 'human-message')
+        .map((row) => row.body),
+    ).toEqual(Array.from({ length: 30 }, (_, index) => `message ${index}`));
+  }, 30_000);
 });

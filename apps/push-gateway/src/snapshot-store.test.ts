@@ -304,6 +304,53 @@ describe('ChannelSnapshotStore dirty worklist', () => {
     expect((await store.status()).oldestDirtyAgeMs).toBeGreaterThan(30_000);
   });
 
+  it('persists a message continuation across ordinary in-flight traffic', async () => {
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
+    const [claim] = await store.claimDirty(1, 60_000);
+    expect(claim).toBeDefined();
+    const continuation = {
+      cursor: { createdAt: 42, eventId: 'b'.repeat(64) },
+      eventIds: ['c'.repeat(64)],
+    };
+
+    await database.query(
+      `INSERT INTO events
+         (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+       VALUES ($1, decode($2, 'hex'), decode($3, 'hex'), now(), 9,
+               $4::jsonb, '', decode($5, 'hex'), $6)`,
+      [
+        TENANT,
+        '1'.padStart(64, '0'),
+        'a'.repeat(64),
+        JSON.stringify([['h', HOT]]),
+        'f'.repeat(128),
+        HOT,
+      ],
+    );
+    await store.continueScan(claim!, continuation);
+
+    const persisted = await database.query<{
+      dirty_revision: string | number;
+      message_scan_revision: string | number;
+      scan_cursor_created_at: string | number | null;
+      scan_cursor_event_id: string | null;
+      scan_event_ids: unknown;
+      claimed_token: string | null;
+    }>(
+      `SELECT dirty_revision, message_scan_revision, scan_cursor_created_at,
+              scan_cursor_event_id, scan_event_ids, claimed_token
+       FROM beeline_snapshot_dirty
+       WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid`,
+      [TENANT, HOT],
+    );
+    expect(Number(persisted.rows[0]?.dirty_revision)).toBeGreaterThan(claim!.dirtyRevision);
+    expect(Number(persisted.rows[0]?.message_scan_revision)).toBe(claim!.messageScanRevision);
+    expect(Number(persisted.rows[0]?.scan_cursor_created_at)).toBe(continuation.cursor.createdAt);
+    expect(persisted.rows[0]?.scan_cursor_event_id).toBe(continuation.cursor.eventId);
+    expect(persisted.rows[0]?.scan_event_ids).toEqual(continuation.eventIds);
+    expect(persisted.rows[0]?.claimed_token).toBeNull();
+  });
+
   it('drops deleted channels without acknowledging a newer dirty generation', async () => {
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
     const [claim] = await store.claimDirty(1, 60_000);

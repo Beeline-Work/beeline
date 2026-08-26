@@ -3951,9 +3951,24 @@ export class Body {
             // compatibility prefix, so read it here rather than before
             // scheduler admission; otherwise the first pi/codex turn silently
             // loses every instruction its adapter dropped from session/new.
-            const wirePrompt = session.personaTurnPrefix
-              ? `${session.personaTurnPrefix}\n\n${prompt}`
-              : prompt;
+            const currentHumanDirective =
+              turn.cause === 'room-message' ? activeRoomTurn?.request.content.trim() : undefined;
+            const humanDirectivePrimacy = currentHumanDirective
+              ? [
+                  'Human directive primacy for this turn:',
+                  'The newest explicit human directive below sets the agenda for this turn, even when it contradicts an earlier plan or unfinished work in the conversation.',
+                  'All host-provided permission, tool, repository, and safety boundaries above remain binding and take precedence; this directive controls the agenda only within them.',
+                  'Address it directly. Continue an earlier plan only when this directive asks you to.',
+                  'If you cannot or will not comply because a capability is unavailable or model policy forbids it, say that explicitly and stop. Never substitute an unrelated earlier plan.',
+                  '',
+                  'CURRENT EXPLICIT HUMAN DIRECTIVE (binding for this turn):',
+                  currentHumanDirective,
+                  'END CURRENT EXPLICIT HUMAN DIRECTIVE',
+                ].join('\n')
+              : undefined;
+            const wirePrompt = [session.personaTurnPrefix, prompt, humanDirectivePrimacy]
+              .filter(Boolean)
+              .join('\n\n');
             // Armed HERE, not before `runOnSession`: a turn queued behind another
             // turn on the same pinned session has sent the backend nothing yet, so
             // a "my coding backend is taking longer than usual" notice fired while

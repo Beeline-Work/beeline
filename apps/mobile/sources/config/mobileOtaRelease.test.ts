@@ -751,6 +751,27 @@ esac
     }
   });
 
+  it('waits for the transcript surface before interacting with its bottom-edge composer', () => {
+    const flows = ['smoke.yaml', 'live-agent-send-once.yaml', 'live-chat-layout.yaml'] as const;
+    for (const flowName of flows) {
+      const flow = readFileSync(join(mobileRoot, 'e2e', flowName), 'utf8');
+      const roomTap = flow.indexOf('id: room-${');
+      const transcriptReady = flow.indexOf('id: chat-messages', roomTap);
+      const composerInteraction = flow.indexOf('id: chat-input', roomTap);
+
+      expect(roomTap, `${flowName} opens the selected Room`).toBeGreaterThan(-1);
+      expect(transcriptReady, `${flowName} waits for the Room transcript`).toBeGreaterThan(roomTap);
+      expect(composerInteraction, `${flowName} reaches the composer after the transcript`).toBeGreaterThan(
+        transcriptReady,
+      );
+    }
+
+    const smoke = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');
+    expect(smoke.indexOf('id: chat-message-${SMOKE_LATEST_MESSAGE_ID}')).toBeGreaterThan(
+      smoke.indexOf('id: chat-messages'),
+    );
+  });
+
   it('runs the governor on a node with a global WebSocket for relay provisioning', () => {
     // scripts/provision-smoke.ts connects through BuzzClient, which needs
     // globalThis.WebSocket; node 20 lacks it and died at connect time after

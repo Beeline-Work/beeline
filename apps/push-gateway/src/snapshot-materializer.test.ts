@@ -210,22 +210,29 @@ describe('ChannelSnapshotMaterializer', () => {
     ).resolves.toBeNull();
   });
 
-  it('pages past unauthorized repository records to the latest authorized binding', async () => {
+  it('pages past an authorized sibling repository to the parent Room binding', async () => {
     const owner = createIdentity('snapshot-repository-owner');
     const member = createIdentity('snapshot-repository-member');
-    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
-      TENANT,
-      CHANNEL,
-    ]);
+    await database.query(
+      `INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3)`,
+      [TENANT, CHANNEL, CORNER],
+    );
     await database.query(
       `INSERT INTO channel_members (community_id, channel_id, pubkey)
-       VALUES ($1, $2, decode($3, 'hex')), ($1, $2, decode($4, 'hex'))`,
-      [TENANT, CHANNEL, owner.publicKey, member.publicKey],
+       VALUES ($1, $2, decode($4, 'hex')),
+              ($1, $2, decode($5, 'hex')),
+              ($1, $3, decode($4, 'hex'))`,
+      [TENANT, CHANNEL, CORNER, owner.publicKey, member.publicKey],
     );
     const base = Math.floor(Date.now() / 1_000) - 100;
-    const repositoryTags = [
+    const parentRepositoryTags = [
       ['d', `buzz-room-repository:${CHANNEL}`],
       ['h', CHANNEL],
+      ['t', 'buzz-room-repository'],
+    ];
+    const cornerRepositoryTags = [
+      ['d', `buzz-room-repository:${CORNER}`],
+      ['h', CORNER],
       ['t', 'buzz-room-repository'],
     ];
     const ownerRepository = signEvent(
@@ -233,7 +240,7 @@ describe('ChannelSnapshotMaterializer', () => {
         pubkey: owner.publicKey,
         created_at: base + 1,
         kind: 30078,
-        tags: repositoryTags,
+        tags: parentRepositoryTags,
         content: JSON.stringify({
           key: 'github:authorized',
           name: 'Authorized repository',
@@ -242,13 +249,13 @@ describe('ChannelSnapshotMaterializer', () => {
       },
       owner.secretKey,
     );
-    const unauthorizedRepositories = Array.from({ length: 20 }, (_, index) =>
+    const unauthorizedRepositories = Array.from({ length: 19 }, (_, index) =>
       signEvent(
         {
           pubkey: member.publicKey,
           created_at: base + index + 2,
           kind: 30078,
-          tags: repositoryTags,
+          tags: parentRepositoryTags,
           content: JSON.stringify({
             key: `github:unauthorized-${index}`,
             name: `Unauthorized repository ${index}`,
@@ -257,6 +264,20 @@ describe('ChannelSnapshotMaterializer', () => {
         },
         member.secretKey,
       ),
+    );
+    const siblingRepository = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: base + 21,
+        kind: 30078,
+        tags: cornerRepositoryTags,
+        content: JSON.stringify({
+          key: 'github:sibling',
+          name: 'Sibling repository',
+          remote: 'https://example.test/sibling.git',
+        }),
+      },
+      owner.secretKey,
     );
     await insertEvents([
       signEvent(
@@ -277,6 +298,27 @@ describe('ChannelSnapshotMaterializer', () => {
       ownerRepository,
       ...unauthorizedRepositories,
     ]);
+    await insertEvents(
+      [
+        signEvent(
+          {
+            pubkey: owner.publicKey,
+            created_at: base,
+            kind: 9007,
+            tags: [
+              ['h', CORNER],
+              ['parent', CHANNEL],
+              ['community', 'verified-application-workspace'],
+              ['p', owner.publicKey, 'owner'],
+            ],
+            content: '',
+          },
+          owner.secretKey,
+        ),
+        siblingRepository,
+      ],
+      CORNER,
+    );
     await database.query(`DELETE FROM beeline_snapshot_dirty`);
     await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [
       TENANT,

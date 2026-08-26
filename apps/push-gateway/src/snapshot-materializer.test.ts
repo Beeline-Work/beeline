@@ -4,7 +4,7 @@ import { createIdentity, selectTranscript } from '@beeline/buzz-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseQueryable, DatabaseTransactional } from './database.js';
 import { ChannelSnapshotMaterializer } from './snapshot-materializer.js';
-import { ChannelSnapshotStore } from './snapshot-store.js';
+import { ChannelSnapshotStore, type DirtyChannelClaim } from './snapshot-store.js';
 import { SnapshotSuccessionClient } from './succession.js';
 
 const TENANT = 'e8299f28-f095-472f-941a-80d1195b9a24';
@@ -370,7 +370,7 @@ describe('ChannelSnapshotMaterializer', () => {
     });
   });
 
-  it('preserves repository sequence across traffic and rejects an admin target change', async () => {
+  it('preserves repository sequence across in-flight traffic and rejects an admin target change', async () => {
     const owner = createIdentity('snapshot-target-owner');
     const admin = createIdentity('snapshot-target-admin');
     const member = createIdentity('snapshot-target-member');
@@ -459,8 +459,30 @@ describe('ChannelSnapshotMaterializer', () => {
       TENANT,
       CHANNEL,
     ]);
+    let injectedTraffic = false;
+    const racingStore = new (class extends ChannelSnapshotStore {
+      override async loadProjectionInput(claim: DirtyChannelClaim) {
+        const input = await super.loadProjectionInput(claim);
+        if (!injectedTraffic && input && !input.repositoriesExhausted) {
+          injectedTraffic = true;
+          await insertEvent(
+            signEvent(
+              {
+                pubkey: owner.publicKey,
+                created_at: base + 23,
+                kind: 9,
+                tags: [['h', CHANNEL]],
+                content: 'Ordinary traffic must not restart repository paging.',
+              },
+              owner.secretKey,
+            ),
+          );
+        }
+        return input;
+      }
+    })(database);
     const materializer = new ChannelSnapshotMaterializer(
-      store,
+      racingStore,
       new SnapshotSuccessionClient({
         baseUrl: 'http://auth:8789',
         token: 'secret',
@@ -478,19 +500,8 @@ describe('ChannelSnapshotMaterializer', () => {
     );
 
     expect(await materializer.runOnce()).toBe(1);
+    expect(injectedTraffic).toBe(true);
     expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload).toBeUndefined();
-    await insertEvent(
-      signEvent(
-        {
-          pubkey: owner.publicKey,
-          created_at: base + 23,
-          kind: 9,
-          tags: [['h', CHANNEL]],
-          content: 'Ordinary traffic must not restart repository paging.',
-        },
-        owner.secretKey,
-      ),
-    );
     expect(await materializer.runOnce()).toBe(1);
     expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload?.repository).toEqual({
       key: 'github:target-authority',

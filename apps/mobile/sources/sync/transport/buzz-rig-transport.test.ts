@@ -11,6 +11,7 @@ import {
   KIND_CORNER_STATE,
   KIND_CREATE_GROUP,
   TAG_AGENT_ACTIVITY,
+  TAG_AGENT_PRESENCE,
   TAG_COMMUNITY,
   TAG_CORNER_STATE,
   TAG_PARENT,
@@ -215,6 +216,7 @@ function clientFixture(
   const client = {
     sessionEventsBackfill: vi.fn(async () => input.messages ?? []),
     getParentChannelId: vi.fn(async () => null),
+    communityChannels: vi.fn(async () => [ROOM, OTHER_ROOM]),
     cornerStateBackfill: vi.fn(async (cornerIds: string[]) =>
       input.corners && cornerIds.includes(CORNER) ? [cornerState()] : [],
     ),
@@ -254,12 +256,10 @@ function clientFixture(
           const tKeys = (filter['#t'] as string[] | undefined) ?? undefined;
           if (!input.corners) continue;
           if (dKeys && dKeys.length > 0) {
-            // Relay-faithful partiality: a MULTI-value `#d` array is answered
-            // with matches for the FIRST key only (live change-review /
-            // corner-wipe evidence); a single-value key is a proper exact hit.
-            const answered = dKeys.length > 1 ? [dKeys[0]!] : dKeys;
-            if (answered.includes(`${TAG_CORNER_STATE}:${CORNER}`)) results.push(cornerState());
-            if (answered.includes(`${TAG_CORNER_STATE}:${CORNER_2}`)) results.push(cornerState2());
+            // Production evidence distinguishes this from `#h`: multi-value
+            // `#d` has proper OR semantics, so answer every requested key.
+            if (dKeys.includes(`${TAG_CORNER_STATE}:${CORNER}`)) results.push(cornerState());
+            if (dKeys.includes(`${TAG_CORNER_STATE}:${CORNER_2}`)) results.push(cornerState2());
           } else if (!dKeys && !filter['#h'] && tKeys?.includes(TAG_CORNER_STATE)) {
             results.push(cornerState());
             if (input.secondCorner) results.push(cornerState2());
@@ -268,11 +268,12 @@ function clientFixture(
         }
         if (kinds.has(KIND_CHANNEL_MEMBERS)) {
           const dKeys = (filter['#d'] as string[] | undefined) ?? undefined;
-          if (dKeys && dKeys.length > 1) {
-            // Same relay-faithful partiality for multi-value `#d`.
-            results.push(...projections.filter((event) => event.tags.some((tag) => tag[0] === 'd' && tag[1] === dKeys[0])));
-          } else if (dKeys && dKeys.length === 1) {
-            results.push(...projections.filter((event) => event.tags.some((tag) => tag[0] === 'd' && tag[1] === dKeys[0])));
+          if (dKeys && dKeys.length > 0) {
+            results.push(
+              ...projections.filter((event) =>
+                event.tags.some((tag) => tag[0] === 'd' && dKeys.includes(tag[1]!)),
+              ),
+            );
           } else {
             results.push(...projections);
           }
@@ -919,12 +920,9 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     expect(kindCornerStateFilters.length).toBeGreaterThan(0);
     for (const filter of kindCornerStateFilters) {
       expect(filter['#h']).toBeUndefined();
-      const dKeys = filter['#d'] as string[] | undefined;
-      if (dKeys) expect(dKeys).toHaveLength(1);
     }
-    // The exact-`#d` state read-back rides the same batched call shape, one
-    // single-value key per corner — never a multi-`#d` array this relay may
-    // answer with only the first key's matches.
+    // The exact-`#d` state read-back rides the same batched call shape. Its
+    // cardinality is intentionally not constrained by this `#h` regression.
     const exactKeyStateFilters = kindCornerStateFilters.filter((filter) => filter['#d']);
     expect(exactKeyStateFilters.length).toBeGreaterThan(0);
     // Discovery rides the marker page and exact-`#d` read-back, never the
@@ -932,7 +930,7 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     expect(fixture.client.listSubchannels).not.toHaveBeenCalled();
   });
 
-  it('recovers the corner family through per-channel single-#h structural filters', async () => {
+  it('recovers a multi-corner family through one batch of single-#h structural filters', async () => {
     // Production relay truth (round-2 corner-discovery failure): one filter
     // naming MULTIPLE `#h` values is answered with an unreliable subset —
     // measured live, eight corners' create events collapsed to one row. With
@@ -941,47 +939,69 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     // stayed healthy. The stub above now reproduces that lossy shape
     // faithfully, so this passes only when the structural read expands into
     // per-channel single-value filters (inside ONE query call).
-    const fixture = clientFixture({ corners: true });
-    const result = await transportWith(fixture.client).readModelBackfill(ROOM);
-    expect(selectCorners(result.snapshot, ROOM)).toHaveLength(1);
-
-    const allFilters = fixture.client.query.mock.calls.flatMap(
-      (call) => call[0] as Array<Record<string, unknown>>,
-    );
-    for (const filter of allFilters) {
-      const hKeys = filter['#h'] as string[] | undefined;
-      if (hKeys) expect(hKeys).toHaveLength(1);
-    }
-  });
-
-  it('recovers every corner of a family when multi-value #d arrays answer partially', async () => {
-    // Live evidence (change-review assembly + close-one-corner wipe, 2026-08):
-    // the relay's partial-answer behavior is NOT confined to multi-value `#h`
-    // — a multi-value `#d` array can also be answered with matches for only
-    // the first key. Pre-fix, that collapsed the second corner's membership
-    // projection and canonical state read-back, so its records failed the
-    // parser's authority checks and the whole family degraded. The stub above
-    // reproduces that lossy `#d` shape faithfully; this passes only when both
-    // the members/admins and corner-state reads expand into per-key
-    // single-value filters inside their ONE batched query call.
     const fixture = clientFixture({ corners: true, secondCorner: true });
     const result = await transportWith(fixture.client).readModelBackfill(ROOM);
     expect(selectCorners(result.snapshot, ROOM).map((corner) => corner.id)).toEqual(
       expect.arrayContaining([CORNER, CORNER_2]),
     );
 
-    const allFilters = fixture.client.query.mock.calls.flatMap(
+    const queryCalls = fixture.client.query.mock.calls.map(
       (call) => call[0] as Array<Record<string, unknown>>,
     );
+    const allFilters = queryCalls.flat();
     for (const filter of allFilters) {
-      for (const key of ['#h', '#d'] as const) {
-        const values = filter[key] as string[] | undefined;
-        if (values) expect(values).toHaveLength(1);
-      }
+      const hKeys = filter['#h'] as string[] | undefined;
+      if (hKeys) expect(hKeys).toHaveLength(1);
     }
-    // Still one batched structural/projection round trip plus the batched
-    // corner-state read-back — bounded, never a sequential per-channel fan-out.
+    const structuralBatches = queryCalls.filter((filters) =>
+      filters.some(
+        (filter) =>
+          ((filter.kinds as number[] | undefined) ?? []).includes(KIND_CREATE_GROUP) &&
+          filter['#h'] !== undefined,
+      ),
+    );
+    expect(structuralBatches).toHaveLength(1);
+    expect(
+      structuralBatches[0]!
+        .flatMap((filter) => (filter['#h'] as string[] | undefined) ?? [])
+        .sort(),
+    ).toEqual([CORNER, CORNER_2, ROOM, CORNER, CORNER_2, ROOM].sort());
+    // Marker discovery + one structural/projection batch + exact-state read:
+    // bounded calls and one structural network round trip for the whole family.
     expect(fixture.client.query.mock.calls.length).toBeLessThanOrEqual(3);
+  });
+
+  it('keeps presence and cross-Room lifecycle fan-outs free of multi-value #h filters', async () => {
+    const fixture = clientFixture({ corners: true });
+    const transport = transportWith(fixture.client);
+
+    await transport.agentPresenceBackfillForWorkspace(WORKSPACE);
+    const presenceCalls = fixture.client.query.mock.calls
+      .map((call) => call[0] as Array<Record<string, unknown>>)
+      .filter((filters) =>
+        filters.some((filter) =>
+          ((filter['#d'] as string[] | undefined) ?? []).some((value) =>
+            value.startsWith(`${TAG_AGENT_PRESENCE}:`),
+          ),
+        ),
+      );
+    expect(presenceCalls).toHaveLength(1);
+    const presenceCall = presenceCalls[0]!;
+    expect(presenceCall).toHaveLength(2);
+    expect(presenceCall.every((filter) => filter['#h'] === undefined)).toBe(true);
+    expect(presenceCall.every((filter) => filter['#d'] !== undefined)).toBe(true);
+
+    const lifecycle = await transport.listSubchannelLifecycleForRooms([ROOM, OTHER_ROOM]);
+
+    expect(lifecycle.has(ROOM)).toBe(true);
+    expect(lifecycle.has(OTHER_ROOM)).toBe(true);
+    const filters = fixture.client.query.mock.calls.flatMap(
+      (call) => call[0] as Array<Record<string, unknown>>,
+    );
+    for (const filter of filters) {
+      const hKeys = filter['#h'] as string[] | undefined;
+      if (hKeys) expect(hKeys).toHaveLength(1);
+    }
   });
 
   it('never commits an empty corner family over a proven non-empty one', async () => {

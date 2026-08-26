@@ -367,6 +367,78 @@ export function projectReadEvent(
   return {};
 }
 
+/**
+ * Identity-stable render DTOs for the transcript surface.
+ *
+ * Every live pump chunk commits a new snapshot, and `cachedMessages` then
+ * re-projects the WHOLE journal synchronously during render. Without this
+ * cache every projection hands back fresh object identities for untouched
+ * events, so the inverted FlatList sees a brand-new `item` for every visible
+ * row on every chunk, re-invokes renderItem for all of them, and rebuilds
+ * every ledger row while the agent is merely streaming — the systemic
+ * corner-screen saturation behind the send/modal-open freezes. The reducer
+ * preserves untouched event REFERENCES across commits (immutable append), so
+ * keying on `(event reference, viewer, isNew)` is exact: same inputs ⇒ same
+ * DTO identity; any content change arrives as a new event object and misses.
+ *
+ * Bounded LRU: DTOs hold activity arrays, so the cache must not grow with
+ * relay history. 2048 rows comfortably covers the cold-backfill window plus
+ * a long live session.
+ */
+const PROJECTION_CACHE_LIMIT = 2048;
+type ProjectionCacheEntry = {
+  source: ReadEvent;
+  viewer: string;
+  isNew: boolean;
+  projected: ChatDisplayMessage[];
+};
+const projectionCache = new Map<string, ProjectionCacheEntry>();
+
+function projectionCacheKey(eventId: string, viewerPubkey: string, isNew: boolean): string {
+  return `${eventId}:${viewerPubkey}:${isNew ? 'new' : 'warm'}`;
+}
+
+function cachedTranscriptProjection(
+  event: ReadEvent,
+  viewerPubkey: string,
+  isNew: boolean | undefined,
+): ChatDisplayMessage[] {
+  const eventId = event.eventId;
+  if (!eventId) {
+    // Defensive: journal events always carry an id.
+    const fallback = projectReadEvent(event, viewerPubkey, isNew === true).message;
+    return fallback ? [fallback] : [];
+  }
+  const hit = projectionCache.get(projectionCacheKey(eventId, viewerPubkey, isNew === true));
+  if (hit && hit.source === event) {
+    // LRU refresh on hit.
+    const key = projectionCacheKey(eventId, viewerPubkey, isNew === true);
+    projectionCache.delete(key);
+    projectionCache.set(key, hit);
+    return hit.projected;
+  }
+  const projectedMessage = projectReadEvent(event, viewerPubkey, isNew === true).message;
+  const projected: ChatDisplayMessage[] = projectedMessage ? [projectedMessage] : [];
+  if (projectionCache.size >= PROJECTION_CACHE_LIMIT) {
+    for (const oldest of projectionCache.keys()) {
+      projectionCache.delete(oldest);
+      break;
+    }
+  }
+  projectionCache.set(projectionCacheKey(eventId, viewerPubkey, isNew === true), {
+    source: event,
+    viewer: viewerPubkey,
+    isNew: isNew === true,
+    projected,
+  });
+  return projected;
+}
+
+/** Test seam: drop every cached projection. */
+export function resetTranscriptProjectionCache(): void {
+  projectionCache.clear();
+}
+
 /** The transcript surface: one pure snapshot selector, then a typed render map. */
 export function transcriptMessages(
   snapshot: WorkspaceSnapshot,
@@ -382,7 +454,7 @@ export function transcriptMessages(
     if (item.kind === 'human-message' || item.kind === 'agent-message') {
       const event = snapshot.rooms[channelId]?.eventJournal[item.id];
       return event
-        ? (projectReadEvent(event, viewerPubkey, input?.newIds?.has(item.id)).message ?? [])
+        ? cachedTranscriptProjection(event, viewerPubkey, input?.newIds?.has(item.id))
         : [];
     }
     if (item.kind === 'activity') {
@@ -420,7 +492,7 @@ export function transcriptMessages(
     }
     const event = snapshot.rooms[channelId]?.eventJournal[item.id];
     return event?.type === 'control'
-      ? (projectReadEvent(event, viewerPubkey, input?.newIds?.has(item.id)).message ?? [])
+      ? cachedTranscriptProjection(event, viewerPubkey, input?.newIds?.has(item.id))
       : [];
   });
 }

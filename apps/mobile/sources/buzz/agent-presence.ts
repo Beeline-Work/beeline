@@ -172,6 +172,34 @@ export function presenceWithMessageLiveness(
   return next;
 }
 
+/**
+ * One online/offline verdict per agent pubkey, resolved once per render.
+ *
+ * The transcript's renderItem needs each speaker's liveness for the byline
+ * ring, but reading the three raw inputs (heartbeat map, wall clock,
+ * reconnect grace) directly recreated the callback on EVERY heartbeat and on
+ * every streamed batch, rebuilding every visible ledger row for no visible
+ * change. Collapsing them to a flat boolean record lets the screen preserve
+ * identity with `useStable` while no verdict actually flips — rows then
+ * re-render only when an agent genuinely went online or offline.
+ */
+export function onlineVerdicts(
+  presences: Readonly<Record<string, RoomAgentPresence>>,
+  pubkeys: readonly string[],
+  now: number,
+  reconnectGrace: Readonly<Record<string, number>> = {},
+): Record<string, boolean> {
+  const verdicts: Record<string, boolean> = {};
+  for (const pubkey of pubkeys) {
+    verdicts[pubkey] = isAgentPresenceOnlineWithReconnectGrace(
+      presences[pubkey],
+      now,
+      reconnectGrace[pubkey],
+    );
+  }
+  return verdicts;
+}
+
 /** Reinstall relay delivery before reading the current replaceable presence snapshot. */
 export async function reconnectPresenceAfterForeground(
   installSubscription: () => Promise<void>,

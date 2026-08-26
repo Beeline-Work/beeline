@@ -44,6 +44,10 @@ export type ChannelDisplayItem = SessionSummary & {
   repoName?: string;
   /** Model id one of the Room's agents publishes in its catalog, if any. */
   modelLabel?: string;
+  /** A successful local create that the relay's list projection has not yet
+   * returned. Snapshot swaps preserve this row until that exact Room appears
+   * in a later structural read. */
+  awaitingListReconciliation?: true;
 };
 
 export type DirectMessageDisplayItem = {
@@ -135,6 +139,14 @@ type BuzzCacheState = PersistedBuzzCache & {
     viewerPubkey: string,
     communityId: string | null,
     patch: Partial<ChannelListCacheEntry>,
+  ) => void;
+  /** Commit an authoritatively successful Room create without waiting for a
+   * potentially stale relay list projection. In-memory only; MMKV remains on
+   * the background flush boundary. */
+  upsertConfirmedChannel: (
+    viewerPubkey: string,
+    communityId: string | null,
+    channel: ChannelDisplayItem,
   ) => void;
   patchChannel: (
     viewerPubkey: string,
@@ -438,7 +450,8 @@ export function mergeChannelBasicsWithCache(
   cached: ChannelDisplayItem[] = [],
 ): ChannelDisplayItem[] {
   const cachedById = new Map(cached.map((channel) => [channel.id, channel]));
-  return basics.map((channel) => {
+  const basicIds = new Set(basics.map((channel) => channel.id));
+  const reconciled = basics.map((channel) => {
     const existing = cachedById.get(channel.id);
     if (!existing) return channel;
     const updatedAt = Math.max(
@@ -469,6 +482,14 @@ export function mergeChannelBasicsWithCache(
       ...(updatedAt > 0 ? { updatedAt } : {}),
     };
   });
+  for (const channel of cached) {
+    if (channel.awaitingListReconciliation && !basicIds.has(channel.id)) {
+      reconciled.push(channel);
+    }
+  }
+  return reconciled.sort(
+    (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+  );
 }
 
 /**
@@ -582,6 +603,24 @@ export const useBuzzLocalCache = create<BuzzCacheState>()((set) => ({
         channelLists: {
           ...state.channelLists,
           [key]: { ...current, ...normalizedPatch, updatedAt: now, lastAccessedAt: now },
+        },
+      };
+    }),
+  upsertConfirmedChannel: (viewerPubkey, communityId, channel) =>
+    set((state) => {
+      const key = channelListCacheKey(viewerPubkey, communityId);
+      const current = state.channelLists[key];
+      if (!current) return state;
+      const now = Date.now();
+      const { corners: _presentationCache, ...confirmed } = channel;
+      const channels = [
+        { ...confirmed, awaitingListReconciliation: true as const },
+        ...current.channels.filter((candidate) => candidate.id !== channel.id),
+      ].sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
+      return {
+        channelLists: {
+          ...state.channelLists,
+          [key]: { ...current, channels, updatedAt: now, lastAccessedAt: now },
         },
       };
     }),

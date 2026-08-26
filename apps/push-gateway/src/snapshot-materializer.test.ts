@@ -249,7 +249,7 @@ describe('ChannelSnapshotMaterializer', () => {
       },
       owner.secretKey,
     );
-    const unauthorizedRepositories = Array.from({ length: 19 }, (_, index) =>
+    const unauthorizedRepositories = Array.from({ length: 20 }, (_, index) =>
       signEvent(
         {
           pubkey: member.publicKey,
@@ -373,16 +373,18 @@ describe('ChannelSnapshotMaterializer', () => {
   it('rejects an admin-authored target branch change from snapshot metadata', async () => {
     const owner = createIdentity('snapshot-target-owner');
     const admin = createIdentity('snapshot-target-admin');
+    const member = createIdentity('snapshot-target-member');
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
       TENANT,
       CHANNEL,
     ]);
     await database.query(
       `INSERT INTO channel_members (community_id, channel_id, pubkey)
-       VALUES ($1, $2, decode($3, 'hex')), ($1, $2, decode($4, 'hex'))`,
-      [TENANT, CHANNEL, owner.publicKey, admin.publicKey],
+       VALUES ($1, $2, decode($3, 'hex')), ($1, $2, decode($4, 'hex')),
+              ($1, $2, decode($5, 'hex'))`,
+      [TENANT, CHANNEL, owner.publicKey, admin.publicKey, member.publicKey],
     );
-    const base = Math.floor(Date.now() / 1_000) - 10;
+    const base = Math.floor(Date.now() / 1_000) - 100;
     const repositoryTags = [
       ['d', `buzz-room-repository:${CHANNEL}`],
       ['h', CHANNEL],
@@ -399,6 +401,7 @@ describe('ChannelSnapshotMaterializer', () => {
             ['community', 'verified-application-workspace'],
             ['p', owner.publicKey, 'owner'],
             ['p', admin.publicKey, 'admin'],
+            ['p', member.publicKey, 'member'],
           ],
           content: '',
         },
@@ -419,10 +422,26 @@ describe('ChannelSnapshotMaterializer', () => {
         },
         owner.secretKey,
       ),
+      ...Array.from({ length: 20 }, (_, index) =>
+        signEvent(
+          {
+            pubkey: member.publicKey,
+            created_at: base + index + 2,
+            kind: 30078,
+            tags: repositoryTags,
+            content: JSON.stringify({
+              key: `github:unauthorized-target-${index}`,
+              name: `Unauthorized target ${index}`,
+              remote: `https://example.test/unauthorized-target-${index}.git`,
+            }),
+          },
+          member.secretKey,
+        ),
+      ),
       signEvent(
         {
           pubkey: admin.publicKey,
-          created_at: base + 2,
+          created_at: base + 22,
           kind: 30078,
           tags: repositoryTags,
           content: JSON.stringify({
@@ -459,11 +478,115 @@ describe('ChannelSnapshotMaterializer', () => {
     );
 
     expect(await materializer.runOnce()).toBe(1);
+    expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload).toBeUndefined();
+    expect(await materializer.runOnce()).toBe(1);
     expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload?.repository).toEqual({
       key: 'github:target-authority',
       name: 'Target authority',
       remote: 'https://example.test/target-authority.git',
       targetBranch: 'main',
+    });
+  });
+
+  it('accepts a successor owner target branch change', async () => {
+    const predecessor = createIdentity('snapshot-predecessor-owner');
+    const successor = createIdentity('snapshot-successor-owner');
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey)
+       VALUES ($1, $2, decode($3, 'hex'))`,
+      [TENANT, CHANNEL, successor.publicKey],
+    );
+    const base = Math.floor(Date.now() / 1_000) - 10;
+    const repositoryTags = [
+      ['d', `buzz-room-repository:${CHANNEL}`],
+      ['h', CHANNEL],
+      ['t', 'buzz-room-repository'],
+    ];
+    await insertEvents([
+      signEvent(
+        {
+          pubkey: predecessor.publicKey,
+          created_at: base,
+          kind: 9007,
+          tags: [
+            ['h', CHANNEL],
+            ['community', 'verified-application-workspace'],
+            ['p', predecessor.publicKey, 'owner'],
+            ['p', successor.publicKey, 'admin'],
+          ],
+          content: '',
+        },
+        predecessor.secretKey,
+      ),
+      signEvent(
+        {
+          pubkey: predecessor.publicKey,
+          created_at: base + 1,
+          kind: 30078,
+          tags: repositoryTags,
+          content: JSON.stringify({
+            key: 'github:successor-authority',
+            name: 'Successor authority',
+            remote: 'https://example.test/successor-authority.git',
+            targetBranch: 'main',
+          }),
+        },
+        predecessor.secretKey,
+      ),
+      signEvent(
+        {
+          pubkey: successor.publicKey,
+          created_at: base + 2,
+          kind: 30078,
+          tags: repositoryTags,
+          content: JSON.stringify({
+            key: 'github:successor-authority',
+            name: 'Successor authority',
+            remote: 'https://example.test/successor-authority.git',
+            targetBranch: 'staging',
+          }),
+        },
+        successor.secretKey,
+      ),
+    ]);
+    await database.query(`DELETE FROM beeline_snapshot_dirty`);
+    await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    const materializer = new ChannelSnapshotMaterializer(
+      store,
+      new SnapshotSuccessionClient({
+        baseUrl: 'http://auth:8789',
+        token: 'secret',
+        fetch: vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+          return new Response(
+            JSON.stringify({
+              mappings: Object.fromEntries(
+                body.pubkeys.map((pubkey) => [
+                  pubkey,
+                  pubkey === predecessor.publicKey ? successor.publicKey : pubkey,
+                ]),
+              ),
+            }),
+            { status: 200 },
+          );
+        }),
+      }),
+      { burstCoalesceMs: 0, log: () => undefined },
+    );
+
+    expect(await materializer.runOnce()).toBe(1);
+    expect((await store.readForViewer(CHANNEL, successor.publicKey))?.payload?.repository).toEqual({
+      key: 'github:successor-authority',
+      name: 'Successor authority',
+      remote: 'https://example.test/successor-authority.git',
+      targetBranch: 'staging',
     });
   });
 

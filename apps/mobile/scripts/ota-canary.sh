@@ -182,9 +182,35 @@ fi
 
 # -r preserves the dedicated beta binary registration while replacing any
 # older beta build. pm clear then gives the smoke its normal cold-device state.
-adb -s "$DEVICE" install -r "$apk" >/dev/null || {
-  park "adb install of the beta APK failed on $DEVICE; the emulator may be wedged or out of storage on the release host"
-}
+# A differently-signed existing installation (e.g. an operator's locally-built
+# apk:release artifact vs the EAS-keyed beta binary) makes adb refuse the
+# update with INSTALL_FAILED_UPDATE_INCOMPATIBLE; the canary owns exactly this
+# one package on the sanctioned device, so it removes that package and retries
+# once before parking.
+set +e
+install_output="$(adb -s "$DEVICE" install -r "$apk" 2>&1)"
+install_status=$?
+set -e
+case "$install_output" in
+  *INSTALL_FAILED_UPDATE_INCOMPATIBLE*)
+    echo "Existing $APP_ID on $DEVICE has a different signature; removing exactly the canary package and retrying the install once." >&2
+    if ! adb -s "$DEVICE" uninstall "$APP_ID" >/dev/null 2>&1; then
+      park "could not remove the differently-signed existing $APP_ID from $DEVICE after INSTALL_FAILED_UPDATE_INCOMPATIBLE; uninstall the canary package manually on the release host, then re-run the governor"
+    fi
+    set +e
+    install_output="$(adb -s "$DEVICE" install -r "$apk" 2>&1)"
+    install_status=$?
+    set -e
+    if (( install_status != 0 )); then
+      park "adb install of the beta APK failed on $DEVICE even after removing the differently-signed existing package: ${install_output}"
+    fi
+    ;;
+  *)
+    if (( install_status != 0 )); then
+      park "adb install of the beta APK failed on $DEVICE: ${install_output}"
+    fi
+    ;;
+esac
 adb -s "$DEVICE" shell pm clear "$APP_ID" >/dev/null || {
   park "adb pm clear failed on $DEVICE for $APP_ID; the emulator is reachable but the app data could not be reset"
 }

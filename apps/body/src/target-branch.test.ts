@@ -115,6 +115,14 @@ describe('the agent-attempted proposal marker', () => {
     ).toBe('release/2026-08');
   });
 
+  it('keeps the retired private marker working for an already-running session', () => {
+    expect(
+      targetBranchProposalFromPermission(
+        command('beeline-propose-target-branch --branch staging'),
+      ),
+    ).toBe('staging');
+  });
+
   it('tolerates a harness wrapping the command and quoting the branch', () => {
     for (const line of [
       `bash -lc ${TARGET_BRANCH_PROPOSAL_COMMAND} --branch staging`,

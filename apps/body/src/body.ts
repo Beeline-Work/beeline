@@ -253,6 +253,7 @@ import {
   TARGET_BRANCH_PROPOSAL_TAG,
   shortBranchName,
   targetBranchChangeIntent,
+  targetBranchProposalFromAgentText,
   targetBranchProposalFromPermission,
   targetBranchProposalText,
 } from './target-branch.js';
@@ -1292,6 +1293,13 @@ interface PendingRoomTurn {
   readOnlyDenialNoted?: boolean;
   /** One target-branch proposal card per turn, however often the agent asks. */
   targetBranchProposed?: boolean;
+  /** Replays the first marker outcome when the harness also prints it as prose. */
+  targetBranchProposalOutcome?: {
+    branch: string;
+    outcome: 'proposed' | 'no-change';
+  };
+  /** A refused proposal must keep the Room request eligible for retry. */
+  targetBranchProposalFailed?: boolean;
   /** Exact target written in this turn; absent stays fail-closed. */
   namedRepositoryTarget?: NamedRepositoryTarget;
   /** The human-authorized schedule is the mandate for this occurrence. */
@@ -7335,6 +7343,48 @@ export class Body {
         );
         return { openedCorner: true, producedReply: true };
       }
+      if (!scheduled && !agentExchange) {
+        const proposedBranch = targetBranchProposalFromAgentText(result.agentText);
+        if (proposedBranch) {
+          await this.handleTargetBranchProposalMarker(
+            tlcChannelId,
+            turn,
+            proposedBranch,
+          );
+        }
+        if (turn.targetBranchProposalOutcome?.outcome === 'no-change') {
+          result = {
+            ...result,
+            agentText: `This Room already lands to ${turn.targetBranchProposalOutcome.branch}, so there is nothing to change.`,
+          };
+        }
+        if (turn.targetBranchProposalFailed) {
+          console.log(
+            `[body] room ${tlcChannelId} request ${request.eventId}: target-branch proposal ` +
+              'publication failed; leaving the request retryable',
+          );
+          await postAgentMessage(
+            tlcChannelId,
+            this.agentIdentity,
+            "I couldn't publish the target-branch proposal; please try again.",
+            request.eventId,
+            [],
+            [],
+            request.replyRootId,
+          );
+          await postAgentTurnStatus(
+            tlcChannelId,
+            this.agentIdentity,
+            request.eventId,
+            session.logicalSessionId ?? session.sessionId,
+            'failed',
+            this.presenceGenerations.get(tlcChannelId),
+          ).catch((statusError) =>
+            console.error('[body] failed to publish Room turn failure status:', statusError),
+          );
+          return { openedCorner: false, producedReply: false };
+        }
+      }
       // A harness that flaked mid-turn can end its run having streamed only
       // retry/backoff narration (`Retrying (attempt 1/3, waiting 2s)...Retry
       // finished, resuming.`) — or having done real tool work after a
@@ -7554,7 +7604,7 @@ export class Body {
   }
 
   /**
-   * Answer the agent's `beeline-propose-target-branch --branch <name>` marker.
+   * Answer the agent's `/change-target-branch --branch <name>` marker.
    *
    * This exists because the daemon's own recognizer
    * (`targetBranchChangeIntent`) is a fixed set of phrasings and natural
@@ -7574,17 +7624,34 @@ export class Body {
     tlcChannelId: string,
     turn: PendingRoomTurn | undefined,
     branch: string,
-  ): Promise<void> {
-    if (!turn || turn.targetBranchProposed) return;
+  ): Promise<'ignored' | 'proposed' | 'no-change'> {
+    if (!turn) return 'ignored';
+    if (turn.targetBranchProposed) {
+      return turn.targetBranchProposalOutcome?.branch === branch
+        ? turn.targetBranchProposalOutcome.outcome
+        : 'ignored';
+    }
     const policy = turn.editPolicy ?? (turn.boundRepo ? 'repository' : 'direct-message');
-    if (policy !== 'repository' || !turn.boundRepo) return;
+    if (policy !== 'repository' || !turn.boundRepo) return 'ignored';
     turn.targetBranchProposed = true;
     try {
-      await this.publishTargetBranchProposal(tlcChannelId, turn.boundRepo, turn.request, branch);
+      const proposed = await this.publishTargetBranchProposal(
+        tlcChannelId,
+        turn.boundRepo,
+        turn.request,
+        branch,
+        false,
+      );
+      const outcome = proposed ? 'proposed' : 'no-change';
+      turn.targetBranchProposalOutcome = { branch, outcome };
+      turn.targetBranchProposalFailed = false;
+      return outcome;
     } catch (error) {
       turn.targetBranchProposed = false;
+      turn.targetBranchProposalOutcome = undefined;
+      turn.targetBranchProposalFailed = true;
       console.error('[body] failed to publish the agent-requested target-branch proposal:', error);
-      return;
+      return 'ignored';
     }
   }
 
@@ -13434,19 +13501,22 @@ export class Body {
     boundRepo: BoundRepo,
     request: ChannelTaskRequest,
     branch: string,
+    announceNoop = true,
   ): Promise<boolean> {
     const from = await this.currentRoomTargetBranch(tlcChannelId, boundRepo);
     if (from === branch) {
-      const reply = `This Room already lands to ${branch}, so there is nothing to change.`;
-      await postAgentMessage(
-        tlcChannelId,
-        this.agentIdentity,
-        reply,
-        request.eventId,
-        [],
-        [],
-        request.replyRootId,
-      );
+      if (announceNoop) {
+        const reply = `This Room already lands to ${branch}, so there is nothing to change.`;
+        await postAgentMessage(
+          tlcChannelId,
+          this.agentIdentity,
+          reply,
+          request.eventId,
+          [],
+          [],
+          request.replyRootId,
+        );
+      }
       return false;
     }
     await postControlMessage(

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const asyncStorage = vi.hoisted(() => ({
   getItem: vi.fn<(key: string) => Promise<string | null>>(),
   setItem: vi.fn<(key: string, value: string) => Promise<void>>(),
+  removeItem: vi.fn<(key: string) => Promise<void>>(),
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -10,9 +11,11 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 import {
+  clearPersonalCommunityId,
   loadActiveCommunityId,
   loadPersonalCommunityId,
   loadLastViewedChannel,
+  reconcileStoredWorkspaceSelection,
   saveActiveCommunityId,
   savePersonalCommunityId,
   saveLastViewedChannel,
@@ -23,6 +26,7 @@ describe('community navigation storage', () => {
     vi.clearAllMocks();
     asyncStorage.getItem.mockResolvedValue(null);
     asyncStorage.setItem.mockResolvedValue(undefined);
+    asyncStorage.removeItem.mockResolvedValue(undefined);
   });
 
   it('persists standalone and community selections per identity', async () => {
@@ -62,5 +66,60 @@ describe('community navigation storage', () => {
 
     asyncStorage.getItem.mockResolvedValueOnce('personal-a');
     await expect(loadPersonalCommunityId('pubkey-a')).resolves.toBe('personal-a');
+
+    await clearPersonalCommunityId('pubkey-a');
+    expect(asyncStorage.removeItem).toHaveBeenCalledWith('@beeline/workspace/personal/pubkey-a');
+  });
+
+  it('persists an authoritative fallback and clears an absent Personal marker', async () => {
+    await expect(
+      reconcileStoredWorkspaceSelection(
+        'pubkey-a',
+        [{ communityId: 'tubing-1' }],
+        'tubing-1',
+        'personal-1',
+      ),
+    ).resolves.toBeNull();
+
+    expect(asyncStorage.removeItem).toHaveBeenCalledWith('@beeline/workspace/personal/pubkey-a');
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      '@beeline/community/active/pubkey-a',
+      'tubing-1',
+    );
+  });
+
+  it('loads the durable Personal marker when the active deck does not carry it', async () => {
+    asyncStorage.getItem.mockResolvedValueOnce('personal-1');
+
+    await expect(
+      reconcileStoredWorkspaceSelection(
+        'pubkey-a',
+        [{ communityId: 'tubing-1' }],
+        'tubing-1',
+        undefined,
+      ),
+    ).resolves.toBeNull();
+
+    expect(asyncStorage.getItem).toHaveBeenCalledWith('@beeline/workspace/personal/pubkey-a');
+    expect(asyncStorage.removeItem).toHaveBeenCalledWith('@beeline/workspace/personal/pubkey-a');
+  });
+
+  it('preserves an absent Personal marker when reconciliation is ambiguous', async () => {
+    await expect(
+      reconcileStoredWorkspaceSelection(
+        'pubkey-a',
+        [{ communityId: 'tubing-1' }],
+        'tubing-1',
+        'personal-1',
+        undefined,
+        'preserve',
+      ),
+    ).resolves.toBe('personal-1');
+
+    expect(asyncStorage.removeItem).not.toHaveBeenCalled();
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      '@beeline/community/active/pubkey-a',
+      'tubing-1',
+    );
   });
 });

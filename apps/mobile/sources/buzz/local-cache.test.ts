@@ -30,6 +30,7 @@ import {
   clearBuzzLocalCache,
   flushBuzzLocalCacheForBackground,
   mergeChannelBasicsWithCache,
+  selectKnownCommunities,
   useBuzzLocalCache,
 } from './local-cache';
 import { cacheLiveSessionEvents, revalidateCachedMessages } from './local-cache-sync';
@@ -261,6 +262,47 @@ describe('normalized Buzz cache', () => {
       useBuzzLocalCache.getState().channels[channelCacheKey(VIEWER, 'room-30')],
     ).toBeUndefined();
     expect(useBuzzLocalCache.getState().channelLists[`${VIEWER}:workspace`]!.channels).toEqual([]);
+  });
+
+  it('evicts a deleted Workspace deck and repoints the active list in memory', () => {
+    const store = useBuzzLocalCache.getState();
+    const tubing = { communityId: 'tubing-1', name: 'Tubing Crew' } as never;
+    const personal = { communityId: 'personal-1', name: 'Personal' } as never;
+    for (const [communityId, room, communities] of [
+      ['tubing-1', 'tubing-room', [tubing]],
+      ['personal-1', 'personal-room', [personal, tubing]],
+    ] as const) {
+      store.setChannelList({
+        viewerPubkey: VIEWER,
+        communityId,
+        channels: [{ id: room, active: true, title: room }],
+        directMessages: [],
+        workspaceMembers: [],
+        communities: [...communities],
+        personalWorkspaceId: 'personal-1',
+        viewerIsAgent: false,
+        canEditWorkspaceAvatar: false,
+        updatedAt: 1,
+        lastAccessedAt: 1,
+      });
+      store.patchChannel(VIEWER, room, { communityId });
+      store.replaceProfiles(VIEWER, communityId, []);
+    }
+    expect(useBuzzLocalCache.getState().activeListKeyByViewer[VIEWER]).toBe(
+      `${VIEWER}:personal-1`,
+    );
+    mmkvWrites.mockClear();
+
+    store.reconcileWorkspaceSet(VIEWER, [tubing], 'tubing-1');
+
+    const reconciled = useBuzzLocalCache.getState();
+    expect(selectKnownCommunities(reconciled, VIEWER)).toEqual([tubing]);
+    expect(reconciled.channelLists[`${VIEWER}:personal-1`]).toBeUndefined();
+    expect(reconciled.channelLists[`${VIEWER}:tubing-1`]!.personalWorkspaceId).toBeNull();
+    expect(reconciled.channels[`${VIEWER}:personal-room`]).toBeUndefined();
+    expect(reconciled.profiles[`${VIEWER}:personal-1`]).toBeUndefined();
+    expect(reconciled.activeListKeyByViewer[VIEWER]).toBe(`${VIEWER}:tubing-1`);
+    expect(mmkvWrites).not.toHaveBeenCalled();
   });
 });
 

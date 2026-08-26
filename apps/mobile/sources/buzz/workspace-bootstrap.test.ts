@@ -29,6 +29,7 @@ function storage(overrides: Record<string, unknown> = {}) {
     loadPersonalId: vi.fn().mockResolvedValue(null),
     saveActiveId: vi.fn().mockResolvedValue(undefined),
     savePersonalId: vi.fn().mockResolvedValue(undefined),
+    clearPersonalId: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   } as any;
 }
@@ -57,6 +58,7 @@ describe('Workspace bootstrap', () => {
       workspaces: [personal],
       activeWorkspaceId: personalId,
       personalWorkspaceId: personalId,
+      cacheReconciliation: 'preserve',
     });
 
     expect(client.createCommunity).toHaveBeenCalledWith(PERSONAL_WORKSPACE_NAME, {
@@ -238,6 +240,7 @@ describe('the personal-Workspace creation door never fires on unconfirmed absenc
       workspaces: [tubing],
       activeWorkspaceId: 'tubing-1',
       personalWorkspaceId: null,
+      cacheReconciliation: 'preserve',
     });
 
     expect(client.listCommunities).toHaveBeenCalledTimes(2);
@@ -261,58 +264,140 @@ describe('the personal-Workspace creation door never fires on unconfirmed absenc
     expect(client.createCommunity).not.toHaveBeenCalled();
   });
 
-  it('retains a cached Workspace when live discovery throws', async () => {
-    const tubing = workspace('tubing-1', 'Tubing Crew');
-    const client = quietClient();
-    client.listCommunities.mockRejectedValue(new Error('relay unavailable'));
+  it.each(['relay unavailable', 'request timed out'])(
+    'retains cached Workspace and Personal identity when live discovery rejects: %s',
+    async (message) => {
+      const tubing = workspace('tubing-1', 'Tubing Crew');
+      const client = quietClient();
+      client.listCommunities.mockRejectedValue(new Error(message));
 
-    await expect(
-      prepareWorkspaceContext(client, 'person-pubkey', undefined, storage(), {
-        knownWorkspaces: [tubing],
-      }),
-    ).resolves.toMatchObject({
-      workspaces: [tubing],
-      activeWorkspaceId: 'tubing-1',
-    });
+      const memory = storage({ loadPersonalId: vi.fn().mockResolvedValue('personal-1') });
+      await expect(
+        prepareWorkspaceContext(client, 'person-pubkey', undefined, memory, {
+          knownWorkspaces: [tubing],
+        }),
+      ).resolves.toMatchObject({
+        workspaces: [tubing],
+        activeWorkspaceId: 'tubing-1',
+        personalWorkspaceId: 'personal-1',
+        cacheReconciliation: 'preserve',
+      });
 
-    expect(client.createCommunity).not.toHaveBeenCalled();
-  });
+      expect(memory.clearPersonalId).not.toHaveBeenCalled();
+      expect(client.createCommunity).not.toHaveBeenCalled();
+    },
+  );
 
   it('retains a cached Workspace through phantom-empty discovery', async () => {
     const tubing = workspace('tubing-1', 'Tubing Crew');
+    const personal = workspace('personal-1');
     const client = quietClient();
     client.listCommunities.mockResolvedValue([]);
     client.getCommunity.mockResolvedValue(null);
 
+    const memory = storage({ loadPersonalId: vi.fn().mockResolvedValue('personal-1') });
     await expect(
-      prepareWorkspaceContext(client, 'person-pubkey', undefined, storage(), {
-        knownWorkspaces: [tubing],
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, memory, {
+        knownWorkspaces: [personal, tubing],
       }),
     ).resolves.toMatchObject({
-      workspaces: [tubing],
-      activeWorkspaceId: 'tubing-1',
+      workspaces: [personal, tubing],
+      activeWorkspaceId: 'personal-1',
+      personalWorkspaceId: 'personal-1',
+      cacheReconciliation: 'preserve',
     });
 
+    expect(memory.clearPersonalId).not.toHaveBeenCalled();
     expect(client.listCommunities).toHaveBeenCalledTimes(2);
     expect(client.createCommunity).not.toHaveBeenCalled();
   });
 
-  it('merges a partial live result into cached Workspace knowledge', async () => {
+  it('merges an ambiguous confirming result into cached Workspace knowledge', async () => {
     const tubing = workspace('tubing-1', 'Tubing Crew');
     const personal = workspace('personal-1');
     const client = quietClient();
-    client.listCommunities.mockResolvedValue([personal]);
+    client.listCommunities
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([personal]);
 
+    const memory = storage({
+      loadActiveId: vi.fn().mockResolvedValue('tubing-1'),
+      loadPersonalId: vi.fn().mockResolvedValue('personal-1'),
+    });
     await expect(
-      prepareWorkspaceContext(client, 'person-pubkey', undefined, storage(), {
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, memory, {
         knownWorkspaces: [tubing],
       }),
     ).resolves.toMatchObject({
       workspaces: [tubing, personal],
       activeWorkspaceId: 'tubing-1',
+      personalWorkspaceId: 'personal-1',
+      cacheReconciliation: 'preserve',
     });
 
+    expect(memory.clearPersonalId).not.toHaveBeenCalled();
     expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+
+  it('evicts a deleted cached Workspace after authoritative non-empty discovery', async () => {
+    const tubing = workspace('tubing-1', 'Tubing Crew');
+    const personal = workspace('personal-1');
+    const client = quietClient();
+    client.listCommunities.mockResolvedValue([tubing]);
+    const memory = storage({
+      loadActiveId: vi.fn().mockResolvedValue('personal-1'),
+      loadPersonalId: vi.fn().mockResolvedValue('personal-1'),
+    });
+
+    await expect(
+      prepareWorkspaceContext(client, 'person-pubkey', undefined, memory, {
+        knownWorkspaces: [personal, tubing],
+      }),
+    ).resolves.toEqual({
+      workspaces: [tubing],
+      activeWorkspaceId: 'tubing-1',
+      personalWorkspaceId: null,
+      cacheReconciliation: 'authoritative',
+    });
+
+    expect(memory.saveActiveId).toHaveBeenCalledWith('person-pubkey', 'tubing-1');
+    expect(memory.clearPersonalId).toHaveBeenCalledWith('person-pubkey');
+    expect(client.createCommunity).not.toHaveBeenCalled();
+  });
+
+  it('defers authoritative storage writes until a bounded caller accepts discovery', async () => {
+    const tubing = workspace('tubing-1', 'Tubing Crew');
+    const personal = workspace('personal-1');
+    const client = quietClient();
+    client.listCommunities.mockResolvedValue([tubing]);
+    const memory = storage({
+      loadActiveId: vi.fn().mockResolvedValue('personal-1'),
+      loadPersonalId: vi.fn().mockResolvedValue('personal-1'),
+    });
+
+    const result = await prepareWorkspaceContext(
+      client,
+      'person-pubkey',
+      undefined,
+      memory,
+      {
+        knownWorkspaces: [personal, tubing],
+        deferSelectionPersistence: true,
+      },
+    );
+
+    expect(result).toMatchObject({
+      workspaces: [tubing],
+      activeWorkspaceId: 'tubing-1',
+      personalWorkspaceId: null,
+      cacheReconciliation: 'authoritative',
+    });
+    expect(memory.saveActiveId).not.toHaveBeenCalled();
+    expect(memory.clearPersonalId).not.toHaveBeenCalled();
+
+    await result.commitSelection?.();
+    expect(memory.clearPersonalId).toHaveBeenCalledWith('person-pubkey');
+    expect(memory.saveActiveId).toHaveBeenCalledWith('person-pubkey', 'tubing-1');
   });
 
   it('a remembered-but-unloadable personal Workspace refuses creation instead of duplicating', async () => {

@@ -98,7 +98,7 @@ import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { selectTurnProgressAgentPubkey } from '@/buzz/room-indicators';
-import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
+import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import {
   activeMentionAtCursor,
   filterMentionCandidates,
@@ -681,6 +681,7 @@ export default function BuzzChat() {
   presenceReconnectGraceRef.current = presenceReconnectGrace;
   const activeCacheViewer = useBuzzLocalCache((state) => state.activeViewerPubkey);
   const cacheViewerPubkey = userPubkey || activeCacheViewer || '';
+  const isCorner = Boolean(parentChannelId);
   const channelCache = useBuzzLocalCache((state) =>
     cacheViewerPubkey ? state.channels[channelCacheKey(cacheViewerPubkey, decodedId)] : undefined,
   );
@@ -772,18 +773,35 @@ export default function BuzzChat() {
   // Older pages loaded on demand via "scroll up" pagination. Kept out of the
   // shared cache (which bounds to the recent tail) and merged in only here.
   const [olderMessages, setOlderMessages] = useState<ChatDisplayMessage[]>([]);
-  const [optimisticMessages, setOptimisticMessages] = useState<ChatDisplayMessage[]>([]);
   const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_MESSAGE_WINDOW);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const hasMoreHistoryRef = useRef(true);
-  const combinedMessages = useMemo(() => {
-    const cachedIds = new Set(cachedMessages.map((message) => message.id));
-    return mergeDisplayPages(
-      olderMessages,
-      cachedMessages,
-      optimisticMessages.filter((message) => !cachedIds.has(message.id)),
-    );
-  }, [cachedMessages, olderMessages, optimisticMessages]);
+  const committedMessageIds = useMemo(
+    () => new Set(cachedMessages.map((message) => message.id)),
+    [cachedMessages],
+  );
+  const durableMessages = useMemo(
+    () => (isCorner ? cachedMessages : mergeDisplayPages(olderMessages, cachedMessages)),
+    [cachedMessages, isCorner, olderMessages],
+  );
+  const {
+    frame: roomSendFrame,
+    append: addMessages,
+    reconcile: reconcileOptimistic,
+    remove: removeOptimistic,
+    clear: clearOptimistic,
+  } = useRoomSendFrame(durableMessages, committedMessageIds, isCorner);
+  // A Room paints its normally single optimistic row as a FlatList header, so
+  // pressing Send cannot invalidate or sort the durable transcript. Corners
+  // keep their proven post-527 data path unchanged; their optimistic row still
+  // participates in the Corner-only final presentation projection.
+  const combinedMessages = useMemo(
+    () =>
+      isCorner
+        ? mergeDisplayPages(olderMessages, cachedMessages, roomSendFrame.optimistic)
+        : roomSendFrame.transcript,
+    [cachedMessages, isCorner, olderMessages, roomSendFrame],
+  );
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
   const unprojectedMessages = useMemo(
@@ -1078,7 +1096,6 @@ export default function BuzzChat() {
     mentionMenuKey !== dismissedMentionKey &&
     mentionSuggestions.matches.length > 0,
   );
-  const isCorner = Boolean(parentChannelId);
   // Turn receipts are channel-local for Rooms and Corners alike. Derive them
   // before final transcript presentation so a bare signed WORKING receipt can
   // drive both the thinking line and Corner stall suppression during the
@@ -1729,16 +1746,6 @@ export default function BuzzChat() {
     };
   }, [decodedId, isCorner, transport]);
 
-  // Helper to add new messages, deduplicating by id.
-  const addMessages = useCallback((newMsgs: ChatDisplayMessage[]) => {
-    setOptimisticMessages((current) =>
-      mergeDisplayPages(
-        current,
-        newMsgs.map((message) => ({ ...message, isNew: true })),
-      ),
-    );
-  }, []);
-
   useEffect(() => {
     if (!decodedId) return;
 
@@ -1757,7 +1764,7 @@ export default function BuzzChat() {
     setPresenceResolved(false);
     hasMoreHistoryRef.current = true;
     setOlderMessages([]);
-    setOptimisticMessages([]);
+    clearOptimistic();
     setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
 
     // The screen is already painted from the local cache by the time this
@@ -2405,16 +2412,12 @@ export default function BuzzChat() {
                 }
               : undefined,
           );
-      setOptimisticMessages((current) =>
-        reconcileOptimisticMessage(current, optimisticId!, eventId),
-      );
+      reconcileOptimistic(optimisticId!, eventId);
     } catch (err) {
       console.warn('Send failed:', err);
       const failedOptimisticId = optimisticId;
       if (failedOptimisticId) {
-        setOptimisticMessages((current) =>
-          current.filter((message) => message.id !== failedOptimisticId),
-        );
+        removeOptimistic(failedOptimisticId);
       }
       const failure = publishFailurePresentation(err);
       Modal.alert(
@@ -2446,6 +2449,8 @@ export default function BuzzChat() {
     transport,
     decodedId,
     addMessages,
+    reconcileOptimistic,
+    removeOptimistic,
     isArchived,
     isCorner,
     userPubkey,
@@ -3672,6 +3677,19 @@ export default function BuzzChat() {
     ],
   );
 
+  const roomOptimisticHeader = useMemo(
+    () =>
+      !isCorner && roomSendFrame.optimistic.length > 0 ? (
+        <>
+          {roomSendFrame.optimistic.map((message) => (
+            <React.Fragment key={message.id}>{renderItem({ item: message })}</React.Fragment>
+          ))}
+        </>
+      ) : null,
+    [isCorner, renderItem, roomSendFrame.optimistic],
+  );
+  const hasVisibleRoomOptimistic = Boolean(roomOptimisticHeader);
+
   const readModelIntegrityHalt =
     channelCache?.integrityHalt ??
     initialChannelCache?.integrityHalt ??
@@ -3922,13 +3940,15 @@ export default function BuzzChat() {
         <FlatList
           testID="chat-messages"
           ref={flatListRef}
-          inverted={invertedMessages.length > 0}
+          inverted={invertedMessages.length > 0 || hasVisibleRoomOptimistic}
           data={invertedMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
           contentContainerStyle={[
             styles.messageListContent,
-            invertedMessages.length === 0 && styles.messageListContentEmpty,
+            invertedMessages.length === 0 &&
+              !hasVisibleRoomOptimistic &&
+              styles.messageListContentEmpty,
           ]}
           maintainVisibleContentPosition={{
             // Anchor on the second-newest row (index 1), not the newest.
@@ -3966,14 +3986,16 @@ export default function BuzzChat() {
           onEndReached={loadOlderTranscriptMessages}
           onEndReachedThreshold={0.5}
           ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <EmptyLedgerState
-                variant={emptyLedgerVariant}
-                name={isDirectMessage ? displayRoomName : undefined}
-                objective={isCorner ? cornerObjective : undefined}
-                onPress={focusComposer}
-              />
-            </View>
+            hasVisibleRoomOptimistic ? null : (
+              <View style={styles.emptyState}>
+                <EmptyLedgerState
+                  variant={emptyLedgerVariant}
+                  name={isDirectMessage ? displayRoomName : undefined}
+                  objective={isCorner ? cornerObjective : undefined}
+                  onPress={focusComposer}
+                />
+              </View>
+            )
           }
           ListFooterComponent={
             // Inverted list: the footer is the visual TOP. The Room discussion
@@ -3996,7 +4018,8 @@ export default function BuzzChat() {
             ) : null
           }
           ListHeaderComponent={
-            isCorner && !isArchived && sessionState === 'done' ? (
+            roomOptimisticHeader ??
+            (isCorner && !isArchived && sessionState === 'done' ? (
               <View style={styles.cornerReviewFooter}>
                 {cornerAction.kind === 'review' ? (
                   <HullSurface strength="raised" style={styles.approvalBar}>
@@ -4137,7 +4160,7 @@ export default function BuzzChat() {
                   </HullSurface>
                 )}
               </View>
-            ) : null
+            ) : null)
           }
         />
 
@@ -4148,7 +4171,14 @@ export default function BuzzChat() {
           <CornerLiveBar
             label={cornerLiveBar.label}
             live={cornerLiveBar.live}
-            onPress={cornerLiveBar.cornerId ? () => openCorner(cornerLiveBar.cornerId!) : undefined}
+            onPress={
+              // A truthy READY id can still be unroutable when it names the
+              // current route. openCorner rejects that self-target; do not
+              // advertise the downstream no-op as `view →` in the first place.
+              cornerLiveBar.cornerId && cornerLiveBar.cornerId !== decodedId
+                ? () => openCorner(cornerLiveBar.cornerId!)
+                : undefined
+            }
             testID="corner-live-bar"
           />
         )}

@@ -208,12 +208,17 @@ function clientFixture(input: { messages?: NostrEvent[]; corners?: boolean } = {
         }
         if (kinds.has(KIND_CHANNEL_MEMBERS)) results.push(...projections);
         if (kinds.has(KIND_CREATE_GROUP)) {
-          const channels = new Set(filters.flatMap((filter) => filter['#h'] ?? []));
-          results.push(
-            ...createEvents.filter((event) =>
-              event.tags.some((tag) => tag[0] === 'h' && channels.has(tag[1]!)),
-            ),
+          // Production indexing truth (measured live, round-2 corner-discovery
+          // failure): a filter naming MULTIPLE `#h` values is answered with an
+          // unreliable subset of the matches — a whole corner family's create
+          // events can collapse to one row. Only per-channel single-value `#h`
+          // filters are answerable, so the faithful stub answers a multi-value
+          // page with at most one event.
+          const hKeys = (filter['#h'] as string[] | undefined) ?? undefined;
+          const matches = createEvents.filter((event) =>
+            event.tags.some((tag) => tag[0] === 'h' && (hKeys ?? []).includes(tag[1]!)),
           );
+          results.push(...(hKeys !== undefined && hKeys.length > 1 ? matches.slice(0, 1) : matches));
         }
       }
       return [...new Map(results.map((event) => [event.id, event])).values()];
@@ -849,6 +854,28 @@ describe('BuzzRigTransport typed read-model boundary', () => {
     // Discovery rides the marker page and exact-`#d` read-back, never the
     // relay-wide kind:9007 child scan.
     expect(fixture.client.listSubchannels).not.toHaveBeenCalled();
+  });
+
+  it('recovers the corner family through per-channel single-#h structural filters', async () => {
+    // Production relay truth (round-2 corner-discovery failure): one filter
+    // naming MULTIPLE `#h` values is answered with an unreliable subset —
+    // measured live, eight corners' create events collapsed to one row. With
+    // its creator fact missing, every corner-state record failed the parser's
+    // signer check and the Room rendered cornerless while `listSubchannels`
+    // stayed healthy. The stub above now reproduces that lossy shape
+    // faithfully, so this passes only when the structural read expands into
+    // per-channel single-value filters (inside ONE query call).
+    const fixture = clientFixture({ corners: true });
+    const result = await transportWith(fixture.client).readModelBackfill(ROOM);
+    expect(selectCorners(result.snapshot, ROOM)).toHaveLength(1);
+
+    const allFilters = fixture.client.query.mock.calls.flatMap(
+      (call) => call[0] as Array<Record<string, unknown>>,
+    );
+    for (const filter of allFilters) {
+      const hKeys = filter['#h'] as string[] | undefined;
+      if (hKeys) expect(hKeys).toHaveLength(1);
+    }
   });
 
   it('hydrates 200+ messages plus a corner without per-channel authority fan-out', async () => {

@@ -274,4 +274,99 @@ describe('ChannelSnapshotStore dirty worklist', () => {
 
     expect(input?.events.some((event) => event.id === controlId)).toBe(true);
   });
+
+  it('loads the latest creator-authored state for every Corner outside the structural tail', async () => {
+    await database.query(
+      `INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3), ($1, $4)`,
+      [TENANT, HOT, COLD, SIBLING],
+    );
+    const creator = 'a'.repeat(64);
+    await database.query(
+      `INSERT INTO events
+         (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+       VALUES
+         ($1, decode($2, 'hex'), decode($5, 'hex'), now() - interval '4 seconds', 9007,
+          $6::jsonb, '', decode($8, 'hex'), $3),
+         ($1, decode($9, 'hex'), decode($5, 'hex'), now() - interval '3 seconds', 9007,
+          $10::jsonb, '', decode($8, 'hex'), $4),
+         ($1, decode($11, 'hex'), decode($5, 'hex'), now() - interval '2 seconds', 9007,
+          $12::jsonb, '', decode($8, 'hex'), $7)`,
+      [
+        TENANT,
+        '1'.padStart(64, '0'),
+        HOT,
+        COLD,
+        creator,
+        JSON.stringify([['h', HOT]]),
+        SIBLING,
+        'f'.repeat(128),
+        '2'.padStart(64, '0'),
+        JSON.stringify([
+          ['h', COLD],
+          ['parent', HOT],
+        ]),
+        '3'.padStart(64, '0'),
+        JSON.stringify([
+          ['h', SIBLING],
+          ['parent', HOT],
+        ]),
+      ],
+    );
+    const dormantStateId = '4'.padStart(64, '0');
+    await database.query(
+      `INSERT INTO events
+         (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+       VALUES ($1, decode($2, 'hex'), decode($3, 'hex'), now() - interval '1 second', 30078,
+               $4::jsonb, '', decode($5, 'hex'), $6)`,
+      [
+        TENANT,
+        dormantStateId,
+        creator,
+        JSON.stringify([
+          ['d', `buzz-corner-state:${COLD}`],
+          ['h', HOT],
+          ['t', 'buzz-corner-state'],
+          ['state', 'waiting'],
+          ['at', '1'],
+          ['reason', 'review'],
+        ]),
+        'f'.repeat(128),
+        HOT,
+      ],
+    );
+    await database.query(
+      `INSERT INTO events
+         (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+       SELECT $1, decode(lpad(to_hex(sequence + 100), 64, '0'), 'hex'), decode($2, 'hex'),
+              now() + sequence * interval '1 millisecond', 30078, $3::jsonb, '',
+              decode($4, 'hex'), $5
+       FROM generate_series(1, 2500) AS sequence`,
+      [
+        TENANT,
+        creator,
+        JSON.stringify([
+          ['d', `buzz-corner-state:${SIBLING}`],
+          ['h', HOT],
+          ['t', 'buzz-corner-state'],
+          ['state', 'working'],
+          ['at', '2'],
+        ]),
+        'f'.repeat(128),
+        HOT,
+      ],
+    );
+    await database.query(`DELETE FROM beeline_snapshot_dirty`);
+    await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [TENANT, HOT]);
+    const [claim] = await store.claimDirty(1, 60_000);
+    const input = await store.loadProjectionInput(claim!);
+
+    expect(input?.events.some((event) => event.id === dormantStateId)).toBe(true);
+    expect(
+      input?.events.filter(
+        (event) =>
+          event.kind === 30078 &&
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-corner-state'),
+      ),
+    ).toHaveLength(2);
+  }, 30_000);
 });

@@ -55,4 +55,34 @@ describe('SnapshotSuccessionClient', () => {
       stale: true,
     });
   });
+
+  it('refreshes every requested key as one succession generation', async () => {
+    const newCurrent = 'c'.repeat(64);
+    const requests: string[][] = [];
+    const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+      requests.push(body.pubkeys);
+      return requests.length === 1
+        ? new Response(JSON.stringify({ mappings: { [OLD]: OLD } }), { status: 200 })
+        : new Response(
+            JSON.stringify({ mappings: { [OLD]: newCurrent, [CURRENT]: newCurrent } }),
+            { status: 200 },
+          );
+    });
+    const client = new SnapshotSuccessionClient({
+      baseUrl: 'http://auth:8789',
+      token: 'secret',
+      fetch: fetchImpl,
+    });
+
+    await expect(client.resolve(TENANT, [OLD])).resolves.toEqual({
+      mappings: { [OLD]: OLD },
+      stale: false,
+    });
+    await expect(client.resolve(TENANT, [OLD, CURRENT])).resolves.toEqual({
+      mappings: { [OLD]: newCurrent, [CURRENT]: newCurrent },
+      stale: false,
+    });
+    expect(requests).toEqual([[OLD], [OLD, CURRENT]]);
+  });
 });

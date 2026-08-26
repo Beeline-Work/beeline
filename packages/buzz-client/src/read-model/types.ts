@@ -502,6 +502,7 @@ export type ParseAuthority = {
   readonly channelCreators?: Readonly<Record<string, string>>;
   readonly channelAdmins?: Readonly<Record<string, readonly string[]>>;
   readonly trustedProjectionPubkeys?: readonly string[];
+  readonly historicalMessagePubkeys?: Readonly<Record<string, readonly string[]>>;
   readonly knownMessages?: Readonly<
     Record<string, { readonly channelId: string; readonly rootId?: string }>
   >;

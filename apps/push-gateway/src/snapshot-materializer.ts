@@ -48,6 +48,10 @@ export interface SnapshotMaterializerStore {
     tenantId: string,
     channelIds: readonly string[],
   ): Promise<readonly CurrentChannelMember[]>;
+  loadMemberHistory(
+    tenantId: string,
+    channelIds: readonly string[],
+  ): Promise<readonly CurrentChannelMember[]>;
   loadIdentityEvents(
     tenantId: string,
     pubkeys: readonly string[],
@@ -220,7 +224,22 @@ export class ChannelSnapshotMaterializer {
         await this.store.discard(claim);
         return;
       }
-      const members = await this.store.loadCurrentMembers(input.tenantId, input.channelIds);
+      const [members, memberHistory] = await Promise.all([
+        this.store.loadCurrentMembers(input.tenantId, input.channelIds),
+        this.store.loadMemberHistory(input.tenantId, input.channelIds),
+      ]);
+      const historicalMessagePubkeys = Object.fromEntries(
+        input.channelIds.map((channelId) => [
+          channelId,
+          [
+            ...new Set(
+              memberHistory
+                .filter((member) => member.channelId === channelId)
+                .map((member) => member.pubkey),
+            ),
+          ],
+        ]),
+      );
       const relayEvents = new Map(input.events.map((event) => [event.id, event]));
       let messageCursor = input.messageCursor;
       let messagesExhausted = input.messagesExhausted;
@@ -271,6 +290,7 @@ export class ChannelSnapshotMaterializer {
           channelCreators: facts.channelCreators,
           channelAdmins: aliasAuthority(facts.channelAdmins, succession),
           trustedProjectionPubkeys: facts.trustedProjectionPubkeys,
+          historicalMessagePubkeys,
         };
         const parsed = parseRelayEvents(events, authority);
         const cursor = input.cursor;

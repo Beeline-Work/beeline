@@ -416,6 +416,7 @@ export class ChannelSnapshotStore {
       carriedMessages,
       statusControls,
       structural,
+      cornerStates,
       createAnchors,
       cursorRows,
     ] = await Promise.all([
@@ -466,6 +467,21 @@ export class ChannelSnapshotStore {
              SELECT 1 FROM jsonb_array_elements(e.tags) AS file_tag
              WHERE file_tag->>0 = 't' AND file_tag->>1 = 'change-review-file'
            )
+           AND NOT (
+             e.kind = 30078
+             AND EXISTS (
+               SELECT 1 FROM jsonb_array_elements(e.tags) AS marker
+               WHERE marker->>0 = 't' AND marker->>1 = 'buzz-corner-state'
+             )
+             AND EXISTS (
+               SELECT 1 FROM jsonb_array_elements(e.tags) AS state_key
+               WHERE state_key->>0 = 'd'
+                 AND state_key->>1 = ANY(
+                   SELECT 'buzz-corner-state:' || channel_id
+                   FROM unnest($2::text[]) AS channel_id
+                 )
+             )
+           )
            AND (e.channel_id = ANY($2::uuid[]) OR EXISTS (
              SELECT 1 FROM jsonb_array_elements(e.tags) AS tag
              WHERE (tag->>0 IN ('h', 'parent', 'subchannel')
@@ -479,6 +495,59 @@ export class ChannelSnapshotStore {
                 ))
            ))
          ORDER BY e.created_at DESC, e.id ASC LIMIT 2500`,
+        [claim.tenantId, channelIds],
+      ),
+      this.database.query<EventRow>(
+        `WITH requested_channels AS (
+           SELECT unnest($2::uuid[]) AS channel_id
+         ), corner_creators AS (
+           SELECT DISTINCT ON (requested.channel_id)
+                  requested.channel_id, created.pubkey
+           FROM requested_channels requested
+           JOIN events created
+             ON created.community_id = $1::uuid
+            AND created.channel_id = requested.channel_id
+            AND created.kind = 9007
+            AND created.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(created.tags) AS parent_tag
+              WHERE parent_tag->>0 = 'parent'
+                AND parent_tag->>1 = ANY($2::text[])
+            )
+           ORDER BY requested.channel_id, created.created_at ASC, created.id ASC
+         ), ranked_states AS (
+           SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind,
+                  e.tags, e.content, e.sig,
+                  row_number() OVER (
+                    PARTITION BY creator.channel_id
+                    ORDER BY e.created_at DESC, e.id DESC
+                  ) AS state_rank
+           FROM corner_creators creator
+           JOIN events e
+             ON e.community_id = $1::uuid
+            AND e.pubkey = creator.pubkey
+            AND e.kind = 30078
+            AND e.deleted_at IS NULL
+            AND e.channel_id = ANY($2::uuid[])
+            AND octet_length(e.content) <= 131072
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(e.tags) AS state_key
+              WHERE state_key->>0 = 'd'
+                AND state_key->>1 = 'buzz-corner-state:' || creator.channel_id::text
+            )
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(e.tags) AS room_tag
+              WHERE room_tag->>0 = 'h' AND room_tag->>1 = ANY($2::text[])
+            )
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(e.tags) AS marker
+              WHERE marker->>0 = 't' AND marker->>1 = 'buzz-corner-state'
+            )
+         )
+         SELECT community_id, id, pubkey, created_at, kind, tags, content, sig
+         FROM ranked_states
+         WHERE state_rank = 1
+         ORDER BY created_at DESC, id ASC`,
         [claim.tenantId, channelIds],
       ),
       this.database.query<EventRow>(
@@ -528,7 +597,12 @@ export class ChannelSnapshotStore {
       byId.set(event.id, event);
     }
     for (const event of messages.events) byId.set(event.id, event);
-    for (const row of [...statusControls.rows, ...structural.rows, ...createAnchors.rows]) {
+    for (const row of [
+      ...statusControls.rows,
+      ...structural.rows,
+      ...cornerStates.rows,
+      ...createAnchors.rows,
+    ]) {
       const event = eventFromRow(row);
       byId.set(event.id, event);
     }
@@ -640,6 +714,21 @@ export class ChannelSnapshotStore {
        WHERE cm.community_id = $1::uuid AND cm.channel_id = ANY($2::uuid[])
          AND cm.removed_at IS NULL
        ORDER BY cm.channel_id, cm.pubkey`,
+      [tenantId, channelIds],
+    );
+    return result.rows.map((row) => ({ channelId: row.channel_id, pubkey: row.pubkey }));
+  }
+
+  async loadMemberHistory(
+    tenantId: string,
+    channelIds: readonly string[],
+  ): Promise<readonly CurrentChannelMember[]> {
+    if (channelIds.length === 0) return [];
+    const result = await this.database.query<{ channel_id: string; pubkey: string }>(
+      `SELECT DISTINCT cm.channel_id::text AS channel_id, encode(cm.pubkey, 'hex') AS pubkey
+       FROM channel_members cm
+       WHERE cm.community_id = $1::uuid AND cm.channel_id = ANY($2::uuid[])
+       ORDER BY 1, 2`,
       [tenantId, channelIds],
     );
     return result.rows.map((row) => ({ channelId: row.channel_id, pubkey: row.pubkey }));

@@ -43,8 +43,8 @@ export class SnapshotSuccessionClient {
     });
     if (staleKeys.length === 0)
       return { mappings: this.cached(relayTenantId, pubkeys), stale: false };
-    const key = `${relayTenantId}:${staleKeys.join(',')}`;
-    const pending = this.inFlight.get(key) ?? this.refresh(relayTenantId, pubkeys, staleKeys);
+    const key = `${relayTenantId}:${pubkeys.join(',')}`;
+    const pending = this.inFlight.get(key) ?? this.refresh(relayTenantId, pubkeys);
     this.inFlight.set(key, pending);
     try {
       return await pending;
@@ -65,7 +65,6 @@ export class SnapshotSuccessionClient {
   private async refresh(
     relayTenantId: string,
     allPubkeys: readonly string[],
-    staleKeys: readonly string[],
   ): Promise<SuccessionResolution> {
     if (!this.options.token) {
       return { mappings: this.cached(relayTenantId, allPubkeys), stale: true };
@@ -80,7 +79,7 @@ export class SnapshotSuccessionClient {
           authorization: `Bearer ${this.options.token}`,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ relay_tenant_id: relayTenantId, pubkeys: staleKeys }),
+        body: JSON.stringify({ relay_tenant_id: relayTenantId, pubkeys: allPubkeys }),
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`identity succession HTTP ${response.status}`);
@@ -90,7 +89,7 @@ export class SnapshotSuccessionClient {
       }
       const mappings = body.mappings as Record<string, unknown>;
       const loadedAt = this.now();
-      for (const pubkey of staleKeys) {
+      for (const pubkey of allPubkeys) {
         const current = mappings[pubkey];
         if (typeof current !== 'string' || !PUBKEY.test(current)) {
           throw new Error('identity succession response omitted a requested key');

@@ -39,9 +39,16 @@ handoff; `beeline daemon` now instantiates `ThinDaemonCore` directly.
   an explicit restart note.
 - Exit status 78 means deliberate agent removal and is excluded from restart.
 - Desired-release drift writes a resumable handoff and exact desired release,
-  quiesces, drains, then exits. The service manager starts the successor. READY
-  is accepted only when `loaded_release` equals that desired release. Failure
-  before READY rolls back once under the cross-process install lock.
+  then waits on `Body.isBusy()` before atomically quiescing Room intake and
+  exiting. The wait shares SIGTERM's absolute nine-minute drain deadline. If
+  work is still active at that deadline, Body publishes that Beeline is
+  restarting for an update, leaves interrupted Room requests undelivered for
+  the successor, quiesces intake, and forces the bounded restart. That notice
+  is best-effort with a five-second ceiling, so a wedged relay cannot consume
+  the remaining systemd cleanup reserve. The service manager starts the
+  successor. READY is accepted only when `loaded_release` equals that desired
+  release. Failure before READY rolls back once under the cross-process install
+  lock.
 - Per-Room archive evidence from any path is terminal-inert. Owner-grant
   failures escalate to long jittered backoff after repeated confirmation;
   transport errors use short bounded jittered backoff. Only state transitions

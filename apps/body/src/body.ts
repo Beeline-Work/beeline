@@ -2328,6 +2328,12 @@ export class Body {
    */
   private sharedSocket?: SharedRelaySocket;
   private disposed = false;
+  /**
+   * Set only after the managed update's absolute drain deadline expires.
+   * A cancellation from that point is lifecycle interruption, not a terminal
+   * answer: its request remains in the durable inbox for the successor.
+   */
+  private forcedUpdateRestart = false;
   private presenceGenerations = new Map<string, string>();
   private activeExchangeReplies = new Set<string>();
   private resolveNamedRepository?: (target: NamedRepositoryTarget) => Promise<BoundRepo>;
@@ -2600,6 +2606,19 @@ export class Body {
     for (const session of affected) session.client.sessionCancel(session.sessionId);
     await Promise.allSettled(
       affected.map((session) => this.scheduler.forceSuspend(session.channelId)),
+    );
+  }
+
+  /** Publish the forced-update state before ACP cancellation can reject a turn. */
+  async prepareForForcedUpdateRestart(channelId: string): Promise<void> {
+    this.forcedUpdateRestart = true;
+    if (!this.isBusy()) return;
+    await postAgentMessage(
+      channelId,
+      this.agentIdentity,
+      'Beeline is restarting for an update — resend in a moment. This request was not marked delivered.',
+    ).catch((error) =>
+      console.error('[body] failed to publish forced update restart notice:', error),
     );
   }
 
@@ -7392,6 +7411,12 @@ export class Body {
           turn,
         );
       }
+      // The deadline may fire just as ACP resolves. Once the host has announced
+      // a forced restart, even a late successful result must not cross the
+      // delivery boundary; the successor owns this still-pending request.
+      if (this.forcedUpdateRestart && !scheduled) {
+        return { openedCorner: false, producedReply: false };
+      }
       if (turn.transitionedToCorner) {
         // The work moved into a corner, but the Room turn still owes the human
         // a visible answer. Publishing nothing here is what left a stalled
@@ -7577,6 +7602,9 @@ export class Body {
       );
       return { openedCorner: false, producedReply: true };
     } catch (error) {
+      if (this.forcedUpdateRestart && promptAttempted && !scheduled) {
+        return { openedCorner: false, producedReply: false };
+      }
       if (scheduled && error instanceof ScheduleActivationRefusedError) {
         await postAgentTurnStatus(
           tlcChannelId,
@@ -12867,6 +12895,10 @@ export class Body {
             this.steerQueuedChannels.delete(subchannelId);
             agentResult = await promptNewTurn();
           }
+          if (this.forcedUpdateRestart && promptAttempted) {
+            retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
+            continue;
+          }
           // A concurrent close (a later `#t=buzz-corner-close` event, possibly
           // seen by an overlapping poll tick while this turn was still
           // running) archives the corner out of band. Never publish a turn
@@ -12910,6 +12942,10 @@ export class Body {
             processed.add(evt.id);
             await this.durableState.delivered(subchannelId, evt.id);
             count++;
+            continue;
+          }
+          if (this.forcedUpdateRestart && promptAttempted) {
+            retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
             continue;
           }
           await postAgentTurnStatus(

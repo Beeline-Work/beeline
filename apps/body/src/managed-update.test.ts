@@ -8,6 +8,7 @@ import { newIdentity } from '@beeline/gate';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activeReleaseId, readPendingUpdate, type BeelineInstallLayout } from './self-update.js';
 import {
+  coordinateManagedUpdateHandoff,
   DEFAULT_UPDATE_INTERVAL_MS,
   ManagedUpdateHandoff,
   proveLoadedReleaseReady,
@@ -55,6 +56,89 @@ afterEach(async () => {
 });
 
 describe('managed update handoff', () => {
+  it('lets an active agent turn finish before handing over, then restarts on the next tick', async () => {
+    const { layout, runtimeDir } = await layoutFixture();
+    let activeTurns = 1;
+    let intakeQuiesced = false;
+    const restarts: Array<{ forced: boolean; desiredRelease: string }> = [];
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+
+    expect(
+      await coordinateManagedUpdateHandoff(
+        update,
+        () => {
+          if (activeTurns > 0) return false;
+          intakeQuiesced = true;
+          return true;
+        },
+        async (request) => {
+          restarts.push({
+            forced: request.forced,
+            desiredRelease: request.handoff.desiredRelease,
+          });
+        },
+      ),
+    ).toBe('waiting-for-idle');
+    expect(restarts).toEqual([]);
+    expect(intakeQuiesced).toBe(false);
+
+    activeTurns = 0;
+    expect(
+      await coordinateManagedUpdateHandoff(
+        update,
+        () => {
+          if (activeTurns > 0) return false;
+          intakeQuiesced = true;
+          return true;
+        },
+        async (request) => {
+          restarts.push({
+            forced: request.forced,
+            desiredRelease: request.handoff.desiredRelease,
+          });
+        },
+      ),
+    ).toBe('restarting');
+    expect(intakeQuiesced).toBe(true);
+    expect(restarts).toEqual([{ forced: false, desiredRelease: 'new' }]);
+  });
+
+  it('forces a bounded handoff only after the persisted drain deadline expires', async () => {
+    const { layout, runtimeDir } = await layoutFixture();
+    let now = 1_000;
+    const restarts: boolean[] = [];
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+      drainDeadlineMs: 50,
+    });
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+
+    expect(
+      await coordinateManagedUpdateHandoff(
+        update,
+        () => false,
+        async ({ forced }) => {
+          restarts.push(forced);
+        },
+      ),
+    ).toBe('waiting-for-idle');
+    expect(restarts).toEqual([]);
+
+    now += 50;
+    expect(
+      await coordinateManagedUpdateHandoff(
+        update,
+        () => false,
+        async ({ forced }) => {
+          restarts.push(forced);
+        },
+      ),
+    ).toBe('restarting');
+    expect(restarts).toEqual([true]);
+  });
+
   it('converges to the exact desired release and accepts only its READY proof', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);

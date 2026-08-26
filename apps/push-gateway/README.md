@@ -1,9 +1,10 @@
 # @beeline/push-gateway
 
-Android-only FCM gateway for Beeline. It accepts an FCM device registration,
-tails kind-9 channel events from Buzz's authoritative Postgres database,
-resolves notification metadata from the same community-scoped rows, and sends
-Firebase notifications to registered members other than the event author.
+Beeline's Postgres-adjacent push and channel-snapshot gateway. It accepts an
+Android FCM device registration, tails kind-9 channel events from Buzz's
+authoritative database, and sends Firebase notifications to registered members
+other than the event author. Beside that existing feed, one durable materializer
+builds the membership-gated `channel-snapshot-v1` Room/corner read view.
 
 The default policy is intentionally quiet: a recipient gets a push only for an
 explicit `p`-tag mention, a direct message, or an agent's transition to
@@ -32,17 +33,22 @@ BUZZY_PUSH_DATABASE_URL=postgres://buzz:password@127.0.0.1:5433/buzz \
 
 The service account file stays outside the repository. Do not log or commit it.
 
-| Variable                         | Default                                | Purpose                                                                            |
-| -------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
-| `BUZZY_PUSH_SA_FILE`             | —                                      | Firebase service-account path; used when `GOOGLE_APPLICATION_CREDENTIALS` is unset |
-| `GOOGLE_APPLICATION_CREDENTIALS` | —                                      | Standard Google credential path                                                    |
-| `BUZZY_PUSH_DATABASE_URL`        | `DATABASE_URL`                         | Buzz Postgres connection; startup fails if neither variable is set                 |
-| `BUZZY_PUSH_HOST`                | `127.0.0.1`                            | Registration HTTP bind host                                                        |
-| `PORT`                           | `8788`                                 | Registration HTTP port (Compose-internal in production)                            |
-| `BUZZY_PUSH_REGISTRY_FILE`       | `.data/registrations.json`             | Local token registry path                                                          |
-| `BUZZY_PUSH_DELIVERY_STATE_FILE` | registry directory + `deliveries.json` | Durable event-id ledger and recipient cursors                                      |
-| `BUZZY_PUSH_POLL_INTERVAL_MS`    | `1500`                                 | Member-scoped database poll interval                                               |
-| `BUZZY_PUSH_FEED_HEARTBEAT_MS`   | `60000`                                | Feed heartbeat interval; production logs normalize its event count to events/min   |
+| Variable                           | Default                                | Purpose                                                                            |
+| ---------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
+| `BUZZY_PUSH_SA_FILE`               | —                                      | Firebase service-account path; used when `GOOGLE_APPLICATION_CREDENTIALS` is unset |
+| `GOOGLE_APPLICATION_CREDENTIALS`   | —                                      | Standard Google credential path                                                    |
+| `BUZZY_PUSH_DATABASE_URL`          | `DATABASE_URL`                         | Buzz Postgres connection; startup fails if neither variable is set                 |
+| `BUZZY_PUSH_HOST`                  | `127.0.0.1`                            | Registration HTTP bind host                                                        |
+| `PORT`                             | `8788`                                 | Registration HTTP port (Compose-internal in production)                            |
+| `BUZZY_PUSH_REGISTRY_FILE`         | `.data/registrations.json`             | Local token registry path                                                          |
+| `BUZZY_PUSH_DELIVERY_STATE_FILE`   | registry directory + `deliveries.json` | Durable event-id ledger and recipient cursors                                      |
+| `BUZZY_PUSH_POLL_INTERVAL_MS`      | `1500`                                 | Member-scoped database poll interval                                               |
+| `BUZZY_PUSH_FEED_HEARTBEAT_MS`     | `60000`                                | Feed heartbeat interval; production logs normalize its event count to events/min   |
+| `BUZZY_SNAPSHOT_PUBLIC_ORIGIN`     | gateway bind origin                    | Exact public origin used to verify snapshot NIP-98 proofs                          |
+| `BUZZY_SNAPSHOT_AUTH_BASE_URL`     | `http://127.0.0.1:8789`                | Private auth-service origin for materializer succession lookups                    |
+| `BUZZY_SNAPSHOT_INTERNAL_TOKEN`    | —                                      | Private auth bearer; mandatory in production                                       |
+| `BUZZY_SNAPSHOT_POLL_INTERVAL_MS`  | `1000`                                 | Durable dirty-work polling interval                                                |
+| `BUZZY_SNAPSHOT_BURST_COALESCE_MS` | `75`                                   | Minimum age before a newly dirty channel is claimed                                |
 
 `POST /registrations` accepts
 `{ "pubkey", "token", "platform": "android", "environment": "physical" }`.
@@ -73,6 +79,32 @@ room-invite repair/visibility fixtures; and all Rooms linked to an obviously
 test/demo/fixture/throwaway Workspace. The active `channel_members` row remains
 the per-recipient delivery authority for every genuine eligible Room.
 
+## Channel snapshots
+
+`GET /snapshot/channel/<uuid>` requires a fresh kind-27235 NIP-98 proof with
+exactly the configured public URL, method `GET`, and one nonce. Proof IDs are
+durably replay guarded. The signer is the only viewer input; the serving query
+resolves the relay tenant and joins an active `channel_members` row on every
+request. A missing channel and a non-member therefore return the same `404`.
+Responses are `private, no-store` and vary on `Authorization`.
+
+The response contains one integrity-hashed, versioned normalized read-model
+snapshot: the requested Room/corner, its parent and sibling corner summaries,
+current metadata/lifecycle and roster, repository and review/approval summary,
+up to 30 projected conversation rows, and an inclusive WebSocket cursor. It is
+hard-capped at 256 KiB; attachments remain link metadata only. Missing,
+incompatible, corrupt, or more-than-30-second-behind rows return typed
+`503 snapshot_not_ready`, never an empty transcript.
+
+Postgres triggers coalesce event, channel, membership, and identity changes into
+one durable dirty row per `(relay_tenant_id, channel_id)`. A bounded fair worker
+claims them with `FOR UPDATE SKIP LOCKED`, rebuilds through the shared
+`@beeline/buzz-client` parser/reducer/selectors, resolves key succession through
+the auth sidecar, and atomically replaces the JSONB row. `/snapshot/health`
+reports worker warmth, queue depth, and oldest dirty age. `/health` remains the
+independent FCM readiness check, so unavailable Firebase credentials do not
+prevent already-built snapshots from being served.
+
 Every candidate database event produces one `[push] decision` line with its full
 event id and Room id, recipient, `notify`/`skip` verdict, exact reason, and send
 counts when FCM was attempted. To audit the metadata and fixture gates against
@@ -99,8 +131,10 @@ Android notification channel label require a new APK; the application label is
 already Beeline.
 
 Production runs the gateway as `push-gateway` in `relay-stack/prod/compose.yml`.
-The tracked relay-front proxies `/push/` to that service on the Compose network,
-and the deploy workflow builds the image and waits for service health before
-public verification. Preserve the existing `secrets/` and `state/` directories;
+The tracked relay-front proxies both `/push/` and path-preserving `/snapshot/`
+to that service on the Compose network. The materializer and replay ledger live
+in relay Postgres; the existing host deploy builds the image, applies the tracked
+Compose/nginx configuration, and verifies both health surfaces on merge. Do not
+deploy it manually. Preserve the existing `secrets/` and `state/` directories;
 the one-time legacy systemd retirement and persistence checks are documented in
 [`deploy/README.md`](deploy/README.md).

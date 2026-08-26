@@ -1909,7 +1909,7 @@ const styles = StyleSheet.create((theme) => {
     dialogError: {
       ...Typography.default(),
       marginTop: 10,
-      color: groknight.dialogDanger,
+      color: groknight.textSecondary,
       fontSize: 12,
       lineHeight: 17,
     },

@@ -50,7 +50,7 @@ export function WebAlertModal({ config, onClose, onConfirm }: WebAlertModalProps
     <HullDialog
       actions={actions}
       body={config.message}
-      dismissOnBackdrop={!isConfirm}
+      dismissOnBackdrop={false}
       onRequestClose={dismiss}
       testID="hull-alert-dialog"
       title={config.title}

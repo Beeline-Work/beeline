@@ -273,7 +273,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: 6,
     height: 6,
     borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.accent,
+    backgroundColor: theme.buzz.textSecondary,
   },
   questionText: {
     fontSize: 17,
@@ -309,11 +309,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     marginTop: 1,
   },
   checkboxSelected: {
-    backgroundColor: theme.buzz.accent,
-    borderColor: theme.buzz.accent,
+    backgroundColor: 'transparent',
+    borderColor: theme.buzz.textPrimary,
   },
   checkboxMark: {
-    color: theme.buzz.textInverted,
+    color: theme.buzz.textPrimary,
     fontSize: 13,
     lineHeight: 16,
     ...Typography.mono('semiBold'),
@@ -354,7 +354,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   errorText: {
     fontSize: 14,
-    color: theme.buzz.dialogDanger,
+    color: theme.buzz.textSecondary,
     ...Typography.default(),
   },
   footer: {

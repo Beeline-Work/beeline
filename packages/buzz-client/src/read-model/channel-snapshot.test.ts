@@ -208,6 +208,31 @@ describe('channel snapshot v1 contract', () => {
       journal['1'.repeat(64)]!.body = 42;
     });
     expect(guardChannelSnapshotViewV1(malformedPersistedRow).status).toBe('integrity-halt');
+
+    const unsafeAttachment = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      const journal = rooms[CHANNEL]!.eventJournal as Record<string, Record<string, unknown>>;
+      journal['1'.repeat(64)]!.attachments = [
+        { url: 'file:///private/data', name: 'secret.txt', mimeType: 'text/plain', size: 1 },
+      ];
+    });
+    expect(guardChannelSnapshotViewV1(unsafeAttachment).status).toBe('integrity-halt');
+
+    const invalidReviewSemantics = correctlyHashedMutation((value) => {
+      value.review = {
+        state: 'ready',
+        target: {
+          repository: 'lunchboxfortwo/beeline',
+          branch: 'main',
+          tip: 'not-a-commit',
+        },
+        files: [''],
+        fileCount: 1,
+        approvedBy: [],
+      };
+    });
+    expect(guardChannelSnapshotViewV1(invalidReviewSemantics).status).toBe('integrity-halt');
   });
 
   it('projects review manifests and human approval through shared typed facts', () => {
@@ -354,5 +379,18 @@ describe('channel snapshot v1 contract', () => {
         state: 'landing',
       },
     });
+
+    const successor = createIdentity('review-successor');
+    const stored = buildStoredChannelSnapshotV1({
+      snapshot,
+      channelId: CHANNEL,
+      revision: 1,
+      projectedAt: 10,
+      cursor: { createdAt: 5, eventIds: [events.at(-1)!.id] },
+      identitiesStale: false,
+      canonicalPubkeys: { [owner.publicKey]: successor.publicKey },
+    });
+    expect(stored.review.approvedBy).toEqual([successor.publicKey]);
+    expect(snapshotViewerOverlay(stored, successor.publicKey).approval).toBe('approved');
   });
 });

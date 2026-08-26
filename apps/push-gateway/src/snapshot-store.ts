@@ -499,6 +499,32 @@ export class ChannelSnapshotStore {
     };
   }
 
+  async loadMessageEvents(
+    tenantId: string,
+    channelId: string,
+    eventIds: readonly string[],
+  ): Promise<readonly NostrEvent[]> {
+    const ids = [...new Set(eventIds.filter((eventId) => /^[0-9a-f]{64}$/.test(eventId)))].slice(
+      0,
+      60,
+    );
+    if (ids.length === 0) return [];
+    const result = await this.database.query<EventRow>(
+      `SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind, e.tags, e.content, e.sig
+       FROM events e
+       WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL AND e.kind = 9
+         AND octet_length(e.content) <= 65536
+         AND encode(e.id, 'hex') = ANY($3::text[])
+         AND (e.channel_id = $2::uuid OR (e.channel_id IS NULL AND EXISTS (
+           SELECT 1 FROM jsonb_array_elements(e.tags) AS tag
+           WHERE tag->>0 = 'h' AND tag->>1 = $2::text
+         )))
+       ORDER BY e.created_at DESC, e.id ASC`,
+      [tenantId, channelId, ids],
+    );
+    return result.rows.map(eventFromRow);
+  }
+
   async loadIdentityEvents(
     tenantId: string,
     pubkeys: readonly string[],

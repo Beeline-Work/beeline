@@ -165,6 +165,7 @@ export async function prepareWorkspaceContext(
   // Persist any verdict learned during THIS pass (migration + membership
   // repair both record them) so the next launch skips those rooms instantly.
   verdicts.persist(pubkey);
+  const storedWorkspaceId = await storage.loadActiveId(pubkey);
   let personalWorkspaceId = await storage.loadPersonalId(pubkey);
 
   // A single empty answer is NOT authoritative absence. Production evidence:
@@ -177,6 +178,16 @@ export async function prepareWorkspaceContext(
   if (workspaces.length === 0) {
     const confirmation = await client.listCommunities(pubkey, predecessors);
     if (confirmation.length > 0) workspaces = confirmation;
+  }
+
+  if (workspaces.length === 0 && storedWorkspaceId) {
+    const storedWorkspace = await client.getCommunity(storedWorkspaceId);
+    if (!storedWorkspace) {
+      throw new Error(
+        `Remembered active ${WORKSPACE_LABEL} could not be loaded yet; retry instead of creating a Personal ${WORKSPACE_LABEL}.`,
+      );
+    }
+    workspaces = [storedWorkspace];
   }
 
   if (workspaces.length === 0) {
@@ -214,7 +225,6 @@ export async function prepareWorkspaceContext(
     }
   }
 
-  const storedWorkspaceId = await storage.loadActiveId(pubkey);
   const requested = requestedWorkspaceId === 'standalone' ? undefined : requestedWorkspaceId;
   const activeWorkspaceId =
     [requested, storedWorkspaceId, personalWorkspaceId].find(

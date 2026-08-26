@@ -24,7 +24,7 @@
 #      host and infra merges (e.g. the #340 push gateway) silently landed
 #      nowhere.
 #
-# Discipline inherited from deploy-beeline-cli.sh and extended:
+# Deployment discipline:
 #   - back up everything replaced before replacing it
 #   - verify staged bytes against the checkout BEFORE swapping anything in
 #   - verify against the PUBLIC URL after deploying; a green local swap is

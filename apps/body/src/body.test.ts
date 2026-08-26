@@ -11389,8 +11389,10 @@ describe('harness-independent corner commit watch', () => {
     filter: Record<string, unknown>,
   ): boolean {
     return Object.entries(filter).every(([key, values]) => {
-      if (key === 'kinds' && Array.isArray(values)) return (values as number[]).includes(event.kind);
-      if (key === 'authors' && Array.isArray(values)) return (values as string[]).includes(event.pubkey);
+      if (key === 'kinds' && Array.isArray(values))
+        return (values as number[]).includes(event.kind);
+      if (key === 'authors' && Array.isArray(values))
+        return (values as string[]).includes(event.pubkey);
       if (!key.startsWith('#') || !Array.isArray(values)) return true;
       if (event.kind === CHANGE_REVIEW_EVENT_KIND && key !== '#d') return false;
       return event.tags.some(
@@ -11406,9 +11408,7 @@ describe('harness-independent corner commit watch', () => {
    * transient projection lag where a store that holds matching events reads
    * as empty.
    */
-  function stubRelayFaithfulPublishing(
-    dropKind30078Query?: () => boolean,
-  ): NostrEvent[] {
+  function stubRelayFaithfulPublishing(dropKind30078Query?: () => boolean): NostrEvent[] {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -11640,139 +11640,151 @@ describe('harness-independent corner commit watch', () => {
       ),
     ).length;
 
-  it('verifies a complete 28-chunk generation already on the relay without republishing or terminally stopping', { timeout: 60_000 }, async () => {
-    // The production relay indexes kind:30078 records by `#d` alone; the
-    // faithful stub reproduces that so a `#h`-shaped read-back cannot pass
-    // here by accident. Every chunk EXISTS on the store — exactly the DB-
-    // verified incident state.
-    const agent = newIdentity('commit-watch-d-indexed-agent');
-    const firstBody = newBody(agent);
-    const published = stubRelayFaithfulPublishing();
-    const worktreePath = largeCommittedFeatureWorktree();
-    try {
-      const firstInfo = watchInfo(firstBody, agent, worktreePath);
-      await expect(
-        Reflect.get(firstBody, 'publishMergeReady').call(firstBody, firstInfo),
-      ).resolves.toBe(true);
+  it(
+    'verifies a complete 28-chunk generation already on the relay without republishing or terminally stopping',
+    { timeout: 60_000 },
+    async () => {
+      // The production relay indexes kind:30078 records by `#d` alone; the
+      // faithful stub reproduces that so a `#h`-shaped read-back cannot pass
+      // here by accident. Every chunk EXISTS on the store — exactly the DB-
+      // verified incident state.
+      const agent = newIdentity('commit-watch-d-indexed-agent');
+      const firstBody = newBody(agent);
+      const published = stubRelayFaithfulPublishing();
+      const worktreePath = largeCommittedFeatureWorktree();
+      try {
+        const firstInfo = watchInfo(firstBody, agent, worktreePath);
+        await expect(
+          Reflect.get(firstBody, 'publishMergeReady').call(firstBody, firstInfo),
+        ).resolves.toBe(true);
 
-      const tip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
-      expect(
-        published.filter((event) =>
+        const tip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+        expect(
+          published.filter((event) =>
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_FILE_TAG),
+          ),
+        ).toHaveLength(28);
+        const payloadsAfterPublish = reviewPayloadCount(published);
+        expect(payloadsAfterPublish).toBe(30);
+
+        // Restart shape: a fresh Body re-verifies the visible card against the
+        // relay. The complete generation must be FOUND — never re-published —
+        // and merge-ready must stand, not a stopped-before-merge-ready card.
+        const restartedBody = newBody(agent);
+        const restartedInfo = watchInfo(restartedBody, agent, worktreePath, {
+          mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip },
+        });
+        await expect(
+          Reflect.get(restartedBody, 'publishMergeReady').call(restartedBody, restartedInfo),
+        ).resolves.toBe(true);
+
+        expect(reviewPayloadCount(published)).toBe(payloadsAfterPublish);
+        expect(restartedInfo.reviewGenerationVerifiedTip).toBe(tip);
+        expect(
+          published.some((event) =>
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+          ),
+        ).toBe(false);
+        expect(
+          published.some(
+            (event) =>
+              typeof event.content === 'string' &&
+              event.content.includes('stopped before merge-ready'),
+          ),
+        ).toBe(false);
+      } finally {
+        await rm(worktreePath, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    'repairs exactly the missing chunks of a partial generation and completes verification',
+    { timeout: 60_000 },
+    async () => {
+      const agent = newIdentity('commit-watch-partial-repair-agent');
+      const firstBody = newBody(agent);
+      const published = stubRelayFaithfulPublishing();
+      const worktreePath = largeCommittedFeatureWorktree();
+      try {
+        const firstInfo = watchInfo(firstBody, agent, worktreePath);
+        await expect(
+          Reflect.get(firstBody, 'publishMergeReady').call(firstBody, firstInfo),
+        ).resolves.toBe(true);
+
+        const tip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+        const chunkEvents = published.filter((event) =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_FILE_TAG),
-        ),
-      ).toHaveLength(28);
-      const payloadsAfterPublish = reviewPayloadCount(published);
-      expect(payloadsAfterPublish).toBe(30);
+        );
+        const removed = [chunkEvents[3]!, chunkEvents[17]!];
+        for (const event of removed) published.splice(published.indexOf(event), 1);
+        const removedCoordinates = removed.map(
+          (event) => event.tags.find((tag) => tag[0] === 'd')?.[1],
+        );
 
-      // Restart shape: a fresh Body re-verifies the visible card against the
-      // relay. The complete generation must be FOUND — never re-published —
-      // and merge-ready must stand, not a stopped-before-merge-ready card.
-      const restartedBody = newBody(agent);
-      const restartedInfo = watchInfo(restartedBody, agent, worktreePath, {
-        mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip },
-      });
-      await expect(
-        Reflect.get(restartedBody, 'publishMergeReady').call(restartedBody, restartedInfo),
-      ).resolves.toBe(true);
+        const restartedBody = newBody(agent);
+        const restartedInfo = watchInfo(restartedBody, agent, worktreePath, {
+          mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip },
+        });
+        await expect(
+          Reflect.get(restartedBody, 'publishMergeReady').call(restartedBody, restartedInfo),
+        ).resolves.toBe(true);
 
-      expect(reviewPayloadCount(published)).toBe(payloadsAfterPublish);
-      expect(restartedInfo.reviewGenerationVerifiedTip).toBe(tip);
-      expect(
-        published.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
-        ),
-      ).toBe(false);
-      expect(
-        published.some(
-          (event) =>
-            typeof event.content === 'string' &&
-            event.content.includes('stopped before merge-ready'),
-        ),
-      ).toBe(false);
-    } finally {
-      await rm(worktreePath, { recursive: true, force: true });
-    }
-  });
+        const repaired = published
+          .filter(
+            (event) =>
+              event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_FILE_TAG) &&
+              !chunkEvents.includes(event),
+          )
+          .map((event) => event.tags.find((tag) => tag[0] === 'd')?.[1]);
+        expect([...repaired].sort()).toEqual([...removedCoordinates].sort());
+        // Both missing chunks are restored, and the repair re-publishes the
+        // completion marker after them (its ordering IS the transaction), so
+        // one extra complete record is expected.
+        expect(reviewPayloadCount(published)).toBe(31);
+        expect(
+          published.filter((event) =>
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_FILE_TAG),
+          ),
+        ).toHaveLength(28);
+        expect(restartedInfo.reviewGenerationVerifiedTip).toBe(tip);
+      } finally {
+        await rm(worktreePath, { recursive: true, force: true });
+      }
+    },
+  );
 
-  it('repairs exactly the missing chunks of a partial generation and completes verification', { timeout: 60_000 }, async () => {
-    const agent = newIdentity('commit-watch-partial-repair-agent');
-    const firstBody = newBody(agent);
-    const published = stubRelayFaithfulPublishing();
-    const worktreePath = largeCommittedFeatureWorktree();
-    try {
-      const firstInfo = watchInfo(firstBody, agent, worktreePath);
-      await expect(
-        Reflect.get(firstBody, 'publishMergeReady').call(firstBody, firstInfo),
-      ).resolves.toBe(true);
-
-      const tip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
-      const chunkEvents = published.filter((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_FILE_TAG),
-      );
-      const removed = [chunkEvents[3]!, chunkEvents[17]!];
-      for (const event of removed) published.splice(published.indexOf(event), 1);
-      const removedCoordinates = removed.map(
-        (event) => event.tags.find((tag) => tag[0] === 'd')?.[1],
-      );
-
-      const restartedBody = newBody(agent);
-      const restartedInfo = watchInfo(restartedBody, agent, worktreePath, {
-        mergeTarget: { repo: 'repo', branch: 'refs/heads/main', tip },
-      });
-      await expect(
-        Reflect.get(restartedBody, 'publishMergeReady').call(restartedBody, restartedInfo),
-      ).resolves.toBe(true);
-
-      const repaired = published
-        .filter(
-          (event) =>
-            event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_FILE_TAG) &&
-            !chunkEvents.includes(event),
-        )
-        .map((event) => event.tags.find((tag) => tag[0] === 'd')?.[1]);
-      expect([...repaired].sort()).toEqual([...removedCoordinates].sort());
-      // Both missing chunks are restored, and the repair re-publishes the
-      // completion marker after them (its ordering IS the transaction), so
-      // one extra complete record is expected.
-      expect(reviewPayloadCount(published)).toBe(31);
-      expect(
-        published.filter((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_FILE_TAG),
-        ),
-      ).toHaveLength(28);
-      expect(restartedInfo.reviewGenerationVerifiedTip).toBe(tip);
-    } finally {
-      await rm(worktreePath, { recursive: true, force: true });
-    }
-  });
-
-  it('recovers verification from an empty projection page instead of reusing a poisoned empty read', { timeout: 60_000 }, async () => {
-    const agent = newIdentity('commit-watch-empty-page-agent');
-    const body = newBody(agent);
-    // This test converges through real backoff sleeps between verification
-    // attempts. An earlier flaky fake-timer test that throws before its own
-    // `useRealTimers()` otherwise leaves timers faked file-wide and hangs
-    // this test; restore real timers explicitly instead of inheriting that.
-    vi.useRealTimers();
-    let droppedPages = 2;
-    stubRelayFaithfulPublishing(() => droppedPages-- > 0);
-    // Retry convergence is the property under proof; the large 28-chunk
-    // workload belongs to the two tests above. One chunk keeps this test
-    // cheap and insensitive to machine load.
-    const worktreePath = committedFeatureWorktree();
-    try {
-      const info = watchInfo(body, agent, worktreePath);
-      // First read reports everything missing (repairs republish), and the
-      // first verify attempt ALSO reads an empty page; the bounded retry
-      // must converge on the third attempt rather than throwing.
-      await expect(
-        Reflect.get(body, 'publishMergeReady').call(body, info),
-      ).resolves.toBe(true);
-      expect(info.reviewGenerationVerifiedTip).toBe(gitCommand(worktreePath, ['rev-parse', 'HEAD']));
-    } finally {
-      await rm(worktreePath, { recursive: true, force: true });
-    }
-  });
+  it(
+    'recovers verification from an empty projection page instead of reusing a poisoned empty read',
+    { timeout: 60_000 },
+    async () => {
+      const agent = newIdentity('commit-watch-empty-page-agent');
+      const body = newBody(agent);
+      // This test converges through real backoff sleeps between verification
+      // attempts. An earlier flaky fake-timer test that throws before its own
+      // `useRealTimers()` otherwise leaves timers faked file-wide and hangs
+      // this test; restore real timers explicitly instead of inheriting that.
+      vi.useRealTimers();
+      let droppedPages = 2;
+      stubRelayFaithfulPublishing(() => droppedPages-- > 0);
+      // Retry convergence is the property under proof; the large 28-chunk
+      // workload belongs to the two tests above. One chunk keeps this test
+      // cheap and insensitive to machine load.
+      const worktreePath = committedFeatureWorktree();
+      try {
+        const info = watchInfo(body, agent, worktreePath);
+        // First read reports everything missing (repairs republish), and the
+        // first verify attempt ALSO reads an empty page; the bounded retry
+        // must converge on the third attempt rather than throwing.
+        await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
+        expect(info.reviewGenerationVerifiedTip).toBe(
+          gitCommand(worktreePath, ['rev-parse', 'HEAD']),
+        );
+      } finally {
+        await rm(worktreePath, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('bounds repeated review-payload failures and publishes an honest terminal state', async () => {
     const agent = newIdentity('commit-watch-bounded-failure-agent');

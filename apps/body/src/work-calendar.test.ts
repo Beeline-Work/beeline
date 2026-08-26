@@ -522,9 +522,7 @@ describe('WorkCalendar best-effort durable execution', () => {
     });
     await restarted.start();
     expect(delivered.map((event) => event.id)).toEqual([receipt.id]);
-    expect(
-      await new DurableWorkCalendarState(durable.path).pendingReceipts(),
-    ).toEqual([]);
+    expect(await new DurableWorkCalendarState(durable.path).pendingReceipts()).toEqual([]);
     await restarted.dispose();
   });
 
@@ -548,8 +546,9 @@ describe('WorkCalendar best-effort durable execution', () => {
     expect(store.receipts.size).toBe(1);
     await fixture.calendar.wakeNow();
     expect(store.receipts.size).toBe(0);
-    expect(delivered.filter((event) => parseScheduledTurnReceipt(event)?.value.status === 'complete'))
-      .toHaveLength(1);
+    expect(
+      delivered.filter((event) => parseScheduledTurnReceipt(event)?.value.status === 'complete'),
+    ).toHaveLength(1);
     await fixture.calendar.dispose();
   });
 

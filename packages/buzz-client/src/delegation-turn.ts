@@ -9,10 +9,7 @@
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { KIND_STREAM_MESSAGE, TAG_DELEGATION_RECEIPT, TAG_DELEGATION_TURN } from './kinds.js';
 import type { Identity } from './types.js';
-import {
-  MAX_MISSION_RESERVED_TOKENS,
-  type ArtifactRevisionRef,
-} from './permission-request.js';
+import { MAX_MISSION_RESERVED_TOKENS, type ArtifactRevisionRef } from './permission-request.js';
 
 export const DELEGATION_TURN_MARKER = TAG_DELEGATION_TURN;
 export const DELEGATION_RECEIPT_MARKER = TAG_DELEGATION_RECEIPT;

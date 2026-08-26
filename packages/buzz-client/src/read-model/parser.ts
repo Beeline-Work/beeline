@@ -649,9 +649,7 @@ function controlPayload(
   if (markerSet.has('buzz-scheduled-turn')) {
     const parsed = parseScheduledTurnReceipt(event);
     const status = parsed?.value.status;
-    const reason = parsed?.value.reason
-      ?.replace(/[\r\n]+/g, ' ')
-      .slice(0, 600);
+    const reason = parsed?.value.reason?.replace(/[\r\n]+/g, ' ').slice(0, 600);
     return status === 'failed'
       ? {
           visibility: 'system-line',

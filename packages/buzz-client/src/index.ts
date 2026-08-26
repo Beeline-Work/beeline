@@ -124,6 +124,7 @@ export {
 export * from './permission-request.js';
 export * from './delegation-turn.js';
 export * from './agent-access-config.js';
+export * from './scheduled-turn.js';
 
 export {
   AGENT_PRESENCE_HEARTBEAT_MS,

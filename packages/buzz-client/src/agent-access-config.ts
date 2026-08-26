@@ -20,6 +20,48 @@ export interface AgentAccessConfigV1 {
   updatedAt: number;
 }
 
+export interface AgentAccessAuthority {
+  policy: AgentAccessPolicyV1;
+  allowlist?: string[];
+  ownerPubkey: string;
+}
+
+export function resolveAgentAccessAuthority(input: {
+  events: readonly NostrEvent[];
+  workspaceId: string;
+  agentPubkey: string;
+  pairedOwnerPubkey: string;
+  currentOwnerPubkey: string;
+  seed?: Pick<AgentAccessConfigV1, 'policy' | 'allowlist'>;
+}): AgentAccessAuthority | 'denied' | undefined {
+  const key = agentAccessConfigKey(input.workspaceId, input.agentPubkey);
+  const relevant = input.events
+    .filter((event) => uniqueTag(event, 'd') === key)
+    .sort((left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id));
+  const newestOwner = relevant.find((event) => event.pubkey === input.currentOwnerPubkey);
+  if (newestOwner) {
+    const parsed = parseAgentAccessConfig(newestOwner);
+    if (!parsed || parsed.workspaceId !== input.workspaceId || parsed.agentPubkey !== input.agentPubkey) {
+      return 'denied';
+    }
+    return {
+      policy: parsed.policy,
+      ...(parsed.allowlist ? { allowlist: parsed.allowlist } : {}),
+      ownerPubkey: input.currentOwnerPubkey,
+    };
+  }
+  if (
+    input.currentOwnerPubkey !== input.pairedOwnerPubkey &&
+    relevant.some((event) => event.pubkey === input.pairedOwnerPubkey)
+  ) return 'denied';
+  if (!input.seed) return undefined;
+  return {
+    policy: input.seed.policy,
+    ...(input.seed.allowlist ? { allowlist: [...input.seed.allowlist] } : {}),
+    ownerPubkey: input.currentOwnerPubkey,
+  };
+}
+
 export function agentAccessConfigKey(workspaceId: string, agentPubkey: string): string {
   if (!SAFE_ID.test(workspaceId) || !HEX_64.test(agentPubkey)) {
     throw new Error('invalid agent access config key');

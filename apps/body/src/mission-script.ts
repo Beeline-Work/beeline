@@ -226,10 +226,13 @@ export async function runMissionScript(input: {
       else resolvePromise(result!);
     };
     const append = (target: 'stdout' | 'stderr', chunk: Buffer | string) => {
+      if (termination) return;
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      if (target === 'stdout') stdout = Buffer.concat([stdout, bytes]);
-      else stderr = Buffer.concat([stderr, bytes]);
-      if (stdout.length + stderr.length > MAX_MISSION_SCRIPT_OUTPUT_BYTES) {
+      const remaining = MAX_MISSION_SCRIPT_OUTPUT_BYTES - stdout.length - stderr.length;
+      const retained = remaining > 0 ? bytes.subarray(0, remaining) : Buffer.alloc(0);
+      if (target === 'stdout') stdout = Buffer.concat([stdout, retained]);
+      else stderr = Buffer.concat([stderr, retained]);
+      if (bytes.length >= remaining) {
         terminate('output-truncated');
       }
     };

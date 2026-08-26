@@ -1,6 +1,7 @@
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { normalizeAttachmentReference, type AttachmentReference } from '../attachment.js';
 import type { CornerMachineState } from '../corner-state.js';
+import { parseScheduledTurnReceipt } from '../scheduled-turn.js';
 import {
   DELEGATION_RECEIPT_MARKER,
   DELEGATION_TURN_MARKER,
@@ -646,9 +647,9 @@ function controlPayload(
   payload: ControlPayload;
 } {
   if (markerSet.has('buzz-scheduled-turn')) {
-    const parsed = parseJson(event.content);
-    const status = text(parsed?.status);
-    const reason = text(parsed?.reason)
+    const parsed = parseScheduledTurnReceipt(event);
+    const status = parsed?.value.status;
+    const reason = parsed?.value.reason
       ?.replace(/[\r\n]+/g, ' ')
       .slice(0, 600);
     return status === 'failed'
@@ -927,6 +928,9 @@ function parseMessage(event: NostrEvent, authority: ParseAuthority): ReadEvent {
   const controlMarker = [...markerSet].find((candidate) => CONTROL_MARKERS.has(candidate));
   const isExplicitBodyControl = markerSet.has('body-control') || Boolean(tag(event, 'subchannel'));
   if ((controlMarker || isExplicitBodyControl) && agentAuthor) {
+    if (markerSet.has('buzz-scheduled-turn') && !parseScheduledTurnReceipt(event)) {
+      return unknown(event, 'malformed-schema');
+    }
     const projected = controlPayload(event, markerSet);
     return {
       ...envelope(event, scope),

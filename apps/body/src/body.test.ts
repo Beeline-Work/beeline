@@ -8968,6 +8968,46 @@ describe('closing a corner with no live session', () => {
     }
   });
 
+  it('fresh-checks mission authority before closing an abandoned corner', async () => {
+    const agent = newIdentity('dead-mission-close-agent');
+    const human = newIdentity('dead-mission-close-human');
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-dead-mission-close-'));
+    try {
+      const body = newBody(agent, workspaceRoot);
+      const admit = vi
+        .spyOn(body as never, 'beginMissionCornerClose' as never)
+        .mockRejectedValue(new Error('mission grant revoked') as never);
+      Reflect.get(body, 'abandonedCorners').set('corner-dead-mission', {
+        subchannelId: 'corner-dead-mission',
+        parentChannelId: 'room-dead-mission',
+        reason: 'its worktree was missing after a restart',
+        mission: {
+          missionId: 'mission-one',
+          grantEventId: 'a'.repeat(64),
+          controllerAgentPubkey: agent.publicKey,
+          principalPubkey: human.publicKey,
+          targetAgentPubkey: agent.publicKey,
+          workspaceId: 'workspace-one',
+          roomId: 'room-dead-mission',
+          repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+        },
+      });
+      const close = closeEvent(human, 'corner-dead-mission');
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => [close]) });
+      const published = stubRelayHttp([
+        cornerCreateEvent(agent, 'corner-dead-mission', 'room-dead-mission'),
+      ]);
+
+      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-dead-mission');
+
+      expect(admit).toHaveBeenCalledOnce();
+      expect(body.getAbandonedCorners().has('corner-dead-mission')).toBe(true);
+      expect(published.some((event) => event.kind === 9002)).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('reaps the corner worktree when one is still on disk, and says what a close did and did not discard', async () => {
     const agent = newIdentity('reap-close-agent');
     const human = newIdentity('reap-close-human');

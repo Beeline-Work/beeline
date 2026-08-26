@@ -143,6 +143,56 @@ describe('DelegationRuntime', () => {
     expect(targetTurn).toHaveBeenCalledOnce();
   });
 
+  it('admits a verified mission return without reverse ordinary access', async () => {
+    const f = fixture();
+    const mission = {
+      missionId: 'mission-one',
+      grantEventId: 'a'.repeat(64),
+      controllerAgentPubkey: f.recipient.publicKey,
+      scheduleId: 'summary',
+      scheduleRevision: 1,
+      scheduleRevisionDigest: 'b'.repeat(64),
+      scheduleRunId: 'run-one',
+      mode: 'model' as const,
+      targetAgentPubkey: f.sender.publicKey,
+      maxRuns: 10,
+      perRunReservedTokens: 100,
+      dailyReservedTokens: 500,
+      totalReservedTokens: 1_000,
+      scriptRuntimeSeconds: 1,
+      repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+    };
+    const assignmentValue: DelegationTurnV1 = {
+      ...f.value,
+      rootEventId: mission.grantEventId,
+      fromAgentPubkey: f.recipient.publicKey,
+      toAgentPubkey: f.sender.publicKey,
+      path: [f.recipient.publicKey],
+      mission,
+    };
+    const assignment = buildDelegationTurn(f.recipient, assignmentValue);
+    const returned = buildDelegationTurn(f.sender, {
+      ...f.value,
+      rootEventId: mission.grantEventId,
+      workItemId: randomUUID(),
+      phase: 'return',
+      parentEventId: assignment.id,
+      parentWorkItemId: assignmentValue.workItemId,
+      path: [f.recipient.publicKey, f.sender.publicKey],
+      depth: 2,
+      budget: { ...f.value.budget, maxAgentTurns: 1, maxChildren: 1, reservedTokens: 0 },
+      mission,
+    });
+    const accessPermitted = vi.fn(async () => false);
+    const reader = (Reflect.get(f.runtime, 'dependencies') as DelegationRuntimeDependencies).reader;
+    reader.accessPermitted = accessPermitted;
+    reader.graph = async () => ({ turns: [parseDelegationTurn(assignment)!], receipts: [] });
+    const invoke = vi.fn(async () => undefined);
+    await expect(f.runtime.handleEvent(returned, invoke)).resolves.toMatchObject({ status: 'complete' });
+    expect(accessPermitted).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledOnce();
+  });
+
   it('keeps ordinary agent-authored Room messages context-only', async () => {
     const f = fixture();
     const ordinary = signEvent(

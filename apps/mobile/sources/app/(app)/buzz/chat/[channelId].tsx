@@ -80,10 +80,7 @@ import {
   setActiveBuzzCacheViewer,
   useBuzzLocalCache,
 } from '@/buzz/local-cache';
-import {
-  pushOpenBuzzChannelId,
-  releaseOpenBuzzChannelId,
-} from '@/buzz/open-room-tracker';
+import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import {
   cacheLiveSessionEvents,
   drainLiveEventFrame,
@@ -199,13 +196,15 @@ import { mentionKeyboardAction } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
-  presenceWithMessageLiveness,
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
+  nextAgentPresenceTransitionAt,
   onlineVerdicts,
   presenceMapFromSessionEvents,
+  activeMentionCandidates,
+  AGENT_PRESENCE_BACKGROUND_GRACE_MS,
   type RoomAgentPresence,
 } from '@/buzz/agent-presence';
 import {
@@ -992,20 +991,9 @@ export default function BuzzChat() {
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
     [roomParticipants],
   );
-  // What the heartbeat stream says, corrected by what the agents have visibly
-  // said. A heartbeat is the weaker of the two signals — it is a best-effort
-  // publish the relay may reject on quota — so an agent that is answering in
-  // the transcript must never read offline. Every "is it online" decision
-  // below reads this map, not the raw heartbeat one.
-  const agentPresences = useMemo(
-    () =>
-      presenceWithMessageLiveness(
-        heartbeatPresences,
-        combinedMessages,
-        new Set(roomAgents.map((agent) => agent.pubkey)),
-      ),
-    [heartbeatPresences, combinedMessages, roomAgents],
-  );
+  // kind:30078 is the sole liveness truth. Transcript/activity events can
+  // describe work, but they never mint or renew a presence lease.
+  const agentPresences = heartbeatPresences;
   const onlineAgentCount = roomAgents.filter((agent) =>
     isAgentPresenceOnlineWithReconnectGrace(
       agentPresences[agent.pubkey],
@@ -1052,14 +1040,18 @@ export default function BuzzChat() {
   const lifecycleAction = roomLifecycleAction(viewerRoomRole);
   const mentionableAgents = useMemo(
     () =>
-      roomParticipants
-        .filter((participant) => participant.kind === 'agent')
-        .map((participant) => ({
-          pubkey: participant.pubkey,
-          name: participant.name,
-          handle: participant.handle,
-        })),
-    [roomParticipants],
+      activeMentionCandidates(
+        roomParticipants
+          .filter((participant) => participant.kind === 'agent')
+          .map((participant) => ({
+            pubkey: participant.pubkey,
+            name: participant.name,
+            handle: participant.handle,
+          })),
+        agentPresences,
+        presenceNow,
+      ),
+    [roomParticipants, agentPresences, presenceNow],
   );
   const activeMention = useMemo(
     () =>
@@ -1074,9 +1066,12 @@ export default function BuzzChat() {
   const mentionSuggestions = useMemo(
     () =>
       activeMention
-        ? filterMentionCandidates(roomParticipants, activeMention.query)
+        ? filterMentionCandidates(
+            activeMentionCandidates(roomParticipants, agentPresences, presenceNow),
+            activeMention.query,
+          )
         : { matches: [], overflow: 0 },
-    [activeMention, roomParticipants],
+    [activeMention, roomParticipants, agentPresences, presenceNow],
   );
   const mentionMenuVisible = Boolean(
     composerFocused &&
@@ -1658,21 +1653,16 @@ export default function BuzzChat() {
   }, [canonicalCorner?.machineState, canonicalCorner?.stateAt]);
 
   useEffect(() => {
-    // Presence only changes at a lease/grace deadline. A five-second clock here
+    // Presence only changes at a lease/dormancy deadline. A five-second clock here
     // recreated FlatList's renderItem (and every visible message) while someone
     // was typing, which made the foreground intermittently unresponsive.
     const now = Date.now();
-    const deadlines = [
-      ...Object.values(agentPresences).map(
-        (presence) => presence.observedAt + AGENT_PRESENCE_STALE_MS,
-      ),
-      ...Object.values(presenceReconnectGrace),
-    ].filter((deadline) => Number.isFinite(deadline) && deadline > now);
-    if (deadlines.length === 0) return;
-    const delay = Math.max(1, Math.min(...deadlines) - now + 1);
+    const deadline = nextAgentPresenceTransitionAt(agentPresences, now);
+    if (deadline === undefined) return;
+    const delay = Math.max(1, deadline - now + 1);
     const timer = setTimeout(() => setPresenceNow(Date.now()), delay);
     return () => clearTimeout(timer);
-  }, [agentPresences, presenceReconnectGrace]);
+  }, [agentPresences, presenceNow]);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
@@ -1840,10 +1830,7 @@ export default function BuzzChat() {
                   const current = corners.find((corner) => corner.id === decodedId);
                   if (current) {
                     setCornerLifecycleStatus(current.status);
-                    if (
-                      current.machineState === 'closed' ||
-                      current.machineState === 'concluded'
-                    ) {
+                    if (current.machineState === 'closed' || current.machineState === 'concluded') {
                       setIsArchived(true);
                     }
                   }
@@ -1984,7 +1971,14 @@ export default function BuzzChat() {
                   .map(([pubkey]) => pubkey),
               );
               const backgroundGrace = Object.fromEntries(
-                [...onlineBeforeBackground].map((pubkey) => [pubkey, Number.MAX_SAFE_INTEGER]),
+                [...onlineBeforeBackground].map((pubkey) => [
+                  pubkey,
+                  // Bounded by the lease, never MAX_SAFE_INTEGER: an
+                  // unbounded grace extended "online" from stale cached
+                  // state forever if the foreground handler missed its
+                  // event — a lapsed lease can never render online.
+                  now + AGENT_PRESENCE_BACKGROUND_GRACE_MS,
+                ]),
               );
               presenceReconnectGraceRef.current = backgroundGrace;
               setPresenceReconnectGrace(backgroundGrace);

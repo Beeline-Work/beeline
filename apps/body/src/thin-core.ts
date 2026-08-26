@@ -104,6 +104,16 @@ export class ThinDaemonCore {
     return this.roomRuntime.isWorkspaceIdle();
   }
 
+  /** Use the Room runtime's one busy registry and close intake in the same turn. */
+  quiesceForUpdateIfIdle(): boolean {
+    return this.roomRuntime.quiesceForUpdateIfIdle();
+  }
+
+  /** Surface a bounded forced update without consuming interrupted requests. */
+  async prepareForForcedUpdateRestart(): Promise<void> {
+    await this.roomRuntime.prepareForForcedUpdateRestart();
+  }
+
   /** Apply the persisted update handoff deadline before abort starts draining. */
   setDrainDeadlineAt(deadlineAt: number): void {
     this.roomRuntime.setDrainDeadlineAt(deadlineAt);

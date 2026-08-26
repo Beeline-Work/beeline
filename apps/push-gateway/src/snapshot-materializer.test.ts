@@ -506,13 +506,22 @@ describe('ChannelSnapshotMaterializer', () => {
 
     expect(await materializer.runOnce()).toBe(1);
     const served = await store.readForViewer(CHANNEL, owner.publicKey);
-    const transcript = selectTranscript(served!.payload!.snapshot, CHANNEL, { limit: 30 });
-    expect(transcript.map((row) => ('body' in row ? row.body : undefined))).toEqual(
-      Array.from({ length: 30 }, (_, index) => `reply ${index}`),
+    const transcript = selectTranscript(served!.payload!.snapshot, CHANNEL);
+    expect(transcript).toHaveLength(30);
+    const retainedReplies = transcript.filter(
+      (row) => 'body' in row && row.body.startsWith('reply '),
     );
-    expect(transcript.map((row) => ('reply' in row ? row.reply?.eventId : undefined))).toEqual(
-      parents.map((parent) => parent.id),
+    expect(retainedReplies.map((row) => ('body' in row ? row.body : undefined))).toEqual(
+      Array.from({ length: 15 }, (_, index) => `reply ${index + 15}`),
     );
+    expect(retainedReplies.map((row) => ('reply' in row ? row.reply?.eventId : undefined))).toEqual(
+      parents.slice(15).map((parent) => parent.id),
+    );
+    expect(
+      Object.values(served!.payload!.snapshot.rooms[CHANNEL]!.eventJournal).filter(
+        (event) => event.type === 'human-message' || event.type === 'agent-message',
+      ),
+    ).toHaveLength(30);
   }, 30_000);
 
   it('yields a deep hidden-history scan so a cold channel runs next', async () => {

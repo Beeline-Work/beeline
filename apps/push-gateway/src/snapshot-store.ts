@@ -160,7 +160,13 @@ RETURNS void LANGUAGE sql AS $$
   ON CONFLICT (relay_tenant_id, channel_id) DO UPDATE SET
     dirty_revision = nextval('beeline_snapshot_dirty_revision_seq'),
     repository_scan_revision = nextval('beeline_snapshot_dirty_revision_seq'),
-    dirty_at = LEAST(beeline_snapshot_dirty.dirty_at, now()),
+    dirty_at = CASE
+      WHEN beeline_snapshot_dirty.claimed_token IS NOT NULL
+        AND beeline_snapshot_dirty.last_claimed_at IS NOT NULL
+        AND beeline_snapshot_dirty.dirty_at <= beeline_snapshot_dirty.last_claimed_at
+      THEN clock_timestamp()
+      ELSE LEAST(beeline_snapshot_dirty.dirty_at, clock_timestamp())
+    END,
     next_attempt_at = LEAST(beeline_snapshot_dirty.next_attempt_at, now()),
     attempts = 0,
     last_error = NULL,
@@ -181,7 +187,13 @@ RETURNS void LANGUAGE sql AS $$
   VALUES (p_tenant, p_channel)
   ON CONFLICT (relay_tenant_id, channel_id) DO UPDATE SET
     dirty_revision = nextval('beeline_snapshot_dirty_revision_seq'),
-    dirty_at = LEAST(beeline_snapshot_dirty.dirty_at, now()),
+    dirty_at = CASE
+      WHEN beeline_snapshot_dirty.claimed_token IS NOT NULL
+        AND beeline_snapshot_dirty.last_claimed_at IS NOT NULL
+        AND beeline_snapshot_dirty.dirty_at <= beeline_snapshot_dirty.last_claimed_at
+      THEN clock_timestamp()
+      ELSE LEAST(beeline_snapshot_dirty.dirty_at, clock_timestamp())
+    END,
     next_attempt_at = LEAST(beeline_snapshot_dirty.next_attempt_at, now()),
     attempts = 0,
     last_error = NULL,
@@ -454,6 +466,18 @@ export class ChannelSnapshotStore {
     );
   }
 
+  async withProjectionBoundary<T>(work: (reader: ChannelSnapshotStore) => Promise<T>): Promise<T> {
+    return this.database.transaction(async (database) => {
+      await database.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      const scopedDatabase: DatabaseTransactional = {
+        query: <Row>(text: string, values?: unknown[]) => database.query<Row>(text, values),
+        transaction: async <Result>(nested: (queryable: DatabaseQueryable) => Promise<Result>) =>
+          nested(database),
+      };
+      return work(new ChannelSnapshotStore(scopedDatabase, this.now));
+    });
+  }
+
   async claimDirty(
     limit: number,
     leaseMs: number,
@@ -572,11 +596,11 @@ export class ChannelSnapshotStore {
       numberValue(continuationRow.repository_scan_revision) === claim.repositoryScanRevision;
     const continuationEventIds =
       messageContinuationCurrent && Array.isArray(continuationRow.scan_event_ids)
-      ? continuationRow.scan_event_ids.filter(
-          (eventId): eventId is string =>
-            typeof eventId === 'string' && /^[0-9a-f]{64}$/.test(eventId),
-        )
-      : [];
+        ? continuationRow.scan_event_ids.filter(
+            (eventId): eventId is string =>
+              typeof eventId === 'string' && /^[0-9a-f]{64}$/.test(eventId),
+          )
+        : [];
     const continuationCursor =
       messageContinuationCurrent &&
       continuationRow.scan_cursor_created_at !== null &&
@@ -1125,10 +1149,7 @@ export class ChannelSnapshotStore {
     );
   }
 
-  async recordRepositoryEvent(
-    claim: DirtyChannelClaim,
-    repositoryEventId?: string,
-  ): Promise<void> {
+  async recordRepositoryEvent(claim: DirtyChannelClaim, repositoryEventId?: string): Promise<void> {
     await this.database.query(
       `UPDATE beeline_snapshot_dirty SET repository_event_id = $5
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
@@ -1157,14 +1178,7 @@ export class ChannelSnapshotStore {
         [claim.tenantId, claim.channelId, claim.claimToken],
       );
       if (current.rows.length !== 1) return;
-      if (numberValue(current.rows[0]!.dirty_revision) !== claim.dirtyRevision) {
-        await transaction.query(
-          `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL
-           WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,
-          [claim.tenantId, claim.channelId, claim.claimToken],
-        );
-        return;
-      }
+      const superseded = numberValue(current.rows[0]!.dirty_revision) !== claim.dirtyRevision;
       await transaction.query(
         `INSERT INTO beeline_channel_snapshot_v1
            (relay_tenant_id, channel_id, schema_version, projection_version, revision,
@@ -1191,12 +1205,14 @@ export class ChannelSnapshotStore {
           JSON.stringify(payload),
         ],
       );
-      await transaction.query(
-        `DELETE FROM beeline_snapshot_dirty
-         WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
-           AND dirty_revision = $3 AND claimed_token = $4`,
-        [claim.tenantId, claim.channelId, claim.dirtyRevision, claim.claimToken],
-      );
+      if (!superseded) {
+        await transaction.query(
+          `DELETE FROM beeline_snapshot_dirty
+           WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
+             AND dirty_revision = $3 AND claimed_token = $4`,
+          [claim.tenantId, claim.channelId, claim.dirtyRevision, claim.claimToken],
+        );
+      }
       await transaction.query(
         `UPDATE beeline_snapshot_dirty SET claimed_until = NULL, claimed_token = NULL
          WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid AND claimed_token = $3`,

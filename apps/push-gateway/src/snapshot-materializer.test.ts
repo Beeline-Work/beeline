@@ -1202,7 +1202,7 @@ describe('ChannelSnapshotMaterializer', () => {
     ).toHaveLength(30);
   }, 30_000);
 
-  it('yields a deep hidden-history scan so a cold channel runs next', async () => {
+  it('resumes a deep hot scan after traffic while a cold channel runs next', async () => {
     const owner = createIdentity('snapshot-bounded-owner');
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2), ($1, $3)`, [
       TENANT,
@@ -1322,6 +1322,24 @@ describe('ChannelSnapshotMaterializer', () => {
 
     expect(await materializer.runOnce()).toBe(1);
     expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload).toBeUndefined();
+
+    await insertEvents(
+      [
+        signed(
+          CHANNEL,
+          base + 500,
+          9,
+          [
+            ['h', CHANNEL],
+            ['t', 'buzz-merge-approval'],
+            ['repo', 'lunchboxfortwo/beeline'],
+            ['branch', 'main'],
+          ],
+          'APPROVE',
+        ),
+      ],
+      CHANNEL,
+    );
 
     expect(await materializer.runOnce()).toBe(1);
     expect((await store.readForViewer(COLD_CHANNEL, owner.publicKey))?.payload).toBeDefined();

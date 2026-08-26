@@ -17,6 +17,7 @@ export type DirtyChannelClaim = {
   readonly tenantId: string;
   readonly channelId: string;
   readonly dirtyRevision: number;
+  readonly messageScanRevision: number;
   readonly repositoryScanRevision: number;
   readonly claimToken: string;
 };
@@ -91,6 +92,7 @@ CREATE TABLE IF NOT EXISTS beeline_snapshot_dirty (
   relay_tenant_id uuid NOT NULL,
   channel_id uuid NOT NULL,
   dirty_revision bigint NOT NULL DEFAULT nextval('beeline_snapshot_dirty_revision_seq'),
+  message_scan_revision bigint NOT NULL DEFAULT nextval('beeline_snapshot_dirty_revision_seq'),
   repository_scan_revision bigint NOT NULL DEFAULT nextval('beeline_snapshot_dirty_revision_seq'),
   dirty_at timestamptz NOT NULL DEFAULT now(),
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
@@ -114,6 +116,19 @@ CREATE INDEX IF NOT EXISTS beeline_snapshot_dirty_due_idx
 
 ALTER TABLE beeline_snapshot_dirty
   ALTER COLUMN dirty_revision SET DEFAULT nextval('beeline_snapshot_dirty_revision_seq');
+
+ALTER TABLE beeline_snapshot_dirty
+  ADD COLUMN IF NOT EXISTS message_scan_revision bigint;
+
+UPDATE beeline_snapshot_dirty
+SET message_scan_revision = nextval('beeline_snapshot_dirty_revision_seq')
+WHERE message_scan_revision IS NULL;
+
+ALTER TABLE beeline_snapshot_dirty
+  ALTER COLUMN message_scan_revision SET DEFAULT nextval('beeline_snapshot_dirty_revision_seq');
+
+ALTER TABLE beeline_snapshot_dirty
+  ALTER COLUMN message_scan_revision SET NOT NULL;
 
 ALTER TABLE beeline_snapshot_dirty
   ADD COLUMN IF NOT EXISTS repository_scan_revision bigint;
@@ -163,6 +178,7 @@ RETURNS void LANGUAGE sql AS $$
   VALUES (p_tenant, p_channel)
   ON CONFLICT (relay_tenant_id, channel_id) DO UPDATE SET
     dirty_revision = nextval('beeline_snapshot_dirty_revision_seq'),
+    message_scan_revision = nextval('beeline_snapshot_dirty_revision_seq'),
     repository_scan_revision = nextval('beeline_snapshot_dirty_revision_seq'),
     dirty_at = LEAST(beeline_snapshot_dirty.dirty_at, clock_timestamp()),
     post_boundary_dirty_at = CASE
@@ -198,10 +214,7 @@ RETURNS void LANGUAGE sql AS $$
     END,
     next_attempt_at = LEAST(beeline_snapshot_dirty.next_attempt_at, now()),
     attempts = 0,
-    last_error = NULL,
-    scan_cursor_created_at = NULL,
-    scan_cursor_event_id = NULL,
-    scan_event_ids = '[]'::jsonb
+    last_error = NULL
 $$;
 
 CREATE OR REPLACE FUNCTION beeline_mark_snapshot_family_dirty(p_tenant uuid, p_channel uuid)
@@ -490,9 +503,11 @@ export class ChannelSnapshotStore {
         relay_tenant_id: string;
         channel_id: string;
         dirty_revision: string | number;
+        message_scan_revision: string | number;
         repository_scan_revision: string | number;
       }>(
-        `SELECT relay_tenant_id, channel_id, dirty_revision, repository_scan_revision
+        `SELECT relay_tenant_id, channel_id, dirty_revision, message_scan_revision,
+                repository_scan_revision
          FROM beeline_snapshot_dirty
          WHERE next_attempt_at <= now()
            AND dirty_at <= now() - ($2::text || ' milliseconds')::interval
@@ -505,6 +520,7 @@ export class ChannelSnapshotStore {
         tenantId: row.relay_tenant_id,
         channelId: row.channel_id,
         dirtyRevision: numberValue(row.dirty_revision),
+        messageScanRevision: numberValue(row.message_scan_revision),
         repositoryScanRevision: numberValue(row.repository_scan_revision),
         claimToken: randomUUID(),
       }));
@@ -516,13 +532,15 @@ export class ChannelSnapshotStore {
                post_boundary_dirty_at = NULL,
                last_claimed_at = now()
            WHERE relay_tenant_id = $1 AND channel_id = $2
-             AND dirty_revision = $5 AND repository_scan_revision = $6`,
+             AND dirty_revision = $5 AND message_scan_revision = $6
+             AND repository_scan_revision = $7`,
           [
             claim.tenantId,
             claim.channelId,
             leaseMs,
             claim.claimToken,
             claim.dirtyRevision,
+            claim.messageScanRevision,
             claim.repositoryScanRevision,
           ],
         );
@@ -573,6 +591,7 @@ export class ChannelSnapshotStore {
 
     const continuationResult = await this.database.query<{
       dirty_revision: string | number;
+      message_scan_revision: string | number;
       repository_scan_revision: string | number;
       scan_cursor_created_at: string | number | null;
       scan_cursor_event_id: string | null;
@@ -581,7 +600,7 @@ export class ChannelSnapshotStore {
       repository_cursor_event_id: string | null;
       repository_event_id: string | null;
     }>(
-      `SELECT dirty_revision, repository_scan_revision,
+      `SELECT dirty_revision, message_scan_revision, repository_scan_revision,
               scan_cursor_created_at, scan_cursor_event_id, scan_event_ids,
               repository_cursor_created_at, repository_cursor_event_id,
               repository_event_id
@@ -593,7 +612,7 @@ export class ChannelSnapshotStore {
     const continuationRow = continuationResult.rows[0];
     const messageContinuationCurrent =
       continuationRow !== undefined &&
-      numberValue(continuationRow.dirty_revision) === claim.dirtyRevision;
+      numberValue(continuationRow.message_scan_revision) === claim.messageScanRevision;
     const repositoryContinuationCurrent =
       continuationRow !== undefined &&
       numberValue(continuationRow.repository_scan_revision) === claim.repositoryScanRevision;
@@ -1103,11 +1122,11 @@ export class ChannelSnapshotStore {
          post_boundary_dirty_at = NULL,
          next_attempt_at = now()
        WHERE relay_tenant_id = $1::uuid AND channel_id = $2::uuid
-         AND dirty_revision = $3 AND claimed_token = $4`,
+         AND message_scan_revision = $3 AND claimed_token = $4`,
       [
         claim.tenantId,
         claim.channelId,
-        claim.dirtyRevision,
+        claim.messageScanRevision,
         claim.claimToken,
         continuation.cursor.createdAt,
         continuation.cursor.eventId,

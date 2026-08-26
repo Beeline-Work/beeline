@@ -347,6 +347,152 @@ esac
       });
     });
 
+    // Stubs a full canary adb surface driven by env knobs. The call log and
+    // state live under the caller's temp directory so assertions can prove
+    // the exact commands the canary issued.
+    function stubAdbFlow(
+      directory: string,
+      options: {
+        installFailures?: number;
+        uninstallFails?: boolean;
+        monkeyFails?: boolean;
+      } = {},
+    ) {
+      const sdkRoot = join(directory, 'android-sdk');
+      const platformTools = join(sdkRoot, 'platform-tools');
+      mkdirSync(platformTools, { recursive: true });
+      const stateDir = join(directory, 'stub-state');
+      mkdirSync(stateDir, { recursive: true });
+      const callLog = join(stateDir, 'calls.log');
+      const adbScript = [
+        '#!/bin/sh',
+        'printf \'%s\\n\' "$*" >> "$STUB_CALL_LOG"',
+        'case "$*" in',
+        '  devices)',
+        "    printf 'List of devices attached\\nemulator-5554\\tdevice\\n'",
+        '    ;;',
+        '  *"install -r"*)',
+        '    count="$(cat "$STUB_STATE_DIR/installs" 2>/dev/null || echo 0)"',
+        '    count=$((count + 1))',
+        '    printf \'%s\\n\' "$count" > "$STUB_STATE_DIR/installs"',
+        '    if [ "$count" -le "${STUB_INSTALL_FAILURES:-0}" ]; then',
+        '      echo "Performing Streamed Install"',
+        '      echo "adb: failed to install cmd: INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package app.usebeeline.mobile signatures do not match newer version; ignoring!"',
+        '      exit 1',
+        '    fi',
+        '    echo "Success"',
+        '    ;;',
+        '  *uninstall*)',
+        '    printf \'%s\\n\' "$*" > "$STUB_STATE_DIR/uninstall_call"',
+        '    [ "${STUB_UNINSTALL_FAILS:-0}" = "1" ] && exit 1',
+        '    echo "Success"',
+        '    ;;',
+        '  *monkey*)',
+        '    [ "${STUB_MONKEY_FAILS:-0}" = "1" ] && exit 1',
+        '    ;;',
+        'esac',
+        'exit 0',
+        '',
+      ].join('\n');
+      writeFileSync(join(platformTools, 'adb'), adbScript);
+      chmodSync(join(platformTools, 'adb'), 0o755);
+      return { sdkRoot, stateDir, callLog };
+    }
+
+    function writeDummyApk(directory: string): string {
+      const apk = join(directory, 'beeline-beta.apk');
+      writeFileSync(apk, 'dummy beta apk bytes');
+      return apk;
+    }
+
+    it('removes exactly the canary package and retries once when the existing install has a different signature', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-signature-ok-'));
+      const { sdkRoot, stateDir, callLog } = stubAdbFlow(directory, {
+        installFailures: 1,
+        monkeyFails: true,
+      });
+      const ledger = writeBetaLedger(directory);
+      const reasonFile = join(directory, 'reason.txt');
+
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: sdkRoot,
+        BEELINE_BETA_APK: writeDummyApk(directory),
+        OTA_CANARY_WARMUP_SECONDS: '0',
+        STUB_CALL_LOG: callLog,
+        STUB_STATE_DIR: stateDir,
+        STUB_INSTALL_FAILURES: '1',
+        STUB_MONKEY_FAILS: '1',
+        OTA_CANARY_REASON_FILE: reasonFile,
+      });
+
+      // The signature-recovery worked; the run proceeds past install and pm
+      // clear and only parks afterwards at the deliberately failing launch.
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('different signature');
+      expect(result.stderr).toContain('could not launch');
+
+      const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
+      expect(calls.filter((call) => call.includes('install -r'))).toHaveLength(2);
+      expect(
+        calls.filter((call) => call.includes('uninstall app.usebeeline.mobile')),
+      ).toHaveLength(1);
+      expect(readFileSync(join(stateDir, 'uninstall_call'), 'utf8')).toBe(
+        '-s emulator-5554 uninstall app.usebeeline.mobile\n',
+      );
+    });
+
+    it('parks honestly when the incompatible existing package cannot be removed', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-signature-unins-'));
+      const { sdkRoot, callLog } = stubAdbFlow(directory, {
+        installFailures: 1,
+        uninstallFails: true,
+      });
+      const ledger = writeBetaLedger(directory);
+
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: sdkRoot,
+        BEELINE_BETA_APK: writeDummyApk(directory),
+        OTA_CANARY_WARMUP_SECONDS: '0',
+        STUB_CALL_LOG: callLog,
+        STUB_STATE_DIR: join(directory, 'stub-state'),
+        STUB_INSTALL_FAILURES: '1',
+        STUB_UNINSTALL_FAILS: '1',
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(
+        'could not remove the differently-signed existing app.usebeeline.mobile',
+      );
+      // Exactly one install attempt, no retry past a failed cleanup.
+      const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
+      expect(calls.filter((call) => call.includes('install -r'))).toHaveLength(1);
+    });
+
+    it('parks honestly when the install still fails after removing the differently-signed package', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-signature-still-'));
+      const { sdkRoot, callLog } = stubAdbFlow(directory, {
+        installFailures: 99,
+      });
+      const ledger = writeBetaLedger(directory);
+
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: sdkRoot,
+        BEELINE_BETA_APK: writeDummyApk(directory),
+        OTA_CANARY_WARMUP_SECONDS: '0',
+        STUB_CALL_LOG: callLog,
+        STUB_STATE_DIR: join(directory, 'stub-state'),
+        STUB_INSTALL_FAILURES: '99',
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(
+        'even after removing the differently-signed existing package',
+      );
+      expect(result.stderr).toContain('INSTALL_FAILED_UPDATE_INCOMPATIBLE');
+      const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
+      expect(calls.filter((call) => call.includes('install -r'))).toHaveLength(2);
+    });
+
     it('parks when the EAS build listing itself fails', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-eas-fail-'));
       const sdkRoot = stubAdbSdk(

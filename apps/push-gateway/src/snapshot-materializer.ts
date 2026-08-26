@@ -63,6 +63,10 @@ export interface SnapshotMaterializerStore {
       readonly eventIds: readonly string[];
     },
   ): Promise<void>;
+  continueRepositoryScan(
+    claim: DirtyChannelClaim,
+    cursor: NonNullable<ProjectionInput['repositoryCursor']>,
+  ): Promise<void>;
   nextRevision(tenantId: string, channelId: string): Promise<number>;
   complete(
     claim: DirtyChannelClaim,
@@ -293,6 +297,19 @@ export class ChannelSnapshotMaterializer {
           historicalMessagePubkeys,
         };
         const parsed = parseRelayEvents(events, authority);
+        const authorizedRepositoryFound = parsed.some(
+          (event) => event.type === 'control' && event.payload.kind === 'repository',
+        );
+        if (!authorizedRepositoryFound && !input.repositoriesExhausted) {
+          if (!input.repositoryCursor) {
+            throw new Error('snapshot repository scan lost its continuation cursor');
+          }
+          await this.store.continueRepositoryScan(claim, input.repositoryCursor);
+          this.log(
+            `[snapshot] yielded tenant=${input.tenantId} channel=${input.channelId} repository_scan=true`,
+          );
+          return;
+        }
         const cursor = input.cursor;
         let snapshot = reduceWorkspaceEvents(
           createWorkspaceSnapshot({ workspaceId, identities: Object.values(identities) }),

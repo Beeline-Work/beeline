@@ -210,6 +210,110 @@ describe('ChannelSnapshotMaterializer', () => {
     ).resolves.toBeNull();
   });
 
+  it('pages past unauthorized repository records to the latest authorized binding', async () => {
+    const owner = createIdentity('snapshot-repository-owner');
+    const member = createIdentity('snapshot-repository-member');
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey)
+       VALUES ($1, $2, decode($3, 'hex')), ($1, $2, decode($4, 'hex'))`,
+      [TENANT, CHANNEL, owner.publicKey, member.publicKey],
+    );
+    const base = Math.floor(Date.now() / 1_000) - 100;
+    const repositoryTags = [
+      ['d', `buzz-room-repository:${CHANNEL}`],
+      ['h', CHANNEL],
+      ['t', 'buzz-room-repository'],
+    ];
+    const ownerRepository = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: base + 1,
+        kind: 30078,
+        tags: repositoryTags,
+        content: JSON.stringify({
+          key: 'github:authorized',
+          name: 'Authorized repository',
+          remote: 'https://example.test/authorized.git',
+        }),
+      },
+      owner.secretKey,
+    );
+    const unauthorizedRepositories = Array.from({ length: 20 }, (_, index) =>
+      signEvent(
+        {
+          pubkey: member.publicKey,
+          created_at: base + index + 2,
+          kind: 30078,
+          tags: repositoryTags,
+          content: JSON.stringify({
+            key: `github:unauthorized-${index}`,
+            name: `Unauthorized repository ${index}`,
+            remote: `https://example.test/unauthorized-${index}.git`,
+          }),
+        },
+        member.secretKey,
+      ),
+    );
+    await insertEvents([
+      signEvent(
+        {
+          pubkey: owner.publicKey,
+          created_at: base,
+          kind: 9007,
+          tags: [
+            ['h', CHANNEL],
+            ['community', 'verified-application-workspace'],
+            ['p', owner.publicKey, 'owner'],
+            ['p', member.publicKey, 'member'],
+          ],
+          content: '',
+        },
+        owner.secretKey,
+      ),
+      ownerRepository,
+      ...unauthorizedRepositories,
+    ]);
+    await database.query(`DELETE FROM beeline_snapshot_dirty`);
+    await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [
+      TENANT,
+      CHANNEL,
+    ]);
+    const fetchImpl = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { pubkeys: string[] };
+      return new Response(
+        JSON.stringify({
+          mappings: Object.fromEntries(body.pubkeys.map((pubkey) => [pubkey, pubkey])),
+        }),
+        { status: 200 },
+      );
+    });
+    const materializer = new ChannelSnapshotMaterializer(
+      store,
+      new SnapshotSuccessionClient({
+        baseUrl: 'http://auth:8789',
+        token: 'secret',
+        fetch: fetchImpl,
+      }),
+      { burstCoalesceMs: 0, log: () => undefined },
+    );
+
+    expect(await materializer.runOnce()).toBe(1);
+    expect((await store.readForViewer(CHANNEL, owner.publicKey))?.payload).toBeUndefined();
+    expect((await store.status()).depth).toBe(1);
+
+    expect(await materializer.runOnce()).toBe(1);
+    const served = await store.readForViewer(CHANNEL, owner.publicKey);
+    expect(served?.payload?.repository).toEqual({
+      key: 'github:authorized',
+      name: 'Authorized repository',
+      remote: 'https://example.test/authorized.git',
+    });
+  });
+
   it('materializes an empty Corner from its parent lifecycle and live roster', async () => {
     const owner = createIdentity('snapshot-empty-corner-owner');
     await database.query(

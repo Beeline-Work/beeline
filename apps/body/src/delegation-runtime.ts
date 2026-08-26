@@ -410,11 +410,13 @@ export class DelegationRuntime {
           ),
           this.dependencies.reader.rootAuthorized(turn),
           this.dependencies.reader.escalationAuthorized(turn),
-          this.dependencies.reader.accessPermitted(
-            turn.value.workspaceId,
-            turn.value.fromAgentPubkey,
-            turn.value.principalPubkey,
-          ),
+          turn.value.phase === 'return' && turn.value.mission
+            ? Promise.resolve(true)
+            : this.dependencies.reader.accessPermitted(
+                turn.value.workspaceId,
+                turn.value.fromAgentPubkey,
+                turn.value.principalPubkey,
+              ),
           this.dependencies.reader.targetOnline(
             turn.value.roomId,
             this.dependencies.identity.publicKey,

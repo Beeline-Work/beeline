@@ -130,7 +130,7 @@ import {
   getRoomRepository,
   KIND_AGENT_ACCESS_CONFIG,
   agentAccessConfigKey,
-  parseAgentAccessConfig,
+  resolveAgentAccessAuthority,
   parseDelegationReceipt,
   parseDelegationTurn,
   parseDelegationDirectives,
@@ -1085,7 +1085,38 @@ export type AbandonedCorner = {
    * without ever seeing the request that got it adopted.
    */
   closeRequestedAt?: number;
+  mission?: MissionCornerAuthority;
+  missionCloseAdmitted?: boolean;
 };
+
+function missionCornerAuthorityFromEvent(
+  event: NostrEvent | undefined,
+  parentChannelId: string,
+): MissionCornerAuthority | undefined {
+  if (!event) return undefined;
+  const missionId = tagValue(event, 'mission');
+  const grantEventId = tagValue(event, 'grant');
+  const controllerAgentPubkey = tagValue(event, 'controller-agent');
+  const principalPubkey = tagValue(event, 'principal');
+  const targetAgentPubkey = tagValue(event, 'target-agent');
+  const workspaceId = tagValue(event, 'mission-workspace');
+  const roomId = tagValue(event, 'mission-room');
+  const repositoryKey = tagValue(event, 'mission-repo');
+  const targetBranch = tagValue(event, 'mission-ref');
+  return missionId && grantEventId && controllerAgentPubkey && principalPubkey &&
+    targetAgentPubkey && workspaceId && roomId === parentChannelId && repositoryKey && targetBranch
+    ? {
+        missionId,
+        grantEventId,
+        controllerAgentPubkey,
+        principalPubkey,
+        targetAgentPubkey,
+        workspaceId,
+        roomId,
+        repository: { key: repositoryKey, targetBranch },
+      }
+    : undefined;
+}
 
 /**
  * The sessionless twin of `assertSubchannelArchiveTarget`. With no live
@@ -4210,39 +4241,7 @@ export class Body {
           .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
           .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
         const missionSource = createEvent ?? control;
-        const restoredMission = missionSource
-          ? (() => {
-              const missionId = tagValue(missionSource, 'mission');
-              const grantEventId = tagValue(missionSource, 'grant');
-              const controllerAgentPubkey = tagValue(missionSource, 'controller-agent');
-              const principalPubkey = tagValue(missionSource, 'principal');
-              const targetAgentPubkey = tagValue(missionSource, 'target-agent');
-              const workspaceId = tagValue(missionSource, 'mission-workspace');
-              const roomId = tagValue(missionSource, 'mission-room');
-              const repositoryKey = tagValue(missionSource, 'mission-repo');
-              const targetBranch = tagValue(missionSource, 'mission-ref');
-              return missionId &&
-                grantEventId &&
-                controllerAgentPubkey &&
-                principalPubkey &&
-                targetAgentPubkey &&
-                workspaceId &&
-                roomId === parentChannelId &&
-                repositoryKey &&
-                targetBranch
-                ? {
-                    missionId,
-                    grantEventId,
-                    controllerAgentPubkey,
-                    principalPubkey,
-                    targetAgentPubkey,
-                    workspaceId,
-                    roomId,
-                    repository: { key: repositoryKey, targetBranch },
-                  }
-                : undefined;
-            })()
-          : undefined;
+        const restoredMission = missionCornerAuthorityFromEvent(missionSource, parentChannelId);
         const featureBranch = control ? tagValue(control, 'feature') : undefined;
         if (!featureBranch) {
           // Nothing on the relay says which branch this corner owns, so it can
@@ -4253,6 +4252,7 @@ export class Body {
             parentChannelId,
             reason: 'no restorable corner state was found for it',
             ...(boundRepo ? { boundRepo } : {}),
+            ...(restoredMission ? { mission: restoredMission } : {}),
           });
           continue;
         }
@@ -4281,6 +4281,7 @@ export class Body {
               parentChannelId,
               reason: 'its approved repository could not be re-resolved after a restart',
               ...(featureBranch ? { featureBranch } : {}),
+              ...(restoredMission ? { mission: restoredMission } : {}),
             });
             continue;
           }
@@ -4357,6 +4358,7 @@ export class Body {
               boundRepo: cornerRepo,
               featureBranch,
               worktreePath,
+              ...(restoredMission ? { mission: restoredMission } : {}),
             });
             continue;
           }
@@ -4404,6 +4406,7 @@ export class Body {
             ),
             parentChannelId,
             worktreePath,
+            ...(restoredMission ? { mission: restoredMission } : {}),
             protectedPaths: cornerFilesystem.protectedPaths,
             additionalWritablePaths: cornerFilesystem.additionalWritablePaths,
             featureBranch,
@@ -5747,6 +5750,15 @@ export class Body {
           workItemId: turn.value.workItemId,
           reservedTokens: turn.value.budget.reservedTokens,
           replyToId: turn.event.id,
+          ...(turn.value.mission
+            ? {
+                beforeModelActivation: async () => {
+                  if (!(await this.delegationRootAuthorized(turn))) {
+                    throw new ScheduleActivationRefusedError(true, 'mission-grant-invalid');
+                  }
+                },
+              }
+            : {}),
         },
         pendingTurn,
       );
@@ -6012,32 +6024,18 @@ export class Body {
           limit: 20,
         },
       ]);
-      const ownerEvents = events
-        .filter((event) => event.pubkey === currentOwner)
-        .sort(
-          (left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id),
-        );
-      const newest = ownerEvents[0];
-      if (newest) {
-        const parsed = parseAgentAccessConfig(newest);
-        if (
-          !parsed ||
-          parsed.workspaceId !== workspaceId ||
-          parsed.agentPubkey !== this.agentIdentity.publicKey
-        ) {
-          return false;
-        }
-        policy = parsed.policy;
-        allowlist = parsed.allowlist;
-      } else if (
-        currentOwner !== pairedOwner &&
-        events.some((event) => event.pubkey === pairedOwner)
-      ) {
-        // A predecessor-authored remote policy must never silently widen back
-        // to the machine seed after key succession. The current successor
-        // republishes explicitly; until then this agent denies all principals.
-        return false;
-      }
+      const authority = resolveAgentAccessAuthority({
+        events,
+        workspaceId,
+        agentPubkey: this.agentIdentity.publicKey,
+        pairedOwnerPubkey: pairedOwner,
+        currentOwnerPubkey: currentOwner,
+        seed: { policy, ...(allowlist ? { allowlist } : {}) },
+      });
+      if (!authority || authority === 'denied') return false;
+      policy = authority.policy;
+      allowlist = authority.allowlist;
+      currentOwner = authority.ownerPubkey;
     }
     return isSenderPermitted(policy, senderPubkey, currentOwner, allowlist);
   }
@@ -6691,6 +6689,32 @@ export class Body {
       throw new Error('mission corner lineage is unavailable');
     }
     await this.archiveSubchannel(subchannelId);
+  }
+
+  private async beginMissionCornerClose(
+    mission: MissionCornerAuthority,
+    subchannelId: string,
+  ): Promise<PermissionExecutionHandle | undefined> {
+    const action = await resolveMissionAction({
+      reader: this.permissionReader,
+      reference: mission,
+      workspaceId: mission.workspaceId,
+      roomId: mission.roomId,
+      principalPubkey: mission.principalPubkey,
+      repository: mission.repository,
+      executorPubkey: this.agentIdentity.publicKey,
+      exercise: { kind: 'corner', operation: 'close', targetAgentPubkey: mission.targetAgentPubkey },
+      ordinal: missionActionOrdinal(`corner-close:${subchannelId}`),
+      idempotencyKey: `mission-corner:close:${subchannelId}`,
+    });
+    if (!action) throw new ScheduleActivationRefusedError(true, 'mission-corner-mismatch');
+    const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
+    if (begun.status === 'started') return begun.execution;
+    if (begun.status === 'duplicate') return undefined;
+    throw new ScheduleActivationRefusedError(
+      begun.status === 'refused' ? begun.terminal : true,
+      begun.status === 'refused' ? begun.reason : `mission-corner-${begun.status}`,
+    );
   }
 
   async dispatchScheduledTurn(
@@ -11420,8 +11444,16 @@ export class Body {
     // Initial status 'online' (the default): the first heartbeat publishes as
     // soon as the loop starts, so a restart handover re-establishes presence
     // promptly instead of inheriting an aging lease. See startAgentPresence.
-    const stopPresence = startAgentPresence(tlcChannelId, this.agentIdentity, undefined, (status) =>
-      this.onRoomPresence?.(tlcChannelId, status),
+    const stopPresence = startAgentPresence(
+      tlcChannelId,
+      this.agentIdentity,
+      undefined,
+      (status) => this.onRoomPresence?.(tlcChannelId, status),
+      'online',
+      {
+        policy: this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
+        ...(this.config.accessAllowlist ? { allowlist: this.config.accessAllowlist } : {}),
+      },
     );
     this.presenceGenerations.set(tlcChannelId, stopPresence.generationId);
     try {
@@ -11448,8 +11480,16 @@ export class Body {
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
     // See runChannelLoop: prompt first heartbeat for restart handover.
-    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
-      this.onRoomPresence?.(channelId, status),
+    const stopPresence = startAgentPresence(
+      channelId,
+      this.agentIdentity,
+      undefined,
+      (status) => this.onRoomPresence?.(channelId, status),
+      'online',
+      {
+        policy: this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
+        ...(this.config.accessAllowlist ? { allowlist: this.config.accessAllowlist } : {}),
+      },
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
@@ -11485,8 +11525,16 @@ export class Body {
   ): Promise<void> {
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
     // See runChannelLoop: prompt first heartbeat for restart handover.
-    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
-      this.onRoomPresence?.(channelId, status),
+    const stopPresence = startAgentPresence(
+      channelId,
+      this.agentIdentity,
+      undefined,
+      (status) => this.onRoomPresence?.(channelId, status),
+      'online',
+      {
+        policy: this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
+        ...(this.config.accessAllowlist ? { allowlist: this.config.accessAllowlist } : {}),
+      },
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
@@ -12652,6 +12700,11 @@ export class Body {
    * two overlapping maintenance ticks retrying the same corner at once.
    */
   async archiveSubchannel(subchannelId: string): Promise<void> {
+    const abandoned = this.abandonedCorners.get(subchannelId);
+    if (abandoned) {
+      await this.closeAbandonedCorner(abandoned);
+      return;
+    }
     if (this.archivingSubchannels.has(subchannelId)) return;
     this.archivingSubchannels.add(subchannelId);
     let missionCloseExecution: PermissionExecutionHandle | undefined;
@@ -12661,41 +12714,11 @@ export class Body {
         // No live session — but a corner this daemon could not restore is
         // exactly the one a human is most likely to be closing. Close it as a
         // daemon action rather than reporting "not found" and doing nothing.
-        const abandoned = this.abandonedCorners.get(subchannelId);
-        if (abandoned) {
-          await this.closeAbandonedCorner(abandoned);
-          return;
-        }
         throw new Error(`Subchannel ${subchannelId} not found`);
       }
 
       if (info.mission && !info.archived && !info.missionCloseAdmitted) {
-        const action = await resolveMissionAction({
-          reader: this.permissionReader,
-          reference: info.mission,
-          workspaceId: info.mission.workspaceId,
-          roomId: info.mission.roomId,
-          principalPubkey: info.mission.principalPubkey,
-          repository: info.mission.repository,
-          executorPubkey: this.agentIdentity.publicKey,
-          exercise: {
-            kind: 'corner',
-            operation: 'close',
-            targetAgentPubkey: info.mission.targetAgentPubkey,
-          },
-          ordinal: missionActionOrdinal(`corner-close:${subchannelId}`),
-          idempotencyKey: `mission-corner:close:${subchannelId}`,
-        });
-        if (!action) throw new ScheduleActivationRefusedError(true, 'mission-corner-mismatch');
-        const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
-        if (begun.status === 'started') {
-          missionCloseExecution = begun.execution;
-        } else if (begun.status !== 'duplicate') {
-          throw new ScheduleActivationRefusedError(
-            begun.status === 'refused' ? begun.terminal : true,
-            begun.status === 'refused' ? begun.reason : `mission-corner-${begun.status}`,
-          );
-        }
+        missionCloseExecution = await this.beginMissionCornerClose(info.mission, subchannelId);
         info.missionCloseAdmitted = true;
       }
 
@@ -12860,9 +12883,14 @@ export class Body {
       { kinds: [9007], authors: [this.agentIdentity.publicKey] },
       { pageSize: UNTRACKED_CORNER_CREATE_PAGE_SIZE, query: this.agentRelay.queryEvents },
     );
+    const createByCorner = new Map<string, NostrEvent>();
     const candidates = creates
       .filter((event) => tagValue(event, 'parent') === parentChannelId)
-      .map((event) => tagValue(event, 'h'))
+      .map((event) => {
+        const id = tagValue(event, 'h');
+        if (id) createByCorner.set(id, event);
+        return id;
+      })
       .filter((id): id is string => Boolean(id) && id !== parentChannelId)
       .filter(
         (id) =>
@@ -12921,6 +12949,10 @@ export class Body {
         .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
         .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
       const featureBranch = control ? tagValue(control, 'feature') : undefined;
+      const mission = missionCornerAuthorityFromEvent(
+        createByCorner.get(subchannelId) ?? control,
+        parentChannelId,
+      );
       this.markCornerAbandoned({
         subchannelId,
         parentChannelId,
@@ -12928,6 +12960,7 @@ export class Body {
         closeRequestedAt,
         ...(boundRepo ? { boundRepo } : {}),
         ...(featureBranch ? { featureBranch } : {}),
+        ...(mission ? { mission } : {}),
       });
       console.log(
         `[body] adopting untracked corner ${subchannelId} in Room ${parentChannelId}: ` +
@@ -13064,7 +13097,12 @@ export class Body {
     const { subchannelId, parentChannelId } = entry;
     if (this.archivingSubchannels.has(subchannelId)) return;
     this.archivingSubchannels.add(subchannelId);
+    let missionCloseExecution: PermissionExecutionHandle | undefined;
     try {
+      if (entry.mission && !entry.missionCloseAdmitted) {
+        missionCloseExecution = await this.beginMissionCornerClose(entry.mission, subchannelId);
+        entry.missionCloseAdmitted = true;
+      }
       const relayParentChannelId = await getParentChannelId(
         this.agentClientContext(),
         subchannelId,
@@ -13122,6 +13160,13 @@ export class Body {
       // this corner back as a candidate; record that it is finished with.
       this.untrackedCornerResolved.add(subchannelId);
     } finally {
+      if (missionCloseExecution) {
+        await this.permissionRuntime.complete({
+          execution: missionCloseExecution,
+          status: 'succeeded',
+          result: 'mission-corner-close-attempted',
+        });
+      }
       this.archivingSubchannels.delete(subchannelId);
     }
   }

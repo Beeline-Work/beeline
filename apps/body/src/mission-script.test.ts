@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MISSION_SCRIPT_SCRATCH_BYTES,
@@ -81,5 +84,31 @@ describe('mission script boundary', () => {
         maskPaths: [],
       }),
     ).rejects.toMatchObject<Partial<MissionScriptFailure>>({ code: 'sandbox-unavailable' });
+  });
+
+  it('discards output emitted after the bounded-output termination starts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-mission-output-'));
+    const fakeBwrap = join(root, 'bwrap');
+    await writeFile(
+      fakeBwrap,
+      "#!/bin/sh\ntrap 'printf LATE_AFTER_TERMINATION >&2; exit 0' TERM\nhead -c 70000 /dev/zero | tr '\\0' x\nwhile :; do sleep 1; done\n",
+    );
+    await chmod(fakeBwrap, 0o755);
+    try {
+      const script = 'true';
+      const error = await runMissionScript({
+        bwrapPath: fakeBwrap,
+        cwd: process.cwd(),
+        repositoryKey: REPOSITORY,
+        script,
+        scriptSha256: createHash('sha256').update(script).digest('hex'),
+        timeoutSeconds: 5,
+        maskPaths: [],
+      }).catch((failure: unknown) => failure);
+      expect(error).toMatchObject<Partial<MissionScriptFailure>>({ code: 'output-truncated' });
+      expect((error as MissionScriptFailure).outputTail).not.toContain('LATE_AFTER_TERMINATION');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

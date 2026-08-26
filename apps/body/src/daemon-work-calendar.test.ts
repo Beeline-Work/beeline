@@ -1,9 +1,16 @@
 import { createHash } from 'node:crypto';
-import { createIdentity, type Identity } from '@beeline/buzz-client';
+import {
+  KIND_AGENT_PRESENCE,
+  TAG_AGENT_PRESENCE,
+  buildAgentAccessConfig,
+  createIdentity,
+  type Identity,
+} from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 import { describe, expect, it } from 'vitest';
 import {
   authorizeDaemonWorkSchedule,
+  targetAgentAccessPermitted,
   validateArtifactRevisionEvents,
   type DaemonWorkScheduleAuthorityDependencies,
   type DaemonWorkScheduleAuthorityFacts,
@@ -72,6 +79,53 @@ function authorityFixture(options: { agentAuthored?: boolean; grantValid?: boole
 }
 
 describe('daemon work schedule authority', () => {
+  it('uses the target seed fallback and current paired-owner override exactly', () => {
+    const target = createIdentity();
+    const owner = createIdentity();
+    const controller = createIdentity();
+    const presence = signEvent({
+      pubkey: target.publicKey,
+      created_at: 10,
+      kind: KIND_AGENT_PRESENCE,
+      tags: [
+        ['d', `${TAG_AGENT_PRESENCE}:authority-room`],
+        ['h', 'authority-room'],
+        ['t', TAG_AGENT_PRESENCE],
+        ['agent', target.publicKey],
+        ['status', 'online'],
+        ['access-policy', 'everyone'],
+      ],
+      content: 'online',
+    }, target.secretKey);
+    const input = {
+      accessEvents: [],
+      presenceEvents: [presence],
+      workspaceId: 'authority-workspace',
+      roomId: 'authority-room',
+      targetAgentPubkey: target.publicKey,
+      controllerAgentPubkey: controller.publicKey,
+      pairedOwnerPubkey: owner.publicKey,
+      currentOwnerPubkey: owner.publicKey,
+    };
+    expect(targetAgentAccessPermitted(input)).toBe(true);
+    const override = buildAgentAccessConfig(owner, {
+      version: 1,
+      workspaceId: input.workspaceId,
+      agentPubkey: target.publicKey,
+      policy: 'creator',
+      revision: 1,
+      updatedAt: 11,
+    });
+    expect(targetAgentAccessPermitted({ ...input, accessEvents: [override] })).toBe(false);
+    expect(
+      targetAgentAccessPermitted({
+        ...input,
+        accessEvents: [override],
+        controllerAgentPubkey: owner.publicKey,
+      }),
+    ).toBe(true);
+  });
+
   it('requires the target agent access decision for a cross-agent mission', async () => {
     const fixture = authorityFixture();
     const target = createIdentity();

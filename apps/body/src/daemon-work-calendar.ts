@@ -4,11 +4,13 @@ import { resolve } from 'node:path';
 import {
   createBuzzClient,
   KIND_AGENT_ACCESS_CONFIG,
+  KIND_AGENT_PRESENCE,
   KIND_STREAM_MESSAGE,
   TAG_AGENT,
   TAG_AGENT_PAIRING,
+  TAG_AGENT_PRESENCE,
   agentAccessConfigKey,
-  parseAgentAccessConfig,
+  resolveAgentAccessAuthority,
   parsePermissionDecision,
   parsePermissionRequest,
   permissionActionId,
@@ -50,6 +52,69 @@ function hasMember(members: readonly { pubkey: string }[], pubkey: string): bool
 function uniqueArtifactTag(event: NostrEvent, name: string): string | undefined {
   const values = event.tags.filter((tag) => tag[0] === name);
   return values.length === 1 ? values[0]?.[1] : undefined;
+}
+
+export function targetAccessSeedFromPresence(
+  events: readonly NostrEvent[],
+  roomId: string,
+  targetAgentPubkey: string,
+): { policy: 'everyone' | 'creator' | 'allowlist'; allowlist?: string[] } | undefined {
+  const event = events
+    .filter(
+      (candidate) =>
+        candidate.kind === KIND_AGENT_PRESENCE &&
+        candidate.pubkey === targetAgentPubkey &&
+        verifyEvent(candidate) &&
+        uniqueArtifactTag(candidate, 'h') === roomId &&
+        uniqueArtifactTag(candidate, 't') === TAG_AGENT_PRESENCE &&
+        uniqueArtifactTag(candidate, 'agent') === targetAgentPubkey,
+    )
+    .sort((left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id))[0];
+  const policy = event ? uniqueArtifactTag(event, 'access-policy') : undefined;
+  if (policy !== 'everyone' && policy !== 'creator' && policy !== 'allowlist') return undefined;
+  const allowlist = event!.tags
+    .filter((tag) => tag[0] === 'access-allow')
+    .map((tag) => tag[1])
+    .filter((pubkey): pubkey is string => Boolean(pubkey && /^[0-9a-f]{64}$/.test(pubkey)));
+  if (
+    (policy === 'allowlist' && (allowlist.length === 0 || new Set(allowlist).size !== allowlist.length)) ||
+    (policy !== 'allowlist' && allowlist.length > 0)
+  ) return undefined;
+  return { policy, ...(allowlist.length ? { allowlist } : {}) };
+}
+
+export function targetAgentAccessPermitted(input: {
+  accessEvents: readonly NostrEvent[];
+  presenceEvents: readonly NostrEvent[];
+  workspaceId: string;
+  roomId: string;
+  targetAgentPubkey: string;
+  controllerAgentPubkey: string;
+  pairedOwnerPubkey: string;
+  currentOwnerPubkey: string;
+}): boolean | undefined {
+  const seed = targetAccessSeedFromPresence(
+    input.presenceEvents,
+    input.roomId,
+    input.targetAgentPubkey,
+  );
+  const authority = resolveAgentAccessAuthority({
+    events: input.accessEvents,
+    workspaceId: input.workspaceId,
+    agentPubkey: input.targetAgentPubkey,
+    pairedOwnerPubkey: input.pairedOwnerPubkey,
+    currentOwnerPubkey: input.currentOwnerPubkey,
+    ...(seed ? { seed } : {}),
+  });
+  if (authority === 'denied') return false;
+  return authority
+    ? isSenderPermitted(
+        authority.policy,
+        input.controllerAgentPubkey,
+        authority.ownerPubkey,
+        authority.allowlist,
+      )
+    : undefined;
 }
 
 export function validateArtifactRevisionEvents(
@@ -483,44 +548,23 @@ export function createDaemonWorkCalendar(input: {
                 identity,
                 pairing.pubkey,
               );
-              if (
-                !hasMember(workspaceMembers, currentOwner) ||
-                !hasMember(roomMembers, currentOwner) ||
-                (await client.isAgentIdentity(currentOwner)) ||
-                (await client.getChannelRole(schedule.value.roomId, currentOwner)) !== 'owner'
-              ) {
+              if (!hasMember(workspaceMembers, currentOwner) || (await client.isAgentIdentity(currentOwner))) {
                 targetAccessPermitted = false;
               } else {
-                const accessEvents = await rawEvents([
-                  {
-                    kinds: [KIND_AGENT_ACCESS_CONFIG],
-                    '#d': [agentAccessConfigKey(schedule.value.workspaceId, targetAgentPubkey)],
-                    limit: 20,
-                  },
+                const [accessEvents, presenceEvents] = await Promise.all([
+                  rawEvents([{ kinds: [KIND_AGENT_ACCESS_CONFIG], '#d': [agentAccessConfigKey(schedule.value.workspaceId, targetAgentPubkey)], limit: 20 }]),
+                  rawEvents([{ kinds: [KIND_AGENT_PRESENCE], authors: [targetAgentPubkey], '#d': [`${TAG_AGENT_PRESENCE}:${schedule.value.roomId}`], limit: 5 }]),
                 ]);
-                const ownerEvents = accessEvents
-                  .filter((event) => event.pubkey === currentOwner)
-                  .sort(
-                    (left, right) =>
-                      right.created_at - left.created_at || right.id.localeCompare(left.id),
-                  );
-                const parsed = ownerEvents[0]
-                  ? parseAgentAccessConfig(ownerEvents[0])
-                  : undefined;
-                if (
-                  parsed &&
-                  parsed.workspaceId === schedule.value.workspaceId &&
-                  parsed.agentPubkey === targetAgentPubkey
-                ) {
-                  targetAccessPermitted = isSenderPermitted(
-                    parsed.policy,
-                    schedule.value.agentPubkey,
-                    currentOwner,
-                    parsed.allowlist,
-                  );
-                } else {
-                  targetAccessPermitted = undefined;
-                }
+                targetAccessPermitted = targetAgentAccessPermitted({
+                  accessEvents,
+                  presenceEvents,
+                  workspaceId: schedule.value.workspaceId,
+                  roomId: schedule.value.roomId,
+                  targetAgentPubkey,
+                  controllerAgentPubkey: schedule.value.agentPubkey,
+                  pairedOwnerPubkey: pairing.pubkey,
+                  currentOwnerPubkey: currentOwner,
+                });
               }
             } catch {
               targetAccessPermitted = undefined;

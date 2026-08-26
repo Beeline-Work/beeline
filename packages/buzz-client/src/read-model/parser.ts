@@ -1102,6 +1102,7 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
     const state = tag(event, 'state') === 'waiting-on-human' ? 'waiting' : tag(event, 'state');
     if (
       !cornerId ||
+      cornerId === scope.channelId ||
       !['open', 'working', 'waiting', 'idle', 'concluded', 'closed'].includes(state ?? '')
     ) {
       return unknown(event, 'malformed-schema');
@@ -1142,6 +1143,7 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
       candidate[1] ? [{ pubkey: candidate[1] as Pubkey, role: role(candidate[2]) }] : [],
     );
     if (parentRoomId) {
+      if (parentRoomId === scope.channelId) return unknown(event, 'malformed-schema');
       return {
         ...envelope(event, { ...scope, channelId: parentRoomId as ChannelId }),
         type: 'lifecycle',

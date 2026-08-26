@@ -373,6 +373,62 @@ describe('channel snapshot v1 contract', () => {
       };
     });
     expect(guardChannelSnapshotViewV1(crossRoomCorner).status).toBe('integrity-halt');
+
+    const selfParentCorner = correctlyHashedMutation((value) => {
+      const snapshot = value.snapshot as Record<string, unknown>;
+      const rooms = snapshot.rooms as Record<string, Record<string, unknown>>;
+      rooms[CHANNEL]!.corners = {
+        [CHANNEL]: {
+          kind: 'terminal',
+          id: CHANNEL,
+          parentRoomId: CHANNEL,
+          state: 'closed',
+          stateAt: 1,
+        },
+      };
+    });
+    expect(guardChannelSnapshotViewV1(selfParentCorner).status).toBe('integrity-halt');
+  });
+
+  it('rejects self-parent Corner creation before reduction', () => {
+    const owner = createIdentity('self-parent-corner-owner');
+    const event = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: 1,
+        kind: 9007,
+        tags: [
+          ['h', CHANNEL],
+          ['parent', CHANNEL],
+          ['p', owner.publicKey, 'owner'],
+        ],
+        content: '',
+      },
+      owner.secretKey,
+    );
+
+    expect(
+      parseRelayEvents([event], {
+        workspaceId: 'verified-workspace',
+        expectedChannelId: CHANNEL,
+        identities: {
+          [owner.publicKey]: {
+            kind: 'human',
+            pubkey: owner.publicKey as Pubkey,
+            revision: 'owner',
+          },
+        },
+      }),
+    ).toEqual([
+      {
+        type: 'unknown',
+        reason: 'malformed-schema',
+        eventId: event.id,
+        authorPubkey: owner.publicKey,
+        createdAt: 1,
+        sourceKind: 9007,
+      },
+    ]);
   });
 
   it('inherits the parent Room genesis repository in Corner snapshots', () => {

@@ -292,9 +292,7 @@ describe('channel snapshot v1 contract', () => {
       const malformedRepositoryValue = correctlyHashedMutation((value) => {
         value.repository = repository;
       });
-      expect(guardChannelSnapshotViewV1(malformedRepositoryValue).status).toBe(
-        'integrity-halt',
-      );
+      expect(guardChannelSnapshotViewV1(malformedRepositoryValue).status).toBe('integrity-halt');
     }
 
     const malformedReview = correctlyHashedMutation((value) => {
@@ -375,9 +373,7 @@ describe('channel snapshot v1 contract', () => {
         approvedBy: [],
       };
     });
-    expect(guardChannelSnapshotViewV1(landingWithoutAcknowledgement).status).toBe(
-      'integrity-halt',
-    );
+    expect(guardChannelSnapshotViewV1(landingWithoutAcknowledgement).status).toBe('integrity-halt');
 
     const landedWithFailedOutcome = correctlyHashedMutation((value) => {
       value.review = {

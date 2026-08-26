@@ -4,11 +4,11 @@ This directory is the **production** stack config, deployed by
 `scripts/deploy-relay-host.sh` on every merge to `main`. It is NOT the same
 stack as `relay-stack/compose.yml` + `relay-stack/nginx.conf` one level up:
 
-| | `relay-stack/` (gate) | `relay-stack/prod/` (this dir) |
-| --- | --- | --- |
-| compose project | `buzzy-gate` | `buzz-router-prod` |
-| purpose | isolated Phase-0 merge-gate proof | the live relay behind usebeeline.app |
-| deploy path | `npm run stack:up` (manual/local) | CI via `scripts/deploy-relay-host.sh` |
+|                 | `relay-stack/` (gate)             | `relay-stack/prod/` (this dir)        |
+| --------------- | --------------------------------- | ------------------------------------- |
+| compose project | `buzzy-gate`                      | `buzz-router-prod`                    |
+| purpose         | isolated Phase-0 merge-gate proof | the live relay behind usebeeline.app  |
+| deploy path     | `npm run stack:up` (manual/local) | CI via `scripts/deploy-relay-host.sh` |
 
 Keep them separate on purpose: the gate stack serves the merge-gate proof and
 must stay untouched by production deploys; this directory reproduces the

@@ -8,7 +8,7 @@ services:
       - /home/lunchbox/buzz-router-relay-prod/beeline-github.env
     environment:
       NODE_ENV: production
-      PORT: "8789"
+      PORT: '8789'
       BUZZY_AUTH_HOST: 0.0.0.0
       BUZZY_SNAPSHOT_INTERNAL_TOKEN: ${BUZZY_SNAPSHOT_INTERNAL_TOKEN:?set BUZZY_SNAPSHOT_INTERNAL_TOKEN}
       DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
@@ -20,9 +20,9 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "node",
-          "-e",
+          'CMD',
+          'node',
+          '-e',
           "fetch('http://127.0.0.1:8789/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
         ]
       interval: 10s
@@ -39,8 +39,8 @@ services:
       - .env
     environment:
       BUZZ_BIND_ADDR: 0.0.0.0:3000
-      BUZZ_HEALTH_PORT: "8080"
-      BUZZ_METRICS_PORT: "9102"
+      BUZZ_HEALTH_PORT: '8080'
+      BUZZ_METRICS_PORT: '9102'
       DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       BUZZ_S3_ENDPOINT: http://minio:9000
@@ -62,7 +62,7 @@ services:
       BUZZ_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN: ${BUZZ_RATE_LIMIT_HUMAN_MESSAGES_PER_MIN:-1200}
       BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC: ${BUZZ_RATE_LIMIT_HUMAN_WS_EVENTS_PER_SEC:-200}
     ports:
-      - "127.0.0.1:${BUZZ_HTTP_PORT:-3400}:3000"
+      - '127.0.0.1:${BUZZ_HTTP_PORT:-3400}:3000'
     volumes:
       - buzz-git-data:/data/git
     depends_on:
@@ -78,7 +78,7 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
+          'CMD-SHELL',
           "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8080; printf \"GET /_readiness HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"200 OK\" <&3'",
         ]
       interval: 10s
@@ -98,7 +98,7 @@ services:
     image: ${BUZZY_PUSH_IMAGE:-beeline-push-gateway:production}
     environment:
       NODE_ENV: production
-      PORT: "8788"
+      PORT: '8788'
       BUZZY_PUSH_HOST: 0.0.0.0
       BUZZY_PUSH_DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
       BUZZY_PUSH_SA_FILE: /run/secrets/buzzy-fcm-service-account.json
@@ -118,9 +118,9 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "node",
-          "-e",
+          'CMD',
+          'node',
+          '-e',
           "fetch('http://127.0.0.1:8788/snapshot/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
         ]
       interval: 10s
@@ -148,7 +148,7 @@ services:
     # The whole ./relay-front host directory (config + web tree + timestamped
     # web-backups) is exposed read-only at /etc/beeline-front; nginx reads only
     # the -c path below, nothing there is served, and it holds no secrets.
-    command: ["nginx", "-g", "daemon off;", "-c", "/etc/beeline-front/nginx.conf"]
+    command: ['nginx', '-g', 'daemon off;', '-c', '/etc/beeline-front/nginx.conf']
     # nginx resolves proxy_pass upstreams at boot, so the front must not start
     # before the push-gateway container exists on the network (same gate as the
     # gate stack's relay-front; replaces the old static push-host:host-gateway
@@ -179,7 +179,7 @@ services:
     volumes:
       - buzz-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 5s
       timeout: 5s
       retries: 12
@@ -190,13 +190,20 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--requirepass',
+        '${REDIS_PASSWORD:?set REDIS_PASSWORD}',
+      ]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
     volumes:
       - buzz-redis-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      test: ['CMD-SHELL', 'redis-cli -a "$${REDIS_PASSWORD}" ping | grep -q PONG']
       interval: 5s
       timeout: 3s
       retries: 12
@@ -214,7 +221,7 @@ services:
     volumes:
       - buzz-minio-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:9000/minio/health/live']
       interval: 5s
       timeout: 5s
       retries: 12
@@ -238,7 +245,7 @@ services:
         mc mb --ignore-existing "local/$${BUZZ_S3_BUCKET}"
         mc anonymous set none "local/$${BUZZ_S3_BUCKET}"
       '
-    restart: "no"
+    restart: 'no'
     networks:
       - buzz-net
 

@@ -332,6 +332,8 @@ Executors re-read membership, role, revocation, and usage immediately before
 publishing a `started` receipt. Concurrent decisions fold deterministically and
 only the first valid decision counts; replayed or exhausted actions fail closed.
 
+Once revocation is durably recorded, no new firing, turn, or child exercise is admitted; anything already admitted before that moment simply runs to completion with no cancellation machinery, no chase, and no race handling.
+
 Agent-to-agent Room work uses signed delegation turns rather than inheriting the
 sender's session. Each admitted work item is addressed to one exact agent and
 runs as one ordinary read-only Room turn with its own tools, filesystem, and

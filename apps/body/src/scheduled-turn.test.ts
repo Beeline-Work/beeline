@@ -401,6 +401,30 @@ describe('scheduled Room turn boundary', () => {
     }
   });
 
+  it('keeps every delegation and escalation directive inert during a mission target turn', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-mission-directives-inert-'));
+    const body = new Body(config(root), undefined, newIdentity('mission-directive-target'));
+    const roster = vi.spyOn(body as never, 'delegationRoster' as never);
+    const publishTurn = vi.spyOn(Reflect.get(body, 'delegationRuntime'), 'publishTurn');
+    try {
+      await Reflect.get(body, 'publishDelegationChildren').call(
+        body,
+        {
+          value: {
+            phase: 'assign',
+            mission: { missionId: 'mission-one' },
+          },
+        },
+        '[[delegate target="@Scout" task="Do more work"]]\n' +
+          '[[delegate target="@Analyst" task="Escalate this"]]',
+      );
+      expect(roster).not.toHaveBeenCalled();
+      expect(publishTurn).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('publishes scheduled attachments from pi while keeping amplification directives inert', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-directives-'));
     const agent = newIdentity('scheduled-directive-agent');

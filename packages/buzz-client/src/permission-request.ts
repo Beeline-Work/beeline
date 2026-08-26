@@ -1737,11 +1737,16 @@ async function currentHumanAuthorized(
  * Full fail-closed execution preflight. The reader names current-state methods
  * explicitly so callers cannot accidentally pass a transcript/cache snapshot.
  */
-export async function verifyPermissionAction(input: {
+type PermissionActionVerificationInput = {
   reader: PermissionFreshReader;
   action: PermissionConcreteAction;
   now: number;
-}): Promise<PermissionVerificationResult> {
+};
+
+async function verifyPermissionActionInternal(
+  input: PermissionActionVerificationInput,
+  authorityOnly: boolean,
+): Promise<PermissionVerificationResult> {
   try {
     const requestEvent = await input.reader.readEvent(input.action.requestEventId);
     const request = requestEvent ? parsePermissionRequest(requestEvent) : undefined;
@@ -1838,12 +1843,14 @@ export async function verifyPermissionAction(input: {
       executions.filter((execution) => execution.event.pubkey === input.action.executorPubkey),
       winner.event.id,
     );
-    const existing = usage.actionStatuses.get(input.action.actionId);
-    if (existing === 'succeeded') {
-      return { authorized: false, terminal: true, reason: 'action-already-succeeded' };
-    }
-    if (existing === 'unknown' || existing === 'started') {
-      return { authorized: false, terminal: true, reason: 'action-outcome-unknown' };
+    if (!authorityOnly) {
+      const existing = usage.actionStatuses.get(input.action.actionId);
+      if (existing === 'succeeded') {
+        return { authorized: false, terminal: true, reason: 'action-already-succeeded' };
+      }
+      if (existing === 'unknown' || existing === 'started') {
+        return { authorized: false, terminal: true, reason: 'action-outcome-unknown' };
+      }
     }
     if (!permissionScopeAllows(request.value.scope, input.action.scope)) {
       return { authorized: false, terminal: true, reason: 'action-mismatch' };
@@ -1878,15 +1885,19 @@ export async function verifyPermissionAction(input: {
     ) {
       return { authorized: false, terminal: true, reason: 'action-mismatch' };
     }
-    if (input.action.charge.uses < 1 || usage.uses + input.action.charge.uses > grant.maxUses) {
+    if (input.action.charge.uses < 1) {
+      return { authorized: false, terminal: true, reason: 'action-mismatch' };
+    }
+    if (!authorityOnly && usage.uses + input.action.charge.uses > grant.maxUses) {
       return { authorized: false, terminal: true, reason: 'exhausted' };
     }
     const windowStart = input.now - grant.rate.windowSeconds;
     const recentUses = usage.committedAt.filter((at) => at >= windowStart).length;
-    if (recentUses + input.action.charge.uses > grant.rate.maxUses) {
+    if (!authorityOnly && recentUses + input.action.charge.uses > grant.rate.maxUses) {
       return { authorized: false, terminal: false, reason: 'rate-exhausted' };
     }
     if (
+      !authorityOnly &&
       grant.budget.maxMinorUnits !== undefined &&
       (input.action.charge.currency !== grant.budget.currency ||
         usage.minorUnits + (input.action.charge.minorUnits ?? 0) > grant.budget.maxMinorUnits)
@@ -1894,6 +1905,7 @@ export async function verifyPermissionAction(input: {
       return { authorized: false, terminal: true, reason: 'budget-exhausted' };
     }
     if (
+      !authorityOnly &&
       grant.budget.maxReservedTokens !== undefined &&
       usage.reservedTokens + (input.action.charge.reservedTokens ?? 0) >
         grant.budget.maxReservedTokens
@@ -1904,4 +1916,19 @@ export async function verifyPermissionAction(input: {
   } catch {
     return { authorized: false, terminal: false, reason: 'authority-unavailable' };
   }
+}
+
+export function verifyPermissionAction(
+  input: PermissionActionVerificationInput,
+): Promise<PermissionVerificationResult> {
+  return verifyPermissionActionInternal(input, false);
+}
+
+export function verifyMissionPermissionActionAuthority(
+  input: PermissionActionVerificationInput,
+): Promise<PermissionVerificationResult> {
+  if (input.action.scope.type !== 'mission.control') {
+    return Promise.resolve({ authorized: false, terminal: true, reason: 'action-mismatch' });
+  }
+  return verifyPermissionActionInternal(input, true);
 }

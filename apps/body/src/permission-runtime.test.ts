@@ -124,7 +124,7 @@ function fixture(publishTerminalReceipt?: (event: NostrEvent) => Promise<void>) 
     },
     ...(publishTerminalReceipt ? { publishTerminalReceipt } : {}),
   });
-  return { action, admin, decision, history, published, request, runtime };
+  return { action, admin, decision, executor, history, published, reader, request, runtime };
 }
 
 describe('PermissionRuntime', () => {
@@ -149,6 +149,24 @@ describe('PermissionRuntime', () => {
     await expect(
       f.runtime.complete({ execution: begun.execution, status: 'unknown' }),
     ).resolves.toEqual({ status: 'duplicate' });
+  });
+
+  it('recovers an admitted action from its durable execution history', async () => {
+    const f = fixture();
+    const action = f.action(0);
+    await expect(f.runtime.admitted(action)).resolves.toBe(false);
+    const begun = await f.runtime.begin({ action, attempt: 1 });
+    if (begun.status !== 'started') throw new Error('expected started execution');
+
+    const restarted = new PermissionRuntime({
+      identity: f.executor,
+      reader: f.reader,
+      now: () => NOW + 2,
+      claim: async () => 'claimed',
+      reserveCapacity: async () => 'claimed',
+      publish: async () => undefined,
+    });
+    await expect(restarted.admitted(action)).resolves.toBe(true);
   });
 
   it('hands terminal receipts to the durable publisher while keeping started strict', async () => {

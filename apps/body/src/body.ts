@@ -186,6 +186,7 @@ import {
   parsePermissionRequest,
   parsePermissionDecision,
   verifyPermissionAction,
+  verifyMissionPermissionActionAuthority,
   type PermissionConcreteAction,
   type PermissionFreshReader,
   type PermissionRequestV1,
@@ -224,6 +225,7 @@ import {
   resolveMissionAction,
   resolveMissionGrant,
   verifyMissionAction,
+  verifyMissionActionAuthority,
   type MissionCornerAuthority,
 } from './mission-authority.js';
 import {
@@ -5539,7 +5541,7 @@ export class Body {
     turn: ParsedDelegationTurn,
     finalText: string,
   ): Promise<void> {
-    if (turn.value.phase === 'return') return;
+    if (turn.value.phase === 'return' || turn.value.mission) return;
     const { roster } = await this.delegationRoster(turn.value.roomId);
     const parsed = parseDelegationDirectives(finalText, roster);
     const directives = parsed.directives.filter(
@@ -6042,7 +6044,7 @@ export class Body {
     }
     if (turn.value.mission) {
       const mission = turn.value.mission;
-      const verification = await verifyMissionAction({
+      const verification = await verifyMissionActionAuthority({
         reader: this.permissionReader,
         reference: {
           missionId: mission.missionId,
@@ -6648,6 +6650,7 @@ export class Body {
       idempotencyKey: `mission-corner:close:${subchannelId}`,
     });
     if (!action) throw new ScheduleActivationRefusedError(true, 'mission-corner-mismatch');
+    if (await this.permissionRuntime.admitted(action)) return undefined;
     const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
     if (begun.status === 'started') return begun.execution;
     if (begun.status === 'duplicate') return undefined;
@@ -6717,6 +6720,17 @@ export class Body {
         if (result.wake) {
           if (result.wake.agentPubkey !== scheduled.targetAgentPubkey) {
             throw new ScheduleActivationRefusedError(true, 'mission-wake-target-mismatch');
+          }
+          const childActivation = await verifyMissionPermissionActionAuthority({
+            reader: this.permissionReader,
+            action: scheduled.missionAction,
+            now: Math.floor(Date.now() / 1_000),
+          });
+          if (!childActivation.authorized) {
+            throw new ScheduleActivationRefusedError(
+              childActivation.terminal,
+              childActivation.reason,
+            );
           }
           const pointerTask =
             `Mission schedule ${scheduled.scheduleId} produced repository pointer ` +

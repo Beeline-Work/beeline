@@ -11,6 +11,7 @@ import {
   reduceWorkspaceEvents,
   selectTranscript,
   unresolvedReplyParentIds,
+  type ChannelSnapshotCursorV1,
   type IdentityRecord,
   type ParseAuthority,
   type Pubkey,
@@ -125,24 +126,6 @@ function aliasAuthority(
   );
 }
 
-function relayCursor(events: readonly ReadEvent[], channelId: string) {
-  const included = events.filter(
-    (
-      event,
-    ): event is Exclude<ReadEvent, { readonly type: 'unknown' }> & { readonly scope: 'channel' } =>
-      event.type !== 'unknown' && event.scope === 'channel' && event.channelId === channelId,
-  );
-  const createdAt = Math.max(...included.map((event) => event.createdAt), -1);
-  if (createdAt < 0) throw new Error('snapshot projection has no inclusive channel cursor');
-  return {
-    createdAt,
-    eventIds: included
-      .filter((event) => event.createdAt === createdAt)
-      .map((event) => event.eventId)
-      .sort(),
-  };
-}
-
 /** Durable, fair, bounded channel-snapshot rebuild worker. */
 export class ChannelSnapshotMaterializer {
   private readonly batchSize: number;
@@ -242,7 +225,7 @@ export class ChannelSnapshotMaterializer {
       let projection:
         | {
             readonly parsed: readonly ReadEvent[];
-            readonly cursor: ReturnType<typeof relayCursor>;
+            readonly cursor: ChannelSnapshotCursorV1;
             readonly snapshot: ReturnType<typeof createWorkspaceSnapshot>;
             readonly succession: SuccessionResolution;
           }
@@ -281,7 +264,7 @@ export class ChannelSnapshotMaterializer {
           trustedProjectionPubkeys: facts.trustedProjectionPubkeys,
         };
         const parsed = parseRelayEvents(events, authority);
-        const cursor = relayCursor(parsed, input.channelId);
+        const cursor = input.cursor;
         let snapshot = reduceWorkspaceEvents(
           createWorkspaceSnapshot({ workspaceId, identities: Object.values(identities) }),
           parsed,

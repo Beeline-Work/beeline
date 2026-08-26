@@ -136,6 +136,33 @@ describe('ChannelSnapshotStore dirty worklist', () => {
     expect(dirty.rows.map((row) => row.channel_id)).toEqual([HOT, COLD, SIBLING].sort());
   });
 
+  it('redirties historical Rooms when a departed author changes identity', async () => {
+    const author = 'a'.repeat(64);
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
+    await database.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, removed_at)
+       VALUES ($1, $2, decode($3, 'hex'), now())`,
+      [TENANT, HOT, author],
+    );
+    await database.query(`DELETE FROM beeline_snapshot_dirty`);
+
+    await database.query(
+      `INSERT INTO events
+         (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+       VALUES ($1, decode($2, 'hex'), decode($3, 'hex'), now(), 0,
+               '[]'::jsonb, '{}', decode($4, 'hex'), NULL)`,
+      [TENANT, '1'.padStart(64, '0'), author, 'f'.repeat(128)],
+    );
+
+    const dirty = await database.query<{ channel_id: string }>(
+      `SELECT channel_id::text AS channel_id
+       FROM beeline_snapshot_dirty
+       WHERE relay_tenant_id = $1`,
+      [TENANT],
+    );
+    expect(dirty.rows.map((row) => row.channel_id)).toEqual([HOT]);
+  });
+
   it('releases redirtied hot claims and selects a cold channel within two claims', async () => {
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
     await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, COLD]);
@@ -368,5 +395,65 @@ describe('ChannelSnapshotStore dirty worklist', () => {
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-corner-state'),
       ),
     ).toHaveLength(2);
+  }, 30_000);
+
+  it('loads current lifecycle and repository facts outside the structural tail', async () => {
+    await database.query(`INSERT INTO channels (community_id, id) VALUES ($1, $2)`, [TENANT, HOT]);
+    const author = 'a'.repeat(64);
+    const nameId = '10'.padStart(64, '0');
+    const archiveId = '11'.padStart(64, '0');
+    const repositoryId = '12'.padStart(64, '0');
+    await database.query(
+      `INSERT INTO events
+         (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+       VALUES
+         ($1, decode($2, 'hex'), decode($5, 'hex'), now() - interval '3 seconds', 9002,
+          $6::jsonb, '', decode($7, 'hex'), $8),
+         ($1, decode($3, 'hex'), decode($5, 'hex'), now() - interval '2 seconds', 9002,
+          $9::jsonb, '', decode($7, 'hex'), $8),
+         ($1, decode($4, 'hex'), decode($5, 'hex'), now() - interval '1 second', 30078,
+          $10::jsonb, $11, decode($7, 'hex'), $8)`,
+      [
+        TENANT,
+        nameId,
+        archiveId,
+        repositoryId,
+        author,
+        JSON.stringify([
+          ['h', HOT],
+          ['name', 'Durable Room'],
+        ]),
+        'f'.repeat(128),
+        HOT,
+        JSON.stringify([
+          ['h', HOT],
+          ['archived', 'true'],
+        ]),
+        JSON.stringify([
+          ['d', `buzz-room-repository:${HOT}`],
+          ['h', HOT],
+          ['t', 'buzz-room-repository'],
+        ]),
+        JSON.stringify({ key: 'github:1', name: 'beeline', remote: 'https://example.test/repo' }),
+      ],
+    );
+    await database.query(
+      `INSERT INTO events
+         (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id)
+       SELECT $1, decode(lpad(to_hex(sequence + 5000), 64, '0'), 'hex'), decode($2, 'hex'),
+              now() + sequence * interval '1 millisecond', 30078,
+              jsonb_build_array(jsonb_build_array('h', $3::text),
+                                jsonb_build_array('d', 'noise:' || sequence::text)),
+              '{}', decode($4, 'hex'), $3::uuid
+       FROM generate_series(1, 2500) AS sequence`,
+      [TENANT, author, HOT, 'f'.repeat(128)],
+    );
+    await database.query(`DELETE FROM beeline_snapshot_dirty`);
+    await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [TENANT, HOT]);
+    const [claim] = await store.claimDirty(1, 60_000);
+    const input = await store.loadProjectionInput(claim!);
+    const eventIds = input?.events.map((event) => event.id) ?? [];
+
+    expect(eventIds).toEqual(expect.arrayContaining([nameId, archiveId, repositoryId]));
   }, 30_000);
 });

@@ -178,6 +178,7 @@ DECLARE
   source_tenant uuid;
   source_channel uuid;
   source_pubkey bytea;
+  source_kind integer;
   source_tags jsonb;
   candidate text;
   affected record;
@@ -186,19 +187,30 @@ BEGIN
     source_tenant := OLD.community_id;
     source_channel := OLD.channel_id;
     source_pubkey := OLD.pubkey;
+    source_kind := OLD.kind;
     source_tags := OLD.tags;
   ELSE
     source_tenant := NEW.community_id;
     source_channel := NEW.channel_id;
     source_pubkey := NEW.pubkey;
+    source_kind := NEW.kind;
     source_tags := NEW.tags;
   END IF;
   IF source_channel IS NULL THEN
     FOR affected IN
-      SELECT cm.community_id, cm.channel_id
+      SELECT DISTINCT cm.community_id, cm.channel_id
       FROM channel_members cm
-      WHERE cm.pubkey = source_pubkey AND cm.removed_at IS NULL
+      WHERE cm.pubkey = source_pubkey
         AND (source_tenant IS NULL OR cm.community_id = source_tenant)
+        AND (
+          cm.removed_at IS NULL
+          OR source_kind = 0
+          OR (source_kind = 9 AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(COALESCE(source_tags, '[]'::jsonb)) AS marker
+            WHERE marker->>0 = 't' AND marker->>1 = 'buzz-agent'
+          ))
+        )
     LOOP
       PERFORM beeline_mark_snapshot_family_dirty(affected.community_id, affected.channel_id);
     END LOOP;
@@ -416,6 +428,7 @@ export class ChannelSnapshotStore {
       carriedMessages,
       statusControls,
       structural,
+      durableStructural,
       cornerStates,
       createAnchors,
       cursorRows,
@@ -482,6 +495,14 @@ export class ChannelSnapshotStore {
                  )
              )
            )
+           AND e.kind NOT IN (9002, 9008)
+           AND NOT (
+             e.kind = 30078
+             AND EXISTS (
+               SELECT 1 FROM jsonb_array_elements(e.tags) AS marker
+               WHERE marker->>0 = 't' AND marker->>1 = 'buzz-room-repository'
+             )
+           )
            AND (e.channel_id = ANY($2::uuid[]) OR EXISTS (
              SELECT 1 FROM jsonb_array_elements(e.tags) AS tag
              WHERE (tag->>0 IN ('h', 'parent', 'subchannel')
@@ -495,6 +516,79 @@ export class ChannelSnapshotStore {
                 ))
            ))
          ORDER BY e.created_at DESC, e.id ASC LIMIT 2500`,
+        [claim.tenantId, channelIds],
+      ),
+      this.database.query<EventRow>(
+        `WITH family_events AS (
+           SELECT e.community_id, e.id, e.pubkey, e.created_at, e.kind,
+                  e.tags, e.content, e.sig,
+                  COALESCE(
+                    e.channel_id::text,
+                    (
+                      SELECT room_tag->>1
+                      FROM jsonb_array_elements(e.tags) AS room_tag
+                      WHERE room_tag->>0 = 'h' AND room_tag->>1 = ANY($2::text[])
+                      LIMIT 1
+                    )
+                  ) AS semantic_channel
+           FROM events e
+           WHERE e.community_id = $1::uuid AND e.deleted_at IS NULL
+             AND octet_length(e.content) <= 131072
+             AND (e.channel_id = ANY($2::uuid[]) OR EXISTS (
+               SELECT 1 FROM jsonb_array_elements(e.tags) AS room_tag
+               WHERE room_tag->>0 = 'h' AND room_tag->>1 = ANY($2::text[])
+             ))
+         ), lifecycle_candidates AS (
+           SELECT e.*, semantic.semantic_key,
+                  row_number() OVER (
+                    PARTITION BY e.semantic_channel, semantic.semantic_key
+                    ORDER BY e.created_at DESC, e.id DESC
+                  ) AS semantic_rank
+           FROM family_events e
+           CROSS JOIN LATERAL (
+             SELECT CASE
+               WHEN field->>0 IN ('avatar', 'picture') THEN 'avatar'
+               ELSE field->>0
+             END AS semantic_key
+             FROM jsonb_array_elements(e.tags) AS field
+             WHERE (field->>0 IN ('name', 'about', 'avatar', 'picture') AND field->>1 <> '')
+                OR (field->>0 IN ('archived', 'deleted') AND field->>1 = 'true')
+             UNION ALL
+             SELECT 'deleted' WHERE e.kind = 9008
+           ) semantic
+           WHERE e.kind IN (9002, 9008)
+         ), repository_candidates AS (
+           SELECT e.*,
+                  row_number() OVER (
+                    PARTITION BY repository_key.repository_key
+                    ORDER BY e.created_at DESC, e.id DESC
+                  ) AS semantic_rank
+           FROM family_events e
+           CROSS JOIN LATERAL (
+             SELECT repository_tag->>1 AS repository_key
+             FROM jsonb_array_elements(e.tags) AS repository_tag
+             WHERE repository_tag->>0 = 'd'
+               AND repository_tag->>1 = ANY(
+                 SELECT 'buzz-room-repository:' || channel_id
+                 FROM unnest($2::text[]) AS channel_id
+               )
+             LIMIT 1
+           ) repository_key
+           WHERE e.kind = 30078
+             AND EXISTS (
+               SELECT 1 FROM jsonb_array_elements(e.tags) AS marker
+               WHERE marker->>0 = 't' AND marker->>1 = 'buzz-room-repository'
+             )
+         ), durable_events AS (
+           SELECT community_id, id, pubkey, created_at, kind, tags, content, sig
+           FROM lifecycle_candidates WHERE semantic_rank = 1
+           UNION
+           SELECT community_id, id, pubkey, created_at, kind, tags, content, sig
+           FROM repository_candidates WHERE semantic_rank <= 20
+         )
+         SELECT community_id, id, pubkey, created_at, kind, tags, content, sig
+         FROM durable_events
+         ORDER BY created_at DESC, id ASC`,
         [claim.tenantId, channelIds],
       ),
       this.database.query<EventRow>(
@@ -600,6 +694,7 @@ export class ChannelSnapshotStore {
     for (const row of [
       ...statusControls.rows,
       ...structural.rows,
+      ...durableStructural.rows,
       ...cornerStates.rows,
       ...createAnchors.rows,
     ]) {

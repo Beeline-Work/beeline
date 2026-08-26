@@ -262,6 +262,180 @@ export function selectCorners(
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
+export type RepositorySummary = {
+  readonly key: string;
+  readonly name: string;
+  readonly remote: string;
+  readonly targetBranch?: string;
+  readonly githubInstallationId?: number;
+  readonly githubEventsEnabled?: boolean;
+};
+
+/** Latest authorized Room repository fact, already parsed into the read model. */
+export function selectRepositorySummary(
+  snapshot: WorkspaceSnapshot,
+  channelId: string,
+): RepositorySummary | undefined {
+  const roomSnapshot = room(snapshot, channelId);
+  if (!roomSnapshot) return undefined;
+  const repository = orderedEvents(roomSnapshot)
+    .filter(
+      (event): event is Control => event.type === 'control' && event.payload.kind === 'repository',
+    )
+    .at(-1)?.payload;
+  if (!repository || repository.kind !== 'repository') return undefined;
+  return {
+    key: repository.key,
+    name: repository.name,
+    remote: repository.remote,
+    ...(repository.targetBranch ? { targetBranch: repository.targetBranch } : {}),
+    ...(repository.githubInstallationId
+      ? { githubInstallationId: repository.githubInstallationId }
+      : {}),
+    ...(repository.githubEventsEnabled === undefined
+      ? {}
+      : { githubEventsEnabled: repository.githubEventsEnabled }),
+  };
+}
+
+export type ReviewSummary = {
+  readonly state: 'none' | 'ready' | 'landing' | 'realigning' | 'landed' | 'failed';
+  readonly target?: {
+    readonly repository: string;
+    readonly branch: string;
+    readonly tip: string;
+    readonly patchId?: string;
+    readonly previewUrl?: string;
+  };
+  readonly files: readonly string[];
+  readonly fileCount: number;
+  readonly previewSummary?: string;
+  readonly approvedBy: readonly Pubkey[];
+  readonly daemonAcknowledgement?: {
+    readonly approvalId: string;
+    readonly decision: 'accepted' | 'rejected';
+    readonly state?: 'landing' | 'realigning' | 'realigned' | 'content-changed' | 'tip-moved';
+  };
+  readonly outcome?: { readonly kind: 'landed' | 'failed'; readonly detail?: string };
+};
+
+/**
+ * Durable merge/review state selected only from typed read-model facts. Patch
+ * bodies stay outside this summary and remain lazy.
+ */
+export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: string): ReviewSummary {
+  const roomSnapshot = room(snapshot, channelId);
+  if (!roomSnapshot) return { state: 'none', files: [], fileCount: 0, approvedBy: [] };
+  let target: ReviewSummary['target'];
+  let state: ReviewSummary['state'] = 'none';
+  let acknowledgement: ReviewSummary['daemonAcknowledgement'];
+  let outcome: ReviewSummary['outcome'];
+  let approvedBy = new Set<Pubkey>();
+  const manifests = new Map<
+    string,
+    Map<number, Extract<Control['payload'], { kind: 'review-manifest' }>>
+  >();
+  const completions = new Map<string, Extract<Control['payload'], { kind: 'review-complete' }>>();
+
+  for (const event of orderedEvents(roomSnapshot)) {
+    if (event.type !== 'control') continue;
+    const payload = event.payload;
+    if (payload.kind === 'review-manifest') {
+      if (!payload.transactional) continue;
+      const chunks = manifests.get(payload.tip) ?? new Map();
+      chunks.set(payload.chunk, payload);
+      manifests.set(payload.tip, chunks);
+      continue;
+    }
+    if (payload.kind === 'review-complete') {
+      completions.set(payload.tip, payload);
+      continue;
+    }
+    if (payload.kind === 'merge-approval') {
+      if (target && payload.repository === target.repository && payload.branch === target.branch) {
+        approvedBy.add(event.authorPubkey);
+      }
+      continue;
+    }
+    if (payload.kind !== 'merge') continue;
+    if (payload.action === 'ready' && payload.repository && payload.branch && payload.tip) {
+      const sameMerge =
+        target?.repository === payload.repository && target.branch === payload.branch;
+      if (!sameMerge) approvedBy = new Set();
+      target = {
+        repository: payload.repository,
+        branch: payload.branch,
+        tip: payload.tip,
+        ...(payload.patchId ? { patchId: payload.patchId } : {}),
+        ...(payload.previewUrl ? { previewUrl: payload.previewUrl } : {}),
+      };
+      state = 'ready';
+      acknowledgement = undefined;
+      outcome = undefined;
+      continue;
+    }
+    if (payload.action === 'not-ready') {
+      target = undefined;
+      state = 'none';
+      approvedBy = new Set();
+      acknowledgement = undefined;
+      outcome = undefined;
+      continue;
+    }
+    if (payload.action === 'approval-ack' && payload.decision) {
+      acknowledgement = {
+        approvalId: payload.approvalId ?? event.eventId,
+        decision: payload.decision,
+        ...(payload.state ? { state: payload.state } : {}),
+      };
+      state =
+        payload.decision === 'rejected'
+          ? 'failed'
+          : payload.state === 'realigning' || payload.state === 'realigned'
+            ? 'realigning'
+            : 'landing';
+      if (payload.decision === 'rejected') {
+        outcome = { kind: 'failed', ...(payload.text ? { detail: payload.text } : {}) };
+      }
+      continue;
+    }
+    if (payload.action === 'landed') {
+      state = 'landed';
+      outcome = { kind: 'landed', ...(payload.text ? { detail: payload.text } : {}) };
+      continue;
+    }
+    if (payload.action === 'failed') {
+      state = 'failed';
+      outcome = { kind: 'failed', ...(payload.text ? { detail: payload.text } : {}) };
+    }
+  }
+
+  const completion = target ? completions.get(target.tip) : undefined;
+  const manifestChunks = target ? manifests.get(target.tip) : undefined;
+  const completeManifests =
+    completion &&
+    manifestChunks?.size === completion.manifestChunks &&
+    [...manifestChunks.keys()]
+      .sort((left, right) => left - right)
+      .every((chunk, index) => chunk === index)
+      ? [...manifestChunks.values()].sort((left, right) => left.chunk - right.chunk)
+      : [];
+  const files = [
+    ...new Set(completeManifests.flatMap((manifest) => manifest.files.map((file) => file.path))),
+  ];
+  const complete = Boolean(completion && files.length === completion.fileCount);
+  return {
+    state,
+    ...(target ? { target } : {}),
+    files: complete ? files : [],
+    fileCount: complete ? completion!.fileCount : 0,
+    ...(complete ? { previewSummary: completion!.summary } : {}),
+    approvedBy: [...approvedBy].sort(),
+    ...(acknowledgement ? { daemonAcknowledgement: acknowledgement } : {}),
+    ...(outcome ? { outcome } : {}),
+  };
+}
+
 export type RoomRowSelection = {
   readonly snapshotRevision: number;
   readonly preview?: TranscriptConversationItem;

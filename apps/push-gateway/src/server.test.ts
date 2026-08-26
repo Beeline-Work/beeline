@@ -1,13 +1,18 @@
 import { once } from 'node:events';
 import { type AddressInfo } from 'node:net';
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nip98AuthHeader, type NostrEvent } from '@beeline/nostr';
 import type { Messaging } from 'firebase-admin/messaging';
-import { createIdentity } from '@beeline/buzz-client';
+import {
+  createIdentity,
+  guardChannelSnapshotViewV1,
+  type StoredChannelSnapshotV1,
+} from '@beeline/buzz-client';
 import { DeliveryState } from './delivery-state.js';
 import { PushGateway } from './gateway.js';
 import { TokenRegistry } from './registry.js';
-import { createRegistrationServer } from './server.js';
+import { createRegistrationServer, type RegistrationServerHooks } from './server.js';
 
 const PUBKEY = 'a'.repeat(64);
 const TOKEN = 'fcm-token-A_12345678901234567890';
@@ -235,5 +240,187 @@ describe('POST /test-send', () => {
       devices: [],
     });
     expect(sendEachForMulticast).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /snapshot/channel/:channelId', () => {
+  const PUBLIC_ORIGIN = 'https://usebeeline.app';
+  const CHANNEL = '9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6';
+  const servers: ReturnType<typeof createRegistrationServer>[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      servers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    );
+  });
+
+  function golden() {
+    const view = JSON.parse(
+      readFileSync(
+        new URL(
+          '../../../packages/buzz-client/src/read-model/fixtures/channel-snapshot-v1.json',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    ) as Record<string, unknown>;
+    const { lagMs: _lag, viewer: _viewer, integrity, ...payload } = view;
+    return {
+      payload: payload as StoredChannelSnapshotV1,
+      digest: (integrity as { digest: string }).digest,
+    };
+  }
+
+  async function listen(
+    readForViewer: NonNullable<RegistrationServerHooks['snapshot']>['readForViewer'],
+    options: {
+      pushHealth?: RegistrationServerHooks['pushHealth'];
+      snapshotStatus?: NonNullable<RegistrationServerHooks['snapshot']>['status'];
+    } = {},
+  ) {
+    const registry = await TokenRegistry.load();
+    const claimed = new Set<string>();
+    const server = createRegistrationServer(registry, {
+      ...(options.pushHealth ? { pushHealth: options.pushHealth } : {}),
+      snapshot: {
+        publicOrigin: PUBLIC_ORIGIN,
+        readForViewer,
+        claimNip98Event: async (eventId) => {
+          if (claimed.has(eventId)) return false;
+          claimed.add(eventId);
+          return true;
+        },
+        ...(options.snapshotStatus ? { status: options.snapshotStatus } : {}),
+      },
+    });
+    servers.push(server);
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  }
+
+  it('keeps snapshot health available when Firebase push readiness is down', async () => {
+    const base = await listen(async () => null, {
+      pushHealth: () => ({ ok: false, reason: 'firebase_unavailable' }),
+      snapshotStatus: async () => ({ depth: 3, oldestDirtyAgeMs: 25, warmed: false }),
+    });
+    const [push, snapshot] = await Promise.all([
+      fetch(`${base}/health`),
+      fetch(`${base}/snapshot/health`),
+    ]);
+    expect(push.status).toBe(503);
+    expect(snapshot.status).toBe(200);
+    await expect(snapshot.json()).resolves.toEqual({
+      ok: true,
+      depth: 3,
+      oldestDirtyAgeMs: 25,
+      warmed: false,
+    });
+  });
+
+  function authorization(identity: ReturnType<typeof createIdentity>, path: string) {
+    return nip98AuthHeader(
+      identity.secretKey,
+      identity.publicKey,
+      `${PUBLIC_ORIGIN}${path}`,
+      'GET',
+    );
+  }
+
+  it('serves the shared golden contract with private headers in under 300ms', async () => {
+    const identity = createIdentity('snapshot-member');
+    const { payload, digest } = golden();
+    const base = await listen(async () => ({
+      tenantId: 'e8299f28-f095-472f-941a-80d1195b9a24',
+      payload,
+      digest,
+      lagMs: 12,
+    }));
+    const path = `/snapshot/channel/${CHANNEL}`;
+    const startedAt = performance.now();
+    const response = await fetch(`${base}${path}`, {
+      headers: { authorization: authorization(identity, path) },
+    });
+    const elapsed = performance.now() - startedAt;
+
+    expect(response.status).toBe(200);
+    expect(elapsed).toBeLessThan(300);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(response.headers.get('vary')).toBe('Authorization');
+    expect(response.headers.get('x-beeline-snapshot-integrity')).toBe(digest);
+    expect(guardChannelSnapshotViewV1(await response.json())).toMatchObject({ status: 'ready' });
+  });
+
+  it('returns an indistinguishable 404 for a non-member and a nonexistent channel', async () => {
+    const identity = createIdentity('snapshot-outsider');
+    const base = await listen(async () => null);
+    const paths = [
+      `/snapshot/channel/${CHANNEL}`,
+      '/snapshot/channel/3f37b271-1a12-4d2a-b002-202b3f3582b9',
+    ];
+    const responses = await Promise.all(
+      paths.map((path) =>
+        fetch(`${base}${path}`, { headers: { authorization: authorization(identity, path) } }),
+      ),
+    );
+    expect(responses.map((response) => response.status)).toEqual([404, 404]);
+    await expect(Promise.all(responses.map((response) => response.json()))).resolves.toEqual([
+      { error: 'not_found' },
+      { error: 'not_found' },
+    ]);
+  });
+
+  it('rejects a wrong exact URL, query alias, and replayed proof', async () => {
+    const identity = createIdentity('snapshot-proof');
+    const { payload, digest } = golden();
+    const base = await listen(async () => ({
+      tenantId: 'e8299f28-f095-472f-941a-80d1195b9a24',
+      payload,
+      digest,
+      lagMs: 0,
+    }));
+    const path = `/snapshot/channel/${CHANNEL}`;
+    const wrong = await fetch(`${base}${path}`, {
+      headers: {
+        authorization: nip98AuthHeader(
+          identity.secretKey,
+          identity.publicKey,
+          `https://attacker.example${path}`,
+          'GET',
+        ),
+      },
+    });
+    expect(wrong.status).toBe(401);
+    const query = await fetch(`${base}${path}?alias=1`, {
+      headers: { authorization: authorization(identity, `${path}?alias=1`) },
+    });
+    expect(query.status).toBe(404);
+
+    const proof = authorization(identity, path);
+    const accepted = await fetch(`${base}${path}`, { headers: { authorization: proof } });
+    const replay = await fetch(`${base}${path}`, { headers: { authorization: proof } });
+    expect(accepted.status).toBe(200);
+    expect(replay.status).toBe(401);
+  });
+
+  it('fails closed for stale, missing, or corrupt snapshots', async () => {
+    const identity = createIdentity('snapshot-stale');
+    const { payload, digest } = golden();
+    const rows = [
+      { tenantId: 'tenant', lagMs: 30_001, payload, digest },
+      { tenantId: 'tenant', lagMs: 0 },
+      { tenantId: 'tenant', lagMs: 0, payload, digest: '0'.repeat(64) },
+    ];
+    const base = await listen(async () => rows.shift()!);
+    const path = `/snapshot/channel/${CHANNEL}`;
+    for (const reason of ['stale', 'missing', 'incompatible_or_corrupt']) {
+      const response = await fetch(`${base}${path}`, {
+        headers: { authorization: authorization(identity, path) },
+      });
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({ error: 'snapshot_not_ready', reason });
+    }
   });
 });

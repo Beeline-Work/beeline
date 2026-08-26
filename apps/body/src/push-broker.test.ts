@@ -76,7 +76,9 @@ function fixture(): {
 
 function realGitRunner(
   cwd: string,
-): (args: string[]) => Promise<{ ok: boolean; status: number | null; stdout: string; stderr: string }> {
+): (
+  args: string[],
+) => Promise<{ ok: boolean; status: number | null; stdout: string; stderr: string }> {
   return async (args) => {
     const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
     return {
@@ -126,10 +128,12 @@ describe('classifyRefspec', () => {
 
   it('recognises listed protected refs and main by name even when unlisted', () => {
     expect(classifyRefspec(`${'a'.repeat(40)}:refs/heads/main`, policy())).toBe('protected');
-    expect(classifyRefspec(`${'a'.repeat(40)}:refs/heads/master`, {
-      featureBranch: 'feature/x',
-      protectedRefs: [],
-    })).toBe('protected');
+    expect(
+      classifyRefspec(`${'a'.repeat(40)}:refs/heads/master`, {
+        featureBranch: 'feature/x',
+        protectedRefs: [],
+      }),
+    ).toBe('protected');
   });
 
   it('classifies everything else as other', () => {
@@ -190,11 +194,90 @@ describe('evaluateBrokeredPush — decision only', () => {
     expect(decision.action).toBe('perform-with-approval');
   });
 
-  it('refuses force and deletes against anything but the feature branch', () => {
-    const base = { remote: 'origin', policy: policy(), refspecs: [`${'b'.repeat(40)}:refs/heads/main`] };
+  it('accepts mission standing land only for the fresh Room repository and ref', () => {
+    const authorization = {
+      kind: 'mission-standing-land' as const,
+      verified: true as const,
+      missionId: 'mission-one',
+      grantEventId: 'a'.repeat(64),
+      roomId: 'room-one',
+      controllerAgentPubkey: 'b'.repeat(64),
+      repositoryKey: 'github:123',
+      targetRef: 'refs/heads/main',
+      cornerId: channel,
+      sourceSha: 'c'.repeat(40),
+    };
+    const base = {
+      remote: 'origin',
+      policy: policy(),
+      refspecs: [`${'c'.repeat(40)}:refs/heads/main`],
+      authorization,
+    };
     expect(
-      evaluateBrokeredPush({ ...base, forceArgs: ['--force'] }).action,
+      evaluateBrokeredPush({
+        ...base,
+        repository: {
+          roomId: 'room-one',
+          repositoryKey: 'github:123',
+          controllerAgentPubkey: 'b'.repeat(64),
+        },
+        cornerId: channel,
+      }).action,
+    ).toBe('perform-with-mission-grant');
+    expect(
+      evaluateBrokeredPush({
+        ...base,
+        repository: {
+          roomId: 'room-one',
+          repositoryKey: 'github:not-the-mission-repo',
+          controllerAgentPubkey: 'b'.repeat(64),
+        },
+        cornerId: channel,
+      }).action,
     ).toBe('refuse');
+    expect(
+      evaluateBrokeredPush({
+        ...base,
+        repository: {
+          roomId: 'another-room',
+          repositoryKey: 'github:123',
+          controllerAgentPubkey: 'b'.repeat(64),
+        },
+        cornerId: channel,
+      }).action,
+    ).toBe('refuse');
+    expect(
+      evaluateBrokeredPush({
+        ...base,
+        cornerId: 'another-corner',
+        repository: {
+          roomId: 'room-one',
+          repositoryKey: 'github:123',
+          controllerAgentPubkey: 'b'.repeat(64),
+        },
+      }).action,
+    ).toBe('refuse');
+    expect(
+      evaluateBrokeredPush({
+        ...base,
+        cornerId: channel,
+        refspecs: [`${'d'.repeat(40)}:refs/heads/main`],
+        repository: {
+          roomId: 'room-one',
+          repositoryKey: 'github:123',
+          controllerAgentPubkey: 'b'.repeat(64),
+        },
+      }).action,
+    ).toBe('refuse');
+  });
+
+  it('refuses force and deletes against anything but the feature branch', () => {
+    const base = {
+      remote: 'origin',
+      policy: policy(),
+      refspecs: [`${'b'.repeat(40)}:refs/heads/main`],
+    };
+    expect(evaluateBrokeredPush({ ...base, forceArgs: ['--force'] }).action).toBe('refuse');
     expect(
       evaluateBrokeredPush({
         ...base,
@@ -265,7 +348,11 @@ describe('performBrokeredPush — against a real repository', () => {
 
   it('audits every decision as one greppable line', () => {
     const line = brokerAuditLine({
-      decision: { action: 'allow', refClass: 'feature', reason: "push to the corner's own feature branch" },
+      decision: {
+        action: 'allow',
+        refClass: 'feature',
+        reason: "push to the corner's own feature branch",
+      },
       remote: 'origin',
       refspecs: ['feature/corner'],
       cornerId: 'corner-channel',

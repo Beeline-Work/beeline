@@ -1,9 +1,16 @@
 import { createHash } from 'node:crypto';
-import { createIdentity, type Identity } from '@beeline/buzz-client';
+import {
+  KIND_AGENT_PRESENCE,
+  TAG_AGENT_PRESENCE,
+  buildAgentAccessConfig,
+  createIdentity,
+  type Identity,
+} from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 import { describe, expect, it } from 'vitest';
 import {
   authorizeDaemonWorkSchedule,
+  targetAgentAccessPermitted,
   validateArtifactRevisionEvents,
   type DaemonWorkScheduleAuthorityDependencies,
   type DaemonWorkScheduleAuthorityFacts,
@@ -72,6 +79,93 @@ function authorityFixture(options: { agentAuthored?: boolean; grantValid?: boole
 }
 
 describe('daemon work schedule authority', () => {
+  it('uses the target seed fallback and current paired-owner override exactly', () => {
+    const target = createIdentity();
+    const owner = createIdentity();
+    const controller = createIdentity();
+    const presence = signEvent(
+      {
+        pubkey: target.publicKey,
+        created_at: 10,
+        kind: KIND_AGENT_PRESENCE,
+        tags: [
+          ['d', `${TAG_AGENT_PRESENCE}:authority-room`],
+          ['h', 'authority-room'],
+          ['t', TAG_AGENT_PRESENCE],
+          ['agent', target.publicKey],
+          ['status', 'online'],
+          ['access-policy', 'everyone'],
+        ],
+        content: 'online',
+      },
+      target.secretKey,
+    );
+    const input = {
+      accessEvents: [],
+      presenceEvents: [presence],
+      workspaceId: 'authority-workspace',
+      roomId: 'authority-room',
+      targetAgentPubkey: target.publicKey,
+      controllerAgentPubkey: controller.publicKey,
+      pairedOwnerPubkey: owner.publicKey,
+      currentOwnerPubkey: owner.publicKey,
+    };
+    expect(targetAgentAccessPermitted(input)).toBe(true);
+    const override = buildAgentAccessConfig(owner, {
+      version: 1,
+      workspaceId: input.workspaceId,
+      agentPubkey: target.publicKey,
+      policy: 'creator',
+      revision: 1,
+      updatedAt: 11,
+    });
+    expect(targetAgentAccessPermitted({ ...input, accessEvents: [override] })).toBe(false);
+    expect(
+      targetAgentAccessPermitted({
+        ...input,
+        accessEvents: [override],
+        controllerAgentPubkey: owner.publicKey,
+      }),
+    ).toBe(true);
+  });
+
+  it('requires the target agent access decision for a cross-agent mission', async () => {
+    const fixture = authorityFixture();
+    const target = createIdentity();
+    fixture.schedule.targetAgentPubkey = target.publicKey;
+    fixture.schedule.execution = { mode: 'model' };
+    fixture.schedule.cadence = {
+      type: 'interval',
+      everySeconds: 15 * 60,
+      anchorAt: fixture.schedule.startsAt,
+    };
+    fixture.schedule.mission = {
+      missionId: 'mission-one',
+      grantEventId: 'a'.repeat(64),
+      controllerAgentPubkey: fixture.agent.publicKey,
+      repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+    };
+    fixture.facts.workspaceMemberPubkeys = [
+      ...fixture.facts.workspaceMemberPubkeys,
+      target.publicKey,
+    ];
+    fixture.facts.roomMemberPubkeys = [...fixture.facts.roomMemberPubkeys, target.publicKey];
+    fixture.facts.authorIsAgent = true;
+    fixture.facts.targetAccessPermitted = false;
+    fixture.dependencies.verifyMissionGrant = async () => true;
+    const parsed = parsedSchedule(fixture.agent, fixture.schedule);
+    fixture.dependencies.readCurrentEvents = async () => [parsed.event];
+    await expect(authorizeDaemonWorkSchedule(parsed, fixture.dependencies)).resolves.toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'mission-target-access-denied',
+    });
+    fixture.facts.targetAccessPermitted = true;
+    await expect(authorizeDaemonWorkSchedule(parsed, fixture.dependencies)).resolves.toEqual({
+      authorized: true,
+    });
+  });
+
   it('accepts current human-admin configuration and an agent change with a live P1 grant', async () => {
     const human = authorityFixture();
     await expect(authorizeDaemonWorkSchedule(human.parsed, human.dependencies)).resolves.toEqual({

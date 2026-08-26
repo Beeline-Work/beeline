@@ -3,9 +3,18 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import {
   createBuzzClient,
+  KIND_AGENT_ACCESS_CONFIG,
+  KIND_AGENT_PRESENCE,
+  KIND_STREAM_MESSAGE,
+  TAG_AGENT,
+  TAG_AGENT_PAIRING,
+  TAG_AGENT_PRESENCE,
+  agentAccessConfigKey,
+  resolveAgentAccessAuthority,
   parsePermissionDecision,
   parsePermissionRequest,
   permissionActionId,
+  resolveCurrentIdentityPubkey,
   verifyPermissionAction,
   type ArtifactRevisionRef,
   type PermissionConcreteAction,
@@ -23,9 +32,18 @@ import {
   parseWorkSchedule,
   workScheduleKey,
   workScheduleRevisionDigest,
+  workScheduleExecutionMode,
   type ParsedWorkSchedule,
   type ScheduleAuthorityResult,
 } from './work-calendar.js';
+import {
+  missionActionOrdinal,
+  resolveMissionAction,
+  verifyMissionAction,
+  type MissionExercise,
+  type MissionGrantReference,
+} from './mission-authority.js';
+import { isSenderPermitted } from './access-policy.js';
 
 function hasMember(members: readonly { pubkey: string }[], pubkey: string): boolean {
   return members.some((member) => member.pubkey === pubkey);
@@ -34,6 +52,73 @@ function hasMember(members: readonly { pubkey: string }[], pubkey: string): bool
 function uniqueArtifactTag(event: NostrEvent, name: string): string | undefined {
   const values = event.tags.filter((tag) => tag[0] === name);
   return values.length === 1 ? values[0]?.[1] : undefined;
+}
+
+export function targetAccessSeedFromPresence(
+  events: readonly NostrEvent[],
+  roomId: string,
+  targetAgentPubkey: string,
+): { policy: 'everyone' | 'creator' | 'allowlist'; allowlist?: string[] } | undefined {
+  const event = events
+    .filter(
+      (candidate) =>
+        candidate.kind === KIND_AGENT_PRESENCE &&
+        candidate.pubkey === targetAgentPubkey &&
+        verifyEvent(candidate) &&
+        uniqueArtifactTag(candidate, 'h') === roomId &&
+        uniqueArtifactTag(candidate, 't') === TAG_AGENT_PRESENCE &&
+        uniqueArtifactTag(candidate, 'agent') === targetAgentPubkey,
+    )
+    .sort(
+      (left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id),
+    )[0];
+  const policy = event ? uniqueArtifactTag(event, 'access-policy') : undefined;
+  if (policy !== 'everyone' && policy !== 'creator' && policy !== 'allowlist') return undefined;
+  const allowlist = event!.tags
+    .filter((tag) => tag[0] === 'access-allow')
+    .map((tag) => tag[1])
+    .filter((pubkey): pubkey is string => Boolean(pubkey && /^[0-9a-f]{64}$/.test(pubkey)));
+  if (
+    (policy === 'allowlist' &&
+      (allowlist.length === 0 || new Set(allowlist).size !== allowlist.length)) ||
+    (policy !== 'allowlist' && allowlist.length > 0)
+  )
+    return undefined;
+  return { policy, ...(allowlist.length ? { allowlist } : {}) };
+}
+
+export function targetAgentAccessPermitted(input: {
+  accessEvents: readonly NostrEvent[];
+  presenceEvents: readonly NostrEvent[];
+  workspaceId: string;
+  roomId: string;
+  targetAgentPubkey: string;
+  controllerAgentPubkey: string;
+  pairedOwnerPubkey: string;
+  currentOwnerPubkey: string;
+}): boolean | undefined {
+  const seed = targetAccessSeedFromPresence(
+    input.presenceEvents,
+    input.roomId,
+    input.targetAgentPubkey,
+  );
+  const authority = resolveAgentAccessAuthority({
+    events: input.accessEvents,
+    workspaceId: input.workspaceId,
+    agentPubkey: input.targetAgentPubkey,
+    pairedOwnerPubkey: input.pairedOwnerPubkey,
+    currentOwnerPubkey: input.currentOwnerPubkey,
+    ...(seed ? { seed } : {}),
+  });
+  if (authority === 'denied') return false;
+  return authority
+    ? isSenderPermitted(
+        authority.policy,
+        input.controllerAgentPubkey,
+        authority.ownerPubkey,
+        authority.allowlist,
+      )
+    : undefined;
 }
 
 export function validateArtifactRevisionEvents(
@@ -77,6 +162,8 @@ export interface DaemonWorkScheduleAuthorityFacts {
   principalCanDrive: boolean | undefined;
   principalRole: string | undefined;
   authorRole: string | undefined;
+  /** Current target-agent policy admission for the CoS; undefined means the read failed. */
+  targetAccessPermitted?: boolean;
 }
 
 export interface DaemonWorkScheduleAuthorityDependencies {
@@ -85,6 +172,7 @@ export interface DaemonWorkScheduleAuthorityDependencies {
   readCurrentEvents(schedule: ParsedWorkSchedule): Promise<readonly NostrEvent[]>;
   readFacts(schedule: ParsedWorkSchedule): Promise<DaemonWorkScheduleAuthorityFacts>;
   verifyScheduleGrant(schedule: ParsedWorkSchedule): Promise<boolean>;
+  verifyMissionGrant(schedule: ParsedWorkSchedule): Promise<boolean>;
 }
 
 /** Pure production-policy seam: every fact is freshly read by the daemon adapter below. */
@@ -150,7 +238,30 @@ export async function authorizeDaemonWorkSchedule(
     if (facts.principalRole !== 'owner' && facts.principalRole !== 'admin') {
       return { authorized: false, terminal: true, reason: 'schedule-principal-role-lost' };
     }
-    if (parsed.event.pubkey === schedule.agentPubkey) {
+    if (schedule.mission) {
+      const targetAgentPubkey = schedule.targetAgentPubkey ?? schedule.agentPubkey;
+      if (
+        !facts.workspaceMemberPubkeys.includes(targetAgentPubkey) ||
+        !facts.roomMemberPubkeys.includes(targetAgentPubkey)
+      ) {
+        return { authorized: false, terminal: true, reason: 'mission-target-removed' };
+      }
+      if (targetAgentPubkey !== schedule.agentPubkey && facts.targetAccessPermitted === undefined) {
+        return { authorized: false, terminal: false, reason: 'mission-target-access-unavailable' };
+      }
+      if (targetAgentPubkey !== schedule.agentPubkey && !facts.targetAccessPermitted) {
+        return { authorized: false, terminal: true, reason: 'mission-target-access-denied' };
+      }
+      if (
+        parsed.event.pubkey !== schedule.mission.controllerAgentPubkey ||
+        !facts.authorIsAgent ||
+        !facts.workspaceMemberPubkeys.includes(schedule.mission.controllerAgentPubkey) ||
+        !facts.roomMemberPubkeys.includes(schedule.mission.controllerAgentPubkey) ||
+        !(await dependencies.verifyMissionGrant(parsed))
+      ) {
+        return { authorized: false, terminal: true, reason: 'mission-grant-invalid' };
+      }
+    } else if (parsed.event.pubkey === schedule.agentPubkey) {
       if (!facts.authorIsAgent || !(await dependencies.verifyScheduleGrant(parsed))) {
         return { authorized: false, terminal: true, reason: 'schedule-change-grant-invalid' };
       }
@@ -229,7 +340,18 @@ export function createDaemonWorkCalendar(input: {
       }
     },
     permissionHistory: (roomId, permissionId) =>
-      rawEvents([{ kinds: [9], '#h': [roomId], '#permission': [permissionId], limit: 1_000 }]),
+      rawEvents([{ kinds: [9], '#h': [roomId], '#permission': [permissionId], limit: 20_000 }]),
+    permissionRevocations: (roomId, permissionId, grantEventId) =>
+      rawEvents([
+        {
+          kinds: [9],
+          '#h': [roomId],
+          '#permission': [permissionId],
+          '#grant': [grantEventId],
+          '#t': ['buzz-permission-revocation'],
+          limit: 256,
+        },
+      ]),
   });
 
   const verifyScheduleGrant = async (parsed: ParsedWorkSchedule): Promise<boolean> => {
@@ -280,6 +402,67 @@ export function createDaemonWorkCalendar(input: {
     return result.authorized || result.reason === 'action-already-succeeded';
   };
 
+  const missionReference = (parsed: ParsedWorkSchedule): MissionGrantReference | undefined => {
+    const mission = parsed.value.mission;
+    return mission
+      ? {
+          missionId: mission.missionId,
+          grantEventId: mission.grantEventId,
+          controllerAgentPubkey: mission.controllerAgentPubkey,
+        }
+      : undefined;
+  };
+
+  const scheduleExercise = (
+    parsed: ParsedWorkSchedule,
+    operation: Extract<MissionExercise, { kind: 'schedule' }>['operation'],
+  ): Extract<MissionExercise, { kind: 'schedule' }> => {
+    const schedule = parsed.value;
+    const mode = workScheduleExecutionMode(schedule);
+    return {
+      kind: 'schedule',
+      operation,
+      scheduleId: schedule.scheduleId,
+      revisionDigest: workScheduleRevisionDigest(schedule),
+      mode,
+      targetAgentPubkey: schedule.targetAgentPubkey ?? schedule.agentPubkey,
+      maxRuns: schedule.maxRuns,
+      perRunReservedTokens: schedule.perRunReservedTokens,
+      dailyReservedTokens: schedule.dailyReservedTokens,
+      totalReservedTokens: schedule.maxRuns * schedule.perRunReservedTokens,
+      scriptRuntimeSeconds:
+        schedule.execution && schedule.execution.mode !== 'model'
+          ? schedule.execution.timeoutSeconds
+          : 1,
+    };
+  };
+
+  const scheduleChangeOperation = (
+    parsed: ParsedWorkSchedule,
+  ): Extract<MissionExercise, { kind: 'schedule' }>['operation'] =>
+    parsed.value.status === 'paused' ? 'pause' : parsed.value.revision === 1 ? 'create' : 'update';
+
+  const verifyMissionGrant = async (parsed: ParsedWorkSchedule): Promise<boolean> => {
+    const mission = parsed.value.mission;
+    const reference = missionReference(parsed);
+    if (!mission || !reference) return false;
+    const result = await verifyMissionAction({
+      reader: freshReader(),
+      reference,
+      workspaceId: parsed.value.workspaceId,
+      roomId: parsed.value.roomId,
+      principalPubkey: parsed.value.principalPubkey,
+      repository: mission.repository,
+      executorPubkey: identity.publicKey,
+      exercise: scheduleExercise(parsed, scheduleChangeOperation(parsed)),
+      ordinal: parsed.value.revision,
+      idempotencyKey: `mission-schedule-change:${parsed.value.scheduleId}:${parsed.value.revision}`,
+      reservedTokens: 0,
+      now: Math.floor((input.nowMs?.() ?? Date.now()) / 1_000),
+    });
+    return result.authorized || result.reason === 'action-already-succeeded';
+  };
+
   const authorize = (parsed: ParsedWorkSchedule): Promise<ScheduleAuthorityResult> =>
     authorizeDaemonWorkSchedule(parsed, {
       workspaceId: input.runtime.communityId,
@@ -322,6 +505,91 @@ export function createDaemonWorkCalendar(input: {
             client.getChannelRole(schedule.value.roomId, schedule.value.principalPubkey),
             client.getChannelRole(schedule.value.roomId, schedule.event.pubkey),
           ]);
+          let targetAccessPermitted: boolean | undefined = true;
+          const targetAgentPubkey = schedule.value.targetAgentPubkey ?? schedule.value.agentPubkey;
+          if (schedule.value.mission && targetAgentPubkey !== schedule.value.agentPubkey) {
+            try {
+              const agentRecords = await rawEvents([
+                {
+                  kinds: [KIND_STREAM_MESSAGE],
+                  '#p': [targetAgentPubkey],
+                  '#t': [TAG_AGENT],
+                  limit: 20,
+                },
+              ]);
+              const agentRecord = agentRecords
+                .filter(
+                  (event) =>
+                    verifyEvent(event) &&
+                    event.pubkey === targetAgentPubkey &&
+                    uniqueArtifactTag(event, 'h') === schedule.value.workspaceId,
+                )
+                .sort(
+                  (left, right) =>
+                    right.created_at - left.created_at || right.id.localeCompare(left.id),
+                )[0];
+              const pairingHash = agentRecord
+                ? uniqueArtifactTag(agentRecord, 'pairing')
+                : undefined;
+              if (!pairingHash) throw new Error('target pairing authority unavailable');
+              const pairingEvents = await rawEvents([
+                {
+                  kinds: [KIND_STREAM_MESSAGE],
+                  '#d': [pairingHash],
+                  '#t': [TAG_AGENT_PAIRING],
+                  limit: 20,
+                },
+              ]);
+              const pairing = pairingEvents.find(
+                (event) =>
+                  verifyEvent(event) &&
+                  uniqueArtifactTag(event, 'd') === pairingHash &&
+                  uniqueArtifactTag(event, 'h') === schedule.value.workspaceId,
+              );
+              if (!pairing) throw new Error('target paired owner unavailable');
+              const currentOwner = await resolveCurrentIdentityPubkey(
+                input.runtime.relayBaseUrl,
+                identity,
+                pairing.pubkey,
+              );
+              if (
+                !hasMember(workspaceMembers, currentOwner) ||
+                (await client.isAgentIdentity(currentOwner))
+              ) {
+                targetAccessPermitted = false;
+              } else {
+                const [accessEvents, presenceEvents] = await Promise.all([
+                  rawEvents([
+                    {
+                      kinds: [KIND_AGENT_ACCESS_CONFIG],
+                      '#d': [agentAccessConfigKey(schedule.value.workspaceId, targetAgentPubkey)],
+                      limit: 20,
+                    },
+                  ]),
+                  rawEvents([
+                    {
+                      kinds: [KIND_AGENT_PRESENCE],
+                      authors: [targetAgentPubkey],
+                      '#d': [`${TAG_AGENT_PRESENCE}:${schedule.value.roomId}`],
+                      limit: 5,
+                    },
+                  ]),
+                ]);
+                targetAccessPermitted = targetAgentAccessPermitted({
+                  accessEvents,
+                  presenceEvents,
+                  workspaceId: schedule.value.workspaceId,
+                  roomId: schedule.value.roomId,
+                  targetAgentPubkey,
+                  controllerAgentPubkey: schedule.value.agentPubkey,
+                  pairedOwnerPubkey: pairing.pubkey,
+                  currentOwnerPubkey: currentOwner,
+                });
+              }
+            } catch {
+              targetAccessPermitted = undefined;
+            }
+          }
           return {
             workspaceMemberPubkeys: workspaceMembers.map((member) => member.pubkey),
             roomMemberPubkeys: roomMembers.map((member) => member.pubkey),
@@ -331,12 +599,14 @@ export function createDaemonWorkCalendar(input: {
             principalCanDrive,
             principalRole: principalRole ?? undefined,
             authorRole: authorRole ?? undefined,
+            targetAccessPermitted,
           };
         } finally {
           client.disconnect();
         }
       },
       verifyScheduleGrant,
+      verifyMissionGrant,
     });
 
   return new WorkCalendar({
@@ -356,7 +626,9 @@ export function createDaemonWorkCalendar(input: {
       ]),
     validateScheduleCreation: async (creation) => {
       for (const candidate of creation) {
-        if (candidate.event.pubkey === candidate.value.agentPubkey) {
+        if (candidate.value.mission) {
+          if (!(await verifyMissionGrant(candidate))) return false;
+        } else if (candidate.event.pubkey === candidate.value.agentPubkey) {
           if (!candidate.value.permissionGrantEventId || !(await verifyScheduleGrant(candidate)))
             return false;
         } else if (
@@ -369,6 +641,33 @@ export function createDaemonWorkCalendar(input: {
       return true;
     },
     authorize,
+    missionAction: async (parsed, nominalAt) => {
+      const mission = parsed.value.mission;
+      const reference = missionReference(parsed);
+      if (!mission || !reference) return undefined;
+      const exercise = scheduleExercise(parsed, 'fire');
+      const actionInput = {
+        reader: freshReader(),
+        reference,
+        workspaceId: parsed.value.workspaceId,
+        roomId: parsed.value.roomId,
+        principalPubkey: parsed.value.principalPubkey,
+        repository: mission.repository,
+        executorPubkey: identity.publicKey,
+        exercise,
+        ordinal: missionActionOrdinal(
+          `schedule-fire:${parsed.value.scheduleId}:${parsed.value.revision}:${nominalAt}`,
+        ),
+        idempotencyKey: `mission-schedule-fire:${parsed.value.scheduleId}:${parsed.value.revision}:${nominalAt}`,
+        reservedTokens: parsed.value.perRunReservedTokens,
+      };
+      const verification = await verifyMissionAction({
+        ...actionInput,
+        now: Math.floor((input.nowMs?.() ?? Date.now()) / 1_000),
+      });
+      if (!verification.authorized) return undefined;
+      return resolveMissionAction(actionInput);
+    },
     validateArtifacts: async (parsed) => {
       const artifacts = parsed.value.artifactRefs ?? [];
       if (artifacts.length === 0) return { authorized: true };

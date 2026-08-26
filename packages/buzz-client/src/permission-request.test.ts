@@ -24,6 +24,7 @@ import {
   type PermissionFreshReader,
   type PermissionRequestV1,
   type PermissionScope,
+  type MissionControlScope,
 } from './permission-request.js';
 
 const NOW = 2_000_000_000;
@@ -50,6 +51,44 @@ function moneyScope(maxMinorUnits = 5_000): PermissionScope {
     merchant: 'ExampleVendor',
     purpose: 'Research API',
     connectorId: 'research-api',
+  };
+}
+
+function missionScope(
+  controllerAgentPubkey = 'c'.repeat(64),
+  revisionDigest?: string,
+): MissionControlScope {
+  return {
+    type: 'mission.control',
+    missionId: 'mission-one',
+    workspaceId: 'workspace-one',
+    roomId: 'source-room',
+    controllerAgentPubkey,
+    repository: { key: 'github:123456', targetBranch: 'refs/heads/main' },
+    cornerOperations: ['open', 'close'],
+    scheduleOperations: ['create', 'update', 'fire'],
+    targetAllocations: [
+      {
+        agentPubkey: controllerAgentPubkey,
+        maxActiveCorners: 2,
+        maxReservedTokensPerDay: 2_000,
+        maxTotalReservedTokens: 10_000,
+      },
+    ],
+    scheduleAllocations: [
+      {
+        scheduleId: 'daily-summary',
+        targetAgentPubkey: controllerAgentPubkey,
+        modes: ['script', 'model'],
+        maxRuns: 10,
+        maxReservedTokensPerRun: 1_000,
+        maxReservedTokensPerDay: 2_000,
+        maxTotalReservedTokens: 10_000,
+        maxScriptRuntimeSeconds: 60,
+        ...(revisionDigest ? { revisionDigest } : {}),
+      },
+    ],
+    land: true,
   };
 }
 
@@ -146,6 +185,35 @@ describe('permission protocol codecs', () => {
         grant: standing,
       }),
     ).toThrow('invalid permission decision');
+  });
+
+  it('round-trips one mission authority set bound to its request Room and Workspace', () => {
+    const agent = createIdentity('chief-of-staff');
+    const scope = missionScope(agent.publicKey);
+    const event = buildPermissionRequest(agent, requestValue(agent.publicKey, scope), [
+      createIdentity('captain').publicKey,
+    ]);
+    expect(parsePermissionRequest(event)?.value.scope).toEqual(scope);
+
+    const wrongRoom = signEvent(
+      {
+        ...event,
+        id: undefined,
+        sig: undefined,
+        content: JSON.stringify({ ...requestValue(agent.publicKey, scope), roomId: 'other-room' }),
+      } as never,
+      agent.secretKey,
+    );
+    expect(parsePermissionRequest(wrongRoom)).toBeUndefined();
+  });
+
+  it('treats exact script hashes as CoS ledger bookkeeping under an unpinned captain boundary', () => {
+    const boundary = missionScope('c'.repeat(64));
+    const exactA = missionScope('c'.repeat(64), 'a'.repeat(64));
+    const exactB = missionScope('c'.repeat(64), 'b'.repeat(64));
+    expect(permissionScopeAllows(boundary, exactA)).toBe(true);
+    expect(permissionScopeAllows(boundary, exactB)).toBe(true);
+    expect(permissionScopeAllows(exactA, exactB)).toBe(false);
   });
 
   it('rejects missing, duplicate, conflicting, forged, oversized, and future-version fields', () => {

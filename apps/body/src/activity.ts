@@ -36,6 +36,11 @@ export const CORNER_SESSION_TAG = 'corner-session';
  *  regardless of ACP chunk frequency (mirrors the activity batch's quota concern). */
 export const AGENT_DRAFT_FLUSH_MS = 250;
 
+export interface AgentPresenceAccessSeed {
+  policy: 'everyone' | 'creator' | 'allowlist';
+  allowlist?: readonly string[];
+}
+
 /** Resolve the NIP-10 root that a reply to this event must preserve. */
 export function replyRootIdForEvent(event: NostrEvent): string {
   return (
@@ -1422,6 +1427,7 @@ export async function postAgentPresence(
   status: AgentPresenceStatus,
   createdAt = Math.floor(Date.now() / 1_000),
   generationId?: string,
+  accessSeed?: AgentPresenceAccessSeed,
 ): Promise<void> {
   const event: NostrEvent = signEvent(
     {
@@ -1437,6 +1443,8 @@ export async function postAgentPresence(
         ['capability', 'factory-permissions-v1'],
         ['capability', 'delegation-v1'],
         ...(generationId ? [['generation', generationId]] : []),
+        ...(accessSeed ? [['access-policy', accessSeed.policy]] : []),
+        ...(accessSeed?.allowlist?.map((pubkey) => ['access-allow', pubkey]) ?? []),
       ],
       content: status,
     },
@@ -1562,6 +1570,7 @@ export function startAgentPresence(
   intervalMs = AGENT_PRESENCE_HEARTBEAT_MS,
   onPublished?: (status: AgentPresenceStatus) => void,
   initialStatus: AgentPresenceStatus = 'online',
+  accessSeed?: AgentPresenceAccessSeed,
 ): AgentPresenceController {
   let stopped = false;
   const lastCreatedAt = { value: 0 };
@@ -1585,6 +1594,7 @@ export function startAgentPresence(
           nextStatus,
           nextMonotonicSecond(lastCreatedAt),
           generationId,
+          accessSeed,
         );
         onPublished?.(nextStatus);
         return;

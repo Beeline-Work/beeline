@@ -39,9 +39,10 @@ by projecting agent activity into the relay channel.
   and do not widen the filesystem boundary.
 - **Subchannel (edit):** ACP session with `buzz-dev-mcp` mounted, `cwd` set to
   a git worktree on a feature branch. Agent has full write access **only within
-  the worktree**. Either an explicit open-a-corner command or a human member's
-  ALLOW response creates this session. ALLOW replays the concrete request;
-  DENY leaves the Room read-only.
+  the worktree**. An explicit open-a-corner command, a human member's ALLOW
+  response, or a host-owned exercise of a captain-signed `mission.control`
+  grant creates this session. ALLOW replays the concrete request; DENY leaves
+  the Room read-only.
 - **Thin daemon core:** one `beeline pair` creates one durable agent
   identity. Humans explicitly invite that existing identity to repository Rooms;
   the core discovers current role projections with bounded three-Room
@@ -332,6 +333,22 @@ Executors re-read membership, role, revocation, and usage immediately before
 publishing a `started` receipt. Concurrent decisions fold deterministically and
 only the first valid decision counts; replayed or exhausted actions fail closed.
 
+`mission.control` is a Tier 1 captain-signed boundary in that same ledger, not a
+second grant system. It names one chief-of-staff controller, Workspace and Room,
+exact repository and target ref, permitted corner and schedule operations,
+exact target agents, non-overlapping per-target and per-schedule budget slices,
+and optional standing-land authority. Every schedule revision digest, firing,
+target activation, mission-corner open/continuation/close, and landing is
+attenuated from that grant, charged to the existing ledger, and fresh-checked
+for current membership, role, expiry, revocation, usage, and budget. The chief
+of staff may supply a new exact schedule revision digest within its static
+allocation without asking the captain to re-sign the whole mission.
+
+Once revocation is durably recorded, no new firing, turn, or child exercise is
+admitted. Anything already admitted before that moment runs to completion; the
+current daemon has no revocation chase or cancellation machinery for active
+mission work.
+
 Agent-to-agent Room work uses signed delegation turns rather than inheriting the
 sender's session. Each admitted work item is addressed to one exact agent and
 runs as one ordinary read-only Room turn with its own tools, filesystem, and
@@ -376,6 +393,33 @@ each occurrence, including send, publish, spend, connector, and attachment
 actions; there is no per-action permission request inside a scheduled turn.
 Model-emitted delegation and text-corner directives remain inert so one
 schedule cannot amplify itself into additional recurring or repository work.
+
+Mission schedules keep the calendar on the chief-of-staff daemon while naming
+an exact target agent. A cross-agent firing and its return use the existing
+signed same-Room delegation transport, so only the addressed target daemon and
+then the chief of staff wake; each target uses its own provider account and its
+static mission budget slice. All participants must still pass fresh
+Room/Workspace membership and target-access checks.
+
+An explicit mission schedule revision chooses `script` or `model`. Script
+schedules are hash-bound to their exact creator-authored bytes, run no model by
+default, and have a one-minute minimum cadence; model schedules have a
+15-minute minimum and receive no native shell or repository-write authority in
+the Room. The script path requires bubblewrap and fails closed on a missing
+sandbox or hash mismatch. It mounts the host read-only, makes only the canonical
+mission repository writable, supplies quota-bounded git-blocked scratch and a
+minimal environment, masks credentials, inherits the same network access as a
+corner, and bounds the process group, deadline, and output. Its only model wake
+is one strict JSON completion line naming the granted target and a safe pointer
+inside the same repository. A failed run becomes one durable system line rather
+than a chat turn, and repeated failures pause the schedule after the configured
+bound (at most three for mission scripts).
+
+When the grant includes standing land, a mission corner may advance only its
+exact granted repository and protected ref through the ordinary push broker.
+The broker fresh-binds the Room, controller, corner lineage, exact source SHA,
+and target ref and remains fast-forward-only. Ordinary corners still require
+their separately signed human corner approval.
 
 ### Repository event service
 
@@ -497,9 +541,11 @@ into the process environment.
   repo-less normal Room may request a corner only by naming an exact
   `owner/repo`; the signed human prompt displays and binds that target, and
   clone/access failures leave the Room read-only. Agent completion
-  can publish only the feature ref and `merge-ready`; target landing and archive
-  cleanup require an independently verified approval for that corner from a
-  device-held human admin.
+  can publish only the feature ref and `merge-ready`. Ordinary target landing
+  and archive cleanup require an independently verified approval for that
+  corner from a device-held human admin; a mission corner may instead use the
+  distinct, freshly verified standing-land slice of its captain-signed
+  `mission.control` grant.
 - **The permission handler is the policy; bubblewrap is the floor.** The Room
   read-only rule and the corner worktree rule are enforced in the ACP permission
   callback (`session-sandbox.ts`), which only binds a harness that actually asks

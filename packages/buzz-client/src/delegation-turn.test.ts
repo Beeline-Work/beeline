@@ -66,6 +66,18 @@ function admission(turn: ParsedDelegationTurn, history: ParsedDelegationTurn[] =
 }
 
 describe('delegation codecs', () => {
+  it('round-trips the full mission reservation bound', () => {
+    const atlas = createIdentity('Atlas');
+    const scout = createIdentity('Scout');
+    const event = buildDelegationTurn(
+      atlas,
+      turnValue(atlas.publicKey, scout.publicKey, {
+        budget: defaultDelegationBudget(NOW, 100_000_000),
+      }),
+    );
+    expect(parseDelegationTurn(event)?.value.budget.reservedTokens).toBe(100_000_000);
+  });
+
   it('round-trips exact signed turn and receipt objects', () => {
     const atlas = createIdentity('Atlas');
     const scout = createIdentity('Scout');
@@ -124,6 +136,71 @@ describe('delegation codecs', () => {
         ),
       ),
     ).toBeUndefined();
+  });
+
+  it('binds mission assign/return lineage to the CoS and exact target daemon', () => {
+    const controller = createIdentity('CoS');
+    const target = createIdentity('Target');
+    const mission = {
+      missionId: 'mission-one',
+      grantEventId: 'a'.repeat(64),
+      controllerAgentPubkey: controller.publicKey,
+      scheduleId: 'summary',
+      scheduleRevision: 2,
+      scheduleRevisionDigest: 'b'.repeat(64),
+      scheduleRunId: 'run-one',
+      mode: 'script' as const,
+      targetAgentPubkey: target.publicKey,
+      maxRuns: 10,
+      perRunReservedTokens: 100,
+      dailyReservedTokens: 500,
+      totalReservedTokens: 1_000,
+      scriptRuntimeSeconds: 30,
+      repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
+    };
+    const assign = parseDelegationTurn(
+      buildDelegationTurn(
+        controller,
+        turnValue(controller.publicKey, target.publicKey, {
+          rootEventId: mission.grantEventId,
+          mission,
+        }),
+      ),
+    )!;
+    expect(assign.value.toAgentPubkey).toBe(target.publicKey);
+    expect(assign.value.mission).toEqual(mission);
+
+    const malformed = JSON.parse(assign.event.content) as DelegationTurnV1;
+    const forgedTarget = signEvent(
+      {
+        ...assign.event,
+        id: undefined as never,
+        sig: undefined as never,
+        content: JSON.stringify({
+          ...malformed,
+          mission: { ...mission, targetAgentPubkey: controller.publicKey },
+        }),
+      },
+      controller.secretKey,
+    );
+    expect(parseDelegationTurn(forgedTarget)).toBeUndefined();
+
+    const returned = parseDelegationTurn(
+      buildDelegationTurn(
+        target,
+        turnValue(target.publicKey, controller.publicKey, {
+          delegationId: assign.value.delegationId,
+          phase: 'return',
+          rootEventId: mission.grantEventId,
+          parentEventId: assign.event.id,
+          parentWorkItemId: assign.value.workItemId,
+          path: [controller.publicKey, target.publicKey],
+          depth: 2,
+          mission,
+        }),
+      ),
+    );
+    expect(returned?.value.toAgentPubkey).toBe(controller.publicKey);
   });
 });
 

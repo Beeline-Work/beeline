@@ -88,6 +88,7 @@ vi.mock('react-native', async () => {
     },
     FlatList,
     Image: host('Image'),
+    KeyboardAvoidingView: host('KeyboardAvoidingView'),
     Linking: { getInitialURL: vi.fn(async () => null), openURL: vi.fn(async () => undefined) },
     Modal: host('Modal'),
     Platform: {

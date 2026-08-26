@@ -2,6 +2,7 @@ import { signEvent, type NostrEvent, type UnsignedEvent } from '@beeline/nostr';
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { createIdentity } from '../identity.js';
+import { buildScheduledTurnReceipt, deterministicScheduleRunId } from '../scheduled-turn.js';
 import {
   KIND_CHANNEL_MEMBERS,
   KIND_AGENT_DRAFT,
@@ -801,5 +802,59 @@ describe('read-model invariants (property based)', () => {
       ),
       { numRuns: 100 },
     );
+  });
+
+  it('projects only a validated failed schedule receipt as one system line', () => {
+    const nominalAt = 400;
+    const runId = deterministicScheduleRunId('nightly', 2, nominalAt);
+    const receipt = buildScheduledTurnReceipt(agent, {
+      version: 1,
+      workspaceId: WORKSPACE,
+      roomId: ROOM,
+      agentPubkey: agent.publicKey,
+      principalPubkey: human.publicKey,
+      scheduleId: 'nightly',
+      revision: 2,
+      runId,
+      nominalAt,
+      status: 'failed',
+      at: 401,
+      reservedTokens: 500,
+      reason: 'script failed',
+    });
+    const parsed = parseRelayEvent(receipt, authority());
+    expect(parsed).toMatchObject({
+      type: 'control',
+      visibility: 'system-line',
+      payload: { kind: 'system', status: 'failed', text: 'Scheduled work failed: script failed' },
+    });
+    const transcript = selectTranscript(replay([parsed]), ROOM);
+    expect(
+      [parsed].filter((item) => item.type === 'control' && item.visibility === 'system-line'),
+    ).toHaveLength(1);
+    expect(transcript.some((item) => item.kind === 'agent-message')).toBe(false);
+
+    const malformed = signed(agent, {
+      created_at: 401,
+      kind: 9,
+      tags: receipt.tags.map((tag) => (tag[0] === 'status' ? ['status', 'complete'] : [...tag])),
+      content: receipt.content,
+    });
+    expect(parseRelayEvent(malformed, authority())).toMatchObject({
+      type: 'unknown',
+      reason: 'malformed-schema',
+    });
+    const wrongRun = JSON.parse(receipt.content) as { runId: string };
+    wrongRun.runId = `wsr_${'f'.repeat(64)}`;
+    const malformedRun = signed(agent, {
+      created_at: 401,
+      kind: 9,
+      tags: receipt.tags.map((tag) => (tag[0] === 'run' ? ['run', wrongRun.runId] : [...tag])),
+      content: JSON.stringify(wrongRun),
+    });
+    expect(parseRelayEvent(malformedRun, authority())).toMatchObject({
+      type: 'unknown',
+      reason: 'malformed-schema',
+    });
   });
 });

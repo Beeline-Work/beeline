@@ -12,6 +12,7 @@ import {
   buildPermissionRequest,
   parsePermissionExecution,
   parsePermissionRequest,
+  summarizePermissionUsage,
   verifyPermissionAction,
   type Identity,
   type PermissionConcreteAction,
@@ -236,6 +237,24 @@ export class PermissionRuntime {
       verification.request.event.id === execution.request.event.id &&
       verification.request.value.permissionId === execution.request.value.permissionId
     );
+  }
+
+  async admitted(action: PermissionConcreteAction): Promise<boolean> {
+    const requestEvent = await this.dependencies.reader.readEvent(action.requestEventId);
+    const request = requestEvent ? parsePermissionRequest(requestEvent) : undefined;
+    if (!request || request.value.permissionId !== action.permissionId) return false;
+    const history = await this.dependencies.reader.permissionHistory(
+      action.roomId,
+      action.permissionId,
+    );
+    const executions = history.flatMap((event) => {
+      const execution = parsePermissionExecution(event, request);
+      return execution?.event.pubkey === action.executorPubkey ? [execution] : [];
+    });
+    const status = summarizePermissionUsage(executions, action.grantEventId).actionStatuses.get(
+      action.actionId,
+    );
+    return status === 'started' || status === 'succeeded';
   }
 
   /** Reserve and publish `started` immediately before an externally-run action. */

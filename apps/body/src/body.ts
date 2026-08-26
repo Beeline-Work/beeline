@@ -131,7 +131,7 @@ import {
   getRoomRepository,
   KIND_AGENT_ACCESS_CONFIG,
   agentAccessConfigKey,
-  parseAgentAccessConfig,
+  resolveAgentAccessAuthority,
   parseDelegationReceipt,
   parseDelegationTurn,
   parseDelegationDirectives,
@@ -182,10 +182,12 @@ import {
   type ParsedDelegationReceipt,
   type DelegationTurnV1,
   DEFAULT_DELEGATION_MAX_AGENT_TURNS,
+  defaultDelegationBudget,
   permissionActionId,
   parsePermissionRequest,
   parsePermissionDecision,
   verifyPermissionAction,
+  verifyMissionPermissionActionAuthority,
   type PermissionConcreteAction,
   type PermissionFreshReader,
   type PermissionRequestV1,
@@ -218,6 +220,15 @@ import {
   type RootFactoryRosterEntry,
 } from './delegation-runtime.js';
 import { PermissionRuntime, type PermissionExecutionHandle } from './permission-runtime.js';
+import { missionScriptHashMatches, runMissionScript } from './mission-script.js';
+import {
+  missionActionOrdinal,
+  resolveMissionAction,
+  resolveMissionGrant,
+  verifyMissionAction,
+  verifyMissionActionAuthority,
+  type MissionCornerAuthority,
+} from './mission-authority.js';
 import {
   CONCLUDE_PROMPT,
   CONCLUDE_TURN_FALLBACK,
@@ -845,6 +856,8 @@ export interface SubchannelInfo {
   archiveChannelNotified?: boolean;
   /** Repository this edit session will push to. */
   boundRepo?: BoundRepo;
+  /** Exact standing grant lineage for a mission-derived corner. */
+  mission?: MissionCornerAuthority;
   /** Human request that caused the agent to open this subchannel. */
   request?: ChannelTaskRequest;
   /** Display name of this corner, as the Room sees it. */
@@ -968,6 +981,7 @@ export interface SubchannelInfo {
    * which archives as soon as neither reports activity.
    */
   archiveWhenSessionRetires?: boolean;
+  missionCloseAdmitted?: boolean;
   /** Relay existence failed authoritatively. Cleanup retries use the missing-
    * channel reap path rather than trying to archive a channel that is gone. */
   missingFromRelay?: boolean;
@@ -1074,7 +1088,45 @@ export type AbandonedCorner = {
    * without ever seeing the request that got it adopted.
    */
   closeRequestedAt?: number;
+  mission?: MissionCornerAuthority;
+  missionCloseAdmitted?: boolean;
 };
+
+function missionCornerAuthorityFromEvent(
+  event: NostrEvent | undefined,
+  parentChannelId: string,
+): MissionCornerAuthority | undefined {
+  if (!event) return undefined;
+  const missionId = tagValue(event, 'mission');
+  const grantEventId = tagValue(event, 'grant');
+  const controllerAgentPubkey = tagValue(event, 'controller-agent');
+  const principalPubkey = tagValue(event, 'principal');
+  const targetAgentPubkey = tagValue(event, 'target-agent');
+  const workspaceId = tagValue(event, 'mission-workspace');
+  const roomId = tagValue(event, 'mission-room');
+  const repositoryKey = tagValue(event, 'mission-repo');
+  const targetBranch = tagValue(event, 'mission-ref');
+  return missionId &&
+    grantEventId &&
+    controllerAgentPubkey &&
+    principalPubkey &&
+    targetAgentPubkey &&
+    workspaceId &&
+    roomId === parentChannelId &&
+    repositoryKey &&
+    targetBranch
+    ? {
+        missionId,
+        grantEventId,
+        controllerAgentPubkey,
+        principalPubkey,
+        targetAgentPubkey,
+        workspaceId,
+        roomId,
+        repository: { key: repositoryKey, targetBranch },
+      }
+    : undefined;
+}
 
 /**
  * The sessionless twin of `assertSubchannelArchiveTarget`. With no live
@@ -1243,15 +1295,9 @@ interface PendingRoomTurn {
   /** Exact target written in this turn; absent stays fail-closed. */
   namedRepositoryTarget?: NamedRepositoryTarget;
   /** The human-authorized schedule is the mandate for this occurrence. */
-  scheduled?: Pick<
-    ScheduledTurnRequest,
-    | 'workspaceId'
-    | 'scheduleId'
-    | 'scheduleRevision'
-    | 'scheduleRunId'
-    | 'principalPubkey'
-    | 'reservedTokens'
-  >;
+  scheduled?: ScheduledTurnRequest;
+  /** A mission assignment may spend its separately granted corner slice. */
+  missionDelegation?: ParsedDelegationTurn;
 }
 
 interface ActivePermissionTurn {
@@ -2028,6 +2074,7 @@ export async function createAgentSubchannel(
   openingHumanPubkey: string,
   communityId?: string,
   task?: string,
+  extraTags: string[][] = [],
 ): Promise<string> {
   if (!openingHumanPubkey || openingHumanPubkey === agentIdentity.publicKey) {
     throw new Error('a corner requires an opening human distinct from its agent');
@@ -2035,7 +2082,9 @@ export async function createAgentSubchannel(
   const subchannelId = await createChannel(agentIdentity, name, {
     parentChannelId,
     ...(communityId ? { communityId } : {}),
-    ...(task ? { extraTags: [['task', task]] } : {}),
+    ...(task || extraTags.length
+      ? { extraTags: [...(task ? [['task', task]] : []), ...extraTags] }
+      : {}),
   });
   // The agent owns the create event, so the relay initially projects an
   // agent-only corner. Add the authenticated human who opened it before the
@@ -2384,7 +2433,18 @@ export class Body {
         !(await isRegisteredAgentIdentity(pubkey, this.agentRelay)),
       permissionHistory: (roomId, permissionId) =>
         this.agentRelay.queryEvents([
-          { kinds: [9], '#h': [roomId], '#permission': [permissionId], limit: 1_000 },
+          { kinds: [9], '#h': [roomId], '#permission': [permissionId], limit: 20_000 },
+        ]),
+      permissionRevocations: (roomId, permissionId, grantEventId) =>
+        this.agentRelay.queryEvents([
+          {
+            kinds: [9],
+            '#h': [roomId],
+            '#permission': [permissionId],
+            '#grant': [grantEventId],
+            '#t': [TAG_PERMISSION_REVOCATION],
+            limit: 256,
+          },
         ]),
     };
     this.permissionRuntime = new PermissionRuntime({
@@ -3773,6 +3833,12 @@ export class Body {
           if (activeRoomTurn) this.pendingRoomTurns.set(turn.channelId, activeRoomTurn);
           try {
             await turn.beforeModelActivation?.();
+            const missionCorner = this.subchannels.get(session.channelId);
+            if (missionCorner?.mission) {
+              if (!(await this.missionCornerFresh(missionCorner))) {
+                throw new Error('mission grant is no longer valid for this corner turn');
+              }
+            }
             // `runOnSession` activates a cold physical session before invoking
             // this task. That activation resolves the soul and assembles the
             // compatibility prefix, so read it here rather than before
@@ -4169,6 +4235,8 @@ export class Body {
         const control = [...events]
           .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
           .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
+        const missionSource = createEvent ?? control;
+        const restoredMission = missionCornerAuthorityFromEvent(missionSource, parentChannelId);
         const featureBranch = control ? tagValue(control, 'feature') : undefined;
         if (!featureBranch) {
           // Nothing on the relay says which branch this corner owns, so it can
@@ -4179,6 +4247,7 @@ export class Body {
             parentChannelId,
             reason: 'no restorable corner state was found for it',
             ...(boundRepo ? { boundRepo } : {}),
+            ...(restoredMission ? { mission: restoredMission } : {}),
           });
           continue;
         }
@@ -4207,6 +4276,7 @@ export class Body {
               parentChannelId,
               reason: 'its approved repository could not be re-resolved after a restart',
               ...(featureBranch ? { featureBranch } : {}),
+              ...(restoredMission ? { mission: restoredMission } : {}),
             });
             continue;
           }
@@ -4283,6 +4353,7 @@ export class Body {
               boundRepo: cornerRepo,
               featureBranch,
               worktreePath,
+              ...(restoredMission ? { mission: restoredMission } : {}),
             });
             continue;
           }
@@ -4330,6 +4401,7 @@ export class Body {
             ),
             parentChannelId,
             worktreePath,
+            ...(restoredMission ? { mission: restoredMission } : {}),
             protectedPaths: cornerFilesystem.protectedPaths,
             additionalWritablePaths: cornerFilesystem.additionalWritablePaths,
             featureBranch,
@@ -4383,6 +4455,7 @@ export class Body {
             lastPolledAt: cursor.createdAt,
             archived: false,
             boundRepo: cornerRepo,
+            ...(restoredMission ? { mission: restoredMission } : {}),
             taskDescription: restoredTaskDescription,
             participantPubkeys,
             ...(restoredPlan ? { taskPlan: restoredPlan } : {}),
@@ -4688,7 +4761,7 @@ export class Body {
     roomRepo: BoundRepo,
     intent?: string,
     request?: ChannelTaskRequest,
-    options?: { objective?: string },
+    options?: { objective?: string; mission?: MissionCornerAuthority },
   ): Promise<SubchannelInfo> {
     // Pick up an owner-confirmed target-branch change for a newly opened corner.
     const freshRoomRepo = this.refreshRepositoryTruth
@@ -4748,6 +4821,19 @@ export class Body {
       openingHumanPubkey,
       communityId ?? undefined,
       taskDescription || undefined,
+      options?.mission
+        ? [
+            ['mission', options.mission.missionId],
+            ['grant', options.mission.grantEventId],
+            ['controller-agent', options.mission.controllerAgentPubkey],
+            ['principal', options.mission.principalPubkey],
+            ['target-agent', options.mission.targetAgentPubkey],
+            ['mission-workspace', options.mission.workspaceId],
+            ['mission-room', options.mission.roomId],
+            ['mission-repo', options.mission.repository.key],
+            ['mission-ref', options.mission.repository.targetBranch],
+          ]
+        : [],
     );
     // A publish acknowledgement is not membership truth. Do not create the
     // worktree or launch the coding session until the relay projection proves
@@ -4888,6 +4974,7 @@ export class Body {
       lastPolledAt: now,
       archived: false,
       boundRepo,
+      ...(options?.mission ? { mission: options.mission } : {}),
       cornerName,
       taskDescription,
       participantPubkeys,
@@ -4925,6 +5012,19 @@ export class Body {
         ['feature', featureBranch],
         ['branch', targetBranch],
         ['status', 'live'],
+        ...(options?.mission
+          ? [
+              ['mission', options.mission.missionId],
+              ['grant', options.mission.grantEventId],
+              ['controller-agent', options.mission.controllerAgentPubkey],
+              ['principal', options.mission.principalPubkey],
+              ['target-agent', options.mission.targetAgentPubkey],
+              ['mission-workspace', options.mission.workspaceId],
+              ['mission-room', options.mission.roomId],
+              ['mission-repo', options.mission.repository.key],
+              ['mission-ref', options.mission.repository.targetBranch],
+            ]
+          : []),
         ...requestTags,
       ],
     );
@@ -5468,7 +5568,7 @@ export class Body {
     turn: ParsedDelegationTurn,
     finalText: string,
   ): Promise<void> {
-    if (turn.value.phase === 'return') return;
+    if (turn.value.phase === 'return' || turn.value.mission) return;
     const { roster } = await this.delegationRoster(turn.value.roomId);
     const parsed = parseDelegationDirectives(finalText, roster);
     const directives = parsed.directives.filter(
@@ -5575,7 +5675,7 @@ export class Body {
       'working',
       this.presenceGenerations.get(channelId),
     );
-    let session: AgentSession;
+    let session: AgentSession | undefined;
     try {
       session =
         this.sessions.get(channelId) ?? (await this.provision(channelId, boundRepo, editPolicy));
@@ -5594,7 +5694,9 @@ export class Body {
         'Host boundary: this is one admitted signed delegation work item.',
         'Use only this agent’s own read-only Room tools, memory, and provider account.',
         'Do not inherit or claim the sender’s tools, grants, filesystem, or authority.',
-        'Repository mutation still requires the ordinary corner/permission boundary.',
+        turn.value.mission
+          ? 'Repository mutation may only transition through the host-owned mission corner boundary.'
+          : 'Repository mutation still requires the ordinary human corner/permission boundary.',
         '',
         roomTurnPrompt(await this.agentHistory(channelId), current, turn.event.id),
       ].join('\n');
@@ -5612,7 +5714,8 @@ export class Body {
         editPolicy,
         permissionHandled: false,
         transitionedToCorner: false,
-        readOnlyInformationRequest: false,
+        readOnlyInformationRequest: true,
+        ...(turn.value.mission && turn.value.phase === 'assign' ? { missionDelegation: turn } : {}),
       };
       const result = await this.promptAgent(
         session,
@@ -5664,6 +5767,7 @@ export class Body {
             reservedTokens: 0,
           },
           task: reply.slice(0, 1_200),
+          ...(turn.value.mission ? { mission: turn.value.mission } : {}),
           createdAt: Math.floor(Date.now() / 1_000),
         };
         await this.delegationRuntime.publishTurn(returnValue);
@@ -5892,32 +5996,18 @@ export class Body {
           limit: 20,
         },
       ]);
-      const ownerEvents = events
-        .filter((event) => event.pubkey === currentOwner)
-        .sort(
-          (left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id),
-        );
-      const newest = ownerEvents[0];
-      if (newest) {
-        const parsed = parseAgentAccessConfig(newest);
-        if (
-          !parsed ||
-          parsed.workspaceId !== workspaceId ||
-          parsed.agentPubkey !== this.agentIdentity.publicKey
-        ) {
-          return false;
-        }
-        policy = parsed.policy;
-        allowlist = parsed.allowlist;
-      } else if (
-        currentOwner !== pairedOwner &&
-        events.some((event) => event.pubkey === pairedOwner)
-      ) {
-        // A predecessor-authored remote policy must never silently widen back
-        // to the machine seed after key succession. The current successor
-        // republishes explicitly; until then this agent denies all principals.
-        return false;
-      }
+      const authority = resolveAgentAccessAuthority({
+        events,
+        workspaceId,
+        agentPubkey: this.agentIdentity.publicKey,
+        pairedOwnerPubkey: pairedOwner,
+        currentOwnerPubkey: currentOwner,
+        seed: { policy, ...(allowlist ? { allowlist } : {}) },
+      });
+      if (!authority || authority === 'denied') return false;
+      policy = authority.policy;
+      allowlist = authority.allowlist;
+      currentOwner = authority.ownerPubkey;
     }
     return isSenderPermitted(policy, senderPubkey, currentOwner, allowlist);
   }
@@ -5978,6 +6068,40 @@ export class Body {
       roomTags[0]?.[1] !== turn.value.roomId
     ) {
       return false;
+    }
+    if (turn.value.mission) {
+      const mission = turn.value.mission;
+      const verification = await verifyMissionActionAuthority({
+        reader: this.permissionReader,
+        reference: {
+          missionId: mission.missionId,
+          grantEventId: mission.grantEventId,
+          controllerAgentPubkey: mission.controllerAgentPubkey,
+        },
+        workspaceId: turn.value.workspaceId,
+        roomId: turn.value.roomId,
+        principalPubkey: turn.value.principalPubkey,
+        repository: mission.repository,
+        executorPubkey: this.agentIdentity.publicKey,
+        exercise: {
+          kind: 'schedule',
+          operation: 'fire',
+          scheduleId: mission.scheduleId,
+          revisionDigest: mission.scheduleRevisionDigest,
+          mode: mission.mode,
+          targetAgentPubkey: mission.targetAgentPubkey,
+          maxRuns: mission.maxRuns,
+          perRunReservedTokens: mission.perRunReservedTokens,
+          dailyReservedTokens: mission.dailyReservedTokens,
+          totalReservedTokens: mission.totalReservedTokens,
+          scriptRuntimeSeconds: mission.scriptRuntimeSeconds,
+        },
+        ordinal: missionActionOrdinal(`delegation-activation:${turn.event.id}`),
+        idempotencyKey: `mission-delegation-activation:${turn.event.id}`,
+        reservedTokens: mission.perRunReservedTokens,
+        now: Math.floor(Date.now() / 1_000),
+      });
+      return verification.authorized;
     }
     return !(await isRegisteredAgentIdentity(root.pubkey, this.agentRelay));
   }
@@ -6375,6 +6499,202 @@ export class Body {
   }
 
   /** Typed calendar ingress; admitted work still uses the ordinary Room dispatcher. */
+  private async beginMissionCornerAction(
+    mission: MissionCornerAuthority,
+    operation: 'open' | 'close',
+    seed: string,
+  ): Promise<PermissionExecutionHandle> {
+    const action = await resolveMissionAction({
+      reader: this.permissionReader,
+      reference: mission,
+      workspaceId: mission.workspaceId,
+      roomId: mission.roomId,
+      principalPubkey: mission.principalPubkey,
+      repository: mission.repository,
+      executorPubkey: this.agentIdentity.publicKey,
+      exercise: { kind: 'corner', operation, targetAgentPubkey: mission.targetAgentPubkey },
+      ordinal: missionActionOrdinal(seed),
+      idempotencyKey: `mission-corner:${operation}:${seed}`,
+    });
+    if (!action) throw new ScheduleActivationRefusedError(true, 'mission-corner-mismatch');
+    const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
+    if (begun.status === 'started') return begun.execution;
+    const reason = begun.status === 'refused' ? begun.reason : `mission-corner-${begun.status}`;
+    throw new ScheduleActivationRefusedError(
+      begun.status === 'refused' ? begun.terminal : true,
+      reason,
+    );
+  }
+
+  private async missionCornerFresh(info: SubchannelInfo): Promise<boolean> {
+    const mission = info.mission;
+    if (!mission || info.archived) return false;
+    const verification = await verifyMissionAction({
+      reader: this.permissionReader,
+      reference: mission,
+      workspaceId: mission.workspaceId,
+      roomId: mission.roomId,
+      principalPubkey: mission.principalPubkey,
+      repository: mission.repository,
+      executorPubkey: this.agentIdentity.publicKey,
+      exercise: {
+        kind: 'corner',
+        operation: 'open',
+        targetAgentPubkey: mission.targetAgentPubkey,
+      },
+      ordinal: missionActionOrdinal(`corner-continuation:${info.subchannelId}`),
+      idempotencyKey: `mission-corner-continuation:${info.subchannelId}`,
+      now: Math.floor(Date.now() / 1_000),
+    });
+    return verification.authorized;
+  }
+
+  private missionCornerAuthority(scheduled: ScheduledTurnRequest): MissionCornerAuthority {
+    if (!scheduled.mission) {
+      throw new ScheduleActivationRefusedError(true, 'mission-corner-boundary-missing');
+    }
+    return {
+      missionId: scheduled.mission.missionId,
+      grantEventId: scheduled.mission.grantEventId,
+      controllerAgentPubkey: scheduled.mission.controllerAgentPubkey,
+      workspaceId: scheduled.workspaceId,
+      roomId: scheduled.roomId,
+      principalPubkey: scheduled.principalPubkey,
+      targetAgentPubkey: scheduled.targetAgentPubkey,
+      repository: scheduled.mission.repository,
+    };
+  }
+
+  /** Host-owned mission corner open; never grants a Room model a shell. */
+  private async openScheduledMissionCorner(
+    scheduled: ScheduledTurnRequest,
+    boundRepo: BoundRepo,
+    request: ChannelTaskRequest,
+  ): Promise<SubchannelInfo> {
+    const mission = this.missionCornerAuthority(scheduled);
+    return this.openMissionCorner(
+      mission,
+      scheduled.roomId,
+      boundRepo,
+      request,
+      `${scheduled.scheduleRunId}:${request.eventId}`,
+    );
+  }
+
+  /** A delegated target spends the same mission corner slice, never ambient sender authority. */
+  private async openDelegatedMissionCorner(
+    turn: ParsedDelegationTurn,
+    boundRepo: BoundRepo,
+    request: ChannelTaskRequest,
+  ): Promise<SubchannelInfo> {
+    const delegated = turn.value.mission;
+    if (!delegated || turn.value.phase !== 'assign') {
+      throw new ScheduleActivationRefusedError(true, 'mission-corner-boundary-missing');
+    }
+    return this.openMissionCorner(
+      {
+        missionId: delegated.missionId,
+        grantEventId: delegated.grantEventId,
+        controllerAgentPubkey: delegated.controllerAgentPubkey,
+        workspaceId: turn.value.workspaceId,
+        roomId: turn.value.roomId,
+        principalPubkey: turn.value.principalPubkey,
+        targetAgentPubkey: delegated.targetAgentPubkey,
+        repository: delegated.repository,
+      },
+      turn.value.roomId,
+      boundRepo,
+      request,
+      `${turn.event.id}:${request.eventId}`,
+    );
+  }
+
+  private async openMissionCorner(
+    mission: MissionCornerAuthority,
+    roomId: string,
+    boundRepo: BoundRepo,
+    request: ChannelTaskRequest,
+    seed: string,
+  ): Promise<SubchannelInfo> {
+    if (mission.targetAgentPubkey !== this.agentIdentity.publicKey) {
+      throw new ScheduleActivationRefusedError(true, 'mission-corner-target-mismatch');
+    }
+    const freshRepo = this.refreshRepositoryTruth
+      ? await this.refreshRepositoryTruth(boundRepo, 'corner-open')
+      : boundRepo;
+    if (
+      freshRepo.truth?.binding.key !== mission.repository.key ||
+      (freshRepo.targetBranch ?? 'refs/heads/main') !== mission.repository.targetBranch
+    ) {
+      throw new ScheduleActivationRefusedError(true, 'mission-repository-mismatch');
+    }
+    const grant = await resolveMissionGrant(this.permissionReader, mission);
+    const allocation = grant?.scope.targetAllocations.find(
+      (candidate) => candidate.agentPubkey === mission.targetAgentPubkey,
+    );
+    const active = [...this.subchannels.values()].filter(
+      (corner) =>
+        !corner.archived &&
+        corner.mission?.grantEventId === mission.grantEventId &&
+        corner.mission.targetAgentPubkey === mission.targetAgentPubkey,
+    ).length;
+    if (!allocation || active >= allocation.maxActiveCorners) {
+      throw new ScheduleActivationRefusedError(true, 'mission-corner-capacity-exhausted');
+    }
+    const execution = await this.beginMissionCornerAction(mission, 'open', seed);
+    try {
+      return await this.openSubchannel(roomId, freshRepo, request.content, request, {
+        mission,
+      });
+    } finally {
+      await this.permissionRuntime.complete({
+        execution,
+        status: 'succeeded',
+        result: 'mission-corner-open-attempted',
+      });
+    }
+  }
+
+  /** Standing close authority is fresh-checked but never retroactively closes on revocation. */
+  async closeMissionSubchannel(subchannelId: string): Promise<void> {
+    const info = this.subchannels.get(subchannelId);
+    if (!info?.mission || info.mission.targetAgentPubkey !== this.agentIdentity.publicKey) {
+      throw new Error('mission corner lineage is unavailable');
+    }
+    await this.archiveSubchannel(subchannelId);
+  }
+
+  private async beginMissionCornerClose(
+    mission: MissionCornerAuthority,
+    subchannelId: string,
+  ): Promise<PermissionExecutionHandle | undefined> {
+    const action = await resolveMissionAction({
+      reader: this.permissionReader,
+      reference: mission,
+      workspaceId: mission.workspaceId,
+      roomId: mission.roomId,
+      principalPubkey: mission.principalPubkey,
+      repository: mission.repository,
+      executorPubkey: this.agentIdentity.publicKey,
+      exercise: {
+        kind: 'corner',
+        operation: 'close',
+        targetAgentPubkey: mission.targetAgentPubkey,
+      },
+      ordinal: missionActionOrdinal(`corner-close:${subchannelId}`),
+      idempotencyKey: `mission-corner:close:${subchannelId}`,
+    });
+    if (!action) throw new ScheduleActivationRefusedError(true, 'mission-corner-mismatch');
+    if (await this.permissionRuntime.admitted(action)) return undefined;
+    const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
+    if (begun.status === 'started') return begun.execution;
+    if (begun.status === 'duplicate') return undefined;
+    throw new ScheduleActivationRefusedError(
+      begun.status === 'refused' ? begun.terminal : true,
+      begun.status === 'refused' ? begun.reason : `mission-corner-${begun.status}`,
+    );
+  }
+
   async dispatchScheduledTurn(
     scheduled: ScheduledTurnRequest,
     boundRepo: BoundRepo | undefined,
@@ -6398,6 +6718,182 @@ export class Body {
     ) {
       throw new Error('scheduled turn target mismatch');
     }
+    if (scheduled.execution.mode === 'script') {
+      if (!scheduled.mission || !scheduled.missionAction || !boundRepo?.localPath) {
+        throw new ScheduleActivationRefusedError(true, 'mission-script-boundary-missing');
+      }
+      if (
+        boundRepo.truth?.binding.key !== scheduled.mission.repository.key ||
+        (boundRepo.targetBranch ?? 'refs/heads/main') !== scheduled.mission.repository.targetBranch
+      ) {
+        throw new ScheduleActivationRefusedError(true, 'mission-repository-mismatch');
+      }
+      if (
+        !this.config.bwrapPath ||
+        !missionScriptHashMatches(scheduled.execution.script, scheduled.execution.scriptSha256)
+      ) {
+        throw new ScheduleActivationRefusedError(
+          true,
+          this.config.bwrapPath
+            ? 'mission-script-hash-mismatch'
+            : 'mission-script-sandbox-unavailable',
+        );
+      }
+      await beforeModelActivation?.();
+      const execution = await this.beginMissionScheduleFire(scheduled);
+      let resultCode = 'mission-script-fired';
+      try {
+        const result = await runMissionScript({
+          bwrapPath: this.config.bwrapPath,
+          cwd: boundRepo.localPath,
+          repositoryKey: scheduled.mission.repository.key,
+          script: scheduled.execution.script,
+          scriptSha256: scheduled.execution.scriptSha256,
+          timeoutSeconds: scheduled.execution.timeoutSeconds,
+          maskPaths: this.sandboxCredentialMaskPaths(),
+        });
+        if (result.wake) {
+          if (result.wake.agentPubkey !== scheduled.targetAgentPubkey) {
+            throw new ScheduleActivationRefusedError(true, 'mission-wake-target-mismatch');
+          }
+          const childActivation = await verifyMissionPermissionActionAuthority({
+            reader: this.permissionReader,
+            action: scheduled.missionAction,
+            now: Math.floor(Date.now() / 1_000),
+          });
+          if (!childActivation.authorized) {
+            throw new ScheduleActivationRefusedError(
+              childActivation.terminal,
+              childActivation.reason,
+            );
+          }
+          const pointerTask =
+            `Mission schedule ${scheduled.scheduleId} produced repository pointer ` +
+            `${JSON.stringify(result.wake.pointer)} in ${result.wake.repositoryKey}. ` +
+            'Handle exactly that work item and return the bounded result to the chief of staff.';
+          if (scheduled.targetAgentPubkey === this.agentIdentity.publicKey) {
+            await this.dispatchScheduledModelTurn(
+              {
+                ...scheduled,
+                prompt: pointerTask,
+                execution: { mode: 'model' },
+                missionAction: undefined,
+              },
+              boundRepo,
+              editPolicy,
+            );
+          } else {
+            await this.publishScheduledDelegation(scheduled, pointerTask, 'script');
+          }
+        }
+      } catch (error) {
+        resultCode = `mission-script-fired:${String(
+          error instanceof Error ? error.message : error,
+        ).slice(0, 300)}`;
+        throw error;
+      } finally {
+        await this.permissionRuntime.complete({
+          execution,
+          status: 'succeeded',
+          result: resultCode,
+        });
+      }
+      return;
+    }
+    if (scheduled.mission && scheduled.targetAgentPubkey !== this.agentIdentity.publicKey) {
+      await beforeModelActivation?.();
+      const execution = await this.beginMissionScheduleFire(scheduled);
+      let result = 'mission-delegation-attempted';
+      try {
+        await this.publishScheduledDelegation(scheduled, scheduled.prompt, 'model');
+        result = 'mission-delegation-published';
+      } finally {
+        await this.permissionRuntime.complete({ execution, status: 'succeeded', result });
+      }
+      return;
+    }
+    await this.dispatchScheduledModelTurn(scheduled, boundRepo, editPolicy, beforeModelActivation);
+  }
+
+  private async publishScheduledDelegation(
+    scheduled: ScheduledTurnRequest,
+    task: string,
+    mode: 'script' | 'model',
+  ): Promise<void> {
+    if (!scheduled.mission || scheduled.targetAgentPubkey === this.agentIdentity.publicKey) {
+      throw new ScheduleActivationRefusedError(true, 'mission-delegation-target-invalid');
+    }
+    const createdAt = Math.floor(Date.now() / 1_000);
+    const budget = defaultDelegationBudget(createdAt, scheduled.reservedTokens);
+    const value: DelegationTurnV1 = {
+      version: 1,
+      delegationId: randomUUID(),
+      workItemId: randomUUID(),
+      phase: 'assign',
+      roomId: scheduled.roomId,
+      workspaceId: scheduled.workspaceId,
+      fromAgentPubkey: this.agentIdentity.publicKey,
+      toAgentPubkey: scheduled.targetAgentPubkey,
+      rootEventId: scheduled.mission.grantEventId,
+      parentEventId: scheduled.queuedEvent.id,
+      principalPubkey: scheduled.principalPubkey,
+      path: [this.agentIdentity.publicKey],
+      depth: 1,
+      budget: {
+        ...budget,
+        maxAgentTurns: 2,
+        maxDepth: 2,
+        maxChildren: 1,
+      },
+      task: task.slice(0, 1_200),
+      ...(scheduled.artifactRefs.length ? { artifactRefs: [...scheduled.artifactRefs] } : {}),
+      mission: {
+        missionId: scheduled.mission.missionId,
+        grantEventId: scheduled.mission.grantEventId,
+        controllerAgentPubkey: scheduled.mission.controllerAgentPubkey,
+        scheduleId: scheduled.scheduleId,
+        scheduleRevision: scheduled.scheduleRevision,
+        scheduleRevisionDigest: scheduled.scheduleRevisionDigest,
+        scheduleRunId: scheduled.scheduleRunId,
+        mode,
+        targetAgentPubkey: scheduled.targetAgentPubkey,
+        maxRuns: scheduled.maxRuns,
+        perRunReservedTokens: scheduled.reservedTokens,
+        dailyReservedTokens: scheduled.dailyReservedTokens,
+        totalReservedTokens: scheduled.maxRuns * scheduled.reservedTokens,
+        scriptRuntimeSeconds:
+          scheduled.execution.mode === 'script' ? scheduled.execution.timeoutSeconds : 1,
+        repository: scheduled.mission.repository,
+      },
+      createdAt,
+    };
+    await this.delegationRuntime.publishTurn(value);
+  }
+
+  private async beginMissionScheduleFire(
+    scheduled: ScheduledTurnRequest,
+  ): Promise<PermissionExecutionHandle> {
+    if (!scheduled.missionAction) {
+      throw new ScheduleActivationRefusedError(true, 'mission-grant-invalid');
+    }
+    const begun = await this.permissionRuntime.begin({
+      action: scheduled.missionAction,
+      attempt: 1,
+    });
+    if (begun.status === 'started') return begun.execution;
+    const reason = begun.status === 'refused' ? begun.reason : `mission-action-${begun.status}`;
+    throw new ScheduleActivationRefusedError(
+      begun.status === 'refused' ? begun.terminal : true,
+      reason,
+    );
+  }
+
+  private async dispatchScheduledModelTurn(
+    scheduled: ScheduledTurnRequest,
+    boundRepo: BoundRepo | undefined,
+    editPolicy: RoomEditPolicy,
+    beforeModelActivation?: () => Promise<void>,
+  ): Promise<void> {
     const artifactContext = scheduled.artifactRefs.length
       ? [
           '',
@@ -6410,28 +6906,46 @@ export class Body {
         ].join('\n')
       : '';
     const principalName = fallbackPersonName(scheduled.principalPubkey);
-    await this.replyInRoom(
-      scheduled.roomId,
-      boundRepo,
-      {
-        eventId: scheduled.queuedEvent.id,
-        authorPubkey: scheduled.principalPubkey,
-        authorAttribution: {
-          kind: 'Member',
-          name: principalName,
-          handle: personHandle(principalName, scheduled.principalPubkey),
+    let missionExecution: PermissionExecutionHandle | undefined;
+    let fired = false;
+    try {
+      await this.replyInRoom(
+        scheduled.roomId,
+        boundRepo,
+        {
+          eventId: scheduled.queuedEvent.id,
+          authorPubkey: scheduled.principalPubkey,
+          authorAttribution: {
+            kind: 'Member',
+            name: principalName,
+            handle: personHandle(principalName, scheduled.principalPubkey),
+          },
+          content: `${scheduled.prompt}${artifactContext}`,
+          attachments: [],
+          createdAt: scheduled.nominalAt,
         },
-        content: `${scheduled.prompt}${artifactContext}`,
-        attachments: [],
-        createdAt: scheduled.nominalAt,
-      },
-      false,
-      editPolicy,
-      undefined,
-      false,
-      scheduled,
-      beforeModelActivation,
-    );
+        false,
+        editPolicy,
+        undefined,
+        false,
+        scheduled,
+        async () => {
+          await beforeModelActivation?.();
+          if (scheduled.missionAction) {
+            missionExecution = await this.beginMissionScheduleFire(scheduled);
+          }
+          fired = true;
+        },
+      );
+    } finally {
+      if (missionExecution) {
+        await this.permissionRuntime.complete({
+          execution: missionExecution,
+          status: 'succeeded',
+          result: fired ? 'mission-model-turn-fired' : 'mission-model-turn-attempted',
+        });
+      }
+    }
   }
 
   /** Run one addressed turn through the provisioned read-only Room session. */
@@ -6680,7 +7194,9 @@ export class Body {
       : scheduled
         ? [
             'Host boundary: this is one admitted recurring schedule occurrence.',
-            'A current human admin or owner authorized this bounded schedule. The schedule is the mandate for this occurrence, including send, publish, spend, connector, and attachment actions needed to complete it.',
+            'The schedule is the bounded mandate for this occurrence. Read-only tools and already-governed connector capabilities retain their ordinary host policy.',
+            'This Room turn has no native shell or repository-write authority. If the mission grant permits edits, the host may move the work into one isolated mission corner; never claim the Room tool itself ran.',
+            'Do not bypass connector allowlists or any existing permission-ledger check.',
             'Stay within the schedule prompt and its expiry, run-count, and token-budget envelope.',
             '',
             sharedPrompt,
@@ -6717,18 +7233,7 @@ export class Body {
       permissionHandled: false,
       transitionedToCorner: false,
       readOnlyInformationRequest: informationOnly,
-      ...(scheduled
-        ? {
-            scheduled: {
-              workspaceId: scheduled.workspaceId,
-              scheduleId: scheduled.scheduleId,
-              scheduleRevision: scheduled.scheduleRevision,
-              scheduleRunId: scheduled.scheduleRunId,
-              principalPubkey: scheduled.principalPubkey,
-              reservedTokens: scheduled.reservedTokens,
-            },
-          }
-        : {}),
+      ...(scheduled ? { scheduled } : {}),
       ...(editPolicy === 'named-repository'
         ? { namedRepositoryTarget: namedRepositoryTargetFromRoomRequest(request.content) }
         : {}),
@@ -7072,12 +7577,6 @@ export class Body {
     editPolicy?: RoomEditPolicy,
   ): Promise<AcpPermissionDecision> {
     const pendingTurn = this.pendingRoomTurns.get(tlcChannelId);
-    if (pendingTurn?.scheduled) {
-      // A current human admin/owner authorized the schedule itself. Once the
-      // calendar's fresh activation check passes, that bounded mandate carries
-      // full action authority for this occurrence across every ACP harness.
-      return 'allow';
-    }
     if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
     if (
       this.config.accessPolicy === 'creator' &&
@@ -7117,6 +7616,75 @@ export class Body {
       await this.noteRoomReadOnlyDenial(tlcChannelId, permission);
     }
     if (!turn || turn.permissionHandled || !isMutatingPermissionRequest(permission)) {
+      return 'reject';
+    }
+    // A mission assignment arriving over DelegationTurnV1 has no ambient edit
+    // authority. The host may spend only the exact target's freshly verified
+    // corner allocation, and the concrete Room tool invocation never runs.
+    if (turn.missionDelegation) {
+      const delegation = turn.missionDelegation;
+      if (
+        delegation.value.phase !== 'assign' ||
+        !delegation.value.mission ||
+        !turn.boundRepo ||
+        delegation.value.toAgentPubkey !== this.agentIdentity.publicKey ||
+        delegation.value.mission.targetAgentPubkey !== this.agentIdentity.publicKey
+      ) {
+        return 'reject';
+      }
+      turn.permissionHandled = true;
+      try {
+        const info = await this.openDelegatedMissionCorner(
+          delegation,
+          turn.boundRepo,
+          turn.request,
+        );
+        turn.transitionedToCorner = true;
+        this.startAgentTask(
+          info,
+          turn.request.content,
+          cornerOpenTaskPrompt(info.taskDescription, turn.request.content),
+          {
+            requestId: turn.request.eventId,
+            originalRequestId: delegation.value.rootEventId,
+            cause: 'corner-opening',
+          },
+        );
+      } catch (error) {
+        console.error('[body] delegated mission corner open refused:', error);
+      }
+      return 'reject';
+    }
+    // A schedule Room turn never receives native shell/write authority. A
+    // mission may instead let the host open an isolated derived corner; this
+    // concrete Room invocation remains rejected.
+    if (turn.scheduled) {
+      const scheduled = turn.scheduled;
+      if (
+        !scheduled.mission ||
+        scheduled.execution.mode !== 'model' ||
+        !turn.boundRepo ||
+        scheduled.targetAgentPubkey !== this.agentIdentity.publicKey
+      ) {
+        return 'reject';
+      }
+      turn.permissionHandled = true;
+      try {
+        const info = await this.openScheduledMissionCorner(scheduled, turn.boundRepo, turn.request);
+        turn.transitionedToCorner = true;
+        this.startAgentTask(
+          info,
+          turn.request.content,
+          cornerOpenTaskPrompt(info.taskDescription, turn.request.content),
+          {
+            requestId: turn.request.eventId,
+            originalRequestId: turn.request.eventId,
+            cause: 'corner-opening',
+          },
+        );
+      } catch (error) {
+        console.error('[body] mission corner open refused:', error);
+      }
       return 'reject';
     }
     const policy =
@@ -9096,26 +9664,93 @@ export class Body {
     // before we got here. The broker receives the resulting current tip and
     // re-checks it against the refspec before using daemon credentials.
     await this.postLandingStage(info, 'pushing', { title: 'Pushing', status: 'in_progress' });
-    const land = await performBrokeredPush({
-      remote,
-      refspecs: [`${target.tip}:${target.branch}`],
-      policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
-      extraArgs: ['--follow-tags'],
-      approval: {
-        verified: true,
-        approval: {
+    let missionExecution: PermissionExecutionHandle | undefined;
+    const repositoryKey = info.boundRepo?.truth?.binding.key;
+    if (info.mission) {
+      if (
+        !repositoryKey ||
+        repositoryKey !== info.mission.repository.key ||
+        target.branch !== info.mission.repository.targetBranch
+      ) {
+        return { kind: 'failed', reason: 'fresh mission repository/ref binding does not match' };
+      }
+      const action = await resolveMissionAction({
+        reader: this.permissionReader,
+        reference: info.mission,
+        workspaceId: info.mission.workspaceId,
+        roomId: info.mission.roomId,
+        principalPubkey: info.mission.principalPubkey,
+        repository: info.mission.repository,
+        executorPubkey: this.agentIdentity.publicKey,
+        exercise: {
+          kind: 'land',
           cornerId: info.subchannelId,
-          repo: target.repo,
-          branch: target.branch,
-          approvedTip: info.humanMergeApproval?.approvedTip ?? target.tip,
-          reviewerPubkey: info.humanMergeApproval?.reviewer ?? '',
+          sourceSha: target.tip,
         },
-      },
-      cornerId: info.subchannelId,
-      sessionId: info.session.logicalSessionId ?? info.session.sessionId,
-      runGit: async (args) => await this.remoteGit(info.boundRepo!, info.worktreePath, args),
-    });
-    return land.ok ? { kind: 'landed' } : { kind: 'failed', reason: land.stderr };
+        ordinal: missionActionOrdinal(`land:${info.subchannelId}:${target.tip}`),
+        idempotencyKey: `mission-land:${info.subchannelId}:${target.tip}`,
+      });
+      if (!action) return { kind: 'failed', reason: 'mission standing land grant is invalid' };
+      const begun = await this.permissionRuntime.begin({ action, attempt: 1 });
+      if (begun.status !== 'started') {
+        return {
+          kind: 'failed',
+          reason: begun.status === 'refused' ? begun.reason : `mission-land-${begun.status}`,
+        };
+      }
+      missionExecution = begun.execution;
+    }
+    try {
+      const land = await performBrokeredPush({
+        remote,
+        refspecs: [`${target.tip}:${target.branch}`],
+        policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
+        extraArgs: ['--follow-tags'],
+        authorization: info.mission
+          ? {
+              kind: 'mission-standing-land',
+              verified: true,
+              missionId: info.mission.missionId,
+              grantEventId: info.mission.grantEventId,
+              roomId: info.mission.roomId,
+              controllerAgentPubkey: info.mission.controllerAgentPubkey,
+              repositoryKey: info.mission.repository.key,
+              targetRef: info.mission.repository.targetBranch,
+              cornerId: info.subchannelId,
+              sourceSha: target.tip,
+            }
+          : {
+              kind: 'corner-approval',
+              verified: true,
+              approval: {
+                cornerId: info.subchannelId,
+                repo: target.repo,
+                branch: target.branch,
+                approvedTip: info.humanMergeApproval?.approvedTip ?? target.tip,
+                reviewerPubkey: info.humanMergeApproval?.reviewer ?? '',
+              },
+            },
+        repository: info.mission
+          ? {
+              repositoryKey: repositoryKey!,
+              roomId: info.mission.roomId,
+              controllerAgentPubkey: info.mission.controllerAgentPubkey,
+            }
+          : undefined,
+        cornerId: info.subchannelId,
+        sessionId: info.session.logicalSessionId ?? info.session.sessionId,
+        runGit: async (args) => await this.remoteGit(info.boundRepo!, info.worktreePath, args),
+      });
+      return land.ok ? { kind: 'landed' } : { kind: 'failed', reason: land.stderr };
+    } finally {
+      if (missionExecution) {
+        await this.permissionRuntime.complete({
+          execution: missionExecution,
+          status: 'succeeded',
+          result: 'mission-land-attempted',
+        });
+      }
+    }
   }
 
   /**
@@ -9201,7 +9836,13 @@ export class Body {
       // Relay-origin repos land through the merge gate, never here.
       if (info.archived || !boundRepo || boundRepo.ownerHex || !target) continue;
       if (!remote && !boundRepo.localPath) continue;
-      if (!(await this.findHumanMergeApproval(info, pushedApprovals))) continue;
+      if (info.mission) {
+        // Standing mission land is deliberately remote-only: local ref writes
+        // do not pass through the credential/ref-policy broker.
+        if (!remote) continue;
+      } else if (!(await this.findHumanMergeApproval(info, pushedApprovals))) {
+        continue;
+      }
 
       await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
       const attemptLanding = async (currentTarget: NonNullable<SubchannelInfo['mergeTarget']>) =>
@@ -9230,7 +9871,12 @@ export class Body {
         if (isMovedTargetLandFailure(outcome.reason)) {
           if (!(await this.realignMovedTargetForLanding(info, target))) continue;
           target = info.mergeTarget;
-          if (!target || !(await this.findHumanMergeApproval(info, pushedApprovals))) continue;
+          if (
+            !target ||
+            (!info.mission && !(await this.findHumanMergeApproval(info, pushedApprovals)))
+          ) {
+            continue;
+          }
           await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
           landing = await attemptLanding(target);
           boundRepo = landing.boundRepo;
@@ -9332,18 +9978,22 @@ export class Body {
       // gets the bounded critical-publish loop, and a final refusal is logged
       // and stepped over rather than allowed to cost this corner its recap —
       // or to abort the loop and starve every corner behind it of its own land.
+      const landAuthorityId = info.mission?.grantEventId ?? info.humanMergeApproval!.id;
+      const landAuthorityActor =
+        info.mission?.controllerAgentPubkey ?? info.humanMergeApproval!.reviewer;
+      const landAuthorityLabel = info.mission ? 'Mission-authorized' : 'Human-approved';
       await publishCritical(
         () =>
           postControlMessage(
             info.subchannelId,
             this.agentIdentity,
-            `Human-approved work landed on ${target.branch} at ${target.tip}.`,
+            `${landAuthorityLabel} work landed on ${target.branch} at ${target.tip}.`,
             [
               ['t', LANDED_TAG],
               ['status', 'ready'],
               ['delivery', 'landed'],
-              ['approval', info.humanMergeApproval!.id],
-              ['reviewer', info.humanMergeApproval!.reviewer],
+              [info.mission ? 'grant' : 'approval', landAuthorityId],
+              [info.mission ? 'controller-agent' : 'reviewer', landAuthorityActor],
               ['repo', target.repo],
               ['branch', target.branch],
               ['feature', info.featureBranch],
@@ -9362,11 +10012,11 @@ export class Body {
           this.postParentCornerStatus(
             info,
             'ready',
-            `Human-approved work landed at ${target.tip.slice(0, 12)} on ${target.branch.replace(/^refs\/heads\//, '')}.`,
+            `${landAuthorityLabel} work landed at ${target.tip.slice(0, 12)} on ${target.branch.replace(/^refs\/heads\//, '')}.`,
             [
               ['delivery', 'landed'],
-              ['approval', info.humanMergeApproval!.id],
-              ['reviewer', info.humanMergeApproval!.reviewer],
+              [info.mission ? 'grant' : 'approval', landAuthorityId],
+              [info.mission ? 'controller-agent' : 'reviewer', landAuthorityActor],
               ['tip', target.tip],
             ],
           ),
@@ -10802,8 +11452,16 @@ export class Body {
     // Initial status 'online' (the default): the first heartbeat publishes as
     // soon as the loop starts, so a restart handover re-establishes presence
     // promptly instead of inheriting an aging lease. See startAgentPresence.
-    const stopPresence = startAgentPresence(tlcChannelId, this.agentIdentity, undefined, (status) =>
-      this.onRoomPresence?.(tlcChannelId, status),
+    const stopPresence = startAgentPresence(
+      tlcChannelId,
+      this.agentIdentity,
+      undefined,
+      (status) => this.onRoomPresence?.(tlcChannelId, status),
+      'online',
+      {
+        policy: this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
+        ...(this.config.accessAllowlist ? { allowlist: this.config.accessAllowlist } : {}),
+      },
     );
     this.presenceGenerations.set(tlcChannelId, stopPresence.generationId);
     try {
@@ -10830,8 +11488,16 @@ export class Body {
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
     // See runChannelLoop: prompt first heartbeat for restart handover.
-    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
-      this.onRoomPresence?.(channelId, status),
+    const stopPresence = startAgentPresence(
+      channelId,
+      this.agentIdentity,
+      undefined,
+      (status) => this.onRoomPresence?.(channelId, status),
+      'online',
+      {
+        policy: this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
+        ...(this.config.accessAllowlist ? { allowlist: this.config.accessAllowlist } : {}),
+      },
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
@@ -10867,8 +11533,16 @@ export class Body {
   ): Promise<void> {
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
     // See runChannelLoop: prompt first heartbeat for restart handover.
-    const stopPresence = startAgentPresence(channelId, this.agentIdentity, undefined, (status) =>
-      this.onRoomPresence?.(channelId, status),
+    const stopPresence = startAgentPresence(
+      channelId,
+      this.agentIdentity,
+      undefined,
+      (status) => this.onRoomPresence?.(channelId, status),
+      'online',
+      {
+        policy: this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
+        ...(this.config.accessAllowlist ? { allowlist: this.config.accessAllowlist } : {}),
+      },
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
@@ -12034,20 +12708,26 @@ export class Body {
    * two overlapping maintenance ticks retrying the same corner at once.
    */
   async archiveSubchannel(subchannelId: string): Promise<void> {
+    const abandoned = this.abandonedCorners.get(subchannelId);
+    if (abandoned) {
+      await this.closeAbandonedCorner(abandoned);
+      return;
+    }
     if (this.archivingSubchannels.has(subchannelId)) return;
     this.archivingSubchannels.add(subchannelId);
+    let missionCloseExecution: PermissionExecutionHandle | undefined;
     try {
       const info = this.subchannels.get(subchannelId);
       if (!info) {
         // No live session — but a corner this daemon could not restore is
         // exactly the one a human is most likely to be closing. Close it as a
         // daemon action rather than reporting "not found" and doing nothing.
-        const abandoned = this.abandonedCorners.get(subchannelId);
-        if (abandoned) {
-          await this.closeAbandonedCorner(abandoned);
-          return;
-        }
         throw new Error(`Subchannel ${subchannelId} not found`);
+      }
+
+      if (info.mission && !info.archived && !info.missionCloseAdmitted) {
+        missionCloseExecution = await this.beginMissionCornerClose(info.mission, subchannelId);
+        info.missionCloseAdmitted = true;
       }
 
       // The map name is not authority. Confirm both the in-memory session and
@@ -12149,6 +12829,13 @@ export class Body {
       this.abandonedCorners.delete(subchannelId);
       this.abandonedCornerScanAt.delete(subchannelId);
     } finally {
+      if (missionCloseExecution) {
+        await this.permissionRuntime.complete({
+          execution: missionCloseExecution,
+          status: 'succeeded',
+          result: 'mission-corner-close-attempted',
+        });
+      }
       this.archivingSubchannels.delete(subchannelId);
     }
   }
@@ -12204,9 +12891,14 @@ export class Body {
       { kinds: [9007], authors: [this.agentIdentity.publicKey] },
       { pageSize: UNTRACKED_CORNER_CREATE_PAGE_SIZE, query: this.agentRelay.queryEvents },
     );
+    const createByCorner = new Map<string, NostrEvent>();
     const candidates = creates
       .filter((event) => tagValue(event, 'parent') === parentChannelId)
-      .map((event) => tagValue(event, 'h'))
+      .map((event) => {
+        const id = tagValue(event, 'h');
+        if (id) createByCorner.set(id, event);
+        return id;
+      })
       .filter((id): id is string => Boolean(id) && id !== parentChannelId)
       .filter(
         (id) =>
@@ -12265,6 +12957,10 @@ export class Body {
         .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
         .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
       const featureBranch = control ? tagValue(control, 'feature') : undefined;
+      const mission = missionCornerAuthorityFromEvent(
+        createByCorner.get(subchannelId) ?? control,
+        parentChannelId,
+      );
       this.markCornerAbandoned({
         subchannelId,
         parentChannelId,
@@ -12272,6 +12968,7 @@ export class Body {
         closeRequestedAt,
         ...(boundRepo ? { boundRepo } : {}),
         ...(featureBranch ? { featureBranch } : {}),
+        ...(mission ? { mission } : {}),
       });
       console.log(
         `[body] adopting untracked corner ${subchannelId} in Room ${parentChannelId}: ` +
@@ -12408,7 +13105,12 @@ export class Body {
     const { subchannelId, parentChannelId } = entry;
     if (this.archivingSubchannels.has(subchannelId)) return;
     this.archivingSubchannels.add(subchannelId);
+    let missionCloseExecution: PermissionExecutionHandle | undefined;
     try {
+      if (entry.mission && !entry.missionCloseAdmitted) {
+        missionCloseExecution = await this.beginMissionCornerClose(entry.mission, subchannelId);
+        entry.missionCloseAdmitted = true;
+      }
       const relayParentChannelId = await getParentChannelId(
         this.agentClientContext(),
         subchannelId,
@@ -12466,6 +13168,13 @@ export class Body {
       // this corner back as a candidate; record that it is finished with.
       this.untrackedCornerResolved.add(subchannelId);
     } finally {
+      if (missionCloseExecution) {
+        await this.permissionRuntime.complete({
+          execution: missionCloseExecution,
+          status: 'succeeded',
+          result: 'mission-corner-close-attempted',
+        });
+      }
       this.archivingSubchannels.delete(subchannelId);
     }
   }

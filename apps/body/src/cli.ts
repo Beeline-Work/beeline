@@ -108,6 +108,7 @@ import {
 } from './systemd.js';
 import { runRepositoryEventsService } from './events-service.js';
 import {
+  coordinateManagedUpdateHandoff,
   ManagedUpdateHandoff,
   proveLoadedReleaseReady,
   readUpdateHandoff,
@@ -628,17 +629,29 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       onProgress: async (status) => {
         // The watchdog heartbeat is coupled to this completed progress tick.
         await notifier.progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`);
-        if (await update?.check()) {
-          const handoff = await readUpdateHandoff(runtimeDir);
-          if (!handoff) throw new Error('update drift was detected without a durable handoff');
-          core.setDrainDeadlineAt(handoff.drainDeadlineAt);
-          stoppingStatus =
-            `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
-            `desired_release=${handoff.desiredRelease}; intake quiesced, draining; ` +
-            `exit_deadline=${new Date(handoff.drainDeadlineAt).toISOString()}`;
-          await notifier.stopping(stoppingStatus);
-          controller.abort();
-        }
+        if (!update) return;
+        await coordinateManagedUpdateHandoff(
+          update,
+          () => core.quiesceForUpdateIfIdle(),
+          async ({ handoff, forced }) => {
+            if (forced) await core.prepareForForcedUpdateRestart();
+            core.setDrainDeadlineAt(handoff.drainDeadlineAt);
+            stoppingStatus =
+              `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
+              `desired_release=${handoff.desiredRelease}; ` +
+              `${forced ? 'drain deadline reached, forcing restart' : 'active work drained'}; ` +
+              `intake quiesced; exit_deadline=${new Date(handoff.drainDeadlineAt).toISOString()}`;
+            await notifier.stopping(stoppingStatus);
+            controller.abort();
+          },
+          async (handoff) => {
+            await notifier.progress(
+              `loaded_release=${loadedRelease ?? 'unknown'}; update ready; ` +
+                `active agent work is still running; handoff deferred; ` +
+                `exit_deadline=${new Date(handoff.drainDeadlineAt).toISOString()}`,
+            );
+          },
+        );
       },
     });
     if (result === 'agent-removed') {

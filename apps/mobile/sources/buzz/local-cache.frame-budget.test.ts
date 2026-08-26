@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import * as React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native-mmkv', () => ({
   MMKV: class {
@@ -18,9 +22,54 @@ import {
   LIVE_EVENT_CHUNK_SIZE,
   LIVE_EVENT_FRAME_MAX_EVENTS,
 } from './local-cache-sync';
+import { useRoomSendFrame } from './room-send-frame';
+import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 
 const VIEWER = 'frame-viewer';
 const ROOM = 'charles-scale-room';
+const chatSource = readFileSync(
+  new URL('../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
+  'utf8',
+);
+const originalConsoleError = console.error;
+
+type RoomSendHook = ReturnType<typeof useRoomSendFrame>;
+
+function RoomSendHarness({
+  transcript,
+  committedIds,
+  isCorner = false,
+  capture,
+}: {
+  transcript: ChatDisplayMessage[];
+  committedIds: ReadonlySet<string>;
+  isCorner?: boolean;
+  capture: (hook: RoomSendHook) => void;
+}) {
+  const hook = useRoomSendFrame(transcript, committedIds, isCorner);
+  capture(hook);
+  return React.createElement(
+    'room-send-overlay',
+    null,
+    hook.frame.optimistic.map((message) =>
+      React.createElement('message-row', { key: message.id, messageId: message.id }, message.text),
+    ),
+  );
+}
+
+beforeAll(() => {
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) {
+      return;
+    }
+    originalConsoleError(message, ...args);
+  });
+});
+
+afterAll(() => vi.restoreAllMocks());
 
 function humanMessage(index: number): HumanMessage {
   return {
@@ -52,6 +101,141 @@ beforeEach(() => {
 });
 
 describe('FRAME-BUDGET gate', () => {
+  it('paints a populated Room send without walking the durable transcript', () => {
+    // Closest faithful non-device interaction: drive the production hook used
+    // by handleSend through a real React state update with the same 1,000-row
+    // populated transcript and optimistic row. The harness renders the same
+    // optimistic collection consumed by the production FlatList header. A
+    // Proxy makes a regression that iterates/sorts durable history fail inside
+    // act(), while the wall-clock budget covers append, React state projection,
+    // and optimistic-row render.
+    const durable = Array.from({ length: 1_000 }, (_, index) => ({
+      id: `durable-${index}`,
+      text: `Loaded Room message ${index}`,
+      isUser: index % 2 === 0,
+      timestamp: index,
+    })) as ChatDisplayMessage[];
+    const guardedDurable = new Proxy(durable, {
+      get(target, property, receiver) {
+        if (property === Symbol.iterator || property === 'map' || property === 'sort') {
+          throw new Error('Room send walked the durable transcript');
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    let optimisticIdReads = 0;
+    const optimistic = new Proxy(
+      {
+        id: 'optimistic-room-send',
+        text: 'Captain send',
+        isUser: true,
+        timestamp: 2_000,
+      } as ChatDisplayMessage,
+      {
+        get(target, property, receiver) {
+          if (property === 'id') optimisticIdReads += 1;
+          return Reflect.get(target, property, receiver);
+        },
+      },
+    );
+    const secondOptimistic = {
+      id: 'optimistic-room-send-2',
+      text: 'Captain send',
+      isUser: true,
+      timestamp: 2_001,
+    } as ChatDisplayMessage;
+    let hook!: RoomSendHook;
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(RoomSendHarness, {
+          transcript: guardedDurable,
+          committedIds: new Set<string>(),
+          capture: (next: RoomSendHook) => {
+            hook = next;
+          },
+        }),
+      );
+    });
+    const startedAt = performance.now();
+    act(() => hook.append([optimistic, secondOptimistic]));
+    const diagnosticElapsedMs = performance.now() - startedAt;
+    const modeledBlockingMs = optimisticIdReads * 0.25;
+
+    expect(hook.frame.transcript).toBe(guardedDurable);
+    expect(hook.frame.optimistic.map((message) => message.id)).toEqual([
+      'optimistic-room-send',
+      'optimistic-room-send-2',
+    ]);
+    expect(modeledBlockingMs).toBeLessThan(5);
+    expect(diagnosticElapsedMs).toBeLessThan(5);
+    expect(renderer.root.findAllByType('message-row').map((row) => row.props.messageId)).toEqual([
+      'optimistic-room-send',
+      'optimistic-room-send-2',
+    ]);
+
+    // Publish reconciliation rekeys the temporary row. Once the signed live
+    // event joins the durable pump, the committed-id filter removes the overlay
+    // so Room history never renders two copies.
+    act(() => hook.reconcile('optimistic-room-send', 'signed-room-send'));
+    act(() => {
+      renderer.update(
+        React.createElement(RoomSendHarness, {
+          transcript: guardedDurable,
+          committedIds: new Set(['signed-room-send']),
+          capture: (next: RoomSendHook) => {
+            hook = next;
+          },
+        }),
+      );
+    });
+    expect(hook.frame.transcript).toBe(guardedDurable);
+    expect(hook.frame.optimistic.map((message) => message.id)).toEqual(['optimistic-room-send-2']);
+    act(() => renderer.unmount());
+
+    expect(chatSource).toContain(
+      'useRoomSendFrame(durableMessages, committedMessageIds, isCorner)',
+    );
+    expect(chatSource).toContain('roomOptimisticHeader ??');
+    expect(chatSource).not.toContain('roomSendFrame.optimistic].reverse()');
+    expect(chatSource).toContain('invertedMessages.length > 0 || hasVisibleRoomOptimistic');
+    const sendStart = chatSource.indexOf('const handleSend = useCallback');
+    const sendEnd = chatSource.indexOf('const pickPhoto', sendStart);
+    const send = chatSource.slice(sendStart, sendEnd);
+    const appendIndex = send.indexOf('addMessages([');
+    const frameYieldIndex = send.indexOf('requestAnimationFrame(() => resolve())');
+    expect(appendIndex).toBeGreaterThanOrEqual(0);
+    expect(frameYieldIndex).toBeGreaterThan(appendIndex);
+    expect(send.slice(appendIndex, frameYieldIndex)).not.toMatch(
+      /mergeDisplayPages|cachedMessages|olderMessages|roomSendFrame/,
+    );
+  });
+
+  it('preserves the proven Corner optimistic merge ordering', () => {
+    let hook!: RoomSendHook;
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        React.createElement(RoomSendHarness, {
+          transcript: [],
+          committedIds: new Set<string>(),
+          isCorner: true,
+          capture: (next: RoomSendHook) => {
+            hook = next;
+          },
+        }),
+      );
+    });
+    act(() =>
+      hook.append([
+        { id: 'newer', text: 'newer', isUser: true, timestamp: 2 },
+        { id: 'older', text: 'older', isUser: true, timestamp: 1 },
+      ]),
+    );
+    expect(hook.frame.optimistic.map((message) => message.id)).toEqual(['older', 'newer']);
+    act(() => renderer.unmount());
+  });
+
   it('time-slices a charles-scale burst through the real live cache path', () => {
     const queue = Array.from({ length: 1_000 }, (_, index) => ({
       type: 'read-model' as const,

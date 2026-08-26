@@ -207,6 +207,27 @@ describe('no foreground-blocking network work', () => {
       expect(send).not.toMatch(/JSON\.stringify|storage\.set/);
     });
 
+    it('keeps a Room optimistic send out of the durable transcript projection', () => {
+      // A populated Room can hold far more history than a Corner tail. The
+      // optimistic row therefore occupies the inverted list's header while
+      // the stable durable data reference stays untouched; only the signed
+      // live event may enter the normal snapshot/projection pump.
+      expect(chatSource).toContain(
+        'useRoomSendFrame(durableMessages, committedMessageIds, isCorner)',
+      );
+      expect(chatSource).toContain('roomOptimisticHeader ??');
+      expect(chatSource).toContain('invertedMessages.length > 0 || hasVisibleRoomOptimistic');
+      expect(chatSource).toContain('hasVisibleRoomOptimistic ? null : (');
+      const projectionStart = chatSource.indexOf('const combinedMessages = useMemo');
+      const projectionEnd = chatSource.indexOf('// Open on the tail', projectionStart);
+      const projection = chatSource.slice(projectionStart, projectionEnd);
+      expect(projection).toContain('isCorner');
+      expect(projection).toContain('mergeDisplayPages(olderMessages, cachedMessages');
+      expect(projection).toContain(': roomSendFrame.transcript');
+      expect(projection).not.toContain('cachedMessages.map');
+      expect(projection).not.toContain('optimisticMessages.filter');
+    });
+
     it('keeps raw presence maps out of renderItem\u2019s dependencies', () => {
       // renderItem's callback is recreated whenever any dependency changes,
       // forcing VirtualizedList to re-invoke it for every visible row. The
@@ -230,7 +251,7 @@ describe('no foreground-blocking network work', () => {
       // The modal-open press handler is pure state. Anything async here would
       // run inside the tap gesture — exactly where a freeze is indistinguishable
       // from broken.
-      const press = chatSource.indexOf("onPress={() => setCornerActionsVisible(true)}");
+      const press = chatSource.indexOf('onPress={() => setCornerActionsVisible(true)}');
       expect(press).toBeGreaterThanOrEqual(0);
       expect(chatSource.slice(press, press + 80)).toContain('setCornerActionsVisible(true)');
       expect(chatSource.slice(press, press + 120)).not.toMatch(/transport|cache|await/);

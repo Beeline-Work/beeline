@@ -52,7 +52,11 @@
 #
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/compose.yml /home/lunchbox/buzz-router-relay-prod/compose.yml
 #   beeline-runner ALL=(root) NOPASSWD: /usr/bin/install -o lunchbox -g lunchbox -m 644 /home/beeline-runner/beeline-deploy-stage/nginx.conf /home/lunchbox/buzz-router-relay-prod/relay-front/nginx.conf
-#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/lunchbox/buzz-router-relay-prod/compose.yml up -d
+#   beeline-runner ALL=(root) NOPASSWD: /usr/bin/docker compose -p buzz-router-prod --env-file /home/lunchbox/buzz-router-relay-prod/.env -f /home/lunchbox/buzz-router-relay-prod/compose.yml up -d --remove-orphans
+#   beeline-runner ALL=(lunchbox) NOPASSWD: /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 /usr/bin/systemctl --user is-active beeline-events.service
+#   beeline-runner ALL=(lunchbox) NOPASSWD: /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 /usr/bin/systemctl --user is-enabled beeline-events.service
+#   beeline-runner ALL=(lunchbox) NOPASSWD: /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 /usr/bin/systemctl --user disable --now beeline-events.service
+#   beeline-runner ALL=(lunchbox) NOPASSWD: /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 /usr/bin/systemctl --user enable --now beeline-events.service
 #
 set -euo pipefail
 
@@ -82,8 +86,10 @@ trap 'rm -rf "$STAGE"' EXIT
 # ---------------------------------------------------------------------------
 OLD_MANIFEST_SHA=$(sha256sum "$WEBROOT/dl/manifest.json" 2>/dev/null | cut -d' ' -f1 || true)
 OLD_AUTH_IMAGE_ID=$(docker image inspect --format '{{.Id}}' beeline-auth:production 2>/dev/null | cut -d: -f2 || true)
+OLD_MATERIALIZER_IMAGE_ID=$(docker image inspect --format '{{.Id}}' beeline-materializer:production 2>/dev/null | cut -d: -f2 || true)
 log "live dl manifest sha: ${OLD_MANIFEST_SHA:-none}"
 log "live auth image id: ${OLD_AUTH_IMAGE_ID:-none}"
+log "live materializer image id: ${OLD_MATERIALIZER_IMAGE_ID:-none}"
 
 # ---------------------------------------------------------------------------
 # 1. Stage the whole web tree + local integrity check.
@@ -122,12 +128,19 @@ docker build -f "$CHECKOUT/apps/auth/Dockerfile" -t beeline-auth:production "$CH
   >$STAGE/auth-build.log 2>&1 || { tail -40 $STAGE/auth-build.log >&2; die "auth image build failed"; }
 tail -3 $STAGE/auth-build.log
 
-# Same discipline for the push-gateway image (#340): built BEFORE anything
-# live is touched, so a build failure costs nothing.
-log "building beeline-push-gateway:production"
-docker build -f "$CHECKOUT/apps/push-gateway/Dockerfile" -t beeline-push-gateway:production "$CHECKOUT" \
-  >$STAGE/push-build.log 2>&1 || { tail -40 $STAGE/push-build.log >&2; die "push-gateway image build failed"; }
-tail -3 $STAGE/push-build.log
+# The one materializer image hosts push, repository events, and snapshots.
+# Build it BEFORE anything live is touched, so a build failure costs nothing.
+log "building beeline-materializer:production"
+docker build -f "$CHECKOUT/apps/push-gateway/Dockerfile" -t beeline-materializer:production "$CHECKOUT" \
+  >$STAGE/materializer-build.log 2>&1 || { tail -40 $STAGE/materializer-build.log >&2; die "materializer image build failed"; }
+tail -3 $STAGE/materializer-build.log
+NEW_MATERIALIZER_IMAGE_ID=$(docker image inspect --format '{{.Id}}' beeline-materializer:production | cut -d: -f2)
+
+restore_materializer_image() {
+  if [ -n "$OLD_MATERIALIZER_IMAGE_ID" ] && [ "$OLD_MATERIALIZER_IMAGE_ID" != "$NEW_MATERIALIZER_IMAGE_ID" ]; then
+    docker tag "sha256:$OLD_MATERIALIZER_IMAGE_ID" beeline-materializer:production 2>/dev/null || return 1
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # 3. Back up the current web tree, then swap the staged one in IN PLACE.
@@ -167,6 +180,7 @@ LIVE_NGINX=$PROJECT_DIR/relay-front/nginx.conf
 STACK_STAGE_DIR=${BEELINE_STACK_STAGE_DIR:-$HOME/beeline-deploy-stage}
 STACK_DEPLOYED=0
 STACK_FAILED=0
+EVENTS_SERVICE_RETIRED=0
 
 [ -f "$REPO_STACK/compose.yml" ] || die "no relay-stack/prod/compose.yml in checkout ($CHECKOUT)"
 [ -f "$REPO_STACK/nginx.conf" ] || die "no relay-stack/prod/nginx.conf in checkout ($CHECKOUT)"
@@ -207,10 +221,10 @@ docker compose -f "$STAGE/stack/compose.validate.yml" --env-file "$STAGE/stack/.
   || die "staged compose.yml does not parse — aborting before anything was touched"
 
 # nginx -t in a throwaway container; the network aliases satisfy the upstream
-# lookups nginx performs while loading the config (relay/auth/push-gateway).
+# lookups nginx performs while loading the config (relay/auth/materializer).
 docker network create beeline-nginx-test >/dev/null 2>&1 || true
 if ! docker run --rm --network beeline-nginx-test \
-      --network-alias relay --network-alias auth --network-alias push-gateway \
+      --network-alias relay --network-alias auth --network-alias materializer \
       -v "$STAGE/stack/nginx.conf:/etc/nginx/nginx.conf:ro" \
       nginx:1.27-alpine nginx -t >/dev/null 2>&1; then
   docker network rm beeline-nginx-test >/dev/null 2>&1 || true
@@ -222,7 +236,7 @@ COMPOSE_CHANGED=0
 NGINX_CHANGED=0
 cmp -s "$STAGE/stack/compose.yml" "$LIVE_COMPOSE" || COMPOSE_CHANGED=1
 cmp -s "$STAGE/stack/nginx.conf" "$LIVE_NGINX" || NGINX_CHANGED=1
-GATEWAY_RUNNING=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=push-gateway)
+MATERIALIZER_RUNNING=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer)
 
 # place_stack_file <name> <live-dest>: copy the staged file over the live one
 # through the fixed-argument sudo rule. Used for BOTH apply and rollback
@@ -248,6 +262,34 @@ reload_relay_front_nginx() {
   log "relay-front nginx reloaded (HUP)"
 }
 
+retire_events_service() {
+  local active enabled
+  active=$(sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
+    /usr/bin/systemctl --user is-active beeline-events.service 2>&1) || true
+  enabled=$(sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
+    /usr/bin/systemctl --user is-enabled beeline-events.service 2>&1) || true
+  case "$active:$enabled" in
+    *sudo*|*denied*|*password*)
+      echo "!! cannot inspect beeline-events.service — install the fixed sudoers rules documented above" >&2
+      return 1
+      ;;
+  esac
+  if [ "$active" != "active" ] && [ "$enabled" != "enabled" ]; then return 0; fi
+  log "retiring standalone beeline-events.service before materializer convergence"
+  sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
+    /usr/bin/systemctl --user disable --now beeline-events.service \
+    || { echo "!! could not retire beeline-events.service — install the fixed sudoers rules documented above" >&2; return 1; }
+  EVENTS_SERVICE_RETIRED=1
+}
+
+restore_events_service() {
+  [ "$EVENTS_SERVICE_RETIRED" = 1 ] || return 0
+  sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
+    /usr/bin/systemctl --user enable --now beeline-events.service \
+    || echo "!! could not restore beeline-events.service — INSPECT MANUALLY" >&2
+  EVENTS_SERVICE_RETIRED=0
+}
+
 rollback_stack_config() {
   local bk="$BACKUP_ROOT/config-$TS"
   [ -d "$bk" ] || return 0
@@ -265,7 +307,7 @@ rollback_stack_config() {
 # Best-effort: used after a rollback, never hides a primary failure.
 converge_stack_runtime() {
   sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" \
-    -f "$LIVE_COMPOSE" up -d >>$STAGE/stack-up.log 2>&1 \
+    -f "$LIVE_COMPOSE" up -d --remove-orphans >>$STAGE/stack-up.log 2>&1 \
     || echo "!! converge 'compose up -d' failed after config restore — INSPECT MANUALLY" >&2
   reload_relay_front_nginx || true
 }
@@ -278,7 +320,7 @@ wait_for_stack_ready() {
   local attempt service expected cid actual all_ready
   for attempt in $(seq 1 36); do
     all_ready=1
-    for service in auth push-gateway relay relay-front; do
+    for service in auth materializer relay relay-front; do
       expected=healthy
       [ "$service" = "relay-front" ] && expected=running
       cid=$(docker ps -aq \
@@ -298,7 +340,7 @@ wait_for_stack_ready() {
     sleep 5
   done
   echo "!! production stack did not become healthy within 180s" >&2
-  for service in auth push-gateway relay relay-front; do
+  for service in auth materializer relay relay-front; do
     cid=$(docker ps -aq \
       --filter label=com.docker.compose.project=buzz-router-prod \
       --filter label=com.docker.compose.service="$service" | head -1)
@@ -310,7 +352,7 @@ wait_for_stack_ready() {
 reconcile_full_stack() {
   local compose_log=$STAGE/stack-up.log
   if sudo -n /usr/bin/docker compose -p buzz-router-prod \
-      --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d \
+      --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d --remove-orphans \
       >"$compose_log" 2>&1; then
     wait_for_stack_ready
     return
@@ -324,7 +366,7 @@ reconcile_full_stack() {
     log "compose observed a concurrently removed container; retrying convergence once"
     sleep 2
     if sudo -n /usr/bin/docker compose -p buzz-router-prod \
-        --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d \
+        --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d --remove-orphans \
         >>"$compose_log" 2>&1; then
       wait_for_stack_ready
       return
@@ -335,17 +377,17 @@ reconcile_full_stack() {
   return 1
 }
 
-recreate_auth_only() {
-  log "recreating auth container"
-  sudo -n /usr/bin/docker compose -p buzz-router-prod \
-    --env-file "$PROJECT_DIR/.env" \
-    -f "$LIVE_COMPOSE" up -d --no-deps auth \
-    || { sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d --no-deps auth 2>&1 | tail -20; return 1; }
-}
+retire_events_service || die "standalone repository-events retirement failed"
 
-if [ "$COMPOSE_CHANGED" = 0 ] && [ "$NGINX_CHANGED" = 0 ] && [ -n "$GATEWAY_RUNNING" ]; then
-  recreate_auth_only || die "compose up auth failed"
-  log "production stack unchanged — nothing to roll out"
+if [ "$COMPOSE_CHANGED" = 0 ] && [ "$NGINX_CHANGED" = 0 ] && [ -n "$MATERIALIZER_RUNNING" ]; then
+  if ! reconcile_full_stack; then
+    restore_materializer_image || true
+    converge_stack_runtime
+    restore_events_service
+    die "production image reconciliation failed"
+  fi
+  STACK_DEPLOYED=1
+  log "production config unchanged — auth and materializer images reconciled"
 else
   mkdir -p "$STACK_STAGE_DIR" "$BACKUP_ROOT/config-$TS/relay-front"
   [ "$COMPOSE_CHANGED" = 1 ] && cp -p "$LIVE_COMPOSE" "$BACKUP_ROOT/config-$TS/compose.yml"
@@ -357,21 +399,11 @@ else
   if [ "$ok" = 1 ] && [ "$NGINX_CHANGED" = 1 ]; then place_stack_file nginx.conf "$LIVE_NGINX" || ok=0; fi
 
   if [ "$ok" = 1 ]; then
-    # Full `up -d` only when the compose config changed or the gateway has
-    # never come up (e.g. the very first rollout after adoption, or a
-    # manually stopped container). An nginx-content-only change is applied
-    # with a zero-downtime HUP reload instead of any container churn.
-    if [ "$COMPOSE_CHANGED" = 1 ] || [ -z "$GATEWAY_RUNNING" ]; then
-      log "applying production stack (docker compose up -d)"
-      # One reconciliation owns auth + gateway + front, followed by an
-      # explicit container-health gate. The former auth-only `up` immediately
-      # followed by a full `up` raced the same auth container: run 32684876277
-      # served auth 502s for the whole public-verification budget, and the next
-      # run observed Docker removing a container underneath Compose.
-      reconcile_full_stack || ok=0
-    else
-      recreate_auth_only || ok=0
-    fi
+    log "applying production stack (docker compose up -d)"
+    # One reconciliation owns auth + materializer + front, followed by an
+    # explicit container-health gate. Compose leaves unchanged relay services
+    # alone while replacing both freshly built application images.
+    reconcile_full_stack || ok=0
     if [ "$ok" = 1 ] && [ "$NGINX_CHANGED" = 1 ]; then reload_relay_front_nginx || ok=0; fi
   fi
 
@@ -382,7 +414,9 @@ else
     STACK_FAILED=1
     echo "!! STACK ROLLOUT FAILED — restoring previous stack config" >&2
     rollback_stack_config
+    restore_materializer_image || true
     converge_stack_runtime
+    restore_events_service
   fi
 fi
 
@@ -468,7 +502,7 @@ verify_public() {
 NEW_AUTH_IMAGE_ID=$(docker image inspect --format '{{.Id}}' beeline-auth:production | cut -d: -f2)
 
 rollback() {
-  log "ROLLBACK: restoring previous web tree, auth image, and stack config"
+  log "ROLLBACK: restoring previous web tree, application images, and stack config"
   rsync -a -O --no-p --no-o --no-g --delete "$BAK/" "$WEBROOT/"
   if [ -n "$OLD_AUTH_IMAGE_ID" ] && [ "$OLD_AUTH_IMAGE_ID" != "$NEW_AUTH_IMAGE_ID" ]; then
     docker tag "$OLD_AUTH_IMAGE_ID" beeline-auth:rollback-prev 2>/dev/null || true
@@ -476,6 +510,7 @@ rollback() {
     sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" \
       -f "$PROJECT_DIR/compose.yml" up -d --no-deps auth || echo "!! rollback compose up failed — inspect manually" >&2
   fi
+  restore_materializer_image || echo "!! materializer image rollback failed — inspect manually" >&2
   if [ "${STACK_DEPLOYED:-0}" = "1" ]; then
     rollback_stack_config
     converge_stack_runtime
@@ -483,6 +518,7 @@ rollback() {
     # which may legitimately have no gateway — not the rolled-forward one.
     STACK_DEPLOYED=0
   fi
+  restore_events_service
 }
 
 # Public verification with a short retry loop (edge caches may lag seconds).

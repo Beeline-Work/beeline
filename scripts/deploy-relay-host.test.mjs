@@ -25,16 +25,16 @@ const TRACKED_COMPOSE = path.join(REPO, 'relay-stack', 'prod', 'compose.yml');
 const TRACKED_NGINX = path.join(REPO, 'relay-stack', 'prod', 'nginx.conf');
 
 // The live host files as they were before this change (hand-maintained,
-// untracked): the tracked copies must converge them to the push-gateway
+// untracked): the tracked copies must converge them to the materializer
 // shape. We only need a marker difference, but using the REAL pre-change
 // content keeps the first-rollout scenario honest.
 const PRE_CHANGE_COMPOSE = fs
   .readFileSync(TRACKED_COMPOSE, 'utf8')
-  .replace('beeline-push-gateway:production', 'beeline-push-gateway:OLD')
+  .replace('beeline-materializer:production', 'beeline-materializer:OLD')
   .replace(/# nginx resolves proxy_pass upstreams[\s\S]*?condition: service_healthy\n/, '');
 const PRE_CHANGE_NGINX = fs
   .readFileSync(TRACKED_NGINX, 'utf8')
-  .replace('http://push-gateway:8788/', 'http://push-host:8788/');
+  .replace('http://materializer:8788/', 'http://push-host:8788/');
 
 function mkdtemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'beeline-deploy-test.'));
@@ -63,7 +63,7 @@ case "$cmd" in
     [ "$1" = "-aq" ] && all=1
     prev=""
     for a in "$@"; do
-      if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=push-gateway" && [ -f "$STATE/gateway-running" ]; then
+      if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=materializer" && [ -f "$STATE/materializer-running" ]; then
         echo "gwcontainerid"
       fi
       if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=auth" && [ -f "$STATE/auth-running" ]; then
@@ -141,7 +141,7 @@ case "$cmd" in
           echo "simulated compose up failure" >&2
           exit 1
         fi
-        touch "$STATE/gateway-running" "$STATE/auth-running"
+        touch "$STATE/materializer-running" "$STATE/auth-running"
         ;;
     esac
     ;;
@@ -155,6 +155,10 @@ esac
 STATE=__STATE__
 echo "sudo $*" >> "$STATE/sudo.log"
 [ "$1" = "-n" ] && shift
+if [ "$1" = "-u" ]; then
+  [ "$2" = "lunchbox" ] || { echo "sudoers REFUSAL (user)" >&2; exit 1; }
+  shift 2
+fi
 case "$1" in
   /usr/bin/install)
     shift
@@ -183,9 +187,34 @@ case "$1" in
       esac
     done
     case "$rest" in
-      " up -d") exec __BIN__/docker compose -p buzz-router-prod up -d ;;
+      " up -d --remove-orphans") exec __BIN__/docker compose -p buzz-router-prod up -d --remove-orphans ;;
       " up -d --no-deps auth") exec __BIN__/docker compose -p buzz-router-prod up -d --no-deps auth ;;
       *) echo "sudoers REFUSAL (compose args):$rest" >&2; exit 1 ;;
+    esac
+    ;;
+  /usr/bin/env)
+    shift
+    [ "$1" = "XDG_RUNTIME_DIR=/run/user/1000" ] || { echo "sudoers REFUSAL (runtime dir)" >&2; exit 1; }
+    shift
+    [ "$1" = "/usr/bin/systemctl" ] && [ "$2" = "--user" ] || { echo "sudoers REFUSAL (systemctl)" >&2; exit 1; }
+    action="$3"
+    [ "$4" = "beeline-events.service" ] || [ "$5" = "beeline-events.service" ] || { echo "sudoers REFUSAL (events unit)" >&2; exit 1; }
+    case "$action" in
+      is-active)
+        if [ -f "$STATE/events-running" ]; then echo active; else echo inactive; exit 3; fi
+        ;;
+      is-enabled)
+        if [ -f "$STATE/events-running" ]; then echo enabled; else echo disabled; exit 1; fi
+        ;;
+      disable)
+        [ "$4" = "--now" ] || { echo "sudoers REFUSAL (disable args)" >&2; exit 1; }
+        rm -f "$STATE/events-running"
+        ;;
+      enable)
+        [ "$4" = "--now" ] || { echo "sudoers REFUSAL (enable args)" >&2; exit 1; }
+        touch "$STATE/events-running"
+        ;;
+      *) echo "sudoers REFUSAL (systemctl action)" >&2; exit 1 ;;
     esac
     ;;
   *)
@@ -264,7 +293,8 @@ function runDeploy(opts) {
     path.join(proj, '.env'),
     'POSTGRES_PASSWORD=real-secret\nREDIS_PASSWORD=real\nBUZZ_S3_ACCESS_KEY=k\nBUZZ_S3_SECRET_KEY=s\n',
   );
-  if (opts.gatewayRunning) write(path.join(stateDir, 'gateway-running'), '1');
+  if (opts.gatewayRunning) write(path.join(stateDir, 'materializer-running'), '1');
+  if (opts.eventsRunning !== false) write(path.join(stateDir, 'events-running'), '1');
   if (opts.failComposeUp) write(path.join(stateDir, 'fail-compose-up'), '1');
   if (opts.failComposeOnceNoContainer)
     write(path.join(stateDir, 'fail-compose-once-no-container'), '1');
@@ -323,6 +353,7 @@ function runDeploy(opts) {
         fs.existsSync(path.join(stateDir, 'docker.log'))
           ? fs.readFileSync(path.join(stateDir, 'docker.log'), 'utf8')
           : '',
+      eventsRunning: () => fs.existsSync(path.join(stateDir, 'events-running')),
     };
   });
 }
@@ -341,7 +372,7 @@ test('first rollout installs both config files, runs one full reconcile through 
     .filter((l) => l.includes('compose ') && l.includes('up -d') && !l.includes('--no-deps auth'));
   assert.equal(ups.length, 1, r.dockerLog());
   assert.ok(ups[0].includes('-p buzz-router-prod'));
-  assert.ok(ups[0].endsWith('up -d'));
+  assert.ok(ups[0].endsWith('up -d --remove-orphans'));
   assert.equal(
     r
       .sudoLog()
@@ -350,6 +381,8 @@ test('first rollout installs both config files, runs one full reconcile through 
     0,
   );
   assert.ok(r.stdout.includes('production stack health verified'));
+  assert.ok(r.sudoLog().includes('disable --now beeline-events.service'), r.sudoLog());
+  assert.equal(r.eventsRunning(), false, 'standalone events unit must stay retired after success');
 
   // nginx HUP reload happened exactly once.
   assert.equal(
@@ -374,6 +407,29 @@ test('first rollout installs both config files, runs one full reconcile through 
   );
 });
 
+function composeServices(composeText) {
+  const lines = composeText.split('\n');
+  const start = lines.findIndex((line) => line === 'services:');
+  assert.notEqual(start, -1, 'compose.yml must declare services');
+  const services = [];
+  for (let index = start + 1; index < lines.length; index++) {
+    if (/^[^\s#]/.test(lines[index])) break;
+    const match = /^  ([a-z][a-z0-9-]*):$/.exec(lines[index]);
+    if (match) services.push(match[1]);
+  }
+  return services;
+}
+
+test('tracked stacks expose one materializer service instead of separate tail processes', () => {
+  for (const relative of ['relay-stack/compose.yml', 'relay-stack/prod/compose.yml']) {
+    const services = composeServices(fs.readFileSync(path.join(REPO, relative), 'utf8'));
+    assert.equal(services.filter((service) => service === 'materializer').length, 1, relative);
+    assert.equal(services.includes('push-gateway'), false, relative);
+    assert.equal(services.includes('events'), false, relative);
+    assert.equal(services.includes('snapshot-materializer'), false, relative);
+  }
+});
+
 test('a stale-container reconciliation race retries the same full-stack operation once and succeeds', async () => {
   const r = await runDeploy({ failComposeOnceNoContainer: true });
   assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
@@ -381,12 +437,12 @@ test('a stale-container reconciliation race retries the same full-stack operatio
   const ups = r
     .sudoLog()
     .split('\n')
-    .filter((line) => line.endsWith('up -d'));
+    .filter((line) => line.endsWith('up -d --remove-orphans'));
   assert.equal(ups.length, 2, r.sudoLog());
   assert.ok(r.stdout.includes('production stack health verified'));
 });
 
-test('a config-unchanged merge updates auth without reconciling the full stack', async () => {
+test('a config-unchanged merge reconciles the freshly built auth and materializer images', async () => {
   const tracked = fs.readFileSync(TRACKED_COMPOSE, 'utf8');
   const r = await runDeploy({
     liveCompose: tracked,
@@ -394,14 +450,14 @@ test('a config-unchanged merge updates auth without reconciling the full stack',
     gatewayRunning: true,
   });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(r.stdout.includes('production stack unchanged'));
+  assert.ok(r.stdout.includes('production config unchanged'));
   assert.ok(!r.sudoLog().includes('install'), r.sudoLog());
   assert.equal(
     r
       .sudoLog()
       .split('\n')
       .filter((l) => l.includes('up -d') && !l.includes('--no-deps auth')).length,
-    0,
+    1,
     r.sudoLog(),
   );
   assert.equal(
@@ -409,12 +465,12 @@ test('a config-unchanged merge updates auth without reconciling the full stack',
       .sudoLog()
       .split('\n')
       .filter((l) => l.includes('--no-deps auth')).length,
-    1,
+    0,
   );
   assert.ok(!r.dockerLog().startsWith('kill '), r.dockerLog());
 });
 
-test('an nginx-content-only change places just nginx.conf and reloads via HUP without any compose up', async () => {
+test('an nginx-content-only change places nginx.conf, reconciles images, and reloads via HUP', async () => {
   const r = await runDeploy({
     liveCompose: fs.readFileSync(TRACKED_COMPOSE, 'utf8'),
     gatewayRunning: true,
@@ -436,10 +492,9 @@ test('an nginx-content-only change places just nginx.conf and reloads via HUP wi
     r
       .dockerLog()
       .split('\n')
-      .filter(
-        (l) => l.startsWith('compose ') && l.includes('up -d') && !l.includes('--no-deps auth'),
-      ).length,
-    0,
+      .filter((l) => l.includes('compose ') && l.includes('up -d') && !l.includes('--no-deps auth'))
+      .length,
+    1,
   );
   assert.equal(
     r
@@ -457,6 +512,7 @@ test('a failed stack rollout restores the previous config files and fails the de
   // Config files rolled back to their pre-deploy bytes.
   assert.equal(r.readLive('compose.yml'), PRE_CHANGE_COMPOSE);
   assert.equal(r.readLive('relay-front/nginx.conf'), PRE_CHANGE_NGINX);
+  assert.equal(r.eventsRunning(), true, 'failed convergence must restore standalone events');
   // The web deploy still completed and verified (web swap succeeded — the
   // staged tree mirrors the checkout's web/).
   assert.equal(
@@ -551,7 +607,11 @@ function relayFrontMounts(blockLines) {
 function relayFrontCommand(blockLines) {
   const line = blockLines.find((l) => l.startsWith('    command:'));
   if (!line) return null;
-  return JSON.parse(line.slice('    command:'.length).trim());
+  const value = line.slice('    command:'.length).trim();
+  if (value.includes("'")) {
+    return [...value.matchAll(/'([^']*)'/g)].map((match) => match[1]);
+  }
+  return JSON.parse(value);
 }
 
 test('relay-front loads nginx.conf through the enclosing read-only directory mount', () => {

@@ -1,7 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   createBuzzClient,
   createChannel,
@@ -10,8 +7,8 @@ import {
 } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging, MulticastMessage } from 'firebase-admin/messaging';
-import { PostgresEventStore } from '../src/database.js';
-import { DeliveryState } from '../src/delivery-state.js';
+import { PostgresMaterializerStore } from '../src/database.js';
+import { DeliveryState, type DeliveryStateFile } from '../src/delivery-state.js';
 import { PushGateway, RegisteredEventPoller, type RelayEventReader } from '../src/gateway.js';
 import { TokenRegistry } from '../src/registry.js';
 
@@ -28,8 +25,9 @@ function client(identity: Identity) {
 
 async function main(): Promise<void> {
   if (!databaseUrl) throw new Error('set BUZZY_PUSH_DATABASE_URL or DATABASE_URL');
-  const eventStore = new PostgresEventStore(databaseUrl);
+  const eventStore = new PostgresMaterializerStore(databaseUrl);
   await eventStore.connect();
+  await eventStore.migrateReservations();
   const reader = (pubkey: string): RelayEventReader => eventStore.readerFor(pubkey);
 
   const marker = randomUUID().slice(0, 8);
@@ -142,8 +140,9 @@ async function main(): Promise<void> {
       },
     } as unknown as Messaging;
 
-    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-live-proof-'));
-    const deliveryStateFile = join(directory, 'deliveries.json');
+    const deliveryPersistence = eventStore.reservation<DeliveryStateFile>(
+      'push-delivery-live-verification',
+    );
     const runPoll = async (state: DeliveryState, count: number): Promise<PushGateway> => {
       const gateway = new PushGateway(registry, messaging, state);
       const poller = new RegisteredEventPoller(
@@ -157,7 +156,7 @@ async function main(): Promise<void> {
       return gateway;
     };
 
-    const firstState = await DeliveryState.load(deliveryStateFile);
+    const firstState = await DeliveryState.load(deliveryPersistence);
     await runPoll(firstState, 2);
     if (captured.length !== 1) {
       throw new Error(
@@ -168,7 +167,7 @@ async function main(): Promise<void> {
       throw new Error('fixture suppression proof failed: captured payload was not the real Room');
     }
 
-    const restartedState = await DeliveryState.load(deliveryStateFile);
+    const restartedState = await DeliveryState.load(deliveryPersistence);
     await runPoll(restartedState, 1);
     if (captured.length !== 1) {
       throw new Error(

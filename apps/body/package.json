@@ -15,6 +15,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./events-service": {
+      "types": "./dist/events-service.d.ts",
+      "import": "./dist/events-service.js",
+      "default": "./dist/events-service.js"
+    },
+    "./events-state": {
+      "types": "./dist/events-state.d.ts",
+      "import": "./dist/events-state.js",
+      "default": "./dist/events-state.js"
     }
   },
   "scripts": {

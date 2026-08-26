@@ -2,6 +2,7 @@ appId: app.usebeeline.mobile
 name: Live chat stays pinned above a multiline composer
 env:
   LIVE_NSEC: ${LIVE_NSEC}
+  LIVE_HANDLE: ${LIVE_HANDLE}
   LIVE_ROOM_ID: ${LIVE_ROOM_ID}
   LIVE_AGENT_HANDLE: ${LIVE_AGENT_HANDLE}
   LIVE_LAYOUT_PROMPT: ${LIVE_LAYOUT_PROMPT}
@@ -24,6 +25,7 @@ env:
       visible:
         id: onboarding-handle-ceremony
     commands:
+      - inputText: ${LIVE_HANDLE}
       - pressKey: back
       - tapOn:
           id: onboarding-claim-handle

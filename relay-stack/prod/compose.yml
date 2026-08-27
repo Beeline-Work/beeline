@@ -89,13 +89,15 @@ services:
     networks:
       - buzz-net
 
-  # Android FCM push gateway (#340), containerized exactly as the gate stack
-  # runs it. The image is built by scripts/deploy-relay-host.sh from
-  # apps/push-gateway/Dockerfile and pinned by tag (same shape as auth above);
-  # the service account key and durable state stay in host-local paths that
-  # are deliberately NOT tracked in this repository.
-  push-gateway:
-    image: ${BUZZY_PUSH_IMAGE:-beeline-push-gateway:production}
+  # One relay-side materializer hosts push delivery, repository-event intake,
+  # and snapshot projection. Its image is built by deploy-relay-host.sh from
+  # apps/push-gateway/Dockerfile and pinned by tag (same shape as auth above).
+  # FCM credentials, device registration, and the legacy-import paths remain
+  # host-local and are deliberately not tracked in this repository.
+  materializer:
+    image: ${BUZZY_MATERIALIZER_IMAGE:-beeline-materializer:production}
+    env_file:
+      - /home/lunchbox/buzz-router-relay-prod/beeline-github.env
     environment:
       NODE_ENV: production
       PORT: '8788'
@@ -107,9 +109,13 @@ services:
       BUZZY_SNAPSHOT_PUBLIC_ORIGIN: https://usebeeline.app
       BUZZY_SNAPSHOT_AUTH_BASE_URL: http://auth:8789
       BUZZY_SNAPSHOT_INTERNAL_TOKEN: ${BUZZY_SNAPSHOT_INTERNAL_TOKEN:?set BUZZY_SNAPSHOT_INTERNAL_TOKEN}
+      XDG_STATE_HOME: ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}
+      BEELINE_EVENTS_STATE_DIR: /var/lib/beeline-events
     volumes:
       - ${BUZZY_PUSH_SA_HOST_FILE:-/home/lunchbox/buzzy-push-gateway/secrets/fcm-service-account.json}:/run/secrets/buzzy-fcm-service-account.json:ro
       - ${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}:/var/lib/buzzy-push
+      - ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:ro
+      - ${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}:/var/lib/beeline-events
     depends_on:
       auth:
         condition: service_healthy
@@ -150,11 +156,11 @@ services:
     # the -c path below, nothing there is served, and it holds no secrets.
     command: ['nginx', '-g', 'daemon off;', '-c', '/etc/beeline-front/nginx.conf']
     # nginx resolves proxy_pass upstreams at boot, so the front must not start
-    # before the push-gateway container exists on the network (same gate as the
+    # before the materializer container exists on the network (same gate as the
     # gate stack's relay-front; replaces the old static push-host:host-gateway
     # extra_host, which never had a listener behind it).
     depends_on:
-      push-gateway:
+      materializer:
         condition: service_healthy
       relay:
         condition: service_healthy

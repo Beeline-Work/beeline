@@ -1,17 +1,33 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DeliveryState } from './delivery-state.js';
+import {
+  DeliveryState,
+  type DeliveryStateFile,
+  type DeliveryStatePersistence,
+} from './delivery-state.js';
 
 const PUBKEY = 'a'.repeat(64);
 
+function durableState(): {
+  persistence: DeliveryStatePersistence;
+  value: () => DeliveryStateFile | undefined;
+} {
+  let value: DeliveryStateFile | undefined;
+  return {
+    persistence: {
+      load: async () => structuredClone(value),
+      save: async (next) => {
+        value = structuredClone(next);
+      },
+    },
+    value: () => structuredClone(value),
+  };
+}
+
 describe('DeliveryState', () => {
   it('persists a spent attention episode until it is cleared explicitly', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-attention-'));
-    const file = join(directory, 'deliveries.json');
+    const durable = durableState();
     const sourceId = 'corner-peddle';
-    const first = await DeliveryState.load(file, { now: () => 200_000 });
+    const first = await DeliveryState.load(durable.persistence, { now: () => 200_000 });
 
     await expect(
       first.reserveAttentionAttempt({
@@ -23,7 +39,7 @@ describe('DeliveryState', () => {
       }),
     ).resolves.toBe(true);
 
-    const restarted = await DeliveryState.load(file, { now: () => 900_000 });
+    const restarted = await DeliveryState.load(durable.persistence, { now: () => 900_000 });
     await expect(
       restarted.reserveAttentionAttempt({
         eventId: '2'.repeat(64),
@@ -47,31 +63,25 @@ describe('DeliveryState', () => {
   });
 
   it('persists an FCM attempt before delivery and treats it as terminal after restart', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-deliveries-'));
-    const file = join(directory, 'deliveries.json');
+    const durable = durableState();
     const eventId = 'b'.repeat(64);
-    const state = await DeliveryState.load(file, { now: () => 200_000 });
+    const state = await DeliveryState.load(durable.persistence, { now: () => 200_000 });
 
     await expect(state.reserveAttempt(eventId, 100, PUBKEY)).resolves.toBe(true);
-    const attempted = JSON.parse(await readFile(file, 'utf8')) as {
-      events: Array<{ recipients: Array<{ status: string }> }>;
-    };
+    const attempted = durable.value()!;
     expect(attempted.events[0]?.recipients[0]?.status).toBe('attempted');
 
-    const restarted = await DeliveryState.load(file, { now: () => 201_000 });
+    const restarted = await DeliveryState.load(durable.persistence, { now: () => 201_000 });
     await expect(restarted.reserveAttempt(eventId, 100, PUBKEY)).resolves.toBe(false);
     await restarted.markDelivered(eventId, PUBKEY);
 
-    const delivered = JSON.parse(await readFile(file, 'utf8')) as {
-      events: Array<{ recipients: Array<{ status: string }> }>;
-    };
+    const delivered = durable.value()!;
     expect(delivered.events[0]?.recipients[0]?.status).toBe('delivered');
   });
 
   it('bounds old event ids only after a durable cursor makes replay ineligible', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-deliveries-'));
-    const file = join(directory, 'deliveries.json');
-    const state = await DeliveryState.load(file, {
+    const durable = durableState();
+    const state = await DeliveryState.load(durable.persistence, {
       now: () => 200_000,
       retentionMs: Number.MAX_SAFE_INTEGER,
       maxEvents: 2,
@@ -83,14 +93,11 @@ describe('DeliveryState', () => {
       await state.advanceCursor(PUBKEY, index + 1);
     }
 
-    const persisted = JSON.parse(await readFile(file, 'utf8')) as {
-      cursors: Array<{ throughCreatedAt: number }>;
-      events: Array<{ eventId: string }>;
-    };
+    const persisted = durable.value()!;
     expect(persisted.events).toHaveLength(2);
     expect(persisted.cursors[0]?.throughCreatedAt).toBe(3);
 
-    const restarted = await DeliveryState.load(file, {
+    const restarted = await DeliveryState.load(durable.persistence, {
       now: () => 201_000,
       retentionMs: Number.MAX_SAFE_INTEGER,
       maxEvents: 2,

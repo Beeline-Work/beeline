@@ -180,7 +180,11 @@ LIVE_NGINX=$PROJECT_DIR/relay-front/nginx.conf
 STACK_STAGE_DIR=${BEELINE_STACK_STAGE_DIR:-$HOME/beeline-deploy-stage}
 STACK_DEPLOYED=0
 STACK_FAILED=0
+STACK_CONFIG_APPLIED=0
 EVENTS_SERVICE_RETIRED=0
+LEGACY_TAIL_PRESENT=0
+TAIL_OWNERSHIP_COMMITTED=0
+FIRST_CUTOVER_COMMITTED=0
 
 [ -f "$REPO_STACK/compose.yml" ] || die "no relay-stack/prod/compose.yml in checkout ($CHECKOUT)"
 [ -f "$REPO_STACK/nginx.conf" ] || die "no relay-stack/prod/nginx.conf in checkout ($CHECKOUT)"
@@ -237,6 +241,17 @@ NGINX_CHANGED=0
 cmp -s "$STAGE/stack/compose.yml" "$LIVE_COMPOSE" || COMPOSE_CHANGED=1
 cmp -s "$STAGE/stack/nginx.conf" "$LIVE_NGINX" || NGINX_CHANGED=1
 MATERIALIZER_RUNNING=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer)
+LEGACY_PUSH_GATEWAY_RUNNING=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=push-gateway)
+[ -z "$LEGACY_PUSH_GATEWAY_RUNNING" ] || LEGACY_TAIL_PRESENT=1
+MATERIALIZER_STARTED_AT_START=0
+MATERIALIZER_CID=$(docker ps -aq --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer | head -1)
+if [ -n "$MATERIALIZER_CID" ]; then
+  MATERIALIZER_STARTED_AT=$(docker inspect --format '{{.State.StartedAt}}' "$MATERIALIZER_CID" 2>/dev/null || true)
+  case "$MATERIALIZER_STARTED_AT" in
+    ""|0001-01-01T00:00:00Z) ;;
+    *) MATERIALIZER_STARTED_AT_START=1; TAIL_OWNERSHIP_COMMITTED=1 ;;
+  esac
+fi
 
 # place_stack_file <name> <live-dest>: copy the staged file over the live one
 # through the fixed-argument sudo rule. Used for BOTH apply and rollback
@@ -275,6 +290,7 @@ retire_events_service() {
       ;;
   esac
   if [ "$active" != "active" ] && [ "$enabled" != "enabled" ]; then return 0; fi
+  LEGACY_TAIL_PRESENT=1
   log "retiring standalone beeline-events.service before materializer convergence"
   sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
     /usr/bin/systemctl --user disable --now beeline-events.service \
@@ -284,10 +300,43 @@ retire_events_service() {
 
 restore_events_service() {
   [ "$EVENTS_SERVICE_RETIRED" = 1 ] || return 0
-  sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
-    /usr/bin/systemctl --user enable --now beeline-events.service \
-    || echo "!! could not restore beeline-events.service — INSPECT MANUALLY" >&2
-  EVENTS_SERVICE_RETIRED=0
+  [ "$TAIL_OWNERSHIP_COMMITTED" = 0 ] || return 0
+  if sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
+      /usr/bin/systemctl --user enable --now beeline-events.service; then
+    EVENTS_SERVICE_RETIRED=0
+    return 0
+  fi
+  echo "!! could not restore beeline-events.service — INSPECT MANUALLY" >&2
+  return 1
+}
+
+observe_materializer_ownership() {
+  local cid started_at
+  cid=$(docker ps -aq --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer | head -1)
+  [ -n "$cid" ] || return 1
+  started_at=$(docker inspect --format '{{.State.StartedAt}}' "$cid" 2>/dev/null || true)
+  case "$started_at" in
+    ""|0001-01-01T00:00:00Z) return 1 ;;
+  esac
+  TAIL_OWNERSHIP_COMMITTED=1
+  if [ "$LEGACY_TAIL_PRESENT" = 1 ] && [ "$MATERIALIZER_STARTED_AT_START" = 0 ]; then
+    FIRST_CUTOVER_COMMITTED=1
+  fi
+  return 0
+}
+
+cleanup_deploy() {
+  local status=$?
+  set +e
+  observe_materializer_ownership
+  if [ "$STACK_CONFIG_APPLIED" = 1 ] && [ "$STACK_DEPLOYED" = 0 ] && [ "$FIRST_CUTOVER_COMMITTED" = 0 ]; then
+    rollback_stack_config
+    converge_stack_runtime
+    STACK_CONFIG_APPLIED=0
+  fi
+  restore_events_service
+  rm -rf "$STAGE"
+  exit "$status"
 }
 
 rollback_stack_config() {
@@ -354,9 +403,11 @@ reconcile_full_stack() {
   if sudo -n /usr/bin/docker compose -p buzz-router-prod \
       --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d --remove-orphans \
       >"$compose_log" 2>&1; then
+    observe_materializer_ownership || true
     wait_for_stack_ready
     return
   fi
+  observe_materializer_ownership || true
 
   # Docker can report a stale container id if another just-finished deployment
   # removed it between Compose's plan and apply (run 32684880925). A second
@@ -368,16 +419,20 @@ reconcile_full_stack() {
     if sudo -n /usr/bin/docker compose -p buzz-router-prod \
         --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d --remove-orphans \
         >>"$compose_log" 2>&1; then
+      observe_materializer_ownership || true
       wait_for_stack_ready
       return
     fi
+    observe_materializer_ownership || true
   fi
 
   tail -20 "$compose_log" >&2
   return 1
 }
 
+trap cleanup_deploy EXIT
 retire_events_service || die "standalone repository-events retirement failed"
+observe_materializer_ownership || true
 
 if [ "$COMPOSE_CHANGED" = 0 ] && [ "$NGINX_CHANGED" = 0 ] && [ -n "$MATERIALIZER_RUNNING" ]; then
   if ! reconcile_full_stack; then
@@ -395,8 +450,14 @@ else
   cp "$STAGE/stack/compose.yml" "$STAGE/stack/nginx.conf" "$STACK_STAGE_DIR/"
 
   ok=1
-  if [ "$COMPOSE_CHANGED" = 1 ]; then place_stack_file compose.yml "$LIVE_COMPOSE" || ok=0; fi
-  if [ "$ok" = 1 ] && [ "$NGINX_CHANGED" = 1 ]; then place_stack_file nginx.conf "$LIVE_NGINX" || ok=0; fi
+  if [ "$COMPOSE_CHANGED" = 1 ]; then
+    STACK_CONFIG_APPLIED=1
+    place_stack_file compose.yml "$LIVE_COMPOSE" || ok=0
+  fi
+  if [ "$ok" = 1 ] && [ "$NGINX_CHANGED" = 1 ]; then
+    STACK_CONFIG_APPLIED=1
+    place_stack_file nginx.conf "$LIVE_NGINX" || ok=0
+  fi
 
   if [ "$ok" = 1 ]; then
     log "applying production stack (docker compose up -d)"
@@ -412,11 +473,17 @@ else
     log "production stack rolled out"
   else
     STACK_FAILED=1
-    echo "!! STACK ROLLOUT FAILED — restoring previous stack config" >&2
-    rollback_stack_config
-    restore_materializer_image || true
-    converge_stack_runtime
-    restore_events_service
+    if [ "$FIRST_CUTOVER_COMMITTED" = 1 ]; then
+      STACK_DEPLOYED=1
+      echo "!! STACK ROLLOUT FAILED AFTER MATERIALIZER START — preserving one-way tail ownership" >&2
+    else
+      echo "!! STACK ROLLOUT FAILED — restoring previous stack config" >&2
+      rollback_stack_config
+      STACK_CONFIG_APPLIED=0
+      restore_materializer_image || true
+      converge_stack_runtime
+      restore_events_service || true
+    fi
   fi
 fi
 
@@ -502,7 +569,11 @@ verify_public() {
 NEW_AUTH_IMAGE_ID=$(docker image inspect --format '{{.Id}}' beeline-auth:production | cut -d: -f2)
 
 rollback() {
-  log "ROLLBACK: restoring previous web tree, application images, and stack config"
+  if [ "$FIRST_CUTOVER_COMMITTED" = 1 ]; then
+    log "ROLLBACK: restoring previous web tree and auth image"
+  else
+    log "ROLLBACK: restoring previous web tree, application images, and stack config"
+  fi
   rsync -a -O --no-p --no-o --no-g --delete "$BAK/" "$WEBROOT/"
   if [ -n "$OLD_AUTH_IMAGE_ID" ] && [ "$OLD_AUTH_IMAGE_ID" != "$NEW_AUTH_IMAGE_ID" ]; then
     docker tag "$OLD_AUTH_IMAGE_ID" beeline-auth:rollback-prev 2>/dev/null || true
@@ -510,15 +581,20 @@ rollback() {
     sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" \
       -f "$PROJECT_DIR/compose.yml" up -d --no-deps auth || echo "!! rollback compose up failed — inspect manually" >&2
   fi
-  restore_materializer_image || echo "!! materializer image rollback failed — inspect manually" >&2
-  if [ "${STACK_DEPLOYED:-0}" = "1" ]; then
-    rollback_stack_config
-    converge_stack_runtime
-    # Post-rollback public verification must judge the RESTORED config —
-    # which may legitimately have no gateway — not the rolled-forward one.
-    STACK_DEPLOYED=0
+  if [ "$FIRST_CUTOVER_COMMITTED" = 1 ]; then
+    log "ROLLBACK: materializer tail ownership remains on Postgres"
+  else
+    restore_materializer_image || echo "!! materializer image rollback failed — inspect manually" >&2
+    if [ "${STACK_DEPLOYED:-0}" = "1" ]; then
+      rollback_stack_config
+      STACK_CONFIG_APPLIED=0
+      converge_stack_runtime
+      # Post-rollback public verification must judge the RESTORED config —
+      # which may legitimately have no gateway — not the rolled-forward one.
+      STACK_DEPLOYED=0
+    fi
   fi
-  restore_events_service
+  restore_events_service || true
 }
 
 # Public verification with a short retry loop (edge caches may lag seconds).
@@ -541,6 +617,9 @@ if [ $verified -ne 1 ]; then
 fi
 
 if [ "$STACK_FAILED" = "1" ]; then
+  if [ "$FIRST_CUTOVER_COMMITTED" = 1 ]; then
+    die "web+auth deployed and verified, but the STACK ROLLOUT FAILED after materializer ownership became irreversible — legacy consumers remain retired; inspect the stack-up log" 1
+  fi
   die "web+auth deployed and verified, but the STACK ROLLOUT FAILED and was rolled back — see the stack-up log tail above and the sudoers note in scripts/deploy-relay-host.sh" 1
 fi
 

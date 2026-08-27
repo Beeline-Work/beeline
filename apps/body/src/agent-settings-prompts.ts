@@ -21,9 +21,6 @@ import { fetchAgentModelCatalog } from './model-catalog.js';
 
 export const EFFORT_AXIS_CATEGORIES = ['thought_level', 'effort', 'reasoning_effort'] as const;
 
-/** Sentinel option value that switches the EFFORT picker to a free-text level. */
-const CUSTOM_CHOICE = '__beeline-custom__';
-
 /**
  * How many filtered choices the searchable model list shows at once before
  * clack's internal scrolling kicks in.
@@ -34,8 +31,7 @@ const SEARCH_MAX_ITEMS = 12;
 function searchMatchesChoice(input: string, choice: { id: string; name?: string }): boolean {
   const needle = input.trim().toLowerCase();
   return (
-    choice.id.toLowerCase().includes(needle) ||
-    (choice.name ?? '').toLowerCase().includes(needle)
+    choice.id.toLowerCase().includes(needle) || (choice.name ?? '').toLowerCase().includes(needle)
   );
 }
 
@@ -48,12 +44,9 @@ function searchMatchesChoice(input: string, choice: { id: string; name?: string 
  * The options getter is re-evaluated by clack on every keystroke with the
  * prompt instance as `this`, so it reads `this.userInput` and does the
  * filtering itself (no clack `filter` is passed, so the rendered list is
- * exactly what the getter returns). When the typed text is not an exact
- * choice id, one dynamic option carrying that text VERBATIM is appended, so
- * an arbitrary custom id submits directly with Enter — a catalog miss is NOT
- * evidence a model is unusable (pi passes unknown ids through as custom
- * model ids), and this replaces the old select-and-then-free-text dance with
- * one keystroke fewer while keeping the same escape hatch.
+ * exactly what the getter returns). The submitted value can only be one of
+ * the live catalog entries; typed text narrows the choices but never becomes
+ * an arbitrary identifier of its own.
  */
 async function pickSearchableChoice(
   message: string,
@@ -70,53 +63,24 @@ async function pickSearchableChoice(
       const matching = (
         input.length > 0 ? choices.filter((choice) => searchMatchesChoice(input, choice)) : choices
       ).map((choice) => ({ value: choice.id, label: choice.name ?? choice.id }));
-      const exact =
-        input.length > 0 && choices.some((choice) => choice.id.toLowerCase() === input.toLowerCase());
-      const custom =
-        input.length > 0 && !exact ? [{ value: input, label: `Use "${input}"`, hint: 'custom id' }] : [];
-      return [...matching, ...custom];
+      return matching;
     },
   });
   return unwrapPrompt(picked, 'Pairing cancelled.');
 }
 
 /**
- * Free-text entry for a model/effort id the catalog does not contain. A
- * catalog miss is NOT evidence a model is unusable — pi (among others)
- * passes unknown ids through verbatim as custom model ids — so the value is
- * taken as given and whatever the harness makes of it surfaces at runtime.
- * Empty input (bare Enter) skips the axis entirely; Ctrl-C still cancels the
- * whole pairing via `unwrapPrompt`.
- */
-async function promptCustomValue(
-  message: string,
-  placeholder: string,
-): Promise<string | undefined> {
-  // No `validate`: bare Enter must SKIP the axis (that is what the message
-  // promises), so emptiness is resolved here rather than re-prompted.
-  const picked = await clack.text({ message, placeholder });
-  const value = unwrapPrompt(picked, 'Pairing cancelled.').trim();
-  return value.length > 0 ? value : undefined;
-}
-
-/**
  * Queries the agent's own LIVE catalog (never a hardcoded list); a picker
  * only appears for an axis the agent actually advertises, and each option's
  * current default is pre-selected so pressing enter keeps the harness
- * default. The MODEL axis is a searchable list (`pickSearchableChoice`) and
- * accepts any typed id; the small EFFORT list stays a plain select with an
- * explicit custom-level escape — a value absent from the catalog may still
- * be perfectly usable (harnesses like pi accept unknown ids as custom model
- * ids), so the user is never fenced into the advertised set.
- *
- * A catalog fetch failure is NOT the end of selection either: with manual
- * entry available, both axes fall back to free-text prompts so the user can
- * still proceed deliberately instead of silently launching with the harness
- * default.
+ * default. The MODEL axis is searchable and the small EFFORT list remains a
+ * plain select. Both are closed over the live values the harness advertised.
+ * A catalog read failure aborts selection because accepting unverified text
+ * would recreate the retired-model failure this boundary exists to prevent.
  *
  * `flags.model` / `flags.effort` skip that axis's prompt (the matching CLI
  * flag was already given). Passing both returns immediately without fetching
- * the catalog — flag values are validated (warn-only) by the caller.
+ * the catalog — flag values are strictly validated by the caller.
  */
 export async function pickModelAndEffort(
   agent: AgentCommand,
@@ -130,13 +94,13 @@ export async function pickModelAndEffort(
 
   const spinner = clack.spinner();
   spinner.start(`Reading ${agent.kind}'s available models…`);
-  let catalog: AgentModelConfigOption[] | null = null;
+  let catalog: AgentModelConfigOption[];
   try {
     catalog = (await fetchAgentModelCatalog(agent, agentEnv)).catalog;
     spinner.stop('Catalog loaded.');
   } catch (error) {
-    spinner.stop('Could not read the catalog — you can still enter model/effort manually.');
-    clack.log.warn(error instanceof Error ? error.message : String(error));
+    spinner.stop('Could not read the live model catalog.');
+    throw error;
   }
 
   const modelAxis = catalog?.find((option) => option.category === 'model');
@@ -146,13 +110,6 @@ export async function pickModelAndEffort(
         `Model for this ${agent.kind} agent?`,
         modelAxis.options,
         modelAxis.currentValue,
-      );
-    } else {
-      // No usable catalog (fetch failed, or the harness advertised no model
-      // axis) — manual entry is the only path, and skipping stays allowed.
-      selection.model = await promptCustomValue(
-        `Model id for this ${agent.kind} agent? (Enter to skip)`,
-        'provider/model-id',
       );
     }
   }
@@ -164,31 +121,13 @@ export async function pickModelAndEffort(
     if (effortAxis && effortAxis.options.length > 0) {
       const picked = await clack.select<string>({
         message: `Effort/thinking level for this ${agent.kind} agent?`,
-        options: [
-          ...effortAxis.options.map((choice) => ({
-            value: choice.id,
-            label: choice.name ?? choice.id,
-          })),
-          {
-            value: CUSTOM_CHOICE,
-            label: 'Enter a custom level…',
-            hint: 'any level the list does not show',
-          },
-        ],
+        options: effortAxis.options.map((choice) => ({
+          value: choice.id,
+          label: choice.name ?? choice.id,
+        })),
         ...(effortAxis.currentValue ? { initialValue: effortAxis.currentValue } : {}),
       });
-      selection.effort =
-        picked === CUSTOM_CHOICE
-          ? await promptCustomValue(
-              `Custom effort/thinking level for this ${agent.kind} agent? (Enter to skip)`,
-              'low | medium | high | …',
-            )
-          : unwrapPrompt(picked, 'Pairing cancelled.');
-    } else {
-      selection.effort = await promptCustomValue(
-        `Effort/thinking level for this ${agent.kind} agent? (Enter to skip)`,
-        'low | medium | high | …',
-      );
+      selection.effort = unwrapPrompt(picked, 'Pairing cancelled.');
     }
   }
 

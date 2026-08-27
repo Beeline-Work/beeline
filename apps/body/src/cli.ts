@@ -29,14 +29,13 @@ import {
   LEGACY_ACCESS_POLICY,
   type AgentAccessPolicy,
 } from './access-policy.js';
-import type { AgentModelConfigOption } from '@beeline/buzz-client';
 import {
   decodeNpub,
   DEFAULT_AGENT_IDENTITY_NAME,
   DEFAULT_BODY_IDENTITY_NAME,
 } from '@beeline/buzz-client';
-import { fetchAgentModelCatalog } from './model-catalog.js';
-import { unadvertisedModelSelectionValues } from './model-config.js';
+import { validateAgentModelSelection } from './model-catalog.js';
+import { applyRuntimeModelPreflight } from './runtime-model-validation.js';
 import { pickModelAndEffort, resolveAccessSettings } from './agent-settings-prompts.js';
 import { withSpinner } from './clack-support.js';
 import { readOperatorMcpServers } from './operator-mcp.js';
@@ -416,13 +415,9 @@ function resolvePairRepository(repoFlag: string | undefined): {
 }
 
 /**
- * Check `--model`/`--effort` against the agent's own live advertised catalog
- * and WARN about anything it does not list. A catalog miss is not evidence a
- * model is unusable (pi passes unknown ids through verbatim as custom model
- * ids), so an unadvertised value is never blocked here — the harness's own
- * response at launch is the truth, and it surfaces with the value named.
- * A failed catalog fetch warns too: a deliberate `--model` must survive a
- * catalog outage. A no-op when neither flag was passed.
+ * Check model/effort against the agent's live catalog and exercise the ACP
+ * setter before anything is persisted. Unknown values, missing axes, catalog
+ * outages, and provider retirement refusals all fail closed here.
  */
 async function validateModelSelection(
   agent: AgentCommand,
@@ -430,24 +425,7 @@ async function validateModelSelection(
   selection: { model?: string; effort?: string },
 ): Promise<void> {
   if (!selection.model && !selection.effort) return;
-  let raw: AgentModelConfigOption[];
-  try {
-    ({ raw } = await fetchAgentModelCatalog(agent, agentEnv));
-  } catch (error) {
-    console.warn(
-      `[beeline] could not read ${agent.kind}'s advertised model catalog (` +
-        `${error instanceof Error ? error.message : String(error)}); applying ` +
-        '--model/--effort anyway.',
-    );
-    return;
-  }
-  for (const miss of unadvertisedModelSelectionValues(raw, selection)) {
-    console.warn(
-      miss.axisMissing
-        ? `[beeline] ${agent.kind} does not advertise a selectable ${miss.label}; "${miss.value}" will be applied as a custom value.`
-        : `[beeline] ${miss.label} "${miss.value}" is not in ${agent.kind}'s advertised catalog; it will be passed through as a custom id, and the harness may refuse it at startup.`,
-    );
-  }
+  await validateAgentModelSelection(agent, agentEnv, selection);
 }
 
 async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
@@ -536,7 +514,14 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // at daemon start so editing the file takes effect on the next daemon
   // restart, like the rest of the runtime record.
   config.operatorMcpServers = readOperatorMcpServers(dirname(configPath));
-  if (runtime.modelSelection) config.modelSelection = runtime.modelSelection;
+  if (runtime.modelSelection) {
+    await applyRuntimeModelPreflight(config, agent, runtime.modelSelection);
+    if (!config.modelUnavailable) {
+      console.log('[body] persisted model/effort selection passed live startup validation');
+    } else {
+      console.error(`[body] ${config.modelUnavailable.detail}`);
+    }
+  }
   // Pinned so corner-session git credential helpers (`corner-read-token.ts`)
   // can exec this bundle's CLI against the exact runtime record — no state-home
   // discovery inside the sandbox, where XDG dirs are deliberately relocated.
@@ -755,12 +740,12 @@ async function pairOneAgent(input: {
     );
     if (picked.model || picked.effort) modelSelection = picked;
   }
-  if (flagSelection?.model || flagSelection?.effort) {
+  if (modelSelection?.model || modelSelection?.effort) {
     await withSpinner(
       Boolean(input.interactiveUi),
-      `Checking ${selectedAgent.kind}'s advertised models…`,
-      'Model/effort selection checked.',
-      () => validateModelSelection(selectedAgent, localConfig.agentEnv, flagSelection),
+      `Validating ${selectedAgent.kind}'s live model selection…`,
+      'Model/effort selection validated.',
+      () => validateModelSelection(selectedAgent, localConfig.agentEnv, modelSelection ?? {}),
     );
   }
   const { access, autoResponse } = await resolveAccessSettings({

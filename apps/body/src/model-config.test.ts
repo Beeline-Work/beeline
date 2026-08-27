@@ -3,11 +3,12 @@ import {
   applyAgentModelSelection,
   advertisedChoiceId,
   assertModelConfigOptionAllowed,
+  assertModelSelectionAdvertised,
   DisallowedModelConfigOptionError,
   filterAllowedModelConfigOptions,
   filterModelOptionsByCredentials,
   parseAdvertisedConfigOptions,
-  unadvertisedModelSelectionValues,
+  ModelSelectionUnavailableError,
 } from './model-config.js';
 import type { AgentModelConfigOption } from '@beeline/buzz-client';
 import { CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS } from './fixtures/codex-acp-config-options.js';
@@ -31,11 +32,7 @@ function claudeLikeRaw(): unknown {
         id: 'effort',
         category: 'effort',
         currentValue: 'default',
-        options: [
-          { id: 'default' },
-          { id: 'low' },
-          { id: 'high' },
-        ],
+        options: [{ id: 'default' }, { id: 'low' }, { id: 'high' }],
       },
       {
         id: 'mode',
@@ -90,11 +87,9 @@ describe('parseAdvertisedConfigOptions', () => {
       'model',
       'thought_level',
     ]);
-    const warnings = unadvertisedModelSelectionValues(parsed, {
-      model: 'gpt-5.6-sol',
-      effort: 'high',
-    });
-    expect(warnings).toEqual([]);
+    expect(() =>
+      assertModelSelectionAdvertised(parsed, { model: 'gpt-5.6-sol', effort: 'high' }),
+    ).not.toThrow();
   });
 });
 
@@ -183,92 +178,67 @@ describe('applyAgentModelSelection — the set path', () => {
     expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'effort', 'high');
   });
 
-  it('passes a CUSTOM model id through to the harness even though no option lists it', async () => {
-    // A catalog miss is not evidence a model is unusable: pi accepts unknown
-    // ids verbatim as custom model ids, so an unadvertised value must reach
-    // `session/set_config_option` intact.
+  it('rejects an unknown or retired model before calling the harness setter', async () => {
     const setConfigOption = vi.fn().mockResolvedValue({});
-    await applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
-      model: 'openrouter/stealth/ox-alpha',
-    });
-    expect(setConfigOption).toHaveBeenCalledTimes(1);
-    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'model', 'openrouter/stealth/ox-alpha');
-  });
-
-  it('keeps the effort axis alongside a custom model — both custom values applied', async () => {
-    const setConfigOption = vi.fn().mockResolvedValue({});
-    await applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
-      model: 'openrouter/stealth/ox-alpha',
-      effort: 'xhigh',
-    });
-    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'model', 'openrouter/stealth/ox-alpha');
-    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'effort', 'xhigh');
-  });
-
-  it('surfaces the harness refusal of a custom value, naming it and quoting the message', async () => {
-    const setConfigOption = vi.fn().mockRejectedValue(new Error('unknown model id'));
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(
       applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
-        model: 'openrouter/nope/broken',
+        model: 'openrouter/stealth/ox-alpha',
       }),
-    ).resolves.toBeUndefined();
-    const logged = errorSpy.mock.calls.map((call) => call.join(' ')).join('\n');
-    expect(logged).toContain('openrouter/nope/broken');
-    expect(logged).toContain('unknown model id');
-    errorSpy.mockRestore();
-    warnSpy.mockRestore();
+    ).rejects.toMatchObject({
+      name: 'ModelSelectionUnavailableError',
+      label: 'model',
+      value: 'openrouter/stealth/ox-alpha',
+      reason: 'not-advertised',
+    });
+    expect(setConfigOption).not.toHaveBeenCalled();
   });
 
-  it('logs a warning when a custom value is applied, so the pass-through is visible', async () => {
+  it('rejects an unknown effort before applying either axis', async () => {
     const setConfigOption = vi.fn().mockResolvedValue({});
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
-      model: 'openrouter/stealth/ox-alpha',
-    });
-    const logged = warnSpy.mock.calls.map((call) => call.join(' ')).join('\n');
-    expect(logged).toContain('custom model "openrouter/stealth/ox-alpha"');
-    warnSpy.mockRestore();
+    await expect(
+      applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
+        model: 'sonnet',
+        effort: 'xhigh',
+      }),
+    ).rejects.toMatchObject({ label: 'effort', value: 'xhigh', reason: 'not-advertised' });
+    expect(setConfigOption).not.toHaveBeenCalled();
   });
 
-  it('never calls setConfigOption for a mode axis, even if a corrupted selection tried to target it', async () => {
-    const setConfigOption = vi.fn().mockResolvedValue({});
-    // No legitimate caller can populate `selection.model`/`selection.effort`
-    // with a mode-shaped value that maps to the mode axis specifically,
-    // since the target search is scoped to model/effort categories only —
-    // this proves that scoping holds even given the full raw (unfiltered)
-    // catalog including a mode axis. A mode-shaped model VALUE passes
-    // through as a custom MODEL id (covered below); the mode configId
-    // itself is unreachable by construction.
-    await applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
-      model: 'bypassPermissions',
+  it('preserves provider retirement guidance when an advertised model is refused', async () => {
+    const setConfigOption = vi
+      .fn()
+      .mockRejectedValue(new Error('Model retired; use z-ai/glm-5.3-flash instead.'));
+    await expect(
+      applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
+        model: 'sonnet',
+      }),
+    ).rejects.toMatchObject({
+      label: 'model',
+      value: 'sonnet',
+      reason: 'provider-refused',
+      guidance: 'Model retired; use z-ai/glm-5.3-flash instead.',
     });
+  });
+
+  it('never reaches a mode axis when a model-shaped value is invalid', async () => {
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    await expect(
+      applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
+        model: 'bypassPermissions',
+      }),
+    ).rejects.toBeInstanceOf(ModelSelectionUnavailableError);
     expect(setConfigOption).not.toHaveBeenCalledWith('sess-1', 'mode', expect.anything());
     expect(setConfigOption).not.toHaveBeenCalledWith('sess-1', 'fast-mode', expect.anything());
-  });
-
-  it('still refuses to SET a mode axis value even when that axis carries an unadvertised (custom-shaped) value', async () => {
-    const setConfigOption = vi.fn().mockResolvedValue({});
-    await applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {
-      model: 'bypassPermissions',
-    });
-    // 'bypassPermissions' is not a model-axis choice here, so it passes
-    // through as a custom MODEL id — the mode axis itself is never touched.
-    expect(setConfigOption).toHaveBeenCalledWith('sess-1', 'model', 'bypassPermissions');
-    expect(setConfigOption).not.toHaveBeenCalledWith('sess-1', 'mode', expect.anything());
-  });
-
-  it('logs and skips a selection whose axis category is missing entirely from the catalog', async () => {
-    const setConfigOption = vi.fn().mockResolvedValue({});
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const modelOnly = raw.filter((option) => option.category !== 'effort');
-    await applyAgentModelSelection({ setConfigOption }, 'sess-1', modelOnly, { effort: 'high' });
     expect(setConfigOption).not.toHaveBeenCalled();
-    expect(errorSpy.mock.calls.map((c) => c.join(' ')).join('\n')).toContain(
-      'no selectable effort axis',
-    );
-    errorSpy.mockRestore();
+  });
+
+  it('rejects a selection whose axis category is missing entirely from the catalog', async () => {
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    const modelOnly = raw.filter((option) => option.category !== 'effort');
+    await expect(
+      applyAgentModelSelection({ setConfigOption }, 'sess-1', modelOnly, { effort: 'high' }),
+    ).rejects.toMatchObject({ label: 'effort', reason: 'axis-missing' });
+    expect(setConfigOption).not.toHaveBeenCalled();
   });
 
   it('is a no-op when there is no persisted selection', async () => {
@@ -278,35 +248,29 @@ describe('applyAgentModelSelection — the set path', () => {
   });
 });
 
-describe('unadvertisedModelSelectionValues — the pair-time check is advisory, never blocking', () => {
+describe('assertModelSelectionAdvertised — shared strict validation', () => {
   const raw = parseAdvertisedConfigOptions(claudeLikeRaw());
 
-  it('reports nothing for a fully advertised selection', () => {
-    expect(
-      unadvertisedModelSelectionValues(raw, { model: 'sonnet', effort: 'high' }),
-    ).toEqual([]);
+  it('accepts the exact advertised model and effort', () => {
+    expect(() =>
+      assertModelSelectionAdvertised(raw, { model: 'sonnet', effort: 'high' }),
+    ).not.toThrow();
   });
 
-  it('reports an unadvertised model as a custom id, with the axis present', () => {
-    expect(unadvertisedModelSelectionValues(raw, { model: 'gpt-nonexistent' })).toEqual([
-      { label: 'model', value: 'gpt-nonexistent', axisMissing: false },
-    ]);
+  it('rejects an unadvertised model with its selected identifier', () => {
+    expect(() => assertModelSelectionAdvertised(raw, { model: 'gpt-nonexistent' })).toThrow(
+      /model "gpt-nonexistent" is unavailable/,
+    );
   });
 
-  it('reports an unadvertised effort as a custom level', () => {
-    expect(unadvertisedModelSelectionValues(raw, { effort: 'ultra' })).toEqual([
-      { label: 'effort', value: 'ultra', axisMissing: false },
-    ]);
-  });
-
-  it('flags a missing axis at all rather than inventing one', () => {
+  it('rejects a missing axis rather than inventing one', () => {
     const modelOnly = raw.filter((option) => option.category !== 'effort');
-    expect(unadvertisedModelSelectionValues(modelOnly, { effort: 'high' })).toEqual([
-      { label: 'effort', value: 'high', axisMissing: true },
-    ]);
+    expect(() => assertModelSelectionAdvertised(modelOnly, { effort: 'high' })).toThrow(
+      /does not advertise a selectable effort axis/,
+    );
   });
 
-  it('is empty when neither model nor effort was requested', () => {
-    expect(unadvertisedModelSelectionValues(raw, {})).toEqual([]);
+  it('is a no-op when neither model nor effort was requested', () => {
+    expect(() => assertModelSelectionAdvertised(raw, {})).not.toThrow();
   });
 });

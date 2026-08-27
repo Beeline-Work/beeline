@@ -14,21 +14,22 @@ import type { AgentModelConfigOption } from '@beeline/buzz-client';
 import { AcpClient } from './acp.js';
 import type { AgentCommand } from './agent-command.js';
 import {
+  applyAgentModelSelection,
   filterAllowedModelConfigOptions,
   filterModelOptionsByCredentials,
   parseAdvertisedConfigOptions,
 } from './model-config.js';
 
-/**
- * `raw` is the unfiltered catalog (what `unadvertisedModelSelectionValues`
- * checks against); `catalog` is the allow-list + credential filtered view
- * (#223's `filterAllowedModelConfigOptions`/`filterModelOptionsByCredentials`)
- * a human should actually be offered.
- */
-export async function fetchAgentModelCatalog(
+async function withAgentModelCatalog<T>(
   agent: Pick<AgentCommand, 'command' | 'args'>,
   agentEnv: Record<string, string>,
-): Promise<{ raw: AgentModelConfigOption[]; catalog: AgentModelConfigOption[] }> {
+  inspect: (input: {
+    client: AcpClient;
+    sessionId: string;
+    raw: AgentModelConfigOption[];
+    catalog: AgentModelConfigOption[];
+  }) => Promise<T>,
+): Promise<T> {
   const scratchCwd = await mkdtemp(resolve(tmpdir(), 'beeline-pair-model-check-'));
   const client = new AcpClient({
     agentCommand: agent.command,
@@ -38,12 +39,43 @@ export async function fetchAgentModelCatalog(
   });
   try {
     await client.start();
-    const { raw: sessionRaw } = await client.sessionNew({ cwd: scratchCwd });
+    const { sessionId, raw: sessionRaw } = await client.sessionNew({ cwd: scratchCwd });
     const raw = parseAdvertisedConfigOptions(sessionRaw);
     const catalog = filterModelOptionsByCredentials(filterAllowedModelConfigOptions(raw), agentEnv);
-    return { raw, catalog };
+    return await inspect({ client, sessionId, raw, catalog });
   } finally {
     await client.stop().catch(() => undefined);
     await rm(scratchCwd, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/**
+ * `raw` is the unfiltered ACP catalog retained for diagnostics; `catalog` is
+ * the allow-list + credential filtered view
+ * (#223's `filterAllowedModelConfigOptions`/`filterModelOptionsByCredentials`)
+ * a human should actually be offered.
+ */
+export async function fetchAgentModelCatalog(
+  agent: Pick<AgentCommand, 'command' | 'args'>,
+  agentEnv: Record<string, string>,
+): Promise<{ raw: AgentModelConfigOption[]; catalog: AgentModelConfigOption[] }> {
+  return withAgentModelCatalog(agent, agentEnv, async ({ raw, catalog }) => ({ raw, catalog }));
+}
+
+/**
+ * Validate and exercise a selection against one live ACP session. Exact
+ * catalog membership rejects unknown identifiers before the setter is called;
+ * the setter then gets the final word on entries a provider has retired while
+ * still advertising them, preserving its recovery guidance in the thrown
+ * `ModelSelectionUnavailableError`.
+ */
+export async function validateAgentModelSelection(
+  agent: Pick<AgentCommand, 'command' | 'args'>,
+  agentEnv: Record<string, string>,
+  selection: { model?: string; effort?: string },
+): Promise<{ raw: AgentModelConfigOption[]; catalog: AgentModelConfigOption[] }> {
+  return withAgentModelCatalog(agent, agentEnv, async ({ client, sessionId, raw, catalog }) => {
+    await applyAgentModelSelection(client, sessionId, catalog, selection);
+    return { raw, catalog };
+  });
 }

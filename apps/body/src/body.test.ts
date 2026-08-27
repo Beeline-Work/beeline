@@ -154,6 +154,7 @@ import { ROOM_READ_ONLY_STEER } from './session-sandbox.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { createCornerRequestFilter, extractCornerRequest } from './corner-request.js';
 import { GROK_WARM_SESSION_IDLE_MS } from './harness-capabilities.js';
+import { ModelSelectionUnavailableError } from './model-config.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -5987,12 +5988,17 @@ describe('Room conversation and permission-gated work intent', () => {
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
     );
-    await Reflect.get(body, 'replyInRoom').call(body, 'parent-channel', { repo: 'repo' }, {
-      eventId: event.id,
-      authorPubkey: event.pubkey,
-      content: event.content,
-      createdAt: event.created_at,
-    });
+    await Reflect.get(body, 'replyInRoom').call(
+      body,
+      'parent-channel',
+      { repo: 'repo' },
+      {
+        eventId: event.id,
+        authorPubkey: event.pubkey,
+        content: event.content,
+        createdAt: event.created_at,
+      },
+    );
     return { published, eventId: event.id };
   }
 
@@ -6013,8 +6019,8 @@ describe('Room conversation and permission-gated work intent', () => {
         'Yes — I diagnosed it and started the fix in an isolated corner so the Room stays read-only.',
     });
     expect(turnStatuses(published)).toEqual(['working', 'complete']);
-    const replies = published.filter(
-      (event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    const replies = published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
     );
     expect(replies).toHaveLength(1);
     expect(replies[0]!.content).toBe(
@@ -6028,8 +6034,8 @@ describe('Room conversation and permission-gated work intent', () => {
   it('still announces the corner when the transition turn produced no text', async () => {
     const { published } = await replyInRoomWithMidTurnCornerTransition({ agentText: '' });
     expect(turnStatuses(published)).toEqual(['working', 'complete']);
-    const replies = published.filter(
-      (event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    const replies = published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
     );
     expect(replies).toHaveLength(1);
     expect(replies[0]!.content).toContain('fix-the-retry-loop');
@@ -8339,7 +8345,9 @@ describe('per-agent access policy', () => {
       baseConfig({ accessPolicy: 'creator', accessOwnerPubkey: owner.publicKey }),
     );
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue({ openedCorner: true, producedReply: true } as never);
+    const reply = vi
+      .spyOn(body as never, 'replyInRoom' as never)
+      .mockResolvedValue({ openedCorner: true, producedReply: true } as never);
     const published = withCapturedPublishes();
     const process = drive(body);
     const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
@@ -8373,7 +8381,9 @@ describe('per-agent access policy', () => {
       baseConfig({ accessPolicy: 'everyone', accessOwnerPubkey: owner.publicKey }),
     );
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue({ openedCorner: true, producedReply: true } as never);
+    const reply = vi
+      .spyOn(body as never, 'replyInRoom' as never)
+      .mockResolvedValue({ openedCorner: true, producedReply: true } as never);
     const published = withCapturedPublishes();
     const process = drive(body);
     const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
@@ -8392,7 +8402,9 @@ describe('per-agent access policy', () => {
   it('defaults to everyone when no policy is configured (unchanged behaviour)', async () => {
     const body = new Body(baseConfig({}));
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    const reply = vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue({ openedCorner: true, producedReply: true } as never);
+    const reply = vi
+      .spyOn(body as never, 'replyInRoom' as never)
+      .mockResolvedValue({ openedCorner: true, producedReply: true } as never);
     withCapturedPublishes();
     const process = drive(body);
     const participants = [stranger.publicKey, body.agent.publicKey];
@@ -8412,7 +8424,10 @@ describe('per-agent access policy', () => {
       baseConfig({ accessPolicy: 'creator', accessOwnerPubkey: owner.publicKey }),
     );
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
-    vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue({ openedCorner: true, producedReply: true } as never);
+    vi.spyOn(body as never, 'replyInRoom' as never).mockResolvedValue({
+      openedCorner: true,
+      producedReply: true,
+    } as never);
     const published = withCapturedPublishes();
     const process = drive(body);
     const participants = [owner.publicKey, stranger.publicKey, body.agent.publicKey];
@@ -8512,6 +8527,14 @@ describe('per-agent model/effort persistence', () => {
           return jsonResponse([signed(owner, KIND_CHANNEL_ADMINS, [['d', communityId]])]);
         }
         if (kind === KIND_STREAM_MESSAGE) {
+          const markers = filter['#t'] as string[] | undefined;
+          if (markers?.includes('buzz-agent-model-unavailable')) {
+            return jsonResponse(
+              published.filter((event) =>
+                event.tags.some((tag) => tag[0] === 't' && markers.includes(tag[1] ?? '')),
+              ),
+            );
+          }
           const authors = filter.authors as string[] | undefined;
           if (!authors) return jsonResponse([agentRecord(body)]);
           return jsonResponse(authors.includes(body.agent.publicKey) ? [agentRecord(body)] : []);
@@ -8658,6 +8681,207 @@ describe('per-agent model/effort persistence', () => {
     expect(setConfigOption).toHaveBeenCalledTimes(2);
     expect(setConfigOption).toHaveBeenCalledWith('sess-3', 'model', 'sonnet');
     expect(setConfigOption).toHaveBeenCalledWith('sess-3', 'effort', 'low');
+  });
+
+  it('refuses an in-app selection that disappeared from the live session catalog', async () => {
+    const agentIdentity = newIdentity('model-config-agent-retired');
+    const body = new Body(config(), undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+    await setAgentModelConfig(
+      {
+        http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner },
+        identity: owner,
+      },
+      communityId,
+      body.agent.publicKey,
+      { model: 'stealth/ox-alpha', effort: 'high' },
+    );
+
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    await expect(
+      Reflect.get(body, 'applyModelConfigForSession').call(
+        body,
+        { setConfigOption },
+        'sess-retired',
+        communityId,
+        rawSessionNew(),
+        { channelId: 'room-retired' } as never,
+      ),
+    ).rejects.toThrow('model "stealth/ox-alpha" is unavailable');
+    expect(setConfigOption).not.toHaveBeenCalled();
+  });
+
+  it('keeps ACP work blocked and publishes the typed Room state after startup revalidation fails', async () => {
+    const agentIdentity = newIdentity('model-config-agent-unavailable');
+    const cfg = config();
+    cfg.modelSelection = { model: 'stealth/ox-alpha', effort: 'high' };
+    cfg.modelUnavailable = {
+      kind: 'model-unavailable',
+      selection: { ...cfg.modelSelection },
+      unavailable: { label: 'model', value: 'stealth/ox-alpha' },
+      detail: 'model "stealth/ox-alpha" is unavailable. Use z-ai/glm-5.3-flash instead.',
+      recovery:
+        'Open this agent’s settings, choose a value from the live model catalog, then restart the agent.',
+    };
+    const body = new Body(cfg, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+    const ordinaryWork = vi.fn(async () => undefined);
+
+    await expect(
+      Reflect.get(body, 'runOnSession').call(
+        body,
+        { channelId: 'room-unavailable', mode: 'readonly' },
+        ordinaryWork,
+      ),
+    ).rejects.toThrow('Model unavailable · stealth/ox-alpha');
+    expect(ordinaryWork).not.toHaveBeenCalled();
+
+    await Reflect.get(body, 'publishModelUnavailableState').call(body, 'room-unavailable');
+    const event = published.find((candidate) =>
+      candidate.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-agent-model-unavailable'),
+    );
+    expect(event?.content).toContain('Model unavailable · stealth/ox-alpha');
+    expect(event?.content).toContain('z-ai/glm-5.3-flash');
+    expect(event?.tags).toContainEqual(['status', 'model-unavailable']);
+  });
+
+  it('recovers only the Room whose valid human override supersedes a stale runtime default', async () => {
+    const agentIdentity = newIdentity('model-config-agent-recovered');
+    const cfg = config();
+    cfg.modelSelection = { model: 'stealth/ox-alpha', effort: 'high' };
+    cfg.modelUnavailable = {
+      kind: 'model-unavailable',
+      selection: { ...cfg.modelSelection },
+      unavailable: { label: 'model', value: 'stealth/ox-alpha' },
+      detail: 'model "stealth/ox-alpha" is unavailable.',
+      recovery:
+        'Open this agent’s settings, choose a value from the live model catalog, then restart the agent.',
+    };
+    const body = new Body(cfg, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+    await setAgentModelConfig(
+      {
+        http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner },
+        identity: owner,
+      },
+      communityId,
+      body.agent.publicKey,
+      { model: 'sonnet', effort: 'low' },
+    );
+    const validate = vi
+      .spyOn(body as never, 'validateLiveModelSelection' as never)
+      .mockResolvedValue(undefined as never);
+
+    await body.syncModelSelectionToRelay(communityId);
+
+    expect(validate).toHaveBeenCalledWith({ model: 'sonnet', effort: 'low' });
+    expect(cfg.modelUnavailable).toBeUndefined();
+    expect(cfg.modelSelection).toEqual({ model: 'sonnet', effort: 'low' });
+  });
+
+  it('blocks a retired human override even when the runtime default still validates', async () => {
+    const agentIdentity = newIdentity('model-config-agent-retired-override');
+    const cfg = config();
+    cfg.modelSelection = { model: 'sonnet', effort: 'high' };
+    const body = new Body(cfg, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+    await setAgentModelConfig(
+      {
+        http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner },
+        identity: owner,
+      },
+      communityId,
+      body.agent.publicKey,
+      { model: 'stealth/ox-alpha', effort: 'low' },
+    );
+    const validate = vi
+      .spyOn(body as never, 'validateLiveModelSelection' as never)
+      .mockRejectedValue(
+        new ModelSelectionUnavailableError({
+          label: 'model',
+          value: 'stealth/ox-alpha',
+          reason: 'not-advertised',
+          guidance: 'Use z-ai/glm-5.3-flash instead.',
+        }),
+      );
+
+    await body.syncModelSelectionToRelay(communityId);
+
+    expect(validate).toHaveBeenCalledWith({ model: 'stealth/ox-alpha', effort: 'low' });
+    expect(cfg.modelSelection).toEqual({ model: 'sonnet', effort: 'high' });
+    expect(cfg.modelUnavailable).toMatchObject({
+      kind: 'model-unavailable',
+      unavailable: { label: 'model', value: 'stealth/ox-alpha' },
+      detail: expect.stringContaining('z-ai/glm-5.3-flash'),
+    });
+  });
+
+  it('blocks a retired human override when pairing stored no runtime default', async () => {
+    const agentIdentity = newIdentity('model-config-agent-retired-only-selection');
+    const cfg = config();
+    const body = new Body(cfg, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(body, published);
+    await setAgentModelConfig(
+      {
+        http: { baseUrl: 'http://relay.test', host: 'relay.test', identity: owner },
+        identity: owner,
+      },
+      communityId,
+      body.agent.publicKey,
+      { model: 'stealth/ox-alpha' },
+    );
+    const validate = vi
+      .spyOn(body as never, 'validateLiveModelSelection' as never)
+      .mockRejectedValue(
+        new ModelSelectionUnavailableError({
+          label: 'model',
+          value: 'stealth/ox-alpha',
+          reason: 'not-advertised',
+        }),
+      );
+
+    await body.syncModelSelectionToRelay(communityId);
+
+    expect(validate).toHaveBeenCalledWith({ model: 'stealth/ox-alpha' });
+    expect(cfg.modelSelection).toBeUndefined();
+    expect(cfg.modelUnavailable).toMatchObject({
+      kind: 'model-unavailable',
+      unavailable: { label: 'model', value: 'stealth/ox-alpha' },
+    });
+  });
+
+  it('does not repeat the same startup state after a daemon restart', async () => {
+    const agentIdentity = newIdentity('model-config-agent-standing-state');
+    const unavailable = {
+      kind: 'model-unavailable' as const,
+      selection: { model: 'stealth/ox-alpha' },
+      unavailable: { label: 'model' as const, value: 'stealth/ox-alpha' },
+      detail: 'model "stealth/ox-alpha" is unavailable.',
+      recovery:
+        'Open this agent’s settings, choose a value from the live model catalog, then restart the agent.',
+    };
+    const firstConfig = config();
+    firstConfig.modelUnavailable = unavailable;
+    const first = new Body(firstConfig, undefined, agentIdentity);
+    const published: NostrEvent[] = [];
+    stubRelay(first, published);
+    await Reflect.get(first, 'publishModelUnavailableState').call(first, 'room-standing');
+
+    const restartedConfig = config();
+    restartedConfig.modelUnavailable = unavailable;
+    const restarted = new Body(restartedConfig, undefined, agentIdentity);
+    await Reflect.get(restarted, 'publishModelUnavailableState').call(restarted, 'room-standing');
+
+    expect(
+      published.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-agent-model-unavailable'),
+      ),
+    ).toHaveLength(1);
   });
 
   it('lets a human in-app selection (#223) override the pair-time default, never the reverse', async () => {
@@ -11375,8 +11599,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       expect(
         published.filter(
           (event) =>
-            event.content ===
-            'This Room already lands to staging, so there is nothing to change.',
+            event.content === 'This Room already lands to staging, so there is nothing to change.',
         ),
       ).toHaveLength(1);
       expect(published.some((event) => event.content.includes('owner must confirm'))).toBe(false);
@@ -11416,8 +11639,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       expect(
         published.filter(
           (event) =>
-            event.content ===
-            'This Room already lands to staging, so there is nothing to change.',
+            event.content === 'This Room already lands to staging, so there is nothing to change.',
         ),
       ).toHaveLength(1);
       expect(published.some((event) => event.content.includes('owner must confirm'))).toBe(false);
@@ -12598,9 +12820,9 @@ describe('harness-independent corner commit watch', () => {
         cornerState: { state: 'waiting', reason: 'review' },
       });
 
-      await expect(
-        Reflect.get(body, 'publishMergeReady').call(body, info),
-      ).rejects.toBeInstanceOf(Error);
+      await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).rejects.toBeInstanceOf(
+        Error,
+      );
 
       expect(info.mergeTarget).toBeUndefined();
       expect(info.cornerState).toEqual({ state: 'idle' });
@@ -13067,7 +13289,10 @@ describe('harness retry narration never becomes the durable Room reply', () => {
         pubkey: human.publicKey,
         created_at: Math.floor(Date.now() / 1000),
         kind: 9,
-        tags: [['h', 'parent-channel'], ['p', agentPubkey]],
+        tags: [
+          ['h', 'parent-channel'],
+          ['p', agentPubkey],
+        ],
         content,
       },
       human.secretKey,

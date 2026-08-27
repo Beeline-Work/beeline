@@ -3,6 +3,7 @@ import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { createChannel, type ChannelOpsContext } from './channel.js';
 import {
   attachCommunityMemberToChannel,
+  communityChannels,
   communityMembers,
   createCommunity,
   createInvite,
@@ -601,9 +602,10 @@ describe('community model', () => {
         avatar: 'https://media.example.test/operators.png',
       },
     ]);
-    // Membership discovery + one scoped create/metadata batch. A lossy
-    // multi-key filter would force per-community recovery round trips.
-    expect(queryBodies).toHaveLength(2);
+    // Membership discovery + one exact create/metadata read per candidate.
+    // Keeping each coordinate separate avoids both lossy multi-key matching
+    // and the on-device timeout for large filter arrays.
+    expect(queryBodies).toHaveLength(3);
   });
 
   it('resolves a non-creator owner marked at admin-tag index 3, not just index 2', async () => {
@@ -707,6 +709,35 @@ describe('community model', () => {
 
     await expect(listCommunities(ctx(), owner.publicKey, 1)).rejects.toThrow(
       /membership result reached its limit/,
+    );
+  });
+
+  it('scopes Room discovery to the selected Workspace at the relay', async () => {
+    const roomCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', channelId],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const foreignCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', 'foreign-room'],
+      [TAG_COMMUNITY, 'foreign-workspace'],
+    ]);
+    const observedFilters: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const observedFilter = filterFrom(init);
+        observedFilters.push(observedFilter);
+        return jsonResponse(
+          (observedFilter['#community'] as string[] | undefined)?.includes(communityId)
+            ? [roomCreate]
+            : [foreignCreate],
+        );
+      }),
+    );
+
+    await expect(communityChannels(ctx(), communityId)).resolves.toEqual([channelId]);
+    expect(observedFilters).toContainEqual(
+      expect.objectContaining({ '#community': [communityId] }),
     );
   });
 

@@ -33,6 +33,8 @@ env:
     visible:
       id: room-list
     timeout: 20000
+- assertVisible:
+    id: workspace-active-${SMOKE_WORKSPACE_ID}
 - assertVisible: Buzzy Maestro Smoke Workspace
 - extendedWaitUntil:
     visible:

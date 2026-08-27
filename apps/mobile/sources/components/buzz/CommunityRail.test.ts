@@ -140,6 +140,7 @@ describe('Workspace drawer', () => {
       seed: 'community-1',
       avatarUrl: 'https://example.test/night-shift.png',
     });
+    expect(renderer.root.findByProps({ testID: 'workspace-active-community-1' })).toBeDefined();
 
     const trigger = renderer.root.findByProps({ testID: 'workspace-avatar-trigger' });
     expect(trigger.props.accessibilityState).toEqual({ expanded: false });

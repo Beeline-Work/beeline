@@ -148,6 +148,9 @@ describe('operator skills + MCP passthrough', () => {
     'approval_policy = "never"',
     'sandbox_mode = "danger-full-access"',
     '',
+    '[agents]',
+    'enabled = true',
+    '',
     '[mcp_servers.squire]',
     'command = "npx"',
     'args = ["-y", "@trusty-squire/mcp"]',
@@ -214,13 +217,19 @@ describe('operator skills + MCP passthrough', () => {
 
     // The codex MCP config is a COPY carrying only mcp_servers — never a
     // symlink to the operator's real config.toml (codex-acp MERGES session MCP
-    // servers into it and would corrupt the operator's file), and none of the
-    // operator's model/sandbox/approval settings ride along.
+    // servers into it and would corrupt the operator's file). The Beeline-owned
+    // internal-agent lockdown is retained, but none of the operator's
+    // model/sandbox/approval/agent settings ride along.
     const isolatedConfig = resolve(roomRoot, 'codex', 'config.toml');
     const stats = lstatSync(isolatedConfig);
     expect(stats.isSymbolicLink()).toBe(false);
     expect(stats.isFile()).toBe(true);
     const isolatedText = readFileSync(isolatedConfig, 'utf8');
+    // This is the actual per-Room CODEX_HOME artifact, not a mocked option:
+    // Codex reads this supported setting to remove its hidden delegation tool
+    // family while ordinary Beeline-provisioned MCP tools remain available.
+    expect(isolatedText).toContain('[agents]\nenabled = false');
+    expect(isolatedText).not.toContain('enabled = true');
     expect(tomlChildTableNames(isolatedText, ['mcp_servers'])).toEqual(['project_tools']);
 
     // Writing through the session cannot reach the operator's real config.
@@ -291,7 +300,9 @@ describe('operator skills + MCP passthrough', () => {
     await writeFile(resolve(operatorHome, '.codex/config.toml'), 'model = "gpt-5-codex"\n');
     await writeFile(resolve(operatorHome, '.claude.json'), JSON.stringify({ mcpServers: {} }));
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
-    expect(existsSync(resolve(roomRoot, 'codex', 'config.toml'))).toBe(false);
+    expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toBe(
+      '[agents]\nenabled = false\n',
+    );
     expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);
   });
 
@@ -313,7 +324,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(readFileSync(redirected, 'utf8')).toBe('must stay unchanged\n');
   });
 
-  it('skips cleanly when the operator has no skills or MCP config at all', async () => {
+  it('keeps Codex delegation disabled when the operator has no shared MCP config', async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
@@ -323,8 +334,15 @@ describe('operator skills + MCP passthrough', () => {
     for (const dir of ['claude', 'codex', 'grok']) {
       // No operator skills to link, but the managed skill is still shipped.
       expect(existsSync(resolve(roomRoot, dir, 'skills', 'using-beeline', 'SKILL.md'))).toBe(true);
-      expect(existsSync(resolve(roomRoot, dir, 'config.toml'))).toBe(false);
     }
+    // Codex's collaboration tools default on, so its isolated config is
+    // intentionally present even without operator configuration. Other
+    // harnesses still have no config to generate.
+    expect(readFileSync(resolve(roomRoot, 'codex', 'config.toml'), 'utf8')).toBe(
+      '[agents]\nenabled = false\n',
+    );
+    expect(existsSync(resolve(roomRoot, 'claude', 'config.toml'))).toBe(false);
+    expect(existsSync(resolve(roomRoot, 'grok', 'config.toml'))).toBe(false);
     expect(existsSync(resolve(roomRoot, 'claude', '.claude.json'))).toBe(false);
   });
 

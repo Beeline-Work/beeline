@@ -126,12 +126,37 @@ import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
  * one-minute tick while it is the focused screen and never on a render loop. */
 const AGE_TICK_MS = 60_000;
 export const CHANNEL_BOOTSTRAP_STEP_TIMEOUT_MS = 8_000;
+export const CHANNEL_LIST_REFRESH_TIMEOUT_MS = 4_000;
 
 function withBootstrapStepTimeout<T>(promise: Promise<T>, step: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`${step} timed out after ${CHANNEL_BOOTSTRAP_STEP_TIMEOUT_MS}ms`)),
       CHANNEL_BOOTSTRAP_STEP_TIMEOUT_MS,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function withChannelListRefreshTimeout<T>(promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Refreshing ${ROOMS_LABEL} timed out after ${CHANNEL_LIST_REFRESH_TIMEOUT_MS}ms`,
+          ),
+        ),
+      CHANNEL_LIST_REFRESH_TIMEOUT_MS,
     );
     promise.then(
       (value) => {
@@ -417,16 +442,6 @@ async function enrichDisplayChannels(
   );
 }
 
-async function loadDisplayChannels(
-  transport: BuzzRigTransport,
-  activeCommunityId: string | null,
-  communities: Community[],
-  viewerPubkey: string,
-): Promise<ChannelDisplayItem[]> {
-  const basics = await loadDisplayChannelBasics(transport, activeCommunityId, communities);
-  return enrichDisplayChannels(transport, basics, activeCommunityId, viewerPubkey);
-}
-
 export default function BuzzChannels() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
@@ -690,19 +705,20 @@ export default function BuzzChannels() {
           loadDisplayChannelBasics(nextTransport, active, available),
           `Loading ${ROOMS_LABEL}`,
         );
+        const cacheState = useBuzzLocalCache.getState();
+        const existing =
+          cacheState.channelLists[channelListCacheKey(currentIdentity.publicKey, active)];
+        const visibleBasics = mergeChannelBasicsWithCache(channels, existing?.channels);
         if (isCurrent()) {
           setCommunities(available);
           setActiveCommunityId(active);
           setPersonalWorkspaceId(personal);
           setViewerIsAgent(identityIsAgent);
-          const cacheState = useBuzzLocalCache.getState();
-          const existing =
-            cacheState.channelLists[channelListCacheKey(currentIdentity.publicKey, active)];
           const now = Date.now();
           cacheState.setChannelList({
             viewerPubkey: currentIdentity.publicKey,
             communityId: active,
-            channels: mergeChannelBasicsWithCache(channels, existing?.channels),
+            channels: visibleBasics,
             directMessages: existing?.directMessages ?? [],
             workspaceMembers: existing?.workspaceMembers ?? [],
             communities: available,
@@ -727,7 +743,7 @@ export default function BuzzChannels() {
             active
               ? client.getPersonProfile(active, currentIdentity.publicKey)
               : Promise.resolve(null),
-            enrichDisplayChannels(nextTransport, channels, active, currentIdentity.publicKey),
+            enrichDisplayChannels(nextTransport, visibleBasics, active, currentIdentity.publicKey),
             active
               ? loadDirectMessageDisplays(
                   nextTransport,
@@ -744,10 +760,12 @@ export default function BuzzChannels() {
           setCanEditWorkspaceAvatar(roster.canEditAvatar);
           const now = Date.now();
           const cacheState = useBuzzLocalCache.getState();
+          const latest =
+            cacheState.channelLists[channelListCacheKey(currentIdentity.publicKey, active)];
           cacheState.setChannelList({
             viewerPubkey: currentIdentity.publicKey,
             communityId: active,
-            channels: enriched,
+            channels: mergeChannelBasicsWithCache(enriched, latest?.channels),
             directMessages: dms,
             workspaceMembers: roster.members,
             communities: available,
@@ -875,85 +893,19 @@ export default function BuzzChannels() {
       }
       setError(null);
       try {
-        const client = await transport.ensureClient();
-        const workspaceContext = await prepareWorkspaceContext(
-          client,
-          identity.publicKey,
-          activeCommunityId ?? undefined,
-          undefined,
-          {
-            knownWorkspaces: selectKnownCommunities(
-              useBuzzLocalCache.getState(),
-              identity.publicKey,
-            ),
-            loadPredecessors: async () =>
-              loadSuccessionPredecessors(
-                relayUrl && relayUrl !== DEFAULT_RELAY_URL
-                  ? relayUrl
-                  : await getEffectiveRelayUrl(),
-                identity,
-              ),
-            deferSelectionPersistence: true,
-          },
+        // The foreground contract is only the structural Room-list snapshot.
+        // Workspace repair, profiles, transcripts, repositories, agents, and
+        // DMs hydrate independently below and never own the pull spinner.
+        const channels = await withChannelListRefreshTimeout(
+          loadDisplayChannelBasics(transport, activeCommunityId, communities),
         );
-        const {
-          workspaces: available,
-          activeWorkspaceId: active,
-          personalWorkspaceId: personal,
-          cacheReconciliation,
-        } = workspaceContext;
-        if (!isCurrent()) return;
-        await workspaceContext.commitSelection?.();
-        if (cacheReconciliation === 'authoritative' && isCurrent()) {
-          useBuzzLocalCache.getState().reconcileWorkspaceSet(identity.publicKey, available, active);
-        }
-        await ensurePersonNameForWorkspace(client, active, identity.publicKey);
-        if (!isCurrent()) return;
-        setCommunities(available);
-        setActiveCommunityId(active);
-        setPersonalWorkspaceId(personal);
-        const channels = await loadDisplayChannelBasics(transport, active, available);
         if (!isCurrent()) return;
         const cacheState = useBuzzLocalCache.getState();
-        const existing = cacheState.channelLists[channelListCacheKey(identity.publicKey, active)];
-        cacheState.patchChannelList(identity.publicKey, active, {
+        const existing =
+          cacheState.channelLists[channelListCacheKey(identity.publicKey, activeCommunityId)];
+        cacheState.patchChannelList(identity.publicKey, activeCommunityId, {
           channels: mergeChannelBasicsWithCache(channels, existing?.channels),
-          communities: available,
         });
-        const roster = active
-          ? await loadWorkspaceRoster(transport, active, identity.publicKey)
-          : { members: [], profiles: [], canEditAvatar: false };
-        const [enriched, viewerProfile, dms] = await Promise.all([
-          enrichDisplayChannels(transport, channels, active, identity.publicKey),
-          active ? client.getPersonProfile(active, identity.publicKey) : Promise.resolve(undefined),
-          active
-            ? loadDirectMessageDisplays(transport, active, identity.publicKey, roster.members)
-            : Promise.resolve([]),
-        ]);
-        if (!isCurrent()) return;
-        setViewerAvatarUrl(viewerProfile?.avatar);
-        setCanEditWorkspaceAvatar(roster.canEditAvatar);
-        const now = Date.now();
-        cacheState.setChannelList({
-          viewerPubkey: identity.publicKey,
-          communityId: active,
-          channels: enriched,
-          directMessages: dms,
-          workspaceMembers: roster.members,
-          communities: available,
-          personalWorkspaceId: personal,
-          viewerIsAgent,
-          viewerAvatarUrl: viewerProfile?.avatar,
-          canEditWorkspaceAvatar: roster.canEditAvatar,
-          updatedAt: now,
-          lastAccessedAt: now,
-        });
-        if (active) {
-          cacheState.replaceProfiles(identity.publicKey, active, [
-            ...roster.profiles,
-            ...(viewerProfile ? [viewerProfile] : []),
-          ]);
-        }
       } catch (err) {
         if (isCurrent()) setError(String(err));
       } finally {
@@ -962,8 +914,102 @@ export default function BuzzChannels() {
           setRefreshing(false);
         }
       }
+
+      void (async () => {
+        try {
+          const client = await transport.ensureClient();
+          const workspaceContext = await prepareWorkspaceContext(
+            client,
+            identity.publicKey,
+            activeCommunityId ?? undefined,
+            undefined,
+            {
+              knownWorkspaces: selectKnownCommunities(
+                useBuzzLocalCache.getState(),
+                identity.publicKey,
+              ),
+              loadPredecessors: async () =>
+                loadSuccessionPredecessors(
+                  relayUrl && relayUrl !== DEFAULT_RELAY_URL
+                    ? relayUrl
+                    : await getEffectiveRelayUrl(),
+                  identity,
+                ),
+              deferSelectionPersistence: true,
+            },
+          );
+          const {
+            workspaces: available,
+            activeWorkspaceId: active,
+            personalWorkspaceId: personal,
+            cacheReconciliation,
+          } = workspaceContext;
+          if (!isCurrent()) return;
+          await workspaceContext.commitSelection?.();
+          if (cacheReconciliation === 'authoritative' && isCurrent()) {
+            useBuzzLocalCache
+              .getState()
+              .reconcileWorkspaceSet(identity.publicKey, available, active);
+          }
+          await ensurePersonNameForWorkspace(client, active, identity.publicKey);
+          const freshBasics = await loadDisplayChannelBasics(transport, active, available);
+          if (!isCurrent()) return;
+          setCommunities(available);
+          setActiveCommunityId(active);
+          setPersonalWorkspaceId(personal);
+          const beforeHydration = useBuzzLocalCache.getState();
+          const existing =
+            beforeHydration.channelLists[channelListCacheKey(identity.publicKey, active)];
+          const visibleBasics = mergeChannelBasicsWithCache(freshBasics, existing?.channels);
+          beforeHydration.patchChannelList(identity.publicKey, active, {
+            channels: visibleBasics,
+            communities: available,
+          });
+          const roster = active
+            ? await loadWorkspaceRoster(transport, active, identity.publicKey)
+            : { members: [], profiles: [], canEditAvatar: false };
+          const [enriched, viewerProfile, dms] = await Promise.all([
+            enrichDisplayChannels(transport, visibleBasics, active, identity.publicKey),
+            active
+              ? client.getPersonProfile(active, identity.publicKey)
+              : Promise.resolve(undefined),
+            active
+              ? loadDirectMessageDisplays(transport, active, identity.publicKey, roster.members)
+              : Promise.resolve([]),
+          ]);
+          if (!isCurrent()) return;
+          setViewerAvatarUrl(viewerProfile?.avatar);
+          setCanEditWorkspaceAvatar(roster.canEditAvatar);
+          const now = Date.now();
+          const cacheState = useBuzzLocalCache.getState();
+          const latest = cacheState.channelLists[channelListCacheKey(identity.publicKey, active)];
+          cacheState.setChannelList({
+            viewerPubkey: identity.publicKey,
+            communityId: active,
+            channels: mergeChannelBasicsWithCache(enriched, latest?.channels),
+            directMessages: dms,
+            workspaceMembers: roster.members,
+            communities: available,
+            personalWorkspaceId: personal,
+            viewerIsAgent,
+            viewerAvatarUrl: viewerProfile?.avatar,
+            canEditWorkspaceAvatar: roster.canEditAvatar,
+            updatedAt: now,
+            lastAccessedAt: now,
+          });
+          if (active) {
+            cacheState.replaceProfiles(identity.publicKey, active, [
+              ...roster.profiles,
+              ...(viewerProfile ? [viewerProfile] : []),
+            ]);
+          }
+          setError(null);
+        } catch (err) {
+          if (isCurrent()) console.warn(`${ROOMS_LABEL} hydration failed:`, err);
+        }
+      })();
     },
-    [activeCommunityId, identity, transport, viewerIsAgent],
+    [activeCommunityId, communities, identity, relayUrl, transport, viewerIsAgent],
   );
 
   // A newly-created Workspace is already relay-backed, but device Back can reveal
@@ -1232,6 +1278,18 @@ export default function BuzzChannels() {
         ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
       });
       await client.waitUntilMember(channelId, client.identity.publicKey);
+      const createdAt = Math.floor(Date.now() / 1_000);
+      useBuzzLocalCache.getState().upsertConfirmedChannel(identity.publicKey, activeCommunityId, {
+        id: channelId,
+        active: true,
+        title: name,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      setChannelName('');
+      setShowCreateChannel(false);
+      setPendingRepo(null);
+      setShowRepoPicker(false);
       if (pendingRepo?.remote) {
         try {
           await client.setRoomRepository(channelId, {
@@ -1248,19 +1306,7 @@ export default function BuzzChannels() {
           setError(`${ROOM_LABEL} created, but could not link the repo: ${String(err)}`);
         }
       }
-      setChannelName('');
-      setShowCreateChannel(false);
-      setPendingRepo(null);
-      setShowRepoPicker(false);
-      const channels = await loadDisplayChannels(
-        transport,
-        activeCommunityId,
-        communities,
-        identity.publicKey,
-      );
-      useBuzzLocalCache
-        .getState()
-        .patchChannelList(identity.publicKey, activeCommunityId, { channels });
+      void handleRefresh(false);
     } catch (err) {
       setError(`Could not create ${ROOM_LABEL}: ${String(err)}`);
     } finally {
@@ -1269,7 +1315,7 @@ export default function BuzzChannels() {
   }, [
     activeCommunityId,
     channelName,
-    communities,
+    handleRefresh,
     identity,
     pendingRepo,
     transport,
@@ -1566,7 +1612,10 @@ export default function BuzzChannels() {
 
   if (!cachedListEntry) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View
+        style={[styles.container, { paddingTop: insets.top }]}
+        testID={refreshing ? 'room-list-refreshing' : 'room-list-idle'}
+      >
         <View accessibilityRole="alert" style={styles.errorPanel}>
           <Text style={styles.errorLabel}>! ERROR</Text>
           <Text accessibilityRole="alert" style={styles.errorText}>
@@ -1615,7 +1664,10 @@ export default function BuzzChannels() {
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={viewerAvatarUrl}
     >
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View
+        style={[styles.container, { paddingTop: insets.top }]}
+        testID={refreshing ? 'room-list-refreshing' : 'room-list-idle'}
+      >
         {/* Chrome carries no surface of its own: the index and its header are
             the same slab, parted by one hairline. */}
         <View style={styles.header}>
@@ -1668,7 +1720,7 @@ export default function BuzzChannels() {
                 disabled: !channelName.trim() || creatingChannel,
                 label: creatingChannel ? 'Creating' : 'Create',
                 onPress: () => void handleCreateChannel(),
-                testID: 'new-room-create',
+                testID: 'create-room-submit',
                 variant: 'primary',
               },
             ]}
@@ -1687,7 +1739,7 @@ export default function BuzzChannels() {
                 onChangeText={setChannelName}
                 onSubmitEditing={() => void handleCreateChannel()}
                 placeholder="#room-name"
-                testID="new-room-input"
+                testID="create-room-name"
                 value={channelName}
               />
               <TouchableOpacity

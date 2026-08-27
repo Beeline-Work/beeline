@@ -380,7 +380,7 @@ describe('one home surface for every Workspace kind', () => {
     expect(dialog.props.actions[1]).toMatchObject({
       disabled: true,
       label: 'Create',
-      testID: 'new-room-create',
+      testID: 'create-room-submit',
       variant: 'primary',
     });
     const input = tree.root.findByType('HullDialogInput' as any);
@@ -388,7 +388,7 @@ describe('one home surface for every Workspace kind', () => {
       accessibilityLabel: 'Room name',
       editable: true,
       placeholder: '#room-name',
-      testID: 'new-room-input',
+      testID: 'create-room-name',
     });
     expect(hostByTestID(tree, 'create-room-repo-row')).toBeDefined();
 

@@ -1,13 +1,24 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { NIP98_KIND, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import { NIP98_KIND, verifyEvent, verifyNip98Header, type NostrEvent } from '@beeline/nostr';
+import {
+  CHANNEL_SNAPSHOT_MAX_BYTES,
+  guardStoredChannelSnapshotV1,
+  snapshotViewerOverlay,
+} from '@beeline/buzz-client';
 import { TokenRegistry } from './registry.js';
 import type { TestSendReport } from './gateway.js';
+import type { SnapshotQueueStatus, ViewerSnapshotRow } from './snapshot-store.js';
 
 const MAX_BODY_BYTES = 32 * 1024;
 const NON_PRODUCTION_ENVIRONMENTS = new Set(['test', 'emulator', 'simulator']);
 
-function json(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, { 'content-type': 'application/json' });
+function json(
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Readonly<Record<string, string>> = {},
+): void {
+  response.writeHead(status, { 'content-type': 'application/json', ...headers });
   response.end(`${JSON.stringify(body)}\n`);
 }
 
@@ -51,6 +62,56 @@ function authenticatedPubkey(request: IncomingMessage): string | null {
 export interface RegistrationServerHooks {
   /** Operator proof-of-delivery; required for the authenticated /test-send route. */
   sendTest?: (pubkey: string) => Promise<TestSendReport>;
+  /** Push health is distinct from snapshot materialization/read health. */
+  pushHealth?: () => { readonly ok: boolean; readonly reason?: string };
+  snapshot?: {
+    readonly publicOrigin: string;
+    readonly maxLagMs?: number;
+    readonly now?: () => number;
+    readonly readForViewer: (
+      channelId: string,
+      pubkey: string,
+    ) => Promise<ViewerSnapshotRow | null>;
+    readonly claimNip98Event: (eventId: string) => Promise<boolean>;
+    readonly status?: () => Promise<SnapshotQueueStatus & { readonly warmed?: boolean }>;
+    readonly log?: (line: string) => void;
+  };
+}
+
+const CHANNEL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SNAPSHOT_PATH = /^\/snapshot\/channel\/([^/?#]+)$/;
+const SNAPSHOT_PRIVATE_HEADERS = {
+  'cache-control': 'private, no-store',
+  vary: 'Authorization',
+} as const;
+
+function snapshotUnavailable(response: ServerResponse, reason: string): void {
+  json(
+    response,
+    503,
+    { error: 'snapshot_not_ready', reason },
+    { ...SNAPSHOT_PRIVATE_HEADERS, 'retry-after': '1' },
+  );
+}
+
+function logSnapshot(
+  snapshot: NonNullable<RegistrationServerHooks['snapshot']>,
+  line: string,
+): void {
+  try {
+    snapshot.log?.(line);
+  } catch {}
+}
+
+function matchesSnapshotOrigin(request: IncomingMessage, publicOrigin: string): boolean {
+  const forwardedProtocol = request.headers['x-forwarded-proto'];
+  if (forwardedProtocol === undefined) return true;
+  if (Array.isArray(forwardedProtocol)) return false;
+  const expected = new URL(publicOrigin);
+  return (
+    forwardedProtocol.toLowerCase() === expected.protocol.slice(0, -1) &&
+    request.headers.host?.toLowerCase() === expected.host.toLowerCase()
+  );
 }
 
 export function createRegistrationServer(
@@ -60,12 +121,134 @@ export function createRegistrationServer(
   return createServer(async (request, response) => {
     try {
       if (request.method === 'GET' && request.url === '/health') {
-        json(response, 200, {
-          ok: true,
+        const pushHealth = hooks.pushHealth?.() ?? { ok: true };
+        json(response, pushHealth.ok ? 200 : 503, {
+          ok: pushHealth.ok,
+          ...(pushHealth.reason ? { reason: pushHealth.reason } : {}),
           registeredPubkeys: registry.pubkeyCount,
           registeredDevices: registry.tokenCount,
         });
         return;
+      }
+
+      if (request.method === 'GET' && request.url === '/snapshot/health' && hooks.snapshot) {
+        const status = (await hooks.snapshot.status?.()) ?? {
+          depth: 0,
+          oldestDirtyAgeMs: 0,
+        };
+        json(response, 200, { ok: true, ...status });
+        return;
+      }
+
+      const snapshotMatch = request.method === 'GET' ? request.url?.match(SNAPSHOT_PATH) : null;
+      if (snapshotMatch && hooks.snapshot) {
+        const startedAt = performance.now();
+        let status = 500;
+        const requestedChannelId = snapshotMatch[1]!;
+        const channelId = requestedChannelId.toLowerCase();
+        try {
+          if (!CHANNEL_ID.test(requestedChannelId) || requestedChannelId !== channelId) {
+            status = 404;
+            json(response, status, { error: 'not_found' }, SNAPSHOT_PRIVATE_HEADERS);
+            return;
+          }
+          if (!matchesSnapshotOrigin(request, hooks.snapshot.publicOrigin)) {
+            status = 401;
+            json(
+              response,
+              status,
+              { error: 'valid_identity_authorization_required' },
+              SNAPSHOT_PRIVATE_HEADERS,
+            );
+            return;
+          }
+          const path = `/snapshot/channel/${channelId}`;
+          const expectedUrl = `${hooks.snapshot.publicOrigin}${path}`;
+          const auth = verifyNip98Header(
+            request.headers.authorization,
+            expectedUrl,
+            'GET',
+            new Date(hooks.snapshot.now?.() ?? Date.now()),
+            60,
+          );
+          if (!auth.ok || !(await hooks.snapshot.claimNip98Event(auth.eventId))) {
+            status = 401;
+            json(
+              response,
+              status,
+              { error: 'valid_identity_authorization_required' },
+              SNAPSHOT_PRIVATE_HEADERS,
+            );
+            return;
+          }
+          const row = await hooks.snapshot.readForViewer(channelId, auth.pubkey);
+          if (!row) {
+            status = 404;
+            json(response, status, { error: 'not_found' }, SNAPSHOT_PRIVATE_HEADERS);
+            return;
+          }
+          if (!Object.hasOwn(row, 'payload') || !Object.hasOwn(row, 'digest')) {
+            status = 503;
+            snapshotUnavailable(response, 'missing');
+            return;
+          }
+          if (row.lagMs > (hooks.snapshot.maxLagMs ?? 30_000)) {
+            status = 503;
+            snapshotUnavailable(response, 'stale');
+            return;
+          }
+          const digest = typeof row.digest === 'string' ? row.digest : '';
+          const stored = guardStoredChannelSnapshotV1(row.payload, channelId, digest);
+          if (stored.status !== 'ready') {
+            status = 503;
+            snapshotUnavailable(response, 'incompatible_or_corrupt');
+            return;
+          }
+          const view = {
+            ...stored.payload,
+            lagMs: row.lagMs,
+            viewer: snapshotViewerOverlay(stored.payload, auth.pubkey),
+            integrity: {
+              algorithm: 'sha256' as const,
+              scope: 'stored-channel-snapshot-v1' as const,
+              digest,
+            },
+          };
+          const serialized = `${JSON.stringify(view)}\n`;
+          if (Buffer.byteLength(serialized) > CHANNEL_SNAPSHOT_MAX_BYTES) {
+            status = 503;
+            snapshotUnavailable(response, 'incompatible_or_corrupt');
+            return;
+          }
+          status = 200;
+          response.writeHead(status, {
+            'content-type': 'application/json',
+            ...SNAPSHOT_PRIVATE_HEADERS,
+            'x-beeline-snapshot-schema': String(stored.payload.schemaVersion),
+            'x-beeline-snapshot-projection': String(stored.payload.projectionVersion),
+            'x-beeline-snapshot-integrity': digest,
+          });
+          response.end(serialized);
+          return;
+        } catch (error) {
+          status = 503;
+          let detail = 'unknown snapshot failure';
+          try {
+            detail = error instanceof Error ? error.message : String(error);
+          } catch {}
+          logSnapshot(
+            hooks.snapshot,
+            `[snapshot] get failed channel=${channelId} error=${JSON.stringify(detail)}`,
+          );
+          if (response.headersSent) response.destroy();
+          else snapshotUnavailable(response, 'temporarily_unavailable');
+          return;
+        } finally {
+          logSnapshot(
+            hooks.snapshot,
+            `[snapshot] get channel=${channelId} status=${status} duration_ms=${Math.round(performance.now() - startedAt)}`,
+          );
+        }
       }
 
       if (request.method === 'POST' && request.url === '/registrations') {
@@ -109,7 +292,7 @@ export function createRegistrationServer(
           json(response, 401, { error: 'valid identity authorization required' });
           return;
         }
-        if (!hooks.sendTest) {
+        if (!hooks.sendTest || hooks.pushHealth?.().ok === false) {
           json(response, 503, { error: 'test-send unavailable' });
           return;
         }

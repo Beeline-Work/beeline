@@ -1,5 +1,12 @@
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { normalizeAttachmentReference, type AttachmentReference } from '../attachment.js';
+import {
+  CHANGE_REVIEW_COMPLETE_TAG,
+  CHANGE_REVIEW_GENERATION_TAG,
+  CHANGE_REVIEW_MANIFEST_TAG,
+  parseChangeReviewGenerationComplete,
+  parseChangeReviewManifest,
+} from '../change-review.js';
 import type { CornerMachineState } from '../corner-state.js';
 import { parseScheduledTurnReceipt } from '../scheduled-turn.js';
 import {
@@ -24,7 +31,9 @@ import {
   TAG_AGENT_THOUGHT,
   TAG_AGENT_PRESENCE,
   TAG_CORNER_STATE,
+  TAG_MERGE_APPROVAL,
   TAG_PARENT,
+  TAG_ROOM_REPOSITORY,
 } from '../kinds.js';
 import {
   PERMISSION_DECISION_MARKER,
@@ -36,6 +45,11 @@ import {
   parsePermissionRequest,
   parsePermissionRevocation,
 } from '../permission-request.js';
+import {
+  advanceRoomRepositorySequence,
+  parseRoomRepository,
+  type RoomRepositorySequenceBinding,
+} from '../room-repository.js';
 import type {
   Activity,
   ActivityDetail,
@@ -202,8 +216,23 @@ function isAdmin(authority: ParseAuthority, channelId: string, pubkey: string): 
   return authority.channelAdmins?.[channelId]?.includes(pubkey) ?? false;
 }
 
+function isOwner(authority: ParseAuthority, channelId: string, pubkey: string): boolean {
+  return (
+    authority.channelCreators?.[channelId] === pubkey ||
+    (authority.channelOwners?.[channelId]?.includes(pubkey) ?? false)
+  );
+}
+
 function isProjectionAuthority(authority: ParseAuthority, pubkey: string): boolean {
   return authority.trustedProjectionPubkeys?.includes(pubkey) ?? false;
+}
+
+function isHistoricalMessageAuthor(
+  authority: ParseAuthority,
+  channelId: string,
+  pubkey: string,
+): boolean {
+  return authority.historicalMessagePubkeys?.[channelId]?.includes(pubkey) ?? false;
 }
 
 function role(value: string | undefined): MemberRole {
@@ -217,6 +246,7 @@ export type RelayAuthorityFacts = {
   readonly memberPubkeys: readonly string[];
   readonly trustedProjectionPubkeys: readonly string[];
   readonly cornerIdsByParent: Readonly<Record<string, readonly string[]>>;
+  readonly identityHints: Readonly<Record<string, IdentityRecord>>;
 };
 
 /**
@@ -233,6 +263,8 @@ export function deriveRelayAuthorityFacts(events: readonly NostrEvent[]): RelayA
   const memberPubkeys = new Set<string>();
   const trustedProjectionPubkeys = new Set<string>();
   const cornerIdsByParent = new Map<string, Set<string>>();
+  const identityHints: Record<string, IdentityRecord> = {};
+  const identityHintAt: Record<string, number> = {};
 
   const rememberMember = (channelId: string, pubkey: string, memberRole: MemberRole) => {
     memberPubkeys.add(pubkey);
@@ -254,6 +286,43 @@ export function deriveRelayAuthorityFacts(events: readonly NostrEvent[]): RelayA
       if (!verifyEvent(event) || !Array.isArray(event.tags)) continue;
       const h = tag(event, 'h');
       const d = tag(event, 'd');
+      if (event.kind === 0) {
+        const body = parseJson(event.content);
+        const displayName = text(body?.display_name) ?? text(body?.name);
+        const handle = text(body?.handle);
+        const avatar = text(body?.picture) ?? text(body?.avatar);
+        if (
+          (displayName || handle || avatar) &&
+          event.created_at >= (identityHintAt[event.pubkey] ?? -1)
+        ) {
+          identityHintAt[event.pubkey] = event.created_at;
+          identityHints[event.pubkey] = {
+            kind: 'human',
+            pubkey: event.pubkey as Pubkey,
+            ...(displayName ? { displayName } : {}),
+            ...(handle ? { handle } : {}),
+            ...(avatar ? { avatar } : {}),
+            revision: event.id,
+          };
+        }
+      }
+      if (
+        event.kind === KIND_STREAM_MESSAGE &&
+        markers(event).includes(TAG_AGENT) &&
+        (!tag(event, 'agent') || tag(event, 'agent') === event.pubkey) &&
+        event.created_at >= (identityHintAt[event.pubkey] ?? -1)
+      ) {
+        const body = parseJson(event.content);
+        identityHintAt[event.pubkey] = event.created_at;
+        identityHints[event.pubkey] = {
+          kind: 'agent',
+          pubkey: event.pubkey as Pubkey,
+          ...(text(body?.displayName) ? { displayName: text(body?.displayName) } : {}),
+          ...(text(body?.handle) ? { handle: text(body?.handle) } : {}),
+          ...(text(body?.avatar) ? { avatar: text(body?.avatar) } : {}),
+          revision: event.id,
+        };
+      }
       if (event.kind === KIND_CREATE_GROUP) {
         const channelId = h ?? d;
         if (!channelId) continue;
@@ -321,6 +390,7 @@ export function deriveRelayAuthorityFacts(events: readonly NostrEvent[]): RelayA
     cornerIdsByParent: Object.fromEntries(
       [...cornerIdsByParent].map(([parentId, cornerIds]) => [parentId, [...cornerIds]]),
     ),
+    identityHints,
   };
 }
 
@@ -899,6 +969,38 @@ function parseFactoryMessage(
   };
 }
 
+function parseConversationMessage(
+  event: NostrEvent,
+  scope: ChannelScope,
+  agentAuthor: boolean,
+  authority: ParseAuthority,
+): HumanMessage | AgentMessage | Unknown {
+  if (!event.content.trim() && attachments(event).length === 0) {
+    return unknown(event, 'malformed-schema');
+  }
+  const reply = replyReference(event, scope.channelId, authority);
+  const conversation = {
+    body: event.content,
+    attachments: attachments(event),
+    mentionPubkeys: mentionPubkeys(event),
+    ...(reply && !isUnknown(reply) ? { reply } : {}),
+    ...(tag(event, 'client-nonce') ? { clientNonce: tag(event, 'client-nonce') } : {}),
+  };
+  if (agentAuthor) {
+    return {
+      ...envelope(event, scope),
+      type: 'agent-message',
+      ...conversation,
+      ...(tag(event, 'request') ? { requestId: tag(event, 'request') } : {}),
+    } satisfies AgentMessage;
+  }
+  return {
+    ...envelope(event, scope),
+    type: 'human-message',
+    ...conversation,
+  } satisfies HumanMessage;
+}
+
 function parseMessage(event: NostrEvent, authority: ParseAuthority): ReadEvent {
   const scope = channelScope(event, authority);
   if (isUnknown(scope)) return scope;
@@ -906,8 +1008,45 @@ function parseMessage(event: NostrEvent, authority: ParseAuthority): ReadEvent {
   const markerSet = new Set(markers(event));
   const factory = parseFactoryMessage(event, scope, author, markerSet, authority);
   if (factory) return factory;
-  if (!author || author.kind === 'infrastructure') return unknown(event, 'unresolved-identity');
+  if (!author) {
+    if (!isHistoricalMessageAuthor(authority, scope.channelId, event.pubkey)) {
+      return unknown(event, 'unresolved-identity');
+    }
+    const reservedMarker = [...markerSet].some(
+      (candidate) =>
+        FACTORY_MARKERS.has(candidate) ||
+        SESSION_MARKERS.has(candidate) ||
+        CONTROL_MARKERS.has(candidate) ||
+        candidate === TAG_AGENT ||
+        candidate === TAG_AGENT_ACTIVITY ||
+        candidate === TAG_MERGE_APPROVAL ||
+        candidate === 'body-control',
+    );
+    if (reservedMarker || tag(event, 'subchannel')) return unknown(event, 'unauthorized');
+    return parseConversationMessage(event, scope, false, authority);
+  }
+  if (author.kind === 'infrastructure') return unknown(event, 'unresolved-identity');
   const agentAuthor = author.kind === 'agent';
+
+  if (markerSet.has(TAG_MERGE_APPROVAL) && !agentAuthor) {
+    const repository = tag(event, 'repo');
+    const branch = tag(event, 'branch');
+    if (!repository || !branch || !isAdmin(authority, scope.channelId, event.pubkey)) {
+      return unknown(event, 'unauthorized');
+    }
+    return {
+      ...envelope(event, scope),
+      type: 'control',
+      visibility: 'hidden',
+      payload: {
+        kind: 'merge-approval',
+        repository,
+        branch,
+        ...(tag(event, 'tip') ? { tip: tag(event, 'tip') } : {}),
+        ...(tag(event, 'patch-id') ? { patchId: tag(event, 'patch-id') } : {}),
+      },
+    };
+  }
 
   if (agentAuthor && markerSet.has(TAG_AGENT_ACTIVITY)) {
     const parsed = parseJson(event.content);
@@ -951,30 +1090,7 @@ function parseMessage(event: NostrEvent, authority: ParseAuthority): ReadEvent {
     }
   }
 
-  if (!event.content.trim() && attachments(event).length === 0) {
-    return unknown(event, 'malformed-schema');
-  }
-  const reply = replyReference(event, scope.channelId, authority);
-  const conversation = {
-    body: event.content,
-    attachments: attachments(event),
-    mentionPubkeys: mentionPubkeys(event),
-    ...(reply && !isUnknown(reply) ? { reply } : {}),
-    ...(tag(event, 'client-nonce') ? { clientNonce: tag(event, 'client-nonce') } : {}),
-  };
-  if (agentAuthor) {
-    return {
-      ...envelope(event, scope),
-      type: 'agent-message',
-      ...conversation,
-      ...(tag(event, 'request') ? { requestId: tag(event, 'request') } : {}),
-    } satisfies AgentMessage;
-  }
-  return {
-    ...envelope(event, scope),
-    type: 'human-message',
-    ...conversation,
-  } satisfies HumanMessage;
+  return parseConversationMessage(event, scope, agentAuthor, authority);
 }
 
 function parseMembership(event: NostrEvent, authority: ParseAuthority): Membership | Unknown {
@@ -1031,6 +1147,7 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
     const state = tag(event, 'state') === 'waiting-on-human' ? 'waiting' : tag(event, 'state');
     if (
       !cornerId ||
+      cornerId === scope.channelId ||
       !['open', 'working', 'waiting', 'idle', 'concluded', 'closed'].includes(state ?? '')
     ) {
       return unknown(event, 'malformed-schema');
@@ -1071,6 +1188,7 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
       candidate[1] ? [{ pubkey: candidate[1] as Pubkey, role: role(candidate[2]) }] : [],
     );
     if (parentRoomId) {
+      if (parentRoomId === scope.channelId) return unknown(event, 'malformed-schema');
       return {
         ...envelope(event, { ...scope, channelId: parentRoomId as ChannelId }),
         type: 'lifecycle',
@@ -1088,6 +1206,20 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
         },
       };
     }
+    const repositoryKey = tag(event, 'repo-key');
+    const repositoryName = tag(event, 'repo-name');
+    const repositoryRemote = tag(event, 'repo-remote');
+    const repositoryScope = tag(event, 'repo-scope');
+    const repositoryInstallation = integer(tag(event, 'repo-github-installation'));
+    const repository =
+      repositoryKey && repositoryName && repositoryRemote && repositoryScope === 'remote'
+        ? {
+            key: repositoryKey,
+            name: repositoryName,
+            remote: repositoryRemote,
+            ...(repositoryInstallation ? { githubInstallationId: repositoryInstallation } : {}),
+          }
+        : undefined;
     return {
       ...envelope(event, scope),
       type: 'lifecycle',
@@ -1097,6 +1229,10 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
         state: 'created',
         ...(tag(event, 'name') ? { name: tag(event, 'name') } : {}),
         ...(tag(event, 'about') ? { about: tag(event, 'about') } : {}),
+        ...(tag(event, 'avatar') || tag(event, 'picture')
+          ? { avatar: tag(event, 'avatar') ?? tag(event, 'picture') }
+          : {}),
+        ...(repository ? { repository } : {}),
         ...(initialMembers.length ? { initialMembers } : {}),
       },
     };
@@ -1118,6 +1254,9 @@ function parseLifecycle(event: NostrEvent, authority: ParseAuthority): Lifecycle
       state: deleted ? 'deleted' : archived ? 'archived' : 'updated',
       ...(tag(event, 'name') ? { name: tag(event, 'name') } : {}),
       ...(tag(event, 'about') ? { about: tag(event, 'about') } : {}),
+      ...(tag(event, 'avatar') || tag(event, 'picture')
+        ? { avatar: tag(event, 'avatar') ?? tag(event, 'picture') }
+        : {}),
     },
   };
 }
@@ -1135,7 +1274,60 @@ function parseParameterizedControl(event: NostrEvent, authority: ParseAuthority)
     : (workspaceScope(workspaceId) ?? unknown(event, 'invalid-envelope'));
   if (isUnknown(scope)) return scope;
   const author = identity(authority, event.pubkey);
+  if (markerSet.has(TAG_ROOM_REPOSITORY) && scope.scope === 'channel') {
+    if (!author || author.kind !== 'human' || !isAdmin(authority, scope.channelId, event.pubkey)) {
+      return unknown(event, 'unauthorized');
+    }
+    const repository = parseRoomRepository(event);
+    if (!repository?.binding.remote) return unknown(event, 'malformed-schema');
+    return {
+      ...envelope(event, scope),
+      type: 'control',
+      visibility: 'hidden',
+      payload: {
+        kind: 'repository',
+        key: repository.binding.key,
+        name: repository.binding.name,
+        remote: repository.binding.remote,
+        ...(repository.targetBranch ? { targetBranch: repository.targetBranch } : {}),
+        ...(repository.binding.githubInstallationId
+          ? { githubInstallationId: repository.binding.githubInstallationId }
+          : {}),
+        ...(repository.githubEventsEnabled === undefined
+          ? {}
+          : { githubEventsEnabled: repository.githubEventsEnabled }),
+      },
+    };
+  }
   if (!author || author.kind !== 'agent') return unknown(event, 'unauthorized');
+  if (markerSet.has(CHANGE_REVIEW_MANIFEST_TAG) && scope.scope === 'channel') {
+    const manifest = parseChangeReviewManifest(event.content);
+    const chunk = integer(tag(event, 'chunk')) ?? 0;
+    const chunks = integer(tag(event, 'chunks')) ?? 1;
+    if (!manifest || chunk >= chunks) return unknown(event, 'malformed-schema');
+    return {
+      ...envelope(event, scope),
+      type: 'control',
+      visibility: 'hidden',
+      payload: {
+        kind: 'review-manifest',
+        ...manifest,
+        chunk,
+        chunks,
+        transactional: tag(event, 'generation') === CHANGE_REVIEW_GENERATION_TAG,
+      },
+    };
+  }
+  if (markerSet.has(CHANGE_REVIEW_COMPLETE_TAG) && scope.scope === 'channel') {
+    const completion = parseChangeReviewGenerationComplete(event.content);
+    if (!completion) return unknown(event, 'malformed-schema');
+    return {
+      ...envelope(event, scope),
+      type: 'control',
+      visibility: 'hidden',
+      payload: { kind: 'review-complete', ...completion },
+    };
+  }
   const sessionMarker = [...markerSet].find((candidate) => SESSION_MARKERS.has(candidate));
   if (sessionMarker && scope.scope === 'channel')
     return parseSessionMarker(event, scope, sessionMarker);
@@ -1165,6 +1357,7 @@ function parseIdentityControl(event: NostrEvent, authority: ParseAuthority): Con
     pubkey: event.pubkey as Pubkey,
     ...(text(body?.displayName) ? { displayName: text(body?.displayName) } : {}),
     ...(text(body?.handle) ? { handle: text(body?.handle) } : {}),
+    ...(text(body?.avatar) ? { avatar: text(body?.avatar) } : {}),
     revision: event.id,
     ...(current?.kind === 'agent' && !text(body?.displayName) && current.displayName
       ? { displayName: current.displayName }
@@ -1344,9 +1537,96 @@ export function parseRelayEvents(
     knownPermissionRequests,
     knownDelegationTurns,
   };
-  return admitted.map((candidate) =>
+  const parsed = admitted.map((candidate) =>
     candidate.accepted
       ? parseVerifiedRelayEvent(candidate.event, finalAuthority)
       : candidate.rejected,
   );
+  const repositoryBindings = new Map<string, RoomRepositorySequenceBinding>();
+  for (const event of [...parsed].sort(
+    (a, b) =>
+      (a.createdAt ?? Number.MAX_SAFE_INTEGER) - (b.createdAt ?? Number.MAX_SAFE_INTEGER) ||
+      (a.eventId ?? '').localeCompare(b.eventId ?? ''),
+  )) {
+    if (
+      event.type === 'lifecycle' &&
+      event.lifecycle.entity === 'room' &&
+      event.lifecycle.state === 'created' &&
+      event.lifecycle.repository &&
+      !repositoryBindings.has(event.channelId)
+    ) {
+      repositoryBindings.set(event.channelId, {
+        key: event.lifecycle.repository.key,
+        targetBranch: 'main',
+      });
+    }
+  }
+  const acceptedRepositories = new Set<number>();
+  const repositoryCandidates = parsed
+    .flatMap((event, index) =>
+      event.type === 'control' && event.payload.kind === 'repository' && 'channelId' in event
+        ? [{ event, index }]
+        : [],
+    )
+    .sort(
+      (a, b) =>
+        a.event.createdAt - b.event.createdAt || a.event.eventId.localeCompare(b.event.eventId),
+    );
+  for (const { event, index } of repositoryCandidates) {
+    const candidate = admitted[index];
+    if (!candidate?.accepted) continue;
+    const repository = parseRoomRepository(candidate.event);
+    if (!repository) continue;
+    const role = isOwner(authority, event.channelId, event.authorPubkey)
+      ? 'owner'
+      : isAdmin(authority, event.channelId, event.authorPubkey)
+        ? 'admin'
+        : null;
+    const decision = advanceRoomRepositorySequence(
+      repositoryBindings.get(event.channelId),
+      repository,
+      role,
+    );
+    if (!decision.accepted) continue;
+    repositoryBindings.set(event.channelId, decision.binding);
+    acceptedRepositories.add(index);
+  }
+  return parsed.map((event, index) => {
+    if (
+      event.type !== 'control' ||
+      event.payload.kind !== 'repository' ||
+      acceptedRepositories.has(index)
+    ) {
+      return event;
+    }
+    const candidate = admitted[index];
+    return candidate ? unknown(candidate.event, 'unauthorized') : event;
+  });
+}
+
+export function unresolvedReplyParentIds(
+  events: readonly NostrEvent[],
+  parsed: readonly ReadEvent[],
+): readonly string[] {
+  const conversations = new Map(
+    parsed.flatMap((event) =>
+      event.type === 'human-message' || event.type === 'agent-message'
+        ? [[event.eventId, event] as const]
+        : [],
+    ),
+  );
+  const unresolved = new Set<string>();
+  for (const event of events) {
+    const conversation = conversations.get(event.id as EventId);
+    if (!conversation || conversation.reply || !Array.isArray(event.tags)) continue;
+    const parentId = event.tags.find(
+      (candidate) =>
+        Array.isArray(candidate) &&
+        candidate[0] === 'e' &&
+        typeof candidate[1] === 'string' &&
+        candidate[3] === 'reply',
+    )?.[1];
+    if (parentId && /^[0-9a-f]{64}$/.test(parentId)) unresolved.add(parentId);
+  }
+  return [...unresolved].sort();
 }

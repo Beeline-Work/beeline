@@ -29,10 +29,12 @@ import { RigTransportNotImplementedError, RigTransportStubbedError } from './rig
 import {
   createBuzzClient,
   buildAttachmentTags,
+  RelayPublishError,
   tagValue,
   tagValues,
   deriveRelayAuthorityFacts,
   parseRelayEvents,
+  unresolvedReplyParentIds,
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
@@ -122,6 +124,7 @@ let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
 const READ_AUTHORITY_TTL_MS = 60_000;
 const LIVE_AUTHORITY_REFRESH_TIMEOUT_MS = 3_000;
+const REPLY_ANCESTRY_FETCH_LIMIT = 64;
 
 function withLiveAuthorityRefreshTimeout<T>(promise: Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -383,10 +386,10 @@ export class BuzzRigTransport implements RigTransport {
    * climbing them yields the true ancestry even when a remembered `rootId` is
    * stale (a truncated or incremental parse once stored a mid-thread root).
    * The climb only wins when it terminates at a message the transport has seen
-   * with no parent of its own; otherwise the reference's own root claim (and
-   * its one-level known-root correction) stands.
+   * with no parent of its own; otherwise the ancestry remains unknown and the
+   * send boundary must exact-fetch proof before signing.
    */
-  private replyThreadRootFor(parent: KnownMessageReference): EventId {
+  private replyThreadRootFor(parent: KnownMessageReference): EventId | null {
     let cursor: string = parent.eventId;
     const seen = new Set<string>();
     while (!seen.has(cursor)) {
@@ -396,7 +399,85 @@ export class BuzzRigTransport implements RigTransport {
       if (!entry.parentId || entry.parentId === cursor) return cursor as EventId;
       cursor = entry.parentId;
     }
-    return (this.knownMessages.get(parent.rootId)?.rootId ?? parent.rootId) as EventId;
+    return null;
+  }
+
+  private async exactReplyMessage(
+    client: BuzzClient,
+    channelId: string,
+    eventId: string,
+  ): Promise<NostrEvent | null> {
+    const events = await client.query([
+      { ids: [eventId], kinds: [KIND_STREAM_MESSAGE], '#h': [channelId], limit: 1 },
+    ]);
+    return events.find((event) => event.id === eventId) ?? null;
+  }
+
+  private replyAncestryUnavailable(cause?: unknown): RelayPublishError {
+    return new RelayPublishError({
+      kind: 'TRANSIENT',
+      sentence: "This reply's conversation thread is not available yet.",
+      recoveryAction: 'Try sending the reply again.',
+      retryable: true,
+      ...(cause === undefined ? {} : { cause }),
+    });
+  }
+
+  /** Resolve one proof that is safe to hand to the synchronous signer. */
+  private async replyProofForSigning(
+    client: BuzzClient,
+    parent: KnownMessageReference,
+  ): Promise<KnownMessageReference> {
+    const rememberedRoot = this.replyThreadRootFor(parent);
+    if (rememberedRoot) {
+      return rememberedRoot === parent.rootId ? parent : { ...parent, rootId: rememberedRoot };
+    }
+
+    try {
+      const authority = await this.readAuthority(parent.channelId);
+      const fetched: NostrEvent[] = [];
+      const fetchedIds = new Set<string>();
+      let nextId: string | undefined = parent.eventId;
+
+      for (let depth = 0; nextId && depth < REPLY_ANCESTRY_FETCH_LIMIT; depth += 1) {
+        if (fetchedIds.has(nextId)) throw this.replyAncestryUnavailable();
+        const exact = await this.exactReplyMessage(client, parent.channelId, nextId);
+        if (!exact) throw this.replyAncestryUnavailable();
+        fetched.push(exact);
+        fetchedIds.add(nextId);
+
+        // A cold projection is not proof. Rebuild the fetched chain through
+        // the same parser/reducer/selector boundary as every other Room read,
+        // without letting stale transport memory seed root resolution.
+        const parsed = parseRelayEvents(fetched, { ...authority, knownMessages: {} });
+        const unresolved = unresolvedReplyParentIds(fetched, parsed).filter(
+          (eventId) => !fetchedIds.has(eventId),
+        );
+        if (unresolved.length > 1) throw this.replyAncestryUnavailable();
+        nextId = unresolved[0];
+        if (nextId) continue;
+
+        const snapshot = reduceWorkspaceEvents(
+          createWorkspaceSnapshot({
+            workspaceId: authority.workspaceId,
+            identities: Object.values(authority.identities),
+          }),
+          parsed,
+        );
+        const selected = selectReplyTarget(snapshot, parent.channelId, parent.eventId);
+        if (selected.status !== 'available') throw this.replyAncestryUnavailable();
+        const root = selectReplyTarget(snapshot, parent.channelId, selected.reference.rootId);
+        if (root.status !== 'available' || root.reference.eventId !== root.reference.rootId) {
+          throw this.replyAncestryUnavailable();
+        }
+        this.rememberMessages(parsed);
+        return selected.reference;
+      }
+      throw this.replyAncestryUnavailable();
+    } catch (error) {
+      if (error instanceof RelayPublishError) throw error;
+      throw this.replyAncestryUnavailable(error);
+    }
   }
 
   private parseReadyEvents(
@@ -556,11 +637,8 @@ export class BuzzRigTransport implements RigTransport {
     // Re-derive the thread root from observed raw-tag parent links before the
     // builder signs: a stale persisted cache can carry a mid-thread rootId,
     // and the relay refuses signed ancestry that does not match the thread.
-    const replyRootId = this.replyThreadRootFor(parent);
-    const event = client.buildReplyMessage(
-      text,
-      replyRootId === parent.rootId ? parent : { ...parent, rootId: replyRootId },
-      {
+    const verifiedParent = await this.replyProofForSigning(client, parent);
+    const event = client.buildReplyMessage(text, verifiedParent, {
       ...(mentionAgent ? { mentionAgent } : {}),
       ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
       ...(attachmentTags.length ? { contentTags: attachmentTags } : {}),

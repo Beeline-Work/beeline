@@ -10,7 +10,11 @@ export interface DatabaseQueryable {
   query<Row>(text: string, values?: unknown[]): Promise<QueryResult<Row>>;
 }
 
-interface EventRow {
+export interface DatabaseTransactional extends DatabaseQueryable {
+  transaction<T>(work: (database: DatabaseQueryable) => Promise<T>): Promise<T>;
+}
+
+export interface EventRow {
   community_id: string;
   id: Uint8Array;
   pubkey: Uint8Array;
@@ -39,7 +43,7 @@ function safeLimit(value: unknown): number {
     : 100;
 }
 
-function nostrEvent(row: EventRow): NostrEvent {
+export function eventFromRow(row: EventRow): NostrEvent {
   if (!Array.isArray(row.tags)) throw new Error('push database returned non-array event tags');
   return {
     id: Buffer.from(row.id).toString('hex'),
@@ -83,7 +87,7 @@ export class DatabaseEventReader implements RelayEventReader {
       const { text, values } = this.buildQuery(filter);
       const result = await this.database.query<EventRow>(text, values);
       for (const row of result.rows) {
-        const event = nostrEvent(row);
+        const event = eventFromRow(row);
         const key = `${row.community_id}:${event.id}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -184,7 +188,7 @@ export class DatabaseEventReader implements RelayEventReader {
   }
 }
 
-export class PostgresEventStore {
+export class PostgresEventStore implements DatabaseTransactional {
   private readonly pool: Pool;
 
   constructor(connectionString: string) {
@@ -193,6 +197,31 @@ export class PostgresEventStore {
 
   async connect(): Promise<void> {
     await this.pool.query('SELECT 1');
+  }
+
+  async query<Row>(text: string, values?: unknown[]): Promise<QueryResult<Row>> {
+    const result = await this.pool.query(text, values);
+    return { rows: result.rows as Row[] };
+  }
+
+  async transaction<T>(work: (database: DatabaseQueryable) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await work({
+        query: async <Row>(text: string, values?: unknown[]) => {
+          const response = await client.query(text, values);
+          return { rows: response.rows as Row[] };
+        },
+      });
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   readerFor(recipientPubkey: string): DatabaseEventReader {

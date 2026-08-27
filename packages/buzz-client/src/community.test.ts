@@ -421,9 +421,14 @@ describe('community model', () => {
     });
   });
 
-  it('mirrors current community members into a newly linked channel', async () => {
+  it('creates a creator-only Room and adds a Workspace member only after an explicit invite', async () => {
     const published: NostrEvent[] = [];
     const channelMemberPubkeys = new Set([owner.publicKey]);
+    const channelCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', channelId],
+      ['name', 'general'],
+      [TAG_COMMUNITY, communityId],
+    ]);
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -436,10 +441,19 @@ describe('community model', () => {
           return jsonResponse({ accepted: true });
         }
         const filter = filterFrom(init);
-        if ((filter.kinds as number[])[0] !== KIND_CHANNEL_MEMBERS) return jsonResponse([]);
-        const requestedId = (filter['#d'] as string[] | undefined)?.[0];
-        if (requestedId === communityId) return jsonResponse([memberState(true)]);
-        if (requestedId === channelId) {
+        const kind = (filter.kinds as number[])[0];
+        const requestedId = ((filter['#h'] ?? filter['#d']) as string[] | undefined)?.[0];
+        if (kind === KIND_CREATE_GROUP) {
+          if (requestedId === channelId) return jsonResponse([channelCreate]);
+          if (requestedId === communityId) return jsonResponse([communityCreate()]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return requestedId === communityId ? jsonResponse([adminState()]) : jsonResponse([]);
+        }
+        if (kind === KIND_CHANNEL_MEMBERS && requestedId === communityId) {
+          return jsonResponse([memberState(true)]);
+        }
+        if (kind === KIND_CHANNEL_MEMBERS && requestedId === channelId) {
           return jsonResponse([
             signed(owner, KIND_CHANNEL_MEMBERS, [
               ['d', channelId],
@@ -454,6 +468,13 @@ describe('community model', () => {
     await expect(createChannel(ctx(), 'general', { channelId, communityId })).resolves.toBe(
       channelId,
     );
+
+    expect(published.filter((event) => event.kind === KIND_PUT_USER)).toEqual([]);
+    expect(channelMemberPubkeys).toEqual(new Set([owner.publicKey]));
+
+    await expect(
+      attachCommunityMemberToChannel(ctx(), channelId, invitee.publicKey, communityId),
+    ).resolves.toMatchObject({ joined: true });
 
     const memberMutations = published.filter((event) => event.kind === KIND_PUT_USER);
     expect(memberMutations).toHaveLength(1);

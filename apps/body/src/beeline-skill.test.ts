@@ -194,30 +194,28 @@ describe('managed-skill materialization on session activation', () => {
 
     const skillsDir = resolve(claudeHome, 'skills');
     expect(lstatSync(skillsDir).isSymbolicLink()).toBe(false);
-    expect(lstatSync(resolve(skillsDir, 'greet')).isSymbolicLink()).toBe(true);
-    expect(realpathSync(resolve(skillsDir, 'greet'))).toBe(
-      realpathSync(resolve(operatorHome, '.claude/skills/greet')),
-    );
+    expect(existsSync(resolve(skillsDir, 'greet'))).toBe(false);
     expect(
       readFileSync(resolve(skillsDir, USING_BEELINE_SKILL_NAME, 'SKILL.md'), 'utf8'),
     ).toContain(beelineSkillReleaseStamp('mig'));
     expect(contentSnapshot(operatorHome)).toEqual(contentSnapshot(operatorHome));
   });
 
-  it('drops stale per-entry links when the operator removes a skill', async () => {
+  it('drops every stale ambient entry on activation', async () => {
     const operatorHome = await operatorHomeWithSkills();
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
     await prepareRoomAgentHome({ root: roomRoot, operatorHome, skillReleaseId: 'x' });
-    expect(existsSync(resolve(roomRoot, 'claude', 'skills', 'greet'))).toBe(true);
-
-    await rm(resolve(operatorHome, '.claude/skills/greet'), { recursive: true });
+    const stale = resolve(roomRoot, 'claude', 'skills', 'stale');
+    await mkdir(stale);
+    await writeFile(resolve(stale, 'SKILL.md'), 'stale\n');
     await prepareRoomAgentHome({ root: roomRoot, operatorHome, skillReleaseId: 'x' });
 
     expect(existsSync(resolve(roomRoot, 'claude', 'skills', 'greet'))).toBe(false);
+    expect(existsSync(stale)).toBe(false);
     expect(existsSync(resolve(roomRoot, 'claude', 'skills', USING_BEELINE_SKILL_NAME))).toBe(true);
   });
 
-  it('refuses to regenerate through a symlink occupying the managed skill slot', async () => {
+  it('replaces a stale managed-slot symlink without following it', async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     await mkdir(resolve(operatorHome, '.claude/skills'), { recursive: true });
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
@@ -230,12 +228,12 @@ describe('managed-skill materialization on session activation', () => {
 
     await prepareRoomAgentHome({ root: roomRoot, operatorHome, skillReleaseId: 'x' });
 
-    // The write was refused; the operator-side file is untouched.
+    // The destination entry was atomically replaced; the external file was untouched.
     expect(readFileSync(decoy, 'utf8')).toBe('operator-owned bytes\n');
-    expect(lstatSync(resolve(skillsDir, USING_BEELINE_SKILL_NAME)).isSymbolicLink()).toBe(true);
+    expect(lstatSync(resolve(skillsDir, USING_BEELINE_SKILL_NAME)).isSymbolicLink()).toBe(false);
   });
 
-  it('leaves unknown real entries in the managed directory alone', async () => {
+  it('removes unknown real entries so the inventory stays exact', async () => {
     const operatorHome = await operatorHomeWithSkills();
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
     const skillsDir = resolve(roomRoot, 'claude', 'skills');
@@ -244,7 +242,7 @@ describe('managed-skill materialization on session activation', () => {
 
     await prepareRoomAgentHome({ root: roomRoot, operatorHome, skillReleaseId: 'x' });
 
-    expect(readFileSync(resolve(skillsDir, 'session-note', 'note.txt'), 'utf8')).toBe('keep me\n');
+    expect(existsSync(resolve(skillsDir, 'session-note'))).toBe(false);
   });
 });
 

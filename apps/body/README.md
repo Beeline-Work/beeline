@@ -210,6 +210,12 @@ BUZZY_BODY_LLM_FILE=/path/to/local-model.env \
 beeline pair BUZZ-XXXX-XXXX --agent custom \
   --agent-command 'my-agent serve --acp'
 
+# Interactive pairing reads the selected harness's live model and effort
+# catalog and offers only those typed choices. In scripts, the same live
+# validation applies to explicit values before runtime.json is written.
+beeline pair BUZZ-XXXX-XXXX --agent codex \
+  --model <catalog-model-id> --effort <catalog-effort-level>
+
 # Restart a previously-paired agent after a machine/process restart.
 beeline start
 
@@ -258,6 +264,34 @@ open that Room in the mobile app and tap `＋ Agent`; the human-signed membershi
 write attaches the already-linked identity using the active Workspace ID. No
 second CLI pairing occurs. Removing that membership stops new intake, drains
 accepted turns, and releases that Room's processes.
+
+Model and effort values are configuration, not free-form labels. Interactive
+pairing searches the exact catalog reported by the selected ACP harness;
+`--model` and `--effort` must name entries in that same live catalog. Pairing
+stops before persistence when an identifier is unknown or the provider refuses
+an advertised-but-retired entry, and preserves useful replacement guidance from
+the harness when it is available.
+
+Every daemon restart revalidates the persisted `runtime.json` selection against
+the current live catalog before opening any ordinary ACP turn. A confirmed
+unknown or retired value produces `Model unavailable · <selected-id>`. A
+harness startup, authentication, or catalog-read failure instead produces
+`Model validation unavailable · <selected-id>`; Beeline does not claim the
+model was retired when it could not complete validation. In either case the
+agent remains connected to its Rooms, reports offline, and posts a Room line
+with safe recovery guidance.
+
+For a confirmed unavailable value, open the agent settings in each affected
+Room, choose a value from the refreshed catalog, then restart the agent. During
+every restart, Beeline live-validates each Room's persisted human-authored
+override before publishing that Room's first presence. A valid override clears
+only that Room's copied startup block and becomes its effective selection; a
+failed override reports that Room offline even when the daemon-wide default is
+valid. Sibling Rooms without their own valid override stay blocked, and the
+stale local `runtime.json` default is not silently rewritten. For a validation
+outage, restore the selected harness, its authentication, and catalog access
+before restarting. Beeline never substitutes another model or rewrites Room
+history.
 
 Trusty Squire keeps provider credentials in a Body-owned, machine-local store;
 Beeline does not upload or centrally custody them, and the daemon never performs

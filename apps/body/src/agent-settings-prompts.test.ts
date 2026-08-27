@@ -241,7 +241,7 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
         maxItems: expect.any(Number),
       }),
     );
-    // Effort axis: small list, plain select with the explicit custom escape.
+    // Effort axis: small list, plain select over live values only.
     expect(select).toHaveBeenCalledTimes(1);
     expect(select.mock.calls[0]![0]).toEqual(
       expect.objectContaining({
@@ -250,11 +250,6 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
         options: [
           { value: 'low', label: 'Low' },
           { value: 'high', label: 'High' },
-          {
-            value: '__beeline-custom__',
-            label: 'Enter a custom level…',
-            hint: 'any level the list does not show',
-          },
         ],
       }),
     );
@@ -275,29 +270,18 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
       { value: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
       { value: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
     ]);
-    // By id fragment. A PARTIAL match is not an exact choice, so the
-    // verbatim "Use …" custom option rides along too.
+    // By id fragment: typed text narrows the catalog but is never submitted.
     expect(options.call({ userInput: 'terra' })).toEqual([
       { value: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
-      { value: 'terra', label: 'Use "terra"', hint: 'custom id' },
     ]);
-    // By display name, case-insensitively (verbatim escape rides along,
-    // since "sOL" itself is not a choice id).
+    // By display name, case-insensitively.
     expect(options.call({ userInput: 'sOL' })).toEqual([
       { value: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
-      { value: 'sOL', label: 'Use "sOL"', hint: 'custom id' },
     ]);
-    // No match at all: only the verbatim custom escape remains.
-    expect(options.call({ userInput: 'zzz' })).toEqual([
-      { value: 'zzz', label: 'Use "zzz"', hint: 'custom id' },
-    ]);
+    expect(options.call({ userInput: 'zzz' })).toEqual([]);
   });
 
-  it('offers the typed text verbatim as a custom model id when it is not an exact catalog choice', async () => {
-    // pi's catalog is a stale subset of OpenRouter upstream; a model absent
-    // from it may still work (pi passes unknown ids through verbatim), so
-    // typing an unlisted id must submit that exact id — no second free-text
-    // prompt, no dead end.
+  it('never offers typed text as a custom model id', async () => {
     const typedId = 'openrouter/stealth/ox-alpha';
     const autocomplete = vi.fn().mockResolvedValueOnce(typedId);
     const select = vi.fn().mockResolvedValueOnce('high');
@@ -319,9 +303,7 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     const result = await pickModelAndEffort(agent, {});
 
     const options = optionsFromAutocompleteCall(autocomplete);
-    expect(options.call({ userInput: typedId })).toEqual([
-      { value: typedId, label: `Use "${typedId}"`, hint: 'custom id' },
-    ]);
+    expect(options.call({ userInput: typedId })).toEqual([]);
     expect(text).not.toHaveBeenCalled();
     expect(result.model).toBe(typedId);
   });
@@ -405,37 +387,7 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     expect(result).toEqual({ model: 'gpt-5.6-sol', effort: 'high' });
   });
 
-  it('keeps the effort axis selectable alongside a custom model, including a custom effort level', async () => {
-    const autocomplete = vi.fn().mockResolvedValueOnce('openrouter/stealth/ox-alpha'); // custom model id
-    const select = vi.fn().mockResolvedValueOnce('__beeline-custom__');
-    const text = vi.fn().mockResolvedValueOnce('xhigh');
-    vi.doMock('./model-catalog.js', () => ({
-      fetchAgentModelCatalog: vi.fn(async () => catalog),
-    }));
-    vi.doMock('@clack/prompts', () => ({
-      select,
-      autocomplete,
-      text,
-      spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
-      log: { warn: vi.fn() },
-      isCancel: () => false,
-      cancel: vi.fn(),
-    }));
-
-    const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
-    const result = await pickModelAndEffort(agent, {});
-
-    // The effort select is the ONLY select, and its custom escape ran.
-    expect(select).toHaveBeenCalledTimes(1);
-    expect(select.mock.calls[0]![0].message).toContain('Effort/thinking');
-    expect(text).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ message: expect.stringContaining('Custom effort/thinking level') }),
-    );
-    expect(result).toEqual({ model: 'openrouter/stealth/ox-alpha', effort: 'xhigh' });
-  });
-
-  it('still permits manual configuration when the catalog fetch fails', async () => {
+  it('fails closed when the live catalog fetch fails', async () => {
     const fetchAgentModelCatalog = vi.fn(async () => {
       throw new Error('ACP handshake timed out');
     });
@@ -458,16 +410,14 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     }));
 
     const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
-    const result = await pickModelAndEffort(agent, {});
-
-    // The old behaviour returned `{}` here, silently dropping both axes.
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ACP handshake timed out'));
+    await expect(pickModelAndEffort(agent, {})).rejects.toThrow('ACP handshake timed out');
+    expect(warn).not.toHaveBeenCalled();
     expect(select).not.toHaveBeenCalled();
     expect(autocomplete).not.toHaveBeenCalled();
-    expect(result).toEqual({ model: 'openrouter/stealth/ox-alpha', effort: 'high' });
+    expect(text).not.toHaveBeenCalled();
   });
 
-  it('offers plain manual entry when the catalog loads but advertises no usable axis options', async () => {
+  it('does not invent prompts when the live catalog advertises no usable axes', async () => {
     const fetchAgentModelCatalog = vi.fn(async () => ({ raw: [], catalog: [] }));
     const select = vi.fn();
     const text = vi
@@ -488,10 +438,11 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     const result = await pickModelAndEffort(agent, {});
 
     expect(select).not.toHaveBeenCalled();
-    expect(result).toEqual({ model: 'openrouter/stealth/ox-alpha', effort: 'high' });
+    expect(text).not.toHaveBeenCalled();
+    expect(result).toEqual({});
   });
 
-  it('skips an axis when the manual prompt is answered with bare Enter', async () => {
+  it('returns no selection when the catalog has no axes', async () => {
     const fetchAgentModelCatalog = vi.fn(async () => ({ raw: [], catalog: [] }));
     const select = vi.fn();
     const text = vi.fn().mockResolvedValue('');
@@ -509,5 +460,6 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     const result = await pickModelAndEffort(agent, {});
 
     expect(result).toEqual({});
+    expect(text).not.toHaveBeenCalled();
   });
 });

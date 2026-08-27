@@ -40,7 +40,7 @@ export const EVENTS_LOOP_TICK_MAX_MS = 5_000;
 export const EVENTS_DISCOVERY_INTERVAL_MS = 60_000;
 export const EVENTS_REPOSITORY_CONCURRENCY = 3;
 export const EVENTS_PUBLISH_DEADLINE_MS = 25_000;
-/** Whole fleet pass ceiling; keeps WATCHDOG coupled to a completed tick. */
+/** Whole fleet pass ceiling; bounds shutdown and rotates work across repositories. */
 export const EVENTS_TICK_DEADLINE_MS = 90_000;
 
 interface StoredEventsIdentity {
@@ -713,8 +713,8 @@ export async function runRepositoryEventsService(
     }
     // Rotate the queue so a fleet larger than the concurrency cap stays
     // fair even when several slow repositories consume the whole bounded
-    // tick. WATCHDOG remains coupled to a completed pass, never an in-flight
-    // network promise.
+    // tick. Materializer shutdown remains bounded by a completed pass, never
+    // an in-flight network promise.
     const orderedTargets =
       targets.length > 0
         ? [...targets.slice(targetOffset), ...targets.slice(0, targetOffset)]

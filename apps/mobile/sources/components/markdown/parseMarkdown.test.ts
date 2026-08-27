@@ -7,6 +7,28 @@ const item = (spans: { styles: string[]; text: string; url: string | null }[]) =
 });
 
 describe('parseMarkdown', () => {
+    it('keeps an incomplete streamed bold delimiter plain until its closing chunk arrives', () => {
+        expect(parseMarkdown('**Analyzing trading economics and risks')).toEqual([
+            {
+                type: 'text',
+                content: [{ styles: [], text: '**Analyzing trading economics and risks', url: null }],
+            },
+        ]);
+
+        expect(parseMarkdown('**Analyzing trading economics and risks**')).toEqual([
+            {
+                type: 'text',
+                content: [
+                    {
+                        styles: ['bold'],
+                        text: 'Analyzing trading economics and risks',
+                        url: null,
+                    },
+                ],
+            },
+        ]);
+    });
+
     it('parses unordered lists across common markdown bullet markers and preserves clickable links', () => {
         const blocks = parseMarkdown([
             '* first item',

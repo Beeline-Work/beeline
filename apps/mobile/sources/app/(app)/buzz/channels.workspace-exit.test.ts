@@ -114,6 +114,7 @@ vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => ({
       isAgentIdentity: vi.fn(async () => false),
+      query: vi.fn(async () => []),
       getPersonProfile: vi.fn(async () => null),
       listMyChannels: vi.fn(async () => []),
       communityMembers: vi.fn(async () => []),
@@ -353,6 +354,9 @@ describe('workspace exit gesture', () => {
     asyncStorage.getItem.mockReset().mockResolvedValue('shared-1');
     asyncStorage.setItem.mockReset().mockResolvedValue(undefined);
     asyncStorage.removeItem.mockReset().mockResolvedValue(undefined);
+    vi.mocked(prepareWorkspaceContext).mockImplementation(
+      async () => workspaceContext.current as never,
+    );
     useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
   });
 
@@ -396,6 +400,80 @@ describe('workspace exit gesture', () => {
 
     expect(leaveWorkspace).not.toHaveBeenCalled();
     expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  it('persists a selected pictured Workspace before its relay bootstrap can finish', async () => {
+    const personal = { communityId: 'personal-1', name: 'Personal' };
+    const tubing = {
+      communityId: 'tubing-1',
+      name: 'Tubing Crew',
+      avatar: 'https://media.example.test/tubing-crew.png',
+    };
+    const now = Date.now();
+    workspaceContext.current = {
+      workspaces: [personal, tubing],
+      activeWorkspaceId: 'personal-1',
+      personalWorkspaceId: 'personal-1',
+    };
+    useBuzzLocalCache.getState().setChannelList({
+      viewerPubkey: VIEWER,
+      communityId: 'personal-1',
+      channels: [],
+      directMessages: [],
+      workspaceMembers: [],
+      communities: [personal, tubing] as never[],
+      personalWorkspaceId: 'personal-1',
+      viewerIsAgent: false,
+      canEditWorkspaceAvatar: false,
+      updatedAt: now,
+      lastAccessedAt: now,
+    });
+    routeParams.current = { communityId: 'personal-1' };
+    const tree = await render();
+
+    // The user can restart immediately after choosing Tubing Crew. Keep the
+    // next relay bootstrap unresolved so only the selection action itself can
+    // preserve the choice.
+    vi.mocked(prepareWorkspaceContext).mockImplementationOnce(
+      () => new Promise(() => undefined) as never,
+    );
+    await press(findAllByTestId(tree, 'workspace-avatar-trigger')[0]);
+    await press(findAllByTestId(tree, 'community-rail-tubing-1')[0]);
+
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      `@beeline/community/active/${VIEWER}`,
+      'tubing-1',
+    );
+    expect(navigation.replace).toHaveBeenCalledWith({
+      pathname: '/buzz/channels',
+      params: { communityId: 'tubing-1' },
+    });
+    routeParams.current = { communityId: 'tubing-1' };
+    await act(async () => {
+      tree.update(React.createElement(BuzzChannels));
+    });
+    tree.unmount();
+
+    // Restart from the persisted selection with the pre-existing Workspace
+    // record. The same avatar must reach the real header mark, not fall back
+    // to the pictureless Personal Workspace.
+    workspaceContext.current = {
+      workspaces: [personal, tubing],
+      activeWorkspaceId: 'tubing-1',
+      personalWorkspaceId: 'personal-1',
+    };
+    vi.mocked(prepareWorkspaceContext).mockImplementation(
+      async () => workspaceContext.current as never,
+    );
+    routeParams.current = {};
+    const restarted = await render();
+    await act(async () => {
+      for (let tick = 0; tick < 8; tick += 1) await Promise.resolve();
+    });
+    expect(findAllByTestId(restarted, 'workspace-avatar-header')[0]?.props.avatarUrl).toBe(
+      'https://media.example.test/tubing-crew.png',
+    );
+    restarted.unmount();
   });
 
   it('successful leave reconciles the switcher, cache, active selection, and Personal marker', async () => {

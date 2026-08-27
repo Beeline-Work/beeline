@@ -46,9 +46,9 @@
  *     on the operator's account) survives even an isolated home; no config key
  *     or env var was found that turns it off.
  *   - `pi-acp`: accepts `mcpServers` on `session/new` and never reads the field
- *     again, so a pi Room does not even get Beeline's own read-only MCP; pi
- *     loads the operator's global `~/.pi/agent/extensions` and
- *     `~/.agents/skills` on its own. Nothing to pass, nothing to scope.
+ *     again, so it does not consume Beeline's MCP inventory. Its own skill and
+ *     extension discovery is still scoped by the isolated HOME and
+ *     PI_CODING_AGENT_DIR from `agent-home.ts`.
  *   - `buzz-agent`: Beeline's own agent. It has no operator-global MCP config
  *     of its own, so the mounted servers are the whole set by construction.
  */
@@ -97,9 +97,7 @@ interface ToolScopeProfile {
 }
 
 const CLAUDE_PROFILE: ToolScopeProfile = {
-  // The owner decision of 2026-08-23 is that agents get every skill + MCP on
-  // the host in every Room/corner (`agent-home.ts` links/copies them into the
-  // isolated home). `settingSources: ['user']` admits that sanitized user copy
+  // `settingSources: ['user']` admits the sanitized user MCP copy
   // while rejecting repository/local/plugin MCP. `strictMcpConfig` cannot be
   // used because it would reject the user copy too. Account-bound claude.ai
   // cloud connectors remain off independently.
@@ -131,8 +129,8 @@ const PROFILES: Array<{ match: RegExp; profile: ToolScopeProfile }> = [
   {
     match: /(^|[/\\])pi-acp(\.[a-z]+)?$/i,
     profile: {
-      enforcement: 'none',
-      note: "pi-acp never reads the mcpServers it is handed, and pi loads the operator's global ~/.pi/agent/extensions and ~/.agents/skills itself",
+      enforcement: 'config-isolated',
+      note: 'pi-acp ignores session MCP servers, while its own skills/extensions are confined by the Beeline-owned HOME and PI_CODING_AGENT_DIR',
     },
   },
   {

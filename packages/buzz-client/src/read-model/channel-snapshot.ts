@@ -27,6 +27,7 @@ export const CHANNEL_SNAPSHOT_CAPABILITY = 'channel-snapshot-v1' as const;
 export const CHANNEL_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 export const CHANNEL_SNAPSHOT_PROJECTION_VERSION = 1 as const;
 export const CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS = 30;
+export const CHANNEL_SNAPSHOT_BRIEFING_ROWS = 10;
 export const CHANNEL_SNAPSHOT_MAX_BYTES = 256 * 1024;
 
 export type ChannelSnapshotCursorV1 = {
@@ -48,6 +49,8 @@ export type StoredChannelSnapshotV1 = {
   readonly identitiesStale: boolean;
   /** Existing persisted read-model types; there is no parallel transcript-row schema. */
   readonly snapshot: WorkspaceSnapshot;
+  /** Corner-only parent conversation immediately preceding the Corner create event. */
+  readonly briefingSnapshot?: WorkspaceSnapshot;
   readonly repository?: RepositorySummary;
   readonly review: ReviewSummary;
 };
@@ -221,6 +224,9 @@ export function buildStoredChannelSnapshotV1(
       ),
     ].sort(),
   };
+  const parent = Object.values(input.snapshot.rooms).find(
+    (candidate) => candidate.corners[input.channelId],
+  );
   for (let limit = CHANNEL_SNAPSHOT_TRANSCRIPT_ROWS; limit >= 0; limit -= 1) {
     const bounded = boundChannelWorkspaceSnapshot(input.snapshot, input.channelId, limit);
     const payload: StoredChannelSnapshotV1 = {
@@ -233,6 +239,15 @@ export function buildStoredChannelSnapshotV1(
       cursor: input.cursor,
       identitiesStale: input.identitiesStale,
       snapshot: bounded,
+      ...(parent
+        ? {
+            briefingSnapshot: boundChannelWorkspaceSnapshot(
+              input.snapshot,
+              parent.channelId,
+              Math.min(limit, CHANNEL_SNAPSHOT_BRIEFING_ROWS),
+            ),
+          }
+        : {}),
       ...(selectRepositorySummary(input.snapshot, input.channelId)
         ? { repository: selectRepositorySummary(input.snapshot, input.channelId) }
         : {}),
@@ -1169,6 +1184,7 @@ export function guardStoredChannelSnapshotV1(
     const candidate = record(value);
     const cursor = record(candidate?.cursor);
     const review = record(candidate?.review);
+    const briefingSnapshot = candidate?.briefingSnapshot;
     const repository =
       candidate?.repository === undefined ? undefined : record(candidate.repository);
     if (
@@ -1190,6 +1206,7 @@ export function guardStoredChannelSnapshotV1(
       !stringArray(cursor.eventIds, HEX_ID) ||
       new Set(cursor.eventIds).size !== cursor.eventIds.length ||
       !validReview(review) ||
+      (briefingSnapshot !== undefined && !validWorkspaceSnapshot(briefingSnapshot)) ||
       (candidate.repository !== undefined && (!repository || !validRepository(repository))) ||
       !validWorkspaceSnapshot(candidate.snapshot) ||
       !/^[0-9a-f]{64}$/.test(expectedDigest)
@@ -1210,6 +1227,19 @@ export function guardStoredChannelSnapshotV1(
     ) {
       return invalidStoredSnapshot();
     }
+    if (briefingSnapshot !== undefined) {
+      const parent = Object.values(snapshot.rooms).find(
+        (candidateRoom) => candidateRoom.corners[expectedChannelId],
+      );
+      const briefing = briefingSnapshot as WorkspaceSnapshot;
+      if (
+        !parent ||
+        briefing.workspaceId !== snapshot.workspaceId ||
+        !briefing.rooms[parent.channelId]
+      ) {
+        return invalidStoredSnapshot();
+      }
+    }
     const payload = {
       capability: candidate.capability,
       schemaVersion: candidate.schemaVersion,
@@ -1220,6 +1250,7 @@ export function guardStoredChannelSnapshotV1(
       cursor: candidate.cursor,
       identitiesStale: candidate.identitiesStale,
       snapshot,
+      ...(briefingSnapshot !== undefined ? { briefingSnapshot } : {}),
       ...(candidate.repository !== undefined ? { repository: candidate.repository } : {}),
       review: candidate.review,
     } as StoredChannelSnapshotV1;

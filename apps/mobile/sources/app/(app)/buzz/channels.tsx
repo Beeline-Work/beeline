@@ -41,7 +41,11 @@ import {
   runGitHubInstallationSession,
 } from '@/auth/github-auth-session';
 import { authSessionOptions } from '@/auth/auth-session';
-import { reconcileStoredWorkspaceSelection, saveLastViewedChannel } from '@/buzz/community-storage';
+import {
+  reconcileStoredWorkspaceSelection,
+  saveActiveCommunityId,
+  saveLastViewedChannel,
+} from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { loadSuccessionPredecessors } from '@/buzz/succession-chain';
@@ -848,15 +852,29 @@ export default function BuzzChannels() {
     setBootstrapAttempt((attempt) => attempt + 1);
   }, []);
 
-  const handleSelectCommunity = useCallback((communityId: string | null) => {
-    if (!communityId) return;
-    setReadyInviteUrl(undefined);
-    setExpandedRoomId(null);
-    router.replace({
-      pathname: '/buzz/channels',
-      params: { communityId },
-    });
-  }, []);
+  const handleSelectCommunity = useCallback(
+    (communityId: string | null) => {
+      if (!communityId) return;
+      // This is an explicit choice from the rendered Workspace set, while the
+      // route change starts a relay bootstrap that can be interrupted by
+      // backgrounding or a restart. Save the choice before that slower work.
+      if (identity) {
+        void saveActiveCommunityId(identity.publicKey, communityId).catch((err) => {
+          Modal.alert(
+            `Could not save ${WORKSPACE_LABEL} selection`,
+            `The app will keep using ${communities.find((entry) => entry.communityId === communityId)?.name ?? WORKSPACE_LABEL} for this session. ${String(err)}`,
+          );
+        });
+      }
+      setReadyInviteUrl(undefined);
+      setExpandedRoomId(null);
+      router.replace({
+        pathname: '/buzz/channels',
+        params: { communityId },
+      });
+    },
+    [communities, identity],
+  );
 
   /** Exit one Workspace from the rail's long-press affordance. The relay does
    * the real work — the SDK leaves this member's top-level Rooms best-effort,

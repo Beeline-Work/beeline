@@ -1,7 +1,15 @@
 import { PGlite } from '@electric-sql/pglite';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Messaging } from 'firebase-admin/messaging';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DatabaseEventReader, type DatabaseQueryable } from './database.js';
+import {
+  DatabaseEventReader,
+  PostgresReservationPersistence,
+  migrateMaterializerReservations,
+  type DatabaseQueryable,
+} from './database.js';
 import { DeliveryState } from './delivery-state.js';
 import { PushGateway } from './gateway.js';
 import { TokenRegistry } from './registry.js';
@@ -16,6 +24,59 @@ const AUTHOR = 'c'.repeat(64);
 function bytes(hex: string): Uint8Array {
   return Uint8Array.from(Buffer.from(hex, 'hex'));
 }
+
+describe('shared materializer reservation store', () => {
+  it('keeps consumer documents independent in one Postgres store', async () => {
+    const postgres = new PGlite();
+    const database: DatabaseQueryable = {
+      query: async <Row>(text: string, values?: unknown[]) => {
+        const result = await postgres.query(text, values as never[] | undefined);
+        return { rows: result.rows as Row[] };
+      },
+    };
+    try {
+      await migrateMaterializerReservations(database);
+      const push = new PostgresReservationPersistence(database, 'push-delivery');
+      const events = new PostgresReservationPersistence(database, 'repository-events');
+      await push.save({ version: 1, attempts: ['push-1'] });
+      await events.save({ version: 1, pending: ['event-1'] });
+
+      await expect(push.load()).resolves.toEqual({ version: 1, attempts: ['push-1'] });
+      await expect(events.load()).resolves.toEqual({ version: 1, pending: ['event-1'] });
+      const rows = await database.query<{ consumer: string }>(
+        `SELECT consumer FROM beeline_materializer_reservations ORDER BY consumer`,
+      );
+      expect(rows.rows.map((row) => row.consumer)).toEqual(['push-delivery', 'repository-events']);
+    } finally {
+      await postgres.close();
+    }
+  });
+
+  it('imports a legacy reservation document once without overwriting current state', async () => {
+    const postgres = new PGlite();
+    const database: DatabaseQueryable = {
+      query: async <Row>(text: string, values?: unknown[]) => {
+        const result = await postgres.query(text, values as never[] | undefined);
+        return { rows: result.rows as Row[] };
+      },
+    };
+    const directory = await mkdtemp(join(tmpdir(), 'materializer-reservations-'));
+    const legacy = join(directory, 'deliveries.json');
+    await writeFile(legacy, JSON.stringify({ version: 1, cursor: 7 }));
+    try {
+      await migrateMaterializerReservations(database);
+      const first = new PostgresReservationPersistence(database, 'push-delivery', legacy);
+      await expect(first.load()).resolves.toEqual({ version: 1, cursor: 7 });
+      await first.save({ version: 1, cursor: 8 });
+      await writeFile(legacy, JSON.stringify({ version: 1, cursor: 99 }));
+      const restarted = new PostgresReservationPersistence(database, 'push-delivery', legacy);
+      await expect(restarted.load()).resolves.toEqual({ version: 1, cursor: 8 });
+    } finally {
+      await postgres.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('DatabaseEventReader', () => {
   let postgres: PGlite;

@@ -105,9 +105,7 @@ import {
   SystemdNotifier,
   disableAgentService,
   installAgentService,
-  installEventsService,
 } from './systemd.js';
-import { runRepositoryEventsService } from './events-service.js';
 import {
   coordinateManagedUpdateHandoff,
   ManagedUpdateHandoff,
@@ -148,8 +146,6 @@ ${pc.dim('Usage:')}
                                             Self-update the installed bundle
   beeline spend [--day YYYY-MM-DD] [--agent <pubkey>] [--json]
                                             Calls/tokens, causal turns, and restart re-primes
-  beeline events install                     Install/restart the single repository-events service
-  beeline events daemon                      Internal: foreground repository-events service
   beeline corner-git-credential (internal)  Git credential helper: read-only repo token for corners
   beeline mission-scaffold <dir> [options]  Write the three-file mission convention into an
                                             existing dir; never overwrites existing files
@@ -1189,32 +1185,6 @@ async function main(): Promise<void> {
   if (command === 'spend') {
     await runSpendCommand(args);
     return;
-  }
-
-  if (command === 'events') {
-    const action = args[1];
-    if (action === 'daemon') {
-      const controller = new AbortController();
-      const stop = () => controller.abort();
-      process.once('SIGINT', stop);
-      process.once('SIGTERM', stop);
-      try {
-        await runRepositoryEventsService(undefined, { signal: controller.signal });
-      } finally {
-        process.off('SIGINT', stop);
-        process.off('SIGTERM', stop);
-      }
-      return;
-    }
-    if (action === 'install') {
-      if (process.platform !== 'linux' || process.env.BEELINE_SYSTEMD_USER === '0') {
-        throw new Error('beeline events install requires Linux systemd user services');
-      }
-      await installEventsService({ entrypoint: stableBeelineEntrypoint() });
-      console.log('[events] beeline-events.service enabled; restart requested');
-      return;
-    }
-    throw new Error('events requires install or daemon');
   }
 
   // Git credential-helper backend wired into corner sessions for private-repo

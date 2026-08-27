@@ -331,6 +331,21 @@ export class ChannelSnapshotMaterializer {
       ]),
     );
     const relayEvents = new Map(input.events.map((event) => [event.id, event]));
+    if (input.repositoryChannelId !== input.channelId) {
+      const cornerCreate = input.events.find(
+        (event) =>
+          event.kind === 9007 &&
+          event.tags.some((tag) => tag[0] === 'h' && tag[1] === input.channelId) &&
+          event.tags.some((tag) => tag[0] === 'parent' && tag[1] === input.repositoryChannelId),
+      );
+      if (cornerCreate) {
+        const briefing = await reader.loadMessagePage(input.tenantId, input.repositoryChannelId, {
+          createdAt: cornerCreate.created_at,
+          eventId: 'f'.repeat(64),
+        });
+        for (const event of briefing.events) relayEvents.set(event.id, event);
+      }
+    }
     let messageCursor = input.messageCursor;
     let messagesExhausted = input.messagesExhausted;
     let messagePagesRead = 1;
@@ -427,9 +442,12 @@ export class ChannelSnapshotMaterializer {
         succession.mappings,
       );
       projection = { parsed, cursor, snapshot, succession };
-      const unresolvedParentIds = unresolvedReplyParentIds(currentEvents, parsed).filter(
-        (eventId) => !relayEvents.has(eventId) && !attemptedReplyParentIds.has(eventId),
-      );
+      const unresolvedParentIds = unresolvedReplyParentIds(
+        currentEvents.filter((event) =>
+          event.tags.some((tag) => tag[0] === 'h' && tag[1] === input.channelId),
+        ),
+        parsed,
+      ).filter((eventId) => !relayEvents.has(eventId) && !attemptedReplyParentIds.has(eventId));
       if (unresolvedParentIds.length > 0 && messagePagesRead < this.maxMessagePagesPerClaim) {
         for (const eventId of unresolvedParentIds) attemptedReplyParentIds.add(eventId);
         const parents = await reader.loadMessageEvents(

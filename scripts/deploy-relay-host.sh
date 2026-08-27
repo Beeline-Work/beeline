@@ -266,8 +266,30 @@ reload_relay_front_nginx() {
   log "relay-front nginx reloaded (HUP)"
 }
 
+events_service_absent() {
+  local unit_file
+  if systemctl list-unit-files --no-legend --no-pager beeline-events.service 2>/dev/null | grep -q '^beeline-events\.service[[:space:]]' \
+    || systemctl --user list-unit-files --no-legend --no-pager beeline-events.service 2>/dev/null | grep -q '^beeline-events\.service[[:space:]]'; then
+    return 1
+  fi
+  for unit_file in \
+    "$HOME/.config/systemd/user/beeline-events.service" \
+    /home/lunchbox/.config/systemd/user/beeline-events.service \
+    /etc/systemd/system/beeline-events.service \
+    /etc/systemd/user/beeline-events.service \
+    /usr/lib/systemd/system/beeline-events.service \
+    /usr/lib/systemd/user/beeline-events.service; do
+    [ -e "$unit_file" ] && return 1
+  done
+  return 0
+}
+
 retire_events_service() {
   local active enabled
+  if events_service_absent; then
+    log "standalone beeline-events.service already absent; skipping retirement"
+    return 0
+  fi
   active=$(sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
     /usr/bin/systemctl --user is-active beeline-events.service 2>&1) || true
   enabled=$(sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \

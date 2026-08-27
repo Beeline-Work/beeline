@@ -212,6 +212,7 @@ case "$1" in
     [ "$1" = "XDG_RUNTIME_DIR=/run/user/1000" ] || { echo "sudoers REFUSAL (runtime dir)" >&2; exit 1; }
     shift
     [ "$1" = "/usr/bin/systemctl" ] && [ "$2" = "--user" ] || { echo "sudoers REFUSAL (systemctl)" >&2; exit 1; }
+    [ -f "$STATE/events-service-present" ] || { echo "sudoers REFUSAL (events unit is absent)" >&2; exit 1; }
     action="$3"
     [ "$4" = "beeline-events.service" ] || [ "$5" = "beeline-events.service" ] || { echo "sudoers REFUSAL (events unit)" >&2; exit 1; }
     case "$action" in
@@ -233,6 +234,12 @@ case "$1" in
     ;;
 esac
 `;
+  const systemctl = String.raw`#!/usr/bin/env bash
+STATE=__STATE__
+[ "$1" = "--user" ] && shift
+[ "$1" = "list-unit-files" ] || { echo "unexpected systemctl invocation: $*" >&2; exit 64; }
+[ -f "$STATE/events-service-present" ] && echo "beeline-events.service enabled"
+`;
   write(
     path.join(binDir, 'docker'),
     docker.replaceAll('__STATE__', stateDir).replaceAll('__BIN__', binDir),
@@ -241,9 +248,11 @@ esac
     path.join(binDir, 'sudo'),
     sudo.replaceAll('__STATE__', stateDir).replaceAll('__BIN__', binDir),
   );
+  write(path.join(binDir, 'systemctl'), systemctl.replaceAll('__STATE__', stateDir));
   write(path.join(binDir, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
   fs.chmodSync(path.join(binDir, 'docker'), 0o755);
   fs.chmodSync(path.join(binDir, 'sudo'), 0o755);
+  fs.chmodSync(path.join(binDir, 'systemctl'), 0o755);
   fs.chmodSync(path.join(binDir, 'sleep'), 0o755);
 }
 
@@ -307,7 +316,10 @@ function runDeploy(opts) {
     path.join(proj, '.env'),
     'POSTGRES_PASSWORD=real-secret\nREDIS_PASSWORD=real\nBUZZ_S3_ACCESS_KEY=k\nBUZZ_S3_SECRET_KEY=s\n',
   );
-  if (opts.eventsRunning !== false) write(path.join(stateDir, 'events-running'), '1');
+  if (opts.eventsServicePresent !== false) {
+    write(path.join(stateDir, 'events-service-present'), '1');
+    if (opts.eventsRunning !== false) write(path.join(stateDir, 'events-running'), '1');
+  }
   if (opts.existingMaterializer) write(path.join(stateDir, 'materializer-running'), '1');
   else write(path.join(stateDir, 'push-gateway-running'), '1');
   if (opts.stickyPushGateway) write(path.join(stateDir, 'sticky-push-gateway'), '1');
@@ -414,6 +426,14 @@ test('first rollout installs both config files, runs one full reconcile through 
       .filter((l) => l.includes('kill -s HUP')).length,
     1,
   );
+});
+
+test('an absent standalone events unit skips retirement and continues deployment', async () => {
+  const r = await runDeploy({ eventsServicePresent: false });
+  assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+  assert.ok(r.stdout.includes('already absent'), r.stdout);
+  assert.equal(r.sudoLog().includes('beeline-events.service'), false, r.sudoLog());
+  assert.equal(r.materializerRunning(), true);
 });
 
 function composeConfig(relative, overrides = {}) {

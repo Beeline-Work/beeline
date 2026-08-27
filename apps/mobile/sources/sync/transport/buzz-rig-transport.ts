@@ -54,6 +54,9 @@ import {
   TAG_DIRECT_MESSAGE,
   TAG_AGENT,
   TAG_AGENT_PRESENCE,
+  KIND_AGENT_DRAFT,
+  TAG_AGENT_DRAFT,
+  TAG_AGENT_THOUGHT,
   parseChangeReviewManifest,
   parseChangeReviewGenerationComplete,
   type BuzzClient,
@@ -1001,11 +1004,11 @@ export class BuzzRigTransport implements RigTransport {
     // with an unreliable subset of the matching events — a whole corner
     // family's kind:9007 create events can collapse to one row, which left
     // every corner-state record signer-unverifiable (no creator fact) and
-    // quarantined the corners out of the snapshot. Multi-value `#d` has
-    // separately proven proper OR semantics and is not evidence for this
-    // sweep. Every `#h` fan-out below therefore expands into per-channel
-    // single-value filters inside THIS one `query` call, preserving one
-    // structural/projection round trip.
+    // quarantined the corners out of the snapshot. Production later showed
+    // the same first-key-only partiality for multi-value `#d` arrays, so every
+    // multi-key read here expands into per-channel single-value filters.
+    // They stay inside THIS one `query` call, so the transport still spends
+    // one round trip.
     const [authorityEvents, cornerStates] = await Promise.all([
       client.query([
         ...channelIds.map(
@@ -1319,9 +1322,10 @@ export class BuzzRigTransport implements RigTransport {
     // events for every Workspace, always, and this directory reported every
     // agent OFFLINE regardless of what its daemon was doing. Confirmed against
     // the live relay: `#h` → 0 events, `#d` → the same agent's four-second-old
-    // `online` heartbeat. The existing exact-`#d` filters stay inside THIS one
-    // query call; multi-value `#d` has separately proven proper OR semantics
-    // and is intentionally outside this `#h` sweep.
+    // `online` heartbeat. One filter per Room key, inside THIS one `query`
+    // call: production can answer a multi-value `#d` array with only the first
+    // key's matches, which would read whole Rooms' agents offline from one
+    // partial page.
     const buzzEvents = await client.query(
       roomIds.map((roomId) => ({
         kinds: [KIND_AGENT_PRESENCE],
@@ -1394,7 +1398,16 @@ export class BuzzRigTransport implements RigTransport {
   /** Read the current live agent reply draft (parameterized-replaceable), if any. */
   async agentDraftBackfill(channelId: string): Promise<SessionEvent[]> {
     const client = await this.getClient();
-    const buzzEvents = await client.agentDraftBackfill(channelId);
+    // One single-value `#d` key per lane inside ONE batched query call. The
+    // SDK helper historically packed both lanes into one multi-value `#d`
+    // array, which production can answer with only the first key's matches
+    // and silently drop the thought lane. A mobile fix must not depend on a
+    // fresh SDK export, so the expansion lives here over long-standing
+    // kind/tag constants.
+    const buzzEvents = await client.query([
+      { kinds: [KIND_AGENT_DRAFT], '#d': [`${TAG_AGENT_DRAFT}:${channelId}`], limit: 5 },
+      { kinds: [KIND_AGENT_DRAFT], '#d': [`${TAG_AGENT_THOUGHT}:${channelId}`], limit: 5 },
+    ]);
     return this.parseEvents(channelId, buzzEvents);
   }
 

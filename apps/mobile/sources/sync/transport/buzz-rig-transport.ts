@@ -36,6 +36,7 @@ import {
   parseRelayEvents,
   unresolvedReplyParentIds,
   CHANGE_REVIEW_EVENT_KIND,
+  CHANGE_REVIEW_ARTIFACT_TAG,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_COMPLETE_TAG,
@@ -59,6 +60,9 @@ import {
   TAG_AGENT_THOUGHT,
   parseChangeReviewManifest,
   parseChangeReviewGenerationComplete,
+  parseChangeReviewArtifactDescriptor,
+  parseChangeReviewArtifact,
+  type ChangeReviewArtifact,
   type BuzzClient,
   type ChannelMetadata,
   type Identity,
@@ -212,6 +216,8 @@ export class BuzzRigTransport implements RigTransport {
   private subscriptions = new Map<SessionId, () => void>();
   /** A second caller publishing the same prepared event joins the first publish. */
   private outgoingPublishes = new Map<string, Promise<string>>();
+  /** Coalesce the file list and patch reads onto the same immutable blob. */
+  private reviewArtifacts = new Map<string, Promise<ChangeReviewArtifact | null>>();
   private knownMessages = new Map<
     string,
     { channelId: string; rootId?: string; parentId?: string }
@@ -1735,6 +1741,65 @@ export class BuzzRigTransport implements RigTransport {
 
   // ── Files (P2) ─────────────────────────────────────────────────────────
 
+  private readChangeReviewArtifact(
+    client: BuzzClient,
+    sessionId: SessionId,
+    tip: string,
+    authorPubkey: string,
+  ): Promise<ChangeReviewArtifact | null> {
+    const key = `${sessionId}\u0000${tip}\u0000${authorPubkey}`;
+    const existing = this.reviewArtifacts.get(key);
+    if (existing) return existing;
+    const reading = (async () => {
+      const events = await client.query([
+        {
+          kinds: [CHANGE_REVIEW_EVENT_KIND],
+          authors: [authorPubkey],
+          '#d': [`${sessionId}:${tip}:artifact`],
+          limit: 2,
+        },
+      ]);
+      const candidate = events
+        .filter(
+          (event) =>
+            event.pubkey === authorPubkey &&
+            tagValue(event, 'h') === sessionId &&
+            tagValue(event, 'tip') === tip &&
+            tagValue(event, 't') === CHANGE_REVIEW_ARTIFACT_TAG,
+        )
+        .sort((left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id))
+        .at(0);
+      if (!candidate) return null;
+      const descriptor = parseChangeReviewArtifactDescriptor(candidate.content);
+      if (
+        !descriptor ||
+        descriptor.tip !== tip ||
+        descriptor.sha256 !== tagValue(candidate, 'x') ||
+        descriptor.patchId !== tagValue(candidate, 'patch-id')
+      ) {
+        throw new Error(`Invalid review artifact descriptor for ${tip.slice(0, 12)}`);
+      }
+      const response = await fetch(descriptor.url);
+      if (!response.ok) {
+        throw new Error(`Review artifact download failed (${response.status})`);
+      }
+      const artifact = parseChangeReviewArtifact(
+        new Uint8Array(await response.arrayBuffer()),
+        descriptor,
+      );
+      if (!artifact) throw new Error(`Review artifact failed integrity check for ${tip.slice(0, 12)}`);
+      return artifact;
+    })();
+    this.reviewArtifacts.set(key, reading);
+    void reading.then(
+      (artifact) => {
+        if (!artifact) this.reviewArtifacts.delete(key);
+      },
+      () => this.reviewArtifacts.delete(key),
+    );
+    return reading;
+  }
+
   async changedFileRead(
     sessionId: SessionId,
     path: string,
@@ -1744,6 +1809,19 @@ export class BuzzRigTransport implements RigTransport {
     const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
     if (!mergeInfo || !('target' in mergeInfo)) return null;
     const tip = reviewTip ?? mergeInfo.target.tip;
+    const artifact = await this.readChangeReviewArtifact(
+      client,
+      sessionId,
+      tip,
+      mergeInfo.authorPubkey,
+    );
+    if (artifact) {
+      const file = artifact.files.find((candidate) => candidate.path === path);
+      if (!file) throw new Error(`Missing diff for ${path} at ${tip.slice(0, 12)}`);
+      if (file.renderUnavailableReason === 'too-large') return null;
+      if (file.diff === undefined) throw new Error(`Missing diff for ${path} at ${tip.slice(0, 12)}`);
+      return { content: file.diff, ...(file.isBinary ? { isBinary: true } : {}) };
+    }
     const events = await client.query([
       {
         kinds: [CHANGE_REVIEW_EVENT_KIND],
@@ -1804,6 +1882,13 @@ export class BuzzRigTransport implements RigTransport {
     const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
     if (!mergeInfo || !('target' in mergeInfo)) return [];
     const tip = reviewTip ?? mergeInfo.target.tip;
+    const artifact = await this.readChangeReviewArtifact(
+      client,
+      sessionId,
+      tip,
+      mergeInfo.authorPubkey,
+    );
+    if (artifact) return artifact.files.map(({ diff: _diff, ...file }) => file);
     const events = await client.query([
       {
         kinds: [CHANGE_REVIEW_EVENT_KIND],

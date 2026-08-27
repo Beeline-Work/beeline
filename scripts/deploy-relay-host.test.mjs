@@ -98,6 +98,20 @@ case "$cmd" in
   kill)
     log "kill $*"
     ;;
+  stop)
+    log "stop $*"
+    for cid in "$@"; do
+      case "$cid" in
+        legacygwcontainerid)
+          [ -f "$STATE/sticky-push-gateway" ] || rm -f "$STATE/push-gateway-running"
+          ;;
+        gwcontainerid)
+          rm -f "$STATE/materializer-running"
+          ;;
+        *) echo "unknown container: $cid" >&2; exit 1 ;;
+      esac
+    done
+    ;;
   compose)
     log "compose $*"
     # Emulate compose resolving env_file entries from the -f file AS THE
@@ -136,6 +150,10 @@ case "$cmd" in
     case "$*" in
       *"up -d --no-deps auth") ;;
       *"up -d"*)
+        if [ -f "$STATE/push-gateway-running" ] || [ -f "$STATE/materializer-running" ]; then
+          echo "tail owner overlap" >&2
+          exit 1
+        fi
         if [ -f "$STATE/fail-compose-up" ]; then
           echo "simulated compose up failure" >&2
           exit 1
@@ -290,6 +308,9 @@ function runDeploy(opts) {
     'POSTGRES_PASSWORD=real-secret\nREDIS_PASSWORD=real\nBUZZ_S3_ACCESS_KEY=k\nBUZZ_S3_SECRET_KEY=s\n',
   );
   if (opts.eventsRunning !== false) write(path.join(stateDir, 'events-running'), '1');
+  if (opts.existingMaterializer) write(path.join(stateDir, 'materializer-running'), '1');
+  else write(path.join(stateDir, 'push-gateway-running'), '1');
+  if (opts.stickyPushGateway) write(path.join(stateDir, 'sticky-push-gateway'), '1');
   if (opts.failComposeUp) write(path.join(stateDir, 'fail-compose-up'), '1');
   const stackStageDir = path.join(tmp, 'stage');
 
@@ -367,6 +388,11 @@ test('first rollout installs both config files, runs one full reconcile through 
   assert.equal(ups.length, 1, r.dockerLog());
   assert.ok(ups[0].includes('-p buzz-router-prod'));
   assert.ok(ups[0].endsWith('up -d --remove-orphans'));
+  const dockerOperations = r.dockerLog().trim().split('\n');
+  const legacyStop = dockerOperations.findIndex((line) => line === 'docker stop legacygwcontainerid');
+  const materializerStart = dockerOperations.findIndex((line) => line.includes('up -d'));
+  assert.notEqual(legacyStop, -1, r.dockerLog());
+  assert.ok(legacyStop < materializerStart, r.dockerLog());
   assert.equal(
     r
       .sudoLog()
@@ -389,62 +415,42 @@ test('first rollout installs both config files, runs one full reconcile through 
 
 });
 
-function composeServices(composeText) {
-  const lines = composeText.split('\n');
-  const start = lines.findIndex((line) => line === 'services:');
-  assert.notEqual(start, -1, 'compose.yml must declare services');
-  const services = [];
-  for (let index = start + 1; index < lines.length; index++) {
-    if (/^[^\s#]/.test(lines[index])) break;
-    const match = /^  ([a-z][a-z0-9-]*):$/.exec(lines[index]);
-    if (match) services.push(match[1]);
-  }
-  return services;
-}
-
-function composeServiceBlock(composeText, service) {
-  const lines = composeText.split('\n');
-  const start = lines.findIndex((line) => line === `  ${service}:`);
-  assert.notEqual(start, -1, `compose.yml must declare ${service}`);
-  let end = lines.length;
-  for (let index = start + 1; index < lines.length; index++) {
-    if (/^  [a-z][a-z0-9-]*:$/.test(lines[index])) {
-      end = index;
-      break;
-    }
-  }
-  return lines.slice(start, end);
-}
-
-function expandComposeValue(value, env = {}) {
-  return value.replace(/\$\{([A-Z0-9_]+):-([^}]+)\}/g, (_match, name, fallback) => {
-    return env[name] || fallback;
-  });
-}
-
-function materializerRuntimeModel(composeText, env = {}) {
-  const block = composeServiceBlock(composeText, 'materializer');
-  const xdgLine = block.find((line) => line.startsWith('      XDG_STATE_HOME:'));
-  assert.ok(xdgLine, 'materializer must set XDG_STATE_HOME');
-  const xdgStateHome = expandComposeValue(xdgLine.split(':').slice(1).join(':').trim(), env);
-  const volumeStart = block.findIndex((line) => line === '    volumes:');
-  assert.notEqual(volumeStart, -1, 'materializer must declare volumes');
-  const volumes = [];
-  for (let index = volumeStart + 1; index < block.length; index++) {
-    const match = /^ {6}- (.+)$/.exec(block[index]);
-    if (!match) {
-      if (volumes.length) break;
-      continue;
-    }
-    const [source, target, mode = 'rw'] = expandComposeValue(match[1], env).split(':');
-    volumes.push({ source, target, mode });
-  }
-  return { xdgStateHome, volumes };
+function composeConfig(relative, overrides = {}) {
+  const composeFile = path.join(REPO, relative);
+  const env = {
+    ...process.env,
+    POSTGRES_PASSWORD: 'compose-test',
+    POSTGRES_USER: 'buzz',
+    POSTGRES_DB: 'buzz',
+    REDIS_PASSWORD: 'compose-test',
+    BUZZ_S3_ACCESS_KEY: 'compose-test',
+    BUZZ_S3_SECRET_KEY: 'compose-test',
+    BUZZY_SNAPSHOT_INTERNAL_TOKEN: 'compose-test',
+  };
+  delete env.BEELINE_RUNTIME_STATE_DIR;
+  Object.assign(env, overrides);
+  const result = spawnSync(
+    'docker',
+    [
+      'compose',
+      '--project-directory',
+      path.dirname(composeFile),
+      '-f',
+      composeFile,
+      'config',
+      '--format',
+      'json',
+      '--no-env-resolution',
+    ],
+    { encoding: 'utf8', env },
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return JSON.parse(result.stdout);
 }
 
 test('tracked stacks expose one materializer service instead of separate tail processes', () => {
   for (const relative of ['relay-stack/compose.yml', 'relay-stack/prod/compose.yml']) {
-    const services = composeServices(fs.readFileSync(path.join(REPO, relative), 'utf8'));
+    const services = Object.keys(composeConfig(relative).services);
     assert.equal(services.filter((service) => service === 'materializer').length, 1, relative);
     assert.equal(services.includes('push-gateway'), false, relative);
     assert.equal(services.includes('events'), false, relative);
@@ -453,26 +459,18 @@ test('tracked stacks expose one materializer service instead of separate tail pr
 });
 
 test('materializer preserves persisted absolute runtime roots inside the container', () => {
-  const compose = fs.readFileSync(TRACKED_COMPOSE, 'utf8');
-  for (const runtimeRoot of ['/home/lunchbox/.local/state', '/srv/beeline-runtime']) {
-    const env =
-      runtimeRoot === '/home/lunchbox/.local/state'
-        ? {}
-        : { BEELINE_RUNTIME_STATE_DIR: runtimeRoot };
-    const model = materializerRuntimeModel(compose, env);
-    assert.equal(model.xdgStateHome, runtimeRoot);
-    assert.deepEqual(
-      model.volumes.find((volume) => volume.target === runtimeRoot),
-      { source: runtimeRoot, target: runtimeRoot, mode: 'ro' },
-    );
-    const runtimeMount = model.volumes.find((volume) => volume.target === runtimeRoot);
-    const persistedRoomRoot = path.posix.join(runtimeRoot, 'beeline', 'agents', 'room');
-    const visibleBodyState = path.posix.join(
-      runtimeMount.source,
-      path.posix.relative(runtimeMount.target, persistedRoomRoot),
-      'body-state.json',
-    );
-    assert.equal(visibleBodyState, path.posix.join(persistedRoomRoot, 'body-state.json'));
+  for (const relative of ['relay-stack/compose.yml', 'relay-stack/prod/compose.yml']) {
+    for (const runtimeRoot of ['/home/lunchbox/.local/state', '/srv/beeline-runtime']) {
+      const overrides =
+        runtimeRoot === '/home/lunchbox/.local/state'
+          ? {}
+          : { BEELINE_RUNTIME_STATE_DIR: runtimeRoot };
+      const materializer = composeConfig(relative, overrides).services.materializer;
+      assert.equal(materializer.environment.XDG_STATE_HOME, runtimeRoot, relative);
+      const runtimeMount = materializer.volumes.find((volume) => volume.target === runtimeRoot);
+      assert.equal(runtimeMount.source, runtimeRoot, relative);
+      assert.equal(runtimeMount.read_only, true, relative);
+    }
   }
 });
 
@@ -480,6 +478,7 @@ test('a repeated deploy places tracked config and converges once', async () => {
   const r = await runDeploy({
     liveCompose: fs.readFileSync(TRACKED_COMPOSE, 'utf8'),
     liveNginx: fs.readFileSync(TRACKED_NGINX, 'utf8'),
+    existingMaterializer: true,
   });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
@@ -500,12 +499,29 @@ test('a repeated deploy places tracked config and converges once', async () => {
       .length,
     1,
   );
+  const dockerOperations = r.dockerLog().trim().split('\n');
+  const currentStop = dockerOperations.findIndex((line) => line === 'docker stop gwcontainerid');
+  const materializerStart = dockerOperations.findIndex((line) => line.includes('up -d'));
+  assert.notEqual(currentStop, -1, r.dockerLog());
+  assert.ok(currentStop < materializerStart, r.dockerLog());
   assert.equal(
     r
       .dockerLog()
       .split('\n')
       .filter((l) => l.includes('kill -s HUP')).length,
     1,
+  );
+});
+
+test('cutover refuses to start while any previous tail owner remains running', async () => {
+  const r = await runDeploy({ stickyPushGateway: true });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.materializerRunning(), false);
+  assert.ok(r.stderr.includes('push-gateway containers remain running'), r.stderr);
+  assert.equal(
+    r.dockerLog().split('\n').some((line) => line.includes('compose ') && line.includes('up -d')),
+    false,
+    r.dockerLog(),
   );
 });
 
@@ -575,69 +591,41 @@ test('compose validation never resolves real env_file secrets: an unreadable env
 // member files across inode replacement.
 // ---------------------------------------------------------------------------
 
-/** Minimal targeted extractor: the `relay-front:` service block text. */
-function relayFrontServiceBlock(composeText) {
-  const lines = composeText.split('\n');
-  const start = lines.findIndex((l) => l === '  relay-front:');
-  assert.ok(start !== -1, 'compose.yml must declare a relay-front service');
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^  [a-z][a-z0-9-]*:$/.test(lines[i])) {
-      end = i;
-      break;
-    }
-  }
-  return lines.slice(start, end);
-}
-
-function relayFrontMounts(blockLines) {
-  const volIdx = blockLines.findIndex((l) => l === '    volumes:');
-  assert.ok(volIdx !== -1, 'relay-front must declare volumes');
-  const mounts = [];
-  for (let i = volIdx + 1; i < blockLines.length; i++) {
-    const m = blockLines[i].match(/^ {6}- ([^:\s]+):([^:\s]+)(?::(ro|rw))?$/);
-    if (!m) {
-      if (/^ {6}- /.test(blockLines[i])) {
-        throw new Error(`unparsed relay-front volume entry: ${blockLines[i].trim()}`);
-      }
-      if (mounts.length) break;
-      continue;
-    }
-    mounts.push({ source: m[1], containerPath: m[2], mode: m[3] ?? 'rw' });
-  }
-  assert.ok(mounts.length > 0, 'relay-front volumes must use short `- src:dst[:mode]` syntax');
-  return mounts;
-}
-
-function relayFrontCommand(blockLines) {
-  const line = blockLines.find((l) => l.startsWith('    command:'));
-  if (!line) return null;
-  const value = line.slice('    command:'.length).trim();
-  if (value.includes("'")) {
-    return [...value.matchAll(/'([^']*)'/g)].map((match) => match[1]);
-  }
-  return JSON.parse(value);
+function relayFrontRuntimeModel() {
+  const relayFront = composeConfig('relay-stack/prod/compose.yml').services['relay-front'];
+  return {
+    command: relayFront.command,
+    mounts: relayFront.volumes.map((volume) => ({
+      type: volume.type,
+      source: volume.source,
+      containerPath: volume.target,
+      mode: volume.read_only ? 'ro' : 'rw',
+    })),
+  };
 }
 
 test('relay-front loads nginx.conf through the enclosing read-only directory mount', () => {
-  const block = relayFrontServiceBlock(fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
-  const mounts = relayFrontMounts(block);
+  const { command, mounts } = relayFrontRuntimeModel();
 
-  const configMount = mounts.find((m) => m.source === './relay-front');
+  const configMount = mounts.find((mount) => mount.containerPath === '/etc/beeline-front');
   assert.deepEqual(
     configMount,
-    { source: './relay-front', containerPath: '/etc/beeline-front', mode: 'ro' },
+    {
+      type: 'bind',
+      source: path.join(REPO, 'relay-stack/prod/relay-front'),
+      containerPath: '/etc/beeline-front',
+      mode: 'ro',
+    },
     'relay-front must bind the enclosing config directory read-only; binding nginx.conf itself pins its old inode',
   );
 
-  const cmd = relayFrontCommand(block);
   assert.ok(
-    Array.isArray(cmd),
+    Array.isArray(command),
     'relay-front must pin a command[] loading config via -c from a directory mount',
   );
-  const cFlag = cmd.indexOf('-c');
+  const cFlag = command.indexOf('-c');
   assert.notEqual(cFlag, -1, 'relay-front command must carry a -c flag');
-  const configPath = cmd[cFlag + 1];
+  const configPath = command[cFlag + 1];
   assert.ok(
     configPath.startsWith(configMount.containerPath + '/'),
     `nginx -c path ${configPath} must live inside ${configMount.containerPath}`,
@@ -648,22 +636,24 @@ test(
   'nginx HUP reloads current bytes after deploy placement through the deployed directory mount',
   { skip: !dockerAvailable() },
   async (t) => {
-    const block = relayFrontServiceBlock(fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
-    const mounts = relayFrontMounts(block);
-    const cmd = relayFrontCommand(block);
-    const cFlag = cmd.indexOf('-c');
-    const containerConfigPath = cmd[cFlag + 1];
+    const model = relayFrontRuntimeModel();
+    const cFlag = model.command.indexOf('-c');
+    const containerConfigPath = model.command[cFlag + 1];
 
     const proj = mkdtemp();
     t.after(() => fs.rmSync(proj, { recursive: true, force: true }));
+    const mounts = model.mounts.map((mount) => ({
+      ...mount,
+      source: path.join(proj, mount.containerPath.replace(/^\/+/, '').replaceAll('/', '-')),
+    }));
+    for (const mount of mounts) fs.mkdirSync(mount.source, { recursive: true });
     const hostFor = (containerPath) => {
       const m = mounts.find(
         (x) => containerPath === x.containerPath || containerPath.startsWith(x.containerPath + '/'),
       );
       assert.ok(m, `no declared mount covers ${containerPath}`);
       const rel = path.relative(m.containerPath, containerPath);
-      const srcAbs = path.join(proj, path.normalize(m.source).replace(/^([.][/\\])+/, ''));
-      return rel && rel !== '.' ? path.join(srcAbs, rel) : srcAbs;
+      return rel && rel !== '.' ? path.join(m.source, rel) : m.source;
     };
 
     const config = (marker) =>
@@ -729,7 +719,7 @@ test(
     // replaces the member inode, directory lookup lets nginx reload V4.
     const bindArgs = mounts.flatMap((m) => [
       '-v',
-      `${path.join(proj, path.normalize(m.source).replace(/^([.][/\\])+/, ''))}:${m.containerPath}:${m.mode}`,
+      `${m.source}:${m.containerPath}:${m.mode}`,
     ]);
     await docker([
       'run',
@@ -739,7 +729,7 @@ test(
       fixedName,
       ...bindArgs,
       'nginx:1.27-alpine',
-      ...cmd,
+      ...model.command,
     ]);
     running.add(fixedName);
     await waitForMarker(fixedName, 'V3');

@@ -112,14 +112,14 @@ services:
       BUZZY_SNAPSHOT_PUBLIC_ORIGIN: ${BUZZY_SNAPSHOT_PUBLIC_ORIGIN:-http://127.0.0.1:${BUZZ_HTTP_PORT:-3010}}
       BUZZY_SNAPSHOT_AUTH_BASE_URL: http://auth:8789
       BUZZY_SNAPSHOT_INTERNAL_TOKEN: ${BUZZY_SNAPSHOT_INTERNAL_TOKEN:-gate-snapshot-internal}
-      XDG_STATE_HOME: /var/lib/beeline-runtime
+      XDG_STATE_HOME: ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}
       BEELINE_EVENTS_STATE_DIR: /var/lib/beeline-events
       BEELINE_GITHUB_APP_ID: ${BEELINE_GITHUB_APP_ID:-1}
       BEELINE_GITHUB_APP_PRIVATE_KEY: ${BEELINE_GITHUB_APP_PRIVATE_KEY:-development-only}
     volumes:
       - ${BUZZY_PUSH_SA_HOST_FILE:-/home/lunchbox/buzzy-push-gateway/secrets/fcm-service-account.json}:/run/secrets/buzzy-fcm-service-account.json:ro
       - ${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}:/var/lib/buzzy-push
-      - ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:/var/lib/beeline-runtime:ro
+      - ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:ro
       - ${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}:/var/lib/beeline-events
     depends_on:
       auth:

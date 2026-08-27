@@ -1304,6 +1304,22 @@ describe('readModelTail cold-open fast path', () => {
   const cornerMessage = (source: typeof human | typeof agent, body: string, at: number): NostrEvent =>
     signed(source, { created_at: at, kind: 9, tags: [['h', CORNER]], content: body });
 
+  function fiveMemberProjection(): NostrEvent {
+    return signed(relay, {
+      created_at: 9,
+      kind: KIND_CHANNEL_MEMBERS,
+      tags: [
+        ['d', CORNER],
+        ['p', human.publicKey, 'owner'],
+        ['p', agent.publicKey, 'member'],
+        ['p', peerAgent.publicKey, 'member'],
+        ['p', unattachedAgent.publicKey, 'member'],
+        ['p', rotatingUnattachedAgent.publicKey, 'member'],
+      ],
+      content: '',
+    });
+  }
+
   function agentRegistryEvent(): NostrEvent {
     return signed(agent, {
       created_at: 4,
@@ -1317,7 +1333,7 @@ describe('readModelTail cold-open fast path', () => {
     });
   }
 
-  it('paints the corner transcript from exactly ONE channel-scoped batched relay read', async () => {
+  it('materializes all five Room roster entries on a first-entry tail read', async () => {
     const messages = [
       cornerMessage(human, 'first', 5),
       cornerMessage(agent, 'second', 6),
@@ -1328,12 +1344,9 @@ describe('readModelTail cold-open fast path', () => {
     const client = {
       query: vi.fn(async (filters: Array<Record<string, unknown>>) => {
         queryCalls += 1;
-        // Exactly three filters: the bounded message tail, this channel's
-        // immutable create event, and the agent registry page. Membership,
-        // admin projections, and general structural history are DEFERRED —
-        // they must not ride the first-paint read.
-        expect(filters).toHaveLength(3);
-        expect(filters.some((filter) => (filter.kinds as number[]).includes(KIND_CHANNEL_MEMBERS))).toBe(false);
+        // The bounded message tail, immutable create event, exact membership
+        // projections, and agent registry all share one channel-scoped read.
+        expect(filters).toHaveLength(5);
         const results: NostrEvent[] = [];
         for (const filter of filters) {
           const kinds = filter.kinds as number[];
@@ -1352,6 +1365,7 @@ describe('readModelTail cold-open fast path', () => {
             else results.push(agentRegistryEvent());
           }
           if (kinds.includes(KIND_CREATE_GROUP)) results.push(cornerCreate());
+          if (kinds.includes(KIND_CHANNEL_MEMBERS)) results.push(fiveMemberProjection());
         }
         return results;
       }),
@@ -1369,6 +1383,19 @@ describe('readModelTail cold-open fast path', () => {
       expect.arrayContaining(messages.map((event) => event.id)),
     );
     expect(transcript).toHaveLength(4);
+    // The header and roster sheet both render from this selector. A newly
+    // created Room must therefore have all five actual members before a
+    // refresh or re-entry can trigger a slower full reconciliation.
+    expect(selectMembers(result.snapshot, CORNER).map((member) => member.pubkey)).toEqual(
+      expect.arrayContaining([
+        human.publicKey,
+        agent.publicKey,
+        peerAgent.publicKey,
+        unattachedAgent.publicKey,
+        rotatingUnattachedAgent.publicKey,
+      ]),
+    );
+    expect(selectMembers(result.snapshot, CORNER)).toHaveLength(5);
     // The parser bootstrapped the registry page into an agent IdentityRecord,
     // so the agent's own rows classify as agent conversation, not prose.
     expect(result.snapshot.identities[agent.publicKey]?.kind).toBe('agent');

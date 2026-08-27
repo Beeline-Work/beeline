@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({
@@ -11,6 +13,9 @@ import {
   KIND_CORNER_STATE,
   KIND_CREATE_GROUP,
   KIND_STREAM_MESSAGE,
+  CHANGE_REVIEW_ARTIFACT_TAG,
+  CHANGE_REVIEW_ARTIFACT_VERSION,
+  CHANGE_REVIEW_EVENT_KIND,
   TAG_AGENT_ACTIVITY,
   TAG_AGENT_PRESENCE,
   TAG_COMMUNITY,
@@ -384,6 +389,82 @@ function transportWith(client: ReturnType<typeof clientFixture>['client']): Buzz
   (transport as unknown as { client: unknown }).client = client;
   return transport;
 }
+
+describe('BuzzRigTransport content-addressed review reads', () => {
+  it('loads the same file metadata and patches from one verified artifact', async () => {
+    const base = 'a'.repeat(40);
+    const tip = 'b'.repeat(40);
+    const patchId = 'c'.repeat(40);
+    const artifactBytes = new TextEncoder().encode(
+      JSON.stringify({
+        version: CHANGE_REVIEW_ARTIFACT_VERSION,
+        base,
+        tip,
+        patchId,
+        summary: 'Atomic review',
+        files: [
+          {
+            path: 'src/review.ts',
+            status: 'modified',
+            linesAdded: 1,
+            linesRemoved: 1,
+            diff: '@@ -1 +1 @@\n-old\n+new',
+          },
+        ],
+      }),
+    );
+    const hash = bytesToHex(sha256(artifactBytes));
+    const artifactEvent = signed(agent, {
+      created_at: 10,
+      kind: CHANGE_REVIEW_EVENT_KIND,
+      tags: [
+        ['h', CORNER],
+        ['d', `${CORNER}:${tip}:artifact`],
+        ['t', CHANGE_REVIEW_ARTIFACT_TAG],
+        ['tip', tip],
+        ['patch-id', patchId],
+        ['x', hash],
+      ],
+      content: JSON.stringify({
+        version: CHANGE_REVIEW_ARTIFACT_VERSION,
+        base,
+        tip,
+        patchId,
+        summary: 'Atomic review',
+        fileCount: 1,
+        url: `https://relay.test/media/${hash}`,
+        sha256: hash,
+        size: artifactBytes.byteLength,
+      }),
+    });
+    const query = vi.fn(async () => [artifactEvent]);
+    const transport = new BuzzRigTransport(human, 'https://relay.test');
+    (transport as unknown as { client: unknown }).client = { query };
+    vi.spyOn(transport as never, 'getSubchannelMergeTarget').mockResolvedValue({
+      authorPubkey: agent.publicKey,
+      target: { tip },
+    });
+    const download = vi.fn(async () => new Response(artifactBytes, { status: 200 }));
+    vi.stubGlobal('fetch', download);
+    try {
+      await expect(transport.workspaceFilesRead(CORNER, tip)).resolves.toEqual([
+        expect.objectContaining({
+          path: 'src/review.ts',
+          status: 'modified',
+          linesAdded: 1,
+          linesRemoved: 1,
+        }),
+      ]);
+      await expect(transport.changedFileRead(CORNER, 'src/review.ts', tip)).resolves.toEqual({
+        content: '@@ -1 +1 @@\n-old\n+new',
+      });
+      expect(query).toHaveBeenCalledOnce();
+      expect(download).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe('BuzzRigTransport typed read-model boundary', () => {
   it('parses relay history once and returns a normalized snapshot plus closed-union events', async () => {

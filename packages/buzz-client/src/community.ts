@@ -490,13 +490,22 @@ export async function listCommunities(
   // getCommunityMetadata's fallback below), so any metadata event that only
   // ever carried the older `#h` convention falls through to the existing
   // per-id `getCommunity` recovery path further down, same as before.
-  const communityEvents = await query(
-    ctx,
-    ids.flatMap((id) => [
-      { kinds: [KIND_CREATE_GROUP], '#h': [id], limit: 20 },
-      { kinds: [KIND_CHANNEL_METADATA], '#d': [id], limit: 5 },
-    ]),
-  );
+  const communityEvents: NostrEvent[] = [];
+  // Keep the per-id reads that avoid lossy multi-key tag matching, and keep
+  // each exact coordinate in its own REQ. Larger filter arrays fall onto the
+  // socket's ten-second fallback path on-device even when desktop WS answers
+  // the same batch promptly.
+  for (let offset = 0; offset < ids.length; offset += 1) {
+    communityEvents.push(
+      ...(await query(
+        ctx,
+        ids.slice(offset, offset + 1).flatMap((id) => [
+          { kinds: [KIND_CREATE_GROUP], '#h': [id], limit: 20 },
+          { kinds: [KIND_CHANNEL_METADATA], '#d': [id], limit: 5 },
+        ]),
+      )),
+    );
+  }
   const createEvents = communityEvents.filter((event) => event.kind === KIND_CREATE_GROUP);
   const metadataEvents = communityEvents.filter((event) => event.kind === KIND_CHANNEL_METADATA);
   const confirmedNonWorkspaceIds = new Set(
@@ -574,9 +583,17 @@ export async function communityChannels(
     if (channelId) ids.add(channelId);
   }
   const candidates = [...ids];
-  const metadata = await Promise.all(
-    candidates.map(async (channelId) => getChannelMetadata(ctx, channelId)),
-  );
+  const metadata: Array<Awaited<ReturnType<typeof getChannelMetadata>>> = [];
+  // Same-turn reads are coalesced by the transport. Keep each REQ below the
+  // relay's large-filter timeout cliff while still checking archive truth in
+  // parallel for a bounded set of Rooms.
+  for (let offset = 0; offset < candidates.length; offset += 8) {
+    metadata.push(
+      ...(await Promise.all(
+        candidates.slice(offset, offset + 8).map((channelId) => getChannelMetadata(ctx, channelId)),
+      )),
+    );
+  }
   return candidates.filter((_channelId, index) => metadata[index]?.archived !== true);
 }
 
@@ -585,7 +602,9 @@ async function communityChannelCreates(
   communityId: string,
   limit = 500,
 ): Promise<NostrEvent[]> {
-  const events = await query(ctx, [{ kinds: [KIND_CREATE_GROUP], limit }]);
+  const events = await query(ctx, [
+    { kinds: [KIND_CREATE_GROUP], '#community': [communityId], limit },
+  ]);
   return events.filter(
     (event) =>
       tagValue(event, TAG_COMMUNITY) === communityId &&
@@ -621,33 +640,65 @@ async function assertCommunityMemberInChannels(
   pubkey: string,
 ): Promise<string[]> {
   const channelIds = await communityRoomIds(ctx, communityId);
+  const projectionLimit = Math.max(500, channelIds.length * 4);
+  const projections =
+    channelIds.length > 0
+      ? await query(ctx, [
+          {
+            kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+            '#d': channelIds,
+            limit: projectionLimit,
+          },
+        ])
+      : [];
+  const completeProjection = projections.length < projectionLimit;
+  const projectedIds = new Set(
+    projections
+      .map((event) => tagValue(event, 'd') ?? tagValue(event, 'h'))
+      .filter((id): id is string => Boolean(id)),
+  );
   const repaired: string[] = [];
-  for (const channelId of channelIds) {
-    // An archived historical Room is not a valid join target. Skip it and
-    // continue into the Workspace's live Rooms instead of surfacing the
-    // relay's low-level kind:9000 rejection in the app.
-    if ((await getChannelMetadata(ctx, channelId))?.archived) continue;
-    if (await isMember(ctx, channelId, pubkey)) continue;
-    // A previously-proven unprojectable self-join stays unprojectable; skip
-    // without re-paying the full projection wait on every bootstrap.
-    if (isRoomUnmigratable(channelId, pubkey)) continue;
-    try {
-      await setMemberRole(ctx, channelId, pubkey, 'member', {
-        extraTags: [[TAG_COMMUNITY, communityId]],
-      });
-    } catch (error) {
-      // Metadata may race the relay's archive mutation. Treat the relay's
-      // authoritative rejection exactly like the preflight result.
-      if (isArchivedChannelError(error)) continue;
-      throw error;
-    }
-    try {
-      await waitUntilMember(ctx, channelId, pubkey);
-    } catch (error) {
-      if (!handleUnprojectableSelfJoin(channelId, pubkey, error)) throw error;
-      continue;
-    }
-    repaired.push(channelId);
+  // Membership projection waits are independent per Room. Keep a small
+  // concurrency window so first entry does not grow linearly with the number
+  // of Rooms while avoiding an unbounded publish burst on large Workspaces.
+  for (let offset = 0; offset < channelIds.length; offset += 8) {
+    const batch = await Promise.all(
+      channelIds.slice(offset, offset + 8).map(async (channelId): Promise<string | null> => {
+        if (
+          completeProjection &&
+          projectedIds.has(channelId) &&
+          projectedCommunityRole(projections, channelId, pubkey)
+        ) {
+          return null;
+        }
+        // An archived historical Room is not a valid join target. Skip it and
+        // continue into the Workspace's live Rooms instead of surfacing the
+        // relay's low-level kind:9000 rejection in the app.
+        if ((await getChannelMetadata(ctx, channelId))?.archived) return null;
+        if (await isMember(ctx, channelId, pubkey)) return null;
+        // A previously-proven unprojectable self-join stays unprojectable; skip
+        // without re-paying the full projection wait on every bootstrap.
+        if (isRoomUnmigratable(channelId, pubkey)) return null;
+        try {
+          await setMemberRole(ctx, channelId, pubkey, 'member', {
+            extraTags: [[TAG_COMMUNITY, communityId]],
+          });
+        } catch (error) {
+          // Metadata may race the relay's archive mutation. Treat the relay's
+          // authoritative rejection exactly like the preflight result.
+          if (isArchivedChannelError(error)) return null;
+          throw error;
+        }
+        try {
+          await waitUntilMember(ctx, channelId, pubkey);
+        } catch (error) {
+          if (!handleUnprojectableSelfJoin(channelId, pubkey, error)) throw error;
+          return null;
+        }
+        return channelId;
+      }),
+    );
+    repaired.push(...batch.filter((channelId): channelId is string => channelId !== null));
   }
   return repaired;
 }

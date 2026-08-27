@@ -137,4 +137,43 @@ describe('query() funnel', () => {
     expect(firstEvents.map((e) => e.id)).toEqual(['room-a-event']);
     expect(secondEvents.map((e) => e.id)).toEqual(['room-b-event']);
   });
+
+  it('splits a same-tick fan-out before it exceeds the relay filter budget', async () => {
+    const eose: Array<() => void> = [];
+    const captured: Record<string, unknown>[][] = [];
+    const fakeSocket = {
+      connected: true,
+      onClose: vi.fn(() => () => {}),
+      subscribe: vi.fn(
+        (filters: Record<string, unknown>[], onEvent: (e: NostrEvent) => void, opts) => {
+          captured.push(filters);
+          eose.push(opts.onEose);
+          for (const filter of filters) {
+            const room = (filter['#h'] as string[])[0]!;
+            onEvent(fakeEvent(`${room}-event`, [['h', room]]));
+          }
+          return vi.fn();
+        },
+      ),
+    };
+    const identity = createIdentity('query-filter-budget');
+    const ctx: QueryFunnelContext = {
+      http: { baseUrl: 'https://relay.test', host: 'relay.test', identity },
+      identity,
+      ws: () => fakeSocket as unknown as RelayWs,
+    };
+
+    const reads = Array.from({ length: 9 }, (_, index) => {
+      const room = `room-${index}`;
+      return query(ctx, [{ kinds: [9], '#h': [room], limit: 1 }]);
+    });
+    await vi.waitFor(() => expect(fakeSocket.subscribe).toHaveBeenCalledTimes(2));
+    eose.forEach((finish) => finish());
+
+    const results = await Promise.all(reads);
+    expect(captured.map((filters) => filters.length)).toEqual([8, 1]);
+    expect(results.map((events) => events[0]?.id)).toEqual(
+      Array.from({ length: 9 }, (_, index) => `room-${index}-event`),
+    );
+  });
 });

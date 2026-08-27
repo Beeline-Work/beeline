@@ -12,19 +12,21 @@
  * Delivery split, deliberately narrow:
  *  - claude/codex/grok discover `<harness-home>/skills/using-beeline/SKILL.md`
  *    through their own skills loaders (their frontmatter `description` is what
- *    makes the skill findable), so no per-turn prompt growth is needed for them;
- *  - pi ignores per-home config entirely, so its coverage is the ALREADY
- *    shipped turn-prefix facts (`PI_CORNER_REQUEST_INSTRUCTIONS` plus the two
- *    proposal commands in `roomEditPolicyInstructions`) — this module does not
- *    add a second pi channel;
- *  - the session system prompt gains exactly ONE pointer line
- *    (`BEELINE_SKILL_PROMPT_LINE`) and nothing else.
+ *    makes the skill findable), but cold capability awareness does not depend
+ *    on optional skill discovery;
+ *  - every harness receives the compact capability primer below in the ACP
+ *    session prompt; adapters proven to drop that field receive the SAME bytes
+ *    through Body's existing compatibility turn prefix;
+ *  - pi ignores per-home skills, so that compact prefix is also its pointer to
+ *    the versioned reference rather than a second prompt/control system.
  *
  * The file is version-stamped with the RUNNING release identifier so drift is
  * visible and regeneration on activation makes upgrades automatic.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 
 /** Skill directory name under every managed harness skills dir. */
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
@@ -36,18 +38,48 @@ export const USING_BEELINE_SKILL_NAME = 'using-beeline';
  */
 export const USING_BEELINE_SKILL_DESCRIPTION =
   'How Beeline managed sessions work: read-only Rooms versus isolated edit corners, ' +
-  'how to open a corner yourself, the merge review and landing flow, the workbench, ' +
-  'agent-private state and memory directories, and the honesty rules for gates and failures. ' +
+  'how to open a corner yourself, schedule unattended and recurring work, request schedule ' +
+  'or mission grants, use target-agent and script-fired crons, follow the merge review and ' +
+  'landing flow, and use the workbench, agent-private state, and memory directories. ' +
   'Consult this skill whenever you are unsure how to act, how to request repository edits, ' +
-  'or where your work and files go.';
+  'how to arrange background work, or where your work and files go.';
 
 /**
- * The one system-prompt line pointing at the skill. The prompt must not grow
- * beyond this: detailed behavior lives in the materialized SKILL.md, not here.
+ * Compact capability awareness delivered at physical session start. Detailed
+ * mechanics stay in the generated reference; this primer exists so a cold
+ * agent cannot miss an already-shipped platform capability before discovering
+ * optional skills.
  */
-export const BEELINE_SKILL_PROMPT_LINE =
-  'When unsure how rooms, edit corners, merge review, the workbench, or your memory directories ' +
-  'work in this environment, consult the using-beeline skill (SKILL.md) before acting.';
+export const BEELINE_CAPABILITIES_PRIMER =
+  'Beeline can schedule unattended and recurring work, including target-agent and script-fired ' +
+  'crons. For monitoring or other background work, propose an exact Beeline schedule and request ' +
+  'the appropriate schedule or mission grant for the human to approve with one signature; do not ' +
+  'claim Beeline has no scheduler. This notice grants nothing. Consult the release-versioned ' +
+  'using-beeline skill (SKILL.md) for the mechanics.';
+
+export interface BeelineCapabilityContext {
+  /** Always sent through ACP session/new. */
+  sessionPrompt: string;
+  /** Existing delivery floor for adapters that discard session/new prompts. */
+  compatibilityTurnPrefix?: string;
+}
+
+/**
+ * One delivery plan for every supported harness. Claude consumes the ACP
+ * session prompt once. Codex, Grok, and Pi have been measured dropping it, so
+ * Body repeats these same compact bytes in its existing compatibility prefix;
+ * no harness owns a prose copy that can drift.
+ */
+export function beelineCapabilityContextForHarness(
+  agentCommand: string | undefined,
+): BeelineCapabilityContext {
+  return {
+    sessionPrompt: BEELINE_CAPABILITIES_PRIMER,
+    ...(harnessHonorsSessionSystemPrompt(agentCommand)
+      ? {}
+      : { compatibilityTurnPrefix: BEELINE_CAPABILITIES_PRIMER }),
+  };
+}
 
 /**
  * Identify the running release for the version stamp. Release-shaped installs
@@ -145,6 +177,30 @@ command once:
 Replace \`<branch>\` with the exact branch name they asked for. The host never
 runs it: it rejects the command itself and posts a proposal card in the Room.
 Then tell the person the Room owner has to confirm that card.
+
+## Unattended and recurring work
+
+Beeline already has a durable scheduler. Never claim that cron, recurring work,
+or unattended monitoring is unavailable merely because this ACP session has no
+standalone scheduler tool.
+
+- **Room schedules** run recurring work on this Room agent's durable work
+  calendar. **Mission schedules** stay on the chief-of-staff calendar and may
+  name an exact target agent; target-agent crons wake only that granted agent
+  through Beeline's signed delegation path.
+- **Model-turn crons** perform periodic model judgment and must be at least 15
+  minutes apart. **Script-fired crons** are hash-bound to exact script bytes,
+  have a one-minute floor, and run no model by default; prefer them for cheap
+  polling and wake granted target work only when the script finds something.
+- For unattended work, propose the exact schedule: Room, objective or prompt,
+  cadence and timezone, expiry, maximum runs, token budget, target agent, and
+  model or script execution. Then request the appropriate Beeline
+  \`schedule.change\` grant or \`mission.control\` grant. The human can approve the
+  scoped request with one signature.
+- A proposal or grant request creates no schedule and grants no authority by
+  itself. Never say it is active until the host confirms the signed grant and
+  schedule. Existing expiry, revocation, membership, budget, and target-access
+  checks still apply to every firing.
 
 ## Merge flow — you never land
 

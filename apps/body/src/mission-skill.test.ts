@@ -144,11 +144,7 @@ describe('mission-brief materialization on session activation', () => {
       // A real regenerated file, not a link into operator data.
       expect(lstatSync(missionSkill).isSymbolicLink()).toBe(false);
       expect(readFileSync(missionSkill, 'utf8')).toContain(beelineSkillReleaseStamp('rel-1'));
-      // The operator's own entry stays an untouched link alongside both skills
-      // (only the claude operator home seeded one for this test).
-      if (dir === 'claude') {
-        expect(lstatSync(resolve(skillsDir, 'greet')).isSymbolicLink()).toBe(true);
-      }
+      expect(existsSync(resolve(skillsDir, 'greet'))).toBe(false);
     }
   });
 
@@ -179,7 +175,7 @@ describe('mission-brief materialization on session activation', () => {
     ).toHaveLength(1);
   });
 
-  it('refuses to regenerate through a symlink occupying the mission-brief slot', async () => {
+  it('replaces a stale mission-brief symlink without following it', async () => {
     const operatorHome = await scratch('mission-operator-home-');
     const roomRoot = resolve(await scratch('mission-room-'), 'agent-home');
     const decoy = resolve(await scratch('mission-decoy-'), 'SKILL.md');
@@ -191,8 +187,8 @@ describe('mission-brief materialization on session activation', () => {
 
     await prepareRoomAgentHome({ root: roomRoot, operatorHome, skillReleaseId: 'x' });
 
-    // The write was refused; the operator-side file is untouched.
+    // The destination entry was replaced; the operator-side file is untouched.
     expect(readFileSync(decoy, 'utf8')).toBe('operator-owned bytes\n');
-    expect(lstatSync(resolve(skillsDir, MISSION_BRIEF_SKILL_NAME)).isSymbolicLink()).toBe(true);
+    expect(lstatSync(resolve(skillsDir, MISSION_BRIEF_SKILL_NAME)).isSymbolicLink()).toBe(false);
   });
 });

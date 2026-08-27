@@ -24,6 +24,7 @@ import {
   type AgentAccessPolicy,
 } from './access-policy.js';
 import { isSandboxPolicy, type SandboxPolicy } from './bwrap-sandbox.js';
+import { isSharedSkillName } from './agent-home.js';
 import {
   isExternalMcpCapability,
   type ExternalMcpCapability,
@@ -90,6 +91,8 @@ export interface AgentRuntimeRecord {
    * with the built-in known list at spawn time. Absolute or `$HOME`-relative.
    */
   sandboxMaskPaths?: string[];
+  /** Auditable, additive skill names explicitly shared with this agent. */
+  sharedSkills?: string[];
   agentKind?: AgentKind;
   agentCommand?: string;
   agentArgs?: string[];
@@ -672,6 +675,10 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
     (parsed.sandboxMaskPaths !== undefined &&
       (!Array.isArray(parsed.sandboxMaskPaths) ||
         parsed.sandboxMaskPaths.some((path) => typeof path !== 'string' || !path.trim()))) ||
+    (parsed.sharedSkills !== undefined &&
+      (!Array.isArray(parsed.sharedSkills) ||
+        parsed.sharedSkills.some((name) => !isSharedSkillName(name)) ||
+        new Set(parsed.sharedSkills).size !== parsed.sharedSkills.length)) ||
     (parsed.modelSelection !== undefined &&
       (typeof parsed.modelSelection !== 'object' ||
         parsed.modelSelection === null ||
@@ -1017,6 +1024,7 @@ export async function pairRepositoryAgent(
     accessAllowlist?: string[];
     accessAutoResponse?: string;
     externalMcpCapabilities?: ExternalMcpCapability[];
+    sharedSkills?: string[];
     modelSelection?: { model?: string; effort?: string };
     mcpBinary: string;
     agentIdentity: Identity;
@@ -1049,6 +1057,14 @@ export async function pairRepositoryAgent(
 ): Promise<PairRuntimeResult> {
   if (input.externalMcpCapabilities?.length && input.accessPolicy !== 'creator') {
     throw new Error('external MCP capabilities require creator access');
+  }
+  if (
+    input.sharedSkills !== undefined &&
+    (!Array.isArray(input.sharedSkills) ||
+      input.sharedSkills.some((name) => !isSharedSkillName(name)) ||
+      new Set(input.sharedSkills).size !== input.sharedSkills.length)
+  ) {
+    throw new Error('shared skills require unique, safe names outside the Beeline default set');
   }
   if (input.accessPolicy === 'allowlist' && !isAgentAccessAllowlist(input.accessAllowlist)) {
     throw new Error('allowlist access requires one to 64 unique hex pubkeys');
@@ -1133,6 +1149,16 @@ export async function pairRepositoryAgent(
       ...(input.accessAutoResponse ? { accessAutoResponse: input.accessAutoResponse } : {}),
       ...(input.externalMcpCapabilities?.length
         ? { externalMcpCapabilities: [...new Set(input.externalMcpCapabilities)] }
+        : {}),
+      ...(input.sharedSkills?.length || input.externalMcpCapabilities?.length
+        ? {
+            sharedSkills: [
+              ...new Set([
+                ...(input.sharedSkills ?? []),
+                ...(input.externalMcpCapabilities?.length ? ['trusty-squire'] : []),
+              ]),
+            ],
+          }
         : {}),
       ...(input.modelSelection?.model || input.modelSelection?.effort
         ? { modelSelection: input.modelSelection }

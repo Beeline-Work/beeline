@@ -124,6 +124,7 @@ describe('pairing with no repository', () => {
         repo: null,
         relayBaseUrl: 'http://relay.test',
         agentBinary: '/usr/bin/agent',
+        sharedSkills: ['review-pr'],
         mcpBinary: '/usr/bin/mcp',
         agentIdentity: agent,
         bodyIdentity: body,
@@ -165,6 +166,7 @@ describe('pairing with no repository', () => {
     expect(stored.rooms).toEqual([]);
     expect(stored.communityId).toBe('11111111-1111-4111-8111-111111111111');
     expect(stored.agent.publicKey).toBe(agent.publicKey);
+    expect(stored.sharedSkills).toEqual(['review-pr']);
   });
 });
 

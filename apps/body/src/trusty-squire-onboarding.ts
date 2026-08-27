@@ -160,9 +160,8 @@ export async function connectTrustySquireForPair(input: {
   );
   const operatorHome = input.operatorHome ?? homedir();
   await ensureTrustySquireSkill(operatorHome);
-  // `agent-home.ts` links this harness-native skills directory into every
-  // isolated Room/corner state root. The generic copy above also makes the
-  // skill discoverable to hosts that read the shared agents convention.
+  // The generic .agents copy is the auditable source that agent-home.ts may
+  // materialize when this agent's explicit Squire grant selects the skill.
   const skillPath = await ensureHarnessSkill(input.agentKind, operatorHome);
   return { target, skillPath };
 }

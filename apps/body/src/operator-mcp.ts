@@ -14,10 +14,8 @@ import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
  * the OPERATOR authors by hand. It deliberately does NOT parse the harnesses'
  * own config locations:
  *
- *   - `pi` never reads the `mcpServers` it is handed over ACP anyway — it
- *     loads the operator's global `~/.pi/agent` extensions/skills itself, and
- *     Body deliberately never overrides `$HOME`, so operator-configured pi
- *     tools already reach every pi session through that path.
+ *   - `pi` never reads the `mcpServers` it is handed over ACP. Its isolated
+ *     HOME prevents operator-global extensions or tools from riding along.
  *   - `codex-acp` merges session servers into an ISOLATED `CODEX_HOME`
  *     (`agent-home.ts`), so reading `~/.codex/config.toml` would couple Body
  *     to Codex's private config format for no benefit over one explicit list.

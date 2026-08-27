@@ -15,6 +15,7 @@
  * Env-driven config; see BodyConfig for all env overrides.
  */
 import { dirname, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { stdin, stdout } from 'node:process';
@@ -84,6 +85,7 @@ import {
   type ExternalMcpCapability,
 } from './external-mcp-capabilities.js';
 import { connectTrustySquireForPair } from './trusty-squire-onboarding.js';
+import { isSharedSkillName, validateSharedSkills } from './agent-home.js';
 import {
   trustySquireConfigRoot,
   trustySquireConfigRootForRuntimeConfig,
@@ -173,12 +175,14 @@ ${pc.dim('Usage:')}
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
                [--auto-response '<text>']
                [--mcp <capability[,capability...]>]
+               [--share-skill <name[,name...]>]
                [--model <model>] [--effort <level>]
 
   beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...> [--repo <path>]
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
                [--auto-response '<text>']
                [--mcp <capability[,capability...]>]
+               [--share-skill <name[,name...]>]
                [--model <model>] [--effort <level>]
 
 Agent choices:
@@ -240,6 +244,10 @@ Account capabilities require --access creator and are mounted from a built-in
 profile; pass a comma-separated list to opt into both. Beeline never imports
 the operator's other personal MCP servers.
 
+Skills: every agent receives only using-beeline and mission-brief by default.
+--share-skill adds exact names from the operator-owned ~/.agents/skills directory
+to this agent's runtime record. It never imports the rest of that directory.
+
 Interactive: on a real TTY, --access/--auto-response missing their flags are
 also offered as clack pickers (in that order, right after model/effort) —
 enter keeps everyone/the default auto-response. A non-terminal session never
@@ -272,6 +280,7 @@ interface PairOptions {
   model?: string;
   effort?: string;
   externalMcpCapabilities?: ExternalMcpCapability[];
+  sharedSkills?: string[];
 }
 
 function parsePairOptions(args: string[]): PairOptions {
@@ -287,6 +296,7 @@ function parsePairOptions(args: string[]): PairOptions {
   let model: string | undefined;
   let effort: string | undefined;
   let externalMcpCapabilities: ExternalMcpCapability[] | undefined;
+  let sharedSkills: string[] | undefined;
   const flags = new Set([
     '--agent',
     '--agents',
@@ -298,6 +308,7 @@ function parsePairOptions(args: string[]): PairOptions {
     '--model',
     '--effort',
     '--mcp',
+    '--share-skill',
   ]);
   for (let index = 1; index < args.length; index += 1) {
     const token = args[index];
@@ -333,6 +344,14 @@ function parsePairOptions(args: string[]): PairOptions {
         );
       }
       externalMcpCapabilities = capabilities as ExternalMcpCapability[];
+    } else if (token === '--share-skill') {
+      const names = value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      const invalid = names.find((name) => !isSharedSkillName(name));
+      if (invalid) throw new Error(`--share-skill contains an invalid skill name: ${invalid}`);
+      sharedSkills = [...new Set([...(sharedSkills ?? []), ...names])];
     } else if (token === '--access') {
       if (!isAgentAccessPolicy(value)) {
         throw new Error(`--access must be one of everyone|creator|allowlist (got: ${value})`);
@@ -380,6 +399,7 @@ function parsePairOptions(args: string[]): PairOptions {
     ...(model !== undefined ? { model } : {}),
     ...(effort !== undefined ? { effort } : {}),
     ...(externalMcpCapabilities?.length ? { externalMcpCapabilities } : {}),
+    ...(sharedSkills?.length ? { sharedSkills } : {}),
   };
 }
 
@@ -509,6 +529,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   if (runtime.externalMcpCapabilities) {
     config.externalMcpCapabilities = [...runtime.externalMcpCapabilities];
   }
+  if (runtime.sharedSkills) config.sharedSkills = [...runtime.sharedSkills];
   // Operator-authored MCP tool servers for corners (`operator-mcp.json` in the
   // runtime directory — the same directory `runtimeDir` below derives). Read
   // at daemon start so editing the file takes effect on the next daemon
@@ -708,6 +729,7 @@ async function pairOneAgent(input: {
   autoResponse?: string;
   modelSelection?: { model?: string; effort?: string };
   externalMcpCapabilities?: ExternalMcpCapability[];
+  sharedSkills?: string[];
   /** Offer the clack model/effort/access/auto-response pickers when their flags weren't given. */
   interactiveUi?: boolean;
 }): Promise<PairRuntimeResult> {
@@ -770,6 +792,10 @@ async function pairOneAgent(input: {
       `[beeline] Trusty Squire connected locally; skill loaded at ${connected.skillPath}`,
     );
   }
+  await validateSharedSkills(homedir(), [
+    ...(input.sharedSkills ?? []),
+    ...(input.externalMcpCapabilities?.length ? ['trusty-squire'] : []),
+  ]);
   // Every question is answered — only now is one spinner alone on the line.
   const spinner = input.interactiveUi ? clack.spinner() : undefined;
   spinner?.start(input.progressLabel);
@@ -796,6 +822,7 @@ async function pairOneAgent(input: {
         ...(input.externalMcpCapabilities?.length
           ? { externalMcpCapabilities: input.externalMcpCapabilities }
           : {}),
+        ...(input.sharedSkills?.length ? { sharedSkills: input.sharedSkills } : {}),
         mcpBinary: localConfig.mcpBinary,
       },
       {
@@ -949,6 +976,7 @@ async function runPairCommand(
           ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
           interactiveUi,
           externalMcpCapabilities: pairOptions.externalMcpCapabilities,
+          sharedSkills: pairOptions.sharedSkills,
         });
         printPairResult(result);
       }
@@ -986,6 +1014,7 @@ async function runPairCommand(
       ...(flagModelSelection ? { modelSelection: flagModelSelection } : {}),
       interactiveUi,
       externalMcpCapabilities: pairOptions.externalMcpCapabilities,
+      sharedSkills: pairOptions.sharedSkills,
     });
     printPairResult(result);
     if (interactiveUi) clack.outro(pc.green('Done.'));

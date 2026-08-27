@@ -197,7 +197,6 @@ export {
   resolveReviewBaseTip,
   listChangeReviewFiles,
   readChangeReviewPatch,
-  chunkChangeReviewPatch,
   postChangeReviewMetadata,
 } from './change-review.js';
 export {

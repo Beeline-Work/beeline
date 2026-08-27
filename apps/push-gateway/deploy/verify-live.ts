@@ -69,6 +69,8 @@ async function main(): Promise<void> {
         localOnly: false,
       },
     });
+    await senderClient.addMember(realChannelId, recipient.publicKey, 'member');
+    await senderClient.addMember(fixtureChannelId, recipient.publicKey, 'member');
     await senderClient.waitUntilMember(realChannelId, recipient.publicKey, {
       timeoutMs: 15_000,
     });
@@ -103,11 +105,28 @@ async function main(): Promise<void> {
     const messageEvent = await senderClient.messageSubmit(realChannelId, messageText);
 
     const filter = [{ ids: [messageEvent.id] }];
-    const recipientEvents = await reader(recipient.publicKey).query(filter);
-    const outsiderEvents = await reader(outsider.publicKey).query(filter);
+    let recipientEvents = await reader(recipient.publicKey).query(filter);
+    let outsiderEvents = await reader(outsider.publicKey).query(filter);
+    const aclDeadline = Date.now() + 15_000;
+    while (
+      recipientEvents.length !== 1 &&
+      outsiderEvents.length === 0 &&
+      Date.now() < aclDeadline
+    ) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+      [recipientEvents, outsiderEvents] = await Promise.all([
+        reader(recipient.publicKey).query(filter),
+        reader(outsider.publicKey).query(filter),
+      ]);
+    }
     if (recipientEvents.length !== 1 || outsiderEvents.length !== 0) {
+      const rawWriteExists = (
+        await senderClient.sessionEventsBackfill(realChannelId, { limit: 100 })
+      ).some((event) => event.id === messageEvent.id);
       throw new Error(
-        `ACL proof failed: recipient=${recipientEvents.length} outsider=${outsiderEvents.length}`,
+        rawWriteExists
+          ? `ACL projection lagged after 15000ms: recipient=${recipientEvents.length} outsider=${outsiderEvents.length}`
+          : `published message ${messageEvent.id} is absent from the relay; ACL projection was not tested`,
       );
     }
 

@@ -114,12 +114,21 @@ const SHARED_SKILLS: Array<{ dir: 'claude' | 'codex' | 'grok'; source: string }>
  *     minimal `.claude.json` inside the isolated `CLAUDE_CONFIG_DIR`.
  *
  * Everything else in those files (models, sandbox modes, approval policy) and
- * the reserved `squire` server deliberately stay behind.
+ * the reserved `squire` server deliberately stay behind. The generated Codex
+ * config also disables its internal multi-agent tools: Beeline must own all
+ * parallel work through its visible Room/corner primitive.
  */
 const HARNESS_MCP_CONFIGS = [
   { dir: 'codex' as const, toml: '.codex/config.toml' },
   { dir: 'grok' as const, toml: '.grok/config.toml' },
 ];
+
+/**
+ * Codex's supported per-home switch for its internal delegation surface.
+ * This removes spawn, follow-up, wait, and message controls without changing
+ * ordinary turn tools or the explicitly copied MCP server configuration.
+ */
+const CODEX_ROOM_AGENT_LOCKDOWN_TOML = '[agents]\nenabled = false\n';
 
 /** Subdirectories created under a room-instance's agent home. */
 const HOME_SUBDIRS = ['claude', 'codex', 'grok', 'state', 'cache', 'tmp'] as const;
@@ -217,11 +226,18 @@ async function provisionOperatorSkillsAndMcp(
     try {
       const source = resolve(operatorHome, config.toml);
       const target = resolve(root, config.dir, 'config.toml');
-      const section = existsSync(source)
+      const mcpSection = existsSync(source)
         ? filteredHarnessMcpToml(readFileSync(source, 'utf8'))
         : undefined;
+      // A Codex Room needs this config even when the operator shares no MCP
+      // servers: Codex otherwise enables internal collaboration by default.
+      const section =
+        config.dir === 'codex'
+          ? [CODEX_ROOM_AGENT_LOCKDOWN_TOML, mcpSection].filter(Boolean).join('\n')
+          : mcpSection;
       // Regeneration is also deletion: if the operator removes the config or
-      // its last MCP table, do not leave stale servers active in a Room.
+      // its last MCP table, do not leave stale servers active in a Room. Codex
+      // retains its required delegation lockdown without shared MCP config.
       if (!section) {
         await unlink(target).catch(() => undefined);
         continue;

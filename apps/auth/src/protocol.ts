@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { NIP98_KIND, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import { verifyEvent, type NostrEvent } from '@beeline/nostr';
+
+export { verifyNip98Header } from '@beeline/nostr';
 
 export const OIDC_BIND_KIND = 24_250;
 export const OIDC_BIND_MARKER = 'beeline-oidc-bind-v1';
@@ -146,52 +148,4 @@ export function verifyBindEvent(
   }
   if (!verifyEvent(event)) return { ok: false, reason: 'invalid bind event signature' };
   return { ok: true, event };
-}
-
-export function verifyNip98Header(
-  authorization: string | undefined,
-  expectedUrl: string,
-  method: string,
-  now = new Date(),
-  clockSkewSeconds = 60,
-): { ok: true; pubkey: string; eventId: string } | { ok: false; reason: string } {
-  if (!authorization?.startsWith('Nostr '))
-    return { ok: false, reason: 'NIP-98 authentication required' };
-  const encoded = authorization.slice('Nostr '.length);
-  if (!encoded || encoded.length > 32_768 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
-    return { ok: false, reason: 'malformed NIP-98 authentication' };
-  }
-
-  let parsed: unknown;
-  try {
-    const decoded = Buffer.from(encoded, 'base64').toString('utf8');
-    if (decoded.length > 16_384) throw new Error('too large');
-    parsed = JSON.parse(decoded) as unknown;
-  } catch {
-    return { ok: false, reason: 'malformed NIP-98 authentication' };
-  }
-  const event = asNostrEvent(parsed);
-  if (!event || event.kind !== NIP98_KIND || event.content !== '') {
-    return { ok: false, reason: 'invalid NIP-98 event' };
-  }
-  if (
-    event.tags.length !== 3 ||
-    !exactTag(event, 'u', expectedUrl) ||
-    !exactTag(event, 'method', method.toUpperCase())
-  ) {
-    return { ok: false, reason: 'NIP-98 request binding mismatch' };
-  }
-  const nonceTags = event.tags.filter((tag) => tag[0] === 'nonce');
-  if (nonceTags.length !== 1 || nonceTags[0]!.length !== 2 || !nonceTags[0]![1]) {
-    return { ok: false, reason: 'NIP-98 nonce required' };
-  }
-  const allowedTags = new Set(['u', 'method', 'nonce']);
-  if (event.tags.some((tag) => !allowedTags.has(tag[0]!))) {
-    return { ok: false, reason: 'unexpected NIP-98 tag' };
-  }
-  if (Math.abs(now.getTime() / 1_000 - event.created_at) > clockSkewSeconds) {
-    return { ok: false, reason: 'stale NIP-98 authentication' };
-  }
-  if (!verifyEvent(event)) return { ok: false, reason: 'invalid NIP-98 signature' };
-  return { ok: true, pubkey: event.pubkey, eventId: event.id };
 }

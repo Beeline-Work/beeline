@@ -42,12 +42,13 @@ host volumes.
 
 Push and repository-event legacy JSON reservations are imported into the same
 Postgres reservation store used by the process. Their transition semantics and
-the snapshot dirty queue remain separately namespaced. Internal succession calls go
-directly to `auth:8789` with `BUZZY_SNAPSHOT_INTERNAL_TOKEN`; nginx never routes
-the `/internal/` endpoint. Compose health uses `/snapshot/health`, while public
-deployment verification checks both snapshot health and the independent
-`/push/health` FCM surface. A Firebase initialization failure can therefore
-leave snapshot reads available while push health reports unavailable.
+the snapshot dirty queue remain separately namespaced. Internal succession
+calls go directly to `auth:8789` with `BUZZY_SNAPSHOT_INTERNAL_TOKEN`; nginx
+never routes the `/internal/` endpoint. Compose health uses
+`/snapshot/health`, while public deployment verification checks both snapshot
+health and the independent `/push/health` FCM surface. A Firebase
+initialization failure can therefore leave snapshot reads available while push
+health reports unavailable.
 
 The deploy script disables the superseded `beeline-events.service`, stops and
 verifies every legacy or current tail container, then performs a one-way

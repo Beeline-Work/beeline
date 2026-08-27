@@ -389,7 +389,9 @@ test('first rollout installs both config files, runs one full reconcile through 
   assert.ok(ups[0].includes('-p buzz-router-prod'));
   assert.ok(ups[0].endsWith('up -d --remove-orphans'));
   const dockerOperations = r.dockerLog().trim().split('\n');
-  const legacyStop = dockerOperations.findIndex((line) => line === 'docker stop legacygwcontainerid');
+  const legacyStop = dockerOperations.findIndex(
+    (line) => line === 'docker stop legacygwcontainerid',
+  );
   const materializerStart = dockerOperations.findIndex((line) => line.includes('up -d'));
   assert.notEqual(legacyStop, -1, r.dockerLog());
   assert.ok(legacyStop < materializerStart, r.dockerLog());
@@ -412,7 +414,6 @@ test('first rollout installs both config files, runs one full reconcile through 
       .filter((l) => l.includes('kill -s HUP')).length,
     1,
   );
-
 });
 
 function composeConfig(relative, overrides = {}) {
@@ -519,7 +520,10 @@ test('cutover refuses to start while any previous tail owner remains running', a
   assert.equal(r.materializerRunning(), false);
   assert.ok(r.stderr.includes('push-gateway containers remain running'), r.stderr);
   assert.equal(
-    r.dockerLog().split('\n').some((line) => line.includes('compose ') && line.includes('up -d')),
+    r
+      .dockerLog()
+      .split('\n')
+      .some((line) => line.includes('compose ') && line.includes('up -d')),
     false,
     r.dockerLog(),
   );
@@ -717,10 +721,7 @@ test(
     // Smallest counterfactual: keep install + HUP unchanged and carry exactly
     // the declared production binds/command. Whether install preserves or
     // replaces the member inode, directory lookup lets nginx reload V4.
-    const bindArgs = mounts.flatMap((m) => [
-      '-v',
-      `${m.source}:${m.containerPath}:${m.mode}`,
-    ]);
+    const bindArgs = mounts.flatMap((m) => ['-v', `${m.source}:${m.containerPath}:${m.mode}`]);
     await docker([
       'run',
       '-d',

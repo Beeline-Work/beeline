@@ -87,8 +87,8 @@ The materializer log lists the last successful poll for every discovered
 workspace/repository. GitHub failures are isolated and backed off per
 repository, while relay deliveries are durably reserved before publication.
 Each fleet tick has a 90-second aggregate deadline and rotates repository
-priority, so a large group of slow repositories cannot outrun WATCHDOG or
-permanently starve the tail of the queue.
+priority, so a large group of slow repositories cannot block materializer
+shutdown or permanently starve the tail of the queue.
 See `apps/body/src/events-service.ts`, `events-state.ts`, and
 `github-events.ts`; hosting lives in `apps/push-gateway/src/hosted-events.ts`.
 

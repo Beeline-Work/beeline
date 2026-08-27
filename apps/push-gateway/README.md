@@ -73,9 +73,9 @@ Buzz identity registers the device, and each mobile cold start refreshes the
 binding in case Firebase rotated the device token.
 
 The materializer imports the former delivery-state file once, then stores the
-push reservation document in Postgres. It
-reserves each event-id/recipient attempt before calling FCM and never retries an
-ambiguous attempt. Delivered ids are retained for 30 days and capped at 50,000;
+push reservation document in Postgres. It reserves each event-id/recipient
+attempt before calling FCM and never retries an ambiguous attempt. Delivered
+ids are retained for 30 days and capped at 50,000;
 durable per-recipient cursors keep pruned backlog events permanently ineligible.
 FCM eligibility fails closed unless the Room has an immutable kind-9007 create
 linked to a self-linked persistent Workspace create. The final pre-FCM boundary

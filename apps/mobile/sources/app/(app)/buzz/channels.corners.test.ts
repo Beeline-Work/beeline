@@ -97,6 +97,16 @@ const backfillBehavior: {
   snapshot?: unknown;
 } = { mode: 'empty' };
 
+/** The independent facts the Corner screen reads when a person opens one. */
+const openedCornerTruth = vi.hoisted(() => ({
+  archived: new Map<string, boolean>(),
+  mergeTargets: new Map<string, { target: { repo: string; branch: string; tip: string } } | null>(),
+  isChannelArchived: vi.fn(async (id: string) => openedCornerTruth.archived.get(id) ?? false),
+  getSubchannelMergeTarget: vi.fn(
+    async (id: string) => openedCornerTruth.mergeTargets.get(id) ?? null,
+  ),
+}));
+
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => ({
@@ -106,6 +116,7 @@ vi.mock('@/sync/transport', () => ({
       listMyChannels: vi.fn(async () => [{ channelId: 'room-1' }]),
       communityMembers: vi.fn(async () => []),
       listAgents: vi.fn(async () => []),
+      listDirectMessages: vi.fn(async () => []),
       query: vi.fn(async (filters: any) => {
         const f = Array.isArray(filters) ? filters[0] : filters;
         if (f?.kinds?.[0] === 9007)
@@ -131,6 +142,8 @@ vi.mock('@/sync/transport', () => ({
       ),
     }));
     roomRepositoryState = vi.fn(async () => ({ kind: 'none' }) as never);
+    isChannelArchived = openedCornerTruth.isChannelArchived;
+    getSubchannelMergeTarget = openedCornerTruth.getSubchannelMergeTarget;
     readModelBackfill = async () => {
       if (backfillBehavior.mode === 'throw')
         throw backfillBehavior.snapshot ?? new Error('relay unreachable');
@@ -351,7 +364,7 @@ function cornerLifecycleEvents(
   generation = 0,
 ): ReadEvent[] {
   return entries.flatMap((item, index) => {
-    const sequence = generation * 100 + index * 2;
+    const sequence = Math.floor(Date.now() / 1_000) + generation * 100 + index * 2;
     const state: CornerMachineState =
       item.status === 'live'
         ? 'working'
@@ -360,6 +373,14 @@ function cornerLifecycleEvents(
           : item.status === 'archived'
             ? 'closed'
             : 'waiting';
+    const reason =
+      item.status === 'open'
+        ? 'review'
+        : item.status === 'failed'
+          ? 'failure'
+          : item.status === 'needs-attention'
+            ? 'question'
+            : undefined;
     const open = {
       type: 'lifecycle',
       eventId: `corner-open-${generation}-${index}`,
@@ -392,6 +413,7 @@ function cornerLifecycleEvents(
           ...open.lifecycle,
           state,
           stateAt: sequence + 2,
+          ...(reason ? { reason } : {}),
         },
       } as unknown as ReadEvent,
     ];
@@ -404,6 +426,12 @@ async function render(): Promise<ReactTestRenderer> {
     tree = create(React.createElement(BuzzChannels));
   });
   return tree;
+}
+
+async function settleHydration() {
+  await act(async () => {
+    for (let index = 0; index < 12; index += 1) await Promise.resolve();
+  });
 }
 
 function findAllByTestId(tree: ReactTestRenderer, testID: string) {
@@ -437,7 +465,76 @@ describe('room-list corner dropdown', () => {
     for (const key of Object.keys(cornerFixtures)) delete cornerFixtures[key];
     backfillBehavior.mode = 'empty';
     delete backfillBehavior.snapshot;
+    openedCornerTruth.archived.clear();
+    openedCornerTruth.mergeTargets.clear();
+    openedCornerTruth.isChannelArchived.mockClear();
+    openedCornerTruth.getSubchannelMergeTarget.mockClear();
     useBuzzLocalCache.setState({ channelLists: {}, channels: {} } as never);
+  });
+
+  it('does not advertise a cached ACTIVE corner that opens as ARCHIVED', async () => {
+    const archivedId = 'corner-archived'.padEnd(64, '0');
+    const liveId = 'corner-live'.padEnd(64, '0');
+    cornerFixtures['room-1'] = [
+      corner('corner-archived', 'already closed', 'live'),
+      corner('corner-live', 'still running', 'live'),
+    ];
+    seedWorkspace();
+
+    // Initiating trigger: the persisted Room-list snapshot still says both
+    // corners are WORKING. The masking condition is a healthy lifecycle page
+    // carrying no newer close record. Opening the first corner nevertheless
+    // gets the direct metadata answer ARCHIVED, while the control path remains
+    // genuinely open.
+    openedCornerTruth.archived.set(archivedId, true);
+    openedCornerTruth.archived.set(liveId, false);
+
+    const tree = await render();
+    await settleHydration();
+    expect(openedCornerTruth.isChannelArchived).toHaveBeenCalledWith(archivedId);
+    expect(openedCornerTruth.isChannelArchived).toHaveBeenCalledWith(liveId);
+    await press(findAllByTestId(tree, 'room-corners-toggle-room-1')[0]);
+    expect(
+      Object.values(useBuzzLocalCache.getState().channelLists)[0]?.channels[0]?.cornerOpenTruth,
+    ).toMatchObject({
+      [archivedId]: { archived: true },
+      [liveId]: { archived: false },
+    });
+
+    // Captain-visible contract: the list must agree with what each tap opens.
+    expect(findByAclPrefix(tree, 'Open #Ledger rewrite/already-closed corner')).toHaveLength(0);
+    expect(
+      findByAclPrefix(tree, 'Open #Ledger rewrite/still-running corner, working'),
+    ).toHaveLength(1);
+  });
+
+  it('advertises review readiness only for a corner with a real merge target', async () => {
+    const emptyId = 'corner-empty-review'.padEnd(64, '0');
+    const reviewableId = 'corner-real-review'.padEnd(64, '0');
+    cornerFixtures['room-1'] = [
+      corner('corner-empty-review', 'nothing to merge', 'open'),
+      corner('corner-real-review', 'review this change', 'open'),
+    ];
+    seedWorkspace();
+    openedCornerTruth.mergeTargets.set(emptyId, null);
+    openedCornerTruth.mergeTargets.set(reviewableId, {
+      target: { repo: 'github:beeline', branch: 'fm/reviewable', tip: 'a'.repeat(40) },
+    });
+
+    const tree = await render();
+    await settleHydration();
+    expect(openedCornerTruth.getSubchannelMergeTarget).toHaveBeenCalledWith(emptyId);
+    expect(openedCornerTruth.getSubchannelMergeTarget).toHaveBeenCalledWith(reviewableId);
+    await press(findAllByTestId(tree, 'room-corners-toggle-room-1')[0]);
+
+    // Both corners may remain navigable, but only the one whose open-screen
+    // review lookup returns a target may carry the needs-you/ready state.
+    expect(
+      findByAclPrefix(tree, 'Open #Ledger rewrite/nothing-to-merge corner, idle'),
+    ).toHaveLength(1);
+    expect(
+      findByAclPrefix(tree, 'Open #Ledger rewrite/review-this-change corner, needs-you'),
+    ).toHaveLength(1);
   });
 
   it('a Room with N open corners expands to exactly N navigable entries', async () => {

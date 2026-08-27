@@ -33,6 +33,10 @@ export type ChannelDisplayItem = SessionSummary & {
   archived?: boolean;
   parentChannelId?: string;
   corners?: CornerSummary[];
+  /** Direct Corner-open facts resolved during Room-list hydration. Lifecycle
+   * remains the canonical state; these facts only prevent the list from
+   * advertising work that the destination screen already disproves. */
+  cornerOpenTruth?: Record<string, { archived?: boolean; mergeable?: boolean }>;
   latestMessage?: string;
   /** Timestamp/author of the previewed conversational message. `updatedAt`
    * tracks *any* event, so only this can drive an honest unread mark or an
@@ -284,7 +288,9 @@ function replyParentOf(event: ThreadedJournalMessage): string | undefined {
   return typeof reply?.eventId === 'string' ? reply.eventId : undefined;
 }
 
-function repairedThreadJournal(journal: RoomSnapshot['eventJournal']): RoomSnapshot['eventJournal'] {
+function repairedThreadJournal(
+  journal: RoomSnapshot['eventJournal'],
+): RoomSnapshot['eventJournal'] {
   // Memoized verdict per event id: the verified thread-root event id, or null
   // when that id's chain cannot be verified inside this journal.
   const verdicts = new Map<string, string | null>();
@@ -324,7 +330,10 @@ function repairedThreadJournal(journal: RoomSnapshot['eventJournal']): RoomSnaps
     const root = resolveVerifiedRoot(eventId);
     if (root === null || root === eventId) continue;
     if (event.reply?.rootId !== root) {
-      next = { ...(next ?? journal), [eventId]: { ...event, reply: { ...event.reply!, rootId: root } } } as RoomSnapshot['eventJournal'];
+      next = {
+        ...(next ?? journal),
+        [eventId]: { ...event, reply: { ...event.reply!, rootId: root } },
+      } as RoomSnapshot['eventJournal'];
     }
   }
   return next ?? journal;
@@ -478,6 +487,9 @@ export function mergeChannelBasicsWithCache(
         : {}),
       ...(channel.modelLabel === undefined && existing.modelLabel !== undefined
         ? { modelLabel: existing.modelLabel }
+        : {}),
+      ...(channel.cornerOpenTruth === undefined && existing.cornerOpenTruth !== undefined
+        ? { cornerOpenTruth: existing.cornerOpenTruth }
         : {}),
       ...(updatedAt > 0 ? { updatedAt } : {}),
     };

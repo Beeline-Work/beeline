@@ -756,6 +756,61 @@ describe('top-level Room creation is human-only', () => {
     expect(published[0]!.pubkey).toBe(human.publicKey);
   });
 
+  it('does not leave Room creation behind the five-second WS backstop', async () => {
+    vi.useFakeTimers();
+    const channelId = 'fast-visible-room';
+    let membershipQueries = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0] ?? {};
+        const kinds = (filter.kinds as number[] | undefined) ?? [];
+        if (kinds[0] === KIND_STREAM_MESSAGE) return new Response('[]');
+        if (kinds.includes(KIND_CHANNEL_MEMBERS)) {
+          membershipQueries += 1;
+          return membershipQueries === 1
+            ? new Response('[]')
+            : new Response(JSON.stringify([projection(KIND_CHANNEL_MEMBERS, channelId)]));
+        }
+        return new Response('[]');
+      }),
+    );
+    const fakeSocket = {
+      connected: true,
+      subscribe: vi.fn(() => vi.fn()),
+    };
+    const creation = createChannel(
+      {
+        http,
+        identity,
+        ws: () => fakeSocket as unknown as RelayWs,
+      },
+      'visible now',
+      { channelId, communityId: 'workspace' },
+    );
+    let settled = false;
+    const outcome = creation.then(
+      (result) => {
+        settled = true;
+        return result;
+      },
+      (error: unknown) => error,
+    );
+
+    try {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toBe(true);
+      await expect(outcome).resolves.toBe(channelId);
+    } finally {
+      await vi.advanceTimersByTimeAsync(15_000);
+      await outcome;
+      vi.useRealTimers();
+    }
+  });
+
   it('never consults the agent registry for a corner (child channel)', async () => {
     const published = stubRelay();
     let registryQueries = 0;

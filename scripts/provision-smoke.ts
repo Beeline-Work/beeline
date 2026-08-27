@@ -143,6 +143,8 @@ async function main() {
   const switchChannelId = await ownerClient.createChannel('Buzzy Maestro Switch Room', {
     communityId: switchWorkspaceId,
   });
+  await ownerClient.addMember(channelId, identity.publicKey, 'member');
+  await ownerClient.addMember(switchChannelId, identity.publicKey, 'member');
   await client.waitUntilMember(channelId, identity.publicKey);
   await client.waitUntilMember(switchChannelId, identity.publicKey);
   console.log('Workspace ready:', workspaceId);

@@ -187,6 +187,10 @@ case "$1" in
       *) echo "sudoers REFUSAL (install dest)" >&2; exit 1 ;;
     esac
     if [ -f "$STATE/fail-install" ]; then echo "simulated install failure" >&2; exit 1; fi
+    if [ -f "$STATE/fail-rollback-install" ] && grep -q '^  push-gateway:$' "$src"; then
+      echo "simulated rollback install failure" >&2
+      exit 1
+    fi
     cp "$src" "$dst"
     if echo "$dst" | grep -q '/compose.yml$'; then
       if grep -q '^  push-gateway:$' "$src"; then
@@ -237,6 +241,11 @@ case "$1" in
       disable)
         [ "$4" = "--now" ] || { echo "sudoers REFUSAL (disable args)" >&2; exit 1; }
         rm -f "$STATE/events-running"
+        if [ -f "$STATE/interrupt-after-events-disable" ]; then
+          rm -f "$STATE/interrupt-after-events-disable"
+          kill -TERM "$PPID"
+          exit 143
+        fi
         ;;
       enable)
         [ "$4" = "--now" ] || { echo "sudoers REFUSAL (enable args)" >&2; exit 1; }
@@ -335,8 +344,11 @@ function runDeploy(opts) {
   if (opts.failComposeOnceNoContainer)
     write(path.join(stateDir, 'fail-compose-once-no-container'), '1');
   if (opts.failInstall) write(path.join(stateDir, 'fail-install'), '1');
+  if (opts.failRollbackInstall) write(path.join(stateDir, 'fail-rollback-install'), '1');
   if (opts.interruptAfterComposeInstall)
     write(path.join(stateDir, 'interrupt-after-compose-install'), '1');
+  if (opts.interruptAfterEventsDisable)
+    write(path.join(stateDir, 'interrupt-after-events-disable'), '1');
   const stackStageDir = path.join(tmp, 'stage');
   if (opts.failStackStage) write(stackStageDir, 'not a directory\n');
 
@@ -572,6 +584,15 @@ test('an exit after events retirement but before materializer start restores the
   assert.equal(r.dockerLog().includes('up -d --remove-orphans'), false, r.dockerLog());
 });
 
+test('an interruption after systemd retirement restores repository-event ingestion', async () => {
+  const r = await runDeploy({ interruptAfterEventsDisable: true });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.eventsRunning(), true);
+  assert.ok(r.sudoLog().includes('disable --now beeline-events.service'), r.sudoLog());
+  assert.ok(r.sudoLog().includes('enable --now beeline-events.service'), r.sudoLog());
+  assert.equal(r.materializerRunning(), false);
+});
+
 test('an interrupted config placement restores the prior stack and legacy consumers', async () => {
   const r = await runDeploy({ interruptAfterComposeInstall: true });
   assert.notEqual(r.status, 0);
@@ -604,11 +625,35 @@ test('public rollback never hands started materializer reservations back to lega
   assert.equal(r.sudoLog().includes('enable --now beeline-events.service'), false, r.sudoLog());
 });
 
+test('stopped legacy consumers still make the first materializer start one-way', async () => {
+  const r = await runDeploy({
+    legacyPushRunning: false,
+    eventsRunning: false,
+    failPublic: true,
+  });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
+  assert.equal(r.materializerRunning(), true);
+  assert.equal(r.legacyPushRunning(), false);
+  assert.equal(r.eventsRunning(), false);
+});
+
+test('an unverifiable legacy rollback never re-enables its events consumer', async () => {
+  const r = await runDeploy({ failComposeUp: true, failRollbackInstall: true });
+  assert.notEqual(r.status, 0);
+  assert.ok(r.stderr.includes('config could not be verified'), r.stderr);
+  assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
+  assert.equal(r.materializerRunning(), false);
+  assert.equal(r.eventsRunning(), false);
+  assert.equal(r.sudoLog().includes('enable --now beeline-events.service'), false, r.sudoLog());
+});
+
 test('a refused sudo install (missing sudoers rule) fails loudly and rolls the config back', async () => {
   const r = await runDeploy({ failInstall: true });
   assert.notEqual(r.status, 0);
   assert.ok(r.stderr.includes('STACK ROLLOUT FAILED'), r.stderr);
   assert.equal(r.readLive('compose.yml'), PRE_CHANGE_COMPOSE);
+  assert.equal(r.eventsRunning(), true);
 });
 
 test('compose validation never resolves real env_file secrets: an unreadable env_file entry does not fail the deploy', async () => {

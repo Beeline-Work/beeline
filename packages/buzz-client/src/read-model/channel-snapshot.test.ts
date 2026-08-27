@@ -146,6 +146,8 @@ describe('channel snapshot v1 contract', () => {
     expect(guarded.status).toBe('ready');
     if (guarded.status === 'ready') {
       expect(guarded.view.snapshot.rooms[CHANNEL]?.metadata.name).toBe('Launch Room');
+      expect(guarded.view.snapshot.rooms[CORNER]?.metadata.name).toBe('Launch Corner');
+      expect(selectTranscript(guarded.view.briefingSnapshot!, CHANNEL)).toHaveLength(1);
     }
   });
 

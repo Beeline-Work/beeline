@@ -2,15 +2,129 @@
   "capability": "channel-snapshot-v1",
   "schemaVersion": 1,
   "projectionVersion": 1,
-  "channelId": "9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6",
+  "channelId": "7d111868-52eb-43ab-98ae-8a6c49b92da8",
   "revision": 7,
   "projectedAt": 1787709600000,
   "cursor": {
-    "createdAt": 1787709599,
-    "eventIds": ["1111111111111111111111111111111111111111111111111111111111111111"]
+    "createdAt": 1787709600,
+    "eventIds": ["3333333333333333333333333333333333333333333333333333333333333333"]
   },
   "identitiesStale": false,
   "snapshot": {
+    "schemaVersion": 1,
+    "workspaceId": "verified-application-workspace",
+    "revision": 4,
+    "identities": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        "kind": "human",
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "displayName": "Captain",
+        "handle": "captain",
+        "revision": "profile:captain"
+      }
+    },
+    "rooms": {
+      "9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6": {
+        "channelId": "9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6",
+        "metadata": {
+          "name": "Launch Room",
+          "about": "Ship the networking debloat",
+          "archived": false,
+          "deleted": false
+        },
+        "eventJournal": {
+          "1111111111111111111111111111111111111111111111111111111111111111": {
+            "eventId": "1111111111111111111111111111111111111111111111111111111111111111",
+            "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "createdAt": 1787709599,
+            "sourceKind": 9,
+            "signature": "verified",
+            "scope": "channel",
+            "channelId": "9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6",
+            "workspaceId": "verified-application-workspace",
+            "type": "human-message",
+            "body": "Paint this snapshot immediately.",
+            "attachments": [],
+            "mentionPubkeys": []
+          }
+        },
+        "membershipEvents": [],
+        "lifecycleEvents": [],
+        "membership": {
+          "status": "known",
+          "members": {
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+              "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "role": "owner"
+            }
+          },
+          "sourceEventId": "2222222222222222222222222222222222222222222222222222222222222222",
+          "observedAt": 1787709598
+        },
+        "corners": {
+          "7d111868-52eb-43ab-98ae-8a6c49b92da8": {
+            "kind": "active",
+            "id": "7d111868-52eb-43ab-98ae-8a6c49b92da8",
+            "parentRoomId": "9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6",
+            "state": "open",
+            "name": "Launch Corner",
+            "task": "Ship the networking debloat",
+            "creatorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "createdAt": 1787709600,
+            "stateAt": 1787709600,
+            "humanMembers": [
+              {
+                "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "role": "owner",
+                "identity": {
+                  "kind": "human",
+                  "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "displayName": "Captain",
+                  "handle": "captain",
+                  "revision": "profile:captain"
+                }
+              }
+            ]
+          }
+        },
+        "coverage": {
+          "oldest": 1787709599,
+          "newest": 1787709599,
+          "initialBackfillComplete": true,
+          "epoch": 1
+        }
+      },
+      "7d111868-52eb-43ab-98ae-8a6c49b92da8": {
+        "channelId": "7d111868-52eb-43ab-98ae-8a6c49b92da8",
+        "metadata": {
+          "name": "Launch Corner",
+          "archived": false,
+          "deleted": false
+        },
+        "eventJournal": {},
+        "membershipEvents": [],
+        "lifecycleEvents": [],
+        "membership": {
+          "status": "known",
+          "members": {
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+              "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "role": "owner"
+            }
+          },
+          "sourceEventId": "3333333333333333333333333333333333333333333333333333333333333333",
+          "observedAt": 1787709600
+        },
+        "corners": {},
+        "coverage": {
+          "initialBackfillComplete": true,
+          "epoch": 1
+        }
+      }
+    },
+    "diagnostics": []
+  },
+  "briefingSnapshot": {
     "schemaVersion": 1,
     "workspaceId": "verified-application-workspace",
     "revision": 4,
@@ -89,6 +203,6 @@
   "integrity": {
     "algorithm": "sha256",
     "scope": "stored-channel-snapshot-v1",
-    "digest": "e875796ba720fba4c019a9bdadcdd64dc8964d6b0724871e54076756c88eba51"
+    "digest": "1d25c2d72ef7a33f7bed073c39bb3848abc9984f4591b7868245370f272769da"
   }
 }

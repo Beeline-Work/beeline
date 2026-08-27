@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 import {
+  AGENT_SKILL_DIRS,
+  BEELINE_DEFAULT_SKILL_NAMES,
   hasAmbientTrustySquireConfiguration,
   hasLocalTrustySquireState,
   harnessStateDirsFromEnv,
@@ -28,7 +31,7 @@ afterEach(async () => {
 });
 
 describe('per-room harness state isolation', () => {
-  it('points every harness state directory at this Room, and never overrides HOME', async () => {
+  it('points every harness state directory and HOME at this Room', async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomA = resolve(await scratch('beeline-room-a-'), 'agent-home');
     const roomB = resolve(await scratch('beeline-room-b-'), 'agent-home');
@@ -40,19 +43,19 @@ describe('per-room harness state isolation', () => {
       'CLAUDE_CONFIG_DIR',
       'CODEX_HOME',
       'GROK_HOME',
+      'PI_CODING_AGENT_DIR',
       'XDG_STATE_HOME',
       'XDG_CACHE_HOME',
       'TMPDIR',
+      'HOME',
     ]) {
       expect(envA[key]).toBeTruthy();
       expect(envA[key]!.startsWith(roomA)).toBe(true);
       // Two Rooms of the same agent must not share a harness state directory.
       expect(envA[key]).not.toBe(envB[key]);
     }
-    // Captain's decision D2: isolate state, share credentials. Overriding HOME
-    // would move harness auth too.
-    expect(envA.HOME).toBeUndefined();
-    expect(envB.HOME).toBeUndefined();
+    expect(envA.HOME).toBe(resolve(roomA, 'user'));
+    expect(envB.HOME).toBe(resolve(roomB, 'user'));
     expect(existsSync(resolve(roomA, 'claude'))).toBe(true);
     expect(existsSync(resolve(roomA, 'tmp'))).toBe(true);
   });
@@ -62,9 +65,11 @@ describe('per-room harness state isolation', () => {
     await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
     await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
     await mkdir(resolve(operatorHome, '.grok'), { recursive: true });
+    await mkdir(resolve(operatorHome, '.pi/agent'), { recursive: true });
     await writeFile(resolve(operatorHome, '.claude/.credentials.json'), '{"token":"claude"}');
     await writeFile(resolve(operatorHome, '.codex/auth.json'), '{"token":"codex"}');
     await writeFile(resolve(operatorHome, '.grok/auth.json'), '{"token":"grok"}');
+    await writeFile(resolve(operatorHome, '.pi/agent/auth.json'), '{"token":"pi"}');
 
     const roomA = resolve(await scratch('beeline-room-a-'), 'agent-home');
     const roomB = resolve(await scratch('beeline-room-b-'), 'agent-home');
@@ -75,14 +80,17 @@ describe('per-room harness state isolation', () => {
       const claude = resolve(root, 'claude/.credentials.json');
       const codex = resolve(root, 'codex/auth.json');
       const grok = resolve(root, 'grok/auth.json');
+      const pi = resolve(root, 'pi/auth.json');
       expect(readFileSync(claude, 'utf8')).toBe('{"token":"claude"}');
       expect(readFileSync(codex, 'utf8')).toBe('{"token":"codex"}');
       expect(readFileSync(grok, 'utf8')).toBe('{"token":"grok"}');
+      expect(readFileSync(pi, 'utf8')).toBe('{"token":"pi"}');
       // Symlinked, not copied: a refreshed token stays shared with every other
       // room-instance and with the operator's own CLI.
       expect(lstatSync(claude).isSymbolicLink()).toBe(true);
       expect(lstatSync(codex).isSymbolicLink()).toBe(true);
       expect(lstatSync(grok).isSymbolicLink()).toBe(true);
+      expect(lstatSync(pi).isSymbolicLink()).toBe(true);
     }
   });
 
@@ -123,9 +131,11 @@ describe('per-room harness state isolation', () => {
   it('derives the env overlay without touching the filesystem', () => {
     const overlay = roomAgentHomeEnv('/rooms/room-a/agent-home');
     expect(overlay).toEqual({
+      HOME: '/rooms/room-a/agent-home/user',
       CLAUDE_CONFIG_DIR: '/rooms/room-a/agent-home/claude',
       CODEX_HOME: '/rooms/room-a/agent-home/codex',
       GROK_HOME: '/rooms/room-a/agent-home/grok',
+      PI_CODING_AGENT_DIR: '/rooms/room-a/agent-home/pi',
       XDG_STATE_HOME: '/rooms/room-a/agent-home/state',
       XDG_CACHE_HOME: '/rooms/room-a/agent-home/cache',
       TMPDIR: '/rooms/room-a/agent-home/tmp',
@@ -185,31 +195,18 @@ describe('operator skills + MCP passthrough', () => {
     return home;
   }
 
-  it('provisions a Beeline-managed skills directory per harness home with linked operator entries', async () => {
+  it('provisions the exact Beeline-owned defaults and never inherits ambient operator skills', async () => {
     const operatorHome = await operatorHomeWithHarnessConfigs();
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
 
     await prepareRoomAgentHome({ root: roomRoot, operatorHome });
 
-    // The discovery path stays <harness-home>/skills, but it is now a REAL
-    // Beeline-managed directory: each OPERATOR entry is a symlink into the
-    // operator's own tree, and the managed skill sits alongside them.
-    const operatorSkillNames: Record<string, string | undefined> = {
-      claude: 'greet',
-      codex: undefined,
-      grok: undefined,
-    };
-    for (const dir of ['claude', 'codex', 'grok']) {
+    for (const dir of AGENT_SKILL_DIRS) {
       const skillsDir = resolve(roomRoot, dir, 'skills');
       expect(lstatSync(skillsDir).isSymbolicLink()).toBe(false);
       expect(lstatSync(skillsDir).isDirectory()).toBe(true);
-      const operatorEntry = operatorSkillNames[dir];
-      if (operatorEntry) {
-        expect(lstatSync(resolve(skillsDir, operatorEntry)).isSymbolicLink()).toBe(true);
-        expect(realpathSync(resolve(skillsDir, operatorEntry))).toBe(
-          realpathSync(resolve(operatorHome, `.${dir}/skills/${operatorEntry}`)),
-        );
-      }
+      expect(readdirSync(skillsDir).sort()).toEqual([...BEELINE_DEFAULT_SKILL_NAMES].sort());
+      expect(existsSync(resolve(skillsDir, 'greet'))).toBe(false);
       const managedSkill = resolve(skillsDir, 'using-beeline', 'SKILL.md');
       expect(lstatSync(resolve(skillsDir, 'using-beeline')).isSymbolicLink()).toBe(false);
       expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
@@ -237,6 +234,84 @@ describe('operator skills + MCP passthrough', () => {
     const operatorText = readFileSync(resolve(operatorHome, '.codex/config.toml'), 'utf8');
     expect(operatorText).toContain('@trusty-squire/mcp');
     expect(operatorText).not.toContain('scribe');
+  });
+
+  it('copies one explicit per-agent skill without enabling ambient inheritance', async () => {
+    const operatorHome = await operatorHomeWithHarnessConfigs();
+    await mkdir(resolve(operatorHome, '.agents/skills/review-pr'), { recursive: true });
+    await writeFile(
+      resolve(operatorHome, '.agents/skills/review-pr/SKILL.md'),
+      '---\nname: review-pr\ndescription: Review a PR.\n---\n',
+    );
+    await writeFile(resolve(operatorHome, '.agents/skills/review-pr/run.sh'), '#!/bin/sh\n');
+    await chmod(resolve(operatorHome, '.agents/skills/review-pr/run.sh'), 0o755);
+    const sharedAgent = resolve(await scratch('beeline-shared-agent-'), 'agent-home');
+    const cleanAgent = resolve(await scratch('beeline-clean-agent-'), 'agent-home');
+
+    await prepareRoomAgentHome({ root: sharedAgent, operatorHome, sharedSkills: ['review-pr'] });
+    await prepareRoomAgentHome({ root: cleanAgent, operatorHome });
+
+    for (const dir of AGENT_SKILL_DIRS) {
+      expect(readdirSync(resolve(sharedAgent, dir, 'skills')).sort()).toEqual(
+        [...BEELINE_DEFAULT_SKILL_NAMES, 'review-pr'].sort(),
+      );
+      expect(lstatSync(resolve(sharedAgent, dir, 'skills/review-pr')).isSymbolicLink()).toBe(false);
+      expect(lstatSync(resolve(sharedAgent, dir, 'skills/review-pr/run.sh')).mode & 0o111).toBe(0);
+      expect(existsSync(resolve(cleanAgent, dir, 'skills/review-pr'))).toBe(false);
+      expect(existsSync(resolve(sharedAgent, dir, 'skills/greet'))).toBe(false);
+    }
+  });
+
+  it('rejects unsafe explicit shares and destination escapes', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    await mkdir(resolve(operatorHome, '.agents/skills'), { recursive: true });
+    const outside = await scratch('beeline-outside-skill-');
+    await writeFile(resolve(outside, 'SKILL.md'), 'outside');
+    await symlink(outside, resolve(operatorHome, '.agents/skills/escaped'));
+    const linkedFile = resolve(operatorHome, '.agents/skills/hardlinked');
+    await mkdir(linkedFile);
+    await writeFile(resolve(outside, 'ordinary.md'), 'hardlink');
+    await writeFile(resolve(linkedFile, 'SKILL.md'), '---\nname: hardlinked\n---\n');
+    await import('node:fs/promises').then(({ link }) =>
+      link(resolve(outside, 'ordinary.md'), resolve(linkedFile, 'payload.md')),
+    );
+    const fifoSkill = resolve(operatorHome, '.agents/skills/fifo-skill');
+    await mkdir(fifoSkill);
+    await writeFile(resolve(fifoSkill, 'SKILL.md'), '---\nname: fifo-skill\n---\n');
+    execFileSync('mkfifo', [resolve(fifoSkill, 'pipe')]);
+    const credentialSkill = resolve(operatorHome, '.agents/skills/credential-skill');
+    await mkdir(credentialSkill);
+    await writeFile(resolve(credentialSkill, 'SKILL.md'), '---\nname: credential-skill\n---\n');
+    await writeFile(resolve(credentialSkill, 'config.toml'), 'token = "secret"\n');
+    const pluginSkill = resolve(operatorHome, '.agents/skills/plugin-skill');
+    await mkdir(resolve(pluginSkill, '.codex-plugin'), { recursive: true });
+    await writeFile(resolve(pluginSkill, 'SKILL.md'), '---\nname: plugin-skill\n---\n');
+    const memorySkill = resolve(operatorHome, '.agents/skills/memory-skill');
+    await mkdir(memorySkill);
+    await writeFile(resolve(memorySkill, 'SKILL.md'), '---\nname: memory-skill\n---\n');
+    await writeFile(resolve(memorySkill, 'MEMORY.md'), 'personal\n');
+
+    for (const name of [
+      '../escape',
+      'using-beeline',
+      'escaped',
+      'hardlinked',
+      'fifo-skill',
+      'credential-skill',
+      'plugin-skill',
+      'memory-skill',
+    ]) {
+      const root = resolve(await scratch('beeline-unsafe-share-'), 'agent-home');
+      await expect(
+        prepareRoomAgentHome({ root, operatorHome, sharedSkills: [name] }),
+      ).rejects.toThrow();
+    }
+
+    const redirectedRoot = resolve(await scratch('beeline-destination-'), 'agent-home');
+    await mkdir(redirectedRoot, { recursive: true });
+    await symlink(outside, resolve(redirectedRoot, 'codex'));
+    await expect(prepareRoomAgentHome({ root: redirectedRoot, operatorHome })).rejects.toThrow();
+    expect(readFileSync(resolve(outside, 'SKILL.md'), 'utf8')).toBe('outside');
   });
 
   it('copies claude user-scope MCP servers into the isolated CLAUDE_CONFIG_DIR and grok MCP into GROK_HOME', async () => {
@@ -331,7 +406,7 @@ describe('operator skills + MCP passthrough', () => {
     await expect(prepareRoomAgentHome({ root: roomRoot, operatorHome })).resolves.toEqual(
       roomAgentHomeEnv(roomRoot),
     );
-    for (const dir of ['claude', 'codex', 'grok']) {
+    for (const dir of AGENT_SKILL_DIRS) {
       // No operator skills to link, but the managed skill is still shipped.
       expect(existsSync(resolve(roomRoot, dir, 'skills', 'using-beeline', 'SKILL.md'))).toBe(true);
     }
@@ -370,7 +445,7 @@ describe('operator skills + MCP passthrough', () => {
       }
     };
     walk(roomRoot);
-    expect(links.length).toBeGreaterThan(0);
+    expect(existsSync(resolve(roomRoot, 'codex/skills/audit'))).toBe(false);
     for (const link of links) {
       const target = realpathSync(link);
       for (const masked of KNOWN_CREDENTIAL_MASK_PATHS) {

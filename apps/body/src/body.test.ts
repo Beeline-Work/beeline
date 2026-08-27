@@ -210,6 +210,41 @@ describe('mcp-inventory', () => {
     });
   });
 
+  it('pins agent self-reads to this agent home and Workspace memory only', () => {
+    for (const kind of ['claude', 'codex', 'grok', 'pi'] as const) {
+      expect(
+        readOnlyMcpServer(
+          {
+            agentBinary: '/agent',
+            agentKind: kind,
+            mcpBinary: '/buzz-dev-mcp',
+            readonlyMcpCommand: '/buzz-readonly-mcp',
+            agentEnv: {},
+            workspaceRoot: '/workspace',
+            agentHomeRoot: '/runtime/agents/agent-a/home',
+            relayBaseUrl: 'http://relay.test',
+            relayHost: 'relay.test',
+            relayScheme: 'http',
+            relayWsUrl: 'ws://relay.test',
+            autoApprovePermissions: true,
+          },
+          '/paired/repository',
+          '/runtime/agents/agent-a/memory/workspace-a',
+        ).env,
+      ).toEqual([
+        { name: 'BUZZ_READONLY_ROOT', value: '/paired/repository' },
+        {
+          name: 'BUZZ_READONLY_AGENT_SKILLS_ROOT',
+          value: `/runtime/agents/agent-a/home/${kind}/skills`,
+        },
+        {
+          name: 'BUZZ_READONLY_AGENT_MEMORY_ROOT',
+          value: '/runtime/agents/agent-a/memory/workspace-a',
+        },
+      ]);
+    }
+  });
+
   it('refuses to construct a Room server when read-only tools are unavailable', () => {
     expect(() =>
       readOnlyMcpServer(
@@ -359,18 +394,13 @@ describe('acp', () => {
     expect(isReadOnlyMcpPermissionRequest(CLAUDE_ACP_NATIVE_BASH_PERMISSION)).toBe(false);
   });
 
-  it('allows the adapter-declared read/search kinds, captured and synthetic', () => {
-    // claude-agent-acp's own `Read`, as it declares itself. In `default` mode
-    // Claude Code auto-approves its built-in Read so it never reaches the host,
-    // but the kind it declares is what a stricter CLI permission config would
-    // send, and it is the adapter's word — not the model's — about the tool.
+  it('denies adapter-native read/search because their host paths are not daemon-pinned', () => {
     expect(isReadOnlyMcpPermissionRequest({ toolCall: CLAUDE_ACP_NATIVE_READ_TOOL_CALL })).toBe(
-      true,
+      false,
     );
     expect(
       isReadOnlyMcpPermissionRequest({ toolCall: { kind: 'search', title: 'grep "beeline"' } }),
-    ).toBe(true);
-    // A read of a file whose NAME contains a mutating word is still a read.
+    ).toBe(false);
     expect(
       isReadOnlyMcpPermissionRequest({
         toolCall: {
@@ -379,7 +409,21 @@ describe('acp', () => {
           rawInput: { file_path: 'src/write.ts' },
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isReadOnlyMcpPermissionRequest({
+        toolCall: { kind: 'read', title: 'read_file', rawInput: { path: '/etc/passwd' } },
+      }),
+    ).toBe(false);
+    expect(
+      isReadOnlyMcpPermissionRequest({
+        toolCall: {
+          kind: 'read',
+          title: 'Read /tmp/buzz-readonly-mcp/read_file',
+          rawInput: { path: '/tmp/buzz-readonly-mcp/read_file' },
+        },
+      }),
+    ).toBe(false);
   });
 
   it("recognizes the inspection toolset across the other adapters' spellings", () => {
@@ -390,6 +434,7 @@ describe('acp', () => {
       'buzz-readonly-mcp/git_show',
       'buzz-readonly-mcp:list_files',
       'mcp__buzz-readonly-mcp__git_diff',
+      'mcp__buzz-readonly-mcp__read_agent_file',
       'buzz-readonly-mcp (read_file)',
     ]) {
       expect(isReadOnlyMcpPermissionRequest({ toolCall: { kind: 'other', title } })).toBe(true);
@@ -598,7 +643,8 @@ describe('agent identity boundary', () => {
       },
       {
         directive: 'Trade crypto.',
-        expected: "I can't trade crypto because this Room has no trading capability. I will stop here.",
+        expected:
+          "I can't trade crypto because this Room has no trading capability. I will stop here.",
       },
       {
         directive: 'Continue the launch pack by outlining its pricing section.',
@@ -638,12 +684,12 @@ describe('agent identity boundary', () => {
               directiveMentions < 2
                 ? 'Planning self-contained launch pack HTML.'
                 : directive === 'Stop the launch pack. Explain what Ethereum is instead.'
-                ? 'Ethereum is a programmable blockchain network.'
-                : directive === 'Trade crypto.'
-                  ? "I can't trade crypto because this Room has no trading capability. I will stop here."
-                  : directive === 'Continue the launch pack by outlining its pricing section.'
-                    ? 'Continuing the launch pack with its pricing section.'
-                    : 'Planning self-contained launch pack HTML.';
+                  ? 'Ethereum is a programmable blockchain network.'
+                  : directive === 'Trade crypto.'
+                    ? "I can't trade crypto because this Room has no trading capability. I will stop here."
+                    : directive === 'Continue the launch pack by outlining its pricing section.'
+                      ? 'Continuing the launch pack with its pricing section.'
+                      : 'Planning self-contained launch pack HTML.';
             return { stopReason: 'end_turn', updates: [], agentText, toolCalls: [] };
           });
           const session = {
@@ -1155,10 +1201,12 @@ describe('agent identity boundary', () => {
         CLAUDE_ACP_MCP_READ_FILE_PERMISSION,
         CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
         CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
-        { toolCall: CLAUDE_ACP_NATIVE_READ_TOOL_CALL },
       ]) {
         await expect(handle('room-1', captured)).resolves.toBe('allow');
       }
+      await expect(handle('room-1', { toolCall: CLAUDE_ACP_NATIVE_READ_TOOL_CALL })).resolves.toBe(
+        'reject',
+      );
       await expect(handle('room-1', CLAUDE_ACP_NATIVE_WRITE_PERMISSION)).resolves.toBe('reject');
       await expect(handle('room-1', CLAUDE_ACP_NATIVE_BASH_PERMISSION)).resolves.toBe('reject');
     });
@@ -1198,6 +1246,19 @@ describe('agent identity boundary', () => {
             kind: 'execute',
             title: 'mcp.buzz-readonly-mcp.read_file',
             rawInput: { server: 'buzz-readonly-mcp', tool: 'read_file', arguments: {} },
+          },
+        }),
+      ).resolves.toBe('allow');
+      await expect(
+        handle('room-1', {
+          toolCall: {
+            kind: 'execute',
+            title: 'mcp.buzz-readonly-mcp.read_agent_file',
+            rawInput: {
+              server: 'buzz-readonly-mcp',
+              tool: 'read_agent_file',
+              arguments: { area: 'skills', path: 'using-beeline/SKILL.md' },
+            },
           },
         }),
       ).resolves.toBe('allow');

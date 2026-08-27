@@ -274,7 +274,7 @@ describe('POST /test-send', () => {
 
 describe('GET /snapshot/channel/:channelId', () => {
   const PUBLIC_ORIGIN = 'https://usebeeline.app';
-  const CHANNEL = '9b929b0d-5189-4dbf-b6ba-a9f4ddf81bc6';
+  const CHANNEL = '7d111868-52eb-43ab-98ae-8a6c49b92da8';
   const servers: ReturnType<typeof createRegistrationServer>[] = [];
 
   afterEach(async () => {
@@ -314,6 +314,7 @@ describe('GET /snapshot/channel/:channelId', () => {
       cursor: candidate.cursor,
       identitiesStale: candidate.identitiesStale,
       snapshot: candidate.snapshot,
+      ...(candidate.briefingSnapshot ? { briefingSnapshot: candidate.briefingSnapshot } : {}),
       ...(candidate.repository ? { repository: candidate.repository } : {}),
       review: candidate.review,
     };

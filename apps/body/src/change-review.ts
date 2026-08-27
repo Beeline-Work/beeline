@@ -6,7 +6,6 @@ import {
 } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 
-const PATCH_CHUNK_CHARACTERS = 32_000;
 export const MAX_RENDERABLE_PATCH_BYTES = 1_000_000;
 const MAX_GIT_ERROR_BYTES = 16_000;
 
@@ -154,16 +153,6 @@ export async function readChangeReviewPatch(
   const patchBytes = Buffer.byteLength(result.stdout);
   if (patchBytes > maxBytes) return { patchBytes, renderUnavailableReason: 'too-large' };
   return { content: result.stdout, patchBytes };
-}
-
-/** Bound each signed relay event while retaining the full patch. */
-export function chunkChangeReviewPatch(patch: string): string[] {
-  if (!patch) return [''];
-  const chunks: string[] = [];
-  for (let offset = 0; offset < patch.length; offset += PATCH_CHUNK_CHARACTERS) {
-    chunks.push(patch.slice(offset, offset + PATCH_CHUNK_CHARACTERS));
-  }
-  return chunks;
 }
 
 /** Persist review payloads outside kind-9 chat history so reads stay lazy. */

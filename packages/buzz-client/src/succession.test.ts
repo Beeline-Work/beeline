@@ -176,6 +176,13 @@ function buildRelayState(
           return true;
         });
       }
+      if (kinds.includes(KIND_PUT_USER)) {
+        return this.published.filter((event) => {
+          if (event.kind !== KIND_PUT_USER) return false;
+          if (hFilter && !hFilter.includes(tagValue(event, 'h') ?? '')) return false;
+          return pFilter.length === 0 || pFilter.includes(tagValue(event, 'p') ?? '');
+        });
+      }
       // Projection reads are scoped by #d (primary) or #h (fallback); an
       // unscoped discovery read unions every known channel.
       const scopedIds = dFilter ?? hFilter;

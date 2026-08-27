@@ -22,6 +22,7 @@ import {
   KIND_CHANNEL_METADATA,
   KIND_CREATE_GROUP,
   KIND_EDIT_METADATA,
+  KIND_PUT_USER,
   KIND_STREAM_MESSAGE,
   TAG_ROOM_LIFECYCLE,
 } from './kinds.js';
@@ -669,12 +670,36 @@ describe('waitUntilMember (WS-driven)', () => {
     expect(attempt).toBeGreaterThanOrEqual(2);
   });
 
-  it('throws after the timeout when neither a WS push nor the backstop poll ever finds membership', async () => {
+  it('reports an absent membership write distinctly from a delayed projection', async () => {
     const channelId = 'timeout-room';
     const recruit = createIdentity('timeout-recruit');
+    let includeWrite = false;
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify([]))),
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+        if (includeWrite && (filters[0]?.kinds as number[] | undefined)?.includes(KIND_PUT_USER)) {
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: Math.floor(Date.now() / 1_000),
+                  kind: KIND_PUT_USER,
+                  tags: [
+                    ['h', channelId],
+                    ['p', recruit.publicKey],
+                    ['role', 'member'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        return new Response(JSON.stringify([]));
+      }),
     );
 
     const fakeSocket = {
@@ -689,7 +714,18 @@ describe('waitUntilMember (WS-driven)', () => {
 
     await expect(
       waitUntilMember(wsCtx, channelId, recruit.publicKey, { timeoutMs: 80, intervalMs: 20 }),
-    ).rejects.toThrow(/membership not visible/);
+    ).rejects.toMatchObject({
+      name: 'MembershipWriteAbsentError',
+      message: expect.stringMatching(/member was never added/),
+    });
+
+    includeWrite = true;
+    await expect(
+      waitUntilMember(wsCtx, channelId, recruit.publicKey, { timeoutMs: 80, intervalMs: 20 }),
+    ).rejects.toMatchObject({
+      name: 'MembershipProjectionTimeoutError',
+      message: expect.stringMatching(/write is readable.*projection still lagged/),
+    });
   });
 });
 

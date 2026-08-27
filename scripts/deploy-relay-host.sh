@@ -182,7 +182,6 @@ STACK_DEPLOYED=0
 STACK_FAILED=0
 STACK_CONFIG_APPLIED=0
 EVENTS_SERVICE_RETIRED=0
-LEGACY_TAIL_PRESENT=0
 TAIL_OWNERSHIP_COMMITTED=0
 FIRST_CUTOVER_COMMITTED=0
 
@@ -240,16 +239,29 @@ COMPOSE_CHANGED=0
 NGINX_CHANGED=0
 cmp -s "$STAGE/stack/compose.yml" "$LIVE_COMPOSE" || COMPOSE_CHANGED=1
 cmp -s "$STAGE/stack/nginx.conf" "$LIVE_NGINX" || NGINX_CHANGED=1
+stack_has_service() {
+  local compose_file=$1 service=$2
+  awk -v wanted="$service" '
+    $0 == "services:" { in_services=1; next }
+    in_services && /^[^[:space:]#]/ { exit }
+    in_services && $0 == "  " wanted ":" { found=1 }
+    END { exit found ? 0 : 1 }
+  ' "$compose_file"
+}
+MATERIALIZER_CONFIG_AT_START=0
+LEGACY_PUSH_CONFIG_AT_START=0
+stack_has_service "$LIVE_COMPOSE" materializer && MATERIALIZER_CONFIG_AT_START=1
+stack_has_service "$LIVE_COMPOSE" push-gateway && LEGACY_PUSH_CONFIG_AT_START=1
 MATERIALIZER_RUNNING=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer)
-LEGACY_PUSH_GATEWAY_RUNNING=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=push-gateway)
-[ -z "$LEGACY_PUSH_GATEWAY_RUNNING" ] || LEGACY_TAIL_PRESENT=1
-MATERIALIZER_STARTED_AT_START=0
 MATERIALIZER_CID=$(docker ps -aq --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer | head -1)
 if [ -n "$MATERIALIZER_CID" ]; then
   MATERIALIZER_STARTED_AT=$(docker inspect --format '{{.State.StartedAt}}' "$MATERIALIZER_CID" 2>/dev/null || true)
   case "$MATERIALIZER_STARTED_AT" in
     ""|0001-01-01T00:00:00Z) ;;
-    *) MATERIALIZER_STARTED_AT_START=1; TAIL_OWNERSHIP_COMMITTED=1 ;;
+    *)
+      TAIL_OWNERSHIP_COMMITTED=1
+      [ "$MATERIALIZER_CONFIG_AT_START" = 1 ] || FIRST_CUTOVER_COMMITTED=1
+      ;;
   esac
 fi
 
@@ -290,12 +302,11 @@ retire_events_service() {
       ;;
   esac
   if [ "$active" != "active" ] && [ "$enabled" != "enabled" ]; then return 0; fi
-  LEGACY_TAIL_PRESENT=1
   log "retiring standalone beeline-events.service before materializer convergence"
+  EVENTS_SERVICE_RETIRED=1
   sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
     /usr/bin/systemctl --user disable --now beeline-events.service \
     || { echo "!! could not retire beeline-events.service — install the fixed sudoers rules documented above" >&2; return 1; }
-  EVENTS_SERVICE_RETIRED=1
 }
 
 restore_events_service() {
@@ -319,10 +330,16 @@ observe_materializer_ownership() {
     ""|0001-01-01T00:00:00Z) return 1 ;;
   esac
   TAIL_OWNERSHIP_COMMITTED=1
-  if [ "$LEGACY_TAIL_PRESENT" = 1 ] && [ "$MATERIALIZER_STARTED_AT_START" = 0 ]; then
-    FIRST_CUTOVER_COMMITTED=1
-  fi
+  [ "$MATERIALIZER_CONFIG_AT_START" = 1 ] || FIRST_CUTOVER_COMMITTED=1
   return 0
+}
+
+preserve_materializer_ownership() {
+  observe_materializer_ownership || true
+  TAIL_OWNERSHIP_COMMITTED=1
+  FIRST_CUTOVER_COMMITTED=1
+  MATERIALIZER_RUNNING=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer)
+  [ -z "$MATERIALIZER_RUNNING" ] || STACK_DEPLOYED=1
 }
 
 cleanup_deploy() {
@@ -330,9 +347,7 @@ cleanup_deploy() {
   set +e
   observe_materializer_ownership
   if [ "$STACK_CONFIG_APPLIED" = 1 ] && [ "$STACK_DEPLOYED" = 0 ] && [ "$FIRST_CUTOVER_COMMITTED" = 0 ]; then
-    rollback_stack_config
-    converge_stack_runtime
-    STACK_CONFIG_APPLIED=0
+    rollback_previous_stack || preserve_materializer_ownership
   fi
   restore_events_service
   rm -rf "$STAGE"
@@ -340,25 +355,63 @@ cleanup_deploy() {
 }
 
 rollback_stack_config() {
-  local bk="$BACKUP_ROOT/config-$TS"
+  local bk="$BACKUP_ROOT/config-$TS" ok=1
   [ -d "$bk" ] || return 0
   if [ -f "$bk/compose.yml" ]; then
-    cp "$bk/compose.yml" "$STACK_STAGE_DIR/compose.yml"
-    place_stack_file compose.yml "$LIVE_COMPOSE" || true
+    if cp "$bk/compose.yml" "$STACK_STAGE_DIR/compose.yml"; then place_stack_file compose.yml "$LIVE_COMPOSE" || true; fi
+    cmp -s "$bk/compose.yml" "$LIVE_COMPOSE" || ok=0
   fi
   if [ -f "$bk/relay-front/nginx.conf" ]; then
-    cp "$bk/relay-front/nginx.conf" "$STACK_STAGE_DIR/nginx.conf"
-    place_stack_file nginx.conf "$LIVE_NGINX" || true
+    if cp "$bk/relay-front/nginx.conf" "$STACK_STAGE_DIR/nginx.conf"; then place_stack_file nginx.conf "$LIVE_NGINX" || true; fi
+    cmp -s "$bk/relay-front/nginx.conf" "$LIVE_NGINX" || ok=0
   fi
+  [ "$ok" = 1 ]
 }
 
 # Converge the RUNNING stack to whatever compose.yml is currently on disk.
 # Best-effort: used after a rollback, never hides a primary failure.
 converge_stack_runtime() {
-  sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" \
-    -f "$LIVE_COMPOSE" up -d --remove-orphans >>$STAGE/stack-up.log 2>&1 \
-    || echo "!! converge 'compose up -d' failed after config restore — INSPECT MANUALLY" >&2
+  if ! sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file "$PROJECT_DIR/.env" \
+      -f "$LIVE_COMPOSE" up -d --remove-orphans >>$STAGE/stack-up.log 2>&1; then
+    echo "!! converge 'compose up -d' failed after config restore — INSPECT MANUALLY" >&2
+    return 1
+  fi
   reload_relay_front_nginx || true
+  return 0
+}
+
+previous_stack_runtime_ready() {
+  local materializer_now legacy_push_now
+  materializer_now=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer)
+  legacy_push_now=$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=push-gateway)
+  if [ "$MATERIALIZER_CONFIG_AT_START" = 1 ]; then
+    [ -n "$materializer_now" ]
+    return
+  fi
+  [ -z "$materializer_now" ] || return 1
+  if [ "$LEGACY_PUSH_CONFIG_AT_START" = 1 ]; then [ -n "$legacy_push_now" ] || return 1; fi
+  return 0
+}
+
+rollback_previous_stack() {
+  if ! rollback_stack_config; then
+    echo "!! previous stack config could not be verified — preserving materializer ownership" >&2
+    preserve_materializer_ownership
+    return 1
+  fi
+  restore_materializer_image || true
+  converge_stack_runtime || true
+  if ! previous_stack_runtime_ready; then
+    echo "!! previous stack runtime could not be verified — preserving materializer ownership" >&2
+    preserve_materializer_ownership
+    return 1
+  fi
+  STACK_CONFIG_APPLIED=0
+  if [ "$MATERIALIZER_CONFIG_AT_START" = 0 ]; then
+    TAIL_OWNERSHIP_COMMITTED=0
+    FIRST_CUTOVER_COMMITTED=0
+  fi
+  return 0
 }
 
 # Wait without changing the fixed sudo command shape. All services with an
@@ -478,11 +531,11 @@ else
       echo "!! STACK ROLLOUT FAILED AFTER MATERIALIZER START — preserving one-way tail ownership" >&2
     else
       echo "!! STACK ROLLOUT FAILED — restoring previous stack config" >&2
-      rollback_stack_config
-      STACK_CONFIG_APPLIED=0
-      restore_materializer_image || true
-      converge_stack_runtime
-      restore_events_service || true
+      if rollback_previous_stack; then
+        restore_events_service || true
+      else
+        echo "!! legacy consumers remain retired because rollback ownership was not verified" >&2
+      fi
     fi
   fi
 fi
@@ -584,14 +637,12 @@ rollback() {
   if [ "$FIRST_CUTOVER_COMMITTED" = 1 ]; then
     log "ROLLBACK: materializer tail ownership remains on Postgres"
   else
-    restore_materializer_image || echo "!! materializer image rollback failed — inspect manually" >&2
     if [ "${STACK_DEPLOYED:-0}" = "1" ]; then
-      rollback_stack_config
-      STACK_CONFIG_APPLIED=0
-      converge_stack_runtime
-      # Post-rollback public verification must judge the RESTORED config —
-      # which may legitimately have no gateway — not the rolled-forward one.
-      STACK_DEPLOYED=0
+      if rollback_previous_stack; then
+        # Post-rollback public verification must judge the RESTORED config —
+        # which may legitimately have no gateway — not the rolled-forward one.
+        STACK_DEPLOYED=0
+      fi
     fi
   fi
   restore_events_service || true

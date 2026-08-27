@@ -284,7 +284,13 @@ export function CommunityDrawerTrigger({ community }: CommunityDrawerTriggerProp
         size={26}
         testID="workspace-avatar-header"
       />
-      <Text numberOfLines={1} style={styles.drawerTriggerName}>
+      <Text
+        numberOfLines={1}
+        style={styles.drawerTriggerName}
+        testID={
+          community ? `workspace-active-${community.communityId}` : 'workspace-active-loading'
+        }
+      >
         {community?.name ?? WORKSPACE_LABEL}
       </Text>
       <Text style={styles.drawerTriggerCaret}>⌄</Text>

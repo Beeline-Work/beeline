@@ -459,23 +459,17 @@ The broker fresh-binds the Room, controller, corner lineage, exact source SHA,
 and target ref and remains fast-forward-only. Ordinary corners still require
 their separately signed human corner approval.
 
-### Repository event service
+### Repository event consumer
 
-GitHub activity is owned by one host-wide service, not by any paired agent:
-
-```bash
-mkdir -p ~/.config/beeline
-$EDITOR ~/.config/beeline/events.env
-beeline events install
-```
-
-`events.env` is mode-0600 operator configuration and must provide
+GitHub activity is owned by the relay host's single materializer process, not
+by any paired agent. The production `beeline-github.env` must provide
 `BEELINE_GITHUB_APP_ID` plus `BEELINE_GITHUB_APP_PRIVATE_KEY` (a PEM encoded
 with literal `\n` separators is accepted). Optional
 `BEELINE_GITHUB_API_BASE_URL` and `BEELINE_GITHUB_EVENTS_REQUEST_TIMEOUT_MS`
-exist for GitHub Enterprise and testing. Agent units do not read this file;
-the credentials and the service's dedicated non-agent Nostr identity remain
-under `~/.config/beeline/` and `~/.local/state/beeline/events/` respectively.
+exist for GitHub Enterprise and testing. Agent units do not receive these
+credentials. The consumer's dedicated non-agent Nostr identity remains under
+`~/.local/state/beeline/events/` and its former JSON delivery reservations are
+imported into the materializer's Postgres store.
 On discovery, each Room's dedicated merge-gate admin enrolls that service key
 as a normal member before the first configuration read or card; repository
 cards are still authored only by the service key. A legacy Room without a
@@ -503,9 +497,9 @@ replay flood.
 Every GitHub request and relay publish is deadline-bounded. Active repositories
 poll faster, idle repositories slow to five minutes, and failures back off per
 repository without delaying siblings. Three consecutive failures publish one
-degraded card per failure episode; systemd `STATUS=` always includes each
-repository's last successful poll. Durable signed pending cards make restart
-retries relay-idempotent.
+degraded card per failure episode. Materializer logs include each repository's
+last successful poll. Durable signed pending cards make restart retries
+relay-idempotent.
 
 ### As a library
 

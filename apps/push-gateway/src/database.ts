@@ -1,4 +1,5 @@
 import type { NostrEvent } from '@beeline/nostr';
+import { readFile } from 'node:fs/promises';
 import { Pool } from 'pg';
 import type { RelayEventReader } from './metadata.js';
 
@@ -12,6 +13,86 @@ export interface DatabaseQueryable {
 
 export interface DatabaseTransactional extends DatabaseQueryable {
   transaction<T>(work: (database: DatabaseQueryable) => Promise<T>): Promise<T>;
+}
+
+export interface MaterializerReservationPersistence<T> {
+  load(): Promise<unknown | undefined>;
+  save(value: T): Promise<void>;
+}
+
+const MATERIALIZER_RESERVATION_SQL = `
+CREATE TABLE IF NOT EXISTS beeline_materializer_reservations (
+  consumer text PRIMARY KEY,
+  state jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+`;
+
+export async function migrateMaterializerReservations(database: DatabaseQueryable): Promise<void> {
+  await database.query(MATERIALIZER_RESERVATION_SQL);
+}
+
+/**
+ * One physical reservation store, partitioned by consumer name.
+ *
+ * Push, repository events, and snapshots deliberately keep independent state
+ * machines. This table only collapses their durability owner into the shared
+ * materializer Postgres connection; it does not let one consumer interpret or
+ * advance another consumer's reservation document.
+ */
+export class PostgresReservationPersistence<T> implements MaterializerReservationPersistence<T> {
+  constructor(
+    private readonly database: DatabaseQueryable,
+    private readonly consumer: string,
+    private readonly legacyFile?: string,
+  ) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(consumer)) {
+      throw new Error('materializer reservation consumer is invalid');
+    }
+  }
+
+  async load(): Promise<unknown | undefined> {
+    const current = await this.database.query<{ state: unknown }>(
+      `SELECT state FROM beeline_materializer_reservations WHERE consumer = $1`,
+      [this.consumer],
+    );
+    if (current.rows[0]) return current.rows[0].state;
+
+    const legacy = await this.readLegacy();
+    if (legacy === undefined) return undefined;
+    await this.database.query(
+      `INSERT INTO beeline_materializer_reservations (consumer, state)
+       VALUES ($1, $2::jsonb)
+       ON CONFLICT (consumer) DO NOTHING`,
+      [this.consumer, JSON.stringify(legacy)],
+    );
+    const imported = await this.database.query<{ state: unknown }>(
+      `SELECT state FROM beeline_materializer_reservations WHERE consumer = $1`,
+      [this.consumer],
+    );
+    return imported.rows[0]?.state;
+  }
+
+  async save(value: T): Promise<void> {
+    await this.database.query(
+      `INSERT INTO beeline_materializer_reservations (consumer, state, updated_at)
+       VALUES ($1, $2::jsonb, now())
+       ON CONFLICT (consumer) DO UPDATE SET
+         state = EXCLUDED.state,
+         updated_at = EXCLUDED.updated_at`,
+      [this.consumer, JSON.stringify(value)],
+    );
+  }
+
+  private async readLegacy(): Promise<unknown | undefined> {
+    if (!this.legacyFile) return undefined;
+    try {
+      return JSON.parse(await readFile(this.legacyFile, 'utf8')) as unknown;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+  }
 }
 
 export interface EventRow {
@@ -105,7 +186,7 @@ export class DatabaseEventReader implements RelayEventReader {
   }
 
   disconnect(): void {
-    // The owning PostgresEventStore holds one shared connection pool.
+    // The owning PostgresMaterializerStore holds one shared connection pool.
   }
 
   private buildQuery(filter: Record<string, unknown>): { text: string; values: unknown[] } {
@@ -188,7 +269,7 @@ export class DatabaseEventReader implements RelayEventReader {
   }
 }
 
-export class PostgresEventStore implements DatabaseTransactional {
+export class PostgresMaterializerStore implements DatabaseTransactional {
   private readonly pool: Pool;
 
   constructor(connectionString: string) {
@@ -197,6 +278,14 @@ export class PostgresEventStore implements DatabaseTransactional {
 
   async connect(): Promise<void> {
     await this.pool.query('SELECT 1');
+  }
+
+  async migrateReservations(): Promise<void> {
+    await migrateMaterializerReservations(this.pool);
+  }
+
+  reservation<T>(consumer: string, legacyFile?: string): MaterializerReservationPersistence<T> {
+    return new PostgresReservationPersistence<T>(this.pool, consumer, legacyFile);
   }
 
   async query<Row>(text: string, values?: unknown[]): Promise<QueryResult<Row>> {

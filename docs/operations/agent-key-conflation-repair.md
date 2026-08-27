@@ -129,7 +129,7 @@ ROLLBACK;
 ```
 
 Run the transaction once with `ROLLBACK`. Compare its returned ids with the
-audit. Only then rerun it with `COMMIT`. Restart the push gateway after commit
+audit. Only then rerun it with `COMMIT`. Restart the materializer after commit
 to clear presentation metadata caches; the new daemon supplies fresh presence.
 
 ### One instruction block for the machine owner

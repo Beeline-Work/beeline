@@ -176,9 +176,9 @@ export function isSandboxPolicy(value: unknown): value is SandboxPolicy {
 }
 
 /**
- * Harness state roots under the operator's `$HOME` that no env var relocates,
- * so `agent-home.ts` cannot point them at a per-Room path and the sandbox has to
- * name them explicitly.
+ * Harness state roots derived from `$HOME` rather than a dedicated state env.
+ * `agent-home.ts` now supplies a per-Room HOME, and the caller passes that home
+ * here so these paths stay inside the validated agent-home boundary.
  *
  * Keyed on the ACP command, the same way `harness-capabilities.ts` keys its
  * per-adapter facts, so a host running one harness never has empty state
@@ -190,8 +190,7 @@ export function isSandboxPolicy(value: unknown): value is SandboxPolicy {
 export const HARNESS_HOME_STATE_DIRS: Array<{ match: RegExp; dirs: string[] }> = [
   {
     // pi writes ~/.pi/pi-acp/session-map.json on every session/new. pi-acp
-    // hard-codes that path — no flag, env var or setting moves it, which is also
-    // why `agent-home.ts` has no overlay entry for pi.
+    // hard-codes that path, so HOME itself is the relocation boundary.
     match: /(^|[/\\])pi(-acp)?(\.[a-z]+)?$/i,
     dirs: ['.pi'],
   },

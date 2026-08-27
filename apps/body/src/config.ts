@@ -78,6 +78,8 @@ export interface BodyConfig {
    * already-provisioned Room from before per-room homes must keep using.
    */
   agentHomeRoot?: string;
+  /** Runtime-owned names of operator skills explicitly shared with this agent. */
+  sharedSkills?: string[];
   operatorHome?: string;
   squireConfigRoot?: string;
   /** Durable persona memory/lessons root outside corner worktrees. */

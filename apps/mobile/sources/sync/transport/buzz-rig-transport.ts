@@ -1124,9 +1124,10 @@ export class BuzzRigTransport implements RigTransport {
    * filters, per this relay's measured multi-value partiality) carrying only
    * what first paint cannot defer: the message tail, this channel's immutable
    * create event (the snapshot's Workspace binding — see the filter comment),
-   * and the agent registry page the parser bootstraps identity from.
-   * Everything else — authority projections, siblings, membership enrichment,
-   * presence — hydrates later through independent, bounded, nonblocking steps
+   * exact membership projections for the roster, and the agent registry page
+   * the parser bootstraps identity from. Everything else — authority
+   * projections, siblings, presence — hydrates later through independent,
+   * bounded, nonblocking steps
    * and merges into the snapshot without ever erasing what first paint showed
    * (`mergeWorkspaceSnapshots` never wipes).
    *
@@ -1155,7 +1156,7 @@ export class BuzzRigTransport implements RigTransport {
     const client = await this.getClient();
     // ONE batched relay round trip carrying EXACTLY what first paint needs —
     // nothing more, per the corner-open contract (authority, sibling states,
-    // projections, membership, and presence are all deferred):
+    // projections, and presence are deferred):
     //   1. the bounded message tail of THIS channel;
     //   2. this channel's IMMUTABLE create event — not general structural
     //      history. Its `community` tag is the only source for the snapshot's
@@ -1165,9 +1166,11 @@ export class BuzzRigTransport implements RigTransport {
     //   3. the self-signed agent registry page, relay-side tag-matched.
     //      parseIdentityControl consumes these before any identity check, so
     //      the bootstrap pass derives agent records without prior authority
-    //      and without client-side tag reads. Membership/admin projections
-    //      are deliberately NOT fetched here: message signers resolve through
-    //      registry/bootstrap/cache/placeholder identity records alone.
+    //      and without client-side tag reads.
+    //   4. this Room's membership/admin projections, under both relay-stored
+    //      coordinates. The roster sheet's authority is the normalized
+    //      membership snapshot, so deferring these made a fresh Room appear
+    //      empty until re-entry triggered a full backfill.
     const events = await client.query([
       {
         kinds: [KIND_STREAM_MESSAGE],
@@ -1178,6 +1181,16 @@ export class BuzzRigTransport implements RigTransport {
         kinds: [KIND_CREATE_GROUP],
         '#h': [sessionId],
         limit: 5,
+      },
+      {
+        kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+        '#d': [sessionId],
+        limit: 4,
+      },
+      {
+        kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
+        '#h': [sessionId],
+        limit: 4,
       },
       {
         kinds: [KIND_STREAM_MESSAGE],

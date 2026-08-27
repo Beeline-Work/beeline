@@ -49,9 +49,11 @@ deployment verification checks both snapshot health and the independent
 `/push/health` FCM surface. A Firebase initialization failure can therefore
 leave snapshot reads available while push health reports unavailable.
 
-The deploy script disables the superseded `beeline-events.service` before the
-first converged Compose reconciliation and restores it if that rollout fails.
-Its fixed sudo command shapes are documented at the top of
+The deploy script disables the superseded `beeline-events.service`, stops and
+verifies every legacy or current tail container, then performs a one-way
+Compose convergence. A failed cutover never reactivates legacy reservation
+owners; it stops and prints exact commands for continuing the materializer
+forward. Its fixed sudo command shapes are documented at the top of
 `scripts/deploy-relay-host.sh`.
 
 ## Preview-origin operator provisioning

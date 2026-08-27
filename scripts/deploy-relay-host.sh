@@ -87,6 +87,10 @@ manual_recovery() {
 !! sudo -n -u lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 /usr/bin/systemctl --user disable --now beeline-events.service
 !! sudo -n /usr/bin/install -o lunchbox -g lunchbox -m 644 $STACK_STAGE_DIR/compose.yml $PROJECT_DIR/compose.yml
 !! sudo -n /usr/bin/install -o lunchbox -g lunchbox -m 644 $STACK_STAGE_DIR/nginx.conf $PROJECT_DIR/relay-front/nginx.conf
+!! docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=push-gateway | xargs -r docker stop
+!! docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer | xargs -r docker stop
+!! test -z "\$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=push-gateway)"
+!! test -z "\$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer)"
 !! sudo -n /usr/bin/docker compose -p buzz-router-prod --env-file $PROJECT_DIR/.env -f $PROJECT_DIR/compose.yml up -d --remove-orphans
 !! docker kill -s HUP \$(docker ps -q --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=relay-front)
 !! Then verify materializer health with:
@@ -281,6 +285,23 @@ retire_events_service() {
     || { echo "!! could not retire beeline-events.service — install the fixed sudoers rules documented above" >&2; return 1; }
 }
 
+stop_tail_containers() {
+  local service remaining
+  for service in push-gateway materializer; do
+    docker ps -q \
+      --filter label=com.docker.compose.project=buzz-router-prod \
+      --filter label=com.docker.compose.service="$service" \
+      | xargs -r docker stop >/dev/null \
+      || { echo "!! could not stop $service containers" >&2; return 1; }
+  done
+  for service in push-gateway materializer; do
+    remaining=$(docker ps -q \
+      --filter label=com.docker.compose.project=buzz-router-prod \
+      --filter label=com.docker.compose.service="$service")
+    [ -z "$remaining" ] || { echo "!! $service containers remain running" >&2; return 1; }
+  done
+}
+
 # Wait without changing the fixed sudo command shape. All services with an
 # application healthcheck must be healthy, and relay-front (which deliberately
 # has no healthcheck) must be running. This closes the gap where `up -d`
@@ -336,6 +357,7 @@ CUTOVER_STARTED=1
 retire_events_service || die "standalone repository-events retirement failed"
 place_stack_file compose.yml "$LIVE_COMPOSE" || die "production compose placement failed"
 place_stack_file nginx.conf "$LIVE_NGINX" || die "production nginx placement failed"
+stop_tail_containers || die "tail consumer retirement failed"
 log "applying production stack (docker compose up -d)"
 reconcile_full_stack || die "production stack convergence failed"
 reload_relay_front_nginx || die "production nginx reload failed"

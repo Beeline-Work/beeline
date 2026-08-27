@@ -426,7 +426,6 @@ describe("the deck's one ordered feed", () => {
         created.push(room);
         return room.id;
       }),
-      waitUntilMember: vi.fn(async () => undefined),
       query: vi.fn(async () =>
         created.slice(0, -1).map((room, index) => ({
           id: `event-${room.id}`,
@@ -470,10 +469,16 @@ describe("the deck's one ordered feed", () => {
     };
 
     await createRoom('Tubing capital');
-    await createRoom('Brrr');
+    await createRoom('Tubing capital');
 
-    expect(findAllByTestId(tree, 'room-created-1')).toHaveLength(1);
-    expect(findAllByTestId(tree, 'room-created-2')).toHaveLength(1);
+    const older = findAllByTestId(tree, 'room-created-1');
+    const newest = findAllByTestId(tree, 'room-created-2');
+    expect(older).toHaveLength(1);
+    expect(newest).toHaveLength(1);
+    expect(older[0].props.accessibilityLabel).toContain('Open #Tubing capital,');
+    expect(newest[0].props.accessibilityLabel).toContain('Open #Tubing capital,');
+    expect(older[0].props.accessibilityLabel).not.toContain('· ID');
+    expect(newest[0].props.accessibilityLabel).not.toContain('· ID');
   });
 
   it('ends pull refresh before independent Room hydration and keeps the fresh Room', async () => {

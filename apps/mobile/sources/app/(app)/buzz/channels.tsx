@@ -512,6 +512,7 @@ export default function BuzzChannels() {
   const [memberPickerVisible, setMemberPickerVisible] = useState(false);
   const [messagingPubkey, setMessagingPubkey] = useState<string | null>(null);
   const [channelName, setChannelName] = useState('');
+  const [createdChannels, setCreatedChannels] = useState<Record<string, string>>({});
   const [creatingChannel, setCreatingChannel] = useState(false);
   // Optional repo step: leave `pendingRepo` null for a chat-only Room.
   const [showRepoPicker, setShowRepoPicker] = useState(false);
@@ -1336,7 +1337,6 @@ export default function BuzzChannels() {
       const channelId = await client.createChannel(name, {
         ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
       });
-      await client.waitUntilMember(channelId, client.identity.publicKey);
       const createdAt = Math.floor(Date.now() / 1_000);
       useBuzzLocalCache.getState().upsertConfirmedChannel(identity.publicKey, activeCommunityId, {
         id: channelId,
@@ -1345,6 +1345,7 @@ export default function BuzzChannels() {
         createdAt,
         updatedAt: createdAt,
       });
+      setCreatedChannels((current) => ({ ...current, [channelId]: name }));
       setChannelName('');
       setShowCreateChannel(false);
       setPendingRepo(null);
@@ -1430,7 +1431,8 @@ export default function BuzzChannels() {
       // a placeholder-id fallback gains no mark — nothing fabricated is
       // decorated.
       const title =
-        displayRoomIndexTitle(item.title) ?? `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
+        displayRoomIndexTitle(createdChannels[item.id] ?? item.title) ??
+        `${ROOM_LABEL.toLowerCase()} ${item.id.slice(0, 8)}`;
       const expanded = canExpand && expandedRoomId === item.id;
       const age = compactRelativeTime(row.meaningfulAt, ageNow);
       // One state per row, one visual language each: needs-you (brass),
@@ -1582,7 +1584,7 @@ export default function BuzzChannels() {
         </View>
       );
     },
-    [ageNow, expandedRoomId, openChannel],
+    [ageNow, createdChannels, expandedRoomId, openChannel],
   );
 
   /** One renderer for the feed's DM rows. Their row language is identity (the

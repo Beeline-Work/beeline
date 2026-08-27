@@ -144,6 +144,17 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialog: (props: any) =>
+      props.visible ? ReactModule.createElement('HullDialog', props, props.children) : null,
+    HullDialogInput: (props: any) => ReactModule.createElement('HullDialogInput', props),
+  };
+});
+vi.mock('@/modal', () => ({
+  Modal: { alert: vi.fn(), confirm: vi.fn(async () => false) },
+}));
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -240,22 +251,31 @@ const DELETED = 'deleted-room-id';
  * publish the relay refused (#396 already-archived case), so its membership
  * projection still names this viewer. */
 function mockRelayStillReturnsBothRooms() {
-  clientMocks.query.mockImplementation(async () => [
-    {
-      id: 'e1',
-      kind: 9007,
-      pubkey: VIEWER,
-      created_at: 100,
-      tags: [['h', KEPT], ['community', 'shared-1']],
-    },
-    {
-      id: 'e2',
-      kind: 9007,
-      pubkey: VIEWER,
-      created_at: 101,
-      tags: [['h', DELETED], ['community', 'shared-1']],
-    },
-  ] as never);
+  clientMocks.query.mockImplementation(
+    async () =>
+      [
+        {
+          id: 'e1',
+          kind: 9007,
+          pubkey: VIEWER,
+          created_at: 100,
+          tags: [
+            ['h', KEPT],
+            ['community', 'shared-1'],
+          ],
+        },
+        {
+          id: 'e2',
+          kind: 9007,
+          pubkey: VIEWER,
+          created_at: 101,
+          tags: [
+            ['h', DELETED],
+            ['community', 'shared-1'],
+          ],
+        },
+      ] as never,
+  );
   clientMocks.listMyChannels.mockResolvedValue([{ channelId: KEPT }, { channelId: DELETED }]);
   clientMocks.getChannelMetadata.mockImplementation(async (id: string) =>
     id === DELETED ? { archived: true } : { archived: false },

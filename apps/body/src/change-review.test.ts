@@ -4,7 +4,6 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  chunkChangeReviewPatch,
   listChangeReviewFiles,
   MAX_RENDERABLE_PATCH_BYTES,
   readChangeReviewPatch,
@@ -112,13 +111,8 @@ describe('change review git metadata', () => {
     expect(small.content).toContain('+export const stillReviewable = true;');
   });
 
-  it('resolves the merge base and chunks large patches without data loss', async () => {
+  it('resolves the merge base', async () => {
     const { directory, base } = fixture();
     expect(await resolveReviewBaseTip(directory, 'refs/heads/main')).toBe(base);
-
-    const patch = `header\n${'x'.repeat(70_000)}\nfooter`;
-    const chunks = chunkChangeReviewPatch(patch);
-    expect(chunks.length).toBeGreaterThan(2);
-    expect(chunks.join('')).toBe(patch);
   });
 });

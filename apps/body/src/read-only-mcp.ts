@@ -88,6 +88,22 @@ const TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'read_agent_file',
+    description:
+      "Read one text file from this agent's approved materialized skills or Workspace memory. It cannot access harness config, credentials, repositories, other agents, or execute content.",
+    inputSchema: {
+      type: 'object',
+      required: ['area', 'path'],
+      properties: {
+        area: { type: 'string', enum: ['skills', 'memory'] },
+        path: { type: 'string', description: 'Path relative to the selected approved area.' },
+        start_line: { type: 'integer', minimum: 1 },
+        end_line: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'search_text',
     description:
       'Search for a literal text string in bounded repository text files. This is a safe grep-like search, not a shell or regex evaluator.',
@@ -187,9 +203,7 @@ function configuredRoot(): string {
 
 /** Additional daemon-derived paths (e.g. corner worktrees) the read tools may
  *  access. Never model-supplied. Semicolon-separated absolute paths. */
-const EXTRA_ROOTS: string[] = (
-  process.env.BUZZ_READONLY_EXTRA_ROOTS?.trim() ?? ''
-)
+const EXTRA_ROOTS: string[] = (process.env.BUZZ_READONLY_EXTRA_ROOTS?.trim() ?? '')
   .split(';')
   .map((p) => p.trim())
   .filter(Boolean)
@@ -203,6 +217,23 @@ const EXTRA_ROOTS: string[] = (
   .filter(Boolean);
 
 const repositoryRoot = configuredRoot();
+const approvedAgentRoots = Object.fromEntries(
+  [
+    ['skills', process.env.BUZZ_READONLY_AGENT_SKILLS_ROOT],
+    ['memory', process.env.BUZZ_READONLY_AGENT_MEMORY_ROOT],
+  ].flatMap(([area, value]) => {
+    if (!value?.trim()) return [];
+    try {
+      const candidate = resolve(value);
+      const details = lstatSync(candidate);
+      const real = realpathSync(candidate);
+      if (!details.isDirectory() || details.isSymbolicLink() || real !== candidate) return [];
+      return [[area, real]];
+    } catch {
+      return [];
+    }
+  }),
+) as Partial<Record<'skills' | 'memory', string>>;
 const gitBinary = ['/usr/bin/git', '/bin/git'].find((candidate) => existsSync(candidate));
 
 function asObject(value: unknown): JsonObject {
@@ -258,10 +289,7 @@ function withinRepository(realPath: string): boolean {
   const rel = relative(repositoryRoot, realPath);
   if (rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))) return true;
   // Also allow paths under any daemon-derived extra root (e.g. corner worktrees).
-  return EXTRA_ROOTS.some(
-    (extra) =>
-      realPath.startsWith(extra + sep) || realPath === extra,
-  );
+  return EXTRA_ROOTS.some((extra) => realPath.startsWith(extra + sep) || realPath === extra);
 }
 
 function existingPath(input: string, expected: 'file' | 'directory' | 'either'): string {
@@ -350,6 +378,53 @@ function readFile(args: JsonObject): string {
     .map((line, index) => `${startLine + index}: ${line}`)
     .join('\n');
   return `${displayPath(path)} (${lines.length} lines)\n${body}${requestedEnd > endLine ? '\n[truncated at 1000 lines]' : ''}`;
+}
+
+function readAgentFile(args: JsonObject): string {
+  const area = stringArg(args, 'area');
+  if (area !== 'skills' && area !== 'memory') throw new Error('area must be skills or memory');
+  const root = approvedAgentRoots[area];
+  if (!root) throw new Error(`approved ${area} material is unavailable`);
+  const input = stringArg(args, 'path') ?? '';
+  if (!input || input.includes('\0') || isAbsolute(input)) {
+    throw new Error('path must be relative to the approved agent area');
+  }
+  const normalized = input.replaceAll('\\', '/');
+  const segments = normalized.split('/').filter((segment) => segment && segment !== '.');
+  if (segments.includes('..')) throw new Error('path escapes the approved agent area');
+  let component = root;
+  for (const segment of segments) {
+    component = resolve(component, segment);
+    if (lstatSync(component).isSymbolicLink()) {
+      throw new Error('approved agent reads do not follow symbolic links');
+    }
+  }
+  const candidate = resolve(root, normalized);
+  const resolved = realpathSync(candidate);
+  const rel = relative(root, resolved);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error('path resolves outside the approved agent area');
+  }
+  const linkStats = lstatSync(candidate);
+  const details = statSync(resolved);
+  if (linkStats.isSymbolicLink() || !details.isFile() || details.nlink !== 1) {
+    throw new Error('approved agent reads require an ordinary file');
+  }
+  const text = readTextFile(resolved);
+  const lines = text.split(/\r?\n/);
+  const startLine = integerArg(args, 'start_line', 1, 1, Math.max(1, lines.length));
+  const requestedEnd = integerArg(
+    args,
+    'end_line',
+    Math.min(lines.length, startLine + 999),
+    startLine,
+    Math.max(startLine, lines.length),
+  );
+  const endLine = Math.min(requestedEnd, startLine + 999);
+  return `${area}/${normalized} (${lines.length} lines)\n${lines
+    .slice(startLine - 1, endLine)
+    .map((line, index) => `${startLine + index}: ${line}`)
+    .join('\n')}${requestedEnd > endLine ? '\n[truncated at 1000 lines]' : ''}`;
 }
 
 function searchableFiles(start: string): string[] {
@@ -517,12 +592,7 @@ function gitDiff(args: JsonObject): string {
 
 function gitStatus(args: JsonObject): string {
   const path = optionalPath(args);
-  return runGit([
-    'status',
-    '--porcelain=v2',
-    '--no-ahead-behind',
-    ...(path ? ['--', path] : []),
-  ]);
+  return runGit(['status', '--porcelain=v2', '--no-ahead-behind', ...(path ? ['--', path] : [])]);
 }
 
 function callTool(name: string, args: JsonObject): string {
@@ -531,6 +601,8 @@ function callTool(name: string, args: JsonObject): string {
       return listFiles(args);
     case 'read_file':
       return readFile(args);
+    case 'read_agent_file':
+      return readAgentFile(args);
     case 'search_text':
       return searchText(args);
     case 'git_log':

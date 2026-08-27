@@ -9,29 +9,18 @@
  * per-channel isolation and is the one plausible mechanism for real cross-room
  * context bleed.
  *
- * The captain's decision (D2 in the agent-instance scout report) is: **isolate
- * state, share credentials.** So `$HOME` itself is never overridden — harness
- * auth lives there and re-authenticating per Room is not acceptable — and only
- * the harness *state* directories are pointed at a per-room path. Credential
- * files are symlinked back into the isolated state dir so a login made once
- * keeps working in every Room, and a token refresh written through the link is
- * visible to every other Room.
+ * Room harnesses receive a Beeline-owned `$HOME` as well as their harness
+ * state roots. Known login files are linked into the harness-specific state
+ * directory, preserving one operator login without inheriting `$HOME/.agents`,
+ * plugins, configuration, or personal memory.
  *
- * **Skills + MCP passthrough (owner decision 2026-08-23).** Each harness home's
- * `skills/` directory is a BEELINE-MANAGED composite: one symlink per entry of
- * the operator's own skills directory plus the daemon-shipped `using-beeline`
- * skill (`beeline-skill.ts`, regenerated from the running release on every
- * activation). The harness-discovered path must stay exactly `<harness-home>/
- * skills/`, and the managed skill may never be written through the operator's
- * directory, so the whole-dir link the passthrough shipped first was migrated
- * into this composite: operator files are only ever READ and linked, byte for
- * byte, never written. Ordinary operator MCP server declarations are COPIED
- * into the harness home, so every Room/corner session has
- * the tools the host offers — without them a harness boots
- * with a login but nothing to advertise over ACP. Two shapes, deliberately:
- * operator skills are LINKED per entry (read-only reference data; edits through
- * a link would be the operator's own business anyway) while MCP config is
- * COPIED — codex-acp
+ * **Skills.** Every `<harness-home>/skills` is rebuilt on activation with the
+ * explicit default allowlist plus narrow names stored on this agent's runtime
+ * record. Shared skills are validated and copied as non-executable ordinary
+ * files; ambient directories are never inherited. Ordinary operator MCP server
+ * declarations are COPIED into the harness home so every Room/corner session
+ * has the tools the host offers — without them a harness boots with a login but
+ * nothing to advertise over ACP. Codex-acp
  * MERGES session MCP servers into `$CODEX_HOME/config.toml`, so a symlink
  * there would let a session write into the operator's real config. Only MCP
  * declarations pass through: model/sandbox/approval settings stay out because
@@ -40,25 +29,26 @@
  * `~/.config/trusty-squire`, `~/.git-credentials`) are never linked. Squire is
  * omitted from ambient declarations and mounted only through its host broker.
  *
- * `pi` needs none of this: it never reads the `mcpServers` it is handed and
- * loads the operator's global `~/.pi/agent` extensions/skills from `$HOME`
- * itself, which is never overridden here.
+ * Pi uses `PI_CODING_AGENT_DIR` and the isolated `$HOME`, preventing its
+ * otherwise-implicit reads from the operator's `~/.pi` and `~/.agents` trees.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import {
   chmod,
+  copyFile,
   lstat,
   mkdir,
   readdir,
-  readlink,
+  realpath,
   rename,
+  rm,
   symlink,
   unlink,
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, relative, resolve, sep } from 'node:path';
 import {
   runningBeelineReleaseId,
   USING_BEELINE_SKILL_NAME,
@@ -76,7 +66,7 @@ import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
  * relative to the operator's real `$HOME`; `target` to the isolated dir.
  */
 const SHARED_CREDENTIALS: Array<{
-  dir: 'claude' | 'codex' | 'grok';
+  dir: 'claude' | 'codex' | 'grok' | 'pi';
   source: string;
   target: string;
 }> = [
@@ -88,6 +78,7 @@ const SHARED_CREDENTIALS: Array<{
   // Grok relocates ~/.grok via GROK_HOME; auth.json holds its login (same
   // shape as codex).
   { dir: 'grok', source: '.grok/auth.json', target: 'auth.json' },
+  { dir: 'pi', source: '.pi/agent/auth.json', target: 'auth.json' },
 ];
 
 /**
@@ -96,11 +87,28 @@ const SHARED_CREDENTIALS: Array<{
  * directory the harness was pointed at. A missing source dir is skipped, not
  * fatal — not every host has every harness installed.
  */
-const SHARED_SKILLS: Array<{ dir: 'claude' | 'codex' | 'grok'; source: string }> = [
-  { dir: 'claude', source: '.claude/skills' },
-  { dir: 'codex', source: '.codex/skills' },
-  { dir: 'grok', source: '.grok/skills' },
-];
+export const BEELINE_DEFAULT_SKILL_NAMES = [
+  USING_BEELINE_SKILL_NAME,
+  MISSION_BRIEF_SKILL_NAME,
+] as const;
+
+/** Owned operator locations from which one named skill may be explicitly shared. */
+const EXPLICIT_SKILL_SOURCE_DIRS = ['.agents/skills'] as const;
+
+/** Every supported Room harness consumes the same exact materialized inventory. */
+export const AGENT_SKILL_DIRS = ['claude', 'codex', 'grok', 'pi'] as const;
+export const SHARED_SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+export function isSharedSkillName(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    SHARED_SKILL_NAME_PATTERN.test(value) &&
+    !(BEELINE_DEFAULT_SKILL_NAMES as readonly string[]).includes(value)
+  );
+}
+
+class AgentHomeSecurityError extends Error {}
+const agentHomeProvisionQueues = new Map<string, Promise<void>>();
 
 /**
  * Harness MCP declarations copied from the operator's real home into the
@@ -131,7 +139,7 @@ const HARNESS_MCP_CONFIGS = [
 const CODEX_ROOM_AGENT_LOCKDOWN_TOML = '[agents]\nenabled = false\n';
 
 /** Subdirectories created under a room-instance's agent home. */
-const HOME_SUBDIRS = ['claude', 'codex', 'grok', 'state', 'cache', 'tmp'] as const;
+const HOME_SUBDIRS = ['user', 'claude', 'codex', 'grok', 'pi', 'state', 'cache', 'tmp'] as const;
 
 export interface RoomAgentHomeInput {
   /** Per-room agent home root, e.g. `<roomRoot>/agent-home`. */
@@ -145,6 +153,8 @@ export interface RoomAgentHomeInput {
    * ids to prove regeneration on version change.
    */
   skillReleaseId?: string;
+  /** Narrow, runtime-owned names explicitly shared with this one agent. */
+  sharedSkills?: string[];
 }
 
 /**
@@ -161,11 +171,17 @@ export async function prepareRoomAgentHome(
   const operatorHome = input.operatorHome ?? homedir();
   try {
     await mkdir(root, { recursive: true, mode: 0o700 });
+    const rootStats = await lstat(root);
+    if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+      throw new AgentHomeSecurityError(`agent home root is not an ordinary directory: ${root}`);
+    }
     for (const subdir of HOME_SUBDIRS) {
-      await mkdir(resolve(root, subdir), { recursive: true, mode: 0o700 });
+      const path = resolve(root, subdir);
+      await mkdir(path, { recursive: true, mode: 0o700 });
+      await assertRealContainedDirectory(path, root);
     }
   } catch (error) {
-    if (input.failClosed) throw error;
+    if (input.failClosed || error instanceof AgentHomeSecurityError) throw error;
     console.error(`[body] per-room agent home unavailable at ${root}; using daemon state:`, error);
     return {};
   }
@@ -179,15 +195,24 @@ export async function prepareRoomAgentHome(
     await symlink(source, target).catch(() => undefined);
   }
 
-  await provisionOperatorSkillsAndMcp(
-    root,
-    operatorHome,
-    input.skillReleaseId ?? runningBeelineReleaseId(),
-    input.failClosed ?? false,
-  ).catch((error) => {
-    if (input.failClosed) throw error;
-    console.warn(`[body] operator skills/MCP passthrough incomplete for ${root}:`, error);
-  });
+  const prior = agentHomeProvisionQueues.get(root) ?? Promise.resolve();
+  const provision = prior
+    .catch(() => undefined)
+    .then(() =>
+      provisionAgentSkillsAndMcp(
+        root,
+        operatorHome,
+        input.skillReleaseId ?? runningBeelineReleaseId(),
+        input.failClosed ?? false,
+        input.sharedSkills ?? [],
+      ),
+    );
+  agentHomeProvisionQueues.set(root, provision);
+  try {
+    await provision;
+  } finally {
+    if (agentHomeProvisionQueues.get(root) === provision) agentHomeProvisionQueues.delete(root);
+  }
 
   return roomAgentHomeEnv(root);
 }
@@ -202,11 +227,12 @@ export async function prepareRoomAgentHome(
  * config edits and release upgrades; per-entry operator-skill links are
  * repaired when they point somewhere else.
  */
-async function provisionOperatorSkillsAndMcp(
+async function provisionAgentSkillsAndMcp(
   root: string,
   operatorHome: string,
   skillReleaseId: string,
   failClosed: boolean,
+  sharedSkills: string[],
 ): Promise<void> {
   const managedSkills = [
     { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
@@ -214,12 +240,10 @@ async function provisionOperatorSkillsAndMcp(
     // release-owned, regenerate-on-activation channel as using-beeline.
     { name: MISSION_BRIEF_SKILL_NAME, content: missionBriefSkillMarkdown(skillReleaseId) },
   ];
-  for (const skills of SHARED_SKILLS) {
-    const source = resolve(operatorHome, skills.source);
-    const target = resolve(root, skills.dir, 'skills');
-    await provisionManagedSkillsDir(source, target, managedSkills).catch((error) => {
-      console.warn(`[body] operator skills unavailable at ${target}:`, error);
-    });
+  const shared = await resolveExplicitSkillSources(operatorHome, sharedSkills);
+  for (const dir of AGENT_SKILL_DIRS) {
+    const target = resolve(root, dir, 'skills');
+    await provisionManagedSkillsDir(target, managedSkills, shared);
   }
 
   for (const config of HARNESS_MCP_CONFIGS) {
@@ -340,71 +364,138 @@ function filteredHarnessMcpToml(source: string): string | undefined {
 }
 
 /**
- * Make `target` a Beeline-managed skills directory holding exactly two kinds
- * of entries: one SYMLINK per entry of the operator's own skills directory,
- * and every daemon-shipped managed skill (`using-beeline`, `mission-brief`)
- * regenerated by the running release.
- *
- * Trust boundary, proven by tests: the operator's directory is only ever READ
- * (names + entry symlinks), never written, so operator files survive every
- * activation byte-for-byte. Real (non-symlink) entries already inside the
- * managed directory are never replaced or deleted — the daemon created this
- * directory inside its own agent home, but unknown real data still wins.
- * A symlink collision with a managed skill's name is refused rather than
- * written through, so an operator skill named like a managed one can never
- * turn regeneration into a write into their tree.
+ * Atomically rebuild `target` with the exact release-owned defaults plus the
+ * already-validated per-agent shares. No pre-existing destination entry is
+ * followed or retained.
  */
 async function provisionManagedSkillsDir(
-  source: string,
   target: string,
   managedSkills: Array<{ name: string; content: string }>,
+  sharedSkills: Array<{ name: string; source: string }>,
 ): Promise<void> {
-  // Migrate the pre-composite layout: a whole-dir symlink occupying the
-  // discovery path is Beeline's own earlier artifact — replace it with the
-  // real managed directory. Never follow or keep it: writing through it would
-  // land inside the operator's tree.
-  const existing = await lstat(target).catch(() => undefined);
-  if (existing?.isSymbolicLink()) await unlink(target);
-  await mkdir(target, { recursive: true });
-
-  const managedNames = new Set(managedSkills.map((skill) => skill.name));
-  const operatorNames = new Set(existsSync(source) ? await readdir(source) : []);
-
-  // Drop stale per-entry links the operator removed or renamed. Anything else
-  // — including an unexpected real entry — stays untouched.
-  for (const entry of await readdir(target)) {
-    if (operatorNames.has(entry) || managedNames.has(entry)) continue;
-    const entryPath = resolve(target, entry);
-    const stats = await lstat(entryPath).catch(() => undefined);
-    if (stats?.isSymbolicLink()) await unlink(entryPath).catch(() => undefined);
-  }
-
-  for (const name of operatorNames) {
-    const entryPath = resolve(target, name);
-    const stats = await lstat(entryPath).catch(() => undefined);
-    if (!stats) {
-      await symlink(resolve(source, name), entryPath).catch(() => undefined);
-      continue;
+  const parent = dirname(target);
+  await assertRealContainedDirectory(parent, dirname(parent));
+  const staged = resolve(parent, `.skills.${process.pid}.${randomUUID()}.tmp`);
+  await mkdir(staged, { mode: 0o700 });
+  const names = new Set(managedSkills.map((skill) => skill.name));
+  try {
+    for (const skill of managedSkills) {
+      const skillDir = resolve(staged, skill.name);
+      await mkdir(skillDir, { recursive: true });
+      await writeIsolatedHarnessFile(resolve(skillDir, 'SKILL.md'), skill.content);
     }
-    if (!stats.isSymbolicLink()) continue; // Never replace real data with a link.
-    const current = await readlinkSafe(entryPath);
-    if (current && resolve(target, current) === resolve(source, name)) continue;
-    // Repair a link left pointing somewhere else by an earlier layout.
-    await unlink(entryPath).catch(() => undefined);
-    await symlink(resolve(source, name), entryPath).catch(() => undefined);
-  }
-
-  // Regenerate each managed skill. Refuse loudly if something symlink-shaped
-  // occupies its slot: regeneration must never write through that link.
-  for (const skill of managedSkills) {
-    const skillDir = resolve(target, skill.name);
-    const skillStats = await lstat(skillDir).catch(() => undefined);
-    if (skillStats?.isSymbolicLink()) {
-      throw new Error(`refusing to write the managed skill through a symlink at ${skillDir}`);
+    for (const shared of sharedSkills) {
+      if (names.has(shared.name)) {
+        throw new Error(`shared skill collides with Beeline-owned skill: ${shared.name}`);
+      }
+      names.add(shared.name);
+      await copySafeSkillTree(shared.source, resolve(staged, shared.name), shared.source);
     }
-    await mkdir(skillDir, { recursive: true });
-    await writeIsolatedHarnessFile(resolve(skillDir, 'SKILL.md'), skill.content);
+    const existing = await lstat(target).catch(() => undefined);
+    if (existing) await rm(target, { recursive: existing.isDirectory(), force: true });
+    await rename(staged, target);
+  } finally {
+    await rm(staged, { recursive: true, force: true });
   }
+}
+
+async function resolveExplicitSkillSources(
+  operatorHome: string,
+  names: string[],
+): Promise<Array<{ name: string; source: string }>> {
+  const unique = [...new Set(names)];
+  for (const name of unique) {
+    if (!isSharedSkillName(name)) throw new Error(`invalid shared skill name: ${name}`);
+  }
+  const resolved: Array<{ name: string; source: string }> = [];
+  for (const name of unique) {
+    const matches: string[] = [];
+    for (const relativeRoot of EXPLICIT_SKILL_SOURCE_DIRS) {
+      const sourceRoot = resolve(operatorHome, relativeRoot);
+      const candidate = resolve(sourceRoot, name);
+      const rootStats = await lstat(sourceRoot).catch(() => undefined);
+      const candidateStats = await lstat(candidate).catch(() => undefined);
+      if (!candidateStats) continue;
+      if (!rootStats?.isDirectory() || rootStats.isSymbolicLink()) {
+        throw new Error(`shared skill source root is not an ordinary directory: ${sourceRoot}`);
+      }
+      if (!candidateStats.isDirectory() || candidateStats.isSymbolicLink()) {
+        throw new Error(`shared skill source is not an ordinary directory: ${candidate}`);
+      }
+      assertContained(sourceRoot, candidate);
+      matches.push(candidate);
+    }
+    if (matches.length !== 1) {
+      throw new Error(
+        matches.length === 0
+          ? `shared skill is unavailable: ${name}`
+          : `shared skill source is ambiguous: ${name}`,
+      );
+    }
+    const skillMd = resolve(matches[0]!, 'SKILL.md');
+    const skillStats = await lstat(skillMd).catch(() => undefined);
+    if (!skillStats?.isFile() || skillStats.isSymbolicLink() || skillStats.nlink !== 1) {
+      throw new Error(`shared skill requires an ordinary SKILL.md: ${name}`);
+    }
+    resolved.push({ name, source: matches[0]! });
+  }
+  return resolved;
+}
+
+/** Pair-time preflight for the same source boundary activation will enforce. */
+export async function validateSharedSkills(operatorHome: string, names: string[]): Promise<void> {
+  await resolveExplicitSkillSources(resolve(operatorHome), names);
+}
+
+function assertContained(root: string, candidate: string): void {
+  const rel = relative(root, candidate);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || resolve(root, rel) !== resolve(candidate)) {
+    throw new Error(`path escapes the agent skill boundary: ${candidate}`);
+  }
+}
+
+async function assertRealContainedDirectory(path: string, root: string): Promise<void> {
+  assertContained(root, path);
+  const stats = await lstat(path);
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new AgentHomeSecurityError(
+      `agent skill destination is not an ordinary directory: ${path}`,
+    );
+  }
+}
+
+const BLOCKED_SHARED_FILENAMES =
+  /^(?:\.env(?:\..*)?|auth\.json|\.credentials\.json|config\.toml|settings(?:\.local)?\.json|\.mcp\.json|credentials?|secrets?|plugins?|\.codex-plugin|\.claude-plugin|memory(?:\.md)?|\.netrc|\.git-credentials|.*\.(?:pem|key))$/i;
+
+async function copySafeSkillTree(
+  source: string,
+  target: string,
+  sourceRoot: string,
+): Promise<void> {
+  assertContained(sourceRoot, source);
+  const resolvedSource = await realpath(source);
+  if (resolvedSource !== resolve(source)) {
+    throw new Error(`shared skill path resolves through a link: ${source}`);
+  }
+  assertContained(sourceRoot, resolvedSource);
+  const stats = await lstat(resolvedSource);
+  if (stats.isSymbolicLink()) throw new Error(`shared skill contains a symlink: ${source}`);
+  if (BLOCKED_SHARED_FILENAMES.test(basename(source))) {
+    throw new Error(`shared skill contains credential or configuration material: ${source}`);
+  }
+  if (stats.isDirectory()) {
+    await mkdir(target, { mode: 0o700 });
+    for (const entry of await readdir(resolvedSource)) {
+      if (entry === '.' || entry === '..') throw new Error('invalid shared skill entry');
+      await copySafeSkillTree(resolve(source, entry), resolve(target, entry), sourceRoot);
+    }
+    return;
+  }
+  if (!stats.isFile() || stats.nlink !== 1) {
+    throw new Error(`shared skill contains a nonordinary file: ${source}`);
+  }
+  await copyFile(resolvedSource, target);
+  await chmod(target, 0o600);
 }
 
 /**
@@ -430,24 +521,17 @@ export async function writeIsolatedHarnessFile(path: string, content: string): P
   }
 }
 
-async function readlinkSafe(path: string): Promise<string | undefined> {
-  try {
-    return await readlink(path);
-  } catch {
-    return undefined;
-  }
-}
-
 /**
- * The env overlay alone, without touching the filesystem. `HOME` is
- * deliberately absent — see the module comment.
+ * The env overlay alone, without touching the filesystem.
  */
 export function roomAgentHomeEnv(root: string): Record<string, string> {
   const resolved = resolve(root);
   return {
+    HOME: resolve(resolved, 'user'),
     CLAUDE_CONFIG_DIR: resolve(resolved, 'claude'),
     CODEX_HOME: resolve(resolved, 'codex'),
     GROK_HOME: resolve(resolved, 'grok'),
+    PI_CODING_AGENT_DIR: resolve(resolved, 'pi'),
     XDG_STATE_HOME: resolve(resolved, 'state'),
     XDG_CACHE_HOME: resolve(resolved, 'cache'),
     TMPDIR: resolve(resolved, 'tmp'),
@@ -466,6 +550,7 @@ export const HARNESS_STATE_ENV_VARS = [
   'CLAUDE_CONFIG_DIR',
   'CODEX_HOME',
   'GROK_HOME',
+  'PI_CODING_AGENT_DIR',
   'XDG_STATE_HOME',
   'XDG_CACHE_HOME',
   AGENT_PRIVATE_STATE_ENV,

@@ -80,7 +80,7 @@ describe('harnessToolScope', () => {
     expect(harnessToolScope('buzz-agent').enforcement).toBe('allowlisted');
     expect(harnessToolScope('codex-acp').enforcement).toBe('config-isolated');
     expect(harnessToolScope('/home/op/.grok/bin/grok').enforcement).toBe('config-isolated');
-    expect(harnessToolScope('pi-acp').enforcement).toBe('none');
+    expect(harnessToolScope('pi-acp').enforcement).toBe('config-isolated');
   });
 
   it('fails closed on an unverified or missing command', () => {
@@ -139,9 +139,9 @@ describe('toolScopeWarning', () => {
   it('warns for a claude Room without its own harness home, like codex', () => {
     // Claude's tool surface is scoped by the isolated CLAUDE_CONFIG_DIR since
     // strictMcpConfig was dropped, so the warning applies to it too.
-    expect(
-      toolScopeWarning('claude-agent-acp', { isolatedHarnessHome: false }),
-    ).toMatch(/CLAUDE_CONFIG_DIR|BUZZY_BODY_ROOM_HOME=1/);
+    expect(toolScopeWarning('claude-agent-acp', { isolatedHarnessHome: false })).toMatch(
+      /CLAUDE_CONFIG_DIR|BUZZY_BODY_ROOM_HOME=1/,
+    );
     expect(toolScopeWarning('claude-agent-acp', { isolatedHarnessHome: true })).toBeTruthy();
     expect(toolScopeWarning('buzz-agent', { isolatedHarnessHome: false })).toBeUndefined();
   });
@@ -248,12 +248,18 @@ describe('the system prompt Beeline builds', () => {
   it('states the no-personal-connectors rule on BOTH the Room and the corner surface', () => {
     // 3 = the import plus the two prompt builders below.
     expect(bodySource.split('NO_PERSONAL_CONNECTORS_INSTRUCTION,').length - 1).toBe(3);
-    expect(bodySource).toMatch(/read-only conversation channel\.',\s*\n\s*NO_PERSONAL_CONNECTORS_INSTRUCTION,/);
-    expect(bodySource).toMatch(/coding agent in an edit session\.',\s*\n\s*NO_PERSONAL_CONNECTORS_INSTRUCTION,/);
+    expect(bodySource).toMatch(
+      /read-only conversation channel\.',\s*\n\s*NO_PERSONAL_CONNECTORS_INSTRUCTION,/,
+    );
+    expect(bodySource).toMatch(
+      /coding agent in an edit session\.',\s*\n\s*NO_PERSONAL_CONNECTORS_INSTRUCTION,/,
+    );
   });
 
   it('warns the operator whenever a Room is provisioned onto an unscopeable harness', () => {
-    expect(bodySource).toMatch(/toolScopeWarning\(this\.config\.agentCommand \?\? this\.config\.agentBinary, \{/);
+    expect(bodySource).toMatch(
+      /toolScopeWarning\(this\.config\.agentCommand \?\? this\.config\.agentBinary, \{/,
+    );
     expect(bodySource).toMatch(/isolatedHarnessHome: Boolean\(this\.config\.agentHomeRoot\)/);
   });
 });

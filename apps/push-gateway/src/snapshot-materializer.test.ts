@@ -691,7 +691,27 @@ describe('ChannelSnapshotMaterializer', () => {
       },
       owner.secretKey,
     );
-    await insertEvent(roomCreate, CHANNEL);
+    const parentBriefing = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: base,
+        kind: 9,
+        tags: [['h', CHANNEL]],
+        content: 'Keep this parent context in the Corner opening snapshot.',
+      },
+      owner.secretKey,
+    );
+    const parentAfterOpen = signEvent(
+      {
+        pubkey: owner.publicKey,
+        created_at: base + 2,
+        kind: 9,
+        tags: [['h', CHANNEL]],
+        content: 'Do not include discussion after the Corner opened.',
+      },
+      owner.secretKey,
+    );
+    await insertEvents([roomCreate, parentBriefing, parentAfterOpen], CHANNEL);
     await insertEvent(cornerCreate, CORNER);
     await database.query(`DELETE FROM beeline_snapshot_dirty`);
     await database.query(`SELECT beeline_mark_snapshot_dirty($1::uuid, $2::uuid)`, [
@@ -735,6 +755,13 @@ describe('ChannelSnapshotMaterializer', () => {
       parentRoomId: CHANNEL,
       name: 'Empty Corner',
     });
+    const briefingSnapshot = served?.payload?.briefingSnapshot;
+    expect(briefingSnapshot).toBeDefined();
+    expect(
+      selectTranscript(briefingSnapshot!, CHANNEL).map((row) =>
+        'body' in row ? row.body : undefined,
+      ),
+    ).toEqual(['Keep this parent context in the Corner opening snapshot.']);
   });
 
   it('retains historical messages after their author leaves the Room', async () => {

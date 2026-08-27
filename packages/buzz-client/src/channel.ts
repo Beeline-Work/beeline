@@ -179,8 +179,10 @@ export async function createChannel(
   if (opts?.communityId) {
     // The relay projects the creator as owner. Every other person and agent
     // enters through the explicit invite APIs; Workspace linkage alone never
-    // grants ambient Room membership.
-    await waitUntilMember(ctx, channelId, ctx.identity.publicKey);
+    // grants ambient Room membership. The create event's socket push can land
+    // before this post-publish wait subscribes, so poll directly instead of
+    // leaving Room creation behind the five-second WS correctness backstop.
+    await waitUntilMember({ ...ctx, ws: undefined }, channelId, ctx.identity.publicKey);
   }
   return channelId;
 }

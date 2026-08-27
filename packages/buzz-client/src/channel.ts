@@ -672,6 +672,45 @@ export function isMembershipProjectionTimeout(error: unknown): boolean {
   return error instanceof MembershipProjectionTimeoutError;
 }
 
+/** No current membership command exists for the state a caller asked us to await. */
+export class MembershipWriteAbsentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MembershipWriteAbsentError';
+  }
+}
+
+async function hasRecentMembershipWrite(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  pubkey: string,
+  expected: ChannelRole | undefined,
+  since: number,
+): Promise<boolean> {
+  const events = await query(ctx, [
+    {
+      kinds: [KIND_PUT_USER],
+      '#h': [channelId],
+      '#p': [pubkey],
+      since,
+      limit: 20,
+    },
+    { kinds: [KIND_CREATE_GROUP], '#h': [channelId], authors: [pubkey], since, limit: 5 },
+  ]);
+  return events.some((event) => {
+    if (event.kind === KIND_CREATE_GROUP)
+      return (
+        (expected === undefined || expected === 'owner') &&
+        event.pubkey === pubkey &&
+        tagValue(event, 'h') === channelId
+      );
+    if (tagValue(event, 'h') !== channelId || tagValue(event, 'p') !== pubkey) return false;
+    if (event.kind !== KIND_PUT_USER) return false;
+    if (expected === undefined) return true;
+    return (tagValue(event, 'role') ?? 'member') === expected;
+  });
+}
+
 /**
  * Poll until membership is visible (gotcha: accepted 9000 ≠ applied).
  * Throws if not listed within timeout.
@@ -682,6 +721,7 @@ export async function waitUntilMember(
   pubkey: string,
   opts?: { timeoutMs?: number; intervalMs?: number },
 ): Promise<void> {
+  const startedAt = Math.floor(Date.now() / 1_000) - 1;
   const timeoutMs = opts?.timeoutMs ?? 15_000;
   const intervalMs = opts?.intervalMs ?? 300;
   const ok = await waitForRelayProjection(
@@ -692,8 +732,13 @@ export async function waitUntilMember(
     { timeoutMs, intervalMs },
   );
   if (ok) return;
+  if (!(await hasRecentMembershipWrite(ctx, channelId, pubkey, undefined, startedAt))) {
+    throw new MembershipWriteAbsentError(
+      `no recent relay membership write exists for ${pubkey.slice(0, 12)}… in ${channelId}; the member was never added`,
+    );
+  }
   throw new MembershipProjectionTimeoutError(
-    `membership not visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39002, not publish ack)`,
+    `membership write is readable for ${pubkey.slice(0, 12)}… in ${channelId}, but the 39001/39002 projection still lagged after ${timeoutMs}ms`,
   );
 }
 
@@ -711,6 +756,7 @@ export async function waitUntilMemberRole(
   role: ChannelRole,
   opts?: { timeoutMs?: number; intervalMs?: number },
 ): Promise<void> {
+  const startedAt = Math.floor(Date.now() / 1_000) - 1;
   const timeoutMs = opts?.timeoutMs ?? 15_000;
   const intervalMs = opts?.intervalMs ?? 300;
   const ok = await waitForRelayProjection(
@@ -721,8 +767,13 @@ export async function waitUntilMemberRole(
     { timeoutMs, intervalMs },
   );
   if (ok) return;
-  throw new Error(
-    `role ${role} was not visible for ${pubkey.slice(0, 12)}… in ${channelId} after ${timeoutMs}ms (assert on 39001/39002, not publish ack)`,
+  if (!(await hasRecentMembershipWrite(ctx, channelId, pubkey, role, startedAt))) {
+    throw new MembershipWriteAbsentError(
+      `no recent relay membership write requests role ${role} for ${pubkey.slice(0, 12)}… in ${channelId}; the role was never written`,
+    );
+  }
+  throw new MembershipProjectionTimeoutError(
+    `role ${role} write is readable for ${pubkey.slice(0, 12)}… in ${channelId}, but the 39001/39002 projection still lagged after ${timeoutMs}ms`,
   );
 }
 

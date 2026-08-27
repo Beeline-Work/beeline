@@ -278,6 +278,7 @@ export {
   backfillMessages,
   isMembershipProjectionTimeout,
   MembershipProjectionTimeoutError,
+  MembershipWriteAbsentError,
 } from './channel.js';
 export type { ChannelOpsContext, ChannelRole } from './channel.js';
 

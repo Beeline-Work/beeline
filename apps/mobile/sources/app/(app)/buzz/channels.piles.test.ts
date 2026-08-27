@@ -472,8 +472,12 @@ describe("the deck's one ordered feed", () => {
     await createRoom('Tubing capital');
     await createRoom('Brrr');
 
-    expect(findAllByTestId(tree, 'room-created-1')).toHaveLength(1);
-    expect(findAllByTestId(tree, 'room-created-2')).toHaveLength(1);
+    const firstRoom = findAllByTestId(tree, 'room-created-1');
+    const secondRoom = findAllByTestId(tree, 'room-created-2');
+    expect(firstRoom).toHaveLength(1);
+    expect(secondRoom).toHaveLength(1);
+    expect(firstRoom[0].props.accessibilityLabel).toContain('Open #Tubing capital');
+    expect(secondRoom[0].props.accessibilityLabel).toContain('Open #Brrr');
   });
 
   it('ends pull refresh before independent Room hydration and keeps the fresh Room', async () => {

@@ -5,9 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DELIBERATE_REMOVAL_EXIT_STATUS,
   agentServiceUnit,
-  eventsServiceUnit,
   installAgentService,
-  installEventsService,
   disableAgentService,
 } from './systemd.js';
 
@@ -35,41 +33,6 @@ describe('systemd supervision contract', () => {
       'Environment="PATH=/home/operator/.local/share/fnm/node-versions/v24.0.0/installation/bin:/usr/local/bin:/usr/bin"',
     );
     expect(unit).toContain('ExecStart="/opt/beeline/bin/beeline" daemon --agent %i');
-  });
-
-  it('renders a single credentials-scoped repository-events service under the same watchdog contract', () => {
-    const unit = eventsServiceUnit('/opt/beeline/bin/beeline', '/opt/node/bin/node', '/usr/bin');
-    expect(unit).toContain('Type=notify');
-    expect(unit).toContain('WatchdogSec=180s');
-    expect(unit).toContain('TimeoutStopSec=90s');
-    expect(unit).toContain('KillMode=control-group');
-    expect(unit).toContain('EnvironmentFile=-%h/.config/beeline/events.env');
-    expect(unit).toContain('ExecStart="/opt/beeline/bin/beeline" events daemon');
-    expect(unit).not.toContain('%i');
-  });
-
-  it('installs one non-template events unit', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-events-systemd-'));
-    roots.push(root);
-    const calls: string[][] = [];
-    await installEventsService({
-      entrypoint: '/opt/beeline/bin/beeline',
-      nodePath: '/opt/node/bin/node',
-      nodeVersion: '24.1.0',
-      env: { XDG_CONFIG_HOME: root, PATH: '/usr/bin' },
-      run: async (args) => {
-        calls.push(args);
-        return { stdout: '' };
-      },
-    });
-    expect(calls).toEqual([
-      ['daemon-reload'],
-      ['enable', 'beeline-events.service'],
-      ['restart', '--no-block', 'beeline-events.service'],
-    ]);
-    expect(await readFile(join(root, 'systemd/user/beeline-events.service'), 'utf8')).toContain(
-      'events daemon',
-    );
   });
 
   it('installs, enables, starts, and returns the supervised main pid', async () => {

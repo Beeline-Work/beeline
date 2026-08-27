@@ -1,10 +1,14 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
-import { RepositoryEventsState } from './events-state.js';
+import {
+  RepositoryEventsState,
+  type EventsStateData,
+  type RepositoryEventsStatePersistence,
+} from './events-state.js';
 import {
   RepositoryEventsCore,
   applyRepositoryEventToggles,
@@ -59,15 +63,25 @@ function normalized(id: string) {
   };
 }
 
-async function stateFile(): Promise<string> {
-  const root = await mkdtemp(resolve(tmpdir(), 'beeline-events-state-'));
-  temporary.push(root);
-  return resolve(root, 'state.json');
+function durableState(): {
+  persistence: RepositoryEventsStatePersistence;
+  value: () => EventsStateData | undefined;
+} {
+  let value: EventsStateData | undefined;
+  return {
+    persistence: {
+      load: async () => structuredClone(value),
+      save: async (next) => {
+        value = structuredClone(next);
+      },
+    },
+    value: () => structuredClone(value),
+  };
 }
 
 describe('RepositoryEventsCore', () => {
   it('resumes its durable cursor without duplicate cards across restart', async () => {
-    const path = await stateFile();
+    const durable = durableState();
     let now = 1_000;
     const cursors: Array<string | undefined> = [];
     const source: RepositoryEventSource = {
@@ -83,16 +97,26 @@ describe('RepositoryEventsCore', () => {
       published.push(event);
     };
     const identity = newIdentity('events-service');
-    await new RepositoryEventsCore(new RepositoryEventsState(path), source, identity, {
-      publish,
-      now: () => now,
-    }).tick([target()]);
+    await new RepositoryEventsCore(
+      new RepositoryEventsState(durable.persistence),
+      source,
+      identity,
+      {
+        publish,
+        now: () => now,
+      },
+    ).tick([target()]);
 
     now = 20_000;
-    await new RepositoryEventsCore(new RepositoryEventsState(path), source, identity, {
-      publish,
-      now: () => now,
-    }).tick([target()]);
+    await new RepositoryEventsCore(
+      new RepositoryEventsState(durable.persistence),
+      source,
+      identity,
+      {
+        publish,
+        now: () => now,
+      },
+    ).tick([target()]);
 
     expect(cursors).toEqual([undefined, '2']);
     expect(published).toHaveLength(1);
@@ -100,7 +124,7 @@ describe('RepositoryEventsCore', () => {
   });
 
   it('isolates one failed repository while a sibling publishes end-to-end from mocked GitHub', async () => {
-    const path = await stateFile();
+    const durable = durableState();
     const rawPush = {
       id: '7',
       type: 'PushEvent',
@@ -128,7 +152,7 @@ describe('RepositoryEventsCore', () => {
     });
     const identity = newIdentity('events-service');
     const core = new RepositoryEventsCore(
-      new RepositoryEventsState(path),
+      new RepositoryEventsState(durable.persistence),
       source,
       identity,
       {
@@ -150,7 +174,7 @@ describe('RepositoryEventsCore', () => {
   });
 
   it('retries a reserved card with the identical relay id after an ambiguous publish', async () => {
-    const path = await stateFile();
+    const durable = durableState();
     let now = 1_000;
     let sourceReads = 0;
     const source: RepositoryEventSource = {
@@ -166,19 +190,29 @@ describe('RepositoryEventsCore', () => {
       if (fail) throw new Error('ambiguous relay timeout');
     };
     const identity = newIdentity('events-service');
-    await new RepositoryEventsCore(new RepositoryEventsState(path), source, identity, {
-      publish,
-      now: () => now,
-      random: () => 0.5,
-    }).tick([target()]);
+    await new RepositoryEventsCore(
+      new RepositoryEventsState(durable.persistence),
+      source,
+      identity,
+      {
+        publish,
+        now: () => now,
+        random: () => 0.5,
+      },
+    ).tick([target()]);
 
     fail = false;
     now = 7_000;
-    await new RepositoryEventsCore(new RepositoryEventsState(path), source, identity, {
-      publish,
-      now: () => now,
-      random: () => 0.5,
-    }).tick([target()]);
+    await new RepositoryEventsCore(
+      new RepositoryEventsState(durable.persistence),
+      source,
+      identity,
+      {
+        publish,
+        now: () => now,
+        random: () => 0.5,
+      },
+    ).tick([target()]);
 
     expect(sourceReads).toBe(1);
     expect(attempts).toHaveLength(2);
@@ -186,7 +220,7 @@ describe('RepositoryEventsCore', () => {
   });
 
   it('migrates a legacy Body cursor by seeding at head without a replay flood', async () => {
-    const path = await stateFile();
+    const durable = durableState();
     const published: NostrEvent[] = [];
     const source: RepositoryEventSource = {
       read: async () => ({
@@ -196,16 +230,14 @@ describe('RepositoryEventsCore', () => {
       }),
     };
     await new RepositoryEventsCore(
-      new RepositoryEventsState(path),
+      new RepositoryEventsState(durable.persistence),
       source,
       newIdentity('events-service'),
       { publish: async (_target, event) => published.push(event), now: () => 1_000 },
     ).tick([target({ legacyCursor: 441 })]);
 
     expect(published).toEqual([]);
-    const stored = JSON.parse(await readFile(path, 'utf8')) as {
-      repositories: Record<string, { cursor?: string; legacyCursorMigrated?: number }>;
-    };
+    const stored = durable.value()!;
     expect(stored.repositories['repo-key']).toMatchObject({
       cursor: '20',
       legacyCursorMigrated: 441,
@@ -213,7 +245,7 @@ describe('RepositoryEventsCore', () => {
   });
 
   it('publishes one degraded Room state per failure episode', async () => {
-    const path = await stateFile();
+    const durable = durableState();
     let now = 1_000;
     const source: RepositoryEventSource = {
       read: async () => {
@@ -222,7 +254,7 @@ describe('RepositoryEventsCore', () => {
     };
     const published: NostrEvent[] = [];
     const core = new RepositoryEventsCore(
-      new RepositoryEventsState(path),
+      new RepositoryEventsState(durable.persistence),
       source,
       newIdentity('events-service'),
       {
@@ -242,7 +274,7 @@ describe('RepositoryEventsCore', () => {
   });
 
   it('propagates service shutdown into an in-flight repository read', async () => {
-    const path = await stateFile();
+    const durable = durableState();
     const controller = new AbortController();
     let observedSignal: AbortSignal | undefined;
     const source: RepositoryEventSource = {
@@ -257,7 +289,7 @@ describe('RepositoryEventsCore', () => {
       },
     };
     const core = new RepositoryEventsCore(
-      new RepositoryEventsState(path),
+      new RepositoryEventsState(durable.persistence),
       source,
       newIdentity('events-service'),
       { now: () => 1_000, random: () => 0.5 },

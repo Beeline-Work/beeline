@@ -2,7 +2,11 @@ import { createIdentity } from '@beeline/buzz-client';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import type { Messaging } from 'firebase-admin/messaging';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DeliveryState } from './delivery-state.js';
+import {
+  DeliveryState,
+  type DeliveryStateFile,
+  type DeliveryStatePersistence,
+} from './delivery-state.js';
 import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { NotificationMetadataResolver, type RelayEventReader } from './metadata.js';
 import { TokenRegistry } from './registry.js';
@@ -13,6 +17,16 @@ const AUTHOR = 'c'.repeat(64);
 const TOKEN_A = 'fcm-token-A_12345678901234567890';
 const TOKEN_B = 'fcm-token-B_12345678901234567890';
 const reader: RelayEventReader = { query: async () => [], disconnect: () => undefined };
+
+function durableDeliveryState(): DeliveryStatePersistence {
+  let value: DeliveryStateFile | undefined;
+  return {
+    load: async () => structuredClone(value),
+    save: async (next) => {
+      value = structuredClone(next);
+    },
+  };
+}
 
 function event(id: string, pubkey = AUTHOR, roomId = 'room-1234'): NostrEvent {
   return {
@@ -32,8 +46,7 @@ function event(id: string, pubkey = AUTHOR, roomId = 'room-1234'): NostrEvent {
 
 describe('RegisteredEventPoller', () => {
   it('sends exactly once across duplicate polls, restart, and subscription replay', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-restart-'));
-    const stateFile = join(directory, 'deliveries.json');
+    const persistence = durableDeliveryState();
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);
     const replayedEvent = event('e');
@@ -70,18 +83,17 @@ describe('RegisteredEventPoller', () => {
       for (let index = 0; index < polls; index += 1) await poller.pollNext();
     };
 
-    await run(await DeliveryState.load(stateFile), 2);
+    await run(await DeliveryState.load(persistence), 2);
     expect(sendEachForMulticast).toHaveBeenCalledOnce();
 
     // A new gateway/poller pair models a forced process restart. The relay
     // intentionally returns the old backlog event again, as can a WS replay.
-    await run(await DeliveryState.load(stateFile), 2);
+    await run(await DeliveryState.load(persistence), 2);
     expect(sendEachForMulticast).toHaveBeenCalledOnce();
   });
 
   it('never retries an ambiguous FCM attempt after restart', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-attempt-'));
-    const stateFile = join(directory, 'deliveries.json');
+    const persistence = durableDeliveryState();
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);
     const sendEachForMulticast = vi.fn().mockRejectedValueOnce(new Error('FCM timeout'));
@@ -97,7 +109,7 @@ describe('RegisteredEventPoller', () => {
     const first = new PushGateway(
       registry,
       { sendEachForMulticast } as unknown as Messaging,
-      await DeliveryState.load(stateFile),
+      await DeliveryState.load(persistence),
       metadata,
     );
 
@@ -107,7 +119,7 @@ describe('RegisteredEventPoller', () => {
     const restarted = new PushGateway(
       registry,
       { sendEachForMulticast } as unknown as Messaging,
-      await DeliveryState.load(stateFile),
+      await DeliveryState.load(persistence),
       metadata,
     );
     await expect(restarted.handleRelayEvent(event('d'), PUBKEY_A, reader)).resolves.toBeUndefined();

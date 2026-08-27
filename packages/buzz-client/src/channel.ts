@@ -145,7 +145,8 @@ export async function createChannel(
     repository?: RepositoryBinding;
     /** Internal protocol tags for specialized channel shapes such as DMs. */
     extraTags?: string[][];
-    /** Workspace Rooms mirror people; private two-party Rooms opt out. */
+    /** @deprecated Retained for call-shape compatibility. Room membership is
+     * always creator-only until an explicit invite mutation is published. */
     mirrorCommunityMembers?: boolean;
   },
 ): Promise<string> {
@@ -175,26 +176,10 @@ export async function createChannel(
   if (opts?.extraTags) tags.push(...opts.extraTags);
   const event = sign(ctx.identity, KIND_CREATE_GROUP, tags);
   await publishEvent(ctx.http, event);
-  if (opts?.communityId && opts.mirrorCommunityMembers !== false) {
-    // A community tag makes the channel discoverable, but NIP-29 authorization
-    // still comes from the channel's direct member projection. Wait for the
-    // creator's implicit ownership first, then mirror every other current
-    // community member as a normal channel member.
-    await waitUntilMember(ctx, channelId, ctx.identity.publicKey);
-    const communityMembers = await listMembers(ctx, opts.communityId);
-    for (const member of communityMembers) {
-      if (member.pubkey === ctx.identity.publicKey) continue;
-      // Workspace membership links an agent identity once, but does not grant
-      // ambient presence in every current/future Room. People are mirrored;
-      // registered agents require attachAgentToChannel for each Room.
-      if (await isRegisteredAgentKey(ctx, member.pubkey)) continue;
-      await setMemberRole(ctx, channelId, member.pubkey, 'member', {
-        extraTags: [[TAG_COMMUNITY, opts.communityId]],
-      });
-      await waitUntilMember(ctx, channelId, member.pubkey);
-    }
-  }
-  if (opts?.communityId && opts.mirrorCommunityMembers === false) {
+  if (opts?.communityId) {
+    // The relay projects the creator as owner. Every other person and agent
+    // enters through the explicit invite APIs; Workspace linkage alone never
+    // grants ambient Room membership.
     await waitUntilMember(ctx, channelId, ctx.identity.publicKey);
   }
   return channelId;

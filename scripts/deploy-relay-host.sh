@@ -201,6 +201,7 @@ POSTGRES_DB=buzz
 REDIS_PASSWORD=stage-dummy
 BUZZ_S3_ACCESS_KEY=stage-dummy
 BUZZ_S3_SECRET_KEY=stage-dummy
+BUZZY_SNAPSHOT_INTERNAL_TOKEN=stage-dummy
 EOF
 docker compose -f "$STAGE/stack/compose.validate.yml" --env-file "$STAGE/stack/.env" config --quiet \
   || die "staged compose.yml does not parse — aborting before anything was touched"
@@ -447,6 +448,9 @@ verify_public() {
     done
     [ "$code_push" = "200" ] || { echo "!! /push/health did not return 200 (last: ${code_push:-error})" >&2; failures=$((failures+1)); }
     log "public /push/health verified"
+    code_snapshot=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 15 "$PUBLIC_BASE/snapshot/health" || true)
+    [ "$code_snapshot" = "200" ] || { echo "!! /snapshot/health did not return 200 (last: ${code_snapshot:-error})" >&2; failures=$((failures+1)); }
+    log "public /snapshot/health verified"
   fi
 
   # Auth service healthy through the front (container may need a moment).

@@ -590,6 +590,128 @@ describe('agent identity boundary', () => {
       }
     });
 
+    it.each([
+      {
+        directive: 'Stop the launch pack. Explain what Ethereum is instead.',
+        expected: 'Ethereum is a programmable blockchain network.',
+      },
+      {
+        directive: 'Trade crypto.',
+        expected: "I can't trade crypto because this Room has no trading capability. I will stop here.",
+      },
+      {
+        directive: 'Continue the launch pack by outlining its pricing section.',
+        expected: 'Continuing the launch pack with its pricing section.',
+      },
+    ])(
+      'makes the newest human directive authoritative over a standing plan: $directive',
+      async ({ directive, expected }) => {
+        const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+        try {
+          const body = new Body(
+            {
+              ...config,
+              agentCommand: '/usr/local/bin/codex-acp',
+              workspaceRoot: '/tmp/beeline-human-directive-primacy',
+            },
+            newIdentity('directive-operator'),
+            newIdentity('directive-agent'),
+            undefined,
+            { scheduler },
+          );
+          const durable = (
+            body as unknown as {
+              durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)>;
+            }
+          ).durableState;
+          vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(
+            undefined as never,
+          );
+          const sessionPrompt = vi.fn(async (_sessionId: string, wirePrompt: string) => {
+            // Hermetic model of the reported failure: a standing plan wins a
+            // one-off contradiction, while repeating the unchanged directive
+            // at the final prompt boundary makes that directive salient. This
+            // deliberately knows nothing about Body's marker or policy prose.
+            const directiveMentions = wirePrompt.split(directive).length - 1;
+            const agentText =
+              directiveMentions < 2
+                ? 'Planning self-contained launch pack HTML.'
+                : directive === 'Stop the launch pack. Explain what Ethereum is instead.'
+                ? 'Ethereum is a programmable blockchain network.'
+                : directive === 'Trade crypto.'
+                  ? "I can't trade crypto because this Room has no trading capability. I will stop here."
+                  : directive === 'Continue the launch pack by outlining its pricing section.'
+                    ? 'Continuing the launch pack with its pricing section.'
+                    : 'Planning self-contained launch pack HTML.';
+            return { stopReason: 'end_turn', updates: [], agentText, toolCalls: [] };
+          });
+          const session = {
+            channelId: 'directive-room',
+            sessionId: 'directive-session-1',
+            mode: 'readonly' as const,
+            client: { sessionPrompt, sessionCancel: vi.fn() },
+            lifecycle: {
+              activate: vi.fn().mockResolvedValue('directive-session-1'),
+              suspend: vi.fn().mockResolvedValue(undefined),
+            },
+            personaTurnPrefix: [
+              'Use the workbench for a self-contained HTML mockup.',
+              'Serving is single-file v1: inline assets into one HTML file.',
+            ].join('\n'),
+          } as never;
+          const standingPlanPrompt = [
+            'Host-provided shared Room context follows.',
+            'Recent Room transcript (oldest to newest):',
+            '[Agent Codex]: I will build the web-agency launch pack now.',
+            '',
+            'Current human-addressed request:',
+            directive,
+          ].join('\n');
+
+          const result = await Reflect.get(body, 'promptAgent').call(
+            body,
+            session,
+            standingPlanPrompt,
+            {
+              channelId: 'directive-room',
+              requestId: 'directive-request',
+              originalRequestId: 'directive-request',
+              cause: 'room-message',
+            },
+            {
+              request: {
+                eventId: 'directive-request',
+                authorPubkey: 'a'.repeat(64),
+                content: directive,
+                createdAt: 1,
+              },
+              boundRepo: { repo: 'repo' },
+              editPolicy: 'repository',
+              permissionHandled: false,
+              transitionedToCorner: false,
+              readOnlyInformationRequest: true,
+            },
+          );
+
+          expect(result.agentText).toBe(expected);
+          const wirePrompt = sessionPrompt.mock.calls[0]![1] as string;
+          expect(wirePrompt).toContain('I will build the web-agency launch pack now.');
+          expect(wirePrompt).toContain(
+            'If you cannot or will not comply because a capability is unavailable or model policy forbids it, say that explicitly and stop.',
+          );
+          expect(wirePrompt).toContain(
+            'All host-provided permission, tool, repository, and safety boundaries above remain binding and take precedence',
+          );
+          expect(wirePrompt.split(directive)).toHaveLength(3);
+          expect(wirePrompt.indexOf('CURRENT EXPLICIT HUMAN DIRECTIVE')).toBeGreaterThan(
+            wirePrompt.indexOf('I will build the web-agency launch pack now.'),
+          );
+        } finally {
+          await scheduler.dispose();
+        }
+      },
+    );
+
     it('delivers the exact pi corner marker contract in turn content', async () => {
       const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
       try {

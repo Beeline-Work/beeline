@@ -465,6 +465,8 @@ export {
 
 export {
   CHANGE_REVIEW_EVENT_KIND,
+  CHANGE_REVIEW_ARTIFACT_TAG,
+  CHANGE_REVIEW_ARTIFACT_VERSION,
   CHANGE_REVIEW_MANIFEST_TAG,
   CHANGE_REVIEW_FILE_TAG,
   CHANGE_REVIEW_COMPLETE_TAG,
@@ -472,6 +474,11 @@ export {
   CHANGE_REVIEW_VERSION,
   parseChangeReviewManifest,
   parseChangeReviewGenerationComplete,
+  parseChangeReviewArtifactDescriptor,
+  parseChangeReviewArtifact,
+  type ChangeReviewArtifact,
+  type ChangeReviewArtifactDescriptor,
+  type ChangeReviewArtifactFile,
   type ChangeReviewFile,
   type ChangeReviewGenerationComplete,
   type ChangeReviewManifest,

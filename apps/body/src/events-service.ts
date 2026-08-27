@@ -1,15 +1,5 @@
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import {
-  access,
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  rename,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import {
   createBuzzClient,
@@ -37,7 +27,7 @@ import {
   type AgentRuntimeRecord,
   type RoomRuntimeRecord,
 } from './runtime.js';
-import { SystemdNotifier, type DaemonNotifier } from './systemd.js';
+import type { DaemonNotifier } from './systemd.js';
 
 export const EVENTS_SERVICE_IDENTITY_NAME = 'beeline-events';
 export const EVENTS_ACTIVE_POLL_MS = 15_000;
@@ -50,7 +40,7 @@ export const EVENTS_LOOP_TICK_MAX_MS = 5_000;
 export const EVENTS_DISCOVERY_INTERVAL_MS = 60_000;
 export const EVENTS_REPOSITORY_CONCURRENCY = 3;
 export const EVENTS_PUBLISH_DEADLINE_MS = 25_000;
-/** Whole fleet pass ceiling; keeps WATCHDOG coupled to a completed tick. */
+/** Whole fleet pass ceiling; bounds shutdown and rotates work across repositories. */
 export const EVENTS_TICK_DEADLINE_MS = 90_000;
 
 interface StoredEventsIdentity {
@@ -79,7 +69,6 @@ export interface EventsServiceConfig {
   supervisorRoot: string;
   stateFile: string;
   identityFile: string;
-  lockFile: string;
   githubAppId: string;
   githubPrivateKey: string;
   githubApiBaseUrl?: string;
@@ -114,7 +103,6 @@ export function loadEventsServiceConfig(env: NodeJS.ProcessEnv = process.env): E
     supervisorRoot,
     stateFile: resolve(root, 'state.json'),
     identityFile: resolve(root, 'identity.json'),
-    lockFile: resolve(root, 'service.lock'),
     githubAppId,
     githubPrivateKey,
     ...(env.BEELINE_GITHUB_API_BASE_URL?.trim()
@@ -668,127 +656,79 @@ export function repositoryEventsStatus(health: readonly RepositoryEventsHealth[]
   return `repos=${health.length}; degraded=${degraded}; last_success=[${repos}]`;
 }
 
-async function acquireServiceLock(path: string): Promise<() => Promise<void>> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const handle = await open(
-        path,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-        0o600,
-      );
-      await handle.writeFile(`${process.pid}\n`);
-      await handle.close();
-      return async () => unlink(path).catch(() => undefined);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const pid = Number((await readFile(path, 'utf8').catch(() => '')).trim());
-      try {
-        if (Number.isSafeInteger(pid) && pid > 0) process.kill(pid, 0);
-        throw new Error(`beeline-events is already running (pid ${pid || 'unknown'})`);
-      } catch (probe) {
-        if (probe instanceof Error && probe.message.startsWith('beeline-events is already')) {
-          throw probe;
-        }
-        await unlink(path).catch(() => undefined);
-      }
-    }
-  }
-  throw new Error('could not acquire beeline-events single-writer lock');
-}
-
-/** Foreground entrypoint honoring the same READY/progress/SIGTERM contract as thin-core. */
+/** Hosted repository-events consumer with explicit lifecycle and persistence owners. */
 export async function runRepositoryEventsService(
-  config = loadEventsServiceConfig(),
+  config: EventsServiceConfig,
   options: {
     signal?: AbortSignal;
-    notifier?: DaemonNotifier;
+    notifier: DaemonNotifier;
     discover?: (root: string) => Promise<RepositoryIngestionTarget[]>;
     source?: RepositoryEventSource;
     identity?: Identity;
-    state?: RepositoryEventsState;
-  } = {},
+    state: RepositoryEventsState;
+  },
 ): Promise<void> {
-  const releaseLock = await acquireServiceLock(config.lockFile);
-  const notifier = options.notifier ?? new SystemdNotifier();
-  try {
-    const identity = options.identity ?? (await loadEventsServiceIdentity(config.identityFile));
-    const github = new GitHubAppRuntime({
-      appId: config.githubAppId,
-      privateKey: config.githubPrivateKey,
-      ...(config.githubApiBaseUrl ? { apiBaseUrl: config.githubApiBaseUrl } : {}),
-      ...(config.githubRequestTimeoutMs ? { requestTimeoutMs: config.githubRequestTimeoutMs } : {}),
-    });
-    const source =
-      options.source ??
-      new GitHubEventsApiSource(
-        (target) =>
-          github.repositoryInstallationToken(
-            {
-              key: `github:${target.owner}/${target.repo}`,
-              name: `${target.owner}/${target.repo}`,
-              remote: `git://github.com/${target.owner}/${target.repo}`,
-              localOnly: false,
-              ...(target.installationId ? { githubInstallationId: target.installationId } : {}),
-            },
-            target.roomId,
-          ),
-        {
-          ...(config.githubApiBaseUrl ? { apiBaseUrl: config.githubApiBaseUrl } : {}),
-          ...(config.githubRequestTimeoutMs
-            ? { requestTimeoutMs: config.githubRequestTimeoutMs }
-            : {}),
-        },
-      );
-    const core = new RepositoryEventsCore(
-      options.state ?? new RepositoryEventsState(config.stateFile),
-      source,
-      identity,
+  const notifier = options.notifier;
+  const identity = options.identity ?? (await loadEventsServiceIdentity(config.identityFile));
+  const github = new GitHubAppRuntime({
+    appId: config.githubAppId,
+    privateKey: config.githubPrivateKey,
+    ...(config.githubApiBaseUrl ? { apiBaseUrl: config.githubApiBaseUrl } : {}),
+    ...(config.githubRequestTimeoutMs ? { requestTimeoutMs: config.githubRequestTimeoutMs } : {}),
+  });
+  const source =
+    options.source ??
+    new GitHubEventsApiSource(
+      (target) =>
+        github.repositoryInstallationToken(
+          {
+            key: `github:${target.owner}/${target.repo}`,
+            name: `${target.owner}/${target.repo}`,
+            remote: `git://github.com/${target.owner}/${target.repo}`,
+            localOnly: false,
+            ...(target.installationId ? { githubInstallationId: target.installationId } : {}),
+          },
+          target.roomId,
+        ),
+      {
+        ...(config.githubApiBaseUrl ? { apiBaseUrl: config.githubApiBaseUrl } : {}),
+        ...(config.githubRequestTimeoutMs
+          ? { requestTimeoutMs: config.githubRequestTimeoutMs }
+          : {}),
+      },
     );
-    const discover = options.discover ?? discoverRepositoryIngestionTargets;
-    // Durable runtime discovery is local-only, so READY never depends on relay
-    // or GitHub health. The Room-toggle reads happen inside the supervised loop.
-    let targets = await discover(config.supervisorRoot);
-    let nextDiscoveryAt = 0;
-    let targetOffset = 0;
-    await notifier.ready(`ready; identity=${identity.publicKey}; repos=${targets.length}`);
-    while (!options.signal?.aborted) {
-      if (Date.now() >= nextDiscoveryAt) {
-        targets = await discover(config.supervisorRoot);
-        if (!options.discover) targets = await applyRepositoryEventToggles(targets, identity);
-        nextDiscoveryAt = Date.now() + EVENTS_DISCOVERY_INTERVAL_MS;
-      }
-      // Rotate the queue so a fleet larger than the concurrency cap stays
-      // fair even when several slow repositories consume the whole bounded
-      // tick. WATCHDOG remains coupled to a completed pass, never an in-flight
-      // network promise.
-      const orderedTargets =
-        targets.length > 0
-          ? [...targets.slice(targetOffset), ...targets.slice(0, targetOffset)]
-          : targets;
-      if (targets.length > 0) {
-        targetOffset = (targetOffset + EVENTS_REPOSITORY_CONCURRENCY) % targets.length;
-      }
-      const deadlineSignal = AbortSignal.timeout(EVENTS_TICK_DEADLINE_MS);
-      const tickSignal = options.signal
-        ? AbortSignal.any([options.signal, deadlineSignal])
-        : deadlineSignal;
-      const health = await core.tick(orderedTargets, tickSignal);
-      await notifier.progress(repositoryEventsStatus(health));
-      await wait(EVENTS_LOOP_TICK_MAX_MS, options.signal);
+  const core = new RepositoryEventsCore(options.state, source, identity);
+  const discover = options.discover ?? discoverRepositoryIngestionTargets;
+  // Durable runtime discovery is local-only, so READY never depends on relay
+  // or GitHub health. The Room-toggle reads happen inside the supervised loop.
+  let targets = await discover(config.supervisorRoot);
+  let nextDiscoveryAt = 0;
+  let targetOffset = 0;
+  await notifier.ready(`ready; identity=${identity.publicKey}; repos=${targets.length}`);
+  while (!options.signal?.aborted) {
+    if (Date.now() >= nextDiscoveryAt) {
+      targets = await discover(config.supervisorRoot);
+      if (!options.discover) targets = await applyRepositoryEventToggles(targets, identity);
+      nextDiscoveryAt = Date.now() + EVENTS_DISCOVERY_INTERVAL_MS;
     }
-    await notifier.stopping('repository event intake stopped; no poll remains in flight');
-  } finally {
-    await releaseLock();
+    // Rotate the queue so a fleet larger than the concurrency cap stays
+    // fair even when several slow repositories consume the whole bounded
+    // tick. Materializer shutdown remains bounded by a completed pass, never
+    // an in-flight network promise.
+    const orderedTargets =
+      targets.length > 0
+        ? [...targets.slice(targetOffset), ...targets.slice(0, targetOffset)]
+        : targets;
+    if (targets.length > 0) {
+      targetOffset = (targetOffset + EVENTS_REPOSITORY_CONCURRENCY) % targets.length;
+    }
+    const deadlineSignal = AbortSignal.timeout(EVENTS_TICK_DEADLINE_MS);
+    const tickSignal = options.signal
+      ? AbortSignal.any([options.signal, deadlineSignal])
+      : deadlineSignal;
+    const health = await core.tick(orderedTargets, tickSignal);
+    await notifier.progress(repositoryEventsStatus(health));
+    await wait(EVENTS_LOOP_TICK_MAX_MS, options.signal);
   }
-}
-
-/** Deployment preflight for the credentials-only service environment file. */
-export async function eventsEnvironmentExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.R_OK);
-    return true;
-  } catch {
-    return false;
-  }
+  await notifier.stopping('repository event intake stopped; no poll remains in flight');
 }

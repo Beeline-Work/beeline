@@ -1,5 +1,3 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
 import type { NostrEvent } from '@beeline/nostr';
 
 export interface PendingRepositoryDelivery {
@@ -27,9 +25,14 @@ export interface RepositoryIngestionRecord {
   pending?: PendingRepositoryDelivery;
 }
 
-interface EventsStateData {
+export interface EventsStateData {
   version: 1;
   repositories: Record<string, RepositoryIngestionRecord>;
+}
+
+export interface RepositoryEventsStatePersistence {
+  load(): Promise<unknown | undefined>;
+  save(value: EventsStateData): Promise<void>;
 }
 
 const MAX_SEEN_EVENT_IDS = 2_000;
@@ -55,14 +58,15 @@ export class RepositoryEventsState {
   private loaded = false;
   private saveTail: Promise<void> = Promise.resolve();
 
-  constructor(private readonly path: string) {}
+  constructor(private readonly persistence: RepositoryEventsStatePersistence) {}
 
   async load(): Promise<void> {
     if (this.loaded) return;
-    try {
-      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as EventsStateData;
+    const value = await this.persistence.load();
+    if (value !== undefined) {
+      const parsed = value as EventsStateData;
       if (parsed.version !== 1 || !parsed.repositories) {
-        throw new Error(`unsupported repository-event state at ${this.path}`);
+        throw new Error('unsupported repository-event state');
       }
       this.data = parsed;
       for (const record of Object.values(this.data.repositories)) {
@@ -72,8 +76,6 @@ export class RepositoryEventsState {
         record.consecutiveFailures ??= 0;
         record.degradedNoticePublished ??= false;
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     this.loaded = true;
   }
@@ -173,12 +175,7 @@ export class RepositoryEventsState {
   }
 
   private save(): Promise<void> {
-    this.saveTail = this.saveTail.then(async () => {
-      await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-      const temporary = resolve(dirname(this.path), `events-state-${process.pid}.tmp`);
-      await writeFile(temporary, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
-      await rename(temporary, this.path);
-    });
+    this.saveTail = this.saveTail.then(() => this.persistence.save(this.data));
     return this.saveTail;
   }
 }

@@ -25,16 +25,17 @@ const TRACKED_COMPOSE = path.join(REPO, 'relay-stack', 'prod', 'compose.yml');
 const TRACKED_NGINX = path.join(REPO, 'relay-stack', 'prod', 'nginx.conf');
 
 // The live host files as they were before this change (hand-maintained,
-// untracked): the tracked copies must converge them to the push-gateway
+// untracked): the tracked copies must converge them to the materializer
 // shape. We only need a marker difference, but using the REAL pre-change
 // content keeps the first-rollout scenario honest.
 const PRE_CHANGE_COMPOSE = fs
   .readFileSync(TRACKED_COMPOSE, 'utf8')
-  .replace('beeline-push-gateway:production', 'beeline-push-gateway:OLD')
+  .replace(/^  materializer:$/m, '  push-gateway:')
+  .replace('beeline-materializer:production', 'beeline-push-gateway:production')
   .replace(/# nginx resolves proxy_pass upstreams[\s\S]*?condition: service_healthy\n/, '');
 const PRE_CHANGE_NGINX = fs
   .readFileSync(TRACKED_NGINX, 'utf8')
-  .replace('http://push-gateway:8788/', 'http://push-host:8788/');
+  .replace('http://materializer:8788/', 'http://push-host:8788/');
 
 function mkdtemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'beeline-deploy-test.'));
@@ -63,8 +64,11 @@ case "$cmd" in
     [ "$1" = "-aq" ] && all=1
     prev=""
     for a in "$@"; do
-      if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=push-gateway" && [ -f "$STATE/gateway-running" ]; then
+      if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=materializer" && [ -f "$STATE/materializer-running" ]; then
         echo "gwcontainerid"
+      fi
+      if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=push-gateway" && [ -f "$STATE/push-gateway-running" ]; then
+        echo "legacygwcontainerid"
       fi
       if [ "$prev" = "--filter" ] && echo "$a" | grep -q "service=auth" && [ -f "$STATE/auth-running" ]; then
         echo "authcontainerid"
@@ -83,7 +87,7 @@ case "$cmd" in
     for last in "$@"; do :; done
     case "$last" in
       frontcontainerid) echo "running" ;;
-      authcontainerid|gwcontainerid|relaycontainerid) echo "healthy" ;;
+      authcontainerid|gwcontainerid|legacygwcontainerid|relaycontainerid) echo "healthy" ;;
       *) echo "missing fixture container" >&2; exit 1 ;;
     esac
     ;;
@@ -93,6 +97,20 @@ case "$cmd" in
     ;;
   kill)
     log "kill $*"
+    ;;
+  stop)
+    log "stop $*"
+    for cid in "$@"; do
+      case "$cid" in
+        legacygwcontainerid)
+          [ -f "$STATE/sticky-push-gateway" ] || rm -f "$STATE/push-gateway-running"
+          ;;
+        gwcontainerid)
+          rm -f "$STATE/materializer-running"
+          ;;
+        *) echo "unknown container: $cid" >&2; exit 1 ;;
+      esac
+    done
     ;;
   compose)
     log "compose $*"
@@ -132,16 +150,15 @@ case "$cmd" in
     case "$*" in
       *"up -d --no-deps auth") ;;
       *"up -d"*)
-        if [ -f "$STATE/fail-compose-once-no-container" ]; then
-          rm "$STATE/fail-compose-once-no-container"
-          echo "Error response from daemon: No such container: stale-id" >&2
+        if [ -f "$STATE/push-gateway-running" ] || [ -f "$STATE/materializer-running" ]; then
+          echo "tail owner overlap" >&2
           exit 1
         fi
         if [ -f "$STATE/fail-compose-up" ]; then
           echo "simulated compose up failure" >&2
           exit 1
         fi
-        touch "$STATE/gateway-running" "$STATE/auth-running"
+        touch "$STATE/materializer-running" "$STATE/auth-running"
         ;;
     esac
     ;;
@@ -155,6 +172,10 @@ esac
 STATE=__STATE__
 echo "sudo $*" >> "$STATE/sudo.log"
 [ "$1" = "-n" ] && shift
+if [ "$1" = "-u" ]; then
+  [ "$2" = "lunchbox" ] || { echo "sudoers REFUSAL (user)" >&2; exit 1; }
+  shift 2
+fi
 case "$1" in
   /usr/bin/install)
     shift
@@ -166,7 +187,6 @@ case "$1" in
       */compose.yml|*/relay-front/nginx.conf) ;;
       *) echo "sudoers REFUSAL (install dest)" >&2; exit 1 ;;
     esac
-    if [ -f "$STATE/fail-install" ]; then echo "simulated install failure" >&2; exit 1; fi
     cp "$src" "$dst"
     ;;
   /usr/bin/docker)
@@ -183,15 +203,42 @@ case "$1" in
       esac
     done
     case "$rest" in
-      " up -d") exec __BIN__/docker compose -p buzz-router-prod up -d ;;
-      " up -d --no-deps auth") exec __BIN__/docker compose -p buzz-router-prod up -d --no-deps auth ;;
+      " up -d --remove-orphans") exec __BIN__/docker compose -p buzz-router-prod up -d --remove-orphans ;;
       *) echo "sudoers REFUSAL (compose args):$rest" >&2; exit 1 ;;
+    esac
+    ;;
+  /usr/bin/env)
+    shift
+    [ "$1" = "XDG_RUNTIME_DIR=/run/user/1000" ] || { echo "sudoers REFUSAL (runtime dir)" >&2; exit 1; }
+    shift
+    [ "$1" = "/usr/bin/systemctl" ] && [ "$2" = "--user" ] || { echo "sudoers REFUSAL (systemctl)" >&2; exit 1; }
+    [ -f "$STATE/events-service-present" ] || { echo "sudoers REFUSAL (events unit is absent)" >&2; exit 1; }
+    action="$3"
+    [ "$4" = "beeline-events.service" ] || [ "$5" = "beeline-events.service" ] || { echo "sudoers REFUSAL (events unit)" >&2; exit 1; }
+    case "$action" in
+      is-active)
+        if [ -f "$STATE/events-running" ]; then echo active; else echo inactive; exit 3; fi
+        ;;
+      is-enabled)
+        if [ -f "$STATE/events-running" ]; then echo enabled; else echo disabled; exit 1; fi
+        ;;
+      disable)
+        [ "$4" = "--now" ] || { echo "sudoers REFUSAL (disable args)" >&2; exit 1; }
+        rm -f "$STATE/events-running"
+        ;;
+      *) echo "sudoers REFUSAL (systemctl action)" >&2; exit 1 ;;
     esac
     ;;
   *)
     echo "sudoers REFUSAL (command)" >&2; exit 1
     ;;
 esac
+`;
+  const systemctl = String.raw`#!/usr/bin/env bash
+STATE=__STATE__
+[ "$1" = "--user" ] && shift
+[ "$1" = "list-unit-files" ] || { echo "unexpected systemctl invocation: $*" >&2; exit 64; }
+[ -f "$STATE/events-service-present" ] && echo "beeline-events.service enabled"
 `;
   write(
     path.join(binDir, 'docker'),
@@ -201,11 +248,15 @@ esac
     path.join(binDir, 'sudo'),
     sudo.replaceAll('__STATE__', stateDir).replaceAll('__BIN__', binDir),
   );
+  write(path.join(binDir, 'systemctl'), systemctl.replaceAll('__STATE__', stateDir));
+  write(path.join(binDir, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
   fs.chmodSync(path.join(binDir, 'docker'), 0o755);
   fs.chmodSync(path.join(binDir, 'sudo'), 0o755);
+  fs.chmodSync(path.join(binDir, 'systemctl'), 0o755);
+  fs.chmodSync(path.join(binDir, 'sleep'), 0o755);
 }
 
-async function withPublicServer(fn) {
+async function withPublicServer(fn, opts = {}) {
   const server = http.createServer((req, res) => {
     const serve = (file) => {
       try {
@@ -215,7 +266,8 @@ async function withPublicServer(fn) {
         res.end();
       }
     };
-    if (req.url === '/install') serve(path.join(REPO, 'relay-stack/web/install.sh'));
+    if (req.url === '/install' && opts.failPublic) res.end('stale install\n');
+    else if (req.url === '/install') serve(path.join(REPO, 'relay-stack/web/install.sh'));
     else if (req.url === '/dl/manifest.json')
       serve(path.join(REPO, 'relay-stack/web/dl/manifest.json'));
     else if (req.url?.startsWith('/dl/') && req.url.endsWith('.sha256'))
@@ -264,11 +316,15 @@ function runDeploy(opts) {
     path.join(proj, '.env'),
     'POSTGRES_PASSWORD=real-secret\nREDIS_PASSWORD=real\nBUZZ_S3_ACCESS_KEY=k\nBUZZ_S3_SECRET_KEY=s\n',
   );
-  if (opts.gatewayRunning) write(path.join(stateDir, 'gateway-running'), '1');
+  if (opts.eventsServicePresent !== false) {
+    write(path.join(stateDir, 'events-service-present'), '1');
+    if (opts.eventsRunning !== false) write(path.join(stateDir, 'events-running'), '1');
+  }
+  if (opts.existingMaterializer) write(path.join(stateDir, 'materializer-running'), '1');
+  else write(path.join(stateDir, 'push-gateway-running'), '1');
+  if (opts.stickyPushGateway) write(path.join(stateDir, 'sticky-push-gateway'), '1');
   if (opts.failComposeUp) write(path.join(stateDir, 'fail-compose-up'), '1');
-  if (opts.failComposeOnceNoContainer)
-    write(path.join(stateDir, 'fail-compose-once-no-container'), '1');
-  if (opts.failInstall) write(path.join(stateDir, 'fail-install'), '1');
+  const stackStageDir = path.join(tmp, 'stage');
 
   makeFakeBin(binDir, stateDir);
 
@@ -287,7 +343,7 @@ function runDeploy(opts) {
           HOME: tmp,
           BEELINE_PROD_DIR: proj,
           BEELINE_PUBLIC_BASE: base,
-          BEELINE_STACK_STAGE_DIR: path.join(tmp, 'stage'),
+          BEELINE_STACK_STAGE_DIR: stackStageDir,
         },
       });
       let stdout = '';
@@ -323,8 +379,10 @@ function runDeploy(opts) {
         fs.existsSync(path.join(stateDir, 'docker.log'))
           ? fs.readFileSync(path.join(stateDir, 'docker.log'), 'utf8')
           : '',
+      eventsRunning: () => fs.existsSync(path.join(stateDir, 'events-running')),
+      materializerRunning: () => fs.existsSync(path.join(stateDir, 'materializer-running')),
     };
-  });
+  }, opts);
 }
 
 test('first rollout installs both config files, runs one full reconcile through the existing sudo rule, and waits for health', async () => {
@@ -341,7 +399,14 @@ test('first rollout installs both config files, runs one full reconcile through 
     .filter((l) => l.includes('compose ') && l.includes('up -d') && !l.includes('--no-deps auth'));
   assert.equal(ups.length, 1, r.dockerLog());
   assert.ok(ups[0].includes('-p buzz-router-prod'));
-  assert.ok(ups[0].endsWith('up -d'));
+  assert.ok(ups[0].endsWith('up -d --remove-orphans'));
+  const dockerOperations = r.dockerLog().trim().split('\n');
+  const legacyStop = dockerOperations.findIndex(
+    (line) => line === 'docker stop legacygwcontainerid',
+  );
+  const materializerStart = dockerOperations.findIndex((line) => line.includes('up -d'));
+  assert.notEqual(legacyStop, -1, r.dockerLog());
+  assert.ok(legacyStop < materializerStart, r.dockerLog());
   assert.equal(
     r
       .sudoLog()
@@ -350,6 +415,8 @@ test('first rollout installs both config files, runs one full reconcile through 
     0,
   );
   assert.ok(r.stdout.includes('production stack health verified'));
+  assert.ok(r.sudoLog().includes('disable --now beeline-events.service'), r.sudoLog());
+  assert.equal(r.eventsRunning(), false, 'standalone events unit must stay retired after success');
 
   // nginx HUP reload happened exactly once.
   assert.equal(
@@ -359,88 +426,105 @@ test('first rollout installs both config files, runs one full reconcile through 
       .filter((l) => l.includes('kill -s HUP')).length,
     1,
   );
-
-  // Backups of BOTH replaced files, timestamped beside the web backups.
-  const backupRoot = path.join(r.proj, 'relay-front/web-backups');
-  const cfgBaks = fs.readdirSync(backupRoot).filter((d) => d.startsWith('config-'));
-  assert.equal(cfgBaks.length, 1);
-  assert.equal(
-    fs.readFileSync(path.join(backupRoot, cfgBaks[0], 'compose.yml'), 'utf8'),
-    PRE_CHANGE_COMPOSE,
-  );
-  assert.equal(
-    fs.readFileSync(path.join(backupRoot, cfgBaks[0], 'relay-front/nginx.conf'), 'utf8'),
-    PRE_CHANGE_NGINX,
-  );
 });
 
-test('a stale-container reconciliation race retries the same full-stack operation once and succeeds', async () => {
-  const r = await runDeploy({ failComposeOnceNoContainer: true });
+test('an absent standalone events unit skips retirement and continues deployment', async () => {
+  const r = await runDeploy({ eventsServicePresent: false });
   assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
-  assert.ok(r.stdout.includes('retrying convergence once'));
-  const ups = r
-    .sudoLog()
-    .split('\n')
-    .filter((line) => line.endsWith('up -d'));
-  assert.equal(ups.length, 2, r.sudoLog());
-  assert.ok(r.stdout.includes('production stack health verified'));
+  assert.ok(r.stdout.includes('already absent'), r.stdout);
+  assert.equal(r.sudoLog().includes('beeline-events.service'), false, r.sudoLog());
+  assert.equal(r.materializerRunning(), true);
 });
 
-test('a config-unchanged merge updates auth without reconciling the full stack', async () => {
-  const tracked = fs.readFileSync(TRACKED_COMPOSE, 'utf8');
-  const r = await runDeploy({
-    liveCompose: tracked,
-    liveNginx: fs.readFileSync(TRACKED_NGINX, 'utf8'),
-    gatewayRunning: true,
-  });
-  assert.equal(r.status, 0, r.stderr);
-  assert.ok(r.stdout.includes('production stack unchanged'));
-  assert.ok(!r.sudoLog().includes('install'), r.sudoLog());
-  assert.equal(
-    r
-      .sudoLog()
-      .split('\n')
-      .filter((l) => l.includes('up -d') && !l.includes('--no-deps auth')).length,
-    0,
-    r.sudoLog(),
+function composeConfig(relative, overrides = {}) {
+  const composeFile = path.join(REPO, relative);
+  const env = {
+    ...process.env,
+    POSTGRES_PASSWORD: 'compose-test',
+    POSTGRES_USER: 'buzz',
+    POSTGRES_DB: 'buzz',
+    REDIS_PASSWORD: 'compose-test',
+    BUZZ_S3_ACCESS_KEY: 'compose-test',
+    BUZZ_S3_SECRET_KEY: 'compose-test',
+    BUZZY_SNAPSHOT_INTERNAL_TOKEN: 'compose-test',
+  };
+  delete env.BEELINE_RUNTIME_STATE_DIR;
+  Object.assign(env, overrides);
+  const result = spawnSync(
+    'docker',
+    [
+      'compose',
+      '--project-directory',
+      path.dirname(composeFile),
+      '-f',
+      composeFile,
+      'config',
+      '--format',
+      'json',
+      '--no-env-resolution',
+    ],
+    { encoding: 'utf8', env },
   );
-  assert.equal(
-    r
-      .sudoLog()
-      .split('\n')
-      .filter((l) => l.includes('--no-deps auth')).length,
-    1,
-  );
-  assert.ok(!r.dockerLog().startsWith('kill '), r.dockerLog());
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return JSON.parse(result.stdout);
+}
+
+test('tracked stacks expose one materializer service instead of separate tail processes', () => {
+  for (const relative of ['relay-stack/compose.yml', 'relay-stack/prod/compose.yml']) {
+    const services = Object.keys(composeConfig(relative).services);
+    assert.equal(services.filter((service) => service === 'materializer').length, 1, relative);
+    assert.equal(services.includes('push-gateway'), false, relative);
+    assert.equal(services.includes('events'), false, relative);
+    assert.equal(services.includes('snapshot-materializer'), false, relative);
+  }
 });
 
-test('an nginx-content-only change places just nginx.conf and reloads via HUP without any compose up', async () => {
+test('materializer preserves persisted absolute runtime roots inside the container', () => {
+  for (const relative of ['relay-stack/compose.yml', 'relay-stack/prod/compose.yml']) {
+    for (const runtimeRoot of ['/home/lunchbox/.local/state', '/srv/beeline-runtime']) {
+      const overrides =
+        runtimeRoot === '/home/lunchbox/.local/state'
+          ? {}
+          : { BEELINE_RUNTIME_STATE_DIR: runtimeRoot };
+      const materializer = composeConfig(relative, overrides).services.materializer;
+      assert.equal(materializer.environment.XDG_STATE_HOME, runtimeRoot, relative);
+      const runtimeMount = materializer.volumes.find((volume) => volume.target === runtimeRoot);
+      assert.equal(runtimeMount.source, runtimeRoot, relative);
+      assert.equal(runtimeMount.read_only, true, relative);
+    }
+  }
+});
+
+test('a repeated deploy places tracked config and converges once', async () => {
   const r = await runDeploy({
     liveCompose: fs.readFileSync(TRACKED_COMPOSE, 'utf8'),
-    gatewayRunning: true,
+    liveNginx: fs.readFileSync(TRACKED_NGINX, 'utf8'),
+    existingMaterializer: true,
   });
   assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
   assert.equal(r.readLive('relay-front/nginx.conf'), fs.readFileSync(TRACKED_NGINX, 'utf8'));
-  assert.ok(r.sudoLog().includes('nginx.conf'));
-  // No compose.yml was placed (the auth step's `-f .../compose.yml` line is
-  // not an install).
   assert.equal(
     r
       .sudoLog()
       .split('\n')
       .filter((l) => l.includes('install') && l.includes('compose.yml')).length,
-    0,
+    1,
     r.sudoLog(),
   );
   assert.equal(
     r
       .dockerLog()
       .split('\n')
-      .filter(
-        (l) => l.startsWith('compose ') && l.includes('up -d') && !l.includes('--no-deps auth'),
-      ).length,
-    0,
+      .filter((l) => l.includes('compose ') && l.includes('up -d') && !l.includes('--no-deps auth'))
+      .length,
+    1,
   );
+  const dockerOperations = r.dockerLog().trim().split('\n');
+  const currentStop = dockerOperations.findIndex((line) => line === 'docker stop gwcontainerid');
+  const materializerStart = dockerOperations.findIndex((line) => line.includes('up -d'));
+  assert.notEqual(currentStop, -1, r.dockerLog());
+  assert.ok(currentStop < materializerStart, r.dockerLog());
   assert.equal(
     r
       .dockerLog()
@@ -450,26 +534,43 @@ test('an nginx-content-only change places just nginx.conf and reloads via HUP wi
   );
 });
 
-test('a failed stack rollout restores the previous config files and fails the deploy WITHOUT losing the web deploy', async () => {
-  const r = await runDeploy({ failComposeUp: true });
+test('cutover refuses to start while any previous tail owner remains running', async () => {
+  const r = await runDeploy({ stickyPushGateway: true });
   assert.notEqual(r.status, 0);
-  assert.ok(r.stderr.includes('STACK ROLLOUT FAILED'), r.stderr);
-  // Config files rolled back to their pre-deploy bytes.
-  assert.equal(r.readLive('compose.yml'), PRE_CHANGE_COMPOSE);
-  assert.equal(r.readLive('relay-front/nginx.conf'), PRE_CHANGE_NGINX);
-  // The web deploy still completed and verified (web swap succeeded — the
-  // staged tree mirrors the checkout's web/).
+  assert.equal(r.materializerRunning(), false);
+  assert.ok(r.stderr.includes('push-gateway containers remain running'), r.stderr);
   assert.equal(
-    r.readLive('relay-front/web/install.sh'),
-    fs.readFileSync(path.join(REPO, 'relay-stack/web/install.sh'), 'utf8'),
+    r
+      .dockerLog()
+      .split('\n')
+      .some((line) => line.includes('compose ') && line.includes('up -d')),
+    false,
+    r.dockerLog(),
   );
 });
 
-test('a refused sudo install (missing sudoers rule) fails loudly and rolls the config back', async () => {
-  const r = await runDeploy({ failInstall: true });
+test('a failed cutover stops one-way and prints exact forward recovery commands', async () => {
+  const r = await runDeploy({ failComposeUp: true });
   assert.notEqual(r.status, 0);
-  assert.ok(r.stderr.includes('STACK ROLLOUT FAILED'), r.stderr);
-  assert.equal(r.readLive('compose.yml'), PRE_CHANGE_COMPOSE);
+  assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
+  assert.equal(r.readLive('relay-front/nginx.conf'), fs.readFileSync(TRACKED_NGINX, 'utf8'));
+  assert.equal(r.eventsRunning(), false);
+  assert.equal(r.materializerRunning(), false);
+  assert.ok(r.stderr.includes('MANUAL RECOVERY REQUIRED'), r.stderr);
+  assert.ok(r.stderr.includes('Keep beeline-events.service stopped'), r.stderr);
+  assert.ok(r.stderr.includes('up -d --remove-orphans'), r.stderr);
+  assert.ok(r.stderr.includes('/push/health'), r.stderr);
+  assert.ok(r.stderr.includes('/snapshot/health'), r.stderr);
+});
+
+test('failed public verification leaves the materializer as sole tail owner', async () => {
+  const r = await runDeploy({ failPublic: true });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.materializerRunning(), true);
+  assert.equal(r.eventsRunning(), false);
+  assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
+  assert.ok(r.stderr.includes('MANUAL RECOVERY REQUIRED'), r.stderr);
+  assert.equal(r.sudoLog().includes('enable --now beeline-events.service'), false, r.sudoLog());
 });
 
 test('compose validation never resolves real env_file secrets: an unreadable env_file entry does not fail the deploy', async () => {
@@ -514,65 +615,41 @@ test('compose validation never resolves real env_file secrets: an unreadable env
 // member files across inode replacement.
 // ---------------------------------------------------------------------------
 
-/** Minimal targeted extractor: the `relay-front:` service block text. */
-function relayFrontServiceBlock(composeText) {
-  const lines = composeText.split('\n');
-  const start = lines.findIndex((l) => l === '  relay-front:');
-  assert.ok(start !== -1, 'compose.yml must declare a relay-front service');
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^  [a-z][a-z0-9-]*:$/.test(lines[i])) {
-      end = i;
-      break;
-    }
-  }
-  return lines.slice(start, end);
-}
-
-function relayFrontMounts(blockLines) {
-  const volIdx = blockLines.findIndex((l) => l === '    volumes:');
-  assert.ok(volIdx !== -1, 'relay-front must declare volumes');
-  const mounts = [];
-  for (let i = volIdx + 1; i < blockLines.length; i++) {
-    const m = blockLines[i].match(/^ {6}- ([^:\s]+):([^:\s]+)(?::(ro|rw))?$/);
-    if (!m) {
-      if (/^ {6}- /.test(blockLines[i])) {
-        throw new Error(`unparsed relay-front volume entry: ${blockLines[i].trim()}`);
-      }
-      if (mounts.length) break;
-      continue;
-    }
-    mounts.push({ source: m[1], containerPath: m[2], mode: m[3] ?? 'rw' });
-  }
-  assert.ok(mounts.length > 0, 'relay-front volumes must use short `- src:dst[:mode]` syntax');
-  return mounts;
-}
-
-function relayFrontCommand(blockLines) {
-  const line = blockLines.find((l) => l.startsWith('    command:'));
-  if (!line) return null;
-  return JSON.parse(line.slice('    command:'.length).trim());
+function relayFrontRuntimeModel() {
+  const relayFront = composeConfig('relay-stack/prod/compose.yml').services['relay-front'];
+  return {
+    command: relayFront.command,
+    mounts: relayFront.volumes.map((volume) => ({
+      type: volume.type,
+      source: volume.source,
+      containerPath: volume.target,
+      mode: volume.read_only ? 'ro' : 'rw',
+    })),
+  };
 }
 
 test('relay-front loads nginx.conf through the enclosing read-only directory mount', () => {
-  const block = relayFrontServiceBlock(fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
-  const mounts = relayFrontMounts(block);
+  const { command, mounts } = relayFrontRuntimeModel();
 
-  const configMount = mounts.find((m) => m.source === './relay-front');
+  const configMount = mounts.find((mount) => mount.containerPath === '/etc/beeline-front');
   assert.deepEqual(
     configMount,
-    { source: './relay-front', containerPath: '/etc/beeline-front', mode: 'ro' },
+    {
+      type: 'bind',
+      source: path.join(REPO, 'relay-stack/prod/relay-front'),
+      containerPath: '/etc/beeline-front',
+      mode: 'ro',
+    },
     'relay-front must bind the enclosing config directory read-only; binding nginx.conf itself pins its old inode',
   );
 
-  const cmd = relayFrontCommand(block);
   assert.ok(
-    Array.isArray(cmd),
+    Array.isArray(command),
     'relay-front must pin a command[] loading config via -c from a directory mount',
   );
-  const cFlag = cmd.indexOf('-c');
+  const cFlag = command.indexOf('-c');
   assert.notEqual(cFlag, -1, 'relay-front command must carry a -c flag');
-  const configPath = cmd[cFlag + 1];
+  const configPath = command[cFlag + 1];
   assert.ok(
     configPath.startsWith(configMount.containerPath + '/'),
     `nginx -c path ${configPath} must live inside ${configMount.containerPath}`,
@@ -583,22 +660,24 @@ test(
   'nginx HUP reloads current bytes after deploy placement through the deployed directory mount',
   { skip: !dockerAvailable() },
   async (t) => {
-    const block = relayFrontServiceBlock(fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
-    const mounts = relayFrontMounts(block);
-    const cmd = relayFrontCommand(block);
-    const cFlag = cmd.indexOf('-c');
-    const containerConfigPath = cmd[cFlag + 1];
+    const model = relayFrontRuntimeModel();
+    const cFlag = model.command.indexOf('-c');
+    const containerConfigPath = model.command[cFlag + 1];
 
     const proj = mkdtemp();
     t.after(() => fs.rmSync(proj, { recursive: true, force: true }));
+    const mounts = model.mounts.map((mount) => ({
+      ...mount,
+      source: path.join(proj, mount.containerPath.replace(/^\/+/, '').replaceAll('/', '-')),
+    }));
+    for (const mount of mounts) fs.mkdirSync(mount.source, { recursive: true });
     const hostFor = (containerPath) => {
       const m = mounts.find(
         (x) => containerPath === x.containerPath || containerPath.startsWith(x.containerPath + '/'),
       );
       assert.ok(m, `no declared mount covers ${containerPath}`);
       const rel = path.relative(m.containerPath, containerPath);
-      const srcAbs = path.join(proj, path.normalize(m.source).replace(/^([.][/\\])+/, ''));
-      return rel && rel !== '.' ? path.join(srcAbs, rel) : srcAbs;
+      return rel && rel !== '.' ? path.join(m.source, rel) : m.source;
     };
 
     const config = (marker) =>
@@ -662,10 +741,7 @@ test(
     // Smallest counterfactual: keep install + HUP unchanged and carry exactly
     // the declared production binds/command. Whether install preserves or
     // replaces the member inode, directory lookup lets nginx reload V4.
-    const bindArgs = mounts.flatMap((m) => [
-      '-v',
-      `${path.join(proj, path.normalize(m.source).replace(/^([.][/\\])+/, ''))}:${m.containerPath}:${m.mode}`,
-    ]);
+    const bindArgs = mounts.flatMap((m) => ['-v', `${m.source}:${m.containerPath}:${m.mode}`]);
     await docker([
       'run',
       '-d',
@@ -674,7 +750,7 @@ test(
       fixedName,
       ...bindArgs,
       'nginx:1.27-alpine',
-      ...cmd,
+      ...model.command,
     ]);
     running.add(fixedName);
     await waitForMarker(fixedName, 'V3');

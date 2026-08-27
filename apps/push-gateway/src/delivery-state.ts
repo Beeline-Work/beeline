@@ -1,6 +1,3 @@
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
-
 const EVENT_ID_RE = /^[0-9a-f]{64}$/;
 const PUBKEY_RE = /^[0-9a-f]{64}$/;
 const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60_000;
@@ -32,11 +29,16 @@ interface StandingAttention {
   reason: string;
 }
 
-interface DeliveryStateFile {
+export interface DeliveryStateFile {
   version: 1;
   cursors: RecipientCursor[];
   events: DeliveredEvent[];
   attentions?: StandingAttention[];
+}
+
+export interface DeliveryStatePersistence {
+  load(): Promise<unknown | undefined>;
+  save(value: DeliveryStateFile): Promise<void>;
 }
 
 export interface AttentionAttempt {
@@ -63,21 +65,27 @@ export class DeliveryState {
   private readonly attentions = new Map<string, StandingAttention>();
 
   private constructor(
-    private readonly filePath?: string,
+    private readonly persistence?: DeliveryStatePersistence,
     private readonly now: () => number = Date.now,
     private readonly retentionMs = DEFAULT_RETENTION_MS,
     private readonly maxEvents = DEFAULT_MAX_EVENTS,
   ) {}
 
   static async load(
-    filePath?: string,
+    persistence?: DeliveryStatePersistence,
     options: { now?: () => number; retentionMs?: number; maxEvents?: number } = {},
   ): Promise<DeliveryState> {
-    const state = new DeliveryState(filePath, options.now, options.retentionMs, options.maxEvents);
-    if (!filePath) return state;
+    const state = new DeliveryState(
+      persistence,
+      options.now,
+      options.retentionMs,
+      options.maxEvents,
+    );
+    if (!persistence) return state;
 
-    try {
-      const parsed = JSON.parse(await readFile(filePath, 'utf8')) as DeliveryStateFile;
+    const value = await persistence.load();
+    if (value !== undefined) {
+      const parsed = value as DeliveryStateFile;
       if (parsed.version !== 1 || !Array.isArray(parsed.cursors) || !Array.isArray(parsed.events)) {
         throw new Error('unsupported delivery state format');
       }
@@ -114,8 +122,6 @@ export class DeliveryState {
         }
       }
       if (state.prune()) await state.persist();
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     return state;
   }
@@ -287,9 +293,7 @@ export class DeliveryState {
   }
 
   private async persist(): Promise<void> {
-    if (!this.filePath) return;
-    const directory = dirname(this.filePath);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
+    if (!this.persistence) return;
     const value: DeliveryStateFile = {
       version: 1,
       cursors: [...this.cursors].map(([pubkey, throughCreatedAt]) => ({
@@ -303,9 +307,6 @@ export class DeliveryState {
       })),
       attentions: [...this.attentions.values()],
     };
-    const temporaryPath = `${this.filePath}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(value)}\n`, { mode: 0o600 });
-    await chmod(temporaryPath, 0o600);
-    await rename(temporaryPath, this.filePath);
+    await this.persistence.save(value);
   }
 }

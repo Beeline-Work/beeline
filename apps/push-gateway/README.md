@@ -1,10 +1,13 @@
 # @beeline/push-gateway
 
-Beeline's Postgres-adjacent push and channel-snapshot gateway. It accepts an
+Beeline's Postgres-adjacent materializer. One process hosts the push,
+repository-events, and channel-snapshot consumers. It accepts an
 Android FCM device registration, tails kind-9 channel events from Buzz's
 authoritative database, and sends Firebase notifications to registered members
-other than the event author. Beside that existing feed, one durable materializer
-builds the membership-gated `channel-snapshot-v1` Room/corner read view.
+other than the event author. The same process polls GitHub repository activity
+and builds the membership-gated `channel-snapshot-v1` Room/corner read view.
+All three use one Postgres owner and reservation store; their consumer-namespaced
+state machines remain independent.
 
 The default policy is intentionally quiet: a recipient gets a push only for an
 explicit `p`-tag mention, a direct message, or an agent's transition to
@@ -41,7 +44,7 @@ The service account file stays outside the repository. Do not log or commit it.
 | `BUZZY_PUSH_HOST`                  | `127.0.0.1`                            | Registration HTTP bind host                                                        |
 | `PORT`                             | `8788`                                 | Registration HTTP port (Compose-internal in production)                            |
 | `BUZZY_PUSH_REGISTRY_FILE`         | `.data/registrations.json`             | Local token registry path                                                          |
-| `BUZZY_PUSH_DELIVERY_STATE_FILE`   | registry directory + `deliveries.json` | Durable event-id ledger and recipient cursors                                      |
+| `BUZZY_PUSH_DELIVERY_STATE_FILE`   | registry directory + `deliveries.json` | Legacy push ledger imported once into Postgres                                     |
 | `BUZZY_PUSH_POLL_INTERVAL_MS`      | `1500`                                 | Member-scoped database poll interval                                               |
 | `BUZZY_PUSH_FEED_HEARTBEAT_MS`     | `60000`                                | Feed heartbeat interval; production logs normalize its event count to events/min   |
 | `BUZZY_SNAPSHOT_PUBLIC_ORIGIN`     | gateway bind origin                    | Exact public origin used to verify snapshot NIP-98 proofs                          |
@@ -49,6 +52,9 @@ The service account file stays outside the repository. Do not log or commit it.
 | `BUZZY_SNAPSHOT_INTERNAL_TOKEN`    | —                                      | Private auth bearer; mandatory in production                                       |
 | `BUZZY_SNAPSHOT_POLL_INTERVAL_MS`  | `1000`                                 | Durable dirty-work polling interval                                                |
 | `BUZZY_SNAPSHOT_BURST_COALESCE_MS` | `75`                                   | Minimum age before a newly dirty channel is claimed                                |
+| `BEELINE_GITHUB_APP_ID`            | —                                      | GitHub App id for the hosted repository-events consumer                            |
+| `BEELINE_GITHUB_APP_PRIVATE_KEY`   | —                                      | GitHub App private key; mandatory for the hosted consumer                          |
+| `BEELINE_EVENTS_STATE_DIR`         | XDG state + `beeline/events`           | Identity plus legacy repository-event state import                                 |
 
 `POST /registrations` accepts
 `{ "pubkey", "token", "platform": "android", "environment": "physical" }`.
@@ -66,9 +72,10 @@ gateway host and is lost if that file is removed. Re-importing or generating a
 Buzz identity registers the device, and each mobile cold start refreshes the
 binding in case Firebase rotated the device token.
 
-The separate delivery-state file is written atomically beside the registry. It
-reserves each event-id/recipient attempt before calling FCM and never retries an
-ambiguous attempt. Delivered ids are retained for 30 days and capped at 50,000;
+The materializer imports the former delivery-state file once, then stores the
+push reservation document in Postgres. It reserves each event-id/recipient
+attempt before calling FCM and never retries an ambiguous attempt. Delivered
+ids are retained for 30 days and capped at 50,000;
 durable per-recipient cursors keep pruned backlog events permanently ineligible.
 FCM eligibility fails closed unless the Room has an immutable kind-9007 create
 linked to a self-linked persistent Workspace create. The final pre-FCM boundary
@@ -126,15 +133,14 @@ visible on the Android lock screen; the preview policy is localized in
 `mapping.ts` so a future per-device hide-preview setting can select the generic
 form without changing relay lookup or delivery code.
 
-Changes under this service require a push-gateway redeploy. Changes to the
+Changes under this service require a materializer redeploy. Changes to the
 Android notification channel label require a new APK; the application label is
 already Beeline.
 
-Production runs the gateway as `push-gateway` in `relay-stack/prod/compose.yml`.
+Production runs one `materializer` service in `relay-stack/prod/compose.yml`.
 The tracked relay-front proxies both `/push/` and path-preserving `/snapshot/`
-to that service on the Compose network. The materializer and replay ledger live
-in relay Postgres; the existing host deploy builds the image, applies the tracked
-Compose/nginx configuration, and verifies both health surfaces on merge. Do not
-deploy it manually. Preserve the existing `secrets/` and `state/` directories;
-the one-time legacy systemd retirement and persistence checks are documented in
-[`deploy/README.md`](deploy/README.md).
+to it on the Compose network. The host deploy builds the image, retires the old
+`beeline-events.service`, applies the tracked Compose/nginx configuration, and
+verifies both health surfaces on merge. Do not deploy it manually. Preserve the
+existing push and repository-events identity/state directories: startup imports
+the two legacy reservation documents into the shared Postgres store.

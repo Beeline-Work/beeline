@@ -96,11 +96,11 @@ services:
     networks:
       - buzzy-net
 
-  push-gateway:
+  materializer:
     build:
       context: ..
       dockerfile: apps/push-gateway/Dockerfile
-    image: ${BUZZY_PUSH_IMAGE:-beeline-push-gateway:local}
+    image: ${BUZZY_MATERIALIZER_IMAGE:-beeline-materializer:local}
     environment:
       NODE_ENV: production
       PORT: '8788'
@@ -112,9 +112,15 @@ services:
       BUZZY_SNAPSHOT_PUBLIC_ORIGIN: ${BUZZY_SNAPSHOT_PUBLIC_ORIGIN:-http://127.0.0.1:${BUZZ_HTTP_PORT:-3010}}
       BUZZY_SNAPSHOT_AUTH_BASE_URL: http://auth:8789
       BUZZY_SNAPSHOT_INTERNAL_TOKEN: ${BUZZY_SNAPSHOT_INTERNAL_TOKEN:-gate-snapshot-internal}
+      XDG_STATE_HOME: ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}
+      BEELINE_EVENTS_STATE_DIR: /var/lib/beeline-events
+      BEELINE_GITHUB_APP_ID: ${BEELINE_GITHUB_APP_ID:-1}
+      BEELINE_GITHUB_APP_PRIVATE_KEY: ${BEELINE_GITHUB_APP_PRIVATE_KEY:-development-only}
     volumes:
       - ${BUZZY_PUSH_SA_HOST_FILE:-/home/lunchbox/buzzy-push-gateway/secrets/fcm-service-account.json}:/run/secrets/buzzy-fcm-service-account.json:ro
       - ${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}:/var/lib/buzzy-push
+      - ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:ro
+      - ${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}:/var/lib/beeline-events
     depends_on:
       auth:
         condition: service_healthy
@@ -146,7 +152,7 @@ services:
     depends_on:
       auth:
         condition: service_healthy
-      push-gateway:
+      materializer:
         condition: service_healthy
       relay:
         condition: service_healthy

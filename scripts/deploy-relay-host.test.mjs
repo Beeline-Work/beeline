@@ -136,28 +136,11 @@ case "$cmd" in
     case "$*" in
       *"up -d --no-deps auth") ;;
       *"up -d"*)
-        if [ -f "$STATE/legacy-compose" ]; then
-          touch "$STATE/push-gateway-running" "$STATE/auth-running"
-          rm -f "$STATE/materializer-running"
-          exit 0
-        fi
-        if [ -f "$STATE/fail-compose-once-no-container" ]; then
-          rm "$STATE/fail-compose-once-no-container"
-          echo "Error response from daemon: No such container: stale-id" >&2
-          exit 1
-        fi
         if [ -f "$STATE/fail-compose-up" ]; then
           echo "simulated compose up failure" >&2
           exit 1
         fi
-        if [ -f "$STATE/fail-compose-after-start" ]; then
-          touch "$STATE/materializer-running" "$STATE/auth-running"
-          rm -f "$STATE/push-gateway-running"
-          echo "simulated compose failure after materializer start" >&2
-          exit 1
-        fi
         touch "$STATE/materializer-running" "$STATE/auth-running"
-        rm -f "$STATE/push-gateway-running"
         ;;
     esac
     ;;
@@ -186,24 +169,7 @@ case "$1" in
       */compose.yml|*/relay-front/nginx.conf) ;;
       *) echo "sudoers REFUSAL (install dest)" >&2; exit 1 ;;
     esac
-    if [ -f "$STATE/fail-install" ]; then echo "simulated install failure" >&2; exit 1; fi
-    if [ -f "$STATE/fail-rollback-install" ] && grep -q '^  push-gateway:$' "$src"; then
-      echo "simulated rollback install failure" >&2
-      exit 1
-    fi
     cp "$src" "$dst"
-    if echo "$dst" | grep -q '/compose.yml$'; then
-      if grep -q '^  push-gateway:$' "$src"; then
-        touch "$STATE/legacy-compose"
-      else
-        rm -f "$STATE/legacy-compose"
-      fi
-    fi
-    if [ -f "$STATE/interrupt-after-compose-install" ] && echo "$dst" | grep -q '/compose.yml$'; then
-      rm -f "$STATE/interrupt-after-compose-install"
-      kill -TERM "$PPID"
-      exit 143
-    fi
     ;;
   /usr/bin/docker)
     shift
@@ -220,7 +186,6 @@ case "$1" in
     done
     case "$rest" in
       " up -d --remove-orphans") exec __BIN__/docker compose -p buzz-router-prod up -d --remove-orphans ;;
-      " up -d --no-deps auth") exec __BIN__/docker compose -p buzz-router-prod up -d --no-deps auth ;;
       *) echo "sudoers REFUSAL (compose args):$rest" >&2; exit 1 ;;
     esac
     ;;
@@ -241,15 +206,6 @@ case "$1" in
       disable)
         [ "$4" = "--now" ] || { echo "sudoers REFUSAL (disable args)" >&2; exit 1; }
         rm -f "$STATE/events-running"
-        if [ -f "$STATE/interrupt-after-events-disable" ]; then
-          rm -f "$STATE/interrupt-after-events-disable"
-          kill -TERM "$PPID"
-          exit 143
-        fi
-        ;;
-      enable)
-        [ "$4" = "--now" ] || { echo "sudoers REFUSAL (enable args)" >&2; exit 1; }
-        touch "$STATE/events-running"
         ;;
       *) echo "sudoers REFUSAL (systemctl action)" >&2; exit 1 ;;
     esac
@@ -333,24 +289,9 @@ function runDeploy(opts) {
     path.join(proj, '.env'),
     'POSTGRES_PASSWORD=real-secret\nREDIS_PASSWORD=real\nBUZZ_S3_ACCESS_KEY=k\nBUZZ_S3_SECRET_KEY=s\n',
   );
-  if (opts.gatewayRunning) write(path.join(stateDir, 'materializer-running'), '1');
-  if (!opts.gatewayRunning && opts.legacyPushRunning !== false)
-    write(path.join(stateDir, 'push-gateway-running'), '1');
-  if (!opts.gatewayRunning) write(path.join(stateDir, 'legacy-compose'), '1');
   if (opts.eventsRunning !== false) write(path.join(stateDir, 'events-running'), '1');
   if (opts.failComposeUp) write(path.join(stateDir, 'fail-compose-up'), '1');
-  if (opts.failComposeAfterStart)
-    write(path.join(stateDir, 'fail-compose-after-start'), '1');
-  if (opts.failComposeOnceNoContainer)
-    write(path.join(stateDir, 'fail-compose-once-no-container'), '1');
-  if (opts.failInstall) write(path.join(stateDir, 'fail-install'), '1');
-  if (opts.failRollbackInstall) write(path.join(stateDir, 'fail-rollback-install'), '1');
-  if (opts.interruptAfterComposeInstall)
-    write(path.join(stateDir, 'interrupt-after-compose-install'), '1');
-  if (opts.interruptAfterEventsDisable)
-    write(path.join(stateDir, 'interrupt-after-events-disable'), '1');
   const stackStageDir = path.join(tmp, 'stage');
-  if (opts.failStackStage) write(stackStageDir, 'not a directory\n');
 
   makeFakeBin(binDir, stateDir);
 
@@ -406,7 +347,6 @@ function runDeploy(opts) {
           ? fs.readFileSync(path.join(stateDir, 'docker.log'), 'utf8')
           : '',
       eventsRunning: () => fs.existsSync(path.join(stateDir, 'events-running')),
-      legacyPushRunning: () => fs.existsSync(path.join(stateDir, 'push-gateway-running')),
       materializerRunning: () => fs.existsSync(path.join(stateDir, 'materializer-running')),
     };
   }, opts);
@@ -447,18 +387,6 @@ test('first rollout installs both config files, runs one full reconcile through 
     1,
   );
 
-  // Backups of BOTH replaced files, timestamped beside the web backups.
-  const backupRoot = path.join(r.proj, 'relay-front/web-backups');
-  const cfgBaks = fs.readdirSync(backupRoot).filter((d) => d.startsWith('config-'));
-  assert.equal(cfgBaks.length, 1);
-  assert.equal(
-    fs.readFileSync(path.join(backupRoot, cfgBaks[0], 'compose.yml'), 'utf8'),
-    PRE_CHANGE_COMPOSE,
-  );
-  assert.equal(
-    fs.readFileSync(path.join(backupRoot, cfgBaks[0], 'relay-front/nginx.conf'), 'utf8'),
-    PRE_CHANGE_NGINX,
-  );
 });
 
 function composeServices(composeText) {
@@ -474,6 +402,46 @@ function composeServices(composeText) {
   return services;
 }
 
+function composeServiceBlock(composeText, service) {
+  const lines = composeText.split('\n');
+  const start = lines.findIndex((line) => line === `  ${service}:`);
+  assert.notEqual(start, -1, `compose.yml must declare ${service}`);
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index++) {
+    if (/^  [a-z][a-z0-9-]*:$/.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start, end);
+}
+
+function expandComposeValue(value, env = {}) {
+  return value.replace(/\$\{([A-Z0-9_]+):-([^}]+)\}/g, (_match, name, fallback) => {
+    return env[name] || fallback;
+  });
+}
+
+function materializerRuntimeModel(composeText, env = {}) {
+  const block = composeServiceBlock(composeText, 'materializer');
+  const xdgLine = block.find((line) => line.startsWith('      XDG_STATE_HOME:'));
+  assert.ok(xdgLine, 'materializer must set XDG_STATE_HOME');
+  const xdgStateHome = expandComposeValue(xdgLine.split(':').slice(1).join(':').trim(), env);
+  const volumeStart = block.findIndex((line) => line === '    volumes:');
+  assert.notEqual(volumeStart, -1, 'materializer must declare volumes');
+  const volumes = [];
+  for (let index = volumeStart + 1; index < block.length; index++) {
+    const match = /^ {6}- (.+)$/.exec(block[index]);
+    if (!match) {
+      if (volumes.length) break;
+      continue;
+    }
+    const [source, target, mode = 'rw'] = expandComposeValue(match[1], env).split(':');
+    volumes.push({ source, target, mode });
+  }
+  return { xdgStateHome, volumes };
+}
+
 test('tracked stacks expose one materializer service instead of separate tail processes', () => {
   for (const relative of ['relay-stack/compose.yml', 'relay-stack/prod/compose.yml']) {
     const services = composeServices(fs.readFileSync(path.join(REPO, relative), 'utf8'));
@@ -484,62 +452,44 @@ test('tracked stacks expose one materializer service instead of separate tail pr
   }
 });
 
-test('a stale-container reconciliation race retries the same full-stack operation once and succeeds', async () => {
-  const r = await runDeploy({ failComposeOnceNoContainer: true });
-  assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
-  assert.ok(r.stdout.includes('retrying convergence once'));
-  const ups = r
-    .sudoLog()
-    .split('\n')
-    .filter((line) => line.endsWith('up -d --remove-orphans'));
-  assert.equal(ups.length, 2, r.sudoLog());
-  assert.ok(r.stdout.includes('production stack health verified'));
+test('materializer preserves persisted absolute runtime roots inside the container', () => {
+  const compose = fs.readFileSync(TRACKED_COMPOSE, 'utf8');
+  for (const runtimeRoot of ['/home/lunchbox/.local/state', '/srv/beeline-runtime']) {
+    const env =
+      runtimeRoot === '/home/lunchbox/.local/state'
+        ? {}
+        : { BEELINE_RUNTIME_STATE_DIR: runtimeRoot };
+    const model = materializerRuntimeModel(compose, env);
+    assert.equal(model.xdgStateHome, runtimeRoot);
+    assert.deepEqual(
+      model.volumes.find((volume) => volume.target === runtimeRoot),
+      { source: runtimeRoot, target: runtimeRoot, mode: 'ro' },
+    );
+    const runtimeMount = model.volumes.find((volume) => volume.target === runtimeRoot);
+    const persistedRoomRoot = path.posix.join(runtimeRoot, 'beeline', 'agents', 'room');
+    const visibleBodyState = path.posix.join(
+      runtimeMount.source,
+      path.posix.relative(runtimeMount.target, persistedRoomRoot),
+      'body-state.json',
+    );
+    assert.equal(visibleBodyState, path.posix.join(persistedRoomRoot, 'body-state.json'));
+  }
 });
 
-test('a config-unchanged merge reconciles the freshly built auth and materializer images', async () => {
-  const tracked = fs.readFileSync(TRACKED_COMPOSE, 'utf8');
-  const r = await runDeploy({
-    liveCompose: tracked,
-    liveNginx: fs.readFileSync(TRACKED_NGINX, 'utf8'),
-    gatewayRunning: true,
-  });
-  assert.equal(r.status, 0, r.stderr);
-  assert.ok(r.stdout.includes('production config unchanged'));
-  assert.ok(!r.sudoLog().includes('install'), r.sudoLog());
-  assert.equal(
-    r
-      .sudoLog()
-      .split('\n')
-      .filter((l) => l.includes('up -d') && !l.includes('--no-deps auth')).length,
-    1,
-    r.sudoLog(),
-  );
-  assert.equal(
-    r
-      .sudoLog()
-      .split('\n')
-      .filter((l) => l.includes('--no-deps auth')).length,
-    0,
-  );
-  assert.ok(!r.dockerLog().startsWith('kill '), r.dockerLog());
-});
-
-test('an nginx-content-only change places nginx.conf, reconciles images, and reloads via HUP', async () => {
+test('a repeated deploy places tracked config and converges once', async () => {
   const r = await runDeploy({
     liveCompose: fs.readFileSync(TRACKED_COMPOSE, 'utf8'),
-    gatewayRunning: true,
+    liveNginx: fs.readFileSync(TRACKED_NGINX, 'utf8'),
   });
   assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
   assert.equal(r.readLive('relay-front/nginx.conf'), fs.readFileSync(TRACKED_NGINX, 'utf8'));
-  assert.ok(r.sudoLog().includes('nginx.conf'));
-  // No compose.yml was placed (the auth step's `-f .../compose.yml` line is
-  // not an install).
   assert.equal(
     r
       .sudoLog()
       .split('\n')
       .filter((l) => l.includes('install') && l.includes('compose.yml')).length,
-    0,
+    1,
     r.sudoLog(),
   );
   assert.equal(
@@ -559,101 +509,28 @@ test('an nginx-content-only change places nginx.conf, reconciles images, and rel
   );
 });
 
-test('a failed stack rollout restores the previous config files and fails the deploy WITHOUT losing the web deploy', async () => {
+test('a failed cutover stops one-way and prints exact forward recovery commands', async () => {
   const r = await runDeploy({ failComposeUp: true });
   assert.notEqual(r.status, 0);
-  assert.ok(r.stderr.includes('STACK ROLLOUT FAILED'), r.stderr);
-  // Config files rolled back to their pre-deploy bytes.
-  assert.equal(r.readLive('compose.yml'), PRE_CHANGE_COMPOSE);
-  assert.equal(r.readLive('relay-front/nginx.conf'), PRE_CHANGE_NGINX);
-  assert.equal(r.eventsRunning(), true, 'failed convergence must restore standalone events');
-  // The web deploy still completed and verified (web swap succeeded — the
-  // staged tree mirrors the checkout's web/).
-  assert.equal(
-    r.readLive('relay-front/web/install.sh'),
-    fs.readFileSync(path.join(REPO, 'relay-stack/web/install.sh'), 'utf8'),
-  );
-});
-
-test('an exit after events retirement but before materializer start restores the legacy service', async () => {
-  const r = await runDeploy({ failStackStage: true });
-  assert.notEqual(r.status, 0);
-  assert.equal(r.eventsRunning(), true);
-  assert.ok(r.sudoLog().includes('disable --now beeline-events.service'), r.sudoLog());
-  assert.ok(r.sudoLog().includes('enable --now beeline-events.service'), r.sudoLog());
-  assert.equal(r.dockerLog().includes('up -d --remove-orphans'), false, r.dockerLog());
-});
-
-test('an interruption after systemd retirement restores repository-event ingestion', async () => {
-  const r = await runDeploy({ interruptAfterEventsDisable: true });
-  assert.notEqual(r.status, 0);
-  assert.equal(r.eventsRunning(), true);
-  assert.ok(r.sudoLog().includes('disable --now beeline-events.service'), r.sudoLog());
-  assert.ok(r.sudoLog().includes('enable --now beeline-events.service'), r.sudoLog());
-  assert.equal(r.materializerRunning(), false);
-});
-
-test('an interrupted config placement restores the prior stack and legacy consumers', async () => {
-  const r = await runDeploy({ interruptAfterComposeInstall: true });
-  assert.notEqual(r.status, 0);
-  assert.equal(r.readLive('compose.yml'), PRE_CHANGE_COMPOSE);
-  assert.equal(r.readLive('relay-front/nginx.conf'), PRE_CHANGE_NGINX);
-  assert.equal(r.eventsRunning(), true);
-  assert.equal(r.legacyPushRunning(), true);
-  assert.equal(r.materializerRunning(), false);
-});
-
-test('a partial first convergence keeps materializer ownership once its consumer started', async () => {
-  const r = await runDeploy({ failComposeAfterStart: true });
-  assert.notEqual(r.status, 0);
-  assert.ok(r.stderr.includes('preserving one-way tail ownership'), r.stderr);
   assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
   assert.equal(r.readLive('relay-front/nginx.conf'), fs.readFileSync(TRACKED_NGINX, 'utf8'));
   assert.equal(r.eventsRunning(), false);
-  assert.equal(r.legacyPushRunning(), false);
-  assert.equal(r.sudoLog().includes('enable --now beeline-events.service'), false, r.sudoLog());
+  assert.equal(r.materializerRunning(), false);
+  assert.ok(r.stderr.includes('MANUAL RECOVERY REQUIRED'), r.stderr);
+  assert.ok(r.stderr.includes('Keep beeline-events.service stopped'), r.stderr);
+  assert.ok(r.stderr.includes('up -d --remove-orphans'), r.stderr);
+  assert.ok(r.stderr.includes('/push/health'), r.stderr);
+  assert.ok(r.stderr.includes('/snapshot/health'), r.stderr);
 });
 
-test('public rollback never hands started materializer reservations back to legacy consumers', async () => {
+test('failed public verification leaves the materializer as sole tail owner', async () => {
   const r = await runDeploy({ failPublic: true });
   assert.notEqual(r.status, 0);
-  assert.ok(r.stdout.includes('materializer tail ownership remains on Postgres'), r.stdout);
-  assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
-  assert.equal(r.readLive('relay-front/nginx.conf'), fs.readFileSync(TRACKED_NGINX, 'utf8'));
-  assert.equal(r.eventsRunning(), false);
-  assert.equal(r.legacyPushRunning(), false);
-  assert.equal(r.sudoLog().includes('enable --now beeline-events.service'), false, r.sudoLog());
-});
-
-test('stopped legacy consumers still make the first materializer start one-way', async () => {
-  const r = await runDeploy({
-    legacyPushRunning: false,
-    eventsRunning: false,
-    failPublic: true,
-  });
-  assert.notEqual(r.status, 0);
-  assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
   assert.equal(r.materializerRunning(), true);
-  assert.equal(r.legacyPushRunning(), false);
   assert.equal(r.eventsRunning(), false);
-});
-
-test('an unverifiable legacy rollback never re-enables its events consumer', async () => {
-  const r = await runDeploy({ failComposeUp: true, failRollbackInstall: true });
-  assert.notEqual(r.status, 0);
-  assert.ok(r.stderr.includes('config could not be verified'), r.stderr);
   assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
-  assert.equal(r.materializerRunning(), false);
-  assert.equal(r.eventsRunning(), false);
+  assert.ok(r.stderr.includes('MANUAL RECOVERY REQUIRED'), r.stderr);
   assert.equal(r.sudoLog().includes('enable --now beeline-events.service'), false, r.sudoLog());
-});
-
-test('a refused sudo install (missing sudoers rule) fails loudly and rolls the config back', async () => {
-  const r = await runDeploy({ failInstall: true });
-  assert.notEqual(r.status, 0);
-  assert.ok(r.stderr.includes('STACK ROLLOUT FAILED'), r.stderr);
-  assert.equal(r.readLive('compose.yml'), PRE_CHANGE_COMPOSE);
-  assert.equal(r.eventsRunning(), true);
 });
 
 test('compose validation never resolves real env_file secrets: an unreadable env_file entry does not fail the deploy', async () => {

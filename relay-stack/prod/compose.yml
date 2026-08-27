@@ -109,12 +109,12 @@ services:
       BUZZY_SNAPSHOT_PUBLIC_ORIGIN: https://usebeeline.app
       BUZZY_SNAPSHOT_AUTH_BASE_URL: http://auth:8789
       BUZZY_SNAPSHOT_INTERNAL_TOKEN: ${BUZZY_SNAPSHOT_INTERNAL_TOKEN:?set BUZZY_SNAPSHOT_INTERNAL_TOKEN}
-      XDG_STATE_HOME: /var/lib/beeline-runtime
+      XDG_STATE_HOME: ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}
       BEELINE_EVENTS_STATE_DIR: /var/lib/beeline-events
     volumes:
       - ${BUZZY_PUSH_SA_HOST_FILE:-/home/lunchbox/buzzy-push-gateway/secrets/fcm-service-account.json}:/run/secrets/buzzy-fcm-service-account.json:ro
       - ${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}:/var/lib/buzzy-push
-      - ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:/var/lib/beeline-runtime:ro
+      - ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:ro
       - ${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}:/var/lib/beeline-events
     depends_on:
       auth:

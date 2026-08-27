@@ -174,6 +174,10 @@ beeline pair BUZZ-XXXX-XXXX --agent codex
 #   npm install -g @agentclientprotocol/claude-agent-acp
 beeline pair BUZZ-XXXX-XXXX --agent claude
 
+# Optional per-agent skill share. The named directory must live at
+# ~/.agents/skills/review-pr; no other personal skills are inherited.
+beeline pair BUZZ-XXXX-XXXX --agent codex --share-skill review-pr
+
 # Optional machine-local credentials. Each profile is a separate opt-in and
 # requires creator-only access. Pairing runs Trusty Squire's connect check while
 # you are present, opening Google/GitHub in your browser only when the local

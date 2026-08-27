@@ -9,6 +9,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    KeyboardAvoidingView: host('KeyboardAvoidingView'),
     Modal: host('Modal'),
     Platform: {
       OS: 'ios',
@@ -16,6 +17,7 @@ vi.mock('react-native', async () => {
     },
     Pressable: host('Pressable'),
     Text: host('Text'),
+    TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
   };
@@ -24,6 +26,13 @@ vi.mock('react-native', async () => {
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
+
+vi.mock('./MonoHull', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullSurface: (props: any) => ReactModule.createElement('HullSurface', props, props.children),
+  };
+});
 
 vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
@@ -57,6 +66,7 @@ import { RoomDeckComposeMenu } from './RoomDeckComposeMenu';
 const source = readFileSync(new URL('./RoomDeckComposeMenu.tsx', import.meta.url), 'utf8');
 const roomGlyphSource = readFileSync(new URL('./RoomGlyph.tsx', import.meta.url), 'utf8');
 const actionSheetSource = readFileSync(new URL('./HullActionSheet.tsx', import.meta.url), 'utf8');
+const dialogSource = readFileSync(new URL('./HullDialog.tsx', import.meta.url), 'utf8');
 
 const originalConsoleError = console.error;
 
@@ -103,7 +113,9 @@ describe('Room deck compose menu', () => {
       accessibilityValue: { text: '×' },
     });
     const rows = actions.map((action) =>
-      renderer.root.findByProps({ testID: `room-deck-compose-${action}` }),
+      renderer.root
+        .findAllByProps({ testID: `room-deck-compose-${action}` })
+        .find((node) => node.type === 'Pressable')!,
     );
     expect(rows).toHaveLength(5);
     expect(rows.map((row) => row.props.accessibilityRole)).toEqual(Array(5).fill('button'));
@@ -144,9 +156,10 @@ describe('Room deck compose menu', () => {
     expect(source).not.toMatch(/borderRadius:\s*\d/);
     expect(source).toContain('borderRadius: groknight.radius');
 
-    expect(actionSheetSource).toContain('backgroundColor: theme.buzz.bgRaised');
-    expect(actionSheetSource).toContain('borderRadius: theme.buzz.radius');
-    expect(actionSheetSource).toContain('borderWidth: StyleSheet.hairlineWidth');
+    expect(actionSheetSource).toContain('<HullFloatingSurface');
+    expect(dialogSource).toContain('backgroundColor: hull.bgRaised');
+    expect(dialogSource).toContain('borderRadius: hull.radius');
+    expect(dialogSource).toContain('borderWidth: StyleSheet.hairlineWidth');
     expect(actionSheetSource).not.toMatch(/rgba?\(/);
   });
 

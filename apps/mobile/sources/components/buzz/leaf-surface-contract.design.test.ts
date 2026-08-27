@@ -2,9 +2,16 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const sources = {
-  'RoomDeckComposeMenu.tsx': readFileSync(new URL('./RoomDeckComposeMenu.tsx', import.meta.url), 'utf8'),
+  'RoomDeckComposeMenu.tsx': readFileSync(
+    new URL('./RoomDeckComposeMenu.tsx', import.meta.url),
+    'utf8',
+  ),
   'HullActionSheet.tsx': readFileSync(new URL('./HullActionSheet.tsx', import.meta.url), 'utf8'),
-  'SettingsNavigationRow.tsx': readFileSync(new URL('./SettingsNavigationRow.tsx', import.meta.url), 'utf8'),
+  'HullDialog.tsx': readFileSync(new URL('./HullDialog.tsx', import.meta.url), 'utf8'),
+  'SettingsNavigationRow.tsx': readFileSync(
+    new URL('./SettingsNavigationRow.tsx', import.meta.url),
+    'utf8',
+  ),
   'EmptyLedgerState.tsx': readFileSync(new URL('./EmptyLedgerState.tsx', import.meta.url), 'utf8'),
   'workspace.tsx': readFileSync(
     new URL('../../app/(app)/buzz/settings/workspace.tsx', import.meta.url),
@@ -22,7 +29,8 @@ describe('Beeline leaf-surface prohibited patterns', () => {
     for (const name of ['RoomDeckComposeMenu.tsx', 'HullActionSheet.tsx'] as const) {
       expect(sources[name], `${name} must stay de-glassed`).not.toMatch(/BlurView|expo-blur/);
     }
-    expect(sources['HullActionSheet.tsx']).toContain('backgroundColor: theme.buzz.bgRaised');
+    expect(sources['HullActionSheet.tsx']).toContain('<HullFloatingSurface');
+    expect(sources['HullDialog.tsx']).toContain('backgroundColor: hull.bgRaised');
     expect(sources['HullActionSheet.tsx']).not.toMatch(/rgba?\(/);
   });
 

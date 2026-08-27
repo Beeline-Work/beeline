@@ -109,7 +109,7 @@ describe('Room→repo settings change', () => {
       'handleSelectRoomRepoCandidate',
     );
     expect(handler).toContain('roomListCorners(cornerLifecycle)');
-    expect(handler).toContain('Alert.alert');
+    expect(handler).toContain('Modal.confirm');
     expect(handler).toContain('roomRepository && hasOpenCorners');
   });
 });

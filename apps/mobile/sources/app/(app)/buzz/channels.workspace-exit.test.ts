@@ -30,6 +30,10 @@ const workspaceContext = vi.hoisted(() => ({
     personalWorkspaceId: null as string | null,
   },
 }));
+const modal = vi.hoisted(() => ({
+  alert: vi.fn(),
+  confirm: vi.fn(async () => false),
+}));
 
 vi.mock('react-native-mmkv', () => ({
   MMKV: class {
@@ -102,6 +106,7 @@ vi.mock('@/buzz/local-cache-sync', () => ({
   revalidateCachedMessages: vi.fn(async () => undefined),
 }));
 vi.mock('@/buzz/defer-interaction', () => ({ afterInteractions: () => () => undefined }));
+vi.mock('@/modal', () => ({ Modal: modal }));
 
 const leaveWorkspace = vi.hoisted(() => vi.fn(async () => undefined));
 
@@ -208,7 +213,8 @@ vi.mock('react-native', async () => {
     ]);
   };
   return {
-    Alert: { alert: vi.fn() },
+    KeyboardAvoidingView: host('KeyboardAvoidingView'),
+    Modal: host('Modal'),
     FlatList,
     Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
@@ -231,7 +237,6 @@ vi.mock('react-native', async () => {
 const { channelCacheKey, channelListCacheKey, selectChannelList, useBuzzLocalCache } =
   await import('@/buzz/local-cache');
 const { prepareWorkspaceContext } = await import('@/buzz/workspace-bootstrap');
-const { Alert } = await import('react-native');
 const { default: BuzzChannels } = await import('./channels');
 
 const VIEWER = 'a'.repeat(64);
@@ -324,16 +329,16 @@ async function longPress(node: any) {
   });
 }
 
-/** Open the drawer, long-press one tile, press its × and hand back the dialog. */
+/** Open the drawer, long-press one tile, press its × and hand back the dialog request. */
 async function openConfirmDialog(tree: ReactTestRenderer, communityId: string) {
   await press(findAllByTestId(tree, 'workspace-avatar-trigger')[0]);
   expect(findAllByTestId(tree, 'community-drawer-overlay')).toHaveLength(1);
   await longPress(findAllByTestId(tree, `community-rail-${communityId}`)[0]);
   expect(findAllByTestId(tree, `workspace-exit-${communityId}`)).toHaveLength(1);
   await press(findAllByTestId(tree, `workspace-exit-${communityId}`)[0]);
-  expect(Alert.alert).toHaveBeenCalledTimes(1);
-  const [title, message, buttons] = vi.mocked(Alert.alert).mock.calls[0];
-  return { title: String(title), message: String(message), buttons: buttons as any[] };
+  expect(modal.confirm).toHaveBeenCalledTimes(1);
+  const [title, message, options] = modal.confirm.mock.calls[0];
+  return { title: String(title), message: String(message), options };
 }
 
 describe('workspace exit gesture', () => {
@@ -341,7 +346,9 @@ describe('workspace exit gesture', () => {
     mmkvValues.clear();
     mmkvWrites.mockClear();
     navigation.replace.mockClear();
-    vi.mocked(Alert.alert).mockClear();
+    modal.alert.mockClear();
+    modal.confirm.mockClear();
+    modal.confirm.mockResolvedValue(false);
     leaveWorkspace.mockClear();
     asyncStorage.getItem.mockReset().mockResolvedValue('shared-1');
     asyncStorage.setItem.mockReset().mockResolvedValue(undefined);
@@ -373,26 +380,19 @@ describe('workspace exit gesture', () => {
   it('the confirm dialog names the workspace and what leaving means', async () => {
     seedWorkspace();
     const tree = await render();
-    const { title, message, buttons } = await openConfirmDialog(tree, 'shared-1');
+    const { title, message, options } = await openConfirmDialog(tree, 'shared-1');
 
     expect(title).toBe('Exit Night Shift?');
     expect(message).toMatch(/removes this Workspace from your list/i);
     expect(message).toMatch(/re-invited later/i);
 
-    const cancel = buttons.find((button) => button.text === 'Cancel');
-    const exit = buttons.find((button) => button.text === 'Exit');
-    expect(cancel?.style).toBe('cancel');
-    expect(exit?.style).toBe('destructive');
+    expect(options).toEqual({ cancelText: 'Cancel', confirmText: 'Exit', destructive: true });
   });
 
   it('cancel dismisses the dialog and leaves nothing', async () => {
     seedWorkspace();
     const tree = await render();
-    const { buttons } = await openConfirmDialog(tree, 'shared-1');
-
-    await act(async () => {
-      buttons.find((button) => button.text === 'Cancel')?.onPress?.();
-    });
+    await openConfirmDialog(tree, 'shared-1');
 
     expect(leaveWorkspace).not.toHaveBeenCalled();
     expect(navigation.replace).not.toHaveBeenCalled();
@@ -400,12 +400,10 @@ describe('workspace exit gesture', () => {
 
   it('successful leave reconciles the switcher, cache, active selection, and Personal marker', async () => {
     seedWorkspace();
+    modal.confirm.mockResolvedValue(true);
     const tree = await render();
-    const { buttons } = await openConfirmDialog(tree, 'shared-1');
-
-    await act(async () => {
-      buttons.find((button) => button.text === 'Exit')?.onPress?.();
-    });
+    await openConfirmDialog(tree, 'shared-1');
+    await act(async () => Promise.resolve());
 
     expect(leaveWorkspace).toHaveBeenCalledWith('shared-1');
     expect(asyncStorage.getItem).toHaveBeenCalledWith(
@@ -454,13 +452,11 @@ describe('workspace exit gesture', () => {
 
   it('keeps a successful server leave visible when preference persistence rejects', async () => {
     seedWorkspace();
+    modal.confirm.mockResolvedValue(true);
     asyncStorage.setItem.mockRejectedValueOnce(new Error('AsyncStorage unavailable'));
     const tree = await render();
-    const { buttons } = await openConfirmDialog(tree, 'shared-1');
-
-    await act(async () => {
-      buttons.find((button) => button.text === 'Exit')?.onPress?.();
-    });
+    await openConfirmDialog(tree, 'shared-1');
+    await act(async () => Promise.resolve());
 
     expect(leaveWorkspace).toHaveBeenCalledWith('shared-1');
     expect(
@@ -472,7 +468,7 @@ describe('workspace exit gesture', () => {
     }
     expect(findAllByTestId(tree, 'community-rail-shared-1')).toHaveLength(0);
     expect(findAllByTestId(tree, 'community-rail-other-2').length).toBeGreaterThan(0);
-    const notice = vi.mocked(Alert.alert).mock.calls.at(-1)!;
+    const notice = modal.alert.mock.calls.at(-1)!;
     expect(String(notice[0])).toMatch(/Exited Night Shift, but could not save selection/);
     expect(String(notice[1])).toMatch(/was removed from this device/);
     expect(String(notice[1])).toMatch(/AsyncStorage unavailable/);
@@ -481,6 +477,7 @@ describe('workspace exit gesture', () => {
 
   it('does not let an in-flight refresh resurrect an inactive Personal leave', async () => {
     seedNonActivePersonalWorkspace();
+    modal.confirm.mockResolvedValue(true);
     asyncStorage.getItem.mockResolvedValueOnce('personal-1');
     const tree = await render();
     let resolveRefresh!: (value: typeof workspaceContext.current & {
@@ -497,10 +494,8 @@ describe('workspace exit gesture', () => {
       roomList.props.onRefresh?.();
     });
 
-    const { buttons } = await openConfirmDialog(tree, 'personal-1');
-    await act(async () => {
-      buttons.find((button) => button.text === 'Exit')?.onPress?.();
-    });
+    await openConfirmDialog(tree, 'personal-1');
+    await act(async () => Promise.resolve());
 
     expect(asyncStorage.getItem).toHaveBeenCalledWith(
       `@beeline/workspace/personal/${VIEWER}`,
@@ -537,6 +532,7 @@ describe('workspace exit gesture', () => {
 
   it('clears the active pointer when the last Workspace is successfully left', async () => {
     seedWorkspace();
+    modal.confirm.mockResolvedValue(true);
     workspaceContext.current = {
       workspaces: [{ communityId: 'shared-1', name: 'Night Shift' }],
       activeWorkspaceId: 'shared-1',
@@ -546,11 +542,8 @@ describe('workspace exit gesture', () => {
       communities: [{ communityId: 'shared-1', name: 'Night Shift' }] as never[],
     });
     const tree = await render();
-    const { buttons } = await openConfirmDialog(tree, 'shared-1');
-
-    await act(async () => {
-      buttons.find((button) => button.text === 'Exit')?.onPress?.();
-    });
+    await openConfirmDialog(tree, 'shared-1');
+    await act(async () => Promise.resolve());
 
     expect(asyncStorage.removeItem).toHaveBeenCalledWith(
       `@beeline/workspace/personal/${VIEWER}`,
@@ -567,22 +560,20 @@ describe('workspace exit gesture', () => {
 
   it('a failed leave surfaces honestly instead of removing anything', async () => {
     seedWorkspace();
+    modal.confirm.mockResolvedValue(true);
     leaveWorkspace.mockRejectedValueOnce(
       new Error(
         'You are the only owner of this Workspace. Promote another member to owner before leaving.',
       ),
     );
     const tree = await render();
-    const { buttons } = await openConfirmDialog(tree, 'shared-1');
-
-    await act(async () => {
-      buttons.find((button) => button.text === 'Exit')?.onPress?.();
-    });
+    await openConfirmDialog(tree, 'shared-1');
+    await act(async () => Promise.resolve());
 
     expect(leaveWorkspace).toHaveBeenCalledWith('shared-1');
-    // Second alert: the honest failure, quoting the rule.
-    expect(vi.mocked(Alert.alert).mock.calls.length).toBeGreaterThanOrEqual(2);
-    const failure = vi.mocked(Alert.alert).mock.calls.at(-1)!;
+    // The Hull alert preserves the honest failure copy, quoting the rule.
+    expect(modal.alert).toHaveBeenCalledTimes(1);
+    const failure = modal.alert.mock.calls.at(-1)!;
     expect(String(failure[0])).toMatch(/Could not exit/);
     expect(String(failure[1])).toMatch(/only owner/);
 

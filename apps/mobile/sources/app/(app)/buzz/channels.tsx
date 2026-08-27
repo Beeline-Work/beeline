@@ -41,10 +41,7 @@ import {
   runGitHubInstallationSession,
 } from '@/auth/github-auth-session';
 import { authSessionOptions } from '@/auth/auth-session';
-import {
-  reconcileStoredWorkspaceSelection,
-  saveLastViewedChannel,
-} from '@/buzz/community-storage';
+import { reconcileStoredWorkspaceSelection, saveLastViewedChannel } from '@/buzz/community-storage';
 import { createCommunityInviteUrl } from '@/buzz/community-invite';
 import { prepareWorkspaceContext } from '@/buzz/workspace-bootstrap';
 import { loadSuccessionPredecessors } from '@/buzz/succession-chain';
@@ -400,20 +397,52 @@ async function enrichDisplayChannels(
         transport.roomRepositoryState(room.id),
       ]);
       const snapshot = synced.status === 'fulfilled' ? synced.value.entry.snapshot : undefined;
+      const corners =
+        synced.status === 'fulfilled' && synced.value.entry.snapshot
+          ? cornerSummariesFromSnapshot(room.id, synced.value.entry.snapshot)
+          : getCachedChannel(viewerPubkey, room.id)?.snapshot
+            ? cornerSummariesFromSnapshot(
+                room.id,
+                getCachedChannel(viewerPubkey, room.id)!.snapshot!,
+              )
+            : [];
+      const previousTruth = room.cornerOpenTruth ?? {};
+      const cornerOpenTruth = Object.fromEntries(
+        await Promise.all(
+          corners.map(async (corner) => {
+            const reviewReady = currentCornerStatus(corner) === 'open';
+            const [archived, mergeTarget] = await Promise.allSettled([
+              transport.isChannelArchived(corner.id),
+              reviewReady
+                ? transport.getSubchannelMergeTarget(corner.id)
+                : Promise.resolve(undefined),
+            ]);
+            const prior = previousTruth[corner.id];
+            const confirmedArchived =
+              prior?.archived === true ||
+              (archived.status === 'fulfilled' ? archived.value : undefined);
+            const mergeable = reviewReady
+              ? mergeTarget.status === 'fulfilled'
+                ? Boolean(mergeTarget.value && 'target' in mergeTarget.value)
+                : prior?.mergeable
+              : undefined;
+            return [
+              corner.id,
+              {
+                ...(confirmedArchived !== undefined ? { archived: confirmedArchived } : {}),
+                ...(mergeable !== undefined ? { mergeable } : {}),
+              },
+            ] as const;
+          }),
+        ),
+      );
       const roomMemberPubkeys = snapshot
         ? selectMembers(snapshot, room.id).map((member) => member.pubkey)
         : [];
       return {
         ...room,
-        corners:
-          synced.status === 'fulfilled' && synced.value.entry.snapshot
-            ? cornerSummariesFromSnapshot(room.id, synced.value.entry.snapshot)
-            : getCachedChannel(viewerPubkey, room.id)?.snapshot
-              ? cornerSummariesFromSnapshot(
-                  room.id,
-                  getCachedChannel(viewerPubkey, room.id)!.snapshot!,
-                )
-              : [],
+        corners,
+        cornerOpenTruth,
         latestMessage: synced.status === 'fulfilled' ? synced.value.entry.latestMessage : undefined,
         latestMessageAt:
           synced.status === 'fulfilled' ? synced.value.entry.latestMessageAt : undefined,
@@ -536,11 +565,31 @@ export default function BuzzChannels() {
         const activeAgentTurn = snapshot
           ? latestAgentTurns(snapshot, room.id).find((turn) => isAgentTurnActive(turn, undefined))
           : undefined;
+        const corners = snapshot ? cornerSummariesFromSnapshot(room.id, snapshot) : [];
         return {
           ...room,
           agentTurnWorking: Boolean(activeAgentTurn),
           agentTurnAt: activeAgentTurn ? snapshot?.rooms[room.id]?.coverage.newest : undefined,
-          corners: snapshot ? cornerSummariesFromSnapshot(room.id, snapshot) : [],
+          corners: corners.map((corner) => {
+            const truth = room.cornerOpenTruth?.[corner.id];
+            if (truth?.archived) {
+              return { ...corner, status: 'archived' as const, machineState: 'closed' as const };
+            }
+            if (
+              truth?.mergeable === false &&
+              corner.machineState === 'waiting' &&
+              corner.machineReason === 'review'
+            ) {
+              return {
+                ...corner,
+                status: null,
+                machineState: 'idle' as const,
+                machineReason: undefined,
+                awaitingReply: false,
+              };
+            }
+            return corner;
+          }),
         };
       }),
     [cachedListEntry?.channels, identity?.publicKey, normalizedChannelCaches],
@@ -842,9 +891,7 @@ export default function BuzzChannels() {
           setCommunities(remaining);
           setActiveCommunityId(nextActive);
           setPersonalWorkspaceId((current) =>
-            current && remaining.some((entry) => entry.communityId === current)
-              ? current
-              : null,
+            current && remaining.some((entry) => entry.communityId === current) ? current : null,
           );
           if (activeCommunityId === communityId) {
             setExpandedRoomId(null);
@@ -873,13 +920,7 @@ export default function BuzzChannels() {
         })
         .finally(() => setLeavingWorkspaceId(null));
     },
-    [
-      activeCommunityId,
-      communities,
-      identity,
-      leavingWorkspaceId,
-      transport,
-    ],
+    [activeCommunityId, communities, identity, leavingWorkspaceId, transport],
   );
 
   const handleRefresh = useCallback(

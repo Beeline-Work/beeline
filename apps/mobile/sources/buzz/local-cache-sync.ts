@@ -289,9 +289,7 @@ async function performMessageRevalidation(
 ): Promise<MessageSyncResult> {
   const key = `${viewerPubkey}:${channelId}`;
   const cached = getCachedChannel(viewerPubkey, channelId);
-  const complete = Boolean(
-    cached?.snapshot?.rooms[channelId]?.coverage.initialBackfillComplete,
-  );
+  const complete = Boolean(cached?.snapshot?.rooms[channelId]?.coverage.initialBackfillComplete);
   // Cold or INCOMPLETE open through a fast-path-capable transport: a cached
   // shell (entry present, snapshot empty or coverage never completed) is not
   // a painted transcript — it takes the same single bounded tail read as no
@@ -414,10 +412,18 @@ export function cornerSummariesFromSnapshot(
           ? corner.state === 'working'
             ? 'live'
             : corner.state === 'waiting'
-              ? 'needs-attention'
+              ? corner.reason === 'review'
+                ? 'open'
+                : corner.reason === 'failure'
+                  ? 'failed'
+                  : 'needs-attention'
               : null
           : 'failed',
       ...(corner.kind === 'active' ? { machineState: corner.state } : {}),
+      ...(corner.kind === 'active' && corner.reason ? { machineReason: corner.reason } : {}),
+      ...(corner.kind === 'active' && corner.state === 'waiting' && corner.reason === 'question'
+        ? { awaitingReply: true }
+        : {}),
       stateAt: corner.stateAt,
       createdAt: corner.createdAt,
     })),

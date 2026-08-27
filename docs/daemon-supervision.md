@@ -27,8 +27,20 @@ handoff; `beeline daemon` now instantiates `ThinDaemonCore` directly.
 
 ## Portable lifecycle semantics
 
-- `READY=1` means configuration and safety checks passed and the core progress
-  loop exists. It is never conditional on a relay connection or Room health.
+- `READY=1` means host configuration and safety checks passed and the core
+  progress loop exists. It is never conditional on a relay connection or Room
+  health. The daemon revalidates a persisted model/effort selection against the
+  selected ACP harness's live catalog before starting the core. A confirmed
+  catalog miss/provider refusal becomes `model unavailable`; a catalog, harness,
+  or authentication outage becomes `model validation unavailable` and is never
+  presented as proof that the model was retired. Both are served degraded states
+  rather than crash loops: the agent stays connected, reports offline, publishes
+  the typed Room line, and refuses ordinary ACP work. On restart, every
+  persisted human-authored model setting is live-validated separately for its
+  Room before that Room's first presence. A valid override clears only that
+  Room's copied startup block; a failed override reports that Room offline even
+  when the daemon-wide default is valid. Sibling Rooms remain isolated from one
+  another's result.
 - `WATCHDOG=1` and `STATUS=` are emitted together, only after a complete core
   tick. A relay outage produces a degraded status and continued watchdog
   progress. No independent heartbeat timer exists.

@@ -57,6 +57,11 @@ import {
 } from './activity.js';
 import { createAgentCommandPublisher } from './agent-commands-publish.js';
 import {
+  modelUnavailableEventTags,
+  modelUnavailableState,
+  modelUnavailableRoomMessage,
+} from './model-availability.js';
+import {
   PI_CORNER_REQUEST_INSTRUCTIONS,
   createCornerRequestFilter,
   type AgentCornerRequest,
@@ -345,7 +350,7 @@ import {
   parseAdvertisedConfigOptions,
   withEffectiveCurrentValues,
 } from './model-config.js';
-import { fetchAgentModelCatalog } from './model-catalog.js';
+import { fetchAgentModelCatalog, validateAgentModelSelection } from './model-catalog.js';
 import {
   assertCornerWorktreeIsolated,
   cornerPoolCandidateRoots,
@@ -2360,6 +2365,8 @@ export class Body {
   private readonly pendingCiWatches = new Set<Promise<void>>();
   /** (repoId:tip) lands this process has already realigned corners for. */
   private readonly realignedLandKeys = new Set<string>();
+  /** Rooms that have received this process's startup model-unavailable line. */
+  private readonly modelUnavailableRooms = new Set<string>();
   /** One coalesced approval pass per Room. A pushed approval arriving while a
    * pass is already reading relay state requests one immediate second pass,
    * closing the read-before-event race without allowing overlapping lands. */
@@ -3095,6 +3102,7 @@ export class Body {
     request: ChannelTaskRequest,
     conversation: readonly { role: string; text: string }[],
   ): Promise<CornerMetadata | undefined> {
+    if (this.config.modelUnavailable) return undefined;
     const prompt = cornerMetadataPrompt(request.content, conversation);
     if (this.generateCornerMetadata) {
       const first = parseCornerMetadata(await this.generateCornerMetadata(prompt));
@@ -3612,7 +3620,48 @@ export class Body {
       }
     }
     if (!applied) return;
-    await applyAgentModelSelection(client, sessionId, rawConfigOptions, applied);
+    await applyAgentModelSelection(client, sessionId, catalogOptions, applied);
+  }
+
+  private async publishModelUnavailableState(channelId: string, replyTo?: string): Promise<void> {
+    const unavailable = this.config.modelUnavailable;
+    if (!unavailable || (!replyTo && this.modelUnavailableRooms.has(channelId))) return;
+    if (!replyTo) {
+      try {
+        const standing = await this.agentRelay.queryEvents([
+          {
+            kinds: [9],
+            authors: [this.agentIdentity.publicKey],
+            '#h': [channelId],
+            '#t': ['buzz-agent-model-unavailable'],
+            limit: 10,
+          },
+        ]);
+        if (
+          standing.some(
+            (event) =>
+              event.tags.some((tag) => tag[0] === 'status' && tag[1] === unavailable.kind) &&
+              event.tags.some(
+                (tag) => tag[0] === 'unavailable-value' && tag[1] === unavailable.unavailable.value,
+              ),
+          )
+        ) {
+          this.modelUnavailableRooms.add(channelId);
+          return;
+        }
+      } catch (error) {
+        console.warn('[body] could not reconcile the standing model-unavailable state:', error);
+      }
+    }
+    await postAgentMessage(
+      channelId,
+      this.agentIdentity,
+      modelUnavailableRoomMessage(unavailable),
+      replyTo,
+      [],
+      modelUnavailableEventTags(unavailable),
+    );
+    if (!replyTo) this.modelUnavailableRooms.add(channelId);
   }
 
   /**
@@ -3673,11 +3722,12 @@ export class Body {
    * human pick when one exists, else the pair-time default) onto it. When no
    * catalog exists at all, probes the harness live once per process for real
    * picker options. Skips silently when nothing is configured or the relay
-   * already agrees; every failure is logged, never thrown — Room serving must
-   * not wait on this.
+   * already agrees. Room startup always awaits this boundary so every
+   * persisted human override is validated before presence can claim the Room
+   * is healthy, even when pairing stored no default; relay failures are logged
+   * and leave any existing startup block in force.
    */
   async syncModelSelectionToRelay(communityId: string): Promise<void> {
-    if (!this.config.modelSelection?.model && !this.config.modelSelection?.effort) return;
     const ctx = this.agentClientContext();
     let human: Awaited<ReturnType<typeof getAgentModelConfig>> = null;
     try {
@@ -3685,7 +3735,26 @@ export class Body {
     } catch (error) {
       console.error('[body] failed to read persisted agent model config:', error);
     }
-    const applied = human ?? this.config.modelSelection;
+    const humanSelection = human
+      ? {
+          ...(human.model ? { model: human.model } : {}),
+          ...(human.effort ? { effort: human.effort } : {}),
+        }
+      : null;
+    if (humanSelection) {
+      try {
+        await this.validateLiveModelSelection(humanSelection);
+        // BodyConfig is copied per Room by RoomRuntimeCoordinator. Clearing
+        // this Room's startup block cannot accidentally authorize a sibling
+        // community that has no valid human override of the stale default.
+        this.config.modelSelection = humanSelection;
+        this.config.modelUnavailable = undefined;
+      } catch (error) {
+        this.config.modelUnavailable = modelUnavailableState(humanSelection, error);
+      }
+    }
+    const applied = humanSelection ?? this.config.modelSelection;
+    if (!applied?.model && !applied?.effort) return;
     const syncedKey = `${communityId}:${this.agentIdentity.publicKey}:${applied.model ?? ''}/${applied.effort ?? ''}`;
     if (MODEL_SELECTION_SYNCED.has(syncedKey)) return;
     let existing: Awaited<ReturnType<typeof getAgentModelCatalog>> = null;
@@ -3706,6 +3775,18 @@ export class Body {
     MODEL_SELECTION_SYNCED.add(syncedKey);
   }
 
+  private async validateLiveModelSelection(selection: {
+    model?: string;
+    effort?: string;
+  }): Promise<void> {
+    const command = this.config.agentCommand ?? this.config.agentBinary;
+    await validateAgentModelSelection(
+      { command, args: this.config.agentArgs ?? [] },
+      this.config.agentEnv,
+      selection,
+    );
+  }
+
   /**
    * Force a session's ACP process live now instead of on its first turn.
    * Only pre-warming and tests that drive `session.client` directly need this;
@@ -3723,6 +3804,9 @@ export class Body {
     task: () => Promise<T>,
     priority = session.mode === 'readonly' ? ('interactive' as const) : ('background' as const),
   ): Promise<T> {
+    if (this.config.modelUnavailable) {
+      return Promise.reject(new Error(modelUnavailableRoomMessage(this.config.modelUnavailable)));
+    }
     if (!session.lifecycle) return task();
     return this.scheduler.run(session.channelId, session.lifecycle, task, {
       priority,
@@ -4266,9 +4350,7 @@ export class Body {
     // (`finalAgentMessageText`); this guard covers results built by other
     // paths so narration can never become a durable kind:9 message.
     if (reply && isPureRetryNarration(reply)) {
-      console.log(
-        `[body] discarded harness retry narration instead of publishing it as a reply`,
-      );
+      console.log(`[body] discarded harness retry narration instead of publishing it as a reply`);
       reply = '';
     }
     if (!reply) reply = uploaded.attachments.length ? 'Shared an attachment.' : fallback;
@@ -7087,6 +7169,10 @@ export class Body {
     scheduled?: ScheduledTurnRequest,
     beforeModelActivation?: () => Promise<void>,
   ): Promise<RoomReplyOutcome> {
+    if (this.config.modelUnavailable) {
+      await this.publishModelUnavailableState(tlcChannelId, request.eventId);
+      return { openedCorner: false, producedReply: true };
+    }
     // Mark a slash-command-shaped message BEFORE anything else consumes it.
     // Beeline's composer commands and a harness's own `/verb` vocabulary share
     // one input box; an unrecognized verb used to pass through silently and be
@@ -7471,11 +7557,7 @@ export class Body {
       if (!scheduled && !agentExchange) {
         const proposedBranch = targetBranchProposalFromAgentText(result.agentText);
         if (proposedBranch) {
-          await this.handleTargetBranchProposalMarker(
-            tlcChannelId,
-            turn,
-            proposedBranch,
-          );
+          await this.handleTargetBranchProposalMarker(tlcChannelId, turn, proposedBranch);
         }
         if (turn.targetBranchProposalOutcome?.outcome === 'no-change') {
           result = {
@@ -7525,7 +7607,13 @@ export class Body {
       const substantiveText = rawText && !isPureRetryNarration(rawText) ? rawText : '';
       const turnHadActivity = result.updates.length > 0;
       const hasAnswer = Boolean(substantiveText) || !!result.cornerRequest;
-      if (!hasAnswer && !turn.permissionHandled && turnHadActivity && !scheduled && !agentExchange) {
+      if (
+        !hasAnswer &&
+        !turn.permissionHandled &&
+        turnHadActivity &&
+        !scheduled &&
+        !agentExchange
+      ) {
         console.log(
           `[body] room ${tlcChannelId} request ${request.eventId}: turn produced only harness ` +
             'retry narration; publishing the honest fallback and leaving the request retryable',
@@ -11648,7 +11736,8 @@ export class Body {
         if (reconnectBackoff.recovered()) {
           console.log(`[body] Room ${channelId} WS reconnected`);
         }
-        await presence.setStatus('online');
+        await presence.setStatus(this.config.modelUnavailable ? 'offline' : 'online');
+        await this.publishModelUnavailableState(channelId);
 
         // This is a belt-and-suspenders read, not the request loop. Starting
         // it after the REQ is active keeps event delivery independent of HTTP.
@@ -11740,7 +11829,7 @@ export class Body {
       this.agentIdentity,
       undefined,
       (status) => this.onRoomPresence?.(tlcChannelId, status),
-      'online',
+      this.config.modelUnavailable ? 'offline' : 'online',
       {
         policy: this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
         ...(this.config.accessAllowlist ? { allowlist: this.config.accessAllowlist } : {}),
@@ -11770,13 +11859,21 @@ export class Body {
     editPolicy: Exclude<RoomEditPolicy, 'repository'>,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
+    // Resolve and validate the effective Room selection before the first
+    // heartbeat. A retired human override must never briefly look healthy
+    // merely because the daemon-wide runtime default still validates.
+    await this.channelCommunityId(channelId)
+      .then((communityId) =>
+        communityId ? this.syncModelSelectionToRelay(communityId) : undefined,
+      )
+      .catch((error) => console.error('[body] model selection sync failed:', error));
     // See runChannelLoop: prompt first heartbeat for restart handover.
     const stopPresence = startAgentPresence(
       channelId,
       this.agentIdentity,
       undefined,
       (status) => this.onRoomPresence?.(channelId, status),
-      'online',
+      this.config.modelUnavailable ? 'offline' : 'online',
       {
         policy: this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
         ...(this.config.accessAllowlist ? { allowlist: this.config.accessAllowlist } : {}),
@@ -11784,13 +11881,6 @@ export class Body {
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
-      // Surface a pair-time --model/--effort default to the app immediately,
-      // before any turn runs. Fire-and-forget: Room serving never waits on it.
-      void this.channelCommunityId(channelId)
-        .then((communityId) =>
-          communityId ? this.syncModelSelectionToRelay(communityId) : undefined,
-        )
-        .catch((error) => console.error('[body] model selection sync failed:', error));
       await this.provision(channelId, undefined, editPolicy);
       // A DM must not revive historical borrowed-repository corners. A normal
       // repo-less Room may resume only its already-approved named-repo corners.
@@ -11815,13 +11905,19 @@ export class Body {
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
     if (!boundRepo.repositoryKey) throw new Error('paired Room is missing its repository key');
+    // Validate a persisted Room override before presence announces this agent.
+    // The runtime default may still be valid even when that effective value
+    // has since disappeared from the harness catalog.
+    await this.syncModelSelectionToRelay(communityId).catch((error) =>
+      console.error('[body] model selection sync failed:', error),
+    );
     // See runChannelLoop: prompt first heartbeat for restart handover.
     const stopPresence = startAgentPresence(
       channelId,
       this.agentIdentity,
       undefined,
       (status) => this.onRoomPresence?.(channelId, status),
-      'online',
+      this.config.modelUnavailable ? 'offline' : 'online',
       {
         policy: this.config.accessPolicy ?? LEGACY_ACCESS_POLICY,
         ...(this.config.accessAllowlist ? { allowlist: this.config.accessAllowlist } : {}),
@@ -11829,11 +11925,6 @@ export class Body {
     );
     this.presenceGenerations.set(channelId, stopPresence.generationId);
     try {
-      // Surface a pair-time --model/--effort default to the app immediately.
-      // Fire-and-forget for the same reason as the conversation loop above.
-      void this.syncModelSelectionToRelay(communityId).catch((error) =>
-        console.error('[body] model selection sync failed:', error),
-      );
       await this.assertRepositorySafety(channelId, boundRepo);
 
       const mergeGate =

@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 import {
-  BEELINE_SKILL_PROMPT_LINE,
+  BEELINE_CAPABILITIES_PRIMER,
+  beelineCapabilityContextForHarness,
   beelineSkillReleaseStamp,
   runningBeelineReleaseId,
   USING_BEELINE_SKILL_DESCRIPTION,
@@ -91,6 +92,19 @@ describe('the using-beeline skill content', () => {
     expect(markdown).toContain('write/edit tool ONCE');
   });
 
+  it('documents current scheduler and mission-grant mechanics', () => {
+    const markdown = usingBeelineSkillMarkdown('r');
+    expect(markdown).toContain('durable scheduler');
+    expect(markdown).toContain('`schedule.change` grant');
+    expect(markdown).toContain('`mission.control` grant');
+    expect(markdown).toContain('target-agent crons');
+    expect(markdown).toContain('**Script-fired crons**');
+    expect(markdown).toContain('one-minute floor');
+    expect(markdown).toContain('15\n  minutes apart');
+    expect(markdown).toContain('approve the\n  scoped request with one signature');
+    expect(markdown).toContain('proposal or grant request creates no schedule');
+  });
+
   it('covers the writable non-repository directories and their limits', () => {
     const markdown = usingBeelineSkillMarkdown('r');
     expect(markdown).toContain('$BUZZY_WORKBENCH_DIR');
@@ -145,7 +159,11 @@ describe('managed-skill materialization on session activation', () => {
     for (const dir of ['claude', 'codex', 'grok']) {
       const skill = resolve(roomRoot, dir, 'skills', USING_BEELINE_SKILL_NAME, 'SKILL.md');
       expect(lstatSync(skill).isSymbolicLink()).toBe(false);
-      expect(readFileSync(skill, 'utf8')).toContain(beelineSkillReleaseStamp('release-a'));
+      const generated = readFileSync(skill, 'utf8');
+      expect(generated).toContain(beelineSkillReleaseStamp('release-a'));
+      expect(generated).toContain('target-agent crons');
+      expect(generated).toContain('**Script-fired crons**');
+      expect(generated).toContain('`mission.control` grant');
     }
 
     // Regeneration on the next activation makes upgrades automatic.
@@ -248,23 +266,57 @@ describe('managed-skill materialization on session activation', () => {
   });
 });
 
-describe('prompt and pi-path coverage', () => {
-  it('adds exactly one system-prompt pointer line in body.ts', async () => {
+describe('session-start capability awareness', () => {
+  it.each([
+    ['Claude', '/usr/local/bin/claude-agent-acp', false],
+    ['Codex', '/usr/local/bin/codex-acp', true],
+    ['Grok', '/home/operator/.grok/bin/grok', true],
+    ['Pi', '/usr/local/bin/pi-acp', true],
+  ] as const)(
+    'delivers the shared primer and reference pointer to %s',
+    (_name, command, needsCompatibilityPrefix) => {
+      const delivery = beelineCapabilityContextForHarness(command);
+      expect(delivery.sessionPrompt).toBe(BEELINE_CAPABILITIES_PRIMER);
+      expect(delivery.sessionPrompt).toContain('using-beeline skill (SKILL.md)');
+      if (needsCompatibilityPrefix) {
+        expect(delivery.compatibilityTurnPrefix).toBe(BEELINE_CAPABILITIES_PRIMER);
+      } else {
+        expect(delivery.compatibilityTurnPrefix).toBeUndefined();
+      }
+    },
+  );
+
+  it('keeps one production delivery authority with no harness-specific prose copy', () => {
     const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
-    const uses = source.split('BEELINE_SKILL_PROMPT_LINE').length - 1;
-    // One import + exactly one use in the session system prompt assembly.
+    const uses = source.split('beelineCapabilityContextForHarness').length - 1;
+    // One import + one activation-time use. Body consumes the returned fields
+    // and never embeds a harness-specific copy of the primer.
     expect(uses).toBe(2);
-    expect(source).toContain('BEELINE_SKILL_PROMPT_LINE,');
+    expect(source).not.toContain('Beeline can schedule unattended');
+    expect(source).toContain('capabilityContext.compatibilityTurnPrefix,');
+    expect(source).toContain('capabilityContext.sessionPrompt,');
   });
 
-  it('keeps the pointer line concise', () => {
-    expect(BEELINE_SKILL_PROMPT_LINE.split('. ').length).toBeLessThanOrEqual(2);
-    expect(BEELINE_SKILL_PROMPT_LINE).toContain('using-beeline skill');
+  it('keeps the recurring compatibility primer compact', () => {
+    expect(BEELINE_CAPABILITIES_PRIMER.split(/\s+/).length).toBeLessThanOrEqual(65);
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('using-beeline skill');
   });
 
-  it('covers pi through the existing turn prefix, not a second channel', () => {
+  it('directs unattended monitoring to a schedule plus grant request', () => {
+    const context = beelineCapabilityContextForHarness('codex-acp').compatibilityTurnPrefix ?? '';
+    expect(context).toContain('propose an exact Beeline schedule');
+    expect(context).toContain('request the appropriate schedule or mission grant');
+    expect(context).toContain('one signature');
+    expect(context).toContain('do not claim Beeline has no scheduler');
+    expect(context.toLowerCase()).not.toContain('beeline has no callable scheduler');
+  });
+
+  it('covers pi through the existing turn prefix, not a second control channel', () => {
     // pi-acp ignores per-home config AND session/new's systemPrompt, so its
-    // corner-open facts must ride the per-turn edit-policy instructions.
+    // capability awareness and corner-open facts ride the existing turn prefix.
+    expect(beelineCapabilityContextForHarness('pi-acp').compatibilityTurnPrefix).toBe(
+      BEELINE_CAPABILITIES_PRIMER,
+    );
     const piLines = roomEditPolicyInstructions('repository', 'pi-acp');
     for (const line of PI_CORNER_REQUEST_INSTRUCTIONS) {
       expect(piLines).toContain(line);
@@ -272,8 +324,8 @@ describe('prompt and pi-path coverage', () => {
     expect(
       piLines.some((line) => line.includes(`${TARGET_BRANCH_PROPOSAL_COMMAND} --branch`)),
     ).toBe(true);
-    // The text-fallback harness is never told to emit permission-style requests
-    // or given the marker twice through the skill prompt line.
-    expect(piLines.join('\n')).not.toContain(BEELINE_SKILL_PROMPT_LINE);
+    // The text-fallback harness is never told to emit permission-style corner
+    // requests, and capability awareness does not alter that control protocol.
+    expect(piLines.join('\n')).not.toContain(BEELINE_CAPABILITIES_PRIMER);
   });
 });

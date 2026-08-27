@@ -9,11 +9,24 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createWorkspaceSnapshot, type CornerMachineState } from '@beeline/buzz-client';
+import {
+  KIND_CHANNEL_MEMBERS,
+  createWorkspaceSnapshot,
+  reduceWorkspaceEvents,
+  selectMembers,
+  type CornerMachineState,
+} from '@beeline/buzz-client';
 
 const VIEWER = 'a'.repeat(64);
 const ROOM = 'charles-room-id';
 const CORNER = 'corner-ready-id';
+const FIRST_ENTRY_ROSTER = [
+  VIEWER,
+  'b'.repeat(64),
+  'c'.repeat(64),
+  'd'.repeat(64),
+  'e'.repeat(64),
+];
 const navigation = vi.hoisted(() => ({
   back: vi.fn(),
   push: vi.fn(),
@@ -281,6 +294,29 @@ function readyCorner(id: string) {
   };
 }
 
+function firstEntryRosterSnapshot() {
+  return reduceWorkspaceEvents(createWorkspaceSnapshot({ workspaceId: 'shared-1' }), [
+    {
+      type: 'membership',
+      eventId: 'first-entry-members',
+      channelId: ROOM,
+      workspaceId: 'shared-1',
+      scope: 'channel',
+      authorPubkey: VIEWER,
+      createdAt: 1,
+      sourceKind: KIND_CHANNEL_MEMBERS,
+      signature: 'verified',
+      membership: {
+        mode: 'snapshot',
+        members: FIRST_ENTRY_ROSTER.map((pubkey, index) => ({
+          pubkey,
+          role: index === 0 ? 'owner' : 'member',
+        })),
+      },
+    } as never,
+  ]);
+}
+
 async function renderRoom(): Promise<ReactTestRenderer> {
   let tree!: ReactTestRenderer;
   await act(async () => {
@@ -344,6 +380,25 @@ describe('the Room READY-corner bar navigation', () => {
       'view →',
     );
     expect(navigation.push).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  it('renders all five actual Room members in the roster on first entry', async () => {
+    expect(selectMembers(firstEntryRosterSnapshot(), ROOM)).toHaveLength(5);
+    useBuzzLocalCache
+      .getState()
+      .replaceSnapshot(VIEWER, ROOM, firstEntryRosterSnapshot(), undefined);
+    const tree = await renderRoom();
+    const trigger = tree.root.findByProps({ testID: 'room-participant-roster-trigger' });
+
+    expect(trigger.props.disabled).toBe(false);
+    await act(async () => trigger.props.onPress());
+
+    for (const pubkey of FIRST_ENTRY_ROSTER) {
+      expect(tree.root.findAllByProps({ testID: `room-roster-person-${pubkey}` }).length).toBeGreaterThan(
+        0,
+      );
+    }
     act(() => tree.unmount());
   });
 });

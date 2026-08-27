@@ -1216,17 +1216,41 @@ export class ReadOnlyToolsUnavailableError extends Error {
 }
 
 /** The only MCP mounted in a Room: a fixed, Beeline-owned inspection surface. */
-export function readOnlyMcpServer(config: BodyConfig, cwd: string): McpServerWire {
+export function readOnlyMcpServer(
+  config: BodyConfig,
+  cwd: string,
+  agentMemoryDir?: string,
+): McpServerWire {
   if (!config.readonlyMcpCommand) {
     throw new ReadOnlyToolsUnavailableError(
       'read-only tools unavailable: buzz-readonly-mcp is required for Room sessions',
     );
   }
+  const skillDir =
+    config.agentKind === 'claude' ||
+    config.agentKind === 'codex' ||
+    config.agentKind === 'grok' ||
+    config.agentKind === 'pi'
+      ? config.agentKind
+      : 'codex';
   return {
     name: READ_ONLY_MCP_SERVER_NAME,
     command: config.readonlyMcpCommand,
     args: [...(config.readonlyMcpArgs ?? [])],
-    env: [{ name: 'BUZZ_READONLY_ROOT', value: resolve(cwd) }],
+    env: [
+      { name: 'BUZZ_READONLY_ROOT', value: resolve(cwd) },
+      ...(config.agentHomeRoot
+        ? [
+            {
+              name: 'BUZZ_READONLY_AGENT_SKILLS_ROOT',
+              value: resolve(config.agentHomeRoot, skillDir, 'skills'),
+            },
+          ]
+        : []),
+      ...(agentMemoryDir
+        ? [{ name: 'BUZZ_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) }]
+        : []),
+    ],
   };
 }
 
@@ -2821,6 +2845,7 @@ export class Body {
     return prepareRoomAgentHome({
       root,
       failClosed: Boolean(squireIsolationRequired),
+      sharedSkills: this.config.sharedSkills ?? [],
       ...(this.config.operatorHome ? { operatorHome: this.config.operatorHome } : {}),
     }).then((overlay) => {
       const env = { ...this.config.agentEnv, ...overlay };
@@ -3026,7 +3051,7 @@ export class Body {
     // create one on a read-only $HOME — so create the roots we know about here,
     // in the daemon, before the child is confined.
     const operatorHome = this.config.operatorHome ?? homedir();
-    const homeStateDirs = harnessHomeStateDirs(command, operatorHome);
+    const homeStateDirs = harnessHomeStateDirs(command, env.HOME ?? operatorHome);
     for (const dir of homeStateDirs) {
       try {
         mkdirSync(dir, { recursive: true });
@@ -4850,12 +4875,12 @@ export class Body {
     if (scopeWarning) console.warn(`[body] ${scopeWarning}`);
     // Resolve the server before any relay membership or session side effect.
     // Missing read-only tools must never create a no-tool or edit-tool session.
-    const readonlyServer = readOnlyMcpServer(this.config, readonlyCwd);
     const agentId = this.agentIdentity;
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     await this.ensureAgentEntity(tlcChannelId);
     const communityId = await this.channelCommunityId(tlcChannelId);
     const roomMemory = await this.sessionMemory(communityId);
+    const readonlyServer = readOnlyMcpServer(this.config, readonlyCwd, roomMemory?.dir);
     // The boundary remains the exact MCP mount: Beeline's fixed inspection MCP
     // plus explicit creator-only account capabilities. Operator config is never inherited.
     const roomMcpServers = [
@@ -4875,6 +4900,7 @@ export class Body {
           'A host turn explicitly identified as a human-authorized schedule occurrence is the one exception: that bounded schedule is the mandate for its mounted action tools and attachments.',
           'Use buzz-readonly-mcp to list, read, search, and inspect local git history when analysis needs repository evidence.',
           'Those inspection tools are non-mutating and do not require human approval.',
+          'Use buzz-readonly-mcp.read_agent_file to read only your approved materialized skills or announced Workspace memory; it is read-only and does not require approval.',
           'Never request native shell or execute permission for listing, reading, searching, or git-history inspection; use the read-only MCP tools instead.',
           'You CANNOT create, edit, or delete repository files in this Room. The separately named workbench and memory directories are the only writable exceptions; open an isolated corner yourself for any landable change.',
           `The host always DENIES repository writes in this Room; outside a host-identified schedule occurrence it also denies every shell/execute request: ${ROOM_READ_ONLY_STEER}`,

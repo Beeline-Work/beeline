@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import { WRITE_TOOL_NAMES } from './config.js';
 const expectedToolNames = [
   'list_files',
   'read_file',
+  'read_agent_file',
   'search_text',
   'git_log',
   'git_show',
@@ -24,6 +25,8 @@ const serverPath = fileURLToPath(new URL('./read-only-mcp.ts', import.meta.url))
 const tsxLoader = createRequire(import.meta.url).resolve('tsx');
 let repository = '';
 let outside = '';
+let skills = '';
+let memory = '';
 
 function git(args: string[]): string {
   return execFileSync('git', ['-C', repository, ...args], {
@@ -44,7 +47,11 @@ function server() {
     command: process.execPath,
     args: ['--import', tsxLoader, serverPath],
     cwd: repository,
-    env: { BUZZ_READONLY_ROOT: repository },
+    env: {
+      BUZZ_READONLY_ROOT: repository,
+      BUZZ_READONLY_AGENT_SKILLS_ROOT: skills,
+      BUZZ_READONLY_AGENT_MEMORY_ROOT: memory,
+    },
   };
 }
 
@@ -56,6 +63,8 @@ function textResult(value: unknown): string {
 beforeAll(async () => {
   repository = await mkdtemp(resolve(tmpdir(), 'beeline-readonly-mcp-repo-'));
   outside = await mkdtemp(resolve(tmpdir(), 'beeline-readonly-mcp-outside-'));
+  skills = await mkdtemp(resolve(tmpdir(), 'beeline-readonly-mcp-skills-'));
+  memory = await mkdtemp(resolve(tmpdir(), 'beeline-readonly-mcp-memory-'));
   await writeFile(resolve(outside, 'secret.txt'), 'outside boundary\n');
   await writeFile(resolve(repository, 'README.md'), '# Seed repository\n');
   await writeFile(
@@ -63,6 +72,9 @@ beforeAll(async () => {
     'export const primaryStory = "A person asks an agent to analyze the repository.";\n',
   );
   await symlink(resolve(outside, 'secret.txt'), resolve(repository, 'outside-link'));
+  await mkdir(resolve(skills, 'using-beeline'));
+  await writeFile(resolve(skills, 'using-beeline/SKILL.md'), 'approved skill\n');
+  await writeFile(resolve(memory, 'MEMORY.md'), 'approved memory\n');
   git(['init', '-q', '-b', 'main']);
   git(['add', 'README.md', 'stories.ts']);
   git(['commit', '-q', '-m', 'seed repository']);
@@ -74,6 +86,8 @@ beforeAll(async () => {
 afterAll(async () => {
   if (repository) await rm(repository, { recursive: true, force: true });
   if (outside) await rm(outside, { recursive: true, force: true });
+  if (skills) await rm(skills, { recursive: true, force: true });
+  if (memory) await rm(memory, { recursive: true, force: true });
 });
 
 describe('hasWriteTools', () => {
@@ -128,6 +142,36 @@ describe('buzz-readonly-mcp', () => {
       await callMcpTool(server(), 'git_diff', { from: 'HEAD~1', to: 'HEAD' }),
     );
     expect(diff).toContain('+Read-only analysis.');
+  });
+
+  it('reads only approved skill and memory files without exposing host paths', async () => {
+    expect(
+      textResult(
+        await callMcpTool(server(), 'read_agent_file', {
+          area: 'skills',
+          path: 'using-beeline/SKILL.md',
+        }),
+      ),
+    ).toContain('approved skill');
+    expect(
+      textResult(
+        await callMcpTool(server(), 'read_agent_file', { area: 'memory', path: 'MEMORY.md' }),
+      ),
+    ).toContain('approved memory');
+
+    await symlink(resolve(outside, 'secret.txt'), resolve(skills, 'escape.md'));
+    await link(resolve(outside, 'secret.txt'), resolve(memory, 'hardlink.md'));
+    for (const attempt of [
+      { area: 'skills', path: '../secret.txt' },
+      { area: 'skills', path: 'escape.md' },
+      { area: 'memory', path: 'hardlink.md' },
+      { area: 'skills', path: '/etc/passwd' },
+      { area: 'config', path: 'config.toml' },
+    ]) {
+      await expect(callMcpTool(server(), 'read_agent_file', attempt)).rejects.toThrow();
+    }
+    await expect(callMcpTool(server(), 'write_agent_file', {})).rejects.toThrow();
+    await expect(callMcpTool(server(), 'execute_agent_file', {})).rejects.toThrow();
   });
 
   it('refuses traversal, escaping symlinks, raw commands, and every mutation-class tool', async () => {

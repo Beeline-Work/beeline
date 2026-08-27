@@ -118,6 +118,17 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialog: (props: any) =>
+      props.visible ? ReactModule.createElement('HullDialog', props, props.children) : null,
+    HullDialogInput: (props: any) => ReactModule.createElement('HullDialogInput', props),
+  };
+});
+vi.mock('@/modal', () => ({
+  Modal: { alert: vi.fn(), confirm: vi.fn(async () => false) },
+}));
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -185,6 +196,7 @@ vi.mock('react-native', async () => {
     SectionList,
     Platform: { OS: 'ios', select: (o: Record<string, unknown>) => o.ios ?? o.default },
     RefreshControl: host('RefreshControl'),
+    ScrollView: host('ScrollView'),
     Share: { share: vi.fn() },
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
@@ -278,6 +290,13 @@ function has(tree: ReactTestRenderer, testID: string): boolean {
   );
 }
 
+function hostByTestID(tree: ReactTestRenderer, testID: string) {
+  return tree.root.findAll(
+    (node: any) => typeof node.type === 'string' && node.props?.testID === testID,
+    { deep: true },
+  )[0];
+}
+
 const HOME_SURFACE_IDS = ['room-list', 'workspace-members', 'create-room'];
 
 describe('one home surface for every Workspace kind', () => {
@@ -344,6 +363,46 @@ describe('one home surface for every Workspace kind', () => {
 
     expect((await inviteProps('personal-1', 'personal-1')).allowPeopleInvites).toBe(false);
     expect((await inviteProps('shared-1', 'personal-1')).allowPeopleInvites).toBe(true);
+  });
+
+  it('opens New Room as a Hull input dialog with empty-name gating and both dismissal paths', async () => {
+    seedWorkspace('shared-1', 'Night Shift', 'personal-1');
+    const tree = await render();
+
+    await act(async () => hostByTestID(tree, 'create-room').props.onPress());
+    let dialog = tree.root.findByType('HullDialog' as any);
+    expect(dialog.props).toMatchObject({
+      body: 'In Night Shift. One Room, one repo. Corners branch from here.',
+      testID: 'new-room-dialog',
+      title: 'New Room',
+      visible: true,
+    });
+    expect(dialog.props.actions[1]).toMatchObject({
+      disabled: true,
+      label: 'Create',
+      testID: 'create-room-submit',
+      variant: 'primary',
+    });
+    const input = tree.root.findByType('HullDialogInput' as any);
+    expect(input.props).toMatchObject({
+      accessibilityLabel: 'Room name',
+      editable: true,
+      placeholder: '#room-name',
+      testID: 'create-room-name',
+    });
+    expect(hostByTestID(tree, 'create-room-repo-row')).toBeDefined();
+
+    await act(async () => input.props.onChangeText('launch-room'));
+    dialog = tree.root.findByType('HullDialog' as any);
+    expect(dialog.props.actions[1].disabled).toBe(false);
+
+    await act(async () => dialog.props.actions[0].onPress());
+    expect(tree.root.findAllByType('HullDialog' as any)).toHaveLength(0);
+
+    await act(async () => hostByTestID(tree, 'create-room').props.onPress());
+    dialog = tree.root.findByType('HullDialog' as any);
+    await act(async () => dialog.props.onRequestClose());
+    expect(tree.root.findAllByType('HullDialog' as any)).toHaveLength(0);
   });
 });
 

@@ -6,11 +6,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const auth = vi.hoisted(() => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
-  loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) })),
+  loadBuzzIdentity: vi.fn(async () => ({
+    publicKey: 'a'.repeat(64),
+    secretKey: new Uint8Array(32),
+  })),
 }));
 const avatarUpload = vi.hoisted(() => ({ pickAndUploadAvatar: vi.fn() }));
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefined) }));
-const nativeAlerts = vi.hoisted(() => ({ alert: vi.fn() }));
+const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
 const client = vi.hoisted(() => ({
   getCommunity: vi.fn(),
   getChannelMetadata: vi.fn(),
@@ -36,6 +39,7 @@ vi.mock('react-native-safe-area-context', () => ({
 vi.mock('@/auth/buzz-identity-storage', () => auth);
 vi.mock('@/buzz/avatar-upload', () => avatarUpload);
 vi.mock('expo-clipboard', () => clipboard);
+vi.mock('@/modal', () => ({ Modal: modal }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     ensureClient = vi.fn(async () => client);
@@ -65,7 +69,6 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    Alert: nativeAlerts,
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
     ScrollView: host('ScrollView'),
     Share: { share: vi.fn() },
@@ -86,7 +89,8 @@ beforeAll(() => {
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.spyOn(console, 'error').mockImplementation((message?: unknown, ...args: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
+    if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated'))
+      return;
     originalConsoleError(message, ...args);
   });
 });
@@ -227,7 +231,10 @@ describe('Workspace Settings authority', () => {
       await renderer.root.findByProps({ testID: 'open-members' }).props.onPress();
     });
 
-    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/buzz/members', params: { communityId: 'workspace-1' } });
+    expect(navigation.push).toHaveBeenCalledWith({
+      pathname: '/buzz/members',
+      params: { communityId: 'workspace-1' },
+    });
   });
 
   it('does not show archived Rooms in the open-Room visibility section', async () => {
@@ -255,8 +262,7 @@ describe('Workspace Settings authority', () => {
     expect(
       renderer.root.findAll(
         (node) =>
-          node.type === 'TouchableOpacity' &&
-          node.props.testID === 'room-visibility-9d5e2285-live',
+          node.type === 'TouchableOpacity' && node.props.testID === 'room-visibility-9d5e2285-live',
       ),
     ).toHaveLength(1);
   });
@@ -283,13 +289,12 @@ describe('Workspace Settings authority', () => {
     expect(visibleText.join(' ')).not.toContain('ID 22222222');
 
     act(() => renderer.root.findByProps({ testID: 'room-details-11111111-room' }).props.onPress());
-    expect(nativeAlerts.alert).toHaveBeenCalledWith(
-      '#beeline',
-      '11111111-room',
-      expect.any(Array),
-    );
-    const buttons = nativeAlerts.alert.mock.calls[0][2];
-    await act(async () => buttons[1].onPress());
+    expect(modal.actionSheet).toHaveBeenCalledWith('#beeline', expect.any(Array), {
+      cancelText: 'Cancel',
+    });
+    const actions = modal.actionSheet.mock.calls[0][1];
+    expect(actions[0]).toMatchObject({ text: 'Copy Room ID', metadata: '11111111-room' });
+    await act(async () => actions[0].onPress());
     expect(clipboard.setStringAsync).toHaveBeenCalledWith('11111111-room');
   });
 

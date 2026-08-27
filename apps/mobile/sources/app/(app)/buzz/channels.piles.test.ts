@@ -160,6 +160,17 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
 });
+vi.mock('@/components/buzz/HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialog: (props: any) =>
+      props.visible ? ReactModule.createElement('HullDialog', props, props.children) : null,
+    HullDialogInput: (props: any) => ReactModule.createElement('HullDialogInput', props),
+  };
+});
+vi.mock('@/modal', () => ({
+  Modal: { alert: vi.fn(), confirm: vi.fn(async () => false) },
+}));
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -206,6 +217,7 @@ vi.mock('react-native', async () => {
     FlatList,
     Platform: { OS: 'ios', select: (o: Record<string, unknown>) => o.ios ?? o.default },
     RefreshControl: host('RefreshControl'),
+    ScrollView: host('ScrollView'),
     Share: { share: vi.fn() },
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
@@ -312,7 +324,11 @@ function shellWorkspaceIds(tree: ReactTestRenderer): string[] {
   return shell.props.communities.map((community: { communityId: string }) => community.communityId);
 }
 
-function agentTurn(roomId: string, status: 'working' | 'complete', createdAt: number): SessionUpdate {
+function agentTurn(
+  roomId: string,
+  status: 'working' | 'complete',
+  createdAt: number,
+): SessionUpdate {
   const agentPubkey = 'b'.repeat(64);
   return {
     type: 'session-update',
@@ -444,11 +460,13 @@ describe("the deck's one ordered feed", () => {
       await act(async () => {
         tree.root.findByType('RoomDeckComposeMenu').props.onSelect('room');
       });
-      const input = tree.root.findByType('TextInput');
+      const input = tree.root.findByType('HullDialogInput');
       await act(async () => input.props.onChangeText(name));
-      await press(
-        tree.root.find((node: any) => node.type === 'MonoButton' && node.props.label === 'CREATE'),
+      const dialog = tree.root.findByType('HullDialog');
+      const createAction = dialog.props.actions.find(
+        (action: { testID?: string }) => action.testID === 'create-room-submit',
       );
+      await act(async () => createAction.onPress());
     };
 
     await createRoom('Tubing capital');
@@ -651,10 +669,9 @@ describe("the deck's one ordered feed", () => {
   it('paints a stored Room-own working turn on first paint and settles on completion', async () => {
     const roomId = 'already-working-room';
     seedRooms([{ id: roomId, title: 'Already working' }]);
-    const working = reduceWorkspaceEvents(
-      createWorkspaceSnapshot({ workspaceId: 'shared-1' }),
-      [agentTurn(roomId, 'working', 3_000)],
-    );
+    const working = reduceWorkspaceEvents(createWorkspaceSnapshot({ workspaceId: 'shared-1' }), [
+      agentTurn(roomId, 'working', 3_000),
+    ]);
     // Store the lifecycle before mount. `useFocusEffect` is a no-op in this
     // harness, so the row cannot pass by witnessing a live transition.
     useBuzzLocalCache.getState().replaceSnapshot(VIEWER, roomId, working, 3_000);

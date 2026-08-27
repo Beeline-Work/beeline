@@ -5,14 +5,13 @@ import {
   createChannel,
   isMember,
   setMemberRole,
-  waitUntilMember,
+  waitUntilMemberRole,
   type ChannelOpsContext,
 } from './channel.js';
 import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
   KIND_CREATE_GROUP,
-  KIND_PUT_USER,
   TAG_COMMUNITY,
 } from './kinds.js';
 import { tagValue } from './parse.js';
@@ -45,40 +44,9 @@ async function joinRepositoryRoom(
     // Room creation and self-join are Workspace-member capabilities. They do
     // not confer merge approval or protected-branch push authority.
     await setMemberRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
-    await waitUntilRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
+    await waitUntilMemberRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
   }
   return { channelId, created: false, joined: true, mergeWorkerProvisioned: false };
-}
-
-async function waitUntilRole(
-  ctx: ChannelOpsContext,
-  channelId: string,
-  pubkey: string,
-  role: CommunityRole,
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < 15_000) {
-    const current = await projectedRoomRole(ctx, channelId, pubkey);
-    if (current === role) return;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
-  }
-  const lastEvents: NostrEvent[] = await query(ctx, [
-    { kinds: [KIND_PUT_USER], '#h': [channelId], '#p': [pubkey], limit: 20 },
-  ]);
-  console.error(
-    `[repo-room] role wait timeout: ${JSON.stringify({
-      channelId,
-      pubkey,
-      expectedRole: role,
-      events: lastEvents.map((event) => ({
-        id: event.id,
-        pubkey: event.pubkey,
-        created_at: event.created_at,
-        tags: event.tags,
-      })),
-    })}`,
-  );
-  throw new Error(`role ${role} not visible for ${pubkey.slice(0, 12)}… in ${channelId}`);
 }
 
 async function queryRoomProjection(
@@ -131,7 +99,7 @@ export async function ensureRepositoryRoomAdmin(
     );
   }
   await setMemberRole(ctx, channelId, pubkey, 'admin');
-  await waitUntilRole(ctx, channelId, pubkey, 'admin');
+  await waitUntilMemberRole(ctx, channelId, pubkey, 'admin');
 }
 
 /** Find the single Room whose immutable create event carries this repository key. */
@@ -182,11 +150,7 @@ async function ensureMergeGateProvisioned(
       // the runtime record omits the unprovisioned worker and a human must
       // elevate both from the app. Failing the whole pairing here would
       // make joining any pre-existing Room impossible.
-      const actorRole = await projectedRoomRole(
-        agentCtx,
-        channelId,
-        agentCtx.identity.publicKey,
-      );
+      const actorRole = await projectedRoomRole(agentCtx, channelId, agentCtx.identity.publicKey);
       if (actorRole !== 'owner' && actorRole !== 'admin') {
         console.error(
           `[repo-room] cannot provision the merge worker in ${channelId}: the agent is not a ` +
@@ -196,13 +160,13 @@ async function ensureMergeGateProvisioned(
         return;
       }
       await setMemberRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
-      await waitUntilRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
+      await waitUntilMemberRole(agentCtx, channelId, mergeWorkerPubkey, 'admin');
     }
   }
   const agentRole = await projectedRoomRole(agentCtx, channelId, agentCtx.identity.publicKey);
   if (agentRole !== 'member') {
     await setMemberRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
-    await waitUntilRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
+    await waitUntilMemberRole(agentCtx, channelId, agentCtx.identity.publicKey, 'member');
   }
 }
 
@@ -270,7 +234,6 @@ export async function resolveRepositoryRoomForHuman(
     await ensureRepositoryRoomAdmin(humanCtx, raced, humanCtx.identity.publicKey);
     return { channelId: raced, created: false, joined: true, mergeWorkerProvisioned: false };
   }
-  await waitUntilMember(humanCtx, channelId, humanCtx.identity.publicKey);
   await ensureRepositoryRoomAdmin(humanCtx, channelId, humanCtx.identity.publicKey, true);
   return { channelId, created: true, joined: true, mergeWorkerProvisioned: false };
 }

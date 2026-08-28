@@ -4,6 +4,7 @@
  * Speaks only to real Buzz (HTTP bridge + WS + signed events). UI-agnostic.
  */
 import type { NostrEvent } from '@beeline/nostr';
+import type { SurfaceWatchFilter } from './room-view.js';
 import { agentPresenceKey } from './agent-presence.js';
 import { cornerStateKey } from './corner-state.js';
 import { buildMergeApproval } from './approval.js';
@@ -952,6 +953,61 @@ export class BuzzClient {
     if (cornerIds.length === 0) return () => undefined;
     if (!this.ws?.connected) await this.connect();
     return this.ws!.subscribe(cornerStateFilters(cornerIds), handler);
+  }
+
+  /**
+   * Subscribe to opaque filters returned by a paint-ready HTTP surface.
+   * Callers may use matching events only as invalidation signals or as input
+   * to the narrow live-overlay decoder; this API deliberately exposes no DTO
+   * patch operation.
+   */
+  async surfaceSubscribe(
+    filters: readonly SurfaceWatchFilter[],
+    handler: (event: NostrEvent) => void,
+  ): Promise<Unsubscribe> {
+    if (filters.length === 0) return () => undefined;
+    if (!this.ws?.connected) await this.connect();
+    const ws = this.ws!;
+    const installedFilters = filters.map((filter) => ({ ...filter }));
+    const seenIds = new Set<string>();
+    let newestCreatedAt = 0;
+
+    // A NIP-01 live REQ first replays matching stored rows and then emits
+    // EOSE. Do not report the subscription as ready until that replay has
+    // drained: screens deliberately listen before their first GET, and a
+    // premature ready signal turns the replay burst into several redundant
+    // physical GETs. Events still reach the handler during this phase, where
+    // a not-yet-started scheduler collapses them into the one closing GET.
+    return new Promise<Unsubscribe>((resolve) => {
+      let settled = false;
+      let unsubscribe: Unsubscribe = () => undefined;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(unsubscribe);
+      };
+      const timer = setTimeout(finish, 3_000);
+      timer.unref?.();
+      unsubscribe = ws.subscribe(
+        installedFilters,
+        (event) => {
+          if (seenIds.has(event.id)) return;
+          seenIds.add(event.id);
+          newestCreatedAt = Math.max(newestCreatedAt, event.created_at);
+          handler(event);
+        },
+        {
+          onEose: finish,
+          // Reconnects need only the gap. The inclusive second plus id
+          // de-duplication avoids both missed writes and replay storms.
+          reconnectFilters: () =>
+            installedFilters.map((filter) =>
+              newestCreatedAt > 0 ? { ...filter, since: newestCreatedAt } : filter,
+            ),
+        },
+      );
+    });
   }
 
   /** Low-level publish (already-signed event) via HTTP. */

@@ -1,18 +1,17 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  KIND_CREATE_GROUP,
-  TAG_COMMUNITY,
-  TAG_DIRECT_MESSAGE,
-  TAG_PARENT,
-  tagValue,
-  tagValues,
+  RoomViewClient,
+  SurfaceRefreshScheduler,
+  isChatListView,
+  isWorkspaceView,
   type BuzzClient,
-  type Community,
+  type ChatListView,
+  type WorkspaceView,
 } from '@beeline/buzz-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -20,7 +19,6 @@ import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { MEMBERS_GLYPH, MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { SettingsNavigationRow } from '@/components/buzz/SettingsNavigationRow';
 import { RoomGlyph } from '@/components/buzz/RoomGlyph';
@@ -53,60 +51,37 @@ function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-async function loadWorkspaceRooms(
-  client: BuzzClient,
-  communityId: string,
-  viewerPubkey: string,
-): Promise<WorkspaceRoomSetting[]> {
-  const creates = await client.query([{ kinds: [KIND_CREATE_GROUP], limit: 500 }]);
-  const roomCreates = new Map<string, (typeof creates)[number]>();
-  for (const create of creates) {
-    if (tagValue(create, TAG_COMMUNITY) !== communityId) continue;
-    if (tagValue(create, TAG_PARENT) || tagValues(create, 't').includes(TAG_DIRECT_MESSAGE))
-      continue;
-    const id = tagValue(create, 'h') ?? tagValue(create, 'd');
-    if (!id || id === communityId) continue;
-    const current = roomCreates.get(id);
-    if (!current || create.created_at < current.created_at) roomCreates.set(id, create);
-  }
-  const rooms = await Promise.all(
-    [...roomCreates.entries()].map(async ([id, create]) => {
-      const metadata = await client.getChannelMetadata(id);
-      if (metadata?.archived) return null;
-      const role = await client.getChannelRole(id, viewerPubkey);
-      const createdVisibility = tagValue(create, 'visibility');
-      return {
-        id,
-        name: metadata?.name ?? tagValue(create, 'name') ?? `${ROOM_LABEL} ${id.slice(0, 8)}`,
-        visibility:
-          metadata?.visibility ??
-          (createdVisibility === 'private' || createdVisibility === 'invite-only'
-            ? 'invite-only'
-            : 'public'),
-        canManage: isWorkspaceManagerRole(role),
-        createdAt: create.created_at,
-      } satisfies WorkspaceRoomSetting;
-    }),
-  );
-  return rooms
-    .filter((room): room is WorkspaceRoomSetting => room !== null)
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
 export default function WorkspaceSettings() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
   const communityId = firstParam(params.communityId);
   const [client, setClient] = useState<BuzzClient | null>(null);
-  const [community, setCommunity] = useState<Community | null>(null);
-  const [rooms, setRooms] = useState<WorkspaceRoomSetting[]>([]);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView | null>(null);
+  const [chatList, setChatList] = useState<ChatListView | null>(null);
   const [workspaceName, setWorkspaceName] = useState('');
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
+  const chatsSchedulerRef = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
 
-  const canManageWorkspace = isWorkspaceManagerRole(community?.viewerRole);
+  const workspace = workspaceView?.workspace;
+  const canManageWorkspace = workspaceView?.viewer.permissions.manage ?? false;
+  const rooms = useMemo<WorkspaceRoomSetting[]>(
+    () =>
+      (chatList?.chats ?? [])
+        .filter((item) => !item.room.archived)
+        .map((item) => ({
+          id: item.room.id,
+          name: item.room.name,
+          visibility: item.room.visibility ?? 'invite-only',
+          canManage: canManageWorkspace,
+          createdAt: item.room.createdAt,
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [canManageWorkspace, chatList],
+  );
   const duplicateRoomNames = useMemo(() => {
     const counts = new Map<string, number>();
     for (const room of rooms) {
@@ -119,10 +94,13 @@ export default function WorkspaceSettings() {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
+      let unsubscribe: (() => void) | undefined;
+      let workspaceScheduler: SurfaceRefreshScheduler<WorkspaceView> | undefined;
+      let chatsScheduler: SurfaceRefreshScheduler<ChatListView> | undefined;
       setLoading(true);
       setClient(null);
-      setCommunity(null);
-      setRooms([]);
+      setWorkspaceView(null);
+      setChatList(null);
       setError(null);
       void (async () => {
         if (!communityId) {
@@ -139,37 +117,57 @@ export default function WorkspaceSettings() {
           const currentRelayUrl = await getEffectiveRelayUrl();
           const transport = new BuzzRigTransport(currentIdentity, currentRelayUrl);
           const currentClient = await transport.ensureClient();
-          const [nextCommunity, allMembers] = await Promise.all([
-            currentClient.getCommunity(communityId),
-            currentClient.communityMembers(communityId),
-          ]);
-          if (!nextCommunity) throw new Error('Workspace not found.');
-          const viewerRole = allMembers.find(
-            (member) => member.pubkey === currentIdentity.publicKey,
-          )?.role;
-          const scopedCommunity = { ...nextCommunity, ...(viewerRole ? { viewerRole } : {}) };
           if (cancelled) return;
           setClient(currentClient);
-          setCommunity(scopedCommunity);
-          setWorkspaceName(scopedCommunity.name);
-          if (!isWorkspaceManagerRole(viewerRole)) return;
-
-          const nextRooms = await loadWorkspaceRooms(
-            currentClient,
-            communityId,
-            currentIdentity.publicKey,
+          const http = new RoomViewClient({ baseUrl: currentRelayUrl, identity: currentIdentity });
+          workspaceScheduler = new SurfaceRefreshScheduler({
+            fetch: () => http.workspace(communityId),
+            apply: (value) => {
+              setWorkspaceView(value);
+              setWorkspaceName((current) => current || value.workspace.name);
+              setLoading(false);
+              setError(null);
+            },
+            onError: (reason) => {
+              setLoading(false);
+              setError(String(reason));
+            },
+          });
+          chatsScheduler = new SurfaceRefreshScheduler({
+            fetch: () => http.chats(communityId),
+            apply: (value) => {
+              setChatList(value);
+              setError(null);
+            },
+            onError: (reason) => setError(String(reason)),
+          });
+          workspaceSchedulerRef.current = workspaceScheduler;
+          chatsSchedulerRef.current = chatsScheduler;
+          unsubscribe = await currentClient.surfaceSubscribe(
+            [{ kinds: [9, 9000, 9001, 9007, 9008, 30078], '#h': [communityId] }],
+            () => {
+              workspaceScheduler?.signal();
+              chatsScheduler?.signal();
+            },
           );
-          if (!cancelled) {
-            setRooms(nextRooms);
-          }
+          if (cancelled) return unsubscribe();
+          await Promise.all([
+            workspaceScheduler.startAfter(Promise.resolve()),
+            chatsScheduler.startAfter(Promise.resolve()),
+          ]);
         } catch (caught) {
           if (!cancelled) setError(`Could not load ${WORKSPACE_LABEL} settings: ${String(caught)}`);
         } finally {
-          if (!cancelled) setLoading(false);
+          if (!cancelled && !workspaceScheduler) setLoading(false);
         }
       })();
       return () => {
         cancelled = true;
+        unsubscribe?.();
+        workspaceScheduler?.dispose();
+        chatsScheduler?.dispose();
+        workspaceSchedulerRef.current = null;
+        chatsSchedulerRef.current = null;
       };
     }, [communityId]),
   );
@@ -179,12 +177,8 @@ export default function WorkspaceSettings() {
     setWorkingKey('name');
     setError(null);
     try {
-      const updated = await client.renameCommunity(communityId, workspaceName);
-      setCommunity((current) => ({
-        ...updated,
-        ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}),
-      }));
-      setWorkspaceName(updated.name);
+      await client.renameCommunity(communityId, workspaceName);
+      workspaceSchedulerRef.current?.force();
     } catch (caught) {
       setError(`Could not rename ${WORKSPACE_LABEL}: ${String(caught)}`);
     } finally {
@@ -199,11 +193,8 @@ export default function WorkspaceSettings() {
     try {
       const avatar = await pickAndUploadAvatar(client);
       if (!avatar) return;
-      const updated = await client.setCommunityAvatar(communityId, avatar);
-      setCommunity((current) => ({
-        ...updated,
-        ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}),
-      }));
+      await client.setCommunityAvatar(communityId, avatar);
+      workspaceSchedulerRef.current?.force();
     } catch (caught) {
       setError(`Could not set ${WORKSPACE_LABEL} picture: ${String(caught)}`);
     } finally {
@@ -216,11 +207,8 @@ export default function WorkspaceSettings() {
     setWorkingKey('picture');
     setError(null);
     try {
-      const updated = await client.setCommunityAvatar(communityId, '');
-      setCommunity((current) => ({
-        ...updated,
-        ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}),
-      }));
+      await client.setCommunityAvatar(communityId, '');
+      workspaceSchedulerRef.current?.force();
     } catch (caught) {
       setError(`Could not reset ${WORKSPACE_LABEL} picture: ${String(caught)}`);
     } finally {
@@ -229,23 +217,20 @@ export default function WorkspaceSettings() {
   }, [canManageWorkspace, client, communityId]);
 
   const changeWorkspaceVisibility = useCallback(
-    async (visibility: Community['visibility']) => {
-      if (!client || !communityId || community?.visibility === visibility) return;
+    async (visibility: 'public' | 'invite-only') => {
+      if (!client || !communityId || workspace?.visibility === visibility) return;
       setWorkingKey('visibility');
       setError(null);
       try {
-        const updated = await client.setCommunityVisibility(communityId, visibility);
-        setCommunity((current) => ({
-          ...updated,
-          ...(current?.viewerRole ? { viewerRole: current.viewerRole } : {}),
-        }));
+        await client.setCommunityVisibility(communityId, visibility);
+        workspaceSchedulerRef.current?.force();
       } catch (caught) {
         setError(`Could not change ${WORKSPACE_LABEL} visibility: ${String(caught)}`);
       } finally {
         setWorkingKey(null);
       }
     },
-    [client, community?.visibility, communityId],
+    [client, communityId, workspace?.visibility],
   );
 
   const changeRoomVisibility = useCallback(
@@ -255,12 +240,8 @@ export default function WorkspaceSettings() {
       setWorkingKey(`room-${room.id}`);
       setError(null);
       try {
-        const metadata = await client.setChannelVisibility(room.id, visibility);
-        setRooms((current) =>
-          current.map((item) =>
-            item.id === room.id ? { ...item, visibility: metadata.visibility ?? visibility } : item,
-          ),
-        );
+        await client.setChannelVisibility(room.id, visibility);
+        chatsSchedulerRef.current?.force();
       } catch (caught) {
         setError(`Could not change ${ROOM_LABEL} visibility: ${String(caught)}`);
       } finally {
@@ -308,7 +289,7 @@ export default function WorkspaceSettings() {
         <View style={styles.headerCopy}>
           <Text style={styles.title}>{WORKSPACE_LABEL} Settings</Text>
           <Text numberOfLines={1} style={styles.headerMeta}>
-            {community?.name ?? WORKSPACE_LABEL}
+            {workspace?.name ?? WORKSPACE_LABEL}
           </Text>
         </View>
       </View>
@@ -330,9 +311,9 @@ export default function WorkspaceSettings() {
               <View style={styles.workspaceIdentityRow}>
                 <IdentityMark
                   kind="workspace"
-                  seed={community?.communityId ?? 'workspace-loading'}
-                  avatarUrl={community?.avatar}
-                  name={community?.name}
+                  seed={workspace?.id ?? 'workspace-loading'}
+                  avatarUrl={workspace?.avatar}
+                  name={workspace?.name}
                   size={72}
                 />
                 <View style={styles.workspaceIdentityCopy}>
@@ -347,12 +328,12 @@ export default function WorkspaceSettings() {
                       <Text style={styles.textButtonLabel}>
                         {workingKey === 'picture'
                           ? 'Working…'
-                          : community?.avatar
+                          : workspace?.avatar
                             ? 'Change'
                             : 'Set picture'}
                       </Text>
                     </TouchableOpacity>
-                    {community?.avatar && (
+                    {workspace?.avatar && (
                       <TouchableOpacity
                         disabled={workingKey === 'picture'}
                         onPress={() => void resetWorkspacePicture()}
@@ -379,7 +360,7 @@ export default function WorkspaceSettings() {
               value={workspaceName}
             />
             <MonoButton
-              disabled={!workspaceName.trim() || workspaceName.trim() === community?.name}
+              disabled={!workspaceName.trim() || workspaceName.trim() === workspace?.name}
               label="Save name"
               loading={workingKey === 'name'}
               onPress={() => void saveWorkspaceName()}
@@ -395,7 +376,7 @@ export default function WorkspaceSettings() {
             </Text>
             <View style={styles.segmented}>
               {(['public', 'invite-only'] as const).map((visibility) => {
-                const selected = community?.visibility === visibility;
+                const selected = workspace?.visibility === visibility;
                 return (
                   <TouchableOpacity
                     accessibilityState={{ selected }}

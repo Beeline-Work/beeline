@@ -4,21 +4,19 @@ import { type Href, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { RoomViewClient, type ChatListView } from '@beeline/buzz-client';
+import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { useHeaderHeight } from '@/utils/responsive';
-import { selectChannelList, useBuzzLocalCache } from '@/buzz/local-cache';
-import { roomListFeed } from '@/buzz/room-list-row';
-import { isRoomUnread, roomReadAt, useRoomReadState } from '@/buzz/room-read-state';
 import { ROOM_LABEL, ROOMS_LABEL } from '@/buzz/vocabulary';
 import { HullDeckMark } from '@/components/buzz/MonoHull';
 
 function selectedRoomId(pathname: string): string | null {
   const prefix = '/buzz/chat/';
   if (!pathname.startsWith(prefix)) return null;
-  const encoded = pathname.slice(prefix.length).split('/')[0];
   try {
-    return decodeURIComponent(encoded);
+    return decodeURIComponent(pathname.slice(prefix.length).split('/')[0]!);
   } catch {
-    return encoded;
+    return pathname.slice(prefix.length).split('/')[0] ?? null;
   }
 }
 
@@ -44,15 +42,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     fontFamily: 'IBMPlexMono-SemiBold',
     letterSpacing: 1.2,
   },
-  homeButton: {
-    padding: 6,
-  },
-  list: {
-    flex: 1,
-  },
-  listContent: {
-    paddingVertical: 8,
-  },
+  homeButton: { padding: 6 },
+  list: { flex: 1 },
+  listContent: { paddingVertical: 8 },
   roomRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -63,21 +55,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingVertical: 8,
     borderRadius: 8,
   },
-  roomRowSelected: {
-    backgroundColor: theme.colors.surfaceSelected,
-  },
-  roomCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  roomTitle: {
-    color: theme.colors.text,
-    fontSize: 13,
-    fontFamily: 'IBMPlexSans-Regular',
-  },
-  roomTitleUnread: {
-    fontFamily: 'IBMPlexSans-SemiBold',
-  },
+  roomRowSelected: { backgroundColor: theme.colors.surfaceSelected },
+  roomCopy: { flex: 1, minWidth: 0 },
+  roomTitle: { color: theme.colors.text, fontSize: 13, fontFamily: 'IBMPlexSans-Regular' },
+  roomTitleUnread: { fontFamily: 'IBMPlexSans-SemiBold' },
   roomFact: {
     marginTop: 2,
     color: theme.colors.textSecondary,
@@ -109,7 +90,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-/** Persistent tablet/desktop navigation for the Beeline surface. */
+/** Persistent tablet navigation reads server paint rows directly and holds no global cache. */
 export const SidebarView = React.memo(function SidebarView() {
   const styles = stylesheet;
   const safeArea = useSafeAreaInsets();
@@ -117,34 +98,25 @@ export const SidebarView = React.memo(function SidebarView() {
   const router = useRouter();
   const pathname = usePathname();
   const activeRoomId = selectedRoomId(pathname);
-  const cachedList = useBuzzLocalCache((state) =>
-    selectChannelList(state, state.activeViewerPubkey),
-  );
-  const readAt = useRoomReadState((state) => state.readAt);
-  const viewerPubkey = useBuzzLocalCache((state) => state.activeViewerPubkey);
-  const authorNames = React.useMemo(
-    () =>
-      new Map(
-        (cachedList?.workspaceMembers ?? []).map((member) => [member.peerPubkey, member.peerName]),
-      ),
-    [cachedList?.workspaceMembers],
-  );
-  const feed = React.useMemo(
-    () =>
-      roomListFeed(
-        (cachedList?.channels ?? []).map((room) => ({
-          ...room,
-          // Same unread activity channel as the phone feed: bold and
-          // recent, never a state-circle override.
-          roomUnread: isRoomUnread(
-            roomReadAt(readAt, viewerPubkey ?? undefined, room.id),
-            room.latestMessageAt,
-          ),
-        })),
-        authorNames,
-      ),
-    [authorNames, cachedList?.channels, readAt, viewerPubkey],
-  );
+  const [surface, setSurface] = React.useState<ChatListView | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const identity = await loadBuzzIdentity();
+      if (!identity) return;
+      const relayUrl = await getEffectiveRelayUrl();
+      const http = new RoomViewClient({ baseUrl: relayUrl, identity });
+      const workspaces = await http.workspaces();
+      const workspaceId = workspaces.workspaces[0]?.id;
+      if (!workspaceId) return;
+      const chats = await http.chats(workspaceId);
+      if (!cancelled) setSurface(chats);
+    })().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
 
   return (
     <View style={[styles.container, { paddingTop: safeArea.top + headerHeight }]}>
@@ -160,42 +132,40 @@ export const SidebarView = React.memo(function SidebarView() {
           <Ionicons name="grid-outline" size={17} color={stylesheet.heading.color} />
         </Pressable>
       </View>
-
       <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-        {feed.length === 0 ? (
+        {!surface?.chats.length ? (
           <Text style={styles.empty}>
             Your {ROOMS_LABEL} will appear here after the workspace connects.
           </Text>
         ) : (
-          feed.map(({ item, row }) => (
+          surface.chats.map((item) => (
             <Pressable
-              key={item.id}
-              accessibilityLabel={`Open ${ROOM_LABEL} ${item.title ?? item.id}`}
+              key={item.room.id}
+              accessibilityLabel={`Open ${ROOM_LABEL} ${item.room.name}`}
               accessibilityRole="button"
-              onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.id)}` as Href)}
+              onPress={() => router.push(`/buzz/chat/${encodeURIComponent(item.room.id)}` as Href)}
               style={({ pressed }) => [
                 styles.roomRow,
-                activeRoomId === item.id && styles.roomRowSelected,
+                activeRoomId === item.room.id && styles.roomRowSelected,
                 pressed && styles.roomRowSelected,
               ]}
             >
-              <HullDeckMark state={row.state} />
+              <HullDeckMark state="idle" />
               <View style={styles.roomCopy}>
                 <Text
                   numberOfLines={1}
-                  style={[styles.roomTitle, row.unread && styles.roomTitleUnread]}
+                  style={[styles.roomTitle, item.unread && styles.roomTitleUnread]}
                 >
-                  {item.title ?? `${ROOM_LABEL} ${item.id.slice(0, 8)}`}
+                  {item.room.name}
                 </Text>
                 <Text numberOfLines={1} style={styles.roomFact}>
-                  {row.fact}
+                  {item.latestMessage?.text ?? 'No activity yet'}
                 </Text>
               </View>
             </Pressable>
           ))
         )}
       </ScrollView>
-
       <Pressable
         accessibilityLabel="Open Beeline settings"
         accessibilityRole="button"

@@ -1,676 +1,114 @@
-/**
- * BuzzRigTransport — real-Buzz implementation of RigTransport.
- *
- * Speaks only to the Buzz relay via @beeline/buzz-client. No Happy server calls.
- *
- * **P1 coverage:** identity, sessionsRead, sessionRead, sessionEventsBackfill,
- * sessionEventsSubscribe, messageSubmit. Everything else is a loud stub
- * (RigTransportNotImplementedError) — see BUZZ-SEAM.md rank-2/3 methods.
- *
- * Tradeoff note for the next lane: the session model is channel-scoped
- * (a "session" = a TLC or subchannel), not a single-user Happy session.
- * The UI mapping is 1:1 in the first slice but will diverge when worktrees
- * and agent-run state arrive.
- */
-import type {
-  ChangedFile,
-  ChannelId,
-  MergeActionInput,
-  MessageSubmitInput,
-  PermissionDecision,
-  RigTransport,
-  SessionDetail,
-  SessionEvent,
-  SessionId,
-  SessionSummary,
-  WorktreeCreateInput,
-} from './rig-transport';
-import { RigTransportNotImplementedError, RigTransportStubbedError } from './rig-transport';
+import type { ChangedFile, MessageSubmitInput, SessionId } from './rig-transport';
 import {
+  RoomViewClient,
   createBuzzClient,
   buildAttachmentTags,
-  RelayPublishError,
-  tagValue,
-  tagValues,
-  deriveRelayAuthorityFacts,
-  parseRelayEvents,
-  unresolvedReplyParentIds,
-  CHANGE_REVIEW_EVENT_KIND,
-  CHANGE_REVIEW_ARTIFACT_TAG,
-  APPROVAL_MARKER,
-  KIND_AGENT_PRESENCE,
-  KIND_PUT_USER,
-  KIND_REMOVE_USER,
-  KIND_EDIT_METADATA,
-  KIND_CREATE_GROUP,
-  KIND_CHANNEL_MEMBERS,
-  KIND_CHANNEL_ADMINS,
-  KIND_STREAM_MESSAGE,
-  TAG_COMMUNITY,
-  TAG_PARENT,
-  TAG_DIRECT_MESSAGE,
-  TAG_AGENT,
-  TAG_AGENT_PRESENCE,
-  KIND_AGENT_DRAFT,
-  TAG_AGENT_DRAFT,
-  TAG_AGENT_THOUGHT,
-  parseChangeReviewArtifactDescriptor,
-  parseChangeReviewArtifact,
-  type ChangeReviewArtifact,
-  type BuzzClient,
-  type ChannelMetadata,
-  type Identity,
-  type MergeTarget,
-  type WritePermissionDecision,
-  type AttachmentReference,
-  type AgentModelCatalog,
-  type AgentModelConfig,
-  type AgentModelConfigInput,
-  type AgentCommandList,
-  TAG_CORNER_STATE,
-  KIND_CORNER_STATE,
-  type RoomRepository,
-  type RoomRepositoryResolution,
-  type RoomRepositoryInput,
   getAuthCapabilities,
   listGitHubRepositories,
   startGitHubInstallation,
   createGitHubRepository,
   getGitHubRepositoryAccess,
+  parseChangeReviewArtifact,
+  type AgentCommandList,
+  type AttachmentReference,
+  type BuzzClient,
+  type ChangeReviewArtifact,
+  type ChangeReviewArtifactDescriptor,
   type GitHubInstallationAccess,
   type GitHubRepositoryAccessResult,
-  type IdentityRecord,
+  type Identity,
   type KnownMessageReference,
-  type ParseAuthority,
-  type ReadEvent,
-  type WorkspaceSnapshot,
-  createWorkspaceSnapshot,
-  reduceWorkspaceEvents,
-  commitRoomCoverage,
-  selectCorners,
-  selectReplyTarget,
-  type EventId,
+  type MergeTarget,
+  type RoomRepository,
+  type RoomRepositoryInput,
+  type WritePermissionDecision,
 } from '@beeline/buzz-client';
-import type { RepoCandidate } from '@/buzz/room-repo-picker';
-import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 import type { NostrEvent } from '@beeline/nostr';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import type { CornerSummary } from '@/buzz/corners';
-import { transcriptMessages, toRigEvent } from './buzz-event-projection';
-import {
-  ROOM_CONTEXT_LIMIT,
-  selectRoomContext,
-  type RoomContextEntry,
-} from '@/buzz/corner-context';
-
-/** Room events read back to find the pre-open window. Generous enough that a
- *  burst of corner status cards and activity batches right before the corner
- *  opened cannot crowd out the conversation underneath them. */
-const ROOM_CONTEXT_SCAN_LIMIT = 80;
-const ROOM_REPOSITORY_MARKER = 'buzz-room-repository';
-
-/** Newest canonical corner-state records enumerated per discovery read. The
- * marker page spans the whole relay, so this bounds its cost; corners beyond
- * the window are still recovered through their `subchannel`-tagged cards in
- * the Room's own message page plus the exact-`#d` state read-back. */
-const CORNER_STATE_DISCOVERY_LIMIT = 500;
-
-/** Per-channel structural page bound for the expanded authority read. Each
- * channel's create/membership-mutation/metadata history is small and bounded
- * by its own membership churn; N channels cost N × this, replacing the old
- * shared multi-`#h` page that production answers lossily. */
-const STRUCTURAL_PAGE_LIMIT_PER_CHANNEL = 200;
+import type { RepoCandidate } from '@/buzz/room-repo-picker';
+import { dedupeRepoCandidates } from '@/buzz/room-repo-picker';
 
 let sharedClientEntry: { key: string; client: BuzzClient } | undefined;
 
-const READ_AUTHORITY_TTL_MS = 60_000;
-const LIVE_AUTHORITY_REFRESH_TIMEOUT_MS = 3_000;
-const REPLY_ANCESTRY_FETCH_LIMIT = 64;
-
-function withLiveAuthorityRefreshTimeout<T>(promise: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error('live Room authority refresh timed out')),
-      LIVE_AUTHORITY_REFRESH_TIMEOUT_MS,
-    );
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
-type ReadModelBackfillResult = { snapshot: WorkspaceSnapshot; events: SessionEvent[] };
-type ReadModelBackfillOptions = { beforeSeq?: number; afterSeq?: number; limit?: number };
-type SharedReadCache = {
-  authorities: Map<string, { loadedAt: number; authority: ParseAuthority }>;
-  workspaceIdentities: Map<
-    string,
-    { loadedAt: number; identities: Readonly<Record<string, IdentityRecord>> }
-  >;
-  backfills: Map<
-    string,
-    Array<{ options: ReadModelBackfillOptions; promise: Promise<ReadModelBackfillResult> }>
-  >;
-  recentSnapshots: Map<string, { loadedAt: number; result: ReadModelBackfillResult }>;
-};
-
-const sharedReadCaches = new WeakMap<object, SharedReadCache>();
-
-function sharedReadCache(client: object): SharedReadCache {
-  const cached = sharedReadCaches.get(client);
-  if (cached) return cached;
-  const created: SharedReadCache = {
-    authorities: new Map(),
-    workspaceIdentities: new Map(),
-    backfills: new Map(),
-    recentSnapshots: new Map(),
-  };
-  sharedReadCaches.set(client, created);
-  return created;
-}
-
-function backfillCovers(
-  existing: ReadModelBackfillOptions,
-  requested: ReadModelBackfillOptions,
-): boolean {
-  if (existing.beforeSeq !== requested.beforeSeq || existing.afterSeq !== requested.afterSeq) {
-    return false;
-  }
-  return (
-    (existing.limit ?? Number.POSITIVE_INFINITY) >= (requested.limit ?? Number.POSITIVE_INFINITY)
-  );
-}
-
 function sharedClient(identity: Identity, baseUrl: string): BuzzClient {
-  const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
-  const key = `${normalizedBaseUrl}\u0000${identity.publicKey}`;
+  const normalized = baseUrl.replace(/\/$/, '');
+  const key = `${normalized}\u0000${identity.publicKey}`;
   if (sharedClientEntry?.key === key) return sharedClientEntry.client;
   sharedClientEntry?.client.disconnect();
-  const client = createBuzzClient({
-    baseUrl: normalizedBaseUrl,
-    identity,
-    batchQueries: true,
-  });
+  const client = createBuzzClient({ baseUrl: normalized, identity, batchQueries: true });
   sharedClientEntry = { key, client };
   return client;
 }
 
-export class BuzzRigTransport implements RigTransport {
+/**
+ * Write/signing adapter only. All Room/Workspace reads live in RoomViewClient;
+ * this class intentionally has no backfill, parser, reducer, selector, or
+ * snapshot API.
+ */
+export class BuzzRigTransport {
   private client: BuzzClient | null = null;
-  private identity: Identity;
-  private baseUrl: string;
-  /** Track open subscriptions for cleanup. */
-  private subscriptions = new Map<SessionId, () => void>();
-  /** A second caller publishing the same prepared event joins the first publish. */
-  private outgoingPublishes = new Map<string, Promise<string>>();
-  /** Coalesce the file list and patch reads onto the same immutable blob. */
-  private reviewArtifacts = new Map<string, Promise<ChangeReviewArtifact | null>>();
-  private knownMessages = new Map<
-    string,
-    { channelId: string; rootId?: string; parentId?: string }
-  >();
+  private readonly outgoingPublishes = new Map<string, Promise<string>>();
+  private readonly reviewArtifacts = new Map<string, Promise<ChangeReviewArtifact>>();
 
-  constructor(identity: Identity, baseUrl: string = getBuzzRuntimeConfig().relayUrl) {
-    this.identity = identity;
-    this.baseUrl = baseUrl;
-  }
-
-  // ── Client lazy-init ──────────────────────────────────────────────────
+  constructor(
+    private readonly identity: Identity,
+    private readonly baseUrl: string = getBuzzRuntimeConfig().relayUrl,
+  ) {}
 
   private async getClient(): Promise<BuzzClient> {
-    if (!this.client) {
-      // Screen bootstrap reads use the authenticated HTTP bridge. The client
-      // connects its WebSocket lazily when the first live subscription starts,
-      // so navigation never waits on an unrelated socket handshake. Clients are
-      // shared by relay + identity so a later Room reuses the authenticated WS.
-      this.client = sharedClient(this.identity, this.baseUrl);
-    }
+    this.client ??= sharedClient(this.identity, this.baseUrl);
     return this.client;
   }
 
-  /** Expose the underlying client for direct buzz-client calls when needed. */
   async ensureClient(): Promise<BuzzClient> {
     return this.getClient();
   }
 
-  private async readAuthority(channelId: string, forceRefresh = false): Promise<ParseAuthority> {
-    const client = await this.getClient();
-    const cache = sharedReadCache(client);
-    let cached = cache.authorities.get(channelId);
-    if (!forceRefresh && cached && Date.now() - cached.loadedAt < 15_000) {
-      return {
-        ...cached.authority,
-        knownMessages: Object.fromEntries(this.knownMessages),
-      };
-    }
-    const activeBackfill = cache.backfills.get(channelId)?.[0];
-    if (!forceRefresh && activeBackfill) {
-      await activeBackfill.promise.catch(() => undefined);
-      cached = cache.authorities.get(channelId);
-      if (cached && Date.now() - cached.loadedAt < 15_000) {
-        return {
-          ...cached.authority,
-          knownMessages: Object.fromEntries(this.knownMessages),
-        };
-      }
-    }
-    const [members, communityId, creator] = await Promise.all([
-      client.listMembers(channelId),
-      client.getChannelCommunityId(channelId),
-      this.getChannelCreator(channelId),
-    ]);
-    const workspaceId = communityId ?? channelId;
-    const identities = await this.readWorkspaceIdentities(
-      client,
-      workspaceId,
-      members.map((member) => member.pubkey),
-      Boolean(communityId),
-      forceRefresh,
-    );
-    const admins = members
-      .filter((member) => member.role === 'owner' || member.role === 'admin')
-      .map((member) => member.pubkey);
-    const authority: ParseAuthority = {
-      workspaceId,
-      expectedChannelId: channelId,
-      identities,
-      ...(creator ? { channelCreators: { [channelId]: creator } } : {}),
-      channelAdmins: { [channelId]: [...new Set([...(creator ? [creator] : []), ...admins])] },
-      knownMessages: Object.fromEntries(this.knownMessages),
-    };
-    cache.authorities.set(channelId, { loadedAt: Date.now(), authority });
-    return authority;
+  private views(): RoomViewClient {
+    return new RoomViewClient({ baseUrl: this.baseUrl, identity: this.identity });
   }
 
-  private async readWorkspaceIdentities(
-    client: BuzzClient,
-    workspaceId: string,
-    memberPubkeys: readonly string[],
-    hasWorkspace: boolean,
-    forceRefresh = false,
-  ): Promise<Readonly<Record<string, IdentityRecord>>> {
-    const cache = sharedReadCache(client);
-    const cached = cache.workspaceIdentities.get(workspaceId);
-    if (
-      !forceRefresh &&
-      cached &&
-      Date.now() - cached.loadedAt < READ_AUTHORITY_TTL_MS &&
-      memberPubkeys.every((pubkey) => cached.identities[pubkey])
-    ) {
-      return Object.fromEntries(
-        memberPubkeys.map((pubkey) => [pubkey, cached.identities[pubkey]!]),
-      );
-    }
-    const agents = !hasWorkspace
-      ? []
-      : forceRefresh
-        ? await client.listAgents(workspaceId, { forceRefresh: true })
-        : await client.listAgents(workspaceId).catch(() => []);
-    const agentByPubkey = new Map(agents.map((agent) => [agent.pubkey, agent]));
-    const humanPubkeys = memberPubkeys.filter((pubkey) => !agentByPubkey.has(pubkey));
-    const profiles = hasWorkspace
-      ? await client.listPersonProfiles(workspaceId, humanPubkeys).catch(() => [])
-      : [];
-    const profileByPubkey = new Map(profiles.map((profile) => [profile.pubkey, profile]));
-    // Parse authority is Room-scoped. Workspace directory membership supplies
-    // names and agent kinds, but never grants a Workspace peer access to a Room.
-    const identities: Record<string, IdentityRecord> = {};
-    for (const pubkey of memberPubkeys) {
-      const agent = agentByPubkey.get(pubkey);
-      const profile = profileByPubkey.get(pubkey);
-      identities[pubkey] = agent
-        ? {
-            kind: 'agent',
-            pubkey: pubkey as IdentityRecord['pubkey'],
-            displayName: agent.displayName,
-            revision: agent.raw.id,
-          }
-        : {
-            kind: 'human',
-            pubkey: pubkey as IdentityRecord['pubkey'],
-            ...(profile?.name ? { displayName: profile.name } : {}),
-            ...(profile?.handle ? { handle: profile.handle } : {}),
-            revision: profile?.raw.id ?? `member:${pubkey}`,
-          };
-    }
-    cache.workspaceIdentities.set(workspaceId, { loadedAt: Date.now(), identities });
-    return identities;
-  }
-
-  private async readAuthorityForChannels(channelIds: readonly string[]): Promise<ParseAuthority> {
-    const authorities = await Promise.all(
-      channelIds.map((channelId) => this.readAuthority(channelId)),
-    );
-    const workspaceId = authorities[0]?.workspaceId ?? channelIds[0] ?? 'unknown-workspace';
-    const identities: Record<string, IdentityRecord> = {};
-    const channelCreators: Record<string, string> = {};
-    const channelAdmins: Record<string, readonly string[]> = {};
-    for (const authority of authorities) {
-      for (const identity of Object.values(authority.identities)) {
-        const current = identities[identity.pubkey];
-        if (!current || current.revision < identity.revision)
-          identities[identity.pubkey] = identity;
-      }
-      Object.assign(channelCreators, authority.channelCreators);
-      Object.assign(channelAdmins, authority.channelAdmins);
-    }
-    return {
-      workspaceId,
-      allowedChannelIds: [...new Set(channelIds)],
-      identities,
-      channelCreators,
-      channelAdmins,
-      knownMessages: Object.fromEntries(this.knownMessages),
-    };
-  }
-
-  private rememberMessages(events: readonly ReadEvent[]): void {
-    for (const event of events) {
-      if (event.type !== 'human-message' && event.type !== 'agent-message') continue;
-      const parentId = event.reply?.eventId;
-      this.knownMessages.set(event.eventId, {
-        channelId: event.channelId,
-        rootId: event.reply?.rootId ?? event.eventId,
-        ...(typeof parentId === 'string' ? { parentId } : {}),
-      });
-    }
-  }
-
-  /** Resolve the thread root to sign on a reply.
-   *
-   * Parent links come verbatim from each message's raw NIP-10 `reply` tag, so
-   * climbing them yields the true ancestry even when a remembered `rootId` is
-   * stale (a truncated or incremental parse once stored a mid-thread root).
-   * The climb only wins when it terminates at a message the transport has seen
-   * with no parent of its own; otherwise the ancestry remains unknown and the
-   * send boundary must exact-fetch proof before signing.
-   */
-  private replyThreadRootFor(parent: KnownMessageReference): EventId | null {
-    let cursor: string = parent.eventId;
-    const seen = new Set<string>();
-    while (!seen.has(cursor)) {
-      seen.add(cursor);
-      const entry = this.knownMessages.get(cursor);
-      if (!entry) break; // chain leaves observed history: unverified
-      if (!entry.parentId || entry.parentId === cursor) return cursor as EventId;
-      cursor = entry.parentId;
-    }
-    return null;
-  }
-
-  private async exactReplyMessage(
-    client: BuzzClient,
-    channelId: string,
-    eventId: string,
-  ): Promise<NostrEvent | null> {
-    const events = await client.query([
-      { ids: [eventId], kinds: [KIND_STREAM_MESSAGE], '#h': [channelId], limit: 1 },
-    ]);
-    return events.find((event) => event.id === eventId) ?? null;
-  }
-
-  private replyAncestryUnavailable(cause?: unknown): RelayPublishError {
-    return new RelayPublishError({
-      kind: 'TRANSIENT',
-      sentence: "This reply's conversation thread is not available yet.",
-      recoveryAction: 'Try sending the reply again.',
-      retryable: true,
-      ...(cause === undefined ? {} : { cause }),
-    });
-  }
-
-  /** Resolve one proof that is safe to hand to the synchronous signer. */
-  private async replyProofForSigning(
-    client: BuzzClient,
-    parent: KnownMessageReference,
-  ): Promise<KnownMessageReference> {
-    const rememberedRoot = this.replyThreadRootFor(parent);
-    if (rememberedRoot) {
-      return rememberedRoot === parent.rootId ? parent : { ...parent, rootId: rememberedRoot };
-    }
-
-    try {
-      const authority = await this.readAuthority(parent.channelId);
-      const fetched: NostrEvent[] = [];
-      const fetchedIds = new Set<string>();
-      let nextId: string | undefined = parent.eventId;
-
-      for (let depth = 0; nextId && depth < REPLY_ANCESTRY_FETCH_LIMIT; depth += 1) {
-        if (fetchedIds.has(nextId)) throw this.replyAncestryUnavailable();
-        const exact = await this.exactReplyMessage(client, parent.channelId, nextId);
-        if (!exact) throw this.replyAncestryUnavailable();
-        fetched.push(exact);
-        fetchedIds.add(nextId);
-
-        // A cold projection is not proof. Rebuild the fetched chain through
-        // the same parser/reducer/selector boundary as every other Room read,
-        // without letting stale transport memory seed root resolution.
-        const parsed = parseRelayEvents(fetched, { ...authority, knownMessages: {} });
-        const unresolved = unresolvedReplyParentIds(fetched, parsed).filter(
-          (eventId) => !fetchedIds.has(eventId),
-        );
-        if (unresolved.length > 1) throw this.replyAncestryUnavailable();
-        nextId = unresolved[0];
-        if (nextId) continue;
-
-        const snapshot = reduceWorkspaceEvents(
-          createWorkspaceSnapshot({
-            workspaceId: authority.workspaceId,
-            identities: Object.values(authority.identities),
-          }),
-          parsed,
-        );
-        const selected = selectReplyTarget(snapshot, parent.channelId, parent.eventId);
-        if (selected.status !== 'available') throw this.replyAncestryUnavailable();
-        const root = selectReplyTarget(snapshot, parent.channelId, selected.reference.rootId);
-        if (root.status !== 'available' || root.reference.eventId !== root.reference.rootId) {
-          throw this.replyAncestryUnavailable();
-        }
-        this.rememberMessages(parsed);
-        return selected.reference;
-      }
-      throw this.replyAncestryUnavailable();
-    } catch (error) {
-      if (error instanceof RelayPublishError) throw error;
-      throw this.replyAncestryUnavailable(error);
-    }
-  }
-
-  private parseReadyEvents(
-    authority: ParseAuthority,
-    events: readonly NostrEvent[],
-  ): SessionEvent[] {
-    const parsed = parseRelayEvents(events, {
-      ...authority,
-      knownMessages: Object.fromEntries(this.knownMessages),
-    });
-    this.rememberMessages(parsed);
-    return parsed.map(toRigEvent);
-  }
-
-  private async parseEvents(
-    channelId: string,
-    events: readonly NostrEvent[],
-  ): Promise<SessionEvent[]> {
-    const authority = await this.readAuthority(channelId);
-    return this.parseReadyEvents(authority, events);
-  }
-
-  async readModelSnapshot(
-    channelId: string,
-    events: readonly NostrEvent[],
-  ): Promise<WorkspaceSnapshot> {
-    const authority = await this.readAuthority(channelId);
-    const parsed = parseRelayEvents(events, authority);
-    this.rememberMessages(parsed);
-    return reduceWorkspaceEvents(
-      createWorkspaceSnapshot({
-        workspaceId: authority.workspaceId,
-        identities: Object.values(authority.identities),
-      }),
-      parsed,
-    );
-  }
-
-  // ── Sessions (P1: channels as sessions) ────────────────────────────────
-
-  async sessionCreate(_input: WorktreeCreateInput & { prompt?: string }): Promise<SessionDetail> {
-    throw new RigTransportNotImplementedError(
-      'sessionCreate',
-      'P2: requires body with ACP session/new + worktree create + subchannel',
-    );
-  }
-
-  async sessionsRead(_scope?: { channelId?: ChannelId }): Promise<SessionSummary[]> {
-    const client = await this.getClient();
-    const channels = await client.listMyChannels();
-    return Promise.all(
-      channels.map(async (c) => {
-        const metadata = await client.getChannelMetadata(c.channelId);
-        const nameTag = c.event.tags.find((t: string[]) => t[0] === 'name');
-        return {
-          id: c.channelId,
-          active: true,
-          title: metadata?.name ?? nameTag?.[1] ?? c.channelId.slice(0, 8),
-          updatedAt: c.event.created_at,
-          createdAt: c.event.created_at,
-        };
-      }),
-    );
-  }
-
-  async sessionRead(sessionId: SessionId): Promise<SessionDetail | null> {
-    const client = await this.getClient();
-    const meta = await client.getChannelMetadata(sessionId);
-    if (!meta) {
-      // Channel exists but metadata not materialised yet — return a skeleton.
-      return { id: sessionId, active: true };
-    }
-    return {
-      id: meta.channelId,
-      channelId: meta.parentChannelId,
-      active: !meta.archived,
-      title: meta.name,
-    };
-  }
-
-  async sessionArchive(_sessionId: SessionId): Promise<{ success: boolean; message?: string }> {
-    throw new RigTransportNotImplementedError(
-      'sessionArchive',
-      'P2: needs channel.archive or metadata set archived+closed',
-    );
-  }
-
-  // ── Messaging (P1) ─────────────────────────────────────────────────────
-
-  async messageSubmit(input: MessageSubmitInput): Promise<void> {
-    await this.messageSubmitWithEventId(input);
-  }
-
-  /** Compose one signed message. Retries must publish this returned event unchanged. */
   async composeMessage(
     input: MessageSubmitInput,
     opts?: { mentionAgent?: string; mentionPubkeys?: string[] },
   ): Promise<NostrEvent> {
-    const client = await this.getClient();
     const attachmentTags = buildAttachmentTags(input.attachments ?? []);
-    return client.buildMessage(input.sessionId, input.text, {
+    return (await this.getClient()).buildMessage(input.sessionId, input.text, {
       ...(opts?.mentionAgent ? { mentionAgent: opts.mentionAgent } : {}),
       ...(opts?.mentionPubkeys?.length ? { mentionPubkeys: opts.mentionPubkeys } : {}),
       ...(attachmentTags.length ? { extraTags: attachmentTags } : {}),
     });
   }
 
-  /** Publish a prepared message at most once while it is in flight. */
   async publishPreparedMessage(event: NostrEvent): Promise<string> {
     const existing = this.outgoingPublishes.get(event.id);
     if (existing) return existing;
-
     const publish = this.getClient()
       .then((client) => client.publish(event))
       .then(() => event.id)
       .finally(() => {
-        if (this.outgoingPublishes.get(event.id) === publish) {
+        if (this.outgoingPublishes.get(event.id) === publish)
           this.outgoingPublishes.delete(event.id);
-        }
       });
     this.outgoingPublishes.set(event.id, publish);
     return publish;
   }
 
-  /** Submit a message and return the stable signed event id for optimistic UI reconciliation. */
-  async messageSubmitWithEventId(
-    input: MessageSubmitInput,
-    opts?: { mentionAgent?: string; mentionPubkeys?: string[]; event?: NostrEvent },
-  ): Promise<string> {
-    const event = opts?.event ?? (await this.composeMessage(input, opts));
-    return this.publishPreparedMessage(event);
-  }
-
-  /** Send an ordinary Room message addressed to one @-mentioned agent. */
-  async messageSubmitMentioningAgent(
-    channelId: string,
-    text: string,
-    agentPubkey: string,
-    attachments: AttachmentReference[] = [],
-  ): Promise<string> {
-    return this.messageSubmitWithEventId(
-      { sessionId: channelId, text, attachments },
-      { mentionAgent: agentPubkey },
-    );
-  }
-
-  /** Publish a NIP-10 reply, optionally addressing the original Agent explicitly. */
-  async messageSubmitReply(
+  async composeReplyMessage(
     text: string,
     parent: KnownMessageReference,
     mentionAgent?: string,
     attachments: AttachmentReference[] = [],
     mentionPubkeys: string[] = [],
-  ): Promise<string> {
-    const client = await this.getClient();
+  ): Promise<NostrEvent> {
     const attachmentTags = buildAttachmentTags(attachments);
-    // Re-derive the thread root from observed raw-tag parent links before the
-    // builder signs: a stale persisted cache can carry a mid-thread rootId,
-    // and the relay refuses signed ancestry that does not match the thread.
-    const verifiedParent = await this.replyProofForSigning(client, parent);
-    const event = client.buildReplyMessage(text, verifiedParent, {
+    return (await this.getClient()).buildReplyMessage(text, parent, {
       ...(mentionAgent ? { mentionAgent } : {}),
       ...(mentionPubkeys.length ? { mentionPubkeys } : {}),
       ...(attachmentTags.length ? { contentTags: attachmentTags } : {}),
     });
-    return this.publishPreparedMessage(event);
   }
 
-  /** Resolve an opaque same-Room reply proof, fetching the exact parent only
-   * when it fell outside the bounded transcript window. */
-  async resolveReplyTarget(
-    channelId: string,
-    eventId: string,
-  ): Promise<KnownMessageReference | null> {
-    const client = await this.getClient();
-    const recent = sharedReadCache(client).recentSnapshots.get(channelId)?.result.snapshot;
-    if (recent) {
-      const selected = selectReplyTarget(recent, channelId, eventId);
-      if (selected.status === 'available') return selected.reference;
-    }
-    const events = await client.query([
-      { ids: [eventId], kinds: [KIND_STREAM_MESSAGE], '#h': [channelId], limit: 1 },
-    ]);
-    if (events.length === 0) return null;
-    const snapshot = await this.readModelSnapshot(channelId, events);
-    const selected = selectReplyTarget(snapshot, channelId, eventId);
-    return selected.status === 'available' ? selected.reference : null;
-  }
-
-  /** Respond to the agent's first mutating-tool request in a Room. */
   async respondToWritePermission(
     channelId: string,
     permissionId: string,
@@ -679,8 +117,9 @@ export class BuzzRigTransport implements RigTransport {
     decision: WritePermissionDecision,
     repository: string,
   ): Promise<string> {
-    const client = await this.getClient();
-    const event = await client.respondToWritePermission(
+    const event = await (
+      await this.getClient()
+    ).respondToWritePermission(
       channelId,
       permissionId,
       requestId,
@@ -691,966 +130,96 @@ export class BuzzRigTransport implements RigTransport {
     return event.id;
   }
 
-  /** Invite one already-linked Workspace agent to this Room; no pairing/restart. */
   async inviteAgentToChannel(
     channelId: string,
     agentPubkey: string,
     communityId: string,
   ): Promise<boolean> {
-    const client = await this.getClient();
-    const result = await client.attachAgentToChannel(channelId, agentPubkey, communityId);
-    sharedReadCache(client).authorities.delete(channelId);
-    return result.joined;
+    return (
+      await (await this.getClient()).attachAgentToChannel(channelId, agentPubkey, communityId)
+    ).joined;
   }
 
-  /** Add one existing Workspace person to this Room as a normal member. */
   async inviteWorkspaceMemberToChannel(
     channelId: string,
     memberPubkey: string,
     communityId: string,
   ): Promise<boolean> {
-    const client = await this.getClient();
-    const result = await client.attachCommunityMemberToChannel(
-      channelId,
-      memberPubkey,
-      communityId,
-    );
-    sharedReadCache(client).authorities.delete(channelId);
-    return result.joined;
+    return (
+      await (
+        await this.getClient()
+      ).attachCommunityMemberToChannel(channelId, memberPubkey, communityId)
+    ).joined;
   }
 
-  /** Remove another Room participant through the SDK's admin-authorized path. */
   async removeRoomMember(channelId: string, memberPubkey: string): Promise<void> {
-    const client = await this.getClient();
-    await client.removeRoomMember(channelId, memberPubkey);
-    sharedReadCache(client).authorities.delete(channelId);
+    await (await this.getClient()).removeRoomMember(channelId, memberPubkey);
   }
 
-  /** Leave a Room as a normal member and wait until the relay projection drops us. */
   async leaveRoom(channelId: string): Promise<void> {
-    const client = await this.getClient();
-    await client.leaveRoom(channelId);
+    await (await this.getClient()).leaveRoom(channelId);
   }
 
-  /** Archive a top-level Room through the explicit human-admin path. */
-  async archiveRoom(channelId: string): Promise<void> {
-    const client = await this.getClient();
-    await client.archiveRoom(channelId);
-  }
-
-  /** Delete a Room and wait until the relay retracts every discovery projection. */
   async deleteRoom(channelId: string): Promise<void> {
-    const client = await this.getClient();
-    await client.deleteRoom(channelId);
+    await (await this.getClient()).deleteRoom(channelId);
   }
 
-  /**
-   * Leave a Workspace as the signed-in member. The SDK drops this identity's
-   * top-level Room memberships first (best-effort), then publishes the
-   * self-authored Workspace removal and waits for the projection to drop it —
-   * so a relay refusal for elevated roles surfaces here instead of silently
-   * leaving the Workspace on the device.
-   */
   async leaveWorkspace(communityId: string): Promise<void> {
-    const client = await this.getClient();
-    await client.leaveWorkspace(communityId);
+    await (await this.getClient()).leaveWorkspace(communityId);
   }
 
-  /** Create or reopen the unique private Room for two Workspace members. */
   async resolveDirectMessage(
     communityId: string,
     otherPubkey: string,
   ): Promise<{ channelId: string; created: boolean }> {
-    const client = await this.getClient();
-    const result = await client.resolveDirectMessage(communityId, otherPubkey);
+    const result = await (await this.getClient()).resolveDirectMessage(communityId, otherPubkey);
     return { channelId: result.directMessage.channelId, created: result.created };
   }
 
-  async runAbort(sessionId: SessionId): Promise<void> {
-    const client = await this.getClient();
-    await client.messageSubmit(sessionId, 'Cancel the active Agent turn.', {
-      extraTags: [['t', 'buzz-agent-cancel']],
-    });
-  }
-
-  /** Close a corner outright: the body archives the subchannel (also cancels any active turn). */
-  async closeCorner(subchannelId: ChannelId): Promise<void> {
-    const client = await this.getClient();
-    await client.messageSubmit(subchannelId, 'Close this corner.', {
+  async closeCorner(subchannelId: string): Promise<void> {
+    await (
+      await this.getClient()
+    ).messageSubmit(subchannelId, 'Close this corner.', {
       extraTags: [['t', 'buzz-corner-close']],
     });
   }
 
-  // ── Realtime + permissions (P1: subscribe + backfill) ──────────────────
-
-  /** Resolve only once relay delivery is installed, so callers can backfill without a race gap. */
-  async sessionEventsSubscribeReady(
-    sessionId: SessionId,
-    handler: (event: SessionEvent) => void,
-    opts?: { since?: number },
-  ): Promise<() => void> {
-    const client = await this.getClient();
-    let authority: ParseAuthority | undefined;
-    const pending: NostrEvent[] = [];
-    let stopped = false;
-    let flushing = false;
-    let cancelScheduledFlush: (() => void) | undefined;
-    let authorityRefreshAttemptedAt = Number.NEGATIVE_INFINITY;
-    const flush = async () => {
-      cancelScheduledFlush = undefined;
-      if (stopped || flushing || !authority || pending.length === 0) return;
-      flushing = true;
-      const batch = pending.splice(0);
-      let parsed = this.parseReadyEvents(authority, batch);
-      const unresolvedAuthors = new Set(
-        parsed.flatMap((candidate) =>
-          candidate.type === 'read-model' &&
-          candidate.event.type === 'unknown' &&
-          candidate.event.reason === 'unresolved-identity' &&
-          candidate.event.authorPubkey &&
-          Date.now() - authorityRefreshAttemptedAt >= READ_AUTHORITY_TTL_MS
-            ? [candidate.event.authorPubkey]
-            : [],
-        ),
-      );
-      try {
-        try {
-          if (unresolvedAuthors.size > 0) {
-            authorityRefreshAttemptedAt = Date.now();
-            // A Room can gain a member after the human has already opened it.
-            // Re-read structural membership and Workspace identities only after
-            // the parser reports that exact stale-authority symptom, then reparse
-            // the intact batch. Raw tags remain parser-owned.
-            // The parser remains the authorization boundary: an unattached or
-            // out-of-Room signer is still quarantined after this refresh.
-            authority = await withLiveAuthorityRefreshTimeout(
-              this.readAuthority(sessionId, true),
-            );
-            if (!stopped) parsed = this.parseReadyEvents(authority, batch);
-          }
-        } catch {
-          // Preserve the original diagnostic event. A failed authority refresh
-          // must not turn an unresolved signer into accepted conversation.
-        }
-        if (!stopped) {
-          for (const event of parsed) handler(event);
-        }
-      } finally {
-        flushing = false;
-        scheduleFlush();
-      }
-    };
-    const scheduleFlush = () => {
-      if (stopped || flushing || !authority || pending.length === 0 || cancelScheduledFlush) return;
-      if (typeof requestAnimationFrame === 'function') {
-        const frame = requestAnimationFrame(() => void flush());
-        cancelScheduledFlush = () => cancelAnimationFrame(frame);
-      } else {
-        const timer = setTimeout(() => void flush(), 0);
-        cancelScheduledFlush = () => clearTimeout(timer);
-      }
-    };
-    const relayRead = client.sessionEventsSubscribe(
-      sessionId,
-      (event) => {
-        pending.push(event);
-        scheduleFlush();
-      },
-      opts,
-    );
-    let relayUnsubscribe: () => void;
-    try {
-      [relayUnsubscribe, authority] = await Promise.all([relayRead, this.readAuthority(sessionId)]);
-    } catch (error) {
-      const installed = await relayRead.catch(() => undefined);
-      installed?.();
-      throw error;
-    }
-    scheduleFlush();
-    const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      cancelScheduledFlush?.();
-      cancelScheduledFlush = undefined;
-      pending.length = 0;
-      relayUnsubscribe();
-      if (this.subscriptions.get(sessionId) === stop) this.subscriptions.delete(sessionId);
-    };
-    this.subscriptions.set(sessionId, stop);
-    return stop;
-  }
-
-  sessionEventsSubscribe(
-    sessionId: SessionId,
-    handler: (event: SessionEvent) => void,
-    opts?: { since?: number },
-  ): () => void {
-    let stopReadySubscription: (() => void) | undefined;
-    let cancelled = false;
-
-    this.sessionEventsSubscribeReady(sessionId, handler, opts)
-      .then((stop) => {
-        if (cancelled) {
-          stop();
-          return;
-        }
-        stopReadySubscription = stop;
-      })
-      .catch((err) => {
-        console.warn(`BuzzRigTransport: sessionEventsSubscribe(${sessionId}) failed:`, err);
-      });
-
-    const unsubscribe = () => {
-      cancelled = true;
-      stopReadySubscription?.();
-    };
-    this.subscriptions.set(sessionId, unsubscribe);
-    return unsubscribe;
-  }
-
-  async sessionEventsBackfill(
-    sessionId: SessionId,
-    opts?: { beforeSeq?: number; afterSeq?: number; limit?: number },
-  ): Promise<SessionEvent[]> {
-    return (await this.readModelBackfill(sessionId, opts)).events;
-  }
-
-  async readModelBackfill(
-    sessionId: SessionId,
-    opts: ReadModelBackfillOptions = {},
-  ): Promise<ReadModelBackfillResult> {
-    const client = await this.getClient();
-    const cache = sharedReadCache(client);
-    const jobs = cache.backfills.get(sessionId) ?? [];
-    const existing = jobs.find((job) => backfillCovers(job.options, opts));
-    if (existing) {
-      const result = await existing.promise;
-      this.rememberMessages(
-        result.events.flatMap((event) => (event.type === 'read-model' ? [event.event] : [])),
-      );
-      return result;
-    }
-    const promise = this.performReadModelBackfill(client, sessionId, opts);
-    const job = { options: { ...opts }, promise };
-    jobs.push(job);
-    cache.backfills.set(sessionId, jobs);
-    try {
-      const result = await promise;
-      cache.recentSnapshots.set(sessionId, { loadedAt: Date.now(), result });
-      return result;
-    } finally {
-      const active = cache.backfills.get(sessionId);
-      if (active) {
-        const remaining = active.filter((candidate) => candidate !== job);
-        if (remaining.length) cache.backfills.set(sessionId, remaining);
-        else cache.backfills.delete(sessionId);
-      }
-    }
-  }
-
-  private async performReadModelBackfill(
-    client: BuzzClient,
-    sessionId: SessionId,
-    opts: ReadModelBackfillOptions,
-  ): Promise<ReadModelBackfillResult> {
-    // The message page, parent relation, and the relay-wide marker page that
-    // discovers canonical corner records are independent and therefore share
-    // the first authenticated batch.
-    const [buzzEvents, parentRoomId, markedCornerStates] = await Promise.all([
-      client.sessionEventsBackfill(sessionId, {
-        limit: opts.limit,
-        until: opts.beforeSeq,
-        since: opts.afterSeq,
-      }),
-      client.getParentChannelId(sessionId),
-      // Canonical corner-state records are parameterized-replaceable
-      // kind:30078 events, which this relay indexes by `#d` ONLY: a `#h`
-      // filter over kind 30078 matches nothing (the same relay truth that
-      // forced the presence and change-review reads onto exact `#d` keys).
-      // The `#t` marker enumeration is the one relay-answerable discovery
-      // read that does not page a relay-wide kind:9007 scan. It is
-      // discovery input only — each discovered corner's state is re-read
-      // authoritatively by its exact `d` coordinate in the second round.
-      client.query([
-        {
-          kinds: [KIND_CORNER_STATE],
-          '#t': [TAG_CORNER_STATE],
-          limit: CORNER_STATE_DISCOVERY_LIMIT,
-        },
-      ]),
-    ]);
-    const roomId = parentRoomId ?? sessionId;
-    // Scope the marker page through the parser boundary — it spans every Room
-    // on the relay and only the parser may interpret which records name this
-    // Room family. The bounded message page contributes further child ids
-    // through its own `subchannel` tags (body-control cards), recovering
-    // corners whose newest record fell beyond the marker page's window.
-    const discovered = deriveRelayAuthorityFacts([...markedCornerStates, ...buzzEvents]);
-    const cornerIds = [
-      ...new Set([
-        ...(parentRoomId ? [sessionId] : []),
-        ...(discovered.cornerIdsByParent[roomId] ?? []),
-      ]),
-    ];
-    const channelIds = [...new Set([roomId, ...cornerIds])];
-    // Round two pairs the structural/projection read with an exact-`#d`
-    // read-back of every discovered corner's canonical state. A `#d` key
-    // returns the record's current replaceable value regardless of any
-    // recency window, so this is the authoritative state source even for a
-    // corner whose newest record is older than the marker page covers.
-    //
-    // Production relay truth (measured live, round-2 corner-discovery
-    // failure): a single filter naming MULTIPLE `#h` values is answered
-    // with an unreliable subset of the matching events — a whole corner
-    // family's kind:9007 create events can collapse to one row, which left
-    // every corner-state record signer-unverifiable (no creator fact) and
-    // quarantined the corners out of the snapshot. Production later showed
-    // the same first-key-only partiality for multi-value `#d` arrays, so every
-    // multi-key read here expands into per-channel single-value filters.
-    // They stay inside THIS one `query` call, so the transport still spends
-    // one round trip.
-    const [authorityEvents, cornerStates] = await Promise.all([
-      client.query([
-        ...channelIds.map(
-          (channelId) =>
-            ({
-              kinds: [KIND_CREATE_GROUP, KIND_PUT_USER, KIND_REMOVE_USER, KIND_EDIT_METADATA],
-              '#h': [channelId],
-              limit: STRUCTURAL_PAGE_LIMIT_PER_CHANNEL,
-            }) as Record<string, unknown>,
-        ),
-        ...channelIds.map(
-          (channelId) =>
-            ({
-              kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-              '#d': [channelId],
-              limit: 4,
-            }) as Record<string, unknown>,
-        ),
-        ...channelIds.map(
-          (channelId) =>
-            ({
-              kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-              '#h': [channelId],
-              limit: 4,
-            }) as Record<string, unknown>,
-        ),
-      ]),
-      // Corner-state records are exact-`#d` replaceables. This existing
-      // coordinate read is intentionally outside the `#h` sweep.
-      client.query(
-        cornerIds.map((cornerId) => ({
-          kinds: [KIND_CORNER_STATE],
-          '#d': [`${TAG_CORNER_STATE}:${cornerId}`],
-          limit: 5,
-        })),
-      ),
-    ]);
-    const authorityFacts = deriveRelayAuthorityFacts([...authorityEvents, ...cornerStates]);
-    const workspaceId =
-      authorityFacts.workspaceIdsByChannel[roomId] ??
-      Object.values(authorityFacts.workspaceIdsByChannel)[0] ??
-      roomId;
-    const identities = await this.readWorkspaceIdentities(
-      client,
-      workspaceId,
-      authorityFacts.memberPubkeys,
-      Object.keys(authorityFacts.workspaceIdsByChannel).length > 0,
-    );
-    const authority: ParseAuthority = {
-      workspaceId,
-      allowedChannelIds: channelIds,
-      identities,
-      channelCreators: authorityFacts.channelCreators,
-      channelAdmins: authorityFacts.channelAdmins,
-      trustedProjectionPubkeys: authorityFacts.trustedProjectionPubkeys,
-      knownMessages: Object.fromEntries(this.knownMessages),
-    };
-    const authorityCache = sharedReadCache(client).authorities;
-    const loadedAt = Date.now();
-    for (const channelId of channelIds) {
-      authorityCache.set(channelId, {
-        loadedAt,
-        authority: {
-          ...authority,
-          expectedChannelId: channelId,
-          allowedChannelIds: undefined,
-        },
-      });
-    }
-    const parsed = parseRelayEvents(
-      [...buzzEvents, ...authorityEvents, ...cornerStates].filter(
-        (event, index, all) => all.findIndex((candidate) => candidate.id === event.id) === index,
-      ),
-      authority,
-    );
-    this.rememberMessages(parsed);
-    const reduced = reduceWorkspaceEvents(
-      createWorkspaceSnapshot({
-        workspaceId: authority.workspaceId,
-        identities: Object.values(authority.identities),
-      }),
-      parsed,
-    );
-    const oldest = parsed
-      .flatMap((event) =>
-        event.type === 'unknown' || event.scope === 'workspace' ? [] : [event.createdAt],
-      )
-      .sort((a, b) => a - b)[0];
-    const newest = parsed
-      .flatMap((event) =>
-        event.type === 'unknown' || event.scope === 'workspace' ? [] : [event.createdAt],
-      )
-      .sort((a, b) => b - a)[0];
-    const snapshot = reduced.rooms[sessionId]
-      ? commitRoomCoverage(reduced, sessionId, {
-          epoch: Date.now(),
-          initialBackfillComplete: opts.afterSeq === undefined,
-          ...(oldest !== undefined ? { oldest } : {}),
-          ...(newest !== undefined ? { newest } : {}),
-        })
-      : reduced;
-    return { snapshot, events: parsed.map(toRigEvent) };
-  }
-
-  /**
-   * Cold-open fast path: exactly ONE bounded relay read feeds first paint.
-   *
-   * `performReadModelBackfill` is the full reconciliation shape — sibling
-   * corner discovery, family-wide authority, workspace identities — and that
-   * is exactly the machinery a Corner open must NOT pay before its first
-   * painted frame (the eight-second cold-open timeout, corr=be47dcd6c6622d21).
-   * This method issues ONE batched `query` (per-key single-value tag
-   * filters, per this relay's measured multi-value partiality) carrying only
-   * what first paint cannot defer: the message tail, this channel's immutable
-   * create event (the snapshot's Workspace binding — see the filter comment),
-   * exact membership projections for the roster, and the agent registry page
-   * the parser bootstraps identity from. Everything else — authority
-   * projections, siblings, presence — hydrates later through independent,
-   * bounded, nonblocking steps
-   * and merges into the snapshot without ever erasing what first paint showed
-   * (`mergeWorkspaceSnapshots` never wipes).
-   *
-   * Identity honesty: with no Workspace directory round trip available on
-   * the critical path, signer classification is BOOTSTRAPPED BY THE PARSER
-   * ITSELF from the same single page: a first parse/reduce pass lets
-   * `parseIdentityControl` fold each self-signed `#t=buzz-agent` registry
-   * record into an agent IdentityRecord (it requires no prior identity), and
-   * the final authority is then built from those reduced records before the
-   * page is parsed again for transcript/control classification. No raw tag
-   * is ever interpreted client-side and no second relay read exists.
-   * Registered agents therefore classify exactly as with directory-backed
-   * authority — their control markers stay control, activity stays activity,
-   * never prose. Only a signer neither the registry page nor a warm
-   * Workspace-identity cache covers falls back to a minimal human placeholder
-   * so ordinary verified member messages still parse as conversation instead
-   * of being quarantined as `unresolved-identity` (a blank transcript is a
-   * worse failure than one bounded unknown). That fallback carries a revision
-   * every real record outranks, so the deferred full reconciliation replaces
-   * it wholesale.
-   */
-  async readModelTail(
-    sessionId: SessionId,
-    opts: { limit: number },
-  ): Promise<ReadModelBackfillResult> {
-    const client = await this.getClient();
-    // ONE batched relay round trip carrying EXACTLY what first paint needs —
-    // nothing more, per the corner-open contract (authority, sibling states,
-    // projections, and presence are deferred):
-    //   1. the bounded message tail of THIS channel;
-    //   2. this channel's IMMUTABLE create event — not general structural
-    //      history. Its `community` tag is the only source for the snapshot's
-    //      Workspace id; without it the tail snapshot would bind to a
-    //      session-id pseudo-workspace and `mergeWorkspaceSnapshots` would
-    //      refuse every later deferred commit outright;
-    //   3. the self-signed agent registry page, relay-side tag-matched.
-    //      parseIdentityControl consumes these before any identity check, so
-    //      the bootstrap pass derives agent records without prior authority
-    //      and without client-side tag reads.
-    //   4. this Room's membership/admin projections, under both relay-stored
-    //      coordinates. The roster sheet's authority is the normalized
-    //      membership snapshot, so deferring these made a fresh Room appear
-    //      empty until re-entry triggered a full backfill.
-    const events = await client.query([
-      {
-        kinds: [KIND_STREAM_MESSAGE],
-        '#h': [sessionId],
-        limit: Math.max(1, opts.limit),
-      },
-      {
-        kinds: [KIND_CREATE_GROUP],
-        '#h': [sessionId],
-        limit: 5,
-      },
-      {
-        kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-        '#d': [sessionId],
-        limit: 4,
-      },
-      {
-        kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-        '#h': [sessionId],
-        limit: 4,
-      },
-      {
-        kinds: [KIND_STREAM_MESSAGE],
-        '#t': [TAG_AGENT],
-        limit: CORNER_STATE_DISCOVERY_LIMIT,
-      },
-    ]);
-    // Scope through the parser boundary only: facts come from
-    // `deriveRelayAuthorityFacts`, raw tags are never interpreted here.
-    const uniqueEvents = events.filter(
-      (event, index, all) => all.findIndex((candidate) => candidate.id === event.id) === index,
-    );
-    const facts = deriveRelayAuthorityFacts(uniqueEvents);
-    const workspaceId = facts.workspaceIdsByChannel[sessionId] ?? sessionId;
-    // Bootstrap pass: the parser itself classifies the registry page.
-    // `parseIdentityControl` consumes self-signed `#t=buzz-agent` records
-    // before any identity check, so this pass yields agent IdentityRecords
-    // without prior authority and without client-side tag reads. Only the
-    // reduced identity records are consumed; anything this pass could not
-    // resolve (messages whose signers are not yet known) is discarded.
-    const bootstrapped = reduceWorkspaceEvents(
-      createWorkspaceSnapshot({ workspaceId }),
-      parseRelayEvents(uniqueEvents, {
-        workspaceId,
-        identities: {},
-        knownMessages: {},
-      }).filter((event) => event.type !== 'unknown'),
-    );
-    const identities = this.tailIdentities(
-      client,
-      workspaceId,
-      uniqueEvents,
-      facts,
-      bootstrapped.identities,
-    );
-    const authority: ParseAuthority = {
-      workspaceId,
-      expectedChannelId: sessionId,
-      identities,
-      channelCreators: facts.channelCreators,
-      channelAdmins: facts.channelAdmins,
-      trustedProjectionPubkeys: facts.trustedProjectionPubkeys,
-      knownMessages: Object.fromEntries(this.knownMessages),
-    };
-    // Warm the shared per-channel authority cache so live delivery's first
-    // flush parses from it instead of issuing its own authority round trip.
-    sharedReadCache(client).authorities.set(sessionId, {
-      loadedAt: Date.now(),
-      authority,
-    });
-    const parsed = parseRelayEvents(
-      events.filter(
-        (event, index, all) =>
-          all.findIndex((candidate) => candidate.id === event.id) === index,
-      ),
-      authority,
-    );
-    this.rememberMessages(parsed);
-    const reduced = reduceWorkspaceEvents(
-      createWorkspaceSnapshot({
-        workspaceId: authority.workspaceId,
-        identities: Object.values(identities),
-      }),
-      parsed,
-    );
-    const channelEvents = parsed.flatMap((event) =>
-      event.type === 'unknown' || event.scope === 'workspace' ? [] : [event.createdAt],
-    );
-    const oldest = [...channelEvents].sort((a, b) => a - b)[0];
-    const newest = [...channelEvents].sort((a, b) => b - a)[0];
-    const snapshot = reduced.rooms[sessionId]
-      ? commitRoomCoverage(reduced, sessionId, {
-          epoch: Date.now(),
-          initialBackfillComplete: true,
-          ...(oldest !== undefined ? { oldest } : {}),
-          ...(newest !== undefined ? { newest } : {}),
-        })
-      : reduced;
-    return { snapshot, events: parsed.map(toRigEvent) };
-  }
-
-  /** Minimal signer identities for the fast path — see `readModelTail`. */
-  private tailIdentities(
-    client: BuzzClient,
-    workspaceId: string,
-    events: readonly NostrEvent[],
-    facts: ReturnType<typeof deriveRelayAuthorityFacts>,
-    bootstrapped: WorkspaceSnapshot['identities'],
-  ): Record<string, IdentityRecord> {
-    const memberPubkeys = new Set<string>(facts.memberPubkeys);
-    // A message's own signer must always resolve, even if the membership
-    // projection lags one write behind; otherwise the row it came to paint is
-    // quarantined and first paint shows less than the tail actually fetched.
-    for (const event of events) {
-      if (event.kind === KIND_STREAM_MESSAGE) memberPubkeys.add(event.pubkey);
-    }
-    const cached = sharedReadCache(client).workspaceIdentities.get(workspaceId)?.identities;
-    const identities: Record<string, IdentityRecord> = {};
-    for (const pubkey of memberPubkeys) {
-      const known = cached?.[pubkey] ?? bootstrapped[pubkey];
-      if (known) {
-        identities[pubkey] = known;
-        continue;
-      }
-      identities[pubkey] = {
-        kind: 'human',
-        pubkey: pubkey as IdentityRecord['pubkey'],
-        // `-` sorts below every real revision (hex event ids, `member:`), so
-        // the deferred full reconciliation always outranks this record in
-        // `mergeWorkspaceSnapshots`' identity fold.
-        revision: `-tail:${pubkey}`,
-      };
-    }
-    return identities;
-  }
-
-  /** Read the current parameterized-replaceable presence record(s) for a Room. */
-  async agentPresenceBackfill(channelId: string): Promise<SessionEvent[]> {
-    const client = await this.getClient();
-    const buzzEvents = await client.agentPresenceBackfill(channelId);
-    return this.parseEvents(channelId, buzzEvents);
-  }
-
-  /**
-   * Read presence across every Room in a Workspace, not just one — the Agents
-   * directory has no single Room context, unlike a Corner list or Room roster.
-   * Presence is published per (agent, Room) with no workspace-wide record, so
-   * this batches exact presence coordinates for every Room into one query call.
-   * Callers merge to newest-per-agent via `presenceMapFromSessionEvents`. An
-   * agent with no live daemon anywhere in the Workspace correctly yields no
-   * record, i.e. offline.
-   */
-  async agentPresenceBackfillForWorkspace(communityId: string): Promise<SessionEvent[]> {
-    const client = await this.getClient();
-    const roomIds = await client.communityChannels(communityId);
-    if (roomIds.length === 0) return [];
-    // Filtered by `#d`, NOT `#h`. Presence is a parameterized-replaceable
-    // kind:30078 record and the relay indexes those by `d`: a `#h` filter over
-    // kind 30078 matches nothing, even though the record carries an `h` tag.
-    // This read was the only presence reader that reached for `#h` — the
-    // per-Room reads always spelled the `d` key out — so it returned zero
-    // events for every Workspace, always, and this directory reported every
-    // agent OFFLINE regardless of what its daemon was doing. Confirmed against
-    // the live relay: `#h` → 0 events, `#d` → the same agent's four-second-old
-    // `online` heartbeat. One filter per Room key, inside THIS one `query`
-    // call: production can answer a multi-value `#d` array with only the first
-    // key's matches, which would read whole Rooms' agents offline from one
-    // partial page.
-    const buzzEvents = await client.query(
-      roomIds.map((roomId) => ({
-        kinds: [KIND_AGENT_PRESENCE],
-        // Built from `TAG_AGENT_PRESENCE`, a long-standing export, rather
-        // than from the newer `agentPresenceKey` helper. Metro resolves
-        // `@beeline/buzz-client` to its BUILT `dist/`, so a mobile fix that
-        // reaches for a brand-new SDK symbol is `undefined` at runtime against
-        // a stale build — and this read is best-effort, so the resulting
-        // TypeError is swallowed and every agent reads OFFLINE. A fix must not
-        // depend on a rebuild it cannot verify.
-        '#d': [`${TAG_AGENT_PRESENCE}:${roomId}`],
-        limit: 10,
-      })),
-    );
-    const authority = await this.readAuthorityForChannels(roomIds);
-    return this.parseReadyEvents(authority, buzzEvents);
-  }
-
-  /** Subscribe only to Room presence, keeping telemetry out of chat backfill. */
-  async agentPresenceSubscribeReady(
-    channelId: string,
-    handler: (event: SessionEvent) => void,
-  ): Promise<() => void> {
-    const subscriptionKey = `presence:${channelId}`;
-    const client = await this.getClient();
-    const authority = await this.readAuthority(channelId);
-    const relayUnsubscribe = await client.agentPresenceSubscribe(channelId, (event) => {
-      const [parsed] = this.parseReadyEvents(authority, [event]);
-      if (parsed) handler(parsed);
-    });
-    let stopped = false;
-    const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      relayUnsubscribe();
-      if (this.subscriptions.get(subscriptionKey) === stop) {
-        this.subscriptions.delete(subscriptionKey);
-      }
-    };
-    this.subscriptions.set(subscriptionKey, stop);
-    return stop;
-  }
-
-  /** Subscribe only to Room presence, keeping telemetry out of chat backfill. */
-  agentPresenceSubscribe(channelId: string, handler: (event: SessionEvent) => void): () => void {
-    const subscriptionKey = `presence:${channelId}`;
-    let stopReadySubscription: (() => void) | undefined;
-    let cancelled = false;
-
-    this.agentPresenceSubscribeReady(channelId, handler)
-      .then((stop) => {
-        if (cancelled) {
-          stop();
-          return;
-        }
-        stopReadySubscription = stop;
-      })
-      .catch((error) => {
-        console.warn(`BuzzRigTransport: agentPresenceSubscribe(${channelId}) failed:`, error);
-      });
-
-    const unsubscribe = () => {
-      cancelled = true;
-      stopReadySubscription?.();
-    };
-    this.subscriptions.set(subscriptionKey, unsubscribe);
-    return unsubscribe;
-  }
-
-  /** Read the current live agent reply draft (parameterized-replaceable), if any. */
-  async agentDraftBackfill(channelId: string): Promise<SessionEvent[]> {
-    const client = await this.getClient();
-    // One single-value `#d` key per lane inside ONE batched query call. The
-    // SDK helper historically packed both lanes into one multi-value `#d`
-    // array, which production can answer with only the first key's matches
-    // and silently drop the thought lane. A mobile fix must not depend on a
-    // fresh SDK export, so the expansion lives here over long-standing
-    // kind/tag constants.
-    const buzzEvents = await client.query([
-      { kinds: [KIND_AGENT_DRAFT], '#d': [`${TAG_AGENT_DRAFT}:${channelId}`], limit: 5 },
-      { kinds: [KIND_AGENT_DRAFT], '#d': [`${TAG_AGENT_THOUGHT}:${channelId}`], limit: 5 },
-    ]);
-    return this.parseEvents(channelId, buzzEvents);
-  }
-
-  /** Subscribe only to this Room's live agent reply draft, isolated from chat backfill. */
-  async agentDraftSubscribeReady(
-    channelId: string,
-    handler: (event: SessionEvent) => void,
-  ): Promise<() => void> {
-    const subscriptionKey = `draft:${channelId}`;
-    const client = await this.getClient();
-    const authority = await this.readAuthority(channelId);
-    const relayUnsubscribe = await client.agentDraftSubscribe(channelId, (event) => {
-      const [parsed] = this.parseReadyEvents(authority, [event]);
-      if (parsed) handler(parsed);
-    });
-    let stopped = false;
-    const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      relayUnsubscribe();
-      if (this.subscriptions.get(subscriptionKey) === stop) {
-        this.subscriptions.delete(subscriptionKey);
-      }
-    };
-    this.subscriptions.set(subscriptionKey, stop);
-    return stop;
-  }
-
-  /** Subscribe only to this Room's live agent reply draft, isolated from chat backfill. */
-  agentDraftSubscribe(channelId: string, handler: (event: SessionEvent) => void): () => void {
-    const subscriptionKey = `draft:${channelId}`;
-    let stopReadySubscription: (() => void) | undefined;
-    let cancelled = false;
-
-    this.agentDraftSubscribeReady(channelId, handler)
-      .then((stop) => {
-        if (cancelled) {
-          stop();
-          return;
-        }
-        stopReadySubscription = stop;
-      })
-      .catch((error) => {
-        console.warn(`BuzzRigTransport: agentDraftSubscribe(${channelId}) failed:`, error);
-      });
-
-    const unsubscribe = () => {
-      cancelled = true;
-      stopReadySubscription?.();
-      if (this.subscriptions.get(subscriptionKey) === unsubscribe) {
-        this.subscriptions.delete(subscriptionKey);
-      }
-    };
-    this.subscriptions.set(subscriptionKey, unsubscribe);
-    return unsubscribe;
-  }
-
-  /** Live canonical lifecycle delivery through the typed wire parser. */
-  async cornerLifecycleSubscribeReady(
-    parentRoomId: string,
-    cornerIds: string[],
-    handler: (event: SessionEvent) => void,
-  ): Promise<() => void> {
-    const subscriptionKey = `corner-state:${[...cornerIds].sort().join(',')}`;
-    const client = await this.getClient();
-    const authority = await this.readAuthorityForChannels([parentRoomId, ...cornerIds]);
-    const relayUnsubscribe = await client.cornerStateSubscribe(cornerIds, (event) => {
-      const [parsed] = this.parseReadyEvents(authority, [event]);
-      if (parsed) handler(parsed);
-    });
-    let stopped = false;
-    const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      relayUnsubscribe();
-      if (this.subscriptions.get(subscriptionKey) === stop) {
-        this.subscriptions.delete(subscriptionKey);
-      }
-    };
-    this.subscriptions.set(subscriptionKey, stop);
-    return stop;
-  }
-
-  /** The runtime's currently advertised model/effort catalog for an agent, if any session has published one. */
-  async agentModelCatalogRead(
-    communityId: string,
-    agentPubkey: string,
-  ): Promise<AgentModelCatalog | null> {
-    const client = await this.getClient();
-    return client.getAgentModelCatalog(communityId, agentPubkey);
-  }
-
-  /** The current human-chosen model/effort selection for an agent, if any. */
-  async agentModelConfigRead(
-    communityId: string,
-    agentPubkey: string,
-  ): Promise<AgentModelConfig | null> {
-    const client = await this.getClient();
-    return client.getAgentModelConfig(communityId, agentPubkey);
-  }
-
-  /**
-   * The slash commands/skills an agent's harness advertises, if published.
-   *
-   * Command records are keyed by Workspace root, never by Room id or relay
-   * tenant. Resolve that immutable Room linkage here so screen selection/cache
-   * state cannot silently query a different `d` key. Older corners may lack
-   * the linkage on their own create event, so their already-resolved parent
-   * Workspace remains a compatibility fallback.
-   */
+  /** Commands are moving into the agent surface; no raw relay fallback is permitted. */
   async agentCommandsRead(
-    channelId: string,
-    agentPubkey: string,
-    fallbackWorkspaceRootId?: string,
+    _channelId: string,
+    _agentPubkey: string,
+    _fallbackWorkspaceRootId?: string,
   ): Promise<AgentCommandList | null> {
-    const client = await this.getClient();
-    let roomWorkspaceRootId: string | null;
-    try {
-      roomWorkspaceRootId = await client.getChannelCommunityId(channelId);
-    } catch (error) {
-      if (!fallbackWorkspaceRootId) throw error;
-      roomWorkspaceRootId = null;
-    }
-    const workspaceRootId = roomWorkspaceRootId ?? fallbackWorkspaceRootId;
-    if (!workspaceRootId) return null;
-    return client.getAgentCommands(workspaceRootId, agentPubkey);
+    return null;
   }
 
-  /** Choose a model/effort for an agent. Applied on that agent's next session (re)activation. */
-  async agentModelConfigSet(
-    communityId: string,
-    agentPubkey: string,
-    input: AgentModelConfigInput,
-  ): Promise<AgentModelConfig> {
-    const client = await this.getClient();
-    return client.setAgentModelConfig(communityId, agentPubkey, input);
-  }
-
-  // ── Room→repo (Stage 2 app UI over Stage 1's daemon/relay backbone) ─────
-
-  /** Resolve the repository a Room owns, or `null` for a chat-only Room. */
-  /**
-   * The Room's repository, keeping "we could not tell" distinct from "there
-   * isn't one".
-   *
-   * `roomRepositoryRead` collapses both into `null`, and its caller then
-   * collapses a thrown error into `null` as well — so one slow or refused
-   * relay read made the app tell an admin their configured Room had no
-   * repository, and intercept their open-a-corner message to say so.
-   */
-  async roomRepositoryState(channelId: string): Promise<RoomRepositoryResolution> {
-    const client = await this.getClient();
-    return client.resolveRoomRepositoryState(channelId);
-  }
-
-  async roomRepositoryRead(channelId: string): Promise<RoomRepository | null> {
-    const client = await this.getClient();
-    return client.resolveRoomRepository(channelId);
-  }
-
-  /** Bind (or re-bind) a Room's repository. Room-admin authority is enforced server-side too. */
   async roomRepositorySet(
     channelId: string,
     input: RoomRepositoryInput & { communityId?: string },
   ): Promise<RoomRepository> {
-    const client = await this.getClient();
-    return client.setRoomRepository(channelId, input);
+    return (await this.getClient()).setRoomRepository(channelId, input);
   }
 
-  /**
-   * Repoint a Room's landing target, carrying its current repository binding
-   * forward. This is the admin-confirm half of the chat-native target-branch
-   * change: the agent only ever publishes a proposal card, and this event is
-   * signed by the confirming admin's own key. Non-admins are refused here AND
-   * again by every reader (`getRoomRepository` re-checks the author's current
-   * role), so a refusal cannot be bypassed by publishing directly.
-   */
   async roomTargetBranchSet(channelId: string, targetBranch: string): Promise<RoomRepository> {
-    const client = await this.getClient();
-    return client.setRoomTargetBranch(channelId, targetBranch);
+    return (await this.getClient()).setRoomTargetBranch(channelId, targetBranch);
   }
 
-  /**
-   * Toggle whether this Room receives GitHub repository activity (pushes,
-   * pull requests, issues, CI, and reviews). Same admin authority and
-   * carry-forward shape as the target-branch change above; absent/`undefined`
-   * reads as enabled — the shipped default is ON.
-   */
   async roomGitHubEventsSet(channelId: string, enabled: boolean): Promise<RoomRepository> {
-    const client = await this.getClient();
-    return client.setRoomGitHubEvents(channelId, enabled);
+    return (await this.getClient()).setRoomGitHubEvents(channelId, enabled);
   }
 
-  /** App repositories when enabled; the unchanged connected-Room list while dark. */
-  async workspaceRoomRepositoryCandidates(communityId: string): Promise<RepoCandidate[]> {
+  async workspaceRoomRepositoryCandidates(_communityId: string): Promise<RepoCandidate[]> {
     const capabilities = await getAuthCapabilities(this.baseUrl).catch(() => undefined);
-    if (capabilities?.github) {
-      const access = await listGitHubRepositories(this.baseUrl, this.identity);
-      return dedupeRepoCandidates(
-        access.repositories.map((repo) => ({
-          key: `github:${repo.id}`,
-          name: repo.fullName,
-          remote: `git://github.com/${repo.fullName}`,
-          githubInstallationId: repo.installationId,
-          defaultBranch: repo.defaultBranch,
-        })),
-      );
-    }
-
-    const client = await this.getClient();
-    const creates = await client.query([{ kinds: [KIND_CREATE_GROUP], limit: 500 }]);
-    const roomIds = new Set<string>();
-    for (const create of creates) {
-      if (tagValue(create, TAG_COMMUNITY) !== communityId) continue;
-      if (tagValue(create, TAG_PARENT) || tagValues(create, 't').includes(TAG_DIRECT_MESSAGE))
-        continue;
-      const id = tagValue(create, 'h') ?? tagValue(create, 'd');
-      if (id && id !== communityId) roomIds.add(id);
-    }
-    const repos = await Promise.all(
-      [...roomIds].map((id) => client.resolveRoomRepository(id).catch(() => null)),
-    );
+    if (!capabilities?.github) return [];
+    const access = await listGitHubRepositories(this.baseUrl, this.identity);
     return dedupeRepoCandidates(
-      repos
-        .filter((repo): repo is RoomRepository => repo !== null && Boolean(repo.binding.remote))
-        .map((repo) => ({
-          key: repo.binding.key,
-          name: repo.binding.name,
-          remote: repo.binding.remote!,
-        })),
+      access.repositories.map((repo) => ({
+        key: `github:${repo.id}`,
+        name: repo.fullName,
+        remote: `git://github.com/${repo.fullName}`,
+        githubInstallationId: repo.installationId,
+        defaultBranch: repo.defaultBranch,
+      })),
     );
   }
 
@@ -1675,7 +244,7 @@ export class BuzzRigTransport implements RigTransport {
     };
   }
 
-  async githubInstallationStart(redirectUri: string, installationId?: number): Promise<string> {
+  githubInstallationStart(redirectUri: string, installationId?: number): Promise<string> {
     return startGitHubInstallation(this.baseUrl, this.identity, redirectUri, installationId);
   }
 
@@ -1695,102 +264,32 @@ export class BuzzRigTransport implements RigTransport {
     };
   }
 
-  async githubRepositoryAccess(fullName: string): Promise<GitHubRepositoryAccessResult> {
+  githubRepositoryAccess(fullName: string): Promise<GitHubRepositoryAccessResult> {
     return getGitHubRepositoryAccess(this.baseUrl, this.identity, fullName);
   }
 
-  async permissionRespond(
-    _sessionId: SessionId,
-    _requestId: string,
-    _decision: PermissionDecision,
-    _extras?: {
-      mode?: string;
-      allowedTools?: string[];
-      updatedInput?: Record<string, unknown>;
-    },
-  ): Promise<void> {
-    throw new RigTransportNotImplementedError(
-      'permissionRespond',
-      'P2: body-mediated; stock buzz-acp auto-approves today',
-    );
-  }
-
-  // ── Worktrees (P2) ─────────────────────────────────────────────────────
-
-  async worktreeCreate(
-    _input: WorktreeCreateInput,
-  ): Promise<{ worktreeId: string; path: string; branch?: string }> {
-    throw new RigTransportNotImplementedError(
-      'worktreeCreate',
-      'P2: body git worktree + subchannel + edit MCP',
-    );
-  }
-
-  async worktreeArchive(_worktreeId: string, _opts?: { sessionId?: SessionId }): Promise<void> {
-    throw new RigTransportNotImplementedError(
-      'worktreeArchive',
-      'P2: body remove worktree, archive child channel',
-    );
-  }
-
-  // ── Files (P2) ─────────────────────────────────────────────────────────
-
-  private readChangeReviewArtifact(
-    client: BuzzClient,
-    sessionId: SessionId,
-    tip: string,
-    authorPubkey: string,
-  ): Promise<ChangeReviewArtifact | null> {
-    const key = `${sessionId}\u0000${tip}\u0000${authorPubkey}`;
+  private async readReviewArtifact(
+    sessionId: string,
+    descriptor: ChangeReviewArtifactDescriptor,
+  ): Promise<ChangeReviewArtifact> {
+    const key = `${sessionId}\u0000${descriptor.tip}\u0000${descriptor.sha256}`;
     const existing = this.reviewArtifacts.get(key);
     if (existing) return existing;
     const reading = (async () => {
-      const events = await client.query([
-        {
-          kinds: [CHANGE_REVIEW_EVENT_KIND],
-          authors: [authorPubkey],
-          '#d': [`${sessionId}:${tip}:artifact`],
-          limit: 2,
-        },
-      ]);
-      const candidate = events
-        .filter(
-          (event) =>
-            event.pubkey === authorPubkey &&
-            tagValue(event, 'h') === sessionId &&
-            tagValue(event, 'tip') === tip &&
-            tagValue(event, 't') === CHANGE_REVIEW_ARTIFACT_TAG,
-        )
-        .sort((left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id))
-        .at(0);
-      if (!candidate) return null;
-      const descriptor = parseChangeReviewArtifactDescriptor(candidate.content);
-      if (
-        !descriptor ||
-        descriptor.tip !== tip ||
-        descriptor.sha256 !== tagValue(candidate, 'x') ||
-        descriptor.patchId !== tagValue(candidate, 'patch-id')
-      ) {
-        throw new Error(`Invalid review artifact descriptor for ${tip.slice(0, 12)}`);
-      }
       const response = await fetch(descriptor.url);
-      if (!response.ok) {
-        throw new Error(`Review artifact download failed (${response.status})`);
-      }
+      if (!response.ok) throw new Error(`Review artifact download failed (${response.status})`);
       const artifact = parseChangeReviewArtifact(
         new Uint8Array(await response.arrayBuffer()),
         descriptor,
       );
-      if (!artifact) throw new Error(`Review artifact failed integrity check for ${tip.slice(0, 12)}`);
+      if (!artifact)
+        throw new Error(
+          `Review artifact failed integrity check for ${descriptor.tip.slice(0, 12)}`,
+        );
       return artifact;
     })();
     this.reviewArtifacts.set(key, reading);
-    void reading.then(
-      (artifact) => {
-        if (!artifact) this.reviewArtifacts.delete(key);
-      },
-      () => this.reviewArtifacts.delete(key),
-    );
+    void reading.catch(() => this.reviewArtifacts.delete(key));
     return reading;
   }
 
@@ -1799,348 +298,86 @@ export class BuzzRigTransport implements RigTransport {
     path: string,
     reviewTip?: string,
   ): Promise<{ content: string; isBinary?: boolean } | null> {
-    const client = await this.getClient();
-    const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
-    if (!mergeInfo || !('target' in mergeInfo)) return null;
-    const tip = reviewTip ?? mergeInfo.target.tip;
-    const artifact = await this.readChangeReviewArtifact(
-      client,
-      sessionId,
-      tip,
-      mergeInfo.authorPubkey,
-    );
-    if (artifact) {
-      const file = artifact.files.find((candidate) => candidate.path === path);
-      if (!file) throw new Error(`Missing diff for ${path} at ${tip.slice(0, 12)}`);
-      if (file.renderUnavailableReason === 'too-large') return null;
-      if (file.diff === undefined) throw new Error(`Missing diff for ${path} at ${tip.slice(0, 12)}`);
-      return { content: file.diff, ...(file.isBinary ? { isBinary: true } : {}) };
-    }
-    throw new Error(`Missing review artifact for ${tip.slice(0, 12)}`);
+    const review = (await this.views().room(sessionId)).review;
+    const descriptor = review?.artifact;
+    if (!descriptor || (reviewTip && descriptor.tip !== reviewTip)) return null;
+    const artifact = await this.readReviewArtifact(sessionId, descriptor);
+    const file = artifact.files.find((candidate) => candidate.path === path);
+    if (!file || file.renderUnavailableReason === 'too-large') return null;
+    if (file.diff === undefined) throw new Error(`Missing diff for ${path}`);
+    return { content: file.diff, ...(file.isBinary ? { isBinary: true } : {}) };
   }
 
   async workspaceFilesRead(sessionId: SessionId, reviewTip?: string): Promise<ChangedFile[]> {
-    const client = await this.getClient();
-    const mergeInfo = await this.getSubchannelMergeTarget(sessionId);
-    if (!mergeInfo || !('target' in mergeInfo)) return [];
-    const tip = reviewTip ?? mergeInfo.target.tip;
-    const artifact = await this.readChangeReviewArtifact(
-      client,
-      sessionId,
-      tip,
-      mergeInfo.authorPubkey,
-    );
-    if (!artifact) throw new Error(`Missing review artifact for ${tip.slice(0, 12)}`);
+    const review = (await this.views().room(sessionId)).review;
+    const descriptor = review?.artifact;
+    if (!descriptor || (reviewTip && descriptor.tip !== reviewTip)) return [];
+    const artifact = await this.readReviewArtifact(sessionId, descriptor);
     return artifact.files.map(({ diff: _diff, ...file }) => file);
   }
 
-  async changedFilesRevert(_sessionId: SessionId, _paths: string[]): Promise<void> {
-    throw new RigTransportNotImplementedError(
-      'changedFilesRevert',
-      'P2: body git checkout in worktree',
-    );
-  }
-
-  // ── Merge (P2) ─────────────────────────────────────────────────────────
-
-  /**
-   * Read the merge target from the subchannel's control messages.
-   * The body posts a control message with repo/branch/tip tags on subchannel open.
-   *
-   * A corner that finished but has nothing reviewable (uncommitted work, or
-   * no committed change at all) returns `{ reason }` instead of `null` —
-   * `null` alone can't distinguish "nothing has happened yet" from "the
-   * agent tried and explicitly declined," and the corner-lifecycle event
-   * carrying that explanation is deliberately excluded from the transcript
-   * (DESIGN.md: corner status is never inscribed there), so this is the only
-   * place the human can learn why the review panel is empty.
-   */
-  async getSubchannelMergeTarget(subchannelId: string): Promise<
-    | {
-        target: MergeTarget;
-        channelId: string;
-        authorPubkey: string;
-      }
-    | { reason: string }
-    | null
+  async getSubchannelMergeTarget(
+    subchannelId: string,
+  ): Promise<
+    { target: MergeTarget; channelId: string; authorPubkey: string } | { reason: string } | null
   > {
-    const client = await this.getClient();
-    // Activity frames can push merge-ready outside the short transcript
-    // backfill window. Fetch body controls directly so review and approval
-    // always bind to the current exact merge target.
-    const events = await client.query([
-      { kinds: [9], '#h': [subchannelId], '#t': ['body-control'], limit: 100 },
-    ]);
-    for (const event of [...events]
-      .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
-      .reverse()) {
+    const view = await this.views().room(subchannelId);
+    for (const message of [...view.messages].reverse()) {
+      if (message.merge?.action === 'not-ready')
+        return message.text ? { reason: message.text } : null;
       if (
-        (event.tags ?? []).some(
-          (tag: string[]) => tag[0] === 't' && tag[1] === 'merge-not-ready',
-        )
+        message.merge?.action === 'ready' &&
+        message.merge.repository &&
+        message.merge.branch &&
+        message.merge.tip
       ) {
-        return event.content ? { reason: event.content } : null;
-      }
-      const repo = tagValue(event, 'repo');
-      const branch = tagValue(event, 'branch');
-      const tip = tagValue(event, 'tip');
-      const parent = tagValue(event, 'parent');
-      if (repo && branch && tip) {
         return {
-          target: { repo, branch, tip },
-          channelId: parent ?? '',
-          authorPubkey: event.pubkey,
+          target: {
+            repo: message.merge.repository,
+            branch: message.merge.branch,
+            tip: message.merge.tip,
+          },
+          channelId: view.parent?.id ?? '',
+          authorPubkey: message.author.pubkey,
         };
       }
     }
     return null;
   }
 
-  /**
-   * Publish a merge approval for the given subchannel.
-   * Signs with the transport's identity key and submits to the relay.
-   */
   async submitMergeApproval(
     subchannelId: string,
     target: MergeTarget,
   ): Promise<{ success: boolean; message?: string }> {
     try {
-      const client = await this.getClient();
-      const existing = await client.query([
-        {
-          kinds: [9],
-          authors: [this.identity.publicKey],
-          '#h': [subchannelId],
-          '#t': [APPROVAL_MARKER],
-          limit: 10,
-        },
-      ]);
-      if (
-        existing.some(
-          (event) =>
-            tagValue(event, 'repo') === target.repo &&
-            tagValue(event, 'branch') === target.branch &&
-            tagValue(event, 'tip') === target.tip,
-        )
-      ) {
-        return { success: true, message: 'Approval already sent for this change' };
-      }
-      await client.submitMergeApproval(subchannelId, target);
+      await (await this.getClient()).submitMergeApproval(subchannelId, target);
       return { success: true, message: 'Approval sent for merge' };
-    } catch (err) {
-      return { success: false, message: String(err) };
+    } catch (reason) {
+      return { success: false, message: String(reason) };
     }
   }
 
-  /** Check whether this channel itself is archived. */
   async isChannelArchived(channelId: string): Promise<boolean> {
     try {
-      const client = await this.getClient();
-      const meta = await client.getChannelMetadata(channelId);
-      return meta?.archived === true;
+      return (await this.views().room(channelId)).room.archived;
     } catch {
       return false;
     }
   }
 
-  /**
-   * List subchannels of a parent parentChannelId.
-   */
-  async listSubchannels(parentChannelId: string): Promise<string[]> {
-    const client = await this.getClient();
-    return client.listSubchannels(parentChannelId);
-  }
-
-  /** Person-facing projection of the canonical snapshot corner union. */
-  async listSubchannelLifecycle(parentChannelId: string): Promise<CornerSummary[]> {
-    const client = await this.getClient();
-    const cache = sharedReadCache(client);
-    const prior = cache.recentSnapshots.get(parentChannelId);
-    const priorCorners =
-      prior && selectCorners(prior.result.snapshot, parentChannelId).length > 0;
-    const recent = prior && Date.now() - prior.loadedAt < 15_000 ? prior : undefined;
-    let result = recent ? recent.result : await this.readModelBackfill(parentChannelId, { limit: 1 });
-    // Completeness guard: a relay that answers batched tag filters partially
-    // can make a whole corner family vanish from one re-read (the live
-    // close-one-corner wipe). An EMPTY answer that would overwrite a family
-    // the previous read proved non-empty is never committed on first sight —
-    // one confirming re-read decides. Bounded: at most one extra batched read,
-    // only on that non-empty→empty transition, and lifecycle enrichment never
-    // blocks navigation.
-    if (!recent && priorCorners) {
-      const freshCorners = selectCorners(result.snapshot, parentChannelId);
-      if (freshCorners.length === 0) {
-        result = await this.readModelBackfill(parentChannelId, { limit: 1 });
-      }
-    }
-    const { snapshot } = result;
-    return selectCorners(snapshot, parentChannelId).map((corner) => {
-      const status =
-        corner.kind === 'active'
-          ? corner.state === 'working'
-            ? 'live'
-            : corner.state === 'waiting'
-              ? corner.reason === 'review'
-                ? 'open'
-                : corner.reason === 'failure'
-                  ? 'failed'
-                  : 'needs-attention'
-              : null
-          : 'failed';
-      return {
-        id: corner.id,
-        name: corner.name ?? `corner-${corner.id.slice(0, 8)}`,
-        openerPubkey: corner.creatorPubkey ?? '',
-        status,
-        ...(corner.kind === 'active' ? { machineState: corner.state } : {}),
-        ...(corner.kind === 'active' && corner.reason ? { machineReason: corner.reason } : {}),
-        stateAt: corner.stateAt,
-        ...(corner.kind === 'active' && corner.state === 'waiting' ? { awaitingReply: true } : {}),
-        ...(corner.createdAt !== undefined ? { createdAt: corner.createdAt } : {}),
-        lastActivityAt: snapshot.rooms[corner.id]?.coverage.newest ?? corner.stateAt,
-      } satisfies CornerSummary;
-    });
-  }
-
-  /**
-   * Cross-Room lifecycle projection through the same normalized snapshot path
-   * as Room entry. Room reads start concurrently and remain failure-isolated;
-   * each structural query uses only single-value `#h` filters. The Room-list
-   * caller treats this enrichment as background work, so it never gates the
-   * foreground shell.
-   */
-  async listSubchannelLifecycleForRooms(
-    parentChannelIds: string[],
-  ): Promise<Map<string, CornerSummary[]>> {
-    // Per-Room calls stay independent so one Room's partial/failed read can
-    // never blank its siblings' committed summaries; each Room's own guard
-    // decides whether its empty answer is believable.
-    const entries = await Promise.all(
-      parentChannelIds.map(async (parentChannelId) => {
-        try {
-          return [parentChannelId, await this.listSubchannelLifecycle(parentChannelId)] as const;
-        } catch {
-          return null;
-        }
-      }),
-    );
-    return new Map(entries.filter((entry) => entry !== null));
-  }
-
-  async getChannelCreator(channelId: string): Promise<string | null> {
-    const client = await this.getClient();
-    const creates = await client.query([{ kinds: [9007], '#h': [channelId], limit: 5 }]);
-    return [...creates].sort((a, b) => a.created_at - b.created_at)[0]?.pubkey ?? null;
-  }
-
-  /**
-   * Resolve parent channel ID from the 9007 create event.
-   * Returns null if the channel is a top-level TLC (no parent).
-   */
   async getParentChannelId(channelId: string): Promise<string | null> {
-    const client = await this.getClient();
-    return client.getParentChannelId(channelId);
+    try {
+      return (await this.views().room(channelId)).parent?.id ?? null;
+    } catch {
+      return null;
+    }
   }
 
-  /**
-   * What a corner inherited from the Room it was opened out of: the objective
-   * the daemon recorded on the corner's create event, and the bounded window
-   * of Room conversation that immediately preceded the corner opening.
-   *
-   * Both come from the corner's own kind:9007 create event and the parent
-   * Room's history, so this works for every corner — including ones opened
-   * before this shipped, which simply have no `task` tag and fall back to the
-   * corner's name. The create-event read is the same filter
-   * `getParentChannelId` already issues, so on the enter-corner path it is a
-   * cache hit rather than a second round trip.
-   */
-  async cornerBriefing(
-    cornerChannelId: string,
-    parentChannelId: string,
-    limit: number = ROOM_CONTEXT_LIMIT,
-  ): Promise<{ task?: string; context: RoomContextEntry[] }> {
-    const client = await this.getClient();
-    const creates = await client.query([
-      { kinds: [KIND_CREATE_GROUP], '#h': [cornerChannelId], limit: 5 },
-    ]);
-    const create = creates
-      .slice()
-      .sort((a, b) => a.created_at - b.created_at)
-      .find((event) => tagValue(event, TAG_PARENT));
-    // No create event means no reliable "before the corner opened" boundary,
-    // and a window taken from the wrong side of it would be worse than none.
-    if (!create) return { context: [] };
-    const events = await client.sessionEventsBackfill(parentChannelId, {
-      until: create.created_at,
-      limit: ROOM_CONTEXT_SCAN_LIMIT,
-    });
-    const viewer = this.identity.publicKey;
-    const [parentSnapshot, cornerSnapshot] = await Promise.all([
-      this.readModelSnapshot(parentChannelId, events),
-      this.readModelSnapshot(cornerChannelId, creates),
-    ]);
-    const messages = transcriptMessages(parentSnapshot, parentChannelId, viewer);
-    const task = selectCorners(cornerSnapshot, parentChannelId).find(
-      (corner) => corner.id === cornerChannelId,
-    )?.task;
-    return { ...(task ? { task } : {}), context: selectRoomContext(messages, limit) };
-  }
-
-  /**
-   * Get pubkey short npub for provenance display.
-   */
   getPubkey(): string {
     return this.identity.publicKey;
   }
 
-  async mergeAction(input: MergeActionInput): Promise<{ success: boolean; message?: string }> {
-    // The mergeAction in RigTransport uses approvalToken-style input.
-    // For P2, we read the merge target from the subchannel's control messages.
-    // If input has channelId, try to find merge target there.
-    if (input.channelId) {
-      const mergeInfo = await this.getSubchannelMergeTarget(input.channelId);
-      if (mergeInfo && 'target' in mergeInfo) {
-        return this.submitMergeApproval(input.channelId, mergeInfo.target);
-      }
-      return { success: false, message: 'No merge target found in subchannel messages' };
-    }
-    return { success: false, message: 'channelId required for merge action' };
-  }
-
-  // ── Terminals: STUB ────────────────────────────────────────────────────
-
-  async terminalCreate(): Promise<never> {
-    throw new RigTransportStubbedError('terminalCreate');
-  }
-  async terminalStop(): Promise<never> {
-    throw new RigTransportStubbedError('terminalStop');
-  }
-  async terminalConnect(): Promise<never> {
-    throw new RigTransportStubbedError('terminalConnect');
-  }
-
-  // ── Cleanup ────────────────────────────────────────────────────────────
-
-  /** Disconnect the WS and clean up subscriptions. */
   disconnect(): void {
-    for (const [, unsub] of this.subscriptions) {
-      try {
-        unsub();
-      } catch {
-        // ignore
-      }
-    }
-    this.subscriptions.clear();
-    if (this.client) {
-      this.client.disconnect();
-      this.client = null;
-    }
+    // Shared clients own the one authenticated socket for this viewer.
   }
-}
-
-/** Test-only hook: backdate the shared recent-snapshot entry so time-based
- *  guards (completeness re-read) take the stale-cache path deterministically. */
-export function __backdateRecentSnapshotForTests(client: object, channelId: string): void {
-  const entry = sharedReadCache(client).recentSnapshots.get(channelId);
-  if (entry) entry.loadedAt -= 60_000;
 }

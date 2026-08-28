@@ -5,7 +5,6 @@ import { LiveOverlayDecoder, applyLiveOverlay, visibleLiveOverlays } from './liv
 import { composeRoomRows, addRoomPage, replaceRoomTail } from './room-response-partitions.js';
 import { SignedEventOutbox } from './signed-event-outbox.js';
 import { SurfaceResponseCache, surfaceCacheKey } from './surface-cache.js';
-import { invalidatesSurface } from './surface-invalidation.js';
 import { SurfaceRefreshScheduler } from './surface-refresh.js';
 import type { RoomView, RoomViewMessage } from './room-view.js';
 
@@ -14,14 +13,22 @@ const WORKSPACE = 'ec08be9d-9d9d-413e-b546-959d4abe39df';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
 }
 
 function row(id: string, createdAt: number, requestId?: string): RoomViewMessage {
   const author = { pubkey: 'a'.repeat(64), kind: 'agent' as const, name: 'Milo' };
   return {
-    id, text: id.slice(0, 4), createdAt, author, presentation: 'message',
+    id,
+    text: id.slice(0, 4),
+    createdAt,
+    author,
+    presentation: 'message',
     reference: { channelId: ROOM, eventId: id, rootId: id },
     ...(requestId ? { requestId, liveTurnId: `live-turn:${requestId}` } : {}),
   };
@@ -30,10 +37,19 @@ function row(id: string, createdAt: number, requestId?: string): RoomViewMessage
 function room(messages: readonly RoomViewMessage[]): RoomView {
   const identity = { pubkey: 'a'.repeat(64), kind: 'agent' as const, name: 'Milo' };
   return {
-    room: { id: ROOM, workspaceId: WORKSPACE, name: 'Room', archived: false, createdAt: 1, updatedAt: 2 },
-    messages, members: [{ identity, role: 'member' }],
+    room: {
+      id: ROOM,
+      workspaceId: WORKSPACE,
+      name: 'Room',
+      archived: false,
+      createdAt: 1,
+      updatedAt: 2,
+    },
+    messages,
+    members: [{ identity, role: 'member' }],
     viewer: { identity, role: 'member', permissions: { send: true, manage: false } },
-    corners: [], watchFilters: [{ kinds: [9], '#h': [ROOM] }],
+    corners: [],
+    watchFilters: [{ kinds: [9], '#h': [ROOM] }],
   };
 }
 
@@ -86,44 +102,115 @@ describe('surface liveness scheduler', () => {
     expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(5);
     expect(fetch.mock.calls.length).toBeLessThanOrEqual(7);
   });
+
+  it('never paints a response that was overtaken by a live dirty signal', async () => {
+    vi.useFakeTimers();
+    const first = deferred<number>();
+    const fetch = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce(2);
+    const applied: number[] = [];
+    const scheduler = new SurfaceRefreshScheduler({ fetch, apply: (value) => applied.push(value) });
+    await scheduler.startAfter(Promise.resolve());
+    await vi.runOnlyPendingTimersAsync();
+    scheduler.signal();
+    first.resolve(1);
+    await Promise.resolve();
+    expect(applied).toEqual([]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(applied).toEqual([2]);
+  });
+
+  it('does not surface an error from a request overtaken by a newer generation', async () => {
+    vi.useFakeTimers();
+    const first = deferred<number>();
+    const onError = vi.fn();
+    const scheduler = new SurfaceRefreshScheduler({
+      fetch: vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce(2),
+      apply: () => undefined,
+      onError,
+    });
+    await scheduler.startAfter(Promise.resolve());
+    await vi.runOnlyPendingTimersAsync();
+    scheduler.signal();
+    first.reject(new Error('old request'));
+    await Promise.resolve();
+    expect(onError).not.toHaveBeenCalled();
+  });
 });
 
 describe('narrow live seam', () => {
-  it('decodes verified overlays for ten viewers while draft/thought never invalidate GET state', () => {
+  it('decodes verified overlays for ten viewers without folding them into GET state', () => {
     const agent = createIdentity('overlay-agent');
-    const draft = signEvent({
-      pubkey: agent.publicKey, created_at: 10, kind: 30078,
-      tags: [['d', `agent-draft:${ROOM}`], ['h', ROOM], ['t', 'agent-draft'],
-        ['agent', agent.publicKey], ['session', 'session'], ['request', 'request']],
-      content: 'Hel',
-    }, agent.secretKey);
+    const draft = signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: 10,
+        kind: 30078,
+        tags: [
+          ['d', `agent-draft:${ROOM}`],
+          ['h', ROOM],
+          ['t', 'agent-draft'],
+          ['agent', agent.publicKey],
+          ['session', 'session'],
+          ['request', 'request'],
+        ],
+        content: 'Hel',
+      },
+      agent.secretKey,
+    );
     for (let viewer = 0; viewer < 10; viewer += 1) {
       const decoder = new LiveOverlayDecoder(ROOM, new Set([agent.publicKey]));
       expect(decoder.decode(draft)).toMatchObject({ kind: 'draft', text: 'Hel' });
     }
-    expect(invalidatesSurface(draft, {
-      kind: 'room', roomId: ROOM, familyIds: new Set([ROOM]), profileAuthors: new Set(),
-    })).toBe(false);
   });
 
   it('suppresses a reordered final and close without duplicate bubbles', () => {
     const agent = createIdentity('overlay-final');
     const decoder = new LiveOverlayDecoder(ROOM, new Set([agent.publicKey]));
-    const event = signEvent({
-      pubkey: agent.publicKey, created_at: 10, kind: 30078,
-      tags: [['d', `agent-draft:${ROOM}`], ['h', ROOM], ['t', 'agent-draft'],
-        ['agent', agent.publicKey], ['request', 'request']], content: 'Done',
-    }, agent.secretKey);
+    const event = signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: 10,
+        kind: 30078,
+        tags: [
+          ['d', `agent-draft:${ROOM}`],
+          ['h', ROOM],
+          ['t', 'agent-draft'],
+          ['agent', agent.publicKey],
+          ['request', 'request'],
+        ],
+        content: 'Done',
+      },
+      agent.secretKey,
+    );
     const overlay = decoder.decode(event)!;
-    expect(visibleLiveOverlays([overlay], [
-      { ...row('1'.repeat(64), 11, 'request'), author: { pubkey: agent.publicKey, kind: 'agent', name: 'Milo' } },
-    ])).toEqual([]);
+    expect(
+      visibleLiveOverlays(
+        [overlay],
+        [
+          {
+            ...row('1'.repeat(64), 11, 'request'),
+            author: { pubkey: agent.publicKey, kind: 'agent', name: 'Milo' },
+          },
+        ],
+      ),
+    ).toEqual([]);
 
-    const close = signEvent({
-      pubkey: agent.publicKey, created_at: 12, kind: 30078,
-      tags: [['d', `agent-draft:${ROOM}`], ['h', ROOM], ['t', 'agent-draft'],
-        ['agent', agent.publicKey], ['status', 'closed']], content: '',
-    }, agent.secretKey);
+    const close = signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: 12,
+        kind: 30078,
+        tags: [
+          ['d', `agent-draft:${ROOM}`],
+          ['h', ROOM],
+          ['t', 'agent-draft'],
+          ['agent', agent.publicKey],
+          ['status', 'closed'],
+        ],
+        content: '',
+      },
+      agent.secretKey,
+    );
     expect(applyLiveOverlay([overlay], decoder.decode(close)!)).toEqual([]);
   });
 });
@@ -136,7 +223,10 @@ describe('separate response, cache, and outbox lifetimes', () => {
       partitions = replaceRoomTail(partitions, room([row('4'.repeat(64), 4 + index)]));
     }
     expect(composeRoomRows(partitions).map((message) => message.id)).toEqual([
-      '1'.repeat(64), '2'.repeat(64), '3'.repeat(64), '4'.repeat(64),
+      '1'.repeat(64),
+      '2'.repeat(64),
+      '3'.repeat(64),
+      '4'.repeat(64),
     ]);
   });
 
@@ -144,32 +234,71 @@ describe('separate response, cache, and outbox lifetimes', () => {
     const values = new Map<string, string>();
     const cache = new SurfaceResponseCache({
       get: async (key) => values.get(key) ?? null,
-      set: async (key, value) => { values.set(key, value); },
-      remove: async (key) => { values.delete(key); },
+      set: async (key, value) => {
+        values.set(key, value);
+      },
+      remove: async (key) => {
+        values.delete(key);
+      },
       keys: async () => [...values.keys()],
     });
-    const address = { relayOrigin: 'https://relay.example', viewerPubkey: 'a'.repeat(64), endpoint: `/room/${ROOM}` };
+    const address = {
+      relayOrigin: 'https://relay.example',
+      viewerPubkey: 'a'.repeat(64),
+      endpoint: `/room/${ROOM}`,
+    };
     const key = surfaceCacheKey(address);
     values.set(key, '{bad');
-    await expect(cache.read(address, (value): value is RoomView => Boolean(value))).resolves.toBeNull();
+    await expect(
+      cache.read(address, (value): value is RoomView => Boolean(value)),
+    ).resolves.toBeNull();
     expect(surfaceCacheKey({ ...address, viewerPubkey: 'b'.repeat(64) })).not.toBe(key);
   });
 
   it('retries the exact signed event and reconciles only the authoritative id', async () => {
     const identity = createIdentity('outbox');
-    const event = signEvent({ pubkey: identity.publicKey, created_at: 10, kind: 9,
-      tags: [['h', ROOM]], content: 'yes' }, identity.secretKey);
+    const event = signEvent(
+      { pubkey: identity.publicKey, created_at: 10, kind: 9, tags: [['h', ROOM]], content: 'yes' },
+      identity.secretKey,
+    );
     let persisted: readonly any[] = [];
     const outbox = new SignedEventOutbox({
       load: async () => persisted,
-      save: async (records) => { persisted = records; },
+      save: async (records) => {
+        persisted = records;
+      },
     });
-    await outbox.enqueue(event, { ...row(event.id, event.created_at), author: {
-      pubkey: identity.publicKey, kind: 'human', name: 'Ada',
-    } });
+    await outbox.enqueue(event, {
+      ...row(event.id, event.created_at),
+      author: {
+        pubkey: identity.publicKey,
+        kind: 'human',
+        name: 'Ada',
+      },
+    });
     await outbox.attempted(event.id);
     expect(outbox.list()[0]?.event).toEqual(event);
     await outbox.reconcile(new Set([event.id]));
     expect(outbox.list()).toEqual([]);
+  });
+
+  it('evicts a corrupt persisted optimistic row before it can paint', async () => {
+    const identity = createIdentity('outbox-corrupt-row');
+    const event = signEvent(
+      { pubkey: identity.publicKey, created_at: 10, kind: 9, tags: [['h', ROOM]], content: 'yes' },
+      identity.secretKey,
+    );
+    let persisted: readonly any[] = [
+      { event, row: { ...row(event.id, 10), attachments: [{}] }, attempts: 0 },
+    ];
+    const outbox = new SignedEventOutbox({
+      load: async () => persisted,
+      save: async (records) => {
+        persisted = records;
+      },
+    });
+    await outbox.restore();
+    expect(outbox.list()).toEqual([]);
+    expect(persisted).toEqual([]);
   });
 });

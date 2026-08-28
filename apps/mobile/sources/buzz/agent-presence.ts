@@ -7,8 +7,7 @@ import {
   type AgentPresence,
   type AgentPresenceTier,
 } from '@beeline/buzz-client';
-import type { SessionEvent } from '@/sync/transport';
-import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
+import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
 
@@ -96,19 +95,6 @@ export function isAgentOfflineAfterPresenceResolved(
   );
 }
 
-/** Accept only an agent's self-signed presence marker; a forged agent tag is ignored. */
-export function agentPresenceFromSessionEvent(event: SessionEvent): RoomAgentPresence | undefined {
-  if (event.type !== 'read-model' || event.event.type !== 'session-update') return undefined;
-  const update = event.event.update;
-  if (update.kind !== 'presence') return undefined;
-  return {
-    agentPubkey: update.agentPubkey,
-    status: update.status,
-    observedAt: event.event.createdAt * 1_000,
-    ...(update.generationId ? { generationId: update.generationId } : {}),
-  };
-}
-
 /** A working turn belongs only to the currently online daemon generation. */
 export function isAgentTurnActive(
   turn: NonNullable<ChatDisplayMessage['agentTurn']>,
@@ -139,17 +125,6 @@ export function mergeAgentPresence(
   return { ...current, [incoming.agentPubkey]: next };
 }
 
-export function presenceMapFromSessionEvents(
-  events: readonly SessionEvent[],
-): Record<string, RoomAgentPresence> {
-  return events.reduce<Record<string, RoomAgentPresence>>((presence, event) => {
-    // kind:30078 is the sole liveness authority. Chat, activity, draft, and
-    // control events can describe work but may never mint or renew a lease.
-    const signal = agentPresenceFromSessionEvent(event);
-    return signal ? mergeAgentPresence(presence, signal) : presence;
-  }, {});
-}
-
 /**
  * One online/offline verdict per agent pubkey, resolved once per render.
  *
@@ -176,13 +151,4 @@ export function onlineVerdicts(
     );
   }
   return verdicts;
-}
-
-/** Reinstall relay delivery before reading the current replaceable presence snapshot. */
-export async function reconnectPresenceAfterForeground(
-  installSubscription: () => Promise<void>,
-  backfill: () => Promise<readonly SessionEvent[]>,
-): Promise<Record<string, RoomAgentPresence>> {
-  await installSubscription();
-  return presenceMapFromSessionEvents(await backfill());
 }

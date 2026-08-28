@@ -1,11 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { NostrEvent } from '@beeline/nostr';
-import {
-  guardReadModelBoot,
-  selectAgentHistory,
-  type WorkspaceSnapshot,
-} from '@beeline/buzz-client';
 import type { ModelTurnSpend, SessionReprimeRecord } from './model-spend.js';
 import type { ConcludeEpisode } from './conclude-watch.js';
 import type {
@@ -55,8 +50,6 @@ export const DURABLE_BODY_STATE_VERSION = 2;
 interface DurableBodyData {
   version: 2;
   inboxes: Record<string, { cursor: EventCursor; items: Record<string, InboxItem> }>;
-  /** Relay-verified normalized read models. Presentation prose is never persisted. */
-  readModels: Record<string, WorkspaceSnapshot>;
   /** Bounded local audit trail for `beeline spend`; never published to the Room. */
   modelTurns?: ModelTurnSpend[];
   sessionReprimes?: SessionReprimeRecord[];
@@ -77,7 +70,7 @@ interface DurableBodyData {
   };
 }
 
-interface DurableBodyDataV1 extends Omit<DurableBodyData, 'version' | 'readModels'> {
+interface DurableBodyDataV1 extends Omit<DurableBodyData, 'version'> {
   version: 1;
   conversations?: unknown;
 }
@@ -95,12 +88,10 @@ function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyDa
 
   switch (parsed.version) {
     case 1: {
-      if ('readModels' in parsed) throw new Error(`unsupported durable body state at ${path}`);
       const legacy = parsed as DurableBodyDataV1;
       return {
         version: 2,
         inboxes: legacy.inboxes,
-        readModels: {},
         modelTurns: legacy.modelTurns,
         sessionReprimes: legacy.sessionReprimes,
         githubEventCursors: legacy.githubEventCursors,
@@ -108,11 +99,14 @@ function migrateDurableBodyData(candidate: unknown, path: string): DurableBodyDa
         factory: legacy.factory,
       };
     }
-    case 2:
-      if (!isRecord(parsed.readModels)) {
-        throw new Error(`unsupported durable body state at ${path}`);
-      }
-      return parsed as DurableBodyData;
+    case 2: {
+      // Snapshot-era files may contain `readModels`; deliberately discard that
+      // retired authority while preserving every unrelated durable ledger.
+      const { readModels: _retired, ...current } = parsed as Partial<DurableBodyData> & {
+        readModels?: unknown;
+      };
+      return current as DurableBodyData;
+    }
     default:
       throw new Error(`unsupported durable body state at ${path}`);
   }
@@ -122,7 +116,6 @@ function emptyData(): DurableBodyData {
   return {
     version: 2,
     inboxes: {},
-    readModels: {},
     modelTurns: [],
     sessionReprimes: [],
     concludeEpisodes: {},
@@ -154,14 +147,6 @@ export class DurableBodyState {
         JSON.parse(await readFile(this.path, 'utf8')) as unknown,
         this.path,
       );
-      for (const [channelId, candidate] of Object.entries(parsed.readModels)) {
-        const guarded = guardReadModelBoot(candidate);
-        if (guarded.status === 'integrity-halt') {
-          throw new Error(
-            `read-model integrity halt for ${channelId} at ${this.path}: ${guarded.diagnostic}`,
-          );
-        }
-      }
       this.data = parsed;
       this.data.modelTurns ??= [];
       this.data.sessionReprimes ??= [];
@@ -242,34 +227,6 @@ export class DurableBodyState {
   async cursor(channelId: string): Promise<EventCursor> {
     await this.load();
     return { ...this.inbox(channelId).cursor };
-  }
-
-  async replaceReadModel(channelId: string, snapshot: WorkspaceSnapshot): Promise<void> {
-    await this.load();
-    const guarded = guardReadModelBoot(snapshot);
-    if (guarded.status === 'integrity-halt') {
-      throw new Error(
-        `refusing corrupt read-model snapshot for ${channelId}: ${guarded.diagnostic}`,
-      );
-    }
-    this.data.readModels[channelId] = guarded.snapshot;
-    await this.save();
-  }
-
-  async readModel(channelId: string): Promise<WorkspaceSnapshot | undefined> {
-    await this.load();
-    return this.data.readModels[channelId];
-  }
-
-  /** Latest durable agent response for lifecycle surfaces that outlive a process. */
-  async latestAgentMessage(channelId: string): Promise<string | undefined> {
-    const snapshot = await this.readModel(channelId);
-    return snapshot
-      ? [...selectAgentHistory(snapshot, channelId)]
-          .reverse()
-          .find((entry) => entry.type === 'agent-message' && entry.body.trim())
-          ?.body.trim()
-      : undefined;
   }
 
   /** Persist one inspectable model invocation, including the human event that authorized it. */

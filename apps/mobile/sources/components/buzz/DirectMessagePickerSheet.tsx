@@ -1,7 +1,7 @@
 import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { WorkspaceMemberDisplayItem } from '@/buzz/local-cache';
+import type { WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from './IdentityMark';
 import { HullActionSheetCancel, HullActionSheetModal } from './HullActionSheet';

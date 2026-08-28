@@ -34,8 +34,8 @@ import { readFileSync, existsSync } from 'node:fs';
  * tag) all describe work the human asked for, not the daemon's own weather.
  *
  * Historical notices already published to real Rooms cannot be unpublished.
- * The typed read-model parser owns their explicit control schemas, keeping that
- * machine state structurally out of transcript and agent-history selectors.
+ * The server indexer classifies their explicit control schemas and omits them
+ * from the paint-ready Room message response.
  */
 describe('the daemon-published agent state notices stay deleted', () => {
   const src = (name: string) => readFileSync(new URL(name, import.meta.url), 'utf8');

@@ -20,6 +20,7 @@ export const ROOM_VIEW_WORKSPACE_LIMIT = 50;
 export const ROOM_VIEW_CHAT_LIMIT = 200;
 export const ROOM_VIEW_MEMBER_LIMIT = 200;
 export const ROOM_VIEW_AGENT_LIMIT = 200;
+export const ROOM_VIEW_REQUEST_TIMEOUT_MS = 8_000;
 
 /** Opaque relay filters supplied by the authoritative surface query. */
 export type SurfaceWatchFilter = {
@@ -55,6 +56,7 @@ export type RoomViewHeader = {
   readonly name: string;
   readonly about?: string;
   readonly avatar?: string;
+  readonly visibility?: 'public' | 'invite-only';
   readonly archived: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -148,11 +150,16 @@ export type RoomViewer = {
   };
 };
 
+export type RoomDirectMessageView = {
+  readonly participants: readonly [string, string];
+};
+
 export type RoomView = {
   readonly room: RoomViewHeader;
   readonly messages: readonly RoomViewMessage[];
   readonly members: readonly RoomViewMember[];
   readonly viewer: RoomViewer;
+  readonly directMessage?: RoomDirectMessageView;
   readonly parent?: RoomViewHeader;
   readonly briefing?: readonly RoomViewMessage[];
   readonly repository?: RoomRepositoryView;
@@ -167,6 +174,22 @@ export type RoomHistoryView = {
   readonly nextBefore?: { readonly createdAt: number; readonly id: string };
 };
 
+/** Prompt-ready conversation rows supplied directly by the Room endpoint. */
+export type AgentHistoryEntry = {
+  readonly eventId: string;
+  readonly channelId: string;
+  readonly type: 'human-message' | 'agent-message';
+  readonly author: {
+    readonly pubkey: string;
+    readonly kind: 'human' | 'agent';
+    readonly label: string;
+  };
+  readonly body: string;
+  readonly attachments: readonly AttachmentReference[];
+  readonly createdAt: number;
+  readonly provenance: 'relay-verified';
+};
+
 export type ChatListItem = {
   readonly room: RoomViewHeader;
   readonly latestMessage?: {
@@ -177,6 +200,9 @@ export type ChatListItem = {
   };
   readonly memberCount: number;
   readonly cornerCount: number;
+  /** Server-owned, cross-device read state. */
+  /** Present once the server-owned read cursor migration is deployed. */
+  readonly unread?: boolean;
   readonly repositoryName?: string;
 };
 
@@ -276,6 +302,11 @@ export type RoomViewClientOptions = {
   readonly baseUrl: string;
   readonly identity: Pick<Identity, 'secretKey' | 'publicKey'>;
   readonly fetch?: typeof fetch;
+  /** Diagnostic hook fired exactly once immediately before each physical fetch. */
+  readonly onPhysicalRequest?: (request: {
+    readonly method: 'GET' | 'POST';
+    readonly path: string;
+  }) => void;
 };
 
 export class RoomViewHttpError extends Error {
@@ -328,9 +359,7 @@ export class RoomViewClient {
     roomId: string,
     before?: { readonly createdAt: number; readonly id: string },
   ): Promise<RoomHistoryView> {
-    const query = before
-      ? `?before=${encodeURIComponent(`${before.createdAt},${before.id}`)}`
-      : '';
+    const query = before ? `?before=${encodeURIComponent(`${before.createdAt},${before.id}`)}` : '';
     return this.get(`/room/${encodeURIComponent(roomId)}/messages${query}`, isRoomHistoryView);
   }
 
@@ -349,29 +378,57 @@ export class RoomViewClient {
     body?: unknown,
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    const response = await this.fetchImpl(url, {
-      method,
-      headers: {
-        authorization: nip98AuthHeader(
-          this.options.identity.secretKey,
-          this.options.identity.publicKey,
-          url,
-          method,
-        ),
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        abort.abort();
+        reject(new RoomViewHttpError(504, 'surface_request_timed_out'));
+      }, ROOM_VIEW_REQUEST_TIMEOUT_MS);
     });
-    if (!response.ok) {
-      let code = 'request_failed';
+    const perform = async () => {
+      this.options.onPhysicalRequest?.({ method, path });
+      const response = await this.fetchImpl(url, {
+        method,
+        signal: abort.signal,
+        headers: {
+          authorization: nip98AuthHeader(
+            this.options.identity.secretKey,
+            this.options.identity.publicKey,
+            url,
+            method,
+          ),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      if (!response.ok) {
+        let code = 'request_failed';
+        try {
+          const errorBody = (await response.json()) as { error?: unknown };
+          if (typeof errorBody.error === 'string') code = errorBody.error;
+        } catch {}
+        throw new RoomViewHttpError(response.status, code);
+      }
+      let value: unknown;
       try {
-        const body = (await response.json()) as { error?: unknown };
-        if (typeof body.error === 'string') code = body.error;
-      } catch {}
-      throw new RoomViewHttpError(response.status, code);
+        value = (await response.json()) as unknown;
+      } catch (error) {
+        // Malformed/truncated JSON is a terminal contract failure. A body
+        // transport failure remains an offline/network error so a screen may
+        // honestly retain its last validated response.
+        if (error instanceof SyntaxError) {
+          throw new RoomViewHttpError(502, 'invalid_surface_response');
+        }
+        throw error;
+      }
+      if (!guard(value)) throw new RoomViewHttpError(502, 'invalid_surface_response');
+      return value;
+    };
+    try {
+      return await Promise.race([perform(), deadline]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    const value = await response.json() as unknown;
-    if (!guard(value)) throw new RoomViewHttpError(502, 'invalid_surface_response');
-    return value;
   }
 }

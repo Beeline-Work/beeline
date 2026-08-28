@@ -16,6 +16,7 @@ import {
   type ChannelOpsContext,
 } from './channel.js';
 import { createIdentity } from './identity.js';
+import { queryEvents } from './http.js';
 import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
@@ -792,6 +793,58 @@ describe('top-level Room creation is human-only', () => {
     expect(published[0]!.pubkey).toBe(human.publicKey);
   });
 
+  it('does not wait for live-socket EOSE before checking Room creator authority', async () => {
+    const published = stubRelay();
+    const socket = {
+      connected: true,
+      onClose: vi.fn(() => vi.fn()),
+      subscribe: vi.fn(() => vi.fn()),
+    };
+
+    await expect(
+      createChannel(
+        {
+          http: { ...http, identity: human },
+          identity: human,
+          ws: () => socket as unknown as RelayWs,
+        },
+        'bounded creator check',
+      ),
+    ).resolves.toBeTruthy();
+
+    expect(socket.subscribe).not.toHaveBeenCalled();
+    expect(published).toHaveLength(1);
+  });
+
+  it('keeps the creator check out of a saturated same-tick screen-read batch', async () => {
+    const never = new Promise<Response>(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }
+        const filters = JSON.parse(String(init?.body)) as Record<string, unknown>[];
+        if (filters.some((filter) => (filter.kinds as number[] | undefined)?.includes(123_456))) {
+          return never;
+        }
+        return new Response('[]', { status: 200 });
+      }),
+    );
+    const batchedHttp = { ...http, identity: human, batchQueries: true };
+    void queryEvents(batchedHttp, [{ kinds: [123_456] }], human.publicKey);
+
+    const creation = createChannel(
+      { http: batchedHttp, identity: human },
+      'independent creator check',
+    );
+    const deadline = new Promise<never>((_resolve, reject) =>
+      setTimeout(() => reject(new Error('creator check joined the saturated batch')), 100),
+    );
+
+    await expect(Promise.race([creation, deadline])).resolves.toBeTruthy();
+  });
+
   it('does not leave Room creation behind the five-second WS backstop', async () => {
     vi.useFakeTimers();
     const channelId = 'fast-visible-room';
@@ -842,6 +895,43 @@ describe('top-level Room creation is human-only', () => {
       await expect(outcome).resolves.toBe(channelId);
     } finally {
       await vi.advanceTimersByTimeAsync(15_000);
+      await outcome;
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports the publish acknowledgement before a lagging owner projection settles', async () => {
+    vi.useFakeTimers();
+    const channelId = 'published-before-projection';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) =>
+        String(input).endsWith('/events')
+          ? new Response(JSON.stringify({ accepted: true }), { status: 200 })
+          : new Response('[]', { status: 200 }),
+      ),
+    );
+    const onPublished = vi.fn();
+    let settled = false;
+    const creation = createChannel(ctx, 'visible on acknowledgement', {
+      channelId,
+      communityId: 'workspace',
+      onPublished,
+    });
+    const outcome = creation.then(
+      (result) => {
+        settled = true;
+        return result;
+      },
+      (error: unknown) => error,
+    );
+
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onPublished).toHaveBeenCalledWith(channelId);
+      expect(settled).toBe(false);
+    } finally {
+      await vi.advanceTimersByTimeAsync(16_000);
       await outcome;
       vi.useRealTimers();
     }

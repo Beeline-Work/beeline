@@ -406,7 +406,7 @@ function chat(value: unknown): value is ChatListItem {
     (item.latestMessage === undefined || latest(item.latestMessage)) &&
     integer(item.memberCount) &&
     integer(item.cornerCount) &&
-    (item.unread === undefined || typeof item.unread === 'boolean') &&
+    typeof item.unread === 'boolean' &&
     optionalString(item.repositoryName),
   );
 }

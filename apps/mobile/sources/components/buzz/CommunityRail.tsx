@@ -221,9 +221,9 @@ export function CommunityRail({
       />
       {showsWorkspaceSettings && activeCommunity && (
         <RailCommand
-          accessibilityLabel={`${activeCommunity.name} ${WORKSPACE_LABEL} settings`}
+          accessibilityLabel={`${activeCommunity.name} ${WORKSPACE_LABEL}`}
           glyph="⚙"
-          label="SETUP"
+          label="WORKSPACE"
           onPress={() => onWorkspaceSettings?.(activeCommunity.communityId)}
           testID={`workspace-settings-${activeCommunity.communityId}`}
         />

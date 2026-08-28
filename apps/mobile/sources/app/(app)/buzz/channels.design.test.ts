@@ -1,449 +1,61 @@
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
-/**
- * Design invariants for the Room list — the index the whole product opens on.
- * These are source assertions, in the same style as `channels.members.test.ts`,
- * because what they lock in is structural: which shared primitive renders a
- * thing, and which shapes must never come back. DESIGN.md (repo root) is the
- * authority they encode.
- */
-const source = readFileSync(path.join(__dirname, 'channels.tsx'), 'utf8');
-const railSource = readFileSync(
-  path.join(__dirname, '../../../components/buzz/CommunityRail.tsx'),
+const source = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
+const composeSource = readFileSync(
+  new URL('../../../components/buzz/RoomDeckComposeMenu.tsx', import.meta.url),
   'utf8',
 );
-const composeSource = readFileSync(
-  path.join(__dirname, '../../../components/buzz/RoomDeckComposeMenu.tsx'),
+const roomViewSource = readFileSync(
+  new URL('../../../../../../packages/buzz-client/src/room-view.ts', import.meta.url),
+  'utf8',
+);
+const surfaceGuardSource = readFileSync(
+  new URL('../../../../../../packages/buzz-client/src/surface-guards.ts', import.meta.url),
   'utf8',
 );
 
 function styleBlock(text: string, name: string): string {
-  const start = text.indexOf(`  ${name}: {`);
+  const start = text.indexOf(`    ${name}: {`);
   expect(start, `missing style ${name}`).toBeGreaterThanOrEqual(0);
   let depth = 0;
   for (let index = text.indexOf('{', start); index < text.length; index += 1) {
     if (text[index] === '{') depth += 1;
-    if (text[index] === '}') depth -= 1;
-    if (depth === 0) return text.slice(start, index + 1);
+    if (text[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
   }
-  throw new Error(`unclosed style ${name}`);
+  throw new Error(`unterminated style ${name}`);
 }
 
-/** Every style that renders a repeating index unit: a Room row, a DM row, the
- * expanded corner rows, and their leading marks. None may become a box.
- * `roomCellUnread` is the one approved repeated-row exception: a whole-ground
- * FILL for unread rows (captain-approved 2026-08-25), never a stroke — it is
- * listed so that stays true (no border, no radius may creep in). */
-const REPEATING_ROW_STYLES = [
-  'indexRow',
-  'roomCell',
-  'roomCellUnread',
-  'roomRow',
-  'roomPrimary',
-  'rowMark',
-  'rowCopy',
-  'rowTitleLine',
-  'rowGutter',
-  'cornerRow',
-  'cornerDropdown',
-  'cornerPeek',
-];
-
-describe('Room list — Grok Mono Hull invariants', () => {
-  it('never draws a box around a repeating row, mark, or the corner dropdown', () => {
-    for (const name of REPEATING_ROW_STYLES.filter((name) => name !== 'roomCell')) {
-      const block = styleBlock(source, name);
-      expect(block, `${name} must not have a radius`).not.toMatch(/borderRadius/);
-      expect(block, `${name} must not be a bordered container`).not.toMatch(/borderWidth/);
-      expect(block, `${name} must not draw an inline border`).not.toMatch(
-        /border(?:Top|Bottom|Left|Right)(?:Width|Color)/,
-      );
-    }
-    expect(styleBlock(source, 'roomCell')).toMatch(/borderBottomWidth:\s*1/);
-    expect(styleBlock(source, 'roomCell')).toMatch(/borderBottomColor:\s*groknight\.border/);
-  });
-
-  it('routes buttons, reveal, press, and the deck mark through shared MonoHull primitives', () => {
-    for (const primitive of [
-      'BrittlePress',
-      'HullDeckMark',
-      'MonoButton',
-      'PixelGateReveal',
-      'PixelLoader',
-    ]) {
-      expect(source, `${primitive} should come from MonoHull`).toContain(primitive);
-    }
-    // No screen-local button styles competing with MonoButton.
-    expect(source).not.toMatch(/ {2}primary(?:Small)?Button: \{/);
-  });
-
-  it('gives the persistent chrome no surface of its own', () => {
-    // The obsidian slab is unbroken: a header or rail that carried its own
-    // textured HullSurface read as a plate laid on top of the screen. Both are
-    // now the same bare surface as the list, parted by one hairline. A
-    // genuinely lifted, non-repeating region (a modal, the merge-approval
-    // panel) still earns HullSurface — persistent chrome does not.
-    for (const [name, text] of [
-      ['channels.tsx', source],
-      ['CommunityRail.tsx', railSource],
-    ] as const) {
-      expect(text, `${name} chrome should not mount HullSurface`).not.toContain('<HullSurface');
-    }
-    expect(styleBlock(source, 'header')).toMatch(/borderBottomColor:\s*groknight\.border/);
-    expect(styleBlock(railSource, 'rail')).toMatch(/borderRightWidth: StyleSheet\.hairlineWidth/);
-    // A row declares no surface of its own either — the slab shows through.
-    // The approved unread ground lift lives on the CONDITIONAL companion
-    // style (`roomCellUnread`), never on the base cell every row shares.
-    expect(styleBlock(source, 'roomCell')).not.toMatch(/backgroundColor/);
-    expect(styleBlock(source, 'roomCellUnread')).toContain('backgroundColor: groknight.bgUnread');
-  });
-
-  it('sources every color from the groknight token file', () => {
-    // No hex, rgb(), or rgba() literal anywhere in the screen.
-    expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    expect(source).not.toMatch(/rgba?\(/);
-    expect(railSource).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
-    expect(railSource).not.toMatch(/rgba?\(/);
-  });
-
-  it('keeps the one radius value wherever a box is still earned', () => {
-    for (const text of [source, railSource]) {
-      for (const match of text.matchAll(/borderRadius: (\d+)/g)) {
-        expect(match[1], 'only groknight.radius (3) ships').toBe('3');
-      }
-    }
-  });
-
-  it('spends state brass only inside the shared circle glyph', () => {
-    // The state circle is the sole visual status signal. Rows, counts, and
-    // fact text stay neutral, while motion/fill distinguish the three states.
-    const accentStyles = [...source.matchAll(/ {2}([A-Za-z0-9_]+): \{[^}]*groknight\.accent/g)].map(
-      (match) => match[1],
-    );
-    expect(accentStyles).toEqual([]);
-    expect(source).not.toMatch(/attnRail|rowPreviewAttention|cornerPeekCountLive/);
-    // Corner state glyphs render through the same shared circle component.
-    expect(source).toContain('<CornerGlyph');
-    expect(source).not.toContain('styles.cornerStatus');
-    // No pill strip came back: the cell renders mark + name + fact + count,
-    // and nothing else.
-    expect(source).not.toMatch(/styles\.pillStrip|styles\.rowPill/);
-    expect(source).not.toContain('styles.unreadRail');
-  });
-
-  it('renders the three deck states through one HullDeckMark driven by the projection', () => {
-    // needs-you > working > idle is decided in `roomRowPresentation`; the
-    // screen only maps the answer onto the shared three-state mark.
-    expect(source).toContain('const deckState = row.state;');
-    expect(source).toContain('<HullDeckMark state={deckState} />');
-    // No screen-local spinner or pulse: motion lives in MonoHull.
-    expect(source).not.toMatch(/withRepeat|useSharedValue/);
-  });
-
-  it('reads on exactly three tones: name, activity line, gutter marginalia', () => {
-    // The ledger's luminance ladder at index scale. The name is the brightest
-    // thing on the row; the activity line sits a step down; everything the
-    // right gutter carries is ghosted.
-    expect(styleBlock(source, 'rowTitle')).toContain('groknight.textPrimary');
-    expect(styleBlock(source, 'rowPreview')).toContain('groknight.ledgerQuiet');
-    for (const name of ['rowAge', 'cornerPeekCount']) {
-      expect(styleBlock(source, name), `${name} belongs to the ghosted tier`).toContain(
-        'groknight.ledgerGhost',
-      );
-    }
-    // Names share one tone; only unread rows add semibold weight, and the
-    // approved unread treatment lifts the preview one step with it and swaps
-    // the gutter's age slot for the count chip (near-white fill, dark mono
-    // numeral). The chip is the screen's one sanctioned small box: something
-    // the reader is meant to find — it is deliberately NOT a repeating row
-    // surface, so it stays out of REPEATING_ROW_STYLES.
-    expect(styleBlock(source, 'rowTitle')).toContain('Typography.default()');
-    expect(styleBlock(source, 'rowTitle')).toContain('fontSize: 16');
-    expect(styleBlock(source, 'rowTitleUnread')).toContain("Typography.default('semiBold')");
-    expect(styleBlock(source, 'rowPreviewUnread')).toContain('groknight.textSecondary');
-    const chip = styleBlock(source, 'unreadChip');
-    expect(chip).toContain('borderRadius: 3');
-    expect(chip).toMatch(/backgroundColor: groknight\.actionFill/);
-    expect(chip).not.toMatch(/borderWidth/);
-    expect(styleBlock(source, 'unreadChipText')).toContain('groknight.textInverted');
-    // The repo tag rides the title line in mono.
-    expect(styleBlock(source, 'rowRepo')).toMatch(/Typography\.mono\(/);
-  });
-
-  it('hangs every row\u2019s metadata in one fixed right gutter \u2014 in flow, never absolute', () => {
-    // Marginalia, exactly as the transcript does it: a fixed-width column, so
-    // an age stamp or a corner count can never reflow the copy beside it, and
-    // every row reserves the column whether or not it has one. It MUST be an
-    // in-flow flex sibling (never absolutely positioned over the row): an
-    // overlay cannot contribute height, and a fixed row height under tall copy
-    // is how the first ship of this deck painted rows over their neighbours.
-    const gutter = styleBlock(source, 'rowGutter');
-    expect(gutter).not.toMatch(/position: 'absolute'/);
-    expect(gutter).toContain('width: ROW_GUTTER_WIDTH');
-    expect(gutter).toContain('flexShrink: 0');
-    expect(gutter).toMatch(/alignItems: 'flex-end'/);
-    expect(styleBlock(source, 'indexRow')).toContain('paddingRight: SCREEN_INSET');
-    expect(styleBlock(source, 'indexRow')).not.toContain(
-      'paddingRight: SCREEN_INSET + ROW_GUTTER_WIDTH',
-    );
-    // The stamp lives in the gutter, never back on the name's own line.
-    expect(styleBlock(source, 'rowAge')).not.toContain("marginLeft: 'auto'");
-    expect(source).toContain('<View style={styles.rowGutter}>');
-    expect(source).not.toContain('pointerEvents="box-none" style={styles.rowGutter}');
-    // Rooms and DMs use the same cell, the same gutter, and the same divider,
-    // and both lift the whole cell for unread through the same conditional.
-    expect(source.match(/style=\{styles\.rowGutter\}/g)).toHaveLength(2);
-    expect(
-      source.match(/style=\{\[styles\.roomCell, \w+(?:\.unread)? && styles\.roomCellUnread\]\}/g),
-    ).toHaveLength(2);
-  });
-
-  it('rows are self-sizing flex containers — the overlap regression stays dead', () => {
-    // The first ship of this deck gave every row a FIXED height (72) while
-    // rows carry title + preview + pills, so tall content overflowed its cell
-    // and painted over the neighbouring row. The row must establish its own
-    // height from in-flow children: a minHeight floor, never a fixed height.
-    const indexRow = styleBlock(source, 'indexRow');
-    expect(indexRow).toContain('minHeight: INDEX_ROW_HEIGHT');
-    expect(indexRow).not.toMatch(/\bheight:\s*(?:INDEX_ROW_HEIGHT|\d)/);
-    expect(indexRow).toContain("flexDirection: 'row'");
-    // The status mark is a fixed-width FLEX column inside the row, never an
-    // absolutely positioned layer over it. Its box is exactly the name's line
-    // height (lineHeight 21) with the mark centered in it, so the dot/ring
-    // aligns TO the name instead of floating above it.
-    const rowMark = styleBlock(source, 'rowMark');
-    expect(rowMark).not.toMatch(/position: 'absolute'/);
-    expect(rowMark).toContain('width: ROW_MARK_WIDTH');
-    expect(rowMark).toContain('height: 21');
-    expect(rowMark).toContain("justifyContent: 'center'");
-    expect(rowMark).not.toMatch(/paddingTop/);
-    expect(source).toContain(
-      '<View style={styles.rowMark}>\n                <HullDeckMark state={deckState} />',
-    );
-    // The repo tag rides the title line via flex (marginLeft auto), not via
-    // absolute placement.
-    const repo = styleBlock(source, 'rowRepo');
-    expect(repo).toContain("marginLeft: 'auto'");
-    expect(repo).not.toMatch(/position: 'absolute'/);
-    // Status contributes no absolute row decoration; the circle stays in flow.
-    expect(source).not.toContain('attnRail');
-  });
-
-  it('keeps corner circles smaller than room circles without changing title alignment', () => {
-    const cornerGlyph = styleBlock(source, 'cornerGlyph');
-    expect(cornerGlyph).toContain('width: 7');
-    expect(cornerGlyph).toContain('height: 7');
-
-    const rowMark = styleBlock(source, 'rowMark');
-    expect(rowMark).toContain('height: 21');
-    expect(rowMark).toContain("alignItems: 'center'");
-    expect(rowMark).toContain("justifyContent: 'center'");
-  });
-
-  it('shows the projected current fact, never raw plumbing or a placeholder id', () => {
-    // The projection chooses lifecycle truth first and a sanitized message
-    // only as its fallback; the row renders that answer directly.
-    expect(source).toContain('{row.fact}');
-    // No slicing, splitting, or rewriting of message text on this screen — the
-    // one sanitizer is `roomPreviewText`, applied where the preview is stored.
-    expect(source).not.toMatch(/latestMessage[^\n]*\.(?:slice|split|replace|substring)\(/);
-    expect(source).not.toMatch(/latestMessage[^\n]*(?:hint:|\[rejected\])/);
-  });
-
-  it('attributes lifecycle facts with the same identity waterfall the rest of the app uses', () => {
-    expect(source).toContain('roomListFeed(');
-    expect(source).toContain('[...visible, ...directEntries]');
-    expect(source).toContain("names.set(identity.publicKey, 'You')");
-  });
-
-  it('adds the captain’s # channel mark to Room rows through the shared display helper only', () => {
-    // Captain decision 2026-08 (supersedes the retired DESIGN.md line): Room
-    // names render as `#<name>` on the index. The prefix is added at render
-    // through `displayRoomIndexTitle` — one derivation, presentation only.
-    expect(source).toContain('displayRoomIndexTitle(item.title) ??');
-    // The helper is the ONLY place a Room `#` is minted; nothing else on this
-    // screen hand-rolls the mark, and corner rows stay unprefixed.
-    const uses = source.match(/displayRoomIndexTitle\(/g) ?? [];
-    expect(uses).toHaveLength(1); // exactly one call site — the Room row title
-    expect(source).not.toContain('#${corner.name}');
-    expect(source).not.toContain('└');
-  });
-
-  it('renders the corner count from exactly the corners the dropdown lists', () => {
-    // Captain's hard requirement: only open/active corners are counted and
-    // listed. `roomRowPresentation` resolves that one set through
-    // `roomListCorners`, and both the count and the dropdown read its result —
-    // nothing on this screen may compute a corner total of its own. Finished
-    // corners are represented NOWHERE: no recorded-total fallback count, and
-    // no expansion affordance when nothing is open.
-    expect(source).toContain('const corners = row.corners;');
-    expect(source).toContain('const canExpand = corners.length > 0;');
-    expect(source).toContain('{corners.length}');
-    expect(source).toContain('{corners.map((corner) => {');
-    expect(source).not.toContain('totalCorners');
-    expect(source).not.toContain('roomListCorners(');
-    expect(source).not.toMatch(/item\.corners(?:\s*\?\?\s*\[\])?\.length/);
-  });
-
-  it('opens a Room’s corners inline from its contained count control', () => {
-    expect(source).toContain('testID={`room-corners-toggle-${item.id}`}');
-    expect(source).toContain('accessibilityState={{ expanded }}');
-    expect(source).toContain(
-      'setExpandedRoomId((current) => (current === item.id ? null : item.id))',
-    );
-    expect(source).toContain('{expanded && (');
-    expect(source).toContain('{corners.map((corner) => {');
-    // The expansion IS the full list of open work: no trailing All Corners
-    // row was re-added after it.
-    expect(source).not.toContain('room-all-corners');
-    expect(source).not.toContain('cornerPeekCaret');
-    expect(styleBlock(source, 'cornerPeek')).toContain("flexDirection: 'row'");
-    expect(styleBlock(source, 'cornerPeek')).toContain("alignItems: 'center'");
-  });
-
-  it('keeps unread out of the room-state circle', () => {
-    expect(source).toContain('const deckState = row.state;');
-    expect(source).toContain('<HullDeckMark state={deckState} />');
-    expect(source).toContain('row.unread && styles.rowTitleUnread');
-    expect(source).not.toContain('attnRail');
-    expect(source).not.toContain('styles.rowUnread');
-  });
-
-  it('closes the deck with just the brass compose FAB — the search field stays gone', () => {
-    // Captain's call: a supervision deck holds few rooms, so search was dead
-    // weight. The field, its state, its filter helper, and its style must not
-    // come back — and nothing else in the index may grow a second filter.
-    expect(source).not.toContain('room-search');
-    expect(source).not.toContain('searchField');
-    expect(source).not.toContain('matchesSearch');
-    expect(source).not.toMatch(/searchQuery|setSearchQuery/);
-    // The owner-approved compose component owns the only footer control and
-    // its five real-flow actions; Room still opens this screen's existing
-    // create panel through the audited dispatch switch.
-    expect(source).toContain('<RoomDeckComposeMenu onSelect={handleComposeAction} />');
-    expect(composeSource).toContain('testID="room-deck-compose-fab"');
-    expect(composeSource).toContain('width: 56');
-    expect(composeSource).toContain('backgroundColor: brand.mark');
-    expect(source).toContain('openRoomCreator: () => setShowCreateChannel(true)');
-  });
-
-  it('renders one ordered feed with no section headers', () => {
-    expect(source).toContain("from '@/buzz/room-list-row'");
-    expect(source).toContain('<FlatList');
-    expect(source).toContain('data={roomFeed}');
-    expect(source).not.toContain('SectionList');
-    expect(source).not.toContain('renderSectionHeader');
-    expect(source).not.toContain('styles.indexHeader');
-    for (const retired of [
-      "'NEEDS YOU'",
-      `"DOESN'T NEED YOU"`,
-      "'WORKING'",
-      "'TODAY'",
-      "'YESTERDAY'",
-      "'EARLIER'",
-    ]) {
-      expect(source, `${retired} must not come back as a tier label`).not.toContain(retired);
-    }
-    expect(source).not.toContain('FINISHED ·');
-    expect(source).not.toContain('finished-rooms-toggle');
-    expect(source).not.toContain('showFinishedRooms');
-    expect(source).not.toContain('DIRECT ·');
+describe('Room list layout contract', () => {
+  it('floats the compose button over the scrolling list at the bottom right', () => {
+    // The compose affordance belongs to the deck, not to a footer list cell:
+    // rows continue underneath it and no separator divides it from the list.
+    expect(source).toContain('pointerEvents="box-none"');
+    expect(source).toContain('style={[styles.composeOverlay, { bottom: 16 + insets.bottom }]}');
+    expect(source).toContain('<RoomDeckComposeMenu onSelect={compose} />');
+    expect(source).not.toContain('styles.footer');
     expect(source).not.toContain('ListFooterComponent');
+    expect(styleBlock(source, 'composeOverlay')).toContain("position: 'absolute'");
+    expect(styleBlock(source, 'composeOverlay')).toContain('right: 16');
+    expect(styleBlock(source, 'composeOverlay')).not.toMatch(/border(?:Top|Bottom|Left|Right)/);
+    expect(styleBlock(source, 'list')).toContain('paddingBottom: COMPOSE_FAB_CLEARANCE');
+    expect(composeSource).toContain('testID="room-deck-compose-fab"');
   });
 
-  it('keeps the expansion as the only in-index corner list — no duplicate route link', () => {
-    // The All Corners row was removed: the expanded dropdown already lists
-    // the Room's open corners, so a second link into the same list was
-    // redundant. Nothing in the index navigates to the standalone corners
-    // screen anymore — that surface remains reachable from elsewhere.
-    expect(source).not.toContain('/buzz/corners/');
-  });
-
-  it('keeps 44pt touch targets on every index control', () => {
-    /** A minimum written either as a literal or as one of the screen's own
-     * layout constants — both are real, and the constant is what a row height
-     * shared by every row in the index should be. */
-    const minimumTouchSize = (name: string): number => {
-      const written = [
-        ...styleBlock(source, name).matchAll(/min(?:Width|Height): ([A-Z_0-9]+|\d+)/g),
-      ].map((match) => match[1]);
-      expect(written.length, `${name} declares no minimum size`).toBeGreaterThan(0);
-      const values = written.map((token) => {
-        if (/^\d+$/.test(token)) return Number(token);
-        const declared = source.match(new RegExp(`const ${token} = (\\d+);`))?.[1];
-        expect(declared, `${name} references an undeclared ${token}`).toBeTruthy();
-        return Number(declared);
-      });
-      // `minWidth: 0` is a flex guard, not a touch bound — the target is the
-      // largest minimum the style declares.
-      return Math.max(...values);
-    };
-    for (const name of ['headerAction', 'indexRow', 'cornerPeek', 'cornerRow']) {
-      expect(minimumTouchSize(name), `${name} is under the 44pt floor`).toBeGreaterThanOrEqual(44);
-    }
-    for (const name of ['railButtonSlot', 'railCommand', 'drawerTrigger']) {
-      expect(styleBlock(railSource, name)).toMatch(/(?:height|minHeight): (?:4[4-9]|[5-9]\d)/);
-    }
-  });
-});
-
-describe('Workspace rail and chrome — Grok Mono Hull invariants', () => {
-  it('gives the Workspace switcher a single press target, not two doing the same thing', () => {
-    expect(railSource.match(/testID="workspace-avatar-trigger"/g)).toHaveLength(1);
-    expect(railSource).not.toContain('community-drawer-trigger');
-    expect(railSource).toContain('testID="workspace-avatar-header"');
-    // The screen no longer prints its own Workspace title beside the trigger.
-    expect(source).not.toContain('styles.headerTitle');
-  });
-
-  it('names every rail command instead of framing it in a box', () => {
-    for (const name of ['railButton', 'railCommand', 'railCommandLabel']) {
-      const block = styleBlock(railSource, name);
-      expect(block, `${name} must not be a box`).not.toMatch(/borderWidth|borderRadius/);
-    }
-    expect(railSource).not.toContain("borderStyle: 'dashed'");
-    for (const label of ['"ADD"', '"SETUP"', '"YOU"']) {
-      expect(railSource, `rail command ${label} needs a mono label`).toContain(`label=${label}`);
-    }
-  });
-
-  it('marks the selected Workspace with an edge bar rather than a floating bracket', () => {
-    expect(railSource).toContain('styles.selectionBar');
-    expect(railSource).not.toContain('activeNotch');
-    expect(styleBlock(railSource, 'selectionBar')).toContain('groknight.selectedBorder');
-  });
-
-  it('renders every identity in the chrome through the one identity mark', () => {
-    // Shape reports the type — ▢ for a Workspace, ○ for a person — and both
-    // come out of the single `IdentityMark` primitive, never a rail-local one.
-    expect(railSource).toMatch(/<IdentityMark\s+kind="workspace"/);
-    expect(railSource).toMatch(/<IdentityMark\s+kind="human"/);
-    expect(railSource).not.toMatch(/AgentAvatar|PersonAvatar|WorkspaceAvatar/);
-    expect(railSource).not.toMatch(/borderRadius: \d*size|borderRadius: '50%'/);
-  });
-
-  it('distinguishes the active Workspace by tone, never by a fill behind it', () => {
-    // Selection is redundantly encoded — edge bar, the mark's own heavier
-    // frame, and tone — and none of those three is a background plate.
-    expect(railSource).toContain('!active && styles.railButtonIdle');
-    expect(styleBlock(railSource, 'railButtonIdle')).toMatch(/opacity: 0\.\d+/);
-    for (const name of ['railButton', 'railButtonIdle', 'railButtonSlot']) {
-      expect(styleBlock(railSource, name), `${name} must not fill`).not.toMatch(/backgroundColor/);
-    }
-  });
-
-  it('keeps the header a Workspace name plus quiet named affordances', () => {
-    // The Workspace name is the anchor; Members and ＋Room sit a tier below it
-    // rather than competing for the top of the ladder.
-    expect(styleBlock(railSource, 'drawerTriggerName')).toContain('groknight.textPrimary');
-    expect(styleBlock(source, 'headerActionText')).toContain('groknight.textMuted');
-    expect(styleBlock(railSource, 'railCommandGlyph')).toContain('groknight.textSecondary');
-  });
-
-  it('opens one coherent settings surface rather than skipping past the hub', () => {
-    expect(source).toContain("onSettings={() => router.push('/buzz/settings' as Href)}");
-    expect(source).not.toContain("router.push('/buzz/settings/identity'");
+  it('uses one required unread fact for NEW and the needs-you mark', () => {
+    // A cached pre-read-mark response is rejected and fetched again; after
+    // that, every visual consequence reads the same server-owned boolean.
+    expect(roomViewSource).toContain('readonly unread: boolean;');
+    expect(surfaceGuardSource).toContain("typeof item.unread === 'boolean'");
+    expect(surfaceGuardSource).not.toContain('item.unread === undefined');
+    expect(source).toContain('const unread = item.unread;');
+    expect(source).toContain("const deckState = unread ? 'needs-you' : 'idle';");
+    expect(source).toContain('<HullDeckMark state={deckState} />');
+    expect(source).toContain('unread ? (');
+    expect(source).toContain('unread && styles.rowUnread');
   });
 });

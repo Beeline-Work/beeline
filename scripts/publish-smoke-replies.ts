@@ -8,6 +8,8 @@ import { createBuzzClient, loadIdentityFromNsec } from '@beeline/buzz-client';
 
 const [agentNsec, roomId, cornerId] = process.argv.slice(2);
 const RELAY = process.env.RELAY_URL || 'https://usebeeline.app';
+const FIRST_DEVICE_MESSAGE_TIMEOUT_MS = 180_000;
+const FOLLOW_UP_MESSAGE_TIMEOUT_MS = 90_000;
 
 if (!agentNsec || !roomId || !cornerId) {
   throw new Error('usage: publish-smoke-replies <agent-nsec> <room-id> <corner-id>');
@@ -17,8 +19,9 @@ async function waitForMessage(
   client: ReturnType<typeof createBuzzClient>,
   channelId: string,
   needle: string,
+  timeoutMs = FOLLOW_UP_MESSAGE_TIMEOUT_MS,
 ): Promise<void> {
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const events = await client.sessionEventsBackfill(channelId, { limit: 100 });
     if (events.some((event) => event.content?.includes(needle))) return;
@@ -48,7 +51,9 @@ async function main() {
     identity: loadIdentityFromNsec(agentNsec, 'buzzy-smoke-agent'),
   });
   await client.connect();
-  await waitForMessage(client, roomId, 'SMOKE ROOM SEND');
+  // This first wait spans onboarding and the full pre-send smoke path. Later
+  // waits begin at the device action they coordinate with and stay tighter.
+  await waitForMessage(client, roomId, 'SMOKE ROOM SEND', FIRST_DEVICE_MESSAGE_TIMEOUT_MS);
   await client.messageSubmit(roomId, 'SMOKE AGENT ROOM REPLY — delivered live');
   await waitForMessage(client, roomId, "@beebee what's up");
   await requireExactlyOneMessage(client, roomId, "@beebee what's up");

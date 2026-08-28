@@ -16,7 +16,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { SessionMode } from './config.js';
-import { cornerAutonomyModeCandidates } from './harness-capabilities.js';
+import {
+  cornerAutonomyModeCandidates,
+  harnessSupportsNativeSessionResume,
+} from './harness-capabilities.js';
 import { harnessReadsMetaSystemPrompt, sessionToolScopeMeta } from './harness-tool-scope.js';
 
 /** Bound on the stderr tail kept for an exit-failure error message. */
@@ -373,6 +376,7 @@ export class AcpClient extends EventEmitter {
   /** Latest `available_commands_update` per session, keyed by sessionId. */
   private sessionCommands = new Map<string, AcpAvailableCommand[]>();
   private supportsStandardSteering = false;
+  private supportsSessionLoading = false;
   private alive = false;
   /** Bounded tail of recent stderr, so a spawn/exit failure's rejection text
    *  carries the real reason (e.g. a harness's own "missing API key" notice)
@@ -496,6 +500,8 @@ export class AcpClient extends EventEmitter {
     const initMeta = initResult._meta as Record<string, unknown> | undefined;
     const steering = initMeta?.steering as Record<string, unknown> | undefined;
     this.supportsStandardSteering = steering?.supported === true;
+    const agentCapabilities = initResult.agentCapabilities as { loadSession?: unknown } | undefined;
+    this.supportsSessionLoading = agentCapabilities?.loadSession === true;
     this.emit('initialized', initResult);
     this.notify('notifications/initialized', {});
   }
@@ -546,6 +552,11 @@ export class AcpClient extends EventEmitter {
     return this.sessionCommands.get(sessionId) ?? [];
   }
 
+  /** Whether this live ACP process advertised the stable `session/load` method. */
+  canLoadSession(): boolean {
+    return this.supportsSessionLoading;
+  }
+
   async sessionNew(opts: {
     cwd: string;
     mcpServers?: McpServerWire[];
@@ -586,6 +597,39 @@ export class AcpClient extends EventEmitter {
     if (!sessionId) throw new Error('session/new missing sessionId');
     await this.applySessionMode(sessionId, raw, opts.mode);
     return { sessionId, raw };
+  }
+
+  /**
+   * Reopen a provider-persisted logical conversation in this new ACP process.
+   * Unlike `session/new`, load accepts no system prompt: the harness restores
+   * its own conversation and instructions instead of receiving transcript
+   * text from Body again.
+   */
+  async sessionLoad(opts: {
+    sessionId: string;
+    cwd: string;
+    mcpServers?: McpServerWire[];
+    mode?: SessionMode;
+  }): Promise<{ sessionId: string; raw: unknown }> {
+    if (!this.supportsSessionLoading) {
+      throw new Error('ACP agent does not advertise session/load');
+    }
+    const params: Record<string, unknown> = {
+      sessionId: opts.sessionId,
+      cwd: opts.cwd,
+      mcpServers: (opts.mcpServers ?? []).map((server) => ({
+        name: server.name,
+        command: server.command,
+        args: server.args ?? [],
+        env: server.env ?? [],
+      })),
+    };
+    const meta = sessionToolScopeMeta(this.agentLabel);
+    if (meta) params._meta = meta;
+    const result = await this.request('session/load', params);
+    const raw = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+    await this.applySessionMode(opts.sessionId, raw, opts.mode);
+    return { sessionId: opts.sessionId, raw };
   }
 
   private async applySessionMode(
@@ -1012,4 +1056,55 @@ export class AcpClient extends EventEmitter {
     if (!this.child?.stdin.writable) return;
     this.child.stdin.write(JSON.stringify(obj) + '\n');
   }
+}
+
+export interface OpenAcpConversationOptions {
+  client: AcpClient;
+  /** Configured harness command, not a bwrap wrapper command. */
+  agentCommand: string | undefined;
+  /** In-memory logical conversation id retained across a clean suspension. */
+  resumeSessionId?: string;
+  cwd: string;
+  mcpServers?: McpServerWire[];
+  mode?: SessionMode;
+  /** Lazily builds the bounded re-prime and creates a genuinely new session. */
+  create(): Promise<{ sessionId: string; raw: unknown }>;
+  onResumeFailure?(error: unknown): void;
+}
+
+export type OpenAcpConversationResult = {
+  sessionId: string;
+  raw: unknown;
+  kind: 'resumed' | 'created';
+};
+
+/**
+ * Prefer the harness's own persisted conversation on an in-process idle wake.
+ * The `create` callback is deliberately lazy: reading durable transcript and
+ * constructing `session-reprime.ts` output must happen only when no native
+ * conversation exists (daemon restart, unsupported harness, or failed load).
+ */
+export async function openAcpConversation(
+  options: OpenAcpConversationOptions,
+): Promise<OpenAcpConversationResult> {
+  if (
+    options.resumeSessionId &&
+    harnessSupportsNativeSessionResume(options.agentCommand) &&
+    options.client.canLoadSession()
+  ) {
+    try {
+      const resumed = await options.client.sessionLoad({
+        sessionId: options.resumeSessionId,
+        cwd: options.cwd,
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+        ...(options.mode ? { mode: options.mode } : {}),
+      });
+      return { ...resumed, kind: 'resumed' };
+    } catch (error) {
+      options.onResumeFailure?.(error);
+    }
+  }
+
+  const created = await options.create();
+  return { ...created, kind: 'created' };
 }

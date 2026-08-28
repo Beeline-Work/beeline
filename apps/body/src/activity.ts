@@ -22,6 +22,7 @@ import {
   TAG_AGENT_DRAFT,
   TAG_AGENT_THOUGHT,
   TAG_AGENT_PRESENCE,
+  asRelayPublishError,
   buildAttachmentTags,
   type AgentPresenceStatus,
   type AttachmentReference,
@@ -1484,15 +1485,11 @@ export async function retractAgentPresence(
 }
 
 /**
- * A relay quota rejection advertises its own delay in the refusal text
- * ("retry in 12s"). Parsed here so presence and Room polling honour the same
- * instruction rather than each guessing.
+ * Read the relay adapter's bounded retry instruction. Legacy string parsing
+ * stays inside `asRelayPublishError`, alongside the HTTP response adapter.
  */
 export function relayRetryAfterMs(error: unknown): number {
-  const seconds = [...String(error).matchAll(/retry in\s+(\d+(?:\.\d+)?)s/gi)].map((match) =>
-    Number(match[1]),
-  );
-  return seconds.length ? Math.ceil(Math.max(...seconds) * 1_000) : 0;
+  return asRelayPublishError(error).retryAfterMs ?? 0;
 }
 
 /** Longest a relay's own advertised quota delay is honoured for one heartbeat. */

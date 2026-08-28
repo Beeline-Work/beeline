@@ -89,6 +89,7 @@ import {
 } from '@beeline/gate';
 import {
   createBuzzClient,
+  asRelayPublishError,
   createAgent,
   isMember,
   isAgentPresenceOnline,
@@ -1866,9 +1867,13 @@ export function isRepositoryMutationRequest(content: string): boolean {
  * retryable.
  */
 export function isNonRetryableRelayError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  if (/\bHTTP\s+(?:408|429)\b/.test(message)) return false;
-  return /\bHTTP\s+4\d\d\b/.test(message);
+  const failure = asRelayPublishError(error);
+  return (
+    !failure.retryable &&
+    (failure.status !== undefined ||
+      failure.kind === 'CLIENT_VALIDATION' ||
+      failure.kind === 'NEGATIVE_ACK')
+  );
 }
 
 /**

@@ -11,11 +11,15 @@ export type RelayPublishErrorKind =
   | 'NETWORK'
   | 'UNKNOWN';
 
+/** Never let untrusted relay prose schedule one retry more than 15 minutes out. */
+export const RELAY_RETRY_AFTER_MAX_MS = 15 * 60_000;
+
 export type RelayPublishErrorOptions = {
   kind: RelayPublishErrorKind;
   sentence: string;
   recoveryAction?: string;
   retryable: boolean;
+  retryAfterMs?: number;
   status?: number;
   eventKind?: number;
   cause?: unknown;
@@ -27,6 +31,7 @@ export class RelayPublishError extends Error {
   readonly sentence: string;
   readonly recoveryAction?: string;
   readonly retryable: boolean;
+  readonly retryAfterMs?: number;
   readonly status?: number;
   readonly eventKind?: number;
 
@@ -37,9 +42,23 @@ export class RelayPublishError extends Error {
     this.sentence = options.sentence;
     this.recoveryAction = options.recoveryAction;
     this.retryable = options.retryable;
+    this.retryAfterMs = boundedRetryAfterMs(options.retryAfterMs);
     this.status = options.status;
     this.eventKind = options.eventKind;
   }
+}
+
+function boundedRetryAfterMs(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return undefined;
+  return Math.min(RELAY_RETRY_AFTER_MAX_MS, Math.ceil(value));
+}
+
+function retryAfterMsFromReason(reason: string): number | undefined {
+  const seconds = [...reason.matchAll(/retry in\s+(\d+(?:\.\d+)?)s/gi)]
+    .map((match) => Number(match[1]))
+    .filter(Number.isFinite);
+  if (seconds.length === 0) return undefined;
+  return boundedRetryAfterMs(Math.max(...seconds) * 1_000);
 }
 
 function relayReason(body: unknown): string {
@@ -56,7 +75,12 @@ function relayReason(body: unknown): string {
   return body;
 }
 
-function invalidRelayError(reason: string, status: number, eventKind?: number): RelayPublishError {
+function invalidRelayError(
+  reason: string,
+  status: number,
+  eventKind?: number,
+  retryAfterMs?: number,
+): RelayPublishError {
   const normalized = reason.toLowerCase();
   if (
     normalized.includes('thread ancestry') ||
@@ -68,6 +92,7 @@ function invalidRelayError(reason: string, status: number, eventKind?: number): 
       sentence: 'This reply no longer matches its conversation thread.',
       recoveryAction: 'Refresh the Room and choose Reply again.',
       retryable: false,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
       status,
       eventKind,
     });
@@ -77,6 +102,7 @@ function invalidRelayError(reason: string, status: number, eventKind?: number): 
       kind: 'ROOM_ARCHIVED',
       sentence: 'This Room is archived and no longer accepts messages.',
       retryable: false,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
       status,
       eventKind,
     });
@@ -86,6 +112,7 @@ function invalidRelayError(reason: string, status: number, eventKind?: number): 
     sentence: 'The relay rejected this message as invalid.',
     recoveryAction: 'Review the message and try again.',
     retryable: false,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     status,
     eventKind,
   });
@@ -98,13 +125,15 @@ export function relayPublishErrorFromResponse(
   eventKind?: number,
 ): RelayPublishError {
   const reason = relayReason(body);
-  if (status === 400) return invalidRelayError(reason, status, eventKind);
+  const retryAfterMs = retryAfterMsFromReason(reason);
+  if (status === 400) return invalidRelayError(reason, status, eventKind, retryAfterMs);
   if (status === 408) {
     return new RelayPublishError({
       kind: 'TIMEOUT',
       sentence: 'The relay timed out while sending your message.',
       recoveryAction: 'Try sending it again.',
       retryable: true,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
       status,
       eventKind,
     });
@@ -115,6 +144,7 @@ export function relayPublishErrorFromResponse(
       sentence: 'The relay is receiving too many messages right now.',
       recoveryAction: 'Wait a moment, then try again.',
       retryable: true,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
       status,
       eventKind,
     });
@@ -125,6 +155,7 @@ export function relayPublishErrorFromResponse(
       sentence: 'The relay is temporarily unavailable.',
       recoveryAction: 'Try sending the message again.',
       retryable: true,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
       status,
       eventKind,
     });
@@ -135,6 +166,7 @@ export function relayPublishErrorFromResponse(
       sentence: 'The relay did not allow this message.',
       recoveryAction: 'Refresh your access and try again.',
       retryable: false,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
       status,
       eventKind,
     });
@@ -144,6 +176,7 @@ export function relayPublishErrorFromResponse(
     sentence: 'The relay could not accept this message.',
     recoveryAction: 'Try again after refreshing the Room.',
     retryable: false,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     status,
     eventKind,
   });
@@ -195,6 +228,17 @@ export function asRelayPublishError(error: unknown): RelayPublishError {
   }
   if (/publishEvent kind=\d+ was not accepted/i.test(message)) {
     return relayPublishNegativeAck(message, Number(/kind=(\d+)/.exec(message)?.[1]));
+  }
+  const retryAfterMs = retryAfterMsFromReason(message);
+  if (retryAfterMs !== undefined) {
+    return new RelayPublishError({
+      kind: 'RATE_LIMITED',
+      sentence: 'The relay is receiving too many messages right now.',
+      recoveryAction: 'Wait a moment, then try again.',
+      retryable: true,
+      retryAfterMs,
+      cause: error,
+    });
   }
   if (/publishEvent|network|fetch|timed out|aborted/i.test(message)) {
     return relayPublishErrorFromNetwork(error);

@@ -119,6 +119,44 @@ describe('HTTP bridge NIP-98 auth', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    {
+      status: 400,
+      body: 'invalid',
+      kind: 'INVALID_EVENT',
+      retryable: false,
+      retryAfterMs: undefined,
+    },
+    {
+      status: 408,
+      body: 'timeout',
+      kind: 'TIMEOUT',
+      retryable: true,
+      retryAfterMs: undefined,
+    },
+    {
+      status: 429,
+      body: JSON.stringify({ error: 'private quota detail; retry in 4s' }),
+      kind: 'RATE_LIMITED',
+      retryable: true,
+      retryAfterMs: 4_000,
+    },
+  ] as const)(
+    'returns a typed HTTP $status refusal with its structured retry posture',
+    async ({ status, body, kind, retryable, retryAfterMs }) => {
+      const fetchMock = vi.fn(async () => new Response(body, { status }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(publishEvent(opts, signedEvent())).rejects.toMatchObject({
+        kind,
+        status,
+        retryable,
+        retryAfterMs,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('retries transient HTTP failures on queryEvents before succeeding', async () => {
     vi.useFakeTimers();
     const fetchMock = vi

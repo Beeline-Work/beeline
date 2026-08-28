@@ -17,7 +17,11 @@ import {
   type WorkspaceView,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
+import {
+  loadActiveCommunityId,
+  saveActiveCommunityId,
+  saveLastViewedChannel,
+} from '@/buzz/community-storage';
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
@@ -128,13 +132,15 @@ export default function BuzzChannels() {
         nextIdentity.publicKey,
         '/workspaces',
       );
+      const storedWorkspaceId = await loadActiveCommunityId(nextIdentity.publicKey);
       const cachedWorkspaces = await mobileSurfaceCache.read(
         workspaceCacheAddress,
         isWorkspaceListView,
       );
       if (cancelled) return;
       if (cachedWorkspaces) setWorkspaceList(cachedWorkspaces);
-      const selectedId = requestedWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
+      const selectedId =
+        requestedWorkspaceId ?? storedWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       const chatCacheAddress = selectedId
         ? surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id/chats', {
             workspaceId: selectedId,
@@ -151,6 +157,15 @@ export default function BuzzChannels() {
         apply: (value) => {
           setWorkspaceList(value);
           void mobileSurfaceCache.write(workspaceCacheAddress, value, isWorkspaceListView);
+          if (
+            value.workspaces[0]?.id &&
+            (!selectedId || !value.workspaces.some((workspace) => workspace.id === selectedId))
+          ) {
+            router.replace({
+              pathname: '/buzz/channels',
+              params: { communityId: value.workspaces[0].id },
+            } as never);
+          }
         },
         onError: (reason) => setError(String(reason)),
       });
@@ -291,7 +306,7 @@ export default function BuzzChannels() {
     let publishAcknowledged = false;
     try {
       const client = await transport.ensureClient();
-      const roomId = await client.createChannel(name, {
+      await client.createChannel(name, {
         communityId: activeCommunityId,
         mirrorCommunityMembers: true,
         onPublished: () => {
@@ -306,7 +321,6 @@ export default function BuzzChannels() {
         setShowCreateRoom(false);
       }
       chatScheduler.current?.force();
-      openRoom(roomId);
     } catch (reason) {
       setError(
         publishAcknowledged
@@ -316,7 +330,7 @@ export default function BuzzChannels() {
     } finally {
       setCreatingRoom(false);
     }
-  }, [activeCommunityId, creatingRoom, openRoom, roomName, transport]);
+  }, [activeCommunityId, creatingRoom, roomName, transport]);
 
   const compose = useCallback(
     (action: RoomDeckComposeAction) => {

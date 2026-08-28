@@ -33,6 +33,12 @@ env:
     visible:
       id: room-list
     timeout: 20000
+# Server-indexed Workspaces are ordered by recent activity, so explicitly
+# select this run's primary fixture before asserting its Rooms.
+- tapOn:
+    id: workspace-avatar-trigger
+- tapOn:
+    id: community-rail-${SMOKE_WORKSPACE_ID}
 - assertVisible:
     id: workspace-active-${SMOKE_WORKSPACE_ID}
 - assertVisible: Buzzy Maestro Smoke Workspace

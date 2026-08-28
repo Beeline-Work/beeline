@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   GitHubEventsApiSource,
-  describeRepositoryEvents,
-  isMutedRepositoryEvent,
   normalizeGitHubEvent,
 } from './github-events.js';
 
@@ -23,9 +21,18 @@ function raw(
 }
 
 describe('normalizeGitHubEvent', () => {
-  it('normalizes the exact included event set', () => {
+  it('normalizes only typed pull-request and issue lifecycle cards', () => {
     const events = [
       raw('PushEvent', { ref: 'refs/heads/main', commits: [{}, {}] }),
+      raw('PullRequestEvent', {
+        action: 'opened',
+        number: 7,
+        pull_request: {
+          number: 7,
+          title: 'Open it',
+          html_url: 'https://github.com/acme/widget/pull/7',
+        },
+      }),
       raw('PullRequestEvent', {
         action: 'closed',
         number: 7,
@@ -39,6 +46,10 @@ describe('normalizeGitHubEvent', () => {
       raw('IssuesEvent', {
         action: 'opened',
         issue: { number: 9, title: 'Broken', html_url: 'https://github.com/acme/widget/issues/9' },
+      }),
+      raw('IssuesEvent', {
+        action: 'closed',
+        issue: { number: 10, title: 'Fixed', html_url: 'https://github.com/acme/widget/issues/10' },
       }),
       raw('WorkflowRunEvent', {
         action: 'completed',
@@ -64,45 +75,26 @@ describe('normalizeGitHubEvent', () => {
       }),
     ].map(normalizeGitHubEvent);
 
-    expect(events.map((event) => event?.type)).toEqual([
-      'push',
-      'pull-request',
-      'issue',
-      'ci',
-      'review-comment',
-      'ci',
+    expect(events.map((event) => event && [event.type, event.action])).toEqual([
+      undefined,
+      ['pull-request', 'opened'],
+      ['pull-request', 'merged'],
+      ['issue', 'opened'],
+      ['issue', 'closed'],
+      undefined,
+      undefined,
+      undefined,
     ]);
-    expect(events[1]?.summary).toContain('merged pull request #7');
-    expect(events[3]?.summary).toBe('CI concluded success on acme/widget:main');
-    expect(events[5]?.summary).toBe('Typecheck concluded success on acme/widget');
+    expect(events[2]).toMatchObject({
+      type: 'pull-request',
+      action: 'merged',
+      title: 'Land it',
+      url: 'https://github.com/acme/widget/pull/7',
+    });
   });
 
-  it('keeps every advertised pull-request and issue lifecycle action', () => {
-    const pullActions = ['opened', 'reopened', 'closed'] as const;
-    const pulls = pullActions.map((action) =>
-      normalizeGitHubEvent(
-        raw('PullRequestEvent', {
-          action,
-          number: 7,
-          pull_request: { number: 7, title: 'Lifecycle', merged: false },
-        }),
-      ),
-    );
-    const issueActions = ['opened', 'reopened', 'closed'] as const;
-    const issues = issueActions.map((action) =>
-      normalizeGitHubEvent(
-        raw('IssuesEvent', {
-          action,
-          issue: { number: 9, title: 'Lifecycle' },
-        }),
-      ),
-    );
-
-    expect(pulls.map((event) => event?.action)).toEqual(pullActions);
-    expect(issues.map((event) => event?.action)).toEqual(issueActions);
-  });
-
-  it('drops high-churn actions and mutes bot pushes to non-target branches', () => {
+  it('excludes every push, including a zero-commit push, and high-churn actions', () => {
+    expect(normalizeGitHubEvent(raw('PushEvent', { ref: 'refs/heads/main', commits: [] }))).toBeUndefined();
     expect(
       normalizeGitHubEvent(
         raw('PullRequestEvent', {
@@ -111,26 +103,6 @@ describe('normalizeGitHubEvent', () => {
         }),
       ),
     ).toBeUndefined();
-    const botPush = normalizeGitHubEvent(
-      raw(
-        'PushEvent',
-        { ref: 'refs/heads/fm/noisy', commits: [{}] },
-        { actor: { login: 'beeline[bot]', type: 'Bot' } },
-      ),
-    )!;
-    expect(isMutedRepositoryEvent(botPush, new Set(['main']))).toBe(true);
-    expect(isMutedRepositoryEvent({ ...botPush, branch: 'main' }, new Set(['main']))).toBe(false);
-  });
-
-  it('coalesces bursts and caps a card at ten facts', () => {
-    const events = Array.from({ length: 12 }, (_, index) => ({
-      ...normalizeGitHubEvent(raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }))!,
-      id: String(index),
-      summary: `event ${index}`,
-    }));
-    const lines = describeRepositoryEvents(events)!.split('\n');
-    expect(lines).toHaveLength(11);
-    expect(lines[10]).toBe('… and 2 more repository updates');
   });
 });
 
@@ -145,7 +117,14 @@ describe('GitHubEventsApiSource', () => {
             raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }, { id: '103' }),
             raw(
               'IssuesEvent',
-              { action: 'closed', issue: { number: 2, title: 'Done' } },
+              {
+                action: 'closed',
+                issue: {
+                  number: 2,
+                  title: 'Done',
+                  html_url: 'https://github.com/acme/widget/issues/2',
+                },
+              },
               { id: '102' },
             ),
             raw('PushEvent', { ref: 'refs/heads/main', commits: [{}] }, { id: '101' }),
@@ -161,7 +140,7 @@ describe('GitHubEventsApiSource', () => {
 
     expect(result.head).toBe('103');
     expect(result.sourceEventIds).toEqual(['103', '102']);
-    expect(result.events.map((event) => event.id)).toEqual(['103', '102']);
+    expect(result.events.map((event) => event.id)).toEqual(['102']);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

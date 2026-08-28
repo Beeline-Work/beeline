@@ -1306,6 +1306,20 @@ export class ReadOnlyToolsUnavailableError extends Error {
   override readonly name = 'ReadOnlyToolsUnavailableError';
 }
 
+function withReadOnlyAgentMemory(
+  server: McpServerWire,
+  agentMemoryDir?: string,
+): McpServerWire {
+  if (!agentMemoryDir) return server;
+  return {
+    ...server,
+    env: [
+      ...(server.env ?? []),
+      { name: 'BUZZ_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) },
+    ],
+  };
+}
+
 /** The only MCP mounted in a Room: a fixed, Beeline-owned inspection surface. */
 export function readOnlyMcpServer(
   config: BodyConfig,
@@ -1324,25 +1338,25 @@ export function readOnlyMcpServer(
     config.agentKind === 'pi'
       ? config.agentKind
       : 'codex';
-  return {
-    name: READ_ONLY_MCP_SERVER_NAME,
-    command: config.readonlyMcpCommand,
-    args: [...(config.readonlyMcpArgs ?? [])],
-    env: [
-      { name: 'BUZZ_READONLY_ROOT', value: resolve(cwd) },
-      ...(config.agentHomeRoot
-        ? [
-            {
-              name: 'BUZZ_READONLY_AGENT_SKILLS_ROOT',
-              value: resolve(config.agentHomeRoot, skillDir, 'skills'),
-            },
-          ]
-        : []),
-      ...(agentMemoryDir
-        ? [{ name: 'BUZZ_READONLY_AGENT_MEMORY_ROOT', value: resolve(agentMemoryDir) }]
-        : []),
-    ],
-  };
+  return withReadOnlyAgentMemory(
+    {
+      name: READ_ONLY_MCP_SERVER_NAME,
+      command: config.readonlyMcpCommand,
+      args: [...(config.readonlyMcpArgs ?? [])],
+      env: [
+        { name: 'BUZZ_READONLY_ROOT', value: resolve(cwd) },
+        ...(config.agentHomeRoot
+          ? [
+              {
+                name: 'BUZZ_READONLY_AGENT_SKILLS_ROOT',
+                value: resolve(config.agentHomeRoot, skillDir, 'skills'),
+              },
+            ]
+          : []),
+      ],
+    },
+    agentMemoryDir,
+  );
 }
 
 export const CODEGRAPH_MCP_SERVER_NAME = 'codegraph';
@@ -5008,12 +5022,13 @@ export class Body {
     if (scopeWarning) console.warn(`[body] ${scopeWarning}`);
     // Resolve the server before any relay membership or session side effect.
     // Missing read-only tools must never create a no-tool or edit-tool session.
+    const readonlyServerWithoutMemory = readOnlyMcpServer(this.config, readonlyCwd);
     const agentId = this.agentIdentity;
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     await this.ensureAgentEntity(tlcChannelId);
     const communityId = await this.channelCommunityId(tlcChannelId);
     const roomMemory = await this.sessionMemory(communityId);
-    const readonlyServer = readOnlyMcpServer(this.config, readonlyCwd, roomMemory?.dir);
+    const readonlyServer = withReadOnlyAgentMemory(readonlyServerWithoutMemory, roomMemory?.dir);
     // The boundary remains the exact MCP mount: Beeline's fixed inspection MCP
     // plus explicit creator-only account capabilities. Operator config is never inherited.
     const roomMcpServers = [

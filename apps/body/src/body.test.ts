@@ -2145,6 +2145,21 @@ describe('agent identity boundary', () => {
     expect(published[2]!.tags).toContainEqual(['t', 'agent-message']);
   });
 
+  it('does no relay or session work when buzz-readonly-mcp is unresolved', async () => {
+    const body = new Body({ ...config, workspaceRoot: '/tmp/buzzy-readonly-unavailable-unit' });
+    const create = vi.spyOn(body as never, 'createManagedSession' as never);
+    const relayRequest = vi.fn();
+    vi.stubGlobal('fetch', relayRequest);
+
+    await expect(body.provision('new-room')).rejects.toBeInstanceOf(
+      ReadOnlyToolsUnavailableError,
+    );
+
+    expect(relayRequest).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(body.listSessions()).toEqual([]);
+  });
+
   it('never reuses an edit session as a read-only Room session', async () => {
     const body = new Body({ ...config, readonlyMcpCommand: '/buzz-readonly-mcp' });
     stubEmptyAgentHistory(body);

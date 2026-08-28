@@ -339,6 +339,45 @@ describe('replaceable multi-lane reads', () => {
     unsubscribe();
     client.disconnect();
   });
+
+  it('expands a multi-channel surface watch into one live REQ per channel', async () => {
+    const client = createBuzzClient({
+      baseUrl: 'https://relay.test',
+      identity: createIdentity('multi-channel-surface-subscriber'),
+      skipAuth: true,
+      WebSocketImpl: ReconnectingTestWebSocket,
+    });
+    const received: string[] = [];
+    const pending = client.surfaceSubscribe(
+      [{ kinds: [9], '#h': ['room-reconnect', 'corner-reconnect'] }],
+      (event) => received.push(event.id),
+    );
+
+    await vi.waitFor(() => expect(ReconnectingTestWebSocket.instances).toHaveLength(1));
+    const socket = ReconnectingTestWebSocket.instances[0]!;
+    await vi.waitFor(() =>
+      expect(socket.sent.filter((frame) => frame[0] === 'REQ')).toHaveLength(2),
+    );
+    const requests = socket.sent.filter((frame) => frame[0] === 'REQ');
+    expect(requests.map((frame) => frame[2])).toEqual([
+      { kinds: [9], '#h': ['room-reconnect'] },
+      { kinds: [9], '#h': ['corner-reconnect'] },
+    ]);
+
+    const roomEvent = streamEvent('room-event', 101, 'room changed');
+    const cornerEvent = {
+      ...streamEvent('corner-event', 102, 'corner changed'),
+      tags: [['h', 'corner-reconnect']],
+    };
+    socket.receive(['EVENT', requests[0]![1], roomEvent]);
+    socket.receive(['EVENT', requests[1]![1], cornerEvent]);
+    for (const request of requests) socket.receive(['EOSE', request[1]]);
+    const unsubscribe = await pending;
+    expect(received).toEqual(['room-event', 'corner-event']);
+
+    unsubscribe();
+    client.disconnect();
+  });
 });
 
 describe('live Room subscriptions', () => {

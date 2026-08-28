@@ -51,10 +51,16 @@ export function CornerLiveBar({
   // Mounted only when something is genuinely live: a quiet Room must never pay
   // for a clock it does not use.
   const body = live ? <HullLivePulse>{row}</HullLivePulse> : row;
+  const resolvedTestID = testID ?? (live ? 'corner-status-working' : 'corner-live-bar');
 
   if (!onPress) {
     return (
-      <View accessibilityLabel={label} accessibilityRole="text" style={styles.bar} testID={testID}>
+      <View
+        accessibilityLabel={label}
+        accessibilityRole="text"
+        style={styles.bar}
+        testID={resolvedTestID}
+      >
         {body}
       </View>
     );
@@ -66,7 +72,7 @@ export function CornerLiveBar({
       accessibilityRole="button"
       onPress={onPress}
       style={styles.bar}
-      testID={testID}
+      testID={resolvedTestID}
     >
       {body}
     </Pressable>

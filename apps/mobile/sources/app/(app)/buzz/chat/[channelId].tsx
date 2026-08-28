@@ -3494,7 +3494,10 @@ export default function BuzzChat() {
       >
         {/* Header. No surface of its own — the chrome sits on the same
             obsidian as the transcript, parted only by a hairline. */}
-        <View style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}>
+        <View
+          style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
+          testID={isCorner ? 'corner-session-header' : undefined}
+        >
           <TouchableOpacity
             accessibilityLabel={
               isCorner && cornerReturnTarget !== 'room-list'
@@ -3902,7 +3905,6 @@ export default function BuzzChat() {
                 ? () => openCorner(cornerLiveBar.cornerId!)
                 : undefined
             }
-            testID="corner-live-bar"
           />
         )}
         {/* The ordinary per-turn indicator, independent of the line above: a

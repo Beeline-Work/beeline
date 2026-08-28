@@ -47,6 +47,7 @@ function room(messages: readonly RoomViewMessage[]): RoomView {
     },
     messages,
     members: [{ identity, role: 'member' }],
+    latestAgentTurns: [],
     viewer: { identity, role: 'member', permissions: { send: true, manage: false } },
     corners: [],
     watchFilters: [{ kinds: [9], '#h': [ROOM] }],
@@ -280,6 +281,36 @@ describe('separate response, cache, and outbox lifetimes', () => {
     expect(outbox.list()[0]?.event).toEqual(event);
     await outbox.reconcile(new Set([event.id]));
     expect(outbox.list()).toEqual([]);
+  });
+
+  it('keeps an unreconciled signed send actionable, while dropping legacy-shaped records', async () => {
+    const identity = createIdentity('outbox-actionable');
+    const event = signEvent(
+      { pubkey: identity.publicKey, created_at: 10, kind: 9, tags: [['h', ROOM]], content: 'yes' },
+      identity.secretKey,
+    );
+    let persisted: readonly any[] = [];
+    const outbox = new SignedEventOutbox({
+      load: async () => persisted,
+      save: async (records) => {
+        persisted = records;
+      },
+    });
+    await outbox.enqueue(event, {
+      ...row(event.id, event.created_at),
+      author: { pubkey: identity.publicKey, kind: 'human', name: 'Ada' },
+    });
+    await outbox.fail(event.id);
+    expect(outbox.get(event.id)?.status).toBe('failed');
+    await outbox.retry(event.id);
+    expect(outbox.get(event.id)).toMatchObject({ status: 'pending', attempts: 1 });
+    await outbox.remove(event.id);
+    expect(outbox.list()).toEqual([]);
+
+    persisted = [{ event, row: row(event.id, event.created_at), attempts: 0 }];
+    await outbox.restore();
+    expect(outbox.list()).toEqual([]);
+    expect(persisted).toEqual([]);
   });
 
   it('evicts a corrupt persisted optimistic row before it can paint', async () => {

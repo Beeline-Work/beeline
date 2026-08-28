@@ -173,6 +173,16 @@ describe('RoomIndexer', () => {
     );
     await event(ROOM, VIEWER, 3, 9, [['h', ROOM]], 'Hello');
     await event(ROOM, AGENT, 4, 9, [['h', ROOM]], 'Ready');
+    await event(ROOM, AGENT, 12, 9, [
+      ['h', ROOM],
+      ['t', 'agent-turn'],
+      ['request', 'c'.repeat(64)],
+      ['session', 'session-1'],
+      ['agent', AGENT],
+      ['mode', 'readonly'],
+      ['status', 'working'],
+      ['generation', 'generation-1'],
+    ]);
     await event(ROOM, AGENT, 10, KIND_AGENT_PRESENCE, [
       ['h', ROOM],
       ['d', `${TAG_AGENT_PRESENCE}:${ROOM}`],
@@ -266,12 +276,57 @@ describe('RoomIndexer', () => {
           presence: { status: 'online', observedAt: 10, roomId: ROOM },
         },
       ],
+      latestAgentTurns: [
+        {
+          requestId: 'c'.repeat(64),
+          agentPubkey: AGENT,
+          status: 'working',
+          createdAt: 12,
+          generationId: 'generation-1',
+        },
+      ],
       corners: [{ corner: { id: CORNER, updatedAt: 7 }, status: 'working' }],
     });
     expect(view?.messages.map((message) => [message.text, message.author.name])).toEqual([
       ['Hello', 'Ada'],
       ['Ready', 'Milo'],
     ]);
+  });
+
+  it('returns the latest terminal receipt so completion clears a working turn', async () => {
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(13), 9, $4, 'Agent reply complete.', $5)`,
+      [
+        TENANT,
+        bytes('9'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-turn'],
+          ['request', 'c'.repeat(64)],
+          ['session', 'session-1'],
+          ['agent', AGENT],
+          ['mode', 'readonly'],
+          ['status', 'complete'],
+          ['generation', 'generation-1'],
+        ]),
+        ROOM,
+      ],
+    );
+
+    await expect(indexer.readRoom(ROOM, VIEWER)).resolves.toMatchObject({
+      latestAgentTurns: [
+        {
+          requestId: 'c'.repeat(64),
+          agentPubkey: AGENT,
+          status: 'complete',
+          createdAt: 13,
+          generationId: 'generation-1',
+        },
+      ],
+    });
   });
 
   it('projects a model-unavailable event as a visible system line', async () => {
@@ -333,7 +388,15 @@ describe('RoomIndexer', () => {
         createdAt: 14,
         pubkey: AGENT,
         markers: ['github-event'],
-        text: 'GitHub · PR #42 merged',
+        extraTags: [
+          ['github-event-type', 'pull-request'],
+          ['github-event-action', 'merged'],
+          ['github-event-actor', 'lena'],
+          ['github-event-title', 'Ship the card'],
+          ['github-event-url', 'https://github.com/acme/widget/pull/42'],
+          ['github-event-id', '42'],
+        ],
+        text: '',
       },
       {
         id: 'd'.repeat(64),
@@ -384,6 +447,7 @@ describe('RoomIndexer', () => {
           JSON.stringify([
             ['h', ROOM],
             ...item.markers.map((marker) => ['t', marker]),
+            ...('extraTags' in item ? item.extraTags : []),
           ]),
           item.text,
           ROOM,
@@ -407,7 +471,6 @@ describe('RoomIndexer', () => {
     );
     for (const text of [
       'Model unavailable · unavailable-model',
-      'GitHub · PR #42 merged',
       'GitHub polling degraded',
       'Steer queued for the active turn.',
       'Permission execution acknowledged',
@@ -416,6 +479,64 @@ describe('RoomIndexer', () => {
         expect.objectContaining({ text, presentation: 'system' }),
       );
     }
+    expect(view?.messages).toContainEqual(
+      expect.objectContaining({ id: 'c'.repeat(64), presentation: 'card' }),
+    );
+  });
+
+  it('projects only complete typed GitHub cards without a service-publisher roster entry', async () => {
+    const service = 'd'.repeat(64);
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
+       VALUES ($1, $2, $3, 'member')`,
+      [TENANT, ROOM, bytes(service)],
+    );
+    const cardId = 'f'.repeat(64);
+    const legacyId = 'e'.repeat(64);
+    const insertGitHubEvent = async (id: string, createdAt: number, tags: string[][], content = '') => {
+      await postgres.query(
+        `INSERT INTO events
+          (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+         VALUES ($1, $2, $3, to_timestamp($4), 9, $5, $6, $7)`,
+        [TENANT, bytes(id), bytes(service), createdAt, JSON.stringify(tags), content, ROOM],
+      );
+    };
+    await insertGitHubEvent(cardId, 13, [
+      ['h', ROOM],
+      ['t', 'github-event'],
+      ['service', 'beeline-events'],
+      ['github-event-type', 'pull-request'],
+      ['github-event-action', 'opened'],
+      ['github-event-actor', 'lena'],
+      ['github-event-title', 'Ship the card'],
+      ['github-event-url', 'https://github.com/acme/widget/pull/7'],
+      ['github-event-id', '7'],
+    ]);
+    await insertGitHubEvent(legacyId, 14, [
+      ['h', ROOM],
+      ['t', 'github-event'],
+      ['service', 'beeline-events'],
+    ], 'lena pushed 0 commits to acme/widget:main');
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+    const history = await indexer.readHistory(ROOM, VIEWER);
+
+    expect(view?.members.map((member) => member.identity.pubkey)).not.toContain(service);
+    expect(view?.messages).toContainEqual(
+      expect.objectContaining({
+        id: cardId,
+        presentation: 'card',
+        githubEvent: {
+          type: 'pull-request',
+          action: 'opened',
+          actor: 'lena',
+          title: 'Ship the card',
+          url: 'https://github.com/acme/widget/pull/7',
+        },
+      }),
+    );
+    expect(view?.messages.map((message) => message.id)).not.toContain(legacyId);
+    expect(history?.messages.map((message) => message.id)).not.toContain(legacyId);
   });
 
   it('owns read marks on the server across devices and viewers without a second Room query', async () => {

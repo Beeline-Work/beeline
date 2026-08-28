@@ -65,6 +65,7 @@ export type LedgerAttributionMessage = {
   isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
   isSystemNotice?: boolean;
+  githubEvent?: unknown;
   writePermission?: unknown;
   targetBranchProposal?: unknown;
 };
@@ -91,7 +92,8 @@ export function ledgerSpeakerKey(
     message.roomUpdate ||
     message.isMergeSummary ||
     message.isArchivedNotice ||
-    message.isSystemNotice
+    message.isSystemNotice ||
+    message.githubEvent
   )
     return null;
   if (message.writePermission || message.targetBranchProposal) return null;

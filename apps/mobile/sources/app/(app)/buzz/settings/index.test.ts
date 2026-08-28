@@ -108,6 +108,17 @@ function render(): ReactTestRenderer {
 }
 
 describe('Buzz global Settings', () => {
+  it('names the GitHub installation section precisely', () => {
+    const renderer = render();
+    const text = renderer.root
+      .findAllByType('Text' as any)
+      .flatMap((node) => node.props.children)
+      .join(' ');
+
+    expect(text).toContain('CONNECTED GITHUB ACCOUNTS');
+    expect(text).not.toContain('CONNECTED ACCOUNTS');
+  });
+
   it('shows the running OTA id and channel on the device settings surface', () => {
     const renderer = render();
 

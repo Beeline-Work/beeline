@@ -28,9 +28,6 @@ import {
   createAgent,
   createChannel as buzzCreateChannel,
   createCommunity,
-  CHANGE_REVIEW_FILE_TAG,
-  CHANGE_REVIEW_MANIFEST_TAG,
-  CHANGE_REVIEW_VERSION,
   identityNpub,
   identityNsec,
   loadIdentityFromNsec,
@@ -39,13 +36,6 @@ import {
   setAgentSoul,
   waitUntilMember,
 } from '@beeline/buzz-client';
-import {
-  chunkChangeReviewPatch,
-  listChangeReviewFiles,
-  postChangeReviewMetadata,
-  readChangeReviewPatch,
-  resolveReviewBaseTip,
-} from '@beeline/body';
 import { signEvent } from '@beeline/nostr';
 
 const RUN_MARKER = `uidemo-${randomUUID().slice(0, 8)}`;
@@ -358,54 +348,9 @@ async function main() {
   if (!pushFeature.ok) throw new Error('push failed: ' + pushFeature.stderr);
   log('Feature tip:', featureTip);
 
-  // ── 4. Post exact-tip review metadata + merge target ──────────────
+  // ── 4. Post the exact merge target ───────────────────────────────
   const repoId = `${owner.publicKey}/${repo}`;
   const targetBranch = 'refs/heads/main';
-  const baseTip = resolveReviewBaseTip(work, targetBranch);
-  const files = listChangeReviewFiles(work, baseTip, featureTip);
-
-  for (const [fileIndex, file] of files.entries()) {
-    const chunks = chunkChangeReviewPatch(readChangeReviewPatch(work, baseTip, featureTip, file));
-    for (const [index, content] of chunks.entries()) {
-      await postChangeReviewMetadata(
-        subchannelId,
-        owner,
-        `${subchannelId}:${featureTip}:file:${fileIndex}:${index}`,
-        content,
-        [
-          ['t', CHANGE_REVIEW_FILE_TAG],
-          ['f', file.path],
-          ['r', featureTip],
-          ['base', baseTip],
-          ['tip', featureTip],
-          ['chunk', String(index)],
-          ['chunks', String(chunks.length)],
-          ...(file.isBinary ? [['binary', 'true']] : []),
-        ],
-      );
-    }
-  }
-
-  await postChangeReviewMetadata(
-    subchannelId,
-    owner,
-    `${subchannelId}:${featureTip}:manifest:0`,
-    JSON.stringify({
-      version: CHANGE_REVIEW_VERSION,
-      base: baseTip,
-      tip: featureTip,
-      files,
-    }),
-    [
-      ['t', CHANGE_REVIEW_MANIFEST_TAG],
-      ['r', featureTip],
-      ['base', baseTip],
-      ['tip', featureTip],
-      ['chunk', '0'],
-    ],
-  );
-
-  // Merge-ready is published last so the review payload is complete first.
   const subIntro = signEvent(
     {
       pubkey: owner.publicKey,
@@ -429,7 +374,7 @@ async function main() {
     owner.secretKey,
   );
   await publishEvent(subIntro, owner);
-  log(`Review metadata posted for ${files.length} file diffs`);
+  log('Merge target posted; Body owns content-addressed review publication');
 
   // To parent (subchannel link - for UI to render as navigable)
   const parentLink = signEvent(

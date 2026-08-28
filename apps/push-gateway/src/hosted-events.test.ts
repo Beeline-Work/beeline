@@ -5,7 +5,6 @@ import { startHostedRepositoryEvents } from './hosted-events.js';
 
 const config: EventsServiceConfig = {
   supervisorRoot: '/runtime',
-  stateFile: '/legacy/events.json',
   identityFile: '/identity/events.json',
   githubAppId: '1',
   githubPrivateKey: 'private-key',

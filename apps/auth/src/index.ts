@@ -44,10 +44,6 @@ function tenantsFromEnvironment(): AuthTenant[] {
 }
 
 async function main(): Promise<void> {
-  const internalSnapshotToken = process.env.BUZZY_SNAPSHOT_INTERNAL_TOKEN;
-  if (process.env.NODE_ENV === 'production' && !internalSnapshotToken) {
-    throw new Error('BUZZY_SNAPSHOT_INTERNAL_TOKEN is required in production');
-  }
   const database = new PostgresDatabase(required('DATABASE_URL'));
   const store = new AuthStore(database);
   await store.migrate();
@@ -90,7 +86,6 @@ async function main(): Promise<void> {
     // Operator-only shared secret for the GitHub App manifest setup page and
     // the on-demand drift endpoint; unset disables both surfaces.
     githubSetupToken: process.env.BUZZY_AUTH_SETUP_TOKEN,
-    internalSnapshotToken,
     tenants: tenantsFromEnvironment(),
     authorizeGitHubRoomToken: createGitHubRoomTokenAuthority(store),
     logger: true,

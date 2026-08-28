@@ -99,9 +99,6 @@ const THROWAWAY_WORKSPACE_PATTERN =
   /(?:^|[\s._-])(?:test|tests|testing|demo|fixture|fixtures|throwaway|temporary|temp|tmp|smoke|e2e|proof)(?:$|[\s._-])/i;
 
 const FIXTURE_EVENT_MARKERS = new Set([
-  'change-review',
-  'change-review-file',
-  'change-review-manifest',
   'ui-test',
   'ui-demo',
   'uidemo',

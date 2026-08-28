@@ -96,7 +96,7 @@ manual_recovery() {
 !! Then verify materializer health with:
 !! docker ps --filter label=com.docker.compose.project=buzz-router-prod --filter label=com.docker.compose.service=materializer
 !! curl -fsS $PUBLIC_BASE/push/health
-!! curl -fsS $PUBLIC_BASE/snapshot/health
+!! test "\$(curl -sS -o /dev/null -w '%{http_code}' $PUBLIC_BASE/workspaces)" = 401
 EOF
 }
 
@@ -227,7 +227,6 @@ POSTGRES_DB=buzz
 REDIS_PASSWORD=stage-dummy
 BUZZ_S3_ACCESS_KEY=stage-dummy
 BUZZ_S3_SECRET_KEY=stage-dummy
-BUZZY_SNAPSHOT_INTERNAL_TOKEN=stage-dummy
 EOF
 docker compose -f "$STAGE/stack/compose.validate.yml" --env-file "$STAGE/stack/.env" config --quiet \
   || die "staged compose.yml does not parse — aborting before anything was touched"
@@ -435,7 +434,7 @@ verify_public() {
     [ "$code" = "200" ] || { echo "!! /.well-known/$wk returned ${code:-error}" >&2; failures=$((failures+1)); }
   done
 
-  # Push and snapshot consumers must both be healthy through the front.
+  # Push and the authenticated indexer must both be reachable through the front.
   local tries_p=0 code_push=""
   while [ $tries_p -lt 12 ]; do
     code_push=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 15 "$PUBLIC_BASE/push/health" || true)
@@ -444,9 +443,9 @@ verify_public() {
   done
   [ "$code_push" = "200" ] || { echo "!! /push/health did not return 200 (last: ${code_push:-error})" >&2; failures=$((failures+1)); }
   log "public /push/health verified"
-  code_snapshot=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 15 "$PUBLIC_BASE/snapshot/health" || true)
-  [ "$code_snapshot" = "200" ] || { echo "!! /snapshot/health did not return 200 (last: ${code_snapshot:-error})" >&2; failures=$((failures+1)); }
-  log "public /snapshot/health verified"
+  code_indexer=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$PUBLIC_BASE/workspaces" || true)
+  [ "$code_indexer" = "401" ] || { echo "!! /workspaces did not enforce authenticated index reads (last: ${code_indexer:-error})" >&2; failures=$((failures+1)); }
+  log "public authenticated indexer verified"
 
   # Auth service healthy through the front (container may need a moment).
   local tries=0 code_auth=""

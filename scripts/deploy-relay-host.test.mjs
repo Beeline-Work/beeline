@@ -283,9 +283,9 @@ async function withPublicServer(fn, opts = {}) {
     } else if (req.url === '/push/health') {
       res.statusCode = 200;
       res.end('ok');
-    } else if (req.url === '/snapshot/health') {
-      res.statusCode = 200;
-      res.end('ok');
+    } else if (req.url === '/workspaces') {
+      res.statusCode = 401;
+      res.end('{"error":"valid_identity_authorization_required"}');
     } else {
       res.statusCode = 404;
       res.end();
@@ -446,7 +446,6 @@ function composeConfig(relative, overrides = {}) {
     REDIS_PASSWORD: 'compose-test',
     BUZZ_S3_ACCESS_KEY: 'compose-test',
     BUZZ_S3_SECRET_KEY: 'compose-test',
-    BUZZY_SNAPSHOT_INTERNAL_TOKEN: 'compose-test',
   };
   delete env.BEELINE_RUNTIME_STATE_DIR;
   Object.assign(env, overrides);
@@ -560,7 +559,7 @@ test('a failed cutover stops one-way and prints exact forward recovery commands'
   assert.ok(r.stderr.includes('Keep beeline-events.service stopped'), r.stderr);
   assert.ok(r.stderr.includes('up -d --remove-orphans'), r.stderr);
   assert.ok(r.stderr.includes('/push/health'), r.stderr);
-  assert.ok(r.stderr.includes('/snapshot/health'), r.stderr);
+  assert.ok(r.stderr.includes('/workspaces'), r.stderr);
 });
 
 test('failed public verification leaves the materializer as sole tail owner', async () => {

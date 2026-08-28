@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { TouchableOpacity, View } from 'react-native';
 import Animated, {
   Easing,
   ReduceMotion,
@@ -41,6 +41,8 @@ const COMPOSE_OPTIONS: readonly ComposeOption[] = [
 const GLYPH_ROTATION_MS = 180;
 const GLYPH_SIZE = 24;
 const GLYPH_STROKE_WIDTH = 1.25;
+const FAB_GLYPH_SIZE = 24;
+const FAB_GLYPH_STROKE_WIDTH = 1.5;
 
 /**
  * Flat hull compose affordance for the Room deck. The brass plus rotates into
@@ -78,8 +80,22 @@ export function RoomDeckComposeMenu({ onSelect }: RoomDeckComposeMenuProps) {
         style={styles.fab}
         testID="room-deck-compose-fab"
       >
-        <Animated.View style={glyphStyle}>
-          <Text style={styles.fabGlyph}>＋</Text>
+        <Animated.View style={[styles.fabGlyph, glyphStyle]}>
+          <Svg
+            accessibilityElementsHidden
+            focusable={false}
+            height={FAB_GLYPH_SIZE}
+            viewBox="0 0 24 24"
+            width={FAB_GLYPH_SIZE}
+          >
+            <Path
+              fill="none"
+              stroke="#1A0F22"
+              strokeLinecap="square"
+              strokeWidth={FAB_GLYPH_STROKE_WIDTH}
+              d="M12 4v16M4 12h16"
+            />
+          </Svg>
         </Animated.View>
       </TouchableOpacity>
 
@@ -174,8 +190,8 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     fab: {
-      width: 56,
-      height: 56,
+      width: 48,
+      height: 48,
       flexShrink: 0,
       borderRadius: groknight.radius,
       alignItems: 'center',
@@ -188,11 +204,10 @@ const styles = StyleSheet.create((theme) => {
       elevation: 10,
     },
     fabGlyph: {
-      ...Typography.default(),
-      color: '#1A0F22',
-      fontSize: 30,
-      lineHeight: 34,
-      fontWeight: '400',
+      width: FAB_GLYPH_SIZE,
+      height: FAB_GLYPH_SIZE,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
   };
 });

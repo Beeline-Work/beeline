@@ -5,6 +5,7 @@ import {
   agentPresenceTier,
   isAgentTurnActive,
   mergeAgentPresence,
+  mergeAgentPresenceBatch,
   nextAgentPresenceTransitionAt,
   onlineVerdicts,
   type RoomAgentPresence,
@@ -44,6 +45,16 @@ describe('mobile live presence overlay', () => {
         current,
       ),
     ).toBe(false);
+  });
+
+  it('keeps a newer live heartbeat when a Room refetch has no presence row', () => {
+    const live = { ...presence, observedAt: 20 };
+    const server = { ...presence, observedAt: 10 };
+    expect(mergeAgentPresenceBatch({ [agent]: live }, [])).toEqual({ [agent]: live });
+    expect(mergeAgentPresenceBatch({ [agent]: live }, [server])).toEqual({ [agent]: live });
+    expect(
+      mergeAgentPresenceBatch({ [agent]: server }, [{ ...presence, observedAt: 30 }]),
+    ).toEqual({ [agent]: { ...presence, observedAt: 30 } });
   });
 
   it('resolves one stable online verdict per requested agent', () => {

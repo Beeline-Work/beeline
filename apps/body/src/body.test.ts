@@ -3,7 +3,7 @@
  * These tests do NOT require a relay or LLM endpoint.
  */
 import { afterAll, afterEach, describe, it, expect, vi } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import {
   existsSync,
   mkdirSync,
@@ -92,7 +92,6 @@ import {
   ReadOnlyToolsUnavailableError,
   isAcpPromptStallError,
   ROOM_AGENT_PROMPT_TIMEOUT_MS,
-  ROOM_AGENT_STALL_NOTICE_MS,
   ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   RoomPollBackoff,
   type RoomReplyOutcome,
@@ -3203,7 +3202,7 @@ describe('Room poll resilience', () => {
     await scheduler.dispose();
   });
 
-  it('surfaces an honest stall notice well before the full idle-cancel window on a fully wedged backend', async () => {
+  it('keeps a fully wedged backend out of the durable transcript until it stops', async () => {
     vi.useFakeTimers();
     try {
       const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
@@ -3263,212 +3262,16 @@ describe('Room poll resilience', () => {
         requestId: 'stall-request',
         originalRequestId: 'stall-request',
         cause: 'room-message',
-        replyToId: 'stall-request',
-        replyRootId: 'stall-thread-root',
       });
       const rejection = expect(prompt).rejects.toThrow('timed out after');
 
-      // Still under the (much shorter) notice threshold: no notice yet.
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS - 1);
-      expect(published.some((event) => event.content.includes('taking longer than usual'))).toBe(
-        false,
-      );
+      // The caller owns the working receipt that lights the thinking
+      // indicator. `promptAgent` must not add a second, durable prose status
+      // while the backend remains silent.
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS - 1);
+      expect(published).toEqual([]);
 
-      // Crossing the notice threshold surfaces the stall well before the
-      // full ROOM_AGENT_PROMPT_TIMEOUT_MS idle-cancel window elapses.
-      expect(ROOM_AGENT_STALL_NOTICE_MS).toBeLessThan(ROOM_AGENT_PROMPT_TIMEOUT_MS);
-      await vi.advanceTimersByTimeAsync(2);
-      const stallNotice = published.find((event) =>
-        event.content.includes('taking longer than usual'),
-      );
-      expect(stallNotice).toBeDefined();
-      expect(stallNotice!.tags.filter((tag) => tag[0] === 'e')).toEqual([
-        ['e', 'stall-thread-root', '', 'root'],
-        ['e', 'stall-request', '', 'reply'],
-      ]);
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
-      await rejection;
-      await scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('never surfaces a stall notice for a turn that keeps producing genuine ACP activity past the notice threshold', async () => {
-    vi.useFakeTimers();
-    try {
-      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
-      const body = new Body(
-        {
-          agentBinary: '/nonexistent',
-          mcpBinary: '/nonexistent',
-          agentEnv: {},
-          workspaceRoot: '/tmp/buzzy-active-turn',
-          relayBaseUrl: 'http://relay.test',
-          relayHost: 'relay.test',
-          relayScheme: 'http',
-          relayWsUrl: 'ws://relay.test',
-          autoApprovePermissions: true,
-        },
-        newIdentity('active-operator'),
-        newIdentity('active-agent'),
-        undefined,
-        { scheduler },
-      );
-      const published: NostrEvent[] = [];
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-          published.push(JSON.parse(String(init?.body)) as NostrEvent);
-          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-        }),
-      );
-
-      // Genuine ACP activity every 15s (under the 20s notice window) for 5
-      // ticks — 75s of real elapsed time, well past the notice threshold in
-      // aggregate, but each individual gap stays short enough that neither
-      // the notice nor the idle-cancel ever trips.
-      const sessionPrompt = vi.fn(
-        (
-          _sessionId: string,
-          _prompt: string,
-          _timeoutMs: number,
-          _onChunk: unknown,
-          onActivity?: () => void,
-        ) =>
-          new Promise((resolve) => {
-            const tick = (remaining: number) => {
-              if (remaining <= 0) {
-                resolve({ stopReason: 'end_turn', updates: [], agentText: 'done', toolCalls: [] });
-                return;
-              }
-              onActivity?.();
-              setTimeout(() => tick(remaining - 1), 15_000);
-            };
-            tick(5);
-          }),
-      );
-      const session = {
-        channelId: 'active-room',
-        sessionId: 'active-session',
-        mode: 'readonly',
-        client: { sessionPrompt, sessionCancel: vi.fn() },
-        lifecycle: {
-          activate: vi.fn().mockResolvedValue('active-session'),
-          suspend: vi.fn().mockResolvedValue(undefined),
-        },
-      } as never;
-
-      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
-        channelId: 'active-room',
-        requestId: 'active-request',
-        originalRequestId: 'active-request',
-        cause: 'room-message',
-      });
-      await vi.advanceTimersByTimeAsync(15_000 * 5 + 5);
-      const result = (await prompt) as { agentText: string };
-      expect(result.agentText).toBe('done');
-      expect(published.some((event) => event.content?.includes('taking longer than usual'))).toBe(
-        false,
-      );
-      await scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('never threads a stall notice to an event outside the channel it publishes into', async () => {
-    // A corner's opening turn is driven by the Room event that opened it —
-    // `requestId` here stands in for that Room event, while `channelId` is
-    // the corner. A relay rejects a kind:9 reply whose `e`-tagged parent
-    // carries a different `h` tag ("parent event belongs to a different
-    // channel"), so the stall notice must never thread to `requestId` unless
-    // the caller explicitly vouches it lives in `channelId` via `replyToId`.
-    vi.useFakeTimers();
-    try {
-      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
-      const body = new Body(
-        {
-          agentBinary: '/nonexistent',
-          mcpBinary: '/nonexistent',
-          agentEnv: {},
-          workspaceRoot: '/tmp/buzzy-stall-cross-channel',
-          relayBaseUrl: 'http://relay.test',
-          relayHost: 'relay.test',
-          relayScheme: 'http',
-          relayWsUrl: 'ws://relay.test',
-          autoApprovePermissions: true,
-        },
-        newIdentity('cross-channel-operator'),
-        newIdentity('cross-channel-agent'),
-        undefined,
-        { scheduler },
-      );
-      const published: NostrEvent[] = [];
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-          const event = JSON.parse(String(init?.body)) as NostrEvent;
-          // Mirror the relay's real validation: reject a kind:9 reply whose
-          // `e`-tagged parent event is known to live in a different channel.
-          // The fixture's only cross-channel event is the Room's own
-          // corner-open message, which never actually lives in `the-corner`.
-          if (event.tags.some((tag) => tag[0] === 'e' && tag[1] === 'room-open-corner-event')) {
-            return new Response(
-              JSON.stringify({ error: 'invalid: parent event belongs to a different channel' }),
-              { status: 400 },
-            );
-          }
-          published.push(event);
-          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-        }),
-      );
-
-      const sessionCancel = vi.fn();
-      const sessionPrompt = vi.fn(
-        (_sessionId: string, _prompt: string, timeoutMs: number) =>
-          new Promise<never>((_resolve, reject) =>
-            setTimeout(
-              () =>
-                reject(
-                  new Error(`ACP session/prompt timed out after ${timeoutMs}ms of inactivity`),
-                ),
-              timeoutMs,
-            ),
-          ),
-      );
-      const session = {
-        channelId: 'the-corner',
-        sessionId: 'corner-session',
-        mode: 'edit',
-        client: { sessionPrompt, sessionCancel },
-        lifecycle: {
-          activate: vi.fn().mockResolvedValue('corner-session'),
-          suspend: vi.fn().mockResolvedValue(undefined),
-        },
-      } as never;
-
-      // `requestId` names the Room event that opened this corner —
-      // deliberately NOT in `channelId` — and no `replyToId` is given,
-      // exactly like `startAgentTask`'s corner-open call.
-      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
-        channelId: 'the-corner',
-        requestId: 'room-open-corner-event',
-        originalRequestId: 'room-open-corner-event',
-        cause: 'corner-opening',
-      });
-      const rejection = expect(prompt).rejects.toThrow('timed out after');
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS + 2);
-
-      const stallNotice = published.find((event) =>
-        event.content.includes('taking longer than usual'),
-      );
-      expect(stallNotice).toBeDefined();
-      expect(stallNotice!.tags.some((tag) => tag[0] === 'e')).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(1);
       await rejection;
       await scheduler.dispose();
     } finally {
@@ -4047,6 +3850,248 @@ describe('Room conversation and permission-gated work intent', () => {
         participants,
       ),
     ).toBe(false);
+  });
+
+  it('routes the multi-party addressing table from indexed reply facts', () => {
+    const colleague = newIdentity('continuation-colleague');
+    const otherAgent = newIdentity('continuation-other-agent');
+    const participants = [
+      human.publicKey,
+      colleague.publicKey,
+      agent.publicKey,
+      otherAgent.publicKey,
+    ];
+    const tagged = requestEvent([['p', agent.publicKey]], human, '@Joy start here.');
+    const followup = requestEvent([], human, 'What about the second part?');
+    const humanRequest = requestEvent([['p', agent.publicKey]], human, '@Joy answer this.');
+    const colleagueRequest = requestEvent(
+      [['p', agent.publicKey]],
+      colleague,
+      '@Joy answer my question.',
+    );
+    const message = (
+      id: string,
+      author: { publicKey: string },
+      kind: 'human' | 'agent',
+      createdAt: number,
+      presentation: RoomViewMessage['presentation'] = 'message',
+      replyTo?: string,
+    ): RoomViewMessage => ({
+      id,
+      text: id,
+      createdAt,
+      author: { pubkey: author.publicKey, kind, name: kind === 'agent' ? 'Joy' : 'Person' },
+      presentation,
+      ...(replyTo
+        ? { reply: { channelId: 'parent-channel', eventId: replyTo, rootId: replyTo } }
+        : {}),
+    });
+    const current = message(followup.id, human, 'human', 4);
+    const replyToHuman = message(
+      'agent-reply-to-human',
+      agent,
+      'agent',
+      2,
+      'message',
+      humanRequest.id,
+    );
+    const replyToColleague = message(
+      'agent-reply-to-colleague',
+      agent,
+      'agent',
+      2,
+      'message',
+      colleagueRequest.id,
+    );
+    const noise = message('status-card', agent, 'agent', 3, 'system');
+
+    expect(isChannelAddressedMessage(tagged, agent.publicKey, participants)).toBe(true);
+    expect(
+      isChannelAddressedMessage(followup, agent.publicKey, participants, [
+        message(humanRequest.id, human, 'human', 1),
+        replyToHuman,
+        current,
+      ]),
+    ).toBe(true);
+    expect(
+      isChannelAddressedMessage(followup, agent.publicKey, participants, [
+        message(colleagueRequest.id, colleague, 'human', 1),
+        replyToColleague,
+        current,
+      ]),
+    ).toBe(false);
+    expect(
+      isChannelAddressedMessage(followup, agent.publicKey, participants, [
+        message(humanRequest.id, human, 'human', 1),
+        replyToHuman,
+        noise,
+        current,
+      ]),
+    ).toBe(true);
+  });
+
+  it('does not infer a continuation from adjacent unthreaded agent prose', () => {
+    const colleague = newIdentity('adjacent-colleague');
+    const followup = requestEvent([], human, 'Was that answer meant for me?');
+    const participants = [human.publicKey, colleague.publicKey, agent.publicKey];
+    const messages: RoomViewMessage[] = [
+      {
+        id: 'unthreaded-agent-message',
+        text: 'An answer without a recorded recipient.',
+        createdAt: 1,
+        author: { pubkey: agent.publicKey, kind: 'agent', name: 'Joy' },
+        presentation: 'message',
+      },
+      {
+        id: followup.id,
+        text: followup.content,
+        createdAt: 2,
+        author: { pubkey: human.publicKey, kind: 'human', name: 'Milo' },
+        presentation: 'message',
+      },
+    ];
+
+    expect(isChannelAddressedMessage(followup, agent.publicKey, participants, messages)).toBe(
+      false,
+    );
+  });
+
+  it('drives only the recorded recipient continuation through Room event processing', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-room-continuation-routing-'));
+    try {
+      const colleague = newIdentity('processed-continuation-colleague');
+      const body = new Body({
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      });
+      const participants = [human.publicKey, colleague.publicKey, body.agent.publicKey];
+      const original = requestEvent(
+        [['p', body.agent.publicKey]],
+        human,
+        '@Joy give me the first answer.',
+      );
+      const humanFollowup = requestEvent([], human, 'Now answer the follow-up.');
+      const colleagueFollowup = requestEvent([], colleague, 'This is a separate conversation.');
+      const indexed = vi.fn(async (): Promise<RoomViewMessage[]> => [
+        {
+          id: original.id,
+          text: original.content,
+          createdAt: 1,
+          author: { pubkey: human.publicKey, kind: 'human', name: 'Milo' },
+          presentation: 'message',
+        },
+        {
+          id: 'threaded-agent-reply',
+          text: 'Here is the first answer.',
+          createdAt: 2,
+          author: { pubkey: body.agent.publicKey, kind: 'agent', name: 'Joy' },
+          presentation: 'message',
+          reply: { channelId: 'parent-channel', eventId: original.id, rootId: original.id },
+        },
+        {
+          id: humanFollowup.id,
+          text: humanFollowup.content,
+          createdAt: 3,
+          author: { pubkey: human.publicKey, kind: 'human', name: 'Milo' },
+          presentation: 'message',
+        },
+      ]);
+      const replyInRoom = vi.fn(async () => ({ openedCorner: false, producedReply: true }));
+      Reflect.set(body, 'indexedRoomMessages', indexed);
+      Reflect.set(
+        body,
+        'roomAuthorAttributions',
+        vi.fn(
+          async () =>
+            new Map([
+              [human.publicKey, { kind: 'Person', name: 'Milo', handle: 'milo' }],
+              [colleague.publicKey, { kind: 'Person', name: 'Nia', handle: 'nia' }],
+              [body.agent.publicKey, { kind: 'Agent', name: 'Joy', handle: 'joy' }],
+            ]),
+        ),
+      );
+      Reflect.set(
+        body,
+        'requestAlreadyOpened',
+        vi.fn(async () => false),
+      );
+      Reflect.set(
+        body,
+        'channelCommunityId',
+        vi.fn(async () => undefined),
+      );
+      Reflect.set(body, 'replyInRoom', replyInRoom);
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+      const processChannelRequestEvents = (
+        Reflect.get(body, 'processChannelRequestEvents') as (...args: unknown[]) => Promise<number>
+      ).bind(body);
+
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [humanFollowup],
+        participants,
+      );
+      expect(replyInRoom).toHaveBeenCalledOnce();
+      expect(replyInRoom).toHaveBeenCalledWith(
+        'parent-channel',
+        { repo: 'repo' },
+        expect.objectContaining({ eventId: humanFollowup.id, authorPubkey: human.publicKey }),
+        false,
+        'repository',
+        undefined,
+        false,
+      );
+
+      replyInRoom.mockClear();
+      indexed.mockResolvedValueOnce([
+        {
+          id: humanFollowup.id,
+          text: humanFollowup.content,
+          createdAt: 3,
+          author: { pubkey: human.publicKey, kind: 'human', name: 'Milo' },
+          presentation: 'message',
+        },
+        {
+          id: 'threaded-followup-reply',
+          text: 'Here is the follow-up answer.',
+          createdAt: 4,
+          author: { pubkey: body.agent.publicKey, kind: 'agent', name: 'Joy' },
+          presentation: 'message',
+          reply: {
+            channelId: 'parent-channel',
+            eventId: humanFollowup.id,
+            rootId: humanFollowup.id,
+          },
+        },
+        {
+          id: colleagueFollowup.id,
+          text: colleagueFollowup.content,
+          createdAt: 5,
+          author: { pubkey: colleague.publicKey, kind: 'human', name: 'Nia' },
+          presentation: 'message',
+        },
+      ]);
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [colleagueFollowup],
+        participants,
+      );
+      expect(replyInRoom).not.toHaveBeenCalled();
+      expect(indexed).toHaveBeenCalledTimes(2);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
   });
 
   it('retires the signed Start work marker as an edit authorization', () => {
@@ -6164,11 +6209,9 @@ describe('Room conversation and permission-gated work intent', () => {
   }
 
   it('answers the Room when a mid-turn mutation moves the work into a corner', async () => {
-    // Production evidence (Room 9d5e2285, 2026-08-25): the stall notice was
-    // already on the wire when the daemon opened the corner and settled the
-    // turn with only a complete receipt — no visible reply ever followed, so
-    // "Still working on this" stayed the agent's last words in the Room for
-    // 5+ hours while the request was silently consumed.
+    // Production evidence (Room 9d5e2285, 2026-08-25): a corner transition
+    // settled with only a complete receipt, leaving no visible Room reply for
+    // hours while the request was silently consumed.
     const { published, eventId } = await replyInRoomWithMidTurnCornerTransition({
       agentText:
         'Yes — I diagnosed it and started the fix in an isolated corner so the Room stays read-only.',
@@ -6720,9 +6763,192 @@ describe('first-class assistant messages', () => {
           mimeType: 'text/html',
         }),
       ]);
-      expect(result.errors).toEqual([
-        'payload.exe: file type application/octet-stream is not allowed for agent attachments',
-      ]);
+      expect(result.failed).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('captures a workbench artifact before the producing session is recycled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buzzy-workbench-recycle-'));
+    const repository = join(root, 'repository');
+    const logicalWorkbench = join(root, 'agent-private', 'workbench');
+    const liveWorkbench = join(root, 'proc', '2952774', 'root', 'workbench');
+    const logicalArtifact = join(logicalWorkbench, 'operation-taco-fund-playbook.html');
+    const liveArtifact = join(liveWorkbench, 'operation-taco-fund-playbook.html');
+    const html = '<!doctype html><title>Operation Taco Fund</title>';
+    await mkdir(repository, { recursive: true });
+    await mkdir(liveWorkbench, { recursive: true });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/upload')) {
+          expect(new TextDecoder().decode(await new Response(init?.body).arrayBuffer())).toBe(html);
+          return new Response(
+            JSON.stringify({
+              url: 'https://usebeeline.app/media/hash/operation-taco-fund-playbook.html',
+              sha256: new Headers(init?.headers).get('X-SHA-256'),
+              size: new TextEncoder().encode(html).byteLength,
+              type: 'text/html',
+            }),
+            { status: 200 },
+          );
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: repository,
+        relayBaseUrl: 'https://usebeeline.app',
+        relayHost: 'usebeeline.app',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://usebeeline.app',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      newIdentity('workbench-recycle-agent'),
+      undefined,
+      { scheduler },
+    );
+    vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
+    const suspend = vi.fn(async () => {
+      await rm(liveWorkbench, { recursive: true, force: true });
+    });
+    const session = {
+      channelId: 'workbench-recycle-room',
+      sessionId: 'physical-2952774',
+      logicalSessionId: 'logical-workbench-recycle',
+      cwd: repository,
+      mode: 'readonly' as const,
+      workbench: { dir: logicalWorkbench, storageDir: liveWorkbench },
+      client: {
+        sessionPrompt: vi.fn(async () => {
+          await writeFile(liveArtifact, html);
+          return {
+            stopReason: 'end_turn',
+            updates: [],
+            agentText: `Here is the playbook. [[buzz-attachment:${logicalArtifact}]]`,
+            toolCalls: [],
+          };
+        }),
+        sessionCancel: vi.fn(),
+      },
+      lifecycle: {
+        activate: vi.fn().mockResolvedValue('physical-2952774'),
+        suspend,
+      },
+    } as never;
+
+    try {
+      const result = await Reflect.get(body, 'promptAgent').call(
+        body,
+        session,
+        'Make the playbook.',
+        {
+          channelId: 'workbench-recycle-room',
+          requestId: 'workbench-recycle-request',
+          originalRequestId: 'workbench-recycle-request',
+          cause: 'room-message',
+          silent: true,
+        },
+      );
+
+      // Reproduce the reported lifecycle gap: the physical sandbox and its
+      // tmpfs disappear after ACP returns but before delivery starts. A new
+      // session claiming the single process slot forces the same LRU recycle
+      // that made the production /proc keeper path go stale.
+      await scheduler.run(
+        'replacement-room',
+        {
+          activate: vi.fn().mockResolvedValue('replacement-physical'),
+          suspend: vi.fn().mockResolvedValue(undefined),
+        },
+        async () => undefined,
+      );
+      expect(suspend).toHaveBeenCalledOnce();
+      await expect(stat(liveArtifact)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      await Reflect.get(body, 'publishAgentResult').call(
+        body,
+        'workbench-recycle-room',
+        session,
+        result,
+        'Done.',
+      );
+
+      expect(published).toHaveLength(1);
+      expect(published[0]!.content).toBe('Here is the playbook.');
+      expect(JSON.stringify(published[0])).toContain(
+        'https://preview.usebeeline.app/media/hash/operation-taco-fund-playbook.html',
+      );
+    } finally {
+      await scheduler.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes plain attachment failure copy without filesystem plumbing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buzzy-workbench-safe-copy-'));
+    const repository = join(root, 'repository');
+    const logicalWorkbench = join(root, 'agent-private', 'workbench');
+    const deadStorage =
+      '/proc/2952774/root/home/lunchbox/.local/state/beeline/agents/agent/rooms/room/agent-private/workbench';
+    await mkdir(repository, { recursive: true });
+    const published: NostrEvent[] = [];
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: repository,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      newIdentity('workbench-safe-copy-agent'),
+    );
+
+    try {
+      await Reflect.get(body, 'publishAgentResult').call(
+        body,
+        'room-id',
+        {
+          cwd: repository,
+          workbench: { dir: logicalWorkbench, storageDir: deadStorage },
+        },
+        {
+          agentText:
+            `I finished the report. ` +
+            `[[buzz-attachment:${join(logicalWorkbench, 'missing-report.html')}]]`,
+          updates: [],
+        },
+        'Done.',
+      );
+
+      expect(published).toHaveLength(1);
+      expect(published[0]!.content).toBe(
+        "I finished the report.\n\nI made a file to show you but couldn't deliver it. I'll regenerate it.",
+      );
+      expect(published[0]!.content).not.toMatch(/ENOENT|\/proc\/|realpath|Attachment unavailable/);
+      expect(published[0]!.content).not.toContain(root);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -10223,7 +10449,7 @@ describe('a corner records the objective it was opened for', () => {
 /**
  * A message sent while a turn is already running must be DELIVERED, not
  * swallowed. Two independent defects produced the live "my steer vanished and
- * the daemon answered with its canned stall notice instead" report:
+ * the daemon answered with unrelated status prose instead" report:
  *
  *  1. `pollMembers` rethrew a failed `sessionSteer` whenever no
  *     `runningAgentTasks` entry existed — the case for every corner FOLLOW-UP
@@ -10231,12 +10457,8 @@ describe('a corner records the objective it was opened for', () => {
  *     re-attempted later, with nothing said to them at any point. None of the
  *     shipped ACP adapters advertise a live-steering channel, so that failure
  *     is the ordinary path, not an edge case.
- *  2. `promptAgent` armed the stall-notice timer BEFORE `runOnSession`, i.e.
- *     while the turn was still merely queued in the per-session FIFO behind
- *     the turn already running. Twenty seconds of *waiting our turn* then
- *     published "my coding backend is taking longer than usual to respond"
- *     directly under the message that was still waiting — a claim about a
- *     backend we had not yet sent anything to.
+ *  2. Once the turn is correctly queued, its acknowledgement remains the only
+ *     immediate durable response until the queued turn itself runs.
  */
 describe('a message that arrives mid-turn is queued, acknowledged, and delivered', () => {
   function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot = '/workspace') {
@@ -10276,12 +10498,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       (event) =>
         Array.isArray(event.tags) &&
         event.tags.some((tag) => tag[0] === 't' && tag[1] === STEER_QUEUED_TAG),
-    );
-
-  const stallNotices = (published: NostrEvent[]): NostrEvent[] =>
-    published.filter(
-      (event) =>
-        typeof event.content === 'string' && event.content.includes('taking longer than usual'),
     );
 
   function memberMessage(
@@ -10649,7 +10865,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     }
   });
 
-  it('never arms the stall notice for a turn that is only waiting its place in the session FIFO', async () => {
+  it('keeps a queued turn from publishing interim transcript prose', async () => {
     vi.useFakeTimers();
     try {
       const published = stubPublishing();
@@ -10672,20 +10888,13 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         { scheduler },
       );
 
-      // A healthy, continuously-active turn that simply runs a long time.
-      const runMs = ROOM_AGENT_STALL_NOTICE_MS * 4;
+      // A healthy turn that occupies the only session slot long enough for a
+      // second prompt to wait in the FIFO.
+      const runMs = 60_000;
       const sessionPrompt = vi.fn(
-        (
-          _sessionId: string,
-          _prompt: string,
-          _timeoutMs: number,
-          _onChunk: unknown,
-          onActivity?: () => void,
-        ) =>
+        (_sessionId: string, _prompt: string, _timeoutMs: number) =>
           new Promise((resolveRun) => {
-            const beat = setInterval(() => onActivity?.(), ROOM_AGENT_STALL_NOTICE_MS / 4);
             setTimeout(() => {
-              clearInterval(beat);
               resolveRun({ stopReason: 'end_turn', updates: [], agentText: 'ok', toolCalls: [] });
             }, runMs);
           }),
@@ -10706,7 +10915,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         requestId: 'req-1',
         originalRequestId: 'req-1',
         cause: 'room-message',
-        replyToId: 'req-1',
       });
       // Issued while `running` still holds the session: this one only waits.
       const queued = Reflect.get(body, 'promptAgent').call(body, session, 'second', {
@@ -10714,7 +10922,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         requestId: 'req-2',
         originalRequestId: 'req-2',
         cause: 'room-message',
-        replyToId: 'req-2',
       });
 
       await vi.advanceTimersByTimeAsync(runMs * 2 + 10);
@@ -10722,80 +10929,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       await queued;
 
       expect(sessionPrompt).toHaveBeenCalledTimes(2);
-      // Both turns were continuously active for their whole run. The old shape
-      // still published one notice — for the turn that had not started yet.
-      expect(stallNotices(published)).toHaveLength(0);
-      await scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('defers the stall notice when a fresh message arrives, and still fires once the channel goes quiet', async () => {
-    vi.useFakeTimers();
-    try {
-      const published = stubPublishing();
-      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
-      const body = new Body(
-        {
-          agentBinary: '/nonexistent',
-          mcpBinary: '/nonexistent',
-          agentEnv: {},
-          workspaceRoot: '/tmp/buzzy-fresh-message-stall',
-          relayBaseUrl: 'http://relay.test',
-          relayHost: 'relay.test',
-          relayScheme: 'http',
-          relayWsUrl: 'ws://relay.test',
-          autoApprovePermissions: true,
-        },
-        newIdentity('fresh-stall-operator'),
-        newIdentity('fresh-stall-agent'),
-        undefined,
-        { scheduler },
-      );
-
-      const sessionPrompt = vi.fn(
-        (_sessionId: string, _prompt: string, timeoutMs: number) =>
-          new Promise<never>((_resolve, reject) =>
-            setTimeout(
-              () => reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms`)),
-              timeoutMs,
-            ),
-          ),
-      );
-      const session = {
-        channelId: 'fresh-room',
-        sessionId: 'fresh-session',
-        mode: 'readonly',
-        client: { sessionPrompt, sessionCancel: vi.fn() },
-        lifecycle: {
-          activate: vi.fn().mockResolvedValue('fresh-session'),
-          suspend: vi.fn().mockResolvedValue(undefined),
-        },
-      } as never;
-
-      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
-        channelId: 'fresh-room',
-        requestId: 'fresh-request',
-        originalRequestId: 'fresh-request',
-        cause: 'room-message',
-      });
-      const rejection = expect(prompt).rejects.toThrow('timed out after');
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS - 1_000);
-      // The human speaks again just before the window would have closed.
-      Reflect.get(body, 'noteInboundMessage').call(body, 'fresh-room');
-      await vi.advanceTimersByTimeAsync(2_000);
-
-      // The stall notice must never be the answer to that fresh message.
-      expect(stallNotices(published)).toHaveLength(0);
-
-      // With no further input, the backend's genuine silence is still reported.
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS);
-      expect(stallNotices(published)).toHaveLength(1);
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
-      await rejection;
+      expect(published).toEqual([]);
       await scheduler.dispose();
     } finally {
       vi.useRealTimers();
@@ -10827,9 +10961,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(1));
 
     expect(queuedAcks(published)[0]!.tags).toContainEqual(['h', 'ack-room']);
-    // Bumping the inbound counter is what suppresses the running turn's stall
-    // notice — the two halves of the contract are one signal.
-    expect((Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('ack-room')).toBe(2);
   });
 
   it('preserves human prose with reserved tags while ignoring the agent’s own message', async () => {
@@ -10864,9 +10995,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     Reflect.get(body, 'noteRoomInboundMessage').call(body, 'noack-room', ownMessage, participants);
 
     await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(1));
-    expect((Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('noack-room')).toBe(
-      1,
-    );
   });
 });
 

@@ -105,6 +105,27 @@ describe('the using-beeline skill content', () => {
     expect(markdown).toContain('proposal or grant request creates no schedule');
   });
 
+  it('teaches governed Squire access without treating a missing profile as blanket inability', () => {
+    const markdown = usingBeelineSkillMarkdown('r');
+    expect(markdown).toContain('Trusty Squire: governed account access');
+    expect(markdown).toContain('opt-in host broker');
+    expect(markdown).toContain(
+      'beeline pair <pairing-code> --agent codex --access creator --mcp squire-credential-use',
+    );
+    expect(markdown).toContain('squire-app-access');
+    expect(markdown).toContain('These\n  are operator actions, not commands you can authorize yourself');
+    expect(markdown).toContain('fresh human-owner-signed P1');
+    expect(markdown).toContain('Requesting this\n  capability or permission grants nothing');
+  });
+
+  it('states the Squire harness distinction precisely', () => {
+    const markdown = usingBeelineSkillMarkdown('r');
+    expect(markdown).toContain('supported only on the Codex and Claude harnesses');
+    expect(markdown).toContain('On Pi, say specifically that Pi\n  cannot support Trusty Squire');
+    expect(markdown).toContain('executes before that checkpoint');
+    expect(markdown).toContain('not turn that harness limitation into a blanket claim');
+  });
+
   it('covers the writable non-repository directories and their limits', () => {
     const markdown = usingBeelineSkillMarkdown('r');
     expect(markdown).toContain('$BUZZY_WORKBENCH_DIR');
@@ -306,7 +327,9 @@ describe('session-start capability awareness', () => {
   });
 
   it('keeps the recurring compatibility primer compact', () => {
-    expect(BEELINE_CAPABILITIES_PRIMER.split(/\s+/).length).toBeLessThanOrEqual(190);
+    // Squire's authority boundary must be present in the same cold-start
+    // delivery; keep this one shared prompt short enough to remain a primer.
+    expect(BEELINE_CAPABILITIES_PRIMER.split(/\s+/).length).toBeLessThanOrEqual(230);
     expect(BEELINE_CAPABILITIES_PRIMER).toContain('using-beeline skill');
   });
 
@@ -340,6 +363,14 @@ describe('session-start capability awareness', () => {
     expect(context).toContain('one signature');
     expect(context).toContain('do not claim Beeline has no scheduler');
     expect(context.toLowerCase()).not.toContain('beeline has no callable scheduler');
+  });
+
+  it('keeps Squire capability awareness authority-free in the cold-session primer', () => {
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('governed credential/account access');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('--access creator --mcp');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('exact human-signed P1 permission');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('Pi cannot support Squire');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('This notice grants nothing');
   });
 
   it('covers pi through the existing turn prefix, not a second control channel', () => {

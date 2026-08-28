@@ -69,7 +69,6 @@ import {
   reconcileRoomView,
   type ChatDisplayMessage,
   type DeliveryRetryPosture,
-  type AgentPresentation,
   cornerSummaries,
   memberAgent,
   workspaceRailItem,
@@ -229,6 +228,7 @@ import {
   type LedgerByline,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { SlashVerbPicker } from '@/components/buzz/SlashVerbPicker';
 import {
@@ -245,13 +245,7 @@ import {
   type ApprovalUiState,
 } from '@/buzz/approval-state';
 
-type RoomMemberOption = {
-  pubkey: string;
-  name: string;
-  handle: string;
-  kind: 'person' | 'agent';
-  agent?: AgentPresentation;
-};
+type RoomMemberOption = RoomRosterParticipant;
 
 /** Known body pubkeys for provenance display (hardcoded for dev). */
 const BODY_PUBKEYS = new Set<string>();
@@ -597,6 +591,7 @@ export default function BuzzChat() {
     installationId?: number;
   } | null>(null);
   const [rosterVisible, setRosterVisible] = useState(false);
+  const closeRoster = useCallback(() => setRosterVisible(false), []);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
   const [renameEditing, setRenameEditing] = useState(false);
@@ -4391,168 +4386,23 @@ export default function BuzzChat() {
         onPickPhoto={() => void pickPhoto()}
       />
 
-      <HullModal
-        accessibilityLabel={`Close ${ROOM_LABEL} roster`}
-        contentStyle={{
-          maxHeight: '82%',
-          paddingHorizontal: 16,
-          paddingBottom: Math.max(insets.bottom, 18),
-        }}
-        onRequestClose={() => setRosterVisible(false)}
-        placement="bottom"
+      <RoomRosterSheet
+        bottomInset={insets.bottom}
+        isDirectMessage={isDirectMessage}
+        memberByPubkey={roomMemberByPubkey}
+        membershipActionPubkey={membershipActionPubkey}
+        membershipError={membershipError}
+        onClose={closeRoster}
+        onRemove={handleRemoveRoomMember}
+        onlineByPubkey={speakerOnline}
+        parentChannelId={parentChannelId ?? null}
+        personProfileByPubkey={personProfileByPubkey}
+        rosterSections={visibleRosterSections}
+        total={roomParticipantTotal}
+        userPubkey={userPubkey}
+        viewerRole={viewerRoomRole}
         visible={rosterVisible}
-      >
-        <HullFloatingSurface style={styles.rosterModal} testID="room-roster-sheet">
-          <View style={styles.rosterModalHeading}>
-            <View style={styles.rosterModalHeadingCopy}>
-              <Text style={styles.rosterModalEyebrow}>IN THIS ROOM</Text>
-              <Text style={styles.rosterModalTitle}>
-                {formatRoomParticipantTotal(roomParticipantTotal)}
-              </Text>
-            </View>
-            <TouchableOpacity
-              accessibilityLabel={`Close ${ROOM_LABEL} roster`}
-              onPress={() => setRosterVisible(false)}
-              style={styles.rosterModalClose}
-            >
-              <Text style={styles.rosterModalCloseText}>×</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView
-            contentContainerStyle={styles.rosterContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {[
-              { key: 'people', label: 'PEOPLE', options: visibleRosterSections.people },
-              { key: 'agents', label: 'AGENTS', options: visibleRosterSections.agents },
-            ].map((section, sectionIndex) =>
-              section.options.length > 0 ? (
-                <View key={section.key}>
-                  <Text
-                    style={[
-                      styles.rosterSectionLabel,
-                      sectionIndex > 0 && styles.rosterSectionLabelSpaced,
-                    ]}
-                  >
-                    {section.label} {section.options.length}
-                  </Text>
-                  {section.options.map((participant) => {
-                    const display = participant.agent
-                      ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
-                      : undefined;
-                    const displayName = display
-                      ? display.name
-                      : participant.pubkey === userPubkey
-                        ? 'You'
-                        : participant.name;
-                    const handle = display?.handle ?? shortMemberNpub(participant.pubkey);
-                    const targetRole = normalizedRoomRole(
-                      roomMemberByPubkey.get(participant.pubkey),
-                    );
-                    const canRemove =
-                      !parentChannelId &&
-                      !isDirectMessage &&
-                      canRemoveRoomParticipant(
-                        viewerRoomRole,
-                        targetRole,
-                        participant.pubkey === userPubkey,
-                      );
-                    const removing = membershipActionPubkey === participant.pubkey;
-                    const agentOnline =
-                      participant.kind === 'agent' &&
-                      isAgentPresenceOnlineWithReconnectGrace(
-                        agentPresences[participant.pubkey],
-                        presenceNow,
-                        presenceReconnectGrace[participant.pubkey],
-                      );
-                    return (
-                      <View
-                        accessibilityLabel={`${displayName}, ${participant.kind}${
-                          participant.kind === 'agent'
-                            ? agentOnline
-                              ? ', online'
-                              : ', offline'
-                            : ''
-                        }, at ${handle}`}
-                        key={participant.pubkey}
-                        style={styles.rosterRow}
-                        testID={`room-roster-${participant.kind}-${participant.pubkey}`}
-                      >
-                        {display ? (
-                          <IdentityMark
-                            kind="agent"
-                            seed={display.avatarSeed ?? participant.pubkey}
-                            avatarUrl={display.avatarUrl}
-                            name={display.name}
-                            size={38}
-                            alive={agentOnline}
-                          />
-                        ) : (
-                          <IdentityMark
-                            kind="human"
-                            seed={participant.pubkey}
-                            avatarUrl={personProfileByPubkey.get(participant.pubkey)?.avatar}
-                            name={displayName}
-                            size={38}
-                          />
-                        )}
-                        <View style={styles.rosterIdentity}>
-                          <View style={styles.rosterNameRow}>
-                            {participant.kind === 'agent' ? (
-                              <AgentPresenceLight
-                                decorative
-                                online={agentOnline}
-                                testID={`agent-presence-light-${participant.pubkey}`}
-                              />
-                            ) : null}
-                            <Text numberOfLines={1} style={styles.rosterName}>
-                              {displayName}
-                            </Text>
-                          </View>
-                          <Text numberOfLines={1} style={styles.rosterHandle}>
-                            @{handle}
-                          </Text>
-                        </View>
-                        <View style={styles.rosterActions}>
-                          <Text style={styles.rosterKind}>
-                            {participant.kind === 'agent' ? 'AGENT' : 'PERSON'}
-                            {targetRole && targetRole !== 'member'
-                              ? ` · ${targetRole.toUpperCase()}`
-                              : ''}
-                          </Text>
-                          {canRemove && (
-                            <TouchableOpacity
-                              accessibilityLabel={`Remove ${displayName} from this ${ROOM_LABEL}`}
-                              accessibilityRole="button"
-                              disabled={Boolean(membershipActionPubkey)}
-                              onPress={() => handleRemoveRoomMember(participant)}
-                              style={styles.rosterRemoveButton}
-                              testID={`remove-room-member-${participant.pubkey}`}
-                            >
-                              <Text style={styles.rosterRemoveText}>
-                                {removing ? 'REMOVING…' : 'REMOVE'}
-                              </Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              ) : null,
-            )}
-            {roomParticipantTotal === 0 && (
-              <Text style={styles.rosterEmpty}>No visible members</Text>
-            )}
-          </ScrollView>
-          {membershipError && (
-            <View accessibilityRole="alert" style={styles.membershipError}>
-              <Text style={styles.membershipErrorText}>! {membershipError}</Text>
-            </View>
-          )}
-        </HullFloatingSurface>
-      </HullModal>
+      />
 
       <HullModal
         accessibilityLabel={`Close ${ROOM_LABEL} actions`}
@@ -5121,108 +4971,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textMuted,
       fontSize: 11,
       lineHeight: 15,
-    },
-    // ── Read-only Room roster ──────────────────────────────────────
-    rosterModal: {
-      width: '100%',
-      maxWidth: 460,
-      maxHeight: '100%',
-      padding: 16,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgRaised,
-    },
-    rosterModalHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-    rosterModalHeadingCopy: { flex: 1, minWidth: 0 },
-    rosterModalEyebrow: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textMuted,
-      fontSize: 9,
-      lineHeight: 12,
-      letterSpacing: 0.8,
-    },
-    rosterModalTitle: {
-      ...Typography.default('semiBold'),
-      marginTop: 4,
-      color: groknight.textPrimary,
-      fontSize: 19,
-      lineHeight: 24,
-    },
-    rosterModalClose: {
-      width: 44,
-      height: 44,
-      marginTop: -10,
-      marginRight: -10,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    rosterModalCloseText: { ...Typography.default(), color: groknight.steel, fontSize: 24 },
-    rosterContent: { paddingTop: 18, paddingBottom: 4 },
-    rosterSectionLabel: {
-      ...Typography.mono('semiBold'),
-      marginBottom: 7,
-      color: groknight.textMuted,
-      fontSize: 9,
-      lineHeight: 12,
-      letterSpacing: 0.7,
-    },
-    rosterSectionLabelSpaced: { marginTop: 20 },
-    rosterRow: {
-      minHeight: 62,
-      paddingHorizontal: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      borderTopWidth: 1,
-      borderColor: groknight.border,
-      backgroundColor: groknight.bgBase,
-    },
-    rosterIdentity: { flex: 1, minWidth: 0 },
-    rosterNameRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
-    rosterName: {
-      ...Typography.default('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 13,
-      lineHeight: 17,
-    },
-    rosterHandle: {
-      ...Typography.mono(),
-      marginTop: 2,
-      color: groknight.textMuted,
-      fontSize: 10,
-      lineHeight: 14,
-    },
-    rosterKind: {
-      ...Typography.mono('semiBold'),
-      color: groknight.steel,
-      fontSize: 8,
-      lineHeight: 12,
-      letterSpacing: 0.7,
-    },
-    rosterActions: {
-      flexShrink: 0,
-      alignItems: 'flex-end',
-      justifyContent: 'center',
-    },
-    rosterRemoveButton: {
-      minHeight: 44,
-      paddingLeft: 12,
-      alignItems: 'flex-end',
-      justifyContent: 'center',
-    },
-    rosterRemoveText: {
-      ...Typography.mono('semiBold'),
-      color: groknight.dialogDanger,
-      fontSize: 9,
-      lineHeight: 13,
-      letterSpacing: 0.4,
-    },
-    rosterEmpty: {
-      ...Typography.default(),
-      paddingVertical: 28,
-      color: groknight.textMuted,
-      fontSize: 12,
-      textAlign: 'center',
     },
     // ── Room lifecycle menu ─────────────────────────────────────────
     roomActionsModal: {

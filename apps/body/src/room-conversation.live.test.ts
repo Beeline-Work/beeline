@@ -3,9 +3,22 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { BASE_URL, HOST, createChannel, git, newIdentity, setMemberRole } from '@beeline/gate';
-import { createBuzzClient, tagValue, WRITE_PERMISSION_REQUEST_TAG } from '@beeline/buzz-client';
-import { Body } from './body.js';
+import {
+  BASE_URL,
+  HOST,
+  createChannel,
+  createCommunity,
+  git,
+  newIdentity,
+  setMemberRole,
+} from '@beeline/gate';
+import {
+  createBuzzClient,
+  RoomViewClient,
+  tagValue,
+  WRITE_PERMISSION_REQUEST_TAG,
+} from '@beeline/buzz-client';
+import { Body, isChannelAddressedMessage } from './body.js';
 import { loadBodyConfig } from './config.js';
 import { resolveAgentCommand, type AgentKind } from './agent-command.js';
 import { waitForWritePermissionPrompt } from './write-permission.live-helper.js';
@@ -51,26 +64,33 @@ describe.runIf(live)('production Room conversation contract', () => {
   const human = newIdentity('room-conversation-human');
   const agent = newIdentity('room-conversation-agent');
   const colleague = newIdentity('room-conversation-colleague');
-  const roomIdPromise = createChannel(human, `room-conversation-${Date.now()}`);
+  const fixtureId = `room-conversation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  let workspaceId = '';
   let roomId = '';
   let client: ReturnType<typeof createBuzzClient>;
+  let agentClient: ReturnType<typeof createBuzzClient>;
 
   beforeAll(async () => {
-    roomId = await roomIdPromise;
+    workspaceId = await createCommunity(human, `${fixtureId}-workspace`);
+    await setMemberRole(human, workspaceId, agent.publicKey, 'member');
+    agentClient = createBuzzClient({ baseUrl: BASE_URL, identity: agent });
+    await agentClient.waitUntilMember(workspaceId, agent.publicKey);
+    await agentClient.createAgent(workspaceId, { displayName: 'Agent' });
+    roomId = await createChannel(human, fixtureId, { communityId: workspaceId });
     await setMemberRole(human, roomId, agent.publicKey, 'member');
     workspace = await mkdtemp(resolve(tmpdir(), 'beeline-room-conversation-'));
     remote = await mkdtemp(resolve(tmpdir(), 'beeline-room-remote-'));
-    git(workspace, ['init', '-q', '-b', 'main']);
+    await git(workspace, ['init', '-q', '-b', 'main']);
     await writeFile(resolve(workspace, 'README.md'), '# Room conversation live proof\n');
     await writeFile(
       resolve(workspace, 'PRODUCT-STORIES.md'),
       '# Shared Repository Stewardship\n\nThe principal user story is that a Room member can ask an agent to inspect a repository and explain it without granting edit authority.\n',
     );
-    git(workspace, ['add', 'README.md', 'PRODUCT-STORIES.md']);
-    git(workspace, ['commit', '-m', 'seed live proof']);
-    git(remote, ['init', '--bare', '-q']);
-    git(workspace, ['remote', 'add', 'origin', remote]);
-    const seed = git(workspace, ['push', '-u', 'origin', 'main']);
+    await git(workspace, ['add', 'README.md', 'PRODUCT-STORIES.md']);
+    await git(workspace, ['commit', '-m', 'seed live proof']);
+    await git(remote, ['init', '--bare', '-q']);
+    await git(workspace, ['remote', 'add', 'origin', remote]);
+    const seed = await git(workspace, ['push', '-u', 'origin', 'main']);
     if (!seed.ok) throw new Error(seed.stderr);
 
     const config = loadBodyConfig({
@@ -91,6 +111,7 @@ describe.runIf(live)('production Room conversation contract', () => {
 
   afterAll(async () => {
     client?.disconnect();
+    agentClient?.disconnect();
     if (body) await body.dispose();
     if (workspace) await rm(workspace, { recursive: true, force: true });
     if (remote) await rm(remote, { recursive: true, force: true });
@@ -167,11 +188,9 @@ describe.runIf(live)('production Room conversation contract', () => {
     );
     expect(await client.listSubchannels(roomId)).toHaveLength(0);
 
-    const analysisStatusBefore = git(workspace, [
-      'status',
-      '--porcelain=v1',
-      '--untracked-files=all',
-    ]).stdout;
+    const analysisStatusBefore = (
+      await git(workspace, ['status', '--porcelain=v1', '--untracked-files=all'])
+    ).stdout;
     const analysisSourceBefore = await readFile(resolve(workspace, 'PRODUCT-STORIES.md'), 'utf8');
     const analysis = await client.messageSubmit(
       roomId,
@@ -204,9 +223,9 @@ describe.runIf(live)('production Room conversation contract', () => {
     expect(await readFile(resolve(workspace, 'PRODUCT-STORIES.md'), 'utf8')).toBe(
       analysisSourceBefore,
     );
-    expect(git(workspace, ['status', '--porcelain=v1', '--untracked-files=all']).stdout).toBe(
-      analysisStatusBefore,
-    );
+    expect(
+      (await git(workspace, ['status', '--porcelain=v1', '--untracked-files=all'])).stdout,
+    ).toBe(analysisStatusBefore);
     console.log(
       `[room-conversation] greeting=REPLIED indicator=${greetingStatuses.join('>')} preamble=CLEAN architecture=REPLIED analysis=READ_FILE permission=NONE corners=0 repo-write=NONE`,
     );
@@ -235,31 +254,82 @@ describe.runIf(live)('production Room conversation contract', () => {
     );
     expect(info).toBeDefined();
     expect(await readFile(resolve(info!.worktreePath, 'FEATURE.md'), 'utf8')).not.toHaveLength(0);
-    expect(git(info!.worktreePath, ['status', '--porcelain']).stdout).toBe('');
+    expect((await git(info!.worktreePath, ['status', '--porcelain'])).stdout).toBe('');
     console.log('[room-conversation] explicit-corner=DIRECT permission=NONE feature=COMMITTED');
   }, 240_000);
 
-  it('ignores unmentioned multi-party chat and answers only a named mention', async () => {
+  it('continues only the tagged human thread in a multi-party Room', async () => {
+    await setMemberRole(human, workspaceId, colleague.publicKey, 'member');
     await setMemberRole(human, roomId, colleague.publicKey, 'member');
     await waitUntil(() => client.isMember(roomId, colleague.publicKey));
-    const before = (await messages()).filter((event) => event.pubkey === agent.publicKey).length;
-    await client.messageSubmit(roomId, 'General note for the people in this Room.');
-    expect(await body!.pollChannelRequests(roomId, binding())).toBe(0);
-    expect((await messages()).filter((event) => event.pubkey === agent.publicKey)).toHaveLength(
-      before,
-    );
+    const colleagueClient = createBuzzClient({ baseUrl: BASE_URL, identity: colleague });
+    try {
+      await colleagueClient.messageSubmit(roomId, 'Context from another person.');
+      await client.messageSubmit(roomId, 'General note for the people in this Room.');
 
-    const mentioned = await client.messageSubmit(roomId, '@Agent please reply briefly.', {
-      mentionAgent: agent.publicKey,
-    });
-    expect(await body!.pollChannelRequests(roomId, binding())).toBe(0);
-    await waitUntil(async () =>
-      (await messages()).some((event) =>
-        event.event.tags.some((tag) => tag[0] === 'e' && tag[1] === mentioned.id),
-      ),
-    );
-    expect(await client.listSubchannels(roomId)).toHaveLength(1);
-    console.log('[room-conversation] multi-party-unmentioned=IGNORED named-agent=REPLIED');
+      const mentioned = await client.messageSubmit(roomId, '@Agent please reply briefly.', {
+        mentionAgent: agent.publicKey,
+      });
+      await agentClient.publish(
+        agentClient.buildReplyMessage(
+          'Fixture reply to the explicitly tagged human.',
+          { channelId: roomId, eventId: mentioned.id, rootId: mentioned.id },
+          { extraTags: [['t', 'agent-message']] },
+        ),
+      );
+      await agentClient.messageSubmit(roomId, 'Fixture status between reply and follow-up.', {
+        extraTags: [['t', 'body-control']],
+      });
+      // Relay ordering is second-granular. Cross the timestamp boundary so
+      // the indexed stream has the same causal order a real agent turn does.
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1_100));
+
+      const followup = await client.messageSubmit(roomId, 'And answer this follow-up too.');
+      const indexed = new RoomViewClient({ baseUrl: BASE_URL, identity: agent });
+      let continuationView = await indexed.room(roomId);
+      await waitUntil(async () =>
+        (continuationView = await indexed.room(roomId)).messages.some(
+          (message) => message.id === followup.id,
+        ),
+      );
+      const participants = [human.publicKey, colleague.publicKey, agent.publicKey];
+      expect(
+        isChannelAddressedMessage(
+          followup,
+          agent.publicKey,
+          participants,
+          continuationView.messages,
+        ),
+      ).toBe(true);
+
+      await agentClient.publish(
+        agentClient.buildReplyMessage(
+          'Fixture reply to the implicit continuation.',
+          { channelId: roomId, eventId: followup.id, rootId: followup.id },
+          { extraTags: [['t', 'agent-message']] },
+        ),
+      );
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1_100));
+
+      const otherFollowup = await colleagueClient.messageSubmit(
+        roomId,
+        'This untagged message is from somebody else.',
+      );
+      let otherView = await indexed.room(roomId);
+      await waitUntil(async () =>
+        (otherView = await indexed.room(roomId)).messages.some(
+          (message) => message.id === otherFollowup.id,
+        ),
+      );
+      expect(
+        isChannelAddressedMessage(otherFollowup, agent.publicKey, participants, otherView.messages),
+      ).toBe(false);
+      console.log(
+        'LIVE SMOKE AGENT REPLY PASS tagged=ROUTED same-human-followup=ROUTED other-human-followup=IGNORED status-noise=IGNORED',
+      );
+    } finally {
+      colleagueClient.disconnect();
+    }
   }, 180_000);
 
   it('keeps implicit work behind ALLOW, while DENY leaves the Room read-only', async () => {

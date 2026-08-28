@@ -1028,6 +1028,7 @@ const HIDDEN_MARKERS = new Set([
   TAG_AGENT_DRAFT,
   TAG_AGENT_THOUGHT,
   TAG_AGENT_PRESENCE,
+  'body-control',
   'agent-turn',
   'corner-session',
   'buzz-merge-approval',
@@ -1197,7 +1198,6 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     return { ...base, presentation: 'system' };
   }
   if (
-    markers.has('body-control') ||
     [...markers].some((candidate) => candidate.startsWith('buzz-'))
   ) {
     return undefined;
@@ -1254,6 +1254,33 @@ function projectedMessages(
     })
     .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
     .slice(-limit);
+}
+
+function projectedHistoryPage(
+  rows: readonly IndexRow[],
+  channelId: string,
+): { messages: RoomViewMessage[]; nextBefore?: { createdAt: number; id: string } } {
+  const raw = rows.filter((row) => row.section === 'event');
+  const messages: RoomViewMessage[] = [];
+  let examined = 0;
+  let cursor: Json | undefined;
+  for (const row of raw) {
+    cursor = json(row.data);
+    examined += 1;
+    const message = projectEvent(cursor, channelId);
+    if (message) messages.push(message);
+    if (messages.length === ROOM_VIEW_MESSAGE_LIMIT) break;
+  }
+  messages.sort(
+    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+  );
+  const hasMoreRawRows = examined < raw.length || raw.length === HISTORY_EVENT_LIMIT;
+  return {
+    messages,
+    ...(hasMoreRawRows && cursor
+      ? { nextBefore: { createdAt: integer(cursor.createdAt), id: String(cursor.id ?? '') } }
+      : {}),
+  };
 }
 
 function viewer(room: Json, members: readonly RoomViewMember[]) {
@@ -1599,16 +1626,11 @@ export class RoomIndexer {
       ])
     ).rows;
     if (!rowData(rows, 'room')) return null;
-    const raw = rows.filter((row) => row.section === 'event');
-    const messages = projectedMessages(rows, 'event', roomId, ROOM_VIEW_MESSAGE_LIMIT);
-    const oldestRaw = raw.at(-1);
-    const oldest = oldestRaw ? json(oldestRaw.data) : undefined;
+    const page = projectedHistoryPage(rows, roomId);
     return {
       roomId,
-      messages,
-      ...(raw.length === HISTORY_EVENT_LIMIT && oldest
-        ? { nextBefore: { createdAt: integer(oldest.createdAt), id: String(oldest.id ?? '') } }
-        : {}),
+      messages: page.messages,
+      ...(page.nextBefore ? { nextBefore: page.nextBefore } : {}),
     };
   }
 

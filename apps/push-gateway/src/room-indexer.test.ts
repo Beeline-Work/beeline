@@ -506,6 +506,96 @@ describe('RoomIndexer', () => {
     expect(corners?.watchFilters[0]?.['#h']).toContain(WORKSPACE);
   });
 
+  it('projects the agent soul and allow-listed model catalog through the indexed agent read', async () => {
+    const modelKey = `${WORKSPACE}:${AGENT}`;
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES
+        ($1, $2, $3, to_timestamp(20), 30078, $5, $6, $4, $8),
+        ($1, $7, $2, to_timestamp(21), 30078, $9, $10, $4, $8),
+        ($1, $11, $2, to_timestamp(22), 30078, $12, $13, $4, $8)`,
+      [
+        TENANT,
+        bytes(VIEWER),
+        bytes(AGENT),
+        WORKSPACE,
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-catalog'],
+        ]),
+        JSON.stringify({
+          options: [
+            {
+              id: 'model',
+              category: 'model',
+              currentValue: 'sonnet',
+              options: [
+                { id: 'sonnet', name: 'Sonnet' },
+                { id: 'opus', name: 'Opus' },
+              ],
+            },
+            {
+              id: 'mode',
+              category: 'mode',
+              options: [{ id: 'bypassPermissions' }],
+            },
+          ],
+          selection: { model: 'sonnet', effort: 'medium' },
+        }),
+        bytes('d'.repeat(64)),
+        modelKey,
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-config'],
+        ]),
+        JSON.stringify({ model: 'opus', effort: 'high' }),
+        bytes('e'.repeat(64)),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['d', modelKey],
+          ['t', 'buzz-agent-soul'],
+          ['community', WORKSPACE],
+        ]),
+        JSON.stringify({
+          name: 'Clara',
+          soul: 'Keep the tests green.',
+          avatarSeed: AGENT,
+        }),
+      ],
+    );
+
+    await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
+      agent: { identity: { name: 'Clara' } },
+      soul: {
+        name: 'Clara',
+        instructions: 'Keep the tests green.',
+        avatarSeed: AGENT,
+      },
+      catalog: [
+        {
+          id: 'model',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [
+            { id: 'sonnet', name: 'Sonnet' },
+            { id: 'opus', name: 'Opus' },
+          ],
+        },
+      ],
+      runtimeSelection: { model: 'sonnet', effort: 'medium' },
+      selected: { model: 'opus', effort: 'high' },
+    });
+    await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
+      agents: [{ identity: { name: 'Clara' } }],
+    });
+  });
+
   it('keeps the scoped chat query to one physical statement at 1, 47, and 200 Rooms', async () => {
     const addRooms = async (from: number, through: number) => {
       await postgres.query(

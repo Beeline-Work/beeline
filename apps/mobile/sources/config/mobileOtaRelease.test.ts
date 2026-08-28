@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 const mobileRoot = resolve(__dirname, '../..');
 const releaseScript = join(mobileRoot, 'scripts/ota-release.mjs');
 const canaryScript = readFileSync(join(mobileRoot, 'scripts/ota-canary.sh'), 'utf8');
+const maestroScript = readFileSync(join(mobileRoot, 'scripts/maestro-e2e.sh'), 'utf8');
 const workflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/mobile-ota.yml'),
   'utf8',
@@ -149,6 +150,25 @@ esac
     expect(canaryScript).toContain('--runtime-version "$android_runtime"');
     expect(canaryScript).toContain('MAESTRO_SKIP_BUILD=1');
     expect(canaryScript).toContain('EXPECTED_ANDROID_UPDATE_ID="$android_update"');
+    expect(canaryScript).toContain('OTA_CANARY_UPDATE_APPLY_TIMEOUT_SECONDS:-120');
+    expect(canaryScript).toContain('MAESTRO_VERIFY_UPDATE_ONLY=1');
+    expect(canaryScript).not.toContain('OTA_CANARY_WARMUP_SECONDS');
+    expect(canaryScript.indexOf('MAESTRO_VERIFY_UPDATE_ONLY=1')).toBeLessThan(
+      canaryScript.indexOf('smoke_log="$temporary/maestro-smoke.log"'),
+    );
+  });
+
+  it('makes update identity a mandatory gate before every requested Maestro flow', () => {
+    expect(maestroScript).toContain('EXPECTED_ANDROID_UPDATE_ID is required');
+    expect(maestroScript).toContain('verify_running_update_identity');
+    expect(maestroScript).toContain('$observed_channel" == "beta"');
+    expect(maestroScript.indexOf('verify_running_update_identity')).toBeLessThan(
+      maestroScript.indexOf('npx tsx scripts/provision-smoke.ts'),
+    );
+    expect(maestroScript.indexOf('verify_running_update_identity')).toBeLessThan(
+      maestroScript.indexOf('maestro test --device'),
+    );
+    expect(maestroScript).toContain('MAESTRO_VERIFY_UPDATE_ONLY');
   });
 
   describe('canary runner environment classification', () => {
@@ -442,6 +462,11 @@ esac
         '  *monkey*)',
         '    [ "${STUB_MONKEY_FAILS:-0}" = "1" ] && exit 1',
         '    ;;',
+        '  *"shell cat /sdcard/beeline-maestro-update-identity.xml"*)',
+        '    if [ -n "${STUB_REPORTED_UPDATE:-}" ]; then',
+        '      printf \'<hierarchy><node text="Running update: %s"/><node text="Channel: %s"/></hierarchy>\\n\' "$STUB_REPORTED_UPDATE" "${STUB_REPORTED_CHANNEL:-beta}"',
+        '    fi',
+        '    ;;',
         'esac',
         'exit 0',
         '',
@@ -451,11 +476,113 @@ esac
       return { sdkRoot, stateDir, callLog };
     }
 
+    function runMaestroGate(
+      sdkRoot: string,
+      env: Record<string, string | undefined> = {},
+    ) {
+      return spawnSync('bash', [join(mobileRoot, 'scripts/maestro-e2e.sh')], {
+        cwd: mobileRoot,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PATH: `${join(sdkRoot, 'platform-tools')}:${barePath}`,
+          MAESTRO_REUSE_INSTALLED_APP: '1',
+          MAESTRO_SKIP_BUILD: '1',
+          MAESTRO_KEEP_DEVICE: '1',
+          MAESTRO_VERIFY_UPDATE_ONLY: '1',
+          MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS: '1',
+          ...env,
+        },
+      });
+    }
+
+    it('refuses a direct Maestro invocation when the expected update id is empty', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-maestro-no-update-id-'));
+      const { sdkRoot, stateDir, callLog } = stubAdbFlow(directory);
+
+      const result = runMaestroGate(sdkRoot, {
+        EXPECTED_ANDROID_UPDATE_ID: '',
+        STUB_CALL_LOG: callLog,
+        STUB_STATE_DIR: stateDir,
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('EXPECTED_ANDROID_UPDATE_ID is required');
+      expect(result.stderr).toContain('refusing to run any flow');
+      expect(readFileSync(callLog, 'utf8')).toBe('devices\n');
+    }, 60_000);
+
+    it('refuses a custom MAESTRO_FLOW when the device reports a stale update', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-maestro-stale-update-'));
+      const { sdkRoot, stateDir, callLog } = stubAdbFlow(directory);
+      const customFlow = join(directory, 'custom-flow.yaml');
+
+      const result = runMaestroGate(sdkRoot, {
+        EXPECTED_ANDROID_UPDATE_ID: 'expected-update',
+        MAESTRO_FLOW: customFlow,
+        STUB_REPORTED_UPDATE: 'stale-update',
+        STUB_REPORTED_CHANNEL: 'beta',
+        STUB_CALL_LOG: callLog,
+        STUB_STATE_DIR: stateDir,
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(customFlow);
+      expect(result.stderr).toContain("reported update 'stale-update'");
+      expect(result.stderr).toContain("expected 'expected-update'");
+      expect(result.stdout).not.toContain('Provisioning complete');
+    }, 60_000);
+
+    it('accepts the gate only when both the expected update and beta channel match', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-maestro-update-ok-'));
+      const { sdkRoot, stateDir, callLog } = stubAdbFlow(directory);
+
+      const result = runMaestroGate(sdkRoot, {
+        EXPECTED_ANDROID_UPDATE_ID: 'expected-update',
+        STUB_REPORTED_UPDATE: 'expected-update',
+        STUB_REPORTED_CHANNEL: 'beta',
+        STUB_CALL_LOG: callLog,
+        STUB_STATE_DIR: stateDir,
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        'Maestro update identity verified: expected-update (channel beta).',
+      );
+    }, 60_000);
+
     function writeDummyApk(directory: string): string {
       const apk = join(directory, 'beeline-beta.apk');
       writeFileSync(apk, 'dummy beta apk bytes');
       return apk;
     }
+
+    it('parks before product smoke when the expected OTA update never becomes active', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-stale-update-'));
+      const { sdkRoot, stateDir, callLog } = stubAdbFlow(directory);
+      const ledger = writeBetaLedger(directory);
+      const reasonFile = join(directory, 'reason.txt');
+
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: sdkRoot,
+        BEELINE_BETA_APK: writeDummyApk(directory),
+        OTA_CANARY_UPDATE_APPLY_TIMEOUT_SECONDS: '1',
+        OTA_CANARY_UPDATE_PROBE_TIMEOUT_SECONDS: '1',
+        OTA_CANARY_REASON_FILE: reasonFile,
+        STUB_CALL_LOG: callLog,
+        STUB_STATE_DIR: stateDir,
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(
+        'expected beta Android update beta-android was not reported running',
+      );
+      expect(result.stderr).toContain('update fetch/reload did not converge');
+      expect(readFileSync(reasonFile, 'utf8')).toContain(
+        'expected beta Android update beta-android',
+      );
+      expect(readFileSync(callLog, 'utf8')).not.toContain('provision-smoke');
+    }, 60_000);
 
     it('removes exactly the canary package and retries once when the existing install has a different signature', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-signature-ok-'));
@@ -711,7 +838,6 @@ esac
   });
 
   it('bridges the root smoke scripts to the mobile workspace modules they import', () => {
-    const maestroScript = readFileSync(join(mobileRoot, 'scripts/maestro-e2e.sh'), 'utf8');
     // Node resolves upward from each script's real path (repo root) and never
     // reaches apps/mobile/node_modules; the bridge is declared before the
     // first provisioning invocation.
@@ -723,7 +849,6 @@ esac
 
   it('types a unique valid handle before claiming in every Maestro onboarding flow', () => {
     const provisionScript = readFileSync(resolve(mobileRoot, '../../scripts/provision-smoke.ts'), 'utf8');
-    const maestroScript = readFileSync(join(mobileRoot, 'scripts/maestro-e2e.sh'), 'utf8');
     expect(provisionScript).toContain('MAESTRO_SMOKE_HANDLE=smoke-${identity.publicKey.slice(0, 12)}');
     expect(maestroScript).toContain('read_seed_value MAESTRO_SMOKE_HANDLE');
     expect(maestroScript).toContain('--env "SMOKE_HANDLE=$SMOKE_HANDLE"');

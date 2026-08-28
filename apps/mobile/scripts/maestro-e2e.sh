@@ -10,6 +10,8 @@ readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPO_DIR="$(cd "$MOBILE_DIR/../.." && pwd -P)"
 readonly APK="$MOBILE_DIR/android/app/build/outputs/apk/release/app-release.apk"
 readonly FLOW="${MAESTRO_FLOW:-$MOBILE_DIR/e2e/smoke.yaml}"
+readonly EXPECTED_UPDATE_ID="${EXPECTED_ANDROID_UPDATE_ID:-}"
+readonly UPDATE_IDENTITY_TIMEOUT="${MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS:-10}"
 
 reply_fixture_pid=""
 cleanup() {
@@ -17,11 +19,13 @@ cleanup() {
   if [[ -n "$reply_fixture_pid" ]]; then
     kill "$reply_fixture_pid" 2>/dev/null || true
   fi
-  local teardown_args=("$MOBILE_DIR/android")
-  if [[ "${MAESTRO_KEEP_DEVICE:-0}" == "1" ]]; then
-    teardown_args+=(--keep-emulator)
+  if [[ "${MAESTRO_VERIFY_UPDATE_ONLY:-0}" != "1" ]]; then
+    local teardown_args=("$MOBILE_DIR/android")
+    if [[ "${MAESTRO_KEEP_DEVICE:-0}" == "1" ]]; then
+      teardown_args+=(--keep-emulator)
+    fi
+    "$MOBILE_DIR/scripts/android-teardown.sh" "${teardown_args[@]}" || true
   fi
-  "$MOBILE_DIR/scripts/android-teardown.sh" "${teardown_args[@]}" || true
   exit "$status"
 }
 trap cleanup EXIT INT TERM
@@ -31,8 +35,94 @@ if ! adb devices | awk 'NR > 1 { print $1 }' | grep -Fxq "$DEVICE"; then
   exit 1
 fi
 
+if [[ -z "$EXPECTED_UPDATE_ID" ]]; then
+  echo "Maestro environment error: EXPECTED_ANDROID_UPDATE_ID is required; refusing to run any flow without identifying the JS update on $DEVICE." >&2
+  exit 2
+fi
+if ! [[ "$UPDATE_IDENTITY_TIMEOUT" =~ ^[0-9]+$ ]] ||
+  (( UPDATE_IDENTITY_TIMEOUT < 1 || UPDATE_IDENTITY_TIMEOUT > 60 )); then
+  echo "Maestro environment error: MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS must be between 1 and 60 (got $UPDATE_IDENTITY_TIMEOUT)." >&2
+  exit 2
+fi
+
 if [[ "${MAESTRO_SKIP_BUILD:-0}" != "1" ]]; then
   (cd "$MOBILE_DIR" && npm run e2e:build)
+fi
+
+if [[ "${MAESTRO_REUSE_INSTALLED_APP:-0}" != "1" && ! -f "$APK" ]]; then
+  echo "E2E APK not found at $APK. Re-run without MAESTRO_SKIP_BUILD=1." >&2
+  exit 1
+fi
+
+# This intentionally clears only the named app on the named disposable
+# emulator, ensuring the identity creation/import flow is exercised each run.
+if [[ "${MAESTRO_REUSE_INSTALLED_APP:-0}" != "1" ]]; then
+  adb -s "$DEVICE" uninstall "$APP_ID" >/dev/null 2>&1 || true
+  adb -s "$DEVICE" install "$APK" >/dev/null
+fi
+# Push registration runs as part of identity import. Grant the manifest-declared
+# permission before launch so an OS-owned modal cannot obscure a product flow.
+adb -s "$DEVICE" shell pm grant "$APP_ID" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
+adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null
+
+verify_running_update_identity() {
+  local hierarchy=""
+  local observed_update="unavailable"
+  local observed_channel="unavailable"
+  local deadline=$((SECONDS + UPDATE_IDENTITY_TIMEOUT))
+  local device_hierarchy="/sdcard/beeline-maestro-update-identity.xml"
+
+  while (( SECONDS <= deadline )); do
+    # Target MainActivity explicitly. A plain openLink can raise Android's
+    # chooser when multiple Beeline intent handlers are present, which would
+    # make a routing prompt look like a stale-bundle product failure. Reissue
+    # the intent while polling: Expo Router can lose the first cold-start
+    # intent while its root providers initialize, but the warm intent is
+    # deterministic and reaches Settings.
+    if ! adb -s "$DEVICE" shell am start -W \
+      -a android.intent.action.VIEW \
+      -d 'beeline://buzz/settings' \
+      "$APP_ID/.MainActivity" >/dev/null; then
+      echo "Maestro environment error: could not open the app-owned OTA identity surface on $DEVICE." >&2
+      return 2
+    fi
+    if adb -s "$DEVICE" shell uiautomator dump "$device_hierarchy" >/dev/null 2>&1; then
+      hierarchy="$(adb -s "$DEVICE" shell cat "$device_hierarchy" 2>/dev/null || true)"
+      observed_update="$(
+        printf '%s' "$hierarchy" |
+          sed -n 's/.*text="Running update: \([^"]*\)".*/\1/p' |
+          head -n 1
+      )"
+      observed_channel="$(
+        printf '%s' "$hierarchy" |
+          sed -n 's/.*text="Channel: \([^"]*\)".*/\1/p' |
+          head -n 1
+      )"
+      observed_update="${observed_update:-unavailable}"
+      observed_channel="${observed_channel:-unavailable}"
+      if [[ "$observed_update" == "$EXPECTED_UPDATE_ID" && "$observed_channel" == "beta" ]]; then
+        echo "Maestro update identity verified: $EXPECTED_UPDATE_ID (channel beta)."
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+
+  echo "Maestro environment error: refusing to run $FLOW because $APP_ID on $DEVICE reported update '$observed_update' on channel '$observed_channel'; expected '$EXPECTED_UPDATE_ID' on channel 'beta'." >&2
+  return 2
+}
+
+verify_running_update_identity
+
+if [[ "${MAESTRO_VERIFY_UPDATE_ONLY:-0}" == "1" ]]; then
+  exit 0
+fi
+
+# ota-canary.yaml repeats the identity assertions as defense in depth, so
+# leave that flow on Settings. Every other requested flow gets the screen it
+# had before this mandatory preflight.
+if [[ "$FLOW" != "$MOBILE_DIR/e2e/ota-canary.yaml" ]]; then
+  adb -s "$DEVICE" shell input keyevent BACK >/dev/null
 fi
 
 # scripts/provision-smoke.ts and publish-smoke-replies.ts live at the repo
@@ -42,11 +132,6 @@ fi
 # nostr-tools) — proven as the release-runner user against a checkout with no
 # root node_modules.
 export NODE_PATH="$MOBILE_DIR/node_modules${NODE_PATH:+:$NODE_PATH}"
-
-if [[ "${MAESTRO_REUSE_INSTALLED_APP:-0}" != "1" && ! -f "$APK" ]]; then
-  echo "E2E APK not found at $APK. Re-run without MAESTRO_SKIP_BUILD=1." >&2
-  exit 1
-fi
 
 seed_output="$(cd "$REPO_DIR" && npx tsx scripts/provision-smoke.ts)"
 printf '%s\n' "$seed_output"
@@ -71,17 +156,6 @@ readonly SMOKE_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_ROOM_ID)"
 readonly SMOKE_AGENT_NSEC="$(read_seed_value MAESTRO_SMOKE_AGENT_NSEC)"
 readonly SMOKE_CORNER_ID="$(read_seed_value MAESTRO_SMOKE_CORNER_ID)"
 readonly SMOKE_LATEST_MESSAGE_ID="$(read_seed_value MAESTRO_SMOKE_LATEST_MESSAGE_ID)"
-
-# This intentionally clears only the named app on the named disposable
-# emulator, ensuring the identity creation/import flow is exercised each run.
-if [[ "${MAESTRO_REUSE_INSTALLED_APP:-0}" != "1" ]]; then
-  adb -s "$DEVICE" uninstall "$APP_ID" >/dev/null 2>&1 || true
-  adb -s "$DEVICE" install "$APK" >/dev/null
-fi
-# Push registration runs as part of identity import. Grant the manifest-declared
-# permission before launch so an OS-owned modal cannot obscure a product flow.
-adb -s "$DEVICE" shell pm grant "$APP_ID" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
-adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null
 
 # A separate registered agent waits for the device's actual Room and corner
 # messages, then responds. This verifies live relay delivery without requiring

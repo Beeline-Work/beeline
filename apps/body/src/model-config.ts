@@ -19,6 +19,8 @@ import {
   isAllowedAgentModelConfigCategory,
   type AgentModelConfigOption,
 } from '@beeline/buzz-client';
+import { lstatSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 /**
  * The identifier a `configOptions` choice actually carries.
@@ -99,6 +101,51 @@ function credentialedProviders(env: Record<string, string>): Set<string> {
   const held = new Set<string>();
   for (const [provider, names] of Object.entries(PROVIDER_CREDENTIAL_ENV_HINTS)) {
     if (names.some((name) => Boolean(env[name]?.trim()))) held.add(provider);
+  }
+  for (const provider of credentialedPiCustomProviders(env)) held.add(provider);
+  return held;
+}
+
+/**
+ * Pi's custom-provider file may hold an inline API key instead of an env-var
+ * credential. Read only provider names from the fixed private config path;
+ * never return, log, or inject the key. The harness-advertised catalog remains
+ * the source of model ids, so this only prevents the credential filter from
+ * deleting live options the harness has already proved it can configure.
+ */
+function credentialedPiCustomProviders(env: Record<string, string>): Set<string> {
+  const agentDir = env.PI_CODING_AGENT_DIR?.trim()
+    ? resolve(env.PI_CODING_AGENT_DIR)
+    : env.HOME?.trim()
+      ? resolve(env.HOME, '.pi/agent')
+      : undefined;
+  const held = new Set<string>();
+  if (!agentDir) return held;
+  const path = resolve(agentDir, 'models.json');
+  try {
+    const stats = lstatSync(path);
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1 || stats.size > 1_048_576) {
+      return held;
+    }
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    const providers = parsed.providers;
+    const remember = (name: unknown, config: unknown): void => {
+      if (typeof name !== 'string' || !name.trim() || !config || typeof config !== 'object') return;
+      const apiKey = (config as Record<string, unknown>).apiKey;
+      if (typeof apiKey === 'string' && apiKey.trim()) held.add(name.trim());
+    };
+    if (Array.isArray(providers)) {
+      for (const provider of providers) {
+        const record = provider as Record<string, unknown> | null;
+        remember(record?.name ?? record?.id, record);
+      }
+    } else if (providers && typeof providers === 'object') {
+      for (const [name, config] of Object.entries(providers as Record<string, unknown>)) {
+        remember(name, config);
+      }
+    }
+  } catch {
+    // Missing, malformed, linked, or unreadable config contributes no hint.
   }
   return held;
 }

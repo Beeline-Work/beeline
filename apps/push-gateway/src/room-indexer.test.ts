@@ -312,6 +312,61 @@ describe('RoomIndexer', () => {
     );
   });
 
+  it('projects only complete typed GitHub cards without a service-publisher roster entry', async () => {
+    const service = 'd'.repeat(64);
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
+       VALUES ($1, $2, $3, 'member')`,
+      [TENANT, ROOM, bytes(service)],
+    );
+    const cardId = 'f'.repeat(64);
+    const legacyId = 'e'.repeat(64);
+    const insertGitHubEvent = async (id: string, createdAt: number, tags: string[][], content = '') => {
+      await postgres.query(
+        `INSERT INTO events
+          (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+         VALUES ($1, $2, $3, to_timestamp($4), 9, $5, $6, $7)`,
+        [TENANT, bytes(id), bytes(service), createdAt, JSON.stringify(tags), content, ROOM],
+      );
+    };
+    await insertGitHubEvent(cardId, 13, [
+      ['h', ROOM],
+      ['t', 'github-event'],
+      ['service', 'beeline-events'],
+      ['github-event-type', 'pull-request'],
+      ['github-event-action', 'opened'],
+      ['github-event-actor', 'lena'],
+      ['github-event-title', 'Ship the card'],
+      ['github-event-url', 'https://github.com/acme/widget/pull/7'],
+      ['github-event-id', '7'],
+    ]);
+    await insertGitHubEvent(legacyId, 14, [
+      ['h', ROOM],
+      ['t', 'github-event'],
+      ['service', 'beeline-events'],
+    ], 'lena pushed 0 commits to acme/widget:main');
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+    const history = await indexer.readHistory(ROOM, VIEWER);
+
+    expect(view?.members.map((member) => member.identity.pubkey)).not.toContain(service);
+    expect(view?.messages).toContainEqual(
+      expect.objectContaining({
+        id: cardId,
+        presentation: 'card',
+        githubEvent: {
+          type: 'pull-request',
+          action: 'opened',
+          actor: 'lena',
+          title: 'Ship the card',
+          url: 'https://github.com/acme/widget/pull/7',
+        },
+      }),
+    );
+    expect(view?.messages.map((message) => message.id)).not.toContain(legacyId);
+    expect(history?.messages.map((message) => message.id)).not.toContain(legacyId);
+  });
+
   it('owns read marks on the server across devices and viewers without a second Room query', async () => {
     await expect(indexer.readChats(WORKSPACE, VIEWER)).resolves.toMatchObject({
       chats: [{ room: { id: ROOM }, unread: true }],

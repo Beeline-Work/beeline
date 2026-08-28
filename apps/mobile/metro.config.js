@@ -36,16 +36,6 @@ config.resolver.blockList = [
 // preact ESM/CJS dedup
 const preactCjsPath = require.resolve('preact');
 const preactHooksCjsPath = require.resolve('preact/hooks');
-// libsodium ESM fallback (CJS)
-const libsodiumCjsPath = path.join(
-  __dirname,
-  'node_modules/libsodium/dist/modules/libsodium.js',
-);
-const libsodiumWrappersCjsPath = path.join(
-  __dirname,
-  'node_modules/libsodium-wrappers/dist/modules/libsodium-wrappers.js',
-);
-
 const baseResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === 'preact') {
@@ -53,12 +43,6 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (moduleName === 'preact/hooks') {
     return { filePath: preactHooksCjsPath, type: 'sourceFile' };
-  }
-  if (moduleName === 'libsodium') {
-    return { filePath: libsodiumCjsPath, type: 'sourceFile' };
-  }
-  if (moduleName === 'libsodium-wrappers') {
-    return { filePath: libsodiumWrappersCjsPath, type: 'sourceFile' };
   }
   if (baseResolveRequest) {
     return baseResolveRequest(context, moduleName, platform);

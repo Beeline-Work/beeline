@@ -1,4 +1,3 @@
-import { useAuth } from '@/auth/AuthContext';
 import * as React from 'react';
 import { Drawer } from 'expo-router/drawer';
 import { useIsTablet, useHeaderHeight } from '@/utils/responsive';
@@ -19,10 +18,9 @@ import { useBrowserNavigationStore } from '@/navigation/browserNavigationStore';
 const TAURI_HEADER_CONTROL_LEFT = Math.ceil(92 / DEFAULT_APP_ZOOM);
 
 export const SidebarNavigator = React.memo(() => {
-    const auth = useAuth();
     const isTablet = useIsTablet();
     const zenMode = useLocalSetting('zenMode');
-    const isDesktopLayout = auth.isAuthenticated && isTablet;
+    const isDesktopLayout = isTablet;
     const showSidebar = isDesktopLayout && !zenMode;
     const { width: windowWidth } = useWindowDimensions();
 

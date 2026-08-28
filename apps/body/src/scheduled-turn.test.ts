@@ -71,7 +71,14 @@ describe('scheduled Room turn boundary', () => {
     );
     await blockerStarted;
 
-    const observed: string[] = [];
+    const observed: Array<
+      | 'schedule-admitted'
+      | {
+          readonly prompt: string;
+          readonly pendingRequestContent: string | undefined;
+          readonly scheduleRunId: string | undefined;
+        }
+    > = [];
     const session = {
       channelId: 'scheduled-room',
       sessionId: 'shared-session',
@@ -80,7 +87,11 @@ describe('scheduled Room turn boundary', () => {
       client: {
         sessionPrompt: vi.fn(async (_id: string, prompt: string) => {
           const pending = Reflect.get(body, 'pendingRoomTurns').get('scheduled-room');
-          observed.push(`${prompt}:${pending?.scheduled ? 'schedule' : 'human'}`);
+          observed.push({
+            prompt,
+            pendingRequestContent: pending?.request.content,
+            scheduleRunId: pending?.scheduled?.scheduleRunId,
+          });
           return { stopReason: 'end_turn', updates: [], agentText: 'done', toolCalls: [] };
         }),
         sessionCancel: vi.fn(),
@@ -144,9 +155,23 @@ describe('scheduled Room turn boundary', () => {
         request('4'.repeat(64), 'human'),
       );
       await human;
-      expect(observed[0]).toBe('human:human');
+      expect(observed[0]).toEqual({
+        prompt: expect.stringContaining(
+          'CURRENT EXPLICIT HUMAN DIRECTIVE (binding for this turn):\nhuman\nEND CURRENT EXPLICIT HUMAN DIRECTIVE',
+        ),
+        pendingRequestContent: 'human',
+        scheduleRunId: undefined,
+      });
       await scheduled;
-      expect(observed).toEqual(['human:human', 'schedule-admitted', 'scheduled:schedule']);
+      expect(observed).toEqual([
+        observed[0],
+        'schedule-admitted',
+        {
+          prompt: 'scheduled',
+          pendingRequestContent: 'scheduled',
+          scheduleRunId: runId,
+        },
+      ]);
       releaseBlocker();
       await blocker;
       expect(Reflect.get(body, 'pendingRoomTurns').size).toBe(0);

@@ -29,6 +29,10 @@ const permissionInfo = vi.hoisted(() => ({
     canAskAgain: true,
   })),
 }));
+const identityApi = vi.hoisted(() => ({
+  lookupRecovery: vi.fn(async () => []),
+  lookupManagedIdentity: vi.fn(async () => null),
+}));
 
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
@@ -62,8 +66,8 @@ vi.mock('@beeline/buzz-client', () => ({
   claimNip05Handle: vi.fn(),
   finishOidcBind: vi.fn(),
   fallbackPersonName: (pubkey: string) => `Person ${pubkey.slice(0, 4)}`,
-  lookupRecovery: vi.fn(async () => []),
-  lookupManagedIdentity: vi.fn(async () => null),
+  lookupRecovery: identityApi.lookupRecovery,
+  lookupManagedIdentity: identityApi.lookupManagedIdentity,
   Nip05ClaimError: class extends Error {
     code: string;
     constructor(code: string, message: string) {
@@ -75,6 +79,9 @@ vi.mock('@beeline/buzz-client', () => ({
   normalizePersonHandle: (value: string) => value.trim().toLowerCase() || null,
   normalizePersonName: (value: string) => value.trim() || null,
   personHandle: (name: string) => name.toLowerCase(),
+  RoomViewClient: class {
+    workspaces = vi.fn(async () => ({ workspaces: [] }));
+  },
   startGitHubBind: vi.fn(),
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
@@ -174,6 +181,7 @@ afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  identityApi.lookupManagedIdentity.mockResolvedValue(null);
   client.getGlobalPersonProfile.mockResolvedValue({
     name: 'Captain',
     avatar: 'https://example.test/captain.png',
@@ -184,8 +192,9 @@ async function renderScreen(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
     renderer = create(React.createElement(IdentitySettingsScreen));
-    await Promise.resolve();
-    await Promise.resolve();
+    // Profile hydration crosses the identity, relay, and managed-identity
+    // boundaries before it renders its fields.
+    for (let pass = 0; pass < 8; pass += 1) await Promise.resolve();
   });
   return renderer;
 }
@@ -232,5 +241,28 @@ describe('photo-override darkflight on the settings surfaces', () => {
     // pickAndUploadAvatar is unreachable from this surface.
     const { pickAndUploadAvatar } = await import('@/buzz/avatar-upload');
     expect(pickAndUploadAvatar).not.toHaveBeenCalled();
+  });
+
+  it('shows one GitHub-provisioned identity and no secondary handle controls', async () => {
+    identityApi.lookupManagedIdentity.mockResolvedValue({
+      handle: 'octocat',
+      displayName: 'The Octocat',
+      nip05: 'octocat@usebeeline.app',
+      source: 'github',
+      githubLogin: 'octocat',
+      githubRenameAvailable: false,
+    });
+    const renderer = await renderScreen();
+
+    expect(renderer.root.findByProps({ testID: 'identity-person-name-input' }).props.value).toBe(
+      'The Octocat',
+    );
+    expect(renderedText(renderer)).toContain('octocat@usebeeline.app');
+    expect(renderer.root.findAllByProps({ testID: 'identity-managed-handle' }).length).toBeGreaterThan(
+      0,
+    );
+    expect(renderer.root.findAllByProps({ testID: 'identity-person-handle-input' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'identity-person-nip05-input' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'claim-handle-setting' })).toHaveLength(0);
   });
 });

@@ -754,11 +754,28 @@ SELECT 'member', jsonb_build_object(
   'name', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
   'handle', resolved.handle,
   'avatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
-  'agent', resolved.agent_content IS NOT NULL
+  'agent', resolved.agent_content IS NOT NULL,
+  'presenceStatus', presence.status, 'presenceObservedAt', presence.observed_at,
+  'presenceRoomId', presence.room_id
 ) FROM authorized a
 JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
   AND cm.removed_at IS NULL
 JOIN identities resolved ON resolved.community_id = cm.community_id AND resolved.pubkey = cm.pubkey
+LEFT JOIN LATERAL (
+  SELECT
+    (SELECT t->>1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' LIMIT 1) AS status,
+    extract(epoch FROM e.created_at)::bigint AS observed_at,
+    a.id::text AS room_id
+  FROM events e
+  WHERE resolved.agent_content IS NOT NULL
+    AND e.community_id = a.community_id AND e.pubkey = cm.pubkey
+    AND e.kind = 30078 AND e.deleted_at IS NULL
+    AND e.d_tag = 'agent-presence:' || a.id::text
+    AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
+    AND e.tags @> '[["t", "agent-presence"]]'::jsonb
+  ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+) presence ON true
 UNION ALL
 SELECT section, jsonb_build_object(
   'id', encode(e.id, 'hex'), 'pubkey', encode(e.pubkey, 'hex'),
@@ -1386,7 +1403,22 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
     .filter((row) => row.section === 'member')
     .map((row) => {
       const data = json(row.data);
-      return { identity: identity(data), role: data.role as RoomViewMember['role'] };
+      const memberIdentity = identity(data);
+      const presenceStatus = text(data.presenceStatus);
+      return {
+        identity: memberIdentity,
+        role: data.role as RoomViewMember['role'],
+        ...(memberIdentity.kind === 'agent' &&
+        (presenceStatus === 'online' || presenceStatus === 'offline')
+          ? {
+              presence: {
+                status: presenceStatus as 'online' | 'offline',
+                observedAt: integer(data.presenceObservedAt),
+                ...(text(data.presenceRoomId) ? { roomId: text(data.presenceRoomId) } : {}),
+              },
+            }
+          : {}),
+      };
     });
   const parentData = rowData(rows, 'parent');
   const repository = repositoryFromRows(rows);

@@ -864,6 +864,12 @@ esac
     expect(replyFixture).toContain(
       "await waitForMessage(client, roomId, 'SMOKE ROOM SEND', FIRST_DEVICE_MESSAGE_TIMEOUT_MS)",
     );
+    expect(replyFixture).toContain('AGENT_PRESENCE_HEARTBEAT_MS');
+    expect(replyFixture).toContain('KIND_AGENT_PRESENCE');
+    expect(replyFixture).toContain('TAG_AGENT_PRESENCE');
+    expect(replyFixture).toMatch(
+      /setTimeout\([\s\S]*?AGENT_PRESENCE_HEARTBEAT_MS[\s\S]*?clearTimeout/,
+    );
 
     const smoke = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');
     expect(smoke).toMatch(/visible: SMOKE AGENT ROOM REPLY\.\*[\s\S]*?timeout: 30000/);

@@ -12551,7 +12551,7 @@ describe('harness-independent corner commit watch', () => {
       ).toBe(true);
       expect(
         published.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'change-review-manifest'),
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'change-review-artifact'),
         ),
       ).toBe(false);
     } finally {

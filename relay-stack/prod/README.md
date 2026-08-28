@@ -33,22 +33,14 @@ around it.
 
 ## Materializer topology
 
-Production has one DB-tail process. `relay-front` sends `/push/` and
-`/snapshot/` to `materializer:8788`; that container hosts push delivery,
-repository-event ingestion, and channel snapshot projection over the private
-`buzz-net` network. It reads paired-agent runtime records read-only and keeps
-the existing FCM registry plus repository-events signing identity on their
-host volumes.
+Production has one DB-adjacent process. `relay-front` sends `/push/` and the
+eight indexer routes to `materializer:8788`; that container hosts push delivery,
+repository-event ingestion, and direct bounded Postgres reads over `buzz-net`.
+The FCM registry and repository-events signing identity remain on host volumes.
 
-Push and repository-event legacy JSON reservations are imported into the same
-Postgres reservation store used by the process. Their transition semantics and
-the snapshot dirty queue remain separately namespaced. Internal succession
-calls go directly to `auth:8789` with `BUZZY_SNAPSHOT_INTERNAL_TOKEN`; nginx
-never routes the `/internal/` endpoint. Compose health uses
-`/snapshot/health`, while public deployment verification checks both snapshot
-health and the independent `/push/health` FCM surface. A Firebase
-initialization failure can therefore leave snapshot reads available while push
-health reports unavailable.
+Compose health proves the indexer rejects an unsigned `/workspaces` read with
+`401`; public deployment verification checks that gate plus the independent
+`/push/health` FCM surface. Index reads do not depend on Firebase readiness.
 
 The deploy script disables the superseded `beeline-events.service`, stops and
 verifies every legacy or current tail container, then performs a one-way

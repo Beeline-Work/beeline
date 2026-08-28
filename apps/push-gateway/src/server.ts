@@ -1,13 +1,18 @@
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { NIP98_KIND, verifyEvent, verifyNip98Header, type NostrEvent } from '@beeline/nostr';
-import {
-  CHANNEL_SNAPSHOT_MAX_BYTES,
-  guardStoredChannelSnapshotV1,
-  snapshotViewerOverlay,
+import type {
+  AgentDetailView,
+  ChatListView,
+  CornerListView,
+  InviteView,
+  RoomHistoryView,
+  RoomView,
+  WorkspaceListView,
+  WorkspaceView,
 } from '@beeline/buzz-client';
 import { TokenRegistry } from './registry.js';
 import type { TestSendReport } from './gateway.js';
-import type { SnapshotQueueStatus, ViewerSnapshotRow } from './snapshot-store.js';
 
 const MAX_BODY_BYTES = 32 * 1024;
 const NON_PRODUCTION_ENVIRONMENTS = new Set(['test', 'emulator', 'simulator']);
@@ -62,48 +67,49 @@ function authenticatedPubkey(request: IncomingMessage): string | null {
 export interface RegistrationServerHooks {
   /** Operator proof-of-delivery; required for the authenticated /test-send route. */
   sendTest?: (pubkey: string) => Promise<TestSendReport>;
-  /** Push health is distinct from snapshot materialization/read health. */
+  /** Push health is independent of paint-view reads. */
   pushHealth?: () => { readonly ok: boolean; readonly reason?: string };
-  snapshot?: {
+  indexer?: {
     readonly publicOrigin: string;
-    readonly maxLagMs?: number;
     readonly now?: () => number;
-    readonly readForViewer: (
-      channelId: string,
+    readonly readWorkspaces: (pubkey: string) => Promise<WorkspaceListView>;
+    readonly readWorkspace: (workspaceId: string, pubkey: string) => Promise<WorkspaceView | null>;
+    readonly readChats: (workspaceId: string, pubkey: string) => Promise<ChatListView | null>;
+    readonly readAgent: (
+      workspaceId: string,
+      agentPubkey: string,
       pubkey: string,
-    ) => Promise<ViewerSnapshotRow | null>;
-    readonly claimNip98Event: (eventId: string) => Promise<boolean>;
-    readonly status?: () => Promise<SnapshotQueueStatus & { readonly warmed?: boolean }>;
+    ) => Promise<AgentDetailView | null>;
+    readonly readRoom: (roomId: string, pubkey: string) => Promise<RoomView | null>;
+    readonly readCorners: (roomId: string, pubkey: string) => Promise<CornerListView | null>;
+    readonly readHistory: (
+      roomId: string,
+      pubkey: string,
+      before?: { readonly createdAt: number; readonly id: string },
+    ) => Promise<RoomHistoryView | null>;
+    readonly readInvite: (tokenHash: string, readerPubkey: string) => Promise<InviteView | null>;
     readonly log?: (line: string) => void;
   };
 }
 
 const CHANNEL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SNAPSHOT_PATH = /^\/snapshot\/channel\/([^/?#]+)$/;
-const SNAPSHOT_PRIVATE_HEADERS = {
+const INVITE_TOKEN = /^bzi_[0-9a-f]{64}$/;
+const PUBKEY = /^[0-9a-f]{64}$/;
+const PRIVATE_HEADERS = {
   'cache-control': 'private, no-store',
   vary: 'Authorization',
 } as const;
 
-function snapshotUnavailable(response: ServerResponse, reason: string): void {
-  json(
-    response,
-    503,
-    { error: 'snapshot_not_ready', reason },
-    { ...SNAPSHOT_PRIVATE_HEADERS, 'retry-after': '1' },
-  );
-}
-
-function logSnapshot(
-  snapshot: NonNullable<RegistrationServerHooks['snapshot']>,
+function logIndexer(
+  indexer: NonNullable<RegistrationServerHooks['indexer']>,
   line: string,
 ): void {
   try {
-    snapshot.log?.(line);
+    indexer.log?.(line);
   } catch {}
 }
 
-function matchesSnapshotOrigin(request: IncomingMessage, publicOrigin: string): boolean {
+function matchesPublicOrigin(request: IncomingMessage, publicOrigin: string): boolean {
   const forwardedProtocol = request.headers['x-forwarded-proto'];
   if (forwardedProtocol === undefined) return true;
   if (Array.isArray(forwardedProtocol)) return false;
@@ -114,10 +120,102 @@ function matchesSnapshotOrigin(request: IncomingMessage, publicOrigin: string): 
   );
 }
 
+type IndexRoute =
+  | { readonly kind: 'workspaces' }
+  | { readonly kind: 'workspace'; readonly workspaceId: string }
+  | { readonly kind: 'chats'; readonly workspaceId: string }
+  | { readonly kind: 'agent'; readonly workspaceId: string; readonly agentPubkey: string }
+  | { readonly kind: 'room'; readonly roomId: string }
+  | { readonly kind: 'corners'; readonly roomId: string }
+  | {
+      readonly kind: 'history';
+      readonly roomId: string;
+      readonly before?: { readonly createdAt: number; readonly id: string };
+    }
+  ;
+
+function exactUuid(value: string): string | null {
+  const lower = value.toLowerCase();
+  return CHANNEL_ID.test(value) && value === lower ? lower : null;
+}
+
+function indexRoute(requestUrl: string): IndexRoute | null {
+  let url: URL;
+  try {
+    url = new URL(requestUrl, 'http://indexer.invalid');
+  } catch {
+    return null;
+  }
+  if (url.pathname === '/workspaces' && !url.search) return { kind: 'workspaces' };
+  const workspaceAgent = url.pathname.match(/^\/workspace\/([^/]+)\/agents\/([^/]+)$/);
+  if (workspaceAgent && !url.search) {
+    const workspaceId = exactUuid(workspaceAgent[1]!);
+    const agentPubkey = workspaceAgent[2]!;
+    return workspaceId && PUBKEY.test(agentPubkey) ? { kind: 'agent', workspaceId, agentPubkey } : null;
+  }
+  const workspaceChats = url.pathname.match(/^\/workspace\/([^/]+)\/chats$/);
+  if (workspaceChats && !url.search) {
+    const workspaceId = exactUuid(workspaceChats[1]!);
+    return workspaceId ? { kind: 'chats', workspaceId } : null;
+  }
+  const workspace = url.pathname.match(/^\/workspace\/([^/]+)$/);
+  if (workspace && !url.search) {
+    const workspaceId = exactUuid(workspace[1]!);
+    return workspaceId ? { kind: 'workspace', workspaceId } : null;
+  }
+  const corners = url.pathname.match(/^\/room\/([^/]+)\/corners$/);
+  if (corners && !url.search) {
+    const roomId = exactUuid(corners[1]!);
+    return roomId ? { kind: 'corners', roomId } : null;
+  }
+  const history = url.pathname.match(/^\/room\/([^/]+)\/messages$/);
+  if (history) {
+    const roomId = exactUuid(history[1]!);
+    if (!roomId || [...url.searchParams.keys()].some((key) => key !== 'before')) return null;
+    const rawBefore = url.searchParams.get('before');
+    if (!rawBefore) return url.search ? null : { kind: 'history', roomId };
+    const match = rawBefore.match(/^(\d+),([0-9a-f]{64})$/);
+    if (!match) return null;
+    const createdAt = Number(match[1]);
+    if (!Number.isSafeInteger(createdAt) || createdAt < 0) return null;
+    return { kind: 'history', roomId, before: { createdAt, id: match[2]! } };
+  }
+  const room = url.pathname.match(/^\/room\/([^/]+)$/);
+  if (room && !url.search) {
+    const roomId = exactUuid(room[1]!);
+    return roomId ? { kind: 'room', roomId } : null;
+  }
+  return null;
+}
+
+async function indexView(
+  indexer: NonNullable<RegistrationServerHooks['indexer']>,
+  route: IndexRoute,
+  pubkey: string,
+): Promise<unknown | null> {
+  switch (route.kind) {
+    case 'workspaces':
+      return indexer.readWorkspaces(pubkey);
+    case 'workspace':
+      return indexer.readWorkspace(route.workspaceId, pubkey);
+    case 'chats':
+      return indexer.readChats(route.workspaceId, pubkey);
+    case 'agent':
+      return indexer.readAgent(route.workspaceId, route.agentPubkey, pubkey);
+    case 'room':
+      return indexer.readRoom(route.roomId, pubkey);
+    case 'corners':
+      return indexer.readCorners(route.roomId, pubkey);
+    case 'history':
+      return indexer.readHistory(route.roomId, pubkey, route.before);
+  }
+}
+
 export function createRegistrationServer(
   registry: TokenRegistry,
   hooks: RegistrationServerHooks = {},
 ) {
+  const inviteRate = new Map<string, { count: number; resetAt: number }>();
   return createServer(async (request, response) => {
     try {
       if (request.method === 'GET' && request.url === '/health') {
@@ -131,123 +229,134 @@ export function createRegistrationServer(
         return;
       }
 
-      if (request.method === 'GET' && request.url === '/snapshot/health' && hooks.snapshot) {
-        const status = (await hooks.snapshot.status?.()) ?? {
-          depth: 0,
-          oldestDirtyAgeMs: 0,
-        };
-        json(response, 200, { ok: true, ...status });
-        return;
-      }
-
-      const snapshotMatch = request.method === 'GET' ? request.url?.match(SNAPSHOT_PATH) : null;
-      if (snapshotMatch && hooks.snapshot) {
+      if (request.method === 'POST' && request.url === '/invite/resolve' && hooks.indexer) {
         const startedAt = performance.now();
         let status = 500;
-        const requestedChannelId = snapshotMatch[1]!;
-        const channelId = requestedChannelId.toLowerCase();
         try {
-          if (!CHANNEL_ID.test(requestedChannelId) || requestedChannelId !== channelId) {
-            status = 404;
-            json(response, status, { error: 'not_found' }, SNAPSHOT_PRIVATE_HEADERS);
-            return;
-          }
-          if (!matchesSnapshotOrigin(request, hooks.snapshot.publicOrigin)) {
+          if (!matchesPublicOrigin(request, hooks.indexer.publicOrigin)) {
             status = 401;
-            json(
-              response,
-              status,
-              { error: 'valid_identity_authorization_required' },
-              SNAPSHOT_PRIVATE_HEADERS,
-            );
+            json(response, status, { error: 'valid_identity_authorization_required' }, PRIVATE_HEADERS);
             return;
           }
-          const path = `/snapshot/channel/${channelId}`;
-          const expectedUrl = `${hooks.snapshot.publicOrigin}${path}`;
+          const expectedUrl = `${hooks.indexer.publicOrigin}/invite/resolve`;
+          const auth = verifyNip98Header(
+            request.headers.authorization,
+            expectedUrl,
+            'POST',
+            new Date(hooks.indexer.now?.() ?? Date.now()),
+            60,
+          );
+          if (!auth.ok) {
+            status = 401;
+            json(response, status, { error: 'valid_identity_authorization_required' }, PRIVATE_HEADERS);
+            return;
+          }
+          const now = hooks.indexer.now?.() ?? Date.now();
+          const address = request.socket.remoteAddress ?? 'unknown';
+          const rateKey = `${auth.pubkey}:${address}`;
+          const current = inviteRate.get(rateKey);
+          const bucket = !current || current.resetAt <= now
+            ? { count: 0, resetAt: now + 60_000 }
+            : current;
+          bucket.count += 1;
+          inviteRate.set(rateKey, bucket);
+          if (bucket.count > 20) {
+            status = 429;
+            json(response, status, { error: 'rate_limited' }, PRIVATE_HEADERS);
+            return;
+          }
+          let body: unknown;
+          try {
+            body = await readJson(request);
+          } catch {
+            status = 404;
+            json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
+            return;
+          }
+          const token = body && typeof body === 'object' && 'token' in body
+            ? (body as { token?: unknown }).token
+            : undefined;
+          if (typeof token !== 'string' || !INVITE_TOKEN.test(token)) {
+            status = 404;
+            json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
+            return;
+          }
+          const tokenHash = createHash('sha256').update(token).digest('hex');
+          const view = await hooks.indexer.readInvite(tokenHash, auth.pubkey);
+          status = view ? 200 : 404;
+          json(response, status, view ?? { error: 'not_found' }, PRIVATE_HEADERS);
+          return;
+        } catch (error) {
+          status = 503;
+          const detail = error instanceof Error ? error.message : String(error);
+          logIndexer(hooks.indexer, `[indexer] invite failed error=${JSON.stringify(detail)}`);
+          if (response.headersSent) response.destroy();
+          else json(response, status, { error: 'temporarily_unavailable' }, PRIVATE_HEADERS);
+          return;
+        } finally {
+          logIndexer(hooks.indexer, `[indexer] request surface=invite status=${status} duration_ms=${Math.round(performance.now() - startedAt)}`);
+        }
+      }
+
+      if (request.method === 'GET' && request.url && hooks.indexer) {
+        const route = indexRoute(request.url);
+        const indexNamespace = /^\/(?:workspaces(?:[/?]|$)|workspace\/|room\/|invite\/)/.test(
+          request.url,
+        );
+        if (!route && indexNamespace) {
+          json(response, 404, { error: 'not_found' }, PRIVATE_HEADERS);
+          return;
+        }
+        if (route) {
+        const startedAt = performance.now();
+        let status = 500;
+        try {
+          if (!matchesPublicOrigin(request, hooks.indexer.publicOrigin)) {
+            status = 401;
+            json(response, status, { error: 'valid_identity_authorization_required' }, PRIVATE_HEADERS);
+            return;
+          }
+          const expectedUrl = `${hooks.indexer.publicOrigin}${request.url}`;
           const auth = verifyNip98Header(
             request.headers.authorization,
             expectedUrl,
             'GET',
-            new Date(hooks.snapshot.now?.() ?? Date.now()),
+            new Date(hooks.indexer.now?.() ?? Date.now()),
             60,
           );
-          if (!auth.ok || !(await hooks.snapshot.claimNip98Event(auth.eventId))) {
+          if (!auth.ok) {
             status = 401;
-            json(
-              response,
-              status,
-              { error: 'valid_identity_authorization_required' },
-              SNAPSHOT_PRIVATE_HEADERS,
-            );
+            json(response, status, { error: 'valid_identity_authorization_required' }, PRIVATE_HEADERS);
             return;
           }
-          const row = await hooks.snapshot.readForViewer(channelId, auth.pubkey);
-          if (!row) {
+          const view = await indexView(hooks.indexer, route, auth.pubkey);
+          if (!view) {
             status = 404;
-            json(response, status, { error: 'not_found' }, SNAPSHOT_PRIVATE_HEADERS);
-            return;
-          }
-          if (!Object.hasOwn(row, 'payload') || !Object.hasOwn(row, 'digest')) {
-            status = 503;
-            snapshotUnavailable(response, 'missing');
-            return;
-          }
-          if (row.lagMs > (hooks.snapshot.maxLagMs ?? 30_000)) {
-            status = 503;
-            snapshotUnavailable(response, 'stale');
-            return;
-          }
-          const digest = typeof row.digest === 'string' ? row.digest : '';
-          const stored = guardStoredChannelSnapshotV1(row.payload, channelId, digest);
-          if (stored.status !== 'ready') {
-            status = 503;
-            snapshotUnavailable(response, 'incompatible_or_corrupt');
-            return;
-          }
-          const view = {
-            ...stored.payload,
-            lagMs: row.lagMs,
-            viewer: snapshotViewerOverlay(stored.payload, auth.pubkey),
-            integrity: {
-              algorithm: 'sha256' as const,
-              scope: 'stored-channel-snapshot-v1' as const,
-              digest,
-            },
-          };
-          const serialized = `${JSON.stringify(view)}\n`;
-          if (Buffer.byteLength(serialized) > CHANNEL_SNAPSHOT_MAX_BYTES) {
-            status = 503;
-            snapshotUnavailable(response, 'incompatible_or_corrupt');
+            json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
             return;
           }
           status = 200;
-          response.writeHead(status, {
-            'content-type': 'application/json',
-            ...SNAPSHOT_PRIVATE_HEADERS,
-            'x-beeline-snapshot-schema': String(stored.payload.schemaVersion),
-            'x-beeline-snapshot-projection': String(stored.payload.projectionVersion),
-            'x-beeline-snapshot-integrity': digest,
-          });
-          response.end(serialized);
+          json(response, status, view, PRIVATE_HEADERS);
           return;
         } catch (error) {
           status = 503;
-          let detail = 'unknown snapshot failure';
+          let detail = 'unknown indexer failure';
           try {
             detail = error instanceof Error ? error.message : String(error);
           } catch {}
-          logSnapshot(
-            hooks.snapshot,
-            `[snapshot] get failed channel=${channelId} error=${JSON.stringify(detail)}`,
+          logIndexer(
+            hooks.indexer,
+            `[indexer] get failed surface=${route.kind} error=${JSON.stringify(detail)}`,
           );
           if (response.headersSent) response.destroy();
-          else snapshotUnavailable(response, 'temporarily_unavailable');
+          else json(response, status, { error: 'temporarily_unavailable' }, PRIVATE_HEADERS);
           return;
         } finally {
-          logSnapshot(
-            hooks.snapshot,
-            `[snapshot] get channel=${channelId} status=${status} duration_ms=${Math.round(performance.now() - startedAt)}`,
+          logIndexer(
+            hooks.indexer,
+            `[indexer] get surface=${route.kind} status=${status} duration_ms=${Math.round(performance.now() - startedAt)}`,
           );
+        }
         }
       }
 

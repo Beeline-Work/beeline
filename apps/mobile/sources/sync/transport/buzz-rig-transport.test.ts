@@ -432,6 +432,14 @@ describe('BuzzRigTransport content-addressed review reads', () => {
         patchId,
         summary: 'Atomic review',
         fileCount: 1,
+        files: [
+          {
+            path: 'src/review.ts',
+            status: 'modified',
+            linesAdded: 1,
+            linesRemoved: 1,
+          },
+        ],
         url: `https://relay.test/media/${hash}`,
         sha256: hash,
         size: artifactBytes.byteLength,

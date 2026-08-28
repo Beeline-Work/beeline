@@ -15,6 +15,7 @@ import {
   type AgentDetailView,
   type AgentModelConfigInput,
   type AgentModelConfigOption,
+  type ChatListItem,
   type Identity,
   type WorkspaceView,
 } from '@beeline/buzz-client';
@@ -38,10 +39,23 @@ const MODEL_FALLBACK_AXES: AgentModelConfigOption[] = [
 const EFFORT_FALLBACK_LEVELS = ['low', 'medium', 'high'];
 const INDEX_CONFIRM_ATTEMPTS = 60;
 const INDEX_CONFIRM_DELAY_MS = 250;
+const INSTALL_COMMAND = 'curl -fsSL https://usebeeline.app/install | sh';
+const PAIR_COMMAND_PREFIX = 'env -u BUZZ_AGENT_KEY -u BUZZ_PRIVATE_KEY beeline pair';
+
+async function copyText(value: string): Promise<void> {
+  await (await import('expo-clipboard')).setStringAsync(value);
+}
 
 type WorkspaceRole = 'owner' | 'admin' | 'member';
 type MembersAction =
-  'invite-person' | 'person-role' | 'rename-agent' | 'remove-agent' | 'model-config';
+  | 'invite-person'
+  | 'load-agent-rooms'
+  | 'attach-agent'
+  | 'pair-agent'
+  | 'person-role'
+  | 'rename-agent'
+  | 'remove-agent'
+  | 'model-config';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -88,8 +102,12 @@ function axisValue(detail: AgentDetailView, axis: AgentModelConfigOption): strin
 
 export default function BuzzMembers() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ communityId?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    communityId?: string | string[];
+    action?: string | string[];
+  }>();
   const workspaceId = first(params.communityId);
+  const requestedAction = first(params.action);
   const [surface, setSurface] = useState<WorkspaceView | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<AgentDetailView | null>(null);
   const [roleEditorPubkey, setRoleEditorPubkey] = useState<string | null>(null);
@@ -99,8 +117,16 @@ export default function BuzzMembers() {
   const [working, setWorking] = useState<MembersAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
+  const [agentInviteOpen, setAgentInviteOpen] = useState(false);
+  const [inviteRooms, setInviteRooms] = useState<readonly ChatListItem[]>([]);
+  const [selectedInviteRoomId, setSelectedInviteRoomId] = useState<string | null>(null);
+  const [pairCommand, setPairCommand] = useState<string | null>(null);
+  const [pairExpiresAt, setPairExpiresAt] = useState<number | null>(null);
+  const [agentInviteNotice, setAgentInviteNotice] = useState<string | null>(null);
+  const [attachingAgentPubkey, setAttachingAgentPubkey] = useState<string | null>(null);
   const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
   const agentRequestGenerationRef = useRef(0);
+  const requestedActionHandledRef = useRef(false);
 
   const workspaceAddress = (nextIdentity = identity, nextRelayUrl = relayUrl) =>
     nextIdentity && nextRelayUrl && workspaceId
@@ -225,6 +251,99 @@ export default function BuzzMembers() {
       setWorking(null);
     }
   };
+
+  const openAgentInvite = async () => {
+    if (!surface?.viewer.permissions.manage || !workspaceId || !identity || !relayUrl) return;
+    setAgentInviteOpen(true);
+    setSelectedAgent(null);
+    setAgentInviteNotice(null);
+    setWorking('load-agent-rooms');
+    setError(null);
+    try {
+      const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).chats(workspaceId);
+      setInviteRooms(value.chats.filter((chat) => !chat.room.archived));
+    } catch (reason) {
+      setError(`Could not load Rooms for agent invitation: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const pairNewAgent = async () => {
+    if (!surface?.viewer.permissions.manage || !workspaceId) return;
+    setWorking('pair-agent');
+    setError(null);
+    setAgentInviteNotice(null);
+    try {
+      const pairing = await (await writeClient()).createAgentPairingCode(workspaceId);
+      setPairCommand(`${PAIR_COMMAND_PREFIX} ${pairing.code}`);
+      setPairExpiresAt(pairing.expiresAt);
+    } catch (reason) {
+      setError(`Could not create agent pairing code: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const chooseInviteRoom = async (chat: ChatListItem) => {
+    if (!workspaceId || !identity || !relayUrl || working) return;
+    setWorking('load-agent-rooms');
+    setError(null);
+    setAgentInviteNotice(null);
+    try {
+      const room = await new RoomViewClient({ baseUrl: relayUrl, identity }).room(chat.room.id);
+      if (room.directMessage) {
+        setError('Agents cannot be attached to direct messages. Choose a Workspace Room.');
+        return;
+      }
+      setSelectedInviteRoomId(chat.room.id);
+    } catch (reason) {
+      setError(`Could not verify #${chat.room.name}: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const attachAgent = async (agentPubkey: string) => {
+    if (!surface?.viewer.permissions.manage || !workspaceId || !selectedInviteRoomId) return;
+    const agent = surface.agents.find((candidate) => candidate.identity.pubkey === agentPubkey);
+    const room = inviteRooms.find((candidate) => candidate.room.id === selectedInviteRoomId);
+    if (!agent || !room) return;
+    setWorking('attach-agent');
+    setAttachingAgentPubkey(agentPubkey);
+    setError(null);
+    setAgentInviteNotice(null);
+    try {
+      const result = await (
+        await writeClient()
+      ).attachAgentToChannel(room.room.id, agentPubkey, workspaceId);
+      setAgentInviteNotice(
+        result.joined
+          ? `${agent.identity.name} attached to #${room.room.name}.`
+          : `${agent.identity.name} is already in #${room.room.name}.`,
+      );
+    } catch (reason) {
+      setError(`Could not attach ${agent.identity.name}: ${String(reason)}`);
+    } finally {
+      setWorking(null);
+      setAttachingAgentPubkey(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!surface?.viewer.permissions.manage || requestedActionHandledRef.current) return;
+    if (requestedAction === 'invite') {
+      requestedActionHandledRef.current = true;
+      void invitePerson();
+    } else if (requestedAction === 'add-agent') {
+      requestedActionHandledRef.current = true;
+      void openAgentInvite();
+    }
+    // The route intent is consume-once. The handlers intentionally read the
+    // current authenticated surface at that moment rather than reopening on
+    // every indexed refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedAction, surface]);
 
   const setPersonRole = async (pubkey: string, role: WorkspaceRole) => {
     if (!surface || !workspaceId) return;
@@ -413,7 +532,7 @@ export default function BuzzMembers() {
       viewerAvatarUrl={surface.viewer.identity.avatar}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <HullSurface strength="quiet" style={styles.header}>
+        <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.back}>
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
@@ -424,7 +543,7 @@ export default function BuzzMembers() {
             </Text>
           </View>
           <Text style={styles.count}>{surface.members.length + surface.agents.length}</Text>
-        </HullSurface>
+        </View>
         {!!error && (
           <TouchableOpacity onPress={() => schedulerRef.current?.force()} style={styles.errorPanel}>
             <Text style={styles.error}>! {error}</Text>
@@ -435,23 +554,154 @@ export default function BuzzMembers() {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
         >
+          {canManage && (
+            <View style={styles.memberActions} testID="members-invite-actions">
+              <MonoButton
+                label={working === 'invite-person' ? 'CREATING INVITE' : 'INVITE PERSON'}
+                loading={working === 'invite-person'}
+                disabled={busy}
+                onPress={() => void invitePerson()}
+                variant="secondary"
+                labelStyle={styles.actionLabel}
+                testID="invite-person"
+              />
+              <MonoButton
+                label={working === 'load-agent-rooms' ? 'LOADING ROOMS' : 'INVITE AGENT'}
+                loading={working === 'load-agent-rooms'}
+                disabled={busy}
+                onPress={() => void openAgentInvite()}
+                variant="secondary"
+                labelStyle={styles.actionLabel}
+                testID="invite-agent"
+              />
+            </View>
+          )}
+          {agentInviteOpen && (
+            <HullSurface strength="raised" style={styles.invitePanel} testID="invite-agent-flow">
+              <View style={styles.inviteHeading}>
+                <View style={styles.rowCopy}>
+                  <Text style={styles.sectionLabel}>INVITE AGENT</Text>
+                  <Text style={styles.detail}>Choose a Room, then attach a registered agent.</Text>
+                </View>
+                <MonoButton
+                  label="CLOSE"
+                  variant="secondary"
+                  labelStyle={styles.actionLabel}
+                  onPress={() => {
+                    setAgentInviteOpen(false);
+                    setSelectedInviteRoomId(null);
+                    setPairCommand(null);
+                    setAgentInviteNotice(null);
+                  }}
+                />
+              </View>
+              {inviteRooms.length === 0 && working !== 'load-agent-rooms' ? (
+                <Text style={styles.detail}>No attachable Rooms are available.</Text>
+              ) : (
+                <View style={styles.inviteList}>
+                  <Text style={styles.sectionLabel}>ROOM</Text>
+                  {inviteRooms.map((chat) => {
+                    const selected = chat.room.id === selectedInviteRoomId;
+                    return (
+                      <TouchableOpacity
+                        key={chat.room.id}
+                        disabled={busy}
+                        onPress={() => void chooseInviteRoom(chat)}
+                        style={[styles.inviteRow, selected && styles.inviteRowSelected]}
+                        testID={`invite-agent-room-${chat.room.id}`}
+                      >
+                        <Text style={styles.name}>#{chat.room.name}</Text>
+                        <Text style={styles.choiceText}>{selected ? 'SELECTED' : 'SELECT'}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+              {selectedInviteRoomId && surface.agents.length > 0 && (
+                <View style={styles.inviteList}>
+                  <Text style={styles.sectionLabel}>WORKSPACE AGENT</Text>
+                  {surface.agents.map((agent) => (
+                    <View key={agent.identity.pubkey} style={styles.inviteRow}>
+                      <View style={styles.inviteIdentity}>
+                        <IdentityMark
+                          kind="agent"
+                          seed={agent.identity.pubkey}
+                          avatarUrl={agent.identity.avatar}
+                          name={agent.identity.name}
+                          size={28}
+                          alive={agent.presence?.status === 'online'}
+                        />
+                        <Text style={styles.name}>{agent.identity.name}</Text>
+                      </View>
+                      <MonoButton
+                        label={
+                          attachingAgentPubkey === agent.identity.pubkey ? 'ATTACHING' : 'ATTACH'
+                        }
+                        loading={attachingAgentPubkey === agent.identity.pubkey}
+                        disabled={busy}
+                        variant="secondary"
+                        labelStyle={styles.actionLabel}
+                        onPress={() => void attachAgent(agent.identity.pubkey)}
+                        testID={`invite-agent-${agent.identity.pubkey}`}
+                      />
+                    </View>
+                  ))}
+                </View>
+              )}
+              {agentInviteNotice && (
+                <Text style={styles.success} testID="invite-agent-success">
+                  {agentInviteNotice}
+                </Text>
+              )}
+              <View style={styles.pairingSection}>
+                <Text style={styles.sectionLabel}>NEW AGENT</Text>
+                <MonoButton
+                  label={working === 'pair-agent' ? 'CREATING CODE' : 'PAIR NEW AGENT'}
+                  loading={working === 'pair-agent'}
+                  disabled={busy}
+                  onPress={() => void pairNewAgent()}
+                  variant="secondary"
+                  labelStyle={styles.actionLabel}
+                  testID="pair-new-agent"
+                />
+                {pairCommand && (
+                  <View style={styles.commandList}>
+                    <Text style={styles.detail}>Run these where the new agent will live.</Text>
+                    <TouchableOpacity
+                      accessibilityLabel="Copy install command"
+                      onPress={() => void copyText(INSTALL_COMMAND)}
+                      style={styles.commandRow}
+                    >
+                      <Text selectable style={styles.command}>
+                        {INSTALL_COMMAND}
+                      </Text>
+                      <Text style={styles.copy}>COPY</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      accessibilityLabel="Copy pairing command"
+                      onPress={() => void copyText(pairCommand)}
+                      style={styles.commandRow}
+                    >
+                      <Text selectable style={styles.command} testID="pair-agent-command">
+                        {pairCommand}
+                      </Text>
+                      <Text style={styles.copy}>COPY</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.expiry}>
+                      EXPIRES{' '}
+                      {pairExpiresAt ? new Date(pairExpiresAt * 1000).toLocaleTimeString() : 'SOON'}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </HullSurface>
+          )}
           <View style={styles.section} testID="members-people-section">
             <View style={styles.sectionHeading}>
-              <Text style={styles.sectionLabel}>People</Text>
+              <Text style={styles.sectionLabel}>PEOPLE</Text>
               <Text style={styles.count} testID="members-people-count">
                 {surface.members.length}
               </Text>
-              {canManage && (
-                <MonoButton
-                  label={working === 'invite-person' ? 'CREATING INVITE' : 'INVITE PERSON'}
-                  loading={working === 'invite-person'}
-                  disabled={busy}
-                  onPress={() => void invitePerson()}
-                  variant="secondary"
-                  style={styles.sectionAction}
-                  testID="invite-person"
-                />
-              )}
             </View>
             {surface.members.map((member) => {
               const editable = canChangeRole(
@@ -686,14 +936,14 @@ const styles = StyleSheet.create((theme) => {
     errorPanel: { padding: 9 },
     error: { ...Typography.default(), color: hull.danger, fontSize: 11, textAlign: 'center' },
     content: { padding: 14, gap: 16, paddingBottom: 40 },
-    section: { borderWidth: StyleSheet.hairlineWidth, borderColor: hull.border },
+    memberActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+    actionLabel: { ...Typography.mono('semiBold'), fontSize: 10, letterSpacing: 0.7 },
+    section: {},
     sectionHeading: {
-      minHeight: 42,
-      paddingHorizontal: 12,
+      minHeight: 30,
       gap: 10,
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: hull.bgRaised,
     },
     sectionLabel: {
       ...Typography.mono('semiBold'),
@@ -701,15 +951,14 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 9,
       letterSpacing: 0.8,
     },
-    sectionAction: { marginLeft: 'auto' },
     row: {
       minHeight: 62,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 11,
       paddingHorizontal: 12,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
     },
     rowCopy: { flex: 1, minWidth: 0 },
     name: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 14 },
@@ -730,6 +979,42 @@ const styles = StyleSheet.create((theme) => {
     choiceActive: { borderColor: hull.chrome, backgroundColor: hull.bgPressed },
     choiceDisabled: { opacity: 0.35 },
     choiceText: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 9 },
+    invitePanel: { padding: 12, gap: 12 },
+    inviteHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    inviteList: { gap: 0 },
+    inviteRow: {
+      minHeight: 52,
+      paddingVertical: 6,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
+    },
+    inviteRowSelected: { backgroundColor: hull.bgPressed },
+    inviteIdentity: { flexDirection: 'row', alignItems: 'center', gap: 9, minWidth: 0 },
+    success: { ...Typography.default(), color: hull.textPrimary, fontSize: 12 },
+    pairingSection: {
+      gap: 8,
+      paddingTop: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    commandList: { gap: 7 },
+    commandRow: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 9,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+      borderRadius: 3,
+    },
+    command: { ...Typography.mono(), color: hull.textPrimary, fontSize: 10, flex: 1 },
+    copy: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 9 },
+    expiry: { ...Typography.mono(), color: hull.textMuted, fontSize: 9 },
     detailPanel: { padding: 14, gap: 12 },
     detailHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     modelSection: { gap: 8 },

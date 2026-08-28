@@ -21,13 +21,15 @@ env:
       id: room-list
     timeout: 10000
 - assertVisible:
-    id: workspace-avatar-${SMOKE_WORKSPACE_ID}
+    id: workspace-active-${SMOKE_WORKSPACE_ID}
 - assertVisible: Buzzy Maestro Smoke Workspace
 
 # 2. Switching to another real Workspace connects and renders. A cold target
 #    has no local cache entry, so the screen legitimately passes through
 #    CONNECTING TO RELAY — but it must LAND on the rendered room list, never
 #    park there, and never surface the error panel.
+- tapOn:
+    id: workspace-avatar-trigger
 - tapOn:
     id: community-rail-${SMOKE_SWITCH_WORKSPACE_ID}
 - extendedWaitUntil:
@@ -40,12 +42,14 @@ env:
 # 3. Switching back proves round-trip navigation and that the original
 #    Workspace identity is still intact after the switch.
 - tapOn:
+    id: workspace-avatar-trigger
+- tapOn:
     id: community-rail-${SMOKE_WORKSPACE_ID}
 - extendedWaitUntil:
     visible:
       id: room-${SMOKE_ROOM_ID}
     timeout: 20000
 - assertVisible:
-    id: workspace-avatar-${SMOKE_WORKSPACE_ID}
+    id: workspace-active-${SMOKE_WORKSPACE_ID}
 - assertVisible: Buzzy Maestro Smoke Workspace
 - assertNotVisible: '! ERROR'

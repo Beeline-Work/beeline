@@ -6,13 +6,15 @@ import {
   resolveAgentPresenceTier,
   type AgentPresence,
   type AgentPresenceTier,
+  type RoomViewAgentTurn,
 } from '@beeline/buzz-client';
-import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 
 export type RoomAgentPresence = AgentPresence & { generationId?: string };
 
 /** Maximum lifetime of reconnect bookkeeping; it never extends the lease verdict. */
 export const AGENT_PRESENCE_BACKGROUND_GRACE_MS = AGENT_PRESENCE_STALE_MS;
+/** A missing terminal receipt must never leave a dead daemon visibly working forever. */
+export const AGENT_TURN_FRESHNESS_MS = 90_000;
 
 /**
  * One tier answer for every surface. Thin over the canonical SDK door so all
@@ -76,6 +78,20 @@ export function nextAgentPresenceTransitionAt(
   return next;
 }
 
+export function nextAgentTurnExpiryAt(
+  turns: readonly RoomViewAgentTurn[],
+  now = Date.now(),
+): number | undefined {
+  let next: number | undefined;
+  for (const turn of turns) {
+    if (turn.status !== 'working') continue;
+    const deadline = turn.createdAt * 1_000 + AGENT_TURN_FRESHNESS_MS;
+    if (!Number.isFinite(deadline) || deadline <= now) continue;
+    next = next === undefined ? deadline : Math.min(next, deadline);
+  }
+  return next;
+}
+
 /**
  * An empty presence map during bootstrap is unknown, not an offline verdict.
  * Only a completed snapshot with a real lease for every Room agent may mark a
@@ -97,14 +113,15 @@ export function isAgentOfflineAfterPresenceResolved(
 
 /** A working turn belongs only to the currently online daemon generation. */
 export function isAgentTurnActive(
-  turn: NonNullable<ChatDisplayMessage['agentTurn']>,
+  turn: RoomViewAgentTurn,
   presence: RoomAgentPresence | undefined,
   now = Date.now(),
   reconnectGraceUntil = 0,
 ): boolean {
-  void now;
   void reconnectGraceUntil;
   if (turn.status !== 'working') return false;
+  const age = now - turn.createdAt * 1_000;
+  if (age < -AGENT_TURN_FRESHNESS_MS || age >= AGENT_TURN_FRESHNESS_MS) return false;
 
   // Turn lifecycle and liveness are independent relay streams. A signed
   // working event is enough to render the Room progress row while the

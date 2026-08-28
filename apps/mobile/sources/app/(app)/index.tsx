@@ -79,7 +79,7 @@ export default function Home() {
     }
 
     // Buzz owns the app root. The replace keeps back navigation from revealing
-    // Happy's retired account landing, including for upgraded authenticated devices.
+    // The app entry always resolves through Beeline identity state.
     return null;
 }
 

@@ -2,8 +2,6 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   getBuzzNotificationTargetFromData,
-  isLegacySessionNotificationData,
-  isLegacySessionNotificationResponse,
   getBuzzChannelIdFromNotificationData,
   navigateToBuzzChannelFromNotification,
   navigateToBuzzNotificationResponse,
@@ -15,52 +13,6 @@ const buzzChatSource = readFileSync(
   'utf8',
 );
 const appLayoutSource = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
-
-describe('isLegacySessionNotificationData', () => {
-  it('recognizes a retired session notification by id', () => {
-    expect(isLegacySessionNotificationData({ sessionId: 'session-123' })).toBe(true);
-  });
-
-  it('ignores notifications without a legacy session target', () => {
-    expect(isLegacySessionNotificationData({ kind: 'done' })).toBe(false);
-  });
-
-  it('ignores empty session ids', () => {
-    expect(isLegacySessionNotificationData({ sessionId: '   ' })).toBe(false);
-  });
-
-  it('recognizes a retired session URL', () => {
-    expect(isLegacySessionNotificationData({ url: '/session/session-123' })).toBe(true);
-  });
-});
-
-describe('isLegacySessionNotificationResponse', () => {
-  it('reads the legacy target from content data', () => {
-    expect(
-      isLegacySessionNotificationResponse({
-        notification: {
-          request: {
-            content: {
-              data: { sessionId: 'session-123' },
-            },
-          },
-        },
-      }),
-    ).toBe(true);
-  });
-
-  it('returns false when content data is missing', () => {
-    expect(
-      isLegacySessionNotificationResponse({
-        notification: {
-          request: {
-            content: {},
-          },
-        },
-      }),
-    ).toBe(false);
-  });
-});
 
 describe('getBuzzChannelIdFromNotificationData', () => {
   it('routes merge approval notifications to their corner instead of a parent Room', () => {

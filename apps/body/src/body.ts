@@ -173,6 +173,7 @@ import {
   type ChangeReviewFile,
   type ChangeReviewArtifact,
   type AgentHistoryEntry,
+  type RoomViewMessage,
   type ParsedDelegationTurn,
   type ParsedDelegationReceipt,
   type DelegationTurnV1,
@@ -1658,6 +1659,36 @@ export const CORNER_CLOSE_TAG = 'buzz-corner-close';
 
 /** Match the six-entry corner-resume window while preventing one huge entry from owning it. */
 export const TURN_CONTEXT_MAX_MESSAGES = CORNER_RESUME_MAX_TURNS;
+
+/**
+ * Convert the server-indexed Room surface into the model's bounded transcript.
+ * The indexer's presentation is the trust boundary: status, activity, and
+ * cards may remain visible in the Room UI, but only durable conversation may
+ * consume one of the model's scarce context slots.
+ */
+export function roomViewConversationHistory(
+  channelId: string,
+  messages: readonly RoomViewMessage[],
+): readonly AgentHistoryEntry[] {
+  return messages
+    .filter((message) => message.presentation === 'message')
+    .map((message) => ({
+      eventId: message.id,
+      channelId,
+      type:
+        message.author.kind === 'agent' ? ('agent-message' as const) : ('human-message' as const),
+      author: {
+        pubkey: message.author.pubkey,
+        kind: message.author.kind,
+        label: message.author.name,
+      },
+      body: message.text,
+      attachments: message.attachments ?? [],
+      createdAt: message.createdAt,
+      provenance: 'relay-verified' as const,
+    }))
+    .slice(-TURN_CONTEXT_MAX_MESSAGES);
+}
 
 /** Render a late-bound, relay-verified history entry for the model prompt. */
 function agentHistoryPrompt(entry: AgentHistoryEntry): string {
@@ -5462,24 +5493,7 @@ export class Body {
       baseUrl: this.config.relayBaseUrl,
       identity: this.agentIdentity,
     }).room(channelId);
-    return view.messages
-      .filter((message) => message.presentation === 'message')
-      .map((message) => ({
-        eventId: message.id,
-        channelId,
-        type:
-          message.author.kind === 'agent' ? ('agent-message' as const) : ('human-message' as const),
-        author: {
-          pubkey: message.author.pubkey,
-          kind: message.author.kind,
-          label: message.author.name,
-        },
-        body: message.text,
-        attachments: message.attachments ?? [],
-        createdAt: message.createdAt,
-        provenance: 'relay-verified' as const,
-      }))
-      .slice(-TURN_CONTEXT_MAX_MESSAGES);
+    return roomViewConversationHistory(channelId, view.messages);
   }
 
   private ensureChannelPresenceCache(channelId: string): Promise<{

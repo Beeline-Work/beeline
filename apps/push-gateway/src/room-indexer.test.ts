@@ -536,6 +536,148 @@ describe('RoomIndexer', () => {
     );
   });
 
+  it('classifies a mixed durable inbox so only human and agent conversation can enter model history', async () => {
+    const inbox = [
+      {
+        id: 'a'.repeat(64),
+        createdAt: 12,
+        pubkey: AGENT,
+        markers: ['body-control'],
+        text: '🤖 Agent session started',
+      },
+      {
+        id: 'b'.repeat(64),
+        createdAt: 13,
+        pubkey: AGENT,
+        markers: ['agent-message', 'buzz-agent-model-unavailable'],
+        text: 'Model unavailable · unavailable-model',
+      },
+      {
+        id: 'c'.repeat(64),
+        createdAt: 14,
+        pubkey: AGENT,
+        markers: ['github-event'],
+        extraTags: [
+          ['service', 'beeline-events'],
+          ['github-event-type', 'pull-request'],
+          ['github-event-action', 'merged'],
+          ['github-event-actor', 'lena'],
+          ['github-event-title', 'Ship the card'],
+          ['github-event-url', 'https://github.com/acme/widget/pull/42'],
+          ['github-event-id', '42'],
+        ],
+        text: '',
+      },
+      {
+        id: 'd'.repeat(64),
+        createdAt: 15,
+        pubkey: AGENT,
+        markers: ['github-event-health'],
+        text: 'GitHub polling degraded',
+      },
+      {
+        id: 'e'.repeat(64),
+        createdAt: 16,
+        pubkey: AGENT,
+        markers: ['agent-message', 'steer-queued'],
+        text: 'Steer queued for the active turn.',
+      },
+      {
+        id: 'f'.repeat(64),
+        createdAt: 17,
+        pubkey: AGENT,
+        markers: ['factory-permission-execution'],
+        text: 'Permission execution acknowledged',
+      },
+      {
+        id: '7'.repeat(64),
+        createdAt: 17,
+        pubkey: AGENT,
+        markers: ['agent-message', 'land-summary'],
+        text: 'Landed the checksum corner.',
+      },
+      {
+        id: '6'.repeat(64),
+        createdAt: 17,
+        pubkey: AGENT,
+        markers: ['agent-message', 'ci-result'],
+        text: 'CI passed for the landed checksum.',
+      },
+      {
+        id: '5'.repeat(64),
+        createdAt: 17,
+        pubkey: AGENT,
+        markers: ['agent-message', 'buzz-agent-exchange'],
+        text: 'A peer agent confirmed the checksum.',
+      },
+      {
+        id: '9'.repeat(64),
+        createdAt: 18,
+        pubkey: VIEWER,
+        markers: [],
+        text: 'Captain: you are my chief of staff.',
+      },
+      {
+        id: '8'.repeat(64),
+        createdAt: 19,
+        pubkey: AGENT,
+        markers: ['agent-message'],
+        text: 'I will maintain the launch checklist.',
+      },
+    ];
+    for (const item of inbox) {
+      await postgres.query(
+        `INSERT INTO events
+          (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+         VALUES ($1, $2, $3, to_timestamp($4), 9, $5, $6, $7)`,
+        [
+          TENANT,
+          bytes(item.id),
+          bytes(item.pubkey),
+          item.createdAt,
+          JSON.stringify([
+            ['h', ROOM],
+            ...item.markers.map((marker) => ['t', marker]),
+            ...('extraTags' in item ? item.extraTags : []),
+          ]),
+          item.text,
+          ROOM,
+        ],
+      );
+    }
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+    const modelConversation = view?.messages
+      .filter((message) => message.presentation === 'message')
+      .map((message) => message.text);
+
+    expect(modelConversation).toEqual([
+      'Hello',
+      'Ready',
+      'A peer agent confirmed the checksum.',
+      'Captain: you are my chief of staff.',
+      'I will maintain the launch checklist.',
+    ]);
+    expect(view?.messages).not.toContainEqual(
+      expect.objectContaining({ text: '🤖 Agent session started' }),
+    );
+    for (const text of [
+      'Model unavailable · unavailable-model',
+      'GitHub polling degraded',
+      'Steer queued for the active turn.',
+      'Permission execution acknowledged',
+      'Landed the checksum corner.',
+      'CI passed for the landed checksum.',
+    ]) {
+      expect(view?.messages).toContainEqual(
+        expect.objectContaining({ text, presentation: 'system' }),
+      );
+    }
+    expect(view?.messages).toContainEqual(
+      expect.objectContaining({ id: 'c'.repeat(64), presentation: 'card' }),
+    );
+  });
+
   it('projects only complete typed GitHub cards without a service-publisher roster entry', async () => {
     const service = 'd'.repeat(64);
     await postgres.query(

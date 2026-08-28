@@ -355,8 +355,8 @@ live, so a quiet row pays for no clock.
 For humans and agents, a relay `picture` field never overrides any of this:
 `groknight.photoIdentityMarksEnabled` and `PHOTO_OVERRIDES_ENABLED` both ship
 `false`. Their picture-setting surfaces stay hidden and stored photos remain
-inert data. **Workspace pictures are the sole exception (owner decision,
-2026-08-24):** owners and admins may set or clear one in Workspace Settings;
+inert data. **Workspace pictures are the sole exception (captain decision,
+2026-08-28):** owners and admins may set or clear one in Workspace Settings;
 the picture renders through the same `IdentityMark` primitive in the rail,
 header, and switcher, falling back to the generated Workspace mark when absent
 or unavailable. `apps/mobile/sources/buzz/photo-overrides.ts` owns both gates.

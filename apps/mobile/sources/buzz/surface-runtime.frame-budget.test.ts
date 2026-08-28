@@ -57,7 +57,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
-  it('paints a send without walking or sorting the loaded server transcript', () => {
+  it('keeps an optimistic send in a constant-size partition until the screen merges it by time', () => {
     const durable = Array.from({ length: 1_000 }, (_, index) => ({
       id: `durable-${index}`,
       text: `Loaded Room message ${index}`,

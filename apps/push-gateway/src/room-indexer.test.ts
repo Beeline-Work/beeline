@@ -274,6 +274,44 @@ describe('RoomIndexer', () => {
     ]);
   });
 
+  it('projects a model-unavailable event as a visible system line', async () => {
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(12), 9, $4, $5, $6)`,
+      [
+        TENANT,
+        bytes('e'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'buzz-agent-model-unavailable'],
+          ['status', 'model-unavailable'],
+          ['unavailable', 'model'],
+          ['unavailable-value', 'openrouter-ox/z-ai/glm-5.3-flash'],
+        ]),
+        'Model unavailable · openrouter-ox/z-ai/glm-5.3-flash',
+        ROOM,
+      ],
+    );
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+    const history = await indexer.readHistory(ROOM, VIEWER);
+
+    expect(view?.messages).toContainEqual(
+      expect.objectContaining({
+        text: 'Model unavailable · openrouter-ox/z-ai/glm-5.3-flash',
+        presentation: 'system',
+      }),
+    );
+    expect(history?.messages).toContainEqual(
+      expect.objectContaining({
+        text: 'Model unavailable · openrouter-ox/z-ai/glm-5.3-flash',
+        presentation: 'system',
+      }),
+    );
+  });
+
   it('owns read marks on the server across devices and viewers without a second Room query', async () => {
     await expect(indexer.readChats(WORKSPACE, VIEWER)).resolves.toMatchObject({
       chats: [{ room: { id: ROOM }, unread: true }],

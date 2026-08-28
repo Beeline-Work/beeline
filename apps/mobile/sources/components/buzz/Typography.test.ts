@@ -17,6 +17,7 @@ const sources = [
   './HeaderLadder.tsx',
   './Ledger.tsx',
   './RoomDeckComposeMenu.tsx',
+  './RoomRosterSheet.tsx',
   './SettingsNavigationRow.tsx',
 ];
 

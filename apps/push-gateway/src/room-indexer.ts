@@ -71,6 +71,7 @@ function agentSoulLateralSql(
     WHERE ${declarationAlias}.content IS NOT NULL
       AND e.community_id = ${identityAlias}.community_id
       AND e.kind = 30078 AND e.deleted_at IS NULL
+      AND pg_input_is_valid(e.content, 'jsonb')
       AND e.d_tag = ${workspaceIdSql} || ':' || ${pubkeySql}
       AND e.tags @> '[["t", "buzz-agent-soul"]]'::jsonb
       AND e.tags @> jsonb_build_array(jsonb_build_array('h', ${workspaceIdSql}))
@@ -99,7 +100,8 @@ function agentSoulsCteSql(
       AND e.kind = 30078 AND e.deleted_at IS NULL
     JOIN agent_declarations agent ON agent.community_id = e.community_id
       AND e.d_tag = ${workspaceIdSql} || ':' || encode(agent.pubkey, 'hex')
-    WHERE e.tags @> '[["t", "buzz-agent-soul"]]'::jsonb
+    WHERE pg_input_is_valid(e.content, 'jsonb')
+      AND e.tags @> '[["t", "buzz-agent-soul"]]'::jsonb
       AND e.tags @> jsonb_build_array(jsonb_build_array('h', ${workspaceIdSql}))
       AND e.tags @> jsonb_build_array(jsonb_build_array('community', ${workspaceIdSql}))
       AND e.tags @> jsonb_build_array(jsonb_build_array('p', encode(agent.pubkey, 'hex')))
@@ -371,7 +373,8 @@ UNION ALL
 SELECT 'member', jsonb_build_object(
   'pubkey', encode(r.pubkey, 'hex'), 'role', r.role,
   'name', ${resolvedIdentityNameSql('r', 'agent_content', 'human_name')},
-  'handle', r.nip05_handle, 'avatar', COALESCE(r.agent_content::jsonb->>'avatar', r.avatar_url),
+  'handle', r.nip05_handle, 'avatar', COALESCE(r.soul_content::jsonb->>'avatar',
+    r.agent_content::jsonb->>'avatar', r.avatar_url),
   'agent', r.agent_content IS NOT NULL,
   'presenceStatus', r.presence_status, 'presenceObservedAt', r.observed_at,
   'presenceRoomId', r.room_id, 'kindTotal', r.kind_total
@@ -589,6 +592,7 @@ WITH authorized AS (
       AND author.channel_id = s.workspace_id AND author.pubkey = e.pubkey
       AND author.removed_at IS NULL
     WHERE e.community_id = s.community_id AND e.kind = 30078 AND e.deleted_at IS NULL
+      AND pg_input_is_valid(e.content, 'jsonb')
       AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
         WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-model-config')
       AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) d
@@ -599,11 +603,13 @@ WITH authorized AS (
 SELECT 'agent' AS section, jsonb_build_object(
   'workspaceId', s.workspace_id, 'pubkey', s.pubkey, 'role', s.role,
   'name', ${resolvedIdentityNameSql('s', 'content', 'human_name')},
-  'handle', s.nip05_handle, 'avatar', COALESCE(s.content::jsonb->>'avatar', s.avatar_url),
+  'handle', s.nip05_handle, 'avatar', COALESCE(s.soul_content::jsonb->>'avatar',
+    s.content::jsonb->>'avatar', s.avatar_url),
   'agent', true
 ) AS data FROM selected s
 UNION ALL SELECT 'catalog', jsonb_build_object('content', c.content) FROM catalog c
-UNION ALL SELECT 'config', jsonb_build_object('content', c.content) FROM config c;
+UNION ALL SELECT 'config', jsonb_build_object('content', c.content) FROM config c
+UNION ALL SELECT 'soul', jsonb_build_object('content', s.soul_content) FROM selected s;
 `;
 
 const INVITE_SQL = `
@@ -1240,6 +1246,14 @@ const HIDDEN_MARKERS = new Set([
   'buzz-delegation-receipt',
 ]);
 
+/** Durable machine-authored Room lines that the client renders as status text. */
+const SYSTEM_MARKERS = new Set([
+  'buzz-agent-model-unavailable',
+  'buzz-work-schedule-paused',
+  'steer-queued',
+  'slash-command-notice',
+]);
+
 function projectEvent(data: Json, channelId: string): RoomViewMessage | undefined {
   const eventTags = tags(data.tags);
   const markers = markerSet(eventTags);
@@ -1390,11 +1404,7 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     return { ...base, presentation: 'card', corner: { id: cornerId, status } };
   }
 
-  if (
-    markers.has('buzz-work-schedule-paused') ||
-    markers.has('steer-queued') ||
-    markers.has('slash-command-notice')
-  ) {
+  if ([...markers].some((candidate) => SYSTEM_MARKERS.has(candidate))) {
     return { ...base, presentation: 'system' };
   }
   if ([...markers].some((candidate) => candidate.startsWith('buzz-'))) {
@@ -1794,6 +1804,28 @@ export class RoomIndexer {
     if (!agentData) return null;
     const catalog = safeJson(text(rowData(rows, 'catalog')?.content) ?? '') ?? {};
     const config = safeJson(text(rowData(rows, 'config')?.content) ?? '') ?? {};
+    const soulContent = safeJson(text(rowData(rows, 'soul')?.content) ?? '') ?? {};
+    const soulName = text(soulContent.name);
+    const soulInstructions =
+      text(soulContent.soul) ??
+      [
+        text(soulContent.personality) ? `Personality: ${text(soulContent.personality)}` : undefined,
+        text(soulContent.intent) ? `Intent: ${text(soulContent.intent)}` : undefined,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join('\n\n');
+    const soulAvatarSeed = text(soulContent.avatarSeed);
+    const soulAvatar = text(soulContent.avatar);
+    const safeSoulAvatar = soulAvatar && /^https?:\/\//i.test(soulAvatar) ? soulAvatar : undefined;
+    const soul =
+      soulName && soulInstructions && soulAvatarSeed
+        ? {
+            name: soulName,
+            instructions: soulInstructions,
+            avatarSeed: soulAvatarSeed,
+            ...(safeSoulAvatar ? { avatar: safeSoulAvatar } : {}),
+          }
+        : undefined;
     const options = Array.isArray(catalog.options)
       ? catalog.options.flatMap((candidate) => {
           const option = json(candidate);
@@ -1832,9 +1864,14 @@ export class RoomIndexer {
     return {
       workspaceId,
       agent: {
-        identity: identity(agentData),
+        identity: identity({
+          ...agentData,
+          ...(soul ? { name: soul.name } : {}),
+          ...(soul?.avatar ? { avatar: soul.avatar } : {}),
+        }),
         role: agentData.role === 'owner' || agentData.role === 'admin' ? agentData.role : 'member',
       },
+      ...(soul ? { soul } : {}),
       catalog: options,
       ...(Object.keys(runtimeSelection).length ? { runtimeSelection } : {}),
       ...(Object.keys(selectedSelection).length ? { selected: selectedSelection } : {}),

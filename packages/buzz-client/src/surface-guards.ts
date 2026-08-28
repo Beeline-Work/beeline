@@ -645,6 +645,7 @@ export function isCornerListView(value: unknown): value is CornerListView {
 
 export function isAgentDetailView(value: unknown): value is AgentDetailView {
   const item = record(value);
+  const soul = item?.soul === undefined ? undefined : record(item.soul);
   return Boolean(
     item &&
     typeof item.workspaceId === 'string' &&
@@ -654,6 +655,15 @@ export function isAgentDetailView(value: unknown): value is AgentDetailView {
     Array.isArray(item.catalog) &&
     item.catalog.length <= 100 &&
     item.catalog.every(modelOption) &&
+    (soul === undefined ||
+      (soul !== null &&
+        typeof soul.name === 'string' &&
+        soul.name.length > 0 &&
+        typeof soul.instructions === 'string' &&
+        soul.instructions.length > 0 &&
+        typeof soul.avatarSeed === 'string' &&
+        soul.avatarSeed.length > 0 &&
+        (soul.avatar === undefined || httpUrl(soul.avatar)))) &&
     (item.runtimeSelection === undefined || modelSelection(item.runtimeSelection)) &&
     (item.selected === undefined || modelSelection(item.selected)) &&
     watchFilters(item.watchFilters),

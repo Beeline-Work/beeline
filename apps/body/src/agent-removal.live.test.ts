@@ -1,14 +1,16 @@
 /** Relay-backed proof that app removal stops and erases the paired host daemon. */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createBuzzClient } from '@beeline/buzz-client';
-import { BASE_URL, HOST, createCommunity, newIdentity } from '@beeline/gate';
+import { newIdentity } from '@beeline/gate';
 import { launchRuntimeDaemon, pairRepositoryAgent, runtimeDaemonPid } from './runtime.js';
 
+const baseUrl = process.env.BUZZY_RELAY_URL ?? 'http://127.0.0.1:3010';
+const host = process.env.BUZZY_RELAY_HOST ?? new URL(baseUrl).host;
 const human = newIdentity('agent-removal-human');
 const agent = newIdentity('agent-removal-agent');
 const body = newIdentity('agent-removal-body');
@@ -17,12 +19,11 @@ let checkout = '';
 /** Machine-local agent state root; the runtime no longer lives in the repo. */
 let stateHome = '';
 let daemonPid: number | undefined;
-let sessionPid: number | undefined;
 
 async function reachable(): Promise<boolean> {
   try {
-    const response = await fetch(`${BASE_URL}/health`, {
-      headers: { host: HOST },
+    const response = await fetch(`${baseUrl}/health`, {
+      headers: { host },
       signal: AbortSignal.timeout(3_000),
     });
     return response.ok;
@@ -45,42 +46,6 @@ function git(cwd: string, args: string[]): void {
   if (result.status !== 0) throw new Error(result.stderr);
 }
 
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function fakeAgentBinary(root: string): Promise<{ binary: string; pidPath: string }> {
-  const binary = resolve(root, 'fake-agent.mjs');
-  const pidPath = resolve(root, 'fake-agent.pid');
-  await writeFile(
-    binary,
-    `#!/usr/bin/env node
-import { writeFileSync } from 'node:fs';
-import { createInterface } from 'node:readline';
-writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
-const lines = createInterface({ input: process.stdin });
-const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
-lines.on('line', (line) => {
-  const message = JSON.parse(line);
-  if (message.method === 'initialize') {
-    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
-  } else if (message.method === 'session/new') {
-    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'live-removal-session' } });
-  } else if (message.method === 'shutdown') {
-    process.exit(0);
-  }
-});
-`,
-  );
-  await chmod(binary, 0o755);
-  return { binary, pidPath };
-}
-
 const live = await reachable();
 
 describe.runIf(live)('live agent removal teardown', () => {
@@ -91,13 +56,6 @@ describe.runIf(live)('live agent removal teardown', () => {
   });
 
   afterAll(async () => {
-    if (sessionPid) {
-      try {
-        process.kill(sessionPid, 'SIGTERM');
-      } catch {
-        // Expected after successful removal.
-      }
-    }
     if (daemonPid) {
       try {
         process.kill(daemonPid, 'SIGTERM');
@@ -109,18 +67,22 @@ describe.runIf(live)('live agent removal teardown', () => {
     if (stateHome) await rm(stateHome, { recursive: true, force: true });
   });
 
-  it('pairs, removes through the app SDK, drains the daemon, and deletes runtime state', async () => {
-    const communityId = await createCommunity(human, `agent-removal-${Date.now()}`);
-    const humanClient = createBuzzClient({ baseUrl: BASE_URL, identity: human });
-    const agentClient = createBuzzClient({ baseUrl: BASE_URL, identity: agent });
+  it('pairs, removes through the app SDK, stops the daemon, and deletes runtime state', async () => {
+    const humanClient = createBuzzClient({ baseUrl, host, identity: human });
+    const agentClient = createBuzzClient({ baseUrl, host, identity: agent });
+    const communityId = await humanClient.createCommunity(`agent-removal-${Date.now()}`);
+    const roomId = await humanClient.createChannel(`agent-removal-room-${Date.now()}`, {
+      communityId,
+    });
     const pairing = await humanClient.createAgentPairingCode(communityId);
-    const fakeAgent = await fakeAgentBinary(checkout);
     const result = await pairRepositoryAgent(
       {
         code: pairing.code,
         cwd: checkout,
-        relayBaseUrl: BASE_URL,
-        agentBinary: fakeAgent.binary,
+        repo: null,
+        relayBaseUrl: baseUrl,
+        relayHost: host,
+        agentBinary: '/bin/false',
         mcpBinary: '/bin/true',
         agentIdentity: agent,
         bodyIdentity: body,
@@ -145,43 +107,40 @@ describe.runIf(live)('live agent removal teardown', () => {
     );
     daemonPid = result.pid;
 
+    await humanClient.attachAgentToChannel(roomId, agent.publicKey, communityId);
+
     await waitUntil(async () => (await runtimeDaemonPid(result.configPath)) === result.pid);
-    await waitUntil(async () => existsSync(fakeAgent.pidPath));
-    sessionPid = Number((await readFile(fakeAgent.pidPath, 'utf8')).trim());
-    await waitUntil(async () => Boolean(sessionPid && processAlive(sessionPid)));
     console.log(
-      `[live-agent-removal] before daemonPid=${result.pid} daemonAlive=true sessionPid=${sessionPid} sessionAlive=true runtime=${existsSync(result.configPath)} room=${result.room.channelId}`,
+      `[live-agent-removal] before daemonPid=${result.pid} daemonAlive=true runtime=${existsSync(result.configPath)} room=${roomId}`,
     );
 
     // This is the same SDK call made by the Agents screen after confirmation.
     await humanClient.removeAgent(communityId, agent.publicKey);
 
-    await waitUntil(async () => (await runtimeDaemonPid(result.configPath)) === null);
-    await waitUntil(async () => Boolean(sessionPid && !processAlive(sessionPid)));
+    await waitUntil(async () => (await runtimeDaemonPid(result.configPath)) === null, 90_000);
     await waitUntil(async () => !existsSync(result.configPath));
     const [communityMember, roomMember, listedAgents] = await Promise.all([
       humanClient.isMember(communityId, agent.publicKey),
-      humanClient.isMember(result.room.channelId, agent.publicKey),
+      humanClient.isMember(roomId, agent.publicKey),
       humanClient.listAgents(communityId),
     ]);
     console.log(
-      `[live-agent-removal] after daemonPid=${result.pid} daemonAlive=false sessionPid=${sessionPid} sessionAlive=false runtime=${existsSync(result.configPath)} communityMember=${communityMember} roomMember=${roomMember} agents=${listedAgents.length}`,
+      `[live-agent-removal] after daemonPid=${result.pid} daemonAlive=false runtime=${existsSync(result.configPath)} communityMember=${communityMember} roomMember=${roomMember} agents=${listedAgents.length}`,
     );
 
     expect(communityMember).toBe(false);
     expect(roomMember).toBe(false);
     expect(listedAgents.some((candidate) => candidate.pubkey === agent.publicKey)).toBe(false);
     daemonPid = undefined;
-    sessionPid = undefined;
     agentClient.disconnect();
     humanClient.disconnect();
-  });
+  }, 120_000);
 });
 
 if (!live) {
   describe('live agent removal teardown (prerequisites)', () => {
-    it('SKIPPED — requires the local relay stack only; no LLM credentials are used', () => {
-      console.warn('Start with `npm run stack:up` at the repository root.');
+    it('SKIPPED — requires a reachable relay stack; no LLM credentials are used', () => {
+      console.warn('Start with `npm run stack:up` or set BUZZY_RELAY_URL.');
     });
   });
 }

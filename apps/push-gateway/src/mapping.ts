@@ -16,6 +16,8 @@ export interface PushNotificationPlan {
 
 export interface NotificationContext {
   roomName?: string;
+  /** Stable profile handle when one is available; `senderName` remains the display fallback. */
+  senderHandle?: string;
   senderName?: string;
   /** Current display name of a destination corner's parent Room, resolved from relay truth. */
   parentRoomName?: string;
@@ -44,7 +46,7 @@ export interface NotificationFormattingOptions {
 }
 
 export type PushNotificationType =
-  'mention' | 'direct-message' | 'merge-approval-request' | 'agent-question' | 'agent-attention';
+  'mention' | 'direct-message' | 'merge-approval-request' | 'actionable-failure';
 
 const MESSAGE_PREVIEW_LENGTH = 120;
 function normalizedDisplayText(value: string | undefined, maxLength: number): string | undefined {
@@ -69,21 +71,18 @@ export function mentionsMember(event: NostrEvent, recipientPubkey: string): bool
   return event.kind === 9 && tagValues(event, 'p').includes(recipientPubkey);
 }
 
-/** A new agent-authored fact that changes a corner from working to waiting on a person. */
-export function isWaitingOnHumanEvent(event: NostrEvent): boolean {
+/**
+ * A terminal failure is interrupt-worthy only when its publisher explicitly
+ * says automatic recovery is blocked. Broad `needs-attention` narration and
+ * agent questions are intentionally ordinary in-app Room activity.
+ */
+export function isActionableHumanFailureEvent(event: NostrEvent): boolean {
   if (event.kind !== 9) return false;
   const markers = tagValues(event, 't');
   // Repository activity is ambient Room content even when an issue title or
   // review comment happens to contain a question mark. It never pages a phone.
   if (markers.includes('github-event')) return false;
-  const mergeReady =
-    markers.includes('body-control') &&
-    Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
-  const needsAttention =
-    tagValue(event, 'display-status') === 'needs-attention' ||
-    tagValue(event, 'status') === 'needs-attention';
-  const agentQuestion = markers.includes('agent-message') && /\?/.test(event.content);
-  return mergeReady || needsAttention || agentQuestion;
+  return tagValues(event, 'status').includes('failed') && tagValue(event, 'retry') === 'blocked';
 }
 
 const FIXTURE_NAME_PATTERNS = [
@@ -178,11 +177,11 @@ export function mapEventToNotification(
   if (markers.includes('github-event')) return null;
   const isMergeRequest =
     markers.includes('body-control') &&
+    markers.includes('merge-ready') &&
     Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
   const mentioned = options.recipientMentioned === true;
-  const question = markers.includes('agent-message') && /\?/.test(event.content);
-  const waitingOnHuman = isWaitingOnHumanEvent(event);
-  if (!mentioned && !context.isDirectMessage && !waitingOnHuman) return null;
+  const actionableFailure = isActionableHumanFailureEvent(event);
+  if (!mentioned && !context.isDirectMessage && !isMergeRequest && !actionableFailure) return null;
   const attentionTarget = tagValue(event, 'subchannel') ?? channelId;
   const type: PushNotificationType = isMergeRequest
     ? 'merge-approval-request'
@@ -190,15 +189,16 @@ export function mapEventToNotification(
       ? 'mention'
       : context.isDirectMessage
         ? 'direct-message'
-        : question
-          ? 'agent-question'
-          : 'agent-attention';
+        : 'actionable-failure';
   const resolvedRoomName = normalizedDisplayText(context.roomName, 80);
   const roomName = resolvedRoomName ?? 'Room';
   const senderName =
     normalizedDisplayText(context.senderName, 80) ?? fallbackPersonName(event.pubkey);
+  const senderHandle =
+    normalizedDisplayText(context.senderHandle, 80)?.replace(/^@+/, '') ?? senderName;
   const showMessagePreview = options.showMessagePreview ?? true;
   const preview = formatMessagePreview(event.content);
+  const bodyMessage = showMessagePreview && preview ? preview : 'New message';
   const composedTitle = locationTitle(
     normalizedDisplayText(context.parentRoomName, 80),
     normalizedDisplayText(context.cornerName, 80),
@@ -207,12 +207,12 @@ export function mapEventToNotification(
   const cornerId =
     isMergeRequest || context.parentChannelId
       ? channelId
-      : type === 'agent-attention' && attentionTarget !== channelId
+      : type === 'actionable-failure'
         ? attentionTarget
         : undefined;
   const destinationChannelId = cornerId ?? channelId;
   const roomId = context.parentChannelId ?? channelId;
-  const target = isMergeRequest ? 'approval' : type === 'agent-attention' ? 'corner' : 'message';
+  const target = isMergeRequest ? 'approval' : type === 'actionable-failure' ? 'corner' : 'message';
 
   return {
     channelId,
@@ -221,23 +221,7 @@ export function mapEventToNotification(
       : context.isDirectMessage
         ? senderName
         : (composedTitle ?? senderName),
-    body: isMergeRequest
-      ? `Review requested in ${roomName}`
-      : mentioned
-        ? showMessagePreview && preview
-          ? `${senderName} mentioned you: ${preview}`
-          : `${senderName} mentioned you`
-        : context.isDirectMessage
-          ? showMessagePreview && preview
-            ? preview
-            : `New direct message from ${senderName}`
-          : question
-            ? showMessagePreview && preview
-              ? `${senderName} needs your reply: ${preview}`
-              : `${senderName} needs your reply`
-            : showMessagePreview && preview
-              ? `${senderName} needs your attention: ${preview}`
-              : `${senderName} needs your attention`,
+    body: `@${senderHandle}: ${bodyMessage}`,
     data: {
       target,
       roomId,

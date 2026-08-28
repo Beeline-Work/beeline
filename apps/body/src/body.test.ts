@@ -5999,6 +5999,7 @@ describe('Room conversation and permission-gated work intent', () => {
    *  transitionedToCorner exactly as production does. */
   async function replyInRoomWithMidTurnCornerTransition(options: {
     readonly agentText: string;
+    readonly requestMutation?: boolean;
   }): Promise<{ readonly published: NostrEvent[]; readonly eventId: string }> {
     const body = new Body({
       agentBinary: '/nonexistent',
@@ -6012,14 +6013,17 @@ describe('Room conversation and permission-gated work intent', () => {
       autoApprovePermissions: true,
     });
     stubEmptyAgentHistory(body);
+    const published: NostrEvent[] = [];
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     vi.spyOn(client, 'sessionPrompt').mockImplementation(async () => {
-      // The model attempts a repository mutation mid-turn; the daemon's real
-      // permission handler opens an isolated corner for it.
-      await Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'parent-channel', {
-        sessionId: 'readonly-session',
-        toolCall: { kind: 'edit', title: 'str_replace README.md' },
-      });
+      if (options.requestMutation ?? true) {
+        // The model attempts a repository mutation mid-turn; the daemon's real
+        // permission handler opens an isolated corner for it.
+        await Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'parent-channel', {
+          sessionId: 'readonly-session',
+          toolCall: { kind: 'edit', title: 'str_replace README.md' },
+        });
+      }
       return { stopReason: 'end_turn', updates: [], agentText: options.agentText, toolCalls: [] };
     });
     body.registerSession({
@@ -6031,7 +6035,6 @@ describe('Room conversation and permission-gated work intent', () => {
     const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     const event = requestEvent([['p', body.agent.publicKey]], human, 'Fix this in a corner');
     const info = {
-      subchannelId: 'corner-id',
       worktreePath: '/tmp/worktree',
       featureBranch: 'feature/corner',
       role: body.agent,
@@ -6042,6 +6045,7 @@ describe('Room conversation and permission-gated work intent', () => {
       request: { eventId: event.id } as never,
       session: {
         channelId: 'corner-id',
+        parentChannelId: 'parent-channel',
         sessionId: 'edit-session',
         client: editClient,
         mode: 'edit' as const,
@@ -6049,12 +6053,24 @@ describe('Room conversation and permission-gated work intent', () => {
       lastPolledAt: 1,
       archived: false,
     };
-    vi.spyOn(body, 'openSubchannel').mockResolvedValue(info);
-    // Production openSubchannel registers the corner actor; the reply path
-    // looks it up by triggering request id to name the corner.
-    (Reflect.get(body, 'subchannels') as Map<string, unknown>).set('corner-id', info);
+    vi.spyOn(body, 'openSubchannel').mockImplementation(async () => {
+      // Exercise the production relay-record writer while avoiding the git
+      // worktree and ACP setup that openSubchannel performs afterwards.
+      const subchannelId = await createAgentSubchannel(
+        body.agent,
+        'parent-channel',
+        'fix-the-retry-loop',
+        human.publicKey,
+        undefined,
+        info.taskDescription,
+      );
+      const registered = { ...info, subchannelId };
+      // Production openSubchannel registers the actor only after the signed
+      // create/member records and the edit session exist.
+      (Reflect.get(body, 'subchannels') as Map<string, unknown>).set(subchannelId, registered);
+      return registered as never;
+    });
     vi.spyOn(body as never, 'startAgentTask' as never).mockImplementation(() => undefined as never);
-    const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
@@ -6103,6 +6119,47 @@ describe('Room conversation and permission-gated work intent', () => {
     // The answer threads to the human request like every other Room reply.
     expect(replies[0]!.tags).toContainEqual(['e', eventId, '', 'reply']);
     expect(replies[0]!.tags).toContainEqual(['h', 'parent-channel']);
+  });
+
+  it('publishes a delegation completion claim only when the turn created signed corner records', async () => {
+    const claim = 'I delegated the implementation into a real Beeline edit corner.';
+    const { published } = await replyInRoomWithMidTurnCornerTransition({ agentText: claim });
+    const create = published.find(
+      (event) =>
+        event.kind === 9007 &&
+        event.tags.some((tag) => tag[0] === 'parent' && tag[1] === 'parent-channel'),
+    );
+    expect(create).toBeDefined();
+    const cornerId = create!.tags.find((tag) => tag[0] === 'h')?.[1];
+    expect(
+      published.some(
+        (event) =>
+          event.kind === 9000 &&
+          event.tags.some((tag) => tag[0] === 'h' && tag[1] === cornerId) &&
+          event.tags.some((tag) => tag[0] === 'p' && tag[1] === human.publicKey),
+      ),
+    ).toBe(true);
+    expect(
+      published.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+      )?.content,
+    ).toBe(claim);
+  });
+
+  it('replaces the captured false completion claim when no corner records exist', async () => {
+    const falseClaim = 'I have now created an active mission and delegated parallel desks.';
+    const { published } = await replyInRoomWithMidTurnCornerTransition({
+      agentText: falseClaim,
+      requestMutation: false,
+    });
+    expect(published.some((event) => event.kind === 9007 || event.kind === 9000)).toBe(false);
+    const reply = published.find((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    );
+    expect(reply?.content).toBe(
+      'No Beeline corner, delegation, or mission record was created, so no delegated work started.',
+    );
+    expect(reply?.content).not.toContain(falseClaim);
   });
 
   it('still announces the corner when the transition turn produced no text', async () => {

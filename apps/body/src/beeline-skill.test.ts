@@ -296,8 +296,17 @@ describe('session-start capability awareness', () => {
   });
 
   it('keeps the recurring compatibility primer compact', () => {
-    expect(BEELINE_CAPABILITIES_PRIMER.split(/\s+/).length).toBeLessThanOrEqual(65);
+    expect(BEELINE_CAPABILITIES_PRIMER.split(/\s+/).length).toBeLessThanOrEqual(110);
     expect(BEELINE_CAPABILITIES_PRIMER).toContain('using-beeline skill');
+  });
+
+  it('makes real corners and record-grounded completion claims cold-session capabilities', () => {
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('open a real edit corner');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('never substitute harness-internal subagents');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain(
+      'Never claim a corner, delegation, mission, or schedule exists',
+    );
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('host message confirms its record');
   });
 
   it('directs unattended monitoring to a schedule plus grant request', () => {

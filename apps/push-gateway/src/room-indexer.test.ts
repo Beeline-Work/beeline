@@ -356,6 +356,46 @@ describe('RoomIndexer', () => {
     }
   });
 
+  it('tombstones retired agent notices before transcript and preview projection', async () => {
+    const stallText =
+      'Still working on this — my coding backend is taking longer than usual to respond.';
+    const roomStallId = '9'.repeat(64);
+    const cornerStallId = '8'.repeat(64);
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES
+        ($1, $2, $3, to_timestamp(20), 9, $4, $5, $6),
+        ($1, $7, $3, to_timestamp(21), 9, $8, $5, $9)`,
+      [
+        TENANT,
+        bytes(roomStallId),
+        bytes(AGENT),
+        JSON.stringify([['h', ROOM], ['t', 'agent-message']]),
+        stallText,
+        ROOM,
+        bytes(cornerStallId),
+        JSON.stringify([['h', CORNER], ['t', 'agent-message']]),
+        CORNER,
+      ],
+    );
+
+    const room = await indexer.readRoom(ROOM, VIEWER);
+    const history = await indexer.readHistory(ROOM, VIEWER);
+    const chats = await indexer.readChats(WORKSPACE, VIEWER);
+    const corners = await indexer.readCorners(ROOM, VIEWER);
+
+    expect(room?.messages.map((message) => message.id)).not.toContain(roomStallId);
+    expect(history?.messages.map((message) => message.id)).not.toContain(roomStallId);
+    expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.latestMessage).toMatchObject({
+      id: directReplyId,
+      text: 'Ready',
+    });
+    expect(corners?.corners.find((corner) => corner.corner.id === CORNER)?.latestMessage).toMatchObject({
+      text: 'Working',
+    });
+  });
+
   it('withholds reply proof from deleted or foreign ancestry', async () => {
     const foreignParentId = 'c'.repeat(64);
     const foreignReplyId = 'd'.repeat(64);

@@ -1332,42 +1332,6 @@ export function postCornerSessionStatus(
   ]);
 }
 
-/**
- * One-time, honest "still working" notice for a turn that has gone quiet for
- * longer than a short idle window, published as an ordinary visible message
- * (same wire shape as any other agent reply) so it renders in the transcript
- * without any client-side changes. This never itself cancels or retries the
- * turn — it only tells the user their agent isn't dead, well before the full
- * idle-cancel timeout would otherwise leave them looking at silence.
- *
- * `replyTo`, when given, MUST name an event in `channelId` itself — a relay
- * rejects a kind:9 reply whose referenced parent lives in a different
- * channel ("parent event belongs to a different channel"). A corner's first
- * turn is triggered by a Room event, not a corner one, so callers with no
- * same-channel parent to thread to must omit it rather than passing a
- * cross-channel id.
- *
- * `replyRootId` is the original NIP-10 thread root. Nested replies must carry
- * it exactly like a completed agent reply does or the relay rejects the event
- * because its root does not match the referenced parent's ancestry.
- */
-export function postAgentStallNotice(
-  channelId: string,
-  owner: Identity,
-  replyTo?: string,
-  replyRootId?: string,
-): Promise<void> {
-  return postAgentMessage(
-    channelId,
-    owner,
-    'Still working on this — my coding backend is taking longer than usual to respond.',
-    replyTo,
-    [],
-    [],
-    replyRootId,
-  );
-}
-
 /** Marker tag on the quiet "your steer is queued" acknowledgement below. */
 export const STEER_QUEUED_TAG = 'steer-queued';
 
@@ -1377,9 +1341,8 @@ export const SLASH_COMMAND_NOTICE_TAG = 'slash-command-notice';
 /**
  * Immediate, lightweight acknowledgement that a message which arrived while a
  * turn was already running has been RECEIVED and will be delivered as the next
- * prompt — never a fabricated agent answer, and deliberately distinct from
- * `postAgentStallNotice` above ("still working" is a statement about the
- * backend's silence; this one is a statement about the human's own input).
+ * prompt — never a fabricated agent answer. It is a statement about the
+ * human's own input, not a status update from the backend.
  *
  * Published as a `body-control` status event rather than an `#t=agent-message`
  * so it renders as a quiet system line and never joins the agent's attributed

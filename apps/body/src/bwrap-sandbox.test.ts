@@ -517,6 +517,21 @@ describe('feature detection falls back rather than failing the daemon', () => {
     expect(result.advisory).toMatch(/No permissions to creating new namespace/);
   });
 
+  it('gives an AppArmor-specific recovery without disabling the host-wide guard', () => {
+    const result = detectBwrapSandbox({
+      env: { PATH: '/usr/bin' },
+      run: () => ({
+        status: 1,
+        stderr:
+          'bwrap: No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces.',
+      }),
+    });
+    expect(result.path).toBeUndefined();
+    expect(result.advisory).toMatch(/Ubuntu AppArmor may be blocking/);
+    expect(result.advisory).toMatch(/Keep the system-wide restriction enabled/);
+    expect(result.advisory).toMatch(/apps\/body\/README\.md/);
+  });
+
   it('honours the runtime.json off-switch without probing at all', () => {
     let probed = false;
     const result = detectBwrapSandbox({

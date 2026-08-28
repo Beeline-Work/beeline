@@ -875,6 +875,35 @@ esac
     expect(smoke).toMatch(/visible: SMOKE AGENT ROOM REPLY\.\*[\s\S]*?timeout: 30000/);
   });
 
+  it('provisions a human-accessible corner and refreshes its canonical working lease', () => {
+    const provisionScript = readFileSync(
+      resolve(mobileRoot, '../../scripts/provision-smoke.ts'),
+      'utf8',
+    );
+    const replyFixture = readFileSync(
+      resolve(mobileRoot, '../../scripts/publish-smoke-replies.ts'),
+      'utf8',
+    );
+    const createCorner = provisionScript.indexOf('await agentClient.createSubchannel(');
+    const addHuman = provisionScript.indexOf(
+      "await agentClient.addMember(cornerId, identity.publicKey, 'member')",
+      createCorner,
+    );
+    const proveHuman = provisionScript.indexOf(
+      'await client.waitUntilMember(cornerId, identity.publicKey)',
+      addHuman,
+    );
+
+    expect(createCorner).toBeGreaterThan(-1);
+    expect(addHuman).toBeGreaterThan(createCorner);
+    expect(proveHuman).toBeGreaterThan(addHuman);
+    expect(replyFixture).toContain('KIND_CORNER_STATE');
+    expect(replyFixture).toContain('TAG_CORNER_STATE');
+    expect(replyFixture).toMatch(
+      /SMOKE KEYBOARD PIN TRIGGER[\s\S]*?publishCornerWorkingState\(\)[\s\S]*?SMOKE CORNER STEER/,
+    );
+  });
+
   it('types a unique valid handle before claiming in every Maestro onboarding flow', () => {
     const provisionScript = readFileSync(resolve(mobileRoot, '../../scripts/provision-smoke.ts'), 'utf8');
     expect(provisionScript).toContain('MAESTRO_SMOKE_HANDLE=smoke-${identity.publicKey.slice(0, 12)}');

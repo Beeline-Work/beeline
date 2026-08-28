@@ -88,7 +88,7 @@ describe('RoomIndexer', () => {
        VALUES
         ($1, $2, 'Builders', 'Workspace about', 'private', $5, to_timestamp(1), to_timestamp(9)),
         ($1, $3, 'Fast Room', 'Room about', 'open', $5, to_timestamp(2), to_timestamp(8)),
-        ($1, $4, 'Agent corner', 'Build it', 'open', $6, to_timestamp(5), to_timestamp(7))`,
+        ($1, $4, 'Agent corner', 'Build it', 'open', $6, to_timestamp(5), to_timestamp(5))`,
       [TENANT, WORKSPACE, ROOM, CORNER, bytes(VIEWER), bytes(AGENT)],
     );
     for (const channelId of [WORKSPACE, ROOM, CORNER]) {
@@ -259,6 +259,7 @@ describe('RoomIndexer', () => {
           presence: { status: 'online', observedAt: 10, roomId: ROOM },
         },
       ],
+      corners: [{ corner: { id: CORNER, updatedAt: 7 }, status: 'working' }],
     });
     expect(view?.messages.map((message) => [message.text, message.author.name])).toEqual([
       ['Hello', 'Ada'],

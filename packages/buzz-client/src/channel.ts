@@ -23,7 +23,11 @@ import {
   TAG_PARENT,
   TAG_ROOM_LIFECYCLE,
 } from './kinds.js';
-import { publishEvent, type AuthenticatedHttpBridgeOptions } from './http.js';
+import {
+  publishEvent,
+  requestQueryEvents,
+  type AuthenticatedHttpBridgeOptions,
+} from './http.js';
 import { isArchivedChannelError } from './archived-channel.js';
 import {
   parseMembersEvent,
@@ -83,9 +87,15 @@ export async function isRegisteredAgentKey(
   ctx: ChannelOpsContext,
   pubkey: string,
 ): Promise<boolean> {
-  const events = await query(ctx, [
-    { kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 20 },
-  ]);
+  // Room creation cannot sign or publish until this authorization check
+  // finishes. Keep its exact filter out of both the live-socket EOSE path and
+  // same-tick screen-read batching: either can be saturated by the concurrent
+  // Room-list refresh even though this one proof is cheap over bounded HTTP.
+  const events = await requestQueryEvents(
+    ctx.http,
+    [{ kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 20 }],
+    ctx.identity.publicKey,
+  );
   return events.some(
     (event) =>
       event.pubkey === pubkey &&
@@ -143,6 +153,8 @@ export async function createChannel(
     parentChannelId?: string;
     communityId?: string;
     repository?: RepositoryBinding;
+    /** Positive publish acknowledgement, before asynchronous relay projection proof. */
+    onPublished?: (channelId: string) => void;
     /** Internal protocol tags for specialized channel shapes such as DMs. */
     extraTags?: string[][];
     /** @deprecated Retained for call-shape compatibility. Room membership is
@@ -176,6 +188,7 @@ export async function createChannel(
   if (opts?.extraTags) tags.push(...opts.extraTags);
   const event = sign(ctx.identity, KIND_CREATE_GROUP, tags);
   await publishEvent(ctx.http, event);
+  opts?.onPublished?.(channelId);
   if (opts?.communityId) {
     // The relay projects the creator as owner. Every other person and agent
     // enters through the explicit invite APIs; Workspace linkage alone never

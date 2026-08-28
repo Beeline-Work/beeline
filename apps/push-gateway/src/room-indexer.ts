@@ -10,6 +10,7 @@ import {
   TAG_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
   TAG_AGENT_THOUGHT,
+  directMessageChannelId,
   normalizeRoomRepositoryContent,
   isAllowedAgentModelConfigCategory,
   parseAttachmentTags,
@@ -44,23 +45,30 @@ const CHAT_PREVIEW_LIMIT = 12;
 const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002] as const;
 
 function profileFilter(identities: readonly RoomViewIdentity[]) {
-  return identities.length ? [{ kinds: [0], authors: [...new Set(identities.map((item) => item.pubkey))] }] : [];
+  return identities.length
+    ? [{ kinds: [0], authors: [...new Set(identities.map((item) => item.pubkey))] }]
+    : [];
 }
 
-function roomFilters(roomId: string, familyIds: readonly string[], members: readonly RoomViewMember[]) {
+function roomFilters(
+  roomId: string,
+  familyIds: readonly string[],
+  members: readonly RoomViewMember[],
+) {
   const h = [...new Set([roomId, ...familyIds])];
   return [
     { kinds: [...DURABLE_KINDS], '#h': h },
     ...profileFilter(members.map((member) => member.identity)),
-    { kinds: [30078], '#d': [
-      `agent-draft:${roomId}`, `agent-thought:${roomId}`, `agent-presence:${roomId}`,
-    ] },
+    {
+      kinds: [30078],
+      '#d': [`agent-draft:${roomId}`, `agent-thought:${roomId}`, `agent-presence:${roomId}`],
+    },
   ];
 }
 
 const ROOM_SQL = `
 WITH candidates AS (
-  SELECT c.community_id, c.id, c.name, c.description, c.created_at, c.updated_at,
+  SELECT c.community_id, c.id, c.name, c.description, c.visibility, c.created_at, c.updated_at,
     c.archived_at, cm.role::text AS viewer_role, encode(cm.pubkey, 'hex') AS viewer_pubkey,
     COALESCE((SELECT tag->>1 FROM jsonb_array_elements(g.tags) tag
       WHERE tag->>0 = 'community' LIMIT 1), c.id::text) AS workspace_id,
@@ -115,7 +123,7 @@ WITH candidates AS (
 )
 SELECT 'room' AS section, jsonb_build_object(
   'id', a.id, 'workspaceId', a.workspace_id, 'parentId', a.parent_id,
-  'name', a.name, 'about', a.description, 'avatar', a.avatar,
+  'name', a.name, 'about', a.description, 'avatar', a.avatar, 'visibility', a.visibility,
   'archived', a.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM a.created_at)::bigint,
   'updatedAt', extract(epoch FROM a.updated_at)::bigint,
@@ -309,6 +317,8 @@ WITH workspace_candidates AS (
     AND e.deleted_at IS NULL AND e.kind = 9
 ), preview_events AS (
   SELECT * FROM preview_ranked WHERE ordinal <= $4
+), latest_events AS (
+  SELECT * FROM preview_ranked WHERE ordinal = 1
 ), member_counts AS (
   SELECT a.community_id, a.id AS room_id, count(*)::bigint AS member_count
   FROM chats a JOIN channel_members cm ON cm.community_id = a.community_id
@@ -378,16 +388,24 @@ LEFT JOIN users u ON u.community_id = w.community_id AND u.pubkey = decode($2, '
 UNION ALL
 SELECT 'chat', jsonb_build_object(
   'id', a.id, 'workspaceId', $1, 'name', a.name, 'about', a.description,
-  'avatar', a.avatar, 'archived', a.archived_at IS NOT NULL,
+  'avatar', a.avatar, 'visibility', a.visibility, 'archived', a.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM a.created_at)::bigint,
   'updatedAt', extract(epoch FROM a.updated_at)::bigint,
   'memberCount', COALESCE(members.member_count, 0),
   'cornerCount', COALESCE(corners.corner_count, 0),
+  'unread', latest.id IS NOT NULL AND (
+    mark.message_created_at IS NULL
+    OR latest.created_at > mark.message_created_at
+    OR (latest.created_at = mark.message_created_at AND latest.id < mark.message_id)
+  ),
   'repositoryName', repo.content::jsonb->>'name'
 ) FROM chats a
 LEFT JOIN member_counts members ON members.community_id = a.community_id AND members.room_id = a.id
 LEFT JOIN corner_counts corners ON corners.community_id = a.community_id AND corners.room_id = a.id
 LEFT JOIN repositories repo ON repo.community_id = a.community_id AND repo.room_id = a.id
+LEFT JOIN latest_events latest ON latest.community_id = a.community_id AND latest.room_id = a.id
+LEFT JOIN beeline_room_read_marks mark ON mark.community_id = a.community_id
+  AND mark.room_id = a.id AND mark.viewer_pubkey = decode($2, 'hex')
 UNION ALL
 SELECT 'preview', jsonb_build_object(
   'roomId', e.room_id, 'id', encode(e.id, 'hex'), 'pubkey', encode(e.pubkey, 'hex'),
@@ -509,7 +527,7 @@ SELECT 'invite' AS section, jsonb_build_object(
 
 const CORNER_LIST_SQL = `
 WITH candidates AS (
-  SELECT c.community_id, c.id, c.name, c.description, c.created_at, c.updated_at,
+  SELECT c.community_id, c.id, c.name, c.description, c.visibility, c.created_at, c.updated_at,
     c.archived_at, cm.role::text AS viewer_role, encode(cm.pubkey, 'hex') AS viewer_pubkey,
     COALESCE((SELECT tag->>1 FROM jsonb_array_elements(g.tags) tag
       WHERE tag->>0 = 'community' LIMIT 1), c.id::text) AS workspace_id,
@@ -570,7 +588,7 @@ WITH candidates AS (
 )
 SELECT 'room' AS section, jsonb_build_object(
   'id', a.id, 'workspaceId', a.workspace_id, 'name', a.name, 'about', a.description,
-  'avatar', a.avatar, 'archived', a.archived_at IS NOT NULL,
+  'avatar', a.avatar, 'visibility', a.visibility, 'archived', a.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM a.created_at)::bigint,
   'updatedAt', extract(epoch FROM a.updated_at)::bigint,
   'viewerRole', a.viewer_role, 'viewerPubkey', a.viewer_pubkey
@@ -578,7 +596,7 @@ SELECT 'room' AS section, jsonb_build_object(
 UNION ALL
 SELECT 'corner', jsonb_build_object(
   'id', c.id, 'workspaceId', a.workspace_id, 'parentId', a.id,
-  'name', c.name, 'about', COALESCE(c.description, c.task),
+  'name', c.name, 'about', COALESCE(c.description, c.task), 'visibility', c.visibility,
   'archived', c.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM c.created_at)::bigint,
   'updatedAt', extract(epoch FROM c.updated_at)::bigint,
@@ -613,9 +631,10 @@ JOIN identities resolved ON resolved.community_id = e.community_id AND resolved.
 
 export const ROOM_PAINT_SQL = `
 WITH candidates AS (
-  SELECT c.community_id, c.id, c.name, c.description, c.created_at, c.updated_at,
+  SELECT c.community_id, c.id, c.name, c.description, c.visibility, c.created_at, c.updated_at,
     c.archived_at, cm.role::text AS viewer_role, encode(cm.pubkey, 'hex') AS viewer_pubkey,
     p.id AS parent_id, p.name AS parent_name, p.description AS parent_description,
+    p.visibility AS parent_visibility,
     p.created_at AS parent_created_at, p.updated_at AS parent_updated_at,
     p.archived_at AS parent_archived_at, g.tags,
     COALESCE((SELECT tag->>1 FROM jsonb_array_elements(g.tags) tag
@@ -651,6 +670,9 @@ WITH candidates AS (
       AND e.deleted_at IS NULL AND e.kind = 9
     ORDER BY e.created_at DESC, e.id ASC LIMIT $3
   ) e ON true
+), newest_message AS (
+  SELECT e.community_id, e.channel_id, e.created_at, e.id FROM page e
+  ORDER BY e.created_at DESC, e.id ASC LIMIT 1
 ), briefing AS (
   SELECT e.* FROM authorized a JOIN LATERAL (
     SELECT e.* FROM events e WHERE e.community_id = a.community_id AND e.channel_id = a.parent_id
@@ -700,15 +722,29 @@ WITH candidates AS (
 SELECT 'room' AS section, jsonb_build_object(
   'id', a.id, 'workspaceId', a.workspace_id, 'parentId', a.parent_id,
   'name', a.name, 'about', COALESCE(a.description, a.task), 'avatar', a.avatar,
+  'visibility', a.visibility,
   'archived', a.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM a.created_at)::bigint,
   'updatedAt', extract(epoch FROM a.updated_at)::bigint,
+  'directMessage', CASE WHEN
+    EXISTS (SELECT 1 FROM jsonb_array_elements(a.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-dm')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(a.tags) t
+      WHERE t->>0 = 'visibility' AND t->>1 = 'private')
+    AND a.parent_id IS NULL
+    THEN jsonb_build_object('participants', (SELECT jsonb_agg(t->>1 ORDER BY t->>1)
+      FROM jsonb_array_elements(a.tags) t WHERE t->>0 = 'p'))
+    ELSE NULL END,
+  '_readMarked', beeline_mark_room_read(
+    a.community_id, a.id, decode($2, 'hex'), newest.created_at, newest.id
+  ),
   'viewerRole', a.viewer_role, 'viewerPubkey', a.viewer_pubkey
-) AS data FROM authorized a
+) AS data FROM authorized a LEFT JOIN newest_message newest ON true
 UNION ALL
 SELECT 'parent', jsonb_build_object(
   'id', a.parent_id, 'workspaceId', a.workspace_id, 'name', a.parent_name,
-  'about', a.parent_description, 'archived', a.parent_archived_at IS NOT NULL,
+  'about', a.parent_description, 'visibility', a.parent_visibility,
+  'archived', a.parent_archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM a.parent_created_at)::bigint,
   'updatedAt', extract(epoch FROM a.parent_updated_at)::bigint
 ) FROM authorized a WHERE a.parent_id IS NOT NULL
@@ -749,6 +785,7 @@ UNION ALL
 SELECT 'sibling', jsonb_build_object(
   'id', f.id, 'workspaceId', a.workspace_id,
   'parentId', COALESCE(a.parent_id, a.id), 'name', f.name, 'about', f.description,
+  'visibility', f.visibility,
   'archived', f.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM f.created_at)::bigint,
   'updatedAt', extract(epoch FROM f.updated_at)::bigint,
@@ -850,15 +887,15 @@ function tag(values: readonly string[][], name: string): string | undefined {
 
 function markerSet(values: readonly string[][]): Set<string> {
   return new Set(
-    values.flatMap((candidate) =>
-      candidate[0] === 't' && candidate[1] ? [candidate[1]] : [],
-    ),
+    values.flatMap((candidate) => (candidate[0] === 't' && candidate[1] ? [candidate[1]] : [])),
   );
 }
 
 function identity(data: Json): RoomViewIdentity {
   const pubkey = String(data.pubkey ?? '');
-  const fallback = pubkey ? `${data.agent === true ? 'Agent' : 'Person'} ${pubkey.slice(0, 8)}` : 'Unknown';
+  const fallback = pubkey
+    ? `${data.agent === true ? 'Agent' : 'Person'} ${pubkey.slice(0, 8)}`
+    : 'Unknown';
   return {
     pubkey,
     kind: data.agent === true ? 'agent' : 'human',
@@ -876,6 +913,14 @@ function header(data: Json): RoomViewHeader {
     name: text(data.name) ?? 'ROOM',
     ...(text(data.about) ? { about: text(data.about) } : {}),
     ...(text(data.avatar) ? { avatar: text(data.avatar) } : {}),
+    ...(text(data.visibility)
+      ? {
+          visibility:
+            data.visibility === 'open' || data.visibility === 'public'
+              ? ('public' as const)
+              : ('invite-only' as const),
+        }
+      : {}),
     archived: data.archived === true,
     createdAt: integer(data.createdAt),
     updatedAt: integer(data.updatedAt),
@@ -887,9 +932,8 @@ function workspaceItem(data: Json): ChatListWorkspace {
     id: String(data.id ?? ''),
     name: text(data.name) ?? 'WORKSPACE',
     ...(text(data.avatar) ? { avatar: text(data.avatar) } : {}),
-    visibility: data.visibility === 'private' || data.visibility === 'invite-only'
-      ? 'invite-only'
-      : 'public',
+    visibility:
+      data.visibility === 'private' || data.visibility === 'invite-only' ? 'invite-only' : 'public',
     role: data.role === 'owner' || data.role === 'admin' ? data.role : 'member',
     updatedAt: integer(data.updatedAt),
   };
@@ -919,8 +963,13 @@ function activityDetail(value: unknown): RoomViewActivity | undefined {
         const entry = json(item);
         const verb = text(entry.verb);
         return verb
-          ? [{ verb, ...(text(entry.target) ? { target: text(entry.target) } : {}),
-              ...(text(entry.result) ? { result: text(entry.result) } : {}) }]
+          ? [
+              {
+                verb,
+                ...(text(entry.target) ? { target: text(entry.target) } : {}),
+                ...(text(entry.result) ? { result: text(entry.result) } : {}),
+              },
+            ]
           : [];
       })
     : [];
@@ -944,20 +993,32 @@ function activityDetail(value: unknown): RoomViewActivity | undefined {
     : [];
   return {
     kind,
-    title: text(update.title) ?? (kind === 'tool' ? 'Tool' : kind === 'thinking' ? 'Thinking' : 'Update'),
+    title:
+      text(update.title) ??
+      (kind === 'tool' ? 'Tool' : kind === 'thinking' ? 'Thinking' : 'Update'),
     ...(updateType ? { operation: updateType } : {}),
     ...(text(update.status) ? { status: text(update.status) } : {}),
     ...(typeof update.thoughtMs === 'number' && update.thoughtMs > 0
       ? { thoughtMs: update.thoughtMs }
       : {}),
     ...(Object.keys(rollup).length
-      ? { rollup: Object.fromEntries(Object.entries(rollup).filter(([, count]) =>
-          typeof count === 'number' && Number.isSafeInteger(count) && count >= 0)) as Record<string, number> }
+      ? {
+          rollup: Object.fromEntries(
+            Object.entries(rollup).filter(
+              ([, count]) => typeof count === 'number' && Number.isSafeInteger(count) && count >= 0,
+            ),
+          ) as Record<string, number>,
+        }
       : {}),
     ...(observed.length ? { observed } : {}),
     ...(files.length ? { files } : {}),
     ...(planItems.length
-      ? { plan: { ...(text(rawPlan.objective) ? { objective: text(rawPlan.objective) } : {}), items: planItems } }
+      ? {
+          plan: {
+            ...(text(rawPlan.objective) ? { objective: text(rawPlan.objective) } : {}),
+            items: planItems,
+          },
+        }
       : {}),
   };
 }
@@ -990,33 +1051,44 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     author: eventIdentity,
   };
 
-  if (markers.has(TAG_AGENT_ACTIVITY) || (eventIdentity.kind === 'agent' && safeJson(base.text)?.sessionId)) {
+  if (
+    markers.has(TAG_AGENT_ACTIVITY) ||
+    (eventIdentity.kind === 'agent' && safeJson(base.text)?.sessionId)
+  ) {
     const parsed = safeJson(base.text);
     const update = json(parsed?.update);
-    const candidates = update.sessionUpdate === 'activity_batch' && Array.isArray(update.updates)
-      ? update.updates
-      : [update];
+    const candidates =
+      update.sessionUpdate === 'activity_batch' && Array.isArray(update.updates)
+        ? update.updates
+        : [update];
     const activity = candidates.flatMap((candidate) => {
       const detail = activityDetail(candidate);
       return detail ? [detail] : [];
     });
     if (!activity.length) return undefined;
-    const failed = activity.some((item) => item.status === 'failed') || tag(eventTags, 'status') === 'failed';
+    const failed =
+      activity.some((item) => item.status === 'failed') || tag(eventTags, 'status') === 'failed';
     const merge = tag(eventTags, 'delivery-stage') === 'landed' || markers.has('landed');
     const action = [...markers].some((candidate) =>
-      ['corner-open', 'room-target-branch-realign', 'branch-switch'].includes(candidate));
+      ['corner-open', 'room-target-branch-realign', 'branch-switch'].includes(candidate),
+    );
     return {
       ...base,
       text: '',
       presentation: 'activity',
       activity,
-      ...(failed ? { durableFact: 'failure' as const }
-        : merge ? { durableFact: 'merge' as const }
-          : action ? { durableFact: 'action' as const } : {}),
+      ...(failed
+        ? { durableFact: 'failure' as const }
+        : merge
+          ? { durableFact: 'merge' as const }
+          : action
+            ? { durableFact: 'action' as const }
+            : {}),
     };
   }
 
-  const permissionMarker = markers.has('buzz-write-permission-request') || markers.has('buzz-permission-request');
+  const permissionMarker =
+    markers.has('buzz-write-permission-request') || markers.has('buzz-permission-request');
   if (permissionMarker) {
     const status = tag(eventTags, 'status');
     const agentPubkey = tag(eventTags, 'agent') ?? eventIdentity.pubkey;
@@ -1026,14 +1098,19 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
       permission: {
         permissionId: tag(eventTags, 'permission') ?? base.id,
         requestId: tag(eventTags, 'request') ?? base.id,
-        agent: agentPubkey === eventIdentity.pubkey
-          ? eventIdentity
-          : { pubkey: agentPubkey, kind: 'agent', name: `Agent ${agentPubkey.slice(0, 8)}` },
+        agent:
+          agentPubkey === eventIdentity.pubkey
+            ? eventIdentity
+            : { pubkey: agentPubkey, kind: 'agent', name: `Agent ${agentPubkey.slice(0, 8)}` },
         tool: tag(eventTags, 'tool') ?? 'edit files',
         ...(tag(eventTags, 'repo') ? { repository: tag(eventTags, 'repo') } : {}),
-        ...(tag(eventTags, 'purpose') === 'squire-spending' ? { purpose: 'squire-spending' as const } : {}),
-        status: status === 'allowed' || status === 'denied' || status === 'expired' || status === 'failed'
-          ? status : 'pending',
+        ...(tag(eventTags, 'purpose') === 'squire-spending'
+          ? { purpose: 'squire-spending' as const }
+          : {}),
+        status:
+          status === 'allowed' || status === 'denied' || status === 'expired' || status === 'failed'
+            ? status
+            : 'pending',
         ...(tag(eventTags, 'subchannel') ? { cornerId: tag(eventTags, 'subchannel') } : {}),
       },
     };
@@ -1055,11 +1132,16 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     };
   }
 
-  const mergeAction = markers.has('merge-ready') ? 'ready'
-    : markers.has('merge-not-ready') ? 'not-ready'
-      : markers.has('buzz-merge-approval-ack') ? 'approval-ack'
-        : tag(eventTags, 'status') === 'failed' && !tag(eventTags, 'subchannel') ? 'failed'
-          : markers.has('landed') || tag(eventTags, 'delivery') === 'landed' ? 'landed'
+  const mergeAction = markers.has('merge-ready')
+    ? 'ready'
+    : markers.has('merge-not-ready')
+      ? 'not-ready'
+      : markers.has('buzz-merge-approval-ack')
+        ? 'approval-ack'
+        : tag(eventTags, 'status') === 'failed' && !tag(eventTags, 'subchannel')
+          ? 'failed'
+          : markers.has('landed') || tag(eventTags, 'delivery') === 'landed'
+            ? 'landed'
             : undefined;
   if (mergeAction) {
     const retry = tag(eventTags, 'retry');
@@ -1074,12 +1156,19 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
         ...(tag(eventTags, 'branch') ? { branch: tag(eventTags, 'branch') } : {}),
         ...(tag(eventTags, 'tip') ? { tip: tag(eventTags, 'tip') } : {}),
         ...(tag(eventTags, 'patch-id') ? { patchId: tag(eventTags, 'patch-id') } : {}),
-        ...(tag(eventTags, 'preview')?.startsWith('https://') ? { previewUrl: tag(eventTags, 'preview') } : {}),
+        ...(tag(eventTags, 'preview')?.startsWith('https://')
+          ? { previewUrl: tag(eventTags, 'preview') }
+          : {}),
         ...(retry === 'auto' || retry === 'realigning' || retry === 'blocked' ? { retry } : {}),
         ...(tag(eventTags, 'approval') ? { approvalId: tag(eventTags, 'approval') } : {}),
         ...(decision === 'accepted' || decision === 'rejected' ? { decision } : {}),
-        ...(state === 'landing' || state === 'realigning' || state === 'realigned' ||
-          state === 'content-changed' || state === 'tip-moved' ? { state } : {}),
+        ...(state === 'landing' ||
+        state === 'realigning' ||
+        state === 'realigned' ||
+        state === 'content-changed' ||
+        state === 'tip-moved'
+          ? { state }
+          : {}),
         ...(tag(eventTags, 'rejected-tip') ? { rejectedTip: tag(eventTags, 'rejected-tip') } : {}),
       },
     };
@@ -1088,22 +1177,39 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   const cornerId = tag(eventTags, 'subchannel');
   if (cornerId) {
     const status = tag(eventTags, 'status');
-    if (status !== 'open' && status !== 'working' && status !== 'waiting' && status !== 'idle' &&
-      status !== 'concluded' && status !== 'closed') return undefined;
+    if (
+      status !== 'open' &&
+      status !== 'working' &&
+      status !== 'waiting' &&
+      status !== 'idle' &&
+      status !== 'concluded' &&
+      status !== 'closed'
+    )
+      return undefined;
     return { ...base, presentation: 'card', corner: { id: cornerId, status } };
   }
 
-  if (markers.has('buzz-work-schedule-paused') || markers.has('steer-queued') ||
-      markers.has('slash-command-notice')) {
+  if (
+    markers.has('buzz-work-schedule-paused') ||
+    markers.has('steer-queued') ||
+    markers.has('slash-command-notice')
+  ) {
     return { ...base, presentation: 'system' };
   }
-  if (markers.has('body-control') || [...markers].some((candidate) => candidate.startsWith('buzz-'))) {
+  if (
+    markers.has('body-control') ||
+    [...markers].some((candidate) => candidate.startsWith('buzz-'))
+  ) {
     return undefined;
   }
   if (!base.text.trim() && !markers.has('buzz-attachment')) return undefined;
 
-  const replyId = eventTags.find((candidate) => candidate[0] === 'e' && candidate[3] === 'reply')?.[1];
-  const taggedRoot = eventTags.find((candidate) => candidate[0] === 'e' && candidate[3] === 'root')?.[1];
+  const replyId = eventTags.find(
+    (candidate) => candidate[0] === 'e' && candidate[3] === 'reply',
+  )?.[1];
+  const taggedRoot = eventTags.find(
+    (candidate) => candidate[0] === 'e' && candidate[3] === 'root',
+  )?.[1];
   const validatedRoot = text(data.rootId);
   const rootId = validatedRoot && /^[0-9a-f]{64}$/.test(validatedRoot) ? validatedRoot : base.id;
   const requestId = tag(eventTags, 'request');
@@ -1111,10 +1217,21 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     ...base,
     presentation: 'message',
     ...(requestId ? { requestId, liveTurnId: `live-turn:${requestId}` } : {}),
-    ...(parseAttachmentTags(eventTags).length ? { attachments: parseAttachmentTags(eventTags) } : {}),
+    ...(parseAttachmentTags(eventTags).length
+      ? { attachments: parseAttachmentTags(eventTags) }
+      : {}),
     ...(eventTags.some((candidate) => candidate[0] === 'p')
-      ? { mentionPubkeys: [...new Set(eventTags.flatMap((candidate) =>
-          candidate[0] === 'p' && /^[0-9a-f]{64}$/.test(candidate[1] ?? '') ? [candidate[1]!] : []))] }
+      ? {
+          mentionPubkeys: [
+            ...new Set(
+              eventTags.flatMap((candidate) =>
+                candidate[0] === 'p' && /^[0-9a-f]{64}$/.test(candidate[1] ?? '')
+                  ? [candidate[1]!]
+                  : [],
+              ),
+            ),
+          ],
+        }
       : {}),
     ...(replyId && /^[0-9a-f]{64}$/.test(replyId)
       ? { reply: { channelId, eventId: replyId, rootId } }
@@ -1123,7 +1240,12 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   } as RoomViewMessage;
 }
 
-function projectedMessages(rows: readonly IndexRow[], section: string, channelId: string, limit: number) {
+function projectedMessages(
+  rows: readonly IndexRow[],
+  section: string,
+  channelId: string,
+  limit: number,
+) {
   return rows
     .filter((row) => row.section === section)
     .flatMap((row) => {
@@ -1139,8 +1261,9 @@ function viewer(room: Json, members: readonly RoomViewMember[]) {
   const member = members.find((candidate) => candidate.identity.pubkey === pubkey);
   return {
     identity: member?.identity ?? identity({ pubkey }),
-    role: (room.viewerRole === 'owner' || room.viewerRole === 'admin' ? room.viewerRole : 'member') as
-      'owner' | 'admin' | 'member',
+    role: (room.viewerRole === 'owner' || room.viewerRole === 'admin'
+      ? room.viewerRole
+      : 'member') as 'owner' | 'admin' | 'member',
     permissions: {
       send: room.archived !== true,
       manage: room.viewerRole === 'owner' || room.viewerRole === 'admin',
@@ -1164,20 +1287,26 @@ function repositoryFromRows(rows: readonly IndexRow[]): RoomRepositoryView | und
     remote: normalized.remote,
     targetBranch: normalized.targetBranch ?? 'main',
     ...(normalized.githubInstallationId
-      ? { githubInstallationId: normalized.githubInstallationId } : {}),
+      ? { githubInstallationId: normalized.githubInstallationId }
+      : {}),
     githubEventsEnabled: normalized.githubEventsEnabled !== false,
   };
 }
 
 function reviewFromRows(rows: readonly IndexRow[]): RoomReviewView {
   const reviewData = rowData(rows, 'review');
-  const descriptor = reviewData && text(reviewData.content)
-    ? parseChangeReviewArtifactDescriptor(text(reviewData.content)!) : null;
+  const descriptor =
+    reviewData && text(reviewData.content)
+      ? parseChangeReviewArtifactDescriptor(text(reviewData.content)!)
+      : null;
   const notReady = text(rowData(rows, 'not-ready')?.reason);
-  const approvedBy = rows.filter((row) => row.section === 'approval')
+  const approvedBy = rows
+    .filter((row) => row.section === 'approval')
     .map((row) => identity(json(row.data)))
-    .filter((candidate, index, all) =>
-      all.findIndex((other) => other.pubkey === candidate.pubkey) === index);
+    .filter(
+      (candidate, index, all) =>
+        all.findIndex((other) => other.pubkey === candidate.pubkey) === index,
+    );
   return descriptor
     ? { status: 'ready', artifact: descriptor, files: descriptor.files, approvedBy }
     : notReady
@@ -1190,47 +1319,96 @@ function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem {
   const rawStatus = tag(stateTags, 'state');
   const status = rawStatus === 'waiting-on-human' ? 'waiting' : rawStatus;
   const agentData = {
-    pubkey: data.agentPubkey, name: data.agentName, handle: data.agentHandle,
-    avatar: data.agentAvatar, agent: data.agent,
+    pubkey: data.agentPubkey,
+    name: data.agentName,
+    handle: data.agentHandle,
+    avatar: data.agentAvatar,
+    agent: data.agent,
   };
   return {
     corner: header(data),
-    status: status === 'working' || status === 'waiting' || status === 'idle' ||
-      status === 'concluded' || status === 'closed' ? status : 'open',
+    status:
+      status === 'working' ||
+      status === 'waiting' ||
+      status === 'idle' ||
+      status === 'concluded' ||
+      status === 'closed'
+        ? status
+        : 'open',
     ...(['review', 'question', 'failure'].includes(tag(stateTags, 'reason') ?? '')
       ? { reason: tag(stateTags, 'reason') as 'review' | 'question' | 'failure' }
       : {}),
     ...(text(data.agentPubkey) ? { agent: identity(agentData) } : {}),
-    ...(latest ? { latestMessage: {
-      id: latest.id, text: latest.text, createdAt: latest.createdAt, author: latest.author,
-    } } : {}),
+    ...(latest
+      ? {
+          latestMessage: {
+            id: latest.id,
+            text: latest.text,
+            createdAt: latest.createdAt,
+            author: latest.author,
+          },
+        }
+      : {}),
   };
 }
 
 function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
   const roomData = rowData(rows, 'room');
   if (!roomData) return null;
-  const members = rows.filter((row) => row.section === 'member').map((row) => {
-    const data = json(row.data);
-    return { identity: identity(data), role: data.role as RoomViewMember['role'] };
-  });
+  const members = rows
+    .filter((row) => row.section === 'member')
+    .map((row) => {
+      const data = json(row.data);
+      return { identity: identity(data), role: data.role as RoomViewMember['role'] };
+    });
   const parentData = rowData(rows, 'parent');
   const repository = repositoryFromRows(rows);
-  const corners = rows.filter((row) => row.section === 'sibling')
+  const directMessageData = json(roomData.directMessage);
+  const directMessageParticipants = Array.isArray(directMessageData.participants)
+    ? directMessageData.participants.filter(
+        (participant): participant is string =>
+          typeof participant === 'string' && /^[0-9a-f]{64}$/.test(participant),
+      )
+    : [];
+  const directMessage =
+    directMessageParticipants.length === 2 &&
+    new Set(directMessageParticipants).size === 2 &&
+    members.length === 2 &&
+    directMessageParticipants.every((participant) =>
+      members.some((member) => member.identity.pubkey === participant),
+    ) &&
+    directMessageChannelId(
+      String(roomData.workspaceId ?? ''),
+      directMessageParticipants[0]!,
+      directMessageParticipants[1]!,
+    ) === roomId
+      ? { participants: directMessageParticipants as [string, string] }
+      : undefined;
+  const corners = rows
+    .filter((row) => row.section === 'sibling')
     .map((row) => cornerItem(json(row.data)));
   return {
     room: header(roomData),
     messages: projectedMessages(rows, 'event', roomId, ROOM_VIEW_MESSAGE_LIMIT),
     members,
     viewer: viewer(roomData, members),
+    ...(directMessage ? { directMessage } : {}),
     ...(parentData ? { parent: header(parentData) } : {}),
-    briefing: projectedMessages(rows, 'briefing', String(parentData?.id ?? roomId), ROOM_VIEW_BRIEFING_LIMIT),
+    briefing: projectedMessages(
+      rows,
+      'briefing',
+      String(parentData?.id ?? roomId),
+      ROOM_VIEW_BRIEFING_LIMIT,
+    ),
     ...(repository ? { repository } : {}),
     review: reviewFromRows(rows),
     corners,
     watchFilters: roomFilters(
       roomId,
-      [...(parentData ? [String(parentData.id ?? '')] : []), ...corners.map((item) => item.corner.id)],
+      [
+        ...(parentData ? [String(parentData.id ?? '')] : []),
+        ...corners.map((item) => item.corner.id),
+      ],
       members,
     ),
   };
@@ -1240,10 +1418,14 @@ export class RoomIndexer {
   constructor(private readonly database: DatabaseQueryable) {}
 
   async readWorkspaces(viewerPubkey: string): Promise<WorkspaceListView> {
-    const rows = (await this.database.query<IndexRow>(WORKSPACE_LIST_SQL, [
-      viewerPubkey, ROOM_VIEW_WORKSPACE_LIMIT + 1,
-    ])).rows;
-    const allWorkspaces = rows.filter((row) => row.section === 'workspace')
+    const rows = (
+      await this.database.query<IndexRow>(WORKSPACE_LIST_SQL, [
+        viewerPubkey,
+        ROOM_VIEW_WORKSPACE_LIMIT + 1,
+      ])
+    ).rows;
+    const allWorkspaces = rows
+      .filter((row) => row.section === 'workspace')
       .map((row) => workspaceItem(json(row.data)))
       .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id));
     const workspaces = allWorkspaces.slice(0, ROOM_VIEW_WORKSPACE_LIMIT);
@@ -1259,29 +1441,38 @@ export class RoomIndexer {
   }
 
   async readWorkspace(workspaceId: string, viewerPubkey: string): Promise<WorkspaceView | null> {
-    const rows = (await this.database.query<IndexRow>(WORKSPACE_SQL, [
-      workspaceId, viewerPubkey, ROOM_VIEW_MEMBER_LIMIT, ROOM_VIEW_AGENT_LIMIT,
-    ])).rows;
+    const rows = (
+      await this.database.query<IndexRow>(WORKSPACE_SQL, [
+        workspaceId,
+        viewerPubkey,
+        ROOM_VIEW_MEMBER_LIMIT,
+        ROOM_VIEW_AGENT_LIMIT,
+      ])
+    ).rows;
     const workspaceData = rowData(rows, 'workspace');
     if (!workspaceData) return null;
-    const roster = rows.filter((row) => row.section === 'member').map((row) => {
-      const data = json(row.data);
-      const memberIdentity = identity(data);
-      const presenceStatus = text(data.presenceStatus);
-      return {
-        identity: memberIdentity,
-        role: data.role as RoomViewMember['role'],
-        ...(memberIdentity.kind === 'agent' &&
+    const roster = rows
+      .filter((row) => row.section === 'member')
+      .map((row) => {
+        const data = json(row.data);
+        const memberIdentity = identity(data);
+        const presenceStatus = text(data.presenceStatus);
+        return {
+          identity: memberIdentity,
+          role: data.role as RoomViewMember['role'],
+          ...(memberIdentity.kind === 'agent' &&
           (presenceStatus === 'online' || presenceStatus === 'offline')
-          ? { presence: {
-              status: presenceStatus as 'online' | 'offline',
-              observedAt: integer(data.presenceObservedAt) * 1_000,
-              ...(text(data.presenceRoomId) ? { roomId: text(data.presenceRoomId) } : {}),
-            } }
-          : {}),
-        kindTotal: integer(data.kindTotal),
-      };
-    });
+            ? {
+                presence: {
+                  status: presenceStatus as 'online' | 'offline',
+                  observedAt: integer(data.presenceObservedAt) * 1_000,
+                  ...(text(data.presenceRoomId) ? { roomId: text(data.presenceRoomId) } : {}),
+                },
+              }
+            : {}),
+          kindTotal: integer(data.kindTotal),
+        };
+      });
     const allMembers = roster.filter((member) => member.identity.kind === 'human');
     const allAgents = roster.filter((member) => member.identity.kind === 'agent');
     const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
@@ -1319,9 +1510,13 @@ export class RoomIndexer {
     agentPubkey: string,
     viewerPubkey: string,
   ): Promise<AgentDetailView | null> {
-    const rows = (await this.database.query<IndexRow>(AGENT_DETAIL_SQL, [
-      workspaceId, agentPubkey, viewerPubkey,
-    ])).rows;
+    const rows = (
+      await this.database.query<IndexRow>(AGENT_DETAIL_SQL, [
+        workspaceId,
+        agentPubkey,
+        viewerPubkey,
+      ])
+    ).rows;
     const agentData = rowData(rows, 'agent');
     if (!agentData) return null;
     const catalog = safeJson(text(rowData(rows, 'catalog')?.content) ?? '') ?? {};
@@ -1341,8 +1536,14 @@ export class RoomIndexer {
                   : [];
               })
             : [];
-          return [{ id, category, ...(text(option.currentValue)
-            ? { currentValue: text(option.currentValue) } : {}), options: choices }];
+          return [
+            {
+              id,
+              category,
+              ...(text(option.currentValue) ? { currentValue: text(option.currentValue) } : {}),
+              options: choices,
+            },
+          ];
         })
       : [];
     const runtime = json(catalog.selection);
@@ -1372,9 +1573,14 @@ export class RoomIndexer {
   }
 
   async readRoom(roomId: string, viewerPubkey: string): Promise<RoomView | null> {
-    const rows = (await this.database.query<IndexRow>(ROOM_PAINT_SQL, [
-      roomId, viewerPubkey, RAW_EVENT_LIMIT, ROOM_VIEW_BRIEFING_LIMIT * 4,
-    ])).rows;
+    const rows = (
+      await this.database.query<IndexRow>(ROOM_PAINT_SQL, [
+        roomId,
+        viewerPubkey,
+        RAW_EVENT_LIMIT,
+        ROOM_VIEW_BRIEFING_LIMIT * 4,
+      ])
+    ).rows;
     return paintRoom(rows, roomId);
   }
 
@@ -1383,9 +1589,15 @@ export class RoomIndexer {
     viewerPubkey: string,
     before?: { readonly createdAt: number; readonly id: string },
   ): Promise<RoomHistoryView | null> {
-    const rows = (await this.database.query<IndexRow>(ROOM_SQL, [
-      roomId, viewerPubkey, before?.createdAt ?? null, before?.id ?? '', HISTORY_EVENT_LIMIT,
-    ])).rows;
+    const rows = (
+      await this.database.query<IndexRow>(ROOM_SQL, [
+        roomId,
+        viewerPubkey,
+        before?.createdAt ?? null,
+        before?.id ?? '',
+        HISTORY_EVENT_LIMIT,
+      ])
+    ).rows;
     if (!rowData(rows, 'room')) return null;
     const raw = rows.filter((row) => row.section === 'event');
     const messages = projectedMessages(rows, 'event', roomId, ROOM_VIEW_MESSAGE_LIMIT);
@@ -1401,9 +1613,14 @@ export class RoomIndexer {
   }
 
   async readChats(workspaceId: string, viewerPubkey: string): Promise<ChatListView | null> {
-    const rows = (await this.database.query<IndexRow>(CHAT_LIST_SQL, [
-      workspaceId, viewerPubkey, ROOM_VIEW_CHAT_LIMIT + 1, CHAT_PREVIEW_LIMIT,
-    ])).rows;
+    const rows = (
+      await this.database.query<IndexRow>(CHAT_LIST_SQL, [
+        workspaceId,
+        viewerPubkey,
+        ROOM_VIEW_CHAT_LIMIT + 1,
+        CHAT_PREVIEW_LIMIT,
+      ])
+    ).rows;
     const workspaceData = rowData(rows, 'workspace');
     if (!workspaceData) return null;
     const previews = new Map<string, RoomViewMessage>();
@@ -1414,27 +1631,41 @@ export class RoomIndexer {
       const current = previews.get(roomId);
       if (
         message?.presentation === 'message' &&
-        (!current || message.createdAt > current.createdAt ||
+        (!current ||
+          message.createdAt > current.createdAt ||
           (message.createdAt === current.createdAt && message.id < current.id))
       ) {
         previews.set(roomId, message);
       }
     }
-    const allChats: ChatListItem[] = rows.filter((row) => row.section === 'chat').map((row) => {
-      const data = json(row.data);
-      const room = header(data);
-      const latest = previews.get(room.id);
-      return {
-        room,
-        ...(latest ? { latestMessage: {
-          id: latest.id, text: latest.text, createdAt: latest.createdAt, author: latest.author,
-        } } : {}),
-        memberCount: integer(data.memberCount),
-        cornerCount: integer(data.cornerCount),
-        ...(text(data.repositoryName) ? { repositoryName: text(data.repositoryName) } : {}),
-      };
-    }).sort((left, right) => right.room.updatedAt - left.room.updatedAt ||
-      left.room.id.localeCompare(right.room.id));
+    const allChats: ChatListItem[] = rows
+      .filter((row) => row.section === 'chat')
+      .map((row) => {
+        const data = json(row.data);
+        const room = header(data);
+        const latest = previews.get(room.id);
+        return {
+          room,
+          ...(latest
+            ? {
+                latestMessage: {
+                  id: latest.id,
+                  text: latest.text,
+                  createdAt: latest.createdAt,
+                  author: latest.author,
+                },
+              }
+            : {}),
+          memberCount: integer(data.memberCount),
+          cornerCount: integer(data.cornerCount),
+          unread: data.unread === true,
+          ...(text(data.repositoryName) ? { repositoryName: text(data.repositoryName) } : {}),
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.room.updatedAt - left.room.updatedAt || left.room.id.localeCompare(right.room.id),
+      );
     const chats = allChats.slice(0, ROOM_VIEW_CHAT_LIMIT);
     const viewerData = rowData(rows, 'viewer') ?? { pubkey: viewerPubkey };
     return {
@@ -1445,8 +1676,10 @@ export class RoomIndexer {
       watchFilters: [
         { kinds: [9000, 9001], '#p': [viewerPubkey] },
         { kinds: [...DURABLE_KINDS], '#h': [workspaceId, ...chats.map((chat) => chat.room.id)] },
-        ...profileFilter([identity(viewerData), ...chats.flatMap((chat) =>
-          chat.latestMessage ? [chat.latestMessage.author] : [])]),
+        ...profileFilter([
+          identity(viewerData),
+          ...chats.flatMap((chat) => (chat.latestMessage ? [chat.latestMessage.author] : [])),
+        ]),
       ],
     };
   }
@@ -1463,9 +1696,13 @@ export class RoomIndexer {
   }
 
   async readCorners(roomId: string, viewerPubkey: string): Promise<CornerListView | null> {
-    const rows = (await this.database.query<IndexRow>(CORNER_LIST_SQL, [
-      roomId, viewerPubkey, CHAT_PREVIEW_LIMIT,
-    ])).rows;
+    const rows = (
+      await this.database.query<IndexRow>(CORNER_LIST_SQL, [
+        roomId,
+        viewerPubkey,
+        CHAT_PREVIEW_LIMIT,
+      ])
+    ).rows;
     const roomData = rowData(rows, 'room');
     if (!roomData) return null;
     const previews = new Map<string, RoomViewMessage>();
@@ -1473,20 +1710,24 @@ export class RoomIndexer {
       const data = json(row.data);
       const cornerId = String(data.roomId ?? '');
       const message = projectEvent(data, cornerId);
-      if (message?.presentation === 'message' && !previews.has(cornerId)) previews.set(cornerId, message);
+      if (message?.presentation === 'message' && !previews.has(cornerId))
+        previews.set(cornerId, message);
     }
-    const corners: CornerListItem[] = rows.filter((row) => row.section === 'corner').map((row) => {
-      const data = json(row.data);
-      const id = String(data.id ?? '');
-      return cornerItem(data, previews.get(id));
-    });
+    const corners: CornerListItem[] = rows
+      .filter((row) => row.section === 'corner')
+      .map((row) => {
+        const data = json(row.data);
+        const id = String(data.id ?? '');
+        return cornerItem(data, previews.get(id));
+      });
     return {
       room: header(roomData),
       corners,
       viewer: {
         identity: identity({ pubkey: roomData.viewerPubkey }),
         role: (roomData.viewerRole === 'owner' || roomData.viewerRole === 'admin'
-          ? roomData.viewerRole : 'member') as 'owner' | 'admin' | 'member',
+          ? roomData.viewerRole
+          : 'member') as 'owner' | 'admin' | 'member',
         permissions: {
           send: roomData.archived !== true,
           manage: roomData.viewerRole === 'owner' || roomData.viewerRole === 'admin',
@@ -1494,9 +1735,8 @@ export class RoomIndexer {
       },
       watchFilters: [
         { kinds: [...DURABLE_KINDS], '#h': [roomId, ...corners.map((item) => item.corner.id)] },
-        ...profileFilter(corners.flatMap((item) => item.agent ? [item.agent] : [])),
+        ...profileFilter(corners.flatMap((item) => (item.agent ? [item.agent] : []))),
       ],
     };
   }
-
 }

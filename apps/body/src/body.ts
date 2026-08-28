@@ -137,13 +137,7 @@ import {
   parseDelegationTurn,
   parseDelegationDirectives,
   publishAgentModelCatalog,
-  createWorkspaceSnapshot,
-  parseRelayEvents,
-  reduceWorkspaceEvents,
-  replaceIdentitySnapshot,
-  selectAgentHistory,
-  selectCorners,
-  selectMembers,
+  RoomViewClient,
   KIND_CREATE_GROUP,
   KIND_DELETE_GROUP,
   KIND_PUT_USER,
@@ -177,9 +171,6 @@ import {
   type ChangeReviewFile,
   type ChangeReviewArtifact,
   type AgentHistoryEntry,
-  type IdentityRecord,
-  type ParseAuthority,
-  type WorkspaceSnapshot,
   type ParsedDelegationTurn,
   type ParsedDelegationReceipt,
   type DelegationTurnV1,
@@ -1471,8 +1462,7 @@ export const MERGE_READY_TAG = 'merge-ready';
 export const LANDED_TAG = 'landed';
 /** Wire tag for the approval-acknowledgement card the daemon publishes when it
  *  consumes an approval — accepted, or rejected with the plain reason (a stale
- *  tip must never hang the app's DELIVERING state). Projected by
- *  `buzz-event-projection.ts` as `ChatEventProjection.approvalAck`. */
+ *  tip must never hang the app's DELIVERING state). */
 export const APPROVAL_ACK_TAG = 'buzz-merge-approval-ack';
 /** Deterministic host recap posted to the PARENT Room when a corner's work lands. */
 export const LAND_SUMMARY_TAG = 'land-summary';
@@ -2263,8 +2253,6 @@ export class Body {
    * with no turn running (i.e. the queue drained).
    */
   private steerQueuedChannels = new Set<string>();
-  /** Integrity halts already surfaced to operators; the typed snapshot remains the authority. */
-  private readModelHalts = new Set<string>();
   /** pi-acp Rooms with a text-fallback corner open in flight. One per channel. */
   private agentCornerRequestsInFlight = new Set<string>();
   private requestCursors = new Map<string, number>();
@@ -5344,169 +5332,29 @@ export class Body {
     );
   }
 
-  /**
-   * Rebuild the only Body conversation state from signed relay facts.
-   * Raw tags/content cross exactly one boundary (`read-model/parser.ts`); the
-   * durable state stores the normalized snapshot and model prompts consume a
-   * late-bound selector over that snapshot.
-   */
-  private async refreshReadModel(channelId: string): Promise<WorkspaceSnapshot> {
-    const ctx = this.agentClientContext();
-    const parentChannelId = await getParentChannelId(ctx, channelId).catch(() => null);
-    const scopedChannelIds = [
-      ...new Set([channelId, ...(parentChannelId ? [parentChannelId] : [])]),
-    ];
-    const [stream, structural, projections, cornerStates] = await Promise.all([
-      this.agentRelay.queryEvents([{ kinds: [9], '#h': [channelId], limit: 5_000 }]),
-      this.agentRelay.queryEvents([
-        {
-          kinds: [
-            KIND_CREATE_GROUP,
-            KIND_DELETE_GROUP,
-            KIND_PUT_USER,
-            KIND_REMOVE_USER,
-            KIND_EDIT_METADATA,
-          ],
-          '#h': scopedChannelIds,
-          limit: 1_000,
-        },
-      ]),
-      this.agentRelay.queryEvents([
-        {
-          kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-          '#d': scopedChannelIds,
-          limit: scopedChannelIds.length * 8,
-        },
-        {
-          kinds: [KIND_CHANNEL_MEMBERS, KIND_CHANNEL_ADMINS],
-          '#h': scopedChannelIds,
-          limit: scopedChannelIds.length * 8,
-        },
-      ]),
-      parentChannelId
-        ? this.agentRelay.queryEvents([
-            {
-              kinds: [KIND_CORNER_STATE],
-              '#d': [cornerStateKey(channelId)],
-              limit: 20,
-            },
-          ])
-        : Promise.resolve([] as NostrEvent[]),
-    ]);
-    const rawEvents = [...stream, ...structural, ...projections, ...cornerStates].filter(
-      (event, index, all) => all.findIndex((candidate) => candidate.id === event.id) === index,
-    );
-    const workspaceId = parentChannelId ?? channelId;
-    const trustedProjectionPubkeys = [...new Set(projections.map((event) => event.pubkey))];
-    const preliminary = reduceWorkspaceEvents(
-      createWorkspaceSnapshot({ workspaceId }),
-      parseRelayEvents([...structural, ...projections], {
-        workspaceId,
-        allowedChannelIds: scopedChannelIds,
-        identities: {},
-        trustedProjectionPubkeys,
-      }),
-    );
-    const members = selectMembers(preliminary, channelId);
-    const creators = Object.values(preliminary.rooms).flatMap((room) =>
-      Object.values(room.eventJournal).flatMap((event) => {
-        if (event.type !== 'lifecycle') return [];
-        return event.lifecycle.entity === 'corner'
-          ? [
-              [
-                event.lifecycle.cornerId,
-                event.lifecycle.creatorPubkey ?? event.authorPubkey,
-              ] as const,
-            ]
-          : [[event.lifecycle.roomId, event.authorPubkey] as const];
-      }),
-    );
-    const verifiedPubkeys = [
-      ...new Set([
-        ...members.map((member) => member.pubkey),
-        ...creators.map(([, creator]) => creator),
-      ]),
-    ];
-    const attributions = await this.roomAuthorAttributions(channelId, verifiedPubkeys);
-    const identities: IdentityRecord[] = verifiedPubkeys.flatMap((pubkey) => {
-      const attribution = attributions.get(pubkey);
-      if (!attribution) return [];
-      const kind = attribution.kind === 'Agent' ? 'agent' : 'human';
-      return [
-        {
-          kind,
-          pubkey: pubkey as IdentityRecord['pubkey'],
-          displayName: attribution.name,
-          handle: attribution.handle,
-          revision: `${kind}:${attribution.name}:${attribution.handle}`,
-        } satisfies IdentityRecord,
-      ];
-    });
-    const current = await this.durableState.readModel(channelId);
-    const base =
-      current?.workspaceId === workspaceId
-        ? replaceIdentitySnapshot(current, identities)
-        : createWorkspaceSnapshot({ workspaceId, identities });
-    const knownMessages = Object.fromEntries(
-      Object.values(base.rooms).flatMap((room) =>
-        Object.values(room.eventJournal).flatMap((event) =>
-          event.type === 'human-message' || event.type === 'agent-message'
-            ? [
-                [
-                  event.eventId,
-                  {
-                    channelId: event.channelId,
-                    rootId: event.reply?.rootId ?? event.eventId,
-                  },
-                ],
-              ]
-            : [],
-        ),
-      ),
-    );
-    const admins = members
-      .filter((member) => member.role === 'admin' || member.role === 'owner')
-      .map((member) => member.pubkey);
-    const authority: ParseAuthority = {
-      workspaceId,
-      allowedChannelIds: scopedChannelIds,
-      identities: Object.fromEntries(identities.map((identity) => [identity.pubkey, identity])),
-      channelCreators: Object.fromEntries(creators),
-      channelAdmins: Object.fromEntries(scopedChannelIds.map((id) => [id, admins])),
-      trustedProjectionPubkeys,
-      knownMessages,
-    };
-    const snapshot = reduceWorkspaceEvents(base, parseRelayEvents(rawEvents, authority));
-    await this.durableState.replaceReadModel(channelId, snapshot);
-
-    if (parentChannelId) {
-      const corner = selectCorners(snapshot, parentChannelId).find(
-        (candidate) => candidate.id === channelId,
-      );
-      if (corner?.kind === 'integrity-halt') {
-        if (!this.readModelHalts.has(channelId)) {
-          this.readModelHalts.add(channelId);
-          await postControlMessage(channelId, this.agentIdentity, corner.operatorMessage, [
-            ['status', 'integrity-halt'],
-            ['reason', corner.reason],
-          ]).catch((error) =>
-            console.error(
-              `[body] failed to publish read-model integrity halt for ${channelId}:`,
-              error,
-            ),
-          );
-        }
-        throw new Error(`read-model integrity halt: ${corner.operatorMessage}`);
-      }
-    }
-    this.readModelHalts.delete(channelId);
-    return snapshot;
-  }
-
   private async agentHistory(channelId: string): Promise<readonly AgentHistoryEntry[]> {
-    return selectAgentHistory(await this.refreshReadModel(channelId), channelId, {
-      limit: TURN_CONTEXT_MAX_MESSAGES,
-    });
+    const view = await new RoomViewClient({
+      baseUrl: this.config.relayBaseUrl,
+      identity: this.agentIdentity,
+    }).room(channelId);
+    return view.messages
+      .filter((message) => message.presentation === 'message')
+      .map((message) => ({
+        eventId: message.id,
+        channelId,
+        type:
+          message.author.kind === 'agent' ? ('agent-message' as const) : ('human-message' as const),
+        author: {
+          pubkey: message.author.pubkey,
+          kind: message.author.kind,
+          label: message.author.name,
+        },
+        body: message.text,
+        attachments: message.attachments ?? [],
+        createdAt: message.createdAt,
+        provenance: 'relay-verified' as const,
+      }))
+      .slice(-TURN_CONTEXT_MAX_MESSAGES);
   }
 
   private ensureChannelPresenceCache(channelId: string): Promise<{
@@ -7900,8 +7748,8 @@ export class Body {
    *
    * ACP's permission response carries only an option id — there is no reason
    * field, and every adapter hard-codes its own denial text — so the corner
-   * steer rides `ROOM_READ_ONLY_STEER` in the Room system prompt. The relay
-   * read-model is the only durable conversation source.
+   * steer rides `ROOM_READ_ONLY_STEER` in the Room system prompt. Durable
+   * conversation history is read from the authenticated Room endpoint.
    */
   private async handleRoomPermissionRequest(
     tlcChannelId: string,
@@ -13079,7 +12927,10 @@ export class Body {
         // from durable conversation state when a restarted daemon closes the
         // corner, and keep old/verbose stored replies within the current compact
         // card contract.
-        const durableSummary = await this.durableState.latestAgentMessage(scId);
+        const durableSummary = [...(await this.agentHistory(scId))]
+          .reverse()
+          .find((entry) => entry.type === 'agent-message' && entry.body.trim())
+          ?.body.trim();
         const archiveSummary = cornerArchiveSummary(info.mergeSummary, durableSummary);
         await postControlMessage(parentId, this.agentIdentity, archiveSummary, [
           ['subchannel', subchannelId],
@@ -13429,7 +13280,10 @@ export class Body {
         return;
       }
 
-      const durableSummary = await this.durableState.latestAgentMessage(subchannelId);
+      const durableSummary = [...(await this.agentHistory(subchannelId))]
+        .reverse()
+        .find((entry) => entry.type === 'agent-message' && entry.body.trim())
+        ?.body.trim();
       const disposition = await this.describeAbandonedCornerWork(entry);
       const archiveSummary = [
         cornerArchiveSummary(undefined, durableSummary),

@@ -1,425 +1,212 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  AGENT_PRESENCE_STALE_MS,
-  CORNER_ACTIVITY_FRESHNESS_MS,
-  isAgentPresenceOnline,
-  type Agent,
-  type AgentPresence,
-  type Community,
-  type PersonProfile,
+  RoomViewClient,
+  SurfaceRefreshScheduler,
+  isCornerListView,
+  type CornerListView,
+  type Identity,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import {
-  cornerVisualState,
-  currentCornerStatus,
-  isCornerActive,
-  sortCorners,
-  type CornerSummary,
-} from '@/buzz/corners';
-import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
-import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
-import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
-import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { useAgentNameCache } from '@/buzz/agent-name-cache';
-import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
-import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
-import { HullSurface, PixelLoader, CornerGlyph } from '@/components/buzz/MonoHull';
-import { Typography } from '@/constants/Typography';
+import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
+import { CornerGlyph, HullSurface, MonoButton, PixelLoader } from '@/components/buzz/MonoHull';
 import { BuzzRigTransport } from '@/sync/transport';
-import { afterInteractions } from '@/buzz/defer-interaction';
-import {
-  channelCacheKey,
-  selectChannelList,
-  useBuzzLocalCache,
-  type ChannelListCacheEntry,
-} from '@/buzz/local-cache';
-import { cornerSummariesFromSnapshot } from '@/buzz/local-cache-sync';
-import {
-  agentPresenceFromSessionEvent,
-  mergeAgentPresence,
-  presenceMapFromSessionEvents,
-} from '@/buzz/agent-presence';
-
-/**
- * What the room list already knows about this Room, read synchronously so the
- * first painted frame is real content instead of a spinner. Everything here is
- * refreshed from the relay in the background immediately afterwards.
- */
-function seedFromRoomListCache(channelId: string): {
-  corners: CornerSummary[];
-  roomName: string;
-  communities: Community[];
-  communityId: string | null;
-  hasCache: boolean;
-} {
-  const state = useBuzzLocalCache.getState();
-  const entry: ChannelListCacheEntry | undefined = selectChannelList(
-    state,
-    state.activeViewerPubkey,
-  );
-  const room = entry?.channels.find((channel) => channel.id === channelId);
-  const viewerKey = state.activeViewerPubkey;
-  const snapshot = viewerKey
-    ? state.channels[channelCacheKey(viewerKey, channelId)]?.snapshot
-    : undefined;
-  const corners = snapshot
-    ? cornerSummariesFromSnapshot(channelId, snapshot).filter(
-        (corner) => Boolean(corner.machineState) && currentCornerStatus(corner) !== 'archived',
-      )
-    : [];
-  return {
-    corners: sortCorners(corners),
-    roomName: room?.title ?? ROOM_LABEL,
-    communities: entry?.communities ?? [],
-    communityId: entry?.communityId ?? null,
-    hasCache: room !== undefined,
-  };
-}
+import { Typography } from '@/constants/Typography';
+import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 
 export default function BuzzCorners() {
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
   const decodedId = roomId ? decodeURIComponent(roomId) : '';
   const insets = useSafeAreaInsets();
-  // Seeded synchronously from the room list's own cache. This screen used to
-  // hold a full-screen loader across an eight-deep serial relay chain with no
-  // cache read at all, which is a blank screen for as long as the network
-  // takes — the room list already holds this Room's corners and title.
-  const seed = seedFromRoomListCache(decodedId);
-  const [corners, setCorners] = useState<CornerSummary[]>(seed.corners);
-  const [roomName, setRoomName] = useState(seed.roomName);
-
-  // Channel-mark convention, display-only: the Room's name renders `#<name>`
-  // and each corner row renders `#<room>/<corner>`, composed from stored
-  // names at render time. The generic ROOM_LABEL fallback gains no mark — a
-  // label is not a name, and nothing fabricated is decorated.
-  const storedRoomTitle = roomName !== ROOM_LABEL ? roomName : undefined;
-  const displayRoomTitle = storedRoomTitle
-    ? (displayRoomIndexTitle(storedRoomTitle) ?? roomName)
-    : roomName;
-  const [communities, setCommunities] = useState<Community[]>(seed.communities);
-  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(seed.communityId);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [personProfiles, setPersonProfiles] = useState<PersonProfile[]>([]);
-  const [loading, setLoading] = useState(!seed.hasCache);
-  const [refreshing, setRefreshing] = useState(false);
+  const [surface, setSurface] = useState<CornerListView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [viewerPubkey, setViewerPubkey] = useState<string | undefined>();
-  const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
-  const [canManageWorkspace, setCanManageWorkspace] = useState(false);
-  const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
-  const [presenceNow, setPresenceNow] = useState(Date.now());
-  const transportRef = useRef<BuzzRigTransport | null>(null);
-
-  const loadCorners = useCallback(
-    async (currentTransport?: BuzzRigTransport) => {
-      if (!decodedId) return;
-      const t = currentTransport ?? transportRef.current;
-      if (!t) return;
-      setError(null);
-      // Each read publishes its own slice as it lands. Nothing here is
-      // sequenced behind an unrelated round-trip, and nothing gates the
-      // already-painted cache-seeded list. Every failure lands in `error`;
-      // this never rejects, so callers can always settle their own state.
-      try {
-        const client = await t.ensureClient();
-        const communityIdRead = client.getChannelCommunityId(decodedId);
-        const cornersRead = t.listSubchannelLifecycle(decodedId);
-        const fail = (step: string) => (loadError: unknown) => {
-          console.warn(`BuzzCorners: ${step} failed for ${decodedId}:`, loadError);
-          setError(String(loadError));
-        };
-
-        setViewerPubkey(client.identity.publicKey);
-
-        const cornersApplied = cornersRead.then((nextCorners) => {
-          setCorners(
-            sortCorners(
-              nextCorners.filter(
-                (corner) =>
-                  Boolean(corner.machineState) && currentCornerStatus(corner) !== 'archived',
-              ),
-            ),
-          );
-          return nextCorners;
-        }, fail('corners'));
-
-        const workspaceApplied = Promise.all([
-          communityIdRead,
-          client.listCommunities().catch((loadError) => {
-            fail('communities')(loadError);
-            return [] as Community[];
-          }),
-        ]).then(([communityId, nextCommunities]) => {
-          setCommunities(nextCommunities);
-          setActiveCommunityId(communityId);
-          const workspaceRole = nextCommunities.find(
-            (workspace) => workspace.communityId === communityId,
-          )?.viewerRole;
-          setCanManageWorkspace(isWorkspaceManagerRole(workspaceRole));
-          return communityId;
-        }, fail('workspace'));
-
-        await Promise.all([
-          client
-            .getChannelMetadata(decodedId)
-            .then(
-              (metadata) => setRoomName(metadata?.name?.trim() || ROOM_LABEL),
-              fail('roomName'),
-            ),
-          t.agentPresenceBackfill(decodedId).then((presenceEvents) => {
-            setAgentPresences(presenceMapFromSessionEvents(presenceEvents));
-            setPresenceNow(Date.now());
-          }, fail('presence')),
-          cornersApplied,
-          workspaceApplied.then(async (communityId) => {
-            if (!communityId) {
-              setAgents([]);
-              setPersonProfiles([]);
-              setViewerAvatarUrl(undefined);
-              return;
-            }
-            await Promise.all([
-              client.listAgents(communityId).then((agents) => {
-                // Warm the device-wide agent-name store.
-                useAgentNameCache.getState().rememberAgents(agents);
-                setAgents(agents);
-              }, fail('agents')),
-              client
-                .getPersonProfile(communityId)
-                .then((profile) => setViewerAvatarUrl(profile?.avatar), fail('viewerProfile')),
-              Promise.resolve(cornersApplied).then((nextCorners) =>
-                client
-                  .listPersonProfiles(
-                    communityId,
-                    (nextCorners ?? []).map((corner) => corner.openerPubkey),
-                  )
-                  .then(setPersonProfiles, fail('personProfiles')),
-              ),
-            ]);
-          }),
-        ]);
-      } catch (loadError) {
-        setError(String(loadError));
-      }
-    },
-    [decodedId],
-  );
+  const [refreshing, setRefreshing] = useState(false);
+  const [retryGeneration, setRetryGeneration] = useState(0);
+  const schedulerRef = useRef<SurfaceRefreshScheduler<CornerListView> | null>(null);
 
   useEffect(() => {
+    if (!decodedId) return;
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
-    let cancelDeferred: (() => void) | undefined;
+    let scheduler: SurfaceRefreshScheduler<CornerListView> | undefined;
     void (async () => {
-      // Local storage reads, not network.
-      const identity = await loadBuzzIdentity();
+      const identity = (await loadBuzzIdentity()) as Identity | null;
       if (!identity) {
         router.replace('/buzz/onboarding');
         return;
       }
-      const t = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
-      if (cancelled) return;
-      transportRef.current = t;
-      // The list is already on screen from cache; refreshing it is background
-      // work that must not compete with the navigation transition.
-      cancelDeferred = afterInteractions(() => {
-        if (cancelled) return;
-        void loadCorners(t).finally(() => {
-          if (!cancelled) setLoading(false);
-        });
-        unsubscribe = t.agentPresenceSubscribe(decodedId, (event) => {
-          if (cancelled) return;
-          const presence = agentPresenceFromSessionEvent(event);
-          if (!presence) return;
-          setAgentPresences((current) => mergeAgentPresence(current, presence));
-          setPresenceNow(Date.now());
-        });
+      const relayUrl = await getEffectiveRelayUrl();
+      const address = surfaceAddress(relayUrl, identity.publicKey, '/room/:id/corners', {
+        roomId: decodedId,
       });
-    })();
+      const cached = await mobileSurfaceCache.read(address, isCornerListView);
+      if (cancelled) return;
+      if (cached) setSurface(cached);
+      let current = cached;
+      const http = new RoomViewClient({ baseUrl: relayUrl, identity });
+      scheduler = new SurfaceRefreshScheduler({
+        fetch: () => http.corners(decodedId),
+        apply: (value) => {
+          current = value;
+          setSurface(value);
+          setError(null);
+          setRefreshing(false);
+          void mobileSurfaceCache.write(address, value, isCornerListView);
+        },
+        onError: (reason) => {
+          setError(String(reason));
+          setRefreshing(false);
+        },
+      });
+      schedulerRef.current = scheduler;
+      const transport = new BuzzRigTransport(identity, relayUrl);
+      const relay = await transport.ensureClient();
+      const filters = cached?.watchFilters ?? [
+        { kinds: [9, 9000, 9001, 9007, 30078], '#h': [decodedId] },
+      ];
+      unsubscribe = await relay.surfaceSubscribe(filters, () => scheduler?.signal());
+      if (cancelled) return unsubscribe();
+      await scheduler.startAfter(Promise.resolve());
+    })().catch((reason) => {
+      if (!cancelled) setError(String(reason));
+    });
     return () => {
       cancelled = true;
-      cancelDeferred?.();
       unsubscribe?.();
+      scheduler?.dispose();
+      schedulerRef.current = null;
     };
-  }, [decodedId, loadCorners]);
+  }, [decodedId, retryGeneration]);
 
-  useEffect(() => {
-    // Presence and canonical WORKING are leases. Wake exactly at the next
-    // deadline so neither an online dot nor an active corner can live forever.
-    const now = Date.now();
-    const deadlines = [
-      ...Object.values(agentPresences).map(
-        (presence) => presence.observedAt + AGENT_PRESENCE_STALE_MS,
-      ),
-      ...corners
-        .filter((corner) => corner.machineState === 'working' && corner.stateAt !== undefined)
-        .map((corner) => corner.stateAt! * 1_000 + CORNER_ACTIVITY_FRESHNESS_MS),
-    ].filter((deadline) => Number.isFinite(deadline) && deadline > now);
-    if (deadlines.length === 0) return;
-    const timer = setTimeout(
-      () => setPresenceNow(Date.now()),
-      Math.max(1, Math.min(...deadlines) - now + 1),
-    );
-    return () => clearTimeout(timer);
-  }, [agentPresences, corners]);
+  const title = useMemo(
+    () => (surface ? (displayRoomIndexTitle(surface.room.name) ?? surface.room.name) : 'Room'),
+    [surface],
+  );
 
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadCorners();
-    setRefreshing(false);
-  }, [loadCorners]);
-
-  const handleCommunitySelect = useCallback((communityId: string | null) => {
-    if (!communityId) return;
-    router.replace({ pathname: '/buzz/channels', params: { communityId } });
-  }, []);
-
-  if (loading) {
+  if (!surface && !error) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <PixelLoader />
-        <Text style={styles.loadingText}>LOADING {CHANGES_LABEL.toUpperCase()}</Text>
+        <Text style={styles.loading}>LOADING CHANGES</Text>
+      </View>
+    );
+  }
+  if (!surface) {
+    return (
+      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+        <Text style={styles.error}>{error}</Text>
+        <MonoButton label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
   }
 
   return (
     <BuzzCommunityShell
-      communities={communities}
-      activeCommunityId={activeCommunityId}
-      onSelect={handleCommunitySelect}
+      communities={[{ communityId: surface.room.workspaceId, name: WORKSPACE_LABEL }]}
+      activeCommunityId={surface.room.workspaceId}
+      onSelect={(communityId) =>
+        communityId &&
+        router.replace({ pathname: '/buzz/channels', params: { communityId } } as never)
+      }
       onAdd={() => router.push('/buzz/community' as Href)}
       onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
-        router.push({
-          pathname: '/buzz/settings/workspace',
-          params: { communityId },
-        } as unknown as Href)
+        router.push({ pathname: '/buzz/settings/workspace', params: { communityId } } as never)
       }
-      canManageActiveCommunity={canManageWorkspace}
-      viewerPubkey={viewerPubkey}
-      viewerAvatarUrl={viewerAvatarUrl}
+      canManageActiveCommunity={surface.viewer.permissions.manage}
+      viewerPubkey={surface.viewer.identity.pubkey}
+      viewerAvatarUrl={surface.viewer.identity.avatar}
     >
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <HullSurface strength="quiet" style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.back}>
             <Text style={styles.backText}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>{displayRoomTitle}</Text>
+            <Text style={styles.eyebrow}>{title}</Text>
             <Text style={styles.title}>All {CHANGES_LABEL}</Text>
           </View>
-          <Text style={styles.count}>{corners.length}</Text>
+          <Text style={styles.count}>{surface.corners.length}</Text>
         </HullSurface>
-
         <HullSurface strength="raised" style={styles.modelPanel}>
           <Text style={styles.modelTitle}>YOLO INSIDE · HUMAN GATE AT COLLAPSE</Text>
           <Text style={styles.modelText}>
-            Agents commit and iterate freely inside their own {CORNER_LABEL}. Only a person can
-            approve collapsing it into the protected line. Agents can never approve or merge.
+            Agents iterate inside their own {CORNER_LABEL}. Only a person can approve collapsing it
+            into the protected line.
           </Text>
         </HullSurface>
-
-        {error && (
-          <View accessibilityRole="alert" style={styles.errorPanel}>
-            <Text style={styles.errorText}>! {error}</Text>
-          </View>
+        {!!error && (
+          <TouchableOpacity
+            accessibilityRole="alert"
+            onPress={() => schedulerRef.current?.force()}
+            style={styles.errorPanel}
+          >
+            <Text style={styles.error}>! {error}</Text>
+          </TouchableOpacity>
         )}
-
         <FlatList
-          data={corners}
-          keyExtractor={(corner) => corner.id}
-          contentContainerStyle={corners.length === 0 ? styles.emptyContainer : undefined}
+          data={surface.corners}
+          keyExtractor={(item) => item.corner.id}
           refreshing={refreshing}
-          onRefresh={() => void handleRefresh()}
+          onRefresh={() => {
+            setRefreshing(true);
+            schedulerRef.current?.force();
+          }}
+          contentContainerStyle={surface.corners.length ? undefined : styles.emptyContainer}
           renderItem={({ item }) => {
-            // Canonical lifecycle owns the glyph. Presence remains a separate
-            // online/offline fact and cannot promote or demote it.
-            const status = currentCornerStatus(item, presenceNow);
-            const state = cornerVisualState(status, { awaitingReply: item.awaitingReply });
-            const agent = agents.find((candidate) => candidate.pubkey === item.openerPubkey);
-            const personProfile = personProfiles.find(
-              (candidate) => candidate.pubkey === item.openerPubkey,
-            );
-            const display = resolveAgentDisplayIdentity(item.openerPubkey, agent);
-            const displayCorner = displayCornerTitle(storedRoomTitle, item.name, item.id);
-            // Presence is a separate dot, never a replacement for the
-            // lifecycle status word shown here — the same word the Room-list
-            // dropdown and the in-Room corner card show for this corner.
-            const showsPresence = Boolean(agent) && isCornerActive(status);
-            const online =
-              showsPresence &&
-              isAgentPresenceOnline(agentPresences[item.openerPubkey], presenceNow);
+            const label = displayCornerTitle(surface.room.name, item.corner.name, item.corner.id);
             return (
               <TouchableOpacity
-                accessibilityLabel={`View ${displayCorner}, ${state}${
-                  showsPresence ? (online ? ', agent online' : ', agent offline') : ''
-                }`}
-                style={styles.cornerRow}
-                onPress={() => router.push(cornerHref(item.id, decodedId, item.name))}
+                testID={`corner-${item.corner.id}`}
+                style={styles.row}
+                onPress={() => router.push(cornerHref(item.corner.id, decodedId, item.corner.name))}
               >
-                {agent ? (
-                  <IdentityMark
-                    kind="agent"
-                    seed={display.avatarSeed ?? item.openerPubkey}
-                    avatarUrl={display.avatarUrl}
-                    name={display.name}
-                    size={34}
-                    alive={online}
-                  />
-                ) : (
-                  <IdentityMark
-                    kind="human"
-                    seed={item.openerPubkey}
-                    avatarUrl={personProfile?.avatar}
-                    name={personProfile?.name ?? 'Corner opener'}
-                    size={34}
-                  />
-                )}
-                <View style={styles.cornerCopy}>
-                  <Text style={styles.cornerName} numberOfLines={1}>
-                    {displayCorner}
+                <IdentityMark
+                  kind={item.agent?.kind === 'agent' ? 'agent' : 'human'}
+                  seed={item.agent?.pubkey ?? item.corner.id}
+                  avatarUrl={item.agent?.avatar}
+                  name={item.agent?.name ?? 'Corner'}
+                  size={34}
+                />
+                <View style={styles.rowCopy}>
+                  <Text numberOfLines={1} style={styles.rowTitle}>
+                    {label}
                   </Text>
-                  <Text style={styles.agent} numberOfLines={1}>
-                    Opened by{' '}
-                    {agent
-                      ? display.name
-                      : (personProfile?.name ?? `${item.openerPubkey.slice(0, 8)}…`)}
+                  <Text numberOfLines={1} style={styles.agent}>
+                    {item.agent
+                      ? `Opened by ${item.agent.name}`
+                      : (item.latestMessage?.text ?? 'No activity yet')}
                   </Text>
                 </View>
-                <View style={styles.statusBlock}>
-                  <View style={styles.statusGlyphRow}>
-                    <CornerGlyph
-                      status={status}
-                      awaitingReply={item.awaitingReply}
-                      style={styles.statusGlyph}
-                    />
-                    {showsPresence && (
-                      <Text
-                        style={[
-                          styles.presenceDot,
-                          online ? styles.presenceOnline : styles.presenceOffline,
-                        ]}
-                      >
-                        {online ? '●' : '○'}
-                      </Text>
-                    )}
-                  </View>
-                </View>
+                <CornerGlyph
+                  status={
+                    item.status === 'working'
+                      ? 'live'
+                      : item.status === 'waiting'
+                        ? 'needs-attention'
+                        : item.status === 'concluded'
+                          ? 'open'
+                          : item.status === 'closed'
+                            ? 'archived'
+                            : null
+                  }
+                />
                 <Text style={styles.chevron}>›</Text>
               </TouchableOpacity>
             );
           }}
           ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyGlyph}>⌁</Text>
+            <View style={styles.empty}>
               <Text style={styles.emptyTitle}>No {CHANGES_LABEL} yet</Text>
               <Text style={styles.emptyText}>
-                Go back to {displayRoomTitle} and ask an Agent to start work.
+                Go back to {title} and ask an Agent to start work.
               </Text>
             </View>
           }
@@ -430,133 +217,55 @@ export default function BuzzCorners() {
 }
 
 const styles = StyleSheet.create((theme) => {
-  const groknight = theme.buzz;
+  const hull = theme.buzz;
   return {
-    container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
-    center: { alignItems: 'center', justifyContent: 'center' },
-    loadingText: {
+    container: { flex: 1, backgroundColor: hull.bgTerminal },
+    center: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 28 },
+    loading: {
       ...Typography.mono('semiBold'),
-      marginTop: 12,
-      color: groknight.textMuted,
-      fontSize: 11,
-      letterSpacing: 0.8,
+      color: hull.textMuted,
+      fontSize: 10,
+      letterSpacing: 1,
     },
     header: {
-      minHeight: 62,
-      paddingRight: 16,
+      minHeight: 66,
       flexDirection: 'row',
       alignItems: 'center',
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-      backgroundColor: groknight.bgBase,
+      paddingHorizontal: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
     },
-    backButton: { width: 52, height: 52, alignItems: 'center', justifyContent: 'center' },
-    backText: { ...Typography.default(), color: groknight.muted, fontSize: 22 },
+    back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    backText: { color: hull.textPrimary, fontSize: 30 },
     headerCopy: { flex: 1, minWidth: 0 },
-    eyebrow: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      color: groknight.textMuted,
-      fontSize: 11,
-      lineHeight: 15,
-    },
-    title: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 20,
-      lineHeight: 24,
-    },
-    count: {
-      ...Typography.mono('semiBold'),
-      marginLeft: 10,
-      color: groknight.steel,
-      fontSize: 13,
-    },
-    modelPanel: {
-      margin: 12,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgRaised,
-    },
-    modelTitle: {
-      ...Typography.mono('semiBold'),
-      color: groknight.textPrimary,
-      fontSize: 10,
-      lineHeight: 14,
-      letterSpacing: 0.6,
-    },
-    modelText: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 6,
-      color: groknight.textSecondary,
-      fontSize: 12,
-      lineHeight: 18,
-    },
-    errorPanel: {
-      marginHorizontal: 12,
-      marginBottom: 8,
-      padding: 10,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-    },
-    errorText: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      color: groknight.textSecondary,
-      fontSize: 12,
-    },
-    cornerRow: {
-      minWidth: 0,
-      minHeight: 64,
-      paddingHorizontal: 16,
+    eyebrow: { ...Typography.mono(), color: hull.textMuted, fontSize: 9 },
+    title: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 18 },
+    count: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 12 },
+    modelPanel: { margin: 12, padding: 12, gap: 5 },
+    modelTitle: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 9 },
+    modelText: { ...Typography.default(), color: hull.textMuted, fontSize: 11, lineHeight: 16 },
+    errorPanel: { paddingHorizontal: 16, paddingVertical: 8 },
+    error: { ...Typography.default(), color: hull.danger, fontSize: 11, textAlign: 'center' },
+    row: {
+      minHeight: 70,
       flexDirection: 'row',
       alignItems: 'center',
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-      backgroundColor: groknight.bgBase,
+      gap: 11,
+      paddingHorizontal: 16,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
     },
-    cornerCopy: { flex: 1, minWidth: 0, marginLeft: 10 },
-    cornerName: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-      fontSize: 14,
-    },
-    agent: {
-      ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 4,
-      color: groknight.textMuted,
-      fontSize: 10,
-      lineHeight: 14,
-    },
-    statusBlock: { width: 14, marginLeft: 8, alignItems: 'flex-end' },
-    statusGlyphRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    statusGlyph: { width: 14, height: 14 },
-    presenceDot: { ...Typography.default(), fontSize: 8 },
-    presenceOnline: { color: groknight.accent },
-    presenceOffline: { color: groknight.textMuted },
-    chevron: { ...Typography.default(), marginLeft: 8, color: groknight.gutter, fontSize: 20 },
+    rowCopy: { flex: 1, minWidth: 0 },
+    rowTitle: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 14 },
+    agent: { ...Typography.default(), color: hull.textMuted, fontSize: 11, marginTop: 3 },
+    chevron: { color: hull.textMuted, fontSize: 22 },
     emptyContainer: { flexGrow: 1 },
-    emptyState: { flex: 1, padding: 24, alignItems: 'center', justifyContent: 'center' },
-    emptyGlyph: { ...Typography.default(), color: groknight.steel, fontSize: 28 },
-    emptyTitle: {
-      ...Typography.default('semiBold'),
-      fontFamily: groknight.proseSemibold,
-      marginTop: 10,
-      color: groknight.textPrimary,
-      fontSize: 16,
-    },
+    empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 },
+    emptyTitle: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 17 },
     emptyText: {
       ...Typography.default(),
-      fontFamily: groknight.proseRegular,
-      marginTop: 6,
-      color: groknight.textMuted,
+      color: hull.textMuted,
       fontSize: 12,
-      lineHeight: 18,
       textAlign: 'center',
     },
   };

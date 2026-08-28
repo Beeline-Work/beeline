@@ -31,6 +31,48 @@ export async function migrateMaterializerReservations(database: DatabaseQueryabl
   await database.query(MATERIALIZER_RESERVATION_SQL);
 }
 
+const ROOM_READ_MARK_SQL = `
+CREATE TABLE IF NOT EXISTS beeline_room_read_marks (
+  community_id uuid NOT NULL,
+  room_id uuid NOT NULL,
+  viewer_pubkey bytea NOT NULL,
+  message_created_at timestamptz NOT NULL,
+  message_id bytea NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (community_id, room_id, viewer_pubkey)
+);
+`;
+
+const ROOM_READ_MARK_FUNCTION_SQL = `
+CREATE OR REPLACE FUNCTION beeline_mark_room_read(
+  target_community uuid,
+  target_room uuid,
+  target_viewer bytea,
+  target_created_at timestamptz,
+  target_message_id bytea
+) RETURNS boolean LANGUAGE sql VOLATILE STRICT AS $$
+  INSERT INTO beeline_room_read_marks (
+    community_id, room_id, viewer_pubkey, message_created_at, message_id, updated_at
+  ) VALUES (
+    target_community, target_room, target_viewer, target_created_at, target_message_id, now()
+  )
+  ON CONFLICT (community_id, room_id, viewer_pubkey) DO UPDATE SET
+    message_created_at = EXCLUDED.message_created_at,
+    message_id = EXCLUDED.message_id,
+    updated_at = EXCLUDED.updated_at
+  WHERE EXCLUDED.message_created_at > beeline_room_read_marks.message_created_at
+    OR (EXCLUDED.message_created_at = beeline_room_read_marks.message_created_at
+      AND EXCLUDED.message_id < beeline_room_read_marks.message_id)
+  RETURNING true;
+$$;
+`;
+
+/** Cross-device Room read cursors are indexer state, never phone state. */
+export async function migrateRoomReadMarks(database: DatabaseQueryable): Promise<void> {
+  await database.query(ROOM_READ_MARK_SQL);
+  await database.query(ROOM_READ_MARK_FUNCTION_SQL);
+}
+
 const DELETE_SNAPSHOT_CONTRACT_SQL = [
   'DROP TRIGGER IF EXISTS beeline_snapshot_events_dirty ON events',
   'DROP TRIGGER IF EXISTS beeline_snapshot_channels_dirty ON channels',
@@ -278,6 +320,10 @@ export class PostgresMaterializerStore implements DatabaseTransactional {
 
   async migrateReservations(): Promise<void> {
     await migrateMaterializerReservations(this.pool);
+  }
+
+  async migrateRoomReadMarks(): Promise<void> {
+    await migrateRoomReadMarks(this.pool);
   }
 
   async deleteSnapshotContract(): Promise<void> {

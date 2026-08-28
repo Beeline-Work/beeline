@@ -39,57 +39,49 @@ import { authSessionOptions } from '@/auth/auth-session';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
-  type Agent,
-  type Community,
   type ChannelRole,
-  type DirectMessage,
   type MergeTarget,
   type AttachmentReference,
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
   type KnownMessageReference,
+  RoomViewClient,
+  RoomViewHttpError,
+  SurfaceRefreshScheduler,
+  LiveOverlayDecoder,
+  applyLiveOverlay,
+  visibleLiveOverlays,
+  addRoomPage,
+  isRoomView,
+  type LiveOverlay,
+  type RoomView,
+  type RoomViewMessage,
+  KIND_AGENT_DRAFT,
   AGENT_PRESENCE_STALE_MS,
   CORNER_ACTIVITY_FRESHNESS_MS,
   personHandle,
-  selectMembers,
-  selectReplyTarget,
 } from '@beeline/buzz-client';
 import {
-  latestAgentTurns,
-  projectCornerTranscript,
-  projectReadEvent,
-  transcriptMessages,
+  displayRoomMessages,
   mergeDisplayPages,
   type ChatDisplayMessage,
   type DeliveryRetryPosture,
-} from '@/sync/transport/buzz-event-projection';
+  type AgentPresentation,
+  cornerSummaries,
+  memberAgent,
+  workspaceRailItem,
+} from '@/buzz/room-view-presentation';
 import {
   buildChannelReferenceIndex,
   type ChannelReferenceIndex,
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
-import {
-  channelCacheKey,
-  getCachedChannel,
-  type ChannelCacheEntry,
-  profileCacheKey,
-  selectChannelList,
-  setActiveBuzzCacheViewer,
-  useBuzzLocalCache,
-} from '@/buzz/local-cache';
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
-import {
-  cacheLiveSessionEvents,
-  drainLiveEventFrame,
-  loadOlderMessages,
-  revalidateCachedMessages,
-} from '@/buzz/local-cache-sync';
+import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { afterInteractions } from '@/buzz/defer-interaction';
-import { markRoomRemovedAndPurge } from '@/buzz/removed-rooms';
 import { buildTurnActivity, latestCornerPlan } from '@/buzz/activity-timeline';
 import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
-import { hydrateRoomEntry } from '@/buzz/room-entry';
 import { groknight } from '@/buzz/groknight';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { splitLedgerText } from '@/buzz/ledger-text';
@@ -115,7 +107,6 @@ import {
   resolveCornerCardAgentPubkey,
   resolvePendingAgentDisplay,
 } from '@/buzz/agent-display';
-import { useAgentNameCache, withKnownAgentNames } from '@/buzz/agent-name-cache';
 import {
   currentCornerStatus,
   roomListCorners,
@@ -200,7 +191,6 @@ import {
   mergeAgentPresence,
   nextAgentPresenceTransitionAt,
   onlineVerdicts,
-  presenceMapFromSessionEvents,
   activeMentionCandidates,
   AGENT_PRESENCE_BACKGROUND_GRACE_MS,
   type RoomAgentPresence,
@@ -255,7 +245,7 @@ type RoomMemberOption = {
   name: string;
   handle: string;
   kind: 'person' | 'agent';
-  agent?: Agent;
+  agent?: AgentPresentation;
 };
 
 /** Known body pubkeys for provenance display (hardcoded for dev). */
@@ -482,11 +472,6 @@ export default function BuzzChat() {
     returnTo?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
-  const initialCacheState = useBuzzLocalCache.getState();
-  const initialViewerPubkey = initialCacheState.activeViewerPubkey;
-  const initialChannelCache = initialViewerPubkey
-    ? getCachedChannel(initialViewerPubkey, decodedId)
-    : undefined;
   const routeParentChannelId = parent?.trim() || undefined;
   const routeChannelTitle = title?.trim() || undefined;
   const cornerReturnTarget = returnTo === 'room-list' ? returnTo : undefined;
@@ -508,6 +493,8 @@ export default function BuzzChat() {
   const selectedMentionsRef = useRef(new Map<string, string>());
   // When each agent was last told about, so a standing offline condition is
   const sendInFlightRef = useRef(false);
+  const outboxRef = useRef<ReturnType<typeof createRoomOutbox> | null>(null);
+  const roomSchedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
 
   // Publish the open conversation to the foreground notification policy. The
   // root notification handler runs outside the React tree, so it reads this
@@ -518,6 +505,9 @@ export default function BuzzChat() {
   }, [decodedId]);
 
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
+  const [roomClient, setRoomClient] = useState<RoomViewClient | null>(null);
+  const [roomSurface, setRoomSurface] = useState<RoomView | null>(null);
+  const [liveOverlays, setLiveOverlays] = useState<readonly LiveOverlay[]>([]);
   const [transcriptHydrationAttempt, setTranscriptHydrationAttempt] = useState(0);
   const [transcriptHydrationFailed, setTranscriptHydrationFailed] = useState(false);
   const [transcriptHydrationError, setTranscriptHydrationError] = useState<string | null>(null);
@@ -536,67 +526,27 @@ export default function BuzzChat() {
   const [sending, setSending] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
-  const [isArchived, setIsArchived] = useState(initialChannelCache?.archived ?? false);
   const [userPubkey, setUserPubkey] = useState<string>('');
-  const [mergeTarget, setMergeTarget] = useState<MergeTarget | null>(
-    initialChannelCache?.mergeTarget ?? null,
-  );
-  /** Branch/PR preview deployment for the merge-ready tip, when one exists.
-   *  Never part of `mergeTarget` — that object contains only signed approval
-   *  binding fields and must not grow a cosmetic field. */
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  // Why the corner has nothing ready, when it has an answer — the review
-  // panel otherwise shows the same generic placeholder whether the corner
-  // hasn't finished yet or explicitly declined to surface a review.
-  const [mergeNotReadyReason, setMergeNotReadyReason] = useState<string | null>(null);
   // Local relay acceptance and daemon landing are separate visible states;
   // neither is terminal until a durable landed event names the resulting tip.
   // 'failed' means a durable publish on the landing path (push, land, or
   // merge-gate attempt) failed or could not be confirmed. Whether anything is
   // still happening after that is NOT inferable here — the daemon says so on
   // the failure event itself, and `deliveryRetry` below carries its answer.
-  const [approvalState, setApprovalState] = useState<ApprovalUiState>('none');
+  const [approvalActionState, setApprovalState] = useState<ApprovalUiState>('none');
   // The daemon confirmed it CONSUMED the signed approval (`decision=accepted`
   // ack) and is landing it. This is what lets DELIVERING resolve on evidence:
   // before this existed, a missed archive event or silent daemon left the
   // spinner up forever. Cleared whenever the panel reopens for a new review.
-  const [approvalAcked, setApprovalAcked] = useState(false);
-  const [landedApprovalTip, setLandedApprovalTip] = useState<string | null>(null);
+  const [approvalPublishAcked, setApprovalAcked] = useState(false);
   // The daemon's own posture after a failed land. This screen used to hard-code
   // "RETRYING AUTOMATICALLY", which is false for a land the daemon has stopped
   // re-attempting (a moved target being rebased, or one it has given up on) —
   // exactly the case that reads as a dead end to the person holding the phone.
-  const [deliveryRetry, setDeliveryRetry] = useState<DeliveryRetryPosture | undefined>(undefined);
   // Reviewable tip currently on screen. Held on a ref, not read off
   // `mergeTarget`, because a whole live batch is applied before any re-render.
-  const mergeTargetTipRef = useRef<string | null>(initialChannelCache?.mergeTarget?.tip ?? null);
+  const mergeTargetTipRef = useRef<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
-  const [reviewFiles, setReviewFiles] = useState<string[] | null>(null);
-  const [parentChannelId, setParentChannelId] = useState<string | undefined>(
-    initialChannelCache?.parentChannelId ?? routeParentChannelId,
-  );
-  // Whether this transcript is a Room or a Corner, tracked separately from
-  // `parentChannelId` because an absent parent means "room" only after the
-  // channel's own read has landed — before that it means "not known yet", and
-  // the header must not name either surface on a guess.
-  const [channelKind, setChannelKind] = useState<ChannelKind>(() =>
-    routeParentChannelId ? 'corner' : cachedChannelKind(initialChannelCache),
-  );
-  // The corner view's own status badge, sourced from the exact same
-  // canonical CornerStatus (via listSubchannelLifecycle) that the Room-list
-  // dropdown and the standalone Corners list already read, so all three
-  // surfaces show identical primary status words for this corner.
-  const [cornerLifecycleStatus, setCornerLifecycleStatus] = useState<CornerStatus | null>(null);
-  // Every corner this transcript can name: a Corner reads its own siblings, a
-  // Room reads its own corners. The pinned indicator needs the corner's real
-  // name ("feat/ux-fix-now"), not an id — and this list is the one place that
-  // name is canonical. It is served from `listSubchannelLifecycle`'s shared
-  // short-TTL cache, which the Room list has usually already warmed.
-  const [cornerLifecycle, setCornerLifecycle] = useState<CornerSummary[]>([]);
-  const [notificationParentResolution, setNotificationParentResolution] = useState<{
-    channelId: string;
-    parentId: string | null;
-  } | null>(null);
   const [cornerStateNow, setCornerStateNow] = useState(Date.now());
   // "No corner on record" and "the corner list has not answered yet" are
   // different answers, and only the first one may let a freshly permitted
@@ -604,27 +554,10 @@ export default function BuzzChat() {
   // What this corner inherited from the Room it was opened out of: the task
   // the daemon recorded on its create event, and the bounded window of Room
   // conversation that preceded it. Corner-only; a Room never reads it.
-  const [cornerTask, setCornerTask] = useState<string | undefined>(undefined);
-  const [roomContext, setRoomContext] = useState<RoomContextEntry[]>([]);
-  const [communities, setCommunities] = useState<Community[]>([]);
-  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
-    initialChannelCache?.communityId ?? null,
-  );
-  const [canManageWorkspace, setCanManageWorkspace] = useState(false);
   const [addingMemberPubkey, setAddingMemberPubkey] = useState<string | null>(null);
-  const [viewerIsAgent, setViewerIsAgent] = useState(false);
-  // `null` while the channel's own metadata read is still in flight; `''` once
-  // it has landed and the channel genuinely carries no name.
-  const [resolvedChannelName, setResolvedChannelName] = useState<string | null>(
-    initialChannelCache?.roomName ?? routeChannelTitle ?? null,
-  );
-  const [viewerChannelRole, setViewerChannelRole] = useState<ChannelRole | null>(null);
   // The repo this Room owns, or `null` for a chat-only Room. Corners never
   // read this — a corner has no room-repository binding of its own; the
   // daemon resolves its working repo from its parent Room instead.
-  const [roomRepository, setRoomRepository] = useState<RoomRepository | null>(null);
-  /** False until a read has definitively established this Room's repository (or lack of one). */
-  const [roomRepositoryResolved, setRoomRepositoryResolved] = useState(false);
   const [showRoomRepoPicker, setShowRoomRepoPicker] = useState(false);
   const [roomRepoCandidates, setRoomRepoCandidates] = useState<RepoCandidate[]>([]);
   const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
@@ -657,9 +590,7 @@ export default function BuzzChat() {
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [membershipActionPubkey, setMembershipActionPubkey] = useState<string | null>(null);
   const [roomLifecycleBusy, setRoomLifecycleBusy] = useState(false);
-  const [directMessage, setDirectMessage] = useState<DirectMessage | null>(
-    initialChannelCache?.directMessage ?? null,
-  );
+  const directMessage = roomSurface?.directMessage ?? null;
   const [composerFocused, setComposerFocused] = useState(false);
   const [permissionActionId, setPermissionActionId] = useState<string | null>(null);
   /** Proposal currently being confirmed, and the last refusal/failure text. */
@@ -679,57 +610,139 @@ export default function BuzzChat() {
   // below is a read-only view for everything that decides "is it online".
   agentPresencesRef.current = heartbeatPresences;
   presenceReconnectGraceRef.current = presenceReconnectGrace;
-  const activeCacheViewer = useBuzzLocalCache((state) => state.activeViewerPubkey);
-  const cacheViewerPubkey = userPubkey || activeCacheViewer || '';
+  const cacheViewerPubkey = userPubkey;
+  const isArchived = roomSurface?.room.archived ?? false;
+  const parentChannelId = roomSurface?.parent?.id ?? routeParentChannelId;
+  const channelKind: ChannelKind = roomSurface
+    ? roomSurface.parent
+      ? 'corner'
+      : 'room'
+    : routeParentChannelId
+      ? 'corner'
+      : 'unknown';
   const isCorner = Boolean(parentChannelId);
-  const channelCache = useBuzzLocalCache((state) =>
-    cacheViewerPubkey ? state.channels[channelCacheKey(cacheViewerPubkey, decodedId)] : undefined,
+  const resolvedChannelName = roomSurface?.room.name ?? routeChannelTitle ?? null;
+  const activeCommunityId = roomSurface?.room.workspaceId ?? null;
+  const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
+  const viewerChannelRole = roomSurface?.viewer.role ?? null;
+  const canManageWorkspace = viewerChannelRole === 'owner' || viewerChannelRole === 'admin';
+  const communities = useMemo(
+    () =>
+      roomSurface
+        ? [
+            workspaceRailItem({
+              id: roomSurface.room.workspaceId,
+              name: roomSurface.parent?.name ?? roomSurface.room.name,
+              visibility: 'invite-only',
+              role: roomSurface.viewer.role,
+              updatedAt: roomSurface.room.updatedAt,
+            }),
+          ]
+        : [],
+    [roomSurface],
   );
-  // Seeded synchronously from the local cache so history is on screen on
-  // first paint, before the async identity load resolves the live channelCache.
-  const cachedSnapshot = channelCache?.snapshot ?? initialChannelCache?.snapshot;
+  const cornerLifecycle = useMemo(
+    () => (roomSurface ? cornerSummaries(roomSurface) : []),
+    [roomSurface],
+  );
+  const cornerLifecycleStatus =
+    cornerLifecycle.find((corner) => corner.id === decodedId)?.status ?? null;
+  const cornerTask = roomSurface?.parent ? roomSurface.room.about : undefined;
+  const roomContext = useMemo<RoomContextEntry[]>(
+    () =>
+      displayRoomMessages(roomSurface?.briefing ?? [], cacheViewerPubkey).map((message) => ({
+        id: message.id,
+        text: message.text,
+        timestamp: message.timestamp,
+        ...(message.pubkey ? { pubkey: message.pubkey } : {}),
+        isAgent: Boolean(message.isAgentAuthor),
+      })),
+    [cacheViewerPubkey, roomSurface?.briefing],
+  );
+  const roomRepository = useMemo<RoomRepository | null>(() => {
+    if (isCorner || !roomSurface?.repository) return null;
+    const repository = roomSurface.repository;
+    return {
+      channelId: decodedId,
+      communityId: roomSurface.room.workspaceId,
+      binding: {
+        key: repository.key,
+        name: repository.name,
+        remote: repository.remote,
+        localOnly: false,
+        ...(repository.githubInstallationId
+          ? { githubInstallationId: repository.githubInstallationId }
+          : {}),
+      },
+      targetBranch: repository.targetBranch,
+      githubEventsEnabled: repository.githubEventsEnabled,
+      source: 'config',
+    };
+  }, [decodedId, isCorner, roomSurface]);
+  const roomRepositoryResolved = Boolean(roomSurface);
+  const mergeTarget = useMemo<MergeTarget | null>(
+    () =>
+      roomSurface?.review?.status === 'ready' &&
+      roomSurface.review.artifact &&
+      roomSurface.repository
+        ? {
+            repo: roomSurface.repository.key,
+            branch: roomSurface.repository.targetBranch.startsWith('refs/')
+              ? roomSurface.repository.targetBranch
+              : `refs/heads/${roomSurface.repository.targetBranch}`,
+            tip: roomSurface.review.artifact.tip,
+            patchId: roomSurface.review.artifact.patchId,
+          }
+        : null,
+    [roomSurface],
+  );
+  const latestMerge = useMemo(
+    () => [...(roomSurface?.messages ?? [])].reverse().find((message) => message.merge)?.merge,
+    [roomSurface?.messages],
+  );
+  const approvalState: ApprovalUiState =
+    latestMerge?.action === 'landed'
+      ? 'merged'
+      : latestMerge?.action === 'failed'
+        ? 'failed'
+        : approvalActionState;
+  const approvalAcked =
+    approvalPublishAcked ||
+    Boolean(
+      [...(roomSurface?.messages ?? [])]
+        .reverse()
+        .find(
+          (message) =>
+            message.merge?.action === 'approval-ack' && message.merge.decision === 'accepted',
+        ),
+    );
+  const previewUrl = latestMerge?.previewUrl ?? null;
+  const mergeNotReadyReason =
+    roomSurface?.review?.status === 'not-ready' ? (roomSurface.review.reason ?? null) : null;
+  const reviewFiles = roomSurface?.review?.files.map((file) => file.path) ?? null;
+  const landedApprovalTip =
+    latestMerge?.action === 'landed' ? (latestMerge.tip ?? mergeTarget?.tip ?? null) : null;
+  const deliveryRetry: DeliveryRetryPosture | undefined =
+    latestMerge?.action === 'failed' ? latestMerge.retry : undefined;
   const cachedMessages = useMemo(
     () =>
-      cachedSnapshot && cacheViewerPubkey
-        ? transcriptMessages(cachedSnapshot, decodedId, cacheViewerPubkey)
+      roomSurface && cacheViewerPubkey
+        ? displayRoomMessages(roomSurface.messages, cacheViewerPubkey)
         : [],
-    [cacheViewerPubkey, cachedSnapshot, decodedId],
+    [cacheViewerPubkey, roomSurface],
   );
-  // Latest-snapshot read for callbacks that must not depend on the snapshot
-  // reference (see `beginReply`): the reference moves on every pump chunk.
-  const cachedSnapshotRef = useRef(cachedSnapshot);
-  cachedSnapshotRef.current = cachedSnapshot;
-  // The workspace's already-known channels, for resolving explicit
-  // `#room` / `#room/corner` references in prose. Read from the SAME local
-  // cache the Room list maintains (never a second persisted index), plus this
-  // transcript's own canonical corner list. Memoized so the object identity —
-  // and therefore MonoMarkdown's React.memo bailout — holds across unrelated
-  // renders; resolution itself is exact-only and stays silent on anything the
-  // workspace does not actually have (`buzz/channel-reference.ts`).
-  const cachedChannelList = useBuzzLocalCache((state) =>
-    selectChannelList(state, cacheViewerPubkey || null, activeCommunityId ?? undefined),
-  );
+  // Resolve references only within the Room family returned by this surface.
   const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
-    const listChannels = cachedChannelList?.channels ?? [];
     return buildChannelReferenceIndex(
       [
-        ...listChannels
-          .filter((channel) => !channel.parentChannelId && channel.title)
-          .map((channel) => ({ channelId: channel.id, name: channel.title! })),
-        // This transcript's own channel, even when it is not in the cached
-        // list yet (a freshly created Room or Corner).
-        parentChannelId
-          ? null
-          : { channelId: decodedId, name: resolvedChannelName || routeChannelTitle || '' },
+        ...(roomSurface?.parent
+          ? [{ channelId: roomSurface.parent.id, name: roomSurface.parent.name }]
+          : []),
+        ...(parentChannelId
+          ? []
+          : [{ channelId: decodedId, name: resolvedChannelName || routeChannelTitle || '' }]),
       ].filter((room): room is { channelId: string; name: string } => room !== null),
       [
-        ...listChannels.flatMap((channel) =>
-          (channel.corners ?? []).map((corner) => ({
-            channelId: corner.id,
-            parentChannelId: channel.id,
-            name: corner.name,
-          })),
-        ),
         ...cornerLifecycle.map((corner) => ({
           channelId: corner.id,
           parentChannelId: parentChannelId ?? decodedId,
@@ -747,11 +760,11 @@ export default function BuzzChat() {
       ],
     );
   }, [
-    cachedChannelList,
     cornerLifecycle,
     decodedId,
     parentChannelId,
     resolvedChannelName,
+    roomSurface?.parent,
     routeChannelTitle,
   ]);
   /** Navigate to exactly the referenced Room/Corner through the existing
@@ -765,14 +778,14 @@ export default function BuzzChat() {
     },
     [decodedId],
   );
-  // The cold-open deadline lives on the ONE critical-path read itself
-  // (`COLD_TAIL_DEADLINE_MS` in local-cache-sync): the eight-second budget
-  // bounds exactly the single bounded tail read, never the deferred
-  // authority/sibling/projection/membership/presence hydration. A rejected
-  // tail read surfaces through `onStepFailed('transcript')` below.
+  // The cold-open deadline bounds the single authenticated Room request.
+  // A rejected request surfaces through `onStepFailed('transcript')` below.
   // Older pages loaded on demand via "scroll up" pagination. Kept out of the
   // shared cache (which bounds to the recent tail) and merged in only here.
-  const [olderMessages, setOlderMessages] = useState<ChatDisplayMessage[]>([]);
+  // History stays as verbatim server rows in page-lifetime partitions. It is
+  // converted to render props only below, never persisted as a derived
+  // transcript or folded into the current Room response.
+  const [olderPages, setOlderPages] = useState<readonly (readonly RoomViewMessage[])[]>([]);
   const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_MESSAGE_WINDOW);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const hasMoreHistoryRef = useRef(true);
@@ -780,15 +793,38 @@ export default function BuzzChat() {
     () => new Set(cachedMessages.map((message) => message.id)),
     [cachedMessages],
   );
+  const liveMessages = useMemo<ChatDisplayMessage[]>(() => {
+    if (!roomSurface) return [];
+    return visibleLiveOverlays(liveOverlays, roomSurface.messages).flatMap((overlay) => {
+      if (overlay.kind === 'presence') return [];
+      return [
+        {
+          id: overlay.kind === 'draft' ? overlay.stableId : overlay.key,
+          text: overlay.kind === 'draft' ? (overlay.text ?? '') : '',
+          isUser: false,
+          timestamp: overlay.createdAt,
+          pubkey: overlay.agentPubkey,
+          isAgentAuthor: true,
+          isAgentActivity: true,
+          isAgentLiveTurn: true,
+          ...(overlay.kind === 'draft'
+            ? { isAgentDraft: true, agentMessageDraft: overlay.text ?? '' }
+            : { agentThought: overlay.text ?? '' }),
+        },
+      ];
+    });
+  }, [liveOverlays, roomSurface]);
+  const olderMessages = useMemo(
+    () => (cacheViewerPubkey ? displayRoomMessages(olderPages.flat(), cacheViewerPubkey) : []),
+    [cacheViewerPubkey, olderPages],
+  );
   const durableMessages = useMemo(
-    () => (isCorner ? cachedMessages : mergeDisplayPages(olderMessages, cachedMessages)),
-    [cachedMessages, isCorner, olderMessages],
+    () => mergeDisplayPages(olderMessages, cachedMessages, liveMessages),
+    [cachedMessages, liveMessages, olderMessages],
   );
   const {
     frame: roomSendFrame,
     append: addMessages,
-    reconcile: reconcileOptimistic,
-    remove: removeOptimistic,
     clear: clearOptimistic,
   } = useRoomSendFrame(durableMessages, committedMessageIds, isCorner);
   // A Room paints its normally single optimistic row as a FlatList header, so
@@ -798,9 +834,9 @@ export default function BuzzChat() {
   const combinedMessages = useMemo(
     () =>
       isCorner
-        ? mergeDisplayPages(olderMessages, cachedMessages, roomSendFrame.optimistic)
+        ? mergeDisplayPages(durableMessages, roomSendFrame.optimistic)
         : roomSendFrame.transcript,
-    [cachedMessages, isCorner, olderMessages, roomSendFrame],
+    [durableMessages, isCorner, roomSendFrame],
   );
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
@@ -835,20 +871,19 @@ export default function BuzzChat() {
       return;
     }
     const oldest = combinedMessages[0];
-    if (!hasMoreHistoryRef.current || !transport || !oldest) return;
+    if (!hasMoreHistoryRef.current || !roomClient || !oldest || !cacheViewerPubkey) return;
     setLoadingOlderMessages(true);
-    void loadOlderMessages(
-      transport,
-      cacheViewerPubkey,
-      decodedId,
-      oldest.timestamp,
-      OLDER_MESSAGES_PAGE_SIZE,
-    )
-      .then((older) => {
-        const fresh = older.filter((message) => message.id !== oldest.id);
-        if (fresh.length < OLDER_MESSAGES_PAGE_SIZE - 1) hasMoreHistoryRef.current = false;
+    void roomClient
+      .history(decodedId, { createdAt: oldest.timestamp, id: oldest.relayId ?? oldest.id })
+      .then((page) => {
+        const fresh = page.messages.filter((message) => message.id !== oldest.id);
+        if (!page.nextBefore) hasMoreHistoryRef.current = false;
         if (fresh.length === 0) return;
-        setOlderMessages((current) => mergeDisplayPages(current, fresh));
+        setOlderPages(
+          (current) =>
+            addRoomPage({ ...(roomSurface ? { tail: roomSurface } : {}), pages: current }, fresh)
+              .pages,
+        );
         setVisibleMessageCount((count) => count + fresh.length);
       })
       .catch((err) => console.warn('Failed to load older messages:', err))
@@ -858,22 +893,37 @@ export default function BuzzChat() {
     combinedMessages,
     decodedId,
     loadingOlderMessages,
-    transport,
+    roomClient,
+    roomSurface,
     visibleMessageCount,
   ]);
-  const knownAgentNames = useAgentNameCache((state) => state.byPubkey);
-  const rememberKnownAgents = useAgentNameCache((state) => state.rememberAgents);
-  // The Room's own roster read wins field-per-field, but a name (soul) the
-  // agent was given in ANY Workspace survives: one identity everywhere, not
-  // per-Room placeholders when this channel's own read is stale or absent.
   const availableAgents = useMemo(
-    () => withKnownAgentNames(knownAgentNames, channelCache?.availableAgents ?? []),
-    [knownAgentNames, channelCache?.availableAgents],
+    () =>
+      (roomSurface?.members ?? [])
+        .filter((member) => member.identity.kind === 'agent')
+        .map((member) => memberAgent(member, roomSurface?.room.workspaceId ?? '')),
+    [roomSurface],
   );
-  const availablePeople = channelCache?.availablePeople ?? [];
+  const availablePeople = useMemo(
+    () =>
+      (roomSurface?.members ?? [])
+        .filter((member) => member.identity.kind === 'human')
+        .map((member) => ({ pubkey: member.identity.pubkey, role: member.role })),
+    [roomSurface],
+  );
   const selectedMembersRaw = useMemo(
-    () => (cachedSnapshot ? selectMembers(cachedSnapshot, decodedId) : []),
-    [cachedSnapshot, decodedId],
+    () =>
+      (roomSurface?.members ?? []).map((member) => ({
+        pubkey: member.identity.pubkey,
+        role: member.role,
+        kind: member.identity.kind,
+        identity: {
+          kind: member.identity.kind,
+          displayName: member.identity.name,
+          handle: member.identity.handle,
+        },
+      })),
+    [roomSurface],
   );
   // The membership projection rebuilds every wrapper object on each snapshot
   // commit. Downstream memos (memberOptions, roomParticipants) and ultimately
@@ -888,13 +938,18 @@ export default function BuzzChat() {
     () => new Set<string>(roomMembers.map((member) => member.pubkey)),
     [roomMembers],
   );
-  const cachedPersonProfiles = useBuzzLocalCache((state) =>
-    cacheViewerPubkey && activeCommunityId
-      ? state.profiles[profileCacheKey(cacheViewerPubkey, activeCommunityId)]
-      : undefined,
+  const personProfiles = useMemo(
+    () =>
+      (roomSurface?.members ?? [])
+        .filter((member) => member.identity.kind === 'human')
+        .map((member) => ({
+          pubkey: member.identity.pubkey,
+          name: member.identity.name,
+          ...(member.identity.avatar ? { avatar: member.identity.avatar } : {}),
+        })),
+    [roomSurface],
   );
-  const personProfiles = cachedPersonProfiles ?? [];
-  const participantsHydrated = cachedSnapshot?.rooms[decodedId]?.membership.status === 'known';
+  const participantsHydrated = roomSurface !== null;
   const agentByPubkey = useMemo(
     () => new Map(availableAgents.map((agent) => [agent.pubkey, agent])),
     [availableAgents],
@@ -970,10 +1025,7 @@ export default function BuzzChat() {
       selectedMembers.map((member) => {
         const known = memberOptions.find((option) => option.pubkey === member.pubkey);
         if (known) return known;
-        const name =
-          member.identity?.kind !== 'infrastructure'
-            ? (member.identity?.displayName ?? member.identity?.handle)
-            : undefined;
+        const name = member.identity?.displayName ?? member.identity?.handle;
         return {
           pubkey: member.pubkey,
           name: member.pubkey === userPubkey ? 'You' : (name ?? shortMemberNpub(member.pubkey)),
@@ -1097,12 +1149,21 @@ export default function BuzzChat() {
     mentionSuggestions.matches.length > 0,
   );
   // Turn receipts are channel-local for Rooms and Corners alike. Derive them
-  // before final transcript presentation so a bare signed WORKING receipt can
-  // drive both the thinking line and Corner stall suppression during the
-  // silent window before the first draft/thought/tool event.
+  // only from the route-local live lane. Durable turn state comes from GETs.
   const agentTurnMarkers = useMemo(
-    () => (cachedSnapshot ? latestAgentTurns(cachedSnapshot, decodedId) : []),
-    [cachedSnapshot, decodedId],
+    () =>
+      liveOverlays.flatMap((overlay) =>
+        overlay.kind === 'draft' && !overlay.closed
+          ? [
+              {
+                requestId: overlay.requestId,
+                agentPubkey: overlay.agentPubkey,
+                status: 'working' as const,
+              },
+            ]
+          : [],
+      ),
+    [liveOverlays],
   );
   const activeAgentTurn = useMemo(
     () =>
@@ -1116,17 +1177,7 @@ export default function BuzzChat() {
       ),
     [agentTurnMarkers, agentPresences, presenceNow, presenceReconnectGrace],
   );
-  const messages = useMemo(() => {
-    if (!isCorner) return unprojectedMessages;
-    const liveAgentPubkeys = new Set<string>();
-    if (!isArchived) {
-      if (activeAgentTurn?.agentPubkey) liveAgentPubkeys.add(activeAgentTurn.agentPubkey);
-      for (const message of unprojectedMessages) {
-        if (message.isAgentLiveTurn && message.pubkey) liveAgentPubkeys.add(message.pubkey);
-      }
-    }
-    return projectCornerTranscript(unprojectedMessages, { liveAgentPubkeys });
-  }, [activeAgentTurn, isArchived, isCorner, unprojectedMessages]);
+  const messages = unprojectedMessages;
   const isDirectMessage = Boolean(directMessage);
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
@@ -1269,11 +1320,9 @@ export default function BuzzChat() {
   // block on another read).
   const parentRoomName = useMemo(() => {
     if (!parentChannelId) return undefined;
-    const parent = cachedChannelList?.channels.find(
-      (channel) => channel.id === parentChannelId && !channel.parentChannelId,
-    );
-    return parent?.title?.trim() ? parent.title : null;
-  }, [cachedChannelList, parentChannelId]);
+    const parent = roomSurface?.parent;
+    return parent?.name?.trim() ? parent.name : null;
+  }, [parentChannelId, roomSurface?.parent]);
   const headerTitle = channelHeaderTitle(
     resolvedChannelName,
     isCorner ? 'corner' : channelKind,
@@ -1297,7 +1346,10 @@ export default function BuzzChat() {
     ? directMessage?.participants.find((pubkey) => pubkey !== userPubkey)
     : undefined;
   const dmPeerProfile = dmPeerPubkey ? personProfileByPubkey.get(dmPeerPubkey) : undefined;
-  const dmPeerNip05Status = useVerifiedNip05Status(dmPeerPubkey ?? '', dmPeerProfile);
+  const dmPeerNip05Status = useVerifiedNip05Status(
+    dmPeerPubkey ?? '',
+    dmPeerProfile ? { nip05: undefined } : undefined,
+  );
   const displayRoomName = useMemo(() => {
     if (!dmPeerPubkey) return roomName;
     const peerAgent = agentByPubkey.get(dmPeerPubkey);
@@ -1353,9 +1405,7 @@ export default function BuzzChat() {
       canonicalCornerStatus === 'archived' ||
       (isCorner && isArchived);
     const targetMissing =
-      isCorner &&
-      notificationParentResolution?.channelId === decodedId &&
-      notificationParentResolution.parentId === null;
+      isCorner && roomSurface?.room.id === decodedId && roomSurface.parent === undefined;
     if (!targetMissing && !targetFinished) return;
     handledNotificationFallbackRef.current = notificationResponseId;
     router.replace({
@@ -1368,8 +1418,8 @@ export default function BuzzChat() {
     isArchived,
     isCorner,
     notificationFallbackChannelId,
-    notificationParentResolution,
     notificationResponseId,
+    roomSurface,
   ]);
 
   const cornerAgentPubkey = useMemo(
@@ -1651,8 +1701,9 @@ export default function BuzzChat() {
   }, [isArchived, visibleMessages]);
 
   useEffect(() => {
-    setReviewFiles(null);
     setApprovalError(null);
+    setApprovalState('none');
+    setApprovalAcked(false);
   }, [mergeTarget?.tip]);
 
   useEffect(() => {
@@ -1701,534 +1752,264 @@ export default function BuzzChat() {
     setHighlightedMentionIndex(0);
   }, [mentionMenuKey]);
 
-  // Off the enter-room fan-out on purpose: only a Room needs its repo chip
-  // and the corner-open lazy prompt, and a corner has no room-repository
-  // binding of its own to read.
-  useEffect(() => {
-    if (!decodedId || !transport || isCorner) {
-      setRoomRepository(null);
-      setRoomRepositoryResolved(false);
-      return;
-    }
-    let cancelled = false;
-    void transport
-      .roomRepositoryState(decodedId)
-      .then(async (state) => {
-        if (cancelled) return;
-        const repository = state.kind === 'repository' ? state.repository : null;
-        setRoomRepository(repository);
-        setRoomRepoAccessIssue(null);
-        const fullName = repository
-          ? githubFullNameFromInput(repository.binding.remote ?? repository.binding.name)
-          : null;
-        if (fullName && repository?.binding.githubInstallationId) {
-          const access = await transport.githubRepositoryAccess(fullName).catch(() => null);
-          if (!cancelled && access && !access.accessible) {
-            setRoomRepoAccessIssue({
-              fullName,
-              reason: access.reason ?? 'not_granted',
-              ...(access.installationId ? { installationId: access.installationId } : {}),
-            });
-          }
-        }
-        // Only a definite `none` licenses the app to say this Room has no
-        // repository. An error, or a config whose author could not be
-        // confirmed as an admin, is "not known yet" — telling an admin their
-        // configured Room is unconfigured because one relay read was slow is
-        // the failure this flag exists to prevent.
-        setRoomRepositoryResolved(state.kind !== 'unverified');
-      })
-      .catch(() => {
-        if (!cancelled) setRoomRepositoryResolved(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [decodedId, isCorner, transport]);
-
   useEffect(() => {
     if (!decodedId) return;
 
     let cancelled = false;
-    const isCancelled = () => cancelled;
     let unsubscribe: (() => void) | undefined;
-    let unsubscribePresence: (() => void) | undefined;
-    let unsubscribeDraft: (() => void) | undefined;
-    let unsubscribeCornerState: (() => void) | undefined;
     let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
-    const cancelDeferred: (() => void)[] = [];
+    let scheduler: SurfaceRefreshScheduler<RoomView> | undefined;
+    let decoder: LiveOverlayDecoder | undefined;
+    let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
+    let watchGeneration = 0;
+    let watchKey = '';
+    let hasPainted = false;
+
     agentPresencesRef.current = {};
     presenceReconnectGraceRef.current = {};
     setAgentPresences({});
     setPresenceReconnectGrace({});
     setPresenceResolved(false);
+    setLiveOverlays([]);
     hasMoreHistoryRef.current = true;
-    setOlderMessages([]);
+    setOlderPages([]);
     clearOptimistic();
     setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
+    setTranscriptHydrationFailed(false);
+    setTranscriptHydrationError(null);
 
-    // The screen is already painted from the local cache by the time this
-    // runs. The navigation transition owns the next few frames, so every
-    // relay response is projected and committed behind it rather than inside
-    // it — see defer-interaction.ts.
-    const defer = (run: () => void) => {
-      cancelDeferred.push(afterInteractions(run));
-    };
-    const patchChannelCache = (viewerPubkey: string, patch: Partial<ChannelCacheEntry>) => {
-      useBuzzLocalCache.getState().patchChannel(viewerPubkey, decodedId, patch);
+    const applyDecodedOverlay = (overlay: LiveOverlay) => {
+      setLiveOverlays((current) => applyLiveOverlay(current, overlay));
+      if (overlay.kind === 'presence') {
+        applyAgentPresence({
+          agentPubkey: overlay.agentPubkey,
+          status: overlay.status,
+          observedAt: overlay.createdAt * 1_000,
+        });
+      }
     };
 
-    (async () => {
+    const applyView = (
+      view: RoomView,
+      identityPubkey: string,
+      relayUrl: string,
+      fresh: boolean,
+    ) => {
+      if (cancelled) return;
+      hasPainted = true;
+      setRoomSurface(view);
       setTranscriptHydrationFailed(false);
       setTranscriptHydrationError(null);
+      void Promise.all([
+        saveActiveCommunityId(identityPubkey, view.room.workspaceId),
+        saveLastViewedChannel(identityPubkey, view.room.workspaceId, decodedId),
+      ]).catch(() => undefined);
+
+      const presences = Object.fromEntries(
+        view.members.flatMap((member) =>
+          member.presence
+            ? [
+                [
+                  member.identity.pubkey,
+                  {
+                    agentPubkey: member.identity.pubkey,
+                    status: member.presence.status,
+                    observedAt: member.presence.observedAt * 1_000,
+                  },
+                ],
+              ]
+            : [],
+        ),
+      );
+      agentPresencesRef.current = presences;
+      setAgentPresences(presences);
+      setPresenceResolved(true);
+      setPresenceNow(Date.now());
+
+      setCornerStateNow(Date.now());
+      mergeTargetTipRef.current =
+        view.review?.status === 'ready' ? (view.review.artifact?.tip ?? null) : null;
+
+      decoder = new LiveOverlayDecoder(
+        decodedId,
+        new Set(
+          view.members
+            .filter((member) => member.identity.kind === 'agent')
+            .map((member) => member.identity.pubkey),
+        ),
+        new Set([
+          decodedId,
+          ...(view.parent ? [view.parent.id] : []),
+          ...view.corners.map((corner) => corner.corner.id),
+        ]),
+      );
+      const replayedOverlays = pendingOverlayEvents;
+      pendingOverlayEvents = [];
+      for (const event of replayedOverlays) {
+        const overlay = decoder.decode(event);
+        if (overlay) applyDecodedOverlay(overlay);
+      }
+      void outboxRef.current?.reconcile(new Set(view.messages.map((message) => message.id)));
+
+      if (fresh) {
+        void mobileSurfaceCache.write(
+          surfaceAddress(relayUrl, identityPubkey, `/room/${decodedId}`),
+          view,
+          isRoomView,
+        );
+      }
+
+      const nextWatchKey = JSON.stringify(view.watchFilters);
+      if (fresh && nextWatchKey !== watchKey) {
+        void installWatch(view.watchFilters);
+      }
+    };
+
+    const installWatch = async (filters: RoomView['watchFilters']): Promise<void> => {
+      const generation = ++watchGeneration;
+      watchKey = JSON.stringify(filters);
+      const currentTransport = transportForEffect;
+      if (!currentTransport) return;
+      const client = await currentTransport.ensureClient();
+      let replaying = true;
+      const stop = await client.surfaceSubscribe(filters, (event) => {
+        if (cancelled || generation !== watchGeneration) return;
+        if (!decoder && event.kind === KIND_AGENT_DRAFT) {
+          // The initial replay can contain the currently replaceable draft
+          // before the Room response supplies its authorized agent roster.
+          // Keep only this bounded live-lane input, then verify/decode it once
+          // the response arrives; durable events still only mark dirty.
+          pendingOverlayEvents = [...pendingOverlayEvents.slice(-63), event];
+          return;
+        }
+        const overlay = decoder?.decode(event);
+        if (overlay) {
+          applyDecodedOverlay(overlay);
+          return;
+        }
+        // Stored rows delivered before EOSE are covered by the closing GET.
+        // Treating that initial replay as fresh invalidation creates a second
+        // physical cold-open request for no new state.
+        if (replaying) return;
+        // Durable relay records carry no client truth. A match does exactly
+        // one thing: mark this surface dirty for a whole-response refresh.
+        scheduler?.signal();
+      });
+      replaying = false;
+      if (cancelled || generation !== watchGeneration) {
+        stop();
+        return;
+      }
+      unsubscribe?.();
+      unsubscribe = stop;
+    };
+
+    let transportForEffect: BuzzRigTransport | undefined;
+    void (async () => {
       try {
-        // Identity and relay URL are local storage reads, never network.
         const identity = await loadBuzzIdentity();
         if (!identity) {
           router.replace('/buzz/onboarding');
           return;
         }
         if (cancelled) return;
-        setActiveBuzzCacheViewer(identity.publicKey);
         setUserPubkey(identity.publicKey);
 
-        const url = await getEffectiveRelayUrl();
+        const relayUrl = await getEffectiveRelayUrl();
         if (cancelled) return;
-        const t = new BuzzRigTransport(identity, url);
-        setTransport(t);
-        // Constructs the shared authenticated client; the WebSocket is opened
-        // lazily by the first live subscription, so this is not a round-trip.
-        const client = await t.ensureClient();
-        if (cancelled) return;
-        // A live Nostr REQ without `since` replays the Room's entire history.
-        // On a large Room that duplicates the HTTP backfill as hundreds of
-        // singular subscription callbacks and can starve every UI gesture.
-        // Start at screen entry; the concurrent backfill owns older history.
-        const liveSince = Math.max(0, Math.floor(Date.now() / 1_000) - 1);
-
-        let cornerStateDeliveryGeneration = 0;
-        const installCornerStateDelivery = (cornerIds: string[]): Promise<void> => {
-          const ids = [...new Set([...cornerIds, decodedId])];
-          const generation = ++cornerStateDeliveryGeneration;
-          unsubscribeCornerState?.();
-          unsubscribeCornerState = undefined;
-          return t.getParentChannelId(decodedId).then(async (knownParent) => {
-            const lifecycleParent = knownParent ?? decodedId;
-            // Corner lifecycle state churns with the daemon's WORKING lease
-            // and every activity receipt. Feeding each event straight into
-            // the cache (one full snapshot reduce + store notify per event)
-            // and firing one relay read + setState cascade per event made the
-            // corner screen saturate the JS thread exactly while a reader
-            // was sending or opening the actions modal. Corner-state events
-            // therefore join the SAME frame-coalesced pump as every other
-            // live stream, and the membership/lifecycle refresh coalesces to
-            // one trailing read per animation frame.
-            let lifecycleRefreshScheduled = false;
-            const scheduleCornerLifecycleRefresh = () => {
-              if (lifecycleRefreshScheduled) return;
-              lifecycleRefreshScheduled = true;
-              requestAnimationFrame(() => {
-                lifecycleRefreshScheduled = false;
-                if (cancelled || generation !== cornerStateDeliveryGeneration) return;
-                void t.listSubchannelLifecycle(lifecycleParent).then((corners) => {
-                  if (cancelled || generation !== cornerStateDeliveryGeneration) return;
-                  setCornerLifecycle(corners);
-                  const current = corners.find((corner) => corner.id === decodedId);
-                  if (current) {
-                    setCornerLifecycleStatus(current.status);
-                    if (current.machineState === 'closed' || current.machineState === 'concluded') {
-                      setIsArchived(true);
-                    }
-                  }
-                  setCornerStateNow(Date.now());
-                });
-              });
-            };
-            const unsubscribe = await t.cornerLifecycleSubscribeReady(
-              lifecycleParent,
-              ids,
-              (event) => {
-                if (cancelled || generation !== cornerStateDeliveryGeneration) return;
-                handleLiveMessage(event);
-                scheduleCornerLifecycleRefresh();
-              },
-            );
-            if (cancelled || generation !== cornerStateDeliveryGeneration) {
-              unsubscribe();
-              return;
-            }
-            unsubscribeCornerState = unsubscribe;
-          });
-        };
-
-        // A corner's live agent-activity stream can deliver one raw event per
-        // streamed token. Reprojecting + re-sorting the cache on every single
-        // one saturates the JS thread and reads as a UI freeze during a send
-        // or while the agent is actively working. Coalesce whatever arrives
-        // within one animation frame into a single cache write instead.
-        let pendingLiveEvents: Parameters<typeof cacheLiveSessionEvents>[2] = [];
-        let liveFlushScheduled = false;
-        const flushLiveEvents = () => {
-          liveFlushScheduled = false;
-          if (cancelled || pendingLiveEvents.length === 0) return;
-          const projections: ReturnType<typeof cacheLiveSessionEvents> = [];
-          const frame = drainLiveEventFrame(pendingLiveEvents, (batch) => {
-            projections.push(...cacheLiveSessionEvents(identity.publicKey, decodedId, batch));
-          });
-          for (const projected of projections) {
-            // One reducer owns every transition out of sending/delivering —
-            // rejection ack, landed card, archive notice, delivery failure —
-            // so the approve panel can never hang on an unbounded claim.
-            setApprovalState((current) => nextApprovalState(current, projected));
-            if (projected.mergeTarget) {
-              // A merge-ready on a DIFFERENT tip is a new change to review —
-              // it supersedes whatever happened to the previous approval, so
-              // the panel must go back to offering the approve button instead
-              // of staying stuck on the earlier attempt's failure. Tracked on
-              // a ref because a whole batch is applied before any re-render.
-              if (
-                mergeTargetTipRef.current &&
-                mergeTargetTipRef.current !== projected.mergeTarget.tip
-              ) {
-                setApprovalState((current) => (current === 'merged' ? current : 'none'));
-                setApprovalAcked(false);
-                setDeliveryRetry(undefined);
-              }
-              mergeTargetTipRef.current = projected.mergeTarget.tip;
-              setMergeTarget(projected.mergeTarget);
-              // The preview belongs to the tip it rode in on, so it moves with
-              // the merge target on both edges — a superseded tip must never
-              // leave a stale PREVIEW row pointing at the old deploy.
-              setPreviewUrl(projected.previewUrl ?? null);
-            }
-            if (projected.clearMergeTarget) {
-              mergeTargetTipRef.current = null;
-              setMergeTarget(null);
-              setPreviewUrl(null);
-              setApprovalAcked(false);
-            }
-            if (projected.archiveChannel) {
-              setIsArchived(true);
-              setApprovalState('merged');
-            }
-            // A durable publish on the landing path failed or could not be
-            // confirmed — never keep showing a stale "sent"/"delivering"
-            // state while nothing is actually landing. Ignored once merged.
-            if (projected.deliveryFailed) {
-              setApprovalState((current) => (current === 'merged' ? current : 'failed'));
-              setDeliveryRetry(projected.deliveryRetry);
-              setApprovalError(
-                projected.deliveryFailureReason ?? 'The daemon could not land this change.',
-              );
-            }
-            // The daemon's receipt for THIS signed approval: accepted (it is
-            // landing the approved tip — stop claiming "delivering", which no
-            // one was answering for) or rejected with its plain reason.
-            if (projected.approvalAck?.decision === 'accepted') {
-              setApprovalAcked(true);
-              setApprovalError(null);
-            } else if (projected.approvalAck?.decision === 'rejected') {
-              setApprovalAcked(false);
-              setDeliveryRetry(undefined);
-              setApprovalError(
-                projected.message?.text ?? 'The daemon rejected this corner approval.',
-              );
-            }
-            if (projected.deliveryLanded) {
-              setLandedApprovalTip(projected.landedTip ?? mergeTargetTipRef.current);
-              setApprovalError(null);
-            }
-            applyAgentPresence(projected.agentPresence);
-          }
-          if (!cancelled && frame.remaining > 0 && !liveFlushScheduled) {
-            liveFlushScheduled = true;
-            requestAnimationFrame(flushLiveEvents);
-          }
-        };
-        const handleLiveMessage = (event: Parameters<typeof cacheLiveSessionEvents>[2][number]) => {
-          if (cancelled) return;
-          pendingLiveEvents.push(event);
-          if (!liveFlushScheduled) {
-            liveFlushScheduled = true;
-            requestAnimationFrame(flushLiveEvents);
-          }
-        };
-
-        // Presence grace across background/foreground needs no relay read, so
-        // it is installed now instead of behind the hydration reads.
-        let lastAppState = AppState.currentState;
-        let onlineBeforeBackground = new Set<string>();
-        appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
-          const previousAppState = lastAppState;
-          lastAppState = nextAppState;
-
-          if (nextAppState !== 'active') {
-            if (previousAppState === 'active') {
-              const now = Date.now();
-              onlineBeforeBackground = new Set(
-                Object.entries(agentPresencesRef.current)
-                  .filter(([pubkey, presence]) =>
-                    isAgentPresenceOnlineWithReconnectGrace(
-                      presence,
-                      now,
-                      presenceReconnectGraceRef.current[pubkey],
-                    ),
-                  )
-                  .map(([pubkey]) => pubkey),
-              );
-              const backgroundGrace = Object.fromEntries(
-                [...onlineBeforeBackground].map((pubkey) => [
-                  pubkey,
-                  // Bounded by the lease, never MAX_SAFE_INTEGER: an
-                  // unbounded grace extended "online" from stale cached
-                  // state forever if the foreground handler missed its
-                  // event — a lapsed lease can never render online.
-                  now + AGENT_PRESENCE_BACKGROUND_GRACE_MS,
-                ]),
-              );
-              presenceReconnectGraceRef.current = backgroundGrace;
-              setPresenceReconnectGrace(backgroundGrace);
-            }
-            return;
-          }
-          if (previousAppState === 'active' || cancelled) return;
-
-          const now = Date.now();
-          const graceUntil = now + AGENT_PRESENCE_STALE_MS;
-          const foregroundGrace = Object.fromEntries(
-            [...onlineBeforeBackground].map((pubkey) => [pubkey, graceUntil]),
-          );
-          presenceReconnectGraceRef.current = foregroundGrace;
-          setPresenceReconnectGrace(foregroundGrace);
-          setPresenceNow(now);
-
-          // RelayWs owns reconnect and the session subscription resumes from
-          // its last-seen cursor. Do not duplicate that work in the AppState
-          // callback: disconnecting, backfilling, and cache projection here
-          // previously starved the resumed composer.
+        const nextTransport = new BuzzRigTransport(identity, relayUrl);
+        const nextRoomClient = new RoomViewClient({
+          baseUrl: relayUrl,
+          identity,
+          onPhysicalRequest: ({ method, path }) => {
+            console.warn(`[room-surface] physical-request ${method} ${path}`);
+          },
         });
+        transportForEffect = nextTransport;
+        setTransport(nextTransport);
+        setRoomClient(nextRoomClient);
 
-        const handleLivePresence = (
-          event: Parameters<typeof cacheLiveSessionEvents>[2][number],
-        ) => {
-          if (cancelled) return;
-          if (event.type === 'read-model') {
-            applyAgentPresence(projectReadEvent(event.event, identity.publicKey).agentPresence);
-          }
-        };
-
-        /**
-         * Establish live delivery for this Room. Started by hydrateRoomEntry
-         * and awaited by nothing a person can see — the WebSocket connect and
-         * NIP-42 AUTH handshake behind these calls used to gate every other
-         * read on the screen.
-         */
-        const installLiveDelivery = async ({
-          parentChannelId,
-        }: {
-          parentChannelId: string | null;
-        }) => {
-          const presenceChannelId = parentChannelId ?? decodedId;
-          const installMessages = (async () => {
-            try {
-              const stop = await t.sessionEventsSubscribeReady(decodedId, handleLiveMessage, {
-                since: liveSince,
-              });
-              if (cancelled) {
-                stop();
-                return;
-              }
-              unsubscribe = stop;
-            } catch (error) {
-              console.warn(`Failed to establish live Room subscription for ${decodedId}:`, error);
-              if (!cancelled) {
-                unsubscribe = t.sessionEventsSubscribe(decodedId, handleLiveMessage, {
-                  since: liveSince,
-                });
-              }
-            }
-          })();
-          const installPresence = (async () => {
-            try {
-              const stop = await t.agentPresenceSubscribeReady(
-                presenceChannelId,
-                handleLivePresence,
-              );
-              if (cancelled) {
-                stop();
-                return;
-              }
-              unsubscribePresence = stop;
-            } catch (error) {
-              console.warn(
-                `Failed to establish live agent presence for ${presenceChannelId}:`,
-                error,
-              );
-              if (!cancelled) {
-                unsubscribePresence = t.agentPresenceSubscribe(
-                  presenceChannelId,
-                  handleLivePresence,
-                );
-              }
-            }
-            const presenceEvents = await t.agentPresenceBackfill(presenceChannelId);
-            if (cancelled) return;
-            defer(() => {
-              if (cancelled) return;
-              const initialPresences = presenceMapFromSessionEvents(presenceEvents);
-              agentPresencesRef.current = initialPresences;
-              setAgentPresences(initialPresences);
-              setPresenceResolved(true);
-              setPresenceNow(Date.now());
-            });
-          })();
-          // Rooms, DMs, and corners share the same replaceable message/thought
-          // lanes. The typed selector spends both when the turn settles.
-          const installDraft = (async () => {
-            try {
-              const stop = await t.agentDraftSubscribeReady(decodedId, handleLiveMessage);
-              if (cancelled) {
-                stop();
-                return;
-              }
-              unsubscribeDraft = stop;
-            } catch (error) {
-              console.warn(
-                `Failed to establish live agent draft subscription for ${decodedId}:`,
-                error,
-              );
-              if (!cancelled) {
-                unsubscribeDraft = t.agentDraftSubscribe(decodedId, handleLiveMessage);
-              }
-            }
-            const draftEvents = await t.agentDraftBackfill(decodedId);
-            if (!cancelled) draftEvents.forEach(handleLiveMessage);
-          })();
-          await Promise.all([installMessages, installPresence, installDraft]);
-        };
-
-        await hydrateRoomEntry(
-          {
-            channelId: decodedId,
-            viewerPubkey: identity.publicKey,
-            client,
-            transport: t,
-            installLiveDelivery,
-            revalidateTranscript: () =>
-              revalidateCachedMessages(t, identity.publicKey, decodedId, {
-                force: transcriptHydrationAttempt > 0,
-              }),
-            isCancelled,
-            afterInteractions: defer,
-            viewerActiveCommunityId: () => loadActiveCommunityId(identity.publicKey),
-          },
-          {
-            onCommunities: setCommunities,
-            onViewerIsAgent: setViewerIsAgent,
-            onChannelRole: setViewerChannelRole,
-            // The channel's own name, never the generic Room label — a cached
-            // label re-seeds the wrong header on the next cold open, and the
-            // header derives its own fallback from the resolved channel kind.
-            onRoomName: (name) => {
-              setResolvedChannelName(name);
-              patchChannelCache(identity.publicKey, { roomName: name });
-            },
-            // Called on both branches: an absent parent only means "room" once
-            // this read has actually landed.
-            onParentChannelId: (parentId) => {
-              setNotificationParentResolution({ channelId: decodedId, parentId });
-              setChannelKind(parentId ? 'corner' : 'room');
-              if (!parentId) return;
-              setParentChannelId(parentId);
-              patchChannelCache(identity.publicKey, { parentChannelId: parentId });
-            },
-            onDirectMessage: (dm) => {
-              setDirectMessage(dm);
-              patchChannelCache(identity.publicKey, { directMessage: dm });
-            },
-            onWorkspaceId: (communityId) => {
-              setActiveCommunityId(communityId);
-              patchChannelCache(identity.publicKey, { communityId });
-              void Promise.all([
-                saveActiveCommunityId(identity.publicKey, communityId),
-                saveLastViewedChannel(identity.publicKey, communityId, decodedId),
-              ]).catch(() => undefined);
-            },
-            // Agent names are the union across every Workspace the viewer
-            // belongs to, and land on their own — never behind the
-            // person-profile read, whose failure used to leave the transcript
-            // with no agent names at all until the screen remounted.
-            onAgents: (agents) => {
-              rememberKnownAgents(agents);
-              patchChannelCache(identity.publicKey, { availableAgents: agents });
-            },
-            onRoster: ({ people, profiles, canManageWorkspace, communityId }) => {
-              setCanManageWorkspace(canManageWorkspace);
-              patchChannelCache(identity.publicKey, { availablePeople: people });
-              useBuzzLocalCache
-                .getState()
-                .replaceProfiles(identity.publicKey, communityId, profiles);
-            },
-            // revalidateCachedMessages already wrote archive/merge state into
-            // the cache; only the screen's own state is left to publish.
-            onTranscriptSynced: (sync) => {
-              setTranscriptHydrationFailed(false);
-              setTranscriptHydrationError(null);
-              if (sync.mergeTarget !== undefined) setMergeTarget(sync.mergeTarget);
-              if (sync.previewUrl !== undefined) setPreviewUrl(sync.previewUrl);
-              if (sync.archiveChannel) setIsArchived(true);
-            },
-            onArchived: () => {
-              setIsArchived(true);
-              patchChannelCache(identity.publicKey, { archived: true });
-            },
-            onMergeTarget: (target) => {
-              setMergeTarget(target);
-              setMergeNotReadyReason(null);
-              patchChannelCache(identity.publicKey, { mergeTarget: target });
-            },
-            onMergeNotReadyReason: setMergeNotReadyReason,
-            onCornerStatus: setCornerLifecycleStatus,
-            onCornerLifecycle: (corners) => {
-              setCornerLifecycle(corners);
-              void installCornerStateDelivery(corners.map((corner) => corner.id)).catch((error) =>
-                console.warn('Failed to establish canonical corner-state delivery:', error),
-              );
-            },
-            onCornerBriefing: (briefing) => {
-              if (briefing.task) setCornerTask(briefing.task);
-              if (briefing.context.length) setRoomContext(briefing.context);
-            },
-            onStepFailed: (step, error) => {
-              console.warn(`BuzzChat: ${step} failed for ${decodedId}:`, error);
-              if (step === 'transcript') {
-                setTranscriptHydrationError(`Could not load this conversation. ${String(error)}`);
-                setTranscriptHydrationFailed(true);
-              }
-            },
-          },
-          '',
-        );
-      } catch (err) {
-        console.warn('Failed to init BuzzChat:', err);
-        if (!cancelled) {
-          setTranscriptHydrationError(`Could not open this ${ROOM_LABEL}. ${String(err)}`);
-          setTranscriptHydrationFailed(true);
+        const outbox = createRoomOutbox(identity, decodedId);
+        outboxRef.current = outbox;
+        await outbox.restore();
+        if (cancelled) return;
+        const restored = outbox
+          .list()
+          .map((record) => displayRoomMessages([record.row], identity.publicKey)[0]!);
+        if (restored.length) addMessages(restored);
+        for (const record of outbox.list()) {
+          await outbox.attempted(record.event.id);
+          void nextTransport.publishPreparedMessage(record.event).catch(() => undefined);
         }
+
+        const address = surfaceAddress(relayUrl, identity.publicKey, `/room/${decodedId}`);
+        const cached = await mobileSurfaceCache.read(address, isRoomView);
+        if (cached && !cancelled) applyView(cached, identity.publicKey, relayUrl, false);
+
+        scheduler = new SurfaceRefreshScheduler({
+          fetch: () => nextRoomClient.room(decodedId),
+          apply: (view) => applyView(view, identity.publicKey, relayUrl, true),
+          onError: (error) => {
+            if (cancelled) return;
+            const terminal =
+              error instanceof RoomViewHttpError &&
+              (error.status === 401 ||
+                error.status === 403 ||
+                error.status === 404 ||
+                error.status === 502);
+            if (terminal) {
+              setRoomSurface(null);
+              setLiveOverlays([]);
+              unsubscribe?.();
+              unsubscribe = undefined;
+              void mobileSurfaceCache.remove(address);
+            }
+            if (terminal || !hasPainted) {
+              setTranscriptHydrationFailed(true);
+              setTranscriptHydrationError(
+                error instanceof RoomViewHttpError && error.code === 'invalid_surface_response'
+                  ? 'The server returned an invalid Room response.'
+                  : `Could not load this conversation. ${String(error)}`,
+              );
+            } else {
+              setTranscriptHydrationError(
+                `Offline — showing the last saved response. ${String(error)}`,
+              );
+            }
+          },
+        });
+        roomSchedulerRef.current = scheduler;
+
+        const initialFilters = cached?.watchFilters ?? [{ '#h': [decodedId] }];
+        await scheduler.startAfter(installWatch(initialFilters));
+
+        appStateSubscription = AppState.addEventListener('change', (state) => {
+          if (state === 'active') scheduler?.force();
+        });
+      } catch (error) {
+        if (cancelled) return;
+        setTranscriptHydrationFailed(true);
+        setTranscriptHydrationError(`Could not open this ${ROOM_LABEL}. ${String(error)}`);
       }
     })();
 
     return () => {
       cancelled = true;
-      cancelDeferred.forEach((cancel) => cancel());
+      watchGeneration += 1;
+      scheduler?.dispose();
       appStateSubscription?.remove();
-      if (unsubscribe) unsubscribe();
-      if (unsubscribePresence) unsubscribePresence();
-      if (unsubscribeDraft) unsubscribeDraft();
-      if (unsubscribeCornerState) unsubscribeCornerState();
+      unsubscribe?.();
+      outboxRef.current = null;
+      roomSchedulerRef.current = null;
     };
-  }, [decodedId, notificationResponseId, applyAgentPresence, transcriptHydrationAttempt]);
-
+  }, [
+    addMessages,
+    applyAgentPresence,
+    clearOptimistic,
+    decodedId,
+    notificationResponseId,
+    transcriptHydrationAttempt,
+  ]);
   /**
    * Who said an inherited Room line. Room context is quoted *from a Room*, so
    * it keeps its attribution even though the corner around it never shows
@@ -2282,32 +2063,15 @@ export default function BuzzChat() {
 
   const beginReply = useCallback(
     (message: ChatDisplayMessage) => {
-      const eventId = message.relayId ?? message.id;
-      // Read through a ref: the snapshot reference moves on every pump chunk,
-      // and a dependency here recreated this callback (and with it renderItem,
-      // and with it every visible ledger row) on every streamed batch.
-      const snapshot = cachedSnapshotRef.current;
-      const selected = snapshot
-        ? selectReplyTarget(snapshot, decodedId, eventId)
-        : { status: 'unavailable' as const };
       const install = (reference: KnownMessageReference) => {
         setReplyTarget({ ...replyTargetForMessage(message), reference });
         setDismissedMentionKey(null);
         void Haptics.selectionAsync();
         requestAnimationFrame(() => composerRef.current?.focus());
       };
-      if (selected.status === 'available') {
-        install(selected.reference);
-        return;
-      }
-      // Older pages deliberately stay outside the bounded persisted snapshot.
-      // Fetch only the exact displayed parent and let the typed selector mint
-      // the same-Room proof instead of silently ignoring the reply gesture.
-      void transport?.resolveReplyTarget(decodedId, eventId).then((reference) => {
-        if (reference) install(reference);
-      });
+      if (message.reference?.channelId === decodedId) install(message.reference);
     },
-    [decodedId, replyTargetForMessage, transport],
+    [decodedId, replyTargetForMessage],
   );
 
   const handleSend = useCallback(async () => {
@@ -2345,7 +2109,8 @@ export default function BuzzChat() {
 
     sendInFlightRef.current = true;
     setSending(true);
-    let optimisticId: string | undefined;
+    let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
+    let preparedTransport: BuzzRigTransport | undefined;
     try {
       // A warm/partial snapshot can paint before the hydration effect has
       // published its transport state. Sending is still a valid operation:
@@ -2358,32 +2123,10 @@ export default function BuzzChat() {
         sendTransport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
       }
       if (!transport) setTransport(sendTransport);
+      preparedTransport = sendTransport;
       const attachments = pendingAttachment
         ? [await uploadChatAttachment(await sendTransport.ensureClient(), pendingAttachment)]
         : [];
-      inputTextRef.current = '';
-      setInputText('');
-      setComposerHeight(COMPOSER_MIN_HEIGHT);
-      setInputSelection({ start: 0, end: 0 });
-      setPendingAttachment(null);
-      setReplyTarget(null);
-      optimisticId = `optimistic-${Date.now()}`;
-      addMessages([
-        {
-          id: optimisticId,
-          text,
-          isUser: true,
-          timestamp: Date.now(),
-          pubkey: userPubkey,
-          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
-          ...(replyTarget ? { replyToId: replyTarget.reference.eventId } : {}),
-          ...(attachments.length ? { attachments } : {}),
-        },
-      ]);
-      // `@noble/curves` signs the Nostr event synchronously. Give React Native
-      // one native frame to commit the cleared composer and optimistic row
-      // before that CPU work begins; the network publish itself remains async.
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       const selectedMentionedAgent = selectedMentionAgentPubkey(
         text,
         selectedAgentMentionsRef.current,
@@ -2393,17 +2136,17 @@ export default function BuzzChat() {
         : parentChannelId
           ? undefined
           : (selectedMentionedAgent ?? mentionedAgentPubkey(text, mentionableAgents));
-      // Build and sign exactly once. publishPreparedMessage retries the same
-      // id on a transient failure, so the relay can dedupe an ambiguous send.
-      const eventId = replyTarget
-        ? await sendTransport.messageSubmitReply(
+      // Sign before append. The authoritative event id is the optimistic row
+      // identity and the durable outbox key from its first frame onward.
+      preparedEvent = replyTarget
+        ? await sendTransport.composeReplyMessage(
             text,
             replyTarget.reference,
             mentionedAgent,
             attachments,
             mentionedPubkeys,
           )
-        : await sendTransport.messageSubmitWithEventId(
+        : await sendTransport.composeMessage(
             { sessionId: decodedId, text, attachments },
             mentionedAgent || mentionedPubkeys.length
               ? {
@@ -2412,13 +2155,43 @@ export default function BuzzChat() {
                 }
               : undefined,
           );
-      reconcileOptimistic(optimisticId!, eventId);
+      const optimistic = {
+        id: preparedEvent.id,
+        text,
+        isUser: true,
+        timestamp: preparedEvent.created_at,
+        pubkey: userPubkey,
+        reference: undefined,
+        ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+        ...(replyTarget ? { replyToId: replyTarget.reference.eventId } : {}),
+        ...(attachments.length ? { attachments } : {}),
+      } satisfies ChatDisplayMessage;
+      const outbox = outboxRef.current;
+      if (!outbox) throw new Error('Message outbox is unavailable');
+      await outbox.enqueue(preparedEvent, {
+        id: preparedEvent.id,
+        text,
+        createdAt: preparedEvent.created_at,
+        author: roomSurface?.viewer.identity ?? {
+          pubkey: userPubkey,
+          kind: 'human',
+          name: 'You',
+        },
+        presentation: 'message',
+        ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+        ...(attachments.length ? { attachments } : {}),
+      });
+      addMessages([optimistic]);
+      inputTextRef.current = '';
+      setInputText('');
+      setComposerHeight(COMPOSER_MIN_HEIGHT);
+      setInputSelection({ start: 0, end: 0 });
+      setPendingAttachment(null);
+      setReplyTarget(null);
+      await outbox.attempted(preparedEvent.id);
+      await sendTransport.publishPreparedMessage(preparedEvent);
     } catch (err) {
       console.warn('Send failed:', err);
-      const failedOptimisticId = optimisticId;
-      if (failedOptimisticId) {
-        removeOptimistic(failedOptimisticId);
-      }
       const failure = publishFailurePresentation(err);
       Modal.alert(
         'Message not sent',
@@ -2429,11 +2202,9 @@ export default function BuzzChat() {
               {
                 text: 'Retry',
                 onPress: () => {
-                  inputTextRef.current = rawText;
-                  setInputText(rawText);
-                  setPendingAttachment(pendingAttachment);
-                  setReplyTarget(replyTarget);
-                  requestAnimationFrame(() => void handleSend());
+                  if (!preparedEvent || !preparedTransport) return;
+                  void outboxRef.current?.attempted(preparedEvent.id);
+                  void preparedTransport.publishPreparedMessage(preparedEvent);
                 },
               },
             ]
@@ -2449,8 +2220,6 @@ export default function BuzzChat() {
     transport,
     decodedId,
     addMessages,
-    reconcileOptimistic,
-    removeOptimistic,
     isArchived,
     isCorner,
     userPubkey,
@@ -2470,6 +2239,7 @@ export default function BuzzChat() {
     agentByPubkey,
     roomRepositoryResolved,
     roomRepoAccessIssue,
+    roomSurface,
   ]);
 
   const pickPhoto = useCallback(async () => {
@@ -2616,8 +2386,8 @@ export default function BuzzChat() {
       setTargetBranchActionId(proposal.proposalId);
       setTargetBranchNotice(null);
       try {
-        const updated = await transport.roomTargetBranchSet(decodedId, proposal.to);
-        setRoomRepository(updated);
+        await transport.roomTargetBranchSet(decodedId, proposal.to);
+        roomSchedulerRef.current?.force();
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         setTargetBranchNotice({
@@ -2653,7 +2423,6 @@ export default function BuzzChat() {
             activeCommunityId,
           );
         }
-        await revalidateCachedMessages(transport, cacheViewerPubkey, decodedId);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         setMembershipError(`Could not add @${option.name}: ${String(err)}`);
@@ -2661,14 +2430,7 @@ export default function BuzzChat() {
         setAddingMemberPubkey(null);
       }
     },
-    [
-      activeCommunityId,
-      addingMemberPubkey,
-      cacheViewerPubkey,
-      decodedId,
-      roomMemberPubkeys,
-      transport,
-    ],
+    [activeCommunityId, addingMemberPubkey, decodedId, roomMemberPubkeys, transport],
   );
 
   const handleRemoveRoomMember = useCallback(
@@ -2689,8 +2451,7 @@ export default function BuzzChat() {
       setMembershipError(null);
       void transport
         .removeRoomMember(decodedId, participant.pubkey)
-        .then(async () => {
-          await revalidateCachedMessages(transport, cacheViewerPubkey, decodedId);
+        .then(() => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         })
         .catch((err) => {
@@ -2698,7 +2459,7 @@ export default function BuzzChat() {
         })
         .finally(() => setMembershipActionPubkey(null));
     },
-    [cacheViewerPubkey, decodedId, roomMemberByPubkey, transport, userPubkey, viewerRoomRole],
+    [decodedId, roomMemberByPubkey, transport, userPubkey, viewerRoomRole],
   );
 
   const returnToRoomList = useCallback(() => {
@@ -2730,18 +2491,6 @@ export default function BuzzChat() {
     const operation = deleting ? transport.deleteRoom(decodedId) : transport.leaveRoom(decodedId);
     void operation
       .then(() => {
-        // Delete is authoritative relay teardown (kind:9008 retracts
-        // the Room's discovery projections); only leave needs a local
-        // durable dismissal. Both paths purge the warm cache before
-        // navigating so no stale row flashes on the next frame.
-        const viewerPubkey = useBuzzLocalCache.getState().activeViewerPubkey;
-        if (viewerPubkey) {
-          if (deleting) {
-            useBuzzLocalCache.getState().removeChannel(viewerPubkey, decodedId);
-          } else {
-            markRoomRemovedAndPurge(viewerPubkey, decodedId);
-          }
-        }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         returnToRoomList();
       })
@@ -2751,24 +2500,15 @@ export default function BuzzChat() {
         );
       })
       .finally(() => setRoomLifecycleBusy(false));
-  }, [decodedId, displayRoomName, lifecycleAction, returnToRoomList, roomLifecycleBusy, transport]);
-
-  const patchCachedRoomName = useCallback(
-    (name: string) => {
-      if (!cacheViewerPubkey) return;
-      const cache = useBuzzLocalCache.getState();
-      cache.patchChannel(cacheViewerPubkey, decodedId, { roomName: name });
-      const list = selectChannelList(cache, cacheViewerPubkey, activeCommunityId ?? undefined);
-      if (list) {
-        cache.patchChannelList(cacheViewerPubkey, activeCommunityId, {
-          channels: list.channels.map((channel) =>
-            channel.id === decodedId ? { ...channel, title: name } : channel,
-          ),
-        });
-      }
-    },
-    [activeCommunityId, cacheViewerPubkey, decodedId],
-  );
+  }, [
+    decodedId,
+    displayRoomName,
+    lifecycleAction,
+    returnToRoomList,
+    roomLifecycleBusy,
+    transport,
+    userPubkey,
+  ]);
 
   const handleRenameRoom = useCallback(async () => {
     const name = renameDraft.trim();
@@ -2778,33 +2518,21 @@ export default function BuzzChat() {
     }
     if (!transport || !canRenameRoom(viewerChannelRole) || renameBusy) return;
 
-    const previousName = resolvedChannelName;
     setRenameBusy(true);
     setRenameError(null);
-    setResolvedChannelName(name);
-    patchCachedRoomName(name);
     try {
       const client = await transport.ensureClient();
       await client.renameChannel(decodedId, name);
+      roomSchedulerRef.current?.force();
       setRenameEditing(false);
       setRoomActionsVisible(false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
-      setResolvedChannelName(previousName);
-      patchCachedRoomName(previousName ?? '');
       setRenameError(`Could not rename ${ROOM_LABEL}: ${String(err)}`);
     } finally {
       setRenameBusy(false);
     }
-  }, [
-    decodedId,
-    patchCachedRoomName,
-    renameBusy,
-    renameDraft,
-    resolvedChannelName,
-    transport,
-    viewerChannelRole,
-  ]);
+  }, [decodedId, renameBusy, renameDraft, transport, viewerChannelRole]);
 
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
@@ -2929,7 +2657,7 @@ export default function BuzzChat() {
             }
           }
         }
-        const repo = await transport.roomRepositorySet(decodedId, {
+        await transport.roomRepositorySet(decodedId, {
           key: input.key,
           name: input.name,
           remote: input.remote,
@@ -2939,7 +2667,7 @@ export default function BuzzChat() {
           ...(input.defaultBranch ? { targetBranch: input.defaultBranch } : {}),
           ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
         });
-        setRoomRepository(repo);
+        roomSchedulerRef.current?.force();
         setShowRoomRepoPicker(false);
         setCornerOpenRepoPrompt(false);
         setOwnerGrant(null);
@@ -3025,8 +2753,8 @@ export default function BuzzChat() {
     setRoomRepoBusy(true);
     setRoomRepoError(null);
     try {
-      const updated = await transport.roomGitHubEventsSet(decodedId, nextEnabled);
-      setRoomRepository(updated);
+      await transport.roomGitHubEventsSet(decodedId, nextEnabled);
+      roomSchedulerRef.current?.force();
     } catch {
       setRoomRepoError('Could not change repository activity settings.');
     } finally {
@@ -3169,10 +2897,6 @@ export default function BuzzChat() {
       setApprovalError(err instanceof Error ? err.message : String(err));
     }
   }, [transport, mergeTarget, decodedId]);
-
-  const handleReviewFilesLoaded = useCallback((files: readonly { path?: string }[]) => {
-    setReviewFiles(files.map((file) => file.path ?? '').filter(Boolean));
-  }, []);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -3690,20 +3414,7 @@ export default function BuzzChat() {
   );
   const hasVisibleRoomOptimistic = Boolean(roomOptimisticHeader);
 
-  const readModelIntegrityHalt =
-    channelCache?.integrityHalt ??
-    initialChannelCache?.integrityHalt ??
-    initialCacheState.bootIntegrityHalt;
-  if (readModelIntegrityHalt) {
-    return (
-      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <Text style={styles.loadingText}>READ MODEL INTEGRITY HALT</Text>
-        <Text style={styles.loadingText}>{readModelIntegrityHalt}</Text>
-      </View>
-    );
-  }
-
-  if (channelCache?.snapshot === undefined && initialChannelCache?.snapshot === undefined) {
+  if (!roomSurface) {
     if (transcriptHydrationFailed) {
       return (
         <View style={[styles.container, { paddingTop: insets.top }]} testID="room-hydration-error">
@@ -4069,7 +3780,6 @@ export default function BuzzChat() {
                         transport={transport}
                         sessionId={decodedId}
                         tip={mergeTarget!.tip}
-                        onFilesLoaded={handleReviewFilesLoaded}
                       />
                     )}
                     {viewerIsAgent ? (

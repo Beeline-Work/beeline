@@ -27,6 +27,8 @@ describe('RoomIndexer', () => {
   let physicalQueries: number;
   let database: DatabaseQueryable;
   let indexer: RoomIndexer;
+  let rootMessageId: string;
+  let directReplyId: string;
 
   beforeEach(async () => {
     postgres = new PGlite();
@@ -171,8 +173,18 @@ describe('RoomIndexer', () => {
       ],
       JSON.stringify({ displayName: 'Milo', avatar: 'https://media.test/milo.png' }),
     );
-    await event(ROOM, VIEWER, 3, 9, [['h', ROOM]], 'Hello');
-    await event(ROOM, AGENT, 4, 9, [['h', ROOM]], 'Ready');
+    rootMessageId = await event(ROOM, VIEWER, 3, 9, [['h', ROOM]], 'Hello');
+    directReplyId = await event(
+      ROOM,
+      AGENT,
+      4,
+      9,
+      [
+        ['h', ROOM],
+        ['e', rootMessageId, '', 'reply'],
+      ],
+      'Ready',
+    );
     await event(ROOM, AGENT, 12, 9, [
       ['h', ROOM],
       ['t', 'agent-turn'],
@@ -291,6 +303,163 @@ describe('RoomIndexer', () => {
       ['Hello', 'Ada'],
       ['Ready', 'Milo'],
     ]);
+  });
+
+  it('returns the original same-Room root as the proof for a current direct reply', async () => {
+    const nestedReplyId = '7'.repeat(64);
+    const deepReplyId = '6'.repeat(64);
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES
+        ($1, $2, $3, to_timestamp(15), 9, $4, 'Nested reply', $5),
+        ($1, $6, $3, to_timestamp(16), 9, $7, 'Deep reply', $5)`,
+      [
+        TENANT,
+        bytes(nestedReplyId),
+        bytes(VIEWER),
+        JSON.stringify([
+          ['h', ROOM],
+          ['e', rootMessageId, '', 'root'],
+          ['e', directReplyId, '', 'reply'],
+        ]),
+        ROOM,
+        bytes(deepReplyId),
+        JSON.stringify([
+          ['h', ROOM],
+          ['e', rootMessageId, '', 'root'],
+          ['e', nestedReplyId, '', 'reply'],
+        ]),
+      ],
+    );
+    const room = await indexer.readRoom(ROOM, VIEWER);
+    const history = await indexer.readHistory(ROOM, VIEWER);
+
+    for (const messages of [room?.messages, history?.messages]) {
+      expect(messages?.find((message) => message.id === rootMessageId)?.reference).toEqual({
+        channelId: ROOM,
+        eventId: rootMessageId,
+        rootId: rootMessageId,
+      });
+      expect(messages?.find((message) => message.id === directReplyId)).toMatchObject({
+        reply: { channelId: ROOM, eventId: rootMessageId, rootId: rootMessageId },
+        reference: { channelId: ROOM, eventId: directReplyId, rootId: rootMessageId },
+      });
+      expect(messages?.find((message) => message.id === nestedReplyId)).toMatchObject({
+        reply: { channelId: ROOM, eventId: directReplyId, rootId: rootMessageId },
+        reference: { channelId: ROOM, eventId: nestedReplyId, rootId: rootMessageId },
+      });
+      expect(messages?.find((message) => message.id === deepReplyId)).toMatchObject({
+        reply: { channelId: ROOM, eventId: nestedReplyId, rootId: rootMessageId },
+        reference: { channelId: ROOM, eventId: deepReplyId, rootId: rootMessageId },
+      });
+    }
+  });
+
+  it('withholds reply proof from deleted or foreign ancestry', async () => {
+    const foreignParentId = 'c'.repeat(64);
+    const foreignReplyId = 'd'.repeat(64);
+    const deletedParentId = 'e'.repeat(64);
+    const deletedReplyId = 'f'.repeat(64);
+    const legacyNestedReplyId = 'a'.repeat(64);
+    const deletedRootReplyId = 'b'.repeat(64);
+    const rootOnlyReplyId = '0'.repeat(64);
+    const redundantRootReplyId = '1'.repeat(64);
+    const otherRootId = '2'.repeat(64);
+    const mismatchedRootReplyId = '3'.repeat(64);
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, deleted_at)
+       VALUES
+        ($1, $2, $3, to_timestamp(20), 9, $4, 'Foreign parent', $5, NULL),
+        ($1, $6, $3, to_timestamp(21), 9, $7, 'Foreign reply', $8, NULL),
+        ($1, $9, $3, to_timestamp(22), 9, $10, 'Deleted parent', $8, now()),
+        ($1, $11, $3, to_timestamp(23), 9, $12, 'Deleted reply', $8, NULL),
+        ($1, $13, $3, to_timestamp(24), 9, $14,
+          'Legacy nested reply without a root marker', $8, NULL),
+        ($1, $15, $3, to_timestamp(25), 9, $16,
+          'Nested reply with a deleted root', $8, NULL)`,
+      [
+        TENANT,
+        bytes(foreignParentId),
+        bytes(VIEWER),
+        JSON.stringify([['h', CORNER]]),
+        CORNER,
+        bytes(foreignReplyId),
+        JSON.stringify([
+          ['h', ROOM],
+          ['e', foreignParentId, '', 'reply'],
+        ]),
+        ROOM,
+        bytes(deletedParentId),
+        JSON.stringify([['h', ROOM]]),
+        bytes(deletedReplyId),
+        JSON.stringify([
+          ['h', ROOM],
+          ['e', deletedParentId, '', 'reply'],
+        ]),
+        bytes(legacyNestedReplyId),
+        JSON.stringify([
+          ['h', ROOM],
+          ['e', directReplyId, '', 'reply'],
+        ]),
+        bytes(deletedRootReplyId),
+        JSON.stringify([
+          ['h', ROOM],
+          ['e', deletedParentId, '', 'root'],
+          ['e', directReplyId, '', 'reply'],
+        ]),
+      ],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES
+        ($1, $2, $3, to_timestamp(26), 9, $4, 'Root marker without reply', $5),
+        ($1, $6, $3, to_timestamp(27), 9, $7, 'Redundant root on direct reply', $5),
+        ($1, $8, $3, to_timestamp(28), 9, $9, 'Other root', $5),
+        ($1, $10, $3, to_timestamp(29), 9, $11, 'Mismatched nested root', $5)`,
+      [
+        TENANT,
+        bytes(rootOnlyReplyId),
+        bytes(VIEWER),
+        JSON.stringify([
+          ['h', ROOM],
+          ['e', rootMessageId, '', 'root'],
+        ]),
+        ROOM,
+        bytes(redundantRootReplyId),
+        JSON.stringify([
+          ['h', ROOM],
+          ['e', rootMessageId, '', 'root'],
+          ['e', rootMessageId, '', 'reply'],
+        ]),
+        bytes(otherRootId),
+        JSON.stringify([['h', ROOM]]),
+        bytes(mismatchedRootReplyId),
+        JSON.stringify([
+          ['h', ROOM],
+          ['e', otherRootId, '', 'root'],
+          ['e', directReplyId, '', 'reply'],
+        ]),
+      ],
+    );
+
+    const room = await indexer.readRoom(ROOM, VIEWER);
+    for (const id of [
+      foreignReplyId,
+      deletedReplyId,
+      legacyNestedReplyId,
+      deletedRootReplyId,
+      rootOnlyReplyId,
+      redundantRootReplyId,
+      mismatchedRootReplyId,
+    ]) {
+      const message = room?.messages.find((candidate) => candidate.id === id);
+      expect(message?.id).toBe(id);
+      expect(message?.reference).toBeUndefined();
+      expect(message?.reply).toBeUndefined();
+    }
   });
 
   it('returns the latest terminal receipt so completion clears a working turn', async () => {

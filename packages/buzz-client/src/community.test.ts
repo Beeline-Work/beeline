@@ -561,6 +561,8 @@ describe('community model', () => {
       ['p', owner.publicKey],
     ]);
     const queryBodies: Record<string, unknown>[][] = [];
+    let exactReadsInFlight = 0;
+    let maxExactReadsInFlight = 0;
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
@@ -573,6 +575,10 @@ describe('community model', () => {
         ) {
           return jsonResponse([firstMembers, secondMembers]);
         }
+        exactReadsInFlight += 1;
+        maxExactReadsInFlight = Math.max(maxExactReadsInFlight, exactReadsInFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        exactReadsInFlight -= 1;
         const candidates = [firstCreate, secondCreate, firstMetadata, secondMetadata];
         const results = filters.flatMap((filter) => {
           const hKeys = (filter['#h'] as string[] | undefined) ?? [];
@@ -606,6 +612,7 @@ describe('community model', () => {
     // Keeping each coordinate separate avoids both lossy multi-key matching
     // and the on-device timeout for large filter arrays.
     expect(queryBodies).toHaveLength(3);
+    expect(maxExactReadsInFlight).toBe(2);
   });
 
   it('resolves a non-creator owner marked at admin-tag index 3, not just index 2', async () => {

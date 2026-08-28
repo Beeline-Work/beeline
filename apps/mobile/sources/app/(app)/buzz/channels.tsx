@@ -460,6 +460,11 @@ export default function BuzzChannels() {
             </View>
           }
           renderItem={({ item }: { item: ChatListItem }) => {
+            // `unread` is server-owned and cross-device. Badge, row emphasis,
+            // and the needs-you mark deliberately share this exact fact so a
+            // row can never say NEW while looking idle (or vice versa).
+            const unread = item.unread;
+            const deckState = unread ? 'needs-you' : 'idle';
             const title = displayRoomIndexTitle(item.room.name) ?? item.room.name;
             const age = compactRelativeTime(
               item.latestMessage?.createdAt ?? item.room.updatedAt,
@@ -469,14 +474,14 @@ export default function BuzzChannels() {
               <TouchableOpacity
                 testID={`room-${item.room.id}`}
                 onPress={() => openRoom(item.room.id)}
-                style={[styles.row, item.unread && styles.rowUnread]}
+                style={[styles.row, unread && styles.rowUnread]}
               >
-                <HullDeckMark state="idle" />
+                <HullDeckMark state={deckState} />
                 <View style={styles.rowCopy}>
                   <View style={styles.rowHeading}>
                     <Text
                       numberOfLines={1}
-                      style={[styles.title, item.unread && styles.titleUnread]}
+                      style={[styles.title, unread && styles.titleUnread]}
                     >
                       {title}
                     </Text>
@@ -494,7 +499,7 @@ export default function BuzzChannels() {
                   </Text>
                 </View>
                 <View style={styles.gutter}>
-                  {item.unread ? (
+                  {unread ? (
                     <View style={styles.unread}>
                       <Text style={styles.unreadText}>NEW</Text>
                     </View>

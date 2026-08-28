@@ -138,7 +138,14 @@ describe('RoomIndexer', () => {
       ['h', WORKSPACE],
       ['community', WORKSPACE],
       ['name', 'Builders'],
-      ['avatar', 'https://media.test/workspace.png'],
+    ]);
+    // The relay's 39000 projection retains the namespaced purpose instead of
+    // an arbitrary image field. The indexer must make that current metadata
+    // visible to every Workspace surface, not fall back to the 9007 create.
+    await event(WORKSPACE, VIEWER, 11, 39000, [
+      ['d', WORKSPACE],
+      ['h', WORKSPACE],
+      ['purpose', 'buzz-workspace-avatar:https://media.test/workspace-projected.png'],
     ]);
     await event(ROOM, VIEWER, 2, 9007, [
       ['h', ROOM],
@@ -331,6 +338,14 @@ describe('RoomIndexer', () => {
     await expect(indexer.readRoom(MISSING, VIEWER)).resolves.toBeNull();
   });
 
+  it('projects a stored Workspace picture from relay metadata into Workspace tiles', async () => {
+    const workspaces = await indexer.readWorkspaces(VIEWER);
+
+    expect(workspaces.workspaces).toMatchObject([
+      { id: WORKSPACE, avatar: 'https://media.test/workspace-projected.png' },
+    ]);
+  });
+
   it('serves each workspace tier in one physical query', async () => {
     for (const read of [
       () => indexer.readWorkspaces(VIEWER),
@@ -344,12 +359,16 @@ describe('RoomIndexer', () => {
       expect(physicalQueries).toBe(1);
     }
     await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
-      workspace: { name: 'Builders', visibility: 'invite-only' },
+      workspace: {
+        name: 'Builders',
+        visibility: 'invite-only',
+        avatar: 'https://media.test/workspace-projected.png',
+      },
       members: [{ identity: { name: 'Ada' } }],
       agents: [{ identity: { name: 'Milo' } }],
     });
     await expect(indexer.readChats(WORKSPACE, VIEWER)).resolves.toMatchObject({
-      workspace: { id: WORKSPACE },
+      workspace: { id: WORKSPACE, avatar: 'https://media.test/workspace-projected.png' },
       chats: [{ room: { id: ROOM }, latestMessage: { text: 'Ready', author: { name: 'Milo' } } }],
     });
     await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
@@ -357,6 +376,134 @@ describe('RoomIndexer', () => {
       agent: { identity: { pubkey: AGENT, name: 'Milo' } },
       catalog: [],
     });
+    await expect(indexer.readWorkspaces(VIEWER)).resolves.toMatchObject({
+      workspaces: [{ id: WORKSPACE, avatar: 'https://media.test/workspace-projected.png' }],
+    });
+  });
+
+  it('uses the current Workspace soul name on every indexed agent surface', async () => {
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role, removed_at)
+       VALUES ($1, $2, $3, 'member', to_timestamp(14))`,
+      [TENANT, WORKSPACE, bytes(OUTSIDER)],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(12), 30078, $4, $5, $6, $7)`,
+      [
+        TENANT,
+        bytes('9'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['d', `${WORKSPACE}:${AGENT}`],
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['t', 'buzz-agent-soul'],
+          ['community', WORKSPACE],
+        ]),
+        JSON.stringify({ name: 'Codex', soul: 'Builds carefully.', avatarSeed: 'codex' }),
+        WORKSPACE,
+        `${WORKSPACE}:${AGENT}`,
+      ],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(13), 30078, $4, $5, $6, $7)`,
+      [
+        TENANT,
+        bytes('8'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['d', `${WORKSPACE}:${AGENT}`],
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['t', 'buzz-agent-soul'],
+          ['community', WORKSPACE],
+        ]),
+        JSON.stringify({ name: 'Forged', soul: 'Overrides the captain.', avatarSeed: 'forged' }),
+        WORKSPACE,
+        `${WORKSPACE}:${AGENT}`,
+      ],
+    );
+
+    const workspace = await indexer.readWorkspace(WORKSPACE, VIEWER);
+    const chats = await indexer.readChats(WORKSPACE, VIEWER);
+    const detail = await indexer.readAgent(WORKSPACE, AGENT, VIEWER);
+    const room = await indexer.readRoom(ROOM, VIEWER);
+    const history = await indexer.readHistory(ROOM, VIEWER);
+    const corners = await indexer.readCorners(ROOM, VIEWER);
+
+    expect(workspace).toMatchObject({
+      members: [{ identity: { pubkey: VIEWER, name: 'Ada' } }],
+      agents: [{ identity: { pubkey: AGENT, name: 'Codex' } }],
+    });
+    expect(chats).toMatchObject({
+      chats: [{ latestMessage: { author: { pubkey: AGENT, name: 'Codex' } } }],
+    });
+    expect(detail).toMatchObject({
+      agent: { identity: { pubkey: AGENT, name: 'Codex' } },
+    });
+    expect(room).toMatchObject({
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          identity: expect.objectContaining({ pubkey: VIEWER, name: 'Ada' }),
+        }),
+        expect.objectContaining({
+          identity: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+        }),
+      ]),
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          text: 'Ready',
+          author: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+        }),
+      ]),
+      corners: [
+        expect.objectContaining({
+          agent: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+        }),
+      ],
+    });
+    expect(history?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: 'Ready',
+          author: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+        }),
+      ]),
+    );
+    expect(corners).toMatchObject({
+      corners: [
+        {
+          agent: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+          latestMessage: expect.objectContaining({
+            author: expect.objectContaining({
+              pubkey: AGENT,
+              name: 'Codex',
+            }),
+          }),
+        },
+      ],
+    });
+    expect(room?.watchFilters[0]?.['#h']).toContain(WORKSPACE);
+    expect(corners?.watchFilters[0]?.['#h']).toContain(WORKSPACE);
   });
 
   it('projects the agent soul and allow-listed model catalog through the indexed agent read', async () => {
@@ -586,7 +733,7 @@ describe('RoomIndexer', () => {
     const valid = await indexer.readInvite(createHash('sha256').update(token).digest('hex'));
     expect(valid).toEqual({
       name: 'Builders',
-      avatar: 'https://media.test/workspace.png',
+      avatar: 'https://media.test/workspace-projected.png',
       expiresAt: 2_000_000_000,
     });
     expect(physicalQueries).toBe(1);

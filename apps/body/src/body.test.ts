@@ -55,6 +55,7 @@ import {
   AGENT_REQUEST_TAG,
   AGENT_EXCHANGE_MAX_MESSAGES,
   agentTurnFailureJournalDetail,
+  agentTurnFailureReply,
   agentExchangeTurnPrompt,
   abandonedCornerCloseRetryDelayMs,
   ABANDONED_CORNER_CLOSE_REFUSED,
@@ -354,6 +355,8 @@ describe('acp', () => {
     const named = new Error('unknown');
     named.name = 'token=must-not-appear';
     expect(agentTurnFailureJournalDetail(named)).toBe('Error');
+    expect(agentTurnFailureReply(named)).toBeUndefined();
+    expect(agentTurnFailureReply(new Error('provider token=must-not-appear'))).toBeUndefined();
   });
 
   it('AcpClient must be started before use', async () => {
@@ -13310,6 +13313,49 @@ describe('harness retry narration never becomes the durable Room reply', () => {
       expect(agentMessages(published).map((message) => message.content)).toEqual([
         "That turn stopped before I could deliver a reply. I won't retry it without another message from you.",
       ]);
+      expect(statuses(published)).toEqual(['working', 'failed']);
+      await expect(durableState.pending('parent-channel')).resolves.not.toContainEqual(
+        expect.objectContaining({ id: event.id }),
+      );
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('names a bubblewrap activation refusal instead of eating it behind the generic fallback', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-squire-sandbox-refusal-'));
+    try {
+      const promptMock = vi
+        .fn()
+        .mockRejectedValue(
+          new Error('Trusty Squire requires an active bubblewrap credential-mask boundary'),
+        );
+      const { body, published, processChannelRequestEvents } = await makeBody(
+        workspaceRoot,
+        promptMock,
+      );
+      const durableState = Reflect.get(body, 'durableState') as {
+        pending: (channelId: string) => Promise<NostrEvent[]>;
+      };
+      const event = requestEvent(
+        'squire-sandbox-refusal',
+        body.agent.publicKey,
+        'Can you answer this?',
+      );
+
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [event],
+        [human.publicKey, body.agent.publicKey],
+      );
+
+      expect(agentMessages(published).map((message) => message.content)).toEqual([
+        "I couldn't start because this host's required credential sandbox is unavailable. " +
+          'The operator must restore working bubblewrap isolation and restart this agent; your request did not reach the model.',
+      ]);
+      expect(agentMessages(published)[0]?.content).not.toContain('That turn stopped');
       expect(statuses(published)).toEqual(['working', 'failed']);
       await expect(durableState.pending('parent-channel')).resolves.not.toContainEqual(
         expect.objectContaining({ id: event.id }),

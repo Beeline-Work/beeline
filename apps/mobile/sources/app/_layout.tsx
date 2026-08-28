@@ -6,8 +6,6 @@ import * as Fonts from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { AuthCredentials, TokenStorage } from '@/auth/tokenStorage';
-import { AuthProvider } from '@/auth/AuthContext';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import {
@@ -17,15 +15,11 @@ import {
 } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/SidebarNavigator';
-import sodium from '@/encryption/libsodium.lib';
 import { AppState, View, Platform } from 'react-native';
 import { ModalProvider } from '@/modal';
 import { PostHogProvider } from 'posthog-react-native';
 import { tracking } from '@/track/tracking';
-import { syncRestore } from '@/sync/sync';
 import { useTrackScreens } from '@/track/useTrackScreens';
-import { RealtimeProvider } from '@/realtime/RealtimeProvider';
-import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
 import { CommandPaletteProvider } from '@/components/CommandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/StatusBarProvider';
 // import * as SystemUI from 'expo-system-ui';
@@ -33,11 +27,7 @@ import { initConsoleLogging, setConsoleOutputEnabled } from '@/utils/consoleLogg
 import { useLocalSetting } from '@/sync/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
-import {
-  isLegacySessionNotificationResponse,
-  navigateToBuzzNotificationResponse,
-} from '@/utils/notificationRouting';
-import { applyVoiceUpsellOverride } from '@/realtime/voiceExperiment';
+import { navigateToBuzzNotificationResponse } from '@/utils/notificationRouting';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
@@ -227,35 +217,6 @@ async function loadFonts() {
   });
 }
 
-function getDevEnvironmentCredentials(): AuthCredentials | null {
-  if (!__DEV__) {
-    return null;
-  }
-
-  const token = process.env.EXPO_PUBLIC_DEV_TOKEN;
-  const secret = process.env.EXPO_PUBLIC_DEV_SECRET;
-  if (!token || !secret) {
-    return null;
-  }
-
-  return { token, secret };
-}
-
-function getDevWebQueryCredentials(): AuthCredentials | null {
-  if (!__DEV__ || Platform.OS !== 'web' || typeof window === 'undefined') {
-    return null;
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('dev_token');
-  const secret = params.get('dev_secret');
-  if (!token || !secret) {
-    return null;
-  }
-
-  return { token, secret };
-}
-
 export default function RootLayout() {
   React.useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -351,40 +312,12 @@ export default function RootLayout() {
   //
   // Init sequence
   //
-  const [initState, setInitState] = React.useState<{ credentials: AuthCredentials | null } | null>(
-    null,
-  );
+  const [initialized, setInitialized] = React.useState(false);
   React.useEffect(() => {
     (async () => {
       try {
         await loadFonts();
-        await sodium.ready;
-
-        let credentials = await TokenStorage.getCredentials();
-        const devCredentials = getDevWebQueryCredentials() ?? getDevEnvironmentCredentials();
-
-        if (devCredentials) {
-          const credentialsChanged =
-            credentials?.token !== devCredentials.token ||
-            credentials?.secret !== devCredentials.secret;
-
-          if (credentialsChanged) {
-            const saved = await TokenStorage.setCredentials(devCredentials);
-            if (saved) {
-              credentials = devCredentials;
-            }
-          }
-
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.replaceState({}, '', window.location.pathname);
-          }
-        }
-
-        if (credentials) {
-          await syncRestore(credentials);
-        }
-
-        setInitState({ credentials });
+        setInitialized(true);
       } catch (error) {
         console.error('Error initializing:', error);
       }
@@ -392,12 +325,12 @@ export default function RootLayout() {
   }, []);
 
   React.useEffect(() => {
-    if (initState) {
+    if (initialized) {
       setTimeout(() => {
         SplashScreen.hideAsync();
       }, 100);
     }
-  }, [initState]);
+  }, [initialized]);
 
   const handledNotificationIds = React.useRef<Set<string>>(new Set());
   const handleNotificationResponse = React.useCallback(
@@ -436,14 +369,9 @@ export default function RootLayout() {
           );
           return;
         }
-        if (!isLegacySessionNotificationResponse(response)) {
-          console.log(
-            '[PUSH ROUTING] No supported route found in notification.request.content.data',
-          );
-          return;
-        }
-        console.log('[PUSH ROUTING] Retired session notification; navigating to Rooms');
-        router.replace('/buzz/channels');
+        console.log(
+          '[PUSH ROUTING] No supported route found in notification.request.content.data',
+        );
       } finally {
         try {
           await Notifications.clearLastNotificationResponseAsync();
@@ -456,7 +384,7 @@ export default function RootLayout() {
   );
 
   React.useEffect(() => {
-    if (!initState) {
+    if (!initialized) {
       return;
     }
 
@@ -480,31 +408,22 @@ export default function RootLayout() {
       active = false;
       subscription.remove();
     };
-  }, [handleNotificationResponse, initState]);
+  }, [handleNotificationResponse, initialized]);
 
   // Track the screens
   useTrackScreens();
 
   // Sync console output toggle from Dev screen
   const consoleLoggingEnabled = useLocalSetting('consoleLoggingEnabled');
-  const devModeEnabled = __DEV__ || useLocalSetting('devModeEnabled');
-  const voiceUpsellOverride = useLocalSetting('voiceUpsellOverride');
   React.useEffect(() => {
     setConsoleOutputEnabled(consoleLoggingEnabled);
   }, [consoleLoggingEnabled]);
-
-  React.useEffect(() => {
-    if (!devModeEnabled || !voiceUpsellOverride) {
-      return;
-    }
-    applyVoiceUpsellOverride(voiceUpsellOverride);
-  }, [devModeEnabled, voiceUpsellOverride]);
 
   //
   // Not inited
   //
 
-  if (!initState) {
+  if (!initialized) {
     return null;
   }
 
@@ -522,24 +441,20 @@ export default function RootLayout() {
               : { flex: 1, backgroundColor: theme.colors.groupped.background }
           }
         >
-          <AuthProvider initialCredentials={initState.credentials}>
-            <UpdateProvider>
-              <ThemeProvider value={navigationTheme}>
-                <StatusBarProvider />
-                <ModalProvider>
-                  <BrowserNavigationShortcuts />
-                  <CommandPaletteProvider>
-                    <RealtimeProvider>
-                      <HorizontalSafeAreaWrapper>
-                        <SidebarNavigator />
-                      </HorizontalSafeAreaWrapper>
-                    </RealtimeProvider>
-                  </CommandPaletteProvider>
-                </ModalProvider>
-                <UpdateReadyPrompt />
-              </ThemeProvider>
-            </UpdateProvider>
-          </AuthProvider>
+          <UpdateProvider>
+            <ThemeProvider value={navigationTheme}>
+              <StatusBarProvider />
+              <ModalProvider>
+                <BrowserNavigationShortcuts />
+                <CommandPaletteProvider>
+                  <HorizontalSafeAreaWrapper>
+                    <SidebarNavigator />
+                  </HorizontalSafeAreaWrapper>
+                </CommandPaletteProvider>
+              </ModalProvider>
+              <UpdateReadyPrompt />
+            </ThemeProvider>
+          </UpdateProvider>
         </GestureHandlerRootView>
       </KeyboardProvider>
     </SafeAreaProvider>
@@ -548,10 +463,5 @@ export default function RootLayout() {
     providers = <PostHogProvider client={tracking}>{providers}</PostHogProvider>;
   }
 
-  return (
-    <>
-      <FaviconPermissionIndicator />
-      {providers}
-    </>
-  );
+  return providers;
 }

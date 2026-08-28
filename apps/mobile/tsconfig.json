@@ -32,7 +32,6 @@
     "android",
     "ios",
     "node_modules",
-    "sources/trash/**/*",
-    "vendor/happy-wire/**/*.test.ts"
+    "sources/trash/**/*"
   ]
 }

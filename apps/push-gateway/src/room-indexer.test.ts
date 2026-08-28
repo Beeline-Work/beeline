@@ -421,6 +421,27 @@ describe('RoomIndexer', () => {
         text: 'Permission execution acknowledged',
       },
       {
+        id: '7'.repeat(64),
+        createdAt: 17,
+        pubkey: AGENT,
+        markers: ['agent-message', 'land-summary'],
+        text: 'Landed the checksum corner.',
+      },
+      {
+        id: '6'.repeat(64),
+        createdAt: 17,
+        pubkey: AGENT,
+        markers: ['agent-message', 'ci-result'],
+        text: 'CI passed for the landed checksum.',
+      },
+      {
+        id: '5'.repeat(64),
+        createdAt: 17,
+        pubkey: AGENT,
+        markers: ['agent-message', 'buzz-agent-exchange'],
+        text: 'A peer agent confirmed the checksum.',
+      },
+      {
         id: '9'.repeat(64),
         createdAt: 18,
         pubkey: VIEWER,
@@ -464,6 +485,7 @@ describe('RoomIndexer', () => {
     expect(modelConversation).toEqual([
       'Hello',
       'Ready',
+      'A peer agent confirmed the checksum.',
       'Captain: you are my chief of staff.',
       'I will maintain the launch checklist.',
     ]);
@@ -475,6 +497,8 @@ describe('RoomIndexer', () => {
       'GitHub polling degraded',
       'Steer queued for the active turn.',
       'Permission execution acknowledged',
+      'Landed the checksum corner.',
+      'CI passed for the landed checksum.',
     ]) {
       expect(view?.messages).toContainEqual(
         expect.objectContaining({ text, presentation: 'system' }),

@@ -143,7 +143,7 @@ import type {
   SessionEventHandler,
   Unsubscribe,
 } from './types.js';
-import type { KnownMessageReference } from './read-model/types.js';
+import type { KnownMessageReference } from './reply-proof.js';
 
 function hostFromBaseUrl(baseUrl: string): string {
   const u = new URL(baseUrl);

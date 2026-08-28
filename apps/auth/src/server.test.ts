@@ -311,7 +311,6 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     logLines = [];
     app = buildAuthServer({
       store,
-      internalSnapshotToken: 'snapshot-test-token',
       oidc: new OidcClient({
         issuer: provider.issuer,
         authorizationEndpoint: `${provider.baseUrl}/authorize`,
@@ -493,48 +492,6 @@ describe('hardened OIDC to Nostr-key binding HTTP protocol', () => {
     expect(bound.statusCode).toBe(201);
     return bound.json<Record<string, unknown>>();
   }
-
-  it('serves a bounded bearer-gated bulk succession lookup by relay tenant', async () => {
-    const predecessor = 'a'.repeat(64);
-    const current = 'b'.repeat(64);
-    const resolve = vi
-      .spyOn(store, 'resolveCurrentPubkey')
-      .mockImplementation(async (community, pubkey) => {
-        expect(community).toBe(alphaTenant.community);
-        return pubkey === predecessor ? current : pubkey;
-      });
-    const path = '/internal/snapshot/current-identities';
-    const unauthorized = await app.inject({
-      method: 'POST',
-      url: path,
-      payload: { relay_tenant_id: alphaTenant.roomCommunityIds[0], pubkeys: [predecessor] },
-    });
-    expect(unauthorized.statusCode).toBe(401);
-
-    const response = await app.inject({
-      method: 'POST',
-      url: path,
-      headers: { authorization: 'Bearer snapshot-test-token' },
-      payload: {
-        relay_tenant_id: alphaTenant.roomCommunityIds[0],
-        pubkeys: [predecessor, predecessor, current],
-      },
-    });
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['cache-control']).toBe('no-store');
-    expect(response.json()).toEqual({
-      mappings: { [predecessor]: current, [current]: current },
-    });
-    expect(resolve).toHaveBeenCalledTimes(2);
-
-    const unknownTenant = await app.inject({
-      method: 'POST',
-      url: path,
-      headers: { authorization: 'Bearer snapshot-test-token' },
-      payload: { relay_tenant_id: '33333333-3333-4333-8333-333333333333', pubkeys: [] },
-    });
-    expect(unknownTenant.statusCode).toBe(404);
-  });
 
   it('advertises GitHub only when its complete configuration is present', async () => {
     const response = await app.inject({

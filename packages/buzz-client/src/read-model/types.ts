@@ -1,5 +1,5 @@
 import type { AttachmentReference } from '../attachment.js';
-import type { ChangeReviewFile } from '../change-review.js';
+import type { ChangeReviewArtifactDescriptor } from '../change-review.js';
 import type { CornerMachineReason, CornerMachineState } from '../corner-state.js';
 import type {
   DelegationReceiptV1,
@@ -160,24 +160,7 @@ export type ControlPayload =
       readonly tip?: string;
       readonly patchId?: string;
     }
-  | {
-      readonly kind: 'review-manifest';
-      readonly base: string;
-      readonly tip: string;
-      readonly files: readonly ChangeReviewFile[];
-      readonly chunk: number;
-      readonly chunks: number;
-      readonly transactional: boolean;
-    }
-  | {
-      readonly kind: 'review-complete';
-      readonly base: string;
-      readonly tip: string;
-      readonly patchId: string;
-      readonly summary: string;
-      readonly manifestChunks: number;
-      readonly fileCount: number;
-    }
+  | { readonly kind: 'review-artifact'; readonly artifact: ChangeReviewArtifactDescriptor }
   | {
       readonly kind: 'repository';
       readonly key: string;

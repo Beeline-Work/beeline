@@ -14,6 +14,7 @@ import type {
   SessionUpdate,
   WorkspaceSnapshot,
 } from './types.js';
+import type { ChangeReviewArtifactDescriptor, ChangeReviewFile } from '../change-review.js';
 
 export type TranscriptConversationItem = {
   readonly kind: 'human-message' | 'agent-message';
@@ -320,9 +321,11 @@ export type ReviewSummary = {
     readonly patchId?: string;
     readonly previewUrl?: string;
   };
-  readonly files: readonly string[];
+  readonly reason?: string;
+  readonly files: readonly ChangeReviewFile[];
   readonly fileCount: number;
   readonly previewSummary?: string;
+  readonly artifact?: ChangeReviewArtifactDescriptor;
   readonly approvedBy: readonly Pubkey[];
   readonly daemonAcknowledgement?: {
     readonly approvalId: string;
@@ -340,6 +343,7 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
   const roomSnapshot = room(snapshot, channelId);
   if (!roomSnapshot) return { state: 'none', files: [], fileCount: 0, approvedBy: [] };
   let target: ReviewSummary['target'];
+  let reason: string | undefined;
   let state: ReviewSummary['state'] = 'none';
   let acknowledgement: ReviewSummary['daemonAcknowledgement'];
   let outcome: ReviewSummary['outcome'];
@@ -349,11 +353,7 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
     readonly event: Control;
     readonly payload: Extract<Control['payload'], { readonly kind: 'merge-approval' }>;
   }[] = [];
-  const manifests = new Map<
-    string,
-    Map<number, Extract<Control['payload'], { kind: 'review-manifest' }>>
-  >();
-  const completions = new Map<string, Extract<Control['payload'], { kind: 'review-complete' }>>();
+  const artifacts = new Map<string, ChangeReviewArtifactDescriptor>();
 
   for (const event of orderedEvents(roomSnapshot)) {
     if (pendingApprovalSecond !== event.createdAt) {
@@ -362,15 +362,8 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
     }
     if (event.type !== 'control') continue;
     const payload = event.payload;
-    if (payload.kind === 'review-manifest') {
-      if (!payload.transactional) continue;
-      const chunks = manifests.get(payload.tip) ?? new Map();
-      chunks.set(payload.chunk, payload);
-      manifests.set(payload.tip, chunks);
-      continue;
-    }
-    if (payload.kind === 'review-complete') {
-      completions.set(payload.tip, payload);
+    if (payload.kind === 'review-artifact') {
+      artifacts.set(payload.artifact.tip, payload.artifact);
       continue;
     }
     if (payload.kind === 'merge-approval') {
@@ -394,6 +387,7 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
         ...(payload.previewUrl ? { previewUrl: payload.previewUrl } : {}),
       };
       state = 'ready';
+      reason = undefined;
       acknowledgement = undefined;
       outcome = undefined;
       for (const approval of pendingApprovals) {
@@ -409,6 +403,7 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
     if (payload.action === 'not-ready') {
       target = undefined;
       state = 'none';
+      reason = payload.text;
       approvedBy = new Set();
       pendingApprovals = [];
       acknowledgement = undefined;
@@ -443,26 +438,14 @@ export function selectReviewSummary(snapshot: WorkspaceSnapshot, channelId: stri
     }
   }
 
-  const completion = target ? completions.get(target.tip) : undefined;
-  const manifestChunks = target ? manifests.get(target.tip) : undefined;
-  const completeManifests =
-    completion &&
-    manifestChunks?.size === completion.manifestChunks &&
-    [...manifestChunks.keys()]
-      .sort((left, right) => left - right)
-      .every((chunk, index) => chunk === index)
-      ? [...manifestChunks.values()].sort((left, right) => left.chunk - right.chunk)
-      : [];
-  const files = [
-    ...new Set(completeManifests.flatMap((manifest) => manifest.files.map((file) => file.path))),
-  ];
-  const complete = Boolean(completion && files.length === completion.fileCount);
+  const artifact = target ? artifacts.get(target.tip) : undefined;
   return {
     state,
     ...(target ? { target } : {}),
-    files: complete ? files : [],
-    fileCount: complete ? completion!.fileCount : 0,
-    ...(complete ? { previewSummary: completion!.summary } : {}),
+    ...(reason ? { reason } : {}),
+    files: artifact?.files ?? [],
+    fileCount: artifact?.fileCount ?? 0,
+    ...(artifact ? { previewSummary: artifact.summary, artifact } : {}),
     approvedBy: [...approvedBy].sort(),
     ...(acknowledgement ? { daemonAcknowledgement: acknowledgement } : {}),
     ...(outcome ? { outcome } : {}),

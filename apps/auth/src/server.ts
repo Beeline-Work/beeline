@@ -120,8 +120,6 @@ export interface AuthServerOptions {
    * endpoints refuse — the setup surface is operator-only, never public.
    */
   githubSetupToken?: string;
-  /** Private-Compose bearer used only by the snapshot materializer's bulk succession read. */
-  internalSnapshotToken?: string;
   /** Relay-backed proof that an agent currently belongs to a Room and that Room names this repo. */
   authorizeGitHubRoomToken?: (
     tenant: AuthTenant,
@@ -388,13 +386,6 @@ function publicUrl(tenant: AuthTenant, request: FastifyRequest): string {
   if (!path?.startsWith('/'))
     throw new ProtocolError(400, 'invalid_request', 'invalid request URL');
   return `${tenant.origin}${path}`;
-}
-
-function bearerMatches(authorization: string | undefined, expected: string | undefined): boolean {
-  if (!expected || !authorization?.startsWith('Bearer ')) return false;
-  const actual = Buffer.from(authorization.slice('Bearer '.length), 'utf8');
-  const wanted = Buffer.from(expected, 'utf8');
-  return actual.length === wanted.length && timingSafeEqual(actual, wanted);
 }
 
 export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
@@ -816,51 +807,6 @@ export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   });
 
   app.get('/health', async () => ({ ok: true }));
-
-  /**
-   * Private-network, read-only bulk succession authority for snapshot builds.
-   * Relay tenant UUIDs are mapped to the durable identity namespace here;
-   * callers can neither choose that namespace nor reach this path via nginx.
-   */
-  app.post('/internal/snapshot/current-identities', async (request, reply) => {
-    if (!bearerMatches(request.headers.authorization, options.internalSnapshotToken)) {
-      throw new ProtocolError(401, 'unauthorized', 'internal snapshot authorization required');
-    }
-    if (!request.body || typeof request.body !== 'object') {
-      throw new ProtocolError(400, 'invalid_request', 'expected identity lookup request');
-    }
-    const body = request.body as Record<string, unknown>;
-    const relayTenantId = body.relay_tenant_id;
-    const pubkeys = body.pubkeys;
-    if (
-      typeof relayTenantId !== 'string' ||
-      !Array.isArray(pubkeys) ||
-      pubkeys.length > 512 ||
-      pubkeys.some((pubkey) => typeof pubkey !== 'string' || !/^[0-9a-f]{64}$/.test(pubkey))
-    ) {
-      throw new ProtocolError(400, 'invalid_request', 'invalid bounded identity lookup');
-    }
-    const communities = new Set(
-      options.tenants
-        .filter((tenant) => tenant.roomCommunityIds.includes(relayTenantId))
-        .map((tenant) => tenant.community),
-    );
-    if (communities.size !== 1) {
-      throw new ProtocolError(404, 'tenant_not_found', 'relay tenant is unavailable');
-    }
-    const community = [...communities][0]!;
-    const uniquePubkeys = [...new Set(pubkeys as string[])];
-    const mappings = Object.fromEntries(
-      await Promise.all(
-        uniquePubkeys.map(async (pubkey) => [
-          pubkey,
-          await options.store.resolveCurrentPubkey(community, pubkey),
-        ]),
-      ),
-    );
-    noStore(reply);
-    return reply.send({ mappings });
-  });
 
   /** Public feature discovery. Missing GitHub config deliberately means dark. */
   app.get('/auth/capabilities', async (request, reply) => {

@@ -1,13 +1,12 @@
 # @beeline/push-gateway
 
-Beeline's Postgres-adjacent materializer. One process hosts the push,
-repository-events, and channel-snapshot consumers. It accepts an
+Beeline's Postgres-adjacent relay service. One process hosts push delivery,
+repository-event ingestion, and the direct Room indexer. It accepts an
 Android FCM device registration, tails kind-9 channel events from Buzz's
 authoritative database, and sends Firebase notifications to registered members
 other than the event author. The same process polls GitHub repository activity
-and builds the membership-gated `channel-snapshot-v1` Room/corner read view.
-All three use one Postgres owner and reservation store; their consumer-namespaced
-state machines remain independent.
+and serves bounded, membership-gated paint DTOs directly from authoritative
+Postgres. There is no stored view, dirty queue, cursor, digest, or read cache.
 
 The default policy is intentionally quiet: a recipient gets a push only for an
 explicit `p`-tag mention, a direct message, or an agent's transition to
@@ -44,17 +43,12 @@ The service account file stays outside the repository. Do not log or commit it.
 | `BUZZY_PUSH_HOST`                  | `127.0.0.1`                            | Registration HTTP bind host                                                        |
 | `PORT`                             | `8788`                                 | Registration HTTP port (Compose-internal in production)                            |
 | `BUZZY_PUSH_REGISTRY_FILE`         | `.data/registrations.json`             | Local token registry path                                                          |
-| `BUZZY_PUSH_DELIVERY_STATE_FILE`   | registry directory + `deliveries.json` | Legacy push ledger imported once into Postgres                                     |
 | `BUZZY_PUSH_POLL_INTERVAL_MS`      | `1500`                                 | Member-scoped database poll interval                                               |
 | `BUZZY_PUSH_FEED_HEARTBEAT_MS`     | `60000`                                | Feed heartbeat interval; production logs normalize its event count to events/min   |
-| `BUZZY_SNAPSHOT_PUBLIC_ORIGIN`     | gateway bind origin                    | Exact public origin used to verify snapshot NIP-98 proofs                          |
-| `BUZZY_SNAPSHOT_AUTH_BASE_URL`     | `http://127.0.0.1:8789`                | Private auth-service origin for materializer succession lookups                    |
-| `BUZZY_SNAPSHOT_INTERNAL_TOKEN`    | —                                      | Private auth bearer; mandatory in production                                       |
-| `BUZZY_SNAPSHOT_POLL_INTERVAL_MS`  | `1000`                                 | Durable dirty-work polling interval                                                |
-| `BUZZY_SNAPSHOT_BURST_COALESCE_MS` | `75`                                   | Minimum age before a newly dirty channel is claimed                                |
+| `BUZZY_INDEXER_PUBLIC_ORIGIN`      | gateway bind origin                    | Exact public origin used to verify surface NIP-98 proofs                           |
 | `BEELINE_GITHUB_APP_ID`            | —                                      | GitHub App id for the hosted repository-events consumer                            |
 | `BEELINE_GITHUB_APP_PRIVATE_KEY`   | —                                      | GitHub App private key; mandatory for the hosted consumer                          |
-| `BEELINE_EVENTS_STATE_DIR`         | XDG state + `beeline/events`           | Identity plus legacy repository-event state import                                 |
+| `BEELINE_EVENTS_STATE_DIR`         | XDG state + `beeline/events`           | Repository-events signing identity                                                  |
 
 `POST /registrations` accepts
 `{ "pubkey", "token", "platform": "android", "environment": "physical" }`.
@@ -72,45 +66,36 @@ gateway host and is lost if that file is removed. Re-importing or generating a
 Buzz identity registers the device, and each mobile cold start refreshes the
 binding in case Firebase rotated the device token.
 
-The materializer imports the former delivery-state file once, then stores the
-push reservation document in Postgres. It reserves each event-id/recipient
+The process stores the push reservation document in Postgres. It reserves each event-id/recipient
 attempt before calling FCM and never retries an ambiguous attempt. Delivered
 ids are retained for 30 days and capped at 50,000;
 durable per-recipient cursors keep pruned backlog events permanently ineligible.
 FCM eligibility fails closed unless the Room has an immutable kind-9007 create
 linked to a self-linked persistent Workspace create. The final pre-FCM boundary
-then suppresses explicit `fixture` tags; `change-review*`, `ui-test`, `ui-demo`,
-`uidemo`, and `test-fixture` markers; fixture names/repositories including
+then suppresses explicit `fixture` tags; `ui-test`, `ui-demo`, `uidemo`, and
+`test-fixture` markers; fixture names/repositories including
 `ui-demo-*`, `research-no-findings-*`, `review-corner-*`, `*-uidemo-*`, and
 room-invite repair/visibility fixtures; and all Rooms linked to an obviously
 test/demo/fixture/throwaway Workspace. The active `channel_members` row remains
 the per-recipient delivery authority for every genuine eligible Room.
 
-## Channel snapshots
+## Direct surface indexer
 
-`GET /snapshot/channel/<uuid>` requires a fresh kind-27235 NIP-98 proof with
-exactly the configured public URL, method `GET`, and one nonce. Proof IDs are
-durably replay guarded. The signer is the only viewer input; the serving query
-resolves the relay tenant and joins an active `channel_members` row on every
-request. A missing channel and a non-member therefore return the same `404`.
-Responses are `private, no-store` and vary on `Authorization`.
+The indexer exposes eight bounded reads: `/workspaces`, `/workspace/:id`,
+`/workspace/:id/chats`, `/workspace/:id/agents/:pubkey`, `/room/:id`,
+`/room/:id/corners`, `/room/:id/messages`, and `POST /invite/resolve`.
+Every route requires an exact fresh NIP-98 reader identity. All except invite
+resolution also join current membership in the same SQL statement; a missing
+object and a non-member return the same `404`. Invite resolution intentionally
+skips membership, hashes the opaque token from its body, verifies the current
+minter and Workspace, and returns only name, avatar, and expiry.
 
-The response contains one integrity-hashed, versioned normalized read-model
-snapshot: the requested Room/corner, its parent and sibling corner summaries,
-current metadata/lifecycle and roster, repository and review/approval summary,
-up to 30 projected conversation rows, and an inclusive WebSocket cursor. It is
-hard-capped at 256 KiB; attachments remain link metadata only. Missing,
-incompatible, corrupt, or more-than-30-second-behind rows return typed
-`503 snapshot_not_ready`, never an empty transcript.
-
-Postgres triggers coalesce event, channel, membership, and identity changes into
-one durable dirty row per `(relay_tenant_id, channel_id)`. A bounded fair worker
-claims them with `FOR UPDATE SKIP LOCKED`, rebuilds through the shared
-`@beeline/buzz-client` parser/reducer/selectors, resolves key succession through
-the auth sidecar, and atomically replaces the JSONB row. `/snapshot/health`
-reports worker warmth, queue depth, and oldest dirty age. `/health` remains the
-independent FCM readiness check, so unavailable Firebase credentials do not
-prevent already-built snapshots from being served.
+`/room/:id` addresses both top-level Rooms and corners. Its one bounded query is
+paint-complete for a cold chat open: metadata, viewer permissions, resolved
+roster, latest durable rows with reply proofs, parent briefing, sibling corners,
+repository, and review descriptors. Media and patch bodies remain lazy assets.
+Responses are `private, no-store`; there is no replay ledger because reads are
+idempotent.
 
 Every candidate database event produces one `[push] decision` line with its full
 event id and Room id, recipient, `notify`/`skip` verdict, exact reason, and send
@@ -138,9 +123,9 @@ Android notification channel label require a new APK; the application label is
 already Beeline.
 
 Production runs one `materializer` service in `relay-stack/prod/compose.yml`.
-The tracked relay-front proxies both `/push/` and path-preserving `/snapshot/`
-to it on the Compose network. The host deploy builds the image, retires the old
+The tracked relay-front proxies `/push/` plus the eight indexer routes to it on
+the Compose network. The host deploy builds the image, retires the old
 `beeline-events.service`, applies the tracked Compose/nginx configuration, and
-verifies both health surfaces on merge. Do not deploy it manually. Preserve the
-existing push and repository-events identity/state directories: startup imports
-the two legacy reservation documents into the shared Postgres store.
+verifies the unsigned indexer refusal plus push health on merge. Do not deploy
+it manually. Preserve the existing push registry and repository-events signing
+identity directories.

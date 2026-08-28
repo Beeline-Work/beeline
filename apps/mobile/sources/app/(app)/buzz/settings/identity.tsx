@@ -23,13 +23,10 @@ import Svg, { Path, Rect } from 'react-native-svg';
 import {
   adoptGitHubHandle,
   buildOidcBindEvent,
-  claimNip05Handle,
   finishOidcBind,
   fallbackPersonName,
   lookupRecovery,
   lookupManagedIdentity,
-  Nip05ClaimError,
-  normalizeNip05Identifier,
   normalizePersonHandle,
   normalizePersonName,
   personHandle,
@@ -48,7 +45,6 @@ import { groknight } from '@/buzz/groknight';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { PHOTO_OVERRIDES_ENABLED } from '@/buzz/photo-overrides';
-import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import {
   ensurePersonNameForWorkspace,
   loadPreferredPersonName,
@@ -153,17 +149,8 @@ export default function BuzzIdentitySettings() {
   const [savedProfileName, setSavedProfileName] = useState('');
   const [profileHandle, setProfileHandle] = useState('');
   const [savedProfileHandle, setSavedProfileHandle] = useState('');
-  const [profileNip05, setProfileNip05] = useState('');
-  const [savedProfileNip05, setSavedProfileNip05] = useState('');
-  const [nip05Focused, setNip05Focused] = useState(false);
-  const [claimName, setClaimName] = useState('');
-  const [claimWorking, setClaimWorking] = useState(false);
-  const [claimStatus, setClaimStatus] = useState<
-    'idle' | 'claimed' | 'taken' | 'invalid' | 'error'
-  >('idle');
   const [nameWorking, setNameWorking] = useState(false);
   const [nameFocused, setNameFocused] = useState(false);
-  const [handleFocused, setHandleFocused] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
   const [pushEnabled, setPushEnabledState] = useState<boolean | null>(null);
   const [pushRegistration, setPushRegistration] = useState<BuzzPushRegistrationState | null>(null);
@@ -175,7 +162,6 @@ export default function BuzzIdentitySettings() {
   const [managedIdentity, setManagedIdentity] = useState<ManagedIdentity | null>(null);
   const [githubWorking, setGitHubWorking] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
-  const nip05Status = useVerifiedNip05Status(profilePubkey ?? '', { nip05: savedProfileNip05 });
 
   useEffect(() => {
     let cancelled = false;
@@ -215,8 +201,6 @@ export default function BuzzIdentitySettings() {
           setSavedProfileName(nextName);
           setProfileHandle(nextHandle);
           setSavedProfileHandle(nextHandle);
-          setProfileNip05(profile?.nip05 ?? '');
-          setSavedProfileNip05(profile?.nip05 ?? '');
           setPushEnabledState(enabled);
           setPushRegistration(registration);
           setPushPermission(permission);
@@ -229,6 +213,12 @@ export default function BuzzIdentitySettings() {
           const linked = links.some((link) => link.provider === 'https://github.com');
           if (!cancelled) {
             setManagedIdentity(hostedIdentity);
+            if (hostedIdentity) {
+              setProfileName(hostedIdentity.displayName);
+              setSavedProfileName(hostedIdentity.displayName);
+              setProfileHandle(hostedIdentity.handle);
+              setSavedProfileHandle(hostedIdentity.handle);
+            }
             setLinkedAccount(linked ? 'connected' : 'not-linked');
           }
         } catch {
@@ -284,19 +274,13 @@ export default function BuzzIdentitySettings() {
   const saveName = useCallback(async () => {
     if (!profileClient || !profilePubkey) return;
     const normalized = normalizePersonName(profileName);
-    const normalizedHandle = normalizePersonHandle(profileHandle);
-    const trimmedNip05 = profileNip05.trim();
-    const normalizedNip05 = trimmedNip05 ? (normalizeNip05Identifier(trimmedNip05) ?? '') : '';
+    const normalizedHandle = normalizePersonHandle(managedIdentity?.handle ?? profileHandle);
     if (!normalized) {
       setError('Choose a name between 1 and 60 characters.');
       return;
     }
     if (!normalizedHandle) {
       setError('Choose a handle using 1-30 letters, numbers, dots, dashes, or underscores.');
-      return;
-    }
-    if (trimmedNip05 && !normalizedNip05) {
-      setError('Your NIP-05 identifier must look like name@domain.');
       return;
     }
     setNameWorking(true);
@@ -307,15 +291,13 @@ export default function BuzzIdentitySettings() {
         name: normalized,
         handle: normalizedHandle,
         avatar: avatarUrl,
-        nip05: normalizedNip05,
+        nip05: `${normalizedHandle}@usebeeline.app`,
       });
       await savePreferredPersonName(profilePubkey, normalized);
       setProfileName(normalized);
       setSavedProfileName(normalized);
       setProfileHandle(normalizedHandle);
       setSavedProfileHandle(normalizedHandle);
-      setProfileNip05(normalizedNip05);
-      setSavedProfileNip05(normalizedNip05);
       setNameSaved(true);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (caught) {
@@ -323,56 +305,12 @@ export default function BuzzIdentitySettings() {
     } finally {
       setNameWorking(false);
     }
-  }, [avatarUrl, profileClient, profileHandle, profileName, profileNip05, profilePubkey]);
-
-  const claimHandle = useCallback(async () => {
-    if (!profileClient || !profileIdentity || claimWorking) return;
-    const requested = claimName.trim().toLowerCase();
-    if (!requested) return;
-    setClaimWorking(true);
-    setClaimStatus('idle');
-    try {
-      const result = await claimNip05Handle(
-        getBuzzRuntimeConfig().relayUrl,
-        profileIdentity,
-        requested,
-      );
-      const identifier = result.identity.nip05;
-      const nextName = normalizePersonName(savedProfileName) ?? result.identity.displayName;
-      await profileClient.setGlobalPersonProfile({
-        name: nextName,
-        handle: result.identity.handle,
-        avatar: avatarUrl,
-        nip05: identifier,
-      });
-      await savePreferredPersonName(profileIdentity.publicKey, nextName);
-      setManagedIdentity(result.identity);
-      setProfileName(nextName);
-      setSavedProfileName(nextName);
-      setProfileHandle(result.identity.handle);
-      setSavedProfileHandle(result.identity.handle);
-      setProfileNip05(identifier);
-      setSavedProfileNip05(identifier);
-      setClaimName('');
-      setClaimStatus('claimed');
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (caught) {
-      if (caught instanceof Nip05ClaimError && caught.code === 'name_taken') {
-        setClaimStatus('taken');
-      } else if (caught instanceof Nip05ClaimError && caught.code === 'invalid_name') {
-        setClaimStatus('invalid');
-      } else {
-        setClaimStatus('error');
-      }
-    } finally {
-      setClaimWorking(false);
-    }
-  }, [avatarUrl, claimName, claimWorking, profileClient, profileIdentity, savedProfileName]);
+  }, [avatarUrl, managedIdentity, profileClient, profileHandle, profileName, profilePubkey]);
 
   const applyHostedIdentity = useCallback(
     async (hosted: ManagedIdentity) => {
       if (!profileClient || !profilePubkey) return;
-      const nextName = normalizePersonName(savedProfileName) ?? hosted.displayName;
+      const nextName = hosted.displayName;
       await profileClient.setGlobalPersonProfile({
         name: nextName,
         handle: hosted.handle,
@@ -384,11 +322,9 @@ export default function BuzzIdentitySettings() {
       setSavedProfileName(nextName);
       setProfileHandle(hosted.handle);
       setSavedProfileHandle(hosted.handle);
-      setProfileNip05(hosted.nip05);
-      setSavedProfileNip05(hosted.nip05);
       setManagedIdentity(hosted);
     },
-    [avatarUrl, profileClient, profilePubkey, savedProfileName],
+    [avatarUrl, profileClient, profilePubkey],
   );
 
   const connectGitHub = useCallback(async () => {
@@ -634,16 +570,8 @@ export default function BuzzIdentitySettings() {
         : linkedAccount === 'unavailable'
           ? 'GitHub link unavailable while offline'
           : 'Checking linked account';
-  const claimStatusLabel =
-    claimStatus === 'claimed'
-      ? '✓ CLAIMED'
-      : claimStatus === 'taken'
-        ? 'ALREADY TAKEN'
-        : claimStatus === 'invalid'
-          ? t('beelineIdentity.claimStatusInvalid')
-          : claimStatus === 'error'
-            ? 'COULD NOT CLAIM HANDLE'
-            : 'FIRST COME, FIRST SERVED';
+  const managedHandle = managedIdentity?.handle ?? profileHandle;
+  const managedNip05 = managedIdentity?.nip05 ?? (managedHandle ? `${managedHandle}@usebeeline.app` : '');
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -667,7 +595,8 @@ export default function BuzzIdentitySettings() {
               <Text style={styles.sectionLabel}>GLOBAL IDENTITY</Text>
               <Text style={styles.heading}>How people see you</Text>
               <Text style={styles.body}>
-                Your name, handle, and picture stay the same in every Workspace, Room, and DM.
+                Your name stays the same in every Workspace, Room, and DM. Your verified Beeline
+                handle comes from GitHub.
               </Text>
               <TextInput
                 accessibilityLabel="Your display name"
@@ -689,73 +618,24 @@ export default function BuzzIdentitySettings() {
                 testID="identity-person-name-input"
                 value={profileName}
               />
-              <View style={[styles.handleInputRow, handleFocused && styles.nameInputFocused]}>
-                <Text style={styles.handlePrefix}>@</Text>
-                <TextInput
-                  accessibilityLabel="Your handle"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  editable={!nameWorking}
-                  maxLength={30}
-                  onBlur={() => setHandleFocused(false)}
-                  onChangeText={(value) => {
-                    setProfileHandle(value.replace(/^@+/, ''));
-                    setNameSaved(false);
-                  }}
-                  onFocus={() => setHandleFocused(true)}
-                  onSubmitEditing={() => void saveName()}
-                  placeholder={personHandle(profileName, profilePubkey)}
-                  placeholderTextColor={theme.buzz.dim}
-                  returnKeyType="done"
-                  style={styles.handleInput}
-                  testID="identity-person-handle-input"
-                  value={profileHandle}
-                />
-              </View>
-              <TextInput
-                accessibilityLabel="Your NIP-05 identifier"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!nameWorking}
-                keyboardType="email-address"
-                maxLength={255}
-                onBlur={() => setNip05Focused(false)}
-                onChangeText={(value) => {
-                  setProfileNip05(value);
-                  setNameSaved(false);
-                }}
-                onFocus={() => setNip05Focused(true)}
-                onSubmitEditing={() => void saveName()}
-                placeholder="name@your-domain.com (optional)"
-                placeholderTextColor={theme.buzz.dim}
-                returnKeyType="done"
-                style={[styles.nameInput, nip05Focused && styles.nameInputFocused]}
-                testID="identity-person-nip05-input"
-                value={profileNip05}
-              />
-              <View style={styles.nameMetaRow}>
-                <Text style={styles.nameHandle} testID="identity-person-nip05-status">
-                  {savedProfileNip05
-                    ? nip05Status === 'verified'
-                      ? '✓ NIP-05 VERIFIED'
-                      : nip05Status === 'checking'
-                        ? 'NIP-05 CHECKING…'
-                        : nip05Status === 'mismatch'
-                          ? 'NIP-05 DOES NOT MATCH THIS KEY'
-                          : 'NIP-05 COULD NOT BE VERIFIED'
-                    : 'ONE PROFILE · ALL WORKSPACES'}
+              <View style={styles.managedHandle} testID="identity-managed-handle">
+                <Text style={styles.managedHandleLabel}>BEELINE HANDLE</Text>
+                <Text style={styles.managedHandleValue}>
+                  {managedNip05 || 'Connecting GitHub…'}
                 </Text>
+              </View>
+              <View style={styles.nameMetaRow}>
+                <Text style={styles.nameHandle}>VERIFIED AND MANAGED BY BEELINE</Text>
                 {nameSaved && <Text style={styles.nameSaved}>✓ SAVED</Text>}
               </View>
               <MonoButton
                 disabled={
                   nameWorking ||
                   !normalizePersonName(profileName) ||
-                  !normalizePersonHandle(profileHandle) ||
-                  (profileNip05.trim() !== '' && !normalizeNip05Identifier(profileNip05)) ||
+                  !normalizePersonHandle(managedIdentity?.handle ?? profileHandle) ||
                   (normalizePersonName(profileName) === savedProfileName &&
-                    normalizePersonHandle(profileHandle) === savedProfileHandle &&
-                    (normalizeNip05Identifier(profileNip05) ?? '') === savedProfileNip05)
+                    normalizePersonHandle(managedIdentity?.handle ?? profileHandle) ===
+                      savedProfileHandle)
                 }
                 label="Save identity"
                 loading={nameWorking}
@@ -805,47 +685,6 @@ export default function BuzzIdentitySettings() {
             )}
           </View>
         )}
-        {!managedIdentity && (
-          <View style={styles.settingsSection} testID="claim-handle-setting">
-            <Text style={styles.sectionLabel}>BEELINE HANDLE</Text>
-            <Text style={styles.body}>{t('beelineIdentity.hostedHandleClaimBody')}</Text>
-            <View style={styles.claimRow}>
-              <TextInput
-                accessibilityLabel="Desired Beeline handle"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!claimWorking}
-                maxLength={30}
-                onChangeText={(value) => {
-                  setClaimName(value);
-                  setClaimStatus('idle');
-                }}
-                onSubmitEditing={() => void claimHandle()}
-                placeholder="yourname"
-                placeholderTextColor={theme.buzz.dim}
-                returnKeyType="done"
-                style={styles.claimInput}
-                testID="identity-claim-handle-input"
-                value={claimName}
-              />
-              <Text style={styles.claimSuffix}>@usebeeline.app</Text>
-            </View>
-            <View style={styles.nameMetaRow}>
-              <Text style={styles.nameHandle} testID="identity-claim-handle-status">
-                {claimStatusLabel}
-              </Text>
-            </View>
-            <MonoButton
-              disabled={claimWorking || !claimName.trim()}
-              label={t('beelineIdentity.claimHandle')}
-              loading={claimWorking}
-              onPress={() => void claimHandle()}
-              style={styles.nameButton}
-              testID="identity-claim-handle-button"
-            />
-          </View>
-        )}
-
         <View style={styles.settingsSection} testID="notifications-setting">
           <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
           <View style={styles.settingLine}>
@@ -1116,28 +955,25 @@ const styles = StyleSheet.create((theme) => {
       fontSize: 17,
     },
     nameInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
-    handleInputRow: {
+    managedHandle: {
       minHeight: 48,
       marginTop: 10,
       paddingHorizontal: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
+      justifyContent: 'center',
       borderWidth: 1,
       borderColor: groknight.border,
       borderRadius: 3,
       backgroundColor: groknight.bgBase,
     },
-    handlePrefix: {
+    managedHandleLabel: {
       ...Typography.mono('semiBold'),
-      marginRight: 2,
       color: groknight.textMuted,
-      fontSize: 15,
+      fontSize: 10,
+      letterSpacing: 0.7,
     },
-    handleInput: {
+    managedHandleValue: {
       ...Typography.mono('semiBold'),
-      flex: 1,
-      minWidth: 0,
-      minHeight: 44,
+      marginTop: 2,
       color: groknight.textPrimary,
       fontSize: 15,
     },
@@ -1161,31 +997,6 @@ const styles = StyleSheet.create((theme) => {
       letterSpacing: 0.7,
     },
     nameButton: { marginTop: 8 },
-    claimRow: {
-      minHeight: 48,
-      marginTop: 16,
-      paddingHorizontal: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderWidth: 1,
-      borderColor: groknight.border,
-      borderRadius: 3,
-      backgroundColor: groknight.bgBase,
-    },
-    claimInput: {
-      ...Typography.mono('semiBold'),
-      flex: 1,
-      minWidth: 0,
-      minHeight: 44,
-      color: groknight.textPrimary,
-      fontSize: 15,
-    },
-    claimSuffix: {
-      ...Typography.mono('semiBold'),
-      marginLeft: 2,
-      color: groknight.textMuted,
-      fontSize: 15,
-    },
     settingsSection: {
       paddingBottom: 24,
       marginBottom: 28,

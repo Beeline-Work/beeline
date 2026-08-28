@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import {
   AcpClient,
   agentStreamSnapshot,
   isPureRetryNarration,
+  openAcpConversation,
   type SessionUpdate,
 } from './acp.js';
+import { harnessSupportsNativeSessionResume } from './harness-capabilities.js';
+import { SessionScheduler } from './session-scheduler.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -726,7 +729,203 @@ process.exit(1);
   return binary;
 }
 
+async function fakePersistentConversationAgent(): Promise<string> {
+  const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-persistent-'));
+  temporaryDirectories.push(directory);
+  const binary = resolve(directory, 'codex-acp.mjs');
+  await writeFile(
+    binary,
+    `#!/usr/bin/env node
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const root = dirname(fileURLToPath(import.meta.url));
+const statePath = resolve(root, 'conversation.json');
+const tracePath = resolve(root, 'trace.json');
+const state = existsSync(statePath)
+  ? JSON.parse(readFileSync(statePath, 'utf8'))
+  : { sessions: {} };
+const trace = existsSync(tracePath) ? JSON.parse(readFileSync(tracePath, 'utf8')) : [];
+const persist = () => writeFileSync(statePath, JSON.stringify(state));
+const record = (message) => {
+  trace.push({ method: message.method, params: message.params });
+  writeFileSync(tracePath, JSON.stringify(trace));
+};
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+const lines = createInterface({ input: process.stdin });
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: { protocolVersion: 1, agentCapabilities: { loadSession: true } },
+    });
+    return;
+  }
+  if (message.method === 'notifications/initialized') return;
+  if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+  if (message.method === 'session/new') {
+    record(message);
+    state.sessions['conversation-1'] = { remembered: '' };
+    persist();
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'conversation-1' } });
+    return;
+  }
+  if (message.method === 'session/load') {
+    record(message);
+    if (!state.sessions[message.params.sessionId]) {
+      send({ jsonrpc: '2.0', id: message.id, error: { code: -32602, message: 'missing' } });
+      return;
+    }
+    send({ jsonrpc: '2.0', id: message.id, result: {} });
+    return;
+  }
+  if (message.method === 'session/prompt') {
+    const session = state.sessions[message.params.sessionId];
+    const text = message.params.prompt[0].text;
+    const remember = text.match(/^remember exactly: (.+)$/);
+    if (remember) {
+      session.remembered = remember[1];
+      persist();
+    }
+    const answer = remember ? 'remembered' : session.remembered;
+    send({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: message.params.sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: answer },
+        },
+      },
+    });
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  }
+});
+`,
+  );
+  await chmod(binary, 0o755);
+  return binary;
+}
+
 describe('AcpClient live steering', () => {
+  it('native-loads an idle-evicted Codex conversation without rebuilding its re-prime', async () => {
+    const binary = await fakePersistentConversationAgent();
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+    let client: AcpClient | undefined;
+    let conversationId: string | undefined;
+    let reprimeCount = 0;
+    const lifecycle = {
+      activate: async () => {
+        client = new AcpClient({ agentCommand: binary, agentEnv: {} });
+        await client.start();
+        const opened = await openAcpConversation({
+          client,
+          agentCommand: binary,
+          resumeSessionId: conversationId,
+          cwd: dirname(binary),
+          create: async () => {
+            reprimeCount += 1;
+            return client!.sessionNew({
+              cwd: dirname(binary),
+              systemPrompt: 'CORNER RESUME BRIEF: the secret is deliberately absent',
+            });
+          },
+        });
+        conversationId = opened.sessionId;
+        return opened.sessionId;
+      },
+      suspend: async () => {
+        await client?.stop();
+      },
+    };
+
+    try {
+      // A newly constructed Body after daemon restart has no in-memory native
+      // conversation id, so this first activation takes the one re-prime path.
+      await scheduler.run('codex-room', lifecycle, async () => {
+        const first = await client!.sessionPrompt(
+          conversationId!,
+          'remember exactly: cobalt-orchid-731',
+          5_000,
+        );
+        expect(first.agentText).toBe('remembered');
+      });
+      expect(reprimeCount).toBe(1);
+
+      // This is the idle eviction boundary: the ACP process is gone, while
+      // the Body-owned logical conversation id survives in memory.
+      await scheduler.suspend('codex-room');
+
+      await scheduler.run('codex-room', lifecycle, async () => {
+        const resumed = await client!.sessionPrompt(
+          conversationId!,
+          'what did I ask you to remember?',
+          5_000,
+        );
+        // The value exists only in the harness's persisted conversation. It is
+        // absent from both the new mention and the one allowed re-prime brief.
+        expect(resumed.agentText).toBe('cobalt-orchid-731');
+      });
+
+      expect(reprimeCount).toBe(1);
+      const trace = JSON.parse(
+        await readFile(resolve(dirname(binary), 'trace.json'), 'utf8'),
+      ) as Array<{ method: string; params: Record<string, unknown> }>;
+      expect(trace.map((entry) => entry.method)).toEqual(['session/new', 'session/load']);
+      expect(trace[0]!.params.systemPrompt).toContain('CORNER RESUME BRIEF');
+      expect(trace[1]!.params).not.toHaveProperty('systemPrompt');
+    } finally {
+      await scheduler.dispose();
+    }
+  });
+
+  it('allows native conversation resume only for the shipped Codex and Grok harnesses', () => {
+    expect(harnessSupportsNativeSessionResume('/usr/local/bin/codex-acp')).toBe(true);
+    expect(harnessSupportsNativeSessionResume('/home/op/.grok/bin/grok')).toBe(true);
+    expect(harnessSupportsNativeSessionResume('claude-agent-acp')).toBe(false);
+    expect(harnessSupportsNativeSessionResume('pi-acp')).toBe(false);
+    expect(harnessSupportsNativeSessionResume('custom-acp')).toBe(false);
+  });
+
+  it('re-primes exactly once when a retained native conversation is genuinely lost', async () => {
+    const binary = await fakePersistentConversationAgent();
+    const client = new AcpClient({ agentCommand: binary, agentEnv: {} });
+    await client.start();
+    let reprimeCount = 0;
+    try {
+      const opened = await openAcpConversation({
+        client,
+        agentCommand: binary,
+        resumeSessionId: 'conversation-that-no-longer-exists',
+        cwd: dirname(binary),
+        create: async () => {
+          reprimeCount += 1;
+          return client.sessionNew({
+            cwd: dirname(binary),
+            systemPrompt: 'one bounded daemon-restart re-prime',
+          });
+        },
+      });
+
+      expect(opened.kind).toBe('created');
+      expect(reprimeCount).toBe(1);
+      const trace = JSON.parse(
+        await readFile(resolve(dirname(binary), 'trace.json'), 'utf8'),
+      ) as Array<{ method: string }>;
+      expect(trace.map((entry) => entry.method)).toEqual(['session/load', 'session/new']);
+    } finally {
+      await client.stop();
+    }
+  });
+
   it.runIf(process.platform !== 'win32')('kills the harness and all tool descendants', async () => {
     const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-pid-'));
     temporaryDirectories.push(directory);

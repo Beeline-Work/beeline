@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { AGENT_PRESENCE_DORMANT_MS, AGENT_PRESENCE_STALE_MS } from '@beeline/buzz-client';
 import {
+  AGENT_TURN_FRESHNESS_MS,
   activeMentionCandidates,
   agentPresenceTier,
   isAgentTurnActive,
   mergeAgentPresence,
   mergeAgentPresenceBatch,
   nextAgentPresenceTransitionAt,
+  nextAgentTurnExpiryAt,
   onlineVerdicts,
   type RoomAgentPresence,
 } from './agent-presence';
@@ -29,22 +31,54 @@ describe('mobile live presence overlay', () => {
   });
 
   it('uses replaceable latest-value semantics and current daemon generation', () => {
-    const current = { ...presence, observedAt: 20, generationId: 'new' };
+    const now = 100_000;
+    const current = { ...presence, observedAt: now, generationId: 'new' };
     expect(mergeAgentPresence({ [agent]: current }, { ...presence, observedAt: 10 })[agent]).toBe(
       current,
     );
     expect(
       isAgentTurnActive(
-        { requestId: 'r', agentPubkey: agent, status: 'working', generationId: 'new' },
+        {
+          requestId: '1'.repeat(64),
+          agentPubkey: agent,
+          status: 'working',
+          generationId: 'new',
+          createdAt: 100,
+        },
         current,
+        now,
       ),
     ).toBe(true);
     expect(
       isAgentTurnActive(
-        { requestId: 'r', agentPubkey: agent, status: 'working', generationId: 'old' },
+        {
+          requestId: '1'.repeat(64),
+          agentPubkey: agent,
+          status: 'working',
+          generationId: 'old',
+          createdAt: 100,
+        },
         current,
+        now,
       ),
     ).toBe(false);
+  });
+
+  it('expires an abandoned working receipt after 90 seconds and schedules that repaint', () => {
+    const turn = {
+      requestId: '1'.repeat(64),
+      agentPubkey: agent,
+      status: 'working' as const,
+      createdAt: 100,
+    };
+    const deadline = 100_000 + AGENT_TURN_FRESHNESS_MS;
+
+    expect(isAgentTurnActive(turn, undefined, deadline - 1)).toBe(true);
+    expect(nextAgentTurnExpiryAt([turn], 100_000)).toBe(deadline);
+    expect(isAgentTurnActive(turn, undefined, deadline)).toBe(false);
+    expect(nextAgentTurnExpiryAt([turn], deadline)).toBeUndefined();
+    expect(isAgentTurnActive({ ...turn, status: 'complete' }, undefined, 100_001)).toBe(false);
+    expect(isAgentTurnActive({ ...turn, status: 'failed' }, undefined, 100_001)).toBe(false);
   });
 
   it('keeps a newer live heartbeat when a Room refetch has no presence row', () => {
@@ -52,9 +86,9 @@ describe('mobile live presence overlay', () => {
     const server = { ...presence, observedAt: 10 };
     expect(mergeAgentPresenceBatch({ [agent]: live }, [])).toEqual({ [agent]: live });
     expect(mergeAgentPresenceBatch({ [agent]: live }, [server])).toEqual({ [agent]: live });
-    expect(
-      mergeAgentPresenceBatch({ [agent]: server }, [{ ...presence, observedAt: 30 }]),
-    ).toEqual({ [agent]: { ...presence, observedAt: 30 } });
+    expect(mergeAgentPresenceBatch({ [agent]: server }, [{ ...presence, observedAt: 30 }])).toEqual(
+      { [agent]: { ...presence, observedAt: 30 } },
+    );
   });
 
   it('resolves one stable online verdict per requested agent', () => {

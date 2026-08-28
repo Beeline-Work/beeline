@@ -26,6 +26,7 @@ import {
   type RoomRepositoryView,
   type RoomReviewView,
   type RoomView,
+  type RoomViewAgentTurn,
   type RoomViewActivity,
   type RoomViewHeader,
   type RoomViewIdentity,
@@ -857,6 +858,25 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.workspace_id))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+), latest_agent_turns AS MATERIALIZED (
+  SELECT DISTINCT ON (e.pubkey)
+    e.pubkey, e.created_at, e.tags
+  FROM authorized a
+  JOIN events e ON e.community_id = a.community_id AND e.channel_id = a.id
+    AND e.kind = 9 AND e.deleted_at IS NULL
+  JOIN channel_members member ON member.community_id = e.community_id
+    AND member.channel_id = e.channel_id AND member.pubkey = e.pubkey
+    AND member.removed_at IS NULL
+  JOIN agent_declarations agent ON agent.community_id = e.community_id
+    AND agent.pubkey = e.pubkey
+  WHERE e.tags @> '[["t", "agent-turn"]]'::jsonb
+    AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
+    AND e.tags @> jsonb_build_array(jsonb_build_array('agent', encode(e.pubkey, 'hex')))
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'request' AND t->>1 ~ '^[0-9a-f]{64}$')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed'))
+  ORDER BY e.pubkey, e.created_at DESC, e.id DESC
 ), ${agentSoulsCteSql('authorized', 'a', 'a.workspace_id')}, identities AS (
   SELECT k.community_id, k.pubkey,
     NULLIF(u.display_name, '') AS name, u.nip05_handle AS handle, u.avatar_url AS avatar,
@@ -948,6 +968,17 @@ JOIN (
   UNION ALL SELECT 'briefing'::text, b.* FROM briefing b
 ) e ON true
 JOIN identities resolved ON resolved.community_id = e.community_id AND resolved.pubkey = e.pubkey
+UNION ALL
+SELECT 'agent-turn', jsonb_build_object(
+  'requestId', (SELECT t->>1 FROM jsonb_array_elements(turn.tags) t
+    WHERE t->>0 = 'request' AND t->>1 ~ '^[0-9a-f]{64}$' LIMIT 1),
+  'agentPubkey', encode(turn.pubkey, 'hex'),
+  'status', (SELECT t->>1 FROM jsonb_array_elements(turn.tags) t
+    WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed') LIMIT 1),
+  'createdAt', extract(epoch FROM turn.created_at)::bigint,
+  'generationId', (SELECT t->>1 FROM jsonb_array_elements(turn.tags) t
+    WHERE t->>0 = 'generation' LIMIT 1)
+) FROM latest_agent_turns turn
 UNION ALL
 SELECT 'sibling', jsonb_build_object(
   'id', f.id, 'workspaceId', a.workspace_id,
@@ -1366,9 +1397,7 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   ) {
     return { ...base, presentation: 'system' };
   }
-  if (
-    [...markers].some((candidate) => candidate.startsWith('buzz-'))
-  ) {
+  if ([...markers].some((candidate) => candidate.startsWith('buzz-'))) {
     return undefined;
   }
   if (!base.text.trim() && !markers.has('buzz-attachment')) return undefined;
@@ -1598,10 +1627,42 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
   const corners = rows
     .filter((row) => row.section === 'sibling')
     .map((row) => cornerItem(json(row.data)));
+  const latestAgentTurns = rows
+    .filter((row) => row.section === 'agent-turn')
+    .flatMap((row): RoomViewAgentTurn[] => {
+      const data = json(row.data);
+      const requestId = text(data.requestId);
+      const agentPubkey = text(data.agentPubkey);
+      const status = text(data.status);
+      if (
+        !requestId ||
+        !/^[0-9a-f]{64}$/.test(requestId) ||
+        !agentPubkey ||
+        !/^[0-9a-f]{64}$/.test(agentPubkey) ||
+        (status !== 'working' && status !== 'complete' && status !== 'failed')
+      ) {
+        return [];
+      }
+      const generationId = text(data.generationId);
+      return [
+        {
+          requestId,
+          agentPubkey,
+          status,
+          createdAt: integer(data.createdAt),
+          ...(generationId ? { generationId } : {}),
+        },
+      ];
+    })
+    .sort(
+      (left, right) =>
+        right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
+    );
   return {
     room: header(roomData),
     messages: projectedMessages(rows, 'event', roomId, ROOM_VIEW_MESSAGE_LIMIT),
     members,
+    latestAgentTurns,
     viewer: viewer(roomData, members),
     ...(directMessage ? { directMessage } : {}),
     ...(parentData ? { parent: header(parentData) } : {}),

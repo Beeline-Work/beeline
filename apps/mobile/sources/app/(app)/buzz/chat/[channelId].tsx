@@ -191,6 +191,7 @@ import {
   mergeAgentPresence,
   mergeAgentPresenceBatch,
   nextAgentPresenceTransitionAt,
+  nextAgentTurnExpiryAt,
   onlineVerdicts,
   activeMentionCandidates,
   AGENT_PRESENCE_BACKGROUND_GRACE_MS,
@@ -1154,22 +1155,11 @@ export default function BuzzChat() {
     mentionMenuKey !== dismissedMentionKey &&
     mentionSuggestions.matches.length > 0,
   );
-  // Turn receipts are channel-local for Rooms and Corners alike. Derive them
-  // only from the route-local live lane. Durable turn state comes from GETs.
+  // The latest signed lifecycle receipt is server-indexed. Draft/thought
+  // overlays carry content only and can neither start nor extend a turn.
   const agentTurnMarkers = useMemo(
-    () =>
-      liveOverlays.flatMap((overlay) =>
-        overlay.kind === 'draft' && !overlay.closed
-          ? [
-              {
-                requestId: overlay.requestId,
-                agentPubkey: overlay.agentPubkey,
-                status: 'working' as const,
-              },
-            ]
-          : [],
-      ),
-    [liveOverlays],
+    () => roomSurface?.latestAgentTurns ?? [],
+    [roomSurface?.latestAgentTurns],
   );
   const activeAgentTurn = useMemo(
     () =>
@@ -1684,22 +1674,20 @@ export default function BuzzChat() {
    * nothing else — no corner reaches it, exactly as no turn reaches the corner
    * line above.
    *
-   * A Corner uses the same signed turn/live-lane proof as a Room. Its separate
+   * A Corner uses the same signed turn proof as a Room. Its separate
    * canonical Corner lease still owns the pinned Corner bar, but cannot hide a
    * channel-local reply that is visibly streaming now.
    */
   const turnProgressLabel = useMemo(() => {
-    const liveTurn = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
     const pubkey = selectTurnProgressAgentPubkey({
       isCorner,
       agentsOffline,
-      ...(liveTurn?.pubkey ? { liveTurnPubkey: liveTurn.pubkey } : {}),
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
     });
     if (!pubkey) return null;
     const subject = resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name;
     return `${subject} thinking…`;
-  }, [activeAgentTurn, agentByPubkey, agentsOffline, isCorner, visibleMessages]);
+  }, [activeAgentTurn, agentByPubkey, agentsOffline, isCorner]);
 
   const activeActivityId = useMemo(() => {
     const latest = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
@@ -1730,12 +1718,19 @@ export default function BuzzChat() {
     // recreated FlatList's renderItem (and every visible message) while someone
     // was typing, which made the foreground intermittently unresponsive.
     const now = Date.now();
-    const deadline = nextAgentPresenceTransitionAt(agentPresences, now);
+    const presenceDeadline = nextAgentPresenceTransitionAt(agentPresences, now);
+    const turnDeadline = nextAgentTurnExpiryAt(agentTurnMarkers, now);
+    const deadline =
+      presenceDeadline === undefined
+        ? turnDeadline
+        : turnDeadline === undefined
+          ? presenceDeadline
+          : Math.min(presenceDeadline, turnDeadline);
     if (deadline === undefined) return;
     const delay = Math.max(1, deadline - now + 1);
     const timer = setTimeout(() => setPresenceNow(Date.now()), delay);
     return () => clearTimeout(timer);
-  }, [agentPresences, presenceNow]);
+  }, [agentPresences, agentTurnMarkers, presenceNow]);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;

@@ -37,6 +37,7 @@ function roomView(pubkey: string): RoomView {
       },
     ],
     members: [{ identity, role: 'owner' }],
+    latestAgentTurns: [],
     viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
     briefing: [],
     review: { status: 'none', files: [], approvedBy: [] },
@@ -52,7 +53,10 @@ function indexer(
   return {
     publicOrigin: PUBLIC_ORIGIN,
     readWorkspaces: async () => ({
-      workspaces: [], viewer: fallbackIdentity, truncated: false, watchFilters: [],
+      workspaces: [],
+      viewer: fallbackIdentity,
+      truncated: false,
+      watchFilters: [],
     }),
     readWorkspace: async () => null,
     readChats: async () => null,
@@ -70,9 +74,9 @@ describe('paint-view GET server', () => {
 
   afterEach(async () => {
     await Promise.all(
-      servers.splice(0).map(
-        (server) => new Promise<void>((resolve) => server.close(() => resolve())),
-      ),
+      servers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
     );
   });
 
@@ -123,7 +127,9 @@ describe('paint-view GET server', () => {
     const responses = await Promise.all(
       [ROOM, missing].map((roomId) => {
         const path = `/room/${roomId}`;
-        return fetch(`${base}${path}`, { headers: { authorization: authorization(identity, path) } });
+        return fetch(`${base}${path}`, {
+          headers: { authorization: authorization(identity, path) },
+        });
       }),
     );
 
@@ -184,7 +190,9 @@ describe('paint-view GET server', () => {
     const path = '/invite/resolve';
 
     const anonymous = await fetch(`${base}${path}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
     });
     const response = await fetch(`${base}${path}`, {
       method: 'POST',

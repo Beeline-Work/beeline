@@ -138,25 +138,24 @@ describe('turn-progress presentation', () => {
     ).toBe('corner-agent');
   });
 
-  it('prefers the visibly streaming lane and preserves the Room offline guard', () => {
+  it('uses only a working receipt and preserves the Room offline guard', () => {
     expect(
       selectTurnProgressAgentPubkey({
         isCorner: true,
         agentsOffline: false,
-        liveTurnPubkey: 'streaming-agent',
         activeTurnPubkey: 'receipt-agent',
       }),
-    ).toBe('streaming-agent');
+    ).toBe('receipt-agent');
     expect(
       selectTurnProgressAgentPubkey({
         isCorner: false,
         agentsOffline: true,
-        liveTurnPubkey: 'room-agent',
+        activeTurnPubkey: 'room-agent',
       }),
     ).toBeNull();
   });
 
-  it('stays dark when neither a live lane nor a working receipt exists', () => {
+  it('stays dark without a working receipt, regardless of draft-stream state', () => {
     expect(selectTurnProgressAgentPubkey({ isCorner: true, agentsOffline: false })).toBeNull();
   });
 });

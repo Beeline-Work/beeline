@@ -47,6 +47,7 @@ function room(messages: readonly RoomViewMessage[]): RoomView {
     },
     messages,
     members: [{ identity, role: 'member' }],
+    latestAgentTurns: [],
     viewer: { identity, role: 'member', permissions: { send: true, manage: false } },
     corners: [],
     watchFilters: [{ kinds: [9], '#h': [ROOM] }],

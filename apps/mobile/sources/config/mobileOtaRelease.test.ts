@@ -847,6 +847,28 @@ esac
     );
   });
 
+  it('keeps the remote reply fixture alive through the flow before the first device send', () => {
+    const replyFixture = readFileSync(
+      resolve(mobileRoot, '../../scripts/publish-smoke-replies.ts'),
+      'utf8',
+    );
+    const initialWait = replyFixture.match(/FIRST_DEVICE_MESSAGE_TIMEOUT_MS = ([\d_]+);/);
+    const followUpWait = replyFixture.match(/FOLLOW_UP_MESSAGE_TIMEOUT_MS = ([\d_]+);/);
+
+    expect(initialWait).not.toBeNull();
+    expect(followUpWait).not.toBeNull();
+    expect(Number(initialWait![1].replaceAll('_', ''))).toBeGreaterThanOrEqual(180_000);
+    expect(Number(initialWait![1].replaceAll('_', ''))).toBeGreaterThan(
+      Number(followUpWait![1].replaceAll('_', '')),
+    );
+    expect(replyFixture).toContain(
+      "await waitForMessage(client, roomId, 'SMOKE ROOM SEND', FIRST_DEVICE_MESSAGE_TIMEOUT_MS)",
+    );
+
+    const smoke = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');
+    expect(smoke).toMatch(/visible: SMOKE AGENT ROOM REPLY\.\*[\s\S]*?timeout: 30000/);
+  });
+
   it('types a unique valid handle before claiming in every Maestro onboarding flow', () => {
     const provisionScript = readFileSync(resolve(mobileRoot, '../../scripts/provision-smoke.ts'), 'utf8');
     expect(provisionScript).toContain('MAESTRO_SMOKE_HANDLE=smoke-${identity.publicKey.slice(0, 12)}');

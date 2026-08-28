@@ -92,4 +92,27 @@ describe('STATE-UPGRADE gate — server-indexed surface storage', () => {
     expect(responseStore.has(key)).toBe(false);
     expect(mmkv.stores.get(LEGACY_STORE)?.get(LEGACY_KEY)).toBe(legacyFixture);
   });
+
+  it('scrubs retired agent notices from an existing response cache on write and restore', async () => {
+    const address = surfaceAddress(
+      'https://usebeeline.app',
+      'c'.repeat(64),
+      '/room/80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+    );
+    const retired =
+      'Still working on this — my coding backend is taking longer than usual to respond.';
+    const surface = {
+      messages: [{ id: 'retired', text: retired }, { id: 'answer', text: 'Done.' }],
+    };
+    const isSurface = (value: unknown): value is typeof surface =>
+      Boolean(value) && typeof value === 'object';
+
+    await mobileSurfaceCache.write(address, surface, isSurface);
+    await expect(mobileSurfaceCache.read(address, isSurface)).resolves.toEqual({
+      messages: [{ id: 'answer', text: 'Done.' }],
+    });
+
+    const key = `surface.${encodeURIComponent(surfaceCacheKey(address))}`;
+    expect(mmkv.stores.get('buzz-surface-responses')?.get(key)).not.toContain(retired);
+  });
 });

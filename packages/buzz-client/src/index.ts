@@ -521,6 +521,7 @@ export { replaceRoomTail, addRoomPage, composeRoomRows } from './room-response-p
 export type { RoomResponsePartitions } from './room-response-partitions.js';
 export { SurfaceResponseCache, surfaceCacheKey } from './surface-cache.js';
 export type { SurfaceCacheStorage, SurfaceCacheAddress } from './surface-cache.js';
+export { RETIRED_AGENT_NOTICES, isRetiredAgentNotice } from './retired-agent-notices.js';
 export { SignedEventOutbox } from './signed-event-outbox.js';
 export type { SignedOutboxRecord, SignedOutboxStorage } from './signed-event-outbox.js';
 export {

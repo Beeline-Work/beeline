@@ -138,7 +138,14 @@ describe('RoomIndexer', () => {
       ['h', WORKSPACE],
       ['community', WORKSPACE],
       ['name', 'Builders'],
-      ['avatar', 'https://media.test/workspace.png'],
+    ]);
+    // The relay's 39000 projection retains the namespaced purpose instead of
+    // an arbitrary image field. The indexer must make that current metadata
+    // visible to every Workspace surface, not fall back to the 9007 create.
+    await event(WORKSPACE, VIEWER, 11, 39000, [
+      ['d', WORKSPACE],
+      ['h', WORKSPACE],
+      ['purpose', 'buzz-workspace-avatar:https://media.test/workspace-projected.png'],
     ]);
     await event(ROOM, VIEWER, 2, 9007, [
       ['h', ROOM],
@@ -331,6 +338,14 @@ describe('RoomIndexer', () => {
     await expect(indexer.readRoom(MISSING, VIEWER)).resolves.toBeNull();
   });
 
+  it('projects a stored Workspace picture from relay metadata into Workspace tiles', async () => {
+    const workspaces = await indexer.readWorkspaces(VIEWER);
+
+    expect(workspaces.workspaces).toMatchObject([
+      { id: WORKSPACE, avatar: 'https://media.test/workspace-projected.png' },
+    ]);
+  });
+
   it('serves each workspace tier in one physical query', async () => {
     for (const read of [
       () => indexer.readWorkspaces(VIEWER),
@@ -344,18 +359,25 @@ describe('RoomIndexer', () => {
       expect(physicalQueries).toBe(1);
     }
     await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
-      workspace: { name: 'Builders', visibility: 'invite-only' },
+      workspace: {
+        name: 'Builders',
+        visibility: 'invite-only',
+        avatar: 'https://media.test/workspace-projected.png',
+      },
       members: [{ identity: { name: 'Ada' } }],
       agents: [{ identity: { name: 'Milo' } }],
     });
     await expect(indexer.readChats(WORKSPACE, VIEWER)).resolves.toMatchObject({
-      workspace: { id: WORKSPACE },
+      workspace: { id: WORKSPACE, avatar: 'https://media.test/workspace-projected.png' },
       chats: [{ room: { id: ROOM }, latestMessage: { text: 'Ready', author: { name: 'Milo' } } }],
     });
     await expect(indexer.readAgent(WORKSPACE, AGENT, VIEWER)).resolves.toMatchObject({
       workspaceId: WORKSPACE,
       agent: { identity: { pubkey: AGENT, name: 'Milo' } },
       catalog: [],
+    });
+    await expect(indexer.readWorkspaces(VIEWER)).resolves.toMatchObject({
+      workspaces: [{ id: WORKSPACE, avatar: 'https://media.test/workspace-projected.png' }],
     });
   });
 
@@ -621,7 +643,7 @@ describe('RoomIndexer', () => {
     const valid = await indexer.readInvite(createHash('sha256').update(token).digest('hex'));
     expect(valid).toEqual({
       name: 'Builders',
-      avatar: 'https://media.test/workspace.png',
+      avatar: 'https://media.test/workspace-projected.png',
       expiresAt: 2_000_000_000,
     });
     expect(physicalQueries).toBe(1);

@@ -233,8 +233,17 @@ const WORKSPACE_LIST_SQL = `
 WITH accessible AS (
   SELECT c.community_id, c.id, c.name, c.updated_at, c.visibility::text,
     cm.role::text AS viewer_role,
-    (SELECT tag->>1 FROM jsonb_array_elements(g.tags) tag
-      WHERE tag->>0 IN ('avatar', 'picture') LIMIT 1) AS avatar
+    COALESCE(
+      (SELECT NULLIF(tag->>1, '') FROM jsonb_array_elements(metadata.tags) tag
+        WHERE tag->>0 IN ('avatar', 'picture') LIMIT 1),
+      (SELECT NULLIF(replace(tag->>1, 'buzz-workspace-avatar:', ''), '')
+        FROM jsonb_array_elements(metadata.tags) tag
+        WHERE tag->>0 = 'purpose' AND tag->>1 LIKE 'buzz-workspace-avatar:%' LIMIT 1),
+      CASE WHEN metadata.tags IS NULL THEN
+        (SELECT NULLIF(tag->>1, '') FROM jsonb_array_elements(g.tags) tag
+          WHERE tag->>0 IN ('avatar', 'picture') LIMIT 1)
+      END
+    ) AS avatar
   FROM channels c
   JOIN channel_members cm ON cm.community_id = c.community_id AND cm.channel_id = c.id
     AND cm.pubkey = decode($1, 'hex') AND cm.removed_at IS NULL
@@ -244,6 +253,13 @@ WITH accessible AS (
     ORDER BY e.created_at ASC, e.id ASC LIMIT 1
   ) g ON EXISTS (SELECT 1 FROM jsonb_array_elements(g.tags) t
     WHERE t->>0 = 'community' AND t->>1 = c.id::text)
+  LEFT JOIN LATERAL (
+    SELECT e.tags FROM events e WHERE e.community_id = c.community_id
+      AND e.channel_id = c.id AND e.kind = 39000 AND e.deleted_at IS NULL
+      AND (e.d_tag = c.id::text OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+        WHERE t->>0 IN ('d', 'h') AND t->>1 = c.id::text))
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+  ) metadata ON true
   WHERE c.deleted_at IS NULL
 )
 SELECT 'viewer' AS section, jsonb_build_object(
@@ -265,8 +281,17 @@ WITH candidates AS (
   SELECT c.community_id, c.id, c.name, c.description, c.visibility::text,
     c.created_at, c.updated_at, cm.role::text AS viewer_role,
     encode(cm.pubkey, 'hex') AS viewer_pubkey,
-    (SELECT tag->>1 FROM jsonb_array_elements(g.tags) tag
-      WHERE tag->>0 IN ('avatar', 'picture') LIMIT 1) AS avatar
+    COALESCE(
+      (SELECT NULLIF(tag->>1, '') FROM jsonb_array_elements(metadata.tags) tag
+        WHERE tag->>0 IN ('avatar', 'picture') LIMIT 1),
+      (SELECT NULLIF(replace(tag->>1, 'buzz-workspace-avatar:', ''), '')
+        FROM jsonb_array_elements(metadata.tags) tag
+        WHERE tag->>0 = 'purpose' AND tag->>1 LIKE 'buzz-workspace-avatar:%' LIMIT 1),
+      CASE WHEN metadata.tags IS NULL THEN
+        (SELECT NULLIF(tag->>1, '') FROM jsonb_array_elements(g.tags) tag
+          WHERE tag->>0 IN ('avatar', 'picture') LIMIT 1)
+      END
+    ) AS avatar
   FROM channels c
   JOIN channel_members cm ON cm.community_id = c.community_id AND cm.channel_id = c.id
     AND cm.pubkey = decode($2, 'hex') AND cm.removed_at IS NULL
@@ -276,6 +301,13 @@ WITH candidates AS (
     ORDER BY e.created_at ASC, e.id ASC LIMIT 1
   ) g ON EXISTS (SELECT 1 FROM jsonb_array_elements(g.tags) t
     WHERE t->>0 = 'community' AND t->>1 = c.id::text)
+  LEFT JOIN LATERAL (
+    SELECT e.tags FROM events e WHERE e.community_id = c.community_id
+      AND e.channel_id = c.id AND e.kind = 39000 AND e.deleted_at IS NULL
+      AND (e.d_tag = c.id::text OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+        WHERE t->>0 IN ('d', 'h') AND t->>1 = c.id::text))
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+  ) metadata ON true
   WHERE c.id = $1::uuid AND c.deleted_at IS NULL
 ), authorized AS (
   SELECT * FROM candidates WHERE (SELECT count(*) FROM candidates) = 1
@@ -351,8 +383,17 @@ export const CHAT_LIST_SQL = `
 WITH workspace_candidates AS (
   SELECT c.community_id, c.id, c.name, c.updated_at, c.visibility::text,
     cm.role::text AS viewer_role,
-    (SELECT tag->>1 FROM jsonb_array_elements(g.tags) tag
-      WHERE tag->>0 IN ('avatar', 'picture') LIMIT 1) AS avatar
+    COALESCE(
+      (SELECT NULLIF(tag->>1, '') FROM jsonb_array_elements(metadata.tags) tag
+        WHERE tag->>0 IN ('avatar', 'picture') LIMIT 1),
+      (SELECT NULLIF(replace(tag->>1, 'buzz-workspace-avatar:', ''), '')
+        FROM jsonb_array_elements(metadata.tags) tag
+        WHERE tag->>0 = 'purpose' AND tag->>1 LIKE 'buzz-workspace-avatar:%' LIMIT 1),
+      CASE WHEN metadata.tags IS NULL THEN
+        (SELECT NULLIF(tag->>1, '') FROM jsonb_array_elements(g.tags) tag
+          WHERE tag->>0 IN ('avatar', 'picture') LIMIT 1)
+      END
+    ) AS avatar
   FROM channels c
   JOIN channel_members cm ON cm.community_id = c.community_id AND cm.channel_id = c.id
     AND cm.pubkey = decode($2, 'hex') AND cm.removed_at IS NULL
@@ -362,6 +403,13 @@ WITH workspace_candidates AS (
     ORDER BY e.created_at ASC, e.id ASC LIMIT 1
   ) g ON EXISTS (SELECT 1 FROM jsonb_array_elements(g.tags) t
     WHERE t->>0 = 'community' AND t->>1 = c.id::text)
+  LEFT JOIN LATERAL (
+    SELECT e.tags FROM events e WHERE e.community_id = c.community_id
+      AND e.channel_id = c.id AND e.kind = 39000 AND e.deleted_at IS NULL
+      AND (e.d_tag = c.id::text OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+        WHERE t->>0 IN ('d', 'h') AND t->>1 = c.id::text))
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+  ) metadata ON true
   WHERE c.id = $1::uuid AND c.deleted_at IS NULL
 ), workspace AS (
   SELECT * FROM workspace_candidates WHERE (SELECT count(*) FROM workspace_candidates) = 1
@@ -577,8 +625,17 @@ WITH current_records AS (
     WHERE t->>0 = 'revoked' AND t->>1 = 'true')
 ), candidates AS (
   SELECT w.id, w.name, v.expires_at,
-    (SELECT t->>1 FROM jsonb_array_elements(g.tags) t
-      WHERE t->>0 IN ('avatar', 'picture') LIMIT 1) AS avatar
+    COALESCE(
+      (SELECT NULLIF(t->>1, '') FROM jsonb_array_elements(metadata.tags) t
+        WHERE t->>0 IN ('avatar', 'picture') LIMIT 1),
+      (SELECT NULLIF(replace(t->>1, 'buzz-workspace-avatar:', ''), '')
+        FROM jsonb_array_elements(metadata.tags) t
+        WHERE t->>0 = 'purpose' AND t->>1 LIKE 'buzz-workspace-avatar:%' LIMIT 1),
+      CASE WHEN metadata.tags IS NULL THEN
+        (SELECT NULLIF(t->>1, '') FROM jsonb_array_elements(g.tags) t
+          WHERE t->>0 IN ('avatar', 'picture') LIMIT 1)
+      END
+    ) AS avatar
   FROM valid v
   JOIN channels w ON w.community_id = v.community_id
     AND w.id = CASE WHEN v.workspace_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
@@ -592,6 +649,13 @@ WITH current_records AS (
     ORDER BY e.created_at ASC, e.id ASC LIMIT 1
   ) g ON EXISTS (SELECT 1 FROM jsonb_array_elements(g.tags) t
     WHERE t->>0 = 'community' AND t->>1 = w.id::text)
+  LEFT JOIN LATERAL (
+    SELECT e.tags FROM events e WHERE e.community_id = w.community_id
+      AND e.channel_id = w.id AND e.kind = 39000 AND e.deleted_at IS NULL
+      AND (e.d_tag = w.id::text OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+        WHERE t->>0 IN ('d', 'h') AND t->>1 = w.id::text))
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+  ) metadata ON true
   WHERE v.expires_at ~ '^[0-9]+$'
     AND CASE WHEN v.expires_at ~ '^[0-9]+$' THEN v.expires_at::numeric END
       > extract(epoch FROM now())::bigint

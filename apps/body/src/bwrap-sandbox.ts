@@ -656,8 +656,14 @@ export function detectBwrapSandbox(
   const result = run(probe.command, probe.args);
   if (result.status !== 0) {
     const detail = (result.stderr ?? '').trim().split('\n').pop() ?? `exit ${result.status}`;
+    const appArmorRemediation =
+      /No permissions to create new namespace|setting up uid map: Permission denied|userns_create/i.test(
+        result.stderr ?? '',
+      )
+        ? ' Ubuntu AppArmor may be blocking unprivileged user namespaces. Keep the system-wide restriction enabled; install a narrow userns profile for /usr/bin/bwrap as documented in apps/body/README.md, then restart the agent.'
+        : '';
     return {
-      advisory: `harness OS sandbox UNAVAILABLE: ${bwrapPath} self-test failed (${detail}); ACP children run unconfined and the Room read-only rule rests on the permission handler alone`,
+      advisory: `harness OS sandbox UNAVAILABLE: ${bwrapPath} self-test failed (${detail}); ACP children run unconfined and the Room read-only rule rests on the permission handler alone.${appArmorRemediation}`,
     };
   }
   return {

@@ -41,10 +41,7 @@ export function shallowEqualRecord(
 }
 
 /** Membership-inspecting equality for string sets. */
-export function sameStringSet(
-  previous: ReadonlySet<string>,
-  next: ReadonlySet<string>,
-): boolean {
+export function sameStringSet(previous: ReadonlySet<string>, next: ReadonlySet<string>): boolean {
   if (previous === next) return true;
   if (previous.size !== next.size) return false;
   for (const value of next) {
@@ -55,9 +52,7 @@ export function sameStringSet(
 
 /**
  * Equality for id→message lookup maps: same keys, and each key mapping to the
- * SAME message object reference. Message DTO identities are stabilized by the
- * transcript projection cache (`buzz-event-projection.ts`), so a changed
- * mapping here always means the row's content genuinely moved.
+ * SAME message object reference, so a changed mapping means row content moved.
  */
 export function sameMessageRefMap<T>(
   previous: ReadonlyMap<string, T>,

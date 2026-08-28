@@ -6,7 +6,6 @@ import { newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BodyConfig } from './config.js';
 import { DurableBodyState } from './durable-state.js';
-import { createWorkspaceSnapshot } from '@beeline/buzz-client';
 import { readRuntimeRecord, type AgentRuntimeRecord } from './runtime.js';
 
 const mocks = vi.hoisted(() => ({
@@ -77,7 +76,7 @@ afterEach(async () => {
 });
 
 describe('thin-core swap compatibility', () => {
-  it('boots the v2 runtime and preserves existing Room/corner/approval durable records in place', async () => {
+  it('boots the v2 runtime and preserves existing Room/corner approval records in place', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-swap-compat-'));
     roots.push(root);
     const roomRoot = resolve(root, 'rooms/room-1');
@@ -126,7 +125,6 @@ describe('thin-core swap compatibility', () => {
       sig: 'c'.repeat(128),
     };
     await durable.enqueue('corner-1', [approval]);
-    await durable.replaceReadModel('corner-1', createWorkspaceSnapshot({ workspaceId: 'room-1' }));
 
     const loaded = await readRuntimeRecord(configPath);
     const before = await readFile(durablePath, 'utf8');
@@ -174,7 +172,6 @@ describe('thin-core swap compatibility', () => {
     expect(established).toBe(true);
     expect(mocks.bodyStarts).toEqual([{ roomId: 'room-1', statePath: durablePath }]);
     expect((await durable.pending('corner-1'))[0]?.id).toBe(approval.id);
-    expect((await durable.readModel('corner-1'))?.workspaceId).toBe('room-1');
     expect(await readFile(durablePath, 'utf8')).toBe(before);
     expect(ThinDaemonCore.name).toBe('ThinDaemonCore');
   });

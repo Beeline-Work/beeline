@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { DatabaseQueryable } from './database.js';
+import { directMessageChannelId } from '@beeline/buzz-client';
+import { migrateRoomReadMarks, type DatabaseQueryable } from './database.js';
 import { RoomIndexer } from './room-indexer.js';
 
 const TENANT = 'e8299f28-f095-472f-941a-80d1195b9a24';
@@ -76,6 +77,7 @@ describe('RoomIndexer', () => {
         deleted_at timestamptz
       );
     `);
+    await migrateRoomReadMarks(database);
     await postgres.query(
       `INSERT INTO channels
         (community_id, id, name, description, visibility, created_by, created_at, updated_at)
@@ -129,33 +131,62 @@ describe('RoomIndexer', () => {
     };
 
     await event(WORKSPACE, VIEWER, 1, 9007, [
-      ['h', WORKSPACE], ['community', WORKSPACE], ['name', 'Builders'],
+      ['h', WORKSPACE],
+      ['community', WORKSPACE],
+      ['name', 'Builders'],
       ['avatar', 'https://media.test/workspace.png'],
     ]);
     await event(ROOM, VIEWER, 2, 9007, [
-      ['h', ROOM], ['community', WORKSPACE], ['name', 'Fast Room'],
+      ['h', ROOM],
+      ['community', WORKSPACE],
+      ['name', 'Fast Room'],
     ]);
     await event(CORNER, AGENT, 5, 9007, [
-      ['h', CORNER], ['community', WORKSPACE], ['parent', ROOM],
-      ['name', 'Agent corner'], ['task', 'Build it'],
+      ['h', CORNER],
+      ['community', WORKSPACE],
+      ['parent', ROOM],
+      ['name', 'Agent corner'],
+      ['task', 'Build it'],
     ]);
-    await event(WORKSPACE, AGENT, 3, 9, [
-      ['h', WORKSPACE], ['t', 'buzz-agent'], ['agent', AGENT],
-    ], JSON.stringify({ displayName: 'Milo', avatar: 'https://media.test/milo.png' }));
+    await event(
+      WORKSPACE,
+      AGENT,
+      3,
+      9,
+      [
+        ['h', WORKSPACE],
+        ['t', 'buzz-agent'],
+        ['agent', AGENT],
+      ],
+      JSON.stringify({ displayName: 'Milo', avatar: 'https://media.test/milo.png' }),
+    );
     await event(ROOM, VIEWER, 3, 9, [['h', ROOM]], 'Hello');
     await event(ROOM, AGENT, 4, 9, [['h', ROOM]], 'Ready');
     await event(CORNER, AGENT, 6, 9, [['h', CORNER]], 'Working');
     await event(CORNER, AGENT, 7, 30078, [
-      ['h', ROOM], ['d', `buzz-corner-state:${CORNER}`],
-      ['t', 'buzz-corner-state'], ['state', 'working'],
+      ['h', ROOM],
+      ['d', `buzz-corner-state:${CORNER}`],
+      ['t', 'buzz-corner-state'],
+      ['state', 'working'],
     ]);
-    await event(ROOM, VIEWER, 4, 30078, [
-      ['h', ROOM], ['d', `buzz-room-repository:${ROOM}`],
-      ['t', 'buzz-room-repository'],
-    ], JSON.stringify({
-      key: 'github:1', name: 'beeline', remote: 'git://github.com/acme/beeline',
-      targetBranch: 'main', githubEventsEnabled: true,
-    }));
+    await event(
+      ROOM,
+      VIEWER,
+      4,
+      30078,
+      [
+        ['h', ROOM],
+        ['d', `buzz-room-repository:${ROOM}`],
+        ['t', 'buzz-room-repository'],
+      ],
+      JSON.stringify({
+        key: 'github:1',
+        name: 'beeline',
+        remote: 'git://github.com/acme/beeline',
+        targetBranch: 'main',
+        githubEventsEnabled: true,
+      }),
+    );
     const descriptor = {
       version: 2,
       base: '1'.repeat(40),
@@ -168,19 +199,32 @@ describe('RoomIndexer', () => {
       sha256: '4'.repeat(64),
       size: 100,
     };
-    await event(CORNER, AGENT, 8, 30078, [
-      ['h', CORNER], ['d', `${CORNER}:${descriptor.tip}:artifact`],
-      ['t', 'change-review-artifact'],
-    ], JSON.stringify(descriptor));
+    await event(
+      CORNER,
+      AGENT,
+      8,
+      30078,
+      [
+        ['h', CORNER],
+        ['d', `${CORNER}:${descriptor.tip}:artifact`],
+        ['t', 'change-review-artifact'],
+      ],
+      JSON.stringify(descriptor),
+    );
     await event(CORNER, VIEWER, 9, 9, [
-      ['h', CORNER], ['t', 'buzz-merge-approval'], ['repo', 'acme/beeline'],
+      ['h', CORNER],
+      ['t', 'buzz-merge-approval'],
+      ['repo', 'acme/beeline'],
       ['branch', 'refs/heads/main'],
     ]);
     const token = `bzi_${'d'.repeat(64)}`;
     const tokenHash = createHash('sha256').update(token).digest('hex');
     await event(WORKSPACE, VIEWER, 10, 30078, [
-      ['h', WORKSPACE], ['community', WORKSPACE], ['t', 'buzz-community-invite'],
-      ['d', tokenHash], ['expiration', '2000000000'],
+      ['h', WORKSPACE],
+      ['community', WORKSPACE],
+      ['t', 'buzz-community-invite'],
+      ['d', tokenHash],
+      ['expiration', '2000000000'],
     ]);
   });
 
@@ -202,8 +246,68 @@ describe('RoomIndexer', () => {
       ],
     });
     expect(view?.messages.map((message) => [message.text, message.author.name])).toEqual([
-      ['Hello', 'Ada'], ['Ready', 'Milo'],
+      ['Hello', 'Ada'],
+      ['Ready', 'Milo'],
     ]);
+  });
+
+  it('owns read marks on the server across devices and viewers without a second Room query', async () => {
+    await expect(indexer.readChats(WORKSPACE, VIEWER)).resolves.toMatchObject({
+      chats: [{ room: { id: ROOM }, unread: true }],
+    });
+
+    physicalQueries = 0;
+    await expect(indexer.readRoom(ROOM, VIEWER)).resolves.not.toBeNull();
+    expect(physicalQueries).toBe(1);
+
+    await expect(indexer.readChats(WORKSPACE, VIEWER)).resolves.toMatchObject({
+      chats: [{ room: { id: ROOM }, unread: false }],
+    });
+    await expect(indexer.readChats(WORKSPACE, AGENT)).resolves.toMatchObject({
+      chats: [{ room: { id: ROOM }, unread: true }],
+    });
+  });
+
+  it('returns an exact immutable direct-message binding in the Room response', async () => {
+    const directRoom = directMessageChannelId(WORKSPACE, VIEWER, AGENT);
+    await postgres.query(
+      `INSERT INTO channels
+        (community_id, id, name, description, visibility, created_by, created_at, updated_at)
+       VALUES ($1, $2, 'Direct Room', NULL, 'private', $3, to_timestamp(11), to_timestamp(11))`,
+      [TENANT, directRoom, bytes(VIEWER)],
+    );
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
+       VALUES ($1, $2, $3, 'owner'), ($1, $2, $4, 'member')`,
+      [TENANT, directRoom, bytes(VIEWER), bytes(AGENT)],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(11), 9007, $4, '', $5)`,
+      [
+        TENANT,
+        bytes('f'.repeat(64)),
+        bytes(VIEWER),
+        JSON.stringify([
+          ['h', directRoom],
+          ['community', WORKSPACE],
+          ['name', 'Direct Room'],
+          ['t', 'buzz-dm'],
+          ['visibility', 'private'],
+          ['p', VIEWER],
+          ['p', AGENT],
+        ]),
+        directRoom,
+      ],
+    );
+
+    physicalQueries = 0;
+    await expect(indexer.readRoom(directRoom, VIEWER)).resolves.toMatchObject({
+      room: { id: directRoom },
+      directMessage: { participants: [VIEWER, AGENT].sort() },
+    });
+    expect(physicalQueries).toBe(1);
   });
 
   it('uses the same empty answer for a non-member and a missing Room', async () => {
@@ -398,7 +502,9 @@ describe('RoomIndexer', () => {
           bytes(VIEWER),
           id,
           JSON.stringify([
-            ['h', WORKSPACE], ['t', 'buzz-community-invite'], ['d', hash],
+            ['h', WORKSPACE],
+            ['t', 'buzz-community-invite'],
+            ['d', hash],
             ['expiration', candidate.expiration],
             ...(candidate.revoked ? [['revoked', 'true']] : []),
           ]),

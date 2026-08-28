@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "capture": {
-    "source": "production-read-only-query",
+    "source": "production-read-only-query (replayed through RoomIndexer)",
     "relay": "usebeeline.app",
     "capturedAt": "2026-08-25",
     "eventCount": 844,
@@ -26768,6 +26768,7 @@
   ],
   "expected": {
     "minimumTranscriptItems": 1,
-    "maximumReplayMs": 30000
+    "maximumReplayMs": 30000,
+    "serverProjectedMessages": 504
   }
 }

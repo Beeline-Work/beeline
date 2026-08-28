@@ -6,6 +6,7 @@ import {
   PostgresReservationPersistence,
   deleteSnapshotContract,
   migrateMaterializerReservations,
+  migrateRoomReadMarks,
   type DatabaseQueryable,
 } from './database.js';
 import { DeliveryState } from './delivery-state.js';
@@ -24,6 +25,25 @@ function bytes(hex: string): Uint8Array {
 }
 
 describe('shared materializer reservation store', () => {
+  it('creates the server-owned cross-device Room read cursor table', async () => {
+    const postgres = new PGlite();
+    const database: DatabaseQueryable = {
+      query: async <Row>(text: string, values?: unknown[]) => {
+        const result = await postgres.query(text, values as never[] | undefined);
+        return { rows: result.rows as Row[] };
+      },
+    };
+    try {
+      await migrateRoomReadMarks(database);
+      const table = await database.query<{ name: string | null }>(
+        `SELECT to_regclass('beeline_room_read_marks')::text AS name`,
+      );
+      expect(table.rows[0]?.name).toBe('beeline_room_read_marks');
+    } finally {
+      await postgres.close();
+    }
+  });
+
   it('keeps consumer documents independent in one Postgres store', async () => {
     const postgres = new PGlite();
     const database: DatabaseQueryable = {
@@ -82,7 +102,6 @@ describe('shared materializer reservation store', () => {
       await postgres.close();
     }
   });
-
 });
 
 describe('DatabaseEventReader', () => {

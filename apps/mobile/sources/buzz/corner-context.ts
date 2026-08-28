@@ -9,8 +9,7 @@
  *   - the objective is the human's own request with the "open a corner"
  *     scaffolding peeled off, published by the daemon on the corner's
  *     immutable kind:9007 create event (`task` tag);
- *   - the context is the parent Room's own conversational messages, read
- *     back through the same projection the Room transcript uses.
+ *   - the context is the bounded briefing returned by the parent Room endpoint.
  *
  * Neither ever renders raw harness output. That is the lesson of the first
  * objective banner (PR #165), which put a free-text string on a brand-new
@@ -21,12 +20,7 @@
  * anything that survives none of that renders nothing at all rather than
  * something raw.
  */
-import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
 import { roomPreviewText } from '@/buzz/room-list-summary';
-
-/** How much of the Room a corner inherits. Enough to recover the thread that
- *  led here; short enough that the corner still opens on its own work. */
-export const ROOM_CONTEXT_LIMIT = 10;
 
 /** One line of inherited Room conversation. */
 export type RoomContextEntry = {
@@ -37,62 +31,8 @@ export type RoomContextEntry = {
   isAgent: boolean;
 };
 
-/** Longest quoted Room line. The block caps each entry at three rendered
- *  lines anyway; this bounds the string before it ever reaches layout. */
-const CONTEXT_MAX_CHARS = 240;
-
 /** A generated corner name (`corner-1a2b3c4d`) names nothing; a task slug does. */
 const GENERATED_CORNER_NAME = /^(?:corner|sub)-[0-9a-f]{4,}$/i;
-
-/**
- * A Room message a person actually said or an agent actually answered.
- *
- * Everything else on a Room's wire is mechanism — corner status cards, turn
- * lifecycle, activity batches, merge summaries, permission cards, the
- * client-only offline notice — and none of it is the discussion that led to
- * the corner.
- */
-function isConversation(message: ChatDisplayMessage): boolean {
-  if (message.corner || message.agentTurn || message.writePermission) return false;
-  if (message.isAgentActivity || message.isSystemNotice) return false;
-  if (message.isMergeSummary || message.isArchivedNotice) return false;
-  return Boolean(message.text?.trim());
-}
-
-/**
- * The bounded window of Room conversation immediately before a corner opened,
- * oldest first.
- *
- * Takes the *last* `limit` conversational messages rather than the first:
- * a corner is opened at the end of a discussion, so the messages nearest the
- * open-corner command are the ones that explain it.
- */
-export function selectRoomContext(
-  messages: readonly ChatDisplayMessage[],
-  limit: number = ROOM_CONTEXT_LIMIT,
-): RoomContextEntry[] {
-  if (limit <= 0) return [];
-  const entries: RoomContextEntry[] = [];
-  for (const message of messages) {
-    if (!isConversation(message)) continue;
-    // Sanitized the same way a Room-list preview is: markdown flattened, git
-    // and CLI plumbing lines dropped, the whole thing collapsed to one
-    // readable line. A message that is nothing *but* a pasted push-rejection
-    // dump reduces to '' and is not conversation at all.
-    const text = roomPreviewText(message.text, CONTEXT_MAX_CHARS);
-    if (!text) continue;
-    entries.push({
-      id: message.id,
-      text,
-      timestamp: message.timestamp,
-      ...(message.pubkey ? { pubkey: message.pubkey } : {}),
-      isAgent: Boolean(message.isAgentAuthor),
-    });
-  }
-  return entries
-    .sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id))
-    .slice(-limit);
-}
 
 /** `add-color-to-code-blocks` reads as a branch; "add color to code blocks"
  *  reads as an objective. Only a real slug is expanded. */

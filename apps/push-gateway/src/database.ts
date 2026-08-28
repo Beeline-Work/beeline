@@ -1,5 +1,4 @@
 import type { NostrEvent } from '@beeline/nostr';
-import { readFile } from 'node:fs/promises';
 import { Pool } from 'pg';
 import type { RelayEventReader } from './metadata.js';
 
@@ -32,19 +31,38 @@ export async function migrateMaterializerReservations(database: DatabaseQueryabl
   await database.query(MATERIALIZER_RESERVATION_SQL);
 }
 
+const DELETE_SNAPSHOT_CONTRACT_SQL = [
+  'DROP TRIGGER IF EXISTS beeline_snapshot_events_dirty ON events',
+  'DROP TRIGGER IF EXISTS beeline_snapshot_channels_dirty ON channels',
+  'DROP TRIGGER IF EXISTS beeline_snapshot_members_dirty ON channel_members',
+  'DROP FUNCTION IF EXISTS beeline_snapshot_event_dirty_trigger()',
+  'DROP FUNCTION IF EXISTS beeline_snapshot_channel_dirty_trigger()',
+  'DROP FUNCTION IF EXISTS beeline_snapshot_member_dirty_trigger()',
+  'DROP FUNCTION IF EXISTS beeline_mark_snapshot_family_dirty(uuid, uuid)',
+  'DROP FUNCTION IF EXISTS beeline_mark_snapshot_family_dirty_preserving_repository(uuid, uuid)',
+  'DROP FUNCTION IF EXISTS beeline_mark_snapshot_dirty(uuid, uuid)',
+  'DROP FUNCTION IF EXISTS beeline_mark_snapshot_dirty_preserving_repository(uuid, uuid)',
+  'DROP TABLE IF EXISTS beeline_snapshot_nip98_replays',
+  'DROP TABLE IF EXISTS beeline_snapshot_dirty',
+  'DROP TABLE IF EXISTS beeline_channel_snapshot_v1',
+  'DROP SEQUENCE IF EXISTS beeline_snapshot_dirty_revision_seq',
+] as const;
+
+/** Delete the retired snapshot storage, queue, replay ledger, and trigger fan-out. */
+export async function deleteSnapshotContract(database: DatabaseQueryable): Promise<void> {
+  for (const statement of DELETE_SNAPSHOT_CONTRACT_SQL) await database.query(statement);
+}
+
 /**
  * One physical reservation store, partitioned by consumer name.
  *
- * Push, repository events, and snapshots deliberately keep independent state
- * machines. This table only collapses their durability owner into the shared
- * materializer Postgres connection; it does not let one consumer interpret or
- * advance another consumer's reservation document.
+ * Push and repository events keep independent state machines. This table only
+ * gives them one Postgres durability owner.
  */
 export class PostgresReservationPersistence<T> implements MaterializerReservationPersistence<T> {
   constructor(
     private readonly database: DatabaseQueryable,
     private readonly consumer: string,
-    private readonly legacyFile?: string,
   ) {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(consumer)) {
       throw new Error('materializer reservation consumer is invalid');
@@ -58,19 +76,7 @@ export class PostgresReservationPersistence<T> implements MaterializerReservatio
     );
     if (current.rows[0]) return current.rows[0].state;
 
-    const legacy = await this.readLegacy();
-    if (legacy === undefined) return undefined;
-    await this.database.query(
-      `INSERT INTO beeline_materializer_reservations (consumer, state)
-       VALUES ($1, $2::jsonb)
-       ON CONFLICT (consumer) DO NOTHING`,
-      [this.consumer, JSON.stringify(legacy)],
-    );
-    const imported = await this.database.query<{ state: unknown }>(
-      `SELECT state FROM beeline_materializer_reservations WHERE consumer = $1`,
-      [this.consumer],
-    );
-    return imported.rows[0]?.state;
+    return undefined;
   }
 
   async save(value: T): Promise<void> {
@@ -82,16 +88,6 @@ export class PostgresReservationPersistence<T> implements MaterializerReservatio
          updated_at = EXCLUDED.updated_at`,
       [this.consumer, JSON.stringify(value)],
     );
-  }
-
-  private async readLegacy(): Promise<unknown | undefined> {
-    if (!this.legacyFile) return undefined;
-    try {
-      return JSON.parse(await readFile(this.legacyFile, 'utf8')) as unknown;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-      throw error;
-    }
   }
 }
 
@@ -284,8 +280,12 @@ export class PostgresMaterializerStore implements DatabaseTransactional {
     await migrateMaterializerReservations(this.pool);
   }
 
-  reservation<T>(consumer: string, legacyFile?: string): MaterializerReservationPersistence<T> {
-    return new PostgresReservationPersistence<T>(this.pool, consumer, legacyFile);
+  async deleteSnapshotContract(): Promise<void> {
+    await deleteSnapshotContract(this.pool);
+  }
+
+  reservation<T>(consumer: string): MaterializerReservationPersistence<T> {
+    return new PostgresReservationPersistence<T>(this.pool, consumer);
   }
 
   async query<Row>(text: string, values?: unknown[]): Promise<QueryResult<Row>> {

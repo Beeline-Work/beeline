@@ -9203,6 +9203,7 @@ export class Body {
           patchId,
           summary,
           fileCount: files.length,
+          files: files.map(({ diff: _diff, ...file }) => file),
           url: uploaded.url,
           sha256: uploaded.sha256,
           size: uploaded.size,

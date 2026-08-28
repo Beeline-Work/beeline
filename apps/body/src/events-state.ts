@@ -20,8 +20,6 @@ export interface RepositoryIngestionRecord {
   degradedNotice?: {
     cards: Array<{ roomId: string; event: NostrEvent; published: boolean }>;
   };
-  /** A legacy Body cursor existed, so first contact starts at GitHub's head. */
-  legacyCursorMigrated?: number;
   pending?: PendingRepositoryDelivery;
 }
 
@@ -83,14 +81,6 @@ export class RepositoryEventsState {
   async record(key: string): Promise<RepositoryIngestionRecord> {
     await this.load();
     return (this.data.repositories[key] ??= emptyRecord());
-  }
-
-  async migrateLegacyCursor(key: string, cursor: number | undefined): Promise<void> {
-    if (cursor === undefined) return;
-    const record = await this.record(key);
-    if (record.cursor || record.legacyCursorMigrated !== undefined) return;
-    record.legacyCursorMigrated = cursor;
-    await this.save();
   }
 
   async reserve(key: string, pending: PendingRepositoryDelivery): Promise<void> {

@@ -86,9 +86,9 @@ describe('mobile live presence overlay', () => {
     const server = { ...presence, observedAt: 10 };
     expect(mergeAgentPresenceBatch({ [agent]: live }, [])).toEqual({ [agent]: live });
     expect(mergeAgentPresenceBatch({ [agent]: live }, [server])).toEqual({ [agent]: live });
-    expect(mergeAgentPresenceBatch({ [agent]: server }, [{ ...presence, observedAt: 30 }])).toEqual(
-      { [agent]: { ...presence, observedAt: 30 } },
-    );
+    expect(
+      mergeAgentPresenceBatch({ [agent]: server }, [{ ...presence, observedAt: 30 }]),
+    ).toEqual({ [agent]: { ...presence, observedAt: 30 } });
   });
 
   it('resolves one stable online verdict per requested agent', () => {

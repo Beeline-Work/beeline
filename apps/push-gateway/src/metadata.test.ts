@@ -148,7 +148,7 @@ describe('NotificationMetadataResolver', () => {
     expect(resolved.senderName).not.toBe('beeline-agent');
   });
 
-  it('uses a verified NIP-01 person name and never exposes an id when room metadata is absent', async () => {
+  it('uses a verified NIP-01 handle with a display-name fallback and never exposes an id', async () => {
     const person = createIdentity('person');
     const profile = signEvent(
       {
@@ -156,7 +156,7 @@ describe('NotificationMetadataResolver', () => {
         created_at: 12,
         kind: 0,
         tags: [],
-        content: JSON.stringify({ display_name: 'Grace Hopper' }),
+        content: JSON.stringify({ name: 'grace-h', display_name: 'Grace Hopper' }),
       },
       person.secretKey,
     );
@@ -173,6 +173,7 @@ describe('NotificationMetadataResolver', () => {
       fixtureCandidates: [],
       fixtureMarkers: [],
       senderName: 'Grace Hopper',
+      senderHandle: 'grace-h',
     });
   });
 

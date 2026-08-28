@@ -259,6 +259,16 @@ export type WorkspaceView = {
 export type AgentDetailView = {
   readonly workspaceId: string;
   readonly agent: RoomViewMember;
+  /**
+   * Latest valid human-authored soul overlay. The indexed read exposes this so
+   * a name-only edit can preserve the agent's existing instructions exactly.
+   */
+  readonly soul?: {
+    readonly name: string;
+    readonly instructions: string;
+    readonly avatarSeed: string;
+    readonly avatar?: string;
+  };
   readonly catalog: readonly AgentModelConfigOption[];
   readonly runtimeSelection?: AgentModelSelection;
   readonly selected?: AgentModelSelection;

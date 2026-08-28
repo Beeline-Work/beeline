@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createIdentity } from './identity.js';
 import { RoomViewClient, RoomViewHttpError, type RoomView } from './room-view.js';
-import { isRoomView } from './surface-guards.js';
+import { isAgentDetailView, isRoomView } from './surface-guards.js';
 
 const room: RoomView = {
   room: {
@@ -114,6 +114,34 @@ describe('RoomViewClient', () => {
       isRoomView({
         ...room,
         review: { status: 'ready', files: [], approvedBy: [] },
+      }),
+    ).toBe(false);
+  });
+
+  it('validates indexed agent souls before a rename form can preserve them', () => {
+    const detail = {
+      workspaceId: room.room.workspaceId,
+      agent: {
+        identity: { pubkey: 'b'.repeat(64), kind: 'agent', name: 'Clara' },
+        role: 'member',
+      },
+      soul: {
+        name: 'Clara',
+        instructions: 'Keep the tests green.',
+        avatarSeed: 'b'.repeat(64),
+      },
+      catalog: [],
+      watchFilters: [],
+    };
+
+    expect(isAgentDetailView(detail)).toBe(true);
+    expect(isAgentDetailView({ ...detail, soul: { ...detail.soul, instructions: '' } })).toBe(
+      false,
+    );
+    expect(
+      isAgentDetailView({
+        ...detail,
+        soul: { ...detail.soul, avatar: 'javascript:alert(1)' },
       }),
     ).toBe(false);
   });

@@ -215,10 +215,26 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+), agent_souls AS MATERIALIZED (
+  SELECT DISTINCT ON (e.community_id, e.d_tag) e.community_id, e.d_tag, e.content
+  FROM authorized a
+  JOIN events e ON e.community_id = a.community_id
+    AND e.kind = 30078 AND e.deleted_at IS NULL
+  JOIN channel_members author ON author.community_id = e.community_id
+    AND author.channel_id = a.id AND author.pubkey = e.pubkey
+    AND (author.removed_at IS NULL OR e.created_at <= author.removed_at)
+  WHERE e.d_tag LIKE a.id::text || ':%'
+    AND pg_input_is_valid(e.content, 'jsonb')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-soul')
+    AND NOT EXISTS (
+      SELECT 1 FROM agent_declarations declaration WHERE declaration.pubkey = e.pubkey
+    )
+  ORDER BY e.community_id, e.d_tag, e.created_at DESC, e.id DESC
 ), roster_resolved AS (
   SELECT a.community_id, a.id AS workspace_id, cm.pubkey, cm.role::text,
     NULLIF(u.display_name, '') AS human_name, u.nip05_handle, u.avatar_url,
-    agent.content AS agent_content,
+    agent.content AS agent_content, soul.content AS soul_content,
     presence.status AS presence_status, presence.observed_at, presence.room_id
   FROM authorized a
   JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
@@ -227,6 +243,8 @@ WITH candidates AS (
     AND u.deactivated_at IS NULL
   LEFT JOIN agent_declarations agent ON agent.community_id = cm.community_id
     AND agent.pubkey = cm.pubkey
+  LEFT JOIN agent_souls soul ON soul.community_id = cm.community_id
+    AND soul.d_tag = a.id::text || ':' || encode(cm.pubkey, 'hex')
   LEFT JOIN LATERAL (
     SELECT (SELECT t->>1 FROM jsonb_array_elements(e.tags) t WHERE t->>0 = 'status' LIMIT 1) AS status,
       extract(epoch FROM e.created_at)::bigint AS observed_at,
@@ -264,8 +282,10 @@ SELECT 'workspace' AS section, jsonb_build_object(
 UNION ALL
 SELECT 'member', jsonb_build_object(
   'pubkey', encode(r.pubkey, 'hex'), 'role', r.role,
-  'name', COALESCE(NULLIF(r.agent_content::jsonb->>'displayName', ''), r.human_name),
-  'handle', r.nip05_handle, 'avatar', COALESCE(r.agent_content::jsonb->>'avatar', r.avatar_url),
+  'name', COALESCE(NULLIF(r.soul_content::jsonb->>'name', ''),
+    NULLIF(r.agent_content::jsonb->>'displayName', ''), r.human_name),
+  'handle', r.nip05_handle, 'avatar', COALESCE(r.soul_content::jsonb->>'avatar',
+    r.agent_content::jsonb->>'avatar', r.avatar_url),
   'agent', r.agent_content IS NOT NULL,
   'presenceStatus', r.presence_status, 'presenceObservedAt', r.observed_at,
   'presenceRoomId', r.room_id, 'kindTotal', r.kind_total
@@ -463,10 +483,31 @@ WITH authorized AS (
       AND author.channel_id = s.workspace_id AND author.pubkey = e.pubkey
       AND author.removed_at IS NULL
     WHERE e.community_id = s.community_id AND e.kind = 30078 AND e.deleted_at IS NULL
+      AND pg_input_is_valid(e.content, 'jsonb')
       AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
         WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-model-config')
       AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) d
         WHERE d->>0 = 'd' AND d->>1 = s.workspace_id::text || ':' || s.pubkey)
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+  ) e ON true
+), soul AS (
+  SELECT e.content FROM selected s JOIN LATERAL (
+    SELECT e.content FROM events e
+    JOIN channel_members author ON author.community_id = e.community_id
+      AND author.channel_id = s.workspace_id AND author.pubkey = e.pubkey
+      AND (author.removed_at IS NULL OR e.created_at <= author.removed_at)
+    WHERE e.community_id = s.community_id AND e.kind = 30078 AND e.deleted_at IS NULL
+      AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+        WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-soul')
+      AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) d
+        WHERE d->>0 = 'd' AND d->>1 = s.workspace_id::text || ':' || s.pubkey)
+      AND NOT EXISTS (
+        SELECT 1 FROM events declaration
+        WHERE declaration.community_id = e.community_id
+          AND declaration.pubkey = e.pubkey AND declaration.kind = 9
+          AND declaration.deleted_at IS NULL
+          AND declaration.tags @> '[["t", "buzz-agent"]]'::jsonb
+      )
     ORDER BY e.created_at DESC, e.id DESC LIMIT 1
   ) e ON true
 )
@@ -477,7 +518,8 @@ SELECT 'agent' AS section, jsonb_build_object(
   'agent', true
 ) AS data FROM selected s
 UNION ALL SELECT 'catalog', jsonb_build_object('content', c.content) FROM catalog c
-UNION ALL SELECT 'config', jsonb_build_object('content', c.content) FROM config c;
+UNION ALL SELECT 'config', jsonb_build_object('content', c.content) FROM config c
+UNION ALL SELECT 'soul', jsonb_build_object('content', s.content) FROM soul s;
 `;
 
 const INVITE_SQL = `
@@ -1218,9 +1260,7 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   ) {
     return { ...base, presentation: 'system' };
   }
-  if (
-    [...markers].some((candidate) => candidate.startsWith('buzz-'))
-  ) {
+  if ([...markers].some((candidate) => candidate.startsWith('buzz-'))) {
     return undefined;
   }
   if (!base.text.trim() && !markers.has('buzz-attachment')) return undefined;
@@ -1584,6 +1624,28 @@ export class RoomIndexer {
     if (!agentData) return null;
     const catalog = safeJson(text(rowData(rows, 'catalog')?.content) ?? '') ?? {};
     const config = safeJson(text(rowData(rows, 'config')?.content) ?? '') ?? {};
+    const soulContent = safeJson(text(rowData(rows, 'soul')?.content) ?? '') ?? {};
+    const soulName = text(soulContent.name);
+    const soulInstructions =
+      text(soulContent.soul) ??
+      [
+        text(soulContent.personality) ? `Personality: ${text(soulContent.personality)}` : undefined,
+        text(soulContent.intent) ? `Intent: ${text(soulContent.intent)}` : undefined,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join('\n\n');
+    const soulAvatarSeed = text(soulContent.avatarSeed);
+    const soulAvatar = text(soulContent.avatar);
+    const safeSoulAvatar = soulAvatar && /^https?:\/\//i.test(soulAvatar) ? soulAvatar : undefined;
+    const soul =
+      soulName && soulInstructions && soulAvatarSeed
+        ? {
+            name: soulName,
+            instructions: soulInstructions,
+            avatarSeed: soulAvatarSeed,
+            ...(safeSoulAvatar ? { avatar: safeSoulAvatar } : {}),
+          }
+        : undefined;
     const options = Array.isArray(catalog.options)
       ? catalog.options.flatMap((candidate) => {
           const option = json(candidate);
@@ -1622,9 +1684,14 @@ export class RoomIndexer {
     return {
       workspaceId,
       agent: {
-        identity: identity(agentData),
+        identity: identity({
+          ...agentData,
+          ...(soul ? { name: soul.name } : {}),
+          ...(soul?.avatar ? { avatar: soul.avatar } : {}),
+        }),
         role: agentData.role === 'owner' || agentData.role === 'admin' ? agentData.role : 'member',
       },
+      ...(soul ? { soul } : {}),
       catalog: options,
       ...(Object.keys(runtimeSelection).length ? { runtimeSelection } : {}),
       ...(Object.keys(selectedSelection).length ? { selected: selectedSelection } : {}),

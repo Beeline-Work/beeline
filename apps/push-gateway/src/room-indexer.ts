@@ -1215,6 +1215,14 @@ const HIDDEN_MARKERS = new Set([
   'buzz-delegation-receipt',
 ]);
 
+/** Durable machine-authored Room lines that the client renders as status text. */
+const SYSTEM_MARKERS = new Set([
+  'buzz-agent-model-unavailable',
+  'buzz-work-schedule-paused',
+  'steer-queued',
+  'slash-command-notice',
+]);
+
 function projectEvent(data: Json, channelId: string): RoomViewMessage | undefined {
   const eventTags = tags(data.tags);
   const markers = markerSet(eventTags);
@@ -1365,11 +1373,7 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     return { ...base, presentation: 'card', corner: { id: cornerId, status } };
   }
 
-  if (
-    markers.has('buzz-work-schedule-paused') ||
-    markers.has('steer-queued') ||
-    markers.has('slash-command-notice')
-  ) {
+  if ([...markers].some((candidate) => SYSTEM_MARKERS.has(candidate))) {
     return { ...base, presentation: 'system' };
   }
   if ([...markers].some((candidate) => candidate.startsWith('buzz-'))) {

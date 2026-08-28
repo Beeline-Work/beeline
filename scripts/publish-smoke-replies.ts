@@ -4,7 +4,14 @@
  * the device's real relay events, then replies through the same relay so the
  * assertions cover subscription delivery rather than preloaded transcript UI.
  */
-import { createBuzzClient, loadIdentityFromNsec } from '@beeline/buzz-client';
+import {
+  AGENT_PRESENCE_HEARTBEAT_MS,
+  createBuzzClient,
+  KIND_AGENT_PRESENCE,
+  loadIdentityFromNsec,
+  TAG_AGENT_PRESENCE,
+} from '@beeline/buzz-client';
+import { signEvent } from '@beeline/nostr';
 
 const [agentNsec, roomId, cornerId] = process.argv.slice(2);
 const RELAY = process.env.RELAY_URL || 'https://usebeeline.app';
@@ -46,23 +53,62 @@ async function requireExactlyOneMessage(
 }
 
 async function main() {
+  const identity = loadIdentityFromNsec(agentNsec, 'buzzy-smoke-agent');
   const client = createBuzzClient({
     baseUrl: RELAY,
-    identity: loadIdentityFromNsec(agentNsec, 'buzzy-smoke-agent'),
+    identity,
   });
   await client.connect();
-  // This first wait spans onboarding and the full pre-send smoke path. Later
-  // waits begin at the device action they coordinate with and stay tighter.
-  await waitForMessage(client, roomId, 'SMOKE ROOM SEND', FIRST_DEVICE_MESSAGE_TIMEOUT_MS);
-  await client.messageSubmit(roomId, 'SMOKE AGENT ROOM REPLY — delivered live');
-  await waitForMessage(client, roomId, "@beebee what's up");
-  await requireExactlyOneMessage(client, roomId, "@beebee what's up");
-  await client.messageSubmit(roomId, "SMOKE AGENT MENTION REPLY — @beebee what's up");
-  await waitForMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
-  await client.messageSubmit(roomId, 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard');
-  await waitForMessage(client, cornerId, 'SMOKE CORNER STEER');
-  await client.messageSubmit(cornerId, 'SMOKE AGENT CORNER REPLY — steering delivered live');
-  client.disconnect();
+  let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+  const publishPresence = () =>
+    client.publish(
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: Math.floor(Date.now() / 1_000),
+          kind: KIND_AGENT_PRESENCE,
+          tags: [
+            ['d', `${TAG_AGENT_PRESENCE}:${roomId}`],
+            ['h', roomId],
+            ['t', TAG_AGENT_PRESENCE],
+            ['agent', identity.publicKey],
+            ['status', 'online'],
+          ],
+          content: '',
+        },
+        identity.secretKey,
+      ),
+    );
+  const schedulePresenceHeartbeat = () => {
+    if (stopped) return;
+    heartbeatTimer = setTimeout(() => {
+      void publishPresence()
+        .catch((error) => console.warn('Smoke presence heartbeat failed:', error))
+        .finally(schedulePresenceHeartbeat);
+    }, AGENT_PRESENCE_HEARTBEAT_MS);
+    heartbeatTimer.unref?.();
+  };
+
+  try {
+    await publishPresence();
+    schedulePresenceHeartbeat();
+    // This first wait spans onboarding and the full pre-send smoke path. Later
+    // waits begin at the device action they coordinate with and stay tighter.
+    await waitForMessage(client, roomId, 'SMOKE ROOM SEND', FIRST_DEVICE_MESSAGE_TIMEOUT_MS);
+    await client.messageSubmit(roomId, 'SMOKE AGENT ROOM REPLY — delivered live');
+    await waitForMessage(client, roomId, "@beebee what's up");
+    await requireExactlyOneMessage(client, roomId, "@beebee what's up");
+    await client.messageSubmit(roomId, "SMOKE AGENT MENTION REPLY — @beebee what's up");
+    await waitForMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
+    await client.messageSubmit(roomId, 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard');
+    await waitForMessage(client, cornerId, 'SMOKE CORNER STEER');
+    await client.messageSubmit(cornerId, 'SMOKE AGENT CORNER REPLY — steering delivered live');
+  } finally {
+    stopped = true;
+    if (heartbeatTimer) clearTimeout(heartbeatTimer);
+    client.disconnect();
+  }
 }
 
 main().catch((error) => {

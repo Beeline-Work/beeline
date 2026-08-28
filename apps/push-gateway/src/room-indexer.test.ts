@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { directMessageChannelId } from '@beeline/buzz-client';
+import {
+  directMessageChannelId,
+  KIND_AGENT_PRESENCE,
+  TAG_AGENT_PRESENCE,
+} from '@beeline/buzz-client';
 import { migrateRoomReadMarks, type DatabaseQueryable } from './database.js';
 import { RoomIndexer } from './room-indexer.js';
 
@@ -162,6 +166,13 @@ describe('RoomIndexer', () => {
     );
     await event(ROOM, VIEWER, 3, 9, [['h', ROOM]], 'Hello');
     await event(ROOM, AGENT, 4, 9, [['h', ROOM]], 'Ready');
+    await event(ROOM, AGENT, 10, KIND_AGENT_PRESENCE, [
+      ['h', ROOM],
+      ['d', `${TAG_AGENT_PRESENCE}:${ROOM}`],
+      ['t', TAG_AGENT_PRESENCE],
+      ['agent', AGENT],
+      ['status', 'online'],
+    ]);
     await event(CORNER, AGENT, 6, 9, [['h', CORNER]], 'Working');
     await event(CORNER, AGENT, 7, 30078, [
       ['h', ROOM],
@@ -242,7 +253,11 @@ describe('RoomIndexer', () => {
       viewer: { identity: { name: 'Ada' }, role: 'owner' },
       members: [
         { identity: { pubkey: VIEWER, kind: 'human', name: 'Ada' }, role: 'owner' },
-        { identity: { pubkey: AGENT, kind: 'agent', name: 'Milo' }, role: 'member' },
+        {
+          identity: { pubkey: AGENT, kind: 'agent', name: 'Milo' },
+          role: 'member',
+          presence: { status: 'online', observedAt: 10, roomId: ROOM },
+        },
       ],
     });
     expect(view?.messages.map((message) => [message.text, message.author.name])).toEqual([

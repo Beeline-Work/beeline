@@ -171,16 +171,35 @@ function agentMessageChunkText(update: Record<string, unknown>): string {
  */
 const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
 
+const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;
+
+function withoutOneTrailingLineEnding(text: string): string {
+  if (/\r?\n\r?\n$/.test(text)) return text;
+  return text.replace(/\r?\n$/, '');
+}
+
+/**
+ * pi-acp frames each incremental text token with one line ending. Treating
+ * that transport delimiter as authored Markdown renders every token as a
+ * paragraph and can split a word (`be\n` + `eline\n`). Remove one terminal
+ * frame from every Pi delta while preserving explicit blank lines.
+ */
+function normalizeStreamDelta(text: string, agentLabel?: string): string {
+  return agentLabel && PI_ACP_HARNESS.test(agentLabel)
+    ? withoutOneTrailingLineEnding(text)
+    : text;
+}
+
 /** Group streaming text into assistant-message runs separated by tool,
  * reasoning, or plan updates. Consecutive deltas are one message. A resuming
  * delta that binds to the prior word remains in that message too, since some
  * harnesses interleave metadata in the middle of a token. */
-function agentMessageRuns(updates: readonly SessionUpdate[]): string[] {
+function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?: string): string[] {
   const runs: string[] = [];
   let current = '';
   let lastWasText = false;
   for (const u of updates) {
-    const delta = agentMessageChunkText(u.update);
+    const delta = normalizeStreamDelta(agentMessageChunkText(u.update), agentLabel);
     if (!delta) {
       lastWasText = false;
       continue;
@@ -212,8 +231,8 @@ function agentMessageRuns(updates: readonly SessionUpdate[]): string[] {
 }
 
 /** Accumulated non-chat draft text shown while the turn is still running. */
-function joinAgentMessageChunks(updates: readonly SessionUpdate[]): string {
-  return agentMessageRuns(updates).join('\n\n');
+function joinAgentMessageChunks(updates: readonly SessionUpdate[], agentLabel?: string): string {
+  return agentMessageRuns(updates, agentLabel).join('\n\n');
 }
 
 /**
@@ -262,8 +281,8 @@ export function isPureRetryNarration(text: string): boolean {
  *  Never scan backwards past the last run: an earlier pre-tool progress
  *  sentence is not the answer just because the turn later degraded into
  *  retry narration. */
-function finalAgentMessageText(updates: readonly SessionUpdate[]): string {
-  const last = agentMessageRuns(updates).at(-1);
+function finalAgentMessageText(updates: readonly SessionUpdate[], agentLabel?: string): string {
+  const last = agentMessageRuns(updates, agentLabel).at(-1);
   if (!last || isPureRetryNarration(last)) return '';
   return last;
 }
@@ -288,7 +307,10 @@ const THOUGHT_UPDATE_TYPES = new Set([
 ]);
 
 /** Derive the three-lane live view from the exact ordered ACP update stream. */
-export function agentStreamSnapshot(updates: readonly SessionUpdate[]): AcpStreamSnapshot {
+export function agentStreamSnapshot(
+  updates: readonly SessionUpdate[],
+  agentLabel?: string,
+): AcpStreamSnapshot {
   const completedMessages: string[] = [];
   let messageText = '';
   let lastWasMessage = false;
@@ -297,7 +319,7 @@ export function agentStreamSnapshot(updates: readonly SessionUpdate[]): AcpStrea
   for (const { update } of updates) {
     const kind = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : '';
     if (kind === 'agent_message_chunk') {
-      const delta = agentMessageChunkText(update);
+      const delta = normalizeStreamDelta(agentMessageChunkText(update), agentLabel);
       if (!delta) continue;
       if (
         !lastWasMessage &&
@@ -319,7 +341,7 @@ export function agentStreamSnapshot(updates: readonly SessionUpdate[]): AcpStrea
     }
     lastWasMessage = false;
     if (THOUGHT_UPDATE_TYPES.has(kind)) {
-      const delta = updateText(update);
+      const delta = normalizeStreamDelta(updateText(update), agentLabel);
       if (!delta) continue;
       if (!thoughtRunOpen) thoughtText = '';
       thoughtText += delta;
@@ -687,10 +709,10 @@ export class AcpClient extends EventEmitter {
       updates.push(u);
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
       if (requestId !== undefined) this.resetPendingIdleTimeout(requestId);
-      onActivity?.(agentStreamSnapshot(updates));
+      onActivity?.(agentStreamSnapshot(updates, this.agentLabel));
       if (onChunk) {
         const delta = agentMessageChunkText(u.update);
-        if (delta) onChunk(delta, joinAgentMessageChunks(updates));
+        if (delta) onChunk(delta, joinAgentMessageChunks(updates, this.agentLabel));
       }
     };
     this.on('session/update', onUpdate);
@@ -709,7 +731,7 @@ export class AcpClient extends EventEmitter {
         },
       )) as { stopReason?: string };
 
-      const agentText = finalAgentMessageText(updates);
+      const agentText = finalAgentMessageText(updates, this.agentLabel);
 
       const toolCalls: ToolCallEntry[] = updates
         .filter((u) => {

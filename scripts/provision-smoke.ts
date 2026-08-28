@@ -169,6 +169,8 @@ async function main() {
   const cornerId = await agentClient.createSubchannel(channelId, 'Smoke agent corner', {
     communityId: workspaceId,
   });
+  await agentClient.addMember(cornerId, identity.publicKey, 'member');
+  await client.waitUntilMember(cornerId, identity.publicKey);
   await agentClient.messageSubmit(channelId, 'Beebee opened a corner for the smoke session.', {
     extraTags: [
       ['t', 'body-control'],

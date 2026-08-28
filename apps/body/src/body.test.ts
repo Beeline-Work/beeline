@@ -10958,6 +10958,7 @@ describe('a corner belongs to the agent that opened it', () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-parked-close-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
       Reflect.get(body, 'abandonedCorners').set('corner-refused', {
         subchannelId: 'corner-refused',
         parentChannelId: 'room-refused',

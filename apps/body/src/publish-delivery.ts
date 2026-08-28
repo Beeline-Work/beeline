@@ -23,7 +23,7 @@
  * shape where a later poll naturally re-attempts.
  */
 
-import { RelayPublishError } from '@beeline/buzz-client';
+import { asRelayPublishError } from '@beeline/buzz-client';
 
 /** Total attempts of the OUTER loop (each attempt itself runs publishEvent's
  *  own inner retry budget for transport/5xx). */
@@ -36,26 +36,7 @@ export const CRITICAL_PUBLISH_BASE_DELAY_MS = 2_000;
 export const CRITICAL_PUBLISH_MAX_DELAY_MS = 30_000;
 
 export function isTransientRelayPublishError(error: unknown): boolean {
-  if (error instanceof RelayPublishError) return error.retryable;
-  const message = errorText(error);
-  // Not a relay-publish failure at all (git failed, logic threw): the caller
-  // decides; retrying cannot fix a broken worktree.
-  if (!message.includes('publishEvent')) return false;
-  const status = /HTTP (\d{3})/.exec(message)?.[1];
-  if (status !== undefined) {
-    const code = Number(status);
-    return code >= 500 || code === 408 || code === 429;
-  }
-  // No HTTP status: either the internal retry budget was exhausted on
-  // transport failures, or the relay negatively acknowledged. Only the
-  // former is transient.
-  if (message.includes('was not accepted')) return false;
-  return true;
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return typeof error === 'string' ? error : JSON.stringify(error);
+  return asRelayPublishError(error).retryable;
 }
 
 function delayWithJitter(attempt: number): number {

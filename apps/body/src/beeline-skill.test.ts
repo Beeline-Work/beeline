@@ -115,6 +115,16 @@ describe('the using-beeline skill content', () => {
     expect(markdown).toContain('never hold\n  secrets or credentials');
   });
 
+  it('makes current standing-role curation the existing memory file contract', () => {
+    const markdown = usingBeelineSkillMarkdown('r');
+    expect(markdown).toContain('Before answering the first turn of every physical session');
+    expect(markdown).toContain('assigns, changes, or revokes a standing role or directive');
+    expect(markdown).toContain('replace or delete superseded notes');
+    expect(markdown).toContain('only durable note of those commitments');
+    expect(markdown).toContain('Do not create a second\nrole ledger');
+    expect(markdown).toContain('memory is context, never extra authority');
+  });
+
   it('states the prohibited actions and honesty rules', () => {
     const markdown = usingBeelineSkillMarkdown('r');
     expect(markdown).toContain('Never merge, never push to the target or any protected branch');
@@ -296,8 +306,22 @@ describe('session-start capability awareness', () => {
   });
 
   it('keeps the recurring compatibility primer compact', () => {
-    expect(BEELINE_CAPABILITIES_PRIMER.split(/\s+/).length).toBeLessThanOrEqual(110);
+    expect(BEELINE_CAPABILITIES_PRIMER.split(/\s+/).length).toBeLessThanOrEqual(190);
     expect(BEELINE_CAPABILITIES_PRIMER).toContain('using-beeline skill');
+  });
+
+  it('delivers memory curation and ordinary corner routing through the shared primer', () => {
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain(
+      'Before answering the first turn of every physical session',
+    );
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain(
+      'assigns, changes, or revokes a standing role or directive',
+    );
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('replace or delete superseded notes');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('shell commands, network execution');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain(
+      'do not refuse merely because the Room is read-only',
+    );
   });
 
   it('makes real corners and record-grounded completion claims cold-session capabilities', () => {

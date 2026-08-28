@@ -303,6 +303,42 @@ describe('replaceable multi-lane reads', () => {
     unsubscribe();
     client.disconnect();
   });
+
+  it('installs each opaque surface filter as an independently live REQ', async () => {
+    const client = createBuzzClient({
+      baseUrl: 'https://relay.test',
+      identity: createIdentity('multi-filter-surface-subscriber'),
+      skipAuth: true,
+      WebSocketImpl: ReconnectingTestWebSocket,
+    });
+    const received: string[] = [];
+    const pending = client.surfaceSubscribe(
+      [
+        { kinds: [9], '#h': ['room-reconnect'] },
+        { kinds: [0], authors: ['a'.repeat(64)] },
+      ],
+      (event) => received.push(event.id),
+    );
+
+    await vi.waitFor(() => expect(ReconnectingTestWebSocket.instances).toHaveLength(1));
+    const socket = ReconnectingTestWebSocket.instances[0]!;
+    await vi.waitFor(() =>
+      expect(socket.sent.filter((frame) => frame[0] === 'REQ')).toHaveLength(2),
+    );
+    const requests = socket.sent.filter((frame) => frame[0] === 'REQ');
+    expect(requests.every((frame) => frame.slice(2).length === 1)).toBe(true);
+
+    const event = streamEvent('overlap', 101, 'one dirty signal');
+    for (const request of requests) {
+      socket.receive(['EVENT', request[1], event]);
+      socket.receive(['EOSE', request[1]]);
+    }
+    const unsubscribe = await pending;
+    expect(received).toEqual(['overlap']);
+
+    unsubscribe();
+    client.disconnect();
+  });
 });
 
 describe('live Room subscriptions', () => {

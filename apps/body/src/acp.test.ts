@@ -50,6 +50,69 @@ describe('ACP streaming lane classifier', () => {
       ]),
     ).toEqual({ messageText: '', thoughtText: 'Reading the workspace' });
   });
+
+  it('joins newline-framed token chunks without splitting words in the live thought lane', () => {
+    const tokens = [
+      'No',
+      ' be',
+      'eline',
+      ' skill',
+      ' in',
+      ' pi',
+      ' docs',
+      '.',
+      ' Search',
+      ' more',
+      ' broadly',
+    ];
+    const expected = 'No beeline skill in pi docs. Search more broadly';
+
+    expect(
+      agentStreamSnapshot(
+        tokens.map((text) =>
+          update('agent_thought_chunk', {
+            content: { type: 'text', text: `${text}\n` },
+          }),
+        ),
+        'pi-acp',
+      ),
+    ).toEqual({ messageText: '', thoughtText: expected });
+
+    expect(
+      agentStreamSnapshot(
+        tokens.map((text) =>
+          update('agent_message_chunk', {
+            content: { type: 'text', text: `${text}\n` },
+          }),
+        ),
+        '/usr/local/bin/pi-acp',
+      ),
+    ).toEqual({ messageText: expected });
+  });
+
+  it('preserves authored line endings from other harnesses and explicit Pi paragraphs', () => {
+    expect(
+      agentStreamSnapshot(
+        [
+          update('agent_thought_chunk', { content: { type: 'text', text: 'First line\n' } }),
+          update('agent_thought_chunk', { content: { type: 'text', text: 'Second line' } }),
+        ],
+        'codex-acp',
+      ),
+    ).toEqual({ messageText: '', thoughtText: 'First line\nSecond line' });
+
+    expect(
+      agentStreamSnapshot(
+        [
+          update('agent_thought_chunk', {
+            content: { type: 'text', text: 'First paragraph\n\n' },
+          }),
+          update('agent_thought_chunk', { content: { type: 'text', text: 'Second paragraph' } }),
+        ],
+        'pi-acp',
+      ),
+    ).toEqual({ messageText: '', thoughtText: 'First paragraph\n\nSecond paragraph' });
+  });
 });
 
 describe('harness retry narration is never the final answer', () => {
@@ -379,7 +442,7 @@ lines.on('line', (line) => {
   return binary;
 }
 
-async function fakeStreamingAgent(): Promise<string> {
+async function fakeStreamingAgent(chunks = ['Hel', 'lo ', 'world']): Promise<string> {
   const directory = await mkdtemp(resolve(tmpdir(), 'buzzy-acp-stream-'));
   temporaryDirectories.push(directory);
   const binary = resolve(directory, 'fake-streaming-agent.mjs');
@@ -390,7 +453,7 @@ import { createInterface } from 'node:readline';
 
 const lines = createInterface({ input: process.stdin });
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
-const chunk = (text) =>
+const emitChunk = (text) =>
   send({
     jsonrpc: '2.0',
     method: 'session/update',
@@ -404,9 +467,7 @@ lines.on('line', (line) => {
   } else if (message.method === 'session/new') {
     send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'stream-session' } });
   } else if (message.method === 'session/prompt') {
-    chunk('Hel');
-    chunk('lo ');
-    chunk('world');
+    for (const text of ${JSON.stringify(chunks)}) emitChunk(text);
     send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
   } else if (message.method === 'shutdown') {
     process.exit(0);
@@ -1062,6 +1123,45 @@ describe('AcpClient live steering', () => {
         { delta: 'world', fullText: 'Hello world' },
       ]);
       expect(result.agentText).toBe('Hello world');
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it('streams and finalizes pi newline-framed token chunks as continuous prose', async () => {
+    const tokens = [
+      'No\n',
+      ' be\n',
+      'eline\n',
+      ' skill\n',
+      ' in\n',
+      ' pi\n',
+      ' docs\n',
+      '.\n',
+    ];
+    const client = new AcpClient({
+      agentBinary: await fakeStreamingAgent(tokens),
+      agentLabel: 'pi-acp',
+      agentEnv: {},
+    });
+    await client.start();
+    try {
+      const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      const drafts: string[] = [];
+      const snapshots: Array<{ messageText: string; thoughtText?: string }> = [];
+      const result = await client.sessionPrompt(
+        sessionId,
+        'go',
+        5_000,
+        (_delta, fullText) => drafts.push(fullText),
+        (snapshot) => {
+          if (snapshot) snapshots.push(snapshot);
+        },
+      );
+
+      expect(drafts.at(-1)).toBe('No beeline skill in pi docs.');
+      expect(snapshots.at(-1)).toEqual({ messageText: 'No beeline skill in pi docs.' });
+      expect(result.agentText).toBe('No beeline skill in pi docs.');
     } finally {
       await client.stop();
     }

@@ -491,19 +491,19 @@ export async function listCommunities(
   // ever carried the older `#h` convention falls through to the existing
   // per-id `getCommunity` recovery path further down, same as before.
   const communityEvents: NostrEvent[] = [];
-  // Keep the per-id reads that avoid lossy multi-key tag matching, and keep
-  // each exact coordinate in its own REQ. Larger filter arrays fall onto the
-  // socket's ten-second fallback path on-device even when desktop WS answers
-  // the same batch promptly.
-  for (let offset = 0; offset < ids.length; offset += 1) {
+  // Keep exact per-id reads to avoid lossy multi-key tag matching, but start
+  // four coordinates together. Each contributes two filters, matching the
+  // relay's proven eight-filter ceiling without serializing every round trip.
+  for (let offset = 0; offset < ids.length; offset += 4) {
     communityEvents.push(
-      ...(await query(
-        ctx,
-        ids.slice(offset, offset + 1).flatMap((id) => [
-          { kinds: [KIND_CREATE_GROUP], '#h': [id], limit: 20 },
-          { kinds: [KIND_CHANNEL_METADATA], '#d': [id], limit: 5 },
-        ]),
-      )),
+      ...(await Promise.all(
+        ids.slice(offset, offset + 4).map((id) =>
+          query(ctx, [
+            { kinds: [KIND_CREATE_GROUP], '#h': [id], limit: 20 },
+            { kinds: [KIND_CHANNEL_METADATA], '#d': [id], limit: 5 },
+          ]),
+        ),
+      )).flat(),
     );
   }
   const createEvents = communityEvents.filter((event) => event.kind === KIND_CREATE_GROUP);

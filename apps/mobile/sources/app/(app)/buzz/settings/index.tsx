@@ -12,7 +12,7 @@ import {
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
-import { clearBuzzLocalCache } from '@/buzz/local-cache';
+import { clearMobileSurfaceStorage } from '@/buzz/surface-storage';
 import { WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { PixelGateReveal } from '@/components/buzz/MonoHull';
 import { Typography } from '@/constants/Typography';
@@ -68,7 +68,7 @@ export default function BuzzSettings() {
       return;
     }
     await Promise.all([clearBuzzIdentity(), clearPendingGitHubSignInState()]);
-    clearBuzzLocalCache();
+    clearMobileSurfaceStorage();
     router.replace('/buzz/onboarding');
   }, [confirmForget]);
 
@@ -282,134 +282,146 @@ const ROW_GUTTER_WIDTH = 46;
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  container: { flex: 1, backgroundColor: groknight.bgTerminal },
-  header: {
-    minHeight: 64,
-    paddingRight: SCREEN_INSET,
-    paddingVertical: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  backText: { ...Typography.default(), color: groknight.chrome, fontSize: 28, lineHeight: 32 },
-  headerCopy: { flex: 1, minWidth: 0 },
-  title: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 17,
-    lineHeight: 22,
-  },
-  headerMeta: {
-    ...Typography.mono(),
-    marginTop: 2,
-    color: groknight.ledgerGhost,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.8,
-  },
-  content: { paddingBottom: 24 },
-  sectionLabel: {
-    ...Typography.mono('semiBold'),
-    paddingHorizontal: SCREEN_INSET,
-    paddingTop: 18,
-    paddingBottom: 6,
-    color: groknight.textMuted,
-    fontSize: 10,
-    lineHeight: 14,
-    letterSpacing: 1.1,
-  },
-  /* An index row, not a card: no fill, no border, no radius — one hairline. */
-  settingsRow: {
-    minHeight: 64,
-    paddingLeft: SCREEN_INSET,
-    paddingRight: SCREEN_INSET,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  rowCopy: { flex: 1, minWidth: 0 },
-  rowGutter: { width: ROW_GUTTER_WIDTH, alignItems: 'flex-end' },
-  /* The hub reads on the index's three tones: name brightest, its explanation
-   * a step down, the gutter's mark ghosted. */
-  rowTitle: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    color: groknight.textPrimary,
-    fontSize: 15,
-    lineHeight: 20,
-  },
-  rowSubtitle: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 3,
-    color: groknight.ledgerQuiet,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  rowChevron: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    color: groknight.ledgerGhost,
-    fontSize: 18,
-    lineHeight: 20,
-  },
-  manageText: {
-    ...Typography.mono(),
-    color: groknight.textSecondary,
-    fontSize: 9,
-  },
-  updateAction: {
-    minWidth: 126,
-    minHeight: 44,
-    marginLeft: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 7,
-  },
-  updateActionDisabled: { opacity: 0.58 },
-  updateActionText: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 9,
-    lineHeight: 13,
-    letterSpacing: 0.3,
-    textAlign: 'right',
-  },
-  updateStatus: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 6,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  forgetGlyph: {
-    ...Typography.default(),
-    color: groknight.ledgerGhost,
-    fontSize: 15,
-    lineHeight: 20,
-  },
-  confirmPanel: {
-    marginTop: 14,
-    marginHorizontal: SCREEN_INSET,
-    padding: 14,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.border,
-  },
-  confirmText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  cancelButton: { minHeight: 44, marginTop: 5, alignSelf: 'flex-start', justifyContent: 'center' },
-  cancelText: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textSecondary,
-    fontSize: 12,
-  },
-  });
+  return {
+    container: { flex: 1, backgroundColor: groknight.bgTerminal },
+    header: {
+      minHeight: 64,
+      paddingRight: SCREEN_INSET,
+      paddingVertical: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    backText: { ...Typography.default(), color: groknight.chrome, fontSize: 28, lineHeight: 32 },
+    headerCopy: { flex: 1, minWidth: 0 },
+    title: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 17,
+      lineHeight: 22,
+    },
+    headerMeta: {
+      ...Typography.mono(),
+      marginTop: 2,
+      color: groknight.ledgerGhost,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.8,
+    },
+    content: { paddingBottom: 24 },
+    sectionLabel: {
+      ...Typography.mono('semiBold'),
+      paddingHorizontal: SCREEN_INSET,
+      paddingTop: 18,
+      paddingBottom: 6,
+      color: groknight.textMuted,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 1.1,
+    },
+    /* An index row, not a card: no fill, no border, no radius — one hairline. */
+    settingsRow: {
+      minHeight: 64,
+      paddingLeft: SCREEN_INSET,
+      paddingRight: SCREEN_INSET,
+      paddingVertical: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    rowCopy: { flex: 1, minWidth: 0 },
+    rowGutter: { width: ROW_GUTTER_WIDTH, alignItems: 'flex-end' },
+    /* The hub reads on the index's three tones: name brightest, its explanation
+     * a step down, the gutter's mark ghosted. */
+    rowTitle: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.textPrimary,
+      fontSize: 15,
+      lineHeight: 20,
+    },
+    rowSubtitle: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 3,
+      color: groknight.ledgerQuiet,
+      fontSize: 12,
+      lineHeight: 16,
+    },
+    rowChevron: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.ledgerGhost,
+      fontSize: 18,
+      lineHeight: 20,
+    },
+    manageText: {
+      ...Typography.mono(),
+      color: groknight.textSecondary,
+      fontSize: 9,
+    },
+    updateAction: {
+      minWidth: 126,
+      minHeight: 44,
+      marginLeft: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 7,
+    },
+    updateActionDisabled: { opacity: 0.58 },
+    updateActionText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 9,
+      lineHeight: 13,
+      letterSpacing: 0.3,
+      textAlign: 'right',
+    },
+    updateStatus: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 6,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+    },
+    forgetGlyph: {
+      ...Typography.default(),
+      color: groknight.ledgerGhost,
+      fontSize: 15,
+      lineHeight: 20,
+    },
+    confirmPanel: {
+      marginTop: 14,
+      marginHorizontal: SCREEN_INSET,
+      padding: 14,
+      borderRadius: 3,
+      borderWidth: 1,
+      borderColor: groknight.border,
+    },
+    confirmText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    cancelButton: {
+      minHeight: 44,
+      marginTop: 5,
+      alignSelf: 'flex-start',
+      justifyContent: 'center',
+    },
+    cancelText: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textSecondary,
+      fontSize: 12,
+    },
+  };
 });

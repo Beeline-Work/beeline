@@ -1,5 +1,3 @@
-import { selectRoomRow, type WorkspaceSnapshot } from '@beeline/buzz-client';
-
 /** Preview length that fills one line on the narrowest shipped phone without
  * the trailing ellipsis landing mid-word on every row. */
 const PREVIEW_MAX_CHARS = 120;
@@ -75,13 +73,6 @@ export function isMachinePreview(text: string): boolean {
   );
 }
 
-export type RoomMessageSummary = {
-  id: string;
-  text: string;
-  timestamp: number;
-  authorPubkey?: string;
-};
-
 function shortenShas(text: string): string {
   return text.replace(/\b[0-9a-f]{40}\b/gi, (sha) => sha.slice(0, 7));
 }
@@ -135,25 +126,4 @@ export function previewAuthorLabel(name: string | undefined, maxChars = 12): str
   const upper = name?.trim().toUpperCase();
   if (!upper) return '';
   return upper.length > maxChars ? `${upper.slice(0, maxChars - 1)}…` : upper;
-}
-
-/** Latest person-facing Room message from the normalized snapshot. */
-export function latestRoomMessageSummary(
-  snapshot: WorkspaceSnapshot,
-  channelId: string,
-): RoomMessageSummary | null {
-  const message = selectRoomRow(snapshot, channelId).preview;
-  if (!message) return null;
-  const preview = roomPreviewText(message.body);
-  if (!preview) return null;
-  return {
-    id: message.id,
-    text: preview,
-    timestamp: message.timestamp,
-    authorPubkey: message.authorPubkey,
-  };
-}
-
-export function latestRoomMessage(snapshot: WorkspaceSnapshot, channelId: string): string | null {
-  return latestRoomMessageSummary(snapshot, channelId)?.text ?? null;
 }

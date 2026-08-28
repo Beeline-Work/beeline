@@ -41,6 +41,7 @@ async function main(): Promise<void> {
   try {
     await materializerStore.connect();
     await materializerStore.migrateReservations();
+    await materializerStore.migrateRoomReadMarks();
     await materializerStore.deleteSnapshotContract();
     const deliveryState = await DeliveryState.load(
       materializerStore.reservation<DeliveryStateFile>('push-delivery'),

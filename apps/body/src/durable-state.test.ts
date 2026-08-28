@@ -6,13 +6,6 @@ import { newIdentity } from '@beeline/gate';
 import { signEvent } from '@beeline/nostr';
 import { DURABLE_BODY_STATE_VERSION, DurableBodyState } from './durable-state.js';
 import fixtureManifest from './fixtures/durable-state/manifest.json';
-import {
-  createWorkspaceSnapshot,
-  parseRelayEvents,
-  reduceWorkspaceEvents,
-  type IdentityRecord,
-  type Pubkey,
-} from '@beeline/buzz-client';
 
 const cleanup: string[] = [];
 
@@ -84,14 +77,12 @@ describe('durable state schema migration', () => {
       eventId: 'last-delivered-event',
     });
     expect((await state.pending('room')).map((event) => event.id)).toEqual([pendingEvent.id]);
-    expect(await state.readModel('room')).toBeUndefined();
   });
 
-  it('loads an existing version 2 file without rewriting it', async () => {
+  it('loads an existing version 2 file while ignoring its retired read model field', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-v2-'));
     cleanup.push(root);
     const path = resolve(root, 'state.json');
-    const readModel = createWorkspaceSnapshot({ workspaceId: 'room', identities: [] });
     const persisted = `${JSON.stringify({
       version: 2,
       inboxes: {
@@ -100,17 +91,16 @@ describe('durable state schema migration', () => {
           items: {},
         },
       },
-      readModels: { room: readModel },
+      readModels: { room: { schemaVersion: 1, retired: true } },
     })}\n`;
     await writeFile(path, persisted);
 
     const state = new DurableBodyState(path);
     expect(await state.cursor('room')).toEqual({ createdAt: 42, eventId: 'v2-cursor' });
-    expect(await state.readModel('room')).toEqual(readModel);
     expect(await readFile(path, 'utf8')).toBe(persisted);
   });
 
-  it('fails closed when an existing version 2 read model fails its integrity guard', async () => {
+  it('discards malformed retired read model data on the next durable save', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-state-invalid-v2-model-'));
     cleanup.push(root);
     const path = resolve(root, 'state.json');
@@ -118,15 +108,32 @@ describe('durable state schema migration', () => {
       path,
       JSON.stringify({
         version: 2,
-        inboxes: {},
+        inboxes: {
+          room: {
+            cursor: { createdAt: 7, eventId: 'preserved' },
+            items: {},
+          },
+        },
         readModels: { room: { schemaVersion: 1, workspaceId: 'room' } },
       }),
     );
 
     const state = new DurableBodyState(path);
-    await expect(state.readModel('room')).rejects.toThrow(
-      `read-model integrity halt for room at ${path}`,
-    );
+    const identity = newIdentity('retired-read-model-save');
+    await state.enqueue('room', [
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: 8,
+          kind: 9,
+          tags: [['h', 'room']],
+          content: 'Trigger a durable save.',
+        },
+        identity.secretKey,
+      ),
+    ]);
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    expect(persisted).not.toHaveProperty('readModels');
   });
 
   it('fails closed on malformed persisted JSON', async () => {
@@ -232,7 +239,7 @@ describe('durable state schema migration', () => {
 
     const persisted = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
     expect(persisted.version).toBe(2);
-    expect(persisted.readModels).toEqual({});
+    expect(persisted).not.toHaveProperty('readModels');
     expect(persisted).not.toHaveProperty('conversations');
     expect(persisted.modelTurns).toEqual([modelTurn]);
     expect(persisted.sessionReprimes).toEqual([sessionReprime]);
@@ -328,72 +335,6 @@ describe('durable input inbox', () => {
       agent.secretKey,
     );
     expect((await restarted.reserveReply('room', request.id, differentReply)).id).toBe(reply.id);
-  });
-
-  it('recovers the latest completed agent summary after restart', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'beeline-corner-summary-'));
-    cleanup.push(root);
-    const path = resolve(root, 'state.json');
-    const human = newIdentity('summary-human');
-    const agent = newIdentity('summary-agent');
-    const first = new DurableBodyState(path);
-    const identities = [
-      { kind: 'human', pubkey: human.publicKey as Pubkey, displayName: 'Captain', revision: '1' },
-      { kind: 'agent', pubkey: agent.publicKey as Pubkey, displayName: 'Buzzy', revision: '1' },
-    ] satisfies IdentityRecord[];
-    const raw = [
-      signEvent(
-        {
-          pubkey: agent.publicKey,
-          created_at: 1,
-          kind: 9,
-          tags: [
-            ['h', 'corner'],
-            ['t', 'agent-message'],
-          ],
-          content: 'Implemented the first change.',
-        },
-        agent.secretKey,
-      ),
-      signEvent(
-        {
-          pubkey: human.publicKey,
-          created_at: 2,
-          kind: 9,
-          tags: [['h', 'corner']],
-          content: 'Please also add tests.',
-        },
-        human.secretKey,
-      ),
-      signEvent(
-        {
-          pubkey: agent.publicKey,
-          created_at: 3,
-          kind: 9,
-          tags: [
-            ['h', 'corner'],
-            ['t', 'agent-message'],
-          ],
-          content: 'Implemented the change and added regression tests.',
-        },
-        agent.secretKey,
-      ),
-    ];
-    const snapshot = reduceWorkspaceEvents(
-      createWorkspaceSnapshot({ workspaceId: 'room', identities }),
-      parseRelayEvents(raw, {
-        workspaceId: 'room',
-        allowedChannelIds: ['corner'],
-        identities: Object.fromEntries(identities.map((identity) => [identity.pubkey, identity])),
-      }),
-    );
-    await first.replaceReadModel('corner', snapshot);
-
-    const restarted = new DurableBodyState(path);
-    expect(await restarted.latestAgentMessage('corner')).toBe(
-      'Implemented the change and added regression tests.',
-    );
-    expect(await restarted.latestAgentMessage('empty-corner')).toBeUndefined();
   });
 
   it('keeps model-call attribution inspectable across restart', async () => {

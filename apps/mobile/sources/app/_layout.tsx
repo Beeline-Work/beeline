@@ -37,7 +37,6 @@ import {
   retryBuzzPushRegistration,
 } from '@/push/buzz-push-registration';
 import type { Identity } from '@beeline/buzz-client';
-import { flushBuzzLocalCacheForBackground } from '@/buzz/local-cache';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
 import { UpdateProvider } from '@/hooks/useUpdates';
@@ -226,7 +225,6 @@ export default function RootLayout() {
       // timer cannot be used here—Android suspends that timer before it
       // fires, leaving a cold launch with no persisted transcript.
       if (state === 'background') {
-        flushBuzzLocalCacheForBackground();
       }
     });
     return () => {

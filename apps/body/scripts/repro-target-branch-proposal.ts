@@ -11,16 +11,13 @@
  * about the daemon's own decision path — the intent recognizer, the
  * current-target re-read, and `postControlMessage` all run for real.
  *
- * Half two: hand the CAPTURED event to the mobile client's typed read-model
- * parser and projection and print the card it renders.
- *
- * Exits non-zero if either half fails, so it is usable as a check.
+ * The mobile client treats this event opaquely as a signal to refetch the
+ * authenticated Room endpoint; it does not interpret or project the event.
+ * Exits non-zero if publication fails, so it is usable as a check.
  */
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { Body, type BodyConfig } from '../src/body.js';
@@ -29,9 +26,6 @@ const LIVE_PHRASING = 'from now on land changes to a branch called staging inste
 const ROOM_ID = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const REPOSITORY_KEY = 'repo-key-target-branch';
 const KIND_CHANNEL_ADMINS = 39_001;
-
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, '../../..');
 
 const admin = newIdentity('target-branch-admin');
 
@@ -155,16 +149,7 @@ try {
       .join('\n'),
   );
 
-  const capturePath = join(workspaceRoot, 'proposal-event.json');
-  writeFileSync(capturePath, JSON.stringify(card));
-
-  console.log("\n[2] Client — the same event through the mobile app's own projection:\n");
-  const client = spawnSync(
-    join(repoRoot, 'apps/mobile/node_modules/.bin/tsx'),
-    [join(repoRoot, 'apps/mobile/scripts/repro-target-branch-card.ts'), capturePath],
-    { cwd: join(repoRoot, 'apps/mobile'), stdio: 'inherit' },
-  );
-  check('the client renders a target-branch proposal card from it', client.status === 0);
+  console.log('\n[2] Client — relay delivery schedules a Room endpoint refresh.');
 } finally {
   rmSync(workspaceRoot, { recursive: true, force: true });
 }

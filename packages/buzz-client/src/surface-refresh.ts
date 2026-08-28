@@ -46,6 +46,10 @@ export class SurfaceRefreshScheduler<T> {
 
   signal(): void {
     if (this.disposed) return;
+    // A signal observed while a GET is in flight may describe a commit that
+    // raced that GET's database snapshot. Reject that completion and let the
+    // dirty follow-up become the only paint for this generation.
+    if (this.inFlight) this.generation += 1;
     this.dirty = true;
     this.firstDirtyAt ??= this.now();
     this.schedule(false);
@@ -54,6 +58,7 @@ export class SurfaceRefreshScheduler<T> {
   /** Reconnect and focus are recovery boundaries, so they do not wait for quiet. */
   force(): void {
     if (this.disposed) return;
+    if (this.inFlight) this.generation += 1;
     this.dirty = true;
     this.firstDirtyAt ??= this.now();
     this.schedule(true);
@@ -79,10 +84,13 @@ export class SurfaceRefreshScheduler<T> {
     const minimumAt = forced ? now : this.lastStartedAt + this.minimumIntervalMs;
     const maximumAt = (this.firstDirtyAt ?? now) + this.maximumWaitMs;
     const dueAt = Math.max(now, Math.min(minimumAt, maximumAt));
-    this.timer = this.setTimer(() => {
-      this.timer = undefined;
-      void this.run();
-    }, Math.max(0, dueAt - now));
+    this.timer = this.setTimer(
+      () => {
+        this.timer = undefined;
+        void this.run();
+      },
+      Math.max(0, dueAt - now),
+    );
   }
 
   private async run(): Promise<void> {
@@ -96,7 +104,7 @@ export class SurfaceRefreshScheduler<T> {
       const value = await this.options.fetch();
       if (!this.disposed && generation === this.generation) this.options.apply(value);
     } catch (error) {
-      this.options.onError?.(error);
+      if (!this.disposed && generation === this.generation) this.options.onError?.(error);
     } finally {
       this.inFlight = false;
       if (this.dirty) this.schedule(false);

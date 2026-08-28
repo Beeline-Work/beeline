@@ -214,9 +214,9 @@ describe('replaceable multi-lane reads', () => {
     vi.stubGlobal('fetch', fetchMock);
     const client = createBuzzClient({ baseUrl: 'https://relay.test', identity });
 
-    await expect(
-      client.cornerStateBackfill(['corner-1', 'corner-1', 'corner-2']),
-    ).resolves.toEqual(events);
+    await expect(client.cornerStateBackfill(['corner-1', 'corner-1', 'corner-2'])).resolves.toEqual(
+      events,
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestedFilters).toHaveLength(2);
   });
@@ -265,6 +265,40 @@ describe('replaceable multi-lane reads', () => {
     deliverFirstKeyOnlyMatches(socket, events);
     expect(received).toEqual(['corner-1', 'corner-2']);
     expect(socket.sent.find((frame) => frame[0] === 'REQ')!.slice(2)).toHaveLength(2);
+
+    unsubscribe();
+    client.disconnect();
+  });
+
+  it('does not declare an opaque surface subscription ready until initial replay reaches EOSE', async () => {
+    const client = createBuzzClient({
+      baseUrl: 'https://relay.test',
+      identity: createIdentity('surface-subscriber'),
+      skipAuth: true,
+      WebSocketImpl: ReconnectingTestWebSocket,
+    });
+    const received: string[] = [];
+    let ready = false;
+    const pending = client
+      .surfaceSubscribe([{ kinds: [9], '#h': ['room'] }], (event) => received.push(event.id))
+      .then((unsubscribe) => {
+        ready = true;
+        return unsubscribe;
+      });
+
+    await vi.waitFor(() => expect(ReconnectingTestWebSocket.instances).toHaveLength(1));
+    const socket = ReconnectingTestWebSocket.instances[0]!;
+    await vi.waitFor(() => expect(socket.sent.some((frame) => frame[0] === 'REQ')).toBe(true));
+    const request = socket.sent.find((frame) => frame[0] === 'REQ')!;
+    const subscriptionId = request[1] as string;
+    socket.receive(['EVENT', subscriptionId, streamEvent('replay', 100, 'stored')]);
+    await Promise.resolve();
+    expect(received).toEqual(['replay']);
+    expect(ready).toBe(false);
+
+    socket.receive(['EOSE', subscriptionId]);
+    const unsubscribe = await pending;
+    expect(ready).toBe(true);
 
     unsubscribe();
     client.disconnect();
@@ -352,7 +386,11 @@ describe('succession-aware communityMembers', () => {
         pubkey: predecessor.publicKey,
         created_at: 1_700_000_000,
         kind: 9007,
-        tags: [['h', communityId], ['name', 'Builders'], ['community', communityId]],
+        tags: [
+          ['h', communityId],
+          ['name', 'Builders'],
+          ['community', communityId],
+        ],
         content: '',
       },
       predecessor.secretKey,
@@ -362,7 +400,10 @@ describe('succession-aware communityMembers', () => {
         pubkey: predecessor.publicKey,
         created_at: 1_700_000_001,
         kind: 39002,
-        tags: [['d', communityId], ['p', predecessor.publicKey]],
+        tags: [
+          ['d', communityId],
+          ['p', predecessor.publicKey],
+        ],
         content: '',
       },
       predecessor.secretKey,
@@ -395,7 +436,11 @@ describe('succession-aware communityMembers', () => {
         pubkey: owner.publicKey,
         created_at: 1_700_000_000,
         kind: 9007,
-        tags: [['h', communityId], ['name', 'Builders'], ['community', communityId]],
+        tags: [
+          ['h', communityId],
+          ['name', 'Builders'],
+          ['community', communityId],
+        ],
         content: '',
       },
       owner.secretKey,
@@ -405,7 +450,11 @@ describe('succession-aware communityMembers', () => {
         pubkey: owner.publicKey,
         created_at: 1_700_000_001,
         kind: 39002,
-        tags: [['d', communityId], ['p', owner.publicKey], ['p', identity.publicKey]],
+        tags: [
+          ['d', communityId],
+          ['p', owner.publicKey],
+          ['p', identity.publicKey],
+        ],
         content: '',
       },
       owner.secretKey,
@@ -437,7 +486,11 @@ describe('succession-aware communityMembers', () => {
         pubkey: owner.publicKey,
         created_at: 1_700_000_000,
         kind: 9007,
-        tags: [['h', communityId], ['name', 'Builders'], ['community', communityId]],
+        tags: [
+          ['h', communityId],
+          ['name', 'Builders'],
+          ['community', communityId],
+        ],
         content: '',
       },
       owner.secretKey,
@@ -447,7 +500,11 @@ describe('succession-aware communityMembers', () => {
         pubkey: owner.publicKey,
         created_at: 1_700_000_001,
         kind: 39001,
-        tags: [['d', communityId], ['p', owner.publicKey, 'owner'], ['p', adminPredecessor.publicKey, 'admin']],
+        tags: [
+          ['d', communityId],
+          ['p', owner.publicKey, 'owner'],
+          ['p', adminPredecessor.publicKey, 'admin'],
+        ],
         content: '',
       },
       owner.secretKey,
@@ -457,7 +514,10 @@ describe('succession-aware communityMembers', () => {
         pubkey: owner.publicKey,
         created_at: 1_700_000_002,
         kind: 39002,
-        tags: [['d', communityId], ['p', owner.publicKey]],
+        tags: [
+          ['d', communityId],
+          ['p', owner.publicKey],
+        ],
         content: '',
       },
       owner.secretKey,

@@ -139,6 +139,14 @@ export type RoomViewMessage = {
     readonly agent?: RoomViewIdentity;
     readonly requester?: RoomViewIdentity;
   };
+  /** A validated, service-published repository activity card. Never a speaker. */
+  readonly githubEvent?: {
+    readonly type: 'pull-request' | 'issue';
+    readonly action: 'opened' | 'closed' | 'merged';
+    readonly actor: string;
+    readonly title: string;
+    readonly url: string;
+  };
 };
 
 export type RoomViewer = {

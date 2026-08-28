@@ -212,6 +212,12 @@ SELECT 'member', jsonb_build_object(
 ) FROM authorized a
 JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
   AND cm.removed_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM events service
+    WHERE service.community_id = cm.community_id AND service.pubkey = cm.pubkey
+      AND service.kind = 9 AND service.deleted_at IS NULL
+      AND service.tags @> '[["service", "beeline-events"]]'::jsonb
+  )
 JOIN identities resolved ON resolved.community_id = cm.community_id AND resolved.pubkey = cm.pubkey
 UNION ALL
 SELECT 'event', jsonb_build_object(
@@ -936,6 +942,12 @@ SELECT 'member', jsonb_build_object(
 ) FROM authorized a
 JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
   AND cm.removed_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM events service
+    WHERE service.community_id = cm.community_id AND service.pubkey = cm.pubkey
+      AND service.kind = 9 AND service.deleted_at IS NULL
+      AND service.tags @> '[["service", "beeline-events"]]'::jsonb
+  )
 JOIN identities resolved ON resolved.community_id = cm.community_id AND resolved.pubkey = cm.pubkey
 LEFT JOIN LATERAL (
   SELECT
@@ -1095,6 +1107,29 @@ function markerSet(values: readonly string[][]): Set<string> {
   return new Set(
     values.flatMap((candidate) => (candidate[0] === 't' && candidate[1] ? [candidate[1]] : [])),
   );
+}
+
+function githubEventCard(
+  values: readonly string[][],
+): NonNullable<RoomViewMessage['githubEvent']> | undefined {
+  const type = tag(values, 'github-event-type');
+  const action = tag(values, 'github-event-action');
+  const actor = text(tag(values, 'github-event-actor'));
+  const title = text(tag(values, 'github-event-title'));
+  const url = text(tag(values, 'github-event-url'));
+  if (
+    tag(values, 'service') !== 'beeline-events' ||
+    !text(tag(values, 'github-event-id')) ||
+    (type !== 'pull-request' && type !== 'issue') ||
+    (action !== 'opened' && action !== 'closed' && action !== 'merged') ||
+    (type === 'issue' && action === 'merged') ||
+    !actor ||
+    !title ||
+    !url ||
+    !/^https:\/\/github\.com\/[^\s]+$/i.test(url)
+  )
+    return undefined;
+  return { type, action, actor, title, url };
 }
 
 function identity(data: Json): RoomViewIdentity {
@@ -1300,6 +1335,15 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
             ? { durableFact: 'action' as const }
             : {}),
     };
+  }
+
+  if (markers.has('github-event')) {
+    // A service health notice is status text, not a person-authored turn.
+    if (markers.has('github-event-health')) return { ...base, presentation: 'system' };
+    // Old batch prose never gets a compatibility renderer: cards need the
+    // complete typed envelope or remain invisible.
+    const githubEvent = githubEventCard(eventTags);
+    return githubEvent ? { ...base, text: '', presentation: 'card', githubEvent } : undefined;
   }
 
   const permissionMarker =

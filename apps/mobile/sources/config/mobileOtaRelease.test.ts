@@ -897,6 +897,9 @@ esac
     expect(maestroScript).toContain('read_seed_value MAESTRO_SMOKE_SWITCH_ROOM_ID');
     expect(maestroScript).toContain('--env "SMOKE_SWITCH_WORKSPACE_ID=$SMOKE_SWITCH_WORKSPACE_ID"');
     expect(canaryFlow).toContain('runFlow: workspace-switch.yaml');
+    const smokeFlow = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');
+    expect(smokeFlow).toContain('id: workspace-avatar-trigger');
+    expect(smokeFlow).toContain('id: community-rail-${SMOKE_WORKSPACE_ID}');
     expect(switchFlow).toContain('id: community-rail-${SMOKE_SWITCH_WORKSPACE_ID}');
     expect(switchFlow).toContain('id: community-rail-${SMOKE_WORKSPACE_ID}');
     expect(switchFlow).toContain('id: room-${SMOKE_SWITCH_ROOM_ID}');

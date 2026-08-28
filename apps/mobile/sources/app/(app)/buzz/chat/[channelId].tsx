@@ -189,6 +189,7 @@ import {
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
   mergeAgentPresence,
+  mergeAgentPresenceBatch,
   nextAgentPresenceTransitionAt,
   onlineVerdicts,
   activeMentionCandidates,
@@ -331,16 +332,21 @@ function durableFactLine(message: ChatDisplayMessage): string {
  * bails correctly whenever this row's own agent status is unchanged.
  */
 const AgentPresenceLight = React.memo(function AgentPresenceLight({
+  decorative = false,
   online,
   testID,
 }: {
+  decorative?: boolean;
   online: boolean;
   testID?: string;
 }) {
   return (
     <View
-      accessibilityLabel={online ? 'Agent online' : 'Agent offline'}
-      accessibilityRole="image"
+      accessibilityElementsHidden={decorative}
+      accessibilityLabel={decorative ? undefined : online ? 'Agent online' : 'Agent offline'}
+      accessibilityRole={decorative ? undefined : 'image'}
+      accessible={!decorative}
+      importantForAccessibility={decorative ? 'no' : 'auto'}
       style={[
         styles.agentPresenceLight,
         online ? styles.agentPresenceOnline : styles.agentPresenceOffline,
@@ -1821,8 +1827,15 @@ export default function BuzzChat() {
             : [],
         ),
       );
-      agentPresencesRef.current = presences;
-      setAgentPresences(presences);
+      // The HTTP response and the live overlay are two observations of the
+      // same replaceable record. A refetch must not erase a newer heartbeat
+      // that arrived while the request was in flight.
+      const mergedPresences = mergeAgentPresenceBatch(
+        agentPresencesRef.current,
+        Object.values(presences),
+      );
+      agentPresencesRef.current = mergedPresences;
+      setAgentPresences(mergedPresences);
       setPresenceResolved(true);
       setPresenceNow(Date.now());
 
@@ -4225,7 +4238,11 @@ export default function BuzzChat() {
 
       <HullModal
         accessibilityLabel={`Close ${ROOM_LABEL} roster`}
-        contentStyle={{ paddingHorizontal: 16, paddingBottom: Math.max(insets.bottom, 18) }}
+        contentStyle={{
+          maxHeight: '82%',
+          paddingHorizontal: 16,
+          paddingBottom: Math.max(insets.bottom, 18),
+        }}
         onRequestClose={() => setRosterVisible(false)}
         placement="bottom"
         visible={rosterVisible}
@@ -4329,6 +4346,7 @@ export default function BuzzChat() {
                           <View style={styles.rosterNameRow}>
                             {participant.kind === 'agent' ? (
                               <AgentPresenceLight
+                                decorative
                                 online={agentOnline}
                                 testID={`agent-presence-light-${participant.pubkey}`}
                               />
@@ -4953,7 +4971,7 @@ const styles = StyleSheet.create((theme) => {
     rosterModal: {
       width: '100%',
       maxWidth: 460,
-      maxHeight: '82%',
+      maxHeight: '100%',
       padding: 16,
       borderWidth: 1,
       borderColor: groknight.borderStrong,

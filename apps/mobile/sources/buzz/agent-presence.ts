@@ -125,6 +125,14 @@ export function mergeAgentPresence(
   return { ...current, [incoming.agentPubkey]: next };
 }
 
+/** A server refetch may race a newer live heartbeat; newest relay time wins. */
+export function mergeAgentPresenceBatch(
+  current: Readonly<Record<string, RoomAgentPresence>>,
+  incoming: readonly RoomAgentPresence[],
+): Record<string, RoomAgentPresence> {
+  return incoming.reduce(mergeAgentPresence, current as Record<string, RoomAgentPresence>);
+}
+
 /**
  * One online/offline verdict per agent pubkey, resolved once per render.
  *

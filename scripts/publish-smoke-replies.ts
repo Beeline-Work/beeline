@@ -8,8 +8,10 @@ import {
   AGENT_PRESENCE_HEARTBEAT_MS,
   createBuzzClient,
   KIND_AGENT_PRESENCE,
+  KIND_CORNER_STATE,
   loadIdentityFromNsec,
   TAG_AGENT_PRESENCE,
+  TAG_CORNER_STATE,
 } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 
@@ -80,6 +82,27 @@ async function main() {
         identity.secretKey,
       ),
     );
+  const publishCornerWorkingState = () => {
+    const stateAt = Math.floor(Date.now() / 1_000);
+    return client.publish(
+      signEvent(
+        {
+          pubkey: identity.publicKey,
+          created_at: stateAt,
+          kind: KIND_CORNER_STATE,
+          tags: [
+            ['d', `${TAG_CORNER_STATE}:${cornerId}`],
+            ['h', roomId],
+            ['t', TAG_CORNER_STATE],
+            ['state', 'working'],
+            ['at', String(stateAt)],
+          ],
+          content: JSON.stringify({ state: 'working', at: stateAt }),
+        },
+        identity.secretKey,
+      ),
+    );
+  };
   const schedulePresenceHeartbeat = () => {
     if (stopped) return;
     heartbeatTimer = setTimeout(() => {
@@ -101,6 +124,7 @@ async function main() {
     await requireExactlyOneMessage(client, roomId, "@beebee what's up");
     await client.messageSubmit(roomId, "SMOKE AGENT MENTION REPLY — @beebee what's up");
     await waitForMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
+    await publishCornerWorkingState();
     await client.messageSubmit(roomId, 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard');
     await waitForMessage(client, cornerId, 'SMOKE CORNER STEER');
     await client.messageSubmit(cornerId, 'SMOKE AGENT CORNER REPLY — steering delivered live');

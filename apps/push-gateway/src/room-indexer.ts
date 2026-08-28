@@ -599,7 +599,9 @@ SELECT 'corner', jsonb_build_object(
   'name', c.name, 'about', COALESCE(c.description, c.task), 'visibility', c.visibility,
   'archived', c.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM c.created_at)::bigint,
-  'updatedAt', extract(epoch FROM c.updated_at)::bigint,
+  'updatedAt', extract(epoch FROM GREATEST(
+    c.updated_at, COALESCE(state.created_at, c.updated_at)
+  ))::bigint,
   'statusTags', state.tags,
   'agentPubkey', encode(c.created_by, 'hex'),
   'agentName', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
@@ -609,7 +611,7 @@ SELECT 'corner', jsonb_build_object(
 ) FROM corners c JOIN authorized a ON true
 JOIN identities resolved ON resolved.community_id = c.community_id AND resolved.pubkey = c.created_by
 LEFT JOIN LATERAL (
-  SELECT e.tags FROM events e WHERE e.community_id = c.community_id
+  SELECT e.tags, e.created_at FROM events e WHERE e.community_id = c.community_id
     AND e.pubkey = c.created_by AND e.kind = 30078
     AND e.d_tag = 'buzz-corner-state:' || c.id::text AND e.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) h
@@ -805,7 +807,9 @@ SELECT 'sibling', jsonb_build_object(
   'visibility', f.visibility,
   'archived', f.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM f.created_at)::bigint,
-  'updatedAt', extract(epoch FROM f.updated_at)::bigint,
+  'updatedAt', extract(epoch FROM GREATEST(
+    f.updated_at, COALESCE(state.created_at, f.updated_at)
+  ))::bigint,
   'statusTags', state.tags,
   'agentPubkey', encode(f.created_by, 'hex'),
   'agentName', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
@@ -815,7 +819,7 @@ SELECT 'sibling', jsonb_build_object(
 ) FROM family f JOIN authorized a ON true
 JOIN identities resolved ON resolved.community_id = f.community_id AND resolved.pubkey = f.created_by
 LEFT JOIN LATERAL (
-  SELECT e.tags FROM events e WHERE e.community_id = f.community_id
+  SELECT e.tags, e.created_at FROM events e WHERE e.community_id = f.community_id
     AND e.pubkey = f.created_by AND e.kind = 30078
     AND e.d_tag = 'buzz-corner-state:' || f.id::text AND e.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) h

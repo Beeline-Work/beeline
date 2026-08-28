@@ -152,6 +152,23 @@ export function harnessHonorsSessionSystemPrompt(agentCommand: string | undefine
 }
 
 /**
+ * Can a new harness process reopen the same provider-owned conversation?
+ *
+ * This is deliberately narrower than the ACP capability bit. Codex and Grok
+ * persist their logical conversation ids and implement `session/load`; their
+ * session prompt/instruction semantics have been measured across a process
+ * restart. Other adapters keep the conservative new-session + bounded
+ * re-prime path even if a future version starts advertising the method.
+ */
+export function harnessSupportsNativeSessionResume(agentCommand: string | undefined): boolean {
+  return Boolean(
+    agentCommand &&
+    (/(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(agentCommand) ||
+      /(^|[/\\])grok(\.[a-z]+)?$/i.test(agentCommand)),
+  );
+}
+
+/**
  * Grok's cold ACP turn has a large fixed prefill, while a second prompt on the
  * same physical session reuses that prefix and streams in a few seconds. Keep
  * its process warm across an ordinary conversational pause. The scheduler's

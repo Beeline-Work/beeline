@@ -139,4 +139,24 @@ describe('the corner-open indicator', () => {
     );
     expect(inert.root.findAllByType('Pressable')).toHaveLength(0);
   });
+
+  it('exposes the canonical working-state identifier only while live', () => {
+    const live = render(
+      React.createElement(CornerLiveBar, {
+        label: 'beebee active: feat/x',
+        live: true,
+        onPress: () => undefined,
+      }),
+    );
+    expect(live.root.findByType('Pressable').props.testID).toBe('corner-status-working');
+
+    const idle = render(
+      React.createElement(CornerLiveBar, {
+        label: 'beebee idle: feat/x',
+        live: false,
+        onPress: () => undefined,
+      }),
+    );
+    expect(idle.root.findByType('Pressable').props.testID).toBe('corner-live-bar');
+  });
 });

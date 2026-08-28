@@ -968,7 +968,16 @@ export class BuzzClient {
     if (filters.length === 0) return () => undefined;
     if (!this.ws?.connected) await this.connect();
     const ws = this.ws!;
-    const installedFilters = filters.map((filter) => ({ ...filter }));
+    // The hosted relay does not implement NIP-01 OR semantics for multiple
+    // values in one #h tag filter. Expand those values before installing the
+    // already-independent live REQs so every channel can mark its surface
+    // dirty. Other filter fields stay intact and are still ANDed normally.
+    const installedFilters = filters.flatMap((filter) => {
+      const channelIds = [...new Set(filter['#h'] ?? [])];
+      return channelIds.length > 1
+        ? channelIds.map((channelId) => ({ ...filter, '#h': [channelId] }))
+        : [{ ...filter }];
+    });
     const seenIds = new Set<string>();
 
     // A NIP-01 live REQ first replays matching stored rows and then emits

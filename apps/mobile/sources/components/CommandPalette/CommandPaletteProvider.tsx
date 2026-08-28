@@ -5,7 +5,6 @@ import { Modal } from '@/modal';
 import { CommandPalette } from './CommandPalette';
 import { Command } from './types';
 import { useGlobalKeyboard } from '@/hooks/useGlobalKeyboard';
-import { useAuth } from '@/auth/AuthContext';
 import { storage } from '@/sync/storage';
 import { useShallow } from 'zustand/react/shallow';
 import { ShortcutHintsProvider } from '@/components/ShortcutHints';
@@ -19,7 +18,6 @@ const EMPTY_SESSION_IDS: readonly string[] = [];
 
 export function CommandPaletteProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
-    const { logout, isAuthenticated } = useAuth();
     const commandPaletteEnabled = storage(useShallow((state) => state.localSettings.commandPaletteEnabled));
     const preferredModifier = useMemo(() => getPreferredShortcutModifier(
         typeof navigator === 'undefined' ? undefined : navigator
@@ -54,23 +52,11 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
             },
         ];
 
-        // System commands
-        cmds.push({
-            id: 'sign-out',
-            title: 'Sign Out',
-            subtitle: 'Sign out of your account',
-            icon: 'log-out-outline',
-            category: 'System',
-            action: async () => {
-                await logout();
-            }
-        });
-
         return cmds;
-    }, [browserSafeShortcuts, router, logout, preferredModifier]);
+    }, [browserSafeShortcuts, router, preferredModifier]);
 
     const showCommandPalette = useCallback(() => {
-        if (Platform.OS !== 'web' || !isAuthenticated || !commandPaletteEnabled) return;
+        if (Platform.OS !== 'web' || !commandPaletteEnabled) return;
         
         Modal.show({
             component: CommandPalette,
@@ -78,7 +64,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
                 commands,
             }
         } as any);
-    }, [commands, commandPaletteEnabled, isAuthenticated]);
+    }, [commands, commandPaletteEnabled]);
 
     const openRooms = useCallback(() => {
         router.navigate('/buzz/channels');
@@ -90,17 +76,17 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 
     const visibleModifier = useGlobalKeyboard(
         {
-            commandPalette: isAuthenticated && commandPaletteEnabled ? showCommandPalette : undefined,
-            newSession: isAuthenticated ? openRooms : undefined,
-            settings: isAuthenticated ? openSettings : undefined,
+            commandPalette: commandPaletteEnabled ? showCommandPalette : undefined,
+            newSession: openRooms,
+            settings: openSettings,
         },
         browserSafeShortcuts,
     );
 
     return (
         <ShortcutHintsProvider
-            modifier={isAuthenticated ? visibleModifier : null}
-            commandPaletteEnabled={isAuthenticated && commandPaletteEnabled}
+            modifier={visibleModifier}
+            commandPaletteEnabled={commandPaletteEnabled}
             recentSessionIds={EMPTY_SESSION_IDS}
             browserSafeShortcuts={browserSafeShortcuts}
         >

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 function source(relativePath: string): string {
@@ -6,22 +6,22 @@ function source(relativePath: string): string {
 }
 
 describe('legacy session retirement', () => {
-  it('redirects stale session and new-session links to the Room list', () => {
-    expect(source('app/(app)/session/[...legacy].tsx')).toContain(
-      '<Redirect href="/buzz/channels" />',
-    );
-    expect(source('app/(app)/new/index.tsx')).toContain('<Redirect href="/buzz/channels" />');
+  it('does not register stale session and new-session compatibility routes', () => {
+    expect(existsSync(new URL('../app/(app)/session/[...legacy].tsx', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../app/(app)/new/index.tsx', import.meta.url))).toBe(false);
 
     const layout = source('app/(app)/_layout.tsx');
-    expect(layout).toContain('name="session/[...legacy]"');
+    expect(layout).not.toContain('name="session/[...legacy]"');
     expect(layout).not.toContain('name="session/[id]"');
     expect(layout).not.toContain('session/[id]/info');
   });
 
-  it('sends stale session notification taps to the Room list', () => {
+  it('does not retain stale session notification compatibility routing', () => {
     const rootLayout = source('app/_layout.tsx');
-    expect(rootLayout).toContain('isLegacySessionNotificationResponse(response)');
-    expect(rootLayout).toContain("router.replace('/buzz/channels')");
+    const routing = source('utils/notificationRouting.ts');
+    expect(rootLayout).not.toContain('isLegacySessionNotificationResponse');
+    expect(rootLayout).not.toContain('Retired session notification');
+    expect(routing).not.toContain('isLegacySessionNotificationData');
     expect(rootLayout).not.toContain('navigateToSession');
   });
 

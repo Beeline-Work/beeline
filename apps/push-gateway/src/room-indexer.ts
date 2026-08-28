@@ -50,12 +50,81 @@ function profileFilter(identities: readonly RoomViewIdentity[]) {
     : [];
 }
 
+/**
+ * Resolve the latest valid human soul for one declared agent.
+ *
+ * The author may be a predecessor key that is no longer a current Workspace
+ * member, so display reads must not re-apply a current-membership check. The
+ * relay enforced membership when it accepted the event; excluding declared
+ * agent authors and requiring the full canonical address keeps forged or
+ * unrelated kind:30078 records out of this overlay.
+ */
+function agentSoulLateralSql(
+  identityAlias: string,
+  workspaceIdSql: string,
+  declarationAlias: string,
+): string {
+  const pubkeySql = `encode(${identityAlias}.pubkey, 'hex')`;
+  return `LEFT JOIN LATERAL (
+    SELECT e.content FROM events e
+    WHERE ${declarationAlias}.content IS NOT NULL
+      AND e.community_id = ${identityAlias}.community_id
+      AND e.kind = 30078 AND e.deleted_at IS NULL
+      AND e.d_tag = ${workspaceIdSql} || ':' || ${pubkeySql}
+      AND e.tags @> '[["t", "buzz-agent-soul"]]'::jsonb
+      AND e.tags @> jsonb_build_array(jsonb_build_array('h', ${workspaceIdSql}))
+      AND e.tags @> jsonb_build_array(jsonb_build_array('community', ${workspaceIdSql}))
+      AND e.tags @> jsonb_build_array(jsonb_build_array('p', ${pubkeySql}))
+      AND NOT EXISTS (
+        SELECT 1 FROM events author_agent
+        WHERE author_agent.community_id = e.community_id AND author_agent.pubkey = e.pubkey
+          AND author_agent.kind = 9 AND author_agent.deleted_at IS NULL
+          AND author_agent.tags @> '[["t", "buzz-agent"]]'::jsonb
+          AND author_agent.tags @> jsonb_build_array(jsonb_build_array('h', ${workspaceIdSql}))
+      )
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+  ) soul ON true`;
+}
+
+function agentSoulsCteSql(
+  scopeRelation: string,
+  scopeAlias: string,
+  workspaceIdSql: string,
+): string {
+  return `agent_souls AS MATERIALIZED (
+    SELECT DISTINCT ON (e.community_id, e.d_tag) e.community_id, e.d_tag, e.content
+    FROM ${scopeRelation} ${scopeAlias}
+    JOIN events e ON e.community_id = ${scopeAlias}.community_id
+      AND e.kind = 30078 AND e.deleted_at IS NULL
+    JOIN agent_declarations agent ON agent.community_id = e.community_id
+      AND e.d_tag = ${workspaceIdSql} || ':' || encode(agent.pubkey, 'hex')
+    WHERE e.tags @> '[["t", "buzz-agent-soul"]]'::jsonb
+      AND e.tags @> jsonb_build_array(jsonb_build_array('h', ${workspaceIdSql}))
+      AND e.tags @> jsonb_build_array(jsonb_build_array('community', ${workspaceIdSql}))
+      AND e.tags @> jsonb_build_array(jsonb_build_array('p', encode(agent.pubkey, 'hex')))
+      AND NOT EXISTS (
+        SELECT 1 FROM agent_declarations author_agent
+        WHERE author_agent.community_id = e.community_id AND author_agent.pubkey = e.pubkey
+      )
+    ORDER BY e.community_id, e.d_tag, e.created_at DESC, e.id DESC
+  )`;
+}
+
+function resolvedIdentityNameSql(
+  alias: string,
+  declarationColumn = 'agent_content',
+  humanNameColumn = 'name',
+): string {
+  return `COALESCE(NULLIF(${alias}.soul_content::jsonb->>'name', ''), NULLIF(${alias}.${declarationColumn}::jsonb->>'displayName', ''), ${alias}.${humanNameColumn})`;
+}
+
 function roomFilters(
   roomId: string,
+  workspaceId: string,
   familyIds: readonly string[],
   members: readonly RoomViewMember[],
 ) {
-  const h = [...new Set([roomId, ...familyIds])];
+  const h = [...new Set([workspaceId, roomId, ...familyIds])];
   return [
     { kinds: [...DURABLE_KINDS], '#h': h },
     ...profileFilter(members.map((member) => member.identity)),
@@ -111,15 +180,17 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.workspace_id))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
-), identities AS (
+), ${agentSoulsCteSql('authorized', 'a', 'a.workspace_id')}, identities AS (
   SELECT k.community_id, k.pubkey,
     NULLIF(u.display_name, '') AS name, u.nip05_handle AS handle, u.avatar_url AS avatar,
-    agent.content AS agent_content
+    agent.content AS agent_content, soul.content AS soul_content
   FROM identity_keys k
   LEFT JOIN users u ON u.community_id = k.community_id AND u.pubkey = k.pubkey
     AND u.deactivated_at IS NULL
   LEFT JOIN agent_declarations agent ON agent.community_id = k.community_id
     AND agent.pubkey = k.pubkey
+  LEFT JOIN agent_souls soul ON soul.community_id = k.community_id
+    AND soul.d_tag = k.workspace_id || ':' || encode(k.pubkey, 'hex')
 )
 SELECT 'room' AS section, jsonb_build_object(
   'id', a.id, 'workspaceId', a.workspace_id, 'parentId', a.parent_id,
@@ -132,7 +203,7 @@ SELECT 'room' AS section, jsonb_build_object(
 UNION ALL
 SELECT 'member', jsonb_build_object(
   'pubkey', encode(cm.pubkey, 'hex'), 'role', cm.role::text,
-  'name', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
+  'name', ${resolvedIdentityNameSql('resolved')},
   'handle', resolved.handle, 'avatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
   'agent', resolved.agent_content IS NOT NULL
 ) FROM authorized a
@@ -151,7 +222,7 @@ SELECT 'event', jsonb_build_object(
       AND root.deleted_at IS NULL AND root.kind = 9
     WHERE rt->>0 = 'e' AND rt->>3 = 'root' AND rt->>1 ~ '^[0-9a-f]{64}$'
     LIMIT 1), encode(e.id, 'hex')),
-  'name', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
+  'name', ${resolvedIdentityNameSql('resolved')},
   'handle', resolved.handle, 'avatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
   'agent', resolved.agent_content IS NOT NULL
 ) FROM page e
@@ -215,10 +286,10 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
-), roster_resolved AS (
+), ${agentSoulsCteSql('authorized', 'a', 'a.id::text')}, roster_resolved AS (
   SELECT a.community_id, a.id AS workspace_id, cm.pubkey, cm.role::text,
     NULLIF(u.display_name, '') AS human_name, u.nip05_handle, u.avatar_url,
-    agent.content AS agent_content,
+    agent.content AS agent_content, soul.content AS soul_content,
     presence.status AS presence_status, presence.observed_at, presence.room_id
   FROM authorized a
   JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
@@ -227,6 +298,8 @@ WITH candidates AS (
     AND u.deactivated_at IS NULL
   LEFT JOIN agent_declarations agent ON agent.community_id = cm.community_id
     AND agent.pubkey = cm.pubkey
+  LEFT JOIN agent_souls soul ON soul.community_id = cm.community_id
+    AND soul.d_tag = a.id::text || ':' || encode(cm.pubkey, 'hex')
   LEFT JOIN LATERAL (
     SELECT (SELECT t->>1 FROM jsonb_array_elements(e.tags) t WHERE t->>0 = 'status' LIMIT 1) AS status,
       extract(epoch FROM e.created_at)::bigint AS observed_at,
@@ -264,7 +337,7 @@ SELECT 'workspace' AS section, jsonb_build_object(
 UNION ALL
 SELECT 'member', jsonb_build_object(
   'pubkey', encode(r.pubkey, 'hex'), 'role', r.role,
-  'name', COALESCE(NULLIF(r.agent_content::jsonb->>'displayName', ''), r.human_name),
+  'name', ${resolvedIdentityNameSql('r', 'agent_content', 'human_name')},
   'handle', r.nip05_handle, 'avatar', COALESCE(r.agent_content::jsonb->>'avatar', r.avatar_url),
   'agent', r.agent_content IS NOT NULL,
   'presenceStatus', r.presence_status, 'presenceObservedAt', r.observed_at,
@@ -356,7 +429,8 @@ WITH workspace_candidates AS (
     WHERE t->>0 = 't' AND t->>1 = 'buzz-room-repository')
   ORDER BY e.community_id, e.channel_id, e.created_at DESC, e.id DESC
 ), identity_keys AS (
-  SELECT DISTINCT e.community_id, e.pubkey FROM preview_events e
+  SELECT DISTINCT e.community_id, e.pubkey, w.id::text AS workspace_id
+  FROM preview_events e JOIN workspace w ON true
 ), agent_declarations AS MATERIALIZED (
   SELECT DISTINCT ON (e.community_id, e.pubkey) e.community_id, e.pubkey, e.content
   FROM workspace w JOIN events e ON e.community_id = w.community_id
@@ -364,15 +438,17 @@ WITH workspace_candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', w.id::text))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
-), identities AS (
+), ${agentSoulsCteSql('workspace', 'w', 'w.id::text')}, identities AS (
   SELECT k.community_id, k.pubkey,
     NULLIF(u.display_name, '') AS name, u.nip05_handle AS handle, u.avatar_url AS avatar,
-    agent.content AS agent_content
+    agent.content AS agent_content, soul.content AS soul_content
   FROM identity_keys k
   LEFT JOIN users u ON u.community_id = k.community_id AND u.pubkey = k.pubkey
     AND u.deactivated_at IS NULL
   LEFT JOIN agent_declarations agent ON agent.community_id = k.community_id
     AND agent.pubkey = k.pubkey
+  LEFT JOIN agent_souls soul ON soul.community_id = k.community_id
+    AND soul.d_tag = k.workspace_id || ':' || encode(k.pubkey, 'hex')
 )
 SELECT 'workspace' AS section, jsonb_build_object(
   'id', w.id, 'name', w.name, 'avatar', w.avatar,
@@ -411,7 +487,7 @@ SELECT 'preview', jsonb_build_object(
   'roomId', e.room_id, 'id', encode(e.id, 'hex'), 'pubkey', encode(e.pubkey, 'hex'),
   'createdAt', extract(epoch FROM e.created_at)::bigint,
   'tags', e.tags, 'content', e.content,
-  'name', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
+  'name', ${resolvedIdentityNameSql('resolved')},
   'handle', resolved.handle,
   'avatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
   'agent', resolved.agent_content IS NOT NULL
@@ -428,7 +504,7 @@ WITH authorized AS (
   WHERE c.id = $1::uuid AND c.deleted_at IS NULL
 ), selected AS (
   SELECT a.community_id, a.id AS workspace_id, cm.role::text,
-    encode(cm.pubkey, 'hex') AS pubkey, declaration.content,
+    encode(cm.pubkey, 'hex') AS pubkey, declaration.content, soul.content AS soul_content,
     NULLIF(u.display_name, '') AS human_name, u.nip05_handle, u.avatar_url
   FROM authorized a
   JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
@@ -445,6 +521,7 @@ WITH authorized AS (
         WHERE h->>0 = 'h' AND h->>1 = a.id::text)
     ORDER BY e.created_at DESC, e.id DESC LIMIT 1
   ) declaration ON true
+  ${agentSoulLateralSql('cm', 'a.id::text', 'declaration')}
 ), catalog AS (
   SELECT e.content FROM selected s JOIN LATERAL (
     SELECT e.content FROM events e
@@ -472,7 +549,7 @@ WITH authorized AS (
 )
 SELECT 'agent' AS section, jsonb_build_object(
   'workspaceId', s.workspace_id, 'pubkey', s.pubkey, 'role', s.role,
-  'name', COALESCE(NULLIF(s.content::jsonb->>'displayName', ''), s.human_name),
+  'name', ${resolvedIdentityNameSql('s', 'content', 'human_name')},
   'handle', s.nip05_handle, 'avatar', COALESCE(s.content::jsonb->>'avatar', s.avatar_url),
   'agent', true
 ) AS data FROM selected s
@@ -567,8 +644,11 @@ WITH candidates AS (
 ), previews AS (
   SELECT * FROM preview_ranked WHERE ordinal <= $3
 ), identity_keys AS (
-  SELECT community_id, created_by AS pubkey FROM corners
-  UNION SELECT community_id, pubkey FROM previews
+  SELECT c.community_id, c.created_by AS pubkey, a.workspace_id
+  FROM corners c JOIN authorized a ON true
+  UNION
+  SELECT e.community_id, e.pubkey, a.workspace_id
+  FROM previews e JOIN authorized a ON true
 ), agent_declarations AS MATERIALIZED (
   SELECT DISTINCT ON (e.community_id, e.pubkey) e.community_id, e.pubkey, e.content
   FROM authorized a JOIN events e ON e.community_id = a.community_id
@@ -576,15 +656,17 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.workspace_id))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
-), identities AS (
+), ${agentSoulsCteSql('authorized', 'a', 'a.workspace_id')}, identities AS (
   SELECT k.community_id, k.pubkey,
     NULLIF(u.display_name, '') AS name, u.nip05_handle AS handle, u.avatar_url AS avatar,
-    agent.content AS agent_content
+    agent.content AS agent_content, soul.content AS soul_content
   FROM identity_keys k
   LEFT JOIN users u ON u.community_id = k.community_id AND u.pubkey = k.pubkey
     AND u.deactivated_at IS NULL
   LEFT JOIN agent_declarations agent ON agent.community_id = k.community_id
     AND agent.pubkey = k.pubkey
+  LEFT JOIN agent_souls soul ON soul.community_id = k.community_id
+    AND soul.d_tag = k.workspace_id || ':' || encode(k.pubkey, 'hex')
 )
 SELECT 'room' AS section, jsonb_build_object(
   'id', a.id, 'workspaceId', a.workspace_id, 'name', a.name, 'about', a.description,
@@ -604,7 +686,7 @@ SELECT 'corner', jsonb_build_object(
   ))::bigint,
   'statusTags', state.tags,
   'agentPubkey', encode(c.created_by, 'hex'),
-  'agentName', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
+  'agentName', ${resolvedIdentityNameSql('resolved')},
   'agentHandle', resolved.handle,
   'agentAvatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
   'agent', resolved.agent_content IS NOT NULL
@@ -623,7 +705,7 @@ SELECT 'preview', jsonb_build_object(
   'roomId', e.room_id, 'id', encode(e.id, 'hex'), 'pubkey', encode(e.pubkey, 'hex'),
   'createdAt', extract(epoch FROM e.created_at)::bigint,
   'tags', e.tags, 'content', e.content,
-  'name', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
+  'name', ${resolvedIdentityNameSql('resolved')},
   'handle', resolved.handle,
   'avatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
   'agent', resolved.agent_content IS NOT NULL
@@ -711,15 +793,17 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.workspace_id))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
-), identities AS (
+), ${agentSoulsCteSql('authorized', 'a', 'a.workspace_id')}, identities AS (
   SELECT k.community_id, k.pubkey,
     NULLIF(u.display_name, '') AS name, u.nip05_handle AS handle, u.avatar_url AS avatar,
-    agent.content AS agent_content
+    agent.content AS agent_content, soul.content AS soul_content
   FROM identity_keys k
   LEFT JOIN users u ON u.community_id = k.community_id AND u.pubkey = k.pubkey
     AND u.deactivated_at IS NULL
   LEFT JOIN agent_declarations agent ON agent.community_id = k.community_id
     AND agent.pubkey = k.pubkey
+  LEFT JOIN agent_souls soul ON soul.community_id = k.community_id
+    AND soul.d_tag = k.workspace_id || ':' || encode(k.pubkey, 'hex')
 )
 SELECT 'room' AS section, jsonb_build_object(
   'id', a.id, 'workspaceId', a.workspace_id, 'parentId', a.parent_id,
@@ -753,7 +837,7 @@ SELECT 'parent', jsonb_build_object(
 UNION ALL
 SELECT 'member', jsonb_build_object(
   'pubkey', encode(cm.pubkey, 'hex'), 'role', cm.role::text,
-  'name', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
+  'name', ${resolvedIdentityNameSql('resolved')},
   'handle', resolved.handle,
   'avatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
   'agent', resolved.agent_content IS NOT NULL,
@@ -790,7 +874,7 @@ SELECT section, jsonb_build_object(
       AND root.deleted_at IS NULL AND root.kind = 9
     WHERE rt->>0 = 'e' AND rt->>3 = 'root' AND rt->>1 ~ '^[0-9a-f]{64}$'
     LIMIT 1), encode(e.id, 'hex')),
-  'name', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
+  'name', ${resolvedIdentityNameSql('resolved')},
   'handle', resolved.handle,
   'avatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
   'agent', resolved.agent_content IS NOT NULL
@@ -812,7 +896,7 @@ SELECT 'sibling', jsonb_build_object(
   ))::bigint,
   'statusTags', state.tags,
   'agentPubkey', encode(f.created_by, 'hex'),
-  'agentName', COALESCE(NULLIF(resolved.agent_content::jsonb->>'displayName', ''), resolved.name),
+  'agentName', ${resolvedIdentityNameSql('resolved')},
   'agentHandle', resolved.handle,
   'agentAvatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
   'agent', resolved.agent_content IS NOT NULL
@@ -1468,6 +1552,7 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
     corners,
     watchFilters: roomFilters(
       roomId,
+      String(roomData.workspaceId ?? ''),
       [
         ...(parentData ? [String(parentData.id ?? '')] : []),
         ...corners.map((item) => item.corner.id),
@@ -1792,7 +1877,14 @@ export class RoomIndexer {
         },
       },
       watchFilters: [
-        { kinds: [...DURABLE_KINDS], '#h': [roomId, ...corners.map((item) => item.corner.id)] },
+        {
+          kinds: [...DURABLE_KINDS],
+          '#h': [
+            String(roomData.workspaceId ?? ''),
+            roomId,
+            ...corners.map((item) => item.corner.id),
+          ],
+        },
         ...profileFilter(corners.flatMap((item) => (item.agent ? [item.agent] : []))),
       ],
     };

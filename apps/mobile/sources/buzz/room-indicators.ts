@@ -38,20 +38,20 @@ export type TurnProgressInput = {
   /** Corners trust their own channel-local turn proof even if Room presence is stale. */
   isCorner: boolean;
   agentsOffline: boolean;
-  liveTurnPubkey?: string;
   activeTurnPubkey?: string;
 };
 
 /**
  * The channel-local agent whose active turn should light the thinking line.
  *
- * A streamed lane is the strongest proof. A bare signed WORKING receipt fills
- * the silent window before the first token. Room-wide offline state may hide a
- * Room indicator, but it cannot veto either proof inside a Corner.
+ * The server-indexed latest WORKING receipt is the only proof. Draft streams
+ * are content overlays, not lifecycle: they can start late and a lost retract
+ * can leave one open forever. Room-wide offline state may hide a Room
+ * indicator, but it cannot veto channel-local proof inside a Corner.
  */
 export function selectTurnProgressAgentPubkey(input: TurnProgressInput): string | null {
   if (!input.isCorner && input.agentsOffline) return null;
-  return input.liveTurnPubkey ?? input.activeTurnPubkey ?? null;
+  return input.activeTurnPubkey ?? null;
 }
 
 /**

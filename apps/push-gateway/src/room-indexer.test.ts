@@ -173,6 +173,16 @@ describe('RoomIndexer', () => {
     );
     await event(ROOM, VIEWER, 3, 9, [['h', ROOM]], 'Hello');
     await event(ROOM, AGENT, 4, 9, [['h', ROOM]], 'Ready');
+    await event(ROOM, AGENT, 12, 9, [
+      ['h', ROOM],
+      ['t', 'agent-turn'],
+      ['request', 'c'.repeat(64)],
+      ['session', 'session-1'],
+      ['agent', AGENT],
+      ['mode', 'readonly'],
+      ['status', 'working'],
+      ['generation', 'generation-1'],
+    ]);
     await event(ROOM, AGENT, 10, KIND_AGENT_PRESENCE, [
       ['h', ROOM],
       ['d', `${TAG_AGENT_PRESENCE}:${ROOM}`],
@@ -266,12 +276,57 @@ describe('RoomIndexer', () => {
           presence: { status: 'online', observedAt: 10, roomId: ROOM },
         },
       ],
+      latestAgentTurns: [
+        {
+          requestId: 'c'.repeat(64),
+          agentPubkey: AGENT,
+          status: 'working',
+          createdAt: 12,
+          generationId: 'generation-1',
+        },
+      ],
       corners: [{ corner: { id: CORNER, updatedAt: 7 }, status: 'working' }],
     });
     expect(view?.messages.map((message) => [message.text, message.author.name])).toEqual([
       ['Hello', 'Ada'],
       ['Ready', 'Milo'],
     ]);
+  });
+
+  it('returns the latest terminal receipt so completion clears a working turn', async () => {
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(13), 9, $4, 'Agent reply complete.', $5)`,
+      [
+        TENANT,
+        bytes('9'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-turn'],
+          ['request', 'c'.repeat(64)],
+          ['session', 'session-1'],
+          ['agent', AGENT],
+          ['mode', 'readonly'],
+          ['status', 'complete'],
+          ['generation', 'generation-1'],
+        ]),
+        ROOM,
+      ],
+    );
+
+    await expect(indexer.readRoom(ROOM, VIEWER)).resolves.toMatchObject({
+      latestAgentTurns: [
+        {
+          requestId: 'c'.repeat(64),
+          agentPubkey: AGENT,
+          status: 'complete',
+          createdAt: 13,
+          generationId: 'generation-1',
+        },
+      ],
+    });
   });
 
   it('owns read marks on the server across devices and viewers without a second Room query', async () => {

@@ -14,6 +14,7 @@ const room: RoomView = {
   },
   messages: [],
   members: [],
+  latestAgentTurns: [],
   corners: [],
   viewer: {
     identity: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Captain' },
@@ -95,6 +96,20 @@ describe('RoomViewClient', () => {
       attachments: [{}],
     };
     expect(isRoomView({ ...room, messages: [badMessage] })).toBe(false);
+    expect(
+      isRoomView({
+        ...room,
+        latestAgentTurns: [
+          {
+            requestId: 'c'.repeat(64),
+            agentPubkey: 'b'.repeat(64),
+            status: 'working',
+            createdAt: 3,
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(isRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })).toBe(false);
     expect(
       isRoomView({
         ...room,

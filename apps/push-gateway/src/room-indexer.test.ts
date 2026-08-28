@@ -389,6 +389,7 @@ describe('RoomIndexer', () => {
         pubkey: AGENT,
         markers: ['github-event'],
         extraTags: [
+          ['service', 'beeline-events'],
           ['github-event-type', 'pull-request'],
           ['github-event-action', 'merged'],
           ['github-event-actor', 'lena'],

@@ -1285,7 +1285,6 @@ const HIDDEN_MARKERS = new Set([
 const SYSTEM_MARKERS = new Set([
   'buzz-agent-model-unavailable',
   'buzz-work-schedule-paused',
-  'github-event',
   'github-event-health',
   'steer-queued',
   'slash-command-notice',
@@ -1465,6 +1464,7 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     markers.size > 0 &&
     ![...markers].some((candidate) => CONVERSATION_MARKERS.has(candidate))
   ) {
+    if ([...markers].some((candidate) => candidate.startsWith('buzz-'))) return undefined;
     return { ...base, presentation: 'system' };
   }
   if (!base.text.trim() && !markers.has('buzz-attachment')) return undefined;

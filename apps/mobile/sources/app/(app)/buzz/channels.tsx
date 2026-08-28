@@ -47,7 +47,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 
 const AGE_TICK_MS = 60_000;
-const COMPOSE_FAB_CLEARANCE = 88;
+const COMPOSE_FAB_CLEARANCE = 80;
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;

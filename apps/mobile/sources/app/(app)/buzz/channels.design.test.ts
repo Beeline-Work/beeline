@@ -44,6 +44,16 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'composeOverlay')).not.toMatch(/border(?:Top|Bottom|Left|Right)/);
     expect(styleBlock(source, 'list')).toContain('paddingBottom: COMPOSE_FAB_CLEARANCE');
     expect(composeSource).toContain('testID="room-deck-compose-fab"');
+    // The compose button matches the deck's 48px rail controls. Its plus is a
+    // geometric SVG, so Android font ascent/descent cannot offset it.
+    expect(styleBlock(composeSource, 'fab')).toContain('width: 48');
+    expect(styleBlock(composeSource, 'fab')).toContain('height: 48');
+    expect(styleBlock(composeSource, 'fabGlyph')).toContain('width: FAB_GLYPH_SIZE');
+    expect(styleBlock(composeSource, 'fabGlyph')).toContain('height: FAB_GLYPH_SIZE');
+    expect(composeSource).toContain('const FAB_GLYPH_SIZE = 24');
+    expect(composeSource).toContain('d="M12 4v16M4 12h16"');
+    expect(composeSource).not.toContain('<Text style={styles.fabGlyph}>');
+    expect(source).toContain('const COMPOSE_FAB_CLEARANCE = 80');
   });
 
   it('uses one required unread fact for NEW and the needs-you mark', () => {

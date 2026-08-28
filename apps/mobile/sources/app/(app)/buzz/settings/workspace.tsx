@@ -287,7 +287,7 @@ export default function WorkspaceSettings() {
           <Text style={styles.backText}>‹</Text>
         </TouchableOpacity>
         <View style={styles.headerCopy}>
-          <Text style={styles.title}>{WORKSPACE_LABEL} Settings</Text>
+          <Text style={styles.title}>{WORKSPACE_LABEL}</Text>
           <Text numberOfLines={1} style={styles.headerMeta}>
             {workspace?.name ?? WORKSPACE_LABEL}
           </Text>

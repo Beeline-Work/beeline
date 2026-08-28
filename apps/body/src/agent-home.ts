@@ -12,7 +12,10 @@
  * Room harnesses receive a Beeline-owned `$HOME` as well as their harness
  * state roots. Known login files are linked into the harness-specific state
  * directory, preserving one operator login without inheriting `$HOME/.agents`,
- * plugins, configuration, or personal memory.
+ * plugins, configuration, or personal memory. Pi's credential-bearing custom
+ * provider catalog is copied as a private ordinary file into only its config
+ * directory and regenerated on activation; operator UI/default settings stay
+ * isolated.
  *
  * **Skills.** Every `<harness-home>/skills` is rebuilt on activation with the
  * explicit default allowlist plus narrow names stored on this agent's runtime
@@ -130,6 +133,18 @@ const HARNESS_MCP_CONFIGS = [
   { dir: 'codex' as const, toml: '.codex/config.toml' },
   { dir: 'grok' as const, toml: '.grok/config.toml' },
 ];
+
+/**
+ * Pi custom providers live outside auth.json and may carry inline API keys.
+ * Copy only this exact file into PI_CODING_AGENT_DIR. `settings.json` is
+ * deliberately excluded: Body applies the paired or human-selected model via
+ * ACP, while Pi's theme, package, extension, and default behavior are ambient
+ * operator preferences rather than credentials required by that selection.
+ */
+const PI_CUSTOM_MODEL_CONFIG = {
+  source: '.pi/agent/models.json',
+  target: 'models.json',
+} as const;
 
 /**
  * Codex's supported per-home switch for its internal delegation surface.
@@ -287,6 +302,41 @@ async function provisionAgentSkillsAndMcp(
   } catch (error) {
     if (failClosed) throw error;
     console.warn('[body] operator MCP passthrough failed for claude:', error);
+  }
+
+  await provisionPiCustomModelConfig(root, operatorHome, failClosed);
+}
+
+async function provisionPiCustomModelConfig(
+  root: string,
+  operatorHome: string,
+  failClosed: boolean,
+): Promise<void> {
+  const source = resolve(operatorHome, PI_CUSTOM_MODEL_CONFIG.source);
+  const target = resolve(root, 'pi', PI_CUSTOM_MODEL_CONFIG.target);
+  try {
+    const sourceStats = await lstat(source).catch(() => undefined);
+    if (!sourceStats) {
+      await unlink(target).catch(() => undefined);
+      return;
+    }
+    if (!sourceStats.isFile() || sourceStats.isSymbolicLink() || sourceStats.nlink !== 1) {
+      throw new AgentHomeSecurityError(
+        `Pi custom model config is not an ordinary private source file: ${source}`,
+      );
+    }
+    const resolvedSource = await realpath(source);
+    if (resolvedSource !== source) {
+      throw new AgentHomeSecurityError(`Pi custom model config resolves through a link: ${source}`);
+    }
+    await writeIsolatedHarnessFile(target, readFileSync(resolvedSource, 'utf8'));
+  } catch (error) {
+    // Never retain a stale credential-bearing copy when its current source is
+    // unsafe or unreadable. A governed activation may choose to fail closed;
+    // ordinary Rooms continue without the custom provider and log the cause.
+    await unlink(target).catch(() => undefined);
+    if (failClosed) throw error;
+    console.warn('[body] operator Pi custom model passthrough failed:', error);
   }
 }
 

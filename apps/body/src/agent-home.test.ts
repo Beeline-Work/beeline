@@ -16,6 +16,7 @@ import {
 } from './agent-home.js';
 import { AGENT_PRIVATE_STATE_ENV } from './agent-private-state.js';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
+import { filterModelOptionsByCredentials } from './model-config.js';
 import { tomlChildTableNames } from './toml-section.js';
 
 const cleanup: string[] = [];
@@ -92,6 +93,109 @@ describe('per-room harness state isolation', () => {
       expect(lstatSync(grok).isSymbolicLink()).toBe(true);
       expect(lstatSync(pi).isSymbolicLink()).toBe(true);
     }
+  });
+
+  it('copies Pi custom providers privately and refreshes them on every activation', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    await mkdir(resolve(operatorHome, '.pi/agent'), { recursive: true });
+    await writeFile(resolve(operatorHome, '.pi/agent/auth.json'), '{}\n');
+    await writeFile(
+      resolve(operatorHome, '.pi/agent/models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            name: 'openrouter-ox',
+            apiKey: 'inline-secret',
+            models: [{ id: 'z-ai/glm-5.3-flash' }],
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    );
+    await writeFile(
+      resolve(operatorHome, '.pi/agent/settings.json'),
+      JSON.stringify({ defaultProvider: 'operator-default', theme: 'operator-theme' }),
+    );
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    const isolatedModels = resolve(roomRoot, 'pi/models.json');
+    expect(lstatSync(isolatedModels).isFile()).toBe(true);
+    expect(lstatSync(isolatedModels).isSymbolicLink()).toBe(false);
+    expect(lstatSync(isolatedModels).mode & 0o777).toBe(0o600);
+    expect(readFileSync(isolatedModels, 'utf8')).toContain('inline-secret');
+    expect(existsSync(resolve(roomRoot, 'pi/settings.json'))).toBe(false);
+    const modelOptions = [
+      {
+        id: 'model',
+        category: 'model',
+        options: [
+          { id: 'openrouter-ox/z-ai/glm-5.3-flash' },
+          { id: 'unconfigured-provider/hidden-model' },
+        ],
+      },
+    ];
+    expect(
+      filterModelOptionsByCredentials(modelOptions, {
+        HOME: resolve(roomRoot, 'user'),
+        PI_CODING_AGENT_DIR: resolve(roomRoot, 'pi'),
+      })[0]?.options.map((choice) => choice.id),
+    ).toEqual(['openrouter-ox/z-ai/glm-5.3-flash']);
+    expect(
+      filterModelOptionsByCredentials(modelOptions, { HOME: operatorHome })[0]?.options.map(
+        (choice) => choice.id,
+      ),
+    ).toEqual(['openrouter-ox/z-ai/glm-5.3-flash']);
+    for (const dir of AGENT_SKILL_DIRS) {
+      expect(existsSync(resolve(roomRoot, dir, 'skills/models.json'))).toBe(false);
+    }
+
+    await writeFile(
+      resolve(operatorHome, '.pi/agent/models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            name: 'openrouter-ox',
+            apiKey: 'rotated-secret',
+            models: [{ id: 'z-ai/glm-5.3-flash' }, { id: 'z-ai/glm-5.4' }],
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    );
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+
+    expect(readFileSync(isolatedModels, 'utf8')).toContain('rotated-secret');
+    expect(readFileSync(isolatedModels, 'utf8')).toContain('z-ai/glm-5.4');
+    expect(lstatSync(isolatedModels).mode & 0o777).toBe(0o600);
+
+    const redirected = resolve(await scratch('beeline-redirected-'), 'models.json');
+    await writeFile(redirected, 'must stay unchanged\n');
+    await rm(isolatedModels);
+    await symlink(redirected, isolatedModels);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    expect(lstatSync(isolatedModels).isSymbolicLink()).toBe(false);
+    expect(readFileSync(isolatedModels, 'utf8')).toContain('rotated-secret');
+    expect(readFileSync(redirected, 'utf8')).toBe('must stay unchanged\n');
+
+    await rm(resolve(operatorHome, '.pi/agent/models.json'));
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome });
+    expect(existsSync(isolatedModels)).toBe(false);
+  });
+
+  it('rejects a linked Pi provider source instead of copying credential material', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const external = resolve(await scratch('beeline-external-models-'), 'models.json');
+    await mkdir(resolve(operatorHome, '.pi/agent'), { recursive: true });
+    await writeFile(external, '{"providers":{"unsafe":{"apiKey":"secret"}}}', { mode: 0o600 });
+    await symlink(external, resolve(operatorHome, '.pi/agent/models.json'));
+    const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');
+
+    await expect(
+      prepareRoomAgentHome({ root: roomRoot, operatorHome, failClosed: true }),
+    ).rejects.toThrow('Pi custom model config is not an ordinary private source file');
+    expect(existsSync(resolve(roomRoot, 'pi/models.json'))).toBe(false);
   });
 
   it('degrades to the daemon state instead of failing a Room it cannot isolate', async () => {

@@ -138,6 +138,99 @@ function roomFilters(
   ];
 }
 
+/**
+ * Resolve only the current NIP-10 shapes accepted by Beeline's publishers.
+ * A direct reply omits a redundant root marker, so its validated same-Room
+ * parent is the root. A nested reply must carry an explicit root.
+ */
+function messageRootIdSql(eventAlias: string): string {
+  const eventTags = `jsonb_array_elements(${eventAlias}.tags)`;
+  return `CASE
+    WHEN (SELECT count(*) FROM ${eventTags} tag WHERE tag->>0 = 'e') = 0
+      THEN encode(${eventAlias}.id, 'hex')
+    WHEN (SELECT count(*) FROM ${eventTags} tag WHERE tag->>0 = 'e') = 1
+      AND (SELECT count(*) FROM ${eventTags} tag
+        WHERE tag->>0 = 'e' AND tag->>3 = 'reply') = 1
+      THEN (
+        SELECT encode(parent.id, 'hex')
+        FROM ${eventTags} reply_tag
+        JOIN events parent ON parent.community_id = ${eventAlias}.community_id
+          AND parent.channel_id = ${eventAlias}.channel_id
+          AND parent.id = CASE WHEN reply_tag->>1 ~ '^[0-9a-f]{64}$'
+            THEN decode(reply_tag->>1, 'hex') END
+          AND parent.deleted_at IS NULL AND parent.kind = 9
+        WHERE reply_tag->>0 = 'e' AND reply_tag->>3 = 'reply'
+          AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(parent.tags) parent_tag
+            WHERE parent_tag->>0 = 'e'
+          )
+        LIMIT 1
+      )
+    WHEN (SELECT count(*) FROM ${eventTags} tag WHERE tag->>0 = 'e') = 2
+      AND (SELECT count(*) FROM ${eventTags} tag
+        WHERE tag->>0 = 'e' AND tag->>3 = 'reply') = 1
+      AND (SELECT count(*) FROM ${eventTags} tag
+        WHERE tag->>0 = 'e' AND tag->>3 = 'root') = 1
+      THEN (
+        SELECT encode(thread_root.id, 'hex')
+        FROM ${eventTags} root_tag
+        JOIN events thread_root ON thread_root.community_id = ${eventAlias}.community_id
+          AND thread_root.channel_id = ${eventAlias}.channel_id
+          AND thread_root.id = CASE WHEN root_tag->>1 ~ '^[0-9a-f]{64}$'
+            THEN decode(root_tag->>1, 'hex') END
+          AND thread_root.deleted_at IS NULL AND thread_root.kind = 9
+        JOIN LATERAL ${eventTags} reply_tag
+          ON reply_tag->>0 = 'e' AND reply_tag->>3 = 'reply'
+        JOIN events nested_parent ON nested_parent.community_id = ${eventAlias}.community_id
+          AND nested_parent.channel_id = ${eventAlias}.channel_id
+          AND nested_parent.id = CASE WHEN reply_tag->>1 ~ '^[0-9a-f]{64}$'
+            THEN decode(reply_tag->>1, 'hex') END
+          AND nested_parent.deleted_at IS NULL AND nested_parent.kind = 9
+        WHERE root_tag->>0 = 'e' AND root_tag->>3 = 'root'
+          AND nested_parent.id <> thread_root.id
+          AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(thread_root.tags) root_marker
+            WHERE root_marker->>0 = 'e'
+          )
+          AND EXISTS (
+            WITH RECURSIVE ancestry(id, tags, path) AS (
+              SELECT nested_parent.id, nested_parent.tags, ARRAY[nested_parent.id]
+              UNION ALL
+              SELECT ancestor.id, ancestor.tags, current.path || ancestor.id
+              FROM ancestry current
+              JOIN LATERAL (
+                SELECT candidate->>1 AS event_id
+                FROM jsonb_array_elements(current.tags) candidate
+                WHERE candidate->>0 = 'e' AND candidate->>3 = 'reply'
+                  AND candidate->>1 ~ '^[0-9a-f]{64}$'
+              ) parent_link ON true
+              JOIN events ancestor ON ancestor.community_id = ${eventAlias}.community_id
+                AND ancestor.channel_id = ${eventAlias}.channel_id
+                AND ancestor.id = decode(parent_link.event_id, 'hex')
+                AND ancestor.deleted_at IS NULL AND ancestor.kind = 9
+              WHERE current.id <> thread_root.id
+                AND NOT ancestor.id = ANY(current.path)
+                AND (
+                  ((SELECT count(*) FROM jsonb_array_elements(current.tags) tag
+                    WHERE tag->>0 = 'e') = 1
+                    AND parent_link.event_id = encode(thread_root.id, 'hex'))
+                  OR
+                  ((SELECT count(*) FROM jsonb_array_elements(current.tags) tag
+                    WHERE tag->>0 = 'e') = 2
+                    AND parent_link.event_id <> encode(thread_root.id, 'hex')
+                    AND (SELECT count(*) FROM jsonb_array_elements(current.tags) tag
+                      WHERE tag->>0 = 'e' AND tag->>3 = 'root'
+                        AND tag->>1 = encode(thread_root.id, 'hex')) = 1)
+                )
+            )
+            SELECT 1 FROM ancestry candidate WHERE candidate.id = thread_root.id
+          )
+        LIMIT 1
+      )
+    ELSE NULL
+  END`;
+}
+
 const ROOM_SQL = `
 WITH candidates AS (
   SELECT c.community_id, c.id, c.name, c.description, c.visibility, c.created_at, c.updated_at,
@@ -224,13 +317,7 @@ SELECT 'event', jsonb_build_object(
   'id', encode(e.id, 'hex'), 'pubkey', encode(e.pubkey, 'hex'),
   'createdAt', extract(epoch FROM e.created_at)::bigint,
   'tags', e.tags, 'content', e.content,
-  'rootId', COALESCE((SELECT encode(root.id, 'hex')
-    FROM jsonb_array_elements(e.tags) rt
-    JOIN events root ON root.community_id = e.community_id AND root.channel_id = e.channel_id
-      AND root.id = CASE WHEN rt->>1 ~ '^[0-9a-f]{64}$' THEN decode(rt->>1, 'hex') END
-      AND root.deleted_at IS NULL AND root.kind = 9
-    WHERE rt->>0 = 'e' AND rt->>3 = 'root' AND rt->>1 ~ '^[0-9a-f]{64}$'
-    LIMIT 1), encode(e.id, 'hex')),
+  'rootId', ${messageRootIdSql('e')},
   'name', ${resolvedIdentityNameSql('resolved')},
   'handle', resolved.handle, 'avatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
   'agent', resolved.agent_content IS NOT NULL
@@ -969,13 +1056,7 @@ SELECT section, jsonb_build_object(
   'id', encode(e.id, 'hex'), 'pubkey', encode(e.pubkey, 'hex'),
   'createdAt', extract(epoch FROM e.created_at)::bigint,
   'tags', e.tags, 'content', e.content,
-  'rootId', COALESCE((SELECT encode(root.id, 'hex')
-    FROM jsonb_array_elements(e.tags) rt
-    JOIN events root ON root.community_id = e.community_id AND root.channel_id = e.channel_id
-      AND root.id = CASE WHEN rt->>1 ~ '^[0-9a-f]{64}$' THEN decode(rt->>1, 'hex') END
-      AND root.deleted_at IS NULL AND root.kind = 9
-    WHERE rt->>0 = 'e' AND rt->>3 = 'root' AND rt->>1 ~ '^[0-9a-f]{64}$'
-    LIMIT 1), encode(e.id, 'hex')),
+  'rootId', ${messageRootIdSql('e')},
   'name', ${resolvedIdentityNameSql('resolved')},
   'handle', resolved.handle,
   'avatar', COALESCE(resolved.agent_content::jsonb->>'avatar', resolved.avatar),
@@ -1456,14 +1537,12 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   }
   if (!base.text.trim() && !markers.has('buzz-attachment')) return undefined;
 
-  const replyId = eventTags.find(
+  const replyMarker = eventTags.find(
     (candidate) => candidate[0] === 'e' && candidate[3] === 'reply',
-  )?.[1];
-  const taggedRoot = eventTags.find(
-    (candidate) => candidate[0] === 'e' && candidate[3] === 'root',
-  )?.[1];
+  );
+  const replyId = replyMarker?.[1];
   const validatedRoot = text(data.rootId);
-  const rootId = validatedRoot && /^[0-9a-f]{64}$/.test(validatedRoot) ? validatedRoot : base.id;
+  const rootId = validatedRoot && /^[0-9a-f]{64}$/.test(validatedRoot) ? validatedRoot : undefined;
   const requestId = tag(eventTags, 'request');
   return {
     ...base,
@@ -1485,10 +1564,12 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
           ],
         }
       : {}),
-    ...(replyId && /^[0-9a-f]{64}$/.test(replyId)
+    ...(replyId && /^[0-9a-f]{64}$/.test(replyId) && rootId
       ? { reply: { channelId, eventId: replyId, rootId } }
       : {}),
-    reference: { channelId, eventId: base.id, rootId },
+    ...((!replyMarker || (replyId && /^[0-9a-f]{64}$/.test(replyId))) && rootId
+      ? { reference: { channelId, eventId: base.id, rootId } }
+      : {}),
   } as RoomViewMessage;
 }
 

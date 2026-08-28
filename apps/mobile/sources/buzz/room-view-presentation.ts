@@ -17,6 +17,117 @@ export type CornerProcessState = 'live' | 'suspended' | 'waiting-for-slot';
 export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
 export type AgentPresentation = Pick<Agent, 'pubkey' | 'displayName' | 'avatar' | 'soulProfile'>;
 
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Give a fresh authenticated Room response structural sharing with the last
+ * response. Unchanged JSON subtrees keep their object identity, while every
+ * changed field still comes from the new server-owned response.
+ */
+function shareResponseValue(previous: unknown, next: unknown): unknown {
+  if (Object.is(previous, next)) return previous;
+  if (Array.isArray(previous) && Array.isArray(next)) {
+    let unchanged = previous.length === next.length;
+    const shared = next.map((value, index) => {
+      const item = shareResponseValue(previous[index], value);
+      if (item !== previous[index]) unchanged = false;
+      return item;
+    });
+    return unchanged ? previous : shared;
+  }
+  if (isRecord(previous) && isRecord(next)) {
+    const previousKeys = Object.keys(previous);
+    const nextKeys = Object.keys(next);
+    let unchanged = previousKeys.length === nextKeys.length;
+    const shared: Record<string, unknown> = {};
+    for (const key of nextKeys) {
+      const value = shareResponseValue(previous[key], next[key]);
+      shared[key] = value;
+      if (value !== previous[key]) unchanged = false;
+    }
+    return unchanged ? previous : shared;
+  }
+  return next;
+}
+
+function shareResponseArrayByKey<T>(
+  previous: readonly T[],
+  next: readonly T[],
+  key: (value: T) => string,
+): readonly T[] {
+  const previousByKey = new Map(previous.map((value) => [key(value), value]));
+  const shared = next.map((value) => shareResponseValue(previousByKey.get(key(value)), value) as T);
+  return previous.length === shared.length &&
+    shared.every((value, index) => value === previous[index])
+    ? previous
+    : shared;
+}
+
+export function reconcileRoomView(previous: RoomView | null, next: RoomView): RoomView {
+  if (!previous) return next;
+  const messages = shareResponseArrayByKey(
+    previous.messages,
+    next.messages,
+    (message) => message.id,
+  );
+  const members = shareResponseArrayByKey(
+    previous.members,
+    next.members,
+    (member) => member.identity.pubkey,
+  );
+  const corners = shareResponseArrayByKey(
+    previous.corners,
+    next.corners,
+    (corner) => corner.corner.id,
+  );
+  const briefing = next.briefing
+    ? shareResponseArrayByKey(previous.briefing ?? [], next.briefing, (message) => message.id)
+    : undefined;
+  return shareResponseValue(previous, {
+    ...next,
+    messages,
+    members,
+    corners,
+    ...(briefing ? { briefing } : {}),
+  }) as RoomView;
+}
+
+export type RoomMessageProjector = {
+  project(messages: readonly RoomViewMessage[], viewerPubkey: string): ChatDisplayMessage[];
+  reset(): void;
+};
+
+/** One bounded projection cache per mounted Room surface. */
+export function createRoomMessageProjector(): RoomMessageProjector {
+  type Entry = {
+    source: RoomViewMessage;
+    viewerPubkey: string;
+    projected: ChatDisplayMessage;
+  };
+  let cache = new Map<string, Entry>();
+  return {
+    project(messages, viewerPubkey) {
+      const nextCache = new Map<string, Entry>();
+      const projected = messages.map((message) => {
+        const current = cache.get(message.id);
+        const value =
+          current?.source === message && current.viewerPubkey === viewerPubkey
+            ? current.projected
+            : displayRoomMessage(message, viewerPubkey);
+        nextCache.set(message.id, { source: message, viewerPubkey, projected: value });
+        return value;
+      });
+      cache = nextCache;
+      return projected;
+    },
+    reset() {
+      cache.clear();
+    },
+  };
+}
+
 export type WorkspaceMemberDisplayItem = {
   peerPubkey: string;
   peerName: string;

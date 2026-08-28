@@ -63,8 +63,10 @@ import {
   personHandle,
 } from '@beeline/buzz-client';
 import {
+  createRoomMessageProjector,
   displayRoomMessages,
   mergeDisplayPages,
+  reconcileRoomView,
   type ChatDisplayMessage,
   type DeliveryRetryPosture,
   type AgentPresentation,
@@ -183,6 +185,7 @@ import {
 } from '@/buzz/message-reply';
 import { mentionKeyboardAction } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
+import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
@@ -503,6 +506,13 @@ export default function BuzzChat() {
   const sendInFlightRef = useRef(false);
   const outboxRef = useRef<ReturnType<typeof createRoomOutbox> | null>(null);
   const roomSchedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
+  const reconciledRoomViewRef = useRef<RoomView | null>(null);
+  const roomMessageProjectorRef = useRef<ReturnType<typeof createRoomMessageProjector> | null>(
+    null,
+  );
+  const roomMessageProjector =
+    roomMessageProjectorRef.current ??
+    (roomMessageProjectorRef.current = createRoomMessageProjector());
   const outboxConfirmationTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   // Publish the open conversation to the foreground notification policy. The
@@ -649,11 +659,11 @@ export default function BuzzChat() {
             }),
           ]
         : [],
-    [roomSurface],
+    [roomSurface?.parent, roomSurface?.room, roomSurface?.viewer.role],
   );
   const cornerLifecycle = useMemo(
     () => (roomSurface ? cornerSummaries(roomSurface) : []),
-    [roomSurface],
+    [roomSurface?.corners],
   );
   const cornerLifecycleStatus =
     cornerLifecycle.find((corner) => corner.id === decodedId)?.status ?? null;
@@ -688,7 +698,7 @@ export default function BuzzChat() {
       githubEventsEnabled: repository.githubEventsEnabled,
       source: 'config',
     };
-  }, [decodedId, isCorner, roomSurface]);
+  }, [decodedId, isCorner, roomSurface?.repository, roomSurface?.room.workspaceId]);
   const roomRepositoryResolved = Boolean(roomSurface);
   const mergeTarget = useMemo<MergeTarget | null>(
     () =>
@@ -737,9 +747,9 @@ export default function BuzzChat() {
   const cachedMessages = useMemo(
     () =>
       roomSurface && cacheViewerPubkey
-        ? displayRoomMessages(roomSurface.messages, cacheViewerPubkey)
+        ? roomMessageProjector.project(roomSurface.messages, cacheViewerPubkey)
         : [],
-    [cacheViewerPubkey, roomSurface],
+    [cacheViewerPubkey, roomMessageProjector, roomSurface?.messages],
   );
   // Resolve references only within the Room family returned by this surface.
   const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
@@ -909,14 +919,14 @@ export default function BuzzChat() {
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'agent')
         .map((member) => memberAgent(member, roomSurface?.room.workspaceId ?? '')),
-    [roomSurface],
+    [roomSurface?.members, roomSurface?.room.workspaceId],
   );
   const availablePeople = useMemo(
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'human')
         .map((member) => ({ pubkey: member.identity.pubkey, role: member.role })),
-    [roomSurface],
+    [roomSurface?.members],
   );
   const selectedMembersRaw = useMemo(
     () =>
@@ -930,7 +940,7 @@ export default function BuzzChat() {
           handle: member.identity.handle,
         },
       })),
-    [roomSurface],
+    [roomSurface?.members],
   );
   // The membership projection rebuilds every wrapper object on each snapshot
   // commit. Downstream memos (memberOptions, roomParticipants) and ultimately
@@ -954,7 +964,7 @@ export default function BuzzChat() {
           name: member.identity.name,
           ...(member.identity.avatar ? { avatar: member.identity.avatar } : {}),
         })),
-    [roomSurface],
+    [roomSurface?.members],
   );
   const participantsHydrated = roomSurface !== null;
   const agentByPubkey = useMemo(
@@ -1772,6 +1782,8 @@ export default function BuzzChat() {
     setPresenceReconnectGrace({});
     setPresenceResolved(false);
     setLiveOverlays([]);
+    reconciledRoomViewRef.current = null;
+    roomMessageProjector.reset();
     hasMoreHistoryRef.current = true;
     setOlderPages([]);
     clearOptimistic();
@@ -1798,17 +1810,19 @@ export default function BuzzChat() {
       fresh: boolean,
     ) => {
       if (cancelled) return;
+      const stableView = reconcileRoomView(reconciledRoomViewRef.current, view);
+      reconciledRoomViewRef.current = stableView;
       hasPainted = true;
-      setRoomSurface(view);
+      setRoomSurface(stableView);
       setTranscriptHydrationFailed(false);
       setTranscriptHydrationError(null);
       void Promise.all([
-        saveActiveCommunityId(identityPubkey, view.room.workspaceId),
-        saveLastViewedChannel(identityPubkey, view.room.workspaceId, decodedId),
+        saveActiveCommunityId(identityPubkey, stableView.room.workspaceId),
+        saveLastViewedChannel(identityPubkey, stableView.room.workspaceId, decodedId),
       ]).catch(() => undefined);
 
       const presences = Object.fromEntries(
-        view.members.flatMap((member) =>
+        stableView.members.flatMap((member) =>
           member.presence
             ? [
                 [
@@ -1837,19 +1851,19 @@ export default function BuzzChat() {
 
       setCornerStateNow(Date.now());
       mergeTargetTipRef.current =
-        view.review?.status === 'ready' ? (view.review.artifact?.tip ?? null) : null;
+        stableView.review?.status === 'ready' ? (stableView.review.artifact?.tip ?? null) : null;
 
       decoder = new LiveOverlayDecoder(
         decodedId,
         new Set(
-          view.members
+          stableView.members
             .filter((member) => member.identity.kind === 'agent')
             .map((member) => member.identity.pubkey),
         ),
         new Set([
           decodedId,
-          ...(view.parent ? [view.parent.id] : []),
-          ...view.corners.map((corner) => corner.corner.id),
+          ...(stableView.parent ? [stableView.parent.id] : []),
+          ...stableView.corners.map((corner) => corner.corner.id),
         ]),
       );
       const replayedOverlays = pendingOverlayEvents;
@@ -1858,7 +1872,7 @@ export default function BuzzChat() {
         const overlay = decoder.decode(event);
         if (overlay) applyDecodedOverlay(overlay);
       }
-      const authoritativeIds = new Set(view.messages.map((message) => message.id));
+      const authoritativeIds = new Set(stableView.messages.map((message) => message.id));
       void outboxRef.current?.reconcile(authoritativeIds);
       setFailedOutboxIds((current) => {
         const next = new Set([...current].filter((id) => !authoritativeIds.has(id)));
@@ -1873,14 +1887,14 @@ export default function BuzzChat() {
       if (fresh) {
         void mobileSurfaceCache.write(
           surfaceAddress(relayUrl, identityPubkey, `/room/${decodedId}`),
-          view,
+          stableView,
           isRoomView,
         );
       }
 
-      const nextWatchKey = JSON.stringify(view.watchFilters);
+      const nextWatchKey = JSON.stringify(stableView.watchFilters);
       if (fresh && nextWatchKey !== watchKey) {
-        void installWatch(view.watchFilters);
+        void installWatch(stableView.watchFilters);
       }
     };
 
@@ -2045,6 +2059,7 @@ export default function BuzzChat() {
       outboxConfirmationTimersRef.current.clear();
       outboxRef.current = null;
       roomSchedulerRef.current = null;
+      reconciledRoomViewRef.current = null;
     };
   }, [
     addMessages,
@@ -2052,6 +2067,7 @@ export default function BuzzChat() {
     clearOptimistic,
     decodedId,
     notificationResponseId,
+    roomMessageProjector,
     transcriptHydrationAttempt,
   ]);
   /**
@@ -3122,8 +3138,19 @@ export default function BuzzChat() {
     slashVerbs,
   ]);
 
-  const renderItem = useCallback(
-    ({ item }: { item: ChatDisplayMessage }) => {
+  const renderMessage = useCallback(
+    (
+      item: ChatDisplayMessage,
+      {
+        continued: attributionContinued,
+        immediatelyPrecedingMessage,
+        referencedMessage,
+      }: {
+        continued: boolean;
+        immediatelyPrecedingMessage?: ChatDisplayMessage;
+        referencedMessage?: ChatDisplayMessage;
+      },
+    ) => {
       if (item.roomUpdate) {
         return (
           <LedgerRoomUpdate
@@ -3363,7 +3390,6 @@ export default function BuzzChat() {
       //   · Your own turn's byline dot and name are brass, and nothing else
       //     marks it: the message text is plain body — regular weight,
       //     primary tone, one size — never bolded, never enlarged.
-      const attributionContinued = continuedAttributionIds.has(item.id);
       // An agent viewing its own messages is both `isUser` and an agent; the
       // agent test wins, matching `ledgerSpeakerKey`'s own ordering.
       const isSelfSteer = isOwn && !isAgent;
@@ -3421,10 +3447,8 @@ export default function BuzzChat() {
       const showReplyReference = shouldShowReplyReference({
         replyToId: item.replyToId,
         speaksAsAgent,
-        immediatelyPrecedingMessage: immediatelyPrecedingVisibleMessageById.get(item.id),
+        immediatelyPrecedingMessage,
       });
-      const referencedMessage =
-        showReplyReference && item.replyToId ? visibleMessageById.get(item.replyToId) : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
@@ -3530,10 +3554,8 @@ export default function BuzzChat() {
     [
       agentByPubkey,
       activeActivityId,
-      continuedAttributionIds,
       handleWritePermission,
       handleConfirmTargetBranch,
-      immediatelyPrecedingVisibleMessageById,
       isCorner,
       parentChannelId,
       participantsHydrated,
@@ -3552,11 +3574,16 @@ export default function BuzzChat() {
       failedOutboxIds,
       replyTargetForMessage,
       retryOutboxMessage,
-      visibleMessageById,
       channelReferenceIndex,
       handleOpenChannelReference,
     ],
   );
+  const renderItem = useRoomMessageRenderItem({
+    render: renderMessage,
+    continuedIds: continuedAttributionIds,
+    precedingMessageById: immediatelyPrecedingVisibleMessageById,
+    messageById: visibleMessageById,
+  });
 
   if (!roomSurface) {
     if (transcriptHydrationFailed) {

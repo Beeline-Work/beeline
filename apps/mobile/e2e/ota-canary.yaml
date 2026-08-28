@@ -3,8 +3,6 @@ name: Beta OTA release canary
 env:
   EXPECTED_ANDROID_UPDATE_ID: ${EXPECTED_ANDROID_UPDATE_ID}
 ---
-- runFlow: smoke.yaml
-- runFlow: workspace-switch.yaml
 - openLink: beeline://buzz/settings
 - extendedWaitUntil:
     visible:
@@ -12,3 +10,5 @@ env:
     timeout: 10000
 - assertVisible: 'Running update: ${EXPECTED_ANDROID_UPDATE_ID}'
 - assertVisible: 'Channel: beta'
+- runFlow: smoke.yaml
+- runFlow: workspace-switch.yaml

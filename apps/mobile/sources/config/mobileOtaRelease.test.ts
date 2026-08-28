@@ -779,6 +779,19 @@ esac
     expect(switchFlow).toContain("assertNotVisible: '! ERROR'");
   });
 
+  it('proves the expected beta update is running before judging the smoke flow', () => {
+    const canaryFlow = readFileSync(join(mobileRoot, 'e2e', 'ota-canary.yaml'), 'utf8');
+    const smoke = canaryFlow.indexOf('runFlow: smoke.yaml');
+    const updateIdentity = canaryFlow.indexOf(
+      "assertVisible: 'Running update: ${EXPECTED_ANDROID_UPDATE_ID}'",
+    );
+    const betaChannel = canaryFlow.indexOf("assertVisible: 'Channel: beta'");
+
+    expect(updateIdentity).toBeGreaterThan(-1);
+    expect(betaChannel).toBeGreaterThan(updateIdentity);
+    expect(smoke).toBeGreaterThan(betaChannel);
+  });
+
   it('waits for the transcript surface before interacting with its bottom-edge composer', () => {
     const flows = ['smoke.yaml', 'live-agent-send-once.yaml', 'live-chat-layout.yaml'] as const;
     for (const flowName of flows) {

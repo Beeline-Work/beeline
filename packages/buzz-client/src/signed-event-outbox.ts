@@ -5,6 +5,8 @@ import { isRoomViewMessage } from './surface-guards.js';
 export type SignedOutboxRecord = {
   readonly event: NostrEvent;
   readonly row: RoomViewMessage;
+  /** Failed sends stay visible until the person retries or dismisses them. */
+  readonly status: 'pending' | 'failed';
   readonly attempts: number;
 };
 
@@ -26,6 +28,7 @@ export class SignedEventOutbox {
         record.event.id === record.row.id &&
         verifyEvent(record.event) &&
         isRoomViewMessage(record.row) &&
+        (record.status === 'pending' || record.status === 'failed') &&
         Number.isSafeInteger(record.attempts) &&
         record.attempts >= 0,
     );
@@ -41,7 +44,7 @@ export class SignedEventOutbox {
       throw new Error('outbox requires one pre-signed event and its exact render id');
     }
     if (!this.records.some((record) => record.event.id === event.id)) {
-      this.records.push({ event, row, attempts: 0 });
+      this.records.push({ event, row, status: 'pending', attempts: 0 });
       await this.storage.save(this.records);
     }
   }
@@ -50,6 +53,33 @@ export class SignedEventOutbox {
     this.records = this.records.map((record) =>
       record.event.id === eventId ? { ...record, attempts: record.attempts + 1 } : record,
     );
+    await this.storage.save(this.records);
+  }
+
+  get(eventId: string): SignedOutboxRecord | undefined {
+    return this.records.find((record) => record.event.id === eventId);
+  }
+
+  async retry(eventId: string): Promise<void> {
+    this.records = this.records.map((record) =>
+      record.event.id === eventId
+        ? { ...record, status: 'pending' as const, attempts: record.attempts + 1 }
+        : record,
+    );
+    await this.storage.save(this.records);
+  }
+
+  async fail(eventId: string): Promise<void> {
+    this.records = this.records.map((record) =>
+      record.event.id === eventId ? { ...record, status: 'failed' as const } : record,
+    );
+    await this.storage.save(this.records);
+  }
+
+  async remove(eventId: string): Promise<void> {
+    const next = this.records.filter((record) => record.event.id !== eventId);
+    if (next.length === this.records.length) return;
+    this.records = next;
     await this.storage.save(this.records);
   }
 

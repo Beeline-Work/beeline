@@ -149,31 +149,52 @@ preflight_privileges() {
 # Docker creates a missing bind source as root. That turns an otherwise valid
 # compose convergence into a materializer EACCES crash-loop, so provision and
 # validate each writable materializer source before any cutover work begins.
+#
+# Do NOT test source paths through the deploy user's shell: lunchbox may own a
+# correct source with mode 700, which intentionally prevents beeline-runner
+# from traversing it even though the materializer's uid 1000 can. Docker owns
+# the bind mount and this probe runs inside the just-built materializer image
+# as that uid, so it establishes the permission that actually matters.
+container_can_write_bind_source() {
+  local source=$1
+  docker run --rm --user "$MATERIALIZER_UID:$MATERIALIZER_GID" \
+    --mount "type=bind,src=$source,dst=/beeline-bind-source" \
+    --entrypoint /bin/sh beeline-materializer:production \
+    -c 'test -d /beeline-bind-source && test -w /beeline-bind-source' >/dev/null 2>&1
+}
+
+container_can_see_bind_source() {
+  local source=$1
+  docker run --rm --user 0:0 \
+    --mount "type=bind,src=$source,dst=/beeline-bind-source" \
+    --entrypoint /bin/sh beeline-materializer:production \
+    -c 'test -d /beeline-bind-source' >/dev/null 2>&1
+}
+
 ensure_materializer_bind_source() {
-  local label=$1 source=$2 owner mode
-  if [ ! -e "$source" ]; then
+  local label=$1 source=$2
+  if container_can_write_bind_source "$source"; then
+    log "verified $label bind-mount source for materializer uid $MATERIALIZER_UID: $source"
+    return 0
+  fi
+  if ! container_can_see_bind_source "$source"; then
     mkdir -p "$source" || die "could not create $label bind-mount source: $source"
     chmod 0755 "$source" || die "could not set mode on $label bind-mount source: $source"
     log "created $label bind-mount source: $source"
   fi
-  if [ ! -d "$source" ]; then
-    die "$label bind-mount source is not a directory: $source"
-  fi
-  owner=$(stat -c '%u:%g' "$source")
-  mode=$(stat -c '%a' "$source")
-  if [ "$owner" != "$MATERIALIZER_UID:$MATERIALIZER_GID" ] || [ $((8#$mode & 0200)) -eq 0 ]; then
-    echo "!! $label bind-mount source is not writable by materializer uid $MATERIALIZER_UID: $source (owner=$owner mode=$mode)" >&2
+
+  if ! container_can_write_bind_source "$source"; then
+    echo "!! $label bind-mount source is not writable by materializer uid $MATERIALIZER_UID: $source" >&2
     echo "!! run: sudo chown $MATERIALIZER_UID:$MATERIALIZER_GID $source && sudo chmod 755 $source" >&2
     die "$label bind-mount source ownership or mode is wrong — refusing a materializer crash-loop"
   fi
 }
 
-# This is deliberately the first operational stage: all privileged command
-# checks and state-source checks finish while the old consumers are still up.
+# This is deliberately the first operational stage: every privileged command
+# is proven while the old consumers are still up. State-source checks run
+# after the local materializer image build, but still before any live swap or
+# consumer retirement, so their permission probe uses the actual container.
 preflight_privileges
-ensure_materializer_bind_source push-state "${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}"
-ensure_materializer_bind_source runtime-state "${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}"
-ensure_materializer_bind_source events-state "${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}"
 
 TS=$(date +%Y%m%d-%H%M%S)
 STAGE=$(mktemp -d /tmp/beeline-deploy-stage.XXXXXX)
@@ -258,6 +279,10 @@ log "building beeline-materializer:production"
 docker build -f "$CHECKOUT/apps/push-gateway/Dockerfile" -t beeline-materializer:production "$CHECKOUT" \
   >$STAGE/materializer-build.log 2>&1 || { tail -40 $STAGE/materializer-build.log >&2; die "materializer image build failed"; }
 tail -3 $STAGE/materializer-build.log
+
+ensure_materializer_bind_source push-state "${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}"
+ensure_materializer_bind_source runtime-state "${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}"
+ensure_materializer_bind_source events-state "${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}"
 
 # ---------------------------------------------------------------------------
 # 3. Back up the current web tree, then swap the staged one in IN PLACE.

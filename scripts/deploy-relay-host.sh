@@ -64,6 +64,9 @@ BACKUP_ROOT=$PROJECT_DIR/relay-front/web-backups
 BACKUP_KEEP=10
 PUBLIC_BASE=${BEELINE_PUBLIC_BASE:-https://usebeeline.app}
 DRILL=${BEELINE_DEPLOY_DRILL:-}
+STACK_STAGE_DIR=${BEELINE_STACK_STAGE_DIR:-/home/beeline-runner/beeline-deploy-stage}
+MATERIALIZER_UID=1000
+MATERIALIZER_GID=1000
 
 CHECKOUT=$(git rev-parse --show-toplevel)
 REPO_WEB=$CHECKOUT/relay-stack/web
@@ -74,6 +77,103 @@ die() { echo "!! $*" >&2; exit "${2:-1}"; }
 
 [ -d "$REPO_WEB" ] || die "no relay-stack/web in checkout ($CHECKOUT)"
 [ -d "$WEBROOT" ] || die "webroot missing: $WEBROOT"
+
+events_service_absent() {
+  local unit_file
+  if systemctl list-unit-files --no-legend --no-pager beeline-events.service 2>/dev/null | grep -q '^beeline-events\.service[[:space:]]' \
+    || systemctl --user list-unit-files --no-legend --no-pager beeline-events.service 2>/dev/null | grep -q '^beeline-events\.service[[:space:]]'; then
+    return 1
+  fi
+  for unit_file in \
+    "$HOME/.config/systemd/user/beeline-events.service" \
+    /home/lunchbox/.config/systemd/user/beeline-events.service \
+    /etc/systemd/system/beeline-events.service \
+    /etc/systemd/user/beeline-events.service \
+    /usr/lib/systemd/system/beeline-events.service \
+    /usr/lib/systemd/user/beeline-events.service; do
+    [ -e "$unit_file" ] && return 1
+  done
+  return 0
+}
+
+# A sudoers command specification matches both its argv and its Runas user.
+# Probe the exact argv we will later execute before creating a stage, building
+# an image, replacing a file, or retiring a running consumer. `sudo -l` is a
+# read-only policy query, so a missing rule leaves the current production stack
+# untouched.
+missing_sudo_rules=()
+preflight_sudo_rule() {
+  local runas=$1
+  shift
+  if [ "$runas" = root ]; then
+    sudo -n -l "$@" >/dev/null 2>&1 && return 0
+  elif sudo -n -l -u "$runas" "$@" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "$runas" = root ]; then
+    missing_sudo_rules+=("beeline-runner ALL=(root) NOPASSWD: $*")
+  else
+    missing_sudo_rules+=("beeline-runner ALL=($runas) NOPASSWD: $*")
+  fi
+}
+
+preflight_privileges() {
+  log "preflighting every privileged deploy command"
+  preflight_sudo_rule root /usr/bin/install -o lunchbox -g lunchbox -m 644 \
+    "$STACK_STAGE_DIR/compose.yml" "$PROJECT_DIR/compose.yml"
+  preflight_sudo_rule root /usr/bin/install -o lunchbox -g lunchbox -m 644 \
+    "$STACK_STAGE_DIR/nginx.conf" "$PROJECT_DIR/relay-front/nginx.conf"
+  preflight_sudo_rule root /usr/bin/docker compose -p buzz-router-prod \
+    --env-file "$PROJECT_DIR/.env" -f "$PROJECT_DIR/compose.yml" up -d --remove-orphans
+
+  # An absent legacy unit is not touched by this deploy, so do not require
+  # stale systemctl grants after the one-way migration has completed.
+  if ! events_service_absent; then
+    preflight_sudo_rule lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
+      /usr/bin/systemctl --user is-active beeline-events.service
+    preflight_sudo_rule lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
+      /usr/bin/systemctl --user is-enabled beeline-events.service
+    preflight_sudo_rule lunchbox /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 \
+      /usr/bin/systemctl --user disable --now beeline-events.service
+  fi
+
+  if [ "${#missing_sudo_rules[@]}" -gt 0 ]; then
+    echo "!! deploy preflight failed; install these exact sudoers rule(s) before retrying:" >&2
+    for rule in "${missing_sudo_rules[@]}"; do
+      echo "!!   $rule" >&2
+    done
+    die "privilege preflight failed — production has not been changed"
+  fi
+}
+
+# Docker creates a missing bind source as root. That turns an otherwise valid
+# compose convergence into a materializer EACCES crash-loop, so provision and
+# validate each writable materializer source before any cutover work begins.
+ensure_materializer_bind_source() {
+  local label=$1 source=$2 owner mode
+  if [ ! -e "$source" ]; then
+    mkdir -p "$source" || die "could not create $label bind-mount source: $source"
+    chmod 0755 "$source" || die "could not set mode on $label bind-mount source: $source"
+    log "created $label bind-mount source: $source"
+  fi
+  if [ ! -d "$source" ]; then
+    die "$label bind-mount source is not a directory: $source"
+  fi
+  owner=$(stat -c '%u:%g' "$source")
+  mode=$(stat -c '%a' "$source")
+  if [ "$owner" != "$MATERIALIZER_UID:$MATERIALIZER_GID" ] || [ $((8#$mode & 0200)) -eq 0 ]; then
+    echo "!! $label bind-mount source is not writable by materializer uid $MATERIALIZER_UID: $source (owner=$owner mode=$mode)" >&2
+    echo "!! run: sudo chown $MATERIALIZER_UID:$MATERIALIZER_GID $source && sudo chmod 755 $source" >&2
+    die "$label bind-mount source ownership or mode is wrong — refusing a materializer crash-loop"
+  fi
+}
+
+# This is deliberately the first operational stage: all privileged command
+# checks and state-source checks finish while the old consumers are still up.
+preflight_privileges
+ensure_materializer_bind_source push-state "${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}"
+ensure_materializer_bind_source runtime-state "${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}"
+ensure_materializer_bind_source events-state "${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}"
 
 TS=$(date +%Y%m%d-%H%M%S)
 STAGE=$(mktemp -d /tmp/beeline-deploy-stage.XXXXXX)
@@ -192,7 +292,6 @@ diff -r --brief "$STAGE/web" "$WEBROOT" >/dev/null || {
 # ---------------------------------------------------------------------------
 LIVE_COMPOSE=$PROJECT_DIR/compose.yml
 LIVE_NGINX=$PROJECT_DIR/relay-front/nginx.conf
-STACK_STAGE_DIR=${BEELINE_STACK_STAGE_DIR:-$HOME/beeline-deploy-stage}
 
 [ -f "$REPO_STACK/compose.yml" ] || die "no relay-stack/prod/compose.yml in checkout ($CHECKOUT)"
 [ -f "$REPO_STACK/nginx.conf" ] || die "no relay-stack/prod/nginx.conf in checkout ($CHECKOUT)"
@@ -263,24 +362,6 @@ reload_relay_front_nginx() {
   [ -n "$cid" ] || { echo "!! relay-front container not found — cannot reload nginx" >&2; return 1; }
   docker kill -s HUP "$cid" >/dev/null 2>&1 || { echo "!! nginx HUP reload failed" >&2; return 1; }
   log "relay-front nginx reloaded (HUP)"
-}
-
-events_service_absent() {
-  local unit_file
-  if systemctl list-unit-files --no-legend --no-pager beeline-events.service 2>/dev/null | grep -q '^beeline-events\.service[[:space:]]' \
-    || systemctl --user list-unit-files --no-legend --no-pager beeline-events.service 2>/dev/null | grep -q '^beeline-events\.service[[:space:]]'; then
-    return 1
-  fi
-  for unit_file in \
-    "$HOME/.config/systemd/user/beeline-events.service" \
-    /home/lunchbox/.config/systemd/user/beeline-events.service \
-    /etc/systemd/system/beeline-events.service \
-    /etc/systemd/user/beeline-events.service \
-    /usr/lib/systemd/system/beeline-events.service \
-    /usr/lib/systemd/user/beeline-events.service; do
-    [ -e "$unit_file" ] && return 1
-  done
-  return 0
 }
 
 retire_events_service() {

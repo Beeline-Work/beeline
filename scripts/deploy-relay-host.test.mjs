@@ -94,6 +94,30 @@ case "$cmd" in
   network)
     ;;
   run)
+    user=""
+    mount=""
+    previous=""
+    for arg in "$@"; do
+      [ "$previous" = "--user" ] && user="$arg"
+      [ "$previous" = "--mount" ] && mount="$arg"
+      previous="$arg"
+    done
+    case "$mount" in
+      type=bind,src=*,dst=*)
+        source="${'${'}mount#type=bind,src=}"
+        source="${'${'}source%%,dst=*}"
+        present=0
+        [ -d "$source" ] && present=1
+        for marker in container-present-source container-writable-source container-deny-source; do
+          [ -f "$STATE/$marker" ] && grep -Fxq "$source" "$STATE/$marker" && present=1
+        done
+        [ "$present" = 1 ] || exit 1
+        if [ "$user" = "1000:1000" ]; then
+          [ -f "$STATE/container-deny-source" ] && grep -Fxq "$source" "$STATE/container-deny-source" && exit 1
+          [ -w "$source" ] || { [ -f "$STATE/container-writable-source" ] && grep -Fxq "$source" "$STATE/container-writable-source"; } || exit 1
+        fi
+        ;;
+    esac
     ;;
   kill)
     log "kill $*"
@@ -253,17 +277,6 @@ STATE=__STATE__
 [ "$1" = "list-unit-files" ] || { echo "unexpected systemctl invocation: $*" >&2; exit 64; }
 [ -f "$STATE/events-service-present" ] && echo "beeline-events.service enabled"
 `;
-  const stat = String.raw`#!/usr/bin/env bash
-STATE=__STATE__
-source="${'${'}!#}"
-if [ -f "$STATE/root-owned-source" ] && [ "$source" = "$(cat "$STATE/root-owned-source")" ]; then
-  case "$1:$2" in
-    -c:%u:%g) echo '0:0'; exit 0 ;;
-    -c:%a) echo '755'; exit 0 ;;
-  esac
-fi
-exec /usr/bin/stat "$@"
-`;
   write(
     path.join(binDir, 'docker'),
     docker.replaceAll('__STATE__', stateDir).replaceAll('__BIN__', binDir),
@@ -273,12 +286,10 @@ exec /usr/bin/stat "$@"
     sudo.replaceAll('__STATE__', stateDir).replaceAll('__BIN__', binDir),
   );
   write(path.join(binDir, 'systemctl'), systemctl.replaceAll('__STATE__', stateDir));
-  write(path.join(binDir, 'stat'), stat.replaceAll('__STATE__', stateDir));
   write(path.join(binDir, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
   fs.chmodSync(path.join(binDir, 'docker'), 0o755);
   fs.chmodSync(path.join(binDir, 'sudo'), 0o755);
   fs.chmodSync(path.join(binDir, 'systemctl'), 0o755);
-  fs.chmodSync(path.join(binDir, 'stat'), 0o755);
   fs.chmodSync(path.join(binDir, 'sleep'), 0o755);
 }
 
@@ -333,7 +344,10 @@ function runDeploy(opts) {
   const stateDir = path.join(tmp, 'state');
   const pushStateDir = opts.pushStateDir ?? path.join(tmp, 'push-state');
   const runtimeStateDir = opts.runtimeStateDir ?? path.join(tmp, 'runtime-state');
-  const eventsStateDir = opts.eventsStateDir ?? path.join(tmp, 'events-state');
+  const privateEventsParent = path.join(tmp, 'lunchbox-private');
+  const eventsStateDir = opts.privateEventsState
+    ? path.join(privateEventsParent, 'state')
+    : (opts.eventsStateDir ?? path.join(tmp, 'events-state'));
   fs.mkdirSync(binDir);
   fs.mkdirSync(stateDir);
 
@@ -349,7 +363,15 @@ function runDeploy(opts) {
   if (!opts.missingRuntimeState) fs.mkdirSync(runtimeStateDir, { recursive: true });
   if (!opts.missingEventsState) fs.mkdirSync(eventsStateDir, { recursive: true });
   if (opts.rootOwnedEventsState) {
-    write(path.join(stateDir, 'root-owned-source'), eventsStateDir);
+    write(path.join(stateDir, 'container-deny-source'), `${eventsStateDir}\n`);
+  }
+  if (opts.privateEventsState) {
+    // The state directory is materializer-owned and mode 700. The enclosing
+    // lunchbox directory denies the deploy runner traversal, reproducing the
+    // host distinction without requiring the test process to change uid.
+    fs.chmodSync(eventsStateDir, 0o700);
+    fs.chmodSync(privateEventsParent, 0o000);
+    write(path.join(stateDir, 'container-writable-source'), `${eventsStateDir}\n`);
   }
   if (opts.eventsServicePresent !== false) {
     write(path.join(stateDir, 'events-service-present'), '1');
@@ -514,6 +536,18 @@ test('missing materializer bind sources are created before compose can auto-crea
   assert.match(r.stdout, /created push-state bind-mount source/);
   assert.match(r.stdout, /created runtime-state bind-mount source/);
   assert.match(r.stdout, /created events-state bind-mount source/);
+});
+
+test('a materializer-owned mode-700 source hidden from the deploy user passes the container permission preflight', async () => {
+  const r = await runDeploy({ privateEventsState: true });
+  assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+  assert.match(
+    r.stdout,
+    /verified events-state bind-mount source for materializer uid 1000/,
+    'the check must use the container uid rather than the deploy user path traversal',
+  );
+  assert.equal(r.eventsRunning(), false, 'the valid source must permit the normal cutover');
+  assert.equal(r.materializerRunning(), true);
 });
 
 test('a root-owned materializer bind source fails before a stop or crash-looping compose convergence', async () => {

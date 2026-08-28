@@ -1,12 +1,15 @@
 /**
  * How much of a channel's history a re-primed ACP session is told.
  *
- * When a logical session is (re)activated — a daemon restart, an idle
- * suspend/reactivate from `SessionScheduler`, a watchdog Room recycle — the
- * host restores continuity by putting the durable transcript into the new
- * session's SYSTEM PROMPT. That is the right idea and the wrong size: it
- * replayed the whole thing, and a system prompt is re-sent by the harness on
- * every request, so the cost is paid per TURN, not per restart.
+ * When the harness's native logical conversation is genuinely unavailable —
+ * a daemon restart, a harness without `session/load`, or a rejected native
+ * load — the host restores continuity by putting one compact durable brief
+ * into the new session's SYSTEM PROMPT. A clean `SessionScheduler` idle wake
+ * never comes here: Codex and Grok reopen their own conversation instead.
+ *
+ * Historically this replayed the whole transcript. A system prompt is re-sent
+ * by the harness on every request, so the cost was paid per TURN, not per
+ * restart.
  *
  * Measured on the captain's Room (`1f6e289d`, `body-state.json` 5.47 MB):
  *
@@ -29,8 +32,16 @@ export interface RepriseEntry {
   role: string;
   text: string;
 }
-export interface ResumePlanItem { step: string; status: 'pending' | 'in_progress' | 'completed'; }
-export interface CornerResumeContext { objective?: string; plan?: { objective?: string; items: readonly ResumePlanItem[] }; changedFiles?: readonly string[]; commits?: readonly string[]; }
+export interface ResumePlanItem {
+  step: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+export interface CornerResumeContext {
+  objective?: string;
+  plan?: { objective?: string; items: readonly ResumePlanItem[] };
+  changedFiles?: readonly string[];
+  commits?: readonly string[];
+}
 
 /**
  * Character budget for the restored transcript.
@@ -103,24 +114,57 @@ export function repriseSystemPromptBlock(
   if (lines.length === 0) return '';
   return [
     '',
-    'This logical channel session was suspended while idle. Restore its single',
+    "The previous native conversation is unavailable. Restore this channel's single",
     'continuous conversation from this ordered transcript; do not treat it as a new task:',
     ...lines,
   ].join('\n');
 }
 
-function boundedLines(lines: readonly string[], fallback: string, count: number, chars: number): string[] {
+function boundedLines(
+  lines: readonly string[],
+  fallback: string,
+  count: number,
+  chars: number,
+): string[] {
   const clean = lines.map((line) => line.trim()).filter(Boolean);
-  return clean.length ? clean.slice(0, count).map((line) => `- ${line.slice(0, chars)}`) : [`- ${fallback}`];
+  return clean.length
+    ? clean.slice(0, count).map((line) => `- ${line.slice(0, chars)}`)
+    : [`- ${fallback}`];
 }
 
-export function cornerResumeSystemPromptBlock(entries: readonly RepriseEntry[], context: CornerResumeContext, maxChars: number = SESSION_REPRIME_MAX_CHARS): string {
+export function cornerResumeSystemPromptBlock(
+  entries: readonly RepriseEntry[],
+  context: CornerResumeContext,
+  maxChars: number = SESSION_REPRIME_MAX_CHARS,
+): string {
   const objective = context.objective?.trim() || context.plan?.objective?.trim() || 'Not recorded';
-  const plan = context.plan?.items.length ? context.plan.items.slice(0, 8).map((item) => `- [${item.status}] ${item.step.slice(0, 180)}`) : ['- No plan was recorded; reconstruct the next step from the repository state.'];
-  const fixed = ['', 'CORNER RESUME BRIEF', 'Resume this same durable corner. Do not restart the task or repeat settled exploration.', '', 'Objective:', objective.slice(0, 480), '', 'Current plan:', ...plan, '', 'Files changed so far:', ...boundedLines(context.changedFiles ?? [], 'No changed files detected.', 12, 180), '', 'Commits on this branch:', ...boundedLines(context.commits ?? [], 'No branch commits detected.', 8, 220), '', 'Last conversation turns:'];
+  const plan = context.plan?.items.length
+    ? context.plan.items.slice(0, 8).map((item) => `- [${item.status}] ${item.step.slice(0, 180)}`)
+    : ['- No plan was recorded; reconstruct the next step from the repository state.'];
+  const fixed = [
+    '',
+    'CORNER RESUME BRIEF',
+    'Resume this same durable corner. Do not restart the task or repeat settled exploration.',
+    '',
+    'Objective:',
+    objective.slice(0, 480),
+    '',
+    'Current plan:',
+    ...plan,
+    '',
+    'Files changed so far:',
+    ...boundedLines(context.changedFiles ?? [], 'No changed files detected.', 12, 180),
+    '',
+    'Commits on this branch:',
+    ...boundedLines(context.commits ?? [], 'No branch commits detected.', 8, 220),
+    '',
+    'Last conversation turns:',
+  ];
   const remaining = Math.max(0, maxChars - fixed.join('\n').length - 1);
   const turns = repriseTranscriptLines(entries.slice(-CORNER_RESUME_MAX_TURNS), remaining);
-  const block = [...fixed, ...(turns.length ? turns : ['- No conversation turns recorded.'])].join('\n');
+  const block = [...fixed, ...(turns.length ? turns : ['- No conversation turns recorded.'])].join(
+    '\n',
+  );
   return block.length <= maxChars ? block : `${block.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
@@ -141,13 +185,15 @@ export function measureSessionReprime(
 ): SessionReprimeSize {
   const header = [
     '',
-    'This logical channel session was suspended while idle. Restore its single',
+    "The previous native conversation is unavailable. Restore this channel's single",
     'continuous conversation from this ordered transcript; do not treat it as a new task:',
   ];
   const before = entries.length
     ? [...header, ...entries.map((entry) => `[${entry.role}] ${entry.text}`)].join('\n')
     : '';
-  const block = cornerResume ? cornerResumeSystemPromptBlock(entries, cornerResume, maxChars) : repriseSystemPromptBlock(entries, maxChars);
+  const block = cornerResume
+    ? cornerResumeSystemPromptBlock(entries, cornerResume, maxChars)
+    : repriseSystemPromptBlock(entries, maxChars);
   return {
     entries: entries.length,
     beforeChars: before.length,

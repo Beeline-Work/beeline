@@ -136,7 +136,7 @@ export default function BuzzSettings() {
           </View>
         </TouchableOpacity>
 
-        <Text style={styles.sectionLabel}>CONNECTED ACCOUNTS</Text>
+        <Text style={styles.sectionLabel}>CONNECTED GITHUB ACCOUNTS</Text>
         {githubInstallations.map((installation) => (
           <TouchableOpacity
             accessibilityLabel={`Manage ${installation.accountLogin} on GitHub`}

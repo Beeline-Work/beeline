@@ -21,6 +21,8 @@ readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly DEVICE="${MAESTRO_DEVICE:-emulator-5554}"
 readonly APP_ID="app.usebeeline.mobile"
 readonly MAX_SECONDS="${OTA_CANARY_MAX_SECONDS:-540}"
+readonly UPDATE_APPLY_TIMEOUT="${OTA_CANARY_UPDATE_APPLY_TIMEOUT_SECONDS:-120}"
+readonly UPDATE_PROBE_TIMEOUT="${OTA_CANARY_UPDATE_PROBE_TIMEOUT_SECONDS:-5}"
 
 park() {
   local reason="${1:-unknown OTA canary environment or setup failure}"
@@ -103,6 +105,15 @@ if [[ "${OTA_CANARY_DEADLINE_ACTIVE:-0}" != "1" ]]; then
   fi
   exec timeout --foreground --signal=TERM "${MAX_SECONDS}s" \
     env OTA_CANARY_DEADLINE_ACTIVE=1 "$0" "$@"
+fi
+
+if ! [[ "$UPDATE_APPLY_TIMEOUT" =~ ^[0-9]+$ ]] ||
+  (( UPDATE_APPLY_TIMEOUT < 1 || UPDATE_APPLY_TIMEOUT > 300 )); then
+  park "OTA_CANARY_UPDATE_APPLY_TIMEOUT_SECONDS must be between 1 and 300 (got ${UPDATE_APPLY_TIMEOUT})"
+fi
+if ! [[ "$UPDATE_PROBE_TIMEOUT" =~ ^[0-9]+$ ]] ||
+  (( UPDATE_PROBE_TIMEOUT < 1 || UPDATE_PROBE_TIMEOUT > 60 )); then
+  park "OTA_CANARY_UPDATE_PROBE_TIMEOUT_SECONDS must be between 1 and 60 (got ${UPDATE_PROBE_TIMEOUT})"
 fi
 
 device_state="$("$ADB_BIN" devices 2>&1 | awk -v d="$DEVICE" '$1 == d { print $2; exit }')" || {
@@ -247,15 +258,39 @@ adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null || {
   park "adb could not launch $APP_ID on $DEVICE; the installed beta binary failed to start"
 }
 
-# Give expo-updates one bounded cold fetch, then relaunch so Maestro starts on
-# the candidate even when reload scheduling was delayed by initial app setup.
-sleep "${OTA_CANARY_WARMUP_SECONDS:-20}"
-adb -s "$DEVICE" shell am force-stop "$APP_ID" >/dev/null || {
-  park "adb am force-stop failed on $DEVICE for $APP_ID during canary warm-up; the emulator stopped responding between launch and relaunch"
-}
-adb -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null || {
-  park "adb could not relaunch $APP_ID on $DEVICE after warm-up; the installed beta binary failed to restart"
-}
+# Poll the identity reported by the running JS bundle. Expo may download an
+# update on one cold start and select it only on the next; a fixed sleep cannot
+# distinguish a slow-but-healthy fetch from a stale bundle. Product flows stay
+# structurally unreachable until the expected candidate reports itself.
+update_deadline=$((SECONDS + UPDATE_APPLY_TIMEOUT))
+update_probe_log="$temporary/update-identity-probe.log"
+update_applied=0
+while (( SECONDS <= update_deadline )); do
+  if MAESTRO_REUSE_INSTALLED_APP=1 \
+    MAESTRO_SKIP_BUILD=1 \
+    MAESTRO_KEEP_DEVICE=1 \
+    MAESTRO_VERIFY_UPDATE_ONLY=1 \
+    MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS="$UPDATE_PROBE_TIMEOUT" \
+    EXPECTED_ANDROID_UPDATE_ID="$android_update" \
+      "$MOBILE_DIR/scripts/maestro-e2e.sh" >"$update_probe_log" 2>&1; then
+    cat "$update_probe_log"
+    update_applied=1
+    break
+  fi
+  if (( SECONDS > update_deadline )); then
+    break
+  fi
+  "$ADB_BIN" -s "$DEVICE" shell am force-stop "$APP_ID" >/dev/null || {
+    park "adb am force-stop failed on $DEVICE for $APP_ID while polling for Android update $android_update; the emulator stopped responding"
+  }
+  "$ADB_BIN" -s "$DEVICE" shell monkey -p "$APP_ID" 1 >/dev/null || {
+    park "adb could not relaunch $APP_ID on $DEVICE while polling for Android update $android_update; the installed beta binary failed to restart"
+  }
+done
+if (( update_applied != 1 )); then
+  probe_reason="$(tail -n 1 "$update_probe_log" 2>/dev/null || true)"
+  park "expected beta Android update $android_update was not reported running on $DEVICE within ${UPDATE_APPLY_TIMEOUT}s; update fetch/reload did not converge${probe_reason:+ (last probe: $probe_reason)}"
+fi
 
 smoke_log="$temporary/maestro-smoke.log"
 set +e

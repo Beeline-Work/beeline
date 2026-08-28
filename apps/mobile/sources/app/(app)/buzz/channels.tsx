@@ -1332,11 +1332,9 @@ export default function BuzzChannels() {
     if (!name || !transport || !identity || viewerIsAgent) return;
     setCreatingChannel(true);
     setError(null);
-    try {
-      const client = await transport.ensureClient();
-      const channelId = await client.createChannel(name, {
-        ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
-      });
+    let publishAcknowledged = false;
+    const showPublishedChannel = (channelId: string) => {
+      publishAcknowledged = true;
       const createdAt = Math.floor(Date.now() / 1_000);
       useBuzzLocalCache.getState().upsertConfirmedChannel(identity.publicKey, activeCommunityId, {
         id: channelId,
@@ -1346,10 +1344,19 @@ export default function BuzzChannels() {
         updatedAt: createdAt,
       });
       setCreatedChannels((current) => ({ ...current, [channelId]: name }));
+      setCreatingChannel(false);
       setChannelName('');
       setShowCreateChannel(false);
       setPendingRepo(null);
       setShowRepoPicker(false);
+    };
+    try {
+      const client = await transport.ensureClient();
+      const channelId = await client.createChannel(name, {
+        ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
+        onPublished: showPublishedChannel,
+      });
+      if (!publishAcknowledged) showPublishedChannel(channelId);
       if (pendingRepo?.remote) {
         try {
           await client.setRoomRepository(channelId, {
@@ -1368,9 +1375,13 @@ export default function BuzzChannels() {
       }
       void handleRefresh(false);
     } catch (err) {
-      setError(`Could not create ${ROOM_LABEL}: ${String(err)}`);
+      setError(
+        publishAcknowledged
+          ? `${ROOM_LABEL} created, but membership is still syncing: ${String(err)}`
+          : `Could not create ${ROOM_LABEL}: ${String(err)}`,
+      );
     } finally {
-      setCreatingChannel(false);
+      if (!publishAcknowledged) setCreatingChannel(false);
     }
   }, [
     activeCommunityId,

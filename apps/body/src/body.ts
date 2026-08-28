@@ -1793,8 +1793,10 @@ export function humanAgentExchangeRequest(
   currentAgentPubkey: string,
   roomParticipants: readonly string[],
   authorAttributions: ReadonlyMap<string, RoomAuthorAttribution>,
+  indexedMessages: readonly RoomViewMessage[] = [],
 ): AgentExchangeRequest | undefined {
-  if (!isChannelAddressedMessage(event, currentAgentPubkey, roomParticipants)) return undefined;
+  if (!isChannelAddressedMessage(event, currentAgentPubkey, roomParticipants, indexedMessages))
+    return undefined;
   const own = authorAttributions.get(currentAgentPubkey);
   if (own?.kind !== 'Agent') return undefined;
 
@@ -2197,6 +2199,7 @@ export function isChannelAddressedMessage(
   event: NostrEvent,
   agentPubkey: string,
   roomParticipants: readonly string[] = [],
+  indexedMessages: readonly RoomViewMessage[] = [],
 ): boolean {
   if (
     event.kind !== 9 ||
@@ -2208,7 +2211,35 @@ export function isChannelAddressedMessage(
 
   const participants = new Set(roomParticipants);
   participants.delete(agentPubkey);
-  return participants.size === 1 && participants.has(event.pubkey);
+  if (participants.size === 1 && participants.has(event.pubkey)) return true;
+
+  // In a multi-party Room, natural follow-up belongs only to the person the
+  // agent actually answered. The server-indexed presentation is the
+  // conversation boundary: cards, statuses, activity, and control records do
+  // not interrupt the pair. The reply edge is the recipient proof; adjacency
+  // to agent prose alone is deliberately insufficient.
+  const indexedCurrent = indexedMessages.find((message) => message.id === event.id);
+  if (indexedCurrent && indexedCurrent.presentation !== 'message') return false;
+  const conversation = indexedMessages.filter((message) => message.presentation === 'message');
+  const currentIndex = conversation.findIndex((message) => message.id === event.id);
+  const latestIndexed = conversation.at(-1);
+  const followsIndexedTail =
+    latestIndexed &&
+    (latestIndexed.createdAt < event.created_at ||
+      (latestIndexed.createdAt === event.created_at && latestIndexed.id.localeCompare(event.id) < 0));
+  const preceding =
+    currentIndex >= 0
+      ? conversation[currentIndex - 1]
+      : followsIndexedTail
+        ? latestIndexed
+        : undefined;
+  if (preceding?.author.kind !== 'agent' || preceding.author.pubkey !== agentPubkey) return false;
+  const repliedTo = preceding.reply?.eventId;
+  if (!repliedTo) return false;
+  const triggeringMessage = conversation.find((message) => message.id === repliedTo);
+  return (
+    triggeringMessage?.author.kind === 'human' && triggeringMessage.author.pubkey === event.pubkey
+  );
 }
 
 /**
@@ -2222,8 +2253,10 @@ export function isChannelWorkIntent(
   event: NostrEvent,
   agentPubkey: string,
   roomParticipants: readonly string[] = [],
+  indexedMessages: readonly RoomViewMessage[] = [],
 ): boolean {
-  if (!isChannelAddressedMessage(event, agentPubkey, roomParticipants)) return false;
+  if (!isChannelAddressedMessage(event, agentPubkey, roomParticipants, indexedMessages))
+    return false;
 
   const content = event.content
     .normalize('NFKC')
@@ -5462,12 +5495,17 @@ export class Body {
     );
   }
 
+  private async indexedRoomMessages(channelId: string): Promise<readonly RoomViewMessage[]> {
+    return (
+      await new RoomViewClient({
+        baseUrl: this.config.relayBaseUrl,
+        identity: this.agentIdentity,
+      }).room(channelId)
+    ).messages;
+  }
+
   private async agentHistory(channelId: string): Promise<readonly AgentHistoryEntry[]> {
-    const view = await new RoomViewClient({
-      baseUrl: this.config.relayBaseUrl,
-      identity: this.agentIdentity,
-    }).room(channelId);
-    return roomViewConversationHistory(channelId, view.messages);
+    return roomViewConversationHistory(channelId, await this.indexedRoomMessages(channelId));
   }
 
   private ensureChannelPresenceCache(channelId: string): Promise<{
@@ -6425,6 +6463,8 @@ export class Body {
       ...roomParticipants,
       ...pendingEvents.map((event) => event.pubkey),
     ]);
+    let indexedMessages: readonly RoomViewMessage[] = [];
+    let indexedMessagesLoaded = false;
     let opened = 0;
     let maxCreatedAt = since ?? Math.max(this.requestCursors.get(tlcChannelId) ?? 0, 0);
 
@@ -6479,11 +6519,30 @@ export class Body {
           continue;
         }
         const authorAttribution = authorAttributions.get(event.pubkey);
-        const addressed = isChannelAddressedMessage(
+        let addressed = isChannelAddressedMessage(
           event,
           this.agentIdentity.publicKey,
           roomParticipants,
         );
+        const otherParticipants = new Set(roomParticipants);
+        otherParticipants.delete(this.agentIdentity.publicKey);
+        if (
+          !addressed &&
+          event.kind === 9 &&
+          event.pubkey !== this.agentIdentity.publicKey &&
+          otherParticipants.size > 1
+        ) {
+          if (!indexedMessagesLoaded) {
+            indexedMessages = await this.indexedRoomMessages(tlcChannelId);
+            indexedMessagesLoaded = true;
+          }
+          addressed = isChannelAddressedMessage(
+            event,
+            this.agentIdentity.publicKey,
+            roomParticipants,
+            indexedMessages,
+          );
+        }
         if (!addressed) {
           await this.durableState.delivered(tlcChannelId, event.id);
           continue;
@@ -6583,6 +6642,7 @@ export class Body {
             this.agentIdentity.publicKey,
             roomParticipants,
             authorAttributions,
+            indexedMessages,
           );
           if (exchangeRequest?.kind === 'invalid') {
             await this.postUnavailableExchangeReply(tlcChannelId, request);
@@ -6617,6 +6677,7 @@ export class Body {
             event,
             this.agentIdentity.publicKey,
             roomParticipants,
+            indexedMessages,
           );
           const roomReply = await this.replyInRoom(
             tlcChannelId,

@@ -48,8 +48,6 @@ export type {
   BuzzClientConfig,
 } from './types.js';
 
-export * from './read-model/index.js';
-
 export {
   DEFAULT_RELAY_HOST,
   DEFAULT_RELAY_SCHEME,
@@ -485,11 +483,13 @@ export {
   ROOM_VIEW_CHAT_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_AGENT_LIMIT,
+  ROOM_VIEW_REQUEST_TIMEOUT_MS,
   RoomViewClient,
   RoomViewHttpError,
 } from './room-view.js';
 export type {
   AgentDetailView,
+  AgentHistoryEntry,
   ChatListItem,
   ChatListView,
   ChatListWorkspace,
@@ -514,21 +514,16 @@ export type {
 export type { KnownMessageReference } from './reply-proof.js';
 export { SurfaceRefreshScheduler } from './surface-refresh.js';
 export type { SurfaceRefreshOptions } from './surface-refresh.js';
-export { SURFACE_INVALIDATION_MATRIX, invalidatesSurface } from './surface-invalidation.js';
-export type { SurfaceScope } from './surface-invalidation.js';
 export { LiveOverlayDecoder, applyLiveOverlay, visibleLiveOverlays } from './live-overlay.js';
 export type { LiveOverlay } from './live-overlay.js';
-export {
-  replaceRoomTail,
-  addRoomPage,
-  composeRoomRows,
-} from './room-response-partitions.js';
+export { replaceRoomTail, addRoomPage, composeRoomRows } from './room-response-partitions.js';
 export type { RoomResponsePartitions } from './room-response-partitions.js';
 export { SurfaceResponseCache, surfaceCacheKey } from './surface-cache.js';
 export type { SurfaceCacheStorage, SurfaceCacheAddress } from './surface-cache.js';
 export { SignedEventOutbox } from './signed-event-outbox.js';
 export type { SignedOutboxRecord, SignedOutboxStorage } from './signed-event-outbox.js';
 export {
+  isRoomViewMessage,
   isRoomView,
   isRoomHistoryView,
   isWorkspaceListView,

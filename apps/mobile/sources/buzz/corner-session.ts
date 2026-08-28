@@ -2,7 +2,7 @@ import { resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
 import { cornerName } from '@/buzz/corners';
 import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
-import type { ChatDisplayMessage, CornerProcessState } from '@/sync/transport/buzz-event-projection';
+import type { ChatDisplayMessage, CornerProcessState } from '@/buzz/room-view-presentation';
 
 export type CornerSessionState = 'working' | 'idle' | 'done';
 
@@ -103,7 +103,11 @@ export function resolveCornerViewAgentPubkey(
   const knownMessageSignerPubkey = reversedMessages.find(
     (message) => message.pubkey && isRegisteredAgent(message.pubkey),
   )?.pubkey;
-  return resolveCornerCardAgentPubkey(declaredAgentPubkey, knownMessageSignerPubkey, isRegisteredAgent);
+  return resolveCornerCardAgentPubkey(
+    declaredAgentPubkey,
+    knownMessageSignerPubkey,
+    isRegisteredAgent,
+  );
 }
 
 /** The edit session lifecycle is authoritative for the corner, never daemon presence. */
@@ -116,8 +120,18 @@ export function cornerSessionState(messages: readonly ChatDisplayMessage[]): Cor
   if (latestTurn.status === 'working') return 'working';
   return latestTurn.status === 'complete' ? 'done' : 'idle';
 }
-export function cornerProcessState(messages: readonly ChatDisplayMessage[]): CornerProcessState | undefined {
-  return [...messages].filter((message) => message.cornerProcess).sort((a, b) => (a.cornerProcess?.sequence ?? 0) - (b.cornerProcess?.sequence ?? 0) || a.timestamp - b.timestamp || a.id.localeCompare(b.id)).at(-1)?.cornerProcess?.state;
+export function cornerProcessState(
+  messages: readonly ChatDisplayMessage[],
+): CornerProcessState | undefined {
+  return [...messages]
+    .filter((message) => message.cornerProcess)
+    .sort(
+      (a, b) =>
+        (a.cornerProcess?.sequence ?? 0) - (b.cornerProcess?.sequence ?? 0) ||
+        a.timestamp - b.timestamp ||
+        a.id.localeCompare(b.id),
+    )
+    .at(-1)?.cornerProcess?.state;
 }
 
 /** How many changed paths the review card names before it counts the rest. */

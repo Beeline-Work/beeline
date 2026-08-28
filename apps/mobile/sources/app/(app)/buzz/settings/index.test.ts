@@ -11,7 +11,7 @@ const identityStorage = vi.hoisted(() => ({
   loadBuzzIdentity: vi.fn(async () => null),
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.example'),
 }));
-const localCache = vi.hoisted(() => ({ clearBuzzLocalCache: vi.fn() }));
+const surfaceStorage = vi.hoisted(() => ({ clearMobileSurfaceStorage: vi.fn() }));
 const authSession = vi.hoisted(() => ({
   clearPendingGitHubSignInState: vi.fn(async () => undefined),
 }));
@@ -35,7 +35,7 @@ vi.mock('expo-updates', () => ({
 }));
 vi.mock('@/auth/buzz-identity-storage', () => identityStorage);
 vi.mock('@/auth/github-auth-session', () => authSession);
-vi.mock('@/buzz/local-cache', () => localCache);
+vi.mock('@/buzz/surface-storage', () => surfaceStorage);
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     async workspaceGitHubAccess() {
@@ -111,10 +111,14 @@ describe('Buzz global Settings', () => {
   it('shows the running OTA id and channel on the device settings surface', () => {
     const renderer = render();
 
-    expect(renderer.root.findByProps({ testID: 'ota-update-running-id' }).props.children)
-      .toEqual(['Running update: ', 'ota-running-123']);
-    expect(renderer.root.findByProps({ testID: 'ota-update-channel' }).props.children)
-      .toEqual(['Channel: ', 'preview']);
+    expect(renderer.root.findByProps({ testID: 'ota-update-running-id' }).props.children).toEqual([
+      'Running update: ',
+      'ota-running-123',
+    ]);
+    expect(renderer.root.findByProps({ testID: 'ota-update-channel' }).props.children).toEqual([
+      'Channel: ',
+      'preview',
+    ]);
   });
 
   it('checks on demand and reports when the running build is latest', async () => {
@@ -273,7 +277,7 @@ describe('Buzz global Settings', () => {
     });
     expect(identityStorage.clearBuzzIdentity).toHaveBeenCalledOnce();
     expect(authSession.clearPendingGitHubSignInState).toHaveBeenCalledOnce();
-    expect(localCache.clearBuzzLocalCache).toHaveBeenCalledOnce();
+    expect(surfaceStorage.clearMobileSurfaceStorage).toHaveBeenCalledOnce();
     expect(navigation.replace).toHaveBeenCalledWith('/buzz/onboarding');
   });
 });

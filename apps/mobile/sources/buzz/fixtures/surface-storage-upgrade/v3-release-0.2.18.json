@@ -1,0 +1,27 @@
+{
+  "bootIntegrityHalt": null,
+  "activeViewerPubkey": "fixture-viewer",
+  "activeListKeyByViewer": {
+    "fixture-viewer": "fixture-viewer:fixture-workspace"
+  },
+  "channelLists": {},
+  "channels": {
+    "fixture-viewer:fixture-room": {
+      "viewerPubkey": "fixture-viewer",
+      "channelId": "fixture-room",
+      "snapshot": {
+        "schemaVersion": 1,
+        "workspaceId": "fixture-workspace",
+        "revision": 0,
+        "identities": {},
+        "rooms": {},
+        "diagnostics": []
+      },
+      "cursor": 42,
+      "backfilled": true,
+      "updatedAt": 42,
+      "lastAccessedAt": 42
+    }
+  },
+  "profiles": {}
+}

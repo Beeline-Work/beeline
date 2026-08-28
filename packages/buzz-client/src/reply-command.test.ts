@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createIdentity } from './identity.js';
 import { buildReplyCommand } from './reply-command.js';
-import type { KnownMessageReference } from './read-model/types.js';
+import type { KnownMessageReference } from './room-view.js';
 
 function proof(input: { eventId: string; rootId: string }): KnownMessageReference {
   return { channelId: 'room', ...input } as KnownMessageReference;

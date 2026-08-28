@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { mergeDisplayPages, type ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
+import { mergeDisplayPages, type ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 
 export type RoomSendFrame = {

@@ -12,7 +12,6 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Community } from '@beeline/buzz-client';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -20,8 +19,14 @@ import { IdentityMark } from '@/components/buzz/IdentityMark';
 const DRAWER_WIDTH = 72;
 const DRAWER_DURATION_MS = 180;
 
+export type CommunityRailItem = {
+  communityId: string;
+  name: string;
+  avatar?: string;
+};
+
 type CommunityRailProps = {
-  communities: Community[];
+  communities: CommunityRailItem[];
   activeCommunityId: string | null;
   onSelect: (communityId: string | null) => void;
   onAdd: () => void;
@@ -254,7 +259,7 @@ type CommunityDrawerContextValue = {
 const CommunityDrawerContext = createContext<CommunityDrawerContextValue | null>(null);
 
 type CommunityDrawerTriggerProps = {
-  community?: Community | null;
+  community?: CommunityRailItem | null;
 };
 
 /**
@@ -423,146 +428,146 @@ export function BuzzCommunityShell({
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  shell: {
-    flex: 1,
-    backgroundColor: groknight.bgTerminal,
-  },
-  content: {
-    flex: 1,
-    minWidth: 0,
-    backgroundColor: groknight.bgTerminal,
-  },
-  rail: {
-    flex: 1,
-    width: DRAWER_WIDTH,
-    alignItems: 'center',
-    backgroundColor: groknight.bgTerminal,
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: groknight.border,
-  },
-  communityScroll: {
-    flex: 1,
-    width: '100%',
-  },
-  communityScrollContent: {
-    paddingVertical: 4,
-    alignItems: 'center',
-  },
-  railButtonSlot: {
-    width: DRAWER_WIDTH,
-    height: 58,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  railButton: {
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  /* Tone, not a box: an unselected Workspace mark sits one step back from the
-   * one you are in. The rail is a quiet column you glance at, not a row of
-   * competing badges. */
-  railButtonIdle: { opacity: 0.5 },
-  /* Exit affordance: one close glyph hung at the tile's own top-right corner,
-   * on the same quiet chrome tier as every other rail glyph. It appears only
-   * while a long-press has armed it. */
-  exitAffordance: {
-    position: 'absolute',
-    top: 2,
-    right: 4,
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 3,
-    backgroundColor: groknight.bgHover,
-  },
-  exitAffordanceGlyph: {
-    ...Typography.default('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 14,
-    lineHeight: 16,
-    textAlign: 'center',
-  },
-  selectionBar: {
-    position: 'absolute',
-    top: 9,
-    bottom: 9,
-    left: 0,
-    width: 2,
-    backgroundColor: groknight.selectedBorder,
-  },
-  railDivider: {
-    width: 40,
-    height: 1,
-    marginVertical: 6,
-    backgroundColor: groknight.border,
-  },
-  railCommand: {
-    width: DRAWER_WIDTH,
-    minHeight: 48,
-    paddingVertical: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 3,
-  },
-  /* A rail command is named, so its glyph does not also have to shout: the
-   * mono micro-label under it carries the meaning and the glyph sits on the
-   * same quiet tier as the rest of the chrome. */
-  railCommandGlyph: {
-    ...Typography.default(),
-    height: 22,
-    color: groknight.textSecondary,
-    fontSize: 19,
-    lineHeight: 22,
-    textAlign: 'center',
-  },
-  railCommandLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 9,
-    lineHeight: 12,
-    letterSpacing: 0.6,
-  },
-  drawerOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 20,
-  },
-  drawer: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-    width: DRAWER_WIDTH,
-  },
-  scrim: {
-    ...StyleSheet.absoluteFillObject,
-    left: DRAWER_WIDTH,
-    backgroundColor: groknight.bgTerminal,
-  },
-  drawerTrigger: {
-    minHeight: 44,
-    flex: 1,
-    minWidth: 0,
-    paddingRight: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  drawerTriggerName: {
-    ...Typography.default('semiBold'),
-    flexShrink: 1,
-    color: groknight.textPrimary,
-    fontSize: 17,
-    lineHeight: 22,
-  },
-  drawerTriggerCaret: {
-    ...Typography.default('semiBold'),
-    color: groknight.steel,
-    fontSize: 13,
-    lineHeight: 16,
-  },
-  });
+  return {
+    shell: {
+      flex: 1,
+      backgroundColor: groknight.bgTerminal,
+    },
+    content: {
+      flex: 1,
+      minWidth: 0,
+      backgroundColor: groknight.bgTerminal,
+    },
+    rail: {
+      flex: 1,
+      width: DRAWER_WIDTH,
+      alignItems: 'center',
+      backgroundColor: groknight.bgTerminal,
+      borderRightWidth: StyleSheet.hairlineWidth,
+      borderRightColor: groknight.border,
+    },
+    communityScroll: {
+      flex: 1,
+      width: '100%',
+    },
+    communityScrollContent: {
+      paddingVertical: 4,
+      alignItems: 'center',
+    },
+    railButtonSlot: {
+      width: DRAWER_WIDTH,
+      height: 58,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    railButton: {
+      width: 48,
+      height: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    /* Tone, not a box: an unselected Workspace mark sits one step back from the
+     * one you are in. The rail is a quiet column you glance at, not a row of
+     * competing badges. */
+    railButtonIdle: { opacity: 0.5 },
+    /* Exit affordance: one close glyph hung at the tile's own top-right corner,
+     * on the same quiet chrome tier as every other rail glyph. It appears only
+     * while a long-press has armed it. */
+    exitAffordance: {
+      position: 'absolute',
+      top: 2,
+      right: 4,
+      width: 20,
+      height: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 3,
+      backgroundColor: groknight.bgHover,
+    },
+    exitAffordanceGlyph: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 14,
+      lineHeight: 16,
+      textAlign: 'center',
+    },
+    selectionBar: {
+      position: 'absolute',
+      top: 9,
+      bottom: 9,
+      left: 0,
+      width: 2,
+      backgroundColor: groknight.selectedBorder,
+    },
+    railDivider: {
+      width: 40,
+      height: 1,
+      marginVertical: 6,
+      backgroundColor: groknight.border,
+    },
+    railCommand: {
+      width: DRAWER_WIDTH,
+      minHeight: 48,
+      paddingVertical: 4,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 3,
+    },
+    /* A rail command is named, so its glyph does not also have to shout: the
+     * mono micro-label under it carries the meaning and the glyph sits on the
+     * same quiet tier as the rest of the chrome. */
+    railCommandGlyph: {
+      ...Typography.default(),
+      height: 22,
+      color: groknight.textSecondary,
+      fontSize: 19,
+      lineHeight: 22,
+      textAlign: 'center',
+    },
+    railCommandLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 9,
+      lineHeight: 12,
+      letterSpacing: 0.6,
+    },
+    drawerOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 20,
+    },
+    drawer: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      width: DRAWER_WIDTH,
+    },
+    scrim: {
+      ...StyleSheet.absoluteFillObject,
+      left: DRAWER_WIDTH,
+      backgroundColor: groknight.bgTerminal,
+    },
+    drawerTrigger: {
+      minHeight: 44,
+      flex: 1,
+      minWidth: 0,
+      paddingRight: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    drawerTriggerName: {
+      ...Typography.default('semiBold'),
+      flexShrink: 1,
+      color: groknight.textPrimary,
+      fontSize: 17,
+      lineHeight: 22,
+    },
+    drawerTriggerCaret: {
+      ...Typography.default('semiBold'),
+      color: groknight.steel,
+      fontSize: 13,
+      lineHeight: 16,
+    },
+  };
 });

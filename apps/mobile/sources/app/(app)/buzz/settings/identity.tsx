@@ -33,6 +33,7 @@ import {
   normalizePersonHandle,
   normalizePersonName,
   personHandle,
+  RoomViewClient,
   startGitHubBind,
   type BuzzClient,
   type Identity,
@@ -65,11 +66,7 @@ import {
   type BuzzPushRegistrationResult,
   type BuzzPushRegistrationState,
 } from '@/push/buzz-push-registration';
-import {
-  buzzPushPhaseDetail,
-  pushStatusLabel,
-  pushSwitchValue,
-} from '@/push/buzz-push-status';
+import { buzzPushPhaseDetail, pushStatusLabel, pushSwitchValue } from '@/push/buzz-push-status';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { authSessionOptions } from '@/auth/auth-session';
@@ -186,20 +183,21 @@ export default function BuzzIdentitySettings() {
       try {
         const identity = await loadBuzzIdentity();
         if (!identity) return;
-        const transport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
+        const relayUrl = await getEffectiveRelayUrl();
+        const transport = new BuzzRigTransport(identity, relayUrl);
         const client = await transport.ensureClient();
-        const [communities, activeCommunityId, preferredName, enabled, registration, permission] =
+        const [workspaceList, activeCommunityId, preferredName, enabled, registration, permission] =
           await Promise.all([
-            client.listCommunities(identity.publicKey),
+            new RoomViewClient({ baseUrl: relayUrl, identity }).workspaces(),
             loadActiveCommunityId(identity.publicKey),
             loadPreferredPersonName(identity.publicKey),
             getBuzzPushEnabled(identity.publicKey),
             getBuzzPushRegistrationState(identity.publicKey),
             getPushPermissionInfo(),
           ]);
-        const communityId = communities.some((item) => item.communityId === activeCommunityId)
+        const communityId = workspaceList.workspaces.some((item) => item.id === activeCommunityId)
           ? (activeCommunityId ?? undefined)
-          : communities[0]?.communityId;
+          : workspaceList.workspaces[0]?.id;
         const profile = communityId
           ? await ensurePersonNameForWorkspace(client, communityId, identity.publicKey)
           : await client.getGlobalPersonProfile(identity.publicKey);
@@ -369,14 +367,7 @@ export default function BuzzIdentitySettings() {
     } finally {
       setClaimWorking(false);
     }
-  }, [
-    avatarUrl,
-    claimName,
-    claimWorking,
-    profileClient,
-    profileIdentity,
-    savedProfileName,
-  ]);
+  }, [avatarUrl, claimName, claimWorking, profileClient, profileIdentity, savedProfileName]);
 
   const applyHostedIdentity = useCallback(
     async (hosted: ManagedIdentity) => {
@@ -418,8 +409,7 @@ export default function BuzzIdentitySettings() {
             start.redirectUri,
             authSessionOptions(Platform.OS, start.redirectUri),
           ),
-        subscribeToUrls: (listener) =>
-          Linking.addEventListener('url', ({ url }) => listener(url)),
+        subscribeToUrls: (listener) => Linking.addEventListener('url', ({ url }) => listener(url)),
       });
       const challenge = await resumeGitHubSignInCallback(callbackUrl);
       const event = buildOidcBindEvent(challenge, profileIdentity);
@@ -434,7 +424,9 @@ export default function BuzzIdentitySettings() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (caught) {
       await clearPendingGitHubSignInState().catch(() => undefined);
-      setError(`Could not link GitHub: ${caught instanceof Error ? caught.message : String(caught)}`);
+      setError(
+        `Could not link GitHub: ${caught instanceof Error ? caught.message : String(caught)}`,
+      );
     } finally {
       setGitHubWorking(false);
     }
@@ -775,84 +767,84 @@ export default function BuzzIdentitySettings() {
                 nothing while PHOTO_OVERRIDES_ENABLED is false. The handlers and
                 plumbing above stay intact for revival. */}
             {PHOTO_OVERRIDES_ENABLED && (
-            <View style={styles.avatarSection}>
-              <IdentityMark
-                kind="human"
-                seed={profilePubkey}
-                avatarUrl={avatarUrl}
-                name={profileName || 'You'}
-                size={76}
-              />
-              <View style={styles.avatarCopy}>
-                <Text style={styles.heading}>Your picture</Text>
-                <Text style={styles.body}>
-                  Cosmetic only. Your generated person mark returns if the image is removed.
-                </Text>
-                <View style={styles.actions}>
-                  <TouchableOpacity
-                    style={styles.secondaryButton}
-                    disabled={avatarWorking}
-                    onPress={() => void changeAvatar()}
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      {avatarWorking ? 'Working…' : avatarUrl ? 'Change picture' : 'Set picture'}
-                    </Text>
-                  </TouchableOpacity>
-                  {avatarUrl && (
+              <View style={styles.avatarSection}>
+                <IdentityMark
+                  kind="human"
+                  seed={profilePubkey}
+                  avatarUrl={avatarUrl}
+                  name={profileName || 'You'}
+                  size={76}
+                />
+                <View style={styles.avatarCopy}>
+                  <Text style={styles.heading}>Your picture</Text>
+                  <Text style={styles.body}>
+                    Cosmetic only. Your generated person mark returns if the image is removed.
+                  </Text>
+                  <View style={styles.actions}>
                     <TouchableOpacity
                       style={styles.secondaryButton}
                       disabled={avatarWorking}
-                      onPress={() => void resetAvatar()}
+                      onPress={() => void changeAvatar()}
                     >
-                      <Text style={styles.secondaryButtonText}>Use generated mark</Text>
+                      <Text style={styles.secondaryButtonText}>
+                        {avatarWorking ? 'Working…' : avatarUrl ? 'Change picture' : 'Set picture'}
+                      </Text>
                     </TouchableOpacity>
-                  )}
+                    {avatarUrl && (
+                      <TouchableOpacity
+                        style={styles.secondaryButton}
+                        disabled={avatarWorking}
+                        onPress={() => void resetAvatar()}
+                      >
+                        <Text style={styles.secondaryButtonText}>Use generated mark</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
               </View>
-            </View>
             )}
           </View>
         )}
-        {!managedIdentity && <View style={styles.settingsSection} testID="claim-handle-setting">
-          <Text style={styles.sectionLabel}>BEELINE HANDLE</Text>
-          <Text style={styles.body}>
-            {t('beelineIdentity.hostedHandleClaimBody')}
-          </Text>
-          <View style={styles.claimRow}>
-            <TextInput
-              accessibilityLabel="Desired Beeline handle"
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!claimWorking}
-              maxLength={30}
-              onChangeText={(value) => {
-                setClaimName(value);
-                setClaimStatus('idle');
-              }}
-              onSubmitEditing={() => void claimHandle()}
-              placeholder="yourname"
-              placeholderTextColor={theme.buzz.dim}
-              returnKeyType="done"
-              style={styles.claimInput}
-              testID="identity-claim-handle-input"
-              value={claimName}
+        {!managedIdentity && (
+          <View style={styles.settingsSection} testID="claim-handle-setting">
+            <Text style={styles.sectionLabel}>BEELINE HANDLE</Text>
+            <Text style={styles.body}>{t('beelineIdentity.hostedHandleClaimBody')}</Text>
+            <View style={styles.claimRow}>
+              <TextInput
+                accessibilityLabel="Desired Beeline handle"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!claimWorking}
+                maxLength={30}
+                onChangeText={(value) => {
+                  setClaimName(value);
+                  setClaimStatus('idle');
+                }}
+                onSubmitEditing={() => void claimHandle()}
+                placeholder="yourname"
+                placeholderTextColor={theme.buzz.dim}
+                returnKeyType="done"
+                style={styles.claimInput}
+                testID="identity-claim-handle-input"
+                value={claimName}
+              />
+              <Text style={styles.claimSuffix}>@usebeeline.app</Text>
+            </View>
+            <View style={styles.nameMetaRow}>
+              <Text style={styles.nameHandle} testID="identity-claim-handle-status">
+                {claimStatusLabel}
+              </Text>
+            </View>
+            <MonoButton
+              disabled={claimWorking || !claimName.trim()}
+              label={t('beelineIdentity.claimHandle')}
+              loading={claimWorking}
+              onPress={() => void claimHandle()}
+              style={styles.nameButton}
+              testID="identity-claim-handle-button"
             />
-            <Text style={styles.claimSuffix}>@usebeeline.app</Text>
           </View>
-          <View style={styles.nameMetaRow}>
-            <Text style={styles.nameHandle} testID="identity-claim-handle-status">
-              {claimStatusLabel}
-            </Text>
-          </View>
-          <MonoButton
-            disabled={claimWorking || !claimName.trim()}
-            label={t('beelineIdentity.claimHandle')}
-            loading={claimWorking}
-            onPress={() => void claimHandle()}
-            style={styles.nameButton}
-            testID="identity-claim-handle-button"
-          />
-        </View>}
+        )}
 
         <View style={styles.settingsSection} testID="notifications-setting">
           <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
@@ -878,9 +870,7 @@ export default function BuzzIdentitySettings() {
               style={styles.pushRetryButton}
               testID="push-retry-registration"
             >
-              <Text style={styles.pushRetryText}>
-                {pushWorking ? 'RETRYING…' : 'RETRY NOW'}
-              </Text>
+              <Text style={styles.pushRetryText}>{pushWorking ? 'RETRYING…' : 'RETRY NOW'}</Text>
             </TouchableOpacity>
           ) : null}
         </View>
@@ -1042,383 +1032,406 @@ export default function BuzzIdentitySettings() {
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  container: { flex: 1, backgroundColor: groknight.bgTerminal },
-  header: {
-    minHeight: 66,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    marginRight: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backButtonText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    color: groknight.chrome,
-    fontSize: 31,
-    lineHeight: 34,
-  },
-  headerCopy: { flex: 1, minWidth: 0 },
-  title: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 20,
-    lineHeight: 24,
-  },
-  content: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 36 },
-  profileSection: {
-    paddingBottom: 24,
-    marginBottom: 28,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  nameSection: { marginBottom: 28 },
-  avatarSection: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 16,
-  },
-  avatarCopy: { flex: 1, minWidth: 0 },
-  intro: { maxWidth: 560 },
-  sectionLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
-  },
-  heading: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    marginTop: 7,
-    color: groknight.textPrimary,
-    fontSize: 24,
-  },
-  body: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 9,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  nameInput: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    minHeight: 48,
-    marginTop: 16,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    color: groknight.textPrimary,
-    backgroundColor: groknight.bgBase,
-    fontSize: 17,
-  },
-  nameInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
-  handleInputRow: {
-    minHeight: 48,
-    marginTop: 10,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    backgroundColor: groknight.bgBase,
-  },
-  handlePrefix: {
-    ...Typography.mono('semiBold'),
-    marginRight: 2,
-    color: groknight.textMuted,
-    fontSize: 15,
-  },
-  handleInput: {
-    ...Typography.mono('semiBold'),
-    flex: 1,
-    minWidth: 0,
-    minHeight: 44,
-    color: groknight.textPrimary,
-    fontSize: 15,
-  },
-  nameMetaRow: {
-    minHeight: 26,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  nameHandle: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textMuted,
-    fontSize: 11,
-    letterSpacing: 0.4,
-  },
-  nameSaved: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 10,
-    letterSpacing: 0.7,
-  },
-  nameButton: { marginTop: 8 },
-  claimRow: {
-    minHeight: 48,
-    marginTop: 16,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    backgroundColor: groknight.bgBase,
-  },
-  claimInput: {
-    ...Typography.mono('semiBold'),
-    flex: 1,
-    minWidth: 0,
-    minHeight: 44,
-    color: groknight.textPrimary,
-    fontSize: 15,
-  },
-  claimSuffix: {
-    ...Typography.mono('semiBold'),
-    marginLeft: 2,
-    color: groknight.textMuted,
-    fontSize: 15,
-  },
-  settingsSection: {
-    paddingBottom: 24,
-    marginBottom: 28,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  settingLine: {
-    minHeight: 68,
-    marginTop: 9,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: groknight.border,
-    backgroundColor: groknight.bgBase,
-  },
-  settingCopy: { flex: 1, minWidth: 0, paddingVertical: 12 },
-  pushRetryButton: {
-    marginTop: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    alignSelf: 'flex-start',
-  },
-  pushRetryText: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  settingTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 14,
-  },
-  settingSubtitle: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 4,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  linkedGlyph: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-  },
-  linkedGlyphText: {
-    ...Typography.default('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 13,
-  },
-  linkedState: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textSecondary,
-    fontSize: 13,
-  },
-  githubRenamePanel: {
-    marginTop: 14,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: groknight.border,
-  },
-  githubNotice: {
-    ...Typography.default(),
-    fontFamily: groknight.proseRegular,
-    marginTop: 12,
-    color: groknight.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  warning: {
-    marginTop: 24,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  warningGlyph: {
-    ...Typography.default('semiBold'),
-    width: 22,
-    height: 22,
-    borderWidth: 1,
-    borderColor: groknight.chrome,
-    color: groknight.chrome,
-    lineHeight: 20,
-    textAlign: 'center',
-  },
-  warningText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    flex: 1,
-    minWidth: 0,
-    color: groknight.chrome,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  confirmSection: { marginTop: 28 },
-  confirmHint: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 9,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  confirmInput: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    minHeight: 44,
-    marginTop: 12,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    borderRadius: 3,
-    color: groknight.textPrimary,
-    backgroundColor: groknight.bgBase,
-    fontSize: 14,
-    letterSpacing: 1.2,
-  },
-  confirmInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
-  primaryButton: {
-    marginTop: 14,
-  },
-  exportSection: { marginTop: 28 },
-  exportHeadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  unlockedLabel: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  secretBox: {
-    minHeight: 74,
-    marginTop: 9,
-    padding: 13,
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    borderRadius: 3,
-    backgroundColor: groknight.bgBase,
-  },
-  secretText: {
-    ...Typography.mono(),
-    color: groknight.textPrimary,
-    fontSize: 12,
-    lineHeight: 19,
-  },
-  actions: { marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
-  secondaryButton: {
-    minHeight: 44,
-    paddingHorizontal: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondaryButtonText: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.chrome,
-    fontSize: 12,
-  },
-  qrSection: { marginTop: 22, alignItems: 'center' },
-  qrFrame: {
-    width: 248,
-    height: 248,
-    maxWidth: '100%',
-    padding: 8,
-    borderRadius: 3,
-    backgroundColor: groknight.textPrimary,
-  },
-  qrHint: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    maxWidth: 320,
-    marginTop: 12,
-    color: groknight.muted,
-    fontSize: 12,
-    lineHeight: 17,
-    textAlign: 'center',
-  },
-  lockButton: {
-    minHeight: 44,
-    marginTop: 22,
-    alignSelf: 'center',
-    paddingHorizontal: 14,
-    justifyContent: 'center',
-  },
-  lockButtonText: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.steel,
-    fontSize: 11,
-  },
-  errorPanel: {
-    marginTop: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  errorLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
-  },
-  errorText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 4,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  footer: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 28,
-    color: groknight.textMuted,
-    fontSize: 12,
-    lineHeight: 17,
-    textAlign: 'center',
-  },
-  });
+  return {
+    container: { flex: 1, backgroundColor: groknight.bgTerminal },
+    header: {
+      minHeight: 66,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    backButton: {
+      width: 44,
+      height: 44,
+      marginRight: 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backButtonText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      color: groknight.chrome,
+      fontSize: 31,
+      lineHeight: 34,
+    },
+    headerCopy: { flex: 1, minWidth: 0 },
+    title: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 20,
+      lineHeight: 24,
+    },
+    content: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 36 },
+    profileSection: {
+      paddingBottom: 24,
+      marginBottom: 28,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    nameSection: { marginBottom: 28 },
+    avatarSection: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 16,
+    },
+    avatarCopy: { flex: 1, minWidth: 0 },
+    intro: { maxWidth: 560 },
+    sectionLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
+    },
+    heading: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      marginTop: 7,
+      color: groknight.textPrimary,
+      fontSize: 24,
+    },
+    body: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 9,
+      color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    nameInput: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      minHeight: 48,
+      marginTop: 16,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: 3,
+      color: groknight.textPrimary,
+      backgroundColor: groknight.bgBase,
+      fontSize: 17,
+    },
+    nameInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
+    handleInputRow: {
+      minHeight: 48,
+      marginTop: 10,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: 3,
+      backgroundColor: groknight.bgBase,
+    },
+    handlePrefix: {
+      ...Typography.mono('semiBold'),
+      marginRight: 2,
+      color: groknight.textMuted,
+      fontSize: 15,
+    },
+    handleInput: {
+      ...Typography.mono('semiBold'),
+      flex: 1,
+      minWidth: 0,
+      minHeight: 44,
+      color: groknight.textPrimary,
+      fontSize: 15,
+    },
+    nameMetaRow: {
+      minHeight: 26,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    nameHandle: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textMuted,
+      fontSize: 11,
+      letterSpacing: 0.4,
+    },
+    nameSaved: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 10,
+      letterSpacing: 0.7,
+    },
+    nameButton: { marginTop: 8 },
+    claimRow: {
+      minHeight: 48,
+      marginTop: 16,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: 3,
+      backgroundColor: groknight.bgBase,
+    },
+    claimInput: {
+      ...Typography.mono('semiBold'),
+      flex: 1,
+      minWidth: 0,
+      minHeight: 44,
+      color: groknight.textPrimary,
+      fontSize: 15,
+    },
+    claimSuffix: {
+      ...Typography.mono('semiBold'),
+      marginLeft: 2,
+      color: groknight.textMuted,
+      fontSize: 15,
+    },
+    settingsSection: {
+      paddingBottom: 24,
+      marginBottom: 28,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    settingLine: {
+      minHeight: 68,
+      marginTop: 9,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderTopWidth: 1,
+      borderBottomWidth: 1,
+      borderColor: groknight.border,
+      backgroundColor: groknight.bgBase,
+    },
+    settingCopy: { flex: 1, minWidth: 0, paddingVertical: 12 },
+    pushRetryButton: {
+      marginTop: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      alignSelf: 'flex-start',
+    },
+    pushRetryText: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textSecondary,
+      fontSize: 12,
+      lineHeight: 16,
+    },
+    settingTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 14,
+    },
+    settingSubtitle: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 4,
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    linkedGlyph: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 3,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+    },
+    linkedGlyphText: {
+      ...Typography.default('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 13,
+    },
+    linkedState: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 13,
+    },
+    githubRenamePanel: {
+      marginTop: 14,
+      paddingTop: 14,
+      borderTopWidth: 1,
+      borderTopColor: groknight.border,
+    },
+    githubNotice: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 12,
+      color: groknight.textSecondary,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    warning: {
+      marginTop: 24,
+      padding: 12,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    warningGlyph: {
+      ...Typography.default('semiBold'),
+      width: 22,
+      height: 22,
+      borderWidth: 1,
+      borderColor: groknight.chrome,
+      color: groknight.chrome,
+      lineHeight: 20,
+      textAlign: 'center',
+    },
+    warningText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      flex: 1,
+      minWidth: 0,
+      color: groknight.chrome,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    confirmSection: { marginTop: 28 },
+    confirmHint: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 9,
+      color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    confirmInput: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      minHeight: 44,
+      marginTop: 12,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      borderRadius: 3,
+      color: groknight.textPrimary,
+      backgroundColor: groknight.bgBase,
+      fontSize: 14,
+      letterSpacing: 1.2,
+    },
+    confirmInputFocused: { borderWidth: 2, borderColor: groknight.focus, paddingHorizontal: 11 },
+    primaryButton: {
+      marginTop: 14,
+    },
+    exportSection: { marginTop: 28 },
+    exportHeadingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    unlockedLabel: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textMuted,
+      fontSize: 11,
+      lineHeight: 15,
+    },
+    secretBox: {
+      minHeight: 74,
+      marginTop: 9,
+      padding: 13,
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      borderRadius: 3,
+      backgroundColor: groknight.bgBase,
+    },
+    secretText: {
+      ...Typography.mono(),
+      color: groknight.textPrimary,
+      fontSize: 12,
+      lineHeight: 19,
+    },
+    actions: {
+      marginTop: 10,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+    },
+    secondaryButton: {
+      minHeight: 44,
+      paddingHorizontal: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    secondaryButtonText: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.chrome,
+      fontSize: 12,
+    },
+    qrSection: { marginTop: 22, alignItems: 'center' },
+    qrFrame: {
+      width: 248,
+      height: 248,
+      maxWidth: '100%',
+      padding: 8,
+      borderRadius: 3,
+      backgroundColor: groknight.textPrimary,
+    },
+    qrHint: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      maxWidth: 320,
+      marginTop: 12,
+      color: groknight.muted,
+      fontSize: 12,
+      lineHeight: 17,
+      textAlign: 'center',
+    },
+    lockButton: {
+      minHeight: 44,
+      marginTop: 22,
+      alignSelf: 'center',
+      paddingHorizontal: 14,
+      justifyContent: 'center',
+    },
+    lockButtonText: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.steel,
+      fontSize: 11,
+    },
+    errorPanel: {
+      marginTop: 16,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    errorLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
+    },
+    errorText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 4,
+      color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    footer: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 28,
+      color: groknight.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      textAlign: 'center',
+    },
+  };
 });

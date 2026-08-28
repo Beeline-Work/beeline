@@ -1,5 +1,6 @@
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import type { RoomViewMessage } from './room-view.js';
+import { isRoomViewMessage } from './surface-guards.js';
 
 export type SignedOutboxRecord = {
   readonly event: NostrEvent;
@@ -20,8 +21,15 @@ export class SignedEventOutbox {
 
   async restore(): Promise<void> {
     const records = await this.storage.load();
-    this.records = records.filter((record) =>
-      record.event.id === record.row.id && verifyEvent(record.event));
+    this.records = records.filter(
+      (record) =>
+        record.event.id === record.row.id &&
+        verifyEvent(record.event) &&
+        isRoomViewMessage(record.row) &&
+        Number.isSafeInteger(record.attempts) &&
+        record.attempts >= 0,
+    );
+    if (this.records.length !== records.length) await this.storage.save(this.records);
   }
 
   list(): readonly SignedOutboxRecord[] {
@@ -39,9 +47,9 @@ export class SignedEventOutbox {
   }
 
   async attempted(eventId: string): Promise<void> {
-    this.records = this.records.map((record) => record.event.id === eventId
-      ? { ...record, attempts: record.attempts + 1 }
-      : record);
+    this.records = this.records.map((record) =>
+      record.event.id === eventId ? { ...record, attempts: record.attempts + 1 } : record,
+    );
     await this.storage.save(this.records);
   }
 

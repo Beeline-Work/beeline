@@ -346,7 +346,7 @@ export interface RedeemInviteResult {
   alreadyMember: boolean;
 }
 
-/** Raw relay delivery. Semantic interpretation belongs exclusively to read-model/parser.ts. */
+/** Raw relay delivery. Screen subscriptions use it only as a dirty signal. */
 export type SessionEvent = NostrEvent;
 
 export type SessionEventHandler = (ev: SessionEvent) => void;

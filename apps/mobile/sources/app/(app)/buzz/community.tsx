@@ -1,17 +1,24 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Community, Identity } from '@beeline/buzz-client';
+import {
+  RoomViewClient,
+  SurfaceRefreshScheduler,
+  isWorkspaceListView,
+  type Identity,
+  type WorkspaceListView,
+} from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { createCommunityInviteUrl, parseCommunityInviteToken } from '@/buzz/community-invite';
 import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
 import { ensurePersonNameForWorkspace } from '@/buzz/person-name';
 import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { BuzzRigTransport } from '@/sync/transport';
+import { workspaceRailItem } from '@/buzz/room-view-presentation';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { Typography } from '@/constants/Typography';
 import { HullSurface, MonoButton, PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 
@@ -22,26 +29,33 @@ function first(value: string | string[] | undefined): string | undefined {
 export default function BuzzCommunityCreateOrJoin() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const requestedMode = first(
-    useLocalSearchParams<{ mode?: string | string[] }>().mode,
-  );
+  const requestedMode = first(useLocalSearchParams<{ mode?: string | string[] }>().mode);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
-  const [communities, setCommunities] = useState<Community[]>([]);
+  const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
   const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
-  const [mode, setMode] = useState<'create' | 'join'>(
-    requestedMode === 'join' ? 'join' : 'create',
-  );
+  const [mode, setMode] = useState<'create' | 'join'>(requestedMode === 'join' ? 'join' : 'create');
   const [communityName, setCommunityName] = useState('');
   const [inviteInput, setInviteInput] = useState('');
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | undefined>();
-  const [canManageWorkspace, setCanManageWorkspace] = useState(false);
+  const communities = useMemo(
+    () => workspaceList?.workspaces.map(workspaceRailItem) ?? [],
+    [workspaceList],
+  );
+  const viewerAvatarUrl = workspaceList?.viewer.avatar;
+  const canManageWorkspace =
+    workspaceList?.workspaces.some(
+      (workspace) =>
+        workspace.id === activeCommunityId &&
+        (workspace.role === 'owner' || workspace.role === 'admin'),
+    ) ?? false;
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    let scheduler: SurfaceRefreshScheduler<WorkspaceListView> | undefined;
     void (async () => {
       try {
         const currentIdentity = await loadBuzzIdentity();
@@ -51,34 +65,53 @@ export default function BuzzCommunityCreateOrJoin() {
         }
         const relayUrl = await getEffectiveRelayUrl();
         const nextTransport = new BuzzRigTransport(currentIdentity, relayUrl);
-        const client = await nextTransport.ensureClient();
-        const available = await client.listCommunities();
+        const relay = await nextTransport.ensureClient();
+        const http = new RoomViewClient({ baseUrl: relayUrl, identity: currentIdentity });
+        const address = surfaceAddress(relayUrl, currentIdentity.publicKey, '/workspaces');
+        const cached = await mobileSurfaceCache.read(address, isWorkspaceListView);
         const stored = await loadActiveCommunityId(currentIdentity.publicKey);
-        const selectedCommunityId = available.some((community) => community.communityId === stored)
-          ? stored
-          : available[0]?.communityId;
-        const profile = selectedCommunityId
-          ? await client.getPersonProfile(selectedCommunityId, currentIdentity.publicKey)
-          : null;
         if (cancelled) return;
         setIdentity(currentIdentity);
         setTransport(nextTransport);
         setRelayUrl(relayUrl);
-        setCommunities(available);
-        setActiveCommunityId(
-          available.some((community) => community.communityId === stored) ? stored : null,
+        if (cached) {
+          setWorkspaceList(cached);
+          setActiveCommunityId(
+            cached.workspaces.some((workspace) => workspace.id === stored)
+              ? stored
+              : (cached.workspaces[0]?.id ?? null),
+          );
+        }
+        scheduler = new SurfaceRefreshScheduler({
+          fetch: () => http.workspaces(),
+          apply: (value) => {
+            setWorkspaceList(value);
+            setActiveCommunityId((current) =>
+              value.workspaces.some((workspace) => workspace.id === current)
+                ? current
+                : (value.workspaces[0]?.id ?? null),
+            );
+            setError(null);
+            void mobileSurfaceCache.write(address, value, isWorkspaceListView);
+          },
+          onError: (reason) => setError(String(reason)),
+        });
+        unsubscribe = await relay.surfaceSubscribe(
+          cached?.watchFilters ?? [
+            { kinds: [9000, 9001, 9007], '#p': [currentIdentity.publicKey] },
+          ],
+          () => scheduler?.signal(),
         );
-        setViewerAvatarUrl(profile?.avatar);
-        const role = available.find(
-          (workspace) => workspace.communityId === selectedCommunityId,
-        )?.viewerRole;
-        setCanManageWorkspace(isWorkspaceManagerRole(role));
+        if (cancelled) return unsubscribe();
+        await scheduler.startAfter(Promise.resolve());
       } catch (err) {
         if (!cancelled) setError(String(err));
       }
     })();
     return () => {
       cancelled = true;
+      unsubscribe?.();
+      scheduler?.dispose();
     };
   }, []);
 
@@ -138,9 +171,10 @@ export default function BuzzCommunityCreateOrJoin() {
       onAdd={() => undefined}
       onSettings={() => router.push('/buzz/settings' as Href)}
       onWorkspaceSettings={(communityId) =>
-        router.push(
-          { pathname: '/buzz/settings/workspace', params: { communityId } } as unknown as Href,
-        )
+        router.push({
+          pathname: '/buzz/settings/workspace',
+          params: { communityId },
+        } as unknown as Href)
       }
       canManageActiveCommunity={canManageWorkspace}
       viewerPubkey={identity?.publicKey}
@@ -250,107 +284,113 @@ export default function BuzzCommunityCreateOrJoin() {
 
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
-  return ({
-  loading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: groknight.bgTerminal,
-  },
-  container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
-  header: {
-    minHeight: 58,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: groknight.bgBase,
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
-  headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
-  title: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 20,
-    lineHeight: 24,
-  },
-  modeSwitch: {
-    marginHorizontal: 16,
-    marginTop: 22,
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: groknight.border,
-  },
-  modeButton: {
-    flex: 1,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modeButtonActive: {
-    borderBottomWidth: 2,
-    borderBottomColor: groknight.textSecondary,
-  },
-  modeText: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.muted,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  modeTextActive: { color: groknight.textPrimary },
-  form: { paddingHorizontal: 18, paddingTop: 32 },
-  formTitle: {
-    ...Typography.default('semiBold'), fontFamily: groknight.proseSemibold,
-    color: groknight.textPrimary,
-    fontSize: 20,
-  },
-  formHint: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 8,
-    maxWidth: 460,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  input: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    minHeight: 48,
-    marginTop: 22,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: groknight.border,
-    color: groknight.textPrimary,
-    backgroundColor: groknight.bgBase,
-    fontSize: 14,
-  },
-  inviteInput: { ...Typography.mono(), fontSize: 11 },
-  primaryButton: {
-    marginTop: 12,
-  },
-  errorPanel: {
-    marginTop: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: groknight.borderStrong,
-    backgroundColor: groknight.bgHighlight,
-  },
-  errorLabel: {
-    ...Typography.mono('semiBold'),
-    color: groknight.textPrimary,
-    fontSize: 11,
-    lineHeight: 15,
-    letterSpacing: 0.8,
-  },
-  errorText: {
-    ...Typography.default(), fontFamily: groknight.proseRegular,
-    marginTop: 4,
-    color: groknight.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  });
+  return {
+    loading: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: groknight.bgTerminal,
+    },
+    container: { flex: 1, minWidth: 0, backgroundColor: groknight.bgTerminal },
+    header: {
+      minHeight: 58,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: groknight.bgBase,
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    backText: { ...Typography.default(), color: groknight.chrome, fontSize: 30, fontWeight: '300' },
+    headerCopy: { flex: 1, minWidth: 0, paddingLeft: 4 },
+    title: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 20,
+      lineHeight: 24,
+    },
+    modeSwitch: {
+      marginHorizontal: 16,
+      marginTop: 22,
+      flexDirection: 'row',
+      borderBottomWidth: 1,
+      borderBottomColor: groknight.border,
+    },
+    modeButton: {
+      flex: 1,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modeButtonActive: {
+      borderBottomWidth: 2,
+      borderBottomColor: groknight.textSecondary,
+    },
+    modeText: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.muted,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    modeTextActive: { color: groknight.textPrimary },
+    form: { paddingHorizontal: 18, paddingTop: 32 },
+    formTitle: {
+      ...Typography.default('semiBold'),
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+      fontSize: 20,
+    },
+    formHint: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 8,
+      maxWidth: 460,
+      color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    input: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      minHeight: 48,
+      marginTop: 22,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 3,
+      borderWidth: 1,
+      borderColor: groknight.border,
+      color: groknight.textPrimary,
+      backgroundColor: groknight.bgBase,
+      fontSize: 14,
+    },
+    inviteInput: { ...Typography.mono(), fontSize: 11 },
+    primaryButton: {
+      marginTop: 12,
+    },
+    errorPanel: {
+      marginTop: 14,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    errorLabel: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 11,
+      lineHeight: 15,
+      letterSpacing: 0.8,
+    },
+    errorText: {
+      ...Typography.default(),
+      fontFamily: groknight.proseRegular,
+      marginTop: 4,
+      color: groknight.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+  };
 });

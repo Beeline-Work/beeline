@@ -26,7 +26,10 @@ export function surfaceCacheKey(address: SurfaceCacheAddress): string {
 export class SurfaceResponseCache {
   constructor(private readonly storage: SurfaceCacheStorage) {}
 
-  async read<T>(address: SurfaceCacheAddress, guard: (value: unknown) => value is T): Promise<T | null> {
+  async read<T>(
+    address: SurfaceCacheAddress,
+    guard: (value: unknown) => value is T,
+  ): Promise<T | null> {
     const value = await this.storage.get(surfaceCacheKey(address));
     if (!value) return null;
     try {
@@ -42,9 +45,17 @@ export class SurfaceResponseCache {
     }
   }
 
-  async write<T>(address: SurfaceCacheAddress, value: T, guard: (value: unknown) => value is T): Promise<void> {
+  async write<T>(
+    address: SurfaceCacheAddress,
+    value: T,
+    guard: (value: unknown) => value is T,
+  ): Promise<void> {
     if (!guard(value)) throw new Error('refusing to cache an invalid surface response');
     await this.storage.set(surfaceCacheKey(address), JSON.stringify(value));
+  }
+
+  async remove(address: SurfaceCacheAddress): Promise<void> {
+    await this.storage.remove(surfaceCacheKey(address));
   }
 
   async evictViewer(relayOrigin: string, viewerPubkey: string): Promise<void> {

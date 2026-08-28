@@ -59,6 +59,9 @@ export const BEELINE_CAPABILITIES_PRIMER =
   'unattended and recurring work, including target-agent and script-fired crons. For monitoring or ' +
   'other background work, propose an exact Beeline schedule and request the appropriate schedule or ' +
   'mission grant for the human to approve with one signature; do not claim Beeline has no scheduler. ' +
+  'Trusty Squire provides governed credential/account access through the host broker only when granted. If absent, ' +
+  'ask to pair/reconfigure with `--access creator --mcp squire-credential-use` or `squire-app-access`; every use ' +
+  'needs exact human-signed P1 permission. Pi cannot support Squire: it executes before the permission gate; say that specifically. ' +
   'This notice grants nothing. Consult the release-versioned using-beeline skill (SKILL.md) for the ' +
   'mechanics.';
 
@@ -214,6 +217,34 @@ standalone scheduler tool.
   itself. Never say it is active until the host confirms the signed grant and
   schedule. Existing expiry, revocation, membership, budget, and target-access
   checks still apply to every firing.
+
+## Trusty Squire: governed account access
+
+Trusty Squire is an opt-in host broker for external accounts. It can expose
+credential inventory and one authenticated credential use with
+\`squire-credential-use\`, or bounded app access with
+\`squire-app-access\`. It never puts provider secrets into chat, source, logs,
+or your environment.
+
+- If the Squire tools are not present, do not say that you have no account, that
+  sign-up is impossible, or that Beeline cannot support the work. Ask the
+  operator to pair or reconfigure a supported agent with creator-only access
+  and the needed capability profile, for example:
+
+      beeline pair <pairing-code> --agent codex --access creator --mcp squire-credential-use
+
+  Use \`--agent claude\` instead for Claude; request
+  \`squire-app-access\` when bounded app access is the needed profile. These
+  are operator actions, not commands you can authorize yourself.
+- Squire is supported only on the Codex and Claude harnesses because they let
+  Beeline govern the permission checkpoint. On Pi, say specifically that Pi
+  cannot support Trusty Squire because it executes before that checkpoint; do
+  not turn that harness limitation into a blanket claim about accounts or
+  sign-up.
+- A selected profile is not permission to act. Each credential use, app-access
+  grant, or revocation needs a fresh human-owner-signed P1
+  \`operation.execute\` permission for its exact arguments. Requesting this
+  capability or permission grants nothing.
 
 ## Merge flow — you never land
 

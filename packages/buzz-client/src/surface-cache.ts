@@ -22,9 +22,12 @@ export function surfaceCacheKey(address: SurfaceCacheAddress): string {
   return JSON.stringify([CONTRACT_VERSION, origin, address.viewerPubkey, address.endpoint, params]);
 }
 
-/** Stores validated GET DTOs verbatim; it has no relay-event or domain merge API. */
+/** Stores validated GET DTOs with an optional narrow response sanitizer; it has no relay-event merge API. */
 export class SurfaceResponseCache {
-  constructor(private readonly storage: SurfaceCacheStorage) {}
+  constructor(
+    private readonly storage: SurfaceCacheStorage,
+    private readonly normalize: (value: unknown) => unknown = (value) => value,
+  ) {}
 
   async read<T>(
     address: SurfaceCacheAddress,
@@ -34,11 +37,15 @@ export class SurfaceResponseCache {
     if (!value) return null;
     try {
       const parsed = JSON.parse(value) as unknown;
-      if (!guard(parsed)) {
+      const normalized = this.normalize(parsed);
+      if (!guard(normalized)) {
         await this.storage.remove(surfaceCacheKey(address));
         return null;
       }
-      return parsed;
+      if (normalized !== parsed) {
+        await this.storage.set(surfaceCacheKey(address), JSON.stringify(normalized));
+      }
+      return normalized;
     } catch {
       await this.storage.remove(surfaceCacheKey(address));
       return null;
@@ -50,8 +57,9 @@ export class SurfaceResponseCache {
     value: T,
     guard: (value: unknown) => value is T,
   ): Promise<void> {
-    if (!guard(value)) throw new Error('refusing to cache an invalid surface response');
-    await this.storage.set(surfaceCacheKey(address), JSON.stringify(value));
+    const normalized = this.normalize(value);
+    if (!guard(normalized)) throw new Error('refusing to cache an invalid surface response');
+    await this.storage.set(surfaceCacheKey(address), JSON.stringify(normalized));
   }
 
   async remove(address: SurfaceCacheAddress): Promise<void> {

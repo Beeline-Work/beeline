@@ -7,6 +7,14 @@ const composeSource = readFileSync(
   new URL('../../../components/buzz/RoomDeckComposeMenu.tsx', import.meta.url),
   'utf8',
 );
+const roomViewSource = readFileSync(
+  new URL('../../../../../../packages/buzz-client/src/room-view.ts', import.meta.url),
+  'utf8',
+);
+const surfaceGuardSource = readFileSync(
+  new URL('../../../../../../packages/buzz-client/src/surface-guards.ts', import.meta.url),
+  'utf8',
+);
 
 function styleBlock(text: string, name: string): string {
   const start = text.indexOf(`    ${name}: {`);
@@ -36,5 +44,18 @@ describe('Room list layout contract', () => {
     expect(styleBlock(source, 'composeOverlay')).not.toMatch(/border(?:Top|Bottom|Left|Right)/);
     expect(styleBlock(source, 'list')).toContain('paddingBottom: COMPOSE_FAB_CLEARANCE');
     expect(composeSource).toContain('testID="room-deck-compose-fab"');
+  });
+
+  it('uses one required unread fact for NEW and the needs-you mark', () => {
+    // A cached pre-read-mark response is rejected and fetched again; after
+    // that, every visual consequence reads the same server-owned boolean.
+    expect(roomViewSource).toContain('readonly unread: boolean;');
+    expect(surfaceGuardSource).toContain("typeof item.unread === 'boolean'");
+    expect(surfaceGuardSource).not.toContain('item.unread === undefined');
+    expect(source).toContain('const unread = item.unread;');
+    expect(source).toContain("const deckState = unread ? 'needs-you' : 'idle';");
+    expect(source).toContain('<HullDeckMark state={deckState} />');
+    expect(source).toContain('unread ? (');
+    expect(source).toContain('unread && styles.rowUnread');
   });
 });

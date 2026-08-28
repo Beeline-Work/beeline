@@ -18,9 +18,9 @@ describe('device-local appearance theme', () => {
 
   it('migrates every retired light/dark/adaptive choice to Obsidian', () => {
     for (const themePreference of ['light', 'dark', 'adaptive']) {
-      expect(localSettingsParse({ themePreference, debugMode: true })).toMatchObject({
+      expect(localSettingsParse({ themePreference, zenMode: true })).toMatchObject({
         themePreference: 'obsidian',
-        debugMode: true,
+        zenMode: true,
       });
     }
   });

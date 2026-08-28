@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const settings = Object.fromEntries(
-  ['appearance', 'agents', 'features', 'language'].map((name) => [
+  ['appearance', 'language'].map((name) => [
     name,
     readFileSync(new URL(`../app/(app)/settings/${name}.tsx`, import.meta.url), 'utf8'),
   ]),
@@ -10,7 +10,6 @@ const settings = Object.fromEntries(
 const item = readFileSync(new URL('./Item.tsx', import.meta.url), 'utf8');
 const itemGroup = readFileSync(new URL('./ItemGroup.tsx', import.meta.url), 'utf8');
 const itemList = readFileSync(new URL('./ItemList.tsx', import.meta.url), 'utf8');
-const settingSwitch = readFileSync(new URL('./Switch.tsx', import.meta.url), 'utf8');
 const header = readFileSync(new URL('./navigation/Header.tsx', import.meta.url), 'utf8');
 const textSelection = readFileSync(
   new URL('../app/(app)/text-selection.tsx', import.meta.url),
@@ -18,7 +17,7 @@ const textSelection = readFileSync(
 );
 const appLayout = readFileSync(new URL('../app/(app)/_layout.tsx', import.meta.url), 'utf8');
 
-describe('legacy settings leaves use the Beeline design contract', () => {
+describe('retained settings leaves use the Beeline design contract', () => {
   it('keeps leaf screens free of glass, generic icon packs, and local palette colors', () => {
     for (const [name, source] of Object.entries(settings)) {
       expect(source, `${name} reintroduced legacy glass or Ionicons`).not.toMatch(
@@ -39,9 +38,7 @@ describe('legacy settings leaves use the Beeline design contract', () => {
     expect(itemList).toContain('backgroundColor: theme.buzz.bgTerminal');
   });
 
-  it('uses the shared box radius for toggles and flat header defaults', () => {
-    expect(settingSwitch.match(/borderRadius: theme\.buzz\.radius/g)).toHaveLength(2);
-    expect(settingSwitch).not.toMatch(/RNSwitch|borderRadius:\s*\d/);
+  it('uses flat header defaults', () => {
     expect(header).not.toMatch(/MobileGlass|Ionicons|@expo\/vector-icons/);
     expect(header).toContain('backgroundColor: theme.buzz.bgTerminal');
 

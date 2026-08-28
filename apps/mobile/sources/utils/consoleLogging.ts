@@ -21,7 +21,6 @@
 
 import { log } from '@/log';
 import { MAX_APP_LOG_ENTRIES } from '@/log';
-import { getLogServerUrl } from '@/sync/serverConfig';
 import { loadLocalSettings } from '@/sync/persistence';
 import { loadAppConfig } from '@/sync/appConfig';
 import { Platform } from 'react-native';
@@ -52,7 +51,7 @@ export function initConsoleLogging() {
     return
   }
 
-  remoteLogServerUrl = getLogServerUrl();
+  remoteLogServerUrl = process.env.EXPO_PUBLIC_LOG_SERVER_URL || null;
 
   // Determine initial state: user setting > build variant default > off
   try {

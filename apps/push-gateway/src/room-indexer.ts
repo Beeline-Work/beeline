@@ -1296,7 +1296,12 @@ const SYSTEM_MARKERS = new Set([
  * control records visible as system lines without silently spending a model
  * transcript slot.
  */
-const CONVERSATION_MARKERS = new Set(['agent-message', 'buzz-attachment']);
+const CONVERSATION_MARKERS = new Set([
+  'agent-message',
+  'buzz-agent-exchange',
+  'buzz-agent-request',
+  'buzz-attachment',
+]);
 
 function projectEvent(data: Json, channelId: string): RoomViewMessage | undefined {
   const eventTags = tags(data.tags);
@@ -1462,7 +1467,7 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   }
   if (
     markers.size > 0 &&
-    ![...markers].some((candidate) => CONVERSATION_MARKERS.has(candidate))
+    [...markers].some((candidate) => !CONVERSATION_MARKERS.has(candidate))
   ) {
     if ([...markers].some((candidate) => candidate.startsWith('buzz-'))) return undefined;
     return { ...base, presentation: 'system' };

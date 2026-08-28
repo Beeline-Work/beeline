@@ -12,7 +12,7 @@ export type RoomSendFrame = {
 /**
  * Prepare the synchronous Room-send paint without touching durable history.
  *
- * The live-event pump owns durable snapshot projection. Until that signed
+ * The durable surface refresh owns the latest server-resolved Room state. Until that signed
  * event arrives, the unsent row is a one-item in-memory overlay. Keeping the
  * transcript reference intact prevents a composer mutation from walking,
  * deduplicating, or sorting every loaded message before the next frame.

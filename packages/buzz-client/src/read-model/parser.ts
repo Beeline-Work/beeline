@@ -1,11 +1,8 @@
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { normalizeAttachmentReference, type AttachmentReference } from '../attachment.js';
 import {
-  CHANGE_REVIEW_COMPLETE_TAG,
-  CHANGE_REVIEW_GENERATION_TAG,
-  CHANGE_REVIEW_MANIFEST_TAG,
-  parseChangeReviewGenerationComplete,
-  parseChangeReviewManifest,
+  CHANGE_REVIEW_ARTIFACT_TAG,
+  parseChangeReviewArtifactDescriptor,
 } from '../change-review.js';
 import type { CornerMachineState } from '../corner-state.js';
 import { parseScheduledTurnReceipt } from '../scheduled-turn.js';
@@ -99,8 +96,6 @@ const CONTROL_MARKERS = new Set([
   'buzz-corner-close',
   'buzz-scheduled-turn',
   'buzz-work-schedule-paused',
-  'change-review-manifest',
-  'change-review-file',
   // Harness retry/backoff narration is machine state, never an agent's
   // conversational answer. The explicit wire marker is the schema boundary;
   // content wording is deliberately not inspected.
@@ -1300,32 +1295,14 @@ function parseParameterizedControl(event: NostrEvent, authority: ParseAuthority)
     };
   }
   if (!author || author.kind !== 'agent') return unknown(event, 'unauthorized');
-  if (markerSet.has(CHANGE_REVIEW_MANIFEST_TAG) && scope.scope === 'channel') {
-    const manifest = parseChangeReviewManifest(event.content);
-    const chunk = integer(tag(event, 'chunk')) ?? 0;
-    const chunks = integer(tag(event, 'chunks')) ?? 1;
-    if (!manifest || chunk >= chunks) return unknown(event, 'malformed-schema');
+  if (markerSet.has(CHANGE_REVIEW_ARTIFACT_TAG) && scope.scope === 'channel') {
+    const artifact = parseChangeReviewArtifactDescriptor(event.content);
+    if (!artifact) return unknown(event, 'malformed-schema');
     return {
       ...envelope(event, scope),
       type: 'control',
       visibility: 'hidden',
-      payload: {
-        kind: 'review-manifest',
-        ...manifest,
-        chunk,
-        chunks,
-        transactional: tag(event, 'generation') === CHANGE_REVIEW_GENERATION_TAG,
-      },
-    };
-  }
-  if (markerSet.has(CHANGE_REVIEW_COMPLETE_TAG) && scope.scope === 'channel') {
-    const completion = parseChangeReviewGenerationComplete(event.content);
-    if (!completion) return unknown(event, 'malformed-schema');
-    return {
-      ...envelope(event, scope),
-      type: 'control',
-      visibility: 'hidden',
-      payload: { kind: 'review-complete', ...completion },
+      payload: { kind: 'review-artifact', artifact },
     };
   }
   const sessionMarker = [...markerSet].find((candidate) => SESSION_MARKERS.has(candidate));

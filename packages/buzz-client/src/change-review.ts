@@ -4,12 +4,6 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 /** Signed change-review metadata published into an agent change channel. */
 export const CHANGE_REVIEW_EVENT_KIND = 30078;
 export const CHANGE_REVIEW_ARTIFACT_TAG = 'change-review-artifact';
-export const CHANGE_REVIEW_MANIFEST_TAG = 'change-review-manifest';
-export const CHANGE_REVIEW_FILE_TAG = 'change-review-file';
-export const CHANGE_REVIEW_COMPLETE_TAG = 'change-review-complete';
-/** Marks manifests whose transaction boundary is CHANGE_REVIEW_COMPLETE_TAG. */
-export const CHANGE_REVIEW_GENERATION_TAG = 'transactional-v1';
-export const CHANGE_REVIEW_VERSION = 1 as const;
 export const CHANGE_REVIEW_ARTIFACT_VERSION = 2 as const;
 
 export type ChangeReviewStatus =
@@ -26,24 +20,6 @@ export interface ChangeReviewFile {
   patchBytes?: number;
   /** Why no per-file patch events exist for this manifest entry. */
   renderUnavailableReason?: 'too-large';
-}
-
-export interface ChangeReviewManifest {
-  version: typeof CHANGE_REVIEW_VERSION;
-  base: string;
-  tip: string;
-  files: ChangeReviewFile[];
-}
-
-/** Published last, after every file chunk and manifest shard is accepted. */
-export interface ChangeReviewGenerationComplete {
-  version: typeof CHANGE_REVIEW_VERSION;
-  base: string;
-  tip: string;
-  patchId: string;
-  summary: string;
-  manifestChunks: number;
-  fileCount: number;
 }
 
 export interface ChangeReviewArtifactFile extends ChangeReviewFile {
@@ -69,6 +45,8 @@ export interface ChangeReviewArtifactDescriptor {
   patchId: string;
   summary: string;
   fileCount: number;
+  /** Paint-ready metadata only. Unified patch bodies remain in the lazy artifact. */
+  files: ChangeReviewFile[];
   url: string;
   sha256: string;
   size: number;
@@ -107,32 +85,6 @@ function parseChangeReviewFile(value: unknown): ChangeReviewFile | null {
   return file as ChangeReviewFile;
 }
 
-/** Parse untrusted relay content and reject malformed review manifests. */
-export function parseChangeReviewManifest(content: string): ChangeReviewManifest | null {
-  try {
-    const value = JSON.parse(content) as Partial<ChangeReviewManifest>;
-    if (
-      value.version !== CHANGE_REVIEW_VERSION ||
-      typeof value.base !== 'string' ||
-      !/^[0-9a-f]{40}$/.test(value.base) ||
-      typeof value.tip !== 'string' ||
-      !/^[0-9a-f]{40}$/.test(value.tip) ||
-      !Array.isArray(value.files)
-    ) {
-      return null;
-    }
-    const files: ChangeReviewFile[] = [];
-    for (const candidate of value.files) {
-      const file = parseChangeReviewFile(candidate);
-      if (!file) return null;
-      files.push(file);
-    }
-    return { version: CHANGE_REVIEW_VERSION, base: value.base, tip: value.tip, files };
-  } catch {
-    return null;
-  }
-}
-
 /** Parse the small relay pointer without trusting its remote URL or hash. */
 export function parseChangeReviewArtifactDescriptor(
   content: string,
@@ -151,6 +103,8 @@ export function parseChangeReviewArtifactDescriptor(
       !value.summary.trim() ||
       !Number.isSafeInteger(value.fileCount) ||
       value.fileCount! < 1 ||
+      !Array.isArray(value.files) ||
+      value.files.length !== value.fileCount ||
       typeof value.url !== 'string' ||
       !/^https?:\/\/[^\s]+$/i.test(value.url) ||
       typeof value.sha256 !== 'string' ||
@@ -160,7 +114,13 @@ export function parseChangeReviewArtifactDescriptor(
     ) {
       return null;
     }
-    return { ...value, summary: value.summary.trim() } as ChangeReviewArtifactDescriptor;
+    const files: ChangeReviewFile[] = [];
+    for (const candidate of value.files) {
+      const file = parseChangeReviewFile(candidate);
+      if (!file || (candidate && typeof candidate === 'object' && 'diff' in candidate)) return null;
+      files.push(file);
+    }
+    return { ...value, files, summary: value.summary.trim() } as ChangeReviewArtifactDescriptor;
   } catch {
     return null;
   }
@@ -202,43 +162,6 @@ export function parseChangeReviewArtifact(
       summary: descriptor.summary,
       files,
     };
-  } catch {
-    return null;
-  }
-}
-
-/** Parse the transaction boundary for one complete review generation. */
-export function parseChangeReviewGenerationComplete(
-  content: string,
-): ChangeReviewGenerationComplete | null {
-  try {
-    const value = JSON.parse(content) as Partial<ChangeReviewGenerationComplete>;
-    if (
-      value.version !== CHANGE_REVIEW_VERSION ||
-      typeof value.base !== 'string' ||
-      !/^[0-9a-f]{40}$/.test(value.base) ||
-      typeof value.tip !== 'string' ||
-      !/^[0-9a-f]{40}$/.test(value.tip) ||
-      typeof value.patchId !== 'string' ||
-      !/^[0-9a-f]{40}$/.test(value.patchId) ||
-      typeof value.summary !== 'string' ||
-      !value.summary.trim() ||
-      !Number.isSafeInteger(value.manifestChunks) ||
-      value.manifestChunks! < 1 ||
-      !Number.isSafeInteger(value.fileCount) ||
-      value.fileCount! < 1
-    ) {
-      return null;
-    }
-    return {
-      version: CHANGE_REVIEW_VERSION,
-      base: value.base,
-      tip: value.tip,
-      patchId: value.patchId,
-      summary: value.summary.trim(),
-      manifestChunks: value.manifestChunks,
-      fileCount: value.fileCount,
-    } as ChangeReviewGenerationComplete;
   } catch {
     return null;
   }

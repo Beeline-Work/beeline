@@ -1,12 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { Messaging } from 'firebase-admin/messaging';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DatabaseEventReader,
   PostgresReservationPersistence,
+  deleteSnapshotContract,
   migrateMaterializerReservations,
   type DatabaseQueryable,
 } from './database.js';
@@ -52,7 +50,7 @@ describe('shared materializer reservation store', () => {
     }
   });
 
-  it('imports a legacy reservation document once without overwriting current state', async () => {
+  it('deletes the retired snapshot tables instead of migrating them', async () => {
     const postgres = new PGlite();
     const database: DatabaseQueryable = {
       query: async <Row>(text: string, values?: unknown[]) => {
@@ -60,22 +58,31 @@ describe('shared materializer reservation store', () => {
         return { rows: result.rows as Row[] };
       },
     };
-    const directory = await mkdtemp(join(tmpdir(), 'materializer-reservations-'));
-    const legacy = join(directory, 'deliveries.json');
-    await writeFile(legacy, JSON.stringify({ version: 1, cursor: 7 }));
     try {
-      await migrateMaterializerReservations(database);
-      const first = new PostgresReservationPersistence(database, 'push-delivery', legacy);
-      await expect(first.load()).resolves.toEqual({ version: 1, cursor: 7 });
-      await first.save({ version: 1, cursor: 8 });
-      await writeFile(legacy, JSON.stringify({ version: 1, cursor: 99 }));
-      const restarted = new PostgresReservationPersistence(database, 'push-delivery', legacy);
-      await expect(restarted.load()).resolves.toEqual({ version: 1, cursor: 8 });
+      await postgres.exec(`
+        CREATE TABLE events (id integer);
+        CREATE TABLE channels (id integer);
+        CREATE TABLE channel_members (id integer);
+        CREATE TABLE beeline_channel_snapshot_v1 (id integer);
+        CREATE TABLE beeline_snapshot_dirty (id integer);
+        CREATE TABLE beeline_snapshot_nip98_replays (id integer);
+        CREATE SEQUENCE beeline_snapshot_dirty_revision_seq;
+      `);
+
+      await deleteSnapshotContract(database);
+
+      const retired = await database.query<{ name: string | null }>(`
+        SELECT to_regclass('beeline_channel_snapshot_v1')::text AS name
+        UNION ALL SELECT to_regclass('beeline_snapshot_dirty')::text
+        UNION ALL SELECT to_regclass('beeline_snapshot_nip98_replays')::text
+        UNION ALL SELECT to_regclass('beeline_snapshot_dirty_revision_seq')::text
+      `);
+      expect(retired.rows.map((row) => row.name)).toEqual([null, null, null, null]);
     } finally {
       await postgres.close();
-      await rm(directory, { recursive: true, force: true });
     }
   });
+
 });
 
 describe('DatabaseEventReader', () => {

@@ -96,7 +96,7 @@ describe('mapEventToNotification', () => {
     expect(
       isSuppressedFixtureNotification(event([['h', 'room']]), {
         ...context,
-        fixtureMarkers: ['change-review-manifest'],
+        fixtureMarkers: ['ui-demo'],
       }),
     ).toBe(true);
   });

@@ -73,9 +73,6 @@ function earliest(events: NostrEvent[]): NostrEvent | undefined {
 }
 
 const FIXTURE_MARKERS = new Set([
-  'change-review',
-  'change-review-file',
-  'change-review-manifest',
   'ui-test',
   'ui-demo',
   'uidemo',

@@ -10,7 +10,6 @@ services:
       NODE_ENV: production
       PORT: '8789'
       BUZZY_AUTH_HOST: 0.0.0.0
-      BUZZY_SNAPSHOT_INTERNAL_TOKEN: ${BUZZY_SNAPSHOT_INTERNAL_TOKEN:?set BUZZY_SNAPSHOT_INTERNAL_TOKEN}
       DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
       BUZZY_AUTH_TENANTS_JSON: >-
         [{"host":"usebeeline.app","community":"relay.buzzrouter.com","origin":"https://usebeeline.app","roomCommunityIds":["e8299f28-f095-472f-941a-80d1195b9a24","3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed"]},{"host":"relay.usebeeline.app","community":"relay.buzzrouter.com","origin":"https://relay.usebeeline.app","roomCommunityIds":["e8299f28-f095-472f-941a-80d1195b9a24","3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed"]},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","origin":"https://relay.buzzrouter.com","roomCommunityIds":["e8299f28-f095-472f-941a-80d1195b9a24","3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed"]}]
@@ -89,11 +88,10 @@ services:
     networks:
       - buzz-net
 
-  # One relay-side materializer hosts push delivery, repository-event intake,
-  # and snapshot projection. Its image is built by deploy-relay-host.sh from
+  # One relay-side process hosts push delivery, repository-event intake, and
+  # the direct Room indexer. Its image is built by deploy-relay-host.sh from
   # apps/push-gateway/Dockerfile and pinned by tag (same shape as auth above).
-  # FCM credentials, device registration, and the legacy-import paths remain
-  # host-local and are deliberately not tracked in this repository.
+  # FCM credentials and device registration remain host-local.
   materializer:
     image: ${BUZZY_MATERIALIZER_IMAGE:-beeline-materializer:production}
     env_file:
@@ -105,10 +103,7 @@ services:
       BUZZY_PUSH_DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
       BUZZY_PUSH_SA_FILE: /run/secrets/buzzy-fcm-service-account.json
       BUZZY_PUSH_REGISTRY_FILE: /var/lib/buzzy-push/registrations.json
-      BUZZY_PUSH_DELIVERY_STATE_FILE: /var/lib/buzzy-push/deliveries.json
-      BUZZY_SNAPSHOT_PUBLIC_ORIGIN: https://usebeeline.app
-      BUZZY_SNAPSHOT_AUTH_BASE_URL: http://auth:8789
-      BUZZY_SNAPSHOT_INTERNAL_TOKEN: ${BUZZY_SNAPSHOT_INTERNAL_TOKEN:?set BUZZY_SNAPSHOT_INTERNAL_TOKEN}
+      BUZZY_INDEXER_PUBLIC_ORIGIN: https://usebeeline.app
       XDG_STATE_HOME: ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}
       BEELINE_EVENTS_STATE_DIR: /var/lib/beeline-events
     volumes:
@@ -117,8 +112,6 @@ services:
       - ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:ro
       - ${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}:/var/lib/beeline-events
     depends_on:
-      auth:
-        condition: service_healthy
       postgres:
         condition: service_healthy
     healthcheck:
@@ -127,7 +120,7 @@ services:
           'CMD',
           'node',
           '-e',
-          "fetch('http://127.0.0.1:8788/snapshot/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:8788/workspaces').then(r=>{if(r.status!==401)process.exit(1)}).catch(()=>process.exit(1))",
         ]
       interval: 10s
       timeout: 3s

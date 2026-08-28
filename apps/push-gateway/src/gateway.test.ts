@@ -194,7 +194,7 @@ describe('RegisteredEventPoller', () => {
 });
 
 describe('PushGateway', () => {
-  it('attempts a standing attention episode once despite changed copy and delivery failure', async () => {
+  it('attempts a standing actionable-failure episode once despite changed copy and delivery failure', async () => {
     let now = 1_000_000;
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);
@@ -225,7 +225,9 @@ describe('PushGateway', () => {
       tags: [
         ['h', 'room-peddle'],
         ['subchannel', 'corner-peddle'],
-        ['status', 'needs-attention'],
+        ['status', 'failed'],
+        ['display-status', 'needs-attention'],
+        ['retry', 'blocked'],
         ['reason', reason],
       ],
       content,
@@ -245,7 +247,7 @@ describe('PushGateway', () => {
 
     await expect(
       gateway.handleRelayEvent(
-        attention('1', 'Nothing committed is ready for review.'),
+        attention('1', 'Could not realign the approved change.'),
         PUBKEY_A,
         reader,
       ),
@@ -253,7 +255,11 @@ describe('PushGateway', () => {
     expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
 
     now += 10 * 60_000;
-    await gateway.handleRelayEvent(attention('2', 'Nothing ready to merge yet.'), PUBKEY_A, reader);
+    await gateway.handleRelayEvent(
+      attention('2', 'The same terminal failure remains.'),
+      PUBKEY_A,
+      reader,
+    );
     expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
 
     // An automatic retry's transient working lease is not a human resolution.
@@ -267,7 +273,7 @@ describe('PushGateway', () => {
 
     await gateway.handleRelayEvent(lifecycle('9', 'idle'), PUBKEY_A, reader);
     await gateway.handleRelayEvent(
-      attention('4', 'A new review episode now needs attention.'),
+      attention('4', 'A newly blocked terminal failure needs a decision.'),
       PUBKEY_A,
       reader,
     );
@@ -324,7 +330,7 @@ describe('PushGateway', () => {
     });
   });
 
-  it('uses activity for DMs and attention for an agent question', async () => {
+  it('uses activity for DMs and keeps agent questions in-app', async () => {
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);
     const send = vi.fn(async () => ({
@@ -365,10 +371,7 @@ describe('PushGateway', () => {
       data: { type: 'direct-message' },
       android: { notification: { channelId: 'activity' } },
     });
-    expect(send.mock.calls[1]?.[0]).toMatchObject({
-      data: { type: 'agent-question' },
-      android: { notification: { channelId: 'attention' } },
-    });
+    expect(send).toHaveBeenCalledOnce();
   });
 
   it('sends zero FCM requests for a fixture-named persistent Room', async () => {
@@ -422,7 +425,7 @@ describe('PushGateway', () => {
     expect(sendEachForMulticast).toHaveBeenCalledOnce();
     expect(sendEachForMulticast.mock.calls[0]![0]).toMatchObject({
       tokens: [TOKEN_A],
-      notification: { title: '#Roadmap', body: 'Ada mentioned you: private message' },
+      notification: { title: '#Roadmap', body: '@Ada: private message' },
       data: { channelId: 'room-1234', roomName: 'Roadmap', type: 'mention' },
       android: {
         collapseKey: 'room-1234',
@@ -604,7 +607,7 @@ describe('PushGateway', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0]).toMatchObject({
       tokens: [TOKEN_A],
-      notification: { title: '#Launch room', body: 'Joy mentioned you: private message' },
+      notification: { title: '#Launch room', body: '@Joy: private message' },
       data: { channelId: roomId, roomName: 'Launch room', type: 'mention' },
     });
     expect(JSON.stringify(captured)).not.toContain('displayName');
@@ -863,7 +866,7 @@ describe('PushGateway @mention pushes', () => {
     expect(send).toHaveBeenCalledOnce();
     expect(send.mock.calls[0]?.[0]).toMatchObject({
       tokens: [TOKEN_A],
-      notification: { title: '#Roadmap', body: 'Ada mentioned you: please review this.' },
+      notification: { title: '#Roadmap', body: '@Ada: please review this.' },
       data: { channelId: 'room-1234', roomName: 'Roadmap', type: 'mention' },
     });
   });

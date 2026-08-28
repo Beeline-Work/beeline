@@ -275,7 +275,7 @@ export class PushGateway {
     let reserved: boolean;
     try {
       reserved =
-        notificationType === 'agent-attention'
+        notificationType === 'actionable-failure'
           ? await this.deliveryState.reserveAttentionAttempt({
               eventId: dedupeKey,
               eventCreatedAt: event.created_at,
@@ -299,7 +299,7 @@ export class PushGateway {
         event,
         recipientPubkey,
         'skip',
-        notificationType === 'agent-attention' ? 'attention-coalesced' : 'already-attempted',
+        notificationType === 'actionable-failure' ? 'attention-coalesced' : 'already-attempted',
       );
       return;
     }

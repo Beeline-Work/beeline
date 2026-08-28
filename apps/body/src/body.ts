@@ -644,6 +644,37 @@ export function agentTurnFailureJournalDetail(error: unknown): string {
 }
 
 /**
+ * Safe host-owned copy for activation failures a person can only resolve on
+ * the daemon host. Unknown/provider errors keep the generic terminal fallback:
+ * their text may contain credentials or mutable upstream detail.
+ */
+export function agentTurnFailureReply(error: unknown): string | undefined {
+  const detail = agentTurnFailureJournalDetail(error);
+  if (
+    detail === 'Trusty Squire requires an active bubblewrap credential-mask boundary' ||
+    detail === 'Trusty Squire activation refused without bubblewrap isolation'
+  ) {
+    return (
+      "I couldn't start because this host's required credential sandbox is unavailable. " +
+      'The operator must restore working bubblewrap isolation and restart this agent; your request did not reach the model.'
+    );
+  }
+  if (
+    detail === 'Trusty Squire requires an isolated agent home; ambient harness state is refused' ||
+    detail === 'Trusty Squire host-only storage is not configured' ||
+    detail === 'Trusty Squire session IPC cannot be masked safely' ||
+    detail === 'Trusty Squire storage or IPC boundary cannot be masked from the agent sandbox' ||
+    detail === 'Trusty Squire activation refused because sandbox mounts are incomplete'
+  ) {
+    return (
+      "I couldn't start because this host's Trusty Squire security boundary is incomplete. " +
+      'The operator must repair the agent sandbox; your request did not reach the model.'
+    );
+  }
+  return undefined;
+}
+
+/**
  * Default cadence for the WS-push loop's low-rate maintenance/liveness tick
  * (child steering, merge closure, and — for a Room with zero pushed events —
  * the periodic connected-socket liveness refresh). Overridable per loop via
@@ -7672,6 +7703,7 @@ export class Body {
       );
       if (promptAttempted) {
         const failure =
+          agentTurnFailureReply(error) ??
           "That turn stopped before I could deliver a reply. I won't retry it without another message from you.";
         await postAgentMessage(
           tlcChannelId,

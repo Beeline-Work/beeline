@@ -87,6 +87,36 @@ by projecting agent activity into the relay channel.
    session legitimately owns. Without it the daemon logs one advisory line and
    spawns unwrapped; see **Key design decisions** below.
 
+### Ubuntu AppArmor and bubblewrap
+
+Ubuntu hosts with `kernel.apparmor_restrict_unprivileged_userns=1` require an
+AppArmor profile before an unprivileged daemon can use bubblewrap. Keep that
+system-wide protection enabled. Install a profile for the bubblewrap executable
+instead, then prove the real namespace operation and restart each affected
+agent:
+
+```bash
+sudo install -m 0644 /dev/stdin /etc/apparmor.d/beeline-bwrap <<'EOF'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile beeline-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/beeline-bwrap>
+}
+EOF
+sudo apparmor_parser -r /etc/apparmor.d/beeline-bwrap
+bwrap --unshare-pid --ro-bind / / --dev /dev --proc /proc /bin/true
+beeline start --agent <agent-pubkey>
+```
+
+The attachment applies to `/usr/bin/bwrap`, so every invocation of that exact
+binary can create a user namespace. On a shared host, prefer a dedicated
+credential-less daemon account or a site-owned narrower profile. Do not work
+around the failure by setting `kernel.apparmor_restrict_unprivileged_userns=0`:
+that disables the protection for the whole host. A daemon that detects local
+Trusty Squire state still fails closed until the bubblewrap self-test passes.
+
 ## Configuration (env vars)
 
 | Variable                            | Required | Default                 | Description                                                                                                                                                                                                                                          |

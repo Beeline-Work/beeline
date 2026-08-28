@@ -714,6 +714,73 @@ export function withoutPrematureMergeClaims(message: string): string {
     .join('\n');
 }
 
+const UNVERIFIED_ROOM_COORDINATION_REPLY =
+  'No Beeline corner, delegation, or mission record was created, so no delegated work started.';
+
+interface RoomCoordinationClaims {
+  corner: boolean;
+  delegation: boolean;
+  mission: boolean;
+}
+
+const NEGATED_COMPLETION =
+  /\b(?:not|never|cannot|can['’]t|couldn['’]t|didn['’]t|haven['’]t|hadn['’]t|failed\s+to)\b/i;
+
+function positiveCoordinationClaim(
+  message: string,
+  pattern: RegExp,
+  completedAction: RegExp,
+): boolean {
+  for (const match of message.matchAll(pattern)) {
+    const actionAt = match[0].search(completedAction);
+    if (actionAt >= 0 && !NEGATED_COMPLETION.test(match[0].slice(0, actionAt))) return true;
+  }
+  return false;
+}
+
+/**
+ * Narrowly recognize first-person completion claims about Beeline-owned
+ * coordination state. Intent, future tense, requests, refusals, and ordinary
+ * explanations remain inert; only past/present-perfect claims reach the gate.
+ */
+function roomCoordinationClaims(message: string): RoomCoordinationClaims {
+  return {
+    corner: positiveCoordinationClaim(
+      message,
+      /\b(?:i|we)\b.{0,72}\b(?:opened|created|started|launched)\b.{0,56}\b(?:edit\s+)?corner\b/gi,
+      /\b(?:opened|created|started|launched)\b/i,
+    ),
+    delegation: positiveCoordinationClaim(
+      message,
+      /\b(?:i|we)\b.{0,72}\bdelegated\b/gi,
+      /\bdelegated\b/i,
+    ),
+    mission: positiveCoordinationClaim(
+      message,
+      /\b(?:i|we)\b.{0,72}\b(?:created|started|launched|activated|set\s+up)\b.{0,32}\bmission\b/gi,
+      /\b(?:created|started|launched|activated|set\s+up)\b/i,
+    ),
+  };
+}
+
+/**
+ * A Room model cannot create a mission in prose. A corner/delegation
+ * completion is publishable only after openSubchannel has returned and
+ * registered the corner actor, which happens after its signed relay records,
+ * projected opening human, worktree, and edit session all exist.
+ */
+function groundRoomCoordinationClaims(
+  message: string,
+  evidence: { cornerRecordCreated: boolean },
+): string {
+  const claims = roomCoordinationClaims(message);
+  if (!claims.corner && !claims.delegation && !claims.mission) return message;
+  if (claims.mission || !evidence.cornerRecordCreated) {
+    return UNVERIFIED_ROOM_COORDINATION_REPLY;
+  }
+  return message;
+}
+
 function shortenSummaryItem(value: string, maxChars = 144): string {
   const compact = value.replace(/\s+/g, ' ').trim();
   if (compact.length <= maxChars) return compact;
@@ -7365,6 +7432,21 @@ export class Body {
           promptOptions,
           turn,
         );
+      }
+      const cornerRecordCreated = [...this.subchannels.values()].some(
+        (corner) =>
+          !corner.archived &&
+          corner.request?.eventId === request.eventId &&
+          corner.session.parentChannelId === tlcChannelId,
+      );
+      const groundedAgentText = groundRoomCoordinationClaims(result.agentText, {
+        cornerRecordCreated,
+      });
+      if (groundedAgentText !== result.agentText) {
+        console.warn(
+          `[body] replaced an unverified Room coordination claim for request ${request.eventId}`,
+        );
+        result = { ...result, agentText: groundedAgentText };
       }
       // The deadline may fire just as ACP resolves. Once the host has announced
       // a forced restart, even a late successful result must not cross the

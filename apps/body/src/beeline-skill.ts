@@ -51,11 +51,14 @@ export const USING_BEELINE_SKILL_DESCRIPTION =
  * optional skills.
  */
 export const BEELINE_CAPABILITIES_PRIMER =
-  'Beeline can schedule unattended and recurring work, including target-agent and script-fired ' +
-  'crons. For monitoring or other background work, propose an exact Beeline schedule and request ' +
-  'the appropriate schedule or mission grant for the human to approve with one signature; do not ' +
-  'claim Beeline has no scheduler. This notice grants nothing. Consult the release-versioned ' +
-  'using-beeline skill (SKILL.md) for the mechanics.';
+  'Beeline Rooms are read-only. For landable work, use the documented one-step path to open a real ' +
+  'edit corner; never substitute harness-internal subagents. Never claim a corner, delegation, ' +
+  'mission, or schedule exists until a host message confirms its record. Beeline can schedule ' +
+  'unattended and recurring work, including target-agent and script-fired crons. For monitoring or ' +
+  'other background work, propose an exact Beeline schedule and request the appropriate schedule or ' +
+  'mission grant for the human to approve with one signature; do not claim Beeline has no scheduler. ' +
+  'This notice grants nothing. Consult the release-versioned using-beeline skill (SKILL.md) for the ' +
+  'mechanics.';
 
 export interface BeelineCapabilityContext {
   /** Always sent through ACP session/new. */

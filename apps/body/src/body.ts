@@ -38,7 +38,6 @@ import {
   postAgentActivityBatch,
   startAgentPresence,
   postAgentTurnStatus,
-  postAgentStallNotice,
   postSteerQueuedNotice,
   postSlashCommandNotice,
   SLASH_COMMAND_NOTICE_TAG,
@@ -423,6 +422,19 @@ import {
   type CornerMetadata,
 } from './corner-metadata.js';
 
+const CAPTURED_AGENT_OUTPUTS = Symbol('captured-agent-outputs');
+const AGENT_ATTACHMENT_FAILURE_REPLY =
+  "I made a file to show you but couldn't deliver it. I'll regenerate it.";
+
+interface CapturedAgentOutputs {
+  candidates: AgentOutputCandidate[];
+  failed: boolean;
+}
+
+type PromptResultWithCapturedOutputs = PromptResult & {
+  [CAPTURED_AGENT_OUTPUTS]?: CapturedAgentOutputs;
+};
+
 /** Tracks a single agent session. */
 export interface AgentSession {
   /** Channel ID this session belongs to. */
@@ -554,19 +566,6 @@ export const ROOM_AGENT_PROMPT_TIMEOUT_MS = 3 * 60_000;
 export const ROOM_AGENT_HARD_TIMEOUT_MS = Number(
   process.env.BUZZY_BODY_TURN_HARD_TIMEOUT_MS ?? String(45 * 60_000),
 );
-
-/**
- * Idle window — driven by the exact same per-update activity signal as
- * `ROOM_AGENT_PROMPT_TIMEOUT_MS` above, just shorter — before a stalled turn
- * gets an honest one-time "still working, taking longer than usual" notice in
- * the Room/corner. This never cancels or retries anything by itself: it only
- * surfaces the stall to the user well before the full idle-cancel window
- * elapses, so a wedged backend doesn't look silently idle or offline. An
- * actively-working turn (any session/update, not just text) keeps resetting
- * this exactly like the real idle-cancel timer, so it never fires on a
- * legitimately slow-but-active (e.g. reasoning) turn.
- */
-export const ROOM_AGENT_STALL_NOTICE_MS = 20_000;
 
 /** Shared by every Room Body in one daemon process; changes on each restart. */
 const BODY_PROCESS_GENERATION = `${process.pid}-${Date.now()}`;
@@ -1794,8 +1793,10 @@ export function humanAgentExchangeRequest(
   currentAgentPubkey: string,
   roomParticipants: readonly string[],
   authorAttributions: ReadonlyMap<string, RoomAuthorAttribution>,
+  indexedMessages: readonly RoomViewMessage[] = [],
 ): AgentExchangeRequest | undefined {
-  if (!isChannelAddressedMessage(event, currentAgentPubkey, roomParticipants)) return undefined;
+  if (!isChannelAddressedMessage(event, currentAgentPubkey, roomParticipants, indexedMessages))
+    return undefined;
   const own = authorAttributions.get(currentAgentPubkey);
   if (own?.kind !== 'Agent') return undefined;
 
@@ -2198,6 +2199,7 @@ export function isChannelAddressedMessage(
   event: NostrEvent,
   agentPubkey: string,
   roomParticipants: readonly string[] = [],
+  indexedMessages: readonly RoomViewMessage[] = [],
 ): boolean {
   if (
     event.kind !== 9 ||
@@ -2209,7 +2211,35 @@ export function isChannelAddressedMessage(
 
   const participants = new Set(roomParticipants);
   participants.delete(agentPubkey);
-  return participants.size === 1 && participants.has(event.pubkey);
+  if (participants.size === 1 && participants.has(event.pubkey)) return true;
+
+  // In a multi-party Room, natural follow-up belongs only to the person the
+  // agent actually answered. The server-indexed presentation is the
+  // conversation boundary: cards, statuses, activity, and control records do
+  // not interrupt the pair. The reply edge is the recipient proof; adjacency
+  // to agent prose alone is deliberately insufficient.
+  const indexedCurrent = indexedMessages.find((message) => message.id === event.id);
+  if (indexedCurrent && indexedCurrent.presentation !== 'message') return false;
+  const conversation = indexedMessages.filter((message) => message.presentation === 'message');
+  const currentIndex = conversation.findIndex((message) => message.id === event.id);
+  const latestIndexed = conversation.at(-1);
+  const followsIndexedTail =
+    latestIndexed &&
+    (latestIndexed.createdAt < event.created_at ||
+      (latestIndexed.createdAt === event.created_at && latestIndexed.id.localeCompare(event.id) < 0));
+  const preceding =
+    currentIndex >= 0
+      ? conversation[currentIndex - 1]
+      : followsIndexedTail
+        ? latestIndexed
+        : undefined;
+  if (preceding?.author.kind !== 'agent' || preceding.author.pubkey !== agentPubkey) return false;
+  const repliedTo = preceding.reply?.eventId;
+  if (!repliedTo) return false;
+  const triggeringMessage = conversation.find((message) => message.id === repliedTo);
+  return (
+    triggeringMessage?.author.kind === 'human' && triggeringMessage.author.pubkey === event.pubkey
+  );
 }
 
 /**
@@ -2223,8 +2253,10 @@ export function isChannelWorkIntent(
   event: NostrEvent,
   agentPubkey: string,
   roomParticipants: readonly string[] = [],
+  indexedMessages: readonly RoomViewMessage[] = [],
 ): boolean {
-  if (!isChannelAddressedMessage(event, agentPubkey, roomParticipants)) return false;
+  if (!isChannelAddressedMessage(event, agentPubkey, roomParticipants, indexedMessages))
+    return false;
 
   const content = event.content
     .normalize('NFKC')
@@ -2390,14 +2422,6 @@ export class Body {
    * ever set once the relay has actually taken the event.
    */
   private landSummaryInFlight = new Set<string>();
-  /**
-   * Per-channel count of inbound human messages seen. A turn snapshots this
-   * when its prompt actually starts; the "still working" stall notice is
-   * deferred whenever the count has moved since, because a fresh steer — not
-   * backend silence — is then what the human is waiting on, and the honest
-   * signal for that is the queued acknowledgement, not "still working".
-   */
-  private inboundMessageSeq = new Map<string, number>();
   /**
    * Channels that already carry an unanswered queued-steer acknowledgement.
    * Keeps the ack to at most one per channel per active turn no matter how
@@ -3990,19 +4014,9 @@ export class Body {
   }
 
   /**
-   * Record that a human message arrived for this channel. Called at the point
-   * of ARRIVAL (a pushed Room event, a corner member event), not at the point
-   * the turn for it finally starts — the whole reason it exists is to tell a
-   * still-running turn that its silence is no longer the interesting fact.
-   */
-  private noteInboundMessage(channelId: string): void {
-    this.inboundMessageSeq.set(channelId, (this.inboundMessageSeq.get(channelId) ?? 0) + 1);
-  }
-
-  /**
-   * Earliest point a Room learns a human message exists. Records it for the
-   * stall-notice check and, when a turn is already running on this Room's
-   * pinned session, publishes the queued acknowledgement immediately.
+   * Earliest point a Room learns a human message exists. When a turn is already
+   * running on this Room's pinned session, publishes the queued acknowledgement
+   * immediately.
    *
    * Deliberately called OFF `runRoomPushLoop`'s `delivery` chain: that chain
    * serializes handling behind the running turn (which is what makes the
@@ -4021,7 +4035,6 @@ export class Body {
     if (event.pubkey === this.agentIdentity.publicKey) return;
     if (!event.content.trim()) return;
     if (!isChannelAddressedMessage(event, this.agentIdentity.publicKey, roomParticipants)) return;
-    this.noteInboundMessage(channelId);
     if (!this.channelTurnActive(channelId)) {
       this.steerQueuedChannels.delete(channelId);
       return;
@@ -4095,17 +4108,6 @@ export class Body {
        *  stream until the host has published an actual merge target. */
       withholdMergeClaims?: boolean;
       /**
-       * The event a stall notice should thread as a reply, when one exists
-       * in `channelId` itself. Deliberately separate from `requestId` (used
-       * only for the draft's plain `request` tag, which carries no channel
-       * constraint): a corner's opening turn is triggered by a Room event,
-       * not a corner one, so its caller omits this rather than reusing
-       * `requestId` across channels — see `postAgentStallNotice`.
-       */
-      replyToId?: string;
-      /** The NIP-10 root inherited from `replyToId`'s thread ancestry. */
-      replyRootId?: string;
-      /**
        * Room turns only: watch the growing reply for the agent-initiated
        * edit-corner request marker (`corner-request.ts`) and strip it from
        * everything downstream — live draft and final text.
@@ -4139,49 +4141,11 @@ export class Body {
       : undefined;
     const cornerRequestFilter = turn.cornerRequests ? createCornerRequestFilter() : undefined;
     let withheldMergeClaim = false;
-    // Surface a stall well before ROOM_AGENT_PROMPT_TIMEOUT_MS elapses. Armed
-    // on every ACP activity signal (`onActivity` below fires on every
-    // session/update, the same trigger `AcpClient` uses to reset its own idle
-    // timer), so this only ever fires on genuine zero-output inactivity, never
-    // on a slow-but-active turn.
-    let stallTimer: ReturnType<typeof setTimeout> | undefined;
-    let stallNotified = false;
-    // Baseline for the "a fresh message arrived" check below. Sampled when the
-    // prompt actually starts, not when this method is entered.
-    let stallBaselineSeq = 0;
     const permissionTurn: ActivePermissionTurn = {
       requestId: turn.requestId,
       ...(turn.originalRequestId ? { originalRequestId: turn.originalRequestId } : {}),
       ...(turn.rootEventId ? { rootEventId: turn.rootEventId } : {}),
       ...(turn.delegationId ? { delegationId: turn.delegationId } : {}),
-    };
-    const clearStallTimer = () => {
-      if (stallTimer) clearTimeout(stallTimer);
-      stallTimer = undefined;
-    };
-    const armStallTimer = () => {
-      clearStallTimer();
-      if (stallNotified) return;
-      stallTimer = setTimeout(() => {
-        // A new human message landed on this channel since the window opened.
-        // The human is waiting on their own steer, not on backend silence —
-        // answering that with "still working" is what made a mid-turn steer
-        // read as swallowed. `acknowledgeQueuedSteer` owns that signal; push
-        // the stall window out and re-measure from the newest message instead.
-        const seq = this.inboundMessageSeq.get(turn.channelId) ?? 0;
-        if (seq !== stallBaselineSeq) {
-          stallBaselineSeq = seq;
-          armStallTimer();
-          return;
-        }
-        stallNotified = true;
-        postAgentStallNotice(
-          turn.channelId,
-          this.agentIdentity,
-          turn.replyToId,
-          turn.replyRootId,
-        ).catch((error) => console.error('[body] failed to publish agent stall notice:', error));
-      }, ROOM_AGENT_STALL_NOTICE_MS);
     };
     let result: PromptResult;
     // Set only at the actual ACP invocation boundary. Scheduler/session
@@ -4226,13 +4190,6 @@ export class Body {
             const wirePrompt = [session.personaTurnPrefix, prompt, humanDirectivePrimacy]
               .filter(Boolean)
               .join('\n\n');
-            // Armed HERE, not before `runOnSession`: a turn queued behind another
-            // turn on the same pinned session has sent the backend nothing yet, so
-            // a "my coding backend is taking longer than usual" notice fired while
-            // merely waiting in that FIFO is simply false — and lands in the
-            // transcript directly under the message that is still waiting its turn.
-            stallBaselineSeq = this.inboundMessageSeq.get(turn.channelId) ?? 0;
-            armStallTimer();
             this.activePermissionTurns.set(turn.channelId, permissionTurn);
             modelCallStartedAt = new Date().toISOString();
             const publishMessageDraft = (fullText: string) => {
@@ -4257,7 +4214,6 @@ export class Body {
                 if (!typedStreamSeen) publishMessageDraft(fullText);
               },
               (stream) => {
-                armStallTimer();
                 if (!stream) return;
                 typedStreamSeen = true;
                 // Progress narration that an adapter reports as an earlier
@@ -4280,9 +4236,14 @@ export class Body {
               );
               hardTimer.unref?.();
             });
-            return await Promise.race([promptCall, hardDeadline]).finally(() => {
+            const completed = await Promise.race([promptCall, hardDeadline]).finally(() => {
               if (hardTimer) clearTimeout(hardTimer);
             });
+            // The workbench is a quota tmpfs owned by this exact physical ACP
+            // process. Capture referenced bytes before returning from the
+            // scheduler task: once this callback settles, capacity eviction
+            // may retire the process and invalidate its /proc/<pid>/root view.
+            return await this.captureAgentOutputs(session, completed);
           } finally {
             if (activeRoomTurn && this.pendingRoomTurns.get(turn.channelId) === activeRoomTurn) {
               if (previousRoomTurn) this.pendingRoomTurns.set(turn.channelId, previousRoomTurn);
@@ -4292,7 +4253,6 @@ export class Body {
         },
         turn.trigger === 'schedule' ? 'background' : undefined,
       );
-      clearStallTimer();
       // End-of-turn corner-request extraction: the final text may carry the
       // marker even when no streaming callback ever fired (a harness that
       // emits one whole message chunk, or none — `agentText` is still built).
@@ -4304,9 +4264,7 @@ export class Body {
             extraction.request;
         }
       }
-      // The backend turn is over. Persisting spend is bookkeeping, not model
-      // inactivity, and must never manufacture a stall notice while the next
-      // FIFO turn is already starting.
+      // The backend turn is over. Persisting spend is bookkeeping only.
       await this.durableState
         .recordModelTurn(
           completedModelSpend({
@@ -4334,7 +4292,6 @@ export class Body {
         )
         .catch((error) => console.error('[body] failed to record model spend:', error));
     } catch (error) {
-      clearStallTimer();
       console.error(
         `[body] room ${turn.channelId} request ${turn.requestId}: ` +
           `ACP ${modelCallStartedAt ? 'model turn' : 'session activation'} failed: ` +
@@ -4374,7 +4331,6 @@ export class Body {
       }
       throw error;
     } finally {
-      clearStallTimer();
       if (this.activePermissionTurns.get(turn.channelId) === permissionTurn) {
         this.activePermissionTurns.delete(turn.channelId);
       }
@@ -4452,20 +4408,56 @@ export class Body {
     throw new Error(`${candidate.name} is outside the agent session and workbench directories`);
   }
 
+  /**
+   * Freeze every attachment candidate while the producing ACP process still
+   * owns its quota tmpfs. The captured value contains bytes, never a path, so
+   * upload may safely happen after scheduler eviction without weakening the
+   * workbench's per-process lifetime or filesystem boundary.
+   */
+  private async captureAgentOutputs(
+    session: AgentSession,
+    result: PromptResult,
+  ): Promise<PromptResultWithCapturedOutputs> {
+    const candidates: AgentOutputCandidate[] = [];
+    let failed = false;
+    for (const candidate of outputCandidates(result)) {
+      try {
+        if (!isAllowedAgentAttachmentMimeType(candidate.mimeType)) {
+          throw new Error(`file type ${candidate.mimeType} is not allowed for agent attachments`);
+        }
+        candidates.push({
+          name: candidate.name,
+          mimeType: candidate.mimeType,
+          bytes: await this.candidateBytes(session, candidate),
+        });
+      } catch (error) {
+        failed = true;
+        // Exact diagnostics belong in operator-local logs. Room prose below
+        // consumes only the boolean and can never expose host or /proc paths.
+        console.warn('[body] agent attachment capture failed:', error);
+      }
+    }
+    return {
+      ...result,
+      [CAPTURED_AGENT_OUTPUTS]: { candidates, failed },
+    };
+  }
+
   /** Upload agent-produced outputs through the same authenticated media client as mobile. */
   private async uploadAgentOutputs(
     session: AgentSession,
     result: PromptResult,
-  ): Promise<{ attachments: AttachmentReference[]; errors: string[] }> {
-    const candidates = outputCandidates(result);
-    if (!candidates.length) return { attachments: [], errors: [] };
+  ): Promise<{ attachments: AttachmentReference[]; failed: boolean }> {
+    const captured = (result as PromptResultWithCapturedOutputs)[CAPTURED_AGENT_OUTPUTS];
+    const candidates = captured?.candidates ?? outputCandidates(result);
+    let failed = captured?.failed ?? false;
+    if (!candidates.length) return { attachments: [], failed };
     const client = createBuzzClient({
       baseUrl: this.config.relayBaseUrl,
       host: this.config.relayHost,
       identity: this.agentIdentity,
     });
     const attachments: AttachmentReference[] = [];
-    const errors: string[] = [];
     try {
       for (const candidate of candidates) {
         try {
@@ -4493,15 +4485,16 @@ export class Body {
             ...(dim ? { width: Number(dim[1]), height: Number(dim[2]) } : {}),
           });
         } catch (error) {
-          errors.push(
-            `${basename(candidate.name)}: ${error instanceof Error ? error.message : String(error)}`,
-          );
+          failed = true;
+          // Upload/canonicalization diagnostics stay operator-local. The Room
+          // receives only AGENT_ATTACHMENT_FAILURE_REPLY below.
+          console.warn('[body] agent attachment delivery failed:', error);
         }
       }
     } finally {
       client.disconnect();
     }
-    return { attachments, errors };
+    return { attachments, failed };
   }
 
   private async publishAgentResult(
@@ -4527,8 +4520,7 @@ export class Body {
       reply = '';
     }
     if (!reply) reply = uploaded.attachments.length ? 'Shared an attachment.' : fallback;
-    if (uploaded.errors.length)
-      reply = `${reply}\n\nAttachment unavailable: ${uploaded.errors.join('; ')}`;
+    if (uploaded.failed) reply = `${reply}\n\n${AGENT_ATTACHMENT_FAILURE_REPLY}`;
     // Concise reduction can legitimately empty out an otherwise real reply
     // (e.g. one that is entirely a fenced code block, which the summary
     // strips before checking for content) — fall back rather than treating a
@@ -5503,12 +5495,17 @@ export class Body {
     );
   }
 
+  private async indexedRoomMessages(channelId: string): Promise<readonly RoomViewMessage[]> {
+    return (
+      await new RoomViewClient({
+        baseUrl: this.config.relayBaseUrl,
+        identity: this.agentIdentity,
+      }).room(channelId)
+    ).messages;
+  }
+
   private async agentHistory(channelId: string): Promise<readonly AgentHistoryEntry[]> {
-    const view = await new RoomViewClient({
-      baseUrl: this.config.relayBaseUrl,
-      identity: this.agentIdentity,
-    }).room(channelId);
-    return roomViewConversationHistory(channelId, view.messages);
+    return roomViewConversationHistory(channelId, await this.indexedRoomMessages(channelId));
   }
 
   private ensureChannelPresenceCache(channelId: string): Promise<{
@@ -5958,7 +5955,6 @@ export class Body {
           delegationId: turn.value.delegationId,
           workItemId: turn.value.workItemId,
           reservedTokens: turn.value.budget.reservedTokens,
-          replyToId: turn.event.id,
         },
         pendingTurn,
       );
@@ -6082,8 +6078,6 @@ export class Body {
           requestId: request.eventId,
           originalRequestId: envelope.authorizationEventId,
           cause: 'agent-exchange',
-          replyToId: request.eventId,
-          replyRootId: request.replyRootId,
         });
         await this.publishAgentResult(
           channelId,
@@ -6469,6 +6463,8 @@ export class Body {
       ...roomParticipants,
       ...pendingEvents.map((event) => event.pubkey),
     ]);
+    let indexedMessages: readonly RoomViewMessage[] = [];
+    let indexedMessagesLoaded = false;
     let opened = 0;
     let maxCreatedAt = since ?? Math.max(this.requestCursors.get(tlcChannelId) ?? 0, 0);
 
@@ -6523,11 +6519,30 @@ export class Body {
           continue;
         }
         const authorAttribution = authorAttributions.get(event.pubkey);
-        const addressed = isChannelAddressedMessage(
+        let addressed = isChannelAddressedMessage(
           event,
           this.agentIdentity.publicKey,
           roomParticipants,
         );
+        const otherParticipants = new Set(roomParticipants);
+        otherParticipants.delete(this.agentIdentity.publicKey);
+        if (
+          !addressed &&
+          event.kind === 9 &&
+          event.pubkey !== this.agentIdentity.publicKey &&
+          otherParticipants.size > 1
+        ) {
+          if (!indexedMessagesLoaded) {
+            indexedMessages = await this.indexedRoomMessages(tlcChannelId);
+            indexedMessagesLoaded = true;
+          }
+          addressed = isChannelAddressedMessage(
+            event,
+            this.agentIdentity.publicKey,
+            roomParticipants,
+            indexedMessages,
+          );
+        }
         if (!addressed) {
           await this.durableState.delivered(tlcChannelId, event.id);
           continue;
@@ -6627,6 +6642,7 @@ export class Body {
             this.agentIdentity.publicKey,
             roomParticipants,
             authorAttributions,
+            indexedMessages,
           );
           if (exchangeRequest?.kind === 'invalid') {
             await this.postUnavailableExchangeReply(tlcChannelId, request);
@@ -6648,11 +6664,10 @@ export class Body {
               continue;
             }
           }
-          // Covers the HTTP backstop / directly-driven Room (no push loop, so
-          // `noteRoomInboundMessage` never ran) and re-checks after any wait
-          // above. `replyInRoom` below queues on the session FIFO when a turn
-          // is already running, so the human gets the ack rather than silence.
-          this.noteInboundMessage(tlcChannelId);
+          // Covers the HTTP backstop / directly-driven Room (no push loop) and
+          // re-checks after any wait above. `replyInRoom` below queues on the
+          // session FIFO when a turn is already running, so the human gets the
+          // ack rather than silence.
           if (this.channelTurnActive(tlcChannelId)) {
             await this.acknowledgeQueuedSteer(tlcChannelId, event.id);
           } else {
@@ -6662,6 +6677,7 @@ export class Body {
             event,
             this.agentIdentity.publicKey,
             roomParticipants,
+            indexedMessages,
           );
           const roomReply = await this.replyInRoom(
             tlcChannelId,
@@ -7487,8 +7503,6 @@ export class Body {
               ...(beforeModelActivation ? { beforeModelActivation } : {}),
             }
           : {}),
-        replyToId: request.eventId,
-        replyRootId: request.replyRootId,
         cornerRequests:
           !scheduled &&
           editPolicy !== 'direct-message' &&
@@ -7543,14 +7557,10 @@ export class Body {
       }
       if (turn.transitionedToCorner) {
         // The work moved into a corner, but the Room turn still owes the human
-        // a visible answer. Publishing nothing here is what left a stalled
-        // turn's earlier "Still working on this" stall notice as the agent's
-        // LAST durable words in the Room forever: the complete receipt closed
-        // the thinking indicator, the corner's status cards never render as
-        // transcript rows, and `producedReply: true` below consumes the
-        // request, so nothing ever follows up. Publish the model's own final
-        // text when it produced one; otherwise one deterministic continuation
-        // line naming the corner that took the work.
+        // a visible answer. The complete receipt closes the thinking indicator
+        // and corner status cards never render as transcript rows, so publish
+        // the model's own final text when it produced one; otherwise publish one
+        // deterministic continuation line naming the corner that took the work.
         const openedCorner = [...this.subchannels.values()].find(
           (candidate) => candidate.request?.eventId === request.eventId,
         );
@@ -8938,11 +8948,6 @@ export class Body {
             '',
             taskInstructions,
           ].join('\n'),
-          // No `replyToId`: `requestId` here is the Room event that opened
-          // this corner, not an event in `info.subchannelId` itself — a
-          // stall notice threaded to it would be rejected by the relay as a
-          // cross-channel reply. This corner's opening turn has no
-          // same-channel parent to thread to.
           {
             ...attribution,
             channelId: info.subchannelId,
@@ -12848,10 +12853,6 @@ export class Body {
         // collision exists in both surfaces.
         await this.markSlashCommandVocabulary(subchannelId, evt.content);
         const prompt = cornerTurnPrompt(await this.agentHistory(subchannelId), userPrompt, evt.id);
-        // A genuine human turn for this corner — from here on, any "still
-        // working" notice about the turn currently in flight would be
-        // answering this message rather than describing the backend.
-        this.noteInboundMessage(subchannelId);
         let promptAttempted = false;
         try {
           let agentResult: PromptResult | undefined;
@@ -12868,8 +12869,6 @@ export class Body {
                 requestId: evt.id,
                 originalRequestId: evt.id,
                 cause: 'corner-follow-up',
-                replyToId: evt.id,
-                replyRootId: replyRootIdForEvent(evt),
                 withholdMergeClaims: true,
               },
             );

@@ -7,6 +7,7 @@ import {
   type SignedOutboxRecord,
   type SurfaceCacheAddress,
 } from '@beeline/buzz-client';
+import { stripRetiredAgentNotices } from './retired-agent-notices';
 
 const responses = new MMKV({ id: 'buzz-surface-responses' });
 const mutations = new MMKV({ id: 'buzz-surface-outbox' });
@@ -26,20 +27,23 @@ function decodedStorageKey(key: string): string | null {
   }
 }
 
-export const mobileSurfaceCache = new SurfaceResponseCache({
-  get: async (key) => responses.getString(storageKey(key)) ?? null,
-  set: async (key, value) => {
-    responses.set(storageKey(key), value);
+export const mobileSurfaceCache = new SurfaceResponseCache(
+  {
+    get: async (key) => responses.getString(storageKey(key)) ?? null,
+    set: async (key, value) => {
+      responses.set(storageKey(key), value);
+    },
+    remove: async (key) => {
+      responses.delete(storageKey(key));
+    },
+    keys: async () =>
+      responses.getAllKeys().flatMap((key) => {
+        const decoded = decodedStorageKey(key);
+        return decoded === null ? [] : [decoded];
+      }),
   },
-  remove: async (key) => {
-    responses.delete(storageKey(key));
-  },
-  keys: async () =>
-    responses.getAllKeys().flatMap((key) => {
-      const decoded = decodedStorageKey(key);
-      return decoded === null ? [] : [decoded];
-    }),
-});
+  stripRetiredAgentNotices,
+);
 
 export function surfaceAddress(
   relayOrigin: string,

@@ -359,6 +359,131 @@ describe('RoomIndexer', () => {
     });
   });
 
+  it('uses the current Workspace soul name on every indexed agent surface', async () => {
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role, removed_at)
+       VALUES ($1, $2, $3, 'member', to_timestamp(14))`,
+      [TENANT, WORKSPACE, bytes(OUTSIDER)],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(12), 30078, $4, $5, $6, $7)`,
+      [
+        TENANT,
+        bytes('9'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['d', `${WORKSPACE}:${AGENT}`],
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['t', 'buzz-agent-soul'],
+          ['community', WORKSPACE],
+        ]),
+        JSON.stringify({ name: 'Codex', soul: 'Builds carefully.' }),
+        WORKSPACE,
+        `${WORKSPACE}:${AGENT}`,
+      ],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(13), 30078, $4, $5, $6, $7)`,
+      [
+        TENANT,
+        bytes('8'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['d', `${WORKSPACE}:${AGENT}`],
+          ['h', WORKSPACE],
+          ['p', AGENT],
+          ['t', 'buzz-agent-soul'],
+          ['community', WORKSPACE],
+        ]),
+        JSON.stringify({ name: 'Forged' }),
+        WORKSPACE,
+        `${WORKSPACE}:${AGENT}`,
+      ],
+    );
+
+    const workspace = await indexer.readWorkspace(WORKSPACE, VIEWER);
+    const chats = await indexer.readChats(WORKSPACE, VIEWER);
+    const detail = await indexer.readAgent(WORKSPACE, AGENT, VIEWER);
+    const room = await indexer.readRoom(ROOM, VIEWER);
+    const history = await indexer.readHistory(ROOM, VIEWER);
+    const corners = await indexer.readCorners(ROOM, VIEWER);
+
+    expect(workspace).toMatchObject({
+      members: [{ identity: { pubkey: VIEWER, name: 'Ada' } }],
+      agents: [{ identity: { pubkey: AGENT, name: 'Codex' } }],
+    });
+    expect(chats).toMatchObject({
+      chats: [{ latestMessage: { author: { pubkey: AGENT, name: 'Codex' } } }],
+    });
+    expect(detail).toMatchObject({
+      agent: { identity: { pubkey: AGENT, name: 'Codex' } },
+    });
+    expect(room).toMatchObject({
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          identity: expect.objectContaining({ pubkey: VIEWER, name: 'Ada' }),
+        }),
+        expect.objectContaining({
+          identity: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+        }),
+      ]),
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          text: 'Ready',
+          author: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+        }),
+      ]),
+      corners: [
+        expect.objectContaining({
+          agent: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+        }),
+      ],
+    });
+    expect(history?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: 'Ready',
+          author: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+        }),
+      ]),
+    );
+    expect(corners).toMatchObject({
+      corners: [
+        {
+          agent: expect.objectContaining({
+            pubkey: AGENT,
+            name: 'Codex',
+          }),
+          latestMessage: expect.objectContaining({
+            author: expect.objectContaining({
+              pubkey: AGENT,
+              name: 'Codex',
+            }),
+          }),
+        },
+      ],
+    });
+    expect(room?.watchFilters[0]?.['#h']).toContain(WORKSPACE);
+    expect(corners?.watchFilters[0]?.['#h']).toContain(WORKSPACE);
+  });
+
   it('keeps the scoped chat query to one physical statement at 1, 47, and 200 Rooms', async () => {
     const addRooms = async (from: number, through: number) => {
       await postgres.query(

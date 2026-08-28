@@ -11,6 +11,7 @@ import {
   TAG_AGENT_PRESENCE,
   TAG_AGENT_THOUGHT,
   directMessageChannelId,
+  isRetiredAgentNotice,
   normalizeRoomRepositoryContent,
   isAllowedAgentModelConfigCategory,
   parseAttachmentTags,
@@ -1395,6 +1396,11 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     createdAt: integer(data.createdAt),
     author: eventIdentity,
   };
+
+  // Old daemon health/stall prose has no distinguishing wire tag. The shared
+  // tombstone is therefore the only safe discriminator; suppress it before it
+  // can become a transcript row, Room-list preview, or corner preview.
+  if (isRetiredAgentNotice(base.text)) return undefined;
 
   if (
     markers.has(TAG_AGENT_ACTIVITY) ||

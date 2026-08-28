@@ -27,7 +27,6 @@ import {
   postAgentMessage,
   retractAgentDraft,
   retractAgentPresence,
-  postAgentStallNotice,
   postSteerQueuedNotice,
   STEER_QUEUED_TAG,
 } from './activity.js';
@@ -1070,28 +1069,5 @@ describe('postSteerQueuedNotice', () => {
   it('omits the request tag when the caller has no event id to reference', async () => {
     await postSteerQueuedNotice('corner-10', newIdentity('steer-ack-agent-2'));
     expect(published[0]!.tags.some((tag) => tag[0] === 'request')).toBe(false);
-  });
-});
-
-describe('postAgentStallNotice', () => {
-  beforeEach(() => {
-    published.length = 0;
-  });
-
-  it('uses the same NIP-10 thread ancestry as a normal in-thread agent reply', async () => {
-    const owner = newIdentity('stall-thread-agent');
-    const replyTo = 'nested-request';
-    const replyRoot = 'room-thread-root';
-    const normalReply = buildAgentMessage('room-9', owner, 'Finished.', replyTo, [], [], replyRoot);
-
-    await postAgentStallNotice('room-9', owner, replyTo, replyRoot);
-
-    const ancestry = (event: NostrEvent) => event.tags.filter((tag) => tag[0] === 'e');
-    expect(published).toHaveLength(1);
-    expect(ancestry(published[0]!)).toEqual(ancestry(normalReply));
-    expect(ancestry(published[0]!)).toEqual([
-      ['e', replyRoot, '', 'root'],
-      ['e', replyTo, '', 'reply'],
-    ]);
   });
 });

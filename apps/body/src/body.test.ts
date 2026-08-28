@@ -92,7 +92,6 @@ import {
   ReadOnlyToolsUnavailableError,
   isAcpPromptStallError,
   ROOM_AGENT_PROMPT_TIMEOUT_MS,
-  ROOM_AGENT_STALL_NOTICE_MS,
   ROOM_POLL_FAILURE_BACKOFF_CAP_MS,
   RoomPollBackoff,
   type RoomReplyOutcome,
@@ -3203,7 +3202,7 @@ describe('Room poll resilience', () => {
     await scheduler.dispose();
   });
 
-  it('surfaces an honest stall notice well before the full idle-cancel window on a fully wedged backend', async () => {
+  it('keeps a fully wedged backend out of the durable transcript until it stops', async () => {
     vi.useFakeTimers();
     try {
       const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
@@ -3263,212 +3262,16 @@ describe('Room poll resilience', () => {
         requestId: 'stall-request',
         originalRequestId: 'stall-request',
         cause: 'room-message',
-        replyToId: 'stall-request',
-        replyRootId: 'stall-thread-root',
       });
       const rejection = expect(prompt).rejects.toThrow('timed out after');
 
-      // Still under the (much shorter) notice threshold: no notice yet.
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS - 1);
-      expect(published.some((event) => event.content.includes('taking longer than usual'))).toBe(
-        false,
-      );
+      // The caller owns the working receipt that lights the thinking
+      // indicator. `promptAgent` must not add a second, durable prose status
+      // while the backend remains silent.
+      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS - 1);
+      expect(published).toEqual([]);
 
-      // Crossing the notice threshold surfaces the stall well before the
-      // full ROOM_AGENT_PROMPT_TIMEOUT_MS idle-cancel window elapses.
-      expect(ROOM_AGENT_STALL_NOTICE_MS).toBeLessThan(ROOM_AGENT_PROMPT_TIMEOUT_MS);
-      await vi.advanceTimersByTimeAsync(2);
-      const stallNotice = published.find((event) =>
-        event.content.includes('taking longer than usual'),
-      );
-      expect(stallNotice).toBeDefined();
-      expect(stallNotice!.tags.filter((tag) => tag[0] === 'e')).toEqual([
-        ['e', 'stall-thread-root', '', 'root'],
-        ['e', 'stall-request', '', 'reply'],
-      ]);
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
-      await rejection;
-      await scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('never surfaces a stall notice for a turn that keeps producing genuine ACP activity past the notice threshold', async () => {
-    vi.useFakeTimers();
-    try {
-      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
-      const body = new Body(
-        {
-          agentBinary: '/nonexistent',
-          mcpBinary: '/nonexistent',
-          agentEnv: {},
-          workspaceRoot: '/tmp/buzzy-active-turn',
-          relayBaseUrl: 'http://relay.test',
-          relayHost: 'relay.test',
-          relayScheme: 'http',
-          relayWsUrl: 'ws://relay.test',
-          autoApprovePermissions: true,
-        },
-        newIdentity('active-operator'),
-        newIdentity('active-agent'),
-        undefined,
-        { scheduler },
-      );
-      const published: NostrEvent[] = [];
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-          published.push(JSON.parse(String(init?.body)) as NostrEvent);
-          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-        }),
-      );
-
-      // Genuine ACP activity every 15s (under the 20s notice window) for 5
-      // ticks — 75s of real elapsed time, well past the notice threshold in
-      // aggregate, but each individual gap stays short enough that neither
-      // the notice nor the idle-cancel ever trips.
-      const sessionPrompt = vi.fn(
-        (
-          _sessionId: string,
-          _prompt: string,
-          _timeoutMs: number,
-          _onChunk: unknown,
-          onActivity?: () => void,
-        ) =>
-          new Promise((resolve) => {
-            const tick = (remaining: number) => {
-              if (remaining <= 0) {
-                resolve({ stopReason: 'end_turn', updates: [], agentText: 'done', toolCalls: [] });
-                return;
-              }
-              onActivity?.();
-              setTimeout(() => tick(remaining - 1), 15_000);
-            };
-            tick(5);
-          }),
-      );
-      const session = {
-        channelId: 'active-room',
-        sessionId: 'active-session',
-        mode: 'readonly',
-        client: { sessionPrompt, sessionCancel: vi.fn() },
-        lifecycle: {
-          activate: vi.fn().mockResolvedValue('active-session'),
-          suspend: vi.fn().mockResolvedValue(undefined),
-        },
-      } as never;
-
-      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
-        channelId: 'active-room',
-        requestId: 'active-request',
-        originalRequestId: 'active-request',
-        cause: 'room-message',
-      });
-      await vi.advanceTimersByTimeAsync(15_000 * 5 + 5);
-      const result = (await prompt) as { agentText: string };
-      expect(result.agentText).toBe('done');
-      expect(published.some((event) => event.content?.includes('taking longer than usual'))).toBe(
-        false,
-      );
-      await scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('never threads a stall notice to an event outside the channel it publishes into', async () => {
-    // A corner's opening turn is driven by the Room event that opened it —
-    // `requestId` here stands in for that Room event, while `channelId` is
-    // the corner. A relay rejects a kind:9 reply whose `e`-tagged parent
-    // carries a different `h` tag ("parent event belongs to a different
-    // channel"), so the stall notice must never thread to `requestId` unless
-    // the caller explicitly vouches it lives in `channelId` via `replyToId`.
-    vi.useFakeTimers();
-    try {
-      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
-      const body = new Body(
-        {
-          agentBinary: '/nonexistent',
-          mcpBinary: '/nonexistent',
-          agentEnv: {},
-          workspaceRoot: '/tmp/buzzy-stall-cross-channel',
-          relayBaseUrl: 'http://relay.test',
-          relayHost: 'relay.test',
-          relayScheme: 'http',
-          relayWsUrl: 'ws://relay.test',
-          autoApprovePermissions: true,
-        },
-        newIdentity('cross-channel-operator'),
-        newIdentity('cross-channel-agent'),
-        undefined,
-        { scheduler },
-      );
-      const published: NostrEvent[] = [];
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-          const event = JSON.parse(String(init?.body)) as NostrEvent;
-          // Mirror the relay's real validation: reject a kind:9 reply whose
-          // `e`-tagged parent event is known to live in a different channel.
-          // The fixture's only cross-channel event is the Room's own
-          // corner-open message, which never actually lives in `the-corner`.
-          if (event.tags.some((tag) => tag[0] === 'e' && tag[1] === 'room-open-corner-event')) {
-            return new Response(
-              JSON.stringify({ error: 'invalid: parent event belongs to a different channel' }),
-              { status: 400 },
-            );
-          }
-          published.push(event);
-          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-        }),
-      );
-
-      const sessionCancel = vi.fn();
-      const sessionPrompt = vi.fn(
-        (_sessionId: string, _prompt: string, timeoutMs: number) =>
-          new Promise<never>((_resolve, reject) =>
-            setTimeout(
-              () =>
-                reject(
-                  new Error(`ACP session/prompt timed out after ${timeoutMs}ms of inactivity`),
-                ),
-              timeoutMs,
-            ),
-          ),
-      );
-      const session = {
-        channelId: 'the-corner',
-        sessionId: 'corner-session',
-        mode: 'edit',
-        client: { sessionPrompt, sessionCancel },
-        lifecycle: {
-          activate: vi.fn().mockResolvedValue('corner-session'),
-          suspend: vi.fn().mockResolvedValue(undefined),
-        },
-      } as never;
-
-      // `requestId` names the Room event that opened this corner —
-      // deliberately NOT in `channelId` — and no `replyToId` is given,
-      // exactly like `startAgentTask`'s corner-open call.
-      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
-        channelId: 'the-corner',
-        requestId: 'room-open-corner-event',
-        originalRequestId: 'room-open-corner-event',
-        cause: 'corner-opening',
-      });
-      const rejection = expect(prompt).rejects.toThrow('timed out after');
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS + 2);
-
-      const stallNotice = published.find((event) =>
-        event.content.includes('taking longer than usual'),
-      );
-      expect(stallNotice).toBeDefined();
-      expect(stallNotice!.tags.some((tag) => tag[0] === 'e')).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(1);
       await rejection;
       await scheduler.dispose();
     } finally {
@@ -6164,11 +5967,9 @@ describe('Room conversation and permission-gated work intent', () => {
   }
 
   it('answers the Room when a mid-turn mutation moves the work into a corner', async () => {
-    // Production evidence (Room 9d5e2285, 2026-08-25): the stall notice was
-    // already on the wire when the daemon opened the corner and settled the
-    // turn with only a complete receipt — no visible reply ever followed, so
-    // "Still working on this" stayed the agent's last words in the Room for
-    // 5+ hours while the request was silently consumed.
+    // Production evidence (Room 9d5e2285, 2026-08-25): a corner transition
+    // settled with only a complete receipt, leaving no visible Room reply for
+    // hours while the request was silently consumed.
     const { published, eventId } = await replyInRoomWithMidTurnCornerTransition({
       agentText:
         'Yes — I diagnosed it and started the fix in an isolated corner so the Room stays read-only.',
@@ -10223,7 +10024,7 @@ describe('a corner records the objective it was opened for', () => {
 /**
  * A message sent while a turn is already running must be DELIVERED, not
  * swallowed. Two independent defects produced the live "my steer vanished and
- * the daemon answered with its canned stall notice instead" report:
+ * the daemon answered with unrelated status prose instead" report:
  *
  *  1. `pollMembers` rethrew a failed `sessionSteer` whenever no
  *     `runningAgentTasks` entry existed — the case for every corner FOLLOW-UP
@@ -10231,12 +10032,8 @@ describe('a corner records the objective it was opened for', () => {
  *     re-attempted later, with nothing said to them at any point. None of the
  *     shipped ACP adapters advertise a live-steering channel, so that failure
  *     is the ordinary path, not an edge case.
- *  2. `promptAgent` armed the stall-notice timer BEFORE `runOnSession`, i.e.
- *     while the turn was still merely queued in the per-session FIFO behind
- *     the turn already running. Twenty seconds of *waiting our turn* then
- *     published "my coding backend is taking longer than usual to respond"
- *     directly under the message that was still waiting — a claim about a
- *     backend we had not yet sent anything to.
+ *  2. Once the turn is correctly queued, its acknowledgement remains the only
+ *     immediate durable response until the queued turn itself runs.
  */
 describe('a message that arrives mid-turn is queued, acknowledged, and delivered', () => {
   function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot = '/workspace') {
@@ -10276,12 +10073,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       (event) =>
         Array.isArray(event.tags) &&
         event.tags.some((tag) => tag[0] === 't' && tag[1] === STEER_QUEUED_TAG),
-    );
-
-  const stallNotices = (published: NostrEvent[]): NostrEvent[] =>
-    published.filter(
-      (event) =>
-        typeof event.content === 'string' && event.content.includes('taking longer than usual'),
     );
 
   function memberMessage(
@@ -10649,7 +10440,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     }
   });
 
-  it('never arms the stall notice for a turn that is only waiting its place in the session FIFO', async () => {
+  it('keeps a queued turn from publishing interim transcript prose', async () => {
     vi.useFakeTimers();
     try {
       const published = stubPublishing();
@@ -10672,20 +10463,13 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         { scheduler },
       );
 
-      // A healthy, continuously-active turn that simply runs a long time.
-      const runMs = ROOM_AGENT_STALL_NOTICE_MS * 4;
+      // A healthy turn that occupies the only session slot long enough for a
+      // second prompt to wait in the FIFO.
+      const runMs = 60_000;
       const sessionPrompt = vi.fn(
-        (
-          _sessionId: string,
-          _prompt: string,
-          _timeoutMs: number,
-          _onChunk: unknown,
-          onActivity?: () => void,
-        ) =>
+        (_sessionId: string, _prompt: string, _timeoutMs: number) =>
           new Promise((resolveRun) => {
-            const beat = setInterval(() => onActivity?.(), ROOM_AGENT_STALL_NOTICE_MS / 4);
             setTimeout(() => {
-              clearInterval(beat);
               resolveRun({ stopReason: 'end_turn', updates: [], agentText: 'ok', toolCalls: [] });
             }, runMs);
           }),
@@ -10706,7 +10490,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         requestId: 'req-1',
         originalRequestId: 'req-1',
         cause: 'room-message',
-        replyToId: 'req-1',
       });
       // Issued while `running` still holds the session: this one only waits.
       const queued = Reflect.get(body, 'promptAgent').call(body, session, 'second', {
@@ -10714,7 +10497,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         requestId: 'req-2',
         originalRequestId: 'req-2',
         cause: 'room-message',
-        replyToId: 'req-2',
       });
 
       await vi.advanceTimersByTimeAsync(runMs * 2 + 10);
@@ -10722,80 +10504,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       await queued;
 
       expect(sessionPrompt).toHaveBeenCalledTimes(2);
-      // Both turns were continuously active for their whole run. The old shape
-      // still published one notice — for the turn that had not started yet.
-      expect(stallNotices(published)).toHaveLength(0);
-      await scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('defers the stall notice when a fresh message arrives, and still fires once the channel goes quiet', async () => {
-    vi.useFakeTimers();
-    try {
-      const published = stubPublishing();
-      const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
-      const body = new Body(
-        {
-          agentBinary: '/nonexistent',
-          mcpBinary: '/nonexistent',
-          agentEnv: {},
-          workspaceRoot: '/tmp/buzzy-fresh-message-stall',
-          relayBaseUrl: 'http://relay.test',
-          relayHost: 'relay.test',
-          relayScheme: 'http',
-          relayWsUrl: 'ws://relay.test',
-          autoApprovePermissions: true,
-        },
-        newIdentity('fresh-stall-operator'),
-        newIdentity('fresh-stall-agent'),
-        undefined,
-        { scheduler },
-      );
-
-      const sessionPrompt = vi.fn(
-        (_sessionId: string, _prompt: string, timeoutMs: number) =>
-          new Promise<never>((_resolve, reject) =>
-            setTimeout(
-              () => reject(new Error(`ACP session/prompt timed out after ${timeoutMs}ms`)),
-              timeoutMs,
-            ),
-          ),
-      );
-      const session = {
-        channelId: 'fresh-room',
-        sessionId: 'fresh-session',
-        mode: 'readonly',
-        client: { sessionPrompt, sessionCancel: vi.fn() },
-        lifecycle: {
-          activate: vi.fn().mockResolvedValue('fresh-session'),
-          suspend: vi.fn().mockResolvedValue(undefined),
-        },
-      } as never;
-
-      const prompt = Reflect.get(body, 'promptAgent').call(body, session, 'hello', {
-        channelId: 'fresh-room',
-        requestId: 'fresh-request',
-        originalRequestId: 'fresh-request',
-        cause: 'room-message',
-      });
-      const rejection = expect(prompt).rejects.toThrow('timed out after');
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS - 1_000);
-      // The human speaks again just before the window would have closed.
-      Reflect.get(body, 'noteInboundMessage').call(body, 'fresh-room');
-      await vi.advanceTimersByTimeAsync(2_000);
-
-      // The stall notice must never be the answer to that fresh message.
-      expect(stallNotices(published)).toHaveLength(0);
-
-      // With no further input, the backend's genuine silence is still reported.
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_STALL_NOTICE_MS);
-      expect(stallNotices(published)).toHaveLength(1);
-
-      await vi.advanceTimersByTimeAsync(ROOM_AGENT_PROMPT_TIMEOUT_MS);
-      await rejection;
+      expect(published).toEqual([]);
       await scheduler.dispose();
     } finally {
       vi.useRealTimers();
@@ -10827,9 +10536,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(1));
 
     expect(queuedAcks(published)[0]!.tags).toContainEqual(['h', 'ack-room']);
-    // Bumping the inbound counter is what suppresses the running turn's stall
-    // notice — the two halves of the contract are one signal.
-    expect((Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('ack-room')).toBe(2);
   });
 
   it('preserves human prose with reserved tags while ignoring the agent’s own message', async () => {
@@ -10864,9 +10570,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     Reflect.get(body, 'noteRoomInboundMessage').call(body, 'noack-room', ownMessage, participants);
 
     await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(1));
-    expect((Reflect.get(body, 'inboundMessageSeq') as Map<string, number>).get('noack-room')).toBe(
-      1,
-    );
   });
 });
 

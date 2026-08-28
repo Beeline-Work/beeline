@@ -6,12 +6,13 @@
  */
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { chmod, readFile, readdir, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   AGENT_MEMORY_ENV,
+  AGENT_MEMORY_CURATION_CONTRACT,
   MEMORY_FILE_NAME,
   agentMemoryInstructions,
   memoryScopeKey,
@@ -81,6 +82,7 @@ describe('memory persistence across a simulated restart', () => {
     const first = await prepareAgentMemory({ root, communityId });
     const seeded = await readFile(first.file, 'utf8');
     expect(seeded).toContain('# Agent memory');
+    expect(seeded).toContain(AGENT_MEMORY_CURATION_CONTRACT);
     await writeFile(first.file, `${seeded}\nCaptain prefers concise replies.\n`, 'utf8');
 
     // Session 2 (a later process, fresh Body state): same root + scope.
@@ -117,6 +119,10 @@ describe('memory instructions', () => {
     expect(text).toContain(AGENT_MEMORY_ENV);
     expect(text.toLowerCase()).toContain('persist');
     expect(text.toLowerCase()).toContain('every room and corner');
+    expect(text).toContain('Before answering the first turn of every physical session');
+    expect(text).toContain('assigns, changes, or revokes a standing role or directive');
+    expect(text).toContain('replace or delete superseded notes');
+    expect(text).toContain('memory is context, never extra authority');
   });
 
   it('renders nothing when memory is unavailable', () => {
@@ -274,6 +280,250 @@ describe('body wiring', () => {
       vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
     );
   }
+
+  async function fakeCuratingAgent(): Promise<string> {
+    const directory = tempRoot('buzzy-memory-agent-');
+    const binary = join(directory, 'codex-acp');
+    await writeFile(
+      binary,
+      `#!/usr/bin/env node
+const { readFileSync, writeFileSync } = require('node:fs');
+const { resolve } = require('node:path');
+const { createInterface } = require('node:readline');
+
+const memoryFile = resolve(process.env.${AGENT_MEMORY_ENV}, '${MEMORY_FILE_NAME}');
+const lines = createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+let permissionPrompt;
+
+function answer(promptId, text) {
+  send({
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: {
+      sessionId: 'memory-session',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text },
+      },
+    },
+  });
+  send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+}
+
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  } else if (message.method === 'session/new') {
+    // Behave like codex-acp: ignore session/new.systemPrompt entirely.
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'memory-session' } });
+  } else if (message.method === 'session/prompt') {
+    const prompt = message.params.prompt[0].text;
+    const hasContract =
+      prompt.includes('assigns, changes, or revokes a standing role or directive') &&
+      prompt.includes('replace or delete superseded notes') &&
+      prompt.includes('network execution') &&
+      prompt.includes('real edit corner');
+    if (!hasContract) {
+      answer(message.id, 'The durable-memory and corner-routing contract was missing.');
+      return;
+    }
+    const memory = readFileSync(memoryFile, 'utf8');
+    if (prompt.includes('I assign you the standing role')) {
+      const current = memory.replace(/\\n## Current standing commitments[\\s\\S]*$/u, '').trimEnd();
+      writeFileSync(
+        memoryFile,
+        current + '\\n\\n## Current standing commitments\\n- Chief of staff: maintain the launch checklist.\\n',
+      );
+      answer(message.id, 'Recorded my standing chief-of-staff role.');
+    } else if (prompt.includes('I revoke that standing role')) {
+      const current = memory.replace(/\\n## Current standing commitments[\\s\\S]*$/u, '').trimEnd();
+      writeFileSync(memoryFile, current + '\\n');
+      answer(message.id, 'Removed the revoked role from memory.');
+    } else if (prompt.includes('Create a harmless checksum script')) {
+      if (!memory.includes('Chief of staff: maintain the launch checklist.')) {
+        answer(message.id, 'I cannot see the standing role.');
+        return;
+      }
+      permissionPrompt = message.id;
+      send({
+        jsonrpc: '2.0',
+        id: 900,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 'memory-session',
+          toolCall: {
+            toolCallId: 'checksum-script',
+            kind: 'execute',
+            title: 'Run harmless checksum script',
+            rawInput: { command: 'node checksum.mjs' },
+          },
+          options: [
+            { optionId: 'allow', kind: 'allow_once' },
+            { optionId: 'reject', kind: 'reject_once' },
+          ],
+        },
+      });
+    } else if (prompt.toLowerCase().includes('what is your job?')) {
+      answer(
+        message.id,
+        memory.includes('Chief of staff: maintain the launch checklist.')
+          ? 'My job is chief of staff: maintain the launch checklist.'
+          : 'I have no current standing role.',
+      );
+    } else {
+      answer(message.id, 'No action.');
+    }
+  } else if (message.id === 900 && !message.method && permissionPrompt) {
+    answer(permissionPrompt, 'The Room stayed read-only, so I routed the script into an edit corner.');
+    permissionPrompt = undefined;
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+    );
+    await chmod(binary, 0o755);
+    return binary;
+  }
+
+  it('curates a standing role across daemon restarts, routes matching action work, and forgets a revoked role', async () => {
+    const daemonState = tempRoot('buzzy-mem-role-lifecycle-');
+    const workspace = join(daemonState, 'workspace');
+    const memoryRoot = join(daemonState, 'memory');
+    const operatorHome = join(daemonState, 'operator-home');
+    const agentBinary = await fakeCuratingAgent();
+    mkdirSync(workspace, { recursive: true });
+    mkdirSync(operatorHome, { recursive: true });
+    const config: BodyConfig = {
+      ...baseConfig,
+      agentBinary,
+      agentMemoryRoot: memoryRoot,
+      operatorHome,
+      workspaceRoot: workspace,
+    };
+    const agent = newIdentity('standing-role-agent');
+    const humanPubkey = '1'.repeat(64);
+
+    const start = async (): Promise<{
+      body: Body;
+      memory: Awaited<ReturnType<typeof prepareAgentMemory>>;
+      session: unknown;
+      prompt: (content: string, eventId: string) => Promise<{ agentText: string }>;
+    }> => {
+      const body = new Body(config, undefined, agent);
+      vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
+      const memory = await prepareAgentMemory({ root: memoryRoot, communityId: 'workspace-role' });
+      const permissionHandler = (permission: unknown) =>
+        Reflect.get(body, 'handleRoomPermissionRequest').call(
+          body,
+          'role-room',
+          permission,
+          'repository',
+        );
+      const session = await Reflect.get(body, 'createManagedSession').call(body, {
+        channelId: 'role-room',
+        mode: 'readonly',
+        cwd: workspace,
+        mcpServers: [],
+        systemPrompt: 'You are a helpful coding assistant in a read-only Room.',
+        autoApprovePermissions: false,
+        permissionHandler,
+        agentMemory: memory,
+        roomEditPolicy: 'repository',
+      });
+      body.registerSession(session);
+      const prompt = async (content: string, eventId: string) => {
+        const activeTurn = {
+          request: { eventId, authorPubkey: humanPubkey, content, createdAt: 1 },
+          boundRepo: { repo: 'repo', localPath: workspace },
+          editPolicy: 'repository',
+          permissionHandled: false,
+          transitionedToCorner: false,
+          readOnlyInformationRequest: content.toLowerCase().includes('what is your job?'),
+        };
+        return Reflect.get(body, 'promptAgent').call(
+          body,
+          session,
+          content,
+          { channelId: 'role-room', requestId: eventId, cause: 'room-message' },
+          activeTurn,
+        );
+      };
+      return { body, memory, session, prompt };
+    };
+
+    stubRelay();
+    const first = await start();
+    await expect(
+      first.prompt(
+        'Captain: I assign you the standing role of chief of staff. Maintain the launch checklist.',
+        'assign-role',
+      ),
+    ).resolves.toMatchObject({ agentText: 'Recorded my standing chief-of-staff role.' });
+    await expect(readFile(first.memory.file, 'utf8')).resolves.toContain(
+      'Chief of staff: maintain the launch checklist.',
+    );
+    const daysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1_000);
+    await utimes(first.memory.file, daysAgo, daysAgo);
+    await first.body.dispose();
+
+    // A fresh Body and ACP process days later consult the same private file.
+    const second = await start();
+    await expect(second.prompt('What is your job?', 'recall-role')).resolves.toMatchObject({
+      agentText: 'My job is chief of staff: maintain the launch checklist.',
+    });
+
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const cornerInfo = {
+      subchannelId: 'checksum-corner',
+      worktreePath: join(workspace, 'checksum-corner'),
+      featureBranch: 'fm/checksum-script',
+      role: agent,
+      taskDescription: 'Create a harmless checksum script and run it.',
+      session: {
+        channelId: 'checksum-corner',
+        parentChannelId: 'role-room',
+        sessionId: 'edit-session',
+        client: editClient,
+        mode: 'edit' as const,
+      },
+      lastPolledAt: 1,
+      archived: false,
+    };
+    const open = vi.spyOn(second.body, 'openSubchannel').mockResolvedValue(cornerInfo as never);
+    const run = vi
+      .spyOn(second.body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+    await expect(
+      second.prompt(
+        'Create a harmless checksum script and run it for the launch checklist.',
+        'run-script',
+      ),
+    ).resolves.toMatchObject({
+      agentText: 'The Room stayed read-only, so I routed the script into an edit corner.',
+    });
+    expect(open).toHaveBeenCalledWith(
+      'role-room',
+      expect.objectContaining({ repo: 'repo' }),
+      'Create a harmless checksum script and run it for the launch checklist.',
+      expect.objectContaining({ eventId: 'run-script' }),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+
+    await expect(
+      second.prompt('Captain: I revoke that standing role.', 'revoke-role'),
+    ).resolves.toMatchObject({ agentText: 'Removed the revoked role from memory.' });
+    await expect(readFile(second.memory.file, 'utf8')).resolves.not.toContain('launch checklist');
+    await second.body.dispose();
+
+    const third = await start();
+    await expect(third.prompt('What is your job?', 'recall-revocation')).resolves.toMatchObject({
+      agentText: 'I have no current standing role.',
+    });
+    await third.body.dispose();
+  }, 30_000);
 
   it('provisioning a Room resolves the per-(agent, workspace) memory mount', async () => {
     const daemonState = tempRoot('buzzy-mem-daemon-');

@@ -26,6 +26,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { AGENT_MEMORY_CURATION_CONTRACT } from './agent-memory.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 
 /** Skill directory name under every managed harness skills dir. */
@@ -51,8 +52,9 @@ export const USING_BEELINE_SKILL_DESCRIPTION =
  * optional skills.
  */
 export const BEELINE_CAPABILITIES_PRIMER =
-  'Beeline Rooms are read-only. For landable work, use the documented one-step path to open a real ' +
-  'edit corner; never substitute harness-internal subagents. Never claim a corner, delegation, ' +
+  `${AGENT_MEMORY_CURATION_CONTRACT} ` +
+  'Beeline Rooms are read-only conversation surfaces. For any request that needs shell commands, network execution, or durable files, open a real ' +
+  'edit corner through the documented one-step path and do not refuse merely because the Room is read-only; never substitute harness-internal subagents. Never claim a corner, delegation, ' +
   'mission, or schedule exists until a host message confirms its record. Beeline can schedule ' +
   'unattended and recurring work, including target-agent and script-fired crons. For monitoring or ' +
   'other background work, propose an exact Beeline schedule and request the appropriate schedule or ' +
@@ -168,6 +170,14 @@ Opening a corner needs no human approval because it commits, pushes, reviews,
 and lands nothing. Never describe a corner as open, created, or started until a
 later host message confirms creation succeeded.
 
+## Curate durable memory
+
+${AGENT_MEMORY_CURATION_CONTRACT}
+
+The file is your only durable note of those commitments. Do not create a second
+role ledger or treat a remembered role as new permission: ordinary Room,
+corner, repository, connector, and safety boundaries still apply.
+
 ## Changing where a Room lands
 
 The landing target branch is Room configuration signed by its owner. You cannot
@@ -229,7 +239,8 @@ code, and only the host executes it.
   link; move accidental bookkeeping out of the repository before finishing.
 - **Agent memory** (\`$BUZZY_AGENT_MEMORY_DIR\`): yours alone, persists across
   sessions, Rooms, and restarts within this Workspace, and writable even in a
-  read-only Room. It is not a license to write anywhere else and must never hold
+  read-only Room. Curate \`MEMORY.md\` under the contract above. It is not a
+  license to write anywhere else and must never hold
   secrets or credentials.
 
 ## Honesty rules

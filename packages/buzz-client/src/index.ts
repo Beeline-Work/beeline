@@ -501,6 +501,7 @@ export type {
   RoomReviewView,
   RoomViewer,
   RoomView,
+  RoomViewAgentTurn,
   RoomViewActivity,
   RoomViewClientOptions,
   RoomViewHeader,

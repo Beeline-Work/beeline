@@ -26,6 +26,7 @@ import {
   type RoomRepositoryView,
   type RoomReviewView,
   type RoomView,
+  type RoomViewAgentTurn,
   type RoomViewActivity,
   type RoomViewHeader,
   type RoomViewIdentity,
@@ -211,6 +212,12 @@ SELECT 'member', jsonb_build_object(
 ) FROM authorized a
 JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
   AND cm.removed_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM events service
+    WHERE service.community_id = cm.community_id AND service.pubkey = cm.pubkey
+      AND service.kind = 9 AND service.deleted_at IS NULL
+      AND service.tags @> '[["service", "beeline-events"]]'::jsonb
+  )
 JOIN identities resolved ON resolved.community_id = cm.community_id AND resolved.pubkey = cm.pubkey
 UNION ALL
 SELECT 'event', jsonb_build_object(
@@ -863,6 +870,25 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.workspace_id))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+), latest_agent_turns AS MATERIALIZED (
+  SELECT DISTINCT ON (e.pubkey)
+    e.pubkey, e.created_at, e.tags
+  FROM authorized a
+  JOIN events e ON e.community_id = a.community_id AND e.channel_id = a.id
+    AND e.kind = 9 AND e.deleted_at IS NULL
+  JOIN channel_members member ON member.community_id = e.community_id
+    AND member.channel_id = e.channel_id AND member.pubkey = e.pubkey
+    AND member.removed_at IS NULL
+  JOIN agent_declarations agent ON agent.community_id = e.community_id
+    AND agent.pubkey = e.pubkey
+  WHERE e.tags @> '[["t", "agent-turn"]]'::jsonb
+    AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
+    AND e.tags @> jsonb_build_array(jsonb_build_array('agent', encode(e.pubkey, 'hex')))
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'request' AND t->>1 ~ '^[0-9a-f]{64}$')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed'))
+  ORDER BY e.pubkey, e.created_at DESC, e.id DESC
 ), ${agentSoulsCteSql('authorized', 'a', 'a.workspace_id')}, identities AS (
   SELECT k.community_id, k.pubkey,
     NULLIF(u.display_name, '') AS name, u.nip05_handle AS handle, u.avatar_url AS avatar,
@@ -916,6 +942,12 @@ SELECT 'member', jsonb_build_object(
 ) FROM authorized a
 JOIN channel_members cm ON cm.community_id = a.community_id AND cm.channel_id = a.id
   AND cm.removed_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM events service
+    WHERE service.community_id = cm.community_id AND service.pubkey = cm.pubkey
+      AND service.kind = 9 AND service.deleted_at IS NULL
+      AND service.tags @> '[["service", "beeline-events"]]'::jsonb
+  )
 JOIN identities resolved ON resolved.community_id = cm.community_id AND resolved.pubkey = cm.pubkey
 LEFT JOIN LATERAL (
   SELECT
@@ -954,6 +986,17 @@ JOIN (
   UNION ALL SELECT 'briefing'::text, b.* FROM briefing b
 ) e ON true
 JOIN identities resolved ON resolved.community_id = e.community_id AND resolved.pubkey = e.pubkey
+UNION ALL
+SELECT 'agent-turn', jsonb_build_object(
+  'requestId', (SELECT t->>1 FROM jsonb_array_elements(turn.tags) t
+    WHERE t->>0 = 'request' AND t->>1 ~ '^[0-9a-f]{64}$' LIMIT 1),
+  'agentPubkey', encode(turn.pubkey, 'hex'),
+  'status', (SELECT t->>1 FROM jsonb_array_elements(turn.tags) t
+    WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed') LIMIT 1),
+  'createdAt', extract(epoch FROM turn.created_at)::bigint,
+  'generationId', (SELECT t->>1 FROM jsonb_array_elements(turn.tags) t
+    WHERE t->>0 = 'generation' LIMIT 1)
+) FROM latest_agent_turns turn
 UNION ALL
 SELECT 'sibling', jsonb_build_object(
   'id', f.id, 'workspaceId', a.workspace_id,
@@ -1064,6 +1107,29 @@ function markerSet(values: readonly string[][]): Set<string> {
   return new Set(
     values.flatMap((candidate) => (candidate[0] === 't' && candidate[1] ? [candidate[1]] : [])),
   );
+}
+
+function githubEventCard(
+  values: readonly string[][],
+): NonNullable<RoomViewMessage['githubEvent']> | undefined {
+  const type = tag(values, 'github-event-type');
+  const action = tag(values, 'github-event-action');
+  const actor = text(tag(values, 'github-event-actor'));
+  const title = text(tag(values, 'github-event-title'));
+  const url = text(tag(values, 'github-event-url'));
+  if (
+    tag(values, 'service') !== 'beeline-events' ||
+    !text(tag(values, 'github-event-id')) ||
+    (type !== 'pull-request' && type !== 'issue') ||
+    (action !== 'opened' && action !== 'closed' && action !== 'merged') ||
+    (type === 'issue' && action === 'merged') ||
+    !actor ||
+    !title ||
+    !url ||
+    !/^https:\/\/github\.com\/[^\s]+$/i.test(url)
+  )
+    return undefined;
+  return { type, action, actor, title, url };
 }
 
 function identity(data: Json): RoomViewIdentity {
@@ -1279,6 +1345,15 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
             ? { durableFact: 'action' as const }
             : {}),
     };
+  }
+
+  if (markers.has('github-event')) {
+    // A service health notice is status text, not a person-authored turn.
+    if (markers.has('github-event-health')) return { ...base, presentation: 'system' };
+    // Old batch prose never gets a compatibility renderer: cards need the
+    // complete typed envelope or remain invisible.
+    const githubEvent = githubEventCard(eventTags);
+    return githubEvent ? { ...base, text: '', presentation: 'card', githubEvent } : undefined;
   }
 
   const permissionMarker =
@@ -1619,10 +1694,42 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
   const corners = rows
     .filter((row) => row.section === 'sibling')
     .map((row) => cornerItem(json(row.data)));
+  const latestAgentTurns = rows
+    .filter((row) => row.section === 'agent-turn')
+    .flatMap((row): RoomViewAgentTurn[] => {
+      const data = json(row.data);
+      const requestId = text(data.requestId);
+      const agentPubkey = text(data.agentPubkey);
+      const status = text(data.status);
+      if (
+        !requestId ||
+        !/^[0-9a-f]{64}$/.test(requestId) ||
+        !agentPubkey ||
+        !/^[0-9a-f]{64}$/.test(agentPubkey) ||
+        (status !== 'working' && status !== 'complete' && status !== 'failed')
+      ) {
+        return [];
+      }
+      const generationId = text(data.generationId);
+      return [
+        {
+          requestId,
+          agentPubkey,
+          status,
+          createdAt: integer(data.createdAt),
+          ...(generationId ? { generationId } : {}),
+        },
+      ];
+    })
+    .sort(
+      (left, right) =>
+        right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
+    );
   return {
     room: header(roomData),
     messages: projectedMessages(rows, 'event', roomId, ROOM_VIEW_MESSAGE_LIMIT),
     members,
+    latestAgentTurns,
     viewer: viewer(roomData, members),
     ...(directMessage ? { directMessage } : {}),
     ...(parentData ? { parent: header(parentData) } : {}),

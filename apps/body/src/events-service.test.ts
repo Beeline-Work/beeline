@@ -54,12 +54,12 @@ function normalized(id: string) {
     source: 'github-poll' as const,
     id,
     repository: 'acme/widget',
-    type: 'push' as const,
-    action: 'pushed',
+    type: 'pull-request' as const,
+    action: 'opened' as const,
     actor: 'lena',
     occurredAt: '2026-08-24T12:00:00Z',
-    summary: `lena pushed 1 commit to acme/widget:main (${id})`,
-    branch: 'main',
+    title: `Ship it (${id})`,
+    url: `https://github.com/acme/widget/pull/${id}`,
   };
 }
 
@@ -80,6 +80,32 @@ function durableState(): {
 }
 
 describe('RepositoryEventsCore', () => {
+  it('publishes one typed card per included GitHub event in each bound Room', async () => {
+    const durable = durableState();
+    const source: RepositoryEventSource = {
+      read: async () => ({
+        head: '2',
+        sourceEventIds: ['2', '1'],
+        events: [normalized('2'), { ...normalized('1'), type: 'issue', action: 'closed' }],
+      }),
+    };
+    const published: NostrEvent[] = [];
+    await new RepositoryEventsCore(new RepositoryEventsState(durable.persistence), source, newIdentity('events-service'), {
+      publish: async (_target, event) => published.push(event),
+      now: () => 1_000,
+    }).tick([target()]);
+
+    expect(published).toHaveLength(2);
+    expect(published.map((event) => event.tags.find((tag) => tag[0] === 'github-event-id')?.[1])).toEqual([
+      '2',
+      '1',
+    ]);
+    expect(published.map((event) => event.tags.find((tag) => tag[0] === 'github-event-type')?.[1])).toEqual([
+      'pull-request',
+      'issue',
+    ]);
+  });
+
   it('resumes its durable cursor without duplicate cards across restart', async () => {
     const durable = durableState();
     let now = 1_000;
@@ -120,22 +146,30 @@ describe('RepositoryEventsCore', () => {
 
     expect(cursors).toEqual([undefined, '2']);
     expect(published).toHaveLength(1);
-    expect(published[0]!.content).toContain('(2)');
+    expect(published[0]!.content).toBe('');
+    expect(published[0]!.tags).toContainEqual(['github-event-type', 'pull-request']);
+    expect(published[0]!.tags).toContainEqual(['github-event-action', 'opened']);
   });
 
   it('isolates one failed repository while a sibling publishes end-to-end from mocked GitHub', async () => {
     const durable = durableState();
-    const rawPush = {
+    const rawPullRequest = {
       id: '7',
-      type: 'PushEvent',
+      type: 'PullRequestEvent',
       actor: { login: 'lena', type: 'User' },
       repo: { name: 'acme/widget' },
       created_at: '2026-08-24T12:00:00Z',
-      payload: { ref: 'refs/heads/main', commits: [{}] },
+      payload: {
+        action: 'opened',
+        pull_request: {
+          title: 'Ship it',
+          html_url: 'https://github.com/acme/widget/pull/7',
+        },
+      },
     };
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       if (String(input).includes('/bad/')) throw new Error('bad repo transport');
-      return new Response(JSON.stringify([rawPush]), { status: 200 });
+      return new Response(JSON.stringify([rawPullRequest]), { status: 200 });
     });
     const source = new GitHubEventsApiSource(async () => 'installation-token', {
       apiBaseUrl: 'https://github.test',
@@ -168,7 +202,8 @@ describe('RepositoryEventsCore', () => {
     expect(published[0]!.pubkey).toBe(identity.publicKey);
     expect(published[0]!.tags).toContainEqual(['t', 'github-event']);
     expect(published[0]!.tags).toContainEqual(['service', 'beeline-events']);
-    expect(published[0]!.content).toContain('lena pushed 1 commit to acme/widget:main');
+    expect(published[0]!.content).toBe('');
+    expect(published[0]!.tags).toContainEqual(['github-event-title', 'Ship it']);
     expect(health.find((repo) => repo.fullName === 'acme/bad')?.failures).toBe(1);
     expect(health.find((repo) => repo.fullName === 'acme/widget')?.failures).toBe(0);
   });

@@ -191,6 +191,7 @@ import {
   mergeAgentPresence,
   mergeAgentPresenceBatch,
   nextAgentPresenceTransitionAt,
+  nextAgentTurnExpiryAt,
   onlineVerdicts,
   activeMentionCandidates,
   AGENT_PRESENCE_BACKGROUND_GRACE_MS,
@@ -257,6 +258,7 @@ const COMPOSER_MAX_HEIGHT = 120;
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
 const OLDER_MESSAGES_PAGE_SIZE = 30;
+const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 // This deliberately remains the sole color seam for the human merge decision.
 // If the product ever approves a non-monochrome exception, change only this value.
 const MERGE_APPROVAL_ACCENT = groknight.accent;
@@ -501,6 +503,7 @@ export default function BuzzChat() {
   const sendInFlightRef = useRef(false);
   const outboxRef = useRef<ReturnType<typeof createRoomOutbox> | null>(null);
   const roomSchedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
+  const outboxConfirmationTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   // Publish the open conversation to the foreground notification policy. The
   // root notification handler runs outside the React tree, so it reads this
@@ -530,6 +533,7 @@ export default function BuzzChat() {
     Record<string, AgentCommandList | null>
   >({});
   const [sending, setSending] = useState(false);
+  const [failedOutboxIds, setFailedOutboxIds] = useState<ReadonlySet<string>>(new Set());
   const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [userPubkey, setUserPubkey] = useState<string>('');
@@ -831,18 +835,15 @@ export default function BuzzChat() {
   const {
     frame: roomSendFrame,
     append: addMessages,
+    remove: removeOptimistic,
     clear: clearOptimistic,
   } = useRoomSendFrame(durableMessages, committedMessageIds, isCorner);
-  // A Room paints its normally single optimistic row as a FlatList header, so
-  // pressing Send cannot invalidate or sort the durable transcript. Corners
-  // keep their proven post-527 data path unchanged; their optimistic row still
-  // participates in the Corner-only final presentation projection.
+  // All four display partitions share the same chronological merge. A durable
+  // outbox row may be older than the current server tail after an interrupted
+  // publish, so it must never claim the inverted list's newest slot.
   const combinedMessages = useMemo(
-    () =>
-      isCorner
-        ? mergeDisplayPages(durableMessages, roomSendFrame.optimistic)
-        : roomSendFrame.transcript,
-    [durableMessages, isCorner, roomSendFrame],
+    () => mergeDisplayPages(durableMessages, roomSendFrame.optimistic),
+    [durableMessages, roomSendFrame.optimistic],
   );
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
@@ -1154,22 +1155,11 @@ export default function BuzzChat() {
     mentionMenuKey !== dismissedMentionKey &&
     mentionSuggestions.matches.length > 0,
   );
-  // Turn receipts are channel-local for Rooms and Corners alike. Derive them
-  // only from the route-local live lane. Durable turn state comes from GETs.
+  // The latest signed lifecycle receipt is server-indexed. Draft/thought
+  // overlays carry content only and can neither start nor extend a turn.
   const agentTurnMarkers = useMemo(
-    () =>
-      liveOverlays.flatMap((overlay) =>
-        overlay.kind === 'draft' && !overlay.closed
-          ? [
-              {
-                requestId: overlay.requestId,
-                agentPubkey: overlay.agentPubkey,
-                status: 'working' as const,
-              },
-            ]
-          : [],
-      ),
-    [liveOverlays],
+    () => roomSurface?.latestAgentTurns ?? [],
+    [roomSurface?.latestAgentTurns],
   );
   const activeAgentTurn = useMemo(
     () =>
@@ -1684,22 +1674,20 @@ export default function BuzzChat() {
    * nothing else — no corner reaches it, exactly as no turn reaches the corner
    * line above.
    *
-   * A Corner uses the same signed turn/live-lane proof as a Room. Its separate
+   * A Corner uses the same signed turn proof as a Room. Its separate
    * canonical Corner lease still owns the pinned Corner bar, but cannot hide a
    * channel-local reply that is visibly streaming now.
    */
   const turnProgressLabel = useMemo(() => {
-    const liveTurn = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
     const pubkey = selectTurnProgressAgentPubkey({
       isCorner,
       agentsOffline,
-      ...(liveTurn?.pubkey ? { liveTurnPubkey: liveTurn.pubkey } : {}),
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
     });
     if (!pubkey) return null;
     const subject = resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name;
     return `${subject} thinking…`;
-  }, [activeAgentTurn, agentByPubkey, agentsOffline, isCorner, visibleMessages]);
+  }, [activeAgentTurn, agentByPubkey, agentsOffline, isCorner]);
 
   const activeActivityId = useMemo(() => {
     const latest = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
@@ -1730,12 +1718,19 @@ export default function BuzzChat() {
     // recreated FlatList's renderItem (and every visible message) while someone
     // was typing, which made the foreground intermittently unresponsive.
     const now = Date.now();
-    const deadline = nextAgentPresenceTransitionAt(agentPresences, now);
+    const presenceDeadline = nextAgentPresenceTransitionAt(agentPresences, now);
+    const turnDeadline = nextAgentTurnExpiryAt(agentTurnMarkers, now);
+    const deadline =
+      presenceDeadline === undefined
+        ? turnDeadline
+        : turnDeadline === undefined
+          ? presenceDeadline
+          : Math.min(presenceDeadline, turnDeadline);
     if (deadline === undefined) return;
     const delay = Math.max(1, deadline - now + 1);
     const timer = setTimeout(() => setPresenceNow(Date.now()), delay);
     return () => clearTimeout(timer);
-  }, [agentPresences, presenceNow]);
+  }, [agentPresences, agentTurnMarkers, presenceNow]);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
@@ -1780,6 +1775,7 @@ export default function BuzzChat() {
     hasMoreHistoryRef.current = true;
     setOlderPages([]);
     clearOptimistic();
+    setFailedOutboxIds(new Set());
     setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
     setTranscriptHydrationFailed(false);
     setTranscriptHydrationError(null);
@@ -1862,7 +1858,17 @@ export default function BuzzChat() {
         const overlay = decoder.decode(event);
         if (overlay) applyDecodedOverlay(overlay);
       }
-      void outboxRef.current?.reconcile(new Set(view.messages.map((message) => message.id)));
+      const authoritativeIds = new Set(view.messages.map((message) => message.id));
+      void outboxRef.current?.reconcile(authoritativeIds);
+      setFailedOutboxIds((current) => {
+        const next = new Set([...current].filter((id) => !authoritativeIds.has(id)));
+        return next.size === current.size ? current : next;
+      });
+      for (const id of authoritativeIds) {
+        const timer = outboxConfirmationTimersRef.current.get(id);
+        if (timer) clearTimeout(timer);
+        outboxConfirmationTimersRef.current.delete(id);
+      }
 
       if (fresh) {
         void mobileSurfaceCache.write(
@@ -1950,9 +1956,32 @@ export default function BuzzChat() {
           .list()
           .map((record) => displayRoomMessages([record.row], identity.publicKey)[0]!);
         if (restored.length) addMessages(restored);
-        for (const record of outbox.list()) {
+        setFailedOutboxIds(
+          new Set(
+            outbox
+              .list()
+              .filter((record) => record.status === 'failed')
+              .map((record) => record.event.id),
+          ),
+        );
+        for (const record of outbox.list().filter((record) => record.status === 'pending')) {
           await outbox.attempted(record.event.id);
-          void nextTransport.publishPreparedMessage(record.event).catch(() => undefined);
+          void nextTransport.publishPreparedMessage(record.event).then(
+            () => {
+              roomSchedulerRef.current?.signal();
+              const timer = setTimeout(() => {
+                const active = outboxRef.current?.get(record.event.id);
+                if (!active || active.status !== 'pending') return;
+                void outboxRef.current?.fail(record.event.id);
+                setFailedOutboxIds((current) => new Set(current).add(record.event.id));
+              }, OUTBOX_CONFIRMATION_TIMEOUT_MS);
+              outboxConfirmationTimersRef.current.set(record.event.id, timer);
+            },
+            () => {
+              void outbox.fail(record.event.id);
+              setFailedOutboxIds((current) => new Set(current).add(record.event.id));
+            },
+          );
         }
 
         const address = surfaceAddress(relayUrl, identity.publicKey, `/room/${decodedId}`);
@@ -2012,6 +2041,8 @@ export default function BuzzChat() {
       scheduler?.dispose();
       appStateSubscription?.remove();
       unsubscribe?.();
+      for (const timer of outboxConfirmationTimersRef.current.values()) clearTimeout(timer);
+      outboxConfirmationTimersRef.current.clear();
       outboxRef.current = null;
       roomSchedulerRef.current = null;
     };
@@ -2085,6 +2116,65 @@ export default function BuzzChat() {
       if (message.reference?.channelId === decodedId) install(message.reference);
     },
     [decodedId, replyTargetForMessage],
+  );
+
+  const markOutboxFailed = useCallback(async (eventId: string) => {
+    await outboxRef.current?.fail(eventId);
+    setFailedOutboxIds((current) => new Set(current).add(eventId));
+  }, []);
+
+  const scheduleOutboxConfirmation = useCallback(
+    (eventId: string) => {
+      const previous = outboxConfirmationTimersRef.current.get(eventId);
+      if (previous) clearTimeout(previous);
+      const timer = setTimeout(() => {
+        const record = outboxRef.current?.get(eventId);
+        if (!record || record.status !== 'pending') return;
+        void markOutboxFailed(eventId);
+      }, OUTBOX_CONFIRMATION_TIMEOUT_MS);
+      outboxConfirmationTimersRef.current.set(eventId, timer);
+    },
+    [markOutboxFailed],
+  );
+
+  const retryOutboxMessage = useCallback(
+    (eventId: string, retryTransport: BuzzRigTransport | null = transport) => {
+      const outbox = outboxRef.current;
+      const record = outbox?.get(eventId);
+      if (!outbox || !record || !retryTransport) return;
+      void (async () => {
+        await outbox.retry(eventId);
+        setFailedOutboxIds((current) => {
+          const next = new Set(current);
+          next.delete(eventId);
+          return next;
+        });
+        try {
+          await retryTransport.publishPreparedMessage(record.event);
+          roomSchedulerRef.current?.signal();
+          scheduleOutboxConfirmation(eventId);
+        } catch {
+          await markOutboxFailed(eventId);
+        }
+      })();
+    },
+    [markOutboxFailed, scheduleOutboxConfirmation, transport],
+  );
+
+  const dismissOutboxMessage = useCallback(
+    (eventId: string) => {
+      const timer = outboxConfirmationTimersRef.current.get(eventId);
+      if (timer) clearTimeout(timer);
+      outboxConfirmationTimersRef.current.delete(eventId);
+      void outboxRef.current?.remove(eventId);
+      setFailedOutboxIds((current) => {
+        const next = new Set(current);
+        next.delete(eventId);
+        return next;
+      });
+      removeOptimistic(eventId);
+    },
+    [removeOptimistic],
   );
 
   const handleSend = useCallback(async () => {
@@ -2203,8 +2293,11 @@ export default function BuzzChat() {
       setReplyTarget(null);
       await outbox.attempted(preparedEvent.id);
       await sendTransport.publishPreparedMessage(preparedEvent);
+      roomSchedulerRef.current?.signal();
+      scheduleOutboxConfirmation(preparedEvent.id);
     } catch (err) {
       console.warn('Send failed:', err);
+      if (preparedEvent) await markOutboxFailed(preparedEvent.id);
       const failure = publishFailurePresentation(err);
       Modal.alert(
         'Message not sent',
@@ -2216,8 +2309,7 @@ export default function BuzzChat() {
                 text: 'Retry',
                 onPress: () => {
                   if (!preparedEvent || !preparedTransport) return;
-                  void outboxRef.current?.attempted(preparedEvent.id);
-                  void preparedTransport.publishPreparedMessage(preparedEvent);
+                  retryOutboxMessage(preparedEvent.id, preparedTransport);
                 },
               },
             ]
@@ -3188,6 +3280,34 @@ export default function BuzzChat() {
         return null;
       }
 
+      if (item.githubEvent) {
+        const event = item.githubEvent;
+        const title =
+          event.type === 'pull-request'
+            ? event.action === 'opened'
+              ? `${event.actor} created a new PR: ${event.title}`
+              : event.action === 'merged'
+                ? `${event.actor} merged a PR: ${event.title}`
+                : `${event.actor} closed a PR: ${event.title}`
+            : event.action === 'opened'
+              ? `${event.actor} created a new issue: ${event.title}`
+              : `${event.actor} closed an issue: ${event.title}`;
+        return (
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel={title}
+            onPress={() => void Linking.openURL(event.url).catch(() => undefined)}
+            style={styles.githubEventPressable}
+            testID={`github-event-card-${event.type}-${event.action}`}
+          >
+            <HullSurface strength="raised" style={styles.githubEventCard}>
+              <Text style={styles.githubEventTitle}>{title}</Text>
+              <Text style={styles.githubEventLink}>VIEW ON GITHUB ↗</Text>
+            </HullSurface>
+          </Pressable>
+        );
+      }
+
       // ── Archived notice ──────────────────────────────────────────
       if (item.isArchivedNotice) {
         return (
@@ -3331,6 +3451,24 @@ export default function BuzzChat() {
           testID={`chat-machine-noise-${item.id}`}
         />
       ) : null;
+      const deliveryFailure =
+        item.isUser && failedOutboxIds.has(item.id) ? (
+          <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${item.id}`}>
+            <Text style={styles.outboxFailureText}>DELIVERY FAILED</Text>
+            <View style={styles.outboxFailureActions}>
+              <MonoButton
+                label="RETRY"
+                onPress={() => retryOutboxMessage(item.id)}
+                variant="secondary"
+              />
+              <MonoButton
+                label="DISMISS"
+                onPress={() => dismissOutboxMessage(item.id)}
+                variant="secondary"
+              />
+            </View>
+          </View>
+        ) : null;
       const taggedMentionPubkeys = new Set(item.mentionPubkeys ?? []);
       const mentionHandles = roomParticipants
         .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
@@ -3348,40 +3486,43 @@ export default function BuzzChat() {
           onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
         >
           <NewMessageMaterialize enabled={Boolean(item.isNew)} messageId={item.id}>
-            {isSelfSteer ? (
-              <LedgerSteer
-                itemId={item.id}
-                continued={attributionContinued}
-                byline={byline}
-                bodyText={item.text}
-                mentionHandles={mentionHandles}
-                channelIndex={channelReferenceIndex}
-                onChannelReference={handleOpenChannelReference}
-                bodyTestID={`chat-message-text-${item.id}`}
-                replyReference={replyReference}
-                attachments={attachmentElements}
-              />
-            ) : (
-              <LedgerEntry
-                itemId={item.id}
-                byline={byline}
-                continued={attributionContinued}
-                luminous={speaksAsAgent}
-                // `item.isNew` is re-stamped by warm revalidation / WS replay
-                // on every room open; the consume-once gate (one type-out per
-                // message id per app session, shared with the entrance fade's
-                // registry) lives inside `LedgerEntry`.
-                typewriter={speaksAsAgent && Boolean(item.isNew)}
-                bodyText={ledgerText ? ledgerText.prose : item.text}
-                mentionHandles={mentionHandles}
-                channelIndex={channelReferenceIndex}
-                onChannelReference={handleOpenChannelReference}
-                bodyTestID={`chat-message-text-${item.id}`}
-                replyReference={replyReference}
-                machineNoise={machineNoise}
-                attachments={attachmentElements}
-              />
-            )}
+            <View>
+              {isSelfSteer ? (
+                <LedgerSteer
+                  itemId={item.id}
+                  continued={attributionContinued}
+                  byline={byline}
+                  bodyText={item.text}
+                  mentionHandles={mentionHandles}
+                  channelIndex={channelReferenceIndex}
+                  onChannelReference={handleOpenChannelReference}
+                  bodyTestID={`chat-message-text-${item.id}`}
+                  replyReference={replyReference}
+                  attachments={attachmentElements}
+                />
+              ) : (
+                <LedgerEntry
+                  itemId={item.id}
+                  byline={byline}
+                  continued={attributionContinued}
+                  luminous={speaksAsAgent}
+                  // `item.isNew` is re-stamped by warm revalidation / WS replay
+                  // on every room open; the consume-once gate (one type-out per
+                  // message id per app session, shared with the entrance fade's
+                  // registry) lives inside `LedgerEntry`.
+                  typewriter={speaksAsAgent && Boolean(item.isNew)}
+                  bodyText={ledgerText ? ledgerText.prose : item.text}
+                  mentionHandles={mentionHandles}
+                  channelIndex={channelReferenceIndex}
+                  onChannelReference={handleOpenChannelReference}
+                  bodyTestID={`chat-message-text-${item.id}`}
+                  replyReference={replyReference}
+                  machineNoise={machineNoise}
+                  attachments={attachmentElements}
+                />
+              )}
+              {deliveryFailure}
+            </View>
           </NewMessageMaterialize>
         </SwipeToReply>
       );
@@ -3407,25 +3548,15 @@ export default function BuzzChat() {
       viewerIsAgent,
       speakerOnline,
       beginReply,
+      dismissOutboxMessage,
+      failedOutboxIds,
       replyTargetForMessage,
+      retryOutboxMessage,
       visibleMessageById,
       channelReferenceIndex,
       handleOpenChannelReference,
     ],
   );
-
-  const roomOptimisticHeader = useMemo(
-    () =>
-      !isCorner && roomSendFrame.optimistic.length > 0 ? (
-        <>
-          {roomSendFrame.optimistic.map((message) => (
-            <React.Fragment key={message.id}>{renderItem({ item: message })}</React.Fragment>
-          ))}
-        </>
-      ) : null,
-    [isCorner, renderItem, roomSendFrame.optimistic],
-  );
-  const hasVisibleRoomOptimistic = Boolean(roomOptimisticHeader);
 
   if (!roomSurface) {
     if (transcriptHydrationFailed) {
@@ -3667,15 +3798,13 @@ export default function BuzzChat() {
         <FlatList
           testID="chat-messages"
           ref={flatListRef}
-          inverted={invertedMessages.length > 0 || hasVisibleRoomOptimistic}
+          inverted={invertedMessages.length > 0}
           data={invertedMessages}
           keyExtractor={(item: ChatDisplayMessage) => item.id}
           style={styles.messageList}
           contentContainerStyle={[
             styles.messageListContent,
-            invertedMessages.length === 0 &&
-              !hasVisibleRoomOptimistic &&
-              styles.messageListContentEmpty,
+            invertedMessages.length === 0 && styles.messageListContentEmpty,
           ]}
           maintainVisibleContentPosition={{
             // Anchor on the second-newest row (index 1), not the newest.
@@ -3713,16 +3842,14 @@ export default function BuzzChat() {
           onEndReached={loadOlderTranscriptMessages}
           onEndReachedThreshold={0.5}
           ListEmptyComponent={
-            hasVisibleRoomOptimistic ? null : (
-              <View style={styles.emptyState}>
-                <EmptyLedgerState
-                  variant={emptyLedgerVariant}
-                  name={isDirectMessage ? displayRoomName : undefined}
-                  objective={isCorner ? cornerObjective : undefined}
-                  onPress={focusComposer}
-                />
-              </View>
-            )
+            <View style={styles.emptyState}>
+              <EmptyLedgerState
+                variant={emptyLedgerVariant}
+                name={isDirectMessage ? displayRoomName : undefined}
+                objective={isCorner ? cornerObjective : undefined}
+                onPress={focusComposer}
+              />
+            </View>
           }
           ListFooterComponent={
             // Inverted list: the footer is the visual TOP. The Room discussion
@@ -3745,8 +3872,7 @@ export default function BuzzChat() {
             ) : null
           }
           ListHeaderComponent={
-            roomOptimisticHeader ??
-            (isCorner && !isArchived && sessionState === 'done' ? (
+            isCorner && !isArchived && sessionState === 'done' ? (
               <View style={styles.cornerReviewFooter}>
                 {cornerAction.kind === 'review' ? (
                   <HullSurface strength="raised" style={styles.approvalBar}>
@@ -3886,7 +4012,7 @@ export default function BuzzChat() {
                   </HullSurface>
                 )}
               </View>
-            ) : null)
+            ) : null
           }
         />
 
@@ -5332,6 +5458,25 @@ const styles = StyleSheet.create((theme) => {
     messageListContentEmpty: {
       flexGrow: 1,
     },
+    outboxFailure: {
+      marginTop: 4,
+      marginHorizontal: 8,
+      padding: 8,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+    outboxFailureText: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 9,
+      letterSpacing: 0.5,
+    },
+    outboxFailureActions: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 6,
+    },
     replySwipeAction: {
       width: 78,
       marginBottom: 8,
@@ -5662,6 +5807,28 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: groknight.borderStrong,
       gap: 10,
+    },
+    githubEventPressable: { marginBottom: 8 },
+    githubEventCard: {
+      minWidth: 0,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      gap: 6,
+    },
+    githubEventTitle: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    githubEventLink: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.45,
     },
     writePermissionHeading: {
       flexDirection: 'row',

@@ -90,9 +90,9 @@ export class RepositoryEventsState {
     await this.save();
   }
 
-  async markCardPublished(key: string, roomId: string): Promise<void> {
+  async markCardPublished(key: string, eventId: string): Promise<void> {
     const record = await this.record(key);
-    const card = record.pending?.cards.find((candidate) => candidate.roomId === roomId);
+    const card = record.pending?.cards.find((candidate) => candidate.event.id === eventId);
     if (!card || card.published) return;
     card.published = true;
     await this.save();

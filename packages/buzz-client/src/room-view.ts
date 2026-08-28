@@ -139,6 +139,14 @@ export type RoomViewMessage = {
     readonly agent?: RoomViewIdentity;
     readonly requester?: RoomViewIdentity;
   };
+  /** A validated, service-published repository activity card. Never a speaker. */
+  readonly githubEvent?: {
+    readonly type: 'pull-request' | 'issue';
+    readonly action: 'opened' | 'closed' | 'merged';
+    readonly actor: string;
+    readonly title: string;
+    readonly url: string;
+  };
 };
 
 export type RoomViewer = {
@@ -154,10 +162,21 @@ export type RoomDirectMessageView = {
   readonly participants: readonly [string, string];
 };
 
+/** Latest durable turn lifecycle fact for one Room agent. */
+export type RoomViewAgentTurn = {
+  readonly requestId: string;
+  readonly agentPubkey: string;
+  readonly status: 'working' | 'complete' | 'failed';
+  /** Relay event time in Unix seconds. */
+  readonly createdAt: number;
+  readonly generationId?: string;
+};
+
 export type RoomView = {
   readonly room: RoomViewHeader;
   readonly messages: readonly RoomViewMessage[];
   readonly members: readonly RoomViewMember[];
+  readonly latestAgentTurns: readonly RoomViewAgentTurn[];
   readonly viewer: RoomViewer;
   readonly directMessage?: RoomDirectMessageView;
   readonly parent?: RoomViewHeader;

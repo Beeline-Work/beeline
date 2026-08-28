@@ -422,6 +422,19 @@ import {
   type CornerMetadata,
 } from './corner-metadata.js';
 
+const CAPTURED_AGENT_OUTPUTS = Symbol('captured-agent-outputs');
+const AGENT_ATTACHMENT_FAILURE_REPLY =
+  "I made a file to show you but couldn't deliver it. I'll regenerate it.";
+
+interface CapturedAgentOutputs {
+  candidates: AgentOutputCandidate[];
+  failed: boolean;
+}
+
+type PromptResultWithCapturedOutputs = PromptResult & {
+  [CAPTURED_AGENT_OUTPUTS]?: CapturedAgentOutputs;
+};
+
 /** Tracks a single agent session. */
 export interface AgentSession {
   /** Channel ID this session belongs to. */
@@ -4190,9 +4203,14 @@ export class Body {
               );
               hardTimer.unref?.();
             });
-            return await Promise.race([promptCall, hardDeadline]).finally(() => {
+            const completed = await Promise.race([promptCall, hardDeadline]).finally(() => {
               if (hardTimer) clearTimeout(hardTimer);
             });
+            // The workbench is a quota tmpfs owned by this exact physical ACP
+            // process. Capture referenced bytes before returning from the
+            // scheduler task: once this callback settles, capacity eviction
+            // may retire the process and invalidate its /proc/<pid>/root view.
+            return await this.captureAgentOutputs(session, completed);
           } finally {
             if (activeRoomTurn && this.pendingRoomTurns.get(turn.channelId) === activeRoomTurn) {
               if (previousRoomTurn) this.pendingRoomTurns.set(turn.channelId, previousRoomTurn);
@@ -4357,20 +4375,56 @@ export class Body {
     throw new Error(`${candidate.name} is outside the agent session and workbench directories`);
   }
 
+  /**
+   * Freeze every attachment candidate while the producing ACP process still
+   * owns its quota tmpfs. The captured value contains bytes, never a path, so
+   * upload may safely happen after scheduler eviction without weakening the
+   * workbench's per-process lifetime or filesystem boundary.
+   */
+  private async captureAgentOutputs(
+    session: AgentSession,
+    result: PromptResult,
+  ): Promise<PromptResultWithCapturedOutputs> {
+    const candidates: AgentOutputCandidate[] = [];
+    let failed = false;
+    for (const candidate of outputCandidates(result)) {
+      try {
+        if (!isAllowedAgentAttachmentMimeType(candidate.mimeType)) {
+          throw new Error(`file type ${candidate.mimeType} is not allowed for agent attachments`);
+        }
+        candidates.push({
+          name: candidate.name,
+          mimeType: candidate.mimeType,
+          bytes: await this.candidateBytes(session, candidate),
+        });
+      } catch (error) {
+        failed = true;
+        // Exact diagnostics belong in operator-local logs. Room prose below
+        // consumes only the boolean and can never expose host or /proc paths.
+        console.warn('[body] agent attachment capture failed:', error);
+      }
+    }
+    return {
+      ...result,
+      [CAPTURED_AGENT_OUTPUTS]: { candidates, failed },
+    };
+  }
+
   /** Upload agent-produced outputs through the same authenticated media client as mobile. */
   private async uploadAgentOutputs(
     session: AgentSession,
     result: PromptResult,
-  ): Promise<{ attachments: AttachmentReference[]; errors: string[] }> {
-    const candidates = outputCandidates(result);
-    if (!candidates.length) return { attachments: [], errors: [] };
+  ): Promise<{ attachments: AttachmentReference[]; failed: boolean }> {
+    const captured = (result as PromptResultWithCapturedOutputs)[CAPTURED_AGENT_OUTPUTS];
+    const candidates = captured?.candidates ?? outputCandidates(result);
+    let failed = captured?.failed ?? false;
+    if (!candidates.length) return { attachments: [], failed };
     const client = createBuzzClient({
       baseUrl: this.config.relayBaseUrl,
       host: this.config.relayHost,
       identity: this.agentIdentity,
     });
     const attachments: AttachmentReference[] = [];
-    const errors: string[] = [];
     try {
       for (const candidate of candidates) {
         try {
@@ -4398,15 +4452,16 @@ export class Body {
             ...(dim ? { width: Number(dim[1]), height: Number(dim[2]) } : {}),
           });
         } catch (error) {
-          errors.push(
-            `${basename(candidate.name)}: ${error instanceof Error ? error.message : String(error)}`,
-          );
+          failed = true;
+          // Upload/canonicalization diagnostics stay operator-local. The Room
+          // receives only AGENT_ATTACHMENT_FAILURE_REPLY below.
+          console.warn('[body] agent attachment delivery failed:', error);
         }
       }
     } finally {
       client.disconnect();
     }
-    return { attachments, errors };
+    return { attachments, failed };
   }
 
   private async publishAgentResult(
@@ -4432,8 +4487,7 @@ export class Body {
       reply = '';
     }
     if (!reply) reply = uploaded.attachments.length ? 'Shared an attachment.' : fallback;
-    if (uploaded.errors.length)
-      reply = `${reply}\n\nAttachment unavailable: ${uploaded.errors.join('; ')}`;
+    if (uploaded.failed) reply = `${reply}\n\n${AGENT_ATTACHMENT_FAILURE_REPLY}`;
     // Concise reduction can legitimately empty out an otherwise real reply
     // (e.g. one that is entirely a fenced code block, which the summary
     // strips before checking for content) — fall back rather than treating a

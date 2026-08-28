@@ -3852,6 +3852,248 @@ describe('Room conversation and permission-gated work intent', () => {
     ).toBe(false);
   });
 
+  it('routes the multi-party addressing table from indexed reply facts', () => {
+    const colleague = newIdentity('continuation-colleague');
+    const otherAgent = newIdentity('continuation-other-agent');
+    const participants = [
+      human.publicKey,
+      colleague.publicKey,
+      agent.publicKey,
+      otherAgent.publicKey,
+    ];
+    const tagged = requestEvent([['p', agent.publicKey]], human, '@Joy start here.');
+    const followup = requestEvent([], human, 'What about the second part?');
+    const humanRequest = requestEvent([['p', agent.publicKey]], human, '@Joy answer this.');
+    const colleagueRequest = requestEvent(
+      [['p', agent.publicKey]],
+      colleague,
+      '@Joy answer my question.',
+    );
+    const message = (
+      id: string,
+      author: { publicKey: string },
+      kind: 'human' | 'agent',
+      createdAt: number,
+      presentation: RoomViewMessage['presentation'] = 'message',
+      replyTo?: string,
+    ): RoomViewMessage => ({
+      id,
+      text: id,
+      createdAt,
+      author: { pubkey: author.publicKey, kind, name: kind === 'agent' ? 'Joy' : 'Person' },
+      presentation,
+      ...(replyTo
+        ? { reply: { channelId: 'parent-channel', eventId: replyTo, rootId: replyTo } }
+        : {}),
+    });
+    const current = message(followup.id, human, 'human', 4);
+    const replyToHuman = message(
+      'agent-reply-to-human',
+      agent,
+      'agent',
+      2,
+      'message',
+      humanRequest.id,
+    );
+    const replyToColleague = message(
+      'agent-reply-to-colleague',
+      agent,
+      'agent',
+      2,
+      'message',
+      colleagueRequest.id,
+    );
+    const noise = message('status-card', agent, 'agent', 3, 'system');
+
+    expect(isChannelAddressedMessage(tagged, agent.publicKey, participants)).toBe(true);
+    expect(
+      isChannelAddressedMessage(followup, agent.publicKey, participants, [
+        message(humanRequest.id, human, 'human', 1),
+        replyToHuman,
+        current,
+      ]),
+    ).toBe(true);
+    expect(
+      isChannelAddressedMessage(followup, agent.publicKey, participants, [
+        message(colleagueRequest.id, colleague, 'human', 1),
+        replyToColleague,
+        current,
+      ]),
+    ).toBe(false);
+    expect(
+      isChannelAddressedMessage(followup, agent.publicKey, participants, [
+        message(humanRequest.id, human, 'human', 1),
+        replyToHuman,
+        noise,
+        current,
+      ]),
+    ).toBe(true);
+  });
+
+  it('does not infer a continuation from adjacent unthreaded agent prose', () => {
+    const colleague = newIdentity('adjacent-colleague');
+    const followup = requestEvent([], human, 'Was that answer meant for me?');
+    const participants = [human.publicKey, colleague.publicKey, agent.publicKey];
+    const messages: RoomViewMessage[] = [
+      {
+        id: 'unthreaded-agent-message',
+        text: 'An answer without a recorded recipient.',
+        createdAt: 1,
+        author: { pubkey: agent.publicKey, kind: 'agent', name: 'Joy' },
+        presentation: 'message',
+      },
+      {
+        id: followup.id,
+        text: followup.content,
+        createdAt: 2,
+        author: { pubkey: human.publicKey, kind: 'human', name: 'Milo' },
+        presentation: 'message',
+      },
+    ];
+
+    expect(isChannelAddressedMessage(followup, agent.publicKey, participants, messages)).toBe(
+      false,
+    );
+  });
+
+  it('drives only the recorded recipient continuation through Room event processing', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-room-continuation-routing-'));
+    try {
+      const colleague = newIdentity('processed-continuation-colleague');
+      const body = new Body({
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot,
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      });
+      const participants = [human.publicKey, colleague.publicKey, body.agent.publicKey];
+      const original = requestEvent(
+        [['p', body.agent.publicKey]],
+        human,
+        '@Joy give me the first answer.',
+      );
+      const humanFollowup = requestEvent([], human, 'Now answer the follow-up.');
+      const colleagueFollowup = requestEvent([], colleague, 'This is a separate conversation.');
+      const indexed = vi.fn(async (): Promise<RoomViewMessage[]> => [
+        {
+          id: original.id,
+          text: original.content,
+          createdAt: 1,
+          author: { pubkey: human.publicKey, kind: 'human', name: 'Milo' },
+          presentation: 'message',
+        },
+        {
+          id: 'threaded-agent-reply',
+          text: 'Here is the first answer.',
+          createdAt: 2,
+          author: { pubkey: body.agent.publicKey, kind: 'agent', name: 'Joy' },
+          presentation: 'message',
+          reply: { channelId: 'parent-channel', eventId: original.id, rootId: original.id },
+        },
+        {
+          id: humanFollowup.id,
+          text: humanFollowup.content,
+          createdAt: 3,
+          author: { pubkey: human.publicKey, kind: 'human', name: 'Milo' },
+          presentation: 'message',
+        },
+      ]);
+      const replyInRoom = vi.fn(async () => ({ openedCorner: false, producedReply: true }));
+      Reflect.set(body, 'indexedRoomMessages', indexed);
+      Reflect.set(
+        body,
+        'roomAuthorAttributions',
+        vi.fn(
+          async () =>
+            new Map([
+              [human.publicKey, { kind: 'Person', name: 'Milo', handle: 'milo' }],
+              [colleague.publicKey, { kind: 'Person', name: 'Nia', handle: 'nia' }],
+              [body.agent.publicKey, { kind: 'Agent', name: 'Joy', handle: 'joy' }],
+            ]),
+        ),
+      );
+      Reflect.set(
+        body,
+        'requestAlreadyOpened',
+        vi.fn(async () => false),
+      );
+      Reflect.set(
+        body,
+        'channelCommunityId',
+        vi.fn(async () => undefined),
+      );
+      Reflect.set(body, 'replyInRoom', replyInRoom);
+      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+      const processChannelRequestEvents = (
+        Reflect.get(body, 'processChannelRequestEvents') as (...args: unknown[]) => Promise<number>
+      ).bind(body);
+
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [humanFollowup],
+        participants,
+      );
+      expect(replyInRoom).toHaveBeenCalledOnce();
+      expect(replyInRoom).toHaveBeenCalledWith(
+        'parent-channel',
+        { repo: 'repo' },
+        expect.objectContaining({ eventId: humanFollowup.id, authorPubkey: human.publicKey }),
+        false,
+        'repository',
+        undefined,
+        false,
+      );
+
+      replyInRoom.mockClear();
+      indexed.mockResolvedValueOnce([
+        {
+          id: humanFollowup.id,
+          text: humanFollowup.content,
+          createdAt: 3,
+          author: { pubkey: human.publicKey, kind: 'human', name: 'Milo' },
+          presentation: 'message',
+        },
+        {
+          id: 'threaded-followup-reply',
+          text: 'Here is the follow-up answer.',
+          createdAt: 4,
+          author: { pubkey: body.agent.publicKey, kind: 'agent', name: 'Joy' },
+          presentation: 'message',
+          reply: {
+            channelId: 'parent-channel',
+            eventId: humanFollowup.id,
+            rootId: humanFollowup.id,
+          },
+        },
+        {
+          id: colleagueFollowup.id,
+          text: colleagueFollowup.content,
+          createdAt: 5,
+          author: { pubkey: colleague.publicKey, kind: 'human', name: 'Nia' },
+          presentation: 'message',
+        },
+      ]);
+      await processChannelRequestEvents(
+        'parent-channel',
+        { repo: 'repo' },
+        'repository',
+        [colleagueFollowup],
+        participants,
+      );
+      expect(replyInRoom).not.toHaveBeenCalled();
+      expect(indexed).toHaveBeenCalledTimes(2);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('retires the signed Start work marker as an edit authorization', () => {
     const participants = [human.publicKey, agent.publicKey];
     const work = requestEvent([['t', AGENT_REQUEST_TAG]]);

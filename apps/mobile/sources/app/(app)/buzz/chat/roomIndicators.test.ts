@@ -56,6 +56,8 @@ describe('the corner line and the turn indicator are independent', () => {
     const turn = memoBody('turnProgressLabel');
     for (const cornerState of CORNER_STATE) expect(turn).not.toContain(cornerState);
     expect(turn).toContain('activeAgentTurn');
+    expect(chatSource).toContain('roomSurface?.latestAgentTurns ?? []');
+    expect(memoBody('activeAgentTurn')).not.toContain('liveOverlays');
   });
 
   it('runs the same thinking indicator for an active turn inside a corner', () => {
@@ -67,9 +69,8 @@ describe('the corner line and the turn indicator are independent', () => {
   });
 
   it('keeps the Corner-only transcript policy out of Room rendering', () => {
-    const messages = memoBody('messages');
-    expect(messages).toContain('if (!isCorner) return unprojectedMessages');
-    expect(messages).toContain('projectCornerTranscript');
+    expect(chatSource).toContain('const messages = unprojectedMessages;');
+    expect(chatSource).not.toContain('projectCornerTranscript');
   });
 
   it('renders the two as separate, independently-gated lines', () => {

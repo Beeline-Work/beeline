@@ -13,6 +13,7 @@ import {
   type InviteView,
   type RoomHistoryView,
   type RoomView,
+  type RoomViewAgentTurn,
   type RoomViewHeader,
   type RoomViewIdentity,
   type RoomViewMember,
@@ -372,6 +373,20 @@ function directMessageForViewer(value: unknown, viewerValue: unknown): boolean {
   );
 }
 
+function agentTurn(value: unknown): value is RoomViewAgentTurn {
+  const item = record(value);
+  return Boolean(
+    item &&
+    typeof item.requestId === 'string' &&
+    HEX.test(item.requestId) &&
+    typeof item.agentPubkey === 'string' &&
+    HEX.test(item.agentPubkey) &&
+    (item.status === 'working' || item.status === 'complete' || item.status === 'failed') &&
+    integer(item.createdAt) &&
+    optionalString(item.generationId),
+  );
+}
+
 function workspace(value: unknown): value is ChatListWorkspace {
   const item = record(value);
   return Boolean(
@@ -526,6 +541,9 @@ export function isRoomView(value: unknown): value is RoomView {
     Array.isArray(item.messages) &&
     item.messages.length <= ROOM_VIEW_MESSAGE_LIMIT &&
     item.messages.every((candidate) => scopedMessage(candidate, record(item.room)?.id)) &&
+    Array.isArray(item.latestAgentTurns) &&
+    item.latestAgentTurns.length <= ROOM_VIEW_AGENT_LIMIT &&
+    item.latestAgentTurns.every(agentTurn) &&
     Array.isArray(item.members) &&
     item.members.length <= ROOM_VIEW_MEMBER_LIMIT &&
     item.members.every(member) &&

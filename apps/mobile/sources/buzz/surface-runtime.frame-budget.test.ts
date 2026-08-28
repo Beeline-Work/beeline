@@ -2,8 +2,15 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { SurfaceRefreshScheduler } from '@beeline/buzz-client';
+import {
+  SurfaceRefreshScheduler,
+  buildReplyCommand,
+  createIdentity,
+  type RoomView,
+  type RoomViewMessage,
+} from '@beeline/buzz-client';
 import type { ChatDisplayMessage } from './room-view-presentation';
+import { createRoomMessageProjector, reconcileRoomView } from './room-view-presentation';
 import { useRoomSendFrame } from './room-send-frame';
 
 vi.mock('react-native-mmkv', () => ({
@@ -57,6 +64,101 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
+  it('keeps untouched rows and their reply proof stable through a live refetch', async () => {
+    vi.useFakeTimers();
+    const rootId = '1'.repeat(64);
+    const parentId = '2'.repeat(64);
+    const firstMessage: RoomViewMessage = {
+      id: parentId,
+      text: 'Agent reply',
+      createdAt: 2,
+      author: { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Codex' },
+      presentation: 'message',
+      reply: { channelId: 'room', eventId: rootId, rootId },
+      reference: { channelId: 'room', eventId: parentId, rootId },
+    };
+    const view = (messages: readonly RoomViewMessage[]): RoomView => ({
+      room: {
+        id: 'room',
+        workspaceId: 'workspace',
+        name: 'Room',
+        archived: false,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      messages,
+      members: [],
+      viewer: {
+        identity: { pubkey: 'b'.repeat(64), kind: 'human', name: 'Captain' },
+        role: 'owner',
+        permissions: { send: true, manage: true },
+      },
+      corners: [],
+      watchFilters: [{ kinds: [9], '#h': ['room'] }],
+    });
+    const first = view([firstMessage]);
+    const second = view([
+      {
+        ...firstMessage,
+        id: '3'.repeat(64),
+        text: 'Live arrival',
+        createdAt: 3,
+        reference: {
+          channelId: 'room',
+          eventId: '3'.repeat(64),
+          rootId: '3'.repeat(64),
+        },
+        reply: undefined,
+      },
+      structuredClone(firstMessage),
+    ]);
+    const fetch = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    const projector = createRoomMessageProjector();
+    const frames: ChatDisplayMessage[][] = [];
+    let current: RoomView | null = null;
+    const scheduler = new SurfaceRefreshScheduler({
+      fetch,
+      apply: (fresh) => {
+        current = reconcileRoomView(current, fresh);
+        frames.push(projector.project(current.messages, current.viewer.identity.pubkey));
+      },
+    });
+
+    await scheduler.startAfter(Promise.resolve());
+    await vi.runOnlyPendingTimersAsync();
+    const heldProof = frames[0]![0]!.reference;
+    scheduler.signal();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(frames).toHaveLength(2);
+    const refetchedParent = frames[1]!.find((message) => message.id === parentId);
+    expect(refetchedParent).toBe(frames[0]![0]);
+    expect(refetchedParent!.reference).toBe(heldProof);
+    expect(
+      buildReplyCommand(createIdentity('refetch-reply'), 'Nested reply', heldProof!).tags,
+    ).toEqual([
+      ['h', 'room'],
+      ['e', rootId, '', 'root'],
+      ['e', parentId, '', 'reply'],
+    ]);
+
+    const changed = reconcileRoomView(
+      current,
+      view([{ ...structuredClone(firstMessage), text: 'Agent reply edited' }]),
+    );
+    const changedProjection = projector.project(
+      changed.messages,
+      changed.viewer.identity.pubkey,
+    )[0]!;
+    expect(changedProjection).not.toBe(refetchedParent);
+    expect(changedProjection.text).toBe('Agent reply edited');
+
+    const otherViewerProjection = projector.project(changed.messages, 'c'.repeat(64))[0]!;
+    expect(otherViewerProjection).not.toBe(changedProjection);
+    projector.reset();
+    expect(projector.project(changed.messages, 'c'.repeat(64))[0]).not.toBe(otherViewerProjection);
+  });
+
   it('keeps an optimistic send in a constant-size partition until the screen merges it by time', () => {
     const durable = Array.from({ length: 1_000 }, (_, index) => ({
       id: `durable-${index}`,

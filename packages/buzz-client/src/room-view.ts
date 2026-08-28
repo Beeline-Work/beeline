@@ -200,9 +200,8 @@ export type ChatListItem = {
   };
   readonly memberCount: number;
   readonly cornerCount: number;
-  /** Server-owned, cross-device read state. */
-  /** Present once the server-owned read cursor migration is deployed. */
-  readonly unread?: boolean;
+  /** Server-owned, cross-device read state. Every accepted list response carries it. */
+  readonly unread: boolean;
   readonly repositoryName?: string;
 };
 

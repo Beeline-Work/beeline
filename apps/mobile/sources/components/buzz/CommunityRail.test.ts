@@ -172,7 +172,12 @@ describe('Workspace drawer', () => {
     act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
     expect(renderer.root.findByProps({ testID: 'community-drawer-overlay' })).toBeDefined();
     const gear = renderer.root.findByProps({ testID: 'workspace-settings-community-1' });
-    expect(gear.props.accessibilityLabel).toBe('Night Shift Workspace settings');
+    expect(gear.props.accessibilityLabel).toBe('Night Shift Workspace');
+    expect(
+      renderer.root
+        .findAllByType('Text' as any)
+        .some((node) => node.props.children === 'WORKSPACE'),
+    ).toBe(true);
     act(() => gear.props.onPress());
     expect(onOpen).toHaveBeenCalledWith('community-1');
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);

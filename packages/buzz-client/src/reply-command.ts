@@ -1,7 +1,7 @@
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 import { KIND_STREAM_MESSAGE } from './kinds.js';
 import type { Identity } from './types.js';
-import type { KnownMessageReference } from './read-model/types.js';
+import type { KnownMessageReference } from './reply-proof.js';
 
 export type ReplyCommandOptions = {
   mentionAgent?: string;

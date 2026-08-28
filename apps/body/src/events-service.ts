@@ -25,7 +25,6 @@ import {
   readRuntimeRecord,
   runtimeIdentity,
   type AgentRuntimeRecord,
-  type RoomRuntimeRecord,
 } from './runtime.js';
 import type { DaemonNotifier } from './systemd.js';
 
@@ -61,13 +60,11 @@ export interface RepositoryIngestionTarget extends GitHubRepositoryTarget {
   /** Existing Room control identities used only to enroll the service key. */
   roomProvisioners: Map<string, Identity>;
   targetBranches: Set<string>;
-  legacyCursor?: number;
   membershipError?: string;
 }
 
 export interface EventsServiceConfig {
   supervisorRoot: string;
-  stateFile: string;
   identityFile: string;
   githubAppId: string;
   githubPrivateKey: string;
@@ -101,7 +98,6 @@ export function loadEventsServiceConfig(env: NodeJS.ProcessEnv = process.env): E
   }
   return {
     supervisorRoot,
-    stateFile: resolve(root, 'state.json'),
     identityFile: resolve(root, 'identity.json'),
     githubAppId,
     githubPrivateKey,
@@ -150,27 +146,6 @@ function githubRemote(remote: string | undefined): { owner: string; repo: string
   return match ? { owner: match[1]!, repo: match[2]! } : undefined;
 }
 
-function roomRoot(configPath: string, room: RoomRuntimeRecord): string {
-  return room.root ?? resolve(dirname(configPath), 'rooms', room.channelId);
-}
-
-async function legacyCursor(
-  configPath: string,
-  room: RoomRuntimeRecord,
-): Promise<number | undefined> {
-  try {
-    const parsed = JSON.parse(
-      await readFile(resolve(roomRoot(configPath, room), 'body-state.json'), 'utf8'),
-    ) as { githubEventCursors?: Record<string, unknown> };
-    const value = parsed.githubEventCursors?.[room.channelId];
-    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-      ? value
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function targetKey(runtime: AgentRuntimeRecord, owner: string, repo: string): string {
   return createHash('sha256')
     .update(
@@ -205,7 +180,6 @@ export async function discoverRepositoryIngestionTargets(
       if (!repository) continue;
       const key = targetKey(runtime, repository.owner, repository.repo);
       const existing = grouped.get(key);
-      const cursor = await legacyCursor(configPath, room);
       if (existing) {
         if (!existing.rooms.includes(room.channelId)) existing.rooms.push(room.channelId);
         // Never replace a proven merge-gate admin from another runtime view
@@ -218,8 +192,6 @@ export async function discoverRepositoryIngestionTargets(
           );
         }
         existing.targetBranches.add(room.repo.targetBranch.replace(/^refs\/heads\//, ''));
-        if (cursor !== undefined)
-          existing.legacyCursor = Math.max(existing.legacyCursor ?? 0, cursor);
         continue;
       }
       grouped.set(key, {
@@ -241,7 +213,6 @@ export async function discoverRepositoryIngestionTargets(
           [room.channelId, runtimeIdentity(room.mergeWorker ?? runtime.agent)],
         ]),
         targetBranches: new Set([room.repo.targetBranch.replace(/^refs\/heads\//, '')]),
-        ...(cursor !== undefined ? { legacyCursor: cursor } : {}),
       });
     }
   }
@@ -549,19 +520,13 @@ export class RepositoryEventsCore {
       if (target.membershipError) {
         throw new Error(`service identity enrollment failed: ${target.membershipError}`);
       }
-      await this.state.migrateLegacyCursor(target.key, target.legacyCursor);
       const state = await this.state.record(target.key);
       const result = await this.source.read(target, state.cursor, { coldLimit: 20, signal });
       const seen = new Set(state.seenEventIds);
       const normalized = result.events.filter(
         (event) => !seen.has(event.id) && !isMutedRepositoryEvent(event, target.targetBranches),
       );
-      // A legacy per-Room cursor cannot be translated into a GitHub event id.
-      // Treat its existence as evidence that the old feed already delivered
-      // history, seed at GitHub's current head, and never replay that history.
-      const legacyBootstrap =
-        state.cursor === undefined && state.legacyCursorMigrated !== undefined;
-      const text = legacyBootstrap ? undefined : describeRepositoryEvents(normalized);
+      const text = describeRepositoryEvents(normalized);
       if (text) {
         const now = this.now();
         await this.state.reserve(target.key, {

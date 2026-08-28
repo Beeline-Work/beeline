@@ -8,10 +8,8 @@ import { DeliveryState, type DeliveryStateFile } from './delivery-state.js';
 import { PushEventFeed } from './feed.js';
 import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { TokenRegistry } from './registry.js';
+import { RoomIndexer } from './room-indexer.js';
 import { createRegistrationServer } from './server.js';
-import { ChannelSnapshotStore } from './snapshot-store.js';
-import { createSnapshotMaterializer } from './snapshot-materializer.js';
-import { SnapshotSuccessionClient } from './succession.js';
 import { startHostedRepositoryEvents } from './hosted-events.js';
 
 async function main(): Promise<void> {
@@ -21,7 +19,6 @@ async function main(): Promise<void> {
   const shutdownController = new AbortController();
   let gateway: PushGateway | undefined;
   let feed: PushEventFeed | undefined;
-  let materializer: ReturnType<typeof createSnapshotMaterializer> | undefined;
   let hostedEvents: Awaited<ReturnType<typeof startHostedRepositoryEvents>> | undefined;
   let server: ReturnType<typeof createRegistrationServer> | undefined;
   let drainPromise: Promise<void> | undefined;
@@ -29,7 +26,6 @@ async function main(): Promise<void> {
     if (drainPromise) return drainPromise;
     drainPromise = (async () => {
       shutdownController.abort();
-      materializer?.stop();
       feed?.stop();
       if (server?.listening) server.close();
       await hostedEvents?.completed.catch(() => undefined);
@@ -45,24 +41,15 @@ async function main(): Promise<void> {
   try {
     await materializerStore.connect();
     await materializerStore.migrateReservations();
+    await materializerStore.deleteSnapshotContract();
     const deliveryState = await DeliveryState.load(
-      materializerStore.reservation<DeliveryStateFile>('push-delivery', config.deliveryStateFile),
+      materializerStore.reservation<DeliveryStateFile>('push-delivery'),
     );
-    const snapshotStore = new ChannelSnapshotStore(materializerStore);
-    await snapshotStore.migrate();
-    const succession = new SnapshotSuccessionClient({
-      baseUrl: config.snapshotAuthBaseUrl,
-      token: config.snapshotInternalToken,
-    });
-    materializer = createSnapshotMaterializer(snapshotStore, succession, {
-      pollIntervalMs: config.snapshotPollIntervalMs,
-      burstCoalesceMs: config.snapshotBurstCoalesceMs,
-    });
-    await materializer.start();
+    const indexer = new RoomIndexer(materializerStore);
 
     const eventsConfig = loadEventsServiceConfig();
     const eventsState = new RepositoryEventsState(
-      materializerStore.reservation<EventsStateData>('repository-events', eventsConfig.stateFile),
+      materializerStore.reservation<EventsStateData>('repository-events'),
     );
     hostedEvents = await startHostedRepositoryEvents({
       config: eventsConfig,
@@ -86,11 +73,17 @@ async function main(): Promise<void> {
         return gateway.sendTestNotification(pubkey);
       },
       pushHealth: () => pushHealth,
-      snapshot: {
-        publicOrigin: config.snapshotPublicOrigin,
-        readForViewer: (channelId, pubkey) => snapshotStore.readForViewer(channelId, pubkey),
-        claimNip98Event: (eventId) => snapshotStore.claimNip98Event(eventId),
-        status: async () => ({ ...(await snapshotStore.status()), warmed: materializer!.ready }),
+      indexer: {
+        publicOrigin: config.indexerPublicOrigin,
+        readWorkspaces: (pubkey) => indexer.readWorkspaces(pubkey),
+        readWorkspace: (workspaceId, pubkey) => indexer.readWorkspace(workspaceId, pubkey),
+        readChats: (workspaceId, pubkey) => indexer.readChats(workspaceId, pubkey),
+        readAgent: (workspaceId, agentPubkey, pubkey) =>
+          indexer.readAgent(workspaceId, agentPubkey, pubkey),
+        readRoom: (roomId, pubkey) => indexer.readRoom(roomId, pubkey),
+        readCorners: (roomId, pubkey) => indexer.readCorners(roomId, pubkey),
+        readHistory: (roomId, pubkey, before) => indexer.readHistory(roomId, pubkey, before),
+        readInvite: (tokenHash, readerPubkey) => indexer.readInvite(tokenHash, readerPubkey),
       },
     });
     await new Promise<void>((resolve, reject) => {
@@ -101,7 +94,7 @@ async function main(): Promise<void> {
       });
     });
     console.log(
-      `[materializer] server listening on http://${config.host}:${config.port}; consumers=push,events,snapshot; store=postgres`,
+      `[materializer] server listening on http://${config.host}:${config.port}; consumers=push,events,indexer; store=postgres`,
     );
 
     try {
@@ -139,7 +132,7 @@ async function main(): Promise<void> {
     } catch (error) {
       pushHealth = { ok: false, reason: 'firebase_unavailable' };
       console.error(
-        '[push] Firebase unavailable; snapshot serving remains active:',
+        '[push] Firebase unavailable; indexer serving remains active:',
         error instanceof Error ? error.message : String(error),
       );
     }

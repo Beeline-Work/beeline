@@ -219,31 +219,6 @@ describe('RepositoryEventsCore', () => {
     expect(attempts[1]).toBe(attempts[0]);
   });
 
-  it('migrates a legacy Body cursor by seeding at head without a replay flood', async () => {
-    const durable = durableState();
-    const published: NostrEvent[] = [];
-    const source: RepositoryEventSource = {
-      read: async () => ({
-        head: '20',
-        sourceEventIds: ['20', '19'],
-        events: [normalized('20'), normalized('19')],
-      }),
-    };
-    await new RepositoryEventsCore(
-      new RepositoryEventsState(durable.persistence),
-      source,
-      newIdentity('events-service'),
-      { publish: async (_target, event) => published.push(event), now: () => 1_000 },
-    ).tick([target({ legacyCursor: 441 })]);
-
-    expect(published).toEqual([]);
-    const stored = durable.value()!;
-    expect(stored.repositories['repo-key']).toMatchObject({
-      cursor: '20',
-      legacyCursorMigrated: 441,
-    });
-  });
-
   it('publishes one degraded Room state per failure episode', async () => {
     const durable = durableState();
     let now = 1_000;
@@ -332,7 +307,7 @@ describe('discoverRepositoryIngestionTargets', () => {
     expect(additions).toEqual([['room-1', service.publicKey, 'member']]);
   });
 
-  it('groups duplicate agent views into one workspace/repository poll and carries legacy cursors', async () => {
+  it('groups duplicate agent views into one workspace/repository poll', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-events-discovery-'));
     temporary.push(root);
     const agent = newIdentity('agent');
@@ -384,9 +359,9 @@ describe('discoverRepositoryIngestionTargets', () => {
       createdAt: new Date(0).toISOString(),
     });
     const agentsRoot = resolve(root, 'beeline', 'agents');
-    for (const [identity, roomId, cursor] of [
-      [newIdentity('one'), 'room-a', 8],
-      [newIdentity('two'), 'room-b', 11],
+    for (const [identity, roomId] of [
+      [newIdentity('one'), 'room-a'],
+      [newIdentity('two'), 'room-b'],
     ] as const) {
       const value = runtime(roomId);
       value.agent = {
@@ -397,9 +372,6 @@ describe('discoverRepositoryIngestionTargets', () => {
       const configPath = resolve(agentsRoot, identity.publicKey, 'runtime.json');
       await mkdir(dirname(configPath), { recursive: true });
       await writeFile(configPath, JSON.stringify(value));
-      const statePath = resolve(root, 'rooms', roomId, 'body-state.json');
-      await mkdir(dirname(statePath), { recursive: true });
-      await writeFile(statePath, JSON.stringify({ githubEventCursors: { [roomId]: cursor } }));
     }
 
     const targets = await discoverRepositoryIngestionTargets(root);
@@ -412,6 +384,5 @@ describe('discoverRepositoryIngestionTargets', () => {
         (identity) => identity.publicKey === mergeWorker.publicKey,
       ),
     ).toBe(true);
-    expect(targets[0]?.legacyCursor).toBe(11);
   });
 });

@@ -377,6 +377,7 @@ export {
   setRoomTargetBranch,
   setRoomGitHubEvents,
   normalizeTargetBranchName,
+  normalizeRoomRepositoryContent,
   type RoomRepositoryAuthorResolution,
   type RoomRepositoryResolution,
 } from './room-repository.js';
@@ -468,22 +469,74 @@ export {
   CHANGE_REVIEW_EVENT_KIND,
   CHANGE_REVIEW_ARTIFACT_TAG,
   CHANGE_REVIEW_ARTIFACT_VERSION,
-  CHANGE_REVIEW_MANIFEST_TAG,
-  CHANGE_REVIEW_FILE_TAG,
-  CHANGE_REVIEW_COMPLETE_TAG,
-  CHANGE_REVIEW_GENERATION_TAG,
-  CHANGE_REVIEW_VERSION,
-  parseChangeReviewManifest,
-  parseChangeReviewGenerationComplete,
   parseChangeReviewArtifactDescriptor,
   parseChangeReviewArtifact,
   type ChangeReviewArtifact,
   type ChangeReviewArtifactDescriptor,
   type ChangeReviewArtifactFile,
   type ChangeReviewFile,
-  type ChangeReviewGenerationComplete,
-  type ChangeReviewManifest,
   type ChangeReviewStatus,
 } from './change-review.js';
+
+export {
+  ROOM_VIEW_MESSAGE_LIMIT,
+  ROOM_VIEW_BRIEFING_LIMIT,
+  ROOM_VIEW_WORKSPACE_LIMIT,
+  ROOM_VIEW_CHAT_LIMIT,
+  ROOM_VIEW_MEMBER_LIMIT,
+  ROOM_VIEW_AGENT_LIMIT,
+  RoomViewClient,
+  RoomViewHttpError,
+} from './room-view.js';
+export type {
+  AgentDetailView,
+  ChatListItem,
+  ChatListView,
+  ChatListWorkspace,
+  CornerListItem,
+  CornerListView,
+  InviteView,
+  RoomHistoryView,
+  RoomRepositoryView,
+  RoomReviewView,
+  RoomViewer,
+  RoomView,
+  RoomViewActivity,
+  RoomViewClientOptions,
+  RoomViewHeader,
+  RoomViewIdentity,
+  RoomViewMember,
+  RoomViewMessage,
+  SurfaceWatchFilter,
+  WorkspaceListView,
+  WorkspaceView,
+} from './room-view.js';
+export type { KnownMessageReference } from './reply-proof.js';
+export { SurfaceRefreshScheduler } from './surface-refresh.js';
+export type { SurfaceRefreshOptions } from './surface-refresh.js';
+export { SURFACE_INVALIDATION_MATRIX, invalidatesSurface } from './surface-invalidation.js';
+export type { SurfaceScope } from './surface-invalidation.js';
+export { LiveOverlayDecoder, applyLiveOverlay, visibleLiveOverlays } from './live-overlay.js';
+export type { LiveOverlay } from './live-overlay.js';
+export {
+  replaceRoomTail,
+  addRoomPage,
+  composeRoomRows,
+} from './room-response-partitions.js';
+export type { RoomResponsePartitions } from './room-response-partitions.js';
+export { SurfaceResponseCache, surfaceCacheKey } from './surface-cache.js';
+export type { SurfaceCacheStorage, SurfaceCacheAddress } from './surface-cache.js';
+export { SignedEventOutbox } from './signed-event-outbox.js';
+export type { SignedOutboxRecord, SignedOutboxStorage } from './signed-event-outbox.js';
+export {
+  isRoomView,
+  isRoomHistoryView,
+  isWorkspaceListView,
+  isWorkspaceView,
+  isChatListView,
+  isCornerListView,
+  isAgentDetailView,
+  isInviteView,
+} from './surface-guards.js';
 
 export { BuzzClient, createBuzzClient } from './client.js';

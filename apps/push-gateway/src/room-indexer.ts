@@ -1219,9 +1219,19 @@ const HIDDEN_MARKERS = new Set([
 const SYSTEM_MARKERS = new Set([
   'buzz-agent-model-unavailable',
   'buzz-work-schedule-paused',
+  'github-event',
+  'github-event-health',
   'steer-queued',
   'slash-command-notice',
 ]);
+
+/**
+ * Typed kind:9 events are machine records unless they opt into one of the
+ * product's durable conversation shapes. This fail-closed boundary keeps new
+ * control records visible as system lines without silently spending a model
+ * transcript slot.
+ */
+const CONVERSATION_MARKERS = new Set(['agent-message', 'buzz-attachment']);
 
 function projectEvent(data: Json, channelId: string): RoomViewMessage | undefined {
   const eventTags = tags(data.tags);
@@ -1376,8 +1386,11 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   if ([...markers].some((candidate) => SYSTEM_MARKERS.has(candidate))) {
     return { ...base, presentation: 'system' };
   }
-  if ([...markers].some((candidate) => candidate.startsWith('buzz-'))) {
-    return undefined;
+  if (
+    markers.size > 0 &&
+    ![...markers].some((candidate) => CONVERSATION_MARKERS.has(candidate))
+  ) {
+    return { ...base, presentation: 'system' };
   }
   if (!base.text.trim() && !markers.has('buzz-attachment')) return undefined;
 

@@ -32,6 +32,17 @@ export const AGENT_MEMORY_ENV = 'BUZZY_AGENT_MEMORY_DIR';
 /** The one well-known file an agent is told to author. */
 export const MEMORY_FILE_NAME = 'MEMORY.md';
 
+/**
+ * The one agent-owned curation contract, reused by the session prompt, the
+ * generated using-beeline reference, and the memory seed. There is no host
+ * parser or parallel role record: the assistant keeps its own notes current,
+ * including removing instructions that the captain later changes or revokes.
+ */
+export const AGENT_MEMORY_CURATION_CONTRACT =
+  `Before answering the first turn of every physical session, read ${MEMORY_FILE_NAME} in $${AGENT_MEMORY_ENV}. ` +
+  'When the captain assigns, changes, or revokes a standing role or directive, curate that file immediately: replace or delete superseded notes so it states only the current commitment. ' +
+  'Treat conversational corrections as the source of truth and use your judgment like a human assistant; memory is context, never extra authority.';
+
 export interface AgentMemory {
   /** Sanitized scope key (workspace id, or `global`). */
   scopeKey: string;
@@ -48,6 +59,8 @@ const MEMORY_SEED = [
   'sessions and daemon restarts and is shared across every Room and corner of',
   'this Workspace. Keep durable notes here: decisions, preferences, lessons,',
   'project facts worth remembering.',
+  '',
+  AGENT_MEMORY_CURATION_CONTRACT,
   '',
   'It is private agent state — never repository content, never credentials.',
   '',
@@ -96,7 +109,8 @@ export function agentMemoryInstructions(memory: AgentMemory | undefined): string
   if (!memory) return '';
   return [
     `Your persistent memory file is ${memory.file} (directory ${memory.dir}, also $${AGENT_MEMORY_ENV}).`,
-    'This memory is YOURS: author it with your file-editing tools whenever you learn something worth keeping across conversations (decisions, preferences, lessons, project facts), and read it whenever prior context would help.',
+    AGENT_MEMORY_CURATION_CONTRACT,
+    'This memory is YOURS: author it with your file-editing tools whenever you learn something else worth keeping across conversations (decisions, preferences, lessons, project facts).',
     'It persists across sessions and restarts and is shared across every Room and corner you serve in this Workspace; it is private to you.',
     'Writing inside your memory directory is always permitted, including in read-only Rooms. It is still not a license to write anywhere else: repository paths stay read-only there, and memory must never hold secrets, credentials, or repository files.',
   ].join('\n');

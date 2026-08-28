@@ -312,6 +312,112 @@ describe('RoomIndexer', () => {
     );
   });
 
+  it('classifies a mixed durable inbox so only human and agent conversation can enter model history', async () => {
+    const inbox = [
+      {
+        id: 'a'.repeat(64),
+        createdAt: 12,
+        pubkey: AGENT,
+        markers: ['body-control'],
+        text: '🤖 Agent session started',
+      },
+      {
+        id: 'b'.repeat(64),
+        createdAt: 13,
+        pubkey: AGENT,
+        markers: ['agent-message', 'buzz-agent-model-unavailable'],
+        text: 'Model unavailable · unavailable-model',
+      },
+      {
+        id: 'c'.repeat(64),
+        createdAt: 14,
+        pubkey: AGENT,
+        markers: ['github-event'],
+        text: 'GitHub · PR #42 merged',
+      },
+      {
+        id: 'd'.repeat(64),
+        createdAt: 15,
+        pubkey: AGENT,
+        markers: ['github-event-health'],
+        text: 'GitHub polling degraded',
+      },
+      {
+        id: 'e'.repeat(64),
+        createdAt: 16,
+        pubkey: AGENT,
+        markers: ['agent-message', 'steer-queued'],
+        text: 'Steer queued for the active turn.',
+      },
+      {
+        id: 'f'.repeat(64),
+        createdAt: 17,
+        pubkey: AGENT,
+        markers: ['factory-permission-execution'],
+        text: 'Permission execution acknowledged',
+      },
+      {
+        id: '9'.repeat(64),
+        createdAt: 18,
+        pubkey: VIEWER,
+        markers: [],
+        text: 'Captain: you are my chief of staff.',
+      },
+      {
+        id: '8'.repeat(64),
+        createdAt: 19,
+        pubkey: AGENT,
+        markers: ['agent-message'],
+        text: 'I will maintain the launch checklist.',
+      },
+    ];
+    for (const item of inbox) {
+      await postgres.query(
+        `INSERT INTO events
+          (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+         VALUES ($1, $2, $3, to_timestamp($4), 9, $5, $6, $7)`,
+        [
+          TENANT,
+          bytes(item.id),
+          bytes(item.pubkey),
+          item.createdAt,
+          JSON.stringify([
+            ['h', ROOM],
+            ...item.markers.map((marker) => ['t', marker]),
+          ]),
+          item.text,
+          ROOM,
+        ],
+      );
+    }
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+    const modelConversation = view?.messages
+      .filter((message) => message.presentation === 'message')
+      .map((message) => message.text);
+
+    expect(modelConversation).toEqual([
+      'Hello',
+      'Ready',
+      'Captain: you are my chief of staff.',
+      'I will maintain the launch checklist.',
+    ]);
+    expect(view?.messages).not.toContainEqual(
+      expect.objectContaining({ text: '🤖 Agent session started' }),
+    );
+    for (const text of [
+      'Model unavailable · unavailable-model',
+      'GitHub · PR #42 merged',
+      'GitHub polling degraded',
+      'Steer queued for the active turn.',
+      'Permission execution acknowledged',
+    ]) {
+      expect(view?.messages).toContainEqual(
+        expect.objectContaining({ text, presentation: 'system' }),
+      );
+    }
+  });
+
   it('owns read marks on the server across devices and viewers without a second Room query', async () => {
     await expect(indexer.readChats(WORKSPACE, VIEWER)).resolves.toMatchObject({
       chats: [{ room: { id: ROOM }, unread: true }],

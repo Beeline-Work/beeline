@@ -37,6 +37,7 @@ function roomView(pubkey: string): RoomView {
       },
     ],
     members: [{ identity, role: 'owner' }],
+    latestAgentTurns: [],
     viewer: { identity, role: 'owner', permissions: { send: true, manage: true } },
     briefing: [],
     review: { status: 'none', files: [], approvedBy: [] },

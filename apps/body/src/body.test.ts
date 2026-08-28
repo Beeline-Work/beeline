@@ -3,7 +3,7 @@
  * These tests do NOT require a relay or LLM endpoint.
  */
 import { afterAll, afterEach, describe, it, expect, vi } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import {
   existsSync,
   mkdirSync,
@@ -6521,9 +6521,192 @@ describe('first-class assistant messages', () => {
           mimeType: 'text/html',
         }),
       ]);
-      expect(result.errors).toEqual([
-        'payload.exe: file type application/octet-stream is not allowed for agent attachments',
-      ]);
+      expect(result.failed).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('captures a workbench artifact before the producing session is recycled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buzzy-workbench-recycle-'));
+    const repository = join(root, 'repository');
+    const logicalWorkbench = join(root, 'agent-private', 'workbench');
+    const liveWorkbench = join(root, 'proc', '2952774', 'root', 'workbench');
+    const logicalArtifact = join(logicalWorkbench, 'operation-taco-fund-playbook.html');
+    const liveArtifact = join(liveWorkbench, 'operation-taco-fund-playbook.html');
+    const html = '<!doctype html><title>Operation Taco Fund</title>';
+    await mkdir(repository, { recursive: true });
+    await mkdir(liveWorkbench, { recursive: true });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1, idleMs: 60_000 });
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/upload')) {
+          expect(new TextDecoder().decode(await new Response(init?.body).arrayBuffer())).toBe(html);
+          return new Response(
+            JSON.stringify({
+              url: 'https://usebeeline.app/media/hash/operation-taco-fund-playbook.html',
+              sha256: new Headers(init?.headers).get('X-SHA-256'),
+              size: new TextEncoder().encode(html).byteLength,
+              type: 'text/html',
+            }),
+            { status: 200 },
+          );
+        }
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: repository,
+        relayBaseUrl: 'https://usebeeline.app',
+        relayHost: 'usebeeline.app',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://usebeeline.app',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      newIdentity('workbench-recycle-agent'),
+      undefined,
+      { scheduler },
+    );
+    vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
+    const suspend = vi.fn(async () => {
+      await rm(liveWorkbench, { recursive: true, force: true });
+    });
+    const session = {
+      channelId: 'workbench-recycle-room',
+      sessionId: 'physical-2952774',
+      logicalSessionId: 'logical-workbench-recycle',
+      cwd: repository,
+      mode: 'readonly' as const,
+      workbench: { dir: logicalWorkbench, storageDir: liveWorkbench },
+      client: {
+        sessionPrompt: vi.fn(async () => {
+          await writeFile(liveArtifact, html);
+          return {
+            stopReason: 'end_turn',
+            updates: [],
+            agentText: `Here is the playbook. [[buzz-attachment:${logicalArtifact}]]`,
+            toolCalls: [],
+          };
+        }),
+        sessionCancel: vi.fn(),
+      },
+      lifecycle: {
+        activate: vi.fn().mockResolvedValue('physical-2952774'),
+        suspend,
+      },
+    } as never;
+
+    try {
+      const result = await Reflect.get(body, 'promptAgent').call(
+        body,
+        session,
+        'Make the playbook.',
+        {
+          channelId: 'workbench-recycle-room',
+          requestId: 'workbench-recycle-request',
+          originalRequestId: 'workbench-recycle-request',
+          cause: 'room-message',
+          silent: true,
+        },
+      );
+
+      // Reproduce the reported lifecycle gap: the physical sandbox and its
+      // tmpfs disappear after ACP returns but before delivery starts. A new
+      // session claiming the single process slot forces the same LRU recycle
+      // that made the production /proc keeper path go stale.
+      await scheduler.run(
+        'replacement-room',
+        {
+          activate: vi.fn().mockResolvedValue('replacement-physical'),
+          suspend: vi.fn().mockResolvedValue(undefined),
+        },
+        async () => undefined,
+      );
+      expect(suspend).toHaveBeenCalledOnce();
+      await expect(stat(liveArtifact)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      await Reflect.get(body, 'publishAgentResult').call(
+        body,
+        'workbench-recycle-room',
+        session,
+        result,
+        'Done.',
+      );
+
+      expect(published).toHaveLength(1);
+      expect(published[0]!.content).toBe('Here is the playbook.');
+      expect(JSON.stringify(published[0])).toContain(
+        'https://preview.usebeeline.app/media/hash/operation-taco-fund-playbook.html',
+      );
+    } finally {
+      await scheduler.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes plain attachment failure copy without filesystem plumbing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'buzzy-workbench-safe-copy-'));
+    const repository = join(root, 'repository');
+    const logicalWorkbench = join(root, 'agent-private', 'workbench');
+    const deadStorage =
+      '/proc/2952774/root/home/lunchbox/.local/state/beeline/agents/agent/rooms/room/agent-private/workbench';
+    await mkdir(repository, { recursive: true });
+    const published: NostrEvent[] = [];
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: repository,
+        relayBaseUrl: 'https://relay.example',
+        relayHost: 'relay.example',
+        relayScheme: 'https',
+        relayWsUrl: 'wss://relay.example',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      newIdentity('workbench-safe-copy-agent'),
+    );
+
+    try {
+      await Reflect.get(body, 'publishAgentResult').call(
+        body,
+        'room-id',
+        {
+          cwd: repository,
+          workbench: { dir: logicalWorkbench, storageDir: deadStorage },
+        },
+        {
+          agentText:
+            `I finished the report. ` +
+            `[[buzz-attachment:${join(logicalWorkbench, 'missing-report.html')}]]`,
+          updates: [],
+        },
+        'Done.',
+      );
+
+      expect(published).toHaveLength(1);
+      expect(published[0]!.content).toBe(
+        "I finished the report.\n\nI made a file to show you but couldn't deliver it. I'll regenerate it.",
+      );
+      expect(published[0]!.content).not.toMatch(/ENOENT|\/proc\/|realpath|Attachment unavailable/);
+      expect(published[0]!.content).not.toContain(root);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

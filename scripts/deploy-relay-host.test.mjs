@@ -172,9 +172,17 @@ esac
 STATE=__STATE__
 echo "sudo $*" >> "$STATE/sudo.log"
 [ "$1" = "-n" ] && shift
+listing=0
+[ "$1" = "-l" ] && { listing=1; shift; }
+runas=root
 if [ "$1" = "-u" ]; then
   [ "$2" = "lunchbox" ] || { echo "sudoers REFUSAL (user)" >&2; exit 1; }
+  runas=lunchbox
   shift 2
+fi
+if [ -f "$STATE/deny-sudo-rule" ] && grep -Fxq "$runas:$*" "$STATE/deny-sudo-rule"; then
+  echo "sudoers REFUSAL (intentionally missing rule): $runas:$*" >&2
+  exit 1
 fi
 case "$1" in
   /usr/bin/install)
@@ -187,6 +195,7 @@ case "$1" in
       */compose.yml|*/relay-front/nginx.conf) ;;
       *) echo "sudoers REFUSAL (install dest)" >&2; exit 1 ;;
     esac
+    [ "$listing" = 1 ] && exit 0
     cp "$src" "$dst"
     ;;
   /usr/bin/docker)
@@ -203,7 +212,10 @@ case "$1" in
       esac
     done
     case "$rest" in
-      " up -d --remove-orphans") exec __BIN__/docker compose -p buzz-router-prod up -d --remove-orphans ;;
+      " up -d --remove-orphans")
+        [ "$listing" = 1 ] && exit 0
+        exec __BIN__/docker compose -p buzz-router-prod up -d --remove-orphans
+        ;;
       *) echo "sudoers REFUSAL (compose args):$rest" >&2; exit 1 ;;
     esac
     ;;
@@ -215,6 +227,7 @@ case "$1" in
     [ -f "$STATE/events-service-present" ] || { echo "sudoers REFUSAL (events unit is absent)" >&2; exit 1; }
     action="$3"
     [ "$4" = "beeline-events.service" ] || [ "$5" = "beeline-events.service" ] || { echo "sudoers REFUSAL (events unit)" >&2; exit 1; }
+    [ "$listing" = 1 ] && exit 0
     case "$action" in
       is-active)
         if [ -f "$STATE/events-running" ]; then echo active; else echo inactive; exit 3; fi
@@ -240,6 +253,17 @@ STATE=__STATE__
 [ "$1" = "list-unit-files" ] || { echo "unexpected systemctl invocation: $*" >&2; exit 64; }
 [ -f "$STATE/events-service-present" ] && echo "beeline-events.service enabled"
 `;
+  const stat = String.raw`#!/usr/bin/env bash
+STATE=__STATE__
+source="${'${'}!#}"
+if [ -f "$STATE/root-owned-source" ] && [ "$source" = "$(cat "$STATE/root-owned-source")" ]; then
+  case "$1:$2" in
+    -c:%u:%g) echo '0:0'; exit 0 ;;
+    -c:%a) echo '755'; exit 0 ;;
+  esac
+fi
+exec /usr/bin/stat "$@"
+`;
   write(
     path.join(binDir, 'docker'),
     docker.replaceAll('__STATE__', stateDir).replaceAll('__BIN__', binDir),
@@ -249,10 +273,12 @@ STATE=__STATE__
     sudo.replaceAll('__STATE__', stateDir).replaceAll('__BIN__', binDir),
   );
   write(path.join(binDir, 'systemctl'), systemctl.replaceAll('__STATE__', stateDir));
+  write(path.join(binDir, 'stat'), stat.replaceAll('__STATE__', stateDir));
   write(path.join(binDir, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
   fs.chmodSync(path.join(binDir, 'docker'), 0o755);
   fs.chmodSync(path.join(binDir, 'sudo'), 0o755);
   fs.chmodSync(path.join(binDir, 'systemctl'), 0o755);
+  fs.chmodSync(path.join(binDir, 'stat'), 0o755);
   fs.chmodSync(path.join(binDir, 'sleep'), 0o755);
 }
 
@@ -305,6 +331,9 @@ function runDeploy(opts) {
   const proj = path.join(tmp, 'prod');
   const binDir = path.join(tmp, 'bin');
   const stateDir = path.join(tmp, 'state');
+  const pushStateDir = opts.pushStateDir ?? path.join(tmp, 'push-state');
+  const runtimeStateDir = opts.runtimeStateDir ?? path.join(tmp, 'runtime-state');
+  const eventsStateDir = opts.eventsStateDir ?? path.join(tmp, 'events-state');
   fs.mkdirSync(binDir);
   fs.mkdirSync(stateDir);
 
@@ -316,6 +345,12 @@ function runDeploy(opts) {
     path.join(proj, '.env'),
     'POSTGRES_PASSWORD=real-secret\nREDIS_PASSWORD=real\nBUZZ_S3_ACCESS_KEY=k\nBUZZ_S3_SECRET_KEY=s\n',
   );
+  if (!opts.missingPushState) fs.mkdirSync(pushStateDir, { recursive: true });
+  if (!opts.missingRuntimeState) fs.mkdirSync(runtimeStateDir, { recursive: true });
+  if (!opts.missingEventsState) fs.mkdirSync(eventsStateDir, { recursive: true });
+  if (opts.rootOwnedEventsState) {
+    write(path.join(stateDir, 'root-owned-source'), eventsStateDir);
+  }
   if (opts.eventsServicePresent !== false) {
     write(path.join(stateDir, 'events-service-present'), '1');
     if (opts.eventsRunning !== false) write(path.join(stateDir, 'events-running'), '1');
@@ -325,6 +360,12 @@ function runDeploy(opts) {
   if (opts.stickyPushGateway) write(path.join(stateDir, 'sticky-push-gateway'), '1');
   if (opts.failComposeUp) write(path.join(stateDir, 'fail-compose-up'), '1');
   const stackStageDir = path.join(tmp, 'stage');
+  if (opts.denySudoCommand === 'compose-up') {
+    write(
+      path.join(stateDir, 'deny-sudo-rule'),
+      `root:/usr/bin/docker compose -p buzz-router-prod --env-file ${path.join(proj, '.env')} -f ${path.join(proj, 'compose.yml')} up -d --remove-orphans\n`,
+    );
+  }
 
   makeFakeBin(binDir, stateDir);
 
@@ -344,6 +385,9 @@ function runDeploy(opts) {
           BEELINE_PROD_DIR: proj,
           BEELINE_PUBLIC_BASE: base,
           BEELINE_STACK_STAGE_DIR: stackStageDir,
+          BUZZY_PUSH_STATE_DIR: pushStateDir,
+          BEELINE_RUNTIME_STATE_DIR: runtimeStateDir,
+          BEELINE_EVENTS_HOST_STATE_DIR: eventsStateDir,
         },
       });
       let stdout = '';
@@ -370,6 +414,9 @@ function runDeploy(opts) {
       proj,
       tmp,
       stateDir,
+      pushStateDir,
+      runtimeStateDir,
+      eventsStateDir,
       readLive: (rel) => fs.readFileSync(path.join(proj, rel), 'utf8'),
       sudoLog: () =>
         fs.existsSync(path.join(stateDir, 'sudo.log'))
@@ -434,6 +481,53 @@ test('an absent standalone events unit skips retirement and continues deployment
   assert.ok(r.stdout.includes('already absent'), r.stdout);
   assert.equal(r.sudoLog().includes('beeline-events.service'), false, r.sudoLog());
   assert.equal(r.materializerRunning(), true);
+});
+
+test('a denied exact compose sudo rule parks before any running consumer is stopped', async () => {
+  const r = await runDeploy({ denySudoCommand: 'compose-up' });
+  assert.notEqual(r.status, 0, `stdout: ${r.stdout}`);
+  assert.equal(r.eventsRunning(), true, 'preflight must not retire the legacy events service');
+  assert.equal(r.materializerRunning(), false, 'preflight must not begin convergence');
+  assert.equal(
+    r.dockerLog().includes('docker stop '),
+    false,
+    `a denied sudo rule must park before stop_tail_containers:\n${r.dockerLog()}`,
+  );
+  assert.match(r.stderr, /deploy preflight failed/);
+  assert.match(
+    r.stderr,
+    /beeline-runner ALL=\(root\) NOPASSWD: \/usr\/bin\/docker compose -p buzz-router-prod .* up -d --remove-orphans/,
+    'the deploy must print the exact missing sudoers rule for the operator',
+  );
+});
+
+test('missing materializer bind sources are created before compose can auto-create them as root', async () => {
+  const r = await runDeploy({
+    missingEventsState: true,
+    missingPushState: true,
+    missingRuntimeState: true,
+  });
+  assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+  assert.deepEqual(fs.statSync(r.pushStateDir).uid, 1000);
+  assert.deepEqual(fs.statSync(r.runtimeStateDir).uid, 1000);
+  assert.deepEqual(fs.statSync(r.eventsStateDir).uid, 1000);
+  assert.match(r.stdout, /created push-state bind-mount source/);
+  assert.match(r.stdout, /created runtime-state bind-mount source/);
+  assert.match(r.stdout, /created events-state bind-mount source/);
+});
+
+test('a root-owned materializer bind source fails before a stop or crash-looping compose convergence', async () => {
+  const r = await runDeploy({ rootOwnedEventsState: true });
+  assert.notEqual(r.status, 0, `stdout: ${r.stdout}`);
+  assert.equal(r.eventsRunning(), true, 'state-source validation must precede retirement');
+  assert.equal(r.materializerRunning(), false, 'state-source validation must precede compose up');
+  assert.equal(r.dockerLog().includes('docker stop '), false, r.dockerLog());
+  assert.match(r.stderr, /events-state bind-mount source is not writable by materializer uid 1000/);
+  assert.match(
+    r.stderr,
+    new RegExp(`sudo chown 1000:1000 ${r.eventsStateDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+    'the remediation must name the exact host source directory',
+  );
 });
 
 function composeConfig(relative, overrides = {}) {
@@ -507,7 +601,7 @@ test('a repeated deploy places tracked config and converges once', async () => {
     r
       .sudoLog()
       .split('\n')
-      .filter((l) => l.includes('install') && l.includes('compose.yml')).length,
+      .filter((l) => !l.includes(' -l ') && l.includes('install') && l.includes('compose.yml')).length,
     1,
     r.sudoLog(),
   );

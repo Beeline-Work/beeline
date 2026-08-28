@@ -47,6 +47,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 
 const AGE_TICK_MS = 60_000;
+const COMPOSE_FAB_CLEARANCE = 88;
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -459,6 +460,11 @@ export default function BuzzChannels() {
             </View>
           }
           renderItem={({ item }: { item: ChatListItem }) => {
+            // `unread` is server-owned and cross-device. Badge, row emphasis,
+            // and the needs-you mark deliberately share this exact fact so a
+            // row can never say NEW while looking idle (or vice versa).
+            const unread = item.unread;
+            const deckState = unread ? 'needs-you' : 'idle';
             const title = displayRoomIndexTitle(item.room.name) ?? item.room.name;
             const age = compactRelativeTime(
               item.latestMessage?.createdAt ?? item.room.updatedAt,
@@ -468,14 +474,14 @@ export default function BuzzChannels() {
               <TouchableOpacity
                 testID={`room-${item.room.id}`}
                 onPress={() => openRoom(item.room.id)}
-                style={[styles.row, item.unread && styles.rowUnread]}
+                style={[styles.row, unread && styles.rowUnread]}
               >
-                <HullDeckMark state="idle" />
+                <HullDeckMark state={deckState} />
                 <View style={styles.rowCopy}>
                   <View style={styles.rowHeading}>
                     <Text
                       numberOfLines={1}
-                      style={[styles.title, item.unread && styles.titleUnread]}
+                      style={[styles.title, unread && styles.titleUnread]}
                     >
                       {title}
                     </Text>
@@ -493,7 +499,7 @@ export default function BuzzChannels() {
                   </Text>
                 </View>
                 <View style={styles.gutter}>
-                  {item.unread ? (
+                  {unread ? (
                     <View style={styles.unread}>
                       <Text style={styles.unreadText}>NEW</Text>
                     </View>
@@ -505,9 +511,14 @@ export default function BuzzChannels() {
             );
           }}
         />
-        <View style={[styles.footer, { paddingBottom: 16 + insets.bottom }]}>
-          {!viewerIsAgent && <RoomDeckComposeMenu onSelect={compose} />}
-        </View>
+        {!viewerIsAgent && (
+          <View
+            pointerEvents="box-none"
+            style={[styles.composeOverlay, { bottom: 16 + insets.bottom }]}
+          >
+            <RoomDeckComposeMenu onSelect={compose} />
+          </View>
+        )}
         <DirectMessagePickerSheet
           busyPubkey={messagingPubkey}
           members={workspaceMembers(workspaceDetail)}
@@ -567,8 +578,11 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.danger,
     },
     error: { ...Typography.default(), color: hull.danger, fontSize: 12, textAlign: 'center' },
-    list: { paddingBottom: 20 },
-    emptyList: { flexGrow: 1, justifyContent: 'center' },
+    // The list owns the whole deck. Its bottom inset lets the final row scroll
+    // clear of the floating compose control without turning that control into
+    // a visually separate footer cell.
+    list: { paddingBottom: COMPOSE_FAB_CLEARANCE },
+    emptyList: { flexGrow: 1, justifyContent: 'center', paddingBottom: COMPOSE_FAB_CLEARANCE },
     empty: { alignItems: 'center', gap: 8, padding: 24 },
     emptyTitle: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 18 },
     emptyCopy: { ...Typography.default(), color: hull.textMuted, fontSize: 12 },
@@ -599,10 +613,9 @@ const styles = StyleSheet.create((theme) => {
     age: { ...Typography.mono(), color: hull.steel, fontSize: 9 },
     unread: { borderWidth: 1, borderColor: hull.chrome, paddingHorizontal: 5, paddingVertical: 2 },
     unreadText: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 8 },
-    footer: {
-      paddingTop: 10,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
+    composeOverlay: {
+      position: 'absolute',
+      right: 16,
     },
   };
 });

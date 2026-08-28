@@ -249,6 +249,7 @@ export class BuzzClient {
       parentChannelId?: string;
       communityId?: string;
       repository?: RepositoryBinding;
+      onPublished?: (channelId: string) => void;
       extraTags?: string[][];
       mirrorCommunityMembers?: boolean;
     },

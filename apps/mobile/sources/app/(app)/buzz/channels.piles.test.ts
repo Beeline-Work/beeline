@@ -481,6 +481,53 @@ describe("the deck's one ordered feed", () => {
     expect(newest[0].props.accessibilityLabel).not.toContain('· ID');
   });
 
+  it('shows a publish-acknowledged Room while its owner projection is still pending', async () => {
+    seedRooms([]);
+    const channelId = 'published-room';
+    transportState.client = {
+      identity: { publicKey: VIEWER },
+      isAgentIdentity: vi.fn(async () => false),
+      createChannel: vi.fn(
+        async (
+          _name: string,
+          opts: { onPublished?: (publishedChannelId: string) => void },
+        ) => {
+          opts.onPublished?.(channelId);
+          return await new Promise<string>(() => undefined);
+        },
+      ),
+      query: vi.fn(async () => []),
+      listMyChannels: vi.fn(async () => []),
+      getChannelMetadata: vi.fn(async () => undefined),
+      communityMembers: vi.fn(async () => [{ pubkey: VIEWER, role: 'owner' }]),
+      listAgents: vi.fn(async () => []),
+      listPersonProfiles: vi.fn(async () => []),
+      getPersonProfile: vi.fn(async () => undefined),
+      listDirectMessages: vi.fn(async () => []),
+    };
+    const tree = await render();
+
+    await act(async () => {
+      tree.root.findByType('RoomDeckComposeMenu').props.onSelect('room');
+    });
+    await act(async () => {
+      tree.root.findByType('HullDialogInput').props.onChangeText('Visible now');
+    });
+    const createAction = tree.root
+      .findByType('HullDialog')
+      .props.actions.find(
+        (action: { testID?: string }) => action.testID === 'create-room-submit',
+      );
+    await act(async () => {
+      createAction.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(findAllByTestId(tree, `room-${channelId}`)).toHaveLength(1);
+    expect(findAllByTestId(tree, 'new-room-dialog')).toHaveLength(0);
+  });
+
   it('ends pull refresh before independent Room hydration and keeps the fresh Room', async () => {
     seedRooms([]);
     let exposeRoom = false;

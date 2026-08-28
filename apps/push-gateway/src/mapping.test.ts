@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { NostrEvent } from '@beeline/nostr';
 import {
+  isActionableHumanFailureEvent,
   isSuppressedFixtureNotification,
-  isWaitingOnHumanEvent,
   mapEventToNotification,
   mentionsMember,
 } from './mapping.js';
@@ -120,7 +120,7 @@ describe('mapEventToNotification', () => {
       ],
       'lena opened issue #4: Should this page move?',
     );
-    expect(isWaitingOnHumanEvent(repositoryActivity)).toBe(false);
+    expect(isActionableHumanFailureEvent(repositoryActivity)).toBe(false);
     expect(
       mapEventToNotification(repositoryActivity, {
         roomName: 'Widget',
@@ -129,15 +129,16 @@ describe('mapEventToNotification', () => {
     ).toBeNull();
   });
 
-  it('keeps direct messages person-titled with a plain message body', () => {
+  it('keeps direct messages person-titled with the compact handle body', () => {
     const result = mapEventToNotification(event([['h', 'dm-123']]), {
       roomName: 'Direct message',
-      senderName: 'Milo',
+      senderHandle: 'milo-dev',
+      senderName: 'Milo Example',
       isDirectMessage: true,
     });
 
-    expect(result?.title).toBe('Milo');
-    expect(result?.body).toBe('Ship the preview now.');
+    expect(result?.title).toBe('Milo Example');
+    expect(result?.body).toBe('@milo-dev: Ship the preview now.');
     expect(result?.data.type).toBe('direct-message');
   });
 
@@ -148,7 +149,7 @@ describe('mapEventToNotification', () => {
 
     expect(result?.title).not.toMatch(/^#/);
     expect(result?.title).not.toBe('New message');
-    expect(result?.body).toBe('Ship the preview now.');
+    expect(result?.body).toMatch(/^@.+: Ship the preview now\.$/);
     expect(result?.data.roomName).toBe('Room');
   });
 
@@ -159,7 +160,7 @@ describe('mapEventToNotification', () => {
       isDirectMessage: true,
     });
 
-    expect(result?.body).toBe(`${'x'.repeat(119)}…`);
+    expect(result?.body).toBe(`@Ada: ${'x'.repeat(119)}…`);
   });
 
   it('keeps hide-preview policy localized and falls back to the room for an unknown sender', () => {
@@ -170,7 +171,7 @@ describe('mapEventToNotification', () => {
     );
 
     expect(result?.title).toBe('Ada');
-    expect(result?.body).toBe('New direct message from Ada');
+    expect(result?.body).toBe('@Ada: New message');
   });
 
   it('maps body merge metadata to an approval request', () => {
@@ -178,6 +179,7 @@ describe('mapEventToNotification', () => {
       event([
         ['h', 'channel-123'],
         ['t', 'body-control'],
+        ['t', 'merge-ready'],
         ['repo', 'owner/repo'],
         ['branch', 'feature/push'],
         ['tip', 'd'.repeat(40)],
@@ -186,7 +188,7 @@ describe('mapEventToNotification', () => {
     );
 
     expect(result?.title).toBe('Merge approval requested');
-    expect(result?.body).toBe('Review requested in Push work');
+    expect(result?.body).toBe('@Ada: Ship the preview now.');
     expect(result?.data).toMatchObject({
       type: 'merge-approval-request',
       target: 'approval',
@@ -198,46 +200,67 @@ describe('mapEventToNotification', () => {
     });
   });
 
-  it('maps a fresh agent question and needs-attention transition to attention', () => {
-    const question = event(
+  it('keeps replies and non-actionable attention cards in-app, but maps a blocked terminal failure', () => {
+    const agentReply = event(
       [
         ['h', 'corner-question'],
         ['t', 'agent-message'],
       ],
-      'Which target branch should I use?',
+      "Yep, I'm here. What do you need?",
     );
-    expect(isWaitingOnHumanEvent(question)).toBe(true);
+    expect(isActionableHumanFailureEvent(agentReply)).toBe(false);
     expect(
-      mapEventToNotification(question, {
+      mapEventToNotification(agentReply, {
         roomName: 'Question',
         senderName: 'Codex',
         parentChannelId: 'parent-room',
       }),
-    ).toMatchObject({
-      body: 'Codex needs your reply: Which target branch should I use?',
-      data: {
-        type: 'agent-question',
-        target: 'message',
-        roomId: 'parent-room',
-        channelId: 'corner-question',
-        cornerId: 'corner-question',
-        eventId: 'a'.repeat(64),
-        messageId: 'a'.repeat(64),
-      },
-    });
+    ).toBeNull();
 
-    const transition = event([
-      ['h', 'parent-room'],
-      ['t', 'body-control'],
-      ['display-status', 'needs-attention'],
-      ['subchannel', 'corner-waiting'],
-    ]);
-    expect(isWaitingOnHumanEvent(transition)).toBe(true);
+    const nothingReady = event(
+      [
+        ['h', 'parent-room'],
+        ['t', 'body-control'],
+        ['display-status', 'needs-attention'],
+        ['subchannel', 'corner-waiting'],
+      ],
+      'Nothing committed is ready for review.',
+    );
     expect(
-      mapEventToNotification(transition, { roomName: 'Roadmap', senderName: 'Ox' }),
+      mapEventToNotification(nothingReady, { roomName: 'Roadmap', senderName: 'Ox' }),
+    ).toBeNull();
+
+    const reviewPreparationExhausted = event(
+      [
+        ['h', 'corner-waiting'],
+        ['t', 'merge-not-ready'],
+        ['status', 'needs-attention'],
+        ['tip', 'd'.repeat(40)],
+      ],
+      "Couldn't prepare this change for review after 3 attempts: relay unavailable.",
+    );
+    expect(
+      mapEventToNotification(reviewPreparationExhausted, { roomName: 'Roadmap', senderName: 'Ox' }),
+    ).toBeNull();
+
+    const terminalFailure = event(
+      [
+        ['h', 'parent-room'],
+        ['t', 'body-control'],
+        ['status', 'failed'],
+        ['display-status', 'needs-attention'],
+        ['retry', 'blocked'],
+        ['subchannel', 'corner-waiting'],
+      ],
+      'Could not follow the latest merge on the target branch. Open corner for details.',
+    );
+    expect(isActionableHumanFailureEvent(terminalFailure)).toBe(true);
+    expect(
+      mapEventToNotification(terminalFailure, { roomName: 'Roadmap', senderName: 'Ox' }),
     ).toMatchObject({
+      body: '@Ox: Could not follow the latest merge on the target branch. Open corner for details.',
       data: {
-        type: 'agent-attention',
+        type: 'actionable-failure',
         target: 'corner',
         roomId: 'parent-room',
         channelId: 'corner-waiting',
@@ -281,17 +304,18 @@ describe('mapEventToNotification', () => {
         event(
           [
             ['h', 'corner-1'],
+            ['p', 'a'.repeat(64)],
             ['t', 'agent-message'],
           ],
           'Which target branch should I use?',
         ),
         cornerContext,
+        { recipientMentioned: true },
       );
       // The Room half is the resolved parent's current display name, not the
       // corner name duplicated and never invented.
       expect(result?.title).toBe('#Launch room/fix-login-loop');
-      // Body content is unchanged by the title convention.
-      expect(result?.body).toBe('Codex needs your reply: Which target branch should I use?');
+      expect(result?.body).toBe('@Codex: Which target branch should I use?');
     });
 
     it('serializes the exact routing payload a corner tap needs', () => {
@@ -325,11 +349,13 @@ describe('mapEventToNotification', () => {
           event(
             [
               ['h', 'corner-1'],
+              ['p', 'a'.repeat(64)],
               ['t', 'agent-message'],
             ],
             'Which target branch should I use?',
           ),
           { ...cornerContext, parentRoomName: undefined },
+          { recipientMentioned: true },
         )?.title,
       ).toBe('#fix-login-loop');
       // With no resolvable name at all, the sender fallback stands.
@@ -338,6 +364,7 @@ describe('mapEventToNotification', () => {
           event(
             [
               ['h', 'corner-1'],
+              ['p', 'a'.repeat(64)],
               ['t', 'agent-message'],
             ],
             'Which target branch should I use?',
@@ -348,15 +375,18 @@ describe('mapEventToNotification', () => {
             cornerName: undefined,
             roomName: undefined,
           },
+          { recipientMentioned: true },
         )?.title,
       ).toBe('Codex');
     });
 
-    it('titles a subchannel attention card #<room>/<corner> with both resolved names', () => {
+    it('titles a subchannel terminal-failure card #<room>/<corner> with both resolved names', () => {
       const transition = event([
         ['h', 'parent-room'],
         ['t', 'body-control'],
+        ['status', 'failed'],
         ['display-status', 'needs-attention'],
+        ['retry', 'blocked'],
         ['subchannel', 'corner-waiting'],
       ]);
       expect(
@@ -375,6 +405,7 @@ describe('mapEventToNotification', () => {
           event([
             ['h', 'corner-1'],
             ['t', 'body-control'],
+            ['t', 'merge-ready'],
             ['repo', 'owner/repo'],
             ['branch', 'feature/x'],
             ['tip', 'd'.repeat(40)],
@@ -532,14 +563,14 @@ describe('mention mapping', () => {
     expect(
       mapEventToNotification(
         relayEvent,
-        { ...ROOM_CONTEXT, senderName: 'Ada' },
+        { ...ROOM_CONTEXT, senderHandle: 'ada-labs', senderName: 'Ada' },
         {
           recipientMentioned: true,
         },
       ),
     ).toMatchObject({
       title: '#Roadmap',
-      body: 'Ada mentioned you: Ship the preview now.',
+      body: '@ada-labs: Ship the preview now.',
       data: {
         type: 'mention',
         target: 'message',
@@ -557,7 +588,7 @@ describe('mention mapping', () => {
       ),
     ).toMatchObject({
       title: 'Ada',
-      body: 'Ada mentioned you',
+      body: '@Ada: New message',
       data: { type: 'mention' },
     });
   });

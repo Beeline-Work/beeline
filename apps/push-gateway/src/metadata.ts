@@ -46,6 +46,11 @@ interface CacheEntry<T> {
   value: Promise<T>;
 }
 
+interface SenderPresentation {
+  name: string;
+  handle?: string;
+}
+
 function tagValue(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
 }
@@ -112,17 +117,18 @@ function jsonObject(content: string): Record<string, unknown> | undefined {
   }
 }
 
-function personName(
+function personPresentation(
   events: NostrEvent[],
   pubkey: string,
   communityId?: string,
-): string | undefined {
+): SenderPresentation | undefined {
   const nipProfile = latest(
     events.filter((event) => event.kind === 0 && event.pubkey === pubkey && verifyEvent(event)),
   );
   const nipContent = nipProfile ? jsonObject(nipProfile.content) : undefined;
-  const globalName = cleanName(nipContent?.display_name) ?? cleanName(nipContent?.name);
-  if (globalName) return globalName;
+  const globalHandle = cleanName(nipContent?.name) ?? cleanName(nipContent?.handle);
+  const globalName = cleanName(nipContent?.display_name) ?? globalHandle;
+  if (globalName) return { name: globalName, ...(globalHandle ? { handle: globalHandle } : {}) };
 
   // Older installs may not have migrated their Workspace-scoped profile yet.
   const communityProfile = latest(
@@ -136,14 +142,17 @@ function personName(
     ),
   );
   const communityContent = communityProfile ? jsonObject(communityProfile.content) : undefined;
+  const communityHandle = cleanName(communityContent?.handle);
   const communityName = cleanName(communityContent?.displayName ?? communityContent?.name);
-  return communityName;
+  return communityName
+    ? { name: communityName, ...(communityHandle ? { handle: communityHandle } : {}) }
+    : undefined;
 }
 
 /** Cached, recipient-authorized relay metadata used only for notification presentation. */
 export class NotificationMetadataResolver {
   private readonly rooms = new Map<string, CacheEntry<RoomMetadata>>();
-  private readonly senders = new Map<string, CacheEntry<string | undefined>>();
+  private readonly senders = new Map<string, CacheEntry<SenderPresentation>>();
 
   constructor(
     private readonly cacheTtlMs = DEFAULT_CACHE_TTL_MS,
@@ -163,7 +172,7 @@ export class NotificationMetadataResolver {
     const roomKey = `${reader.scopeKey ?? ''}:${channelId}`;
     const room = await this.cached(this.rooms, roomKey, () => this.loadRoom(channelId, reader));
     const senderKey = `${room.communityId ?? ''}:${event.pubkey}`;
-    const senderName = await this.cached(this.senders, senderKey, () =>
+    const sender = await this.cached(this.senders, senderKey, () =>
       this.loadSender(event.pubkey, room.communityId, reader),
     );
 
@@ -208,7 +217,8 @@ export class NotificationMetadataResolver {
       ...(room.workspaceName ? { workspaceName: room.workspaceName } : {}),
       fixtureCandidates: room.fixtureCandidates,
       fixtureMarkers: room.fixtureMarkers,
-      ...(senderName ? { senderName } : {}),
+      senderName: sender.name,
+      ...(sender.handle ? { senderHandle: sender.handle } : {}),
     };
   }
 
@@ -220,9 +230,10 @@ export class NotificationMetadataResolver {
   ): Promise<string | undefined> {
     const roomKey = `${reader.scopeKey ?? ''}:${roomId}`;
     const room = await this.cached(this.rooms, roomKey, () => this.loadRoom(roomId, reader));
-    return this.cached(this.senders, `${room.communityId ?? ''}:${pubkey}`, () =>
+    const sender = await this.cached(this.senders, `${room.communityId ?? ''}:${pubkey}`, () =>
       this.loadSender(pubkey, room.communityId, reader),
     );
+    return sender.name;
   }
 
   /** Cached current display name of one channel, shared with the full room cache. */
@@ -341,7 +352,7 @@ export class NotificationMetadataResolver {
     pubkey: string,
     communityId: string | undefined,
     reader: RelayEventReader,
-  ): Promise<string | undefined> {
+  ): Promise<SenderPresentation> {
     const filters: Record<string, unknown>[] = [
       { kinds: [KIND_STREAM_MESSAGE], authors: [pubkey], '#t': [TAG_AGENT], limit: 50 },
       { kinds: [0], authors: [pubkey], limit: 5 },
@@ -392,9 +403,9 @@ export class NotificationMetadataResolver {
       // or leaves. The relay accepted it while that signer was a member, and a
       // removed key cannot publish a replacement; requiring CURRENT membership
       // made durable Codex/Ox/Clara assignments fall back to seed names.
-      return resolveAgentName(soulProfile?.name ?? agent.displayName, pubkey);
+      return { name: resolveAgentName(soulProfile?.name ?? agent.displayName, pubkey) };
     }
-    return personName(events, pubkey, communityId) ?? fallbackPersonName(pubkey);
+    return personPresentation(events, pubkey, communityId) ?? { name: fallbackPersonName(pubkey) };
   }
 
   private cached<T>(

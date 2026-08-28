@@ -14,9 +14,8 @@ import {
   GITHUB_EVENT_HEALTH_TAG,
   GITHUB_EVENT_TAG,
   GitHubEventsApiSource,
-  describeRepositoryEvents,
-  isMutedRepositoryEvent,
   type GitHubRepositoryTarget,
+  type RepositoryEvent,
   type RepositoryEventSource,
 } from './github-events.js';
 import { RepositoryEventsState } from './events-state.js';
@@ -352,8 +351,7 @@ function activityCard(
   identity: Identity,
   target: RepositoryIngestionTarget,
   roomId: string,
-  text: string,
-  sourceEventIds: readonly string[],
+  event: RepositoryEvent,
   now: number,
 ): NostrEvent {
   return signEvent(
@@ -368,9 +366,16 @@ function activityCard(
         ['repo', target.fullName],
         ['workspace', target.workspaceId],
         ['service', EVENTS_SERVICE_IDENTITY_NAME],
-        ...sourceEventIds.slice(0, 20).map((id) => ['github-event-id', id]),
+        ['github-event-type', event.type],
+        ['github-event-action', event.action],
+        ['github-event-actor', event.actor],
+        ['github-event-title', event.title],
+        ['github-event-url', event.url],
+        ['github-event-id', event.id],
       ],
-      content: text,
+      // The typed fields above are the only card contract. Deliberately do
+      // not leave generic prose behind for a legacy transcript renderer.
+      content: '',
     },
     identity.secretKey,
   );
@@ -469,7 +474,7 @@ export class RepositoryEventsCore {
         .map(async (card) => {
           if (signal?.aborted) throw signal.reason;
           await this.publishBounded(target, card.event);
-          await this.state.markCardPublished(target.key, card.roomId);
+          await this.state.markCardPublished(target.key, card.event.id);
         }),
     );
     const rejected = results.find(
@@ -523,20 +528,19 @@ export class RepositoryEventsCore {
       const state = await this.state.record(target.key);
       const result = await this.source.read(target, state.cursor, { coldLimit: 20, signal });
       const seen = new Set(state.seenEventIds);
-      const normalized = result.events.filter(
-        (event) => !seen.has(event.id) && !isMutedRepositoryEvent(event, target.targetBranches),
-      );
-      const text = describeRepositoryEvents(normalized);
-      if (text) {
+      const normalized = result.events.filter((event) => !seen.has(event.id));
+      if (normalized.length) {
         const now = this.now();
         await this.state.reserve(target.key, {
           cursor: result.head,
           sourceEventIds: result.sourceEventIds,
-          cards: target.rooms.map((roomId) => ({
-            roomId,
-            event: activityCard(this.identity, target, roomId, text, result.sourceEventIds, now),
-            published: false,
-          })),
+          cards: normalized.flatMap((event) =>
+            target.rooms.map((roomId) => ({
+              roomId,
+              event: activityCard(this.identity, target, roomId, event, now),
+              published: false,
+            })),
+          ),
         });
         await this.deliverPending(target, signal);
         return;

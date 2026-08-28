@@ -72,6 +72,8 @@ export type ChatDisplayMessage = {
     agentPubkey?: string;
     requesterPubkey?: string;
   };
+  /** Repository activity is a typed surface, never a transcript speaker. */
+  githubEvent?: NonNullable<RoomViewMessage['githubEvent']>;
   writePermission?: {
     permissionId: string;
     requestId: string;
@@ -105,15 +107,20 @@ export function displayRoomMessage(
   message: RoomViewMessage,
   viewerPubkey: string,
 ): ChatDisplayMessage {
+  const githubEvent = message.githubEvent ? { ...message.githubEvent } : undefined;
   return {
     id: message.id,
     relayId: message.id,
     text: message.text,
-    isUser: message.author.pubkey === viewerPubkey,
     timestamp: message.createdAt,
-    pubkey: message.author.pubkey,
+    ...(githubEvent
+      ? { isUser: false }
+      : {
+          isUser: message.author.pubkey === viewerPubkey,
+          pubkey: message.author.pubkey,
+        }),
     reference: message.reference,
-    ...(message.author.kind === 'agent' ? { isAgentAuthor: true } : {}),
+    ...(!githubEvent && message.author.kind === 'agent' ? { isAgentAuthor: true } : {}),
     ...(message.presentation === 'system' ? { isSystemNotice: true } : {}),
     ...(message.presentation === 'activity' ? { isAgentActivity: true } : {}),
     ...(message.activity ? { activity: activityItems(message) } : {}),
@@ -147,6 +154,7 @@ export function displayRoomMessage(
           },
         }
       : {}),
+    ...(githubEvent ? { githubEvent } : {}),
     ...(message.permission
       ? {
           writePermission: {

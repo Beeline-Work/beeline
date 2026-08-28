@@ -3280,6 +3280,34 @@ export default function BuzzChat() {
         return null;
       }
 
+      if (item.githubEvent) {
+        const event = item.githubEvent;
+        const title =
+          event.type === 'pull-request'
+            ? event.action === 'opened'
+              ? `${event.actor} created a new PR: ${event.title}`
+              : event.action === 'merged'
+                ? `${event.actor} merged a PR: ${event.title}`
+                : `${event.actor} closed a PR: ${event.title}`
+            : event.action === 'opened'
+              ? `${event.actor} created a new issue: ${event.title}`
+              : `${event.actor} closed an issue: ${event.title}`;
+        return (
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel={title}
+            onPress={() => void Linking.openURL(event.url).catch(() => undefined)}
+            style={styles.githubEventPressable}
+            testID={`github-event-card-${event.type}-${event.action}`}
+          >
+            <HullSurface strength="raised" style={styles.githubEventCard}>
+              <Text style={styles.githubEventTitle}>{title}</Text>
+              <Text style={styles.githubEventLink}>VIEW ON GITHUB ↗</Text>
+            </HullSurface>
+          </Pressable>
+        );
+      }
+
       // ── Archived notice ──────────────────────────────────────────
       if (item.isArchivedNotice) {
         return (
@@ -5779,6 +5807,28 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: groknight.borderStrong,
       gap: 10,
+    },
+    githubEventPressable: { marginBottom: 8 },
+    githubEventCard: {
+      minWidth: 0,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      gap: 6,
+    },
+    githubEventTitle: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    githubEventLink: {
+      ...Typography.mono('semiBold'),
+      color: groknight.textSecondary,
+      fontSize: 10,
+      lineHeight: 14,
+      letterSpacing: 0.45,
     },
     writePermissionHeading: {
       flexDirection: 'row',

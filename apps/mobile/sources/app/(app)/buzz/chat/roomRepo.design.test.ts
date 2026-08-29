@@ -43,17 +43,11 @@ describe('Room→repo header chip', () => {
     expect(chip).not.toMatch(/\bREPO\b/);
   });
 
-  it('is fetched off the enter-room fan-out, and cleared for a corner', () => {
-    const effect = blockFrom(
-      chatSource,
-      'useEffect(() => {\n    if (!decodedId || !transport || isCorner) {',
-      'room repository fetch effect',
-    );
-    // The tri-state read, not the collapsing one: an error and "this Room has
-    // no repository" are different answers, and only the second one licenses
-    // the prompt below.
-    expect(effect).toContain('roomRepositoryState');
-    expect(effect).toContain('setRoomRepositoryResolved');
+  it('uses the server-indexed tri-state rather than treating every loaded surface as none', () => {
+    expect(chatSource).toContain('const roomRepositoryState = roomSurface?.repositoryResolution;');
+    expect(chatSource).toContain("const roomRepositoryResolved = roomRepositoryState === 'none';");
+    expect(chatSource).toContain("if (roomRepositoryState !== 'none' && !roomRepoAccessIssue)");
+    expect(chatSource).not.toContain('const roomRepositoryResolved = Boolean(roomSurface);');
   });
 });
 
@@ -67,6 +61,7 @@ describe('Room→repo corner-open lazy prompt', () => {
     const guardIndex = handleSend.indexOf('looksLikeCornerOpenIntent(rawText)');
     expect(guardIndex).toBeGreaterThanOrEqual(0);
     expect(handleSend).toContain('roomRepoAccessIssue');
+    expect(handleSend).toContain('roomRepositoryResolved');
     // The composer must not be cleared before this guard — it sits before the
     // optimistic-message / setInputText('') side effects.
     expect(handleSend.indexOf("setInputText('')")).toBeGreaterThan(
@@ -85,6 +80,24 @@ describe('Room→repo corner-open lazy prompt', () => {
     expect(banner).toContain('Ask a');
     expect(banner).toContain('ACCESS TO THIS REPO WAS REVOKED');
     expect(banner).toContain('Add this repo to the Beeline installation');
+  });
+});
+
+describe('Room→repo write confirmation', () => {
+  it('keeps the picker open when a successful publish does not re-read as the selected repo', () => {
+    const apply = blockFrom(
+      chatSource,
+      'const applyRoomRepository = useCallback(',
+      'room repository apply',
+    );
+    expect(apply).toContain('const published = await transport.roomRepositorySet');
+    expect(apply).toContain('const confirmed = await roomClient.room(decodedId);');
+    expect(apply).toContain("confirmed.repositoryResolution !== 'repository'");
+    expect(apply).toContain('confirmed.repository?.key !== published.binding.key');
+    expect(apply).toContain('Room did not confirm it');
+    expect(apply.indexOf('setShowRoomRepoPicker(false)')).toBeGreaterThan(
+      apply.indexOf('const confirmed = await roomClient.room(decodedId);'),
+    );
   });
 });
 

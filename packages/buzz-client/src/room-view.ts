@@ -182,6 +182,7 @@ export type RoomView = {
   readonly parent?: RoomViewHeader;
   readonly briefing?: readonly RoomViewMessage[];
   readonly repository?: RoomRepositoryView;
+  readonly repositoryResolution: RoomRepositoryResolution;
   readonly review?: RoomReviewView;
   readonly corners: readonly CornerListItem[];
   readonly watchFilters: readonly SurfaceWatchFilter[];
@@ -222,6 +223,14 @@ export type ChatListItem = {
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
   readonly unread: boolean;
   readonly repositoryName?: string;
+  /**
+   * Max-severity rollup of this Room's own conversational turn and every one
+   * of its corners' current lifecycle state: `needs-you` when any corner is
+   * waiting on a human, else `working` when the Room's own turn or any
+   * corner is actively working, else absent (idle). Message `unread` is a
+   * separate, independent needs-you signal — the deck combines both.
+   */
+  readonly agentState?: 'needs-you' | 'working';
 };
 
 export type ChatListWorkspace = {
@@ -317,6 +326,16 @@ export type RoomRepositoryView = {
   readonly githubInstallationId?: number;
   readonly githubEventsEnabled: boolean;
 };
+
+/**
+ * What the server-indexed Room read can establish about its repository.
+ *
+ * A repository event whose author no longer projects as a current Room admin
+ * is not evidence that the Room has no repository. It is deliberately
+ * exposed as `unverified` so callers never turn an authorization-read gap
+ * into a repo-picker prompt.
+ */
+export type RoomRepositoryResolution = 'repository' | 'none' | 'unverified';
 
 export type RoomReviewView = {
   readonly status: 'none' | 'not-ready' | 'ready';

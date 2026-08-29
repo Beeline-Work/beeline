@@ -75,4 +75,34 @@ describe('ledger attribution runs', () => {
     ]);
     expect(continued.has('b1')).toBe(false);
   });
+
+  it('a reply re-announces its speaker even when the same voice sent the entry above (screenshot 97520a1e)', () => {
+    // Two consecutive Ox messages: the second carries a reply-reference (it
+    // quotes an earlier message, not the one directly above it) and was
+    // byline-suppressed by the plain run-continuation rule, which made it
+    // read as authored by whoever it quoted instead of by Ox.
+    const continued = continuedSpeakerIds([
+      agent('ox-1', 'ox'),
+      { ...agent('ox-2', 'ox'), hasReplyReference: true },
+    ]);
+    expect(continued.has('ox-2')).toBe(false);
+  });
+
+  it('a reply never re-opens a run for the entries that follow it', () => {
+    const continued = continuedSpeakerIds([
+      agent('ox-1', 'ox'),
+      { ...agent('ox-2', 'ox'), hasReplyReference: true },
+      agent('ox-3', 'ox'),
+    ]);
+    expect(continued.has('ox-2')).toBe(false);
+    expect(continued.has('ox-3')).toBe(true);
+  });
+
+  it('a reply that opens a brand-new voice still shows its byline (nothing new to prove, but never regress)', () => {
+    const continued = continuedSpeakerIds([
+      agent('a1', 'beebee'),
+      { ...agent('b1', 'alden'), hasReplyReference: true },
+    ]);
+    expect(continued.has('b1')).toBe(false);
+  });
 });

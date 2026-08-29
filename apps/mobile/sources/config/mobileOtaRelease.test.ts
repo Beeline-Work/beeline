@@ -880,6 +880,18 @@ esac
     expect(replyFixture).toContain(
       "await waitForMessage(client, roomId, 'SMOKE ROOM SEND', FIRST_DEVICE_MESSAGE_TIMEOUT_MS)",
     );
+    const pickerCheckpoint = replyFixture.indexOf(
+      "await waitForMessage(client, roomId, 'mention picker stayed responsive')",
+    );
+    const exactMentionWait = replyFixture.indexOf(
+      'await waitForMessage(client, roomId, "@beebee what\'s up")',
+    );
+    const exactMentionCount = replyFixture.indexOf(
+      'await requireExactlyOneMessage(client, roomId, "@beebee what\'s up")',
+    );
+    expect(pickerCheckpoint).toBeGreaterThan(-1);
+    expect(exactMentionWait).toBeGreaterThan(pickerCheckpoint);
+    expect(exactMentionCount).toBeGreaterThan(exactMentionWait);
     expect(replyFixture).toContain('AGENT_PRESENCE_HEARTBEAT_MS');
     expect(replyFixture).toContain('KIND_AGENT_PRESENCE');
     expect(replyFixture).toContain('TAG_AGENT_PRESENCE');
@@ -896,6 +908,7 @@ esac
       resolve(mobileRoot, '../../scripts/provision-smoke.ts'),
       'utf8',
     );
+    const smoke = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');
     const replyFixture = readFileSync(
       resolve(mobileRoot, '../../scripts/publish-smoke-replies.ts'),
       'utf8',
@@ -917,6 +930,17 @@ esac
     expect(replyFixture).toContain('TAG_CORNER_STATE');
     expect(replyFixture).toMatch(
       /SMOKE KEYBOARD PIN TRIGGER[\s\S]*?publishCornerWorkingState\(\)[\s\S]*?SMOKE CORNER STEER/,
+    );
+    const cornerPhaseCheckpoint = replyFixture.indexOf(
+      "await waitForMessage(client, roomId, 'SMOKE CORNER PHASE READY')",
+    );
+    const cornerSteerWait = replyFixture.indexOf(
+      "await waitForMessage(client, cornerId, 'SMOKE CORNER STEER')",
+    );
+    expect(cornerPhaseCheckpoint).toBeGreaterThan(-1);
+    expect(cornerSteerWait).toBeGreaterThan(cornerPhaseCheckpoint);
+    expect(smoke).toMatch(
+      /SMOKE CORNER PHASE READY[\s\S]*?id: corner-status-working/,
     );
   });
 

@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -11,6 +10,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullSurface } from './MonoHull';
@@ -204,7 +204,7 @@ const StableHullModal = React.memo(function StableHullModal({
       visible={visible}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'translate-with-padding'}
         enabled={keyboardAvoiding}
         style={[
           styles.modalRoot,

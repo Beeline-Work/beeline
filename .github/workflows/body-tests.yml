@@ -1,0 +1,32 @@
+name: Body test suite
+
+on:
+  pull_request:
+    paths:
+      - 'apps/body/**'
+      - 'packages/nostr/**'
+      - 'packages/buzz-client/**'
+      - 'apps/gate/**'
+      - '.github/workflows/body-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  body-suite:
+    name: BODY SUITE
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # apps/body imports these three workspaces from their built dist, not
+      # their TS source (package.json "main"/"exports" point at dist/).
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate
+      - name: Run the hermetic Body suite
+        working-directory: apps/body
+        run: npx vitest run

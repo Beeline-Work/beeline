@@ -31,3 +31,25 @@ export function relayQueryResponse(
   const matches = filterRelayEvents(events, filters);
   return new Response(JSON.stringify(matches), { status: 200 });
 }
+
+/**
+ * Minimal relay `/upload` responder for Body tests that publish a single
+ * review artifact. `Body.buildChangeReviewArtifact` uploads the complete
+ * review once as authenticated binary bytes (`uploadMedia`, a `PUT` with a
+ * `Uint8Array` body and an `X-SHA-256` header) and publishes one pointer to
+ * the returned descriptor — it is never a JSON Nostr event, so a fixture
+ * that only understands `/query` and event publication must not try to
+ * `JSON.parse` this request's body.
+ */
+export function mediaUploadResponse(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Response | undefined {
+  if (!String(input).endsWith('/upload')) return undefined;
+  const hash = new Headers(init?.headers).get('X-SHA-256')!;
+  const bytes = new Uint8Array(init?.body as Uint8Array);
+  return new Response(
+    JSON.stringify({ url: `https://relay.example/media/${hash}`, sha256: hash, size: bytes.byteLength }),
+    { status: 200 },
+  );
+}

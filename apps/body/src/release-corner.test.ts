@@ -82,6 +82,11 @@ function room(options: { unreleased?: string[] } = {}): {
     client: new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} }),
     mode: 'readonly',
   });
+  // Room turn handling reads conversation history through the authenticated
+  // server-indexed Room read (`Body.agentHistory`), not the relay
+  // `/query`/publish surface this fixture's fetch stub models; these tests
+  // are about the release-ask/proposal flow, not history content.
+  vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
 
   const prompts: string[] = [];
   Reflect.set(body, 'promptAgent', async (_session: unknown, prompt: string) => {

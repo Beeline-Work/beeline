@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import { Body, CI_RESULT_TAG, LAND_SUMMARY_TAG, LANDED_TAG, type SubchannelInfo } from './body.js';
-import { relayQueryResponse } from './relay-test-helper.js';
+import { mediaUploadResponse, relayQueryResponse } from './relay-test-helper.js';
 import type { NostrEvent } from '@beeline/nostr';
 
 const cleanup: string[] = [];
@@ -117,6 +117,10 @@ function corner(options: { localOnly?: boolean; remoteUrl?: string } = {}): Fixt
     },
   };
   body.registerSubchannel(info);
+  // CI-report/land-recap narration reads conversation history through the
+  // authenticated server-indexed Room read (`Body.agentHistory`), not the
+  // relay `/query`/publish surface `captureEvents` models.
+  vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
   return {
     root,
     checkout,
@@ -136,6 +140,8 @@ function captureEvents(): NostrEvent[] {
     vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const queryResponse = relayQueryResponse(events, input, init);
       if (queryResponse) return queryResponse;
+      const upload = mediaUploadResponse(input, init);
+      if (upload) return upload;
       const event = JSON.parse(String(init?.body)) as NostrEvent;
       if (Array.isArray(event.tags)) events.push(event);
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });

@@ -3938,6 +3938,78 @@ describe('Room conversation and permission-gated work intent', () => {
     ).toBe(true);
   });
 
+  it('a message tagging ANY member suppresses continuation for every other agent (captured 2026-08-28 failure)', () => {
+    // Captain, mid-exchange with agent A (A's threaded answer was the latest
+    // message), tags @B instead: "u back?". A must NOT fire its continuation;
+    // B must answer its own direct tag.
+    const otherAgent = newIdentity('tag-suppress-other-agent');
+    const participants = [human.publicKey, agent.publicKey, otherAgent.publicKey];
+    const message = (
+      id: string,
+      author: { publicKey: string },
+      kind: 'human' | 'agent',
+      createdAt: number,
+      presentation: RoomViewMessage['presentation'] = 'message',
+      replyTo?: string,
+    ): RoomViewMessage => ({
+      id,
+      text: id,
+      createdAt,
+      author: { pubkey: author.publicKey, kind, name: kind === 'agent' ? 'Joy' : 'Person' },
+      presentation,
+      ...(replyTo
+        ? { reply: { channelId: 'parent-channel', eventId: replyTo, rootId: replyTo } }
+        : {}),
+    });
+    const humanRequest = requestEvent([['p', agent.publicKey]], human, '@Joy answer this.');
+    const agentReply = message(
+      'agent-reply-to-human',
+      agent,
+      'agent',
+      2,
+      'message',
+      humanRequest.id,
+    );
+    // "@ox u back?" — a p tag for the OTHER agent, unthreaded to A's answer.
+    const taggedSwitch = requestEvent(
+      [['p', otherAgent.publicKey]],
+      human,
+      `@other-agent u back?`,
+    );
+    taggedSwitch.created_at = 4;
+    const current = message(taggedSwitch.id, human, 'human', 4);
+
+    // Agent A is in continuation with the human, but the human's message tags
+    // another member, so A must not respond.
+    expect(
+      isChannelAddressedMessage(taggedSwitch, agent.publicKey, participants, [
+        message(humanRequest.id, human, 'human', 1),
+        agentReply,
+        current,
+      ]),
+    ).toBe(false);
+
+    // Agent B is tagged directly and must respond.
+    expect(
+      isChannelAddressedMessage(
+        taggedSwitch,
+        otherAgent.publicKey,
+        participants,
+      ),
+    ).toBe(true);
+
+    // The same continuation still works when the message tags nobody.
+    const untaggedFollowup = requestEvent([], human, 'What about the second part?');
+    untaggedFollowup.created_at = 4;
+    expect(
+      isChannelAddressedMessage(untaggedFollowup, agent.publicKey, participants, [
+        message(humanRequest.id, human, 'human', 1),
+        agentReply,
+        message(untaggedFollowup.id, human, 'human', 4),
+      ]),
+    ).toBe(true);
+  });
+
   it('does not infer a continuation from adjacent unthreaded agent prose', () => {
     const colleague = newIdentity('adjacent-colleague');
     const followup = requestEvent([], human, 'Was that answer meant for me?');

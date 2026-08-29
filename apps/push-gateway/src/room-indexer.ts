@@ -1106,6 +1106,17 @@ LEFT JOIN LATERAL (
   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) state ON true
 UNION ALL
+SELECT 'repository-candidate', jsonb_build_object('content', e.content)
+FROM authorized a JOIN LATERAL (
+  SELECT e.content FROM events e
+  WHERE e.community_id = a.community_id AND e.channel_id = COALESCE(a.parent_id, a.id)
+    AND e.kind = 30078
+    AND e.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-room-repository')
+  ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+) e ON true
+UNION ALL
 SELECT 'repository', jsonb_build_object('content', e.content)
 FROM authorized a JOIN LATERAL (
   SELECT e.content FROM events e
@@ -1677,6 +1688,17 @@ function repositoryFromRows(rows: readonly IndexRow[]): RoomRepositoryView | und
   };
 }
 
+function repositoryResolutionFromRows(
+  rows: readonly IndexRow[],
+  repository: RoomRepositoryView | undefined,
+): 'repository' | 'none' | 'unverified' {
+  if (repository) return 'repository';
+  // Keep an authorization failure separate from absence. This row is any
+  // relay-indexed repository event, while `repository` above is limited to
+  // one whose author still projects as the Room owner/admin.
+  return rowData(rows, 'repository-candidate') ? 'unverified' : 'none';
+}
+
 function reviewFromRows(rows: readonly IndexRow[]): RoomReviewView {
   const reviewData = rowData(rows, 'review');
   const descriptor =
@@ -1762,6 +1784,7 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
     });
   const parentData = rowData(rows, 'parent');
   const repository = repositoryFromRows(rows);
+  const repositoryResolution = repositoryResolutionFromRows(rows, repository);
   const directMessageData = json(roomData.directMessage);
   const directMessageParticipants = Array.isArray(directMessageData.participants)
     ? directMessageData.participants.filter(
@@ -1832,6 +1855,7 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
       ROOM_VIEW_BRIEFING_LIMIT,
     ),
     ...(repository ? { repository } : {}),
+    repositoryResolution,
     review: reviewFromRows(rows),
     corners,
     watchFilters: roomFilters(

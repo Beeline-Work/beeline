@@ -182,6 +182,7 @@ export type RoomView = {
   readonly parent?: RoomViewHeader;
   readonly briefing?: readonly RoomViewMessage[];
   readonly repository?: RoomRepositoryView;
+  readonly repositoryResolution: RoomRepositoryResolution;
   readonly review?: RoomReviewView;
   readonly corners: readonly CornerListItem[];
   readonly watchFilters: readonly SurfaceWatchFilter[];
@@ -317,6 +318,16 @@ export type RoomRepositoryView = {
   readonly githubInstallationId?: number;
   readonly githubEventsEnabled: boolean;
 };
+
+/**
+ * What the server-indexed Room read can establish about its repository.
+ *
+ * A repository event whose author no longer projects as a current Room admin
+ * is not evidence that the Room has no repository. It is deliberately
+ * exposed as `unverified` so callers never turn an authorization-read gap
+ * into a repo-picker prompt.
+ */
+export type RoomRepositoryResolution = 'repository' | 'none' | 'unverified';
 
 export type RoomReviewView = {
   readonly status: 'none' | 'not-ready' | 'ready';

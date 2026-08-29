@@ -84,19 +84,21 @@ describe('Room→repo corner-open lazy prompt', () => {
 });
 
 describe('Room→repo write confirmation', () => {
-  it('keeps the picker open when a successful publish does not re-read as the selected repo', () => {
+  it('retries the indexed read and only errors on a definitive competing write', () => {
     const apply = blockFrom(
       chatSource,
       'const applyRoomRepository = useCallback(',
       'room repository apply',
     );
     expect(apply).toContain('const published = await transport.roomRepositorySet');
-    expect(apply).toContain('const confirmed = await roomClient.room(decodedId);');
-    expect(apply).toContain("confirmed.repositoryResolution !== 'repository'");
-    expect(apply).toContain('confirmed.repository?.key !== published.binding.key');
-    expect(apply).toContain('Room did not confirm it');
+    expect(apply).toContain('await confirmRoomRepositoryLink(');
+    expect(apply).toContain('published.updatedAt');
+    expect(apply).toContain("confirmation === 'contradicted'");
+    expect(apply).toContain("confirmation === 'pending'");
+    expect(apply).toContain('Repo link accepted. The Room is still syncing.');
+    expect(apply).not.toContain('Room did not confirm it');
     expect(apply.indexOf('setShowRoomRepoPicker(false)')).toBeGreaterThan(
-      apply.indexOf('const confirmed = await roomClient.room(decodedId);'),
+      apply.indexOf('await confirmRoomRepositoryLink('),
     );
   });
 });

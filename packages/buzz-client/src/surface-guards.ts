@@ -461,6 +461,7 @@ function repository(value: unknown): boolean {
     item.remote.length > 0 &&
     typeof item.targetBranch === 'string' &&
     item.targetBranch.length > 0 &&
+    integer(item.updatedAt) &&
     (item.githubInstallationId === undefined || integer(item.githubInstallationId)) &&
     typeof item.githubEventsEnabled === 'boolean',
   );

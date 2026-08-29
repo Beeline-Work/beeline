@@ -122,6 +122,7 @@ import {
   canRenameRoom,
   canManageRoomRepository,
   canRemoveRoomParticipant,
+  confirmRoomRepositoryLink,
   normalizedRoomRole,
   roomLifecycleAction,
 } from '@/buzz/room-management';
@@ -2866,15 +2867,17 @@ export default function BuzzChat() {
           ...(input.defaultBranch ? { targetBranch: input.defaultBranch } : {}),
           ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
         });
-        if (!roomClient) {
-          throw new Error('The repo link was accepted but could not be confirmed. Try again.');
+        const confirmation = roomClient
+          ? await confirmRoomRepositoryLink(
+              () => roomClient.room(decodedId),
+              { key: published.binding.key, updatedAt: published.updatedAt },
+            )
+          : 'pending';
+        if (confirmation === 'contradicted') {
+          throw new Error('A newer repository link replaced this selection. Refresh and try again.');
         }
-        const confirmed = await roomClient.room(decodedId);
-        if (
-          confirmed.repositoryResolution !== 'repository' ||
-          confirmed.repository?.key !== published.binding.key
-        ) {
-          throw new Error('The repo link was accepted but the Room did not confirm it. Try again.');
+        if (confirmation === 'pending') {
+          setRoomRepoNotice('Repo link accepted. The Room is still syncing.');
         }
         roomSchedulerRef.current?.force();
         setShowRoomRepoPicker(false);

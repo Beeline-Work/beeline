@@ -2260,6 +2260,19 @@ export function isChannelAddressedMessage(
     return false;
   if (event.tags.some((tag) => tag[0] === 'p' && tag[1] === agentPubkey)) return true;
 
+  // An explicit tag of ANY member routes only per tags. Continuation below is
+  // evaluated only for messages that tag no member at all, so a human
+  // switching conversations by tagging another agent can never be pulled into
+  // an earlier agent's continuation window (captured failure 2026-08-28: a
+  // human in continuation with agent A tagged @B and A still answered).
+  if (
+    event.tags.some(
+      (tag) => tag[0] === 'p' && tag[1] && roomParticipants.includes(tag[1]),
+    )
+  ) {
+    return false;
+  }
+
   const participants = new Set(roomParticipants);
   participants.delete(agentPubkey);
   if (participants.size === 1 && participants.has(event.pubkey)) return true;

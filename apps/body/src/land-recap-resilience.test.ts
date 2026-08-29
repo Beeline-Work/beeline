@@ -30,7 +30,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Body } from './body.js';
-import { relayQueryResponse } from './relay-test-helper.js';
+import { mediaUploadResponse, relayQueryResponse } from './relay-test-helper.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, type NostrEvent } from '@beeline/nostr';
 
@@ -67,7 +67,7 @@ describe('a landed corner is recapped even when the relay or the session misbeha
   }
 
   function newBody(agent: ReturnType<typeof newIdentity>, statePath: string) {
-    return new Body(
+    const body = new Body(
       {
         agentBinary: '/nonexistent',
         mcpBinary: '/nonexistent',
@@ -84,6 +84,12 @@ describe('a landed corner is recapped even when the relay or the session misbeha
       undefined,
       { statePath },
     );
+    // Recap narration reads conversation history through the authenticated
+    // server-indexed Room read (`Body.agentHistory`), not the relay
+    // `/query`/publish surface `capturePublishes` models; these tests assert
+    // on the recap/archive sequencing, not on history content.
+    vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
+    return body;
   }
 
   function cornerInfo(agent: ReturnType<typeof newIdentity>, repoPath: string, cornerPath: string) {
@@ -131,6 +137,8 @@ describe('a landed corner is recapped even when the relay or the session misbeha
         if (String(input).endsWith('/query')) {
           return relayQueryResponse([...queryResults, ...published], input, init)!;
         }
+        const upload = mediaUploadResponse(input, init);
+        if (upload) return upload;
         const event = JSON.parse(String(init?.body)) as NostrEvent;
         if (refuse?.(event)) {
           return new Response('rate limited, retry in 30s', { status: 429 });

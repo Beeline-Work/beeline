@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Body } from './body.js';
-import { relayQueryResponse } from './relay-test-helper.js';
+import { mediaUploadResponse, relayQueryResponse } from './relay-test-helper.js';
 import { newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
 
@@ -23,6 +23,8 @@ function stubRelay(published: NostrEvent[]): void {
     vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const queryResponse = relayQueryResponse(published, input, init);
       if (queryResponse) return queryResponse;
+      const upload = mediaUploadResponse(input, init);
+      if (upload) return upload;
       published.push(JSON.parse(String(init?.body)) as NostrEvent);
       return new Response(JSON.stringify({ accepted: true }), { status: 200 });
     }),
@@ -58,7 +60,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
   }
 
   function newBody(agent: ReturnType<typeof newIdentity>, statePath: string) {
-    return new Body(
+    const body = new Body(
       {
         agentBinary: '/nonexistent',
         mcpBinary: '/nonexistent',
@@ -75,6 +77,11 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       undefined,
       { statePath },
     );
+    // The deterministic recap reads conversation history through the
+    // authenticated server-indexed Room read (`Body.agentHistory`), not the
+    // relay `/query`/publish surface `stubRelay` models.
+    vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
+    return body;
   }
 
   function cornerInfo(agent: ReturnType<typeof newIdentity>, repoPath: string, cornerPath: string) {
@@ -313,7 +320,7 @@ describe('every land path recaps the corner exactly once', () => {
   }
 
   function newBody(agent: ReturnType<typeof newIdentity>, statePath: string) {
-    return new Body(
+    const body = new Body(
       {
         agentBinary: '/nonexistent',
         mcpBinary: '/nonexistent',
@@ -330,6 +337,11 @@ describe('every land path recaps the corner exactly once', () => {
       undefined,
       { statePath },
     );
+    // The deterministic recap reads conversation history through the
+    // authenticated server-indexed Room read (`Body.agentHistory`), not the
+    // relay `/query`/publish surface `stubRelay` models.
+    vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
+    return body;
   }
 
   /** A repo with NO remote at all, plus a corner worktree holding one commit. */

@@ -438,6 +438,34 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
     expect(await readPendingUpdate(layout)).toBeUndefined();
     expect((await readUpdateState(layout)).lastRollback?.toReleaseId).toBe(previousReleaseId);
+    expect((await readUpdateState(layout)).updatePin).toMatchObject({
+      releaseId: releaseB,
+      identity: { commit: b.commit, version: b.version },
+    });
+
+    // The exact broken publish cannot churn straight back onto the host.
+    const logs: string[] = [];
+    const pinned = new SelfUpdateManager({
+      layout,
+      env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(b) },
+      isIdle: () => true,
+      logger: (line) => logs.push(line),
+    });
+    await pinned.checkAndApply();
+    expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
+    expect(logs.join('\n')).toContain('paused after automatic rollback');
+
+    // A genuinely newer publish clears the pin without human intervention.
+    const newer = await buildFixtureBundle('c5fixed', '1.6.0');
+    const fixed = new SelfUpdateManager({
+      layout,
+      env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(newer) },
+      isIdle: () => true,
+      logger: () => undefined,
+    });
+    await fixed.checkAndApply();
+    expect(await activeReleaseId(layout)).toBe(newer.commit);
+    expect((await readUpdateState(layout)).updatePin).toBeUndefined();
 
     // A FRESH journal is kept pending confirmation instead.
     await writePendingUpdateFixture(layout, {

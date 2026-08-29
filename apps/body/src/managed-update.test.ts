@@ -6,20 +6,35 @@ import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { newIdentity } from '@beeline/gate';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { activeReleaseId, readPendingUpdate, type BeelineInstallLayout } from './self-update.js';
+import {
+  activeReleaseId,
+  readPendingUpdate,
+  readUpdateState,
+  type BeelineInstallLayout,
+} from './self-update.js';
 import {
   coordinateManagedUpdateHandoff,
   DEFAULT_UPDATE_INTERVAL_MS,
+  gateManagedSuccessor,
   ManagedUpdateHandoff,
   proveLoadedReleaseReady,
   readUpdateHandoff,
   rollbackFailedSuccessor,
 } from './managed-update.js';
+import { UpdateFunctionalProbeError } from './update-functional-probe.js';
+import { updateRollbackAlertPath } from './update-rollback-alert.js';
 
 const roots: string[] = [];
 const systemdUnits: string[] = [];
 const execFileAsync = promisify(execFile);
 const nodeRequire = createRequire(import.meta.url);
+const functionalProof = {
+  harness: 'fixture-acp',
+  sandboxed: true,
+  sessionStarted: true as const,
+  turnCompleted: true as const,
+  nativeTools: ['read_mandate'] as const,
+};
 
 async function layoutFixture(): Promise<{
   root: string;
@@ -151,8 +166,13 @@ describe('managed update handoff', () => {
       desiredRelease: 'new',
     });
     expect((await readPendingUpdate(layout))?.releaseId).toBe('new');
-    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'old')).toBe(false);
-    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new')).toBe(true);
+    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new')).toBe(false);
+    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'old', { functionalProof })).toBe(
+      false,
+    );
+    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new', { functionalProof })).toBe(
+      true,
+    );
     expect(await readPendingUpdate(layout)).toBeUndefined();
     expect(
       JSON.parse(await readFile(resolve(runtimeDir, 'daemon-ready.json'), 'utf8')),
@@ -170,24 +190,73 @@ describe('managed update handoff', () => {
 
     expect(await rollbackFailedSuccessor(layout, runtimeDir)).toBe(true);
     expect(await activeReleaseId(layout)).toBe('old');
+    expect((await readUpdateState(layout)).updatePin).toMatchObject({ releaseId: 'new' });
+    expect(JSON.parse(await readFile(updateRollbackAlertPath(runtimeDir), 'utf8'))).toMatchObject({
+      releaseId: 'new',
+    });
     expect(await rollbackFailedSuccessor(layout)).toBe(false);
     expect(await readUpdateHandoff(runtimeDir)).toBeUndefined();
   });
 
-  it('accepts each instance exact-release proof after another instance cleared the global journal', async () => {
+  it.each([
+    ['hung generated extension', 'session-start-failed'],
+    ['invalid model selection', 'model-unavailable'],
+    ['broken sandbox', 'sandbox-unavailable'],
+  ] as const)('automatically rolls back a successor with %s', async (_label, reason) => {
+    const { layout, runtimeDir } = await layoutFixture();
+    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+    await update.check();
+
+    const result = await gateManagedSuccessor({
+      layout,
+      runtimeDir,
+      loadedRelease: 'new',
+      probeId: 'agent-1',
+      probe: () =>
+        Promise.reject(new UpdateFunctionalProbeError(reason, 'deliberate acceptance fault')),
+    });
+
+    expect(result).toMatchObject({ kind: 'failed', rolledBack: true });
+    expect(await activeReleaseId(layout)).toBe('old');
+    expect(await readPendingUpdate(layout)).toBeUndefined();
+    expect((await readUpdateState(layout)).updatePin).toMatchObject({ releaseId: 'new' });
+  });
+
+  it('keeps the journal until every required runtime proves a functional session', async () => {
     const { layout, runtimeDir } = await layoutFixture();
     const secondRuntime = resolve(dirname(runtimeDir), 'runtime-2');
     await mkdir(secondRuntime);
-    const first = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
-    const second = await ManagedUpdateHandoff.create(layout, secondRuntime, () => 1_000);
+    const requiredProbeIds = ['agent-1', 'agent-2'];
+    const first = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
+      requiredProbeIds,
+    });
+    const second = await ManagedUpdateHandoff.create(layout, secondRuntime, () => 1_000, {
+      requiredProbeIds,
+    });
     await rm(layout.libDir);
     await symlink('beeline-releases/new', layout.libDir);
     await first.check();
     await second.check();
 
-    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new')).toBe(true);
+    expect(
+      await proveLoadedReleaseReady(layout, runtimeDir, 'new', {
+        probeId: 'agent-1',
+        functionalProof,
+      }),
+    ).toBe(true);
+    expect(await readPendingUpdate(layout)).toMatchObject({
+      requiredProbeIds,
+      confirmedProbeIds: ['agent-1'],
+    });
+    expect(
+      await proveLoadedReleaseReady(layout, secondRuntime, 'new', {
+        probeId: 'agent-2',
+        functionalProof,
+      }),
+    ).toBe(true);
     expect(await readPendingUpdate(layout)).toBeUndefined();
-    expect(await proveLoadedReleaseReady(layout, secondRuntime, 'new')).toBe(true);
     expect(await readUpdateHandoff(secondRuntime)).toBeUndefined();
   });
 
@@ -335,7 +404,10 @@ const notifier = new SystemdNotifier();
 if (generation > 1) {
   const handoff = await readUpdateHandoff(runtimeDir);
   if (!handoff || handoff.desiredRelease !== loadedRelease) process.exit(70);
-  if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease))) process.exit(71);
+if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease, { functionalProof: {
+  harness: 'fixture-acp', sandboxed: true, sessionStarted: true,
+  turnCompleted: true, nativeTools: ['read_mandate']
+} }))) process.exit(71);
   const successorReadyAt = Date.now();
   await notifier.ready('ready; loaded_release=' + loadedRelease);
   await writeFile(statePath, JSON.stringify({ ...previous, generation, loadedRelease, successorReadyAt }));

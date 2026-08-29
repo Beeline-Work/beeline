@@ -80,6 +80,7 @@ import { dirname, join, resolve } from 'node:path';
 import { launchRuntimeDaemon } from './runtime.js';
 import {
   compareBundleIdentity,
+  compareVersions,
   parseUpdateManifest,
   resolveManifestUrl,
   type InstalledBundleIdentity,
@@ -207,6 +208,13 @@ export interface UpdateStateFile {
     at: number;
   };
   lastRollback?: { releaseId: string; toReleaseId: string; reason: string; at: number };
+  /** Exact failed release suppressed until an operator clears it or a newer publish appears. */
+  updatePin?: {
+    releaseId: string;
+    identity: InstalledBundleIdentity;
+    reason: string;
+    at: number;
+  };
 }
 
 /**
@@ -732,6 +740,10 @@ export interface PendingUpdateRecord {
   releaseId: string;
   previousReleaseId: string | undefined;
   appliedAt: number;
+  /** Running agent identities that must each complete a functional probe. */
+  requiredProbeIds?: string[];
+  /** Successfully probed identities; updated atomically under the install lock. */
+  confirmedProbeIds?: string[];
 }
 
 export function pendingUpdatePath(layout: BeelineInstallLayout): string {
@@ -758,6 +770,14 @@ async function writePendingUpdate(
 ): Promise<void> {
   await mkdir(join(layout.releasesRoot, '.state'), { recursive: true });
   await writeFile(pendingUpdatePath(layout), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+}
+
+/** Replace a pending journal while its caller holds the install lock. */
+export async function replacePendingUpdate(
+  layout: BeelineInstallLayout,
+  record: PendingUpdateRecord,
+): Promise<void> {
+  await writePendingUpdate(layout, record);
 }
 
 export async function clearPendingUpdate(layout: BeelineInstallLayout): Promise<void> {
@@ -815,6 +835,12 @@ export async function settlePendingUpdateOnStart(
       reason: 'update never confirmed healthy',
       at: now(),
     },
+    updatePin: {
+      releaseId: record.releaseId,
+      identity: record.to,
+      reason: 'update never confirmed healthy',
+      at: now(),
+    },
   });
   return { kind: 'rolled-back', record };
 }
@@ -825,6 +851,50 @@ export async function confirmPendingUpdate(layout: BeelineInstallLayout): Promis
   if (!record) return false;
   await clearPendingUpdate(layout);
   return true;
+}
+
+/** Record the failed release once so automatic checks cannot immediately reinstall it. */
+export async function recordFailedUpdatePin(
+  layout: BeelineInstallLayout,
+  record: PendingUpdateRecord,
+  reason: string,
+  now = Date.now(),
+): Promise<void> {
+  const state = await readUpdateState(layout);
+  await writeUpdateState(layout, {
+    ...state,
+    lastRollback: {
+      releaseId: record.releaseId,
+      toReleaseId: record.previousReleaseId ?? 'unknown',
+      reason,
+      at: now,
+    },
+    updatePin: {
+      releaseId: record.releaseId,
+      identity: record.to,
+      reason,
+      at: now,
+    },
+  });
+}
+
+export async function clearFailedUpdatePin(layout: BeelineInstallLayout): Promise<boolean> {
+  const state = await readUpdateState(layout);
+  if (!state.updatePin) return false;
+  const { updatePin: _removed, ...next } = state;
+  await writeUpdateState(layout, next);
+  return true;
+}
+
+function publishedSupersedesPin(
+  pin: NonNullable<UpdateStateFile['updatePin']>,
+  published: PublishedBundle,
+): boolean {
+  if (pin.identity.commit && published.commit) return pin.identity.commit !== published.commit;
+  if (pin.identity.version && published.version) {
+    return compareVersions(pin.identity.version, published.version) < 0;
+  }
+  return false;
 }
 
 /**
@@ -857,6 +927,12 @@ export async function relaunchPreviousReleaseAfterFailedUpdate(
     lastRollback: {
       releaseId: journal.releaseId,
       toReleaseId: journal.previousReleaseId,
+      reason: 'new release failed to boot inside its confirm window',
+      at: Date.now(),
+    },
+    updatePin: {
+      releaseId: journal.releaseId,
+      identity: journal.to,
       reason: 'new release failed to boot inside its confirm window',
       at: Date.now(),
     },
@@ -939,6 +1015,8 @@ export interface SelfUpdateManagerOptions {
    * journal once the window passes healthy.
    */
   pendingUnconfirmedReleaseId?: string;
+  /** Running daemon identities captured when the release is applied. */
+  requiredProbeIds?: string[];
   fetchImpl?: typeof fetch;
   logger?: (line: string) => void;
 }
@@ -961,6 +1039,7 @@ export class SelfUpdateManager {
   private readonly isIdle: () => boolean;
   private readonly requestRestartCb: (() => void) | undefined;
   private readonly restartHandover: boolean;
+  private readonly requiredProbeIds: string[];
   private readonly fetchImpl: typeof fetch;
   private readonly log: (line: string) => void;
 
@@ -1006,6 +1085,7 @@ export class SelfUpdateManager {
     this.isIdle = options.isIdle ?? (() => true);
     this.requestRestartCb = options.requestRestart;
     this.restartHandover = options.restartHandover !== false;
+    this.requiredProbeIds = [...new Set(options.requiredProbeIds ?? [])].sort();
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.log = options.logger ?? ((line: string) => console.log(line));
   }
@@ -1144,6 +1224,9 @@ export class SelfUpdateManager {
       // A legacy real-dir origin has no releases/<id> copy to roll back to.
       previousReleaseId: loaded === 'legacy' ? undefined : loaded,
       appliedAt: now,
+      ...(this.requiredProbeIds.length > 0
+        ? { requiredProbeIds: this.requiredProbeIds, confirmedProbeIds: [] }
+        : {}),
     });
     this.unconfirmedReleaseId = current;
     this.restartPending = true;
@@ -1232,7 +1315,28 @@ export class SelfUpdateManager {
     const platform = hostPlatformKey();
     const raw = await fetchText(manifestUrl, this.fetchImpl);
     const { bundle } = parseUpdateManifest(raw, platform);
-    const state = await readUpdateState(this.options.layout);
+    let state = await readUpdateState(this.options.layout);
+    if (state.updatePin) {
+      if (!publishedSupersedesPin(state.updatePin, bundle)) {
+        const line =
+          `release ${describeIdentity(state.updatePin.identity)} is paused after automatic rollback; ` +
+          'waiting for a newer publish or `beeline update --clear-pin`';
+        if (line !== this.lastVerdictLog) {
+          this.log(`[body] self-update: ${line}`);
+          this.lastVerdictLog = line;
+        }
+        await writeUpdateState(this.options.layout, {
+          ...state,
+          lastCheckAt: now,
+          lastCheckResult: 'skipped: rolled-back release is pinned',
+        });
+        return;
+      }
+      const { updatePin: _superseded, ...unpinned } = state;
+      state = unpinned;
+      await writeUpdateState(this.options.layout, state);
+      this.log('[body] self-update: a newer release superseded the rollback pin');
+    }
     // An explicit --force overrides an indeterminate comparison when the
     // published side at least names itself; otherwise compare normally.
     const installed = await readInstalledBundleIdentity(this.options.layout, state);
@@ -1332,6 +1436,9 @@ export class SelfUpdateManager {
       releaseId,
       previousReleaseId,
       appliedAt: now,
+      ...(this.requiredProbeIds.length > 0
+        ? { requiredProbeIds: this.requiredProbeIds, confirmedProbeIds: [] }
+        : {}),
     });
     this.unconfirmedReleaseId = releaseId;
     this.restartPending = true;

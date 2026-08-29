@@ -104,4 +104,16 @@ describe('the per-turn progress indicator', () => {
     expect(bar.props.style).not.toHaveProperty('borderRadius');
     expect(bar.props.style).not.toHaveProperty('backgroundColor');
   });
+
+  it('a quiet tone holds still and drops the reserved gold, never claiming the agent is alive', () => {
+    const renderer = render(
+      React.createElement(TurnProgressLine, { label: 'still waiting\u2026', tone: 'quiet' }),
+    );
+    // Style arrays resolve last-wins: the quiet override must be the final
+    // word on color, not merely present alongside the base gold.
+    const style = renderer.root.findAllByType('Text')[0].props.style as Array<{ color?: string }>;
+    expect(style.at(-1)?.color).toBe(groknight.textMuted);
+    // `active={false}` on HullLivePulse holds it still rather than breathing.
+    expect(renderer.root.findAllByType('AnimatedView')).toHaveLength(1);
+  });
 });

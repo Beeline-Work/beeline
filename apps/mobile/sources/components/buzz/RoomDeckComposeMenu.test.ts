@@ -178,6 +178,35 @@ describe('Room deck compose menu', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-deck-compose-menu' })).toHaveLength(0);
   });
 
+  it('never truncates a row description with a mystery ellipsis (screenshot 1cfe27eb)', () => {
+    // The shared sheet row's default layout squeezes `metadata` onto one line
+    // beside the label — fine for a short chip, but every description here is
+    // a full sentence. `metadataWrap` lets it wrap instead of ellipsizing.
+    const renderer = renderMenu();
+    open(renderer);
+
+    const descriptions = [
+      'Direct message a person',
+      'New room in this workspace',
+      'Bring a person into the workspace',
+      'Seat an agent here',
+      'Paste a Workspace invite',
+    ];
+    actions.forEach((action, index) => {
+      const row = renderer.root
+        .findAllByProps({ testID: `room-deck-compose-${action}` })
+        .find((node) => node.type === 'Pressable')!;
+      const descriptionText = row
+        .findAllByType('Text' as any)
+        .find((node) => node.props.children === descriptions[index])!;
+      expect(descriptionText).toBeDefined();
+      // No line cap: a wrapped description is never truncated regardless of
+      // device width.
+      expect(descriptionText.props.numberOfLines).toBeUndefined();
+    });
+    expect(source).toContain('metadataWrap');
+  });
+
   it('dismisses every row before dispatching its real-flow action', () => {
     const onSelect = vi.fn();
     const renderer = renderMenu(onSelect);

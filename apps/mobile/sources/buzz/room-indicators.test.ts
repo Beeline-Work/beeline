@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { CORNER_ACTIVITY_FRESHNESS_MS, type CornerMachineState } from '@beeline/buzz-client';
 import type { CornerStatus, CornerSummary } from './corners';
 import {
+  COMPOSER_ACK_BOUND_MS,
   isPinnedCornerLive,
   isPinnedCornerReadyForReview,
+  selectComposerAckState,
   selectPinnedCorner,
   selectTurnProgressAgentPubkey,
 } from './room-indicators';
@@ -157,5 +159,70 @@ describe('turn-progress presentation', () => {
 
   it('stays dark without a working receipt, regardless of draft-stream state', () => {
     expect(selectTurnProgressAgentPubkey({ isCorner: true, agentsOffline: false })).toBeNull();
+  });
+});
+
+describe('composer ack presentation', () => {
+  const NOW = 1_000_000;
+
+  it('renders nothing when nothing was sent and no turn is running', () => {
+    expect(selectComposerAckState({ isCorner: false, agentsOffline: false, now: NOW })).toBeNull();
+  });
+
+  it('buzzes immediately once a message is sent, before any receipt exists', () => {
+    expect(
+      selectComposerAckState({
+        isCorner: false,
+        agentsOffline: false,
+        pendingAckSentAt: NOW,
+        now: NOW,
+      }),
+    ).toEqual({ kind: 'buzzing' });
+  });
+
+  it('keeps buzzing right up to the bound', () => {
+    expect(
+      selectComposerAckState({
+        isCorner: false,
+        agentsOffline: false,
+        pendingAckSentAt: NOW,
+        now: NOW + COMPOSER_ACK_BOUND_MS - 1,
+      }),
+    ).toEqual({ kind: 'buzzing' });
+  });
+
+  it('reports delivery-unclear once the bound elapses with no receipt', () => {
+    expect(
+      selectComposerAckState({
+        isCorner: false,
+        agentsOffline: false,
+        pendingAckSentAt: NOW,
+        now: NOW + COMPOSER_ACK_BOUND_MS,
+      }),
+    ).toEqual({ kind: 'delivery-unclear' });
+  });
+
+  it('the real receipt always replaces a pending local ack, never races it', () => {
+    expect(
+      selectComposerAckState({
+        isCorner: false,
+        agentsOffline: false,
+        pendingAckSentAt: NOW,
+        activeTurnPubkey: 'agent-1',
+        now: NOW + COMPOSER_ACK_BOUND_MS + 5_000,
+      }),
+    ).toEqual({ kind: 'thinking', agentPubkey: 'agent-1' });
+  });
+
+  it('a Room-offline guard still suppresses the real receipt but never a local buzz', () => {
+    expect(
+      selectComposerAckState({
+        isCorner: false,
+        agentsOffline: true,
+        pendingAckSentAt: NOW,
+        activeTurnPubkey: 'agent-1',
+        now: NOW,
+      }),
+    ).toEqual({ kind: 'buzzing' });
   });
 });

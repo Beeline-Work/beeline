@@ -14,6 +14,7 @@ import {
   type CornerVisualState,
 } from '@/buzz/corners';
 import { isMachinePreview } from '@/buzz/room-list-summary';
+import { isRetiredAgentNotice } from '@beeline/buzz-client';
 
 /** The one state vocabulary used by both row projection and circle rendering. */
 export type RoomListZone = 'needs-you' | 'working' | 'idle';
@@ -320,9 +321,14 @@ export function roomRowPresentation(
         : 'idle';
   const zone: RoomListZone = state;
   // The stored preview was sanitized when it was written; this is the floor
-  // for one written by an older build and still sitting in the local cache.
+  // for one written by an older build and still sitting in the local cache —
+  // git/tool plumbing (`isMachinePreview`) and retired daemon prose
+  // (`isRetiredAgentNotice`, including the bounded attachment-ENOENT and
+  // model-unavailable shapes) alike. A relay event cannot be unpublished, so
+  // an old wall must never reach this row just because it predates the fix.
   const stored = room.latestMessage?.trim();
-  const clean = stored && !isMachinePreview(stored) ? stored : undefined;
+  const clean =
+    stored && !isMachinePreview(stored) && !isRetiredAgentNotice(stored) ? stored : undefined;
   const messageAt = room.latestMessageAt ?? (clean ? room.updatedAt : undefined) ?? 0;
   const meaningfulAt = Math.max(
     messageAt,

@@ -447,6 +447,47 @@ describe('RoomIndexer', () => {
     });
   });
 
+  it('tombstones the bounded structural retired-notice shapes too', async () => {
+    // A relay event cannot be unpublished, so the two bounded structural
+    // shapes (a raw attachment-delivery ENOENT dump, and the model-unavailable
+    // wall — both carry variable data so they cannot join the exact-set list)
+    // must be caught here the same as the exact-text notices above.
+    const attachmentEnoent =
+      "Attachment unavailable: ENOENT: no such file or directory, realpath " +
+      "'/proc/2952774/root/home/lunchbox/.local/state/beeline/agents/agent/rooms/room/agent-private/workbench/report.html'";
+    const modelUnavailable =
+      'Model validation unavailable · gpt-5\n' +
+      'The live harness catalog could not verify "gpt-5".\n' +
+      'Restore access to the selected harness and its live catalog, then restart the agent.';
+    const attachmentWallId = '5'.repeat(64);
+    const modelWallId = '4'.repeat(64);
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES
+        ($1, $2, $3, to_timestamp(20), 9, $4, $5, $6),
+        ($1, $7, $3, to_timestamp(21), 9, $4, $8, $6)`,
+      [
+        TENANT,
+        bytes(attachmentWallId),
+        bytes(AGENT),
+        JSON.stringify([['h', ROOM], ['t', 'agent-message']]),
+        attachmentEnoent,
+        ROOM,
+        bytes(modelWallId),
+        modelUnavailable,
+      ],
+    );
+
+    const room = await indexer.readRoom(ROOM, VIEWER);
+    const history = await indexer.readHistory(ROOM, VIEWER);
+
+    expect(room?.messages.map((message) => message.id)).not.toContain(attachmentWallId);
+    expect(room?.messages.map((message) => message.id)).not.toContain(modelWallId);
+    expect(history?.messages.map((message) => message.id)).not.toContain(attachmentWallId);
+    expect(history?.messages.map((message) => message.id)).not.toContain(modelWallId);
+  });
+
   it('rolls the Room deck up to the max-severity state of the room turn and its corners', async () => {
     // The fixture already published a working room-level agent-turn for ROOM
     // (created_at=12) and a working corner-state for CORNER, parented on

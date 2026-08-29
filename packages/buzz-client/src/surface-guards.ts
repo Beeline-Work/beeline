@@ -463,6 +463,10 @@ function repository(value: unknown): boolean {
   );
 }
 
+function repositoryResolution(value: unknown): boolean {
+  return value === 'repository' || value === 'none' || value === 'unverified';
+}
+
 function reviewFile(value: unknown): boolean {
   const item = record(value);
   return Boolean(
@@ -555,6 +559,7 @@ export function isRoomView(value: unknown): value is RoomView {
     Array.isArray(item.corners) &&
     item.corners.every(corner) &&
     (item.repository === undefined || repository(item.repository)) &&
+    repositoryResolution(item.repositoryResolution) &&
     (item.review === undefined || review(item.review)) &&
     watchFilters(item.watchFilters),
   );

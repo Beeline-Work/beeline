@@ -138,15 +138,13 @@ describe('model spend accounting', () => {
       prompt: 'research',
       systemPromptChars: 0,
       attribution: {
-        cause: 'delegation',
-        requestId: 'delegation-turn',
+        cause: 'agent-mention',
+        requestId: 'mention-turn',
         originalRequestId: root,
-        trigger: 'delegation',
+        trigger: 'agent',
         rootEventId: root,
         principalPubkey: principal,
         commissionedByAgentPubkey: 'atlas',
-        delegationId: 'graph',
-        workItemId: 'work',
         reservedTokens: 2_000,
       },
       agentPubkey: 'scout',
@@ -163,8 +161,6 @@ describe('model spend accounting', () => {
       commissionedByAgentPubkey: 'atlas',
       rootEventId: root,
       principalPubkey: principal,
-      delegationId: 'graph',
-      workItemId: 'work',
       reservedTokens: 2_000,
     });
   });

@@ -19,67 +19,10 @@ import {
   type PermissionExecutionStatus,
   type PermissionFreshReader,
   type PermissionRequestV1,
-  type PermissionScope,
   type PermissionUsage,
   type PermissionGrantEnvelopeV1,
   type ParsedPermissionRequest,
 } from '@beeline/buzz-client';
-
-export interface PermissionDirectiveRosterEntry {
-  handle: string;
-  pubkey: string;
-  kind: 'agent' | 'human';
-}
-
-/**
- * The first narrow prose normalizer: deterministic outcome-Room creation.
- * Anything outside this exact grammar stays inert prose. Native structured
- * calls can supply every other registry scope without widening this parser.
- */
-export function parseRoomCreatePermissionDirective(input: {
-  task: string;
-  workspaceId: string;
-  reservedRoomId: string;
-  principalPubkey: string;
-  roster: readonly PermissionDirectiveRosterEntry[];
-}): Extract<PermissionScope, { type: 'room.create' }> | undefined {
-  const match =
-    /^create\s+(?:an?\s+)?(?:outcome\s+)?room\s+named\s+["“]([^"”]{1,120})["”]\s+with\s+(.+?)[.]?$/i.exec(
-      input.task.trim(),
-    );
-  if (!match?.[1] || !match[2]) return undefined;
-  const handles = match[2]
-    .split(/\s*(?:,|\band\b)\s*/i)
-    .map((handle) => handle.trim().replace(/^@/, '').toLowerCase())
-    .filter(Boolean);
-  if (handles.length === 0 || new Set(handles).size !== handles.length) return undefined;
-  const resolved = handles.map((handle) =>
-    input.roster.filter(
-      (candidate) => candidate.handle.trim().replace(/^@/, '').toLowerCase() === handle,
-    ),
-  );
-  if (resolved.some((matches) => matches.length !== 1)) return undefined;
-  const entries = resolved.map((matches) => matches[0]!);
-  const participantPubkeys = [
-    ...new Set([
-      input.principalPubkey,
-      ...entries.filter((entry) => entry.kind === 'human').map((entry) => entry.pubkey),
-    ]),
-  ];
-  const agentPubkeys = [
-    ...new Set(entries.filter((entry) => entry.kind === 'agent').map((entry) => entry.pubkey)),
-  ];
-  if (agentPubkeys.length === 0) return undefined;
-  return {
-    type: 'room.create',
-    workspaceId: input.workspaceId,
-    roomId: input.reservedRoomId,
-    name: match[1].trim(),
-    visibility: 'invite-only',
-    participantPubkeys,
-    agentPubkeys,
-  };
-}
 
 export type PermissionActionClaim = 'claimed' | 'duplicate';
 

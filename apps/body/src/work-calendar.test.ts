@@ -301,6 +301,27 @@ describe('work schedule occurrence math', () => {
 });
 
 describe('WorkCalendar best-effort durable execution', () => {
+  it('run_now re-authorizes the underlying operation immediately before activation', async () => {
+    vi.useFakeTimers();
+    const authorize = vi.fn(async () => ({ authorized: true as const }));
+    const fixture = await calendarFixture({ authority: authorize });
+    await fixture.calendar.start();
+    const result = await fixture.calendar.runNow(fixture.schedule.scheduleId);
+    // Refresh, pre-dispatch, and the activation callback each verify current
+    // authority; the last check is immediately adjacent to model activation.
+    expect(authorize).toHaveBeenCalledTimes(4);
+    expect(fixture.dispatch).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      runId: deterministicScheduleRunId(
+        fixture.schedule.scheduleId,
+        fixture.schedule.revision,
+        1_900_000_000,
+      ),
+      eventId: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    await fixture.calendar.dispose();
+  });
+
   it('dispatches a mission occurrence to the exact named target agent', async () => {
     vi.useFakeTimers();
     const controller = createIdentity();

@@ -544,7 +544,7 @@ WITH workspace_candidates AS (
     AND cm.channel_id = a.id AND cm.removed_at IS NULL
   GROUP BY a.community_id, a.id
 ), corner_children AS (
-  SELECT child.community_id,
+  SELECT child.community_id, child.id AS corner_id, child.created_by,
     (SELECT t->>1 FROM jsonb_array_elements(generation.tags) t
       WHERE t->>0 = 'parent' LIMIT 1) AS parent_id
   FROM workspace w JOIN channels child ON child.community_id = w.community_id
@@ -562,6 +562,30 @@ WITH workspace_candidates AS (
   SELECT parent.community_id, parent.id AS room_id, count(*)::bigint AS corner_count
   FROM chats parent JOIN corner_children child ON child.community_id = parent.community_id
     AND child.parent_id = parent.id::text
+  GROUP BY parent.community_id, parent.id
+), corner_states AS (
+  -- Latest buzz-corner-state record per corner, normalized the same way
+  -- cornerItem() normalizes it for the standalone corners list.
+  SELECT cc.community_id, cc.parent_id,
+    (CASE WHEN raw.state = 'waiting-on-human' THEN 'waiting' ELSE raw.state END) AS state
+  FROM corner_children cc
+  LEFT JOIN LATERAL (
+    SELECT (SELECT t->>1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'state' LIMIT 1) AS state
+    FROM events e WHERE e.community_id = cc.community_id AND e.pubkey = cc.created_by
+      AND e.kind = 30078 AND e.deleted_at IS NULL
+      AND e.d_tag = 'buzz-corner-state:' || cc.corner_id::text
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+  ) raw ON true
+), corner_urgency AS (
+  -- Max-severity rollup of every corner's current state: a corner waiting on
+  -- a human outranks one merely working, matching the deck's needs-you >
+  -- working > idle precedence.
+  SELECT parent.community_id, parent.id AS room_id,
+    bool_or(cs.state = 'waiting') AS needs_you,
+    bool_or(cs.state = 'working') AS working
+  FROM chats parent JOIN corner_states cs ON cs.community_id = parent.community_id
+    AND cs.parent_id = parent.id::text
   GROUP BY parent.community_id, parent.id
 ), repositories AS (
   SELECT DISTINCT ON (e.community_id, e.channel_id)
@@ -584,6 +608,34 @@ WITH workspace_candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', w.id::text))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+), room_turn_latest AS (
+  -- Newest durable agent-turn receipt per (room, agent), mirroring
+  -- ROOM_PAINT_SQL's latest_agent_turns so the deck's own room-turn
+  -- signal agrees with the single Room view's.
+  SELECT DISTINCT ON (e.channel_id, e.pubkey)
+    e.community_id, e.channel_id AS room_id,
+    (SELECT t->>1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed') LIMIT 1) AS status
+  FROM chats a
+  JOIN events e ON e.community_id = a.community_id AND e.channel_id = a.id
+    AND e.kind = 9 AND e.deleted_at IS NULL
+  JOIN channel_members member ON member.community_id = e.community_id
+    AND member.channel_id = e.channel_id AND member.pubkey = e.pubkey
+    AND member.removed_at IS NULL
+  JOIN agent_declarations agent ON agent.community_id = e.community_id
+    AND agent.pubkey = e.pubkey
+  WHERE e.tags @> '[["t", "agent-turn"]]'::jsonb
+    AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
+    AND e.tags @> jsonb_build_array(jsonb_build_array('agent', encode(e.pubkey, 'hex')))
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'request' AND t->>1 ~ '^[0-9a-f]{64}$')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed'))
+  ORDER BY e.channel_id, e.pubkey, e.created_at DESC, e.id DESC
+), room_turns AS (
+  SELECT community_id, room_id, bool_or(status = 'working') AS working
+  FROM room_turn_latest
+  GROUP BY community_id, room_id
 ), ${agentSoulsCteSql('workspace', 'w', 'w.id::text')}, identities AS (
   SELECT k.community_id, k.pubkey,
     NULLIF(u.display_name, '') AS name, u.nip05_handle AS handle, u.avatar_url AS avatar,
@@ -620,10 +672,20 @@ SELECT 'chat', jsonb_build_object(
     OR latest.created_at > mark.message_created_at
     OR (latest.created_at = mark.message_created_at AND latest.id < mark.message_id)
   ),
-  'repositoryName', repo.content::jsonb->>'name'
+  'repositoryName', repo.content::jsonb->>'name',
+  -- Max-severity rollup of the room's own conversational turn and every
+  -- corner's current state: a corner waiting on a human outranks a working
+  -- turn, and either outranks quiet. NULL means idle.
+  'agentState', CASE
+    WHEN COALESCE(urgency.needs_you, false) THEN 'needs-you'
+    WHEN COALESCE(urgency.working, false) OR COALESCE(turns.working, false) THEN 'working'
+    ELSE NULL
+  END
 ) FROM chats a
 LEFT JOIN member_counts members ON members.community_id = a.community_id AND members.room_id = a.id
 LEFT JOIN corner_counts corners ON corners.community_id = a.community_id AND corners.room_id = a.id
+LEFT JOIN corner_urgency urgency ON urgency.community_id = a.community_id AND urgency.room_id = a.id
+LEFT JOIN room_turns turns ON turns.community_id = a.community_id AND turns.room_id = a.id
 LEFT JOIN repositories repo ON repo.community_id = a.community_id AND repo.room_id = a.id
 LEFT JOIN latest_events latest ON latest.community_id = a.community_id AND latest.room_id = a.id
 LEFT JOIN beeline_room_read_marks mark ON mark.community_id = a.community_id
@@ -1105,6 +1167,17 @@ LEFT JOIN LATERAL (
       WHERE h->>0 = 'h' AND h->>1 = COALESCE(a.parent_id, a.id)::text)
   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) state ON true
+UNION ALL
+SELECT 'repository-candidate', jsonb_build_object('content', e.content)
+FROM authorized a JOIN LATERAL (
+  SELECT e.content FROM events e
+  WHERE e.community_id = a.community_id AND e.channel_id = COALESCE(a.parent_id, a.id)
+    AND e.kind = 30078
+    AND e.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-room-repository')
+  ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+) e ON true
 UNION ALL
 SELECT 'repository', jsonb_build_object('content', e.content)
 FROM authorized a JOIN LATERAL (
@@ -1677,6 +1750,17 @@ function repositoryFromRows(rows: readonly IndexRow[]): RoomRepositoryView | und
   };
 }
 
+function repositoryResolutionFromRows(
+  rows: readonly IndexRow[],
+  repository: RoomRepositoryView | undefined,
+): 'repository' | 'none' | 'unverified' {
+  if (repository) return 'repository';
+  // Keep an authorization failure separate from absence. This row is any
+  // relay-indexed repository event, while `repository` above is limited to
+  // one whose author still projects as the Room owner/admin.
+  return rowData(rows, 'repository-candidate') ? 'unverified' : 'none';
+}
+
 function reviewFromRows(rows: readonly IndexRow[]): RoomReviewView {
   const reviewData = rowData(rows, 'review');
   const descriptor =
@@ -1762,6 +1846,7 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
     });
   const parentData = rowData(rows, 'parent');
   const repository = repositoryFromRows(rows);
+  const repositoryResolution = repositoryResolutionFromRows(rows, repository);
   const directMessageData = json(roomData.directMessage);
   const directMessageParticipants = Array.isArray(directMessageData.participants)
     ? directMessageData.participants.filter(
@@ -1832,6 +1917,7 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
       ROOM_VIEW_BRIEFING_LIMIT,
     ),
     ...(repository ? { repository } : {}),
+    repositoryResolution,
     review: reviewFromRows(rows),
     corners,
     watchFilters: roomFilters(
@@ -2026,7 +2112,10 @@ export class RoomIndexer {
       ...(Object.keys(selectedSelection).length ? { selected: selectedSelection } : {}),
       watchFilters: [
         { kinds: [0], authors: [agentPubkey] },
-        { kinds: [9, 30078, 9000, 9001], '#h': [workspaceId], '#p': [agentPubkey] },
+        { kinds: [9, 9000, 9001], '#h': [workspaceId], '#p': [agentPubkey] },
+        // Parameterized agent overlays are indexed by their canonical d key,
+        // not by their community h tag. All three records share this key.
+        { kinds: [30078], '#d': [`${workspaceId}:${agentPubkey}`] },
       ],
     };
   }
@@ -2114,6 +2203,9 @@ export class RoomIndexer {
           cornerCount: integer(data.cornerCount),
           unread: data.unread === true,
           ...(text(data.repositoryName) ? { repositoryName: text(data.repositoryName) } : {}),
+          ...(data.agentState === 'needs-you' || data.agentState === 'working'
+            ? { agentState: data.agentState }
+            : {}),
         };
       })
       .sort(

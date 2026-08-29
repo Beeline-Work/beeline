@@ -969,15 +969,22 @@ export class BuzzClient {
     if (!this.ws?.connected) await this.connect();
     const ws = this.ws!;
     // The hosted relay does not implement NIP-01 OR semantics for multiple
-    // values in one #h tag filter. Expand those values before installing the
-    // already-independent live REQs so every channel can mark its surface
-    // dirty. Other filter fields stay intact and are still ANDed normally.
-    const installedFilters = filters.flatMap((filter) => {
-      const channelIds = [...new Set(filter['#h'] ?? [])];
-      return channelIds.length > 1
-        ? channelIds.map((channelId) => ({ ...filter, '#h': [channelId] }))
-        : [{ ...filter }];
-    });
+    // values in a tag filter. Expand h and d values before installing the
+    // already-independent live REQs so every server-owned surface can mark
+    // itself dirty, including parameterized-replaceable records.
+    const installedFilters = filters.flatMap((filter) =>
+      (['#h', '#d'] as const).reduce<SurfaceWatchFilter[]>(
+        (expanded, tag) => {
+          const values = [...new Set(filter[tag] ?? [])];
+          return values.length > 1
+            ? expanded.flatMap((candidate) =>
+                values.map((value) => ({ ...candidate, [tag]: [value] })),
+              )
+            : expanded;
+        },
+        [{ ...filter }],
+      ),
+    );
     const seenIds = new Set<string>();
 
     // A NIP-01 live REQ first replays matching stored rows and then emits

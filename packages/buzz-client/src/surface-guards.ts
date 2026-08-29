@@ -422,7 +422,10 @@ function chat(value: unknown): value is ChatListItem {
     integer(item.memberCount) &&
     integer(item.cornerCount) &&
     typeof item.unread === 'boolean' &&
-    optionalString(item.repositoryName),
+    optionalString(item.repositoryName) &&
+    (item.agentState === undefined ||
+      item.agentState === 'needs-you' ||
+      item.agentState === 'working'),
   );
 }
 
@@ -461,6 +464,10 @@ function repository(value: unknown): boolean {
     (item.githubInstallationId === undefined || integer(item.githubInstallationId)) &&
     typeof item.githubEventsEnabled === 'boolean',
   );
+}
+
+function repositoryResolution(value: unknown): boolean {
+  return value === 'repository' || value === 'none' || value === 'unverified';
 }
 
 function reviewFile(value: unknown): boolean {
@@ -555,6 +562,7 @@ export function isRoomView(value: unknown): value is RoomView {
     Array.isArray(item.corners) &&
     item.corners.every(corner) &&
     (item.repository === undefined || repository(item.repository)) &&
+    repositoryResolution(item.repositoryResolution) &&
     (item.review === undefined || review(item.review)) &&
     watchFilters(item.watchFilters),
   );

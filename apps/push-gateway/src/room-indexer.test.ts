@@ -279,6 +279,7 @@ describe('RoomIndexer', () => {
     expect(physicalQueries).toBe(1);
     expect(view).toMatchObject({
       room: { id: ROOM, workspaceId: WORKSPACE, name: 'Fast Room' },
+      repositoryResolution: 'repository',
       viewer: { identity: { name: 'Ada' }, role: 'owner' },
       members: [
         { identity: { pubkey: VIEWER, kind: 'human', name: 'Ada' }, role: 'owner' },
@@ -303,6 +304,56 @@ describe('RoomIndexer', () => {
       ['Hello', 'Ada'],
       ['Ready', 'Milo'],
     ]);
+  });
+
+  it('keeps a predecessor-authored repository binding unverified instead of calling it absent', async () => {
+    await postgres.query(
+      `DELETE FROM events
+       WHERE community_id = $1 AND channel_id = $2 AND kind = 30078
+         AND tags @> '[["t", "buzz-room-repository"]]'::jsonb`,
+      [TENANT, ROOM],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, $5, $6, $7)`,
+      [
+        TENANT,
+        bytes('e'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['h', ROOM],
+          ['d', `buzz-room-repository:${ROOM}`],
+          ['t', 'buzz-room-repository'],
+        ]),
+        JSON.stringify({
+          key: 'github:1',
+          name: 'beeline',
+          remote: 'git://github.com/acme/beeline',
+        }),
+        ROOM,
+        `buzz-room-repository:${ROOM}`,
+      ],
+    );
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+
+    expect(view?.repository).toBeUndefined();
+    expect(view?.repositoryResolution).toBe('unverified');
+  });
+
+  it('reports none only when the Room has no repository event at all', async () => {
+    await postgres.query(
+      `DELETE FROM events
+       WHERE community_id = $1 AND channel_id = $2 AND kind = 30078
+         AND tags @> '[["t", "buzz-room-repository"]]'::jsonb`,
+      [TENANT, ROOM],
+    );
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+
+    expect(view?.repository).toBeUndefined();
+    expect(view?.repositoryResolution).toBe('none');
   });
 
   it('returns the original same-Room root as the proof for a current direct reply', async () => {
@@ -394,6 +445,86 @@ describe('RoomIndexer', () => {
     expect(corners?.corners.find((corner) => corner.corner.id === CORNER)?.latestMessage).toMatchObject({
       text: 'Working',
     });
+  });
+
+  it('rolls the Room deck up to the max-severity state of the room turn and its corners', async () => {
+    // The fixture already published a working room-level agent-turn for ROOM
+    // (created_at=12) and a working corner-state for CORNER, parented on
+    // ROOM (created_at=7). A live turn or a live corner must gold/spin the
+    // deck row even when nothing in the Room is unread.
+    const working = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(working?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
+      agentState: 'working',
+    });
+
+    // A corner waiting on a human outranks a merely working room turn.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(30), 30078, $4, '', $5, $6)`,
+      [
+        TENANT,
+        bytes('9'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['d', `buzz-corner-state:${CORNER}`],
+          ['t', 'buzz-corner-state'],
+          ['state', 'waiting-on-human'],
+          ['reason', 'question'],
+        ]),
+        CORNER,
+        `buzz-corner-state:${CORNER}`,
+      ],
+    );
+    const needsYou = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(needsYou?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
+      agentState: 'needs-you',
+    });
+
+    // Once the room turn completes and the corner concludes, the rollup
+    // clears — an old lease does not linger forever.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(31), 9, $4, '', $5, NULL)`,
+      [
+        TENANT,
+        bytes('8'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-turn'],
+          ['request', 'c'.repeat(64)],
+          ['session', 'session-1'],
+          ['agent', AGENT],
+          ['mode', 'readonly'],
+          ['status', 'complete'],
+          ['generation', 'generation-1'],
+        ]),
+        ROOM,
+      ],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(32), 30078, $4, '', $5, $6)`,
+      [
+        TENANT,
+        bytes('7'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['d', `buzz-corner-state:${CORNER}`],
+          ['t', 'buzz-corner-state'],
+          ['state', 'concluded'],
+        ]),
+        CORNER,
+        `buzz-corner-state:${CORNER}`,
+      ],
+    );
+    const idle = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(idle?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
   });
 
   it('withholds reply proof from deleted or foreign ancestry', async () => {
@@ -1093,6 +1224,14 @@ describe('RoomIndexer', () => {
     await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
       agents: [{ identity: { name: 'Clara' } }],
     });
+    const detail = await indexer.readAgent(WORKSPACE, AGENT, VIEWER);
+    expect(detail?.watchFilters).toContainEqual({
+      kinds: [30078],
+      '#d': [modelKey],
+    });
+    expect(
+      detail?.watchFilters.some((filter) => filter.kinds?.includes(30078) && filter['#h']),
+    ).toBe(false);
   });
 
   it('keeps the scoped chat query to one physical statement at 1, 47, and 200 Rooms', async () => {

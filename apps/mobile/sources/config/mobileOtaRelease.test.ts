@@ -144,7 +144,7 @@ esac
   });
 
   it('bounds the canary and tests the candidate runtime without rebuilding native code', () => {
-    expect(canaryScript).toContain('MAX_SECONDS="${OTA_CANARY_MAX_SECONDS:-540}"');
+    expect(canaryScript).toContain('MAX_SECONDS="${OTA_CANARY_MAX_SECONDS:-600}"');
     expect(canaryScript).toContain('MAX_SECONDS > 600');
     expect(canaryScript).toContain('--build-profile beta-apk');
     expect(canaryScript).toContain('--runtime-version "$android_runtime"');
@@ -1004,17 +1004,22 @@ esac
     expect(switchFlow).toContain("assertNotVisible: '! ERROR'");
   });
 
-  it('proves the expected beta update is running before judging the smoke flow', () => {
+  it('does not repeat the script-level update identity gate in the Maestro flow', () => {
     const canaryFlow = readFileSync(join(mobileRoot, 'e2e', 'ota-canary.yaml'), 'utf8');
     const smoke = canaryFlow.indexOf('runFlow: smoke.yaml');
-    const updateIdentity = canaryFlow.indexOf(
-      "assertVisible: 'Running update: ${EXPECTED_ANDROID_UPDATE_ID}'",
-    );
-    const betaChannel = canaryFlow.indexOf("assertVisible: 'Channel: beta'");
 
-    expect(updateIdentity).toBeGreaterThan(-1);
-    expect(betaChannel).toBeGreaterThan(updateIdentity);
-    expect(smoke).toBeGreaterThan(betaChannel);
+    expect(smoke).toBeGreaterThan(-1);
+    expect(canaryFlow).not.toContain("assertVisible: 'Running update:");
+    expect(canaryFlow).not.toContain("assertVisible: 'Channel: beta'");
+  });
+
+  it('keeps one Room reply assertion and clears the still-focused composer directly', () => {
+    const smoke = readFileSync(join(mobileRoot, 'e2e', 'smoke.yaml'), 'utf8');
+
+    expect(smoke.match(/SMOKE AGENT ROOM REPLY\.\*/g)).toHaveLength(1);
+    expect(smoke).toMatch(
+      /visible: "\.\*still accepting input"[\s\S]*?timeout: 1000\n\n# Selecting Beebee[\s\S]*?- eraseText/,
+    );
   });
 
   it('waits for the transcript surface before interacting with its bottom-edge composer', () => {

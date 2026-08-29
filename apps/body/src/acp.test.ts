@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -1296,16 +1296,19 @@ describe('AcpClient live steering', () => {
   it('cancels a turn that goes fully idle (zero ACP activity) for the timeout window', async () => {
     const client = new AcpClient({ agentBinary: await fakeWedgedAgent(), agentEnv: {} });
     await client.start();
+    let timeoutSpy: ReturnType<typeof vi.spyOn> | undefined;
     try {
       const { sessionId } = await client.sessionNew({ cwd: tmpdir() });
+      timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
       const started = Date.now();
       await expect(client.sessionPrompt(sessionId, 'go', 200)).rejects.toThrow(
         'ACP session/prompt timed out after 200ms of inactivity',
       );
       const elapsed = Date.now() - started;
-      expect(elapsed).toBeGreaterThanOrEqual(200);
+      expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 200);
       expect(elapsed).toBeLessThan(1_000);
     } finally {
+      timeoutSpy?.mockRestore();
       await client.stop();
     }
   });

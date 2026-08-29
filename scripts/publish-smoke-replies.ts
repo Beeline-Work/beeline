@@ -120,12 +120,18 @@ async function main() {
     // waits begin at the device action they coordinate with and stay tighter.
     await waitForMessage(client, roomId, 'SMOKE ROOM SEND', FIRST_DEVICE_MESSAGE_TIMEOUT_MS);
     await client.messageSubmit(roomId, 'SMOKE AGENT ROOM REPLY — delivered live');
+    // The smoke performs a separate picker/responsiveness send before its
+    // exact Beebee mention. Use that relay-backed action as the phase boundary
+    // so time spent navigating and exercising the first mention cannot consume
+    // the timeout for an action the device has not reached yet.
+    await waitForMessage(client, roomId, 'mention picker stayed responsive');
     await waitForMessage(client, roomId, "@beebee what's up");
     await requireExactlyOneMessage(client, roomId, "@beebee what's up");
     await client.messageSubmit(roomId, "SMOKE AGENT MENTION REPLY — @beebee what's up");
     await waitForMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
     await publishCornerWorkingState();
     await client.messageSubmit(roomId, 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard');
+    await waitForMessage(client, roomId, 'SMOKE CORNER PHASE READY');
     await waitForMessage(client, cornerId, 'SMOKE CORNER STEER');
     await client.messageSubmit(cornerId, 'SMOKE AGENT CORNER REPLY — steering delivered live');
   } finally {

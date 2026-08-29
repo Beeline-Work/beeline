@@ -17,12 +17,45 @@ jobs:
     name: BODY SUITE
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # A hermetic suite must not react to whatever this happens to be on the
+      # runner image (a set value redirects Trusty Squire ambient-state
+      # detection at a real path outside any test's own scratch dir).
+      XDG_CONFIG_HOME: ''
+      # apps/body/README.md documents these as the standing escape hatch for
+      # a host with no cargo-built buzz-agent/buzz-dev-mcp (this monorepo
+      # vendors neither; they come from a private upstream). Point them at an
+      # inert placeholder so config/CLI-plumbing tests that only need SOME
+      # valid, immediately-exiting executable never depend on cargo tooling
+      # or a real ACP handshake. /bin/false matches this repo's existing
+      # placeholder-binary convention (e.g. `agentBinary: '/bin/false'`).
+      BUZZ_AGENT_BIN: /bin/false
+      BUZZ_DEV_MCP_BIN: /bin/false
+      BUZZ_READONLY_MCP_BIN: /bin/false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      # Tests spawn fake ACP-agent scripts with a bare `#!/usr/bin/env node`
+      # shebang and an intentionally empty child environment (see
+      # apps/body/src/acp.ts's `inheritProcessEnv` doc comment) — `env`'s
+      # fallback PATH when none is set is the POSIX default (`/bin:/usr/bin`),
+      # not wherever setup-node installed this job's node.
+      - run: sudo ln -sf "$(command -v node)" /usr/bin/node
+      # Several git-backed fixtures commit as the daemon/operator without
+      # setting an identity themselves (they're proving something else).
+      - run: |
+          git config --global user.name "Body CI"
+          git config --global user.email "body-ci@users.noreply.github.com"
+      # bwrap-sandbox.test.ts's viability-detection tests need the binary on
+      # PATH; they inject a fake self-test runner, so it never has to
+      # actually build a namespace. Body's own tests that DO execute a real
+      # bwrap sandbox gate on `detectBwrapSandbox()`'s live viability probe
+      # and skip cleanly if this runner's kernel refuses unprivileged user
+      # namespaces (common under AppArmor hardening).
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - run: npm ci
       # apps/body imports these three workspaces from their built dist, not
       # their TS source (package.json "main"/"exports" point at dist/).

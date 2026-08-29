@@ -3454,7 +3454,7 @@ export class Body {
     return authorizedExternalMcpServers(this.config.accessPolicy, capabilities, broker);
   }
 
-  /** Mount, inspect, and then remint the one-use session capability. */
+  /** Mount, inspect, and then remint the per-session capability handed to the harness. */
   private async agentToolMcpServer(binding: AgentToolSessionBinding): Promise<McpServerWire> {
     const probe = await this.agentToolBroker.mcpServer(binding);
     assertBeelineAgentToolHandshake(
@@ -3463,8 +3463,8 @@ export class Body {
         env: Object.fromEntries((probe.env ?? []).map(({ name, value }) => [name, value])),
       }),
     );
-    // The protocol inspection consumed the broker's one-use capability. A
-    // fresh endpoint is the only value handed to the harness.
+    // The probe endpoint is revoked when the replacement is minted. Only the
+    // fresh endpoint and its capability are handed to the harness.
     return this.agentToolBroker.mcpServer(binding);
   }
 

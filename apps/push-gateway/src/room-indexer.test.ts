@@ -612,6 +612,52 @@ describe('RoomIndexer', () => {
     expect(idle?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
   });
 
+  it("excludes terminal corners from the Room row's corner count", async () => {
+    // The base fixture's CORNER is already 'working' (created_at=7), so the
+    // row starts with one open corner — the count a person can act on.
+    const working = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(working?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
+      cornerCount: 1,
+    });
+
+    // Landing publishes 'concluded' — terminal — before the corner channel is
+    // ever archived. The count must drop to zero immediately, matching the
+    // deck's own non-terminal rule for the pinned line and dropdown.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, '', $5, $6)`,
+      [
+        TENANT,
+        bytes('6'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['d', `buzz-corner-state:${CORNER}`],
+          ['t', 'buzz-corner-state'],
+          ['state', 'concluded'],
+        ]),
+        CORNER,
+        `buzz-corner-state:${CORNER}`,
+      ],
+    );
+    const concluded = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(concluded?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
+      cornerCount: 0,
+    });
+
+    // A corner archived outright (post-cleanup 'closed', or a bare archive)
+    // must never resurface in the count either.
+    await postgres.query(
+      `UPDATE channels SET archived_at = now() WHERE community_id = $1 AND id = $2`,
+      [TENANT, CORNER],
+    );
+    const archived = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(archived?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
+      cornerCount: 0,
+    });
+  });
+
   it('withholds reply proof from deleted or foreign ancestry', async () => {
     const foreignParentId = 'c'.repeat(64);
     const foreignReplyId = 'd'.repeat(64);

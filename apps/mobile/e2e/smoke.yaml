@@ -232,6 +232,16 @@ env:
 - assertNotVisible: "AGENT OFFLINE"
 - tapOn: "×"
 
+# Give the remote fixture a relay-backed boundary immediately before the
+# corner phase. Roster interaction and corner navigation are deliberately
+# tested UI work and must not consume a timeout for a later device action.
+- tapOn:
+    id: chat-input
+- inputText: SMOKE CORNER PHASE READY
+- tapOn:
+    id: chat-send
+- assertVisible: SMOKE CORNER PHASE READY
+
 # Scroll to the linked corner, steer it, and receive the relay-backed agent
 # fixture reply. A real Body/ACP daemon is separately required to prove model
 # reasoning; this flow proves mobile delivery and live response rendering.

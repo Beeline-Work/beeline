@@ -656,6 +656,86 @@ describe('agent identity boundary', () => {
       }
     });
 
+    it('refreshes a warm session persona on the next turn after a soul is saved', async () => {
+      // Pins the fix for a saved soul edit not reaching a warm session: the
+      // daemon used to apply persona only at session ACTIVATION
+      // (createManagedSession's activate()), so an already-live session kept
+      // serving the persona it started with indefinitely. This exercises the
+      // fix end to end: refreshPersonaForSoulUpdate() suspends the idle
+      // session so the NEXT turn goes through activate() again and picks up
+      // the newly saved soul, never touching the FIRST (still in-flight) turn.
+      const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+      try {
+        const body = new Body(
+          {
+            ...config,
+            agentCommand: '/usr/local/bin/codex-acp',
+            workspaceRoot: '/tmp/beeline-persona-soul-refresh',
+          },
+          newIdentity('soul-refresh-operator'),
+          newIdentity('soul-refresh-agent'),
+          undefined,
+          { scheduler },
+        );
+        const durable = (
+          body as unknown as {
+            durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)>;
+          }
+        ).durableState;
+        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(
+          undefined as never,
+        );
+        const sessionPrompt = vi.fn().mockResolvedValue({ agentText: 'ok', updates: [] });
+        const souls = [
+          'Soul: Steady, practical, and ready to help this Workspace.',
+          'Soul: Japanese cosplay girl personality, bubbly and playful.',
+        ];
+        let activations = 0;
+        const session = {
+          channelId: 'soul-refresh-room',
+          sessionId: 'soul-refresh-session-1',
+          mode: 'readonly' as const,
+          client: { sessionPrompt, sessionCancel: vi.fn() },
+          lifecycle: {
+            // Models real activation: `createManagedSession`'s activate()
+            // resolves the CURRENT soul from the relay every time it runs,
+            // never only once at first start.
+            activate: vi.fn().mockImplementation(async () => {
+              session.personaTurnPrefix = souls[activations] ?? souls[souls.length - 1];
+              activations += 1;
+              return 'soul-refresh-session-1';
+            }),
+            suspend: vi.fn().mockResolvedValue(undefined),
+          },
+        } as never;
+        body.registerSession(session);
+
+        await Reflect.get(body, 'promptAgent').call(body, session, 'first question', {
+          channelId: 'soul-refresh-room',
+          requestId: 'soul-refresh-request-1',
+          originalRequestId: 'soul-refresh-request-1',
+          cause: 'room-message',
+        });
+        expect(sessionPrompt.mock.calls[0]![1]).toContain(souls[0]);
+
+        // The soul is saved here, while the session is still warm/live.
+        await body.refreshPersonaForSoulUpdate();
+
+        await Reflect.get(body, 'promptAgent').call(body, session, 'second question', {
+          channelId: 'soul-refresh-room',
+          requestId: 'soul-refresh-request-2',
+          originalRequestId: 'soul-refresh-request-2',
+          cause: 'room-message',
+        });
+
+        expect(session.lifecycle.activate).toHaveBeenCalledTimes(2);
+        expect(sessionPrompt.mock.calls[1]![1]).toContain(souls[1]);
+        expect(sessionPrompt.mock.calls[1]![1]).not.toContain(souls[0]);
+      } finally {
+        await scheduler.dispose();
+      }
+    });
+
     it.each([
       {
         directive: 'Stop the launch pack. Explain what Ethereum is instead.',

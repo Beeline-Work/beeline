@@ -10,12 +10,11 @@
  * a working corner vanishes mid-conversation.
  *
  * The contract pinned here:
- *   1. Landing with a live session marks the corner merged (land recap + merge
- *      summary unchanged) but HOLDS the archive; the channel stays writable.
- *   2. When the session actually retires (the scheduler's suspended
- *      transition), the archive proceeds.
- *   3. Landing with no live session archives immediately — the common case,
- *      unchanged.
+ *   1. Landing freezes new turns and immediately suspends an idle warm session,
+ *      then archives and reaps its worktree.
+ *   2. A genuinely mid-turn session is never interrupted; its turn-finally
+ *      path drains and closes the corner as soon as the run settles.
+ *   3. Landing with no live session archives immediately.
  *   4. A session-state publish refused because the channel is archived is an
  *      expected terminal no-op: one plain log line, never a thrown error.
  *
@@ -30,7 +29,6 @@ import { join, resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import { Body, type SubchannelInfo } from './body.js';
 import { mediaUploadResponse, relayQueryResponse } from './relay-test-helper.js';
-import { postAgentMessage } from './activity.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, type Identity, type NostrEvent } from '@beeline/nostr';
 
@@ -209,45 +207,79 @@ async function retireSession(fixture: Fixture): Promise<void> {
 }
 
 describe('a landed corner whose agent session is still live', () => {
-  it('holds the archive until the session retires, staying writable throughout', async () => {
+  it('promptly drains an idle warm session, archives the corner, and reaps its worktree', async () => {
     const fixture = corner();
     const published = stubRelayHttp([
       createCornerCreateEvent(fixture.body.agent, 'corner-channel', 'room-channel'),
     ]);
     fixture.info.session.processState = 'live';
+    const scheduler = Reflect.get(fixture.body, 'scheduler') as {
+      suspend(channelId: string): Promise<void>;
+    };
+    const suspend = vi.spyOn(scheduler, 'suspend').mockImplementation(async (channelId) => {
+      expect(channelId).toBe('corner-channel');
+      fixture.info.session.processState = 'suspended';
+    });
 
     await land(fixture);
-    // The completion poll records the merge summary and hits the deferral.
+    const closeStartedAt = Date.now();
     await expect(fixture.body.pollMergeCompletions()).resolves.toBe(1);
-    // Merged exactly as today — recap and summary published, landedTip set…
+
     expect(tagged(published, 'merge-summary')).toHaveLength(1);
     expect(fixture.info.landedTip).toBe(fixture.tip);
-    // …but the channel is NOT archived while the session is live.
+    expect(suspend).toHaveBeenCalledOnce();
     expect(fixture.info.archiveWhenSessionRetires).toBe(true);
-    expect(fixture.info.archived).toBe(false);
+    expect(fixture.body.getSubchannels().has('corner-channel')).toBe(false);
+    expect(archiveEvents(published)).toHaveLength(1);
+    expect(Date.now() - closeStartedAt).toBeLessThan(2_000);
+    expect(() => git(fixture.checkout, ['worktree', 'list', '--porcelain'])).not.toThrow();
+    expect(git(fixture.checkout, ['worktree', 'list', '--porcelain'])).not.toContain(
+      fixture.worktree,
+    );
+  });
+
+  it('never interrupts a mid-turn session, then drains and closes as soon as the turn settles', async () => {
+    const fixture = corner();
+    const published = stubRelayHttp([
+      createCornerCreateEvent(fixture.body.agent, 'corner-channel', 'room-channel'),
+    ]);
+    fixture.info.session.processState = 'live';
+    let activeRunId: string | null = 'run-in-progress';
+    fixture.info.session.client.activeRunId = () => activeRunId;
+    const scheduler = Reflect.get(fixture.body, 'scheduler') as {
+      suspend(channelId: string): Promise<void>;
+    };
+    const suspend = vi.spyOn(scheduler, 'suspend').mockImplementation(async () => {
+      fixture.info.session.processState = 'suspended';
+    });
+
+    await land(fixture);
+    await expect(fixture.body.pollMergeCompletions()).resolves.toBe(1);
+
+    expect(suspend).not.toHaveBeenCalled();
     expect(fixture.body.getSubchannels().has('corner-channel')).toBe(true);
     expect(archiveEvents(published)).toHaveLength(0);
 
-    // Post-landing agent output is still publishable — the defect had the
-    // relay refusing every further kind:9 event here.
-    await expect(
-      postAgentMessage('corner-channel', fixture.body.agent, 'post-landing narration'),
-    ).resolves.toBeUndefined();
-    expect(published.some((e) => e.kind === 9 && tagsIncludeH(e, 'corner-channel'))).toBe(true);
+    activeRunId = null;
+    await (
+      Reflect.get(fixture.body, 'runDeferredLandArchive') as (
+        this: Body,
+        channelId: string,
+      ) => Promise<void>
+    ).call(fixture.body, 'corner-channel');
 
-    // The session retires (the scheduler's suspend path) → NOW it archives.
-    await retireSession(fixture);
-
+    expect(suspend).toHaveBeenCalledOnce();
     expect(fixture.body.getSubchannels().has('corner-channel')).toBe(false);
     expect(archiveEvents(published)).toHaveLength(1);
   });
 
-  it('does not restate the merge summary on later ticks while waiting to retire', async () => {
+  it('does not restate the merge summary while an active turn drains', async () => {
     const fixture = corner();
     const published = stubRelayHttp([
       createCornerCreateEvent(fixture.body.agent, 'corner-channel', 'room-channel'),
     ]);
     fixture.info.session.processState = 'live';
+    fixture.info.session.client.activeRunId = () => 'run-in-progress';
     await land(fixture);
 
     await expect(fixture.body.pollMergeCompletions()).resolves.toBe(1);
@@ -269,8 +301,8 @@ describe('a landed corner whose agent session is still live', () => {
 
     expect(fixture.body.getSubchannels().has('corner-channel')).toBe(false);
     expect(archiveEvents(published)).toHaveLength(1);
-    // The deferral machinery stayed out of the way entirely.
-    expect(fixture.info.archiveWhenSessionRetires).toBeUndefined();
+    // The close intent is recorded before the no-session fast path archives.
+    expect(fixture.info.archiveWhenSessionRetires).toBe(true);
   });
 
   it('converges through the maintenance backstop when the retire notification was skipped', async () => {
@@ -350,10 +382,6 @@ describe('a session-state publish refused by an archived channel', () => {
 
 function tagged(events: NostrEvent[], value: string): NostrEvent[] {
   return events.filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === value));
-}
-
-function tagsIncludeH(event: NostrEvent, channelId: string): boolean {
-  return event.tags.some((tag) => tag[0] === 'h' && tag[1] === channelId);
 }
 
 /** The immutable kind:9007 create event that proves a channel is a corner. */

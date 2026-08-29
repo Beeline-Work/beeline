@@ -119,14 +119,21 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     info: ReturnType<typeof cornerInfo>,
     tip: string,
   ): Promise<void> {
+    const reviewer = newIdentity('land-summary-reviewer');
     Reflect.set(body, 'findHumanMergeApproval', async (target: typeof info) => {
       (target as { humanMergeApproval?: unknown }).humanMergeApproval = {
         id: 'approval-1',
-        reviewer: newIdentity('land-summary-reviewer').publicKey,
+        reviewer: reviewer.publicKey,
         tip,
       };
       return (target as { humanMergeApproval?: unknown }).humanMergeApproval;
     });
+    Reflect.set(
+      body,
+      'roomAuthorAttributions',
+      async () =>
+        new Map([[reviewer.publicKey, { kind: 'Person', name: 'Ada Lovelace', handle: 'ada' }]]),
+    );
     Reflect.set(
       body,
       'promptAgent',
@@ -150,6 +157,8 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     try {
       const body = newBody(agent, join(root, 'state.json'));
       const info = cornerInfo(agent, repoPath, cornerPath);
+      info.mergeSummary = 'Added the haiku. Did not touch the build configuration.';
+      info.boundRepo.remoteUrl = 'https://github.com/acme/haiku.git';
       body.registerSubchannel(info as never);
 
       await landIt(body, info, tip);
@@ -170,10 +179,18 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
           'Set out to: add a haiku to the readme',
           'Landed: 1 commit across 1 file (README.md).',
           `Landed on master at ${tip.slice(0, 12)}.`,
+          'Left out: Did not touch the build configuration.',
+          'Approved by @ada.',
+          `https://github.com/acme/haiku/commit/${tip}`,
         ].join('\n'),
       );
+      expect(summary.tags).toContainEqual(['objective', 'add a haiku to the readme']);
+      expect(summary.tags).toContainEqual(['omitted', 'Did not touch the build configuration.']);
+      expect(summary.tags).toContainEqual(['approver-name', 'Ada Lovelace']);
+      expect(summary.tags).toContainEqual(['approver-handle', 'ada']);
+      expect(summary.tags).toContainEqual(['url', `https://github.com/acme/haiku/commit/${tip}`]);
       expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
-      expect(summary.content.split('\n')).toHaveLength(3);
+      expect(summary.content.split('\n')).toHaveLength(6);
       expect(summary.content.split('\n').length).toBeLessThanOrEqual(8);
       // No raw plumbing survives into a Room a person reads on their phone.
       expect(summary.content).not.toMatch(/\bgit\b|hint:|```/);
@@ -496,6 +513,13 @@ describe('every land path recaps the corner exactly once', () => {
             event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         ),
       ).toBe(true);
+
+      // The land path already recorded and concluded this exact tip. Re-
+      // reading its approval would attempt the illegal state reversal
+      // concluded -> working and strand the close.
+      Reflect.set(body, 'findHumanMergeApproval', async () => {
+        throw new Error('a recorded landedTip must not re-read approval');
+      });
 
       await body.pollMergeCompletions();
 

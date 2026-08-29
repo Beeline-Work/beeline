@@ -178,6 +178,36 @@ describe('daemon work schedule authority', () => {
     });
   });
 
+  it('authorizes an agent-tool schedule from the current mandate instead of human drive policy', async () => {
+    const agent = createIdentity();
+    const schedule = scheduleFixture(agent, agent);
+    schedule.agentToolMandate = {
+      eventId: 'b'.repeat(64),
+      defaultsVersion: 2,
+    };
+    const parsed = parsedSchedule(agent, schedule);
+    const facts: DaemonWorkScheduleAuthorityFacts = {
+      workspaceMemberPubkeys: [agent.publicKey],
+      roomMemberPubkeys: [agent.publicKey],
+      roomArchived: false,
+      authorIsAgent: true,
+      principalIsAgent: true,
+      principalCanDrive: false,
+      principalRole: 'member',
+      authorRole: 'member',
+    };
+    await expect(
+      authorizeDaemonWorkSchedule(parsed, {
+        workspaceId: schedule.workspaceId,
+        agentPubkey: agent.publicKey,
+        readCurrentEvents: async () => [parsed.event],
+        readFacts: async () => facts,
+        verifyScheduleGrant: async () => false,
+        verifyAgentToolMandate: async () => true,
+      }),
+    ).resolves.toEqual({ authorized: true });
+  });
+
   it.each([
     {
       reason: 'principal-removed',

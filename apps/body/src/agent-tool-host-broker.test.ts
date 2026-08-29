@@ -18,8 +18,10 @@ describe('AgentToolHostBroker', () => {
     try {
       await expect(listMcpToolNames(server)).resolves.toEqual([
         'read_mandate',
+        'request_mandate',
         'open_corner',
         'close_corner',
+        'schedule',
         'deliver',
       ]);
       const fresh = await broker.mcpServer({ channelId: 'room', invoke });
@@ -39,7 +41,7 @@ describe('AgentToolHostBroker', () => {
       resolve(process.cwd(), 'src', 'agent-tool-mcp-proxy.ts'),
     );
     const invoke = vi.fn(async () => ({
-      schema_version: 1,
+      schema_version: 2,
       generation: { event_id: 'a'.repeat(64), generation: 1 },
       grants: [],
       defaults: [],
@@ -49,7 +51,7 @@ describe('AgentToolHostBroker', () => {
     try {
       await expect(listMcpToolNames(server)).resolves.toContain('read_mandate');
       await expect(callMcpTool(server, 'read_mandate', {})).resolves.toMatchObject({
-        structuredContent: { schema_version: 1 },
+        structuredContent: { schema_version: 2 },
       });
       expect(invoke).toHaveBeenCalledOnce();
     } finally {
@@ -60,13 +62,20 @@ describe('AgentToolHostBroker', () => {
   it('fails closed when server identity, schema, or inventory is broken', () => {
     expect(() =>
       assertBeelineAgentToolHandshake({
-        serverInfo: { name: 'broken', version: '1' },
-        toolNames: ['read_mandate', 'open_corner', 'close_corner', 'deliver'],
+        serverInfo: { name: 'broken', version: '2' },
+        toolNames: [
+          'read_mandate',
+          'request_mandate',
+          'open_corner',
+          'close_corner',
+          'schedule',
+          'deliver',
+        ],
       }),
     ).toThrow('identity/schema handshake failed');
     expect(() =>
       assertBeelineAgentToolHandshake({
-        serverInfo: { name: 'beeline-agent-tools', version: '1' },
+        serverInfo: { name: 'beeline-agent-tools', version: '2' },
         toolNames: ['read_mandate'],
       }),
     ).toThrow('inventory handshake failed');

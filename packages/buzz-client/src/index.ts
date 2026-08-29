@@ -108,8 +108,6 @@ export {
   TAG_PERMISSION_DECISION,
   TAG_PERMISSION_REVOCATION,
   TAG_PERMISSION_EXECUTION,
-  TAG_DELEGATION_TURN,
-  TAG_DELEGATION_RECEIPT,
   TAG_AGENT_ACCESS_CONFIG,
   TAG_PARENT,
   TAG_COMMUNITY,
@@ -120,7 +118,6 @@ export {
 } from './kinds.js';
 
 export * from './permission-request.js';
-export * from './delegation-turn.js';
 export * from './agent-access-config.js';
 export * from './scheduled-turn.js';
 

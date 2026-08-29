@@ -352,117 +352,13 @@ describe('scheduled Room turn boundary', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-
-  it('routes a target-daemon mission mutation only through the mission corner funnel', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'beeline-delegated-mission-corner-'));
-    const controller = newIdentity('mission-controller');
-    const target = newIdentity('mission-target');
-    const captain = newIdentity('mission-captain');
-    const body = new Body(config(root), undefined, target);
-    const roomId = 'mission-room';
-    const request = {
-      eventId: '3'.repeat(64),
-      authorPubkey: controller.publicKey,
-      content: 'Update state.md in the mission repository.',
-      createdAt: 1_900_000_000,
-    };
-    const delegation = {
-      event: { id: '4'.repeat(64) },
-      value: {
-        phase: 'assign',
-        rootEventId: '5'.repeat(64),
-        roomId,
-        workspaceId: 'mission-workspace',
-        principalPubkey: captain.publicKey,
-        toAgentPubkey: target.publicKey,
-        mission: {
-          missionId: 'mission-one',
-          grantEventId: '5'.repeat(64),
-          controllerAgentPubkey: controller.publicKey,
-          targetAgentPubkey: target.publicKey,
-          repository: { key: 'github:123', targetBranch: 'refs/heads/main' },
-        },
-      },
-    };
-    const corner = {
-      subchannelId: 'mission-corner',
-      taskDescription: request.content,
-    };
-    const openMission = vi
-      .spyOn(body as never, 'openDelegatedMissionCorner' as never)
-      .mockResolvedValue(corner as never);
-    const ordinaryOpen = vi.spyOn(body, 'openSubchannel');
-    const start = vi
-      .spyOn(body as never, 'startAgentTask' as never)
-      .mockImplementation(() => undefined as never);
-    vi.spyOn(body as never, 'noteRoomReadOnlyDenial' as never).mockResolvedValue(
-      undefined as never,
-    );
-    Reflect.get(body, 'pendingRoomTurns').set(roomId, {
-      request,
-      boundRepo: {
-        repo: 'mission',
-        repositoryKey: 'github:123',
-        targetBranch: 'refs/heads/main',
-      },
-      editPolicy: 'repository',
-      permissionHandled: false,
-      transitionedToCorner: false,
-      readOnlyInformationRequest: true,
-      missionDelegation: delegation,
-    });
-
-    try {
-      await expect(
-        Reflect.get(body, 'handleRoomPermissionRequest').call(body, roomId, {
-          toolCall: { kind: 'edit', title: 'Update state.md', rawInput: { path: 'state.md' } },
-        }),
-      ).resolves.toBe('reject');
-      expect(openMission).toHaveBeenCalledOnce();
-      expect(ordinaryOpen).not.toHaveBeenCalled();
-      expect(start).toHaveBeenCalledOnce();
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('keeps every delegation and escalation directive inert during a mission target turn', async () => {
-    const root = await mkdtemp(resolve(tmpdir(), 'beeline-mission-directives-inert-'));
-    const body = new Body(config(root), undefined, newIdentity('mission-directive-target'));
-    const roster = vi.spyOn(body as never, 'delegationRoster' as never);
-    const publishTurn = vi.spyOn(Reflect.get(body, 'delegationRuntime'), 'publishTurn');
-    try {
-      await Reflect.get(body, 'publishDelegationChildren').call(
-        body,
-        {
-          value: {
-            phase: 'assign',
-            mission: { missionId: 'mission-one' },
-          },
-        },
-        '[[delegate target="@Scout" task="Do more work"]]\n' +
-          '[[delegate target="@Analyst" task="Escalate this"]]',
-      );
-      expect(roster).not.toHaveBeenCalled();
-      expect(publishTurn).not.toHaveBeenCalled();
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('publishes scheduled attachments from pi while keeping amplification directives inert', async () => {
+  it('publishes scheduled attachments from pi without interpreting model prose', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-scheduled-directives-'));
     const agent = newIdentity('scheduled-directive-agent');
     const principal = newIdentity('scheduled-directive-principal');
     const body = new Body({ ...config(root), agentCommand: 'pi-acp' }, undefined, agent);
     vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
     vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
-    const corner = vi
-      .spyOn(body as never, 'handleAgentCornerRequest' as never)
-      .mockResolvedValue(undefined as never);
-    const factory = vi
-      .spyOn(body as never, 'publishRootFactoryDirectives' as never)
-      .mockResolvedValue(undefined as never);
     const upload = vi.spyOn(body as never, 'uploadAgentOutputs' as never).mockResolvedValue({
       attachments: [
         {
@@ -478,8 +374,7 @@ describe('scheduled Room turn boundary', () => {
     const sessionPrompt = vi.fn(async () => ({
       stopReason: 'end_turn',
       updates: [],
-      agentText:
-        'Draft complete. [[buzz-attachment:/tmp/report.html]]\nCORNER_REQUEST: mutate the repository\n@Owner: create an outcome room named “Blast” with @Scout.',
+      agentText: 'Draft complete. [[buzz-attachment:/tmp/report.html]]',
       toolCalls: [],
     }));
     body.registerSession({
@@ -543,8 +438,6 @@ describe('scheduled Room turn boundary', () => {
       );
       expect(beforeModelActivation).toHaveBeenCalledOnce();
       expect(sessionPrompt).toHaveBeenCalledOnce();
-      expect(corner).not.toHaveBeenCalled();
-      expect(factory).not.toHaveBeenCalled();
       expect(upload).toHaveBeenCalledOnce();
       expect(
         published.some(

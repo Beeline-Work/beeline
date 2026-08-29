@@ -1405,7 +1405,7 @@ export async function postAgentPresence(
         ['agent', owner.publicKey],
         ['status', status],
         ['capability', 'factory-permissions-v1'],
-        ['capability', 'delegation-v1'],
+        ['capability', 'agent-mention-v1'],
         ...(generationId ? [['generation', generationId]] : []),
         ...(accessSeed ? [['access-policy', accessSeed.policy]] : []),
         ...(accessSeed?.allowlist?.map((pubkey) => ['access-allow', pubkey]) ?? []),

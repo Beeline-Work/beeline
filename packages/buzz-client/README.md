@@ -21,7 +21,6 @@ method→call table).
 | Live + backfill      | `sessionEventsSubscribe` (WS NIP-01 + NIP-42 AUTH), `sessionEventsBackfill` (`POST /query`)                                                        |
 | Agent activity bus   | body-projected kind:9 with `#t=agent-activity` — classified on subscribe/backfill                                                                  |
 | Permission ledger    | signed request/decision/revocation/execution wire types, including the attenuated `mission.control` boundary                                       |
-| Delegation turns     | signed same-Room `DelegationTurnV1` assignments/returns with bounded mission lineage                                                               |
 | Schedule receipts    | deterministic run ids plus signed queued/working/complete/failed/skipped receipt builders and parsers                                              |
 | Merge Approve        | `buildMergeApproval` / `submitMergeApproval` — **P0 gate shape** (same tags as `@beeline/gate`)                                                    |
 

@@ -63,11 +63,6 @@ import {
   modelUnavailableRoomMessage,
 } from './model-availability.js';
 import {
-  PI_CORNER_REQUEST_INSTRUCTIONS,
-  createCornerRequestFilter,
-  type AgentCornerRequest,
-} from './corner-request.js';
-import {
   createChannel,
   setMemberRole,
   newIdentity,
@@ -108,7 +103,6 @@ import {
   TAG_PERMISSION_DECISION,
   TAG_PERMISSION_REVOCATION,
   TAG_PERMISSION_EXECUTION,
-  TAG_DELEGATION_RECEIPT,
   TAG_MERGE_APPROVAL,
   agentHandle,
   fallbackAgentName,
@@ -135,9 +129,6 @@ import {
   KIND_AGENT_ACCESS_CONFIG,
   agentAccessConfigKey,
   resolveAgentAccessAuthority,
-  parseDelegationReceipt,
-  parseDelegationTurn,
-  parseDelegationDirectives,
   publishAgentModelCatalog,
   RoomViewClient,
   KIND_CREATE_GROUP,
@@ -174,11 +165,6 @@ import {
   type ChangeReviewArtifact,
   type AgentHistoryEntry,
   type RoomViewMessage,
-  type ParsedDelegationTurn,
-  type ParsedDelegationReceipt,
-  type DelegationTurnV1,
-  DEFAULT_DELEGATION_MAX_AGENT_TURNS,
-  defaultDelegationBudget,
   permissionActionId,
   parsePermissionRequest,
   parsePermissionDecision,
@@ -209,12 +195,6 @@ import {
   renderAccessAutoResponse,
 } from './access-policy.js';
 import { DurableBodyState } from './durable-state.js';
-import {
-  DelegationRuntime,
-  buildDelegationEscalationPermission,
-  dispatchRootFactoryDirectives,
-  type RootFactoryRosterEntry,
-} from './delegation-runtime.js';
 import { PermissionRuntime, type PermissionExecutionHandle } from './permission-runtime.js';
 import { missionScriptHashMatches, runMissionScript } from './mission-script.js';
 import {
@@ -248,16 +228,23 @@ import {
   TARGET_BRANCH_PROPOSAL_COMMAND,
   TARGET_BRANCH_PROPOSAL_TAG,
   shortBranchName,
-  targetBranchChangeIntent,
   targetBranchProposalFromAgentText,
   targetBranchProposalFromPermission,
   targetBranchProposalText,
 } from './target-branch.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import {
+  WORK_SCHEDULE_KIND,
+  WORK_SCHEDULE_TAG,
   ScheduleActivationRefusedError,
+  buildWorkSchedule,
+  parseWorkSchedule,
+  parseWorkScheduleValue,
   parseScheduledTurnReceipt,
+  workScheduleKey,
+  type ParsedWorkSchedule,
   type ScheduledTurnRequest,
+  type WorkScheduleV1,
 } from './work-calendar.js';
 import {
   harnessStateDirsFromEnv,
@@ -329,17 +316,25 @@ import {
 import { operatorMcpServersForCorners } from './operator-mcp.js';
 import { SquireHostBroker } from './squire-host-broker.js';
 import { AgentToolHostBroker, type AgentToolSessionBinding } from './agent-tool-host-broker.js';
-import { AuthorizeOrRequestKernel } from './authorize-or-request.js';
+import { AuthorizeOrRequestKernel, mandateCovers } from './authorize-or-request.js';
 import {
+  BEELINE_ACTION_TOKENS,
   BEELINE_AGENT_TOOL_SCHEMA_VERSION,
+  BEELINE_MANDATE_DEFAULTS,
+  BEELINE_MANDATE_DEFAULTS_VERSION,
+  BEELINE_SCHEDULE_OPERATIONS,
   assertBeelineAgentToolHandshake,
   type BeelineActionScope,
+  type BeelineActionToken,
   type BeelineAgentToolName,
+  type BeelineScheduleOperation,
   type CloseCornerDisposition,
   type DeliverAudience,
   type DirectToolResult,
   cornerFrozenForPendingClose,
   type ReadMandateResult,
+  type RequestMandateResult,
+  type ScheduleConfigurationInput,
 } from './agent-tool-contract.js';
 import { inspectMcpServer } from './mcp-inventory.js';
 import { piMcpDirectToolSelection, preparePiMcpSession } from './pi-mcp-session.js';
@@ -414,7 +409,7 @@ import {
   harnessSessionIdleMs,
   harnessSupportsNativeSessionResume,
   roomSandboxWarning,
-  usesTextCornerRequestFallback,
+  usesTextTargetBranchFallback,
 } from './harness-capabilities.js';
 import {
   credentialMaskPaths,
@@ -780,11 +775,10 @@ export function withoutPrematureMergeClaims(message: string): string {
 }
 
 const UNVERIFIED_ROOM_COORDINATION_REPLY =
-  'No Beeline corner, delegation, or mission record was created, so no delegated work started.';
+  'No Beeline corner or mission record was created, so no coordinated work started.';
 
 interface RoomCoordinationClaims {
   corner: boolean;
-  delegation: boolean;
   mission: boolean;
 }
 
@@ -815,11 +809,6 @@ function roomCoordinationClaims(message: string): RoomCoordinationClaims {
       /\b(?:i|we)\b.{0,72}\b(?:opened|created|started|launched)\b.{0,56}\b(?:edit\s+)?corner\b/gi,
       /\b(?:opened|created|started|launched)\b/i,
     ),
-    delegation: positiveCoordinationClaim(
-      message,
-      /\b(?:i|we)\b.{0,72}\bdelegated\b/gi,
-      /\bdelegated\b/i,
-    ),
     mission: positiveCoordinationClaim(
       message,
       /\b(?:i|we)\b.{0,72}\b(?:created|started|launched|activated|set\s+up)\b.{0,32}\bmission\b/gi,
@@ -829,7 +818,7 @@ function roomCoordinationClaims(message: string): RoomCoordinationClaims {
 }
 
 /**
- * A Room model cannot create a mission in prose. A corner/delegation
+ * A Room model cannot create a mission in prose. A corner
  * completion is publishable only after openSubchannel has returned and
  * registered the corner actor, which happens after its signed relay records,
  * projected opening human, worktree, and edit session all exist.
@@ -839,7 +828,7 @@ function groundRoomCoordinationClaims(
   evidence: { cornerRecordCreated: boolean },
 ): string {
   const claims = roomCoordinationClaims(message);
-  if (!claims.corner && !claims.delegation && !claims.mission) return message;
+  if (!claims.corner && !claims.mission) return message;
   if (claims.mission || !evidence.cornerRecordCreated) {
     return UNVERIFIED_ROOM_COORDINATION_REPLY;
   }
@@ -1448,16 +1437,13 @@ export function roomEditPolicyInstructions(
       'If no exact repository is known, ask for one and remain read-only.',
     ];
   }
-  const textCornerFallback = usesTextCornerRequestFallback(agentCommand);
+  const targetBranchControl = usesTextTargetBranchFallback(agentCommand)
+    ? `For pi-acp only, put this exact command on its own line in your reply: ${TARGET_BRANCH_PROPOSAL_COMMAND} --branch <branch>`
+    : `Attempt this exact native command: ${TARGET_BRANCH_PROPOSAL_COMMAND} --branch <branch>`;
   return [
-    ...(textCornerFallback
-      ? PI_CORNER_REQUEST_INSTRUCTIONS
-      : [
-          'When the requested work requires repository changes, open the edit corner yourself in one step: attempt the appropriate built-in write/edit tool once.',
-          'A permission-capable harness sends that attempt as session/request_permission before it runs. The host rejects the in-Room mutation and directly opens an isolated corner for the same request.',
-          'Opening a corner needs no human approval because it commits, pushes, reviews, and lands nothing. Signed human merge approval remains the only path that lands code.',
-          'Do not merely tell the human to ask for a corner separately. The native permission request is the one-step corner-open action.',
-        ]),
+    'When requested work requires repository changes, call the mounted open_corner tool with the concrete objective.',
+    'Opening a corner needs no human approval because it commits, pushes, reviews, and lands nothing. Signed human merge approval remains the only path that lands code.',
+    'Do not attempt an in-Room mutation as a control signal and do not emit a prose marker.',
     'Never claim that work started until the host transitions you into an edit session.',
     // The branch a Room lands to is Room configuration signed by its owner, so
     // the agent has no way to change it and no memory that could hold it. Left
@@ -1465,7 +1451,8 @@ export function roomEditPolicyInstructions(
     // the confirmed live failure was "it holds for this conversation; to make
     // it stick it needs to go into memory". This is the one true answer.
     'The branch this Room lands changes to is Room configuration. You cannot change it, and nothing you remember or write down can change it.',
-    `When someone asks for changes to land on a different branch from now on, attempt this exact native command: ${TARGET_BRANCH_PROPOSAL_COMMAND} --branch <branch>`,
+    'When someone asks for changes to land on a different branch from now on, use the typed target-branch proposal control.',
+    targetBranchControl,
     'Replace <branch> with the exact branch name they asked for, and attempt it once. The host never runs that command: it rejects the command itself and posts a proposal card in this Room.',
     'After attempting it, tell the person the Room owner has to confirm that card. Open corners automatically follow the confirmed branch change; conflicts are surfaced in their activity ledger for resolution.',
     'Never say a landing-target change is in effect, saved, remembered, or held for this conversation. Only the Room owner confirming that card changes it.',
@@ -1515,15 +1502,12 @@ interface PendingRoomTurn {
   namedRepositoryTarget?: NamedRepositoryTarget;
   /** The human-authorized schedule is the mandate for this occurrence. */
   scheduled?: ScheduledTurnRequest;
-  /** A mission assignment may spend its separately granted corner slice. */
-  missionDelegation?: ParsedDelegationTurn;
 }
 
 interface ActivePermissionTurn {
   requestId: string;
   originalRequestId?: string;
   rootEventId?: string;
-  delegationId?: string;
 }
 
 interface PendingGovernedToolExecution {
@@ -2265,11 +2249,7 @@ export function isChannelAddressedMessage(
   // switching conversations by tagging another agent can never be pulled into
   // an earlier agent's continuation window (captured failure 2026-08-28: a
   // human in continuation with agent A tagged @B and A still answered).
-  if (
-    event.tags.some(
-      (tag) => tag[0] === 'p' && tag[1] && roomParticipants.includes(tag[1]),
-    )
-  ) {
+  if (event.tags.some((tag) => tag[0] === 'p' && tag[1] && roomParticipants.includes(tag[1]))) {
     return false;
   }
 
@@ -2495,7 +2475,6 @@ export class Body {
    */
   private steerQueuedChannels = new Set<string>();
   /** pi-acp Rooms with a text-fallback corner open in flight. One per channel. */
-  private agentCornerRequestsInFlight = new Set<string>();
   private requestCursors = new Map<string, number>();
   /** Throttle for the periodic stray-corner-worktree prune (per Body). */
   private lastWorktreePruneAt = 0;
@@ -2528,7 +2507,6 @@ export class Body {
   private scheduler: SessionScheduler;
   private ownsScheduler: boolean;
   private durableState: DurableBodyState;
-  private delegationRuntime: DelegationRuntime;
   private permissionRuntime: PermissionRuntime;
   private permissionReader: PermissionFreshReader;
   private agentRelay: RelayClient;
@@ -2605,6 +2583,7 @@ export class Body {
   private onRoomPollSuccess?: (channelId: string) => void;
   private onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
   private onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
+  private runScheduleNow?: (scheduleId: string) => Promise<{ runId: string; eventId: string }>;
   /**
    * Post-land CI watches still running. They deliberately outlive the corner
    * they report on (it is archived seconds after the land), so shutdown is the
@@ -2661,6 +2640,7 @@ export class Body {
       onRoomPollSuccess?: (channelId: string) => void;
       onRoomPollFailure?: (channelId: string, retryInMs: number) => void;
       onRoomPresence?: (channelId: string, status: 'online' | 'offline') => void;
+      runScheduleNow?: (scheduleId: string) => Promise<{ runId: string; eventId: string }>;
       relaySocket?: SharedRelaySocket;
       publishPermissionReceipt?: (event: NostrEvent) => Promise<void>;
       /** Test/embedding seam for the hidden metadata-only model turn. */
@@ -2703,6 +2683,7 @@ export class Body {
     this.onRoomPollSuccess = services.onRoomPollSuccess;
     this.onRoomPollFailure = services.onRoomPollFailure;
     this.onRoomPresence = services.onRoomPresence;
+    this.runScheduleNow = services.runScheduleNow;
     this.sharedSocket = services.relaySocket;
     this.generateCornerMetadata = services.generateCornerMetadata;
     this.durableState = new DurableBodyState(
@@ -2757,57 +2738,6 @@ export class Body {
     void this.drainPermissionReceiptOutbox().catch((error) =>
       console.error('[body] governed permission receipt restart drain failed:', error),
     );
-    this.delegationRuntime = new DelegationRuntime({
-      identity: this.agentIdentity,
-      reader: {
-        isRegisteredAgent: (pubkey) => isRegisteredAgentIdentity(pubkey, this.agentRelay),
-        isRoomMember: async (roomId, pubkey) =>
-          (await listMembers(this.agentClientContext(), roomId)).some(
-            (member) => member.pubkey === pubkey,
-          ),
-        isWorkspaceMember: async (workspaceId, pubkey) =>
-          (await listMembers(this.agentClientContext(), workspaceId)).some(
-            (member) => member.pubkey === pubkey,
-          ),
-        accessPermitted: (workspaceId, senderPubkey, _principalPubkey) =>
-          this.senderAccessAllowedFresh(workspaceId, senderPubkey),
-        targetOnline: (roomId, pubkey) => this.isRoomAgentOnline(roomId, pubkey),
-        // Reaching this runtime proves the exact recipient is running a P1
-        // build. Outbound dispatch still checks advertised compatibility.
-        targetSupportsDelegationV1: (roomId, pubkey) =>
-          this.agentSupportsDelegationV1(roomId, pubkey),
-        rootAuthorized: (turn) => this.delegationRootAuthorized(turn),
-        escalationAuthorized: (turn) => this.delegationEscalationAuthorized(turn),
-        consumeEscalation: (turn) => this.consumeDelegationEscalation(turn),
-        graph: (delegationId, roomId) => this.delegationGraph(roomId, delegationId),
-        delegatedUsage: async (pubkey, at) => {
-          const day = new Date(at * 1_000).toISOString().slice(0, 10);
-          const turns = (await this.durableState.modelTurns()).filter(
-            (turn) =>
-              turn.startedAt.slice(0, 10) === day &&
-              (turn.chargedAgentPubkey ?? turn.agentPubkey) === pubkey &&
-              (turn.trigger === 'delegation' || turn.cause === 'delegation'),
-          );
-          return {
-            calls: turns.length,
-            reservedTokens: turns.reduce((sum, turn) => sum + (turn.reservedTokens ?? 0), 0),
-            turnEventIds: turns.map((turn) => turn.requestId),
-          };
-        },
-      },
-      publish: async (event) => {
-        await publishEvent(event, this.agentIdentity);
-      },
-      claimInbound: (eventId) => this.durableState.claimDelegationInbound(eventId),
-      reserveInboundCapacity: (input) => this.durableState.reserveDelegationInbound(input),
-      reserveOutbound: (event) => this.durableState.reserveDelegationOutbound(event),
-      markOutboundDelivered: (eventId) =>
-        this.durableState.markDelegationOutboundDelivered(eventId),
-      dailyLimit: {
-        maxCalls: this.config.delegationDailyMaxCalls ?? 64,
-        maxReservedTokens: this.config.delegationDailyMaxReservedTokens ?? 1_000_000,
-      },
-    });
     this.cornerStates = new CornerStatePublisher(this.agentIdentity);
     this.assertDistinctAgentIdentity(this.agentIdentity);
   }
@@ -2860,6 +2790,23 @@ export class Body {
     for (const session of affected) session.client.sessionCancel(session.sessionId);
     await Promise.allSettled(
       affected.map((session) => this.scheduler.forceSuspend(session.channelId)),
+    );
+  }
+
+  /**
+   * A saved `buzz-agent-soul` edit is applied at session ACTIVATION
+   * (`prepareNativePersonaInstructions`/`personaTurnPrefixForHarness`, both
+   * resolved fresh from the relay each time `createManagedSession`'s
+   * `activate()` runs), so a warm session — which skips `activate()` entirely
+   * — would otherwise keep serving the persona it started with indefinitely.
+   * `scheduler.suspend()` is a deliberate no-op for a session mid-turn or with
+   * queued work, so this never interrupts an in-flight turn: it only retires
+   * genuinely idle sessions, and the next `run()` call re-activates one with
+   * the freshly resolved soul.
+   */
+  async refreshPersonaForSoulUpdate(): Promise<void> {
+    await Promise.allSettled(
+      [...this.sessions.values()].map((session) => this.scheduler.suspend(session.channelId)),
     );
   }
 
@@ -3557,12 +3504,18 @@ export class Body {
       const missionLand =
         requestedScope.disposition === 'land' &&
         Boolean(info?.mission && (await this.missionCornerFresh(info)));
-      if (defaultAbandon || missionLand) {
+      const approvedLand =
+        requestedScope.disposition === 'land' &&
+        Boolean(info && (await this.findHumanMergeApproval(info)));
+      if (defaultAbandon || missionLand || approvedLand) {
         grants.push({
           action: 'corner.close',
           scope: requestedScope,
-          source: defaultAbandon ? 'default' : 'mission',
-          event_id: info?.mission?.grantEventId ?? standing.generation.event_id,
+          source: defaultAbandon ? 'default' : missionLand ? 'mission' : 'signed-grant',
+          event_id:
+            info?.humanMergeApproval?.id ??
+            info?.mission?.grantEventId ??
+            standing.generation.event_id,
         });
       }
     }
@@ -3639,9 +3592,592 @@ export class Body {
       }
       return this.currentAgentToolMandate(binding.workspaceId, binding.roomId);
     }
+    if (tool === 'request_mandate') return this.invokeRequestMandateTool(binding, args);
     if (tool === 'open_corner') return this.invokeOpenCornerTool(binding, args);
     if (tool === 'close_corner') return this.invokeCloseCornerTool(binding, args);
+    if (tool === 'schedule') return this.invokeScheduleTool(binding, args);
     return this.invokeDeliverTool(binding, args);
+  }
+
+  private objectToolArg(args: Record<string, unknown>, name: string): Record<string, unknown> {
+    const value = args[name];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new AgentToolKnownFailure('invalid_arguments', `${name} must be an object.`);
+    }
+    return value as Record<string, unknown>;
+  }
+
+  private assertToolArgKeys(args: Record<string, unknown>, allowed: readonly string[]): void {
+    if (Object.keys(args).some((key) => !allowed.includes(key))) {
+      throw new AgentToolKnownFailure(
+        'invalid_arguments',
+        'The tool payload contains an unknown or host-owned field.',
+      );
+    }
+  }
+
+  private async mandateScopeFromToolArgs(
+    binding: { channelId: string; roomId: string; workspaceId: string },
+    action: BeelineActionToken,
+    raw: Record<string, unknown>,
+  ): Promise<BeelineActionScope> {
+    if (raw.type !== action) {
+      throw new AgentToolKnownFailure(
+        'scope_action_mismatch',
+        'The typed scope must match the requested action.',
+      );
+    }
+    const roomRepo = this.agentToolRoomRepositories.get(binding.roomId);
+    const repositoryKey = roomRepo
+      ? (roomRepo.truth?.binding.key ?? roomRepo.repositoryKey ?? this.repoId(roomRepo))
+      : undefined;
+    const targetRef = roomRepo?.targetBranch ?? (roomRepo ? 'refs/heads/main' : undefined);
+    if (action === 'corner.open') {
+      this.assertToolArgKeys(raw, ['type', 'repository_key', 'target_ref']);
+      if (!repositoryKey || !targetRef) {
+        throw new AgentToolKnownFailure(
+          'repository_unavailable',
+          'This Room has no host-bound repository for a corner.',
+        );
+      }
+      if (
+        (raw.repository_key !== undefined && raw.repository_key !== repositoryKey) ||
+        (raw.target_ref !== undefined && raw.target_ref !== targetRef)
+      ) {
+        throw new AgentToolKnownFailure(
+          'repository_scope_mismatch',
+          'The requested repository scope is outside this session binding.',
+        );
+      }
+      return {
+        type: action,
+        workspaceId: binding.workspaceId,
+        roomId: binding.roomId,
+        repositoryKey,
+        targetRef,
+      };
+    }
+    if (action === 'corner.close') {
+      this.assertToolArgKeys(raw, [
+        'type',
+        'corner_id',
+        'disposition',
+        'repository_key',
+        'target_ref',
+        'source_sha',
+      ]);
+      const cornerId = this.stringToolArg(raw, 'corner_id', { required: true, max: 256 })!;
+      const disposition = this.stringToolArg(raw, 'disposition', { required: true, max: 16 });
+      if (cornerId !== binding.channelId || (disposition !== 'land' && disposition !== 'abandon')) {
+        throw new AgentToolKnownFailure(
+          'corner_scope_mismatch',
+          'The requested mandate must name this bound corner and a closed disposition.',
+        );
+      }
+      const info = this.subchannels.get(cornerId);
+      if (!info || info.session.parentChannelId !== binding.roomId) {
+        throw new AgentToolKnownFailure('corner_unavailable', 'The bound corner is unavailable.');
+      }
+      const sourceSha = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+      if (!/^[0-9a-f]{40}$/.test(sourceSha)) {
+        throw new AgentToolKnownFailure('corner_tip_unavailable', 'The corner tip is unavailable.');
+      }
+      if (
+        (raw.repository_key !== undefined && raw.repository_key !== repositoryKey) ||
+        (raw.target_ref !== undefined && raw.target_ref !== targetRef) ||
+        (raw.source_sha !== undefined && raw.source_sha !== sourceSha)
+      ) {
+        throw new AgentToolKnownFailure(
+          'corner_scope_mismatch',
+          'The requested close scope is stale or outside this session binding.',
+        );
+      }
+      return {
+        type: action,
+        workspaceId: binding.workspaceId,
+        roomId: binding.roomId,
+        cornerId,
+        disposition,
+        ...(repositoryKey && targetRef ? { repositoryKey, targetRef, sourceSha } : {}),
+      };
+    }
+    if (action === 'artifact.deliver') {
+      this.assertToolArgKeys(raw, ['type', 'audience', 'corner_id']);
+      const audience = this.stringToolArg(raw, 'audience', { required: true, max: 32 });
+      if (audience !== 'current_corner' && audience !== 'parent_room') {
+        throw new AgentToolKnownFailure(
+          'invalid_arguments',
+          'audience must be current_corner or parent_room.',
+        );
+      }
+      const cornerId = binding.channelId === binding.roomId ? undefined : binding.channelId;
+      if (raw.corner_id !== undefined && raw.corner_id !== cornerId) {
+        throw new AgentToolKnownFailure(
+          'corner_scope_mismatch',
+          'The requested artifact scope is outside this session binding.',
+        );
+      }
+      return {
+        type: action,
+        workspaceId: binding.workspaceId,
+        roomId: binding.roomId,
+        ...(cornerId ? { cornerId } : {}),
+        audience,
+      };
+    }
+    this.assertToolArgKeys(raw, ['type', 'schedule_id', 'repository_key', 'target_ref']);
+    const scheduleId = this.stringToolArg(raw, 'schedule_id', { max: 256 });
+    if (
+      (raw.repository_key !== undefined && raw.repository_key !== repositoryKey) ||
+      (raw.target_ref !== undefined && raw.target_ref !== targetRef)
+    ) {
+      throw new AgentToolKnownFailure(
+        'repository_scope_mismatch',
+        'The requested schedule scope is outside this session binding.',
+      );
+    }
+    return {
+      type: action,
+      workspaceId: binding.workspaceId,
+      roomId: binding.roomId,
+      ...(scheduleId ? { scheduleId } : {}),
+      ...(repositoryKey && targetRef ? { repositoryKey, targetRef } : {}),
+    };
+  }
+
+  private async invokeRequestMandateTool(
+    binding: { channelId: string; roomId: string; workspaceId: string },
+    args: Record<string, unknown>,
+  ): Promise<RequestMandateResult> {
+    try {
+      this.assertToolArgKeys(args, ['action', 'scope', 'beneficiary']);
+      const action = this.stringToolArg(args, 'action', { required: true, max: 64 });
+      if (!(BEELINE_ACTION_TOKENS as readonly string[]).includes(action!)) {
+        throw new AgentToolKnownFailure(
+          'unknown_action',
+          'The requested action is not in this schema version.',
+        );
+      }
+      const beneficiary =
+        this.stringToolArg(args, 'beneficiary', { max: 64 }) ?? this.agentIdentity.publicKey;
+      if (!/^[0-9a-f]{64}$/.test(beneficiary)) {
+        throw new AgentToolKnownFailure(
+          'invalid_arguments',
+          'beneficiary must be a canonical agent public key.',
+        );
+      }
+      if (beneficiary !== this.agentIdentity.publicKey) {
+        return {
+          status: 'denied',
+          code: 'sponsor_authority_required',
+          message: 'Sponsoring another beneficiary requires an explicit sponsor mandate.',
+        };
+      }
+      const scope = await this.mandateScopeFromToolArgs(
+        binding,
+        action as BeelineActionToken,
+        this.objectToolArg(args, 'scope'),
+      );
+      const direct = await this.agentToolKernel.authorizeOrRequest({
+        action: action as BeelineActionToken,
+        scope,
+        dedupKey: this.agentToolDedupKey(
+          binding.channelId,
+          'request_mandate',
+          JSON.stringify({ action, scope, beneficiary }),
+        ),
+        readMandate: () => this.currentAgentToolMandate(binding.workspaceId, binding.roomId, scope),
+        execute: async (mandate) => ({
+          event_id: mandate.generation.event_id,
+          result: { mandate },
+        }),
+        requestApproval: async () => {
+          if (scope.type !== 'corner.close' || scope.disposition !== 'land') {
+            throw new AgentToolKnownFailure(
+              'approval_unavailable',
+              'This mandate action cannot create an approval request.',
+            );
+          }
+          const info = this.subchannels.get(scope.cornerId);
+          const turnId = this.activePermissionTurns.get(binding.channelId)?.requestId;
+          if (!info || !turnId) {
+            throw new AgentToolKnownFailure(
+              'no_active_turn',
+              'This mandate request requires an active corner turn.',
+            );
+          }
+          const pending = await this.prepareToolCloseForReview(info, turnId);
+          return {
+            request_id: pending.requestId,
+            event_id: pending.eventId,
+            message: 'The exact reviewed tip is frozen and waiting for owner approval.',
+          };
+        },
+      });
+      if (direct.status !== 'executed') return direct;
+      const mandate = direct.result.mandate;
+      return {
+        status: 'granted',
+        event_id: direct.event_id,
+        generation: mandate.generation,
+        beneficiary,
+        action: action as BeelineActionToken,
+        scope,
+      };
+    } catch (error) {
+      return this.agentToolFailure(error) as RequestMandateResult;
+    }
+  }
+
+  private scheduleIndexKey(workspaceId: string): string {
+    return `buzz-agent-tool-schedules:${workspaceId}:${this.agentIdentity.publicKey}`;
+  }
+
+  private async agentToolScheduleIds(workspaceId: string): Promise<string[]> {
+    const key = this.scheduleIndexKey(workspaceId);
+    const events = await this.agentRelay.queryEvents([
+      { kinds: [WORK_SCHEDULE_KIND], '#d': [key], limit: 20 },
+    ]);
+    const latest = events
+      .filter(
+        (event) =>
+          verifyEvent(event) &&
+          event.pubkey === this.agentIdentity.publicKey &&
+          event.tags.some((tag) => tag[0] === 'd' && tag[1] === key) &&
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'beeline-agent-tool-schedules'),
+      )
+      .sort(
+        (left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id),
+      )[0];
+    if (!latest) return [];
+    try {
+      const value = JSON.parse(latest.content) as { schedule_ids?: unknown };
+      if (!Array.isArray(value.schedule_ids)) return [];
+      return [
+        ...new Set(
+          value.schedule_ids.filter(
+            (item): item is string =>
+              typeof item === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/.test(item),
+          ),
+        ),
+      ].sort();
+    } catch {
+      return [];
+    }
+  }
+
+  private async publishAgentToolScheduleIndex(
+    workspaceId: string,
+    scheduleIds: readonly string[],
+  ): Promise<NostrEvent> {
+    const key = this.scheduleIndexKey(workspaceId);
+    const event = signEvent(
+      {
+        pubkey: this.agentIdentity.publicKey,
+        created_at: Math.floor(Date.now() / 1_000),
+        kind: WORK_SCHEDULE_KIND,
+        tags: [
+          ['d', key],
+          ['t', 'beeline-agent-tool-schedules'],
+          ['workspace', workspaceId],
+          ['agent', this.agentIdentity.publicKey],
+        ],
+        content: JSON.stringify({ version: 1, schedule_ids: [...new Set(scheduleIds)].sort() }),
+      },
+      this.agentIdentity.secretKey,
+    );
+    await publishEvent(event, this.agentIdentity);
+    return event;
+  }
+
+  private async agentToolSchedules(
+    workspaceId: string,
+    roomId: string,
+  ): Promise<ParsedWorkSchedule[]> {
+    const scheduleIds = await this.agentToolScheduleIds(workspaceId);
+    if (scheduleIds.length === 0) return [];
+    const events = await this.agentRelay.queryEvents(
+      scheduleIds.map((scheduleId) => ({
+        kinds: [WORK_SCHEDULE_KIND],
+        '#d': [
+          workScheduleKey({
+            workspaceId,
+            agentPubkey: this.agentIdentity.publicKey,
+            scheduleId,
+          }),
+        ],
+        limit: 20,
+      })),
+    );
+    const latest = new Map<string, ParsedWorkSchedule>();
+    for (const event of events) {
+      const parsed = parseWorkSchedule(event);
+      if (
+        !parsed ||
+        parsed.value.workspaceId !== workspaceId ||
+        parsed.value.roomId !== roomId ||
+        parsed.value.agentPubkey !== this.agentIdentity.publicKey
+      ) {
+        continue;
+      }
+      const current = latest.get(parsed.value.scheduleId);
+      if (
+        !current ||
+        parsed.value.revision > current.value.revision ||
+        (parsed.value.revision === current.value.revision &&
+          (parsed.event.created_at > current.event.created_at ||
+            (parsed.event.created_at === current.event.created_at &&
+              parsed.event.id.localeCompare(current.event.id) > 0)))
+      ) {
+        latest.set(parsed.value.scheduleId, parsed);
+      }
+    }
+    return [...latest.values()].sort((left, right) =>
+      left.value.scheduleId.localeCompare(right.value.scheduleId),
+    );
+  }
+
+  private scheduleConfigurationArg(value: unknown): ScheduleConfigurationInput {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new AgentToolKnownFailure('invalid_arguments', 'schedule must be an object.');
+    }
+    const input = value as Record<string, unknown>;
+    this.assertToolArgKeys(input, [
+      'operation',
+      'cadence',
+      'starts_at',
+      'expires_at',
+      'max_runs',
+      'per_run_reserved_tokens',
+      'daily_reserved_tokens',
+      'catch_up',
+      'max_consecutive_failures',
+    ]);
+    const operation = this.objectToolArg(input, 'operation');
+    this.assertToolArgKeys(operation, ['type', 'prompt']);
+    if (operation.type !== 'agent_turn') {
+      throw new AgentToolKnownFailure(
+        'invalid_schedule',
+        'The scheduled operation type is not supported.',
+      );
+    }
+    this.stringToolArg(operation, 'prompt', { required: true, max: 32_000 });
+    return input as unknown as ScheduleConfigurationInput;
+  }
+
+  private workScheduleFromToolInput(input: {
+    binding: { roomId: string; workspaceId: string };
+    scheduleId: string;
+    revision: number;
+    config: ScheduleConfigurationInput;
+    mandate: ReadMandateResult;
+  }): WorkScheduleV1 {
+    const now = Math.floor(Date.now() / 1_000);
+    const cadence =
+      input.config.cadence.type === 'daily'
+        ? {
+            type: 'daily' as const,
+            localTime: input.config.cadence.local_time,
+            timezone: input.config.cadence.timezone,
+          }
+        : input.config.cadence.type === 'interval'
+          ? {
+              type: 'interval' as const,
+              everySeconds: input.config.cadence.every_seconds,
+              anchorAt: input.config.cadence.anchor_at ?? input.config.starts_at ?? now,
+            }
+          : input.config.cadence;
+    const candidate = parseWorkScheduleValue({
+      version: 1,
+      scheduleId: input.scheduleId,
+      revision: input.revision,
+      workspaceId: input.binding.workspaceId,
+      roomId: input.binding.roomId,
+      agentPubkey: this.agentIdentity.publicKey,
+      principalPubkey: this.agentIdentity.publicKey,
+      prompt: input.config.operation.prompt,
+      execution: { mode: 'model' },
+      cadence,
+      startsAt: input.config.starts_at ?? now,
+      expiresAt: input.config.expires_at,
+      maxRuns: input.config.max_runs,
+      perRunReservedTokens: input.config.per_run_reserved_tokens,
+      dailyReservedTokens: input.config.daily_reserved_tokens,
+      catchUp: input.config.catch_up === 'latest_one' ? 'latest-one' : input.config.catch_up,
+      maxConsecutiveFailures: input.config.max_consecutive_failures,
+      status: 'active',
+      agentToolMandate: {
+        eventId: input.mandate.generation.event_id,
+        defaultsVersion: BEELINE_MANDATE_DEFAULTS_VERSION,
+      },
+    });
+    if (!candidate) {
+      throw new AgentToolKnownFailure(
+        'invalid_schedule',
+        'The schedule payload violates the calendar bounds or cadence rules.',
+      );
+    }
+    return candidate;
+  }
+
+  private async invokeScheduleTool(
+    binding: { channelId: string; roomId: string; workspaceId: string },
+    args: Record<string, unknown>,
+  ): Promise<DirectToolResult<unknown>> {
+    try {
+      this.assertToolArgKeys(args, ['operation', 'schedule_id', 'schedule']);
+      const rawOperation = this.stringToolArg(args, 'operation', { required: true, max: 32 });
+      if (!(BEELINE_SCHEDULE_OPERATIONS as readonly string[]).includes(rawOperation!)) {
+        throw new AgentToolKnownFailure('invalid_arguments', 'Unknown schedule operation.');
+      }
+      const operation = rawOperation as BeelineScheduleOperation;
+      const scheduleId = this.stringToolArg(args, 'schedule_id', { max: 256 });
+      if (operation !== 'list' && !scheduleId) {
+        throw new AgentToolKnownFailure(
+          'invalid_arguments',
+          'schedule_id is required for this operation.',
+        );
+      }
+      const suppliedConfig =
+        args.schedule === undefined ? undefined : this.scheduleConfigurationArg(args.schedule);
+      if ((operation === 'create' || operation === 'update') !== Boolean(suppliedConfig)) {
+        throw new AgentToolKnownFailure(
+          'invalid_arguments',
+          'schedule is required only for create and update.',
+        );
+      }
+      const action = `schedule.${operation}` as BeelineActionToken;
+      const roomRepo = this.agentToolRoomRepositories.get(binding.roomId);
+      const scope: BeelineActionScope = {
+        type: action as `schedule.${BeelineScheduleOperation}`,
+        workspaceId: binding.workspaceId,
+        roomId: binding.roomId,
+        ...(scheduleId ? { scheduleId } : {}),
+        ...(roomRepo
+          ? {
+              repositoryKey:
+                roomRepo.truth?.binding.key ?? roomRepo.repositoryKey ?? this.repoId(roomRepo),
+              targetRef: roomRepo.targetBranch ?? 'refs/heads/main',
+            }
+          : {}),
+      };
+      return await this.agentToolKernel.authorizeOrRequest<unknown>({
+        action,
+        scope,
+        dedupKey: this.agentToolDedupKey(
+          binding.channelId,
+          'schedule',
+          JSON.stringify({ operation, scheduleId, suppliedConfig }),
+        ),
+        readMandate: () => this.currentAgentToolMandate(binding.workspaceId, binding.roomId, scope),
+        execute: async (mandate) => {
+          const schedules = await this.agentToolSchedules(binding.workspaceId, binding.roomId);
+          const current = schedules.find((item) => item.value.scheduleId === scheduleId);
+          if (operation === 'list') {
+            return {
+              event_id: mandate.generation.event_id,
+              result: {
+                schedules: schedules.map((item) => ({
+                  event_id: item.event.id,
+                  schedule: item.value,
+                })),
+              },
+            };
+          }
+          if (operation === 'get') {
+            if (!current) {
+              throw new AgentToolKnownFailure('schedule_not_found', 'The schedule was not found.');
+            }
+            return { event_id: current.event.id, result: { schedule: current.value } };
+          }
+          if (operation === 'run_now') {
+            if (!current || current.value.status !== 'active') {
+              throw new AgentToolKnownFailure(
+                'schedule_not_runnable',
+                'The active schedule was not found.',
+              );
+            }
+            if (!this.runScheduleNow) {
+              throw new AgentToolKnownFailure(
+                'calendar_unavailable',
+                'The durable work calendar is unavailable.',
+                true,
+              );
+            }
+            const run = await this.runScheduleNow(current.value.scheduleId);
+            return {
+              event_id: run.eventId,
+              result: { schedule_id: current.value.scheduleId, run_id: run.runId },
+            };
+          }
+          let next: WorkScheduleV1;
+          if (operation === 'create') {
+            if (current) {
+              throw new AgentToolKnownFailure(
+                'schedule_exists',
+                'A schedule with this id already exists.',
+              );
+            }
+            next = this.workScheduleFromToolInput({
+              binding,
+              scheduleId: scheduleId!,
+              revision: 1,
+              config: suppliedConfig!,
+              mandate,
+            });
+          } else {
+            if (!current || current.value.status === 'cancelled') {
+              throw new AgentToolKnownFailure('schedule_not_found', 'The schedule was not found.');
+            }
+            if (operation === 'update') {
+              next = this.workScheduleFromToolInput({
+                binding,
+                scheduleId: scheduleId!,
+                revision: current.value.revision + 1,
+                config: suppliedConfig!,
+                mandate,
+              });
+            } else {
+              next = {
+                ...current.value,
+                revision: current.value.revision + 1,
+                status:
+                  operation === 'resume'
+                    ? 'active'
+                    : operation === 'cancel'
+                      ? 'cancelled'
+                      : 'paused',
+                agentToolMandate: {
+                  eventId: mandate.generation.event_id,
+                  defaultsVersion: BEELINE_MANDATE_DEFAULTS_VERSION,
+                },
+              };
+            }
+          }
+          const event = buildWorkSchedule(this.agentIdentity, next);
+          await publishEvent(event, this.agentIdentity);
+          const ids = new Set(await this.agentToolScheduleIds(binding.workspaceId));
+          ids.add(next.scheduleId);
+          await this.publishAgentToolScheduleIndex(binding.workspaceId, [...ids]);
+          return {
+            event_id: event.id,
+            result: {
+              schedule_id: next.scheduleId,
+              revision: next.revision,
+              status: next.status,
+            },
+          };
+        },
+        requestApproval: async () => {
+          throw new AgentToolKnownFailure(
+            'approval_unavailable',
+            'Schedule operations are default-granted and cannot create a second grant path.',
+          );
+        },
+      });
+    } catch (error) {
+      return this.agentToolFailure(error);
+    }
   }
 
   private async invokeOpenCornerTool(
@@ -4799,23 +5335,12 @@ export class Body {
       /** Corner turns only: hide readiness/approval claims from the live
        *  stream until the host has published an actual merge target. */
       withholdMergeClaims?: boolean;
-      /**
-       * Room turns only: watch the growing reply for the agent-initiated
-       * edit-corner request marker (`corner-request.ts`) and strip it from
-       * everything downstream — live draft and final text.
-       */
-      cornerRequests?: boolean;
       /** Calendar authority is re-read after background scheduler admission,
        * immediately before the ACP model invocation. */
       beforeModelActivation?: () => Promise<void>;
     },
     activeRoomTurn?: PendingRoomTurn,
-  ): Promise<
-    PromptResult & {
-      cornerRequest?: AgentCornerRequest;
-      withheldMergeClaim?: boolean;
-    }
-  > {
+  ): Promise<PromptResult & { withheldMergeClaim?: boolean }> {
     const draft = !turn.silent
       ? createDraftStreamer(
           turn.channelId,
@@ -4831,13 +5356,11 @@ export class Body {
           session.logicalSessionId ?? session.sessionId,
         )
       : undefined;
-    const cornerRequestFilter = turn.cornerRequests ? createCornerRequestFilter() : undefined;
     let withheldMergeClaim = false;
     const permissionTurn: ActivePermissionTurn = {
       requestId: turn.requestId,
       ...(turn.originalRequestId ? { originalRequestId: turn.originalRequestId } : {}),
       ...(turn.rootEventId ? { rootEventId: turn.rootEventId } : {}),
-      ...(turn.delegationId ? { delegationId: turn.delegationId } : {}),
     };
     let result: PromptResult;
     // Set only at the actual ACP invocation boundary. Scheduler/session
@@ -4885,9 +5408,7 @@ export class Body {
             this.activePermissionTurns.set(turn.channelId, permissionTurn);
             modelCallStartedAt = new Date().toISOString();
             const publishMessageDraft = (fullText: string) => {
-              const visible = cornerRequestFilter
-                ? cornerRequestFilter.onChunk(fullText)
-                : fullText;
+              const visible = fullText;
               const gateSafeVisible = turn.withholdMergeClaims
                 ? withoutPrematureMergeClaims(visible)
                 : visible;
@@ -4945,17 +5466,6 @@ export class Body {
         },
         turn.trigger === 'schedule' ? 'background' : undefined,
       );
-      // End-of-turn corner-request extraction: the final text may carry the
-      // marker even when no streaming callback ever fired (a harness that
-      // emits one whole message chunk, or none — `agentText` is still built).
-      if (cornerRequestFilter) {
-        const extraction = cornerRequestFilter.finalize(result.agentText);
-        result = { ...result, agentText: extraction.visibleText };
-        if (extraction.request) {
-          (result as PromptResult & { cornerRequest?: AgentCornerRequest }).cornerRequest =
-            extraction.request;
-        }
-      }
       // The backend turn is over. Persisting spend is bookkeeping only.
       await this.durableState
         .recordModelTurn(
@@ -4971,8 +5481,6 @@ export class Body {
               rootEventId: turn.rootEventId,
               principalPubkey: turn.principalPubkey,
               commissionedByAgentPubkey: turn.commissionedByAgentPubkey,
-              delegationId: turn.delegationId,
-              workItemId: turn.workItemId,
               scheduleId: turn.scheduleId,
               scheduleRunId: turn.scheduleRunId,
               reservedTokens: turn.reservedTokens,
@@ -5003,8 +5511,6 @@ export class Body {
                 rootEventId: turn.rootEventId,
                 principalPubkey: turn.principalPubkey,
                 commissionedByAgentPubkey: turn.commissionedByAgentPubkey,
-                delegationId: turn.delegationId,
-                workItemId: turn.workItemId,
                 scheduleId: turn.scheduleId,
                 scheduleRunId: turn.scheduleRunId,
                 reservedTokens: turn.reservedTokens,
@@ -5777,6 +6283,7 @@ export class Body {
     this.sessions.set(tlcChannelId, session);
     if (boundRepo) this.agentToolRoomRepositories.set(tlcChannelId, boundRepo);
 
+    const mandateGeneration = Date.now();
     const started = buildControlMessage(
       tlcChannelId,
       agentId,
@@ -5784,20 +6291,18 @@ export class Body {
       [
         ['session', session.logicalSessionId!],
         ['mode', 'readonly'],
-        ['mandate-generation', '1'],
-        ['mandate-defaults-version', '1'],
+        ['t', 'beeline-agent-mandate'],
+        ['mandate-generation', String(mandateGeneration)],
+        ['agent-tool-schema-version', String(BEELINE_AGENT_TOOL_SCHEMA_VERSION)],
+        ['mandate-defaults-version', String(BEELINE_MANDATE_DEFAULTS_VERSION)],
       ],
     );
     await publishEvent(started, this.agentIdentity);
     this.agentToolMandates.set(tlcChannelId, {
       schema_version: BEELINE_AGENT_TOOL_SCHEMA_VERSION,
-      generation: { event_id: started.id, generation: 1 },
+      generation: { event_id: started.id, generation: mandateGeneration },
       grants: [],
-      defaults: [
-        { action: 'corner.open', version: 1, effect: 'allow' },
-        { action: 'corner.close', version: 1, effect: 'approval_required' },
-        { action: 'artifact.deliver', version: 1, effect: 'allow' },
-      ],
+      defaults: BEELINE_MANDATE_DEFAULTS.map((entry) => ({ ...entry })),
       blockers: [],
     });
 
@@ -6292,25 +6797,6 @@ export class Body {
     return isAgentPresenceOnline(cache.byPubkey.get(agentPubkey));
   }
 
-  private async agentSupportsDelegationV1(
-    channelId: string,
-    agentPubkey: string,
-  ): Promise<boolean> {
-    const events = await this.agentRelay.queryEvents([
-      {
-        kinds: [KIND_AGENT_PRESENCE],
-        '#d': [agentPresenceKey(channelId)],
-        limit: 50,
-      },
-    ]);
-    return events.some(
-      (event) =>
-        tagValue(event, 'agent') === agentPubkey &&
-        tagValue(event, 'status') === 'online' &&
-        event.tags.some((tag) => tag[0] === 'capability' && tag[1] === 'delegation-v1'),
-    );
-  }
-
   private async validateAgentExchangeEnvelope(
     channelId: string,
     event: NostrEvent,
@@ -6419,7 +6905,7 @@ export class Body {
     );
   }
 
-  private async delegationRoster(channelId: string): Promise<{
+  private async agentMentionRoster(channelId: string): Promise<{
     roster: Array<{ handle: string; pubkey: string }>;
     attributions: ReadonlyMap<string, RoomAuthorAttribution>;
   }> {
@@ -6460,7 +6946,7 @@ export class Body {
     if (!/@[a-z0-9][a-z0-9._-]*/i.test(input.text)) return undefined;
     const workspaceId =
       input.workspaceId ?? (await this.channelCommunityId(input.roomId)) ?? input.roomId;
-    const { roster } = await this.delegationRoster(input.roomId);
+    const { roster } = await this.agentMentionRoster(input.roomId);
     const target = mentionedAgent(input.text, roster, this.agentIdentity.publicKey);
     if (!target) return undefined;
     const [roomMembers, workspaceMembers] = await Promise.all([
@@ -6687,304 +7173,6 @@ export class Body {
     });
   }
 
-  /**
-   * Convert only the narrow, line-leading factory grammar in a completed
-   * model turn into signed typed events. The visible model text remains inert
-   * unless it passes the shared parser and every relay-derived roster check.
-   */
-  private async publishRootFactoryDirectives(
-    channelId: string,
-    request: ChannelTaskRequest,
-    finalText: string,
-  ): Promise<void> {
-    // The parser can prove ordinary prose is inert without any relay-derived
-    // roster. Avoid turning every conversational answer into an authority
-    // lookup (and, more importantly, never let that unrelated read failure
-    // convert an already-published Room reply into a failed turn).
-    const preflight = parseDelegationDirectives(finalText, []);
-    if (preflight.directives.length === 0 && preflight.errors.length === 0) return;
-    const workspaceId = await this.channelCommunityId(channelId);
-    if (!workspaceId) return;
-    const { attributions } = await this.delegationRoster(channelId);
-    const immediateTurn = await this.durableState.reply(channelId, request.eventId);
-    const immediateTurnEventId = immediateTurn?.id ?? request.eventId;
-    const currentMembers = await listMembers(this.agentClientContext(), channelId);
-    const agentFlags = await Promise.all(
-      currentMembers.map((member) =>
-        isRegisteredAgentIdentity(member.pubkey, this.agentRelay).catch(() => true),
-      ),
-    );
-    const roster: RootFactoryRosterEntry[] = currentMembers.map((member, index) => {
-      const attribution = attributions.get(member.pubkey);
-      const isAgent = agentFlags[index] ?? true;
-      return {
-        handle: (
-          attribution?.handle ??
-          (isAgent
-            ? agentHandle(fallbackAgentName(member.pubkey), member.pubkey)
-            : personHandle(fallbackPersonName(member.pubkey), member.pubkey))
-        ).replace(/^@/, ''),
-        pubkey: member.pubkey,
-        kind: isAgent ? 'agent' : 'human',
-        ...(member.role ? { role: member.role } : {}),
-      };
-    });
-    const dispatched = await dispatchRootFactoryDirectives(
-      {
-        identity: this.agentIdentity,
-        publishTurn: (value) => this.delegationRuntime.publishTurn(value),
-        publishPermission: (event) => publishEvent(event, this.agentIdentity),
-        targetReady: async (roomId, pubkey) =>
-          (await this.isRoomAgentOnline(roomId, pubkey)) &&
-          (await this.agentSupportsDelegationV1(roomId, pubkey)),
-      },
-      {
-        roomId: channelId,
-        workspaceId,
-        principalPubkey: request.authorPubkey,
-        rootEventId: request.eventId,
-        immediateTurnEventId,
-        completedAt: immediateTurn?.created_at ?? Math.floor(Date.now() / 1_000),
-        finalText,
-        roster,
-      },
-    );
-    if (dispatched.errors) {
-      console.warn(
-        `[body] ignored ${dispatched.errors} invalid factory directive(s) in ${channelId}`,
-      );
-    }
-  }
-
-  /** Publish child assignments authored by a delegated turn, conserving its subtree budget. */
-  private async publishDelegationChildren(
-    turn: ParsedDelegationTurn,
-    finalText: string,
-  ): Promise<void> {
-    if (turn.value.phase === 'return' || turn.value.mission) return;
-    const { roster } = await this.delegationRoster(turn.value.roomId);
-    const parsed = parseDelegationDirectives(finalText, roster);
-    const directives = parsed.directives.filter(
-      (directive): directive is Extract<(typeof parsed.directives)[number], { kind: 'delegate' }> =>
-        directive.kind === 'delegate',
-    );
-    const remainingTurns = Math.max(0, turn.value.budget.maxAgentTurns - 2);
-    const requiredTurns = directives.length * 2;
-    if (requiredTurns > remainingTurns && directives.length > 0) {
-      const reply = await this.durableState.reply(turn.value.roomId, turn.event.id);
-      const requestedAt = reply?.created_at ?? Math.floor(Date.now() / 1_000);
-      const currentMembers = await listMembers(this.agentClientContext(), turn.value.roomId);
-      const agentFlags = await Promise.all(
-        currentMembers.map((member) =>
-          isRegisteredAgentIdentity(member.pubkey, this.agentRelay).catch(() => true),
-        ),
-      );
-      const eligibleHumans = currentMembers.flatMap((member, index) =>
-        !agentFlags[index] && (member.role === 'owner' || member.role === 'admin')
-          ? [member.pubkey]
-          : [],
-      );
-      if (eligibleHumans.length) {
-        await publishEvent(
-          buildDelegationEscalationPermission({
-            identity: this.agentIdentity,
-            turn,
-            immediateTurnEventId: reply?.id ?? turn.event.id,
-            requestedAt,
-            extraTurns: requiredTurns - remainingTurns,
-            extraReservedTokens: 0,
-            permittedAgentPubkeys: [
-              this.agentIdentity.publicKey,
-              ...directives.map((directive) => directive.targetPubkey),
-            ],
-            eligibleHumanPubkeys: eligibleHumans,
-          }),
-          this.agentIdentity,
-        );
-      }
-    }
-    const count = Math.min(directives.length, turn.value.budget.maxChildren, remainingTurns);
-    if (count === 0) return;
-    const baseTurns = Math.floor(remainingTurns / count);
-    let extraTurns = remainingTurns % count;
-    const baseTokens = Math.floor(turn.value.budget.reservedTokens / count);
-    let extraTokens = turn.value.budget.reservedTokens % count;
-    for (const directive of directives.slice(0, count)) {
-      if (
-        !(await this.isRoomAgentOnline(turn.value.roomId, directive.targetPubkey)) ||
-        !(await this.agentSupportsDelegationV1(turn.value.roomId, directive.targetPubkey))
-      ) {
-        continue;
-      }
-      const childTurns = baseTurns + (extraTurns-- > 0 ? 1 : 0);
-      const childTokens = baseTokens + (extraTokens-- > 0 ? 1 : 0);
-      await this.delegationRuntime.publishTurn({
-        version: 1,
-        delegationId: turn.value.delegationId,
-        workItemId: randomUUID(),
-        phase: 'assign',
-        roomId: turn.value.roomId,
-        workspaceId: turn.value.workspaceId,
-        fromAgentPubkey: this.agentIdentity.publicKey,
-        toAgentPubkey: directive.targetPubkey,
-        rootEventId: turn.value.rootEventId,
-        parentEventId: turn.event.id,
-        parentWorkItemId: turn.value.workItemId,
-        principalPubkey: turn.value.principalPubkey,
-        path: [...turn.value.path, this.agentIdentity.publicKey],
-        depth: turn.value.depth + 1,
-        budget: {
-          maxAgentTurns: childTurns,
-          maxDepth: turn.value.budget.maxDepth,
-          maxChildren: turn.value.budget.maxChildren,
-          reservedTokens: childTokens,
-          deadlineAt: turn.value.budget.deadlineAt,
-        },
-        task: directive.task,
-        createdAt: Math.floor(Date.now() / 1_000),
-      });
-    }
-  }
-
-  /**
-   * A typed delegation is an ordinary FIFO read-only Room turn with factory
-   * attribution. It never reuses the sender's tools, grants, or filesystem.
-   */
-  private async replyToDelegationTurn(
-    channelId: string,
-    boundRepo: BoundRepo | undefined,
-    editPolicy: RoomEditPolicy,
-    turn: ParsedDelegationTurn,
-    authorAttribution?: RoomAuthorAttribution,
-  ): Promise<void> {
-    const receiptSessionId =
-      this.sessions.get(channelId)?.logicalSessionId ??
-      `${this.agentIdentity.publicKey}:${channelId}`;
-    await postAgentTurnStatus(
-      channelId,
-      this.agentIdentity,
-      turn.event.id,
-      receiptSessionId,
-      'working',
-      this.presenceGenerations.get(channelId),
-    );
-    let session: AgentSession | undefined;
-    try {
-      session =
-        this.sessions.get(channelId) ?? (await this.provision(channelId, boundRepo, editPolicy));
-      if (session.mode !== 'readonly') {
-        throw new ReadOnlyToolsUnavailableError(
-          'read-only tools unavailable: refusing an edit session for delegation',
-        );
-      }
-      const current = attachmentPrompt(
-        turn.value.fromAgentPubkey,
-        turn.value.task,
-        [],
-        authorAttribution,
-      );
-      const prompt = [
-        'Host boundary: this is one admitted signed delegation work item.',
-        'Use only this agent’s own read-only Room tools, memory, and provider account.',
-        'Do not inherit or claim the sender’s tools, grants, filesystem, or authority.',
-        turn.value.mission
-          ? 'Repository mutation may only transition through the host-owned mission corner boundary.'
-          : 'Repository mutation still requires the ordinary human corner/permission boundary.',
-        '',
-        roomTurnPrompt(await this.agentHistory(channelId), current, turn.event.id),
-      ].join('\n');
-      const request: ChannelTaskRequest = {
-        eventId: turn.event.id,
-        authorPubkey: turn.value.fromAgentPubkey,
-        ...(authorAttribution ? { authorAttribution } : {}),
-        content: turn.value.task,
-        attachments: [],
-        createdAt: turn.value.createdAt,
-      };
-      const pendingTurn: PendingRoomTurn = {
-        request,
-        boundRepo,
-        editPolicy,
-        permissionHandled: false,
-        transitionedToCorner: false,
-        readOnlyInformationRequest: true,
-        ...(turn.value.mission && turn.value.phase === 'assign' ? { missionDelegation: turn } : {}),
-      };
-      const result = await this.promptAgent(
-        session,
-        prompt,
-        {
-          channelId,
-          requestId: turn.event.id,
-          originalRequestId: turn.value.rootEventId,
-          cause: 'delegation',
-          trigger: 'delegation',
-          rootEventId: turn.value.rootEventId,
-          principalPubkey: turn.value.principalPubkey,
-          commissionedByAgentPubkey: turn.value.fromAgentPubkey,
-          delegationId: turn.value.delegationId,
-          workItemId: turn.value.workItemId,
-          reservedTokens: turn.value.budget.reservedTokens,
-        },
-        pendingTurn,
-      );
-      const reply = await this.publishAgentResult(
-        channelId,
-        session,
-        result,
-        "I couldn't produce a response for this delegated work item.",
-        { replyTo: turn.event.id },
-      );
-      await this.publishDelegationChildren(turn, result.agentText);
-      if (turn.value.phase === 'assign' && turn.value.budget.maxAgentTurns > 1) {
-        const returnValue: DelegationTurnV1 = {
-          version: 1,
-          delegationId: turn.value.delegationId,
-          workItemId: randomUUID(),
-          phase: 'return',
-          roomId: turn.value.roomId,
-          workspaceId: turn.value.workspaceId,
-          fromAgentPubkey: this.agentIdentity.publicKey,
-          toAgentPubkey: turn.value.fromAgentPubkey,
-          rootEventId: turn.value.rootEventId,
-          parentEventId: turn.event.id,
-          parentWorkItemId: turn.value.workItemId,
-          principalPubkey: turn.value.principalPubkey,
-          path: [...turn.value.path, this.agentIdentity.publicKey],
-          depth: turn.value.depth + 1,
-          budget: {
-            ...turn.value.budget,
-            maxAgentTurns: 1,
-            maxChildren: 1,
-            reservedTokens: 0,
-          },
-          task: reply.slice(0, 1_200),
-          ...(turn.value.mission ? { mission: turn.value.mission } : {}),
-          createdAt: Math.floor(Date.now() / 1_000),
-        };
-        await this.delegationRuntime.publishTurn(returnValue);
-      }
-      await postAgentTurnStatus(
-        channelId,
-        this.agentIdentity,
-        turn.event.id,
-        session.logicalSessionId ?? session.sessionId,
-        'complete',
-        this.presenceGenerations.get(channelId),
-      );
-    } catch (error) {
-      await postAgentTurnStatus(
-        channelId,
-        this.agentIdentity,
-        turn.event.id,
-        receiptSessionId,
-        'failed',
-        this.presenceGenerations.get(channelId),
-      ).catch(() => undefined);
-      throw error;
-    }
-  }
-
   private async replyToAuthorizedAgentExchange(
     channelId: string,
     boundRepo: BoundRepo | undefined,
@@ -7155,7 +7343,7 @@ export class Body {
   }
 
   /**
-   * Current paired-owner access policy for delegated calls. A mobile config
+   * Current paired-owner access policy for agent-authored calls. A mobile config
    * can override the filesystem seed only when its newest replaceable record
    * is signed by the paired owner's current succession key. A malformed
    * current-owner record denies rather than falling back to a wider policy.
@@ -7203,192 +7391,6 @@ export class Body {
   }
 
   /** Relay-derived prior graph used for structural admission and replay checks. */
-  private async delegationGraph(
-    roomId: string,
-    delegationId: string,
-  ): Promise<{
-    turns: ParsedDelegationTurn[];
-    receipts: ParsedDelegationReceipt[];
-  }> {
-    const events = await this.agentRelay.queryEvents([
-      {
-        kinds: [9],
-        '#h': [roomId],
-        '#delegation': [delegationId],
-        limit: 1_000,
-      },
-    ]);
-    const turns = events.flatMap((event) => {
-      const parsed = parseDelegationTurn(event);
-      return parsed && parsed.value.roomId === roomId && parsed.value.delegationId === delegationId
-        ? [parsed]
-        : [];
-    });
-    const byId = new Map(turns.map((turn) => [turn.event.id, turn]));
-    const receipts = events.flatMap((event) => {
-      const parsed = parseDelegationReceipt(event);
-      if (!parsed || parsed.value.delegationId !== delegationId) return [];
-      const turn = byId.get(parsed.value.turnEventId);
-      if (
-        !turn ||
-        turn.value.workItemId !== parsed.value.workItemId ||
-        (parsed.value.status === 'queued'
-          ? event.pubkey !== turn.value.fromAgentPubkey
-          : event.pubkey !== turn.value.toAgentPubkey)
-      ) {
-        return [];
-      }
-      return [parsed];
-    });
-    return { turns, receipts };
-  }
-
-  /** Load and bind the immutable human root; a well-shaped id is not provenance. */
-  private async delegationRootAuthorized(turn: ParsedDelegationTurn): Promise<boolean> {
-    const events = await this.agentRelay.queryEvents([
-      { ids: [turn.value.rootEventId], kinds: [9], limit: 2 },
-    ]);
-    const root = events.find((event) => event.id === turn.value.rootEventId);
-    const roomTags = root?.tags.filter((tag) => tag[0] === 'h') ?? [];
-    if (
-      !root ||
-      !verifyEvent(root) ||
-      root.pubkey !== turn.value.principalPubkey ||
-      roomTags.length !== 1 ||
-      roomTags[0]?.[1] !== turn.value.roomId
-    ) {
-      return false;
-    }
-    if (turn.value.mission) {
-      const mission = turn.value.mission;
-      const verification = await verifyMissionActionAuthority({
-        reader: this.permissionReader,
-        reference: {
-          missionId: mission.missionId,
-          grantEventId: mission.grantEventId,
-          controllerAgentPubkey: mission.controllerAgentPubkey,
-        },
-        workspaceId: turn.value.workspaceId,
-        roomId: turn.value.roomId,
-        principalPubkey: turn.value.principalPubkey,
-        repository: mission.repository,
-        executorPubkey: this.agentIdentity.publicKey,
-        exercise: {
-          kind: 'schedule',
-          operation: 'fire',
-          scheduleId: mission.scheduleId,
-          revisionDigest: mission.scheduleRevisionDigest,
-          mode: mission.mode,
-          targetAgentPubkey: mission.targetAgentPubkey,
-          maxRuns: mission.maxRuns,
-          perRunReservedTokens: mission.perRunReservedTokens,
-          dailyReservedTokens: mission.dailyReservedTokens,
-          totalReservedTokens: mission.totalReservedTokens,
-          scriptRuntimeSeconds: mission.scriptRuntimeSeconds,
-        },
-        ordinal: missionActionOrdinal(`delegation-activation:${turn.event.id}`),
-        idempotencyKey: `mission-delegation-activation:${turn.event.id}`,
-        reservedTokens: mission.perRunReservedTokens,
-        now: Math.floor(Date.now() / 1_000),
-      });
-      return verification.authorized;
-    }
-    return !(await isRegisteredAgentIdentity(root.pubkey, this.agentRelay));
-  }
-
-  private async delegationEscalationAction(
-    turn: ParsedDelegationTurn,
-  ): Promise<PermissionConcreteAction | undefined> {
-    const grantEventId = turn.value.escalationGrantEventId;
-    if (!grantEventId) return undefined;
-    const grantEvent = await this.permissionReader.readEvent(grantEventId);
-    if (!grantEvent || grantEvent.content.length > 32_000) return undefined;
-    let requestEventId: string | undefined;
-    try {
-      const value = JSON.parse(grantEvent.content) as { requestEventId?: unknown };
-      if (typeof value.requestEventId === 'string' && /^[0-9a-f]{64}$/.test(value.requestEventId)) {
-        requestEventId = value.requestEventId;
-      }
-    } catch {
-      return undefined;
-    }
-    if (!requestEventId) return undefined;
-    const requestEvent = await this.permissionReader.readEvent(requestEventId);
-    const request = requestEvent ? parsePermissionRequest(requestEvent) : undefined;
-    const decision = request ? parsePermissionDecision(grantEvent, request) : undefined;
-    const scope = request?.value.scope;
-    const extraTurns = Math.max(
-      0,
-      turn.value.budget.maxAgentTurns - DEFAULT_DELEGATION_MAX_AGENT_TURNS,
-    );
-    if (
-      !request ||
-      !decision ||
-      decision.value.decision !== 'grant' ||
-      scope?.type !== 'delegation.escalate' ||
-      scope.delegationId !== turn.value.delegationId ||
-      scope.extraTurns < extraTurns ||
-      scope.extraReservedTokens < turn.value.budget.reservedTokens ||
-      !scope.permittedAgentPubkeys.includes(turn.value.fromAgentPubkey) ||
-      !scope.permittedAgentPubkeys.includes(turn.value.toAgentPubkey) ||
-      request.value.roomId !== turn.value.roomId ||
-      request.value.workspaceId !== turn.value.workspaceId
-    ) {
-      return undefined;
-    }
-    const actionId = permissionActionId(scope, request.event.id, 0);
-    return {
-      permissionId: request.value.permissionId,
-      requestEventId: request.event.id,
-      grantEventId,
-      ordinal: 0,
-      actionId,
-      idempotencyKey: `delegation-escalate:${turn.value.delegationId}`,
-      workspaceId: turn.value.workspaceId,
-      roomId: turn.value.roomId,
-      scope,
-      executor: 'body',
-      executorPubkey: this.agentIdentity.publicKey,
-      charge: {
-        uses: 1,
-        ...(scope.extraReservedTokens ? { reservedTokens: scope.extraReservedTokens } : {}),
-      },
-    };
-  }
-
-  private async delegationEscalationAuthorized(turn: ParsedDelegationTurn): Promise<boolean> {
-    if (!turn.value.escalationGrantEventId) return true;
-    const action = await this.delegationEscalationAction(turn);
-    if (!action) return false;
-    const verification = await verifyPermissionAction({
-      reader: this.permissionReader,
-      action,
-      now: Math.floor(Date.now() / 1_000),
-    });
-    return (
-      verification.authorized ||
-      (!verification.authorized && verification.reason === 'action-already-succeeded')
-    );
-  }
-
-  private async consumeDelegationEscalation(turn: ParsedDelegationTurn): Promise<boolean> {
-    if (!turn.value.escalationGrantEventId) return true;
-    const action = await this.delegationEscalationAction(turn);
-    if (!action) return false;
-    const result = await this.permissionRuntime.execute({
-      action,
-      attempt: 1,
-      invoke: async () => ({ result: turn.value.delegationId }),
-    });
-    if (result.status === 'succeeded' || result.status === 'duplicate') return true;
-    if (result.status === 'refused') {
-      if (result.reason === 'action-already-succeeded') return true;
-      if (!result.terminal) throw new Error(result.reason);
-    }
-    return false;
-  }
-
-  /** Owner display name for the auto-response template, resolved once and cached. */
   private async resolveAccessOwnerName(channelId: string): Promise<string> {
     if (this.accessOwnerName) return this.accessOwnerName;
     const ownerPubkey = this.config.accessOwnerPubkey;
@@ -7450,20 +7452,6 @@ export class Body {
         const reservedReply = await this.durableState.reply(tlcChannelId, event.id);
         if (reservedReply) {
           await publishEvent(reservedReply, this.agentIdentity);
-          if (!(await isRegisteredAgentIdentity(event.pubkey, this.agentRelay))) {
-            await this.publishRootFactoryDirectives(
-              tlcChannelId,
-              {
-                eventId: event.id,
-                authorPubkey: event.pubkey,
-                content: event.content.trim(),
-                attachments: parseAttachmentTags(event.tags),
-                createdAt: event.created_at,
-                replyRootId: replyRootIdForEvent(event),
-              },
-              reservedReply.content,
-            );
-          }
           this.processedRequestIds.add(event.id);
           await this.durableState.delivered(tlcChannelId, event.id);
           continue;
@@ -7481,7 +7469,6 @@ export class Body {
             TAG_PERMISSION_DECISION,
             TAG_PERMISSION_REVOCATION,
             TAG_PERMISSION_EXECUTION,
-            TAG_DELEGATION_RECEIPT,
           ].includes(typedControlMarker)
         ) {
           this.processedRequestIds.add(event.id);
@@ -7530,24 +7517,6 @@ export class Body {
             const mentionDispatch = await this.validateAgentMentionDispatch(tlcChannelId, event);
             if (mentionDispatch) {
               await this.replyToAgentMention(tlcChannelId, boundRepo, editPolicy, mentionDispatch);
-              this.processedRequestIds.add(event.id);
-              await this.durableState.delivered(tlcChannelId, event.id);
-              continue;
-            }
-            const delegation = parseDelegationTurn(event);
-            if (delegation) {
-              const outcome = await this.delegationRuntime.handleEvent(event, async (turn) => {
-                await this.replyToDelegationTurn(
-                  tlcChannelId,
-                  boundRepo,
-                  editPolicy,
-                  turn,
-                  authorAttribution,
-                );
-              });
-              if (outcome.status === 'deferred') {
-                throw new Error(`delegation admission deferred: ${outcome.reason}`);
-              }
               this.processedRequestIds.add(event.id);
               await this.durableState.delivered(tlcChannelId, event.id);
               continue;
@@ -7800,34 +7769,7 @@ export class Body {
     );
   }
 
-  /** A delegated target spends the same mission corner slice, never ambient sender authority. */
-  private async openDelegatedMissionCorner(
-    turn: ParsedDelegationTurn,
-    boundRepo: BoundRepo,
-    request: ChannelTaskRequest,
-  ): Promise<SubchannelInfo> {
-    const delegated = turn.value.mission;
-    if (!delegated || turn.value.phase !== 'assign') {
-      throw new ScheduleActivationRefusedError(true, 'mission-corner-boundary-missing');
-    }
-    return this.openMissionCorner(
-      {
-        missionId: delegated.missionId,
-        grantEventId: delegated.grantEventId,
-        controllerAgentPubkey: delegated.controllerAgentPubkey,
-        workspaceId: turn.value.workspaceId,
-        roomId: turn.value.roomId,
-        principalPubkey: turn.value.principalPubkey,
-        targetAgentPubkey: delegated.targetAgentPubkey,
-        repository: delegated.repository,
-      },
-      turn.value.roomId,
-      boundRepo,
-      request,
-      `${turn.event.id}:${request.eventId}`,
-    );
-  }
-
+  /** A mission target spends the exact mission corner slice, never ambient authority. */
   private async openMissionCorner(
     mission: MissionCornerAuthority,
     roomId: string,
@@ -8002,7 +7944,7 @@ export class Body {
               editPolicy,
             );
           } else {
-            await this.publishScheduledDelegation(scheduled, pointerTask, 'script');
+            throw new ScheduleActivationRefusedError(true, 'cross-agent-schedule-unsupported');
           }
         }
       } catch (error) {
@@ -8020,73 +7962,9 @@ export class Body {
       return;
     }
     if (scheduled.mission && scheduled.targetAgentPubkey !== this.agentIdentity.publicKey) {
-      await beforeModelActivation?.();
-      const execution = await this.beginMissionScheduleFire(scheduled);
-      let result = 'mission-delegation-attempted';
-      try {
-        await this.publishScheduledDelegation(scheduled, scheduled.prompt, 'model');
-        result = 'mission-delegation-published';
-      } finally {
-        await this.permissionRuntime.complete({ execution, status: 'succeeded', result });
-      }
-      return;
+      throw new ScheduleActivationRefusedError(true, 'cross-agent-schedule-unsupported');
     }
     await this.dispatchScheduledModelTurn(scheduled, boundRepo, editPolicy, beforeModelActivation);
-  }
-
-  private async publishScheduledDelegation(
-    scheduled: ScheduledTurnRequest,
-    task: string,
-    mode: 'script' | 'model',
-  ): Promise<void> {
-    if (!scheduled.mission || scheduled.targetAgentPubkey === this.agentIdentity.publicKey) {
-      throw new ScheduleActivationRefusedError(true, 'mission-delegation-target-invalid');
-    }
-    const createdAt = Math.floor(Date.now() / 1_000);
-    const budget = defaultDelegationBudget(createdAt, scheduled.reservedTokens);
-    const value: DelegationTurnV1 = {
-      version: 1,
-      delegationId: randomUUID(),
-      workItemId: randomUUID(),
-      phase: 'assign',
-      roomId: scheduled.roomId,
-      workspaceId: scheduled.workspaceId,
-      fromAgentPubkey: this.agentIdentity.publicKey,
-      toAgentPubkey: scheduled.targetAgentPubkey,
-      rootEventId: scheduled.mission.grantEventId,
-      parentEventId: scheduled.queuedEvent.id,
-      principalPubkey: scheduled.principalPubkey,
-      path: [this.agentIdentity.publicKey],
-      depth: 1,
-      budget: {
-        ...budget,
-        maxAgentTurns: 2,
-        maxDepth: 2,
-        maxChildren: 1,
-      },
-      task: task.slice(0, 1_200),
-      ...(scheduled.artifactRefs.length ? { artifactRefs: [...scheduled.artifactRefs] } : {}),
-      mission: {
-        missionId: scheduled.mission.missionId,
-        grantEventId: scheduled.mission.grantEventId,
-        controllerAgentPubkey: scheduled.mission.controllerAgentPubkey,
-        scheduleId: scheduled.scheduleId,
-        scheduleRevision: scheduled.scheduleRevision,
-        scheduleRevisionDigest: scheduled.scheduleRevisionDigest,
-        scheduleRunId: scheduled.scheduleRunId,
-        mode,
-        targetAgentPubkey: scheduled.targetAgentPubkey,
-        maxRuns: scheduled.maxRuns,
-        perRunReservedTokens: scheduled.reservedTokens,
-        dailyReservedTokens: scheduled.dailyReservedTokens,
-        totalReservedTokens: scheduled.maxRuns * scheduled.reservedTokens,
-        scriptRuntimeSeconds:
-          scheduled.execution.mode === 'script' ? scheduled.execution.timeoutSeconds : 1,
-        repository: scheduled.mission.repository,
-      },
-      createdAt,
-    };
-    await this.delegationRuntime.publishTurn(value);
   }
 
   private async beginMissionScheduleFire(
@@ -8202,9 +8080,7 @@ export class Body {
       editPolicy === 'repository' &&
       !explicitCornerWork &&
       !scheduled &&
-      !targetBranchChangeIntent(request.content)
-        ? releaseRoomIntent(request.content)
-        : undefined;
+      releaseRoomIntent(request.content);
     const informationOnly =
       scheduled !== undefined ||
       agentExchange !== undefined ||
@@ -8257,19 +8133,6 @@ export class Body {
         cause: 'corner-opening',
       });
       return { openedCorner: true, producedReply: true };
-    }
-
-    // "land to staging from now on" is a Room CONFIG change, not work and not
-    // a repository mutation this agent may perform. It is answered with a
-    // typed proposal card the Room owner confirms in the app; the agent never
-    // authors the Room→repository binding. Checked ahead of the mutation
-    // escalation below because its verbs ("land", "make") are mutation verbs.
-    if (boundRepo && editPolicy === 'repository' && !informationOnly) {
-      const targetChange = targetBranchChangeIntent(request.content);
-      if (targetChange) {
-        await this.proposeTargetBranchChange(tlcChannelId, boundRepo, request, targetChange.branch);
-        return { openedCorner: false, producedReply: true };
-      }
     }
 
     // "yes" to a release this agent offered to cut. The proposal, not this
@@ -8438,13 +8301,6 @@ export class Body {
                 'Host boundary: this is an information-only request.',
                 'Inspect with the read-only repository tools and answer conversationally in this Room.',
                 'Do not attempt editing, execute a native shell, open a corner yourself, or change repository state.',
-                ...(usesTextCornerRequestFallback(
-                  this.config.agentCommand ?? this.config.agentBinary,
-                )
-                  ? [
-                      'If inspection reveals a concrete follow-up edit, you may open its corner using the documented pi-acp CORNER_REQUEST one-step fallback.',
-                    ]
-                  : []),
                 '',
                 sharedPrompt,
               ].join('\n')
@@ -8480,11 +8336,6 @@ export class Body {
               ...(beforeModelActivation ? { beforeModelActivation } : {}),
             }
           : {}),
-        cornerRequests:
-          !scheduled &&
-          editPolicy !== 'direct-message' &&
-          boundRepo !== undefined &&
-          usesTextCornerRequestFallback(this.config.agentCommand ?? this.config.agentBinary),
       } as const;
       let result = await this.promptAgent(session, prompt, promptOptions, turn);
       // Some ACP adapters occasionally finish a turn successfully without
@@ -8497,7 +8348,6 @@ export class Body {
         !result.agentText.trim() &&
         result.updates.length === 0 &&
         result.toolCalls.length === 0 &&
-        !result.cornerRequest &&
         !scheduled
       ) {
         result = await this.promptAgent(
@@ -8573,7 +8423,11 @@ export class Body {
         );
         return { openedCorner: true, producedReply: true };
       }
-      if (!scheduled && !agentExchange) {
+      if (
+        !scheduled &&
+        !agentExchange &&
+        usesTextTargetBranchFallback(this.config.agentCommand ?? this.config.agentBinary)
+      ) {
         const proposedBranch = targetBranchProposalFromAgentText(result.agentText);
         if (proposedBranch) {
           await this.handleTargetBranchProposalMarker(tlcChannelId, turn, proposedBranch);
@@ -8625,7 +8479,7 @@ export class Body {
       const rawText = result.agentText.trim();
       const substantiveText = rawText && !isPureRetryNarration(rawText) ? rawText : '';
       const turnHadActivity = result.updates.length > 0;
-      const hasAnswer = Boolean(substantiveText) || !!result.cornerRequest;
+      const hasAnswer = Boolean(substantiveText);
       if (
         !hasAnswer &&
         !turn.permissionHandled &&
@@ -8667,11 +8521,9 @@ export class Body {
         ? turn.transitionedToCorner
           ? 'The in-Room mutation was refused; implementation continues only in the isolated corner.'
           : 'The in-Room mutation was refused, and the host could not open its edit corner. No implementation work started.'
-        : result.cornerRequest
-          ? 'I found a concrete change worth making and initiated its isolated edit corner.'
-          : agentExchange
-            ? "I don't have a grounded opening message, so I can't start the live exchange."
-            : "I couldn't produce a response to that message; please try again.";
+        : agentExchange
+          ? "I don't have a grounded opening message, so I can't start the live exchange."
+          : "I couldn't produce a response to that message; please try again.";
       const reply = await this.publishAgentResult(tlcChannelId, session, result, fallback, {
         replyTo: request.eventId,
         replyRootId: request.replyRootId,
@@ -8680,25 +8532,6 @@ export class Body {
           : undefined,
       });
       if (!reply) throw new Error('agent returned an empty Room reply');
-      if (!agentExchange && !scheduled) {
-        // This is the sole prose-to-authority bridge: it sees the completed
-        // signed reply, applies the narrow parser, and emits typed events.
-        // Publication failure is part of this delivery attempt; the durable
-        // Room reply prevents a later retry from invoking the model again.
-        await this.publishRootFactoryDirectives(tlcChannelId, request, result.agentText);
-      }
-      // A pi-acp agent opened an edit corner through its text-only fallback.
-      // Permission-capable harnesses reach the native handler above and are
-      // never parsed for this marker. Fire-and-forget so the Room reply does
-      // not wait for worktree/session provisioning.
-      if (!scheduled && result.cornerRequest && boundRepo && editPolicy === 'repository') {
-        void this.handleAgentCornerRequest(
-          tlcChannelId,
-          boundRepo,
-          request,
-          result.cornerRequest.task,
-        ).catch((error) => console.error('[body] agent-initiated corner request failed:', error));
-      }
       // From this point a retry must replay the persisted event, never prompt
       // the model again. Lifecycle cosmetics cannot reopen the inbox item.
       this.processedRequestIds.add(request.eventId);
@@ -8839,23 +8672,7 @@ export class Body {
     }
   }
 
-  /**
-   * Answer the agent's `/change-target-branch --branch <name>` marker.
-   *
-   * This exists because the daemon's own recognizer
-   * (`targetBranchChangeIntent`) is a fixed set of phrasings and natural
-   * language is not: the confirmed live miss was "from now on land changes to
-   * a branch called staging instead of master", which read as ordinary chat
-   * and got a conversational answer claiming the change was held in memory.
-   * The recognizer covers that shape now; this marker is the general escape
-   * hatch for the ones it will never cover, and it is the ONLY thing the Room
-   * system prompt tells the agent to do about a landing-target change.
-   *
-   * It grants the agent no authority it did not already lack: the card is a
-   * proposal, the Room owner's own key signs the binding, and one card per turn
-   * is the cap. A Room with no repository has nothing to repoint, so it is a
-   * plain read-only denial there.
-   */
+  /** Publish the owner-confirmed target-branch proposal for one typed callback. */
   private async handleTargetBranchProposalMarker(
     tlcChannelId: string,
     turn: PendingRoomTurn | undefined,
@@ -8953,43 +8770,6 @@ export class Body {
       await this.noteRoomReadOnlyDenial(tlcChannelId, permission);
     }
     if (!turn || turn.permissionHandled || !isMutatingPermissionRequest(permission)) {
-      return 'reject';
-    }
-    // A mission assignment arriving over DelegationTurnV1 has no ambient edit
-    // authority. The host may spend only the exact target's freshly verified
-    // corner allocation, and the concrete Room tool invocation never runs.
-    if (turn.missionDelegation) {
-      const delegation = turn.missionDelegation;
-      if (
-        delegation.value.phase !== 'assign' ||
-        !delegation.value.mission ||
-        !turn.boundRepo ||
-        delegation.value.toAgentPubkey !== this.agentIdentity.publicKey ||
-        delegation.value.mission.targetAgentPubkey !== this.agentIdentity.publicKey
-      ) {
-        return 'reject';
-      }
-      turn.permissionHandled = true;
-      try {
-        const info = await this.openDelegatedMissionCorner(
-          delegation,
-          turn.boundRepo,
-          turn.request,
-        );
-        turn.transitionedToCorner = true;
-        this.startAgentTask(
-          info,
-          turn.request.content,
-          cornerOpenTaskPrompt(info.taskDescription, turn.request.content),
-          {
-            requestId: turn.request.eventId,
-            originalRequestId: delegation.value.rootEventId,
-            cause: 'corner-opening',
-          },
-        );
-      } catch (error) {
-        console.error('[body] delegated mission corner open refused:', error);
-      }
       return 'reject';
     }
     // A schedule Room turn never receives native shell/write authority. A
@@ -9404,7 +9184,6 @@ export class Body {
       provenance: {
         immediateTurnEventId,
         rootEventId,
-        ...(turn.delegationId ? { delegationId: turn.delegationId } : {}),
       },
       requestedAt: now,
       requestExpiresAt: now + 10 * 60,
@@ -9641,30 +9420,6 @@ export class Body {
       ['status', status],
       ...(subchannelId ? [['subchannel', subchannelId]] : []),
     ]);
-  }
-
-  /** pi-acp's text-only one-step corner-open compatibility path. */
-  private async handleAgentCornerRequest(
-    tlcChannelId: string,
-    boundRepo: BoundRepo,
-    request: ChannelTaskRequest,
-    task: string,
-  ): Promise<void> {
-    if (this.agentCornerRequestsInFlight.has(tlcChannelId)) return;
-    this.agentCornerRequestsInFlight.add(tlcChannelId);
-    try {
-      const cornerRequest = { ...request, content: task };
-      const info = await this.openSubchannel(tlcChannelId, boundRepo, task, cornerRequest, {
-        objective: task,
-      });
-      this.startAgentTask(info, task, cornerOpenTaskPrompt(info.taskDescription, task), {
-        requestId: request.eventId,
-        originalRequestId: request.eventId,
-        cause: 'corner-opening',
-      });
-    } finally {
-      this.agentCornerRequestsInFlight.delete(tlcChannelId);
-    }
   }
 
   /**
@@ -14709,29 +14464,10 @@ export class Body {
   }
 
   /**
-   * Answer a "land to staging from now on" ask with a typed proposal card.
-   *
-   * The agent proposes; it never authors the binding. The card carries the
-   * exact from/to pair and the requester, and the Room owner confirms it in the
-   * app, which republishes the Room→repository event under the owner's own key
-   * (`setRoomTargetBranch`). Returns false when nothing needed proposing.
-   */
-  private async proposeTargetBranchChange(
-    tlcChannelId: string,
-    boundRepo: BoundRepo,
-    request: ChannelTaskRequest,
-    branch: string,
-  ): Promise<boolean> {
-    return this.publishTargetBranchProposal(tlcChannelId, boundRepo, request, branch);
-  }
-
-  /**
    * Publish the proposal card itself.
    *
-   * Split from the caller above because it is reached two ways — the daemon
-   * recognizing the ask in the Room message, and the agent attempting
-   * `TARGET_BRANCH_PROPOSAL_COMMAND` mid-turn — and only the first of those
-   * owns appending the person's message to the durable conversation.
+   * Reached from the typed permission-channel command or pi-acp's bounded text
+   * fallback. Human prose never creates configuration state.
    */
   private async publishTargetBranchProposal(
     tlcChannelId: string,

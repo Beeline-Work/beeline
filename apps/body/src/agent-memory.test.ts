@@ -323,7 +323,7 @@ lines.on('line', (line) => {
     const hasContract =
       prompt.includes('assigns, changes, or revokes a standing role or directive') &&
       prompt.includes('replace or delete superseded notes') &&
-      prompt.includes('open the edit corner yourself in one step');
+      prompt.includes('call the mounted open_corner tool with the concrete objective');
     if (!hasContract) {
       answer(message.id, 'The durable-memory and corner-routing contract was missing.');
       return;

@@ -9,10 +9,13 @@ import type { BodyConfig } from './config.js';
 import { applyAgentModelSelection, parseAdvertisedConfigOptions } from './model-config.js';
 import { piMcpDirectToolSelection, preparePiMcpSession } from './pi-mcp-session.js';
 
-// The systemd unit's start deadline is 90s. Initialize + session/new each get
-// 10s and the real turn gets 45s, preserving more than 20s for home/sandbox
-// setup and teardown before the service manager could kill the successor.
+// The systemd unit's start deadline is 90s. Initialize gets 10s, session/new
+// gets 20s, and the real turn gets 45s, preserving 15s for home/sandbox setup
+// and teardown before the service manager could kill the successor. Pi cold
+// loads its release-owned extension during session/new; keep that compilation
+// off the faster protocol-initialize deadline.
 export const UPDATE_PROBE_SESSION_TIMEOUT_MS = 10_000;
+export const UPDATE_PROBE_SESSION_OPEN_TIMEOUT_MS = 20_000;
 export const UPDATE_PROBE_TURN_TIMEOUT_MS = 45_000;
 
 export type UpdateFunctionalProbeFailure =
@@ -54,7 +57,10 @@ export async function runUpdateFunctionalProbe(input: {
   releaseId: string;
   /** `sandbox: off` is the sole supported reason for an unwrapped probe. */
   sandboxRequired: boolean;
+  /** Protocol initialize timeout. Also controls session/new when explicitly set alone. */
   sessionTimeoutMs?: number;
+  /** Test seam for the separate cold session/new budget. */
+  sessionOpenTimeoutMs?: number;
   turnTimeoutMs?: number;
   /** Test seam; production always resolves the proxy owned by the running bundle. */
   proxyEntrypoint?: string;
@@ -86,7 +92,7 @@ export async function runUpdateFunctionalProbe(input: {
       invoke: async (tool) => {
         calls.push(tool);
         return {
-          schema_version: 1,
+          schema_version: 2,
           generation: { event_id: '0'.repeat(64), generation: 1 },
           grants: [],
           defaults: [],
@@ -146,6 +152,8 @@ export async function runUpdateFunctionalProbe(input: {
       autoApprovePermissions: true,
     });
     const sessionTimeoutMs = input.sessionTimeoutMs ?? UPDATE_PROBE_SESSION_TIMEOUT_MS;
+    const sessionOpenTimeoutMs =
+      input.sessionOpenTimeoutMs ?? input.sessionTimeoutMs ?? UPDATE_PROBE_SESSION_OPEN_TIMEOUT_MS;
     try {
       await client.start(sessionTimeoutMs);
       const opened = await client.sessionNew({
@@ -154,7 +162,7 @@ export async function runUpdateFunctionalProbe(input: {
         systemPrompt:
           'This is Beeline update validation. Call read_mandate once, then answer only READY.',
         mode: 'readonly',
-        timeoutMs: sessionTimeoutMs,
+        timeoutMs: sessionOpenTimeoutMs,
       });
       if (input.config.modelSelection) {
         await applyAgentModelSelection(

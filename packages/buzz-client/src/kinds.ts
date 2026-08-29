@@ -107,9 +107,6 @@ export const TAG_PERMISSION_DECISION = 'buzz-permission-decision';
 export const TAG_PERMISSION_REVOCATION = 'buzz-permission-revocation';
 export const TAG_PERMISSION_EXECUTION = 'buzz-permission-execution';
 
-/** P1 bounded agent-to-agent turn and receipt families. */
-export const TAG_DELEGATION_TURN = 'buzz-delegation-turn';
-export const TAG_DELEGATION_RECEIPT = 'buzz-delegation-receipt';
 export const TAG_AGENT_ACCESS_CONFIG = 'buzz-agent-access-config';
 
 /** App-convention parent-channel linkage tag on child (sub)channels. */

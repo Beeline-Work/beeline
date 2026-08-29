@@ -155,7 +155,6 @@ import {
 import { ROOM_READ_ONLY_STEER } from './session-sandbox.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import { SessionScheduler } from './session-scheduler.js';
-import { createCornerRequestFilter, extractCornerRequest } from './corner-request.js';
 import { GROK_WARM_SESSION_IDLE_MS } from './harness-capabilities.js';
 import { ModelSelectionUnavailableError } from './model-config.js';
 
@@ -651,6 +650,86 @@ describe('agent identity boundary', () => {
       }
     });
 
+    it('refreshes a warm session persona on the next turn after a soul is saved', async () => {
+      // Pins the fix for a saved soul edit not reaching a warm session: the
+      // daemon used to apply persona only at session ACTIVATION
+      // (createManagedSession's activate()), so an already-live session kept
+      // serving the persona it started with indefinitely. This exercises the
+      // fix end to end: refreshPersonaForSoulUpdate() suspends the idle
+      // session so the NEXT turn goes through activate() again and picks up
+      // the newly saved soul, never touching the FIRST (still in-flight) turn.
+      const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
+      try {
+        const body = new Body(
+          {
+            ...config,
+            agentCommand: '/usr/local/bin/codex-acp',
+            workspaceRoot: '/tmp/beeline-persona-soul-refresh',
+          },
+          newIdentity('soul-refresh-operator'),
+          newIdentity('soul-refresh-agent'),
+          undefined,
+          { scheduler },
+        );
+        const durable = (
+          body as unknown as {
+            durableState: Record<string, ReturnType<typeof vi.fn> & (() => Promise<undefined>)>;
+          }
+        ).durableState;
+        vi.spyOn(durable as never, 'recordModelTurn' as never).mockResolvedValue(
+          undefined as never,
+        );
+        const sessionPrompt = vi.fn().mockResolvedValue({ agentText: 'ok', updates: [] });
+        const souls = [
+          'Soul: Steady, practical, and ready to help this Workspace.',
+          'Soul: Japanese cosplay girl personality, bubbly and playful.',
+        ];
+        let activations = 0;
+        const session = {
+          channelId: 'soul-refresh-room',
+          sessionId: 'soul-refresh-session-1',
+          mode: 'readonly' as const,
+          client: { sessionPrompt, sessionCancel: vi.fn() },
+          lifecycle: {
+            // Models real activation: `createManagedSession`'s activate()
+            // resolves the CURRENT soul from the relay every time it runs,
+            // never only once at first start.
+            activate: vi.fn().mockImplementation(async () => {
+              session.personaTurnPrefix = souls[activations] ?? souls[souls.length - 1];
+              activations += 1;
+              return 'soul-refresh-session-1';
+            }),
+            suspend: vi.fn().mockResolvedValue(undefined),
+          },
+        } as never;
+        body.registerSession(session);
+
+        await Reflect.get(body, 'promptAgent').call(body, session, 'first question', {
+          channelId: 'soul-refresh-room',
+          requestId: 'soul-refresh-request-1',
+          originalRequestId: 'soul-refresh-request-1',
+          cause: 'room-message',
+        });
+        expect(sessionPrompt.mock.calls[0]![1]).toContain(souls[0]);
+
+        // The soul is saved here, while the session is still warm/live.
+        await body.refreshPersonaForSoulUpdate();
+
+        await Reflect.get(body, 'promptAgent').call(body, session, 'second question', {
+          channelId: 'soul-refresh-room',
+          requestId: 'soul-refresh-request-2',
+          originalRequestId: 'soul-refresh-request-2',
+          cause: 'room-message',
+        });
+
+        expect(session.lifecycle.activate).toHaveBeenCalledTimes(2);
+        expect(sessionPrompt.mock.calls[1]![1]).toContain(souls[1]);
+        expect(sessionPrompt.mock.calls[1]![1]).not.toContain(souls[0]);
+      } finally {
+        await scheduler.dispose();
+      }
+    });
+
     it.each([
       {
         directive: 'Stop the launch pack. Explain what Ethereum is instead.',
@@ -774,7 +853,7 @@ describe('agent identity boundary', () => {
       },
     );
 
-    it('delivers the exact pi corner marker contract in turn content', async () => {
+    it('delivers the direct open_corner contract to pi turn content', async () => {
       const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
       try {
         const body = new Body(
@@ -838,9 +917,10 @@ describe('agent identity boundary', () => {
         );
 
         const wirePrompt = sessionPrompt.mock.calls[0]![1] as string;
-        expect(wirePrompt).toContain('CORNER_REQUEST: <one-sentence task objective>');
+        expect(wirePrompt).toContain('mounted open_corner tool');
+        expect(wirePrompt).not.toContain('CORNER_REQUEST:');
         expect(wirePrompt).toContain('Please change README.md.');
-        expect(wirePrompt.indexOf('CORNER_REQUEST:')).toBeLessThan(
+        expect(wirePrompt.indexOf('mounted open_corner tool')).toBeLessThan(
           wirePrompt.indexOf('Please change README.md.'),
         );
       } finally {
@@ -2187,9 +2267,7 @@ describe('agent identity boundary', () => {
     const relayRequest = vi.fn();
     vi.stubGlobal('fetch', relayRequest);
 
-    await expect(body.provision('new-room')).rejects.toBeInstanceOf(
-      ReadOnlyToolsUnavailableError,
-    );
+    await expect(body.provision('new-room')).rejects.toBeInstanceOf(ReadOnlyToolsUnavailableError);
 
     expect(relayRequest).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
@@ -3751,53 +3829,13 @@ describe('Room conversation and permission-gated work intent', () => {
     );
   }
 
-  it('documents native corner requests for capable harnesses and the text fallback only for pi', () => {
-    for (const harness of ['codex-acp', 'claude-agent-acp']) {
+  it('documents the mounted open_corner tool for every harness', () => {
+    for (const harness of ['codex-acp', 'claude-agent-acp', 'pi-acp']) {
       const instructions = roomEditPolicyInstructions('repository', harness).join('\n');
-      expect(instructions).toContain('session/request_permission');
-      expect(instructions).toMatch(/open the edit corner yourself in one step/i);
-      expect(instructions).toMatch(/do not merely tell the human/i);
+      expect(instructions).toContain('mounted open_corner tool');
       expect(instructions).toMatch(/needs no human approval/i);
       expect(instructions).not.toContain('CORNER_REQUEST');
     }
-
-    const piInstructions = roomEditPolicyInstructions('repository', 'pi-acp').join('\n');
-    expect(piInstructions).toContain('CORNER_REQUEST: <one-sentence task objective>');
-    expect(piInstructions).toMatch(/no human approval is needed/i);
-    expect(piInstructions).toMatch(/never describe the corner as open/i);
-    expect(piInstructions).not.toContain('/CORNER_REQUEST');
-  });
-
-  it('extracts and stream-hides an agent corner request control line', () => {
-    const text = [
-      'The retry loop can lose the final event. I recommend a small state fix.',
-      'CORNER_REQUEST: Fix the retry loop so it preserves the final event',
-    ].join('\n');
-    expect(extractCornerRequest(text)).toEqual({
-      visibleText: 'The retry loop can lose the final event. I recommend a small state fix.',
-      request: { task: 'Fix the retry loop so it preserves the final event' },
-    });
-
-    const filter = createCornerRequestFilter();
-    expect(filter.onChunk('Diagnosis complete.\nCORNER_REQU')).toBe('Diagnosis complete.\n');
-    expect(filter.onChunk(text)).toBe(
-      'The retry loop can lose the final event. I recommend a small state fix.',
-    );
-    expect(filter.onChunk(`${text}\nCORNER_REQUEST: A second task`)).toBe(
-      'The retry loop can lose the final event. I recommend a small state fix.',
-    );
-    expect(filter.finalize(`${text}\nCORNER_REQUEST: A second task`)).toEqual({
-      visibleText: 'The retry loop can lose the final event. I recommend a small state fix.',
-      request: { task: 'Fix the retry loop so it preserves the final event' },
-    });
-
-    const tokenBoundaryFilter = createCornerRequestFilter();
-    expect(tokenBoundaryFilter.onChunk('Diagnosis complete.\nCORNER_REQUEST:')).toBe(
-      'Diagnosis complete.',
-    );
-    expect(
-      tokenBoundaryFilter.onChunk('Diagnosis complete.\nCORNER_REQUEST: Fix the retry loop'),
-    ).toBe('Diagnosis complete.');
   });
 
   it('replies to an @-addressed ordinary message without authorizing work', () => {
@@ -4000,11 +4038,7 @@ describe('Room conversation and permission-gated work intent', () => {
       humanRequest.id,
     );
     // "@ox u back?" — a p tag for the OTHER agent, unthreaded to A's answer.
-    const taggedSwitch = requestEvent(
-      [['p', otherAgent.publicKey]],
-      human,
-      `@other-agent u back?`,
-    );
+    const taggedSwitch = requestEvent([['p', otherAgent.publicKey]], human, `@other-agent u back?`);
     taggedSwitch.created_at = 4;
     const current = message(taggedSwitch.id, human, 'human', 4);
 
@@ -4019,13 +4053,7 @@ describe('Room conversation and permission-gated work intent', () => {
     ).toBe(false);
 
     // Agent B is tagged directly and must respond.
-    expect(
-      isChannelAddressedMessage(
-        taggedSwitch,
-        otherAgent.publicKey,
-        participants,
-      ),
-    ).toBe(true);
+    expect(isChannelAddressedMessage(taggedSwitch, otherAgent.publicKey, participants)).toBe(true);
 
     // The same continuation still works when the message tags nobody.
     const untaggedFollowup = requestEvent([], human, 'What about the second part?');
@@ -4579,196 +4607,6 @@ describe('Room conversation and permission-gated work intent', () => {
     ).rejects.toThrow('adapter could not start');
 
     expect(order).toEqual(['receipt:working', 'spawn', 'receipt:failed']);
-  });
-
-  it('accepts a pi-acp text-only corner request without any permission callback', async () => {
-    const body = new Body({
-      agentBinary: '/nonexistent',
-      agentCommand: 'pi-acp',
-      mcpBinary: '/nonexistent',
-      agentEnv: {},
-      workspaceRoot: mkdtempSync(join(tmpdir(), 'buzzy-pi-corner-request-unit-')),
-      relayBaseUrl: 'http://relay.test',
-      relayHost: 'relay.test',
-      relayScheme: 'http',
-      relayWsUrl: 'ws://relay.test',
-      autoApprovePermissions: true,
-    });
-    stubEmptyAgentHistory(body);
-    const client = new AcpClient({ agentCommand: 'pi-acp', agentEnv: {} });
-    vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
-      stopReason: 'end_turn',
-      updates: [],
-      agentText:
-        'I found a bounded retry bug worth fixing.\nCORNER_REQUEST: Preserve the final event in the retry loop',
-      toolCalls: [],
-    });
-    body.registerSession({
-      channelId: 'parent-channel',
-      sessionId: 'pi-readonly-session',
-      client,
-      mode: 'readonly',
-    });
-    const requestCorner = vi
-      .spyOn(body as never, 'handleAgentCornerRequest' as never)
-      .mockResolvedValue(undefined as never);
-    const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
-
-    await Reflect.get(body, 'replyInRoom').call(
-      body,
-      'parent-channel',
-      { repo: 'repo' },
-      {
-        eventId: 'pi-diagnosis',
-        authorPubkey: human.publicKey,
-        content: 'Diagnose why the retry loop loses its last event.',
-        createdAt: 1,
-      },
-    );
-
-    expect(requestCorner).toHaveBeenCalledWith(
-      'parent-channel',
-      { repo: 'repo' },
-      expect.objectContaining({ eventId: 'pi-diagnosis' }),
-      'Preserve the final event in the retry loop',
-    );
-    const reply = published.find((event) =>
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
-    );
-    expect(reply?.content).toBe('I found a bounded retry bug worth fixing.');
-    expect(published.every((event) => !event.content.includes('CORNER_REQUEST'))).toBe(true);
-  });
-
-  it('opens an agent-requested corner directly and starts only after successful creation', async () => {
-    const body = new Body({
-      agentBinary: '/nonexistent',
-      mcpBinary: '/nonexistent',
-      agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-agent-corner-approval-unit',
-      relayBaseUrl: 'http://relay.test',
-      relayHost: 'relay.test',
-      relayScheme: 'http',
-      relayWsUrl: 'ws://relay.test',
-      autoApprovePermissions: true,
-    });
-    stubEmptyAgentHistory(body);
-    const request = {
-      eventId: 'agent-corner-request',
-      authorPubkey: human.publicKey,
-      content: 'Diagnose the retry issue.',
-      createdAt: 1,
-    };
-    const task = 'Preserve the final event in the retry loop';
-    const wait = vi.spyOn(body as never, 'waitForWritePermissionDecision' as never);
-    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
-    const info = {
-      subchannelId: 'agent-corner-id',
-      worktreePath: '/tmp/agent-corner-worktree',
-      featureBranch: 'feature/agent-corner',
-      role: body.agent,
-      taskDescription: task,
-      session: {
-        channelId: 'agent-corner-id',
-        sessionId: 'edit-session',
-        client: editClient,
-        mode: 'edit' as const,
-      },
-      lastPolledAt: 1,
-      archived: false,
-    };
-    let finishCreation!: (value: typeof info) => void;
-    const creation = new Promise<typeof info>((resolve) => {
-      finishCreation = resolve;
-    });
-    const open = vi.spyOn(body, 'openSubchannel').mockReturnValue(creation);
-    const start = vi
-      .spyOn(body as never, 'startAgentTask' as never)
-      .mockImplementation(() => undefined as never);
-    const handling = Reflect.get(body, 'handleAgentCornerRequest').call(
-      body,
-      'parent-channel',
-      { repo: 'repo' },
-      request,
-      task,
-    ) as Promise<void>;
-    await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
-
-    expect(wait).not.toHaveBeenCalled();
-    expect(start).not.toHaveBeenCalled();
-
-    finishCreation(info);
-    await handling;
-
-    expect(open).toHaveBeenCalledWith(
-      'parent-channel',
-      { repo: 'repo' },
-      task,
-      { ...request, content: task },
-      { objective: task },
-    );
-    expect(start).toHaveBeenCalledWith(
-      info,
-      task,
-      expect.stringContaining(task),
-      expect.objectContaining({ cause: 'corner-opening' }),
-    );
-    expect(wait).not.toHaveBeenCalled();
-  });
-
-  it('deduplicates concurrent agent-requested corner opens', async () => {
-    const body = new Body({
-      agentBinary: '/nonexistent',
-      mcpBinary: '/nonexistent',
-      agentEnv: {},
-      workspaceRoot: '/tmp/buzzy-agent-corner-dedupe-unit',
-      relayBaseUrl: 'http://relay.test',
-      relayHost: 'relay.test',
-      relayScheme: 'http',
-      relayWsUrl: 'ws://relay.test',
-      autoApprovePermissions: true,
-    });
-    let finish!: () => void;
-    const open = vi.spyOn(body, 'openSubchannel').mockReturnValue(
-      new Promise((resolve) => {
-        finish = () =>
-          resolve({
-            subchannelId: 'deduped-corner',
-            taskDescription: 'Preserve the final event in the retry loop',
-          } as never);
-      }),
-    );
-    vi.spyOn(body as never, 'startAgentTask' as never).mockImplementation(() => undefined as never);
-    const request = {
-      eventId: 'agent-corner-deduped',
-      authorPubkey: human.publicKey,
-      content: 'Diagnose the retry issue.',
-      createdAt: 1,
-    };
-    const first = Reflect.get(body, 'handleAgentCornerRequest').call(
-      body,
-      'parent-channel',
-      { repo: 'repo' },
-      request,
-      'Preserve the final event in the retry loop',
-    ) as Promise<void>;
-    await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
-    await Reflect.get(body, 'handleAgentCornerRequest').call(
-      body,
-      'parent-channel',
-      { repo: 'repo' },
-      request,
-      'Preserve the final event in the retry loop',
-    );
-    expect(open).toHaveBeenCalledOnce();
-    finish();
-    await first;
   });
 
   it('recycles the read-only ACP generation after a handled edit permission', async () => {
@@ -6338,8 +6176,8 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(replies[0]!.tags).toContainEqual(['h', 'parent-channel']);
   });
 
-  it('publishes a delegation completion claim only when the turn created signed corner records', async () => {
-    const claim = 'I delegated the implementation into a real Beeline edit corner.';
+  it('publishes a corner completion claim only when the turn created signed corner records', async () => {
+    const claim = 'I started the implementation in a real Beeline edit corner.';
     const { published } = await replyInRoomWithMidTurnCornerTransition({ agentText: claim });
     const create = published.find(
       (event) =>
@@ -6364,7 +6202,7 @@ describe('Room conversation and permission-gated work intent', () => {
   });
 
   it('replaces the captured false completion claim when no corner records exist', async () => {
-    const falseClaim = 'I have now created an active mission and delegated parallel desks.';
+    const falseClaim = 'I have now created an active mission.';
     const { published } = await replyInRoomWithMidTurnCornerTransition({
       agentText: falseClaim,
       requestMutation: false,
@@ -6374,7 +6212,7 @@ describe('Room conversation and permission-gated work intent', () => {
       event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
     );
     expect(reply?.content).toBe(
-      'No Beeline corner, delegation, or mission record was created, so no delegated work started.',
+      'No Beeline corner or mission record was created, so no coordinated work started.',
     );
     expect(reply?.content).not.toContain(falseClaim);
   });
@@ -11835,9 +11673,12 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
     );
   }
 
-  function makeBody(): { body: Body; workspaceRoot: string } {
+  function makeBody(agentCommand?: string): { body: Body; workspaceRoot: string } {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-target-branch-'));
-    const body = new Body(baseConfig(workspaceRoot));
+    const body = new Body({
+      ...baseConfig(workspaceRoot),
+      ...(agentCommand ? { agentCommand } : {}),
+    });
     stubEmptyAgentHistory(body);
     return { body, workspaceRoot };
   }
@@ -11857,67 +11698,6 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
   }
 
   afterEach(() => vi.unstubAllGlobals());
-
-  it('answers "land to staging from now on" with a proposal card and authors NO binding', async () => {
-    const { body, workspaceRoot } = makeBody();
-    const published = stubRelay(roomId, 'main');
-    const open = vi.spyOn(body, 'openSubchannel');
-    const createSession = vi.spyOn(body as never, 'createManagedSession' as never);
-
-    await expect(
-      reply(body, roomId, '@lena land to staging from now on', {
-        repo: 'buzzy',
-        repositoryKey,
-        targetBranch: 'refs/heads/main',
-      }),
-    ).resolves.toEqual({ openedCorner: false, producedReply: true });
-
-    // A proposal, not work: no corner, no session, no permission escalation.
-    expect(open).not.toHaveBeenCalled();
-    expect(createSession).not.toHaveBeenCalled();
-
-    const card = proposals(published);
-    expect(card).toHaveLength(1);
-    expect(card[0]!.kind).toBe(9);
-    expect(card[0]!.pubkey).toBe(body.agent.publicKey);
-    expect(card[0]!.content).toBe('Change target branch: main → staging');
-    expect(card[0]!.tags).toContainEqual(['from', 'main']);
-    expect(card[0]!.tags).toContainEqual(['to', 'staging']);
-    expect(card[0]!.tags).toContainEqual(['requester', admin.publicKey]);
-    expect(card[0]!.tags).toContainEqual(['t', 'body-control']);
-
-    // THE security property: the agent never authors the Room→repository
-    // binding itself — that event may only be signed by the confirming owner.
-    expect(published.filter((event) => event.kind === 30_078)).toHaveLength(0);
-    rmSync(workspaceRoot, { recursive: true, force: true });
-  });
-
-  // The exact phrasing from the live report. Before this it matched nothing:
-  // the capture stopped on the article in "to a branch called staging", which
-  // `BRANCH_STOP_WORDS` refuses, so the ask ran as an ordinary Room turn and
-  // was answered conversationally with no card and nothing persisted.
-  it('answers the exact live phrasing with a proposal card', async () => {
-    const { body, workspaceRoot } = makeBody();
-    const published = stubRelay(roomId, 'master');
-    const open = vi.spyOn(body, 'openSubchannel');
-
-    await expect(
-      reply(body, roomId, 'from now on land changes to a branch called staging instead of master', {
-        repo: 'buzzy',
-        repositoryKey,
-        targetBranch: 'refs/heads/master',
-      }),
-    ).resolves.toEqual({ openedCorner: false, producedReply: true });
-
-    expect(open).not.toHaveBeenCalled();
-    const card = proposals(published);
-    expect(card).toHaveLength(1);
-    expect(card[0]!.content).toBe('Change target branch: master → staging');
-    expect(card[0]!.tags).toContainEqual(['from', 'master']);
-    expect(card[0]!.tags).toContainEqual(['to', 'staging']);
-    expect(published.filter((event) => event.kind === 30_078)).toHaveLength(0);
-    rmSync(workspaceRoot, { recursive: true, force: true });
-  });
 
   describe('the agent has a prompt-documented way to raise the card itself', () => {
     function permission(line: string) {
@@ -11958,7 +11738,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
     });
 
     it('publishes the card, rejects the command, and never opens a corner', async () => {
-      const { body, workspaceRoot } = makeBody();
+      const { body, workspaceRoot } = makeBody('pi-acp');
       const published = stubRelay(roomId, 'master');
       const open = vi.spyOn(body, 'openSubchannel');
       armTurn(body);
@@ -11983,7 +11763,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
     });
 
     it('turns the captured prose slash command into the native proposal card', async () => {
-      const { body, workspaceRoot } = makeBody();
+      const { body, workspaceRoot } = makeBody('pi-acp');
       const published = stubRelay(roomId, 'master');
       Reflect.get(body, 'sessions').set(roomId, {
         channelId: roomId,
@@ -12020,7 +11800,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
     });
 
     it('replaces stale proposal prose when the Room already uses that branch', async () => {
-      const { body, workspaceRoot } = makeBody();
+      const { body, workspaceRoot } = makeBody('pi-acp');
       const published = stubRelay(roomId, 'staging');
       Reflect.get(body, 'sessions').set(roomId, {
         channelId: roomId,
@@ -12057,7 +11837,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
     });
 
     it('keeps that no-op truthful when permission and prose expose the same command', async () => {
-      const { body, workspaceRoot } = makeBody();
+      const { body, workspaceRoot } = makeBody('pi-acp');
       const published = stubRelay(roomId, 'staging');
       Reflect.get(body, 'sessions').set(roomId, {
         channelId: roomId,
@@ -12097,7 +11877,7 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
     });
 
     it('keeps the Room request retryable when the native proposal is refused', async () => {
-      const { body, workspaceRoot } = makeBody();
+      const { body, workspaceRoot } = makeBody('pi-acp');
       const published = stubRelay(roomId, 'master', true);
       Reflect.get(body, 'sessions').set(roomId, {
         channelId: roomId,
@@ -12196,26 +11976,6 @@ describe('the Room target branch changes by owner confirm, never by the agent', 
       expect(proposals(published)).toHaveLength(0);
       rmSync(workspaceRoot, { recursive: true, force: true });
     });
-  });
-
-  it('says nothing to propose when the Room already lands there', async () => {
-    const { body, workspaceRoot } = makeBody();
-    const published = stubRelay(roomId, 'staging');
-
-    await expect(
-      reply(body, roomId, 'land to staging from now on', {
-        repo: 'buzzy',
-        repositoryKey,
-        targetBranch: 'refs/heads/main',
-      }),
-    ).resolves.toEqual({ openedCorner: false, producedReply: true });
-
-    expect(proposals(published)).toHaveLength(0);
-    // The published Room state wins over the daemon's start-time snapshot.
-    expect(published.map((event) => event.content).join('\n')).toContain(
-      'already lands to staging',
-    );
-    rmSync(workspaceRoot, { recursive: true, force: true });
   });
 
   it('uses the confirmed target for the next corner without mutating the Room snapshot', async () => {
@@ -12801,9 +12561,9 @@ describe('harness-independent corner commit watch', () => {
     const worktreePath = committedFeatureWorktree();
     try {
       const info = watchInfo(body, agent, worktreePath);
-      await expect(
-        Reflect.get(body, 'publishMergeReady').call(body, info),
-      ).rejects.toThrow('relay rejected this message');
+      await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).rejects.toThrow(
+        'relay rejected this message',
+      );
       expect(
         published.some((event) =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
@@ -12854,9 +12614,7 @@ describe('harness-independent corner commit watch', () => {
       const worktreePath = largeCommittedFeatureWorktree();
       try {
         const info = watchInfo(body, agent, worktreePath);
-        await expect(
-          Reflect.get(body, 'publishMergeReady').call(body, info),
-        ).resolves.toBe(true);
+        await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
 
         const tip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
         expect(reviewPayloadCount(published)).toBe(1);
@@ -12875,7 +12633,10 @@ describe('harness-independent corner commit watch', () => {
         ) as { files: Array<{ path: string; diff?: string }> };
         expect(artifact.files).toHaveLength(141);
         expect(artifact.files[0]).toEqual(
-          expect.objectContaining({ path: 'changed-000.ts', diff: expect.stringContaining('changed0') }),
+          expect.objectContaining({
+            path: 'changed-000.ts',
+            diff: expect.stringContaining('changed0'),
+          }),
         );
         expect(artifact.files).toContainEqual(
           expect.objectContaining({ path: 'vendor.min.js', renderUnavailableReason: 'too-large' }),

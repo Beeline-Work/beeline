@@ -14,6 +14,17 @@ afterEach(async () => {
 });
 
 describe('Pi MCP generated-extension route', () => {
+  it('keeps Pi host modules external to the release-owned adapter bundle', async () => {
+    const buildScript = await readFile(
+      resolve(process.cwd(), '../../scripts/build-beeline-bundle.mjs'),
+      'utf8',
+    );
+    expect(buildScript).toContain("'--minify'");
+    expect(buildScript).toContain("'--external:@earendil-works/pi-*'");
+    expect(buildScript).toContain("'--external:typebox'");
+    expect(buildScript).toContain("'--external:typebox/*'");
+  });
+
   it('selects the exact mounted inventory for the startup readiness barrier', () => {
     expect(
       piMcpDirectToolSelection([

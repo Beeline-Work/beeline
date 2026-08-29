@@ -3,6 +3,20 @@
 The relay front serves invite links, app-association files, and the hosted
 Beeline installer from the read-only `web/` mount.
 
+## Local RoomView proof
+
+`npm run stack:up` starts the local relay and its credential-free materializer;
+the latter serves the RoomView indexer through the same `127.0.0.1:3010`
+front. After it becomes healthy, run:
+
+```sh
+npm run verify:local-room-indexer
+```
+
+The proof creates a fresh local Room and reads it through `/room/:id` with the
+creator's NIP-98 identity. Its request URL is local and its relay Host header
+can be set separately with `BUZZY_LOCAL_RELAY_HOST` for an isolated test port.
+
 ## Build the Beeline download
 
 From the repository root:

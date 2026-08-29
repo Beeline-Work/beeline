@@ -44,6 +44,10 @@ import {
   type MissionGrantReference,
 } from './mission-authority.js';
 import { isSenderPermitted } from './access-policy.js';
+import {
+  BEELINE_AGENT_TOOL_SCHEMA_VERSION,
+  BEELINE_MANDATE_DEFAULTS_VERSION,
+} from './agent-tool-contract.js';
 
 function hasMember(members: readonly { pubkey: string }[], pubkey: string): boolean {
   return members.some((member) => member.pubkey === pubkey);
@@ -52,6 +56,13 @@ function hasMember(members: readonly { pubkey: string }[], pubkey: string): bool
 function uniqueArtifactTag(event: NostrEvent, name: string): string | undefined {
   const values = event.tags.filter((tag) => tag[0] === name);
   return values.length === 1 ? values[0]?.[1] : undefined;
+}
+
+function mandateGeneration(event: NostrEvent): number | undefined {
+  const raw = uniqueArtifactTag(event, 'mandate-generation');
+  if (!raw || !/^\d+$/.test(raw)) return undefined;
+  const generation = Number(raw);
+  return Number.isSafeInteger(generation) && generation > 0 ? generation : undefined;
 }
 
 export function targetAccessSeedFromPresence(
@@ -172,6 +183,7 @@ export interface DaemonWorkScheduleAuthorityDependencies {
   readCurrentEvents(schedule: ParsedWorkSchedule): Promise<readonly NostrEvent[]>;
   readFacts(schedule: ParsedWorkSchedule): Promise<DaemonWorkScheduleAuthorityFacts>;
   verifyScheduleGrant(schedule: ParsedWorkSchedule): Promise<boolean>;
+  verifyAgentToolMandate?(schedule: ParsedWorkSchedule): Promise<boolean>;
   verifyMissionGrant(schedule: ParsedWorkSchedule): Promise<boolean>;
 }
 
@@ -226,16 +238,28 @@ export async function authorizeDaemonWorkSchedule(
     ) {
       return { authorized: false, terminal: true, reason: 'principal-removed' };
     }
-    if (facts.principalCanDrive === undefined) {
-      return { authorized: false, terminal: false, reason: 'principal-access-unavailable' };
+    const agentToolAuthorized = schedule.agentToolMandate
+      ? parsed.event.pubkey === schedule.agentPubkey &&
+        facts.authorIsAgent &&
+        Boolean(await dependencies.verifyAgentToolMandate?.(parsed))
+      : false;
+    if (schedule.agentToolMandate && !agentToolAuthorized) {
+      return { authorized: false, terminal: true, reason: 'agent-tool-mandate-invalid' };
     }
-    if (!facts.principalCanDrive) {
-      return { authorized: false, terminal: true, reason: 'principal-access-denied' };
-    }
-    if (facts.principalIsAgent) {
+    if (facts.principalIsAgent && !agentToolAuthorized) {
       return { authorized: false, terminal: true, reason: 'principal-is-agent' };
     }
-    if (facts.principalRole !== 'owner' && facts.principalRole !== 'admin') {
+    if (!agentToolAuthorized && facts.principalCanDrive === undefined) {
+      return { authorized: false, terminal: false, reason: 'principal-access-unavailable' };
+    }
+    if (!agentToolAuthorized && !facts.principalCanDrive) {
+      return { authorized: false, terminal: true, reason: 'principal-access-denied' };
+    }
+    if (
+      !agentToolAuthorized &&
+      facts.principalRole !== 'owner' &&
+      facts.principalRole !== 'admin'
+    ) {
       return { authorized: false, terminal: true, reason: 'schedule-principal-role-lost' };
     }
     if (schedule.mission) {
@@ -262,7 +286,10 @@ export async function authorizeDaemonWorkSchedule(
         return { authorized: false, terminal: true, reason: 'mission-grant-invalid' };
       }
     } else if (parsed.event.pubkey === schedule.agentPubkey) {
-      if (!facts.authorIsAgent || !(await dependencies.verifyScheduleGrant(parsed))) {
+      if (
+        !facts.authorIsAgent ||
+        (!schedule.agentToolMandate && !(await dependencies.verifyScheduleGrant(parsed)))
+      ) {
         return { authorized: false, terminal: true, reason: 'schedule-change-grant-invalid' };
       }
     } else if (
@@ -402,6 +429,60 @@ export function createDaemonWorkCalendar(input: {
     return result.authorized || result.reason === 'action-already-succeeded';
   };
 
+  const verifyAgentToolMandate = async (parsed: ParsedWorkSchedule): Promise<boolean> => {
+    const mandate = parsed.value.agentToolMandate;
+    if (!mandate) return false;
+    const referenced = (await rawEvents([{ ids: [mandate.eventId], limit: 2 }])).find(
+      (event) => event.id === mandate.eventId,
+    );
+    if (
+      mandate.defaultsVersion !== BEELINE_MANDATE_DEFAULTS_VERSION ||
+      !referenced ||
+      !verifyEvent(referenced) ||
+      referenced.pubkey !== identity.publicKey ||
+      uniqueArtifactTag(referenced, 'h') !== parsed.value.roomId ||
+      !referenced.tags.some((tag) => tag[0] === 't' && tag[1] === 'beeline-agent-mandate') ||
+      uniqueArtifactTag(referenced, 'agent-tool-schema-version') !==
+        String(BEELINE_AGENT_TOOL_SCHEMA_VERSION) ||
+      uniqueArtifactTag(referenced, 'mandate-defaults-version') !==
+        String(mandate.defaultsVersion) ||
+      mandateGeneration(referenced) === undefined
+    ) {
+      return false;
+    }
+    const current = (
+      await rawEvents([
+        {
+          kinds: [KIND_STREAM_MESSAGE],
+          authors: [identity.publicKey],
+          '#h': [parsed.value.roomId],
+          '#t': ['beeline-agent-mandate'],
+          limit: 20,
+        },
+      ])
+    )
+      .filter(
+        (event) =>
+          verifyEvent(event) &&
+          event.pubkey === identity.publicKey &&
+          uniqueArtifactTag(event, 'h') === parsed.value.roomId &&
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'beeline-agent-mandate') &&
+          uniqueArtifactTag(event, 'agent-tool-schema-version') ===
+            String(BEELINE_AGENT_TOOL_SCHEMA_VERSION),
+      )
+      .sort(
+        (left, right) =>
+          (mandateGeneration(right) ?? -1) - (mandateGeneration(left) ?? -1) ||
+          right.created_at - left.created_at ||
+          right.id.localeCompare(left.id),
+      )[0];
+    return (
+      Boolean(current) &&
+      current!.id === referenced.id &&
+      uniqueArtifactTag(current!, 'mandate-defaults-version') === String(mandate.defaultsVersion)
+    );
+  };
+
   const missionReference = (parsed: ParsedWorkSchedule): MissionGrantReference | undefined => {
     const mission = parsed.value.mission;
     return mission
@@ -440,7 +521,13 @@ export function createDaemonWorkCalendar(input: {
   const scheduleChangeOperation = (
     parsed: ParsedWorkSchedule,
   ): Extract<MissionExercise, { kind: 'schedule' }>['operation'] =>
-    parsed.value.status === 'paused' ? 'pause' : parsed.value.revision === 1 ? 'create' : 'update';
+    parsed.value.status === 'cancelled'
+      ? 'delete'
+      : parsed.value.status === 'paused'
+        ? 'pause'
+        : parsed.value.revision === 1
+          ? 'create'
+          : 'update';
 
   const verifyMissionGrant = async (parsed: ParsedWorkSchedule): Promise<boolean> => {
     const mission = parsed.value.mission;
@@ -606,6 +693,7 @@ export function createDaemonWorkCalendar(input: {
         }
       },
       verifyScheduleGrant,
+      verifyAgentToolMandate,
       verifyMissionGrant,
     });
 
@@ -629,8 +717,14 @@ export function createDaemonWorkCalendar(input: {
         if (candidate.value.mission) {
           if (!(await verifyMissionGrant(candidate))) return false;
         } else if (candidate.event.pubkey === candidate.value.agentPubkey) {
-          if (!candidate.value.permissionGrantEventId || !(await verifyScheduleGrant(candidate)))
+          if (candidate.value.agentToolMandate) {
+            if (!(await verifyAgentToolMandate(candidate))) return false;
+          } else if (
+            !candidate.value.permissionGrantEventId ||
+            !(await verifyScheduleGrant(candidate))
+          ) {
             return false;
+          }
         } else if (
           candidate.event.pubkey !== candidate.value.principalPubkey ||
           candidate.value.permissionGrantEventId

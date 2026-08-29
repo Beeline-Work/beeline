@@ -29,11 +29,8 @@ by projecting agent activity into the relay channel.
   server process. The agent converses normally. Pure analysis, explanation,
   summary, and research requests are locked to a Room answer and cannot become
   an ALLOW prompt. For non-research work, codex-acp and claude-agent-acp agents
-  initiate the edit-corner request by attempting the required mutating tool;
-  their real `session/request_permission` becomes a signed Room prompt. pi-acp
-  cannot send that protocol request, so only pi-backed Rooms retain the
-  stripped `CORNER_REQUEST:` text fallback. An explicit human command to open a
-  corner is the only message that creates one without the approval card. A
+  use the mounted `open_corner` agent tool. An explicit human command to open a
+  corner is the only message that creates one without the tool path. A
   creator-only Codex or Claude agent may also mount separately selected Trusty
   Squire capabilities; their side effects require exact P1 factory permission
   and do not widen the filesystem boundary.
@@ -389,7 +386,7 @@ into a repository and cannot grant permissions or approve merges. The remaining
 explicit `serve`/`open` commands are internal diagnostic compatibility surfaces,
 not part of the user pairing workflow.
 
-### Factory permissions and delegation (P1)
+### Factory permissions (P1)
 
 Factory side effects use signed, versioned Room events; model prose is never
 authority. The shared scope registry assigns the required human role, executor,
@@ -417,22 +414,6 @@ admitted. Anything already admitted before that moment runs to completion; the
 current daemon has no revocation chase or cancellation machinery for active
 mission work.
 
-Agent-to-agent Room work uses signed delegation turns rather than inheriting the
-sender's session. Each admitted work item is addressed to one exact agent and
-runs as one ordinary read-only Room turn with its own tools, filesystem, and
-provider account. Provenance, principal/payer attribution, deadlines, depth,
-child count, turn count, reserved-token limits, cycle detection, and durable
-receipts bound the graph. Failed work publishes a failed receipt and is not
-retried through another model turn. Extending a delegation beyond its original
-envelope requires a scoped permission grant.
-
-An agent may propose deterministic invite-only Room creation only through the
-bounded `create [an] [outcome] room named "…" with @…` directive. A device-held human
-admin grants and executes the request from a durable mobile outbox, using the
-request's reserved Room UUID so crashes and concurrent admins reconcile instead
-of creating duplicates. This permission-gated factory path is separate from
-`beeline pair --repo`, which still only joins an existing repository Room.
-
 ### Daemon work calendar (P2)
 
 Each agent daemon owns one durable `WorkCalendar` min-heap and one next-due
@@ -459,15 +440,12 @@ priority, and `SessionScheduler` remains the final per-Room/Workspace queue so a
 live human turn wins. The schedule itself is the human-authorized mandate for
 each occurrence, including send, publish, spend, connector, and attachment
 actions; there is no per-action permission request inside a scheduled turn.
-Model-emitted delegation and text-corner directives remain inert so one
+Model-emitted control prose remains inert so one
 schedule cannot amplify itself into additional recurring or repository work.
 
-Mission schedules keep the calendar on the chief-of-staff daemon while naming
-an exact target agent. A cross-agent firing and its return use the existing
-signed same-Room delegation transport, so only the addressed target daemon and
-then the chief of staff wake; each target uses its own provider account and its
-static mission budget slice. All participants must still pass fresh
-Room/Workspace membership and target-access checks.
+Mission schedules execute only on their owning target daemon. Cross-agent
+schedule dispatch fails closed; agent-to-agent work starts from a structured
+signed mention in a corner instead.
 
 An explicit mission schedule revision chooses `script` or `model`. Script
 schedules are hash-bound to their exact creator-authored bytes, run no model by

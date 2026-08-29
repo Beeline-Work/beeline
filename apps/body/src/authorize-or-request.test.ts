@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AuthorizeOrRequestKernel } from './authorize-or-request.js';
+import { AuthorizeOrRequestKernel, mandateCovers, scopeContained } from './authorize-or-request.js';
 import type { ReadMandateResult } from './agent-tool-contract.js';
 
 const scope = {
@@ -12,7 +12,7 @@ const scope = {
 
 function mandate(effect: 'allow' | 'approval_required' | 'deny'): ReadMandateResult {
   return {
-    schema_version: 1,
+    schema_version: 2,
     generation: { event_id: 'a'.repeat(64), generation: 7 },
     grants: [],
     defaults: [
@@ -101,5 +101,32 @@ describe('authorize_or_request', () => {
       message: 'Authority changed before execution. Retry against the current mandate.',
     });
   });
-});
 
+  it('contains schedule grants structurally by exact operation and schedule id', () => {
+    const grant = {
+      type: 'schedule.update' as const,
+      workspaceId: 'workspace',
+      roomId: 'room',
+      scheduleId: 'daily-triage',
+      repositoryKey: 'github:1',
+      targetRef: 'refs/heads/main',
+    };
+    expect(scopeContained(grant, { ...grant })).toBe(true);
+    expect(scopeContained(grant, { ...grant, scheduleId: 'other' })).toBe(false);
+    expect(scopeContained(grant, { ...grant, type: 'schedule.run_now' })).toBe(false);
+  });
+
+  it('denies unknown action defaults and every blocked generation', () => {
+    const value = mandate('allow');
+    expect(
+      mandateCovers(value, 'schedule.create', {
+        type: 'schedule.create',
+        workspaceId: 'workspace',
+        roomId: 'room',
+        scheduleId: 'daily-triage',
+      }),
+    ).toBe('deny');
+    value.blockers.push({ code: 'membership', message: 'missing' });
+    expect(mandateCovers(value, 'corner.open', scope)).toBe('deny');
+  });
+});

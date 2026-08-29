@@ -118,8 +118,9 @@ describe('a corner opened by a bare imperative still knows what it is for', () =
     // raw trigger — otherwise a recovered objective still leaves a corner
     // called `corner-<parent>` on a branch called `feature/<uuid>`.
     expect(body).toContain('cornerObjectiveFromConversation(conversation)');
-    expect(body).toContain('const fallbackTitle = cornerTitleFromTask');
-    expect(body).toContain('const cornerName = generated?.title ?? fallbackTitle');
+    expect(body).toContain('const cornerName = cornerTitleFromTask(taskDescription)');
+    expect(body).toContain('const taskSlug = slugifyCornerTask(cornerName)');
+    expect(body).not.toContain('const cornerName = generated?.title');
     expect(body).toContain('taskSlug\n      ? `feature/${taskSlug}-');
   });
 

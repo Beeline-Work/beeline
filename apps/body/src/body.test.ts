@@ -20,20 +20,7 @@ import { join } from 'node:path';
 import { hasWriteTools, inventoryForMcpServers } from './mcp-inventory.js';
 import { parseEnvFile, hasLlmCredentials, type BodyConfig } from './config.js';
 import { prepareCornerAgentPrivateState } from './agent-private-state.js';
-import { relayQueryResponse } from './relay-test-helper.js';
-
-function mediaUploadResponse(
-  input: string | URL | Request,
-  init?: RequestInit,
-): Response | undefined {
-  if (!String(input).endsWith('/upload')) return undefined;
-  const hash = new Headers(init?.headers).get('X-SHA-256')!;
-  const bytes = new Uint8Array(init?.body as Uint8Array);
-  return new Response(
-    JSON.stringify({ url: `https://relay.example/media/${hash}`, sha256: hash, size: bytes.byteLength }),
-    { status: 200 },
-  );
-}
+import { mediaUploadResponse, relayQueryResponse } from './relay-test-helper.js';
 
 const mocks = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
@@ -166,10 +153,21 @@ import {
   CODEX_ACP_MCP_READ_FILE_PERMISSION,
 } from './fixtures/claude-agent-acp-permissions.js';
 import { ROOM_READ_ONLY_STEER } from './session-sandbox.js';
+import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { createCornerRequestFilter, extractCornerRequest } from './corner-request.js';
 import { GROK_WARM_SESSION_IDLE_MS } from './harness-capabilities.js';
 import { ModelSelectionUnavailableError } from './model-config.js';
+
+/**
+ * Whether this host can actually build the bwrap namespace `sessionSpawnCommand`
+ * targets, per the product's own start-up viability probe. A `bwrap` binary
+ * that exists but cannot unshare (e.g. AppArmor-restricted unprivileged user
+ * namespaces, common on CI runners) must not fail a test asserting only that
+ * Body constructs the right argv — only tests that actually execute the
+ * resulting command need this gate.
+ */
+const bwrapExecutionViable = detectBwrapSandbox().path !== undefined;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -973,24 +971,41 @@ describe('agent identity boundary', () => {
     });
 
     it('spawns the bare command when no bwrap was detected at daemon start', async () => {
-      const body = new Body(config, newIdentity('operator'));
-      const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
-        { mode: 'edit', cwd: repoRoot, worktreePath: repoRoot },
-        {},
-      );
-      // Today's behaviour, unchanged: bwrap missing must never fail a session.
-      expect(spawn).toEqual({ command: '/nonexistent', args: [] });
+      // An empty, non-ambient operatorHome: this host's real home may carry
+      // Trusty Squire state, which would make squireIsolationRequired() true
+      // and turn "no bwrap" into a rejection instead of the bare-command
+      // fallback under test.
+      const operatorHome = mkdtempSync(join(tmpdir(), 'buzzy-no-ambient-squire-'));
+      try {
+        const body = new Body({ ...config, operatorHome }, newIdentity('operator'));
+        const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
+          { mode: 'edit', cwd: repoRoot, worktreePath: repoRoot },
+          {},
+        );
+        // Today's behaviour, unchanged: bwrap missing must never fail a session.
+        expect(spawn).toEqual({ command: '/nonexistent', args: [] });
+      } finally {
+        rmSync(operatorHome, { recursive: true, force: true });
+      }
     });
 
     it('fails open rather than sandboxing a corner it cannot resolve a git dir for', async () => {
-      const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
-      const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
-        // Not a git repository: a wrapped session here could edit but never
-        // commit, which is worse than an unwrapped one.
-        { mode: 'edit', cwd: notARepo, worktreePath: notARepo },
-        {},
-      );
-      expect(spawn).toEqual({ command: '/nonexistent', args: [] });
+      const operatorHome = mkdtempSync(join(tmpdir(), 'buzzy-no-ambient-squire-'));
+      try {
+        const body = new Body(
+          { ...config, bwrapPath: '/usr/bin/bwrap', operatorHome },
+          newIdentity('operator'),
+        );
+        const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
+          // Not a git repository: a wrapped session here could edit but never
+          // commit, which is worse than an unwrapped one.
+          { mode: 'edit', cwd: notARepo, worktreePath: notARepo },
+          {},
+        );
+        expect(spawn).toEqual({ command: '/nonexistent', args: [] });
+      } finally {
+        rmSync(operatorHome, { recursive: true, force: true });
+      }
     });
   });
 
@@ -1659,9 +1674,13 @@ describe('agent identity boundary', () => {
         expect(masks).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ path: join(squireConfigRoot, 'trusty-squire') }),
+            // The daemon creates every legacy store mountpoint — including
+            // the XDG_CONFIG_HOME variant — before computing the mask plan
+            // (see sessionAgentEnv's trustySquireLegacyStorePaths loop), so
+            // this one is an existing directory, not a missing one to create.
             expect.objectContaining({
               path: join(alternateConfig, 'trusty-squire'),
-              create: true,
+              kind: 'dir',
             }),
             expect.objectContaining({ path: sessionBus, create: true }),
           ]),
@@ -1738,16 +1757,22 @@ describe('agent identity boundary', () => {
           expect(spawnCommand.args).toContain('--unshare-pid');
           expect(spawnCommand.args).toContain(join(agentHomeRoot, 'codex'));
           expect(existsSync(squireConfigRoot)).toBe(true);
-          const launched = spawnSync(spawnCommand.command, spawnCommand.args, {
-            cwd: root,
-            env: sessionEnv,
-            encoding: 'utf8',
-          });
-          expect({
-            status: launched.status,
-            signal: launched.signal,
-            stderr: launched.stderr,
-          }).toEqual({ status: 0, signal: null, stderr: '' });
+          // The masked-argv shape is asserted above unconditionally; actually
+          // executing it needs a host that can build the namespace at all
+          // (see `bwrapExecutionViable`), which the product's own start-up
+          // probe would likewise refuse to rely on.
+          if (bwrapExecutionViable) {
+            const launched = spawnSync(spawnCommand.command, spawnCommand.args, {
+              cwd: root,
+              env: sessionEnv,
+              encoding: 'utf8',
+            });
+            expect({
+              status: launched.status,
+              signal: launched.signal,
+              stderr: launched.stderr,
+            }).toEqual({ status: 0, signal: null, stderr: '' });
+          }
           expect(readlinkSync(join(agentHomeRoot, 'codex/auth.json'))).toBe(
             join(operatorHome, '.codex/auth.json'),
           );
@@ -1808,16 +1833,20 @@ describe('agent identity boundary', () => {
           { mode: 'readonly', cwd: root },
           env,
         );
-        const launched = spawnSync(spawnCommand.command, spawnCommand.args, {
-          cwd: root,
-          env,
-          encoding: 'utf8',
-        });
-        expect({
-          status: launched.status,
-          signal: launched.signal,
-          stderr: launched.stderr,
-        }).toEqual({ status: 0, signal: null, stderr: '' });
+        // See `bwrapExecutionViable`: only actually run the sandboxed command
+        // on a host that can build the namespace at all.
+        if (bwrapExecutionViable) {
+          const launched = spawnSync(spawnCommand.command, spawnCommand.args, {
+            cwd: root,
+            env,
+            encoding: 'utf8',
+          });
+          expect({
+            status: launched.status,
+            signal: launched.signal,
+            stderr: launched.stderr,
+          }).toEqual({ status: 0, signal: null, stderr: '' });
+        }
         expect(spawnCommand.args).toContain('--unshare-pid');
 
         const governed = new Body({
@@ -7388,6 +7417,7 @@ describe('corner narrative persistence', () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-narrative-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
       const sessionPrompt = fakeMultiParagraphSessionPrompt([
         'Applied the requested follow-up tweak.',
         'Ran the suite again; still green.',
@@ -8333,6 +8363,7 @@ describe('a local-only repository lands through the daemon, never through the ag
     );
     try {
       const body = newBody(agent, join(root, 'state.json'));
+      stubEmptyAgentHistory(body);
       const info = {
         ...localCornerInfo(agent, repoPath, cornerPath, tip),
         session: {
@@ -8568,6 +8599,7 @@ describe('graceful relay-failure confirmation', () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-corner-close-discussed-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
       body.registerSubchannel({
         subchannelId: 'corner-close-discussed',
         worktreePath: '/tmp/nonexistent-close-discussed',
@@ -10135,6 +10167,7 @@ describe('closing a corner with no live session', () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-dead-close-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
       Reflect.get(body, 'abandonedCorners').set('corner-dead', {
         subchannelId: 'corner-dead',
         parentChannelId: 'room-dead',
@@ -10218,6 +10251,7 @@ describe('closing a corner with no live session', () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-reap-close-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
       const worktreePath = join(workspaceRoot, 'corner-reap-worktree');
       mkdirSync(worktreePath, { recursive: true });
       spawnSync('git', ['init', '-q', worktreePath]);
@@ -10393,6 +10427,7 @@ describe('closing a corner with no live session', () => {
       spawnSync('git', ['commit', '-q', '-m', 'corner work'], { cwd: worktreePath });
 
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
       body.registerSubchannel({
         subchannelId: 'corner-wedged',
         worktreePath,
@@ -10759,6 +10794,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-overlap-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
 
       let releasePrompt!: () => void;
       let markStarted!: () => void;
@@ -10831,6 +10867,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-steer-idle-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
 
       const sessionPrompt = vi.fn(async () => ({
         stopReason: 'end_turn',
@@ -11429,6 +11466,7 @@ describe('a corner that fell out of local tracking is still closable', () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-untracked-close-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
       const create = cornerCreateEvent(agent, 'corner-untracked', 'room-untracked');
       const intro = signEvent(
         {
@@ -11564,6 +11602,7 @@ describe('a corner that fell out of local tracking is still closable', () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-untracked-cursor-'));
     try {
       const body = newBody(agent, workspaceRoot);
+      stubEmptyAgentHistory(body);
       const close = closeEvent(human, 'corner-cursor');
       // The cursor is a high-water mark: a close that failed while the corner
       // was still live, followed by any delivered later message, leaves it

@@ -11,14 +11,12 @@ import {
   harnessHonorsSessionSystemPrompt,
   harnessSessionIdleMs,
   roomSandboxWarning,
-  usesTextCornerRequestFallback,
+  usesTextTargetBranchFallback,
 } from './harness-capabilities.js';
 
 describe('harness session retention', () => {
   it('keeps only Grok warm beyond the ordinary scheduler idle window', () => {
-    expect(harnessSessionIdleMs('/home/op/.grok/bin/grok')).toBe(
-      GROK_WARM_SESSION_IDLE_MS,
-    );
+    expect(harnessSessionIdleMs('/home/op/.grok/bin/grok')).toBe(GROK_WARM_SESSION_IDLE_MS);
     expect(GROK_WARM_SESSION_IDLE_MS).toBe(30 * 60_000);
     expect(harnessSessionIdleMs('codex-acp')).toBeUndefined();
     expect(harnessSessionIdleMs('claude-agent-acp')).toBeUndefined();
@@ -83,13 +81,13 @@ describe('harness permission enforcement', () => {
     expect(enforcesPermissionBoundary(undefined)).toBe(false);
   });
 
-  it('scopes the text corner-request fallback to pi-acp only', () => {
-    expect(usesTextCornerRequestFallback('/usr/local/bin/pi-acp')).toBe(true);
-    expect(usesTextCornerRequestFallback('codex-acp')).toBe(false);
-    expect(usesTextCornerRequestFallback('claude-agent-acp')).toBe(false);
-    expect(usesTextCornerRequestFallback('/home/op/.grok/bin/grok')).toBe(false);
-    expect(usesTextCornerRequestFallback('some-unknown-acp')).toBe(false);
-    expect(usesTextCornerRequestFallback(undefined)).toBe(false);
+  it('scopes the text target-branch fallback to pi-acp only', () => {
+    expect(usesTextTargetBranchFallback('/usr/local/bin/pi-acp')).toBe(true);
+    expect(usesTextTargetBranchFallback('codex-acp')).toBe(false);
+    expect(usesTextTargetBranchFallback('claude-agent-acp')).toBe(false);
+    expect(usesTextTargetBranchFallback('/home/op/.grok/bin/grok')).toBe(false);
+    expect(usesTextTargetBranchFallback('some-unknown-acp')).toBe(false);
+    expect(usesTextTargetBranchFallback(undefined)).toBe(false);
   });
 
   it('warns only for a harness the daemon cannot actually hold to the boundary', () => {

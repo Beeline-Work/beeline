@@ -50,6 +50,12 @@ The service account file stays outside the repository. Do not log or commit it.
 | `BEELINE_GITHUB_APP_PRIVATE_KEY`   | —                                      | GitHub App private key; mandatory for the hosted consumer                          |
 | `BEELINE_EVENTS_STATE_DIR`         | XDG state + `beeline/events`           | Repository-events signing identity                                                  |
 
+For the isolated `relay-stack/compose.yml` gate stack, Compose sets
+`BUZZY_MATERIALIZER_DISABLE_PUSH_DELIVERY=true` and
+`BUZZY_MATERIALIZER_DISABLE_REPOSITORY_EVENTS=true`. This keeps the direct
+RoomView indexer local without an FCM service-account or any operator runtime
+state; production leaves both consumers enabled.
+
 `POST /registrations` accepts
 `{ "pubkey", "token", "platform": "android", "environment": "physical" }`.
 `environment` is optional for legacy clients, but registrations explicitly marked

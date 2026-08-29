@@ -82,7 +82,7 @@ export interface WorkScheduleV1 {
   workspaceId: string;
   roomId: string;
   agentPubkey: string;
-  /** Mission calendar owner remains the CoS; this names the delegated turn recipient. */
+  /** Mission calendar owner remains the CoS; this names the exact execution target. */
   targetAgentPubkey?: string;
   principalPubkey: string;
   prompt: string;
@@ -101,8 +101,13 @@ export interface WorkScheduleV1 {
   dailyReservedTokens: number;
   catchUp: 'skip' | 'latest-one';
   maxConsecutiveFailures: number;
-  status: 'active' | 'paused';
+  status: 'active' | 'paused' | 'cancelled';
   permissionGrantEventId?: string;
+  /** Signed Beeline mandate generation used by the six-tool schedule surface. */
+  agentToolMandate?: {
+    eventId: string;
+    defaultsVersion: number;
+  };
 }
 
 export interface ParsedWorkSchedule {
@@ -639,7 +644,7 @@ export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefin
     perRunReservedTokens > dailyReservedTokens ||
     maxConsecutiveFailures === undefined ||
     !['skip', 'latest-one'].includes(String(input.catchUp)) ||
-    !['active', 'paused'].includes(String(input.status))
+    !['active', 'paused', 'cancelled'].includes(String(input.status))
   )
     return undefined;
   const targetAgentPubkey =
@@ -685,6 +690,23 @@ export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefin
   ) {
     return undefined;
   }
+  const rawAgentToolMandate = object(input.agentToolMandate);
+  const agentToolMandate = rawAgentToolMandate
+    ? {
+        eventId: rawAgentToolMandate.eventId,
+        defaultsVersion: integer(rawAgentToolMandate.defaultsVersion, 1),
+      }
+    : undefined;
+  if (
+    input.agentToolMandate !== undefined &&
+    (!agentToolMandate ||
+      typeof agentToolMandate.eventId !== 'string' ||
+      !HEX_64.test(agentToolMandate.eventId) ||
+      agentToolMandate.defaultsVersion === undefined)
+  ) {
+    return undefined;
+  }
+  if (permissionGrantEventId && agentToolMandate) return undefined;
   return {
     version: 1,
     scheduleId,
@@ -708,6 +730,14 @@ export function parseWorkScheduleValue(value: unknown): WorkScheduleV1 | undefin
     maxConsecutiveFailures,
     status: input.status as WorkScheduleV1['status'],
     ...(permissionGrantEventId ? { permissionGrantEventId } : {}),
+    ...(agentToolMandate
+      ? {
+          agentToolMandate: {
+            eventId: agentToolMandate.eventId as string,
+            defaultsVersion: agentToolMandate.defaultsVersion as number,
+          },
+        }
+      : {}),
   };
 }
 
@@ -987,6 +1017,12 @@ export function buildWorkSchedule(
         ['revision', String(schedule.revision)],
         ['status', schedule.status],
         ...(schedule.execution ? [['execution', workScheduleExecutionMode(schedule)]] : []),
+        ...(schedule.agentToolMandate
+          ? [
+              ['mandate', schedule.agentToolMandate.eventId],
+              ['mandate-defaults-version', String(schedule.agentToolMandate.defaultsVersion)],
+            ]
+          : []),
         ...(schedule.execution && schedule.execution.mode !== 'model'
           ? [['script-sha256', schedule.execution.scriptSha256]]
           : []),
@@ -1036,6 +1072,12 @@ export function parseWorkSchedule(event: NostrEvent): ParsedWorkSchedule | undef
     (value.execution && value.execution.mode !== 'model'
       ? uniqueTag(event, 'script-sha256') !== value.execution.scriptSha256
       : uniqueTag(event, 'script-sha256') !== undefined) ||
+    (value.agentToolMandate
+      ? uniqueTag(event, 'mandate') !== value.agentToolMandate.eventId ||
+        uniqueTag(event, 'mandate-defaults-version') !==
+          String(value.agentToolMandate.defaultsVersion)
+      : uniqueTag(event, 'mandate') !== undefined ||
+        uniqueTag(event, 'mandate-defaults-version') !== undefined) ||
     (value.mission
       ? uniqueTag(event, 'mission') !== value.mission.missionId ||
         uniqueTag(event, 'mission-grant') !== value.mission.grantEventId ||
@@ -1259,6 +1301,34 @@ export class WorkCalendar {
     await this.enqueueWake(async () => this.onWake());
   }
 
+  /** Typed tool seam for one immediate occurrence on the same calendar authority. */
+  async runNow(scheduleId: string): Promise<{ runId: string; eventId: string }> {
+    let result: { runId: string; eventId: string } | undefined;
+    await this.enqueueWake(async () => {
+      await this.refresh();
+      const found = [...this.schedules.entries()].find(
+        ([, parsed]) => parsed.value.scheduleId === scheduleId,
+      );
+      if (!found || found[1].value.status !== 'active') {
+        throw new Error('schedule-unavailable');
+      }
+      const nominalAt = this.secondsNow();
+      const receipt = await this.process({
+        key: found[0],
+        parsed: found[1],
+        nominalAt,
+        wakeAt: nominalAt,
+        action: 'run',
+      });
+      if (!receipt) throw new Error('schedule-run-refused');
+      result = {
+        runId: deterministicScheduleRunId(scheduleId, found[1].value.revision, nominalAt),
+        eventId: receipt.id,
+      };
+    });
+    return result!;
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     if (this.timer) clearTimeout(this.timer);
@@ -1334,7 +1404,12 @@ export class WorkCalendar {
           current.value.status === 'active' &&
           current.value.mission !== undefined &&
           current.event.pubkey === current.value.mission.controllerAgentPubkey;
-        if (!humanResume && !missionControllerResume) continue;
+        const agentToolResume =
+          current.value.revision > existing.revision &&
+          current.value.status === 'active' &&
+          current.value.agentToolMandate !== undefined &&
+          current.event.pubkey === current.value.agentPubkey;
+        if (!humanResume && !missionControllerResume && !agentToolResume) continue;
       }
       const authority = await this.dependencies.authorize(current);
       if (!authority.authorized) {
@@ -1342,8 +1417,12 @@ export class WorkCalendar {
         else throw new Error(`transient schedule authority failure: ${authority.reason}`);
         continue;
       }
-      if (current.value.status === 'paused') {
-        await this.pause(current, 'schedule-paused', false);
+      if (current.value.status === 'paused' || current.value.status === 'cancelled') {
+        await this.pause(
+          current,
+          current.value.status === 'cancelled' ? 'schedule-cancelled' : 'schedule-paused',
+          false,
+        );
         continue;
       }
       const artifacts = await this.validateArtifacts(current);
@@ -1481,7 +1560,7 @@ export class WorkCalendar {
     this.armTimer();
   }
 
-  private async process(entry: HeapEntry): Promise<void> {
+  private async process(entry: HeapEntry): Promise<NostrEvent | undefined> {
     const schedule = entry.parsed.value;
     const runId = deterministicScheduleRunId(
       schedule.scheduleId,
@@ -1489,37 +1568,48 @@ export class WorkCalendar {
       entry.nominalAt,
     );
     if (entry.action === 'skip') {
-      await this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, 'catch-up-skipped');
-      return;
+      return this.finish(
+        entry.parsed,
+        runId,
+        entry.nominalAt,
+        'skipped',
+        false,
+        'catch-up-skipped',
+      );
     }
 
     const authority = await this.dependencies.authorize(entry.parsed);
     if (!authority.authorized) {
       if (authority.terminal) await this.pause(entry.parsed, authority.reason, true);
       else this.retryLater(schedule.scheduleId);
-      return;
+      return undefined;
     }
     const artifacts = await this.validateArtifacts(entry.parsed);
     if (!artifacts.authorized) {
       if (artifacts.terminal) await this.pause(entry.parsed, artifacts.reason, true);
       else this.retryLater(schedule.scheduleId);
-      return;
+      return undefined;
     }
     if (this.secondsNow() > schedule.expiresAt) {
-      await this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, 'schedule-expired');
-      return;
+      return this.finish(
+        entry.parsed,
+        runId,
+        entry.nominalAt,
+        'skipped',
+        false,
+        'schedule-expired',
+      );
     }
     const budgetReason = this.budgetRefusal(schedule);
     if (budgetReason) {
-      await this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, budgetReason);
-      return;
+      return this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, budgetReason);
     }
     const missionAction = schedule.mission
       ? await this.dependencies.missionAction?.(entry.parsed, entry.nominalAt)
       : undefined;
     if (schedule.mission && !missionAction) {
       await this.pause(entry.parsed, 'mission-grant-invalid', true);
-      return;
+      return undefined;
     }
 
     // Receipts are best-effort observability only. A relay failure never gates
@@ -1597,22 +1687,21 @@ export class WorkCalendar {
             error.reason,
           )
         )
-          await this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, error.reason);
+          return this.finish(entry.parsed, runId, entry.nominalAt, 'skipped', false, error.reason);
         else if (error.terminal) await this.pause(entry.parsed, error.reason, true);
         else this.retryLater(schedule.scheduleId);
-        return;
+        return undefined;
       }
       const reason =
         String(error instanceof Error ? error.message : error)
           .replace(/[\r\n]+/g, ' ')
           .slice(0, 600) || 'scheduled-turn-failed';
-      await this.finish(entry.parsed, runId, entry.nominalAt, 'failed', activated, reason);
-      return;
+      return this.finish(entry.parsed, runId, entry.nominalAt, 'failed', activated, reason);
     }
     // Keep the last-execution write outside the model/dispatcher catch: a
     // durable-store failure here is a daemon crash condition, not a model
     // failure. On restart the occurrence may run again by design.
-    await this.finish(entry.parsed, runId, entry.nominalAt, 'complete', true);
+    return this.finish(entry.parsed, runId, entry.nominalAt, 'complete', true);
   }
 
   private budgetRefusal(schedule: WorkScheduleV1): string | undefined {
@@ -1632,7 +1721,7 @@ export class WorkCalendar {
     status: 'complete' | 'failed' | 'skipped',
     activated: boolean,
     reason?: string,
-  ): Promise<void> {
+  ): Promise<NostrEvent | undefined> {
     const schedule = parsed.value;
     const current = this.states.get(schedule.scheduleId);
     if (!current) return;
@@ -1675,6 +1764,7 @@ export class WorkCalendar {
         `pause card for ${schedule.scheduleId}`,
       );
     }
+    return receipt;
   }
 
   private async publishReceipt(

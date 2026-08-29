@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import WebSocket from 'ws';
 import {
+  type AgentSoulProfile,
   type BuzzClient,
   createBuzzClient,
   type RepositoryBinding,
@@ -279,6 +280,7 @@ async function readWorkspaceMembership(
  * it does not own process supervision, READY/WATCHDOG, or update handoff.
  */
 export class RoomRuntimeCoordinator {
+  private runScheduleNow?: (scheduleId: string) => Promise<{ runId: string; eventId: string }>;
   private runtime: AgentRuntimeRecord;
   private readonly configPath: string;
   private readonly baseConfig: BodyConfig;
@@ -319,6 +321,13 @@ export class RoomRuntimeCoordinator {
   private readonly roomRemovalConfirmations = new Map<string, number>();
   /** Schedule another short-cadence read while a removal is being confirmed. */
   private confirmationPending = false;
+  /**
+   * `updatedAt` of the `buzz-agent-soul` overlay last observed for this
+   * agent, undefined until the first successful read. That first read only
+   * seeds the baseline — a Room freshly discovering its persona is not a
+   * "change" — every read after it that disagrees is.
+   */
+  private lastKnownSoulUpdatedAt: number | undefined;
   private readonly now: () => number;
   private readonly watchdogStaleMs: number;
   private readonly reconcileHeartbeatMs: number;
@@ -446,6 +455,12 @@ export class RoomRuntimeCoordinator {
     );
   }
 
+  setScheduleRunNow(
+    run: (scheduleId: string) => Promise<{ runId: string; eventId: string }>,
+  ): void {
+    this.runScheduleNow = run;
+  }
+
   needsFastReconcile(): boolean {
     return this.confirmationPending;
   }
@@ -528,6 +543,41 @@ export class RoomRuntimeCoordinator {
     console.warn(
       `[thin-core] Room ${channelId} repository could not be confirmed (${reason}); ` +
         'keeping the last confirmed classification rather than treating it as repo-less',
+    );
+  }
+
+  /**
+   * Detect a newer `buzz-agent-soul` overlay for this agent and, when found,
+   * force every session in every Room this daemon serves back through full
+   * activation on its next turn (`Body.refreshPersonaForSoulUpdate`). Piggy-
+   * backs on the reconcile heartbeat rather than opening a dedicated
+   * subscription — the same cadence a saved model/access-policy change
+   * already rides.
+   */
+  private async refreshPersonaIfSoulChanged(client: BuzzClient): Promise<void> {
+    let profile: AgentSoulProfile | undefined;
+    try {
+      const agents = await client.listAgents(this.runtime.communityId);
+      profile = agents.find((agent) => agent.pubkey === this.agent.publicKey)?.soulProfile;
+    } catch (error) {
+      console.error(
+        `[thin-core] agent soul freshness check failed for Workspace ` +
+          `${this.runtime.communityId}; keeping the currently applied persona:`,
+        error,
+      );
+      return;
+    }
+    const updatedAt = profile?.updatedAt;
+    const previouslyKnown = this.lastKnownSoulUpdatedAt !== undefined;
+    const changed = updatedAt !== this.lastKnownSoulUpdatedAt;
+    this.lastKnownSoulUpdatedAt = updatedAt;
+    if (!previouslyKnown || !changed) return;
+    console.info(
+      `[thin-core] agent soul changed for Workspace ${this.runtime.communityId}; ` +
+        'refreshing persona delivery for every Room session on its next turn',
+    );
+    await Promise.allSettled(
+      [...this.running.values()].map((running) => running.body.refreshPersonaForSoulUpdate()),
     );
   }
 
@@ -794,6 +844,7 @@ export class RoomRuntimeCoordinator {
           this.noteRoomDiscoveryFailure(channelId, error);
         }
       });
+      await this.refreshPersonaIfSoulChanged(client);
       return 'member';
     } catch (error) {
       // A partially completed discovery pass cannot count toward consecutive
@@ -1084,6 +1135,10 @@ export class RoomRuntimeCoordinator {
         onRoomPollSuccess: health.poll,
         onRoomPollFailure: health.failure,
         onRoomPresence: health.presence,
+        runScheduleNow: (scheduleId) => {
+          if (!this.runScheduleNow) throw new Error('schedule calendar is unavailable');
+          return this.runScheduleNow(scheduleId);
+        },
       },
     );
     const promise = body
@@ -1128,6 +1183,10 @@ export class RoomRuntimeCoordinator {
       onRoomPollSuccess: () => this.notePoll(channelId),
       onRoomPollFailure: (_roomId, retryInMs) => this.notePollFailure(channelId, retryInMs),
       onRoomPresence: (_roomId, status) => this.notePresence(channelId, status),
+      runScheduleNow: (scheduleId) => {
+        if (!this.runScheduleNow) throw new Error('schedule calendar is unavailable');
+        return this.runScheduleNow(scheduleId);
+      },
     });
     const promise = body
       .runConversationRoomLoop(channelId, kind, { signal: controller.signal })

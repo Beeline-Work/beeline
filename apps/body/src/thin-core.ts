@@ -7,7 +7,8 @@ import { RoomRuntimeCoordinator, reconcileRetryMs } from './room-runtime.js';
 import { createDaemonWorkCalendar } from './daemon-work-calendar.js';
 import type { WorkCalendar } from './work-calendar.js';
 
-type WorkCalendarLifecycle = Pick<WorkCalendar, 'start' | 'dispose' | 'refreshNow'>;
+type WorkCalendarLifecycle = Pick<WorkCalendar, 'start' | 'dispose' | 'refreshNow'> &
+  Partial<Pick<WorkCalendar, 'runNow'>>;
 
 export {
   DEFAULT_DRAIN_DEADLINE_MS,
@@ -94,6 +95,9 @@ export class ThinDaemonCore {
         roomRuntime: this.roomRuntime,
         nowMs: this.now,
       });
+    if (this.workCalendar.runNow) {
+      this.roomRuntime.setScheduleRunNow((scheduleId) => this.workCalendar.runNow!(scheduleId));
+    }
   }
 
   activeRoomIds(): string[] {

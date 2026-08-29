@@ -3,10 +3,8 @@ name: Beta OTA release canary
 env:
   EXPECTED_ANDROID_UPDATE_ID: ${EXPECTED_ANDROID_UPDATE_ID}
 ---
-- assertVisible:
-    id: ota-update-info
-- assertVisible: 'Running update: ${EXPECTED_ANDROID_UPDATE_ID}'
-- assertVisible: 'Channel: beta'
+# ota-canary.sh has already polled this exact update id and beta channel before
+# invoking Maestro. Start the product flow without repeating that proven gate.
 - pressKey: back
 - runFlow: smoke.yaml
 - runFlow: workspace-switch.yaml

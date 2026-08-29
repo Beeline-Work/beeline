@@ -77,6 +77,7 @@ vi.mock('react-native', async () => {
     Share: { share },
     ScrollView: host('ScrollView'),
     Text: host('Text'),
+    TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
   };
@@ -317,30 +318,69 @@ describe('Members workspace management', () => {
   });
 
   it('replaces the reported zero-axis dead end with model and fixed-level effort controls', async () => {
-    state.agent = { ...baseAgent(), catalog: [] };
+    state.agent = {
+      ...baseAgent(),
+      catalog: [],
+      selected: undefined,
+      runtimeSelection: { model: 'gpt-5.6-sol', effort: 'medium' },
+    };
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
 
     expect(renderer.root.findByProps({ testID: 'model-catalog-missing' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'model-axis-model' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'model-axis-effort' })).toBeDefined();
+    expect(
+      renderer.root
+        .findByProps({ testID: 'model-axis-model' })
+        .findAllByType('Text')
+        .some((text: any) => text.props.children === 'gpt-5.6-sol'),
+    ).toBe(true);
+    expect(
+      renderer.root
+        .findByProps({ testID: 'model-axis-effort' })
+        .findAllByType('Text')
+        .some((text: any) => text.props.children === 'medium'),
+    ).toBe(true);
     await press(renderer, 'model-axis-effort');
     expect(renderer.root.findByProps({ testID: 'model-option-effort-low' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'model-option-effort-medium' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'model-custom-effort' })).toHaveLength(0);
   });
 
-  it('renames through setAgentSoul without replacing existing instructions', async () => {
-    modal.prompt.mockResolvedValueOnce('Scout');
+  it('edits the human-authored soul fields through setAgentSoul', async () => {
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
-    await press(renderer, 'rename-agent');
+    await press(renderer, 'edit-agent-soul');
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
+      renderer.root
+        .findByProps({ testID: 'agent-soul-instructions' })
+        .props.onChangeText('Look for regressions before shipping.');
+    });
+    await press(renderer, 'save-agent-soul');
 
     expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
       name: 'Scout',
-      soul: 'Keep the tests green.',
+      soul: 'Look for regressions before shipping.',
       avatarSeed: AGENT,
     });
+  });
+
+  it('uses pencil and close glyph controls instead of boxed rename and close actions', async () => {
+    const renderer = await render();
+    await press(renderer, `agent-${AGENT}-identity`);
+
+    expect(
+      renderer.root.findByProps({ testID: 'edit-agent-soul' }).findByType('Text').props.children,
+    ).toBe('✎');
+    expect(
+      renderer.root.findByProps({ testID: 'close-agent-settings' }).findByType('Text').props
+        .children,
+    ).toBe('×');
+    expect(renderer.root.findAllByProps({ testID: 'rename-agent' })).toHaveLength(0);
+    await press(renderer, 'close-agent-settings');
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
   });
 
   it('warns about and invokes the full removeAgent host teardown path', async () => {

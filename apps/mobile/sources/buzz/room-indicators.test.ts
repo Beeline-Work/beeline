@@ -5,6 +5,7 @@ import {
   COMPOSER_ACK_BOUND_MS,
   isPinnedCornerLive,
   isPinnedCornerReadyForReview,
+  pinnedCornerVerb,
   selectComposerAckState,
   selectPinnedCorner,
   selectTurnProgressAgentPubkey,
@@ -31,6 +32,12 @@ const corner = (
 });
 
 describe('selectPinnedCorner', () => {
+  it('pins canonical open as a quiet preparing phase before working', () => {
+    expect(
+      selectPinnedCorner({ lifecycle: [corner('opening', 'open', null)], now: NOW }),
+    ).toEqual({ cornerId: 'opening', status: 'preparing' });
+  });
+
   it('does not pin a parent body-control corner-open message without canonical working state', () => {
     const parentRoomHistory = [
       {
@@ -121,11 +128,18 @@ describe('pinned-corner presentation', () => {
     expect(isPinnedCornerLive('live')).toBe(true);
     expect(isPinnedCornerLive('needs-attention')).toBe(false);
     expect(isPinnedCornerLive('open')).toBe(false);
+    expect(isPinnedCornerLive('preparing')).toBe(false);
   });
 
   it('labels only review-ready as ready for review', () => {
     expect(isPinnedCornerReadyForReview('open')).toBe(true);
     expect(isPinnedCornerReadyForReview('live')).toBe(false);
+    expect(isPinnedCornerReadyForReview('preparing')).toBe(false);
+  });
+
+  it('names the opening lifecycle before it becomes active', () => {
+    expect(pinnedCornerVerb('preparing')).toBe('preparing');
+    expect(pinnedCornerVerb('live')).toBe('active');
   });
 });
 

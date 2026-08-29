@@ -25,7 +25,8 @@ import {
  */
 export type PinnedCorner = {
   cornerId: string;
-  status: CornerStatus;
+  /** `preparing` is the pinned-only projection of canonical machine OPEN. */
+  status: CornerStatus | 'preparing';
 };
 
 export type PinnedCornerInput = {
@@ -103,6 +104,7 @@ export function selectComposerAckState(input: ComposerAckInput): ComposerAckStat
 const PIN_RELEVANCE: Record<string, number> = {
   open: 0,
   live: 1,
+  preparing: 1,
   'needs-attention': 2,
   stalled: 2,
   failed: 3,
@@ -120,7 +122,7 @@ const PIN_RELEVANCE: Record<string, number> = {
  * review-ready one wins, then a working one, then the most recently active.
  */
 export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | null {
-  const status = new Map<string, CornerStatus>();
+  const status = new Map<string, PinnedCorner['status']>();
   const seenAt = new Map<string, number>();
 
   for (const corner of input.lifecycle) {
@@ -129,7 +131,8 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
     // control message can remain in history forever and must never pin itself.
     if (!corner.machineState) continue;
     const canonical = currentCornerStatus(corner, input.now);
-    if (canonical !== null) status.set(corner.id, canonical);
+    if (corner.machineState === 'open') status.set(corner.id, 'preparing');
+    else if (canonical !== null) status.set(corner.id, canonical);
     seenAt.set(
       corner.id,
       Math.max(seenAt.get(corner.id) ?? 0, corner.lastActivityAt ?? corner.createdAt ?? 0),
@@ -137,7 +140,7 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
   }
 
   const candidates = [...status.entries()]
-    .filter(([, value]) => !isCornerTerminal(value))
+    .filter(([, value]) => value === 'preparing' || !isCornerTerminal(value))
     .sort(
       ([leftId, left], [rightId, right]) =>
         PIN_RELEVANCE[left] - PIN_RELEVANCE[right] ||
@@ -155,12 +158,18 @@ export function selectPinnedCorner(input: PinnedCornerInput): PinnedCorner | nul
  * render on the quiet tier with no pulse — this is the one test that decides
  * which of a pinned corner's non-terminal statuses earns the gold treatment.
  */
-export function isPinnedCornerLive(status: CornerStatus): boolean {
+export function isPinnedCornerLive(status: PinnedCorner['status']): boolean {
   return status === 'live';
 }
 
 /** A pinned corner has an approvable change waiting — the pinned line should
  * say so rather than a generic "active"/"idle". */
-export function isPinnedCornerReadyForReview(status: CornerStatus): boolean {
+export function isPinnedCornerReadyForReview(status: PinnedCorner['status']): boolean {
   return status === 'open';
+}
+
+export function pinnedCornerVerb(status: PinnedCorner['status']): string {
+  if (status === 'preparing') return 'preparing';
+  if (isPinnedCornerReadyForReview(status)) return 'ready for review';
+  return isPinnedCornerLive(status) ? 'active' : 'needs attention';
 }

@@ -15,6 +15,16 @@ const require = createRequire(import.meta.url);
 export const PI_MCP_ADAPTER_VERSION = '2.30.0';
 export const PI_MCP_EXTENSION_NAME = 'beeline-mcp.ts';
 
+/**
+ * pi-mcp-adapter awaits fresh metadata during session_start only when its
+ * direct-tool selection is explicit. Body owns the full session inventory, so
+ * selecting every mounted server is both the readiness barrier and the exact
+ * intended surface.
+ */
+export function piMcpDirectToolSelection(servers: readonly McpServerWire[]): string {
+  return servers.map((server) => server.name).join(',');
+}
+
 export function resolvePiMcpAdapterEntrypoint(
   cliEntrypoint: string = process.argv[1] ?? '',
   configured: string | undefined = process.env.BEELINE_PI_MCP_ADAPTER_ENTRYPOINT,

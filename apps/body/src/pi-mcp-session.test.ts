@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { preparePiMcpSession } from './pi-mcp-session.js';
+import { piMcpDirectToolSelection, preparePiMcpSession } from './pi-mcp-session.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -10,6 +10,15 @@ afterEach(async () => {
 });
 
 describe('Pi MCP generated-extension route', () => {
+  it('selects the exact mounted inventory for the startup readiness barrier', () => {
+    expect(
+      piMcpDirectToolSelection([
+        { name: 'beeline-agent-tools', command: '/bin/true' },
+        { name: 'buzz-readonly-mcp', command: '/bin/true' },
+      ]),
+    ).toBe('beeline-agent-tools,buzz-readonly-mcp');
+  });
+
   it('materializes the exact session inventory with data-only serialization', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-pi-mcp-'));
     roots.push(root);

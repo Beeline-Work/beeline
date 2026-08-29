@@ -2,6 +2,7 @@ import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 
 export const AGENT_MENTION_TAG = 'beeline-agent-mention';
 export const AGENT_MENTION_DISPATCH_TAG = 'beeline-agent-mention-dispatch';
+export const AGENT_MENTION_REPLY_TAG = 'beeline-agent-mention-reply';
 export const AGENT_MENTION_PAUSED_TAG = 'beeline-agent-chain-paused';
 export const AGENT_TO_AGENT_TURN_FUSE = 6;
 

@@ -2,6 +2,7 @@ import { generateKeypair, signEvent } from '@beeline/nostr';
 import { describe, expect, it, vi } from 'vitest';
 import {
   AGENT_MENTION_TAG,
+  AGENT_MENTION_REPLY_TAG,
   AGENT_TO_AGENT_TURN_FUSE,
   AgentMentionTurnQueue,
   agentMentionTags,
@@ -11,6 +12,10 @@ import {
 } from './agent-mention.js';
 
 describe('signed agent mentions', () => {
+  it('uses a dedicated transcript marker for replies dispatched by the host', () => {
+    expect(AGENT_MENTION_REPLY_TAG).toBe('beeline-agent-mention-reply');
+  });
+
   it('resolves a stable same-roster agent id and round-trips signed metadata', () => {
     const from = generateKeypair();
     const to = generateKeypair();

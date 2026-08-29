@@ -34,6 +34,29 @@ describe('AgentToolHostBroker', () => {
     }
   });
 
+  it('keeps a session capability valid across transport reconnects', async () => {
+    const broker = new AgentToolHostBroker(
+      resolve(process.cwd(), 'src', 'agent-tool-mcp-proxy.ts'),
+    );
+    const invoke = vi.fn(async () => ({
+      schema_version: 1,
+      generation: { event_id: 'a'.repeat(64), generation: 1 },
+      grants: [],
+      defaults: [],
+      blockers: [],
+    }));
+    const server = await broker.mcpServer({ channelId: 'room', invoke });
+    try {
+      await expect(listMcpToolNames(server)).resolves.toContain('read_mandate');
+      await expect(callMcpTool(server, 'read_mandate', {})).resolves.toMatchObject({
+        structuredContent: { schema_version: 1 },
+      });
+      expect(invoke).toHaveBeenCalledOnce();
+    } finally {
+      await broker.close();
+    }
+  });
+
   it('fails closed when server identity, schema, or inventory is broken', () => {
     expect(() =>
       assertBeelineAgentToolHandshake({

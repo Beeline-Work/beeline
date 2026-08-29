@@ -466,11 +466,17 @@ describe('RoomIndexer', () => {
         TENANT,
         bytes(roomStallId),
         bytes(AGENT),
-        JSON.stringify([['h', ROOM], ['t', 'agent-message']]),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-message'],
+        ]),
         stallText,
         ROOM,
         bytes(cornerStallId),
-        JSON.stringify([['h', CORNER], ['t', 'agent-message']]),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-message'],
+        ]),
         CORNER,
       ],
     );
@@ -486,7 +492,9 @@ describe('RoomIndexer', () => {
       id: directReplyId,
       text: 'Ready',
     });
-    expect(corners?.corners.find((corner) => corner.corner.id === CORNER)?.latestMessage).toMatchObject({
+    expect(
+      corners?.corners.find((corner) => corner.corner.id === CORNER)?.latestMessage,
+    ).toMatchObject({
       text: 'Working',
     });
   });
@@ -497,7 +505,7 @@ describe('RoomIndexer', () => {
     // wall — both carry variable data so they cannot join the exact-set list)
     // must be caught here the same as the exact-text notices above.
     const attachmentEnoent =
-      "Attachment unavailable: ENOENT: no such file or directory, realpath " +
+      'Attachment unavailable: ENOENT: no such file or directory, realpath ' +
       "'/proc/2952774/root/home/lunchbox/.local/state/beeline/agents/agent/rooms/room/agent-private/workbench/report.html'";
     const modelUnavailable =
       'Model validation unavailable · gpt-5\n' +
@@ -515,7 +523,10 @@ describe('RoomIndexer', () => {
         TENANT,
         bytes(attachmentWallId),
         bytes(AGENT),
-        JSON.stringify([['h', ROOM], ['t', 'agent-message']]),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-message'],
+        ]),
         attachmentEnoent,
         ROOM,
         bytes(modelWallId),
@@ -610,6 +621,52 @@ describe('RoomIndexer', () => {
     );
     const idle = await indexer.readChats(WORKSPACE, VIEWER);
     expect(idle?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
+  });
+
+  it("excludes terminal corners from the Room row's corner count", async () => {
+    // The base fixture's CORNER is already 'working' (created_at=7), so the
+    // row starts with one open corner — the count a person can act on.
+    const working = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(working?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
+      cornerCount: 1,
+    });
+
+    // Landing publishes 'concluded' — terminal — before the corner channel is
+    // ever archived. The count must drop to zero immediately, matching the
+    // deck's own non-terminal rule for the pinned line and dropdown.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, '', $5, $6)`,
+      [
+        TENANT,
+        bytes('6'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['d', `buzz-corner-state:${CORNER}`],
+          ['t', 'buzz-corner-state'],
+          ['state', 'concluded'],
+        ]),
+        CORNER,
+        `buzz-corner-state:${CORNER}`,
+      ],
+    );
+    const concluded = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(concluded?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
+      cornerCount: 0,
+    });
+
+    // A corner archived outright (post-cleanup 'closed', or a bare archive)
+    // must never resurface in the count either.
+    await postgres.query(
+      `UPDATE channels SET archived_at = now() WHERE community_id = $1 AND id = $2`,
+      [TENANT, CORNER],
+    );
+    const archived = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(archived?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
+      cornerCount: 0,
+    });
   });
 
   it('withholds reply proof from deleted or foreign ancestry', async () => {
@@ -943,7 +1000,12 @@ describe('RoomIndexer', () => {
     );
     const cardId = 'f'.repeat(64);
     const legacyId = 'e'.repeat(64);
-    const insertGitHubEvent = async (id: string, createdAt: number, tags: string[][], content = '') => {
+    const insertGitHubEvent = async (
+      id: string,
+      createdAt: number,
+      tags: string[][],
+      content = '',
+    ) => {
       await postgres.query(
         `INSERT INTO events
           (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
@@ -962,11 +1024,16 @@ describe('RoomIndexer', () => {
       ['github-event-url', 'https://github.com/acme/widget/pull/7'],
       ['github-event-id', '7'],
     ]);
-    await insertGitHubEvent(legacyId, 14, [
-      ['h', ROOM],
-      ['t', 'github-event'],
-      ['service', 'beeline-events'],
-    ], 'lena pushed 0 commits to acme/widget:main');
+    await insertGitHubEvent(
+      legacyId,
+      14,
+      [
+        ['h', ROOM],
+        ['t', 'github-event'],
+        ['service', 'beeline-events'],
+      ],
+      'lena pushed 0 commits to acme/widget:main',
+    );
 
     const view = await indexer.readRoom(ROOM, VIEWER);
     const history = await indexer.readHistory(ROOM, VIEWER);
@@ -1003,6 +1070,94 @@ describe('RoomIndexer', () => {
     });
     await expect(indexer.readChats(WORKSPACE, AGENT)).resolves.toMatchObject({
       chats: [{ room: { id: ROOM }, unread: true }],
+    });
+  });
+
+  it('keeps chat preview and read state aligned with messages amid live and terminal corner activity', async () => {
+    const terminalCorner = '5c1455f1-3690-4b35-b52b-67c7fbce64c9';
+    await postgres.query(
+      `INSERT INTO channels
+        (community_id, id, name, description, visibility, created_by, created_at, updated_at)
+       VALUES ($1, $2, 'Landed corner', 'Already shipped', 'open', $3,
+         to_timestamp(13), to_timestamp(14))`,
+      [TENANT, terminalCorner, bytes(AGENT)],
+    );
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
+       VALUES ($1, $2, $3, 'owner'), ($1, $2, $4, 'member')`,
+      [TENANT, terminalCorner, bytes(VIEWER), bytes(AGENT)],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES
+        ($1, $2, $3, to_timestamp(13), 9007, $4, '', $5, NULL),
+        ($1, $6, $7, to_timestamp(14), 30078, $8, '', $5, $9)`,
+      [
+        TENANT,
+        bytes(createHash('sha256').update('terminal-corner-generation').digest('hex')),
+        bytes(VIEWER),
+        JSON.stringify([
+          ['h', terminalCorner],
+          ['community', WORKSPACE],
+          ['parent', ROOM],
+          ['name', 'Landed corner'],
+        ]),
+        terminalCorner,
+        bytes(createHash('sha256').update('terminal-corner-state').digest('hex')),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['d', `buzz-corner-state:${terminalCorner}`],
+          ['t', 'buzz-corner-state'],
+          ['state', 'concluded'],
+        ]),
+        `buzz-corner-state:${terminalCorner}`,
+      ],
+    );
+    await postgres.query(
+      `INSERT INTO beeline_room_read_marks
+        (community_id, room_id, viewer_pubkey, message_created_at, message_id)
+       VALUES ($1, $2, $3, to_timestamp(4), $4)`,
+      [TENANT, ROOM, bytes(VIEWER), bytes(directReplyId)],
+    );
+
+    // Production Rooms accumulate many typed kind:9 lifecycle records after
+    // the last conversation message. They must not consume the bounded chat
+    // preview window or move the server-owned conversation read cursor.
+    for (let ordinal = 0; ordinal < 12; ordinal += 1) {
+      const requestId = createHash('sha256')
+        .update(`chat-list-control-request-${ordinal}`)
+        .digest('hex');
+      await postgres.query(
+        `INSERT INTO events
+          (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+         VALUES ($1, $2, $3, to_timestamp($4), 9, $5, '', $6)`,
+        [
+          TENANT,
+          bytes(createHash('sha256').update(`chat-list-control-${ordinal}`).digest('hex')),
+          bytes(AGENT),
+          20 + ordinal,
+          JSON.stringify([
+            ['h', ROOM],
+            ['t', 'agent-turn'],
+            ['request', requestId],
+            ['agent', AGENT],
+            ['status', 'complete'],
+          ]),
+          ROOM,
+        ],
+      );
+    }
+
+    const chat = (await indexer.readChats(WORKSPACE, VIEWER))?.chats.find(
+      (candidate) => candidate.room.id === ROOM,
+    );
+    expect(chat).toMatchObject({
+      latestMessage: { id: directReplyId, text: 'Ready' },
+      unread: false,
+      cornerCount: 1,
+      agentState: 'working',
     });
   });
 

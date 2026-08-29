@@ -534,6 +534,19 @@ WITH workspace_candidates AS (
       ORDER BY e.created_at DESC, e.id ASC) AS ordinal
   FROM chats a JOIN events e ON e.community_id = a.community_id AND e.channel_id = a.id
     AND e.deleted_at IS NULL AND e.kind = 9
+  -- Rank conversation messages, not every kind:9 machine record. Otherwise
+  -- a burst of agent-turn/activity receipts can exhaust the bounded preview
+  -- window and also move the unread cursor beyond the last real message.
+  WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
+      WHERE marker->>0 = 't' AND COALESCE(marker->>1, '') <> ''
+        AND marker->>1 NOT IN (
+          'agent-message', 'buzz-agent-exchange', 'buzz-agent-request', 'buzz-attachment'
+        ))
+    AND (
+      btrim(e.content) <> ''
+      OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
+        WHERE marker->>0 = 't' AND marker->>1 = 'buzz-attachment')
+    )
 ), preview_events AS (
   SELECT * FROM preview_ranked WHERE ordinal <= $4
 ), latest_events AS (
@@ -544,7 +557,7 @@ WITH workspace_candidates AS (
     AND cm.channel_id = a.id AND cm.removed_at IS NULL
   GROUP BY a.community_id, a.id
 ), corner_children AS (
-  SELECT child.community_id, child.id AS corner_id, child.created_by,
+  SELECT child.community_id, child.id AS corner_id, child.created_by, child.archived_at,
     (SELECT t->>1 FROM jsonb_array_elements(generation.tags) t
       WHERE t->>0 = 'parent' LIMIT 1) AS parent_id
   FROM workspace w JOIN channels child ON child.community_id = w.community_id
@@ -558,18 +571,13 @@ WITH workspace_candidates AS (
     ORDER BY e.created_at ASC, e.id ASC LIMIT 1
   ) generation ON EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t
     WHERE t->>0 = 'parent')
-), corner_counts AS (
-  SELECT parent.community_id, parent.id AS room_id, count(*)::bigint AS corner_count
-  FROM chats parent JOIN corner_children child ON child.community_id = parent.community_id
-    AND child.parent_id = parent.id::text
-  GROUP BY parent.community_id, parent.id
 ), corner_states AS (
   -- Latest buzz-corner-state record per corner, normalized the same way
   -- cornerItem() normalizes it for the standalone corners list. Gated on
   -- current corner membership like every other agent-authored read below: a
   -- ghost agent (evicted key, dead or rogue daemon) must never resurrect a
   -- WORKING dot from a stale or replayed self-signed state record.
-  SELECT cc.community_id, cc.parent_id,
+  SELECT cc.community_id, cc.corner_id, cc.parent_id, cc.archived_at,
     (CASE WHEN raw.state = 'waiting-on-human' THEN 'waiting' ELSE raw.state END) AS state
   FROM corner_children cc
   LEFT JOIN LATERAL (
@@ -583,6 +591,18 @@ WITH workspace_candidates AS (
           AND member.pubkey = e.pubkey AND member.removed_at IS NULL)
     ORDER BY e.created_at DESC, e.id DESC LIMIT 1
   ) raw ON true
+), corner_counts AS (
+  -- Same non-terminal rule the deck applies before pinning or expanding a
+  -- corner (isCornerTerminalState, room-indicators.ts): a corner that has
+  -- concluded (landed), closed, or been archived is done work, not an open
+  -- count. A room whose corners are all terminal gets no row here at all,
+  -- so COALESCE(corners.corner_count, 0) below reads 0.
+  SELECT parent.community_id, parent.id AS room_id, count(*)::bigint AS corner_count
+  FROM chats parent JOIN corner_states cs ON cs.community_id = parent.community_id
+    AND cs.parent_id = parent.id::text
+  WHERE cs.archived_at IS NULL AND cs.state IS DISTINCT FROM 'concluded'
+    AND cs.state IS DISTINCT FROM 'closed'
+  GROUP BY parent.community_id, parent.id
 ), corner_urgency AS (
   -- Max-severity rollup of every corner's current state: a corner waiting on
   -- a human outranks one merely working, matching the deck's needs-you >
@@ -1546,6 +1566,9 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   if (permissionMarker) {
     const status = tag(eventTags, 'status');
     const agentPubkey = tag(eventTags, 'agent') ?? eventIdentity.pubkey;
+    const requesterPubkey = tag(eventTags, 'requester') ?? '';
+    const deciderPubkey = tag(eventTags, 'decider');
+    if (!/^[0-9a-f]{64}$/.test(requesterPubkey)) return undefined;
     return {
       ...base,
       presentation: 'card',
@@ -1556,6 +1579,20 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
           agentPubkey === eventIdentity.pubkey
             ? eventIdentity
             : { pubkey: agentPubkey, kind: 'agent', name: `Agent ${agentPubkey.slice(0, 8)}` },
+        requester: {
+          pubkey: requesterPubkey,
+          kind: 'human',
+          name: `Person ${requesterPubkey.slice(0, 8)}`,
+        },
+        ...(deciderPubkey && /^[0-9a-f]{64}$/.test(deciderPubkey)
+          ? {
+              decider: {
+                pubkey: deciderPubkey,
+                kind: 'human' as const,
+                name: `Person ${deciderPubkey.slice(0, 8)}`,
+              },
+            }
+          : {}),
         tool: tag(eventTags, 'tool') ?? 'edit files',
         ...(tag(eventTags, 'repo') ? { repository: tag(eventTags, 'repo') } : {}),
         ...(tag(eventTags, 'purpose') === 'squire-spending'
@@ -1694,14 +1731,32 @@ function projectedMessages(
   channelId: string,
   limit: number,
 ) {
-  return rows
+  const projected = rows
     .filter((row) => row.section === section)
     .flatMap((row) => {
       const message = projectEvent(json(row.data), channelId);
       return message ? [message] : [];
     })
-    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
-    .slice(-limit);
+    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+  return collapsePermissionCards(projected).slice(-limit);
+}
+
+/** Fold signed permission history into the single paint-ready card it models. */
+export function collapsePermissionCards(projected: readonly RoomViewMessage[]): RoomViewMessage[] {
+  const latestPermission = new Map<string, RoomViewMessage>();
+  for (const message of projected) {
+    if (!message.permission) continue;
+    const existing = latestPermission.get(message.permission.permissionId);
+    if (!existing?.permission || existing.permission.status === 'pending') {
+      latestPermission.set(message.permission.permissionId, message);
+    } else if (message.permission.status !== 'pending') {
+      latestPermission.set(message.permission.permissionId, message);
+    }
+  }
+  return projected.filter(
+    (message) =>
+      !message.permission || latestPermission.get(message.permission.permissionId) === message,
+  );
 }
 
 function projectedHistoryPage(
@@ -1724,7 +1779,7 @@ function projectedHistoryPage(
   );
   const hasMoreRawRows = examined < raw.length || raw.length === HISTORY_EVENT_LIMIT;
   return {
-    messages,
+    messages: collapsePermissionCards(messages),
     ...(hasMoreRawRows && cursor
       ? { nextBefore: { createdAt: integer(cursor.createdAt), id: String(cursor.id ?? '') } }
       : {}),

@@ -12,6 +12,7 @@ import {
   KIND_AGENT_SOUL,
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
+  KIND_CHANNEL_METADATA,
   KIND_COMMUNITY_INVITE,
   KIND_CREATE_GROUP,
   KIND_PUT_USER,
@@ -20,6 +21,8 @@ import {
   TAG_AGENT_PAIRING,
   TAG_AGENT_SOUL,
   TAG_COMMUNITY,
+  TAG_DIRECT_MESSAGE,
+  TAG_PARENT,
 } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
 import type { ChannelOpsContext } from './channel.js';
@@ -236,6 +239,208 @@ describe('agent pairing and soul overlays', () => {
     const second = await redeemAgentPairingCode(ctx(agentIdentity), pairing.code);
     expect(second).toMatchObject({ communityId, joined: false });
     expect(published.filter((event) => tagValues(event, 't').includes(TAG_AGENT))).toHaveLength(1);
+  });
+
+  it('redeems a freshly minted code when the relay hides Workspace-scoped kind:9 from a non-member key', async () => {
+    const published: NostrEvent[] = [];
+    let agentIsMember = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.kind === KIND_PUT_USER && tagValue(event, 'p') === agentIdentity.publicKey) {
+            agentIsMember = true;
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', owner.publicKey],
+              ...(agentIsMember ? [['p', agentIdentity.publicKey]] : []),
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_ADMINS, [
+              ['d', communityId],
+              ['p', owner.publicKey, 'owner'],
+            ]),
+          ]);
+        }
+        if (kind === KIND_STREAM_MESSAGE) {
+          // Production requires an h filter for kind:9 reads, and redemption
+          // cannot derive that Workspace id from the plaintext pairing code.
+          const hValues = (filter['#h'] as string[] | undefined) ?? [];
+          if (!hValues.includes(communityId)) return jsonResponse([]);
+          const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
+          const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
+          return jsonResponse(
+            published.filter(
+              (event) =>
+                event.kind === kind &&
+                requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value) &&
+                pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
+            ),
+          );
+        }
+        if (kind === KIND_COMMUNITY_INVITE) {
+          const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
+          return jsonResponse(
+            published.filter(
+              (event) =>
+                event.kind === KIND_COMMUNITY_INVITE &&
+                requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value),
+            ),
+          );
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    const pairing = await createAgentPairingCode(ctx(owner), communityId, 600);
+    await expect(
+      redeemAgentPairingCode(ctx(agentIdentity), pairing.code.toLowerCase()),
+    ).resolves.toMatchObject({ communityId, joined: true });
+    expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(true);
+  });
+
+  it('redemption attaches the agent to every top-level Room the inviter belongs to, excluding DMs, corners, and archived Rooms', async () => {
+    const roomAId = '22222222-2222-4222-8222-222222222222';
+    const roomBId = '33333333-3333-4333-8333-333333333333';
+    const cornerId = '44444444-4444-4444-8444-444444444444';
+    const dmId = '55555555-5555-4555-8555-555555555555';
+    const archivedRoomId = '66666666-6666-4666-8666-666666666666';
+    const roomACreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', roomAId],
+      ['name', 'room-a'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const roomBCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', roomBId],
+      ['name', 'room-b'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const cornerCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', cornerId],
+      ['name', 'a-corner'],
+      [TAG_PARENT, roomAId],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const dmCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', dmId],
+      ['t', TAG_DIRECT_MESSAGE],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    const archivedRoomCreate = signed(owner, KIND_CREATE_GROUP, [
+      ['h', archivedRoomId],
+      ['name', 'old-room'],
+      [TAG_COMMUNITY, communityId],
+    ]);
+    // Owner (the pairing code's minter) belongs to room A and the archived
+    // room, but not room B — room B must never receive the agent even though
+    // it's an ordinary top-level Room in the same Workspace.
+    const roomMembers: Record<string, Set<string>> = {
+      [roomAId]: new Set([owner.publicKey]),
+      [roomBId]: new Set(),
+      [cornerId]: new Set([owner.publicKey]),
+      [dmId]: new Set([owner.publicKey]),
+      [archivedRoomId]: new Set([owner.publicKey]),
+    };
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.kind === KIND_PUT_USER) {
+            const channelId = tagValue(event, 'h');
+            const pubkey = tagValue(event, 'p');
+            if (channelId && pubkey) (roomMembers[channelId] ??= new Set()).add(pubkey);
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) {
+          return jsonResponse([
+            communityCreate(),
+            roomACreate,
+            roomBCreate,
+            cornerCreate,
+            dmCreate,
+            archivedRoomCreate,
+          ]);
+        }
+        if (kind === KIND_CHANNEL_METADATA) {
+          const requestedId =
+            (filter['#d'] as string[] | undefined)?.[0] ??
+            (filter['#h'] as string[] | undefined)?.[0];
+          if (requestedId === archivedRoomId) {
+            return jsonResponse([
+              signed(owner, KIND_CHANNEL_METADATA, [
+                ['d', archivedRoomId],
+                ['archived', 'true'],
+              ]),
+            ]);
+          }
+          return jsonResponse([]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          const requestedId = (filter['#d'] as string[] | undefined)?.[0] ?? '';
+          const members = [...(roomMembers[requestedId] ?? [])];
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', requestedId],
+              ...members.map((pubkey) => ['p', pubkey]),
+            ]),
+          ]);
+        }
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
+          const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
+          const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
+          return jsonResponse(
+            published.filter(
+              (event) =>
+                event.kind === kind &&
+                requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value) &&
+                pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
+            ),
+          );
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    const pairing = await createAgentPairingCode(ctx(owner), communityId, 600);
+    await redeemAgentPairingCode(ctx(agentIdentity), pairing.code);
+
+    expect(roomMembers[roomAId]!.has(agentIdentity.publicKey)).toBe(true);
+    expect(roomMembers[roomBId]!.has(agentIdentity.publicKey)).toBe(false);
+    expect(roomMembers[cornerId]!.has(agentIdentity.publicKey)).toBe(false);
+    expect(roomMembers[dmId]!.has(agentIdentity.publicKey)).toBe(false);
+    expect(roomMembers[archivedRoomId]!.has(agentIdentity.publicKey)).toBe(false);
+
+    const attachPublishes = published.filter(
+      (event) => event.kind === KIND_PUT_USER && tagValue(event, 'p') === agentIdentity.publicKey,
+    );
+    expect(attachPublishes).toHaveLength(2); // the Workspace itself + room A
+    expect(attachPublishes.some((event) => tagValue(event, 'h') === roomAId)).toBe(true);
   });
 
   it('joins a member-authored replaceable soul overlay without changing identity authority', async () => {

@@ -77,4 +77,17 @@ describe('Room list layout contract', () => {
     expect(source).toContain('const deckState = roomDeckState(item);');
     expect(source).not.toContain("unread ? 'needs-you' : 'idle'");
   });
+
+  it('names the corner count "corner(s)", never "changes", and hides it at zero', () => {
+    // Regression: the row used to print `${item.cornerCount} changes` verbatim,
+    // showing "0 changes" for a Room whose corners had all landed/closed —
+    // confusing wording (the product noun is "corner") for a count nothing
+    // could act on. The server count already excludes terminal corners; the
+    // row must additionally omit the segment entirely rather than show "0".
+    expect(source).toContain("import { formatRoomCornerCount } from '@/buzz/vocabulary';");
+    expect(source).toContain('const cornerCount = formatRoomCornerCount(item.cornerCount);');
+    expect(source).not.toMatch(/\{item\.cornerCount\}\s*changes/);
+    expect(source).not.toContain('changes</Text>');
+    expect(source).toContain("cornerCount ? ` · ${cornerCount}` : ''");
+  });
 });

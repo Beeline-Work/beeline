@@ -21,6 +21,13 @@ vi.mock('react-native', async () => {
   };
 });
 
+vi.mock('react-native-keyboard-controller', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return { KeyboardAvoidingView: host('KeyboardAvoidingView') };
+});
+
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     absoluteFillObject: { position: 'absolute', inset: 0 },

@@ -173,6 +173,7 @@ import {
 } from '@/buzz/corner-session';
 import {
   chatBackAction,
+  cornerOpenAction,
   cornerHref,
   roomHref,
   type ChatStackRoute,
@@ -3115,9 +3116,13 @@ export default function BuzzChat() {
   }, []);
 
   const openCorner = useCallback(
-    (subchannelId: string) => {
-      if (subchannelId === decodedId) return;
-      router.push(cornerHref(subchannelId, decodedId));
+    (subchannelId: string | undefined) => {
+      const action = cornerOpenAction(subchannelId, decodedId);
+      if (action.type === 'explain') {
+        Modal.alert('Corner unavailable', action.message);
+        return;
+      }
+      router.push(cornerHref(action.cornerId, decodedId));
     },
     [decodedId],
   );
@@ -4137,14 +4142,9 @@ export default function BuzzChat() {
           <CornerLiveBar
             label={cornerLiveBar.label}
             live={cornerLiveBar.live}
-            onPress={
-              // A truthy READY id can still be unroutable when it names the
-              // current route. openCorner rejects that self-target; do not
-              // advertise the downstream no-op as `view →` in the first place.
-              cornerLiveBar.cornerId && cornerLiveBar.cornerId !== decodedId
-                ? () => openCorner(cornerLiveBar.cornerId!)
-                : undefined
-            }
+            // A Room bar always acts. Corrupt/missing lifecycle data is
+            // explained by openCorner instead of disappearing in a guard.
+            onPress={!isCorner ? () => openCorner(cornerLiveBar.cornerId) : undefined}
           />
         )}
         {/* The ordinary per-turn indicator, independent of the line above: a

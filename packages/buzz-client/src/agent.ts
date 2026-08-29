@@ -8,9 +8,10 @@
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { communityChannels, communityMembers, getCommunity, inviteTokenHash } from './community.js';
-import { publishEvent } from './http.js';
+import { publishEvent, queryEvents } from './http.js';
 import {
   KIND_AGENT_SOUL,
+  KIND_COMMUNITY_INVITE,
   KIND_STREAM_MESSAGE,
   TAG_AGENT,
   TAG_AGENT_PAIRING,
@@ -255,7 +256,11 @@ export async function createAgentPairingCode(
     {
       pubkey: ctx.identity.publicKey,
       created_at: createdAt,
-      kind: KIND_STREAM_MESSAGE,
+      // Pairing is redeemed by a brand-new key that is not a Workspace member
+      // yet. Keep the marker on the same globally resolvable record kind as a
+      // person invite; a Workspace-scoped kind:9 marker is invisible to that
+      // key on the production relay.
+      kind: KIND_COMMUNITY_INVITE,
       tags: [
         ['h', communityId],
         ['t', TAG_AGENT_PAIRING],
@@ -281,11 +286,37 @@ export async function redeemAgentPairingCode(
     throw new Error('invalid agent pairing code');
   }
   const tokenHash = inviteTokenHash(code);
-  const events = await query(ctx, [
-    { kinds: [KIND_STREAM_MESSAGE], '#d': [tokenHash], '#t': [TAG_AGENT_PAIRING], limit: 20 },
-  ]);
+  // Invite discovery is deliberately HTTP-only: the bridge grants a fresh,
+  // authenticated non-member access to globally resolvable invite records.
+  // Retain the old kind:9 marker scan until already-issued legacy codes age
+  // out; their Workspace id cannot be derived from the plaintext code.
+  const current = await queryEvents(
+    ctx.http,
+    [
+      {
+        kinds: [KIND_COMMUNITY_INVITE],
+        '#d': [tokenHash],
+        '#t': [TAG_AGENT_PAIRING],
+        limit: 20,
+      },
+    ],
+    ctx.identity.publicKey,
+  );
+  const events =
+    current.length > 0
+      ? current
+      : await queryEvents(
+          ctx.http,
+          [{ kinds: [KIND_STREAM_MESSAGE], '#t': [TAG_AGENT_PAIRING], limit: 500 }],
+          ctx.identity.publicKey,
+        );
   const pairing = events.find((event) => {
-    if (!verifyEvent(event) || event.kind !== KIND_STREAM_MESSAGE) return false;
+    if (
+      !verifyEvent(event) ||
+      (event.kind !== KIND_COMMUNITY_INVITE && event.kind !== KIND_STREAM_MESSAGE)
+    ) {
+      return false;
+    }
     const communityId = tagValue(event, 'h');
     const expiresAt = Number(tagValue(event, 'expiration'));
     return Boolean(

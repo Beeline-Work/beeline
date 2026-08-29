@@ -12,6 +12,7 @@ import {
   KIND_AGENT_SOUL,
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
+  KIND_COMMUNITY_INVITE,
   KIND_CREATE_GROUP,
   KIND_PUT_USER,
   KIND_STREAM_MESSAGE,
@@ -96,14 +97,16 @@ describe('agent pairing and soul overlays', () => {
             ]),
           ]);
         }
-        if (kind === KIND_STREAM_MESSAGE) {
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
           const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
           const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
           return jsonResponse(
             published.filter(
               (event) =>
-                event.kind === KIND_STREAM_MESSAGE &&
+                event.kind === kind &&
                 requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value) &&
                 pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
             ),
           );
@@ -141,13 +144,16 @@ describe('agent pairing and soul overlays', () => {
           ]);
         }
         if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
-        if (kind === KIND_STREAM_MESSAGE) {
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
           const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
           const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
           return jsonResponse(
             published.filter(
               (event) =>
+                event.kind === kind &&
                 requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value) &&
                 pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
             ),
           );
@@ -163,7 +169,7 @@ describe('agent pairing and soul overlays', () => {
     expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(false);
   });
 
-  it('redeems a short-lived code under the agent identity and is idempotent for that key', async () => {
+  it('redeems a globally resolvable code under the agent identity and is idempotent for that key', async () => {
     const published: NostrEvent[] = [];
     let agentIsMember = false;
     vi.stubGlobal(
@@ -197,14 +203,16 @@ describe('agent pairing and soul overlays', () => {
             ]),
           ]);
         }
-        if (kind === KIND_STREAM_MESSAGE) {
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
           const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
           const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
           return jsonResponse(
             published.filter(
               (event) =>
-                event.kind === KIND_STREAM_MESSAGE &&
+                event.kind === kind &&
                 requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value) &&
                 pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
             ),
           );
@@ -216,6 +224,7 @@ describe('agent pairing and soul overlays', () => {
     const pairing = await createAgentPairingCode(ctx(), communityId, 600);
     expect(pairing.code).toMatch(/^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
     expect(JSON.stringify(pairing.event)).not.toContain(pairing.code);
+    expect(pairing.event.kind).toBe(KIND_COMMUNITY_INVITE);
     expect(pairing.event.tags).toContainEqual(['t', TAG_AGENT_PAIRING]);
 
     const first = await redeemAgentPairingCode(ctx(agentIdentity), pairing.code.toLowerCase());

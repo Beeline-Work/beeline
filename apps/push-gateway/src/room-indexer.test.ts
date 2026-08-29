@@ -1093,6 +1093,14 @@ describe('RoomIndexer', () => {
     await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
       agents: [{ identity: { name: 'Clara' } }],
     });
+    const detail = await indexer.readAgent(WORKSPACE, AGENT, VIEWER);
+    expect(detail?.watchFilters).toContainEqual({
+      kinds: [30078],
+      '#d': [modelKey],
+    });
+    expect(
+      detail?.watchFilters.some((filter) => filter.kinds?.includes(30078) && filter['#h']),
+    ).toBe(false);
   });
 
   it('keeps the scoped chat query to one physical statement at 1, 47, and 200 Rooms', async () => {

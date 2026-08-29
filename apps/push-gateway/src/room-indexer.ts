@@ -2026,7 +2026,10 @@ export class RoomIndexer {
       ...(Object.keys(selectedSelection).length ? { selected: selectedSelection } : {}),
       watchFilters: [
         { kinds: [0], authors: [agentPubkey] },
-        { kinds: [9, 30078, 9000, 9001], '#h': [workspaceId], '#p': [agentPubkey] },
+        { kinds: [9, 9000, 9001], '#h': [workspaceId], '#p': [agentPubkey] },
+        // Parameterized agent overlays are indexed by their canonical d key,
+        // not by their community h tag. All three records share this key.
+        { kinds: [30078], '#d': [`${workspaceId}:${agentPubkey}`] },
       ],
     };
   }

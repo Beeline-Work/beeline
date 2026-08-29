@@ -43,30 +43,31 @@ async function main(): Promise<void> {
     await materializerStore.migrateReservations();
     await materializerStore.migrateRoomReadMarks();
     await materializerStore.deleteSnapshotContract();
-    const deliveryState = await DeliveryState.load(
-      materializerStore.reservation<DeliveryStateFile>('push-delivery'),
-    );
     const indexer = new RoomIndexer(materializerStore);
 
-    const eventsConfig = loadEventsServiceConfig();
-    const eventsState = new RepositoryEventsState(
-      materializerStore.reservation<EventsStateData>('repository-events'),
-    );
-    hostedEvents = await startHostedRepositoryEvents({
-      config: eventsConfig,
-      state: eventsState,
-      signal: shutdownController.signal,
-      run: runRepositoryEventsService,
-    });
-    void hostedEvents.completed.catch((error) => {
-      if (shutdownController.signal.aborted) return;
-      console.error(
-        '[events] hosted consumer failed:',
-        error instanceof Error ? error.message : String(error),
+    if (!config.repositoryEventsEnabled) {
+      console.log('[events] repository ingestion disabled by configuration');
+    } else {
+      const eventsConfig = loadEventsServiceConfig();
+      const eventsState = new RepositoryEventsState(
+        materializerStore.reservation<EventsStateData>('repository-events'),
       );
-      process.exitCode = 1;
-      void drain();
-    });
+      hostedEvents = await startHostedRepositoryEvents({
+        config: eventsConfig,
+        state: eventsState,
+        signal: shutdownController.signal,
+        run: runRepositoryEventsService,
+      });
+      void hostedEvents.completed.catch((error) => {
+        if (shutdownController.signal.aborted) return;
+        console.error(
+          '[events] hosted consumer failed:',
+          error instanceof Error ? error.message : String(error),
+        );
+        process.exitCode = 1;
+        void drain();
+      });
+    }
 
     server = createRegistrationServer(registry, {
       sendTest: async (pubkey) => {
@@ -98,44 +99,52 @@ async function main(): Promise<void> {
       `[materializer] server listening on http://${config.host}:${config.port}; consumers=push,events,indexer; store=postgres`,
     );
 
-    try {
-      const serviceAccountPath = process.env.BUZZY_PUSH_SA_FILE;
-      if (serviceAccountPath && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-        process.env.GOOGLE_APPLICATION_CREDENTIALS = serviceAccountPath;
-      }
-      if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-        throw new Error('set GOOGLE_APPLICATION_CREDENTIALS or BUZZY_PUSH_SA_FILE');
-      }
-      const firebaseApp =
-        getApps()[0] ??
-        initializeApp({
-          credential: applicationDefault(),
-          projectId: 'buzzy-e11e7',
+    if (!config.pushDeliveryEnabled) {
+      pushHealth = { ok: false, reason: 'push_delivery_disabled' };
+      console.log('[push] delivery disabled by configuration; indexer serving remains active');
+    } else {
+      try {
+        const deliveryState = await DeliveryState.load(
+          materializerStore.reservation<DeliveryStateFile>('push-delivery'),
+        );
+        const serviceAccountPath = process.env.BUZZY_PUSH_SA_FILE;
+        if (serviceAccountPath && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+          process.env.GOOGLE_APPLICATION_CREDENTIALS = serviceAccountPath;
+        }
+        if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+          throw new Error('set GOOGLE_APPLICATION_CREDENTIALS or BUZZY_PUSH_SA_FILE');
+        }
+        const firebaseApp =
+          getApps()[0] ??
+          initializeApp({
+            credential: applicationDefault(),
+            projectId: 'buzzy-e11e7',
+          });
+        gateway = new PushGateway(registry, getMessaging(firebaseApp), deliveryState);
+        const poller = new RegisteredEventPoller(
+          registry,
+          (pubkey) => materializerStore.readerFor(pubkey),
+          (event, recipientPubkey, reader) => {
+            feed?.noteEvent();
+            return gateway!.handleRelayEvent(event, recipientPubkey, reader);
+          },
+          deliveryState,
+          Date.now,
+        );
+        feed = new PushEventFeed(poller, {
+          pollIntervalMs: config.pollIntervalMs,
+          heartbeatIntervalMs: config.feedHeartbeatIntervalMs,
         });
-      gateway = new PushGateway(registry, getMessaging(firebaseApp), deliveryState);
-      const poller = new RegisteredEventPoller(
-        registry,
-        (pubkey) => materializerStore.readerFor(pubkey),
-        (event, recipientPubkey, reader) => {
-          feed?.noteEvent();
-          return gateway!.handleRelayEvent(event, recipientPubkey, reader);
-        },
-        deliveryState,
-        Date.now,
-      );
-      feed = new PushEventFeed(poller, {
-        pollIntervalMs: config.pollIntervalMs,
-        heartbeatIntervalMs: config.feedHeartbeatIntervalMs,
-      });
-      feed.start();
-      pushHealth = { ok: true };
-      console.log(`[push] gateway ready; feed=postgres-tail; devices=${registry.tokenCount}`);
-    } catch (error) {
-      pushHealth = { ok: false, reason: 'firebase_unavailable' };
-      console.error(
-        '[push] Firebase unavailable; indexer serving remains active:',
-        error instanceof Error ? error.message : String(error),
-      );
+        feed.start();
+        pushHealth = { ok: true };
+        console.log(`[push] gateway ready; feed=postgres-tail; devices=${registry.tokenCount}`);
+      } catch (error) {
+        pushHealth = { ok: false, reason: 'firebase_unavailable' };
+        console.error(
+          '[push] Firebase unavailable; indexer serving remains active:',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
 
     process.once('SIGINT', () => void drain());

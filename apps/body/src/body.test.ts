@@ -140,7 +140,10 @@ import {
   STEER_QUEUED_TAG,
   SLASH_COMMAND_NOTICE_TAG,
 } from './activity.js';
-import { isReadOnlyMcpPermissionRequest } from './read-only-policy.js';
+import {
+  isBeelineAgentToolPermissionRequest,
+  isReadOnlyMcpPermissionRequest,
+} from './read-only-policy.js';
 import { targetBranchProposalFromAgentText } from './target-branch.js';
 import { CONCLUDE_NUDGE_SPACING_MS, MAX_CONCLUDE_NUDGES_PER_EPISODE } from './conclude-watch.js';
 import {
@@ -453,6 +456,34 @@ describe('acp', () => {
     ]) {
       expect(isReadOnlyMcpPermissionRequest({ toolCall: { kind: 'other', title } })).toBe(true);
     }
+  });
+
+  it('recognizes Beeline agent tools as host-governed MCP calls, never native mutations', () => {
+    for (const request of [
+      {
+        toolCall: {
+          kind: 'execute',
+          title: 'mcp.beeline-agent-tools.open_corner',
+          rawInput: {
+            server: 'beeline-agent-tools',
+            tool: 'open_corner',
+            arguments: { objective: 'Fix the incident' },
+          },
+        },
+      },
+      { toolCall: { kind: 'other', title: 'mcp__beeline-agent-tools__open_corner' } },
+    ]) {
+      expect(isBeelineAgentToolPermissionRequest(request)).toBe(true);
+    }
+    expect(
+      isBeelineAgentToolPermissionRequest({
+        toolCall: {
+          kind: 'execute',
+          title: 'rm -rf /tmp/beeline-agent-tools/open_corner',
+          rawInput: { command: 'rm -rf /tmp/beeline-agent-tools/open_corner' },
+        },
+      }),
+    ).toBe(false);
   });
 
   it('stays fail-closed on every non-read shape', () => {
@@ -1338,6 +1369,27 @@ describe('agent identity boundary', () => {
       await expect(
         handle('room-1', { toolCall: { kind: 'execute', title: command, rawInput: { command } } }),
       ).resolves.toBe('reject');
+    });
+
+    it('lets a Beeline action-tool call reach its own authority kernel without a Room denial', async () => {
+      const body = new Body(config, newIdentity('operator'), newIdentity('agent'));
+      const noteDenial = vi.spyOn(body as never, 'noteRoomReadOnlyDenial' as never);
+      const handle = Reflect.get(body, 'handleRoomPermissionRequest').bind(body);
+
+      await expect(
+        handle('room-1', {
+          toolCall: {
+            kind: 'execute',
+            title: 'mcp.beeline-agent-tools.open_corner',
+            rawInput: {
+              server: 'beeline-agent-tools',
+              tool: 'open_corner',
+              arguments: { objective: 'Fix the incident' },
+            },
+          },
+        }),
+      ).resolves.toBe('allow');
+      expect(noteDenial).not.toHaveBeenCalled();
     });
 
     it('still auto-allows an exact read-only MCP inspection call', async () => {
@@ -5974,7 +6026,9 @@ describe('Room conversation and permission-gated work intent', () => {
       taskDescription: turn.request.content,
     };
     const open = vi.spyOn(body, 'openSubchannel').mockResolvedValue(info as never);
-    vi.spyOn(body as never, 'startAgentTask' as never).mockImplementation(() => undefined as never);
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 200 })),
@@ -5986,6 +6040,7 @@ describe('Room conversation and permission-gated work intent', () => {
 
     expect(wait).not.toHaveBeenCalled();
     expect(open).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledOnce();
     expect(turn.transitionedToCorner).toBe(true);
   });
 
@@ -6215,6 +6270,154 @@ describe('Room conversation and permission-gated work intent', () => {
       'No Beeline corner or mission record was created, so no coordinated work started.',
     );
     expect(reply?.content).not.toContain(falseClaim);
+  });
+
+  it('joins an explicit-command corner with the same request tool call and rejects false-denial prose', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-corner-dual-authority',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    stubEmptyAgentHistory(body);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    const request = {
+      eventId: 'f'.repeat(64),
+      authorPubkey: human.publicKey,
+      content: 'Go and try to find it and fix it.',
+      createdAt: 1,
+    };
+    const boundRepo = {
+      repo: 'repo',
+      localPath: '/tmp/buzzy-corner-dual-authority/repo',
+      targetBranch: 'refs/heads/main',
+    };
+    (Reflect.get(body, 'agentToolRoomRepositories') as Map<string, unknown>).set(
+      'parent-channel',
+      boundRepo,
+    );
+    vi.spyOn(body as never, 'currentAgentToolMandate' as never).mockResolvedValue({
+      schema_version: 2,
+      generation: { event_id: 'a'.repeat(64), generation: 1 },
+      grants: [],
+      defaults: [{ action: 'corner.open', version: 2, effect: 'allow' }],
+      blockers: [],
+    } as never);
+
+    let openCount = 0;
+    let releaseFirstOpen!: () => void;
+    let reportFirstOpen!: () => void;
+    const firstOpenStarted = new Promise<void>((resolve) => {
+      reportFirstOpen = resolve;
+    });
+    const firstOpenGate = new Promise<void>((resolve) => {
+      releaseFirstOpen = resolve;
+    });
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const open = vi.spyOn(body, 'openSubchannel').mockImplementation(async (...args) => {
+      const ordinal = ++openCount;
+      if (ordinal === 1) {
+        reportFirstOpen();
+        await firstOpenGate;
+      }
+      const triggeringRequest = args[3] as typeof request | undefined;
+      const info = {
+        subchannelId: `corner-${ordinal}`,
+        worktreePath: `/tmp/worktree-${ordinal}`,
+        featureBranch: `feature/corner-${ordinal}`,
+        role: body.agent,
+        taskDescription: request.content,
+        cornerName: `incident-fix-${ordinal}`,
+        request: triggeringRequest,
+        session: {
+          channelId: `corner-${ordinal}`,
+          parentChannelId: 'parent-channel',
+          sessionId: `edit-session-${ordinal}`,
+          client: editClient,
+          mode: 'edit' as const,
+        },
+        lastPolledAt: 1,
+        archived: false,
+      };
+      (Reflect.get(body, 'subchannels') as Map<string, unknown>).set(info.subchannelId, info);
+      return info as never;
+    });
+    const start = vi
+      .spyOn(body as never, 'startAgentTask' as never)
+      .mockImplementation(() => undefined as never);
+
+    let toolResult: unknown;
+    const roomClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    vi.spyOn(roomClient, 'sessionPrompt').mockImplementation(async () => {
+      toolResult = await Reflect.get(body, 'invokeAgentTool').call(
+        body,
+        { channelId: 'parent-channel', roomId: 'parent-channel', workspaceId: 'parent-channel' },
+        'open_corner',
+        { objective: request.content },
+      );
+      return {
+        stopReason: 'end_turn',
+        updates: [],
+        agentText:
+          'The corner-opening request was rejected by the host/user, so no edit session started and I made no repository changes.',
+        toolCalls: [],
+      };
+    });
+    body.registerSession({
+      channelId: 'parent-channel',
+      sessionId: 'readonly-session',
+      client: roomClient,
+      mode: 'readonly',
+    });
+
+    const toolPath = Reflect.get(body, 'replyInRoom').call(
+      body,
+      'parent-channel',
+      boundRepo,
+      request,
+      false,
+      'repository',
+    );
+    await firstOpenStarted;
+    const explicitCommandPath = Reflect.get(body, 'replyInRoom').call(
+      body,
+      'parent-channel',
+      boundRepo,
+      request,
+      true,
+      'repository',
+    );
+    await Promise.resolve();
+    releaseFirstOpen();
+    await Promise.all([toolPath, explicitCommandPath]);
+
+    expect(open).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledOnce();
+    expect(toolResult).toMatchObject({
+      status: 'executed',
+      result: { corner_id: 'corner-1', feature_ref: 'feature/corner-1' },
+    });
+    expect(Reflect.get(body, 'subchannels')).toHaveLength(1);
+    const replies = published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
+    );
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.content).toContain('incident-fix-1');
+    expect(replies[0]!.content).toMatch(/corner/i);
+    expect(replies[0]!.content).not.toMatch(/rejected|no edit session|no repository changes/i);
   });
 
   it('still announces the corner when the transition turn produced no text', async () => {

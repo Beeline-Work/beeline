@@ -323,6 +323,8 @@ export type RoomRepositoryView = {
   readonly name: string;
   readonly remote: string;
   readonly targetBranch: string;
+  /** Relay event time used to distinguish stale projection from a newer conflicting write. */
+  readonly updatedAt: number;
   readonly githubInstallationId?: number;
   readonly githubEventsEnabled: boolean;
 };

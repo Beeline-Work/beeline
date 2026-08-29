@@ -104,6 +104,21 @@ export interface CloseCornerResult {
   landed_tip?: string;
 }
 
+export interface PendingToolCloseBinding {
+  turnId: string;
+  sourceSha: string;
+  targetRef: string;
+  requestId: string;
+  eventId: string;
+}
+
+export function cornerFrozenForPendingClose(input: {
+  pending?: PendingToolCloseBinding;
+  approved?: boolean;
+}): boolean {
+  return Boolean(input.pending && !input.approved);
+}
+
 export interface DeliverResult {
   artifact_id: string;
   url: string;
@@ -192,3 +207,19 @@ export function isBeelineAgentToolName(value: unknown): value is BeelineAgentToo
   return (BEELINE_AGENT_TOOL_NAMES as readonly unknown[]).includes(value);
 }
 
+export function assertBeelineAgentToolHandshake(input: {
+  serverInfo?: { name?: string; version?: string };
+  toolNames: readonly string[];
+}): void {
+  if (
+    input.serverInfo?.name !== BEELINE_AGENT_TOOL_SERVER_NAME ||
+    input.serverInfo.version !== String(BEELINE_AGENT_TOOL_SCHEMA_VERSION)
+  ) {
+    throw new Error('Beeline agent-tool server identity/schema handshake failed');
+  }
+  const expected = new Set<string>(BEELINE_AGENT_TOOL_NAMES);
+  const actual = new Set(input.toolNames);
+  if (expected.size !== actual.size || [...expected].some((name) => !actual.has(name))) {
+    throw new Error('Beeline agent-tool inventory handshake failed');
+  }
+}

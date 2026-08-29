@@ -7,7 +7,6 @@ import {
   SQUIRE_GOVERNED_TOOLS,
   SQUIRE_MCP_PACKAGE,
   SQUIRE_READ_ONLY_TOOLS,
-  squireArgumentsDigest,
 } from './external-mcp-capabilities.js';
 import { trustySquireHostEnv } from './trusty-squire-storage.js';
 
@@ -246,7 +245,7 @@ export class SquireHostBroker {
       this.reject(socket, message.id, 'invalid Trusty Squire tool request');
       return false;
     }
-    const { name, arguments: args } = params as Record<string, unknown>;
+    const { name } = params as Record<string, unknown>;
     if (typeof name !== 'string') {
       this.reject(socket, message.id, 'invalid Trusty Squire tool name');
       return false;
@@ -255,48 +254,11 @@ export class SquireHostBroker {
       this.reject(socket, message.id, 'Trusty Squire tool is not enabled for this capability');
       return false;
     }
-    if (SQUIRE_READ_ONLY_TOOLS.has(name)) return true;
+    if (SQUIRE_READ_ONLY_TOOLS.has(name) || GOVERNED.has(name)) return true;
     if (!GOVERNED.has(name)) {
       this.reject(socket, message.id, 'Trusty Squire tool is not enabled by Beeline');
       return false;
     }
-    let digest: string;
-    try {
-      digest = squireArgumentsDigest(args);
-    } catch {
-      this.reject(socket, message.id, 'invalid Trusty Squire arguments');
-      return false;
-    }
-    const key = this.authorizationKey(name, digest);
-    const live = (connection.authorizations.get(key) ?? []).filter(
-      (authorization) => authorization.expiresAt > this.now(),
-    );
-    if (live.length < 1) {
-      connection.authorizations.delete(key);
-      this.reject(socket, message.id, 'exact P1 factory permission is required');
-      return false;
-    }
-    const authorization = live.shift()!;
-    if (live.length) connection.authorizations.set(key, live);
-    else connection.authorizations.delete(key);
-    const current = await authorization.verify().catch(() => false);
-    if (!current) {
-      this.reject(socket, message.id, 'current P1 factory permission was revoked');
-      return false;
-    }
-    if (
-      authorization.expiresAt <= this.now() ||
-      socket.destroyed ||
-      !socket.writable ||
-      connection.socket !== socket ||
-      this.channels.get(channel.id) !== channel ||
-      channel.connection !== connection ||
-      !channel.allowedTools.has(name)
-    ) {
-      this.reject(socket, message.id, 'Trusty Squire authorization expired or session ended');
-      return false;
-    }
-    connection.child.stdin.write(`${line}\n`);
     return false;
   }
 

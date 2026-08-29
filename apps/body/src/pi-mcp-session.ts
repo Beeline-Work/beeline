@@ -11,7 +11,6 @@ import { dirname, resolve } from 'node:path';
 import type { McpServerWire } from './acp.js';
 import { writeIsolatedHarnessFile } from './agent-home.js';
 
-const require = createRequire(import.meta.url);
 export const PI_MCP_ADAPTER_VERSION = '2.30.0';
 export const PI_MCP_EXTENSION_NAME = 'beeline-mcp.ts';
 
@@ -34,7 +33,10 @@ export function resolvePiMcpAdapterEntrypoint(
     const bundled = resolve(dirname(cliEntrypoint), 'pi-mcp-adapter.mjs');
     if (existsSync(bundled)) return bundled;
   }
-  return require.resolve('pi-mcp-adapter');
+  // Keep createRequire lazy. Release bundles deliberately define away
+  // import.meta.url, but they always return the sibling above; evaluating a
+  // top-level createRequire against that synthetic URL would abort startup.
+  return createRequire(import.meta.url).resolve('pi-mcp-adapter');
 }
 
 function sessionSegment(channelId: string): string {

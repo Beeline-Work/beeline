@@ -177,7 +177,7 @@ ${pc.dim('Usage:')}
                [--auto-response '<text>']
                [--mcp <capability[,capability...]>]
                [--share-skill <name[,name...]>]
-               [--model <model>] [--effort <level>]
+               [--model <model>] [--effort <level>] [--use-env-key]
 
   beeline pair <CODE1> <CODE2> ... --agents <kind1,kind2,...> [--repo <path>]
                [--access <everyone|creator|allowlist>] [--allow <npub-or-hex,...>]
@@ -208,7 +208,13 @@ never installs packages automatically. Several ready matches require --agent.
 Multiple runtimes in one Workspace: pass one single-use pairing code per agent
 plus a matching --agents list. Each agent gets its own fresh keypair/identity
 and its own daemon — three distinct agents live in one Room, each addressed by
-its own @-mention. Pairing never reads BUZZ_AGENT_KEY or BUZZ_PRIVATE_KEY.
+its own @-mention. Pairing ignores BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY and always
+mints a fresh agent identity by default.
+
+--use-env-key (single-agent pairing only): the rare deliberate exception —
+reuse the ambient BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY as this agent's identity
+instead of minting a fresh one. Requires one of those env vars to be set;
+cannot be combined with --agents.
 
 Repository (optional): a repository belongs to a ROOM, not to an agent.
 Pairing never infers one from the current directory. Without --repo, the agent
@@ -282,6 +288,8 @@ interface PairOptions {
   effort?: string;
   externalMcpCapabilities?: ExternalMcpCapability[];
   sharedSkills?: string[];
+  /** The rare deliberate opt-in to reuse the ambient agent key instead of minting a fresh one. */
+  useEnvKey?: boolean;
 }
 
 function parsePairOptions(args: string[]): PairOptions {
@@ -298,6 +306,7 @@ function parsePairOptions(args: string[]): PairOptions {
   let effort: string | undefined;
   let externalMcpCapabilities: ExternalMcpCapability[] | undefined;
   let sharedSkills: string[] | undefined;
+  let useEnvKey = false;
   const flags = new Set([
     '--agent',
     '--agents',
@@ -316,6 +325,10 @@ function parsePairOptions(args: string[]): PairOptions {
     if (!token) continue;
     if (!token.startsWith('--')) {
       codes.push(token);
+      continue;
+    }
+    if (token === '--use-env-key') {
+      useEnvKey = true;
       continue;
     }
     if (!flags.has(token)) throw new Error(`unknown beeline pair option: ${token}`);
@@ -382,6 +395,9 @@ function parsePairOptions(args: string[]): PairOptions {
   if (kinds && (singleKind || customCommand)) {
     throw new Error('--agents cannot be combined with --agent or --agent-command');
   }
+  if (kinds && useEnvKey) {
+    throw new Error('--agents cannot be combined with --use-env-key');
+  }
   if (access === 'allowlist' && !accessAllowlist?.length) {
     throw new Error('--access allowlist requires --allow <npub-or-hex,...>');
   }
@@ -401,6 +417,7 @@ function parsePairOptions(args: string[]): PairOptions {
     ...(effort !== undefined ? { effort } : {}),
     ...(externalMcpCapabilities?.length ? { externalMcpCapabilities } : {}),
     ...(sharedSkills?.length ? { sharedSkills } : {}),
+    ...(useEnvKey ? { useEnvKey } : {}),
   };
 }
 
@@ -960,9 +977,14 @@ async function runPairCommand(
   try {
     const pairOptions = parsePairOptions(args);
     if (pairOptions.codes.length === 0) usage();
+    if (pairOptions.useEnvKey && !agentPrivateKey) {
+      throw new Error('--use-env-key requires BUZZ_AGENT_KEY or BUZZ_PRIVATE_KEY to be set');
+    }
     if (agentPrivateKey) {
       console.warn(
-        '[beeline] pair ignores BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY and is minting a fresh agent identity',
+        pairOptions.useEnvKey
+          ? '[beeline] pair is reusing the ambient BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY as this agent identity (--use-env-key)'
+          : '[beeline] pair ignores BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY and is minting a fresh agent identity',
       );
     }
     const { cwd: pairCwd, repo: pairRepo } = resolvePairRepository(pairOptions.repo);
@@ -1025,9 +1047,12 @@ async function runPairCommand(
     if (pairOptions.codes.length > 1) {
       throw new Error('multiple pairing codes require --agents <kind1,kind2,...>');
     }
-    // Pairing always creates one new identity. In particular, the legacy
-    // BUZZ_PRIVATE_KEY used by human clients is never an agent-key fallback.
-    const agentIdentity = mintAgentIdentityForPairing();
+    // Pairing always creates one new identity by default. In particular, the
+    // legacy BUZZ_PRIVATE_KEY used by human clients is never an ambient
+    // agent-key fallback — reusing it requires the explicit --use-env-key opt-in.
+    const agentIdentity = pairOptions.useEnvKey
+      ? identityFromKey(agentPrivateKey, DEFAULT_AGENT_IDENTITY_NAME)
+      : mintAgentIdentityForPairing();
     await assertAgentIdentityUnpaired(defaultSupervisorRoot(process.env), agentIdentity.publicKey);
     const selectedAgent = await selectPairAgentCommand({
       explicitKind: pairOptions.singleKind,

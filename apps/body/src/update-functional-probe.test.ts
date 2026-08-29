@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,7 +11,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixtureConfig(mode: 'clean' | 'hang' = 'clean'): Promise<{
+async function fixtureConfig(mode: 'clean' | 'hang' | 'pi-cold-start' = 'clean'): Promise<{
   config: BodyConfig;
   runtimeDir: string;
   proxyEntrypoint: string;
@@ -43,6 +43,8 @@ socket.on('data', (chunk) => {
   await writeFile(
     harness,
     `import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import readline from 'node:readline';
 const mode = process.argv[2];
 let server;
@@ -53,7 +55,15 @@ lines.on('line', (line) => {
   if (message.method === 'initialize') return reply(message.id, { agentCapabilities: {} });
   if (message.method === 'session/new') {
     server = message.params.mcpServers[0];
-    if (mode !== 'hang') reply(message.id, { sessionId: 'probe-session', configOptions: [] });
+    if (mode === 'pi-cold-start') {
+      const piDir = process.env.PI_CODING_AGENT_DIR;
+      const models = JSON.parse(readFileSync(resolve(piDir, 'models.json'), 'utf8'));
+      if (models.providers?.['openrouter-ox']?.models?.[0]?.contextWindow !== 98304) process.exit(31);
+      if (!models.providers?.openrouter || process.env.MCP_DIRECT_TOOLS !== server.name) process.exit(32);
+      if (piDir === process.env.STALE_PI_DIR || existsSync(resolve(piDir, 'stale-adapter.mjs'))) process.exit(33);
+      if (!existsSync(resolve(piDir, 'extensions', 'beeline-pi-mcp-adapter.mjs'))) process.exit(34);
+      setTimeout(() => reply(message.id, { sessionId: 'probe-session', configOptions: [] }), 750);
+    } else if (mode !== 'hang') reply(message.id, { sessionId: 'probe-session', configOptions: [] });
     return;
   }
   if (message.method !== 'session/prompt') return;
@@ -81,12 +91,42 @@ lines.on('line', (line) => {
     { mode: 0o700 },
   );
   await chmod(harness, 0o700);
+  const operatorHome = resolve(runtimeDir, 'operator-home');
+  if (mode === 'pi-cold-start') {
+    await mkdir(resolve(operatorHome, '.pi/agent'), { recursive: true });
+    await writeFile(resolve(operatorHome, '.pi/agent/auth.json'), '{}\n', { mode: 0o600 });
+    await writeFile(
+      resolve(operatorHome, '.pi/agent/models.json'),
+      JSON.stringify({
+        providers: {
+          openrouter: {
+            api: 'openai-completions',
+            apiKey: 'fixture-secret',
+            models: [{ id: 'z-ai/glm-5.3-flash', contextWindow: 98_304 }],
+          },
+          'openrouter-ox': {
+            api: 'openai-completions',
+            apiKey: 'fixture-secret',
+            models: [{ id: 'z-ai/glm-5.3-flash', contextWindow: 98_304 }],
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+  }
+  const stalePiDir = resolve(runtimeDir, 'rooms/ox/agent-home/pi');
+  if (mode === 'pi-cold-start') {
+    await mkdir(resolve(stalePiDir, 'sessions/old/extensions'), { recursive: true });
+    await mkdir(resolve(runtimeDir, 'rooms/ox/agent-home/tmp/jiti'), { recursive: true });
+    await writeFile(resolve(stalePiDir, 'stale-adapter.mjs'), 'old release bytes\n');
+    await writeFile(resolve(stalePiDir, 'sessions/old/mcp-cache.json'), '{}\n');
+  }
   return {
     runtimeDir,
     proxyEntrypoint,
     config: {
       agentBinary: process.execPath,
-      agentKind: 'custom',
+      agentKind: mode === 'pi-cold-start' ? 'pi' : 'custom',
       agentCommand: process.execPath,
       agentArgs: [harness, mode],
       mcpBinary: process.execPath,
@@ -94,6 +134,7 @@ lines.on('line', (line) => {
         PATH: process.env.PATH ?? '',
         HOME: process.env.HOME ?? runtimeDir,
         TMPDIR: tmpdir(),
+        ...(mode === 'pi-cold-start' ? { STALE_PI_DIR: stalePiDir } : {}),
       },
       workspaceRoot: runtimeDir,
       relayBaseUrl: 'https://example.invalid',
@@ -101,6 +142,7 @@ lines.on('line', (line) => {
       relayScheme: 'https',
       relayWsUrl: 'wss://example.invalid',
       autoApprovePermissions: true,
+      ...(mode === 'pi-cold-start' ? { operatorHome } : {}),
     },
   };
 }
@@ -170,5 +212,24 @@ describe('functional update probe', () => {
       }),
     );
     expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it('gives a production-shaped Pi cold session its own startup budget', async () => {
+    const fixture = await fixtureConfig('pi-cold-start');
+    await expect(
+      runUpdateFunctionalProbe({
+        ...fixture,
+        releaseId: 'pi-custom-provider',
+        sandboxRequired: false,
+        sessionTimeoutMs: 500,
+        sessionOpenTimeoutMs: 1_500,
+        turnTimeoutMs: 3_000,
+      }),
+    ).resolves.toMatchObject({
+      harness: 'pi',
+      sessionStarted: true,
+      turnCompleted: true,
+      nativeTools: ['read_mandate'],
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   chatBackAction,
+  cornerOpenAction,
   cornerHref,
   popCountToParentRoom,
   roomHref,
@@ -13,13 +14,21 @@ const chatRoute = (channelId: string): ChatStackRoute => ({
   params: { channelId },
 });
 
+describe('opening a corner', () => {
+  it('cannot silently no-op', () => {
+    expect(cornerOpenAction('corner-1', 'room-1')).toEqual({
+      type: 'open-corner',
+      cornerId: 'corner-1',
+    });
+    expect(cornerOpenAction(undefined, 'room-1')).toMatchObject({ type: 'explain' });
+    expect(cornerOpenAction('', 'room-1')).toMatchObject({ type: 'explain' });
+    expect(cornerOpenAction('room-1', 'room-1')).toMatchObject({ type: 'explain' });
+  });
+});
+
 describe('leaving a corner', () => {
   it('pops to the parent Room when it sits directly beneath the corner', () => {
-    const routes = [
-      { name: 'buzz/channels' },
-      chatRoute('room-1'),
-      chatRoute('corner-1'),
-    ];
+    const routes = [{ name: 'buzz/channels' }, chatRoute('room-1'), chatRoute('corner-1')];
     expect(chatBackAction(routes, 'room-1')).toEqual({ type: 'pop', count: 1 });
   });
 
@@ -43,11 +52,7 @@ describe('leaving a corner', () => {
   });
 
   it('pops past intervening screens rather than one entry at a time', () => {
-    const routes = [
-      chatRoute('room-1'),
-      chatRoute('corner-1'),
-      chatRoute('corner-2'),
-    ];
+    const routes = [chatRoute('room-1'), chatRoute('corner-1'), chatRoute('corner-2')];
     expect(chatBackAction(routes, 'room-1')).toEqual({ type: 'pop', count: 2 });
   });
 
@@ -66,11 +71,7 @@ describe('leaving a corner', () => {
 
   it('returns to the Room list when the Corner was opened there', () => {
     expect(
-      chatBackAction(
-        [{ name: 'buzz/channels' }, chatRoute('corner-1')],
-        'room-1',
-        'room-list',
-      ),
+      chatBackAction([{ name: 'buzz/channels' }, chatRoute('corner-1')], 'room-1', 'room-list'),
     ).toEqual({ type: 'pop', count: 1 });
     expect(chatBackAction([chatRoute('corner-1')], 'room-1', 'room-list')).toEqual({
       type: 'room-list',

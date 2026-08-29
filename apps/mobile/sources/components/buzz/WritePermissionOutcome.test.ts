@@ -54,9 +54,7 @@ function render(element: React.ReactElement): ReactTestRenderer {
 
 describe('write permission corner outcome', () => {
   it('inscribes the outcome as one dim line — no border, no fill, no chip', () => {
-    const renderer = render(
-      React.createElement(WritePermissionOutcome, { status: 'denied' }),
-    );
+    const renderer = render(React.createElement(WritePermissionOutcome, { status: 'denied' }));
     const [line] = renderer.root.findAllByType('View');
     expect(line.props.style).not.toHaveProperty('borderWidth');
     expect(line.props.style).not.toHaveProperty('borderColor');
@@ -72,15 +70,31 @@ describe('write permission corner outcome', () => {
     const tone = (node: { props: { style: unknown } }) =>
       (Array.isArray(node.props.style) ? node.props.style : [node.props.style])
         .filter(Boolean)
-        .reduce((merged: Record<string, unknown>, style: Record<string, unknown>) => ({ ...merged, ...style }), {});
+        .reduce(
+          (merged: Record<string, unknown>, style: Record<string, unknown>) => ({
+            ...merged,
+            ...style,
+          }),
+          {},
+        );
     expect(tone(status).color).toBe('#83838d');
   });
 
-  it('reports the decision and never navigates', () => {
-    // An open corner is live state, not a decision. It lives in the pinned
-    // CornerLiveBar above the composer, which stays true as the corner's
-    // status moves on; a note inscribed here would scroll away and then lie.
-    for (const status of ['pending', 'allowed', 'denied', 'expired', 'failed'] as const) {
+  it('mutates an approval into one corner link and keeps other outcomes inert', () => {
+    const onOpen = vi.fn();
+    const allowed = render(
+      React.createElement(WritePermissionOutcome, {
+        status: 'allowed',
+        subchannelId: 'new-corner-id',
+        onOpen,
+      }),
+    );
+    const [link] = allowed.root.findAllByProps({ testID: 'write-permission-open-corner' });
+    expect(link).toBeDefined();
+    act(() => link!.props.onPress());
+    expect(onOpen).toHaveBeenCalledOnce();
+
+    for (const status of ['pending', 'denied', 'expired', 'failed'] as const) {
       const renderer = render(
         React.createElement(WritePermissionOutcome, { status, subchannelId: 'new-corner-id' }),
       );
@@ -99,7 +113,8 @@ describe('write permission corner outcome', () => {
     expect(label(['denied'])).toContain('STILL READ-ONLY');
     expect(label(['failed'])).toContain('STILL READ-ONLY');
     expect(label(['expired'])).toContain('STILL READ-ONLY');
-    // The scroll note the pinned bar replaced.
+    // Status copy alone never overclaims live state; the approved mutation is
+    // a real navigation affordance bound to the returned corner id.
     for (const status of ['pending', 'allowed', 'denied', 'expired', 'failed'] as const) {
       expect(label([status, 'new-corner-id'])).not.toContain('CORNER OPEN');
     }

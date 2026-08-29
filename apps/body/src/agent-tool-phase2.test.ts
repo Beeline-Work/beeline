@@ -23,7 +23,7 @@ function config() {
 
 function mandate(): ReadMandateResult {
   return {
-    schema_version: 2,
+    schema_version: 3,
     generation: { event_id: 'a'.repeat(64), generation: 42 },
     grants: [],
     defaults: BEELINE_MANDATE_DEFAULTS.map((entry) => ({ ...entry })),

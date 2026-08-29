@@ -54,6 +54,8 @@ export const BEELINE_CAPABILITIES_PRIMER =
   'describing a prose ritual, and let the host derive identity, Workspace, Room, repository, ' +
   'authority, and retry scope. The host routes each call and the typed result tells you whether ' +
   'it executed, is awaiting approval, was denied, or failed; never claim more than that result. ' +
+  'After any timeout or ambiguous open_corner outcome, call read_corner before claiming whether ' +
+  'a corner exists; use list_corners for the Room-wide live state. ' +
   'Consult the release-versioned using-beeline skill (SKILL.md) only when you need the mechanics ' +
   'behind a host boundary.';
 
@@ -157,9 +159,13 @@ Call \`open_corner\` with the concrete objective. In a Room with no assigned
 repository, also pass the exact \`owner/repo\` target; never guess one or pass a
 clone URL. Prose, failed writes, shell commands, and marker lines create no state.
 
-Opening a corner needs no human approval because it commits, pushes, reviews,
-and lands nothing. Never describe a corner as open, created, or started until a
-later host message confirms creation succeeded.
+Opening a corner follows the Room's current signed mandate. The typed result may
+execute immediately or leave one human approval pending. After a timeout or any
+other ambiguous outcome, call \`read_corner\` before claiming whether the corner
+exists; use \`list_corners\` to inspect every live corner in this Room. A retry for
+the same triggering request returns the same corner. Never describe a corner as
+open, created, or started unless \`open_corner\` returned \`executed\` or a corner
+read confirms it.
 
 ## Curate durable memory
 

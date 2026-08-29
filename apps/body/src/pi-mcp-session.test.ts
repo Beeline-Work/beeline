@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   PI_MCP_SESSION_ADAPTER_NAME,
+  PI_MCP_REQUEST_TIMEOUT_MS,
   piMcpDirectToolSelection,
   preparePiMcpSession,
 } from './pi-mcp-session.js';
@@ -14,6 +15,9 @@ afterEach(async () => {
 });
 
 describe('Pi MCP generated-extension route', () => {
+  it('keeps the direct-tool deadline above bounded corner provisioning', () => {
+    expect(PI_MCP_REQUEST_TIMEOUT_MS).toBeGreaterThanOrEqual(10 * 60_000);
+  });
   it('keeps Pi host modules external to the release-owned adapter bundle', async () => {
     const buildScript = await readFile(
       resolve(process.cwd(), '../../scripts/build-beeline-bundle.mjs'),
@@ -68,6 +72,7 @@ describe('Pi MCP generated-extension route', () => {
     expect(extension).toContain('"directTools": true');
     expect(extension).toContain('"disableProxyTool": true');
     expect(extension).toContain('"scriptMode": false');
+    expect(extension).toContain(`"requestTimeoutMs": ${PI_MCP_REQUEST_TIMEOUT_MS}`);
     expect(extension).toContain('"DUPLICATE": "last"');
     expect(extension).toContain('λ');
     expect((await stat(resolve(session, 'extensions', 'beeline-mcp.ts'))).mode & 0o777).toBe(0o600);

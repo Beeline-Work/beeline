@@ -1566,6 +1566,9 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   if (permissionMarker) {
     const status = tag(eventTags, 'status');
     const agentPubkey = tag(eventTags, 'agent') ?? eventIdentity.pubkey;
+    const requesterPubkey = tag(eventTags, 'requester') ?? '';
+    const deciderPubkey = tag(eventTags, 'decider');
+    if (!/^[0-9a-f]{64}$/.test(requesterPubkey)) return undefined;
     return {
       ...base,
       presentation: 'card',
@@ -1576,6 +1579,20 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
           agentPubkey === eventIdentity.pubkey
             ? eventIdentity
             : { pubkey: agentPubkey, kind: 'agent', name: `Agent ${agentPubkey.slice(0, 8)}` },
+        requester: {
+          pubkey: requesterPubkey,
+          kind: 'human',
+          name: `Person ${requesterPubkey.slice(0, 8)}`,
+        },
+        ...(deciderPubkey && /^[0-9a-f]{64}$/.test(deciderPubkey)
+          ? {
+              decider: {
+                pubkey: deciderPubkey,
+                kind: 'human' as const,
+                name: `Person ${deciderPubkey.slice(0, 8)}`,
+              },
+            }
+          : {}),
         tool: tag(eventTags, 'tool') ?? 'edit files',
         ...(tag(eventTags, 'repo') ? { repository: tag(eventTags, 'repo') } : {}),
         ...(tag(eventTags, 'purpose') === 'squire-spending'
@@ -1714,14 +1731,32 @@ function projectedMessages(
   channelId: string,
   limit: number,
 ) {
-  return rows
+  const projected = rows
     .filter((row) => row.section === section)
     .flatMap((row) => {
       const message = projectEvent(json(row.data), channelId);
       return message ? [message] : [];
     })
-    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
-    .slice(-limit);
+    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+  return collapsePermissionCards(projected).slice(-limit);
+}
+
+/** Fold signed permission history into the single paint-ready card it models. */
+export function collapsePermissionCards(projected: readonly RoomViewMessage[]): RoomViewMessage[] {
+  const latestPermission = new Map<string, RoomViewMessage>();
+  for (const message of projected) {
+    if (!message.permission) continue;
+    const existing = latestPermission.get(message.permission.permissionId);
+    if (!existing?.permission || existing.permission.status === 'pending') {
+      latestPermission.set(message.permission.permissionId, message);
+    } else if (message.permission.status !== 'pending') {
+      latestPermission.set(message.permission.permissionId, message);
+    }
+  }
+  return projected.filter(
+    (message) =>
+      !message.permission || latestPermission.get(message.permission.permissionId) === message,
+  );
 }
 
 function projectedHistoryPage(
@@ -1744,7 +1779,7 @@ function projectedHistoryPage(
   );
   const hasMoreRawRows = examined < raw.length || raw.length === HISTORY_EVENT_LIMIT;
   return {
-    messages,
+    messages: collapsePermissionCards(messages),
     ...(hasMoreRawRows && cursor
       ? { nextBefore: { createdAt: integer(cursor.createdAt), id: String(cursor.id ?? '') } }
       : {}),

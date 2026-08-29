@@ -4466,6 +4466,9 @@ describe('Room conversation and permission-gated work intent', () => {
       autoApprovePermissions: true,
     });
     stubEmptyAgentHistory(body);
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     const prompt = vi.spyOn(client, 'sessionPrompt').mockResolvedValue({
       stopReason: 'end_turn',
@@ -4739,6 +4742,9 @@ describe('Room conversation and permission-gated work intent', () => {
       autoApprovePermissions: true,
     });
     stubEmptyAgentHistory(body);
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     const prompt = vi.spyOn(client, 'sessionPrompt');
     body.registerSession({
@@ -4784,7 +4790,13 @@ describe('Room conversation and permission-gated work intent', () => {
       ),
     ).resolves.toEqual({ openedCorner: true, producedReply: true });
 
-    expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
+    expect(open).toHaveBeenCalledWith(
+      'parent-channel',
+      { repo: 'repo' },
+      request.content,
+      request,
+      expect.objectContaining({ onCreated: expect.any(Function) }),
+    );
     expect(start).toHaveBeenCalledWith(
       info,
       request.content,
@@ -4811,6 +4823,9 @@ describe('Room conversation and permission-gated work intent', () => {
       autoApprovePermissions: true,
     });
     stubEmptyAgentHistory(body);
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     body.registerSession({
       channelId: 'parent-channel',
@@ -4867,6 +4882,7 @@ describe('Room conversation and permission-gated work intent', () => {
   });
 
   it('creates exactly one corner when the same mention event is processed concurrently (WS-push + backstop-poll race)', async () => {
+    await rm('/tmp/buzzy-corner-dedup-unit', { recursive: true, force: true });
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -4882,6 +4898,9 @@ describe('Room conversation and permission-gated work intent', () => {
     // attribution lookups, registered-agent lookup) sees no prior state, the
     // worst case for a real relay round-trip that hasn't converged yet.
     Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => []) });
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     const info = {
       subchannelId: 'corner-id',
@@ -5026,6 +5045,9 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const request = {
       eventId: 'human-request',
       authorPubkey: human.publicKey,
@@ -5077,7 +5099,13 @@ describe('Room conversation and permission-gated work intent', () => {
       }),
     ).resolves.toBe('reject');
 
-    expect(open).toHaveBeenCalledWith('parent-channel', { repo: 'repo' }, request.content, request);
+    expect(open).toHaveBeenCalledWith(
+      'parent-channel',
+      { repo: 'repo' },
+      request.content,
+      request,
+      expect.objectContaining({ onCreated: expect.any(Function) }),
+    );
     // A corner reached through write-permission escalation gets the same
     // bounded objective/opening-request brief as an explicitly opened corner.
     expect(start).toHaveBeenCalledWith(
@@ -5168,6 +5196,9 @@ describe('Room conversation and permission-gated work intent', () => {
       autoApprovePermissions: true,
     });
     stubEmptyAgentHistory(body);
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const provision = vi.spyOn(body, 'provision');
     const open = vi.spyOn(body, 'openSubchannel');
     const published: NostrEvent[] = [];
@@ -5501,6 +5532,9 @@ describe('Room conversation and permission-gated work intent', () => {
       autoApprovePermissions: true,
     });
     stubEmptyAgentHistory(body);
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const client = new AcpClient({ agentCommand: 'codex-acp', agentEnv: {} });
     body.registerSession({
       channelId: 'parent-channel',
@@ -5586,6 +5620,7 @@ describe('Room conversation and permission-gated work intent', () => {
       { repo: 'buzzy', repositoryId: 'lunchboxfortwo/buzzy' },
       'Create PROOF.txt and commit it.',
       expect.objectContaining({ eventId: 'direct-bound-request' }),
+      expect.objectContaining({ onCreated: expect.any(Function) }),
     );
     expect(start).toHaveBeenCalledWith(
       info,
@@ -5659,6 +5694,9 @@ describe('Room conversation and permission-gated work intent', () => {
       autoApprovePermissions: true,
     });
     stubEmptyAgentHistory(body);
+    vi.spyOn(body as never, 'cornerOpenAudience' as never).mockResolvedValue([
+      human.publicKey,
+    ] as never);
     const client = new AcpClient({ agentCommand: 'codex-acp', agentEnv: {} });
     body.registerSession({
       channelId: 'repo-less-room',
@@ -5766,6 +5804,9 @@ describe('Room conversation and permission-gated work intent', () => {
       undefined,
       { resolveNamedRepository },
     );
+    vi.spyOn(body as never, 'cornerOpenAudience' as never).mockResolvedValue([
+      human.publicKey,
+    ] as never);
     const request = {
       eventId: 'named-repo-request',
       authorPubkey: human.publicKey,
@@ -5873,6 +5914,9 @@ describe('Room conversation and permission-gated work intent', () => {
       undefined,
       { resolveNamedRepository },
     );
+    vi.spyOn(body as never, 'cornerOpenAudience' as never).mockResolvedValue([
+      human.publicKey,
+    ] as never);
     const turn = {
       request: {
         eventId: 'uncloneable-request',
@@ -5944,6 +5988,9 @@ describe('Room conversation and permission-gated work intent', () => {
       undefined,
       { resolveNamedRepository },
     );
+    vi.spyOn(body as never, 'cornerOpenAudience' as never).mockResolvedValue([
+      human.publicKey,
+    ] as never);
     const turn = {
       request: {
         eventId: 'named-deny-request',
@@ -5995,7 +6042,7 @@ describe('Room conversation and permission-gated work intent', () => {
     ).toContainEqual(['repo', 'lunchboxfortwo/buzzy']);
   });
 
-  it('does not consult a human decision when a bound Room opens its corner', async () => {
+  it('lets an admin or owner open a bound Room corner without another decision', async () => {
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -6007,6 +6054,9 @@ describe('Room conversation and permission-gated work intent', () => {
       relayWsUrl: 'ws://relay.test',
       autoApprovePermissions: true,
     });
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const turn = {
       request: {
         eventId: 'human-request',
@@ -6042,6 +6092,57 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(open).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledOnce();
     expect(turn.transitionedToCorner).toBe(true);
+  });
+
+  it('raises one approval card when a non-admin member requests bound Room work', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-member-corner-card',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      false as never,
+    );
+    vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue('workspace' as never);
+    const request = {
+      eventId: 'member-request',
+      authorPubkey: human.publicKey,
+      content: 'Edit README.',
+      createdAt: 1,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', {
+      request,
+      boundRepo: { repo: 'repo' },
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: false,
+    });
+    const requestApproval = vi
+      .spyOn(body as never, 'requestCornerApproval' as never)
+      .mockResolvedValue({
+        request_id: 'permission',
+        event_id: 'event',
+        message: 'pending',
+      } as never);
+    const open = vi.spyOn(body, 'openSubchannel');
+
+    await expect(
+      Reflect.get(body, 'handleRoomPermissionRequest').call(body, 'parent-channel', {
+        toolCall: { kind: 'edit', title: 'Write README.md' },
+      }),
+    ).resolves.toBe('reject');
+
+    expect(requestApproval).toHaveBeenCalledOnce();
+    expect(requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ request, objective: request.content, tool: 'Write README.md' }),
+    );
+    expect(open).not.toHaveBeenCalled();
   });
 
   it('refuses agent mutation escalation for research without posting ALLOW or opening a corner', async () => {
@@ -6125,6 +6226,9 @@ describe('Room conversation and permission-gated work intent', () => {
       autoApprovePermissions: true,
     });
     stubEmptyAgentHistory(body);
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const published: NostrEvent[] = [];
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
     vi.spyOn(client, 'sessionPrompt').mockImplementation(async () => {
@@ -6285,6 +6389,9 @@ describe('Room conversation and permission-gated work intent', () => {
       autoApprovePermissions: true,
     });
     stubEmptyAgentHistory(body);
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
@@ -6310,7 +6417,7 @@ describe('Room conversation and permission-gated work intent', () => {
       boundRepo,
     );
     vi.spyOn(body as never, 'currentAgentToolMandate' as never).mockResolvedValue({
-      schema_version: 2,
+      schema_version: 3,
       generation: { event_id: 'a'.repeat(64), generation: 1 },
       grants: [],
       defaults: [{ action: 'corner.open', version: 2, effect: 'allow' }],
@@ -6418,6 +6525,177 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(replies[0]!.content).toContain('incident-fix-1');
     expect(replies[0]!.content).toMatch(/corner/i);
     expect(replies[0]!.content).not.toMatch(/rejected|no edit session|no repository changes/i);
+  });
+
+  it('returns timeout-recovery truth for the triggering request and lists the opening corner', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-corner-truth',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const request = {
+      eventId: 'd'.repeat(64),
+      authorPubkey: human.publicKey,
+      content: 'Fix the corner timeout',
+      createdAt: 1,
+    };
+    (Reflect.get(body, 'pendingRoomTurns') as Map<string, unknown>).set('parent-channel', {
+      request,
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: false,
+    });
+    (Reflect.get(body, 'cornerOpenAttempts') as Map<string, unknown>).set(request.eventId, {
+      roomId: 'parent-channel',
+      requestId: request.eventId,
+      objective: request.content,
+      cornerId: 'corner-created-before-timeout',
+      name: 'Fix corner timeout',
+    });
+
+    const binding = {
+      channelId: 'parent-channel',
+      roomId: 'parent-channel',
+      workspaceId: 'workspace',
+    };
+    await expect(
+      Reflect.get(body, 'invokeAgentTool').call(body, binding, 'read_corner', {}),
+    ).resolves.toEqual({
+      request_id: request.eventId,
+      exists: true,
+      state: 'opening',
+      corner: {
+        corner_id: 'corner-created-before-timeout',
+        name: 'Fix corner timeout',
+        objective: request.content,
+        state: 'opening',
+      },
+    });
+    await expect(
+      Reflect.get(body, 'invokeAgentTool').call(body, binding, 'list_corners', {}),
+    ).resolves.toMatchObject({
+      corners: [{ corner_id: 'corner-created-before-timeout', state: 'opening' }],
+    });
+  });
+
+  it('publishes one audience-scoped approval card for repeated corner requests', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-corner-approval-card',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const admin = newIdentity('corner-admin');
+    const owner = newIdentity('corner-owner');
+    vi.spyOn(body as never, 'cornerOpenAudience' as never).mockResolvedValue([
+      human.publicKey,
+      admin.publicKey,
+      owner.publicKey,
+    ] as never);
+    vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockReturnValue(
+      new Promise(() => undefined) as never,
+    );
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const input = {
+      roomId: 'parent-channel',
+      workspaceId: 'workspace',
+      roomRepo: { repo: 'repo' },
+      request: {
+        eventId: 'e'.repeat(64),
+        authorPubkey: human.publicKey,
+        content: 'Repair approval cards',
+        createdAt: 1,
+      },
+      objective: 'Repair approval cards',
+      tool: 'open_corner',
+    };
+    const [first, second] = await Promise.all([
+      Reflect.get(body, 'requestCornerApproval').call(body, input),
+      Reflect.get(body, 'requestCornerApproval').call(body, input),
+    ]);
+
+    expect(second).toEqual(first);
+    const cards = published.filter((event) =>
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-write-permission-request'),
+    );
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.content).toContain('Repair approval cards');
+    expect(cards[0]!.tags.filter((tag) => tag[0] === 'p').map((tag) => tag[1])).toEqual([
+      human.publicKey,
+      admin.publicKey,
+      owner.publicKey,
+    ]);
+  });
+
+  it('self-closes a child whose setup fails after its durable create', async () => {
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot: '/tmp/buzzy-corner-orphan-hygiene',
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    vi.spyOn(body, 'openSubchannel').mockImplementation(async (...args) => {
+      const options = args[4] as {
+        onCreated?: (cornerId: string, name: string, objective: string) => void;
+      };
+      options.onCreated?.('orphan-corner', 'Repair kickoff', 'Repair kickoff');
+      throw new Error('session activation failed');
+    });
+    const request = {
+      eventId: 'c'.repeat(64),
+      authorPubkey: human.publicKey,
+      content: 'Repair kickoff',
+      createdAt: 1,
+    };
+
+    await expect(
+      Reflect.get(body, 'openSubchannelForRequest').call(
+        body,
+        'parent-channel',
+        { repo: 'repo' },
+        request.content,
+        request,
+      ),
+    ).rejects.toThrow('session activation failed');
+    expect(
+      published.some(
+        (event) =>
+          event.kind === 9 &&
+          event.content.includes('could not start and was closed') &&
+          event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'orphan-corner'),
+      ),
+    ).toBe(true);
   });
 
   it('still announces the corner when the transition turn produced no text', async () => {

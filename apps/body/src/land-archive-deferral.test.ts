@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AcpClient } from './acp.js';
 import { Body, type SubchannelInfo } from './body.js';
-import { relayQueryResponse } from './relay-test-helper.js';
+import { mediaUploadResponse, relayQueryResponse } from './relay-test-helper.js';
 import { postAgentMessage } from './activity.js';
 import { newIdentity } from '@beeline/gate';
 import { signEvent, type Identity, type NostrEvent } from '@beeline/nostr';
@@ -122,6 +122,12 @@ function corner(): Fixture {
     },
   };
   body.registerSubchannel(info);
+  // Deferred-archive narration reads conversation history through the
+  // authenticated server-indexed Room read (`Body.agentHistory`), not the
+  // relay `/query`/publish surface this fixture's `stubRelayHttp` models;
+  // these tests assert on the archive/publish sequencing, not on history
+  // content, so an empty history is sufficient.
+  vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
   return { root, checkout, remote: bare, worktree, info, body, tip };
 }
 
@@ -142,6 +148,8 @@ function stubRelayHttp(
       if (String(input).endsWith('/query')) {
         return relayQueryResponse([...creates, ...published], input, init)!;
       }
+      const upload = mediaUploadResponse(input, init);
+      if (upload) return upload;
       published.push(JSON.parse(String(init?.body)) as NostrEvent);
       if (refusePublishesWith) {
         return new Response(refusePublishesWith.body, { status: refusePublishesWith.status });

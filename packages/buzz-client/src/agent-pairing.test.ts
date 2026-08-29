@@ -13,6 +13,7 @@ import {
   KIND_CHANNEL_ADMINS,
   KIND_CHANNEL_MEMBERS,
   KIND_CHANNEL_METADATA,
+  KIND_COMMUNITY_INVITE,
   KIND_CREATE_GROUP,
   KIND_PUT_USER,
   KIND_STREAM_MESSAGE,
@@ -99,14 +100,16 @@ describe('agent pairing and soul overlays', () => {
             ]),
           ]);
         }
-        if (kind === KIND_STREAM_MESSAGE) {
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
           const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
           const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
           return jsonResponse(
             published.filter(
               (event) =>
-                event.kind === KIND_STREAM_MESSAGE &&
+                event.kind === kind &&
                 requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value) &&
                 pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
             ),
           );
@@ -144,13 +147,16 @@ describe('agent pairing and soul overlays', () => {
           ]);
         }
         if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
-        if (kind === KIND_STREAM_MESSAGE) {
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
           const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
           const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
           return jsonResponse(
             published.filter(
               (event) =>
+                event.kind === kind &&
                 requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value) &&
                 pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
             ),
           );
@@ -200,14 +206,16 @@ describe('agent pairing and soul overlays', () => {
             ]),
           ]);
         }
-        if (kind === KIND_STREAM_MESSAGE) {
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
           const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
           const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
           return jsonResponse(
             published.filter(
               (event) =>
-                event.kind === KIND_STREAM_MESSAGE &&
+                event.kind === kind &&
                 requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value) &&
                 pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
             ),
           );
@@ -219,6 +227,7 @@ describe('agent pairing and soul overlays', () => {
     const pairing = await createAgentPairingCode(ctx(), communityId, 600);
     expect(pairing.code).toMatch(/^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
     expect(JSON.stringify(pairing.event)).not.toContain(pairing.code);
+    expect(pairing.event.kind).toBe(KIND_COMMUNITY_INVITE);
     expect(pairing.event.tags).toContainEqual(['t', TAG_AGENT_PAIRING]);
 
     const first = await redeemAgentPairingCode(ctx(agentIdentity), pairing.code.toLowerCase());
@@ -230,6 +239,82 @@ describe('agent pairing and soul overlays', () => {
     const second = await redeemAgentPairingCode(ctx(agentIdentity), pairing.code);
     expect(second).toMatchObject({ communityId, joined: false });
     expect(published.filter((event) => tagValues(event, 't').includes(TAG_AGENT))).toHaveLength(1);
+  });
+
+  it('redeems a freshly minted code immediately, even though the Workspace-scoped relay hides kind:9 from a non-member key', async () => {
+    // Production model: kind:9 is Workspace-scoped and only resolvable under
+    // an `h` filter, and a brand-new agent key is not a member yet — so its
+    // kind:9 reads see nothing. Redemption must succeed through the globally
+    // resolvable kind:30078 marker queried over authenticated HTTP.
+    const published: NostrEvent[] = [];
+    let agentIsMember = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (event.kind === KIND_PUT_USER && tagValue(event, 'p') === agentIdentity.publicKey) {
+            agentIsMember = true;
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_MEMBERS, [
+              ['d', communityId],
+              ['p', owner.publicKey],
+              ...(agentIsMember ? [['p', agentIdentity.publicKey]] : []),
+            ]),
+          ]);
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return jsonResponse([
+            signed(owner, KIND_CHANNEL_ADMINS, [
+              ['d', communityId],
+              ['p', owner.publicKey, 'owner'],
+            ]),
+          ]);
+        }
+        if (kind === KIND_STREAM_MESSAGE) {
+          // Workspace-scoped: a kind:9 read without an h filter is invisible.
+          const hValues = (filter['#h'] as string[] | undefined) ?? [];
+          if (!hValues.includes(communityId)) return jsonResponse([]);
+          const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
+          return jsonResponse(
+            published.filter(
+              (event) =>
+                event.kind === KIND_STREAM_MESSAGE &&
+                requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
+            ),
+          );
+        }
+        if (kind === KIND_COMMUNITY_INVITE) {
+          const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
+          return jsonResponse(
+            published.filter(
+              (event) =>
+                event.kind === KIND_COMMUNITY_INVITE &&
+                requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value),
+            ),
+          );
+        }
+        return jsonResponse([]);
+      }),
+    );
+
+    const pairing = await createAgentPairingCode(ctx(owner), communityId, 600);
+    await expect(
+      redeemAgentPairingCode(ctx(agentIdentity), pairing.code.toLowerCase()),
+    ).resolves.toMatchObject({ communityId, joined: true });
+    expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(true);
   });
 
   it('redemption attaches the agent to every top-level Room the inviter belongs to, excluding DMs, corners, and archived Rooms', async () => {
@@ -321,14 +406,16 @@ describe('agent pairing and soul overlays', () => {
             ]),
           ]);
         }
-        if (kind === KIND_STREAM_MESSAGE) {
+        if (kind === KIND_COMMUNITY_INVITE || kind === KIND_STREAM_MESSAGE) {
           const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
           const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
           return jsonResponse(
             published.filter(
               (event) =>
-                event.kind === KIND_STREAM_MESSAGE &&
+                event.kind === kind &&
                 requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value) &&
                 pairingHashes.every((hash) => tagValue(event, 'pairing') === hash),
             ),
           );

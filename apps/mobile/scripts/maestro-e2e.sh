@@ -14,11 +14,16 @@ readonly EXPECTED_UPDATE_ID="${EXPECTED_ANDROID_UPDATE_ID:-}"
 readonly UPDATE_IDENTITY_TIMEOUT="${MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS:-10}"
 
 reply_fixture_pid=""
+disabled_deep_link_packages=()
 cleanup() {
   local status=$?
   if [[ -n "$reply_fixture_pid" ]]; then
     kill "$reply_fixture_pid" 2>/dev/null || true
   fi
+  local package
+  for package in "${disabled_deep_link_packages[@]}"; do
+    adb -s "$DEVICE" shell pm enable --user 0 "$package" </dev/null >/dev/null 2>&1 || true
+  done
   if [[ "${MAESTRO_VERIFY_UPDATE_ONLY:-0}" != "1" ]]; then
     local teardown_args=("$MOBILE_DIR/android")
     if [[ "${MAESTRO_KEEP_DEVICE:-0}" == "1" ]]; then
@@ -116,6 +121,43 @@ verify_running_update_identity
 
 if [[ "${MAESTRO_VERIFY_UPDATE_ONLY:-0}" == "1" ]]; then
   exit 0
+fi
+
+# This AVD is shared with local development lanes that install differently
+# named Beeline variants. Those packages can still claim the production
+# `beeline://` scheme, making Android's resolver cover the app or route a
+# canary deep link into the wrong package. Keep the product flow bound to the
+# candidate package without uninstalling another lane's app: disable only the
+# competing scheme handlers for this process lifetime and restore them in the
+# cleanup trap above.
+deep_link_handlers="$(
+  adb -s "$DEVICE" shell cmd package query-activities --brief \
+    -a android.intent.action.VIEW \
+    -c android.intent.category.BROWSABLE \
+    -d 'beeline://buzz/channels'
+)" || {
+  echo "Maestro environment error: could not enumerate beeline:// handlers on $DEVICE." >&2
+  exit 2
+}
+target_handler_seen=0
+while IFS= read -r component; do
+  package="${component%%/*}"
+  if [[ "$package" == "$APP_ID" ]]; then
+    target_handler_seen=1
+    continue
+  fi
+  if ! adb -s "$DEVICE" shell pm disable-user --user 0 "$package" </dev/null >/dev/null; then
+    echo "Maestro environment error: could not temporarily disable competing beeline:// handler $package on $DEVICE." >&2
+    exit 2
+  fi
+  disabled_deep_link_packages+=("$package")
+done < <(
+  printf '%s\n' "$deep_link_handlers" |
+    sed -n 's/^[[:space:]]*\([[:alnum:]_.]*\/[[:alnum:]_.$]*\)$/\1/p'
+)
+if (( target_handler_seen != 1 )); then
+  echo "Maestro environment error: $APP_ID is not registered for beeline:// on $DEVICE." >&2
+  exit 2
 fi
 
 # ota-canary.yaml repeats the identity assertions as defense in depth, so

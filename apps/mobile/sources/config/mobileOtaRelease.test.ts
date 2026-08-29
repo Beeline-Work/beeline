@@ -171,6 +171,22 @@ esac
     expect(maestroScript).toContain('MAESTRO_VERIFY_UPDATE_ONLY');
   });
 
+  it('binds deep-link canary steps to the production package on a shared AVD', () => {
+    const enumerateHandlers = maestroScript.indexOf('cmd package query-activities --brief');
+    const disableCompetitor = maestroScript.indexOf('pm disable-user --user 0 "$package"');
+    const runFlow = maestroScript.indexOf('maestro test --device');
+    const restoreCompetitor = maestroScript.indexOf('pm enable --user 0 "$package"');
+
+    expect(enumerateHandlers).toBeGreaterThan(-1);
+    expect(maestroScript).toContain("-d 'beeline://buzz/channels'");
+    expect(maestroScript).toContain('target_handler_seen=1');
+    expect(maestroScript).toContain('$APP_ID is not registered for beeline://');
+    expect(disableCompetitor).toBeGreaterThan(enumerateHandlers);
+    expect(disableCompetitor).toBeLessThan(runFlow);
+    expect(restoreCompetitor).toBeGreaterThan(-1);
+    expect(maestroScript).not.toContain('uninstall "$package"');
+  });
+
   describe('canary runner environment classification', () => {
     const barePath = '/usr/bin:/bin';
     const defaultMaestroDirectory = mkdtempSync(join(tmpdir(), 'beeline-maestro-stub-'));

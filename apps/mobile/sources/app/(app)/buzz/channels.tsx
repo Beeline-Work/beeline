@@ -26,6 +26,7 @@ import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { roomDeckState } from '@/buzz/room-deck-state';
 import { formatRoomParticipantTotal } from '@/buzz/room-participants';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
@@ -460,11 +461,16 @@ export default function BuzzChannels() {
             </View>
           }
           renderItem={({ item }: { item: ChatListItem }) => {
-            // `unread` is server-owned and cross-device. Badge, row emphasis,
-            // and the needs-you mark deliberately share this exact fact so a
-            // row can never say NEW while looking idle (or vice versa).
+            // `unread` is server-owned and cross-device. Badge and row
+            // emphasis share this exact fact so a row can never say NEW while
+            // looking idle (or vice versa). The circle's state additionally
+            // inherits `agentState` — the server's max-severity rollup of the
+            // Room's own conversational turn and every one of its corners —
+            // so a live turn or a corner waiting on a human golds/spins the
+            // row even when every message has already been read. Precedence:
+            // needs-you (unread OR a corner needs a human) > working > idle.
             const unread = item.unread;
-            const deckState = unread ? 'needs-you' : 'idle';
+            const deckState = roomDeckState(item);
             const title = displayRoomIndexTitle(item.room.name) ?? item.room.name;
             const age = compactRelativeTime(
               item.latestMessage?.createdAt ?? item.room.updatedAt,

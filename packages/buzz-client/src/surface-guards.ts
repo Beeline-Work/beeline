@@ -422,7 +422,10 @@ function chat(value: unknown): value is ChatListItem {
     integer(item.memberCount) &&
     integer(item.cornerCount) &&
     typeof item.unread === 'boolean' &&
-    optionalString(item.repositoryName),
+    optionalString(item.repositoryName) &&
+    (item.agentState === undefined ||
+      item.agentState === 'needs-you' ||
+      item.agentState === 'working'),
   );
 }
 

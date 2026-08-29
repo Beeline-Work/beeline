@@ -30,6 +30,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
+import { filterAgentModelOptions } from '@/buzz/agent-model-picker';
 import { Modal } from '@/modal/ModalManager';
 
 const MODEL_FALLBACK_AXES: AgentModelConfigOption[] = [
@@ -115,6 +116,7 @@ export default function BuzzMembers() {
   const [agentSoulDraft, setAgentSoulDraft] = useState('');
   const [roleEditorPubkey, setRoleEditorPubkey] = useState<string | null>(null);
   const [openModelAxis, setOpenModelAxis] = useState<string | null>(null);
+  const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [working, setWorking] = useState<MembersAction | null>(null);
@@ -446,6 +448,7 @@ export default function BuzzMembers() {
             : value.selected?.effort === choiceId,
       );
       setOpenModelAxis(null);
+      setModelSearchQuery('');
     } catch (reason) {
       setError(
         `Could not set ${axis.category === 'model' ? 'model' : 'effort'}: ${String(reason)}`,
@@ -487,6 +490,7 @@ export default function BuzzMembers() {
       agentRequestGenerationRef.current += 1;
       setSelectedAgent(null);
       setOpenModelAxis(null);
+      setModelSearchQuery('');
     } catch (reason) {
       setError(`Could not remove agent: ${String(reason)}`);
     } finally {
@@ -500,6 +504,11 @@ export default function BuzzMembers() {
       [];
     return advertised.length > 0 ? advertised : MODEL_FALLBACK_AXES;
   }, [selectedAgent]);
+  const hasAdvertisedModelCatalog = Boolean(
+    selectedAgent?.catalog.some(
+      (axis) => axis.category === 'model' && axis.options.length > 0,
+    ),
+  );
 
   if (!surface && !error) {
     return (
@@ -891,7 +900,7 @@ export default function BuzzMembers() {
               </View>
               <View style={styles.modelSection}>
                 <Text style={styles.sectionLabel}>MODEL / EFFORT</Text>
-                {selectedAgent.catalog.length === 0 && (
+                {!hasAdvertisedModelCatalog && (
                   <Text style={styles.detail} testID="model-catalog-missing">
                     This agent has not reported a model catalog yet. Model remains configurable;
                     effort uses safe fixed levels until the live catalog arrives.
@@ -907,11 +916,16 @@ export default function BuzzMembers() {
                         : [];
                   const current = axisValue(selectedAgent, axis);
                   const open = openModelAxis === axis.id;
+                  const visibleChoices =
+                    isEffort ? choices : filterAgentModelOptions(choices, modelSearchQuery);
                   return (
                     <View key={axis.id} style={styles.axisBlock}>
                       <TouchableOpacity
                         disabled={!canManage || busy}
-                        onPress={() => setOpenModelAxis(open ? null : axis.id)}
+                        onPress={() => {
+                          setOpenModelAxis(open ? null : axis.id);
+                          setModelSearchQuery('');
+                        }}
                         style={styles.axisRow}
                         testID={`model-axis-${axis.id}`}
                       >
@@ -921,8 +935,20 @@ export default function BuzzMembers() {
                         </Text>
                         {canManage && <Text style={styles.chevron}>{open ? '⌄' : '›'}</Text>}
                       </TouchableOpacity>
+                      {open && !isEffort && (
+                        <TextInput
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          editable={!busy}
+                          onChangeText={setModelSearchQuery}
+                          placeholder="Search models"
+                          style={styles.modelSearchInput}
+                          testID={`model-search-${axis.id}`}
+                          value={modelSearchQuery}
+                        />
+                      )}
                       {open &&
-                        choices.map((choice) => (
+                        visibleChoices.map((choice) => (
                           <TouchableOpacity
                             key={choice.id}
                             disabled={busy}
@@ -934,7 +960,7 @@ export default function BuzzMembers() {
                             {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
                           </TouchableOpacity>
                         ))}
-                      {open && !isEffort && (
+                      {open && !isEffort && !hasAdvertisedModelCatalog && (
                         <TouchableOpacity
                           disabled={busy}
                           onPress={() => void setCustomModel(axis)}
@@ -1037,6 +1063,15 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'space-between',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: hull.border,
+    },
+    modelSearchInput: {
+      minHeight: 38,
+      paddingHorizontal: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+      color: hull.textPrimary,
+      ...Typography.default(),
+      fontSize: 11,
     },
     roleChoice: { flex: 1 },
     choiceActive: { borderColor: hull.chrome, backgroundColor: hull.bgPressed },

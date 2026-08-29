@@ -29,7 +29,7 @@ function memoBody(name: string): string {
   throw new Error(`Unclosed useMemo for ${name}`);
 }
 
-const TURN_STATE = ['activeAgentTurn', 'sessionState', 'turnProgressLabel'];
+const TURN_STATE = ['activeAgentTurn', 'sessionState', 'composerAck'];
 const CORNER_STATE = ['pinnedCorner', 'pinnedCornerCard', 'cornerLifecycle'];
 
 describe('the corner line and the turn indicator are independent', () => {
@@ -53,7 +53,7 @@ describe('the corner line and the turn indicator are independent', () => {
   });
 
   it('never derives the turn indicator from any corner signal', () => {
-    const turn = memoBody('turnProgressLabel');
+    const turn = memoBody('composerAck');
     for (const cornerState of CORNER_STATE) expect(turn).not.toContain(cornerState);
     expect(turn).toContain('activeAgentTurn');
     expect(chatSource).toContain('roomSurface?.latestAgentTurns ?? []');
@@ -61,11 +61,24 @@ describe('the corner line and the turn indicator are independent', () => {
   });
 
   it('runs the same thinking indicator for an active turn inside a corner', () => {
-    const turn = memoBody('turnProgressLabel');
+    const turn = memoBody('composerAck');
     expect(turn).not.toContain('sessionState');
-    expect(turn).toContain('selectTurnProgressAgentPubkey');
+    // The real receipt is resolved by the shared `selectComposerAckState` (it
+    // calls `selectTurnProgressAgentPubkey` internally) rather than by a
+    // second inline copy of the same check in the screen.
+    expect(turn).toContain('selectComposerAckState');
     expect(turn).toContain('activeTurnPubkey: activeAgentTurn.agentPubkey');
     expect(turn).not.toContain('if (isCorner || agentsOffline) return null');
+  });
+
+  it('the local pre-receipt ack never derives from any corner signal either', () => {
+    // "buzzing…" is armed the instant a message is sent and cleared the
+    // instant the real receipt lands — it must not be able to see a corner's
+    // pinned-selection state any more than the receipt-driven branch can.
+    const turn = memoBody('composerAck');
+    for (const cornerState of CORNER_STATE) expect(turn).not.toContain(cornerState);
+    expect(turn).toContain('pendingAckSentAt');
+    expect(turn).toContain('composerAckNow');
   });
 
   it('keeps the Corner-only transcript policy out of Room rendering', () => {
@@ -77,8 +90,9 @@ describe('the corner line and the turn indicator are independent', () => {
     // Neither is nested in the other's condition, so a Room can show one, the
     // other, both, or neither.
     expect(chatSource).toContain('{!isArchived && cornerLiveBar && (');
-    expect(chatSource).toContain('{!isArchived && turnProgressLabel && (');
-    expect(chatSource).toContain('<TurnProgressLine label={turnProgressLabel}');
+    expect(chatSource).toContain('{!isArchived && composerAck && (');
+    expect(chatSource).toContain('<TurnProgressLine');
+    expect(chatSource).toContain('label={composerAck.label}');
   });
 
   it('keeps the corner line the only tappable one', () => {

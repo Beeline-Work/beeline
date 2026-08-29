@@ -2793,6 +2793,23 @@ export class Body {
     );
   }
 
+  /**
+   * A saved `buzz-agent-soul` edit is applied at session ACTIVATION
+   * (`prepareNativePersonaInstructions`/`personaTurnPrefixForHarness`, both
+   * resolved fresh from the relay each time `createManagedSession`'s
+   * `activate()` runs), so a warm session — which skips `activate()` entirely
+   * — would otherwise keep serving the persona it started with indefinitely.
+   * `scheduler.suspend()` is a deliberate no-op for a session mid-turn or with
+   * queued work, so this never interrupts an in-flight turn: it only retires
+   * genuinely idle sessions, and the next `run()` call re-activates one with
+   * the freshly resolved soul.
+   */
+  async refreshPersonaForSoulUpdate(): Promise<void> {
+    await Promise.allSettled(
+      [...this.sessions.values()].map((session) => this.scheduler.suspend(session.channelId)),
+    );
+  }
+
   /** Publish the forced-update state before ACP cancellation can reject a turn. */
   async prepareForForcedUpdateRestart(channelId: string): Promise<void> {
     this.forcedUpdateRestart = true;
@@ -4805,12 +4822,13 @@ export class Body {
           personaTurnPrefixForHarness(profile, agentCommand, nativePersonaPrepared),
           capabilityContext.compatibilityTurnPrefix,
           // Codex/Grok/Pi ignore session/new's systemPrompt. Capability
-          // awareness, the workbench boundary, and Room edit/corner protocol
-          // must still reach every turn because turn content is the one
-          // instruction channel these adapters honor.
+          // awareness, the memory contract, the workbench boundary, and Room
+          // edit/corner protocol must still reach every turn because turn
+          // content is the one instruction channel these adapters honor.
           ...(harnessHonorsSessionSystemPrompt(agentCommand)
             ? []
             : [
+                agentMemoryInstructions(input.agentMemory),
                 workbenchInstructions(workbench, input.mode),
                 ...(input.roomEditPolicy
                   ? roomEditPolicyInstructions(input.roomEditPolicy, agentCommand)

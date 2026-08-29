@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -71,6 +71,21 @@ lines.on('line', (line) => {
   );
   await chmod(binary, 0o755);
   return binary;
+}
+
+/**
+ * `--mcp squire-credential-use` implicitly requires the `trusty-squire`
+ * skill to be shareable from the OPERATOR's real $HOME
+ * (`agent-home.ts`'s `EXPLICIT_SKILL_SOURCE_DIRS`), not this test's own
+ * scratch space. Give it its own fake, self-contained $HOME instead of
+ * relying on whatever this host's real operator account happens to carry.
+ */
+async function fakeOperatorHomeWithSquireSkill(): Promise<string> {
+  const home = await tmpDir('beeline-pair-cli-home-');
+  const skillDir = resolve(home, '.agents/skills/trusty-squire');
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(resolve(skillDir, 'SKILL.md'), '# Trusty Squire\n');
+  return home;
 }
 
 function runPair(
@@ -419,6 +434,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');
     spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: gitRepo });
     const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const home = await fakeOperatorHomeWithSquireSkill();
     const agent = await fakeModelAgent();
 
     // No --access flag resolves to DEFAULT_ACCESS_POLICY ('creator'), which
@@ -436,7 +452,7 @@ describe('beeline pair — --access/--auto-response (non-interactive)', () => {
         '--mcp',
         'squire-credential-use',
       ],
-      { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome } },
+      { cwd: gitRepo, env: { XDG_STATE_HOME: stateHome, HOME: home } },
     );
 
     expect(status).toBe(1);

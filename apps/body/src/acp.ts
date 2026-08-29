@@ -527,7 +527,12 @@ export class AcpClient extends EventEmitter {
         p.reject(err);
       }
       this.pending.clear();
-      this.emit('error', err);
+      // EventEmitter's 'error' event is special: emitting it with no
+      // listener attached throws the error as an uncaught exception instead
+      // of merely going unheard. No caller currently subscribes to this
+      // instance's 'error' event (the rejected `pending` requests above are
+      // the real, always-observed failure path), so guard the emit.
+      if (this.listenerCount('error') > 0) this.emit('error', err);
     });
 
     // ACP handshake: initialize, then send initialized notification.

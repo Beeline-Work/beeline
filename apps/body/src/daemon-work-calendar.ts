@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import {
   createBuzzClient,
   KIND_AGENT_ACCESS_CONFIG,
+  KIND_COMMUNITY_INVITE,
   KIND_AGENT_PRESENCE,
   KIND_STREAM_MESSAGE,
   TAG_AGENT,
@@ -621,7 +622,7 @@ export function createDaemonWorkCalendar(input: {
               if (!pairingHash) throw new Error('target pairing authority unavailable');
               const pairingEvents = await rawEvents([
                 {
-                  kinds: [KIND_STREAM_MESSAGE],
+                  kinds: [KIND_COMMUNITY_INVITE, KIND_STREAM_MESSAGE],
                   '#d': [pairingHash],
                   '#t': [TAG_AGENT_PAIRING],
                   limit: 20,

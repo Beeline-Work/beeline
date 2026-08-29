@@ -96,7 +96,6 @@ import {
   beelineInstallLayout,
   describeIdentity,
   readInstalledBundleIdentity,
-  readPendingUpdate,
   repairInstallForwarders,
   settlePendingUpdateOnStart,
 } from './self-update.js';
@@ -108,12 +107,18 @@ import {
 } from './systemd.js';
 import {
   coordinateManagedUpdateHandoff,
+  gateManagedSuccessor,
   ManagedUpdateHandoff,
-  proveLoadedReleaseReady,
   readUpdateHandoff,
   rollbackFailedSuccessor,
+  runningRuntimeProbeIds,
   runManagedUpdateWorker,
 } from './managed-update.js';
+import { runUpdateFunctionalProbe } from './update-functional-probe.js';
+import {
+  publishPendingUpdateRollbackAlert,
+  queueUpdateRollbackAlert,
+} from './update-rollback-alert.js';
 import {
   dailyAgentSpend,
   dailyRestartReprimes,
@@ -565,14 +570,41 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   const runtimeDir = dirname(configPath);
   const layout = beelineInstallLayout(process.env);
   const notifier = new SystemdNotifier();
+  const daemonIdentity = runtimeIdentity(runtime.agent);
+  const rollbackAlertRelay = createRelayClient(daemonIdentity, {
+    baseUrl: runtime.relayBaseUrl,
+    host: runtime.relayHost ?? new URL(runtime.relayBaseUrl).host,
+  });
+  let rollbackAlertDrain: Promise<void> | undefined;
+  const drainRollbackAlert = (channelId: string | undefined): Promise<void> => {
+    if (!channelId) return Promise.resolve();
+    if (rollbackAlertDrain) return rollbackAlertDrain;
+    rollbackAlertDrain = publishPendingUpdateRollbackAlert({
+      runtimeDir,
+      channelId,
+      identity: daemonIdentity,
+      publishEvent: (event) => rollbackAlertRelay.publishEvent(event),
+    })
+      .then(() => undefined)
+      .catch((alertError) =>
+        console.error('[thin-core] automatic rollback alert remains queued:', alertError),
+      )
+      .finally(() => {
+        rollbackAlertDrain = undefined;
+      });
+    return rollbackAlertDrain;
+  };
   let loadedRelease: string | undefined;
   let update: ManagedUpdateHandoff | undefined;
   let pendingSuccessor = false;
+  let successorRolledBack = false;
   if (layout) {
     const settle = await settlePendingUpdateOnStart(layout);
     const handoff = await readUpdateHandoff(runtimeDir);
     if (settle.kind === 'rolled-back') {
       await unlink(resolve(runtimeDir, 'update-handoff.json')).catch(() => undefined);
+      await queueUpdateRollbackAlert(runtimeDir, settle.record.releaseId);
+      await drainRollbackAlert(runtime.rooms[0]?.channelId);
       console.error(
         `[body] self-update ROLLED BACK: bundle ${describeIdentity(settle.record.to)} never confirmed healthy; ` +
           `restored ${settle.record.previousReleaseId ?? 'previous release'}`,
@@ -590,7 +622,9 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     } else if (handoff) {
       pendingSuccessor = true;
     }
-    update = await ManagedUpdateHandoff.create(layout, runtimeDir);
+    update = await ManagedUpdateHandoff.create(layout, runtimeDir, Date.now, {
+      requiredProbeIds: [...(await runningRuntimeProbeIds(process.env)), runtime.agent.publicKey],
+    });
   }
 
   console.log(
@@ -606,29 +640,37 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
     const result = await core.run({
       signal: controller.signal,
       onEstablished: async () => {
+        let functionalProof: Awaited<ReturnType<typeof runUpdateFunctionalProbe>> | undefined;
         if (layout && pendingSuccessor) {
-          const pending = await readPendingUpdate(layout);
-          const handoff = await readUpdateHandoff(runtimeDir);
-          const desiredRelease = handoff?.desiredRelease ?? pending?.releaseId;
-          if (!desiredRelease || !loadedRelease || desiredRelease !== loadedRelease) {
-            throw new Error(
-              `successor loaded release ${loadedRelease ?? 'unknown'}, not the pending desired release`,
-            );
+          const gate = await gateManagedSuccessor({
+            layout,
+            runtimeDir,
+            loadedRelease,
+            probeId: runtime.agent.publicKey,
+            probe: () =>
+              runUpdateFunctionalProbe({
+                config,
+                runtimeDir,
+                releaseId: loadedRelease ?? 'unknown',
+                sandboxRequired: runtime.sandbox !== 'off',
+              }),
+          });
+          if (gate.kind === 'failed') {
+            successorRolledBack = gate.rolledBack;
+            throw gate.error;
           }
+          functionalProof = gate.proof;
+          pendingSuccessor = false;
+          console.log(
+            `[thin-core] successor functional probe passed on exact release ${loadedRelease}: ` +
+              `${functionalProof?.harness ?? 'unknown'} session/new + turn + read_mandate`,
+          );
         }
         await notifier.ready(`ready; loaded_release=${loadedRelease ?? 'development'}`);
-        if (layout && pendingSuccessor) {
-          if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease))) {
-            throw new Error(
-              `successor loaded release ${loadedRelease ?? 'unknown'}, not the pending desired release`,
-            );
-          }
-          pendingSuccessor = false;
-          console.log(`[thin-core] successor READY on exact release ${loadedRelease}`);
-        }
         ready = true;
       },
       onProgress: async (status) => {
+        void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);
         // The watchdog heartbeat is coupled to this completed progress tick.
         await notifier.progress(`loaded_release=${loadedRelease ?? 'development'}; ${status}`);
         if (!update) return;
@@ -674,13 +716,13 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
       );
     }
   } catch (error) {
-    if (
-      layout &&
-      pendingSuccessor &&
-      !ready &&
-      (await rollbackFailedSuccessor(layout, runtimeDir))
-    ) {
+    const rolledBack =
+      successorRolledBack ||
+      (layout && pendingSuccessor && !ready && (await rollbackFailedSuccessor(layout, runtimeDir)));
+    if (rolledBack) {
       console.error('[thin-core] successor failed before READY; previous release restored once');
+      const alertRoom = runtime.rooms[0]?.channelId;
+      await drainRollbackAlert(alertRoom);
     }
     throw error;
   } finally {

@@ -4,8 +4,8 @@
  * registerTool extension route, using the pinned release-owned adapter.
  */
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { lstat, mkdir, rename, rm, symlink, unlink } from 'node:fs/promises';
+import { constants as fsConstants, existsSync } from 'node:fs';
+import { chmod, copyFile, lstat, mkdir, rename, rm, symlink, unlink } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import type { McpServerWire } from './acp.js';
@@ -13,6 +13,7 @@ import { writeIsolatedHarnessFile } from './agent-home.js';
 
 export const PI_MCP_ADAPTER_VERSION = '2.30.0';
 export const PI_MCP_EXTENSION_NAME = 'beeline-mcp.ts';
+export const PI_MCP_SESSION_ADAPTER_NAME = 'beeline-pi-mcp-adapter.mjs';
 
 /**
  * pi-mcp-adapter awaits fresh metadata during session_start only when its
@@ -100,8 +101,18 @@ export async function preparePiMcpSession(input: {
     if (!adapterDetails.isFile() || adapterDetails.isSymbolicLink()) {
       throw new Error('release-owned Pi MCP adapter entrypoint is not an ordinary file');
     }
+    // Pi's TypeScript extension loader opens imported modules through a
+    // writable compilation path. The immutable release bundle sits under
+    // bubblewrap's read-only root, which leaves session/new waiting forever
+    // if the extension imports it directly. Clone the exact release-owned
+    // bytes into this regenerated, writable session root instead. A rollback
+    // activates the old bundle and recreates this whole directory, so a newer
+    // adapter can never survive and load under older code.
+    const sessionAdapter = resolve(staged, 'extensions', PI_MCP_SESSION_ADAPTER_NAME);
+    await copyFile(adapterEntrypoint, sessionAdapter, fsConstants.COPYFILE_FICLONE);
+    await chmod(sessionAdapter, 0o600);
     const extension = [
-      `import { createMcpAdapter } from ${JSON.stringify(adapterEntrypoint)};`,
+      `import { createMcpAdapter } from ${JSON.stringify(`./${PI_MCP_SESSION_ADAPTER_NAME}`)};`,
       '',
       `export default createMcpAdapter(${JSON.stringify({ config: adapterConfig(input.mcpServers) }, null, 2)});`,
       '',

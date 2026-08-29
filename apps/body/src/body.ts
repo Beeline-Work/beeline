@@ -304,7 +304,11 @@ import {
   workbenchInstructions,
   type SessionWorkbench,
 } from './workbench.js';
-import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
+import {
+  isBeelineAgentToolPermissionRequest,
+  isReadOnlyMcpPermissionRequest,
+  READ_ONLY_MCP_SERVER_NAME,
+} from './read-only-policy.js';
 import { cornerToolchainNotice, ensureCornerToolchainProvisioned } from './corner-toolchain.js';
 import {
   authorizedExternalMcpServers,
@@ -777,6 +781,12 @@ export function withoutPrematureMergeClaims(message: string): string {
 const UNVERIFIED_ROOM_COORDINATION_REPLY =
   'No Beeline corner or mission record was created, so no coordinated work started.';
 
+function roomCornerAnnouncement(cornerName?: string): string {
+  return cornerName
+    ? `This needs repository edits, so I moved it into the ${cornerName} corner — follow the work there.`
+    : 'This needs repository edits, so it continues in an isolated edit corner.';
+}
+
 interface RoomCoordinationClaims {
   corner: boolean;
   mission: boolean;
@@ -817,6 +827,19 @@ function roomCoordinationClaims(message: string): RoomCoordinationClaims {
   };
 }
 
+function falseNegativeCornerClaim(message: string): boolean {
+  if (!/\b(?:i|we|my|our)\b/i.test(message)) return false;
+  return (
+    /\b(?:corner(?:-opening)?\s+request|request\s+to\s+(?:open|start|create)(?:\s+an?)?\s+(?:edit\s+)?corner)\b.{0,96}\b(?:denied|rejected|refused)\b/i.test(
+      message,
+    ) ||
+    /\bno\s+(?:edit\s+)?session\s+(?:was\s+)?(?:started|opened|created)\b/i.test(message) ||
+    /\b(?:i|we)\b.{0,64}\b(?:made|performed)\s+no\s+(?:repository\s+)?(?:changes|edits)\b/i.test(
+      message,
+    )
+  );
+}
+
 /**
  * A Room model cannot create a mission in prose. A corner
  * completion is publishable only after openSubchannel has returned and
@@ -825,8 +848,11 @@ function roomCoordinationClaims(message: string): RoomCoordinationClaims {
  */
 function groundRoomCoordinationClaims(
   message: string,
-  evidence: { cornerRecordCreated: boolean },
+  evidence: { cornerRecordCreated: boolean; cornerName?: string },
 ): string {
+  if (evidence.cornerRecordCreated && falseNegativeCornerClaim(message)) {
+    return roomCornerAnnouncement(evidence.cornerName);
+  }
   const claims = roomCoordinationClaims(message);
   if (!claims.corner && !claims.mission) return message;
   if (claims.mission || !evidence.cornerRecordCreated) {
@@ -2409,6 +2435,11 @@ export class Body {
    * a `finally` so a failed attempt can still be retried on a later poll.
    */
   private inFlightRequestIds = new Set<string>();
+  /** One corner-opening operation per triggering Room event across the direct
+   * command, ACP permission, and first-class tool paths. The promise is stored
+   * before any relay/git await so concurrent authorities join the same host
+   * result instead of creating competing children. */
+  private openingSubchannelsByRequestId = new Map<string, Promise<SubchannelInfo>>();
   /** Same synchronous claim/release shape as `inFlightRequestIds` above —
    *  `archiveSubchannel` is now retried (both from `pollMembers`'s incomplete-
    *  archive check and its own `#t=buzz-corner-close` handler), so two
@@ -4225,9 +4256,13 @@ export class Body {
           const pending = this.pendingRoomTurns.get(binding.roomId);
           const sourceCorner = this.subchannels.get(binding.channelId);
           const request = pending?.request ?? sourceCorner?.request;
-          const info = await this.openSubchannel(binding.roomId, roomRepo, objective, request, {
-            objective,
-          });
+          const info = request
+            ? await this.openSubchannelForRequest(binding.roomId, roomRepo, objective, request, {
+                objective,
+              })
+            : await this.openSubchannel(binding.roomId, roomRepo, objective, request, {
+                objective,
+              });
           const receipt = await this.publishAgentToolReceipt({
             channelId: binding.roomId,
             tool: 'open_corner',
@@ -6349,6 +6384,41 @@ export class Body {
     });
   }
 
+  private openSubchannelForRequest(
+    tlcChannelId: string,
+    roomRepo: BoundRepo,
+    intent: string,
+    request: ChannelTaskRequest,
+    options?: { objective?: string; mission?: MissionCornerAuthority },
+  ): Promise<SubchannelInfo> {
+    const existing = this.liveSubchannelForRequest(tlcChannelId, request.eventId);
+    if (existing) return Promise.resolve(existing);
+    const inFlight = this.openingSubchannelsByRequestId.get(request.eventId);
+    if (inFlight) return inFlight;
+    const open = options
+      ? this.openSubchannel(tlcChannelId, roomRepo, intent, request, options)
+      : this.openSubchannel(tlcChannelId, roomRepo, intent, request);
+    const opening = open.finally(() => {
+      if (this.openingSubchannelsByRequestId.get(request.eventId) === opening) {
+        this.openingSubchannelsByRequestId.delete(request.eventId);
+      }
+    });
+    this.openingSubchannelsByRequestId.set(request.eventId, opening);
+    return opening;
+  }
+
+  private liveSubchannelForRequest(
+    tlcChannelId: string,
+    requestId: string,
+  ): SubchannelInfo | undefined {
+    return [...this.subchannels.values()].find(
+      (info) =>
+        !info.archived &&
+        info.session.parentChannelId === tlcChannelId &&
+        info.request?.eventId === requestId,
+    );
+  }
+
   async openSubchannel(
     tlcChannelId: string,
     roomRepo: BoundRepo,
@@ -8106,7 +8176,10 @@ export class Body {
       // the live shape where a bare "@beebee open corner" fifty seconds after
       // a described one opened an objective-less twin of the corner already
       // running.
-      const duplicate = this.duplicateLiveCorner(tlcChannelId, request.content);
+      const alreadyOpenedForRequest = this.liveSubchannelForRequest(tlcChannelId, request.eventId);
+      const duplicate = alreadyOpenedForRequest
+        ? undefined
+        : this.duplicateLiveCorner(tlcChannelId, request.content);
       if (duplicate) {
         await postAgentMessage(
           tlcChannelId,
@@ -8122,7 +8195,12 @@ export class Body {
         );
         return { openedCorner: false, producedReply: true };
       }
-      const info = await this.openSubchannel(tlcChannelId, boundRepo, request.content, request);
+      const info = await this.openSubchannelForRequest(
+        tlcChannelId,
+        boundRepo,
+        request.content,
+        request,
+      );
       const displayPrompt = request.attachments?.length ? userPrompt : request.content;
       const taskInstructions = cornerOpenTaskPrompt(info.taskDescription, displayPrompt);
       this.startAgentTask(info, displayPrompt, taskInstructions, {
@@ -8359,14 +8437,17 @@ export class Body {
           turn,
         );
       }
-      const cornerRecordCreated = [...this.subchannels.values()].some(
+      const openedCornerForRequest = [...this.subchannels.values()].find(
         (corner) =>
           !corner.archived &&
           corner.request?.eventId === request.eventId &&
           corner.session.parentChannelId === tlcChannelId,
       );
       const groundedAgentText = groundRoomCoordinationClaims(result.agentText, {
-        cornerRecordCreated,
+        cornerRecordCreated: Boolean(openedCornerForRequest),
+        ...(openedCornerForRequest?.cornerName
+          ? { cornerName: openedCornerForRequest.cornerName }
+          : {}),
       });
       if (groundedAgentText !== result.agentText) {
         console.warn(
@@ -8394,9 +8475,7 @@ export class Body {
             tlcChannelId,
             session,
             result,
-            openedCorner?.cornerName
-              ? `This needs repository edits, so I moved it into the ${openedCorner.cornerName} corner — follow the work there.`
-              : 'This needs repository edits, so it continues in an isolated edit corner.',
+            roomCornerAnnouncement(openedCorner?.cornerName),
             {
               replyTo: request.eventId,
               ...(request.replyRootId ? { replyRootId: request.replyRootId } : {}),
@@ -8730,6 +8809,10 @@ export class Body {
   ): Promise<AcpPermissionDecision> {
     const pendingTurn = this.pendingRoomTurns.get(tlcChannelId);
     if (isReadOnlyMcpPermissionRequest(permission)) return 'allow';
+    // Admit Body's own MCP transport before the generic Room mutation floor.
+    // The tool server's authorize-or-request kernel remains the sole action
+    // authority and returns its canonical result union to the model.
+    if (isBeelineAgentToolPermissionRequest(permission)) return 'allow';
     if (
       this.config.accessPolicy === 'creator' &&
       isExternalMcpPermissionRequest(permission, this.config.externalMcpCapabilities)
@@ -8827,7 +8910,7 @@ export class Body {
     turn.permissionHandled = true;
     if (policy === 'repository' && turn.boundRepo) {
       try {
-        const info = await this.openSubchannel(
+        const info = await this.openSubchannelForRequest(
           tlcChannelId,
           turn.boundRepo,
           turn.request.content,
@@ -9657,6 +9740,7 @@ export class Body {
     taskInstructions: string,
     attribution: ModelTurnAttribution,
   ): void {
+    if (this.runningAgentTasks.has(info.subchannelId)) return;
     if (
       cornerFrozenForPendingClose({
         pending: info.toolClosePending,

@@ -304,6 +304,25 @@ describe('replaceable multi-lane reads', () => {
     client.disconnect();
   });
 
+  it('starts loopback surface subscriptions when the open relay sends no AUTH challenge', async () => {
+    const client = createBuzzClient({
+      baseUrl: 'http://127.0.0.1:3010',
+      identity: createIdentity('local-open-surface-subscriber'),
+      WebSocketImpl: ReconnectingTestWebSocket,
+    });
+    const pending = client.surfaceSubscribe([{ kinds: [9], '#h': ['room'] }], () => undefined);
+
+    await vi.waitFor(() => expect(ReconnectingTestWebSocket.instances).toHaveLength(1));
+    const socket = ReconnectingTestWebSocket.instances[0]!;
+    await vi.waitFor(() => expect(socket.sent.some((frame) => frame[0] === 'REQ')).toBe(true));
+    const request = socket.sent.find((frame) => frame[0] === 'REQ')!;
+    socket.receive(['EOSE', request[1]]);
+
+    const unsubscribe = await pending;
+    unsubscribe();
+    client.disconnect();
+  });
+
   it('installs each opaque surface filter as an independently live REQ', async () => {
     const client = createBuzzClient({
       baseUrl: 'https://relay.test',

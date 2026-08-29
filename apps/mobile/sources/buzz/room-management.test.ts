@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   canRenameRoom,
   canManageRoomRepository,
   canRemoveRoomParticipant,
+  confirmRoomRepositoryLink,
   normalizedRoomRole,
   roomLifecycleAction,
 } from './room-management';
@@ -46,5 +47,76 @@ describe('Room management capabilities', () => {
     expect(normalizedRoomRole({ pubkey: 'a', role: 'admin' })).toBe('admin');
     expect(normalizedRoomRole({ pubkey: 'a', role: 'unexpected' })).toBe('member');
     expect(normalizedRoomRole(undefined)).toBeNull();
+  });
+
+  it('retries none and unverified repository reads until the accepted link appears', async () => {
+    const reads = [
+      { repositoryResolution: 'none' as const },
+      { repositoryResolution: 'unverified' as const },
+      {
+        repositoryResolution: 'repository' as const,
+        repository: {
+          key: 'github:2',
+          name: 'acme/repo',
+          remote: 'git://github.com/acme/repo',
+          targetBranch: 'main',
+          updatedAt: 20,
+          githubEventsEnabled: true,
+        },
+      },
+    ];
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(
+      confirmRoomRepositoryLink(async () => reads.shift()!, { key: 'github:2', updatedAt: 20 }, {
+        attempts: 3,
+        sleep,
+      }),
+    ).resolves.toBe('confirmed');
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps an accepted link pending when confirmation stays unverified or unavailable', async () => {
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce({ repositoryResolution: 'unverified' })
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ repositoryResolution: 'none' });
+
+    await expect(
+      confirmRoomRepositoryLink(read, { key: 'github:2', updatedAt: 20 }, {
+        attempts: 3,
+        sleep: async () => undefined,
+      }),
+    ).resolves.toBe('pending');
+  });
+
+  it('rejects only a different binding at or beyond the accepted write generation', async () => {
+    const staleThenCurrent = vi
+      .fn()
+      .mockResolvedValueOnce({
+        repositoryResolution: 'repository',
+        repository: { key: 'github:old', updatedAt: 19 },
+      })
+      .mockResolvedValueOnce({
+        repositoryResolution: 'repository',
+        repository: { key: 'github:2', updatedAt: 20 },
+      });
+    await expect(
+      confirmRoomRepositoryLink(staleThenCurrent, { key: 'github:2', updatedAt: 20 }, {
+        attempts: 2,
+        sleep: async () => undefined,
+      }),
+    ).resolves.toBe('confirmed');
+
+    await expect(
+      confirmRoomRepositoryLink(
+        async () => ({
+          repositoryResolution: 'repository',
+          repository: { key: 'github:newer', updatedAt: 21 },
+        }),
+        { key: 'github:2', updatedAt: 20 },
+      ),
+    ).resolves.toBe('contradicted');
   });
 });

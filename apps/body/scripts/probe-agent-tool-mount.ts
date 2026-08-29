@@ -4,14 +4,26 @@ import { mkdir, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { basename, resolve } from 'node:path';
 import { AcpClient } from '../src/acp.js';
-import { prepareRoomAgentHome } from '../src/agent-home.js';
+import { harnessStateDirsFromEnv, prepareRoomAgentHome } from '../src/agent-home.js';
 import { AgentToolHostBroker } from '../src/agent-tool-host-broker.js';
+import {
+  credentialMaskPaths,
+  detectBwrapSandbox,
+  harnessHomeStateDirs,
+  wrapAgentCommand,
+} from '../src/bwrap-sandbox.js';
 import { piMcpDirectToolSelection, preparePiMcpSession } from '../src/pi-mcp-session.js';
 
 const command = process.argv.slice(2).find((argument) => !argument.startsWith('--'));
 const workflow = process.argv.includes('--workflow');
+const sandboxed = process.argv.includes('--sandbox');
+const agentArgs = process.argv
+  .filter((argument) => argument.startsWith('--agent-arg='))
+  .map((argument) => argument.slice('--agent-arg='.length));
 if (!command) {
-  throw new Error('usage: probe-agent-tool-mount.ts <ACP harness command> [--workflow]');
+  throw new Error(
+    'usage: probe-agent-tool-mount.ts <ACP harness command> [--agent-arg=<arg> ...] [--workflow] [--sandbox]',
+  );
 }
 
 const harness = basename(command).replace(/[^a-z0-9_-]+/gi, '-');
@@ -38,11 +50,10 @@ try {
       if (tool !== 'read_mandate') {
         if (tool === 'open_corner') {
           const objective = String(args.objective ?? '');
-          const result =
-            openResults.get(objective) ?? {
-              corner_id: cornerId,
-              feature_ref: `refs/heads/probe/${harness}`,
-            };
+          const result = openResults.get(objective) ?? {
+            corner_id: cornerId,
+            feature_ref: `refs/heads/probe/${harness}`,
+          };
           openResults.set(objective, result);
           return { status: 'executed', event_id: 'b'.repeat(64), result };
         }
@@ -99,8 +110,30 @@ try {
     });
     agentEnv.MCP_DIRECT_TOOLS = piMcpDirectToolSelection([server]);
   }
+  let spawnCommand = { command, args: agentArgs };
+  if (sandboxed) {
+    const sandbox = detectBwrapSandbox();
+    if (!sandbox.path) throw new Error(sandbox.advisory);
+    const { stateDirs, tmpDir } = harnessStateDirsFromEnv(agentEnv);
+    const homeStateDirs = harnessHomeStateDirs(command, agentEnv.HOME);
+    await Promise.all(homeStateDirs.map((dir) => mkdir(dir, { recursive: true })));
+    spawnCommand = wrapAgentCommand({
+      bwrapPath: sandbox.path,
+      spec: {
+        mode: 'readonly',
+        cwd: root,
+        harnessStateDirs: stateDirs,
+        harnessHomeStateDirs: homeStateDirs,
+        maskPaths: credentialMaskPaths(undefined),
+        ...(tmpDir ? { tmpDir } : {}),
+      },
+      command,
+      args: agentArgs,
+    });
+  }
   client = new AcpClient({
-    agentCommand: command,
+    agentCommand: spawnCommand.command,
+    agentArgs: spawnCommand.args,
     agentLabel: command,
     agentEnv,
     agentCwd: root,
@@ -114,7 +147,11 @@ try {
     systemPrompt: 'Use mounted Beeline tools directly. This is an isolated conformance probe.',
   });
   if (/^pi-acp(?:\.|$)/i.test(harness)) {
-    await client.setConfigOption(session.sessionId, 'model', 'openrouter-ox/deepseek/deepseek-v4-flash');
+    await client.setConfigOption(
+      session.sessionId,
+      'model',
+      'openrouter-ox/deepseek/deepseek-v4-flash',
+    );
   }
   let result = await client.sessionPrompt(
     session.sessionId,
@@ -164,6 +201,7 @@ try {
     JSON.stringify(
       {
         harness,
+        sandboxed,
         mode: workflow ? 'workflow' : 'mount',
         passed,
         calls,

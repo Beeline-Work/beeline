@@ -221,6 +221,35 @@ function messageMerge(value: unknown): boolean {
   );
 }
 
+function messageLandSummary(value: unknown): boolean {
+  const item = record(value);
+  const approvedBy = item?.approvedBy === undefined ? undefined : record(item.approvedBy);
+  return Boolean(
+    item &&
+    typeof item.cornerId === 'string' &&
+    item.cornerId.length > 0 &&
+    typeof item.objective === 'string' &&
+    item.objective.length > 0 &&
+    typeof item.delivered === 'string' &&
+    item.delivered.length > 0 &&
+    typeof item.omitted === 'string' &&
+    item.omitted.length > 0 &&
+    typeof item.branch === 'string' &&
+    item.branch.length > 0 &&
+    typeof item.tip === 'string' &&
+    /^[0-9a-f]{40}$/i.test(item.tip) &&
+    (item.url === undefined || httpUrl(item.url)) &&
+    (approvedBy === undefined ||
+      (approvedBy &&
+        typeof approvedBy.pubkey === 'string' &&
+        HEX.test(approvedBy.pubkey) &&
+        typeof approvedBy.name === 'string' &&
+        approvedBy.name.length > 0 &&
+        typeof approvedBy.handle === 'string' &&
+        approvedBy.handle.length > 0)),
+  );
+}
+
 function messagePermission(value: unknown): boolean {
   const item = record(value);
   return Boolean(
@@ -305,6 +334,7 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
       item.durableFact === 'action') &&
     (item.corner === undefined || messageCorner(item.corner)) &&
     (item.merge === undefined || messageMerge(item.merge)) &&
+    (item.landSummary === undefined || messageLandSummary(item.landSummary)) &&
     (item.permission === undefined || messagePermission(item.permission)) &&
     (item.targetBranch === undefined || targetBranch(item.targetBranch)),
   );

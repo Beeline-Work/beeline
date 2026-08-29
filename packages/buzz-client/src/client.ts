@@ -151,6 +151,16 @@ function hostFromBaseUrl(baseUrl: string): string {
   return u.host;
 }
 
+function isLocalOpenRelay(baseUrl: string): boolean {
+  const hostname = new URL(baseUrl).hostname.toLowerCase();
+  return (
+    hostname === '127.0.0.1' ||
+    hostname === 'localhost' ||
+    hostname === '[::1]' ||
+    hostname === '10.0.2.2'
+  );
+}
+
 /** Bound on the lazy auth-service predecessor fetch inside communityMembers. */
 const SUCCESSION_LOAD_TIMEOUT_MS = 5_000;
 const READ_DIRECTORY_CACHE_TTL_MS = 30_000;
@@ -212,7 +222,11 @@ export class BuzzClient {
       wsUrl: this.config.wsUrl ?? wsUrlFromHttp(this.baseUrl),
       identity: this.identity,
       ...(this.config.WebSocketImpl ? { WebSocketImpl: this.config.WebSocketImpl } : {}),
-      ...(this.config.skipAuth !== undefined ? { skipAuth: this.config.skipAuth } : {}),
+      // The repository's local relay is deliberately open and never emits a
+      // NIP-42 challenge. Waiting for one blocks the Room-list closing GET,
+      // leaving a cold mobile bootstrap on LOADING ROOMS indefinitely.
+      // Explicit config still wins, and every nonlocal relay remains auth-first.
+      skipAuth: this.config.skipAuth ?? isLocalOpenRelay(this.baseUrl),
       ...(this.config.connectTimeoutMs !== undefined
         ? { connectTimeoutMs: this.config.connectTimeoutMs }
         : {}),

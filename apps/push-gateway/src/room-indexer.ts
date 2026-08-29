@@ -1548,6 +1548,56 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     return githubEvent ? { ...base, text: '', presentation: 'card', githubEvent } : undefined;
   }
 
+  if (markers.has('land-summary')) {
+    const cornerId = tag(eventTags, 'subchannel');
+    const objective = tag(eventTags, 'objective');
+    const delivered = tag(eventTags, 'delivered');
+    const omitted = tag(eventTags, 'omitted');
+    const branch = tag(eventTags, 'branch');
+    const tip = tag(eventTags, 'tip');
+    const url = tag(eventTags, 'url');
+    const approverPubkey = tag(eventTags, 'approver');
+    const approverName = tag(eventTags, 'approver-name');
+    const approverHandle = tag(eventTags, 'approver-handle');
+    // Old recap events lacked the typed envelope. Keep their text visible as
+    // a system line; only a complete new-generation digest gets the card.
+    if (
+      !cornerId ||
+      !objective ||
+      !delivered ||
+      !omitted ||
+      !branch ||
+      !/^[0-9a-f]{40}$/i.test(tip ?? '')
+    ) {
+      return { ...base, presentation: 'system' };
+    }
+    return {
+      ...base,
+      presentation: 'card',
+      landSummary: {
+        cornerId,
+        objective,
+        delivered,
+        omitted,
+        branch,
+        tip: tip!,
+        ...(url?.startsWith('https://') ? { url } : {}),
+        ...(approverPubkey &&
+        /^[0-9a-f]{64}$/.test(approverPubkey) &&
+        approverName &&
+        approverHandle
+          ? {
+              approvedBy: {
+                pubkey: approverPubkey,
+                name: approverName,
+                handle: approverHandle,
+              },
+            }
+          : {}),
+      },
+    };
+  }
+
   const permissionMarker =
     markers.has('buzz-write-permission-request') || markers.has('buzz-permission-request');
   if (permissionMarker) {

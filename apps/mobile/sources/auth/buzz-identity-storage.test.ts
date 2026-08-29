@@ -14,8 +14,16 @@ const buzzClient = vi.hoisted(() => ({
   identityNpub: vi.fn(),
 }));
 
+const runtimeConfig = vi.hoisted(() => ({
+  getBuzzRuntimeConfig: vi.fn(() => ({
+    relayUrl: 'https://usebeeline.app',
+    pushGatewayUrl: 'https://usebeeline.app/push',
+  })),
+}));
+
 vi.mock('expo-secure-store', () => secureStore);
 vi.mock('@beeline/buzz-client', () => buzzClient);
+vi.mock('@/buzz/runtime-config', () => runtimeConfig);
 
 import {
   loadBuzzIdentity,
@@ -38,6 +46,10 @@ describe('Buzz identity storage', () => {
     secureStore.getItemAsync.mockResolvedValue(null);
     secureStore.setItemAsync.mockResolvedValue(undefined);
     secureStore.deleteItemAsync.mockResolvedValue(undefined);
+    runtimeConfig.getBuzzRuntimeConfig.mockReturnValue({
+      relayUrl: 'https://usebeeline.app',
+      pushGatewayUrl: 'https://usebeeline.app/push',
+    });
   });
 
   it('uses SecureStore-compatible keys for relay persistence', async () => {
@@ -61,6 +73,15 @@ describe('Buzz identity storage', () => {
     secureStore.getItemAsync.mockResolvedValue('https://relay.buzzrouter.com');
     await expect(getEffectiveRelayUrl()).resolves.toBe('https://relay.buzzrouter.com');
     expect(secureStore.setItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('honors an embedded local relay when no device override was stored', async () => {
+    runtimeConfig.getBuzzRuntimeConfig.mockReturnValue({
+      relayUrl: 'http://127.0.0.1:3010',
+      pushGatewayUrl: 'http://127.0.0.1:3010/push',
+    });
+
+    await expect(getEffectiveRelayUrl()).resolves.toBe('http://127.0.0.1:3010');
   });
 
   it('uses the same SecureStore-compatible key to save and load identities', async () => {
@@ -101,15 +122,10 @@ describe('Buzz identity storage', () => {
     buzzClient.identityNsec.mockReturnValue('nsec1portable');
 
     await expect(importBuzzIdentity('nsec1portable')).resolves.toBe(identity);
-    expect(buzzClient.loadIdentityFromNsec).toHaveBeenCalledWith(
-      'nsec1portable',
-      'buzzy-mobile',
-    );
-    expect(secureStore.setItemAsync).toHaveBeenCalledWith(
-      'buzzy.identity.nsec',
-      'nsec1portable',
-      { keychainAccessible: 123 },
-    );
+    expect(buzzClient.loadIdentityFromNsec).toHaveBeenCalledWith('nsec1portable', 'buzzy-mobile');
+    expect(secureStore.setItemAsync).toHaveBeenCalledWith('buzzy.identity.nsec', 'nsec1portable', {
+      keychainAccessible: 123,
+    });
 
     secureStore.getItemAsync.mockResolvedValue('nsec1portable');
     await expect(loadBuzzIdentityNsecForExport()).resolves.toBe('nsec1portable');
@@ -150,9 +166,8 @@ describe('Buzz identity storage', () => {
     expect(buzzClient.loadIdentityFromNsec).toHaveBeenCalledWith('nsec1pending', 'buzzy-mobile');
 
     await clearPendingGitHubIdentity();
-    expect(secureStore.deleteItemAsync).toHaveBeenCalledWith(
-      'buzzy.identity.githubPendingNsec',
-      { keychainAccessible: 123 },
-    );
+    expect(secureStore.deleteItemAsync).toHaveBeenCalledWith('buzzy.identity.githubPendingNsec', {
+      keychainAccessible: 123,
+    });
   });
 });

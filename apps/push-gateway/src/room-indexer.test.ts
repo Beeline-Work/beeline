@@ -466,11 +466,17 @@ describe('RoomIndexer', () => {
         TENANT,
         bytes(roomStallId),
         bytes(AGENT),
-        JSON.stringify([['h', ROOM], ['t', 'agent-message']]),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-message'],
+        ]),
         stallText,
         ROOM,
         bytes(cornerStallId),
-        JSON.stringify([['h', CORNER], ['t', 'agent-message']]),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-message'],
+        ]),
         CORNER,
       ],
     );
@@ -486,7 +492,9 @@ describe('RoomIndexer', () => {
       id: directReplyId,
       text: 'Ready',
     });
-    expect(corners?.corners.find((corner) => corner.corner.id === CORNER)?.latestMessage).toMatchObject({
+    expect(
+      corners?.corners.find((corner) => corner.corner.id === CORNER)?.latestMessage,
+    ).toMatchObject({
       text: 'Working',
     });
   });
@@ -497,7 +505,7 @@ describe('RoomIndexer', () => {
     // wall — both carry variable data so they cannot join the exact-set list)
     // must be caught here the same as the exact-text notices above.
     const attachmentEnoent =
-      "Attachment unavailable: ENOENT: no such file or directory, realpath " +
+      'Attachment unavailable: ENOENT: no such file or directory, realpath ' +
       "'/proc/2952774/root/home/lunchbox/.local/state/beeline/agents/agent/rooms/room/agent-private/workbench/report.html'";
     const modelUnavailable =
       'Model validation unavailable · gpt-5\n' +
@@ -515,7 +523,10 @@ describe('RoomIndexer', () => {
         TENANT,
         bytes(attachmentWallId),
         bytes(AGENT),
-        JSON.stringify([['h', ROOM], ['t', 'agent-message']]),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-message'],
+        ]),
         attachmentEnoent,
         ROOM,
         bytes(modelWallId),
@@ -896,7 +907,19 @@ describe('RoomIndexer', () => {
         createdAt: 17,
         pubkey: AGENT,
         markers: ['agent-message', 'land-summary'],
-        text: 'Landed the checksum corner.',
+        extraTags: [
+          ['subchannel', 'corner-checksum'],
+          ['objective', 'Add checksum verification'],
+          ['delivered', '2 commits across 3 files'],
+          ['omitted', 'The upload protocol stayed unchanged.'],
+          ['branch', 'main'],
+          ['tip', '4'.repeat(40)],
+          ['url', `https://github.com/acme/widget/commit/${'4'.repeat(40)}`],
+          ['approver', VIEWER],
+          ['approver-name', 'Ada Lovelace'],
+          ['approver-handle', 'ada'],
+        ],
+        text: 'Landed checksum verification. Approved by @ada.',
       },
       {
         id: '6'.repeat(64),
@@ -968,7 +991,6 @@ describe('RoomIndexer', () => {
       'GitHub polling degraded',
       'Steer queued for the active turn.',
       'Permission execution acknowledged',
-      'Landed the checksum corner.',
       'CI passed for the landed checksum.',
     ]) {
       expect(view?.messages).toContainEqual(
@@ -977,6 +999,26 @@ describe('RoomIndexer', () => {
     }
     expect(view?.messages).toContainEqual(
       expect.objectContaining({ id: 'c'.repeat(64), presentation: 'card' }),
+    );
+    expect(view?.messages).toContainEqual(
+      expect.objectContaining({
+        id: '7'.repeat(64),
+        presentation: 'card',
+        landSummary: {
+          cornerId: 'corner-checksum',
+          objective: 'Add checksum verification',
+          delivered: '2 commits across 3 files',
+          omitted: 'The upload protocol stayed unchanged.',
+          branch: 'main',
+          tip: '4'.repeat(40),
+          url: `https://github.com/acme/widget/commit/${'4'.repeat(40)}`,
+          approvedBy: {
+            pubkey: VIEWER,
+            name: 'Ada Lovelace',
+            handle: 'ada',
+          },
+        },
+      }),
     );
   });
 
@@ -989,7 +1031,12 @@ describe('RoomIndexer', () => {
     );
     const cardId = 'f'.repeat(64);
     const legacyId = 'e'.repeat(64);
-    const insertGitHubEvent = async (id: string, createdAt: number, tags: string[][], content = '') => {
+    const insertGitHubEvent = async (
+      id: string,
+      createdAt: number,
+      tags: string[][],
+      content = '',
+    ) => {
       await postgres.query(
         `INSERT INTO events
           (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
@@ -1008,11 +1055,16 @@ describe('RoomIndexer', () => {
       ['github-event-url', 'https://github.com/acme/widget/pull/7'],
       ['github-event-id', '7'],
     ]);
-    await insertGitHubEvent(legacyId, 14, [
-      ['h', ROOM],
-      ['t', 'github-event'],
-      ['service', 'beeline-events'],
-    ], 'lena pushed 0 commits to acme/widget:main');
+    await insertGitHubEvent(
+      legacyId,
+      14,
+      [
+        ['h', ROOM],
+        ['t', 'github-event'],
+        ['service', 'beeline-events'],
+      ],
+      'lena pushed 0 commits to acme/widget:main',
+    );
 
     const view = await indexer.readRoom(ROOM, VIEWER);
     const history = await indexer.readHistory(ROOM, VIEWER);

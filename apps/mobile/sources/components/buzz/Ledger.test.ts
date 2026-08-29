@@ -25,6 +25,7 @@ vi.mock('react-native-reanimated', () => ({
 import {
   LedgerEntry,
   LedgerGhostLine,
+  LedgerLandDigest,
   LedgerMarginalia,
   LedgerRoomUpdate,
   LedgerSteer,
@@ -88,6 +89,37 @@ function stylesOfType(renderer: ReactTestRenderer, type: string): Record<string,
 }
 
 describe('the ledger — an agent turn', () => {
+  it('renders the landed-corner digest as one complete close block', () => {
+    const renderer = render(
+      React.createElement(LedgerLandDigest, {
+        id: 'landed-1',
+        digest: {
+          cornerId: 'corner-checksum',
+          objective: 'Add checksum verification',
+          delivered: '2 commits across 3 files',
+          omitted: 'The upload protocol stayed unchanged.',
+          branch: 'main',
+          tip: '4'.repeat(40),
+          url: `https://github.com/acme/widget/commit/${'4'.repeat(40)}`,
+          approvedBy: {
+            pubkey: 'a'.repeat(64),
+            name: 'Ada Lovelace',
+            handle: 'ada',
+          },
+        },
+      }),
+    );
+
+    const text = renderedText(renderer).join('');
+    expect(renderer.root.findByProps({ testID: 'land-digest-landed-1' })).toBeDefined();
+    expect(text).toContain('LANDED · main @ 444444444444');
+    expect(text).toContain('Add checksum verification');
+    expect(text).toContain('DELIVERED 2 commits across 3 files');
+    expect(text).toContain('LEFT OUT The upload protocol stayed unchanged.');
+    expect(text).toContain('Approved by @ada');
+    expect(text).toContain('VIEW COMMIT ON GITHUB ↗');
+  });
+
   it('renders a Room update as a Space Grotesk italic caption with mono gutter time and a plain digest', () => {
     const renderer = render(
       React.createElement(LedgerRoomUpdate, {

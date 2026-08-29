@@ -58,6 +58,39 @@ describe('Room view presentation', () => {
     expect(displayRoomMessage(message, 'a'.repeat(64))).not.toHaveProperty('isAgentAuthor');
   });
 
+  it('projects a landed-corner digest as one typed transcript block', () => {
+    const message: RoomViewMessage = {
+      id: 'land-digest',
+      text: 'Legacy fallback text',
+      createdAt: 13,
+      author: {
+        pubkey: 'd'.repeat(64),
+        kind: 'agent',
+        name: 'Patch',
+      },
+      presentation: 'card',
+      landSummary: {
+        cornerId: 'corner-checksum',
+        objective: 'Add checksum verification',
+        delivered: '2 commits across 3 files',
+        omitted: 'The upload protocol stayed unchanged.',
+        branch: 'main',
+        tip: '4'.repeat(40),
+        url: `https://github.com/acme/widget/commit/${'4'.repeat(40)}`,
+        approvedBy: {
+          pubkey: 'a'.repeat(64),
+          name: 'Ada Lovelace',
+          handle: 'ada',
+        },
+      },
+    };
+
+    expect(displayRoomMessage(message, 'a'.repeat(64))).toMatchObject({
+      id: 'land-digest',
+      landSummary: message.landSummary,
+    });
+  });
+
   it('orders response, paged history, signed outbox, and live-overlay partitions by time', () => {
     const message = (id: string, timestamp: number): ChatDisplayMessage => ({
       id,

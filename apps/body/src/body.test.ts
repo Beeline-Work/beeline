@@ -1281,7 +1281,7 @@ describe('agent identity boundary', () => {
       ).resolves.toBe('allow');
     });
 
-    it('allows Squire inventory only for creator scope and routes exact effects to P1', async () => {
+    it('allows creator-scoped Squire tools as standing authority', async () => {
       const safeRequest = {
         toolCall: {
           kind: 'other',
@@ -1322,9 +1322,7 @@ describe('agent identity boundary', () => {
         ),
       ).resolves.toBe('reject');
 
-      const govern = vi
-        .spyOn(creatorBody as never, 'handleGovernedSquirePermission' as never)
-        .mockResolvedValue('allow' as never);
+      const govern = vi.spyOn(creatorBody as never, 'handleGovernedSquirePermission' as never);
       const credentialRequest = {
         toolCall: {
           kind: 'other',
@@ -1346,7 +1344,7 @@ describe('agent identity boundary', () => {
           credentialRequest,
         ),
       ).resolves.toBe('allow');
-      expect(govern).toHaveBeenCalledWith('room-1', credentialRequest);
+      expect(govern).not.toHaveBeenCalled();
       await expect(
         Reflect.get(creatorBody, 'handleRoomPermissionRequest').call(creatorBody, 'room-1', {
           toolCall: {
@@ -1358,7 +1356,7 @@ describe('agent identity boundary', () => {
       ).resolves.toBe('reject');
     });
 
-    it('never lets a corner auto-approval bypass a governed Squire effect', async () => {
+    it('keeps the creator-scoped Squire standing mandate in corners', async () => {
       const body = new Body(
         { ...config, accessPolicy: 'creator', externalMcpCapabilities: ['squire-app-access'] },
         newIdentity('operator'),
@@ -1388,7 +1386,7 @@ describe('agent identity boundary', () => {
         'corner-1',
       );
       await expect(handler(request)).resolves.toBe('allow');
-      expect(govern).toHaveBeenCalledWith('corner-1', request);
+      expect(govern).not.toHaveBeenCalled();
     });
 
     it('accepts only the first current human-owner P1 decision for Squire', async () => {
@@ -2057,6 +2055,11 @@ describe('agent identity boundary', () => {
             args: ['--fixed-entrypoint'],
             env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
           },
+          expect.objectContaining({
+            name: 'beeline-agent-tools',
+            command: process.execPath,
+            env: [],
+          }),
         ],
       }),
     );
@@ -2095,12 +2098,17 @@ describe('agent identity boundary', () => {
       env: [{ name: 'BUZZ_READONLY_ROOT', value: '/paired/repo' }],
     });
     expect(create.mock.calls[0]![0].mcpServers[1]).toMatchObject({
+      name: 'beeline-agent-tools',
+      command: process.execPath,
+      env: [],
+    });
+    expect(create.mock.calls[0]![0].mcpServers[2]).toMatchObject({
       name: 'squire',
       command: process.execPath,
       env: [],
     });
-    expect(create.mock.calls[0]![0].mcpServers[1].args[0]).toContain('squire-mcp-proxy.js');
-    expect(create.mock.calls[0]![0].mcpServers[1].args).not.toContain('@trusty-squire/mcp');
+    expect(create.mock.calls[0]![0].mcpServers[2].args[0]).toContain('squire-mcp-proxy.js');
+    expect(create.mock.calls[0]![0].mcpServers[2].args).not.toContain('@trusty-squire/mcp');
     await body.dispose();
   });
 

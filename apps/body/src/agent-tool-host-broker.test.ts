@@ -2,16 +2,19 @@ import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentToolHostBroker } from './agent-tool-host-broker.js';
 import { callMcpTool, listMcpToolNames } from './mcp-inventory.js';
+import { assertBeelineAgentToolHandshake } from './agent-tool-contract.js';
 
 describe('AgentToolHostBroker', () => {
   it('advertises the exact Phase-1 inventory and dispatches through a session capability', async () => {
     const broker = new AgentToolHostBroker(
       resolve(process.cwd(), 'src', 'agent-tool-mcp-proxy.ts'),
     );
-    const invoke = vi.fn(async (_tool, args) => ({ status: 'executed', event_id: 'event', result: args }));
+    const invoke = vi.fn(async (_tool, args) => ({
+      status: 'executed',
+      event_id: 'event',
+      result: args,
+    }));
     const server = await broker.mcpServer({ channelId: 'room', invoke });
-    server.command = process.execPath;
-    server.args = ['--import', 'tsx', ...(server.args ?? [])];
     try {
       await expect(listMcpToolNames(server)).resolves.toEqual([
         'read_mandate',
@@ -20,14 +23,29 @@ describe('AgentToolHostBroker', () => {
         'deliver',
       ]);
       const fresh = await broker.mcpServer({ channelId: 'room', invoke });
-      fresh.command = process.execPath;
-      fresh.args = ['--import', 'tsx', ...(fresh.args ?? [])];
-      await expect(callMcpTool(fresh, 'open_corner', { objective: 'Add a haiku' })).resolves.toMatchObject({
+      await expect(
+        callMcpTool(fresh, 'open_corner', { objective: 'Add a haiku' }),
+      ).resolves.toMatchObject({
         structuredContent: { status: 'executed', event_id: 'event' },
       });
       expect(invoke).toHaveBeenCalledWith('open_corner', { objective: 'Add a haiku' });
     } finally {
       await broker.close();
     }
+  });
+
+  it('fails closed when server identity, schema, or inventory is broken', () => {
+    expect(() =>
+      assertBeelineAgentToolHandshake({
+        serverInfo: { name: 'broken', version: '1' },
+        toolNames: ['read_mandate', 'open_corner', 'close_corner', 'deliver'],
+      }),
+    ).toThrow('identity/schema handshake failed');
+    expect(() =>
+      assertBeelineAgentToolHandshake({
+        serverInfo: { name: 'beeline-agent-tools', version: '1' },
+        toolNames: ['read_mandate'],
+      }),
+    ).toThrow('inventory handshake failed');
   });
 });

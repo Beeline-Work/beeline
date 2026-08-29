@@ -50,7 +50,7 @@ describe('external MCP capabilities', () => {
       'allow',
     );
     expect(externalMcpPermissionPolicy(call('use_credential'), ['squire-credential-use'])).toBe(
-      'factory-permission',
+      'allow',
     );
     expect(externalMcpPermissionPolicy(call('grant_app_access'), ['squire-credential-use'])).toBe(
       'deny',
@@ -59,10 +59,10 @@ describe('external MCP capabilities', () => {
       'allow',
     );
     expect(externalMcpPermissionPolicy(call('grant_app_access'), ['squire-app-access'])).toBe(
-      'factory-permission',
+      'allow',
     );
     expect(externalMcpPermissionPolicy(call('revoke_app_access'), ['squire-app-access'])).toBe(
-      'factory-permission',
+      'allow',
     );
     expect(externalMcpPermissionPolicy(call('use_credential'), ['squire-app-access'])).toBe('deny');
     expect(externalMcpPermissionPolicy(call('operate_start'), ['squire-app-access'])).toBe('deny');

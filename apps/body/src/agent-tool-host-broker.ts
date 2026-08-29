@@ -1,6 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import { dirname, extname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { McpServerWire } from './acp.js';
 import {
   BEELINE_AGENT_TOOL_DEFINITIONS,
@@ -27,7 +29,15 @@ interface BrokerSession {
 export function agentToolMcpProxyEntrypoint(cliEntrypoint: string = process.argv[1] ?? ''): string {
   if (!cliEntrypoint) throw new Error('Beeline CLI entrypoint is unavailable');
   const extension = extname(cliEntrypoint) === '.mjs' ? '.mjs' : '.js';
-  return resolve(dirname(cliEntrypoint), `agent-tool-mcp-proxy${extension}`);
+  const sibling = resolve(dirname(cliEntrypoint), `agent-tool-mcp-proxy${extension}`);
+  if (existsSync(sibling)) return sibling;
+  try {
+    const source = resolve(dirname(fileURLToPath(import.meta.url)), 'agent-tool-mcp-proxy.ts');
+    if (existsSync(source)) return source;
+  } catch {
+    // Bundled import.meta.url is intentionally synthetic; use the sibling.
+  }
+  return sibling;
 }
 
 export class AgentToolHostBroker {
@@ -43,10 +53,11 @@ export class AgentToolHostBroker {
     const previous = this.sessions.get(binding.channelId);
     previous?.connection?.destroy();
     const token = randomBytes(32).toString('hex');
+    const proxyArgs = [this.proxyEntrypoint, '127.0.0.1', String(address.port), token];
     const endpoint: McpServerWire = {
       name: BEELINE_AGENT_TOOL_SERVER_NAME,
       command: process.execPath,
-      args: [this.proxyEntrypoint, '127.0.0.1', String(address.port), token],
+      args: this.proxyEntrypoint.endsWith('.ts') ? ['--import', 'tsx', ...proxyArgs] : proxyArgs,
       env: [],
     };
     this.sessions.set(binding.channelId, { token, binding, endpoint });
@@ -111,7 +122,8 @@ export class AgentToolHostBroker {
       if (session?.connection === socket) {
         session.connection = undefined;
         session.token = randomBytes(32).toString('hex');
-        if (session.endpoint.args) session.endpoint.args[session.endpoint.args.length - 1] = session.token;
+        if (session.endpoint.args)
+          session.endpoint.args[session.endpoint.args.length - 1] = session.token;
       }
     });
     socket.once('error', close);

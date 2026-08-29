@@ -225,6 +225,7 @@ import {
   LEDGER_MARGINALIA_WIDTH,
   LedgerEntry,
   LedgerGhostLine,
+  LedgerLandDigest,
   LedgerRoomUpdate,
   LedgerSteer,
   type LedgerByline,
@@ -3426,6 +3427,10 @@ export default function BuzzChat() {
             </HullSurface>
           </Pressable>
         );
+      }
+
+      if (item.landSummary) {
+        return <LedgerLandDigest id={item.id} digest={item.landSummary} />;
       }
 
       // ── Archived notice ──────────────────────────────────────────

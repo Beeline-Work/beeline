@@ -16,6 +16,7 @@ import {
   type Identity,
 } from '@beeline/buzz-client';
 import * as SecureStore from 'expo-secure-store';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 
 // SecureStore on Android requires keys matching [A-Za-z0-9._-]+
 const BUZZ_NSEC_KEY = 'buzzy.identity.nsec';
@@ -169,11 +170,13 @@ export async function clearRelayUrl(): Promise<void> {
 
 /**
  * Load the relay URL with a sensible default.
- * Returns the stored URL, falling back to DEFAULT_RELAY_URL.
+ * Returns the stored URL, falling back to the embedded runtime relay. Production
+ * builds still resolve to DEFAULT_RELAY_URL; local/device builds retain their
+ * explicit stack endpoint across every Room and Workspace surface.
  */
 export async function getEffectiveRelayUrl(): Promise<string> {
   const stored = await loadRelayUrl();
-  return stored ?? DEFAULT_RELAY_URL;
+  return stored ?? getBuzzRuntimeConfig().relayUrl;
 }
 
 export { identityNpub };

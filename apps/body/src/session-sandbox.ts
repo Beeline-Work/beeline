@@ -291,11 +291,12 @@ function inPlaceSedFlag(word: string): boolean {
 /**
  * Room policy: deny every mutating request outright.
  *
- * Fail-closed by construction — the caller allows ONLY an exact
- * `isReadOnlyMcpPermissionRequest` match before consulting this, so a request
- * this function cannot classify is still denied by the Room handler. The
- * verdict exists to carry the steering reason and to make the denial explicit
- * rather than a fall-through.
+ * Fail-closed by construction — the caller admits only an exact inspection
+ * MCP match or Body's own action-tool MCP transport before consulting this.
+ * The latter still reaches `authorize-or-request` for its actual verdict; a
+ * request this function cannot classify is denied by the Room handler. This
+ * verdict carries the steering reason and makes the denial explicit rather
+ * than a fall-through.
  */
 export function classifyRoomPermission(request: AcpPermissionRequest): SandboxVerdict {
   if (!isMutatingPermissionRequest(request)) return ALLOW;

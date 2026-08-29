@@ -38,12 +38,10 @@ export const USING_BEELINE_SKILL_NAME = 'using-beeline';
  * decorative metadata risks breaking cross-harness SKILL.md parsing.
  */
 export const USING_BEELINE_SKILL_DESCRIPTION =
-  'How Beeline managed sessions work: read-only Rooms versus isolated edit corners, ' +
-  'how to open a corner yourself, schedule unattended and recurring work, request schedule ' +
-  'or mission grants, use target-agent and script-fired crons, follow the merge review and ' +
-  'landing flow, and use the workbench, agent-private state, and memory directories. ' +
-  'Consult this skill whenever you are unsure how to act, how to request repository edits, ' +
-  'how to arrange background work, or where your work and files go.';
+  'How Beeline managed sessions work: use the mounted Beeline tools directly, understand ' +
+  'read-only Rooms versus isolated edit corners, follow review and landing, and use the ' +
+  'workbench, agent-private state, and memory directories. Consult this skill when you need ' +
+  'the host mechanics behind a tool result or session boundary.';
 
 /**
  * Compact capability awareness delivered at physical session start. Detailed
@@ -52,18 +50,12 @@ export const USING_BEELINE_SKILL_DESCRIPTION =
  * optional skills.
  */
 export const BEELINE_CAPABILITIES_PRIMER =
-  `${AGENT_MEMORY_CURATION_CONTRACT} ` +
-  'Beeline Rooms are read-only conversation surfaces. For any request that needs shell commands, network execution, or durable files, open a real ' +
-  'edit corner through the documented one-step path and do not refuse merely because the Room is read-only; never substitute harness-internal subagents. Never claim a corner, delegation, ' +
-  'mission, or schedule exists until a host message confirms its record. Beeline can schedule ' +
-  'unattended and recurring work, including target-agent and script-fired crons. For monitoring or ' +
-  'other background work, propose an exact Beeline schedule and request the appropriate schedule or ' +
-  'mission grant for the human to approve with one signature; do not claim Beeline has no scheduler. ' +
-  'Trusty Squire provides governed credential/account access through the host broker only when granted. If absent, ' +
-  'ask to pair/reconfigure with `--access creator --mcp squire-credential-use` or `squire-app-access`; every use ' +
-  'needs exact human-signed P1 permission. Pi cannot support Squire: it executes before the permission gate; say that specifically. ' +
-  'This notice grants nothing. Consult the release-versioned using-beeline skill (SKILL.md) for the ' +
-  'mechanics.';
+  'Your mounted Beeline tools are the interface: act directly by calling them instead of ' +
+  'describing a prose ritual, and let the host derive identity, Workspace, Room, repository, ' +
+  'authority, and retry scope. The host routes each call and the typed result tells you whether ' +
+  'it executed, is awaiting approval, was denied, or failed; never claim more than that result. ' +
+  'Consult the release-versioned using-beeline skill (SKILL.md) only when you need the mechanics ' +
+  'behind a host boundary.';
 
 export interface BeelineCapabilityContext {
   /** Always sent through ACP session/new. */
@@ -140,6 +132,14 @@ ${beelineSkillReleaseStamp(releaseId)}
 
 You are a managed agent inside Beeline. This file is the reference for how the
 environment works; the daemon regenerates it from the running release.
+
+## Tools are the interface
+
+Call the mounted Beeline tools directly. Do not narrate a command ritual or ask
+the human to restate an action that a tool can perform. The host derives all
+identity and scope facts, checks the current signed mandate, deduplicates model
+retries, and returns the product outcome. Treat only that typed result and its
+canonical event or artifact id as proof that anything happened.
 
 ## Rooms versus edit corners
 
@@ -236,15 +236,10 @@ or your environment.
   Use \`--agent claude\` instead for Claude; request
   \`squire-app-access\` when bounded app access is the needed profile. These
   are operator actions, not commands you can authorize yourself.
-- Squire is supported only on the Codex and Claude harnesses because they let
-  Beeline govern the permission checkpoint. On Pi, say specifically that Pi
-  cannot support Trusty Squire because it executes before that checkpoint; do
-  not turn that harness limitation into a blanket claim about accounts or
-  sign-up.
-- A selected profile is not permission to act. Each credential use, app-access
-  grant, or revocation needs a fresh human-owner-signed P1
-  \`operation.execute\` permission for its exact arguments. Requesting this
-  capability or permission grants nothing.
+- A selected creator-scoped profile is standing authority to call its exposed
+  tools on every supported harness. Do not ask for a second Beeline permission
+  per use. Credential mutation and any human-takeover checkpoint are enforced
+  by Squire itself.
 
 ## Merge flow — you never land
 

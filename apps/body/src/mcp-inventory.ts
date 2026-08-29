@@ -34,7 +34,15 @@ interface JsonRpcMsg {
  * Spawn an MCP server briefly, run initialize + tools/list, return tool names.
  * Kills the process when done.
  */
-export async function listMcpToolNames(spec: McpServerSpec, timeoutMs = 15_000): Promise<string[]> {
+export interface McpServerInspection {
+  serverInfo?: { name?: string; version?: string };
+  toolNames: string[];
+}
+
+export async function inspectMcpServer(
+  spec: McpServerSpec,
+  timeoutMs = 15_000,
+): Promise<McpServerInspection> {
   const child: ChildProcessWithoutNullStreams = spawn(spec.command, spec.args ?? [], {
     cwd: spec.cwd,
     env: { ...process.env, ...spec.env },
@@ -132,7 +140,7 @@ export async function listMcpToolNames(spec: McpServerSpec, timeoutMs = 15_000):
   };
 
   try {
-    await request('initialize', {
+    const initialized = await request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
       clientInfo: { name: 'beeline-body', version: '0.0.0' },
@@ -143,11 +151,17 @@ export async function listMcpToolNames(spec: McpServerSpec, timeoutMs = 15_000):
     const names = (result?.tools ?? [])
       .map((t) => t.name)
       .filter((n): n is string => typeof n === 'string' && n.length > 0);
-    return names;
+    const initializeResult = initialized.result as
+      { serverInfo?: { name?: string; version?: string } } | undefined;
+    return { serverInfo: initializeResult?.serverInfo, toolNames: names };
   } finally {
     clearTimeout(deadline);
     cleanup();
   }
+}
+
+export async function listMcpToolNames(spec: McpServerSpec, timeoutMs = 15_000): Promise<string[]> {
+  return (await inspectMcpServer(spec, timeoutMs)).toolNames;
 }
 
 /**

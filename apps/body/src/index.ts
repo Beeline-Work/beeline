@@ -203,3 +203,25 @@ export {
   appendPersonaSessionInstructions,
   personaSessionInstructions,
 } from './persona-instructions.js';
+export {
+  BEELINE_AGENT_TOOL_DEFINITIONS,
+  BEELINE_AGENT_TOOL_NAMES,
+  BEELINE_AGENT_TOOL_SCHEMA_VERSION,
+  BEELINE_AGENT_TOOL_SERVER_NAME,
+  assertBeelineAgentToolHandshake,
+  cornerFrozenForPendingClose,
+  type BeelineActionScope,
+  type BeelineActionToken,
+  type BeelineAgentToolName,
+  type DirectToolResult,
+  type ReadMandateResult,
+} from './agent-tool-contract.js';
+export {
+  AGENT_MENTION_DISPATCH_TAG,
+  AGENT_MENTION_PAUSED_TAG,
+  AGENT_MENTION_TAG,
+  AGENT_TO_AGENT_TURN_FUSE,
+  AgentMentionTurnQueue,
+  parseAgentMention,
+  type AgentMentionMetadata,
+} from './agent-mention.js';

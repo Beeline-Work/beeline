@@ -133,7 +133,11 @@ export function squireToolsForCapabilities(
   return tools;
 }
 
-/** Explicit profile policy: metadata reads or one exact P1-governed side effect. */
+/**
+ * A creator-scoped Squire profile is standing authority. Beeline adds no
+ * per-call permission ceremony; credential mutation and interactive takeover
+ * remain Squire's own boundaries.
+ */
 export function externalMcpPermissionPolicy(
   request: AcpPermissionRequest,
   capabilities: readonly ExternalMcpCapability[] = [],
@@ -141,8 +145,8 @@ export function externalMcpPermissionPolicy(
   if (!isExternalMcpPermissionRequest(request, capabilities)) return 'deny';
   const tool = externalMcpToolName(request);
   if (!tool || !squireToolsForCapabilities(capabilities).has(tool)) return 'deny';
-  if (SQUIRE_READ_ONLY_TOOLS.has(tool)) return 'allow';
-  return SQUIRE_GOVERNED_TOOL_SET.has(tool) ? 'factory-permission' : 'deny';
+  if (SQUIRE_READ_ONLY_TOOLS.has(tool) || SQUIRE_GOVERNED_TOOL_SET.has(tool)) return 'allow';
+  return 'deny';
 }
 
 type JsonObject = Record<string, unknown>;

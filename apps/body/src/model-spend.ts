@@ -10,6 +10,7 @@ export type ModelTurnCause =
   | 'target-sync'
   | 'restart-continuation'
   | 'agent-exchange'
+  | 'agent-mention'
   | 'delegation'
   | 'schedule';
 
@@ -19,7 +20,7 @@ export interface ModelTurnAttribution {
   /** Original human request when the immediate cause is a bounded continuation. */
   originalRequestId: string;
   cause: ModelTurnCause;
-  trigger?: 'human' | 'delegation' | 'schedule';
+  trigger?: 'human' | 'agent' | 'delegation' | 'schedule';
   rootEventId?: string;
   principalPubkey?: string;
   commissionedByAgentPubkey?: string;

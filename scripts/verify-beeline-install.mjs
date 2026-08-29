@@ -229,6 +229,10 @@ async function main() {
     const squireProxy = resolve(libDir, 'lib', 'beeline', 'squire-mcp-proxy.mjs');
     await access(squireProxy, constants.F_OK);
     await verifySquireProxy(squireProxy, bareCwd, runtimeEnv);
+    const agentToolProxy = resolve(libDir, 'lib', 'beeline', 'agent-tool-mcp-proxy.mjs');
+    await access(agentToolProxy, constants.F_OK);
+    await verifySquireProxy(agentToolProxy, bareCwd, runtimeEnv);
+    await access(resolve(libDir, 'lib', 'beeline', 'pi-mcp-adapter.mjs'), constants.F_OK);
 
     const probe = await run(resolve(binDir, 'buzz-readonly-mcp'), [], {
       cwd: bareCwd,

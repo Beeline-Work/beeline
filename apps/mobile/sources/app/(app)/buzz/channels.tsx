@@ -12,6 +12,7 @@ import {
   isWorkspaceView,
   type ChatListItem,
   type ChatListView,
+  type CornerListItem,
   type Identity,
   type WorkspaceListView,
   type WorkspaceView,
@@ -25,7 +26,8 @@ import {
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
-import { displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { cornerHref } from '@/buzz/corner-navigation';
+import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { roomDeckState } from '@/buzz/room-deck-state';
 import { formatRoomParticipantTotal } from '@/buzz/room-participants';
 import { formatRoomCornerCount } from '@/buzz/vocabulary';
@@ -53,6 +55,22 @@ const COMPOSE_FAB_CLEARANCE = 80;
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function openCornerItems(corners: readonly CornerListItem[]): CornerListItem[] {
+  return corners.filter(
+    (item) => !item.corner.archived && item.status !== 'concluded' && item.status !== 'closed',
+  );
+}
+
+function cornerStatusWord(item: CornerListItem): string {
+  if (item.status === 'working') return 'WORKING';
+  if (item.status === 'waiting') {
+    if (item.reason === 'review') return 'READY FOR REVIEW';
+    if (item.reason === 'failure') return 'FAILED';
+    return 'NEEDS ATTENTION';
+  }
+  return item.status === 'open' ? 'OPENING' : 'IDLE';
 }
 
 function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayItem[] {
@@ -87,6 +105,10 @@ export default function BuzzChannels() {
   const [roomName, setRoomName] = useState('');
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [retryGeneration, setRetryGeneration] = useState(0);
+  const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
+  const [cornersByRoom, setCornersByRoom] = useState<Record<string, readonly CornerListItem[]>>({});
+  const [cornerLoadingRoomId, setCornerLoadingRoomId] = useState<string | null>(null);
+  const [cornerLoadErrors, setCornerLoadErrors] = useState<Record<string, string>>({});
   const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView> | null>(null);
 
@@ -273,6 +295,46 @@ export default function BuzzChannels() {
       router.push(`/buzz/chat/${encodeURIComponent(roomId)}` as Href);
     },
     [activeCommunityId, identity],
+  );
+
+  const loadRoomCorners = useCallback(
+    async (roomId: string) => {
+      if (!identity || !relayUrl) {
+        setCornerLoadErrors((current) => ({
+          ...current,
+          [roomId]: 'Corner navigation is still connecting. Try again.',
+        }));
+        return;
+      }
+      setCornerLoadingRoomId(roomId);
+      setCornerLoadErrors((current) => {
+        const next = { ...current };
+        delete next[roomId];
+        return next;
+      });
+      try {
+        const view = await new RoomViewClient({ baseUrl: relayUrl, identity }).corners(roomId);
+        setCornersByRoom((current) => ({ ...current, [roomId]: openCornerItems(view.corners) }));
+      } catch (reason) {
+        setCornerLoadErrors((current) => ({
+          ...current,
+          [roomId]: `Could not load corners: ${String(reason)}`,
+        }));
+      } finally {
+        setCornerLoadingRoomId((current) => (current === roomId ? null : current));
+      }
+    },
+    [identity, relayUrl],
+  );
+
+  const toggleRoomCorners = useCallback(
+    (roomId: string) => {
+      setExpandedRoomId((current) => (current === roomId ? null : roomId));
+      if (!cornersByRoom[roomId] && cornerLoadingRoomId !== roomId) {
+        void loadRoomCorners(roomId);
+      }
+    },
+    [cornerLoadingRoomId, cornersByRoom, loadRoomCorners],
   );
 
   const selectWorkspace = useCallback(
@@ -478,45 +540,121 @@ export default function BuzzChannels() {
               ageNow,
             );
             const cornerCount = formatRoomCornerCount(item.cornerCount);
+            const expanded = expandedRoomId === item.room.id;
+            const corners = cornersByRoom[item.room.id];
             return (
-              <TouchableOpacity
-                testID={`room-${item.room.id}`}
-                onPress={() => openRoom(item.room.id)}
-                style={[styles.row, unread && styles.rowUnread]}
-              >
-                <HullDeckMark state={deckState} />
-                <View style={styles.rowCopy}>
-                  <View style={styles.rowHeading}>
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.title, unread && styles.titleUnread]}
-                    >
-                      {title}
-                    </Text>
-                    {!!item.repositoryName && (
-                      <Text numberOfLines={1} style={styles.repo}>
-                        {item.repositoryName}
+              <View style={[styles.roomCell, unread && styles.rowUnread]}>
+                <View style={styles.row}>
+                  <TouchableOpacity
+                    testID={`room-${item.room.id}`}
+                    onPress={() => openRoom(item.room.id)}
+                    style={styles.rowMain}
+                  >
+                    <HullDeckMark state={deckState} />
+                    <View style={styles.rowCopy}>
+                      <View style={styles.rowHeading}>
+                        <Text
+                          numberOfLines={1}
+                          style={[styles.title, unread && styles.titleUnread]}
+                        >
+                          {title}
+                        </Text>
+                        {!!item.repositoryName && (
+                          <Text numberOfLines={1} style={styles.repo}>
+                            {item.repositoryName}
+                          </Text>
+                        )}
+                      </View>
+                      <Text numberOfLines={1} style={styles.preview}>
+                        {item.latestMessage?.text ?? 'No activity yet'}
                       </Text>
+                      <Text style={styles.meta}>
+                        {formatRoomParticipantTotal(item.memberCount)}
+                        {cornerCount ? ` · ${cornerCount}` : ''}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  <View style={styles.gutter}>
+                    {unread ? (
+                      <View style={styles.unread}>
+                        <Text style={styles.unreadText}>NEW</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.age}>{age}</Text>
+                    )}
+                    {item.cornerCount > 0 && (
+                      <TouchableOpacity
+                        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${cornerCount} in ${title}`}
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded }}
+                        onPress={() => toggleRoomCorners(item.room.id)}
+                        style={styles.cornerToggle}
+                        testID={`room-corners-toggle-${item.room.id}`}
+                      >
+                        <Text style={styles.cornerToggleText}>{expanded ? '⌃' : '⌄'}</Text>
+                      </TouchableOpacity>
                     )}
                   </View>
-                  <Text numberOfLines={1} style={styles.preview}>
-                    {item.latestMessage?.text ?? 'No activity yet'}
-                  </Text>
-                  <Text style={styles.meta}>
-                    {formatRoomParticipantTotal(item.memberCount)}
-                    {cornerCount ? ` · ${cornerCount}` : ''}
-                  </Text>
                 </View>
-                <View style={styles.gutter}>
-                  {unread ? (
-                    <View style={styles.unread}>
-                      <Text style={styles.unreadText}>NEW</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.age}>{age}</Text>
-                  )}
-                </View>
-              </TouchableOpacity>
+                {expanded && (
+                  <View style={styles.cornerDropdown} testID={`room-corners-${item.room.id}`}>
+                    {cornerLoadingRoomId === item.room.id && !corners ? (
+                      <View style={styles.cornerLoading}>
+                        <PixelLoader compact />
+                        <Text style={styles.cornerLoadingText}>LOADING CORNERS</Text>
+                      </View>
+                    ) : cornerLoadErrors[item.room.id] ? (
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        onPress={() => void loadRoomCorners(item.room.id)}
+                        style={styles.cornerNotice}
+                        testID={`room-corners-retry-${item.room.id}`}
+                      >
+                        <Text style={styles.cornerNoticeText}>
+                          {cornerLoadErrors[item.room.id]}
+                        </Text>
+                        <Text style={styles.cornerRetryText}>RETRY</Text>
+                      </TouchableOpacity>
+                    ) : corners?.length ? (
+                      corners.map((corner) => {
+                        const label = displayCornerTitle(
+                          item.room.name,
+                          corner.corner.name,
+                          corner.corner.id,
+                        );
+                        const status = cornerStatusWord(corner);
+                        return (
+                          <TouchableOpacity
+                            accessibilityLabel={`Open ${label}, ${status}`}
+                            accessibilityRole="button"
+                            key={corner.corner.id}
+                            onPress={() =>
+                              router.push(
+                                cornerHref(
+                                  corner.corner.id,
+                                  item.room.id,
+                                  corner.corner.name,
+                                  'room-list',
+                                ),
+                              )
+                            }
+                            style={styles.cornerRow}
+                            testID={`room-corner-${corner.corner.id}`}
+                          >
+                            <Text numberOfLines={1} style={styles.cornerName}>
+                              └ {label}
+                            </Text>
+                            <Text style={styles.cornerStatus}>{status}</Text>
+                            <Text style={styles.cornerChevron}>›</Text>
+                          </TouchableOpacity>
+                        );
+                      })
+                    ) : (
+                      <Text style={styles.cornerNoticeText}>No open corners now.</Text>
+                    )}
+                  </View>
+                )}
+              </View>
             );
           }}
         />
@@ -595,15 +733,24 @@ const styles = StyleSheet.create((theme) => {
     empty: { alignItems: 'center', gap: 8, padding: 24 },
     emptyTitle: { ...Typography.default('semiBold'), color: hull.textPrimary, fontSize: 18 },
     emptyCopy: { ...Typography.default(), color: hull.textMuted, fontSize: 12 },
+    roomCell: {
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
+    },
     row: {
       minHeight: 92,
       flexDirection: 'row',
       alignItems: 'center',
+    },
+    rowMain: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 92,
+      flexDirection: 'row',
+      alignItems: 'center',
       gap: 12,
-      paddingHorizontal: 16,
+      paddingLeft: 16,
       paddingVertical: 13,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
     },
     rowUnread: { backgroundColor: hull.bgUnread },
     rowCopy: { flex: 1, minWidth: 0, gap: 4 },
@@ -618,10 +765,89 @@ const styles = StyleSheet.create((theme) => {
     repo: { ...Typography.mono(), color: hull.chrome, fontSize: 9, flexShrink: 1 },
     preview: { ...Typography.default(), color: hull.textMuted, fontSize: 12 },
     meta: { ...Typography.mono(), color: hull.steel, fontSize: 9 },
-    gutter: { width: 42, alignItems: 'flex-end' },
+    gutter: {
+      width: 58,
+      minHeight: 92,
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+      gap: 8,
+      paddingRight: 16,
+    },
     age: { ...Typography.mono(), color: hull.steel, fontSize: 9 },
     unread: { borderWidth: 1, borderColor: hull.chrome, paddingHorizontal: 5, paddingVertical: 2 },
     unreadText: { ...Typography.mono('semiBold'), color: hull.chrome, fontSize: 8 },
+    cornerToggle: {
+      minWidth: 36,
+      minHeight: 28,
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+    },
+    cornerToggleText: {
+      ...Typography.mono('semiBold'),
+      color: hull.chrome,
+      fontSize: 16,
+      lineHeight: 18,
+    },
+    cornerDropdown: {
+      paddingLeft: 50,
+      paddingRight: 16,
+      paddingBottom: 8,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    cornerLoading: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    cornerLoadingText: {
+      ...Typography.mono('semiBold'),
+      color: hull.textMuted,
+      fontSize: 9,
+      letterSpacing: 0.6,
+    },
+    cornerNotice: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    cornerNoticeText: {
+      ...Typography.default(),
+      flex: 1,
+      color: hull.textMuted,
+      fontSize: 11,
+    },
+    cornerRetryText: {
+      ...Typography.mono('semiBold'),
+      color: hull.chrome,
+      fontSize: 9,
+    },
+    cornerRow: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    cornerName: {
+      ...Typography.default('semiBold'),
+      flex: 1,
+      minWidth: 0,
+      color: hull.textSecondary,
+      fontSize: 12,
+    },
+    cornerStatus: {
+      ...Typography.mono('semiBold'),
+      color: hull.textMuted,
+      fontSize: 8,
+      letterSpacing: 0.35,
+    },
+    cornerChevron: {
+      ...Typography.default('semiBold'),
+      color: hull.steel,
+      fontSize: 18,
+    },
     composeOverlay: {
       position: 'absolute',
       right: 16,

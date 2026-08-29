@@ -72,7 +72,7 @@ export async function publishPendingUpdateRollbackAlert(input: {
         UPDATE_ROLLBACK_ALERT_TEXT,
         undefined,
         [],
-        [['t', 'beeline-update-rollback']],
+        [],
         undefined,
         Math.floor(pending.createdAt / 1_000),
       ),

@@ -907,7 +907,19 @@ describe('RoomIndexer', () => {
         createdAt: 17,
         pubkey: AGENT,
         markers: ['agent-message', 'land-summary'],
-        text: 'Landed the checksum corner.',
+        extraTags: [
+          ['subchannel', 'corner-checksum'],
+          ['objective', 'Add checksum verification'],
+          ['delivered', '2 commits across 3 files'],
+          ['omitted', 'The upload protocol stayed unchanged.'],
+          ['branch', 'main'],
+          ['tip', '4'.repeat(40)],
+          ['url', `https://github.com/acme/widget/commit/${'4'.repeat(40)}`],
+          ['approver', VIEWER],
+          ['approver-name', 'Ada Lovelace'],
+          ['approver-handle', 'ada'],
+        ],
+        text: 'Landed checksum verification. Approved by @ada.',
       },
       {
         id: '6'.repeat(64),
@@ -979,7 +991,6 @@ describe('RoomIndexer', () => {
       'GitHub polling degraded',
       'Steer queued for the active turn.',
       'Permission execution acknowledged',
-      'Landed the checksum corner.',
       'CI passed for the landed checksum.',
     ]) {
       expect(view?.messages).toContainEqual(
@@ -988,6 +999,26 @@ describe('RoomIndexer', () => {
     }
     expect(view?.messages).toContainEqual(
       expect.objectContaining({ id: 'c'.repeat(64), presentation: 'card' }),
+    );
+    expect(view?.messages).toContainEqual(
+      expect.objectContaining({
+        id: '7'.repeat(64),
+        presentation: 'card',
+        landSummary: {
+          cornerId: 'corner-checksum',
+          objective: 'Add checksum verification',
+          delivered: '2 commits across 3 files',
+          omitted: 'The upload protocol stayed unchanged.',
+          branch: 'main',
+          tip: '4'.repeat(40),
+          url: `https://github.com/acme/widget/commit/${'4'.repeat(40)}`,
+          approvedBy: {
+            pubkey: VIEWER,
+            name: 'Ada Lovelace',
+            handle: 'ada',
+          },
+        },
+      }),
     );
   });
 

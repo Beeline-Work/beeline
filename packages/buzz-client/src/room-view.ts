@@ -121,6 +121,22 @@ export type RoomViewMessage = {
     readonly state?: 'landing' | 'realigning' | 'realigned' | 'content-changed' | 'tip-moved';
     readonly rejectedTip?: string;
   };
+  /** Typed, host-grounded close digest for one landed corner. The event text
+   * remains a legacy fallback; clients render these fields as one block. */
+  readonly landSummary?: {
+    readonly cornerId: string;
+    readonly objective: string;
+    readonly delivered: string;
+    readonly omitted: string;
+    readonly branch: string;
+    readonly tip: string;
+    readonly url?: string;
+    readonly approvedBy?: {
+      readonly pubkey: string;
+      readonly name: string;
+      readonly handle: string;
+    };
+  };
   readonly permission?: {
     readonly permissionId: string;
     readonly requestId: string;

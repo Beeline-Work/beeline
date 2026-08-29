@@ -767,7 +767,7 @@ export const CORNER_TURN_SUMMARY_MAX_CHARS = 480;
 export const CORNER_TURN_SUMMARY_MAX_ITEMS = 3;
 export const CORNER_ARCHIVE_FALLBACK_SUMMARY = 'Corner closed without a completed summary.';
 export const CORNER_TURN_SUMMARY_INSTRUCTION =
-  'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed and which checks passed. Do not narrate your process, restate the request, or include multi-paragraph detail.';
+  'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed, which checks passed, and what you deliberately left out (say "Nothing" when there was no deliberate omission). Do not narrate your process, restate the request, or include multi-paragraph detail.';
 export const CORNER_MERGE_GATE_INSTRUCTION =
   'Do not tell the human to approve this work or claim that a review target exists. After your turn, Beeline checks the worktree and publishes the review target itself. If that check rejects the work, you will receive its exact reason as a follow-up instruction.' +
   ' An external merge/validation gate you run (e.g. no-mistakes) shares this rule: if it fails to initialize or run, quote its exact error in your reply, report the work as NOT ready, and never ask for approval — an approval the human sends while no review target is published goes nowhere.';
@@ -932,6 +932,22 @@ export function cornerArchiveSummary(
 ): string {
   const candidate = inMemorySummary?.trim() ? inMemorySummary : durableSummary;
   return conciseCornerTurnSummary(candidate ?? '') || CORNER_ARCHIVE_FALLBACK_SUMMARY;
+}
+
+/** Pull one explicit scope boundary out of the agent's already-published
+ * completion summary. The land digest never starts another model turn merely
+ * to rewrite facts. When the summary names no omission, say so without
+ * pretending the daemon can infer product intent from a git diff. */
+export function deliberateLandOmission(summary: string | undefined): string {
+  const normalized = conciseCornerTurnSummary(summary ?? '');
+  const candidates = normalized
+    .split(/\n+|(?<=[.!?])\s+(?=[A-Z0-9])/)
+    .map((line) => line.replace(/^(?:[-*•]|\d+[.)])\s+/, '').trim())
+    .filter(Boolean);
+  const explicit = candidates.find((line) =>
+    /\b(?:did not|didn't|left out|excluded|out of scope|not touch|unchanged)\b/i.test(line),
+  );
+  return explicit ? shortenSummaryItem(explicit, 180) : 'Nothing beyond the reviewed change.';
 }
 
 /**
@@ -1156,21 +1172,17 @@ export interface SubchannelInfo {
   /** Successfully forwarded member events, preventing same-second relay replays. */
   processedMemberEventIds?: Set<string>;
   /** The merge-summary card was confirmed published. Idempotency for a corner
-   *  whose archive is deferred past the tick that landed it (a live session),
-   *  so the summary is not restated on every maintenance tick while the corner
-   *  waits to retire. */
+   *  whose archive is deferred past the tick that landed it (an active turn),
+   *  so the summary is not restated while that turn drains. */
   mergeSummaryPosted?: boolean;
   /**
-   * The land is complete but this corner's archive is deliberately HELD while
-   * its agent session is still live or has queued work — archiving immediately
-   * made the relay reject every further kind:9 event on the channel, silently
-   * discarding the agent's post-landing output and, since archived corners are
-   * hidden (#375), vanishing a working corner mid-conversation.
+   * The land is complete and this corner is draining toward archive. No new
+   * member turn may start. A genuinely active turn finishes before teardown;
+   * an idle warm process is suspended immediately so it cannot hold the
+   * worktree open until the ordinary minutes-long idle sweep.
    *
-   * Set by `pollMergeCompletions` when it finds a live session; consumed by
-   * the session lifecycle's `suspended` transition (the scheduler's
-   * suspend/retire path) and backstopped by the per-corner maintenance visit,
-   * which archives as soon as neither reports activity.
+   * Set by `pollMergeCompletions`; consumed by the active turn's `finally`, the
+   * scheduler's `suspended` transition, or the per-corner maintenance visit.
    */
   archiveWhenSessionRetires?: boolean;
   missionCloseAdmitted?: boolean;
@@ -10388,6 +10400,7 @@ export class Body {
         ).catch(() => undefined);
       } finally {
         this.runningAgentTasks.delete(info.subchannelId);
+        await this.runDeferredLandArchive(info.subchannelId);
       }
     })();
     this.runningAgentTasks.set(info.subchannelId, task);
@@ -11884,14 +11897,32 @@ export class Body {
       tip: landedTip,
       ...(remoteUrl ? { remoteUrl } : {}),
     };
-    const landedLine = landDestinationLines(destination).join('\n');
+    const landedLine = landDestinationLines(destination)[0]!;
     const commitUrl = commitUrlForRemote(remoteUrl, landedTip);
+    const omitted = deliberateLandOmission(info.mergeSummary);
+    const approval = info.humanMergeApproval;
+    let approver: { pubkey: string; name: string; handle: string } | undefined;
+    if (approval) {
+      const attribution = await this.roomAuthorAttributions(parentId, [approval.reviewer])
+        .then((authors) => authors.get(approval.reviewer))
+        .catch(() => undefined);
+      const name = attribution?.name ?? fallbackPersonName(approval.reviewer);
+      approver = {
+        pubkey: approval.reviewer,
+        name,
+        handle: attribution?.handle ?? personHandle(name, approval.reviewer),
+      };
+    }
 
     const recap = [
       objective
         ? `Set out to: ${objective}`
         : `Set out to finish the work in ${info.featureBranch}.`,
       `Landed: ${changeLine}.`,
+      landedLine,
+      `Left out: ${omitted}`,
+      ...(approver ? [`Approved by @${approver.handle}.`] : []),
+      ...(commitUrl ? [commitUrl] : []),
     ].join('\n');
     // Recap composition is deterministic host work. A land often arrives on
     // a maintenance tick, and no fresh human message authorized another model
@@ -11900,7 +11931,7 @@ export class Body {
     const event = buildAgentMessage(
       parentId,
       this.agentIdentity,
-      `${recap}\n${landedLine}`,
+      recap,
       undefined,
       [],
       [
@@ -11909,6 +11940,16 @@ export class Body {
         ['feature', info.featureBranch],
         ['branch', branch],
         ['tip', landedTip],
+        ['objective', objective || `Finish the work in ${info.featureBranch}`],
+        ['delivered', changeLine],
+        ['omitted', omitted],
+        ...(approver
+          ? [
+              ['approver', approver.pubkey],
+              ['approver-name', approver.name],
+              ['approver-handle', approver.handle],
+            ]
+          : []),
         ...(commitUrl ? [['url', commitUrl]] : []),
         ['agent', this.agentIdentity.publicKey],
       ],
@@ -12432,7 +12473,11 @@ export class Body {
       // follow-up turn after a land, since the worktree then holds nothing the
       // target branch does not already have. Without it a landed corner could
       // never be recapped, summarized or archived at all.
-      const landedTip = (await this.confirmedLandedTip(info)) ?? info.landedTip;
+      // A land path records `landedTip` before posting the recap, whose state
+      // transition concludes the corner. Prefer that host-grounded fact: re-
+      // reading the same approval here would try to move concluded -> working
+      // and strand teardown on an invalid lifecycle transition.
+      const landedTip = info.landedTip ?? (await this.confirmedLandedTip(info));
       if (!landedTip) continue;
       info.landedTip = landedTip;
       // The work is durably on the target ref — the one moment a Room reader
@@ -12451,41 +12496,22 @@ export class Body {
         // nothing, so a later tick re-attempts rather than skipping forever.
         info.mergeSummaryPosted = true;
       }
-      // A live agent session is exactly why the corner must NOT archive yet:
-      // the relay rejects every further kind:9 event on an archived channel,
-      // so an immediate teardown silently discarded the agent's post-landing
-      // output and hid a working corner mid-conversation. Hold the archive;
-      // the session lifecycle's `suspended` transition (and the per-corner
-      // maintenance backstop below) archives once it actually retires.
-      if (this.cornerSessionActive(info)) {
-        if (!info.archiveWhenSessionRetires) {
-          info.archiveWhenSessionRetires = true;
-          console.log(
-            `[body] landed corner ${info.subchannelId} stays open until its agent session retires`,
-          );
-        }
+      // A confirmed land closes the corner. Mark the drain before inspecting
+      // the session so no later member poll can start another turn. An active
+      // turn is allowed to finish; an idle warm process is proactively
+      // suspended now instead of waiting minutes for the scheduler's idle
+      // sweep. The suspension callback and this call share the idempotent
+      // archive path.
+      info.archiveWhenSessionRetires = true;
+      if (this.channelTurnActive(info.subchannelId)) {
+        console.log(`[body] landed corner ${info.subchannelId} is draining its active turn`);
         merged++;
         continue;
       }
-      await this.archiveSubchannel(info.subchannelId);
+      await this.runDeferredLandArchive(info.subchannelId);
       merged++;
     }
     return merged;
-  }
-
-  /**
-   * Whether this corner's agent session is still live or has queued work — the
-   * condition that must hold an archive off (see `archiveWhenSessionRetires`).
-   *
-   * An active turn is checked directly because the scheduler's own busy set is
-   * private; a session whose physical process is live or waiting for a slot is
-   * read off the lifecycle state the scheduler already reports. `undefined`
-   * (a session never activated, or one already retired) counts as NOT active,
-   * which keeps the common no-live-session land archiving immediately.
-   */
-  private cornerSessionActive(info: SubchannelInfo): boolean {
-    if (this.runningAgentTasks.has(info.subchannelId)) return true;
-    return info.session.processState === 'live' || info.session.processState === 'waiting-for-slot';
   }
 
   /**
@@ -12556,16 +12582,33 @@ export class Body {
   private async runDeferredLandArchive(subchannelId: string): Promise<void> {
     const info = this.subchannels.get(subchannelId);
     if (!info?.archiveWhenSessionRetires || info.archived) return;
-    if (this.cornerSessionActive(info)) return;
-    console.log(`[body] archiving landed corner ${subchannelId}: agent session retired`);
+    if (this.channelTurnActive(subchannelId)) return;
     try {
+      if (
+        info.session.processState === 'live' ||
+        info.session.processState === 'waiting-for-slot'
+      ) {
+        console.log(`[body] draining landed corner ${subchannelId}: suspending idle session`);
+        await this.scheduler.suspend(subchannelId);
+      }
+      const drained = this.subchannels.get(subchannelId);
+      if (!drained || drained.archived || this.channelTurnActive(subchannelId)) return;
+      // A no-op suspend means the scheduler still owns a task/admission
+      // boundary. Its lifecycle notification or the next maintenance visit
+      // retries after that boundary clears; never force-stop it here.
+      if (
+        drained.session.processState === 'live' ||
+        drained.session.processState === 'waiting-for-slot'
+      )
+        return;
+      console.log(`[body] archiving landed corner ${subchannelId}: session drained`);
       await this.archiveSubchannel(subchannelId);
     } catch (error) {
       // The maintenance backstop retries; nothing here may break the scheduler
       // callback this runs under (`notifyState` swallows, but loudly hiding a
       // real failure would strand the corner unarchived with no trace).
       console.error(
-        `[body] deferred archive of landed corner ${subchannelId} failed; will retry:`,
+        `[body] drain/archive of landed corner ${subchannelId} failed; will retry:`,
         error,
       );
     }
@@ -13901,6 +13944,7 @@ export class Body {
         ).catch(() => undefined);
       } finally {
         this.runningAgentTasks.delete(info.subchannelId);
+        await this.runDeferredLandArchive(info.subchannelId);
       }
     })();
     this.runningAgentTasks.set(info.subchannelId, task);
@@ -14069,6 +14113,7 @@ export class Body {
       return await this.pollMembersOnce(subchannelId);
     } finally {
       this.inFlightSubchannelPolls.delete(subchannelId);
+      await this.runDeferredLandArchive(subchannelId);
     }
   }
 
@@ -14101,14 +14146,10 @@ export class Body {
       return 0;
     }
 
-    // Backstop for a landed corner whose archive is held for its live session:
-    // the lifecycle's own `suspended` transition normally fires first, but a
-    // session retired through a path that skipped the notification (or raced
-    // this visit while still marked live) converges here instead of staying
-    // open forever. Return either way: a successful archive deleted the
-    // corner from the map, and a failed one should not process messages
-    // against teardown state mid-close.
-    if (info.archiveWhenSessionRetires && !this.cornerSessionActive(info)) {
+    // A confirmed land freezes new turns immediately. This visit either drains
+    // an idle warm process and closes now or observes the active run and lets
+    // the turn-finally hook close it the moment that run settles.
+    if (info.archiveWhenSessionRetires) {
       await this.runDeferredLandArchive(subchannelId);
       return 0;
     }

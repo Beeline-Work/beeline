@@ -1,0 +1,75 @@
+appId: app.usebeeline.mobile
+name: Land-close digest proof
+env:
+  PROOF_NSEC: ${PROOF_NSEC}
+  PROOF_HANDLE: ${PROOF_HANDLE}
+  PROOF_WORKSPACE_ID: ${PROOF_WORKSPACE_ID}
+  PROOF_ROOM_ID: ${PROOF_ROOM_ID}
+  PROOF_DIGEST_ID: ${PROOF_DIGEST_ID}
+---
+- launchApp
+- runFlow:
+    when:
+      visible:
+        id: onboarding-advanced
+    commands:
+      - tapOn:
+          id: onboarding-advanced
+      - tapOn:
+          id: onboarding-secret-key
+      - inputText: ${PROOF_NSEC}
+      - pressKey: back
+      - tapOn:
+          id: onboarding-import-key
+      - runFlow:
+          when:
+            visible:
+              id: onboarding-handle-ceremony
+          commands:
+            - tapOn:
+                id: onboarding-handle-input
+            - inputText: ${PROOF_HANDLE}
+            - pressKey: back
+            - tapOn:
+                id: onboarding-claim-handle
+- extendedWaitUntil:
+    visible:
+      id: room-list
+    timeout: 60000
+- tapOn:
+    id: workspace-avatar-trigger
+- extendedWaitUntil:
+    visible:
+      id: community-rail-${PROOF_WORKSPACE_ID}
+    timeout: 20000
+- tapOn:
+    id: community-rail-${PROOF_WORKSPACE_ID}
+- assertVisible:
+    id: workspace-active-${PROOF_WORKSPACE_ID}
+- extendedWaitUntil:
+    visible:
+      id: room-${PROOF_ROOM_ID}
+    timeout: 20000
+- tapOn:
+    id: room-${PROOF_ROOM_ID}
+- extendedWaitUntil:
+    visible:
+      id: chat-messages
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: land-digest-${PROOF_DIGEST_ID}
+    direction: DOWN
+    timeout: 20000
+- assertVisible:
+    id: land-digest-objective-${PROOF_DIGEST_ID}
+- assertVisible:
+    id: land-digest-delivered-${PROOF_DIGEST_ID}
+- assertVisible:
+    id: land-digest-omitted-${PROOF_DIGEST_ID}
+- assertVisible:
+    id: land-digest-approver-${PROOF_DIGEST_ID}
+- assertVisible: Ship the close beat and prove its Room digest
+- assertVisible: DELIVERED.*1 commit across 1 file.*LANDED.txt.*
+- assertVisible: LEFT OUT.*Did not change corner-open authority.*
+- assertVisible: Approved by @adalovelace

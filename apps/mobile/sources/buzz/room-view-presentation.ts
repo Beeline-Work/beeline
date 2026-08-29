@@ -185,6 +185,8 @@ export type ChatDisplayMessage = {
   };
   /** Repository activity is a typed surface, never a transcript speaker. */
   githubEvent?: NonNullable<RoomViewMessage['githubEvent']>;
+  /** One typed close digest, rendered independently of speaker prose. */
+  landSummary?: NonNullable<RoomViewMessage['landSummary']>;
   writePermission?: {
     permissionId: string;
     requestId: string;
@@ -268,6 +270,7 @@ export function displayRoomMessage(
         }
       : {}),
     ...(githubEvent ? { githubEvent } : {}),
+    ...(message.landSummary ? { landSummary: { ...message.landSummary } } : {}),
     ...(message.permission
       ? {
           writePermission: {

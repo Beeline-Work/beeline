@@ -351,6 +351,29 @@ describe('Room row presentation', () => {
     ).toBe('pushed 1a2b3c4 to origin/main');
   });
 
+  it('declines a stale cached preview that is retired daemon prose, exact or structural', () => {
+    // A relay event cannot be unpublished, so an old wall must never reach
+    // this row just because it predates the publish-time fix — same reader
+    // floor as the plumbing check above, for the retired-notice tombstone.
+    const exact = 'I lost my connection to the relay — reconnecting.';
+    expect(roomRowPresentation({ latestMessage: exact }, NO_NAMES).fact).toBe(NO_ACTIVITY_PREVIEW);
+
+    const attachmentEnoent =
+      "Attachment unavailable: ENOENT: no such file or directory, realpath " +
+      "'/proc/2952774/root/home/lunchbox/.local/state/beeline/agents/agent/rooms/room/agent-private/workbench/report.html'";
+    expect(roomRowPresentation({ latestMessage: attachmentEnoent }, NO_NAMES).fact).toBe(
+      NO_ACTIVITY_PREVIEW,
+    );
+
+    const modelUnavailable =
+      'Model validation unavailable · gpt-5\n' +
+      'The live harness catalog could not verify "gpt-5".\n' +
+      'Restore access to the selected harness and its live catalog, then restart the agent.';
+    expect(roomRowPresentation({ latestMessage: modelUnavailable }, NO_NAMES).fact).toBe(
+      NO_ACTIVITY_PREVIEW,
+    );
+  });
+
   it('states plainly when a Room holds nothing readable', () => {
     expect(roomRowPresentation({}, NO_NAMES).fact).toBe(NO_ACTIVITY_PREVIEW);
     // `roomPreviewText` stores `''` for a message that was entirely plumbing,

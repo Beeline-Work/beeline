@@ -6,6 +6,12 @@ export interface PushGatewayConfig {
   pollIntervalMs: number;
   feedHeartbeatIntervalMs: number;
   indexerPublicOrigin: string;
+  pushDeliveryEnabled: boolean;
+  repositoryEventsEnabled: boolean;
+}
+
+function enabled(env: NodeJS.ProcessEnv, disabledVariable: string): boolean {
+  return env[disabledVariable] !== '1' && env[disabledVariable] !== 'true';
 }
 
 function origin(value: string, name: string): string {
@@ -52,5 +58,7 @@ export function loadPushGatewayConfig(env: NodeJS.ProcessEnv = process.env): Pus
     pollIntervalMs: Number(env.BUZZY_PUSH_POLL_INTERVAL_MS ?? '1500'),
     feedHeartbeatIntervalMs: Number(env.BUZZY_PUSH_FEED_HEARTBEAT_MS ?? '60000'),
     indexerPublicOrigin,
+    pushDeliveryEnabled: enabled(env, 'BUZZY_MATERIALIZER_DISABLE_PUSH_DELIVERY'),
+    repositoryEventsEnabled: enabled(env, 'BUZZY_MATERIALIZER_DISABLE_REPOSITORY_EVENTS'),
   };
 }

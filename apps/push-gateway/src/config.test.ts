@@ -12,7 +12,22 @@ describe('loadPushGatewayConfig', () => {
         pollIntervalMs: 1_500,
         feedHeartbeatIntervalMs: 60_000,
         indexerPublicOrigin: 'http://127.0.0.1:8788',
+        pushDeliveryEnabled: true,
+        repositoryEventsEnabled: true,
       });
+  });
+
+  it('can serve local RoomView reads without delivery or repository-event credentials', () => {
+    expect(
+      loadPushGatewayConfig({
+        BUZZY_PUSH_DATABASE_URL: 'postgres://buzz@postgres/buzz',
+        BUZZY_MATERIALIZER_DISABLE_PUSH_DELIVERY: 'true',
+        BUZZY_MATERIALIZER_DISABLE_REPOSITORY_EVENTS: '1',
+      }),
+    ).toMatchObject({
+      pushDeliveryEnabled: false,
+      repositoryEventsEnabled: false,
+    });
   });
 
   it('requires HTTPS for a non-loopback production indexer origin', () => {

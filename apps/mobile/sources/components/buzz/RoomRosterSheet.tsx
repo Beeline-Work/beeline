@@ -27,9 +27,9 @@ type RoomRosterSections = {
 };
 
 /**
- * A Room's roster only receives identity-stable sections and collapsed online
- * verdicts. Live relay activity can still refresh the chat screen, but React
- * now skips this open sheet until something a reader can see actually changes.
+ * The shared HullModal boundary owns the no-flicker guarantee. This additional
+ * memo remains a roster-specific CPU fast path: identity-stable sections and
+ * collapsed online verdicts avoid rebuilding a potentially long member tree.
  */
 export const RoomRosterSheet = React.memo(function RoomRosterSheet({
   bottomInset,

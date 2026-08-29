@@ -46,13 +46,142 @@ type HullModalProps = {
   visible: boolean;
 };
 
+type FloatingCallback = (...args: unknown[]) => unknown;
+
+type StablePresentationValue =
+  | { kind: 'atomic'; source: unknown; value: unknown }
+  | {
+      kind: 'function';
+      slot: { current: FloatingCallback };
+      value: FloatingCallback;
+    }
+  | { kind: 'array'; entries: readonly StablePresentationValue[]; value: readonly unknown[] }
+  | {
+      kind: 'element';
+      elementKey: React.Key | null;
+      elementType: React.ReactElement['type'];
+      props: StablePresentationValue;
+      value: React.ReactElement;
+    }
+  | {
+      kind: 'record';
+      entries: Readonly<Record<string, StablePresentationValue>>;
+      value: Readonly<Record<string, unknown>>;
+    };
+
+function isPlainRecord(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Reconcile one floating presentation by visible value, not allocation identity.
+ * React event callback slots stay live even when the rendered tree keeps its
+ * prior identity. Render/style functions remain presentation-significant.
+ */
+function reconcilePresentationValue(
+  previous: StablePresentationValue | undefined,
+  next: unknown,
+  propertyKey?: string,
+): StablePresentationValue {
+  const isEventCallback = propertyKey === 'ref' || /^on[A-Z]/.test(propertyKey ?? '');
+  if (typeof next === 'function' && isEventCallback) {
+    const latest = next as FloatingCallback;
+    if (previous?.kind === 'function') {
+      previous.slot.current = latest;
+      return previous;
+    }
+    const slot: { current: FloatingCallback } = { current: latest };
+    const value = function (this: unknown, ...args: unknown[]) {
+      return slot.current.apply(this, args);
+    };
+    const stable: StablePresentationValue = {
+      kind: 'function',
+      slot,
+      value,
+    };
+    return stable;
+  }
+
+  if (React.isValidElement(next)) {
+    const element = next as React.ReactElement<Record<string, unknown>>;
+    const previousElement =
+      previous?.kind === 'element' &&
+      previous.elementType === element.type &&
+      previous.elementKey === element.key
+        ? previous
+        : undefined;
+    const props = reconcilePresentationValue(previousElement?.props, element.props);
+    if (previousElement && props === previousElement.props) return previousElement;
+    return {
+      kind: 'element',
+      elementKey: element.key,
+      elementType: element.type,
+      props,
+      value: React.cloneElement(element, props.value as Record<string, unknown>),
+    };
+  }
+
+  if (Array.isArray(next)) {
+    const previousArray = previous?.kind === 'array' ? previous : undefined;
+    const entries = next.map((value, index) =>
+      reconcilePresentationValue(previousArray?.entries[index], value, propertyKey),
+    );
+    if (
+      previousArray &&
+      entries.length === previousArray.entries.length &&
+      entries.every((entry, index) => entry === previousArray.entries[index])
+    ) {
+      return previousArray;
+    }
+    return {
+      kind: 'array',
+      entries,
+      value: entries.map((entry, index) =>
+        React.isValidElement(entry.value) && entry.value.key === null
+          ? React.cloneElement(entry.value, { key: `floating-presentation-${index}` })
+          : entry.value,
+      ),
+    };
+  }
+
+  if (next !== null && typeof next === 'object' && isPlainRecord(next)) {
+    const previousRecord = previous?.kind === 'record' ? previous : undefined;
+    const keys = Object.keys(next);
+    const entries: Record<string, StablePresentationValue> = {};
+    let unchanged = Boolean(
+      previousRecord && keys.length === Object.keys(previousRecord.entries).length,
+    );
+    for (const key of keys) {
+      const entry = reconcilePresentationValue(previousRecord?.entries[key], next[key], key);
+      entries[key] = entry;
+      unchanged = unchanged && entry === previousRecord?.entries[key];
+    }
+    if (previousRecord && unchanged) return previousRecord;
+    return {
+      kind: 'record',
+      entries,
+      value: Object.fromEntries(keys.map((key) => [key, entries[key]!.value])),
+    };
+  }
+
+  if (previous?.kind === 'atomic' && Object.is(previous.source, next)) return previous;
+  return { kind: 'atomic', source: next, value: next };
+}
+
+function useStableFloatingPresentation(props: HullModalProps): HullModalProps {
+  const presentation = React.useRef<StablePresentationValue | undefined>(undefined);
+  presentation.current = reconcilePresentationValue(presentation.current, props);
+  return presentation.current.value as HullModalProps;
+}
+
 /**
  * The only React Native Modal boundary owned by Beeline. Every app-rendered
  * floating surface gets the same scrim, keyboard behavior, platform-back
  * semantics, and accessibility isolation before choosing its HullSurface
  * content shape.
  */
-export function HullModal({
+const StableHullModal = React.memo(function StableHullModal({
   accessibilityLabel = 'Close dialog',
   animationType = 'fade',
   children,
@@ -114,6 +243,16 @@ export function HullModal({
       </KeyboardAvoidingView>
     </Modal>
   );
+});
+
+/**
+ * Every floating member crosses this one identity boundary. A churning host can
+ * refresh callback closures without asking React Native to lay out the mounted
+ * Modal again; a visible prop or presentation-value change still renders.
+ */
+export function HullModal(props: HullModalProps) {
+  const presentation = useStableFloatingPresentation(props);
+  return <StableHullModal {...presentation} />;
 }
 
 type HullDialogProps = Omit<HullModalProps, 'children' | 'placement'> & {

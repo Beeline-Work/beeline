@@ -613,7 +613,14 @@ async function communityChannelCreates(
   );
 }
 
-async function communityRoomIds(ctx: ChannelOpsContext, communityId: string): Promise<string[]> {
+/**
+ * Top-level Room ids in a Workspace: DMs and corners excluded, same rule
+ * `migrateSuccessorMemberships` uses for membership propagation. Archived
+ * Rooms are not filtered here — callers that need that exclusion check
+ * `getChannelMetadata(...)?.archived` per room, as this function's other
+ * call sites already do.
+ */
+export async function communityRoomIds(ctx: ChannelOpsContext, communityId: string): Promise<string[]> {
   const creates = await communityChannelCreates(ctx, communityId);
   const ids = new Set<string>();
   for (const event of creates) {

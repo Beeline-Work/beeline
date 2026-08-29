@@ -392,9 +392,11 @@ export function identityFromKey(value: string | undefined, name: string): Identi
 }
 
 /**
- * The only identity factory allowed on the `beeline pair` path. It accepts no
- * key material by design, so an ambient human `BUZZ_PRIVATE_KEY` can never be
- * mistaken for the new agent again.
+ * The default identity factory on the `beeline pair` path. It accepts no key
+ * material by design, so an ambient human `BUZZ_PRIVATE_KEY` can never be
+ * mistaken for the new agent by default. The one deliberate exception is the
+ * CLI's `--use-env-key` opt-in, which instead builds the identity from the
+ * ambient key via `identityFromKey`.
  */
 export function mintAgentIdentityForPairing(): Identity {
   return newIdentity(DEFAULT_AGENT_IDENTITY_NAME);

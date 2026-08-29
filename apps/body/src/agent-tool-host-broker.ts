@@ -108,9 +108,12 @@ export class AgentToolHostBroker {
               session = [...this.sessions.values()].find((candidate) =>
                 this.matchesToken(token, candidate.token),
               );
-              if (!session || session.connection) return close();
+              if (!session) return close();
+              // MCP clients may probe and immediately reconnect the same
+              // configured transport. Keep exactly one live connection while
+              // preserving the per-session capability for that reconnect.
+              session.connection?.destroy();
               session.connection = socket;
-              session.token = '';
               continue;
             }
             await this.handleLine(session, socket, line);
@@ -121,9 +124,6 @@ export class AgentToolHostBroker {
     socket.once('close', () => {
       if (session?.connection === socket) {
         session.connection = undefined;
-        session.token = randomBytes(32).toString('hex');
-        if (session.endpoint.args)
-          session.endpoint.args[session.endpoint.args.length - 1] = session.token;
       }
     });
     socket.once('error', close);

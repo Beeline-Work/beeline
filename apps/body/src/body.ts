@@ -342,10 +342,11 @@ import {
   type ReadMandateResult,
 } from './agent-tool-contract.js';
 import { inspectMcpServer } from './mcp-inventory.js';
-import { preparePiMcpSession } from './pi-mcp-session.js';
+import { piMcpDirectToolSelection, preparePiMcpSession } from './pi-mcp-session.js';
 import {
   AGENT_MENTION_DISPATCH_TAG,
   AGENT_MENTION_PAUSED_TAG,
+  AGENT_MENTION_REPLY_TAG,
   AGENT_TO_AGENT_TURN_FUSE,
   AgentMentionTurnQueue,
   agentMentionTags,
@@ -4182,6 +4183,11 @@ export class Body {
               channelId: input.channelId,
               mcpServers: input.mcpServers,
             }),
+            // The pinned adapter treats an explicit direct-tool selection as
+            // a startup barrier: session_start does not complete until every
+            // selected server has supplied fresh tool metadata. This keeps a
+            // cold Pi turn from racing the generated extension mount.
+            MCP_DIRECT_TOOLS: piMcpDirectToolSelection(input.mcpServers),
           };
         }
         // The memory mount is writable in BOTH modes (readonly included) — it
@@ -6422,7 +6428,7 @@ export class Body {
    */
   private async prepareCornerAgentMention(
     input: {
-      workspaceId: string;
+      workspaceId?: string;
       roomId: string;
       cornerId: string;
       writerAgentId: string;
@@ -6434,14 +6440,20 @@ export class Body {
     { status: 'dispatch' | 'pause'; metadata: AgentMentionMetadata; tags: string[][] } | undefined
   > {
     if (!/^[0-9a-f]{64}$/.test(input.sourceTurnId)) return undefined;
+    // Most model replies contain no mention at all. Keep that proof local so
+    // ordinary corner publication never gains an unrelated relay read (or a
+    // new failure mode) just to establish that fact.
+    if (!/@[a-z0-9][a-z0-9._-]*/i.test(input.text)) return undefined;
+    const workspaceId =
+      input.workspaceId ?? (await this.channelCommunityId(input.roomId)) ?? input.roomId;
     const { roster } = await this.delegationRoster(input.roomId);
     const target = mentionedAgent(input.text, roster, this.agentIdentity.publicKey);
     if (!target) return undefined;
     const [roomMembers, workspaceMembers] = await Promise.all([
       listMembers(this.agentClientContext(), input.roomId),
-      input.workspaceId === input.roomId
+      workspaceId === input.roomId
         ? Promise.resolve(undefined)
-        : listMembers(this.agentClientContext(), input.workspaceId),
+        : listMembers(this.agentClientContext(), workspaceId),
     ]);
     const inRoom = roomMembers.some((member) => member.pubkey === target.pubkey);
     const inWorkspace =
@@ -6449,7 +6461,7 @@ export class Body {
     if (!inRoom || !inWorkspace) return undefined;
     const chain = nextAgentMentionChain(parent);
     const metadata: AgentMentionMetadata = {
-      workspaceId: input.workspaceId,
+      workspaceId,
       roomId: input.roomId,
       cornerId: input.cornerId,
       fromAgentId: this.agentIdentity.publicKey,
@@ -6628,7 +6640,11 @@ export class Body {
           "I couldn't produce a grounded reply to that mention.",
           {
             replyTo: dispatch.source.id,
-            extraTags: prepared?.tags,
+            extraTags: [
+              ['t', AGENT_MENTION_REPLY_TAG],
+              ['source-event', dispatch.source.id],
+              ...(prepared?.tags ?? []),
+            ],
             captureEvent: (event) => {
               published = event;
             },
@@ -9932,19 +9948,15 @@ export class Body {
           | undefined;
         let publishedMentionEvent: NostrEvent | undefined;
         const parentRoomId = info.session.parentChannelId;
-        const workspaceId = parentRoomId
-          ? ((await this.channelCommunityId(parentRoomId)) ?? parentRoomId)
-          : undefined;
         const ready = await this.finishCornerTurnAgainstMergeGate(
           info,
           result,
           attribution,
           `Completed: ${prompt}`,
-          parentRoomId && workspaceId
+          parentRoomId
             ? {
                 extraTagsForText: async (text) => {
                   preparedMention = await this.prepareCornerAgentMention({
-                    workspaceId,
                     roomId: parentRoomId,
                     cornerId: info.subchannelId,
                     writerAgentId: info.role.publicKey,
@@ -13841,7 +13853,7 @@ export class Body {
         // Agent-authored corner messages are transcript records, not the
         // dispatch mechanism. A target daemon starts only from the separately
         // signed parent-Room delivery bell validated above.
-        if (await isRegisteredAgentIdentity(evt.pubkey, this.agentRelay)) {
+        if (evt.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_MENTION_REPLY_TAG)) {
           processed.add(evt.id);
           await this.durableState.delivered(subchannelId, evt.id);
           continue;
@@ -13958,9 +13970,6 @@ export class Body {
               | undefined;
             let publishedMentionEvent: NostrEvent | undefined;
             const parentRoomId = info.session.parentChannelId;
-            const workspaceId = parentRoomId
-              ? ((await this.channelCommunityId(parentRoomId)) ?? parentRoomId)
-              : undefined;
             const ready = await this.finishCornerTurnAgainstMergeGate(
               info,
               agentResult,
@@ -13973,11 +13982,10 @@ export class Body {
               {
                 replyTo: evt.id,
                 replyRootId: replyRootIdForEvent(evt),
-                ...(parentRoomId && workspaceId
+                ...(parentRoomId
                   ? {
                       extraTagsForText: async (text: string) => {
                         preparedMention = await this.prepareCornerAgentMention({
-                          workspaceId,
                           roomId: parentRoomId,
                           cornerId: info.subchannelId,
                           writerAgentId: info.role.publicKey,

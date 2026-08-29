@@ -2015,7 +2015,7 @@ describe('agent identity boundary', () => {
     await scheduler.dispose();
   });
 
-  it('mounts only buzz-readonly-mcp when provisioning a Room', async () => {
+  it('mounts only the release-owned read and Beeline tool servers when provisioning a Room', async () => {
     const body = new Body({
       ...config,
       readonlyMcpCommand: '/buzz-readonly-mcp',

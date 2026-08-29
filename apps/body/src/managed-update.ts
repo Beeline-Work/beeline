@@ -4,16 +4,20 @@ import { dirname, resolve } from 'node:path';
 import {
   activeReleaseId,
   clearPendingUpdate,
-  confirmPendingUpdate,
   readInstalledBundleIdentity,
   readPendingUpdate,
   readUpdateState,
+  recordFailedUpdatePin,
+  replacePendingUpdate,
   rollbackToPreviousRelease,
   SelfUpdateManager,
   writePendingUpdateFixture,
   type BeelineInstallLayout,
   type PendingUpdateRecord,
 } from './self-update.js';
+import { findAgentRuntimeConfigPaths, readRuntimeRecord, runtimeDaemonPid } from './runtime.js';
+import type { UpdateFunctionalProbeResult } from './update-functional-probe.js';
+import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
 
 export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
 export const DEFAULT_UPDATE_INTERVAL_MS = 30_000;
@@ -88,6 +92,7 @@ export class ManagedUpdateHandoff {
   readonly #env: NodeJS.ProcessEnv;
   readonly #runUpdateWorker: () => Promise<void>;
   readonly #drainDeadlineMs: number;
+  readonly #requiredProbeIds: string[];
   #nextUpdateCheckAt: number;
   #updateCycleDeadlineAt: number | undefined;
   #worker: Promise<void> | undefined;
@@ -101,6 +106,7 @@ export class ManagedUpdateHandoff {
     env?: NodeJS.ProcessEnv;
     runUpdateWorker?: () => Promise<void>;
     drainDeadlineMs?: number;
+    requiredProbeIds?: string[];
   }) {
     this.#layout = options.layout;
     this.#runtimeDir = options.runtimeDir;
@@ -109,6 +115,7 @@ export class ManagedUpdateHandoff {
     this.#env = options.env ?? process.env;
     this.#runUpdateWorker = options.runUpdateWorker ?? runManagedUpdateWorkerProcess;
     this.#drainDeadlineMs = options.drainDeadlineMs ?? UPDATE_DRAIN_DEADLINE_MS;
+    this.#requiredProbeIds = [...new Set(options.requiredProbeIds ?? [])].sort();
     this.#nextUpdateCheckAt =
       this.#now() +
       numberEnv(this.#env, 'BEELINE_UPDATE_INITIAL_DELAY_MS', DEFAULT_UPDATE_INITIAL_DELAY_MS);
@@ -122,6 +129,7 @@ export class ManagedUpdateHandoff {
       env?: NodeJS.ProcessEnv;
       runUpdateWorker?: () => Promise<void>;
       drainDeadlineMs?: number;
+      requiredProbeIds?: string[];
     } = {},
   ): Promise<ManagedUpdateHandoff> {
     return new ManagedUpdateHandoff({
@@ -220,8 +228,24 @@ export class ManagedUpdateHandoff {
           releaseId: desiredRelease,
           previousReleaseId: this.#loadedRelease,
           appliedAt: requestedAt,
+          ...(this.#requiredProbeIds.length > 0
+            ? { requiredProbeIds: this.#requiredProbeIds, confirmedProbeIds: [] }
+            : {}),
         };
         await writePendingUpdateFixture(this.#layout, record);
+      } else if (this.#requiredProbeIds.length > 0) {
+        // The disposable worker normally captures the whole live fleet, but
+        // each old daemon also contributes its startup snapshot before it
+        // exits. This closes discovery/env races without ever removing a
+        // sibling proof requirement already written by another daemon.
+        const requiredProbeIds = [
+          ...new Set([...(pending.requiredProbeIds ?? []), ...this.#requiredProbeIds]),
+        ].sort();
+        await writePendingUpdateFixture(this.#layout, {
+          ...pending,
+          requiredProbeIds,
+          confirmedProbeIds: pending.confirmedProbeIds ?? [],
+        });
       }
       await writeFile(
         updateHandoffPath(this.#runtimeDir),
@@ -301,11 +325,25 @@ export async function runManagedUpdateWorker(): Promise<{ activeRelease?: string
     // Arms the global exact-release rollback journal, but no callback is
     // supplied and the worker exits: systemd still owns every daemon restart.
     restartHandover: true,
+    requiredProbeIds: await runningRuntimeProbeIds(process.env),
     logger: (line) => console.error(line),
   });
   await manager.checkAndApply();
   const activeRelease = await activeReleaseId(layout);
   return activeRelease ? { activeRelease } : {};
+}
+
+/** Stable agent identities whose live daemons will cross this shared install boundary. */
+export async function runningRuntimeProbeIds(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (const path of await findAgentRuntimeConfigPaths(env).catch(() => [] as string[])) {
+    if (!(await runtimeDaemonPid(path).catch(() => undefined))) continue;
+    const runtime = await readRuntimeRecord(path).catch(() => undefined);
+    if (runtime?.agent.publicKey) ids.push(runtime.agent.publicKey);
+  }
+  return [...new Set(ids)].sort();
 }
 
 /** Spawn the update worker as a killable process group with an absolute deadline. */
@@ -374,19 +412,88 @@ export async function proveLoadedReleaseReady(
   layout: BeelineInstallLayout,
   runtimeDir: string,
   loadedRelease: string | undefined,
+  options: {
+    probeId?: string;
+    functionalProof?: UpdateFunctionalProbeResult;
+    now?: () => number;
+  } = {},
 ): Promise<boolean> {
   const pending = await readPendingUpdate(layout);
   const handoff = await readUpdateHandoff(runtimeDir);
   const desiredRelease = handoff?.desiredRelease ?? pending?.releaseId;
   if (!desiredRelease || !loadedRelease || desiredRelease !== loadedRelease) return false;
+  if ((await activeReleaseId(layout).catch(() => undefined)) !== loadedRelease) return false;
+  if (!options.functionalProof) return false;
+  const probeId = options.probeId ?? runtimeDir;
+  const accepted = await withInstallLock(layout, async () => {
+    if ((await activeReleaseId(layout).catch(() => undefined)) !== loadedRelease) return false;
+    const current = await readPendingUpdate(layout);
+    if (!current || current.releaseId !== loadedRelease) return true;
+    const confirmed = [...new Set([...(current.confirmedProbeIds ?? []), probeId])].sort();
+    const required = current.requiredProbeIds ?? [probeId];
+    if (required.every((id) => confirmed.includes(id))) {
+      await clearPendingUpdate(layout);
+    } else {
+      await replacePendingUpdate(layout, { ...current, confirmedProbeIds: confirmed });
+    }
+    return true;
+  });
+  if (!accepted) return false;
   await writeFile(
     resolve(runtimeDir, 'daemon-ready.json'),
-    `${JSON.stringify({ readyAt: Date.now(), loadedRelease }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        readyAt: (options.now ?? Date.now)(),
+        loadedRelease,
+        functionalProof: options.functionalProof,
+      },
+      null,
+      2,
+    )}\n`,
     { mode: 0o600 },
   );
   await rm(updateHandoffPath(runtimeDir), { force: true });
-  if (!pending || pending.releaseId !== loadedRelease) return true;
-  return withInstallLock(layout, () => confirmPendingUpdate(layout));
+  return true;
+}
+
+export type ManagedSuccessorGateResult =
+  | { kind: 'passed'; proof: UpdateFunctionalProbeResult }
+  | { kind: 'failed'; error: unknown; rolledBack: boolean };
+
+/** One fail-closed transaction from a pending successor to functional READY. */
+export async function gateManagedSuccessor(input: {
+  layout: BeelineInstallLayout;
+  runtimeDir: string;
+  loadedRelease: string | undefined;
+  probeId: string;
+  probe: () => Promise<UpdateFunctionalProbeResult>;
+}): Promise<ManagedSuccessorGateResult> {
+  try {
+    const pending = await readPendingUpdate(input.layout);
+    const handoff = await readUpdateHandoff(input.runtimeDir);
+    const desiredRelease = handoff?.desiredRelease ?? pending?.releaseId;
+    if (!desiredRelease || !input.loadedRelease || desiredRelease !== input.loadedRelease) {
+      throw new Error(
+        `successor loaded release ${input.loadedRelease ?? 'unknown'}, not the pending desired release`,
+      );
+    }
+    const proof = await input.probe();
+    if (
+      !(await proveLoadedReleaseReady(input.layout, input.runtimeDir, input.loadedRelease, {
+        probeId: input.probeId,
+        functionalProof: proof,
+      }))
+    ) {
+      throw new Error(`successor release ${input.loadedRelease} did not produce functional proof`);
+    }
+    return { kind: 'passed', proof };
+  } catch (error) {
+    return {
+      kind: 'failed',
+      error,
+      rolledBack: await rollbackFailedSuccessor(input.layout, input.runtimeDir),
+    };
+  }
 }
 
 /** One rollback, without self-spawning; systemd owns the next process. */
@@ -402,6 +509,8 @@ export async function rollbackFailedSuccessor(
       return false;
     }
     await rollbackToPreviousRelease(layout, pending.previousReleaseId);
+    await recordFailedUpdatePin(layout, pending, 'functional update probe failed before READY');
+    if (runtimeDir) await queueUpdateRollbackAlert(runtimeDir, pending.releaseId);
     await clearPendingUpdate(layout);
     if (runtimeDir) await rm(updateHandoffPath(runtimeDir), { force: true });
     return true;

@@ -90,7 +90,7 @@ import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
-import { selectTurnProgressAgentPubkey } from '@/buzz/room-indicators';
+import { COMPOSER_ACK_BOUND_MS, selectComposerAckState } from '@/buzz/room-indicators';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import {
   activeMentionAtCursor,
@@ -618,6 +618,12 @@ export default function BuzzChat() {
   const [presenceResolved, setPresenceResolved] = useState(false);
   const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
   const [presenceNow, setPresenceNow] = useState(Date.now());
+  // Armed the instant a message this client believes addresses an agent is
+  // sent, so the composer never shows dead air waiting on the real WORKING
+  // receipt (relay round trip + pickup + publish + refetch). See
+  // `selectComposerAckState`.
+  const [pendingAckSentAt, setPendingAckSentAt] = useState<number | null>(null);
+  const [composerAckNow, setComposerAckNow] = useState(() => Date.now());
   const agentPresencesRef = useRef(heartbeatPresences);
   const presenceReconnectGraceRef = useRef(presenceReconnectGrace);
   // The ref is the *heartbeat* map, because it is what live presence events
@@ -1458,6 +1464,9 @@ export default function BuzzChat() {
             // into the voice above it, but the prose below it must re-announce
             // (its byline was never allowed to be spent on the tool block).
             isMachine: message.isAgentActivity,
+            // A reply always re-announces its own speaker; see
+            // `continuedSpeakerIds`'s `hasReplyReference` doc.
+            hasReplyReference: Boolean(message.replyToId),
           })),
         ),
       ),
@@ -1672,6 +1681,26 @@ export default function BuzzChat() {
     sessionState,
   ]);
 
+  // Once the real receipt lands there is nothing left for the local ack to
+  // guess at; clearing it here is what keeps a stale `pendingAckSentAt` from
+  // reading as "delivery unclear" after the turn it was standing in for has
+  // already finished.
+  useEffect(() => {
+    if (activeAgentTurn) setPendingAckSentAt(null);
+  }, [activeAgentTurn]);
+
+  // A single deadline-scheduled timer (never a ticking interval — see the
+  // presence clock above) so the composer flips from "buzzing…" to the
+  // honest "no confirmation yet" the instant the bound elapses, not on
+  // whatever unrelated re-render happens to follow.
+  useEffect(() => {
+    if (pendingAckSentAt == null) return;
+    const deadline = pendingAckSentAt + COMPOSER_ACK_BOUND_MS;
+    const delay = Math.max(1, deadline - Date.now() + 1);
+    const timer = setTimeout(() => setComposerAckNow(Date.now()), delay);
+    return () => clearTimeout(timer);
+  }, [pendingAckSentAt]);
+
   /**
    * The ordinary turn indicator, and the only thing a plain question in a Room
    * ever lights: "beebee thinking…" while the reply is being composed, gone
@@ -1682,17 +1711,39 @@ export default function BuzzChat() {
    * A Corner uses the same signed turn proof as a Room. Its separate
    * canonical Corner lease still owns the pinned Corner bar, but cannot hide a
    * channel-local reply that is visibly streaming now.
+   *
+   * Before that receipt exists, `pendingAckSentAt` (armed the instant a
+   * message addressed to an agent is sent — see `handleSend`) fills the dead
+   * air with an immediate local "buzzing…"; past `COMPOSER_ACK_BOUND_MS` with
+   * still no receipt it becomes an honest "no confirmation yet" rather than
+   * silently disappearing or lying about a turn that hasn't started.
    */
-  const turnProgressLabel = useMemo(() => {
-    const pubkey = selectTurnProgressAgentPubkey({
+  const composerAck = useMemo((): { label: string; tone: 'live' | 'quiet' } | null => {
+    const state = selectComposerAckState({
       isCorner,
       agentsOffline,
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
+      ...(pendingAckSentAt != null ? { pendingAckSentAt } : {}),
+      now: composerAckNow,
     });
-    if (!pubkey) return null;
-    const subject = resolveAgentDisplayIdentity(pubkey, agentByPubkey.get(pubkey)).name;
-    return `${subject} thinking…`;
-  }, [activeAgentTurn, agentByPubkey, agentsOffline, isCorner]);
+    if (!state) return null;
+    if (state.kind === 'thinking') {
+      const subject = resolveAgentDisplayIdentity(
+        state.agentPubkey,
+        agentByPubkey.get(state.agentPubkey),
+      ).name;
+      return { label: `${subject} thinking…`, tone: 'live' };
+    }
+    if (state.kind === 'buzzing') return { label: 'buzzing…', tone: 'live' };
+    return { label: 'no confirmation yet…', tone: 'quiet' };
+  }, [
+    activeAgentTurn,
+    agentByPubkey,
+    agentsOffline,
+    composerAckNow,
+    isCorner,
+    pendingAckSentAt,
+  ]);
 
   const activeActivityId = useMemo(() => {
     const latest = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
@@ -2220,6 +2271,22 @@ export default function BuzzChat() {
       roomParticipants,
       selectedMentionsRef.current,
     ).pubkeys;
+    // Instant, local, and deliberately duplicated from the mentioned-agent
+    // resolution below rather than shared with it: that resolution can sit
+    // behind an attachment upload or a cold transport construction, and the
+    // whole point of the ack is that it cannot wait on either. A corner (one
+    // agent, always addressed) or a two-party Room (the sole other
+    // participant "may speak naturally", per the addressing rule) counts too.
+    const addressesAgent =
+      isCorner ||
+      Boolean(
+        replyTarget?.isAgent
+          ? replyTarget.authorPubkey
+          : (selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current) ??
+              mentionedAgentPubkey(text, mentionableAgents)),
+      ) ||
+      (roomAgents.length === 1 && roomParticipants.length <= 2);
+    setPendingAckSentAt(addressesAgent ? Date.now() : null);
 
     sendInFlightRef.current = true;
     setSending(true);
@@ -2308,6 +2375,9 @@ export default function BuzzChat() {
       scheduleOutboxConfirmation(preparedEvent.id);
     } catch (err) {
       console.warn('Send failed:', err);
+      // A publish failure already gets its own explicit modal below; the
+      // local ack has nothing left to guess at and must not keep buzzing.
+      setPendingAckSentAt(null);
       if (preparedEvent) await markOutboxFailed(preparedEvent.id);
       const failure = publishFailurePresentation(err);
       Modal.alert(
@@ -2342,6 +2412,7 @@ export default function BuzzChat() {
     parentChannelId,
     mentionableAgents,
     roomParticipants,
+    roomAgents,
     cacheViewerPubkey,
     replyTarget,
     agentsOffline,
@@ -4263,8 +4334,12 @@ export default function BuzzChat() {
             {/* Keep this in the composer stack, directly above the field. A
                 growing multiline field then takes room from the transcript,
                 never from the only live progress signal. */}
-            {!isArchived && turnProgressLabel && (
-              <TurnProgressLine label={turnProgressLabel} testID="turn-progress-line" />
+            {!isArchived && composerAck && (
+              <TurnProgressLine
+                label={composerAck.label}
+                testID="turn-progress-line"
+                tone={composerAck.tone}
+              />
             )}
             <View style={[styles.composer, composerFocused && styles.composerFocused]}>
               <TouchableOpacity

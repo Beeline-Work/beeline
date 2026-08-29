@@ -1678,13 +1678,13 @@ async function emitActivityEvent(
  * Post a control message to a channel (kind:9 with specific tag).
  * Used for: "subchannel opened", "session started", "session archived", etc.
  */
-export async function postControlMessage(
+export function buildControlMessage(
   channelId: string,
   owner: Identity,
   msg: string,
   extraTags: string[][] = [],
-): Promise<void> {
-  const event: NostrEvent = signEvent(
+): NostrEvent {
+  return signEvent(
     {
       pubkey: owner.publicKey,
       created_at: Math.floor(Date.now() / 1000),
@@ -1694,6 +1694,14 @@ export async function postControlMessage(
     },
     owner.secretKey,
   );
+}
 
+export async function postControlMessage(
+  channelId: string,
+  owner: Identity,
+  msg: string,
+  extraTags: string[][] = [],
+): Promise<void> {
+  const event = buildControlMessage(channelId, owner, msg, extraTags);
   await publishEvent(event, owner);
 }

@@ -196,6 +196,29 @@ async function main() {
     '--target=node20',
     `--outfile=${resolve(staging, 'lib', 'beeline', 'squire-mcp-proxy.mjs')}`,
   ]);
+  run('npx', [
+    '--no-install',
+    'esbuild',
+    resolve(repoRoot, 'apps/body/dist/agent-tool-mcp-proxy.js'),
+    '--bundle',
+    '--platform=node',
+    '--format=esm',
+    '--target=node20',
+    `--outfile=${resolve(staging, 'lib', 'beeline', 'agent-tool-mcp-proxy.mjs')}`,
+  ]);
+  // Pi receives MCP through this release-owned, version-pinned adapter. It is
+  // built into the immutable archive; session startup never runs `pi install`
+  // and therefore never depends on registry or mutable global package state.
+  run('npx', [
+    '--no-install',
+    'esbuild',
+    resolve(repoRoot, 'node_modules/pi-mcp-adapter/index.ts'),
+    '--bundle',
+    '--platform=node',
+    '--format=esm',
+    '--target=node20',
+    `--outfile=${resolve(staging, 'lib', 'beeline', 'pi-mcp-adapter.mjs')}`,
+  ]);
 
   await copyFile(binaries.agent, resolve(staging, 'bin', 'buzz-agent'));
   await copyFile(binaries.mcp, resolve(staging, 'bin', 'buzz-dev-mcp'));

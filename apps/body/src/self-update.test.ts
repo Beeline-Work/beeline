@@ -217,6 +217,11 @@ async function buildFixtureBundle(commit: string, version: string): Promise<Fixt
   await writeFile(join(staging, 'lib', 'beeline', 'beeline-cli.mjs'), STUB_CLI);
   await writeFile(join(staging, 'lib', 'beeline', 'squire-mcp-proxy.mjs'), 'process.exit(0);\n');
   await writeFile(
+    join(staging, 'lib', 'beeline', 'agent-tool-mcp-proxy.mjs'),
+    'process.exit(0);\n',
+  );
+  await writeFile(join(staging, 'lib', 'beeline', 'pi-mcp-adapter.mjs'), 'export {};\n');
+  await writeFile(
     join(staging, 'bundle.json'),
     `${JSON.stringify({ schemaVersion: 1, name: 'beeline', platform: hostPlatformKey(), commit, version }, null, 2)}\n`,
   );

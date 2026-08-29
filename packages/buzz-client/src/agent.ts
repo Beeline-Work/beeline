@@ -7,7 +7,13 @@
  */
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
-import { communityChannels, communityMembers, getCommunity, inviteTokenHash } from './community.js';
+import {
+  communityChannels,
+  communityMembers,
+  communityRoomIds,
+  getCommunity,
+  inviteTokenHash,
+} from './community.js';
 import { publishEvent } from './http.js';
 import {
   KIND_AGENT_SOUL,
@@ -35,6 +41,7 @@ import type {
 } from './types.js';
 import {
   getChannelCommunityId,
+  getChannelMetadata,
   isMember,
   removeMember,
   setMemberRole,
@@ -271,6 +278,41 @@ export async function createAgentPairingCode(
   return { code, tokenHash, communityId, expiresAt, mintedBy: event.pubkey, event };
 }
 
+/**
+ * Attach a redeemed agent to every top-level Room the pairing code's minter
+ * currently belongs to — the app no longer asks which Room, so redemption
+ * mirrors human Workspace-join propagation directly: DMs, corners, and
+ * archived Rooms excluded (`communityRoomIds`, same rule
+ * `migrateSuccessorMemberships` uses). Best-effort per Room so one relay
+ * hiccup or unprojectable self-join never blocks the rest, and re-running it
+ * on a retried redemption is a no-op for rooms already attached.
+ */
+async function attachAgentToInviterRooms(
+  ctx: ChannelOpsContext,
+  communityId: string,
+  agentPubkey: string,
+  inviterPubkey: string,
+): Promise<void> {
+  for (const channelId of await communityRoomIds(ctx, communityId)) {
+    if ((await getChannelMetadata(ctx, channelId))?.archived) continue;
+    if (!(await isMember(ctx, channelId, inviterPubkey))) continue;
+    if (await isMember(ctx, channelId, agentPubkey)) continue;
+    try {
+      await setMemberRole(ctx, channelId, agentPubkey, 'member', {
+        extraTags: [
+          [TAG_COMMUNITY, communityId],
+          ['agent-invite', agentPubkey],
+        ],
+      });
+      await waitUntilMember(ctx, channelId, agentPubkey);
+    } catch (error) {
+      console.warn(
+        `[buzz-client] could not attach agent ${agentPubkey.slice(0, 12)}… to room ${channelId}: ${String(error)}`,
+      );
+    }
+  }
+}
+
 /** Redeem a pairing code under this agent's own key and register its identity. */
 export async function redeemAgentPairingCode(
   ctx: ChannelOpsContext,
@@ -320,7 +362,10 @@ export async function redeemAgentPairingCode(
   const ours = matchingRedemptions
     .map(parseAgent)
     .find((agent) => agent?.pubkey === ctx.identity.publicKey);
-  if (ours) return { communityId, pairedBy: pairing.pubkey, agent: ours, joined: false };
+  if (ours) {
+    await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.pubkey);
+    return { communityId, pairedBy: pairing.pubkey, agent: ours, joined: false };
+  }
   if (matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
     throw new Error('agent pairing code has already been redeemed');
   }
@@ -356,6 +401,7 @@ export async function redeemAgentPairingCode(
     if (!wasMember) await abandonAgentPairing(ctx, communityId);
     throw error;
   }
+  await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.pubkey);
   return { communityId, pairedBy: pairing.pubkey, agent, joined: !wasMember };
 }
 

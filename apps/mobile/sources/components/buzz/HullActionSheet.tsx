@@ -55,6 +55,11 @@ export type HullActionSheetAction = {
   label: string;
   leading?: React.ReactNode;
   metadata?: string;
+  /** A short value chip (a selection, a source name) sits beside the label on
+   *  one line by default. A full descriptive sentence never fits that way —
+   *  set this to let it wrap onto its own line below instead of silently
+   *  ellipsizing. Never combined with `selected`'s chip. */
+  metadataWrap?: boolean;
   onPress: () => void;
   selected?: boolean;
   testID?: string;
@@ -67,32 +72,43 @@ export function HullActionSheetRow({
   label,
   leading,
   metadata,
+  metadataWrap = false,
   onPress,
   selected = false,
   testID,
 }: HullActionSheetAction) {
+  const metadataText = selected ? 'SELECTED' : metadata;
+  const header = (
+    <>
+      {leading}
+      <Text numberOfLines={1} style={[styles.rowLabel, destructive && styles.destructive]}>
+        {label}
+      </Text>
+      {!metadataWrap && metadataText ? (
+        <Text numberOfLines={1} style={styles.metadata}>
+          {metadataText}
+        </Text>
+      ) : null}
+    </>
+  );
   return (
     <Pressable
-      accessibilityLabel={accessibilityLabel ?? `${label}${metadata ? `. ${metadata}` : ''}`}
+      accessibilityLabel={accessibilityLabel ?? `${label}${metadataText ? `. ${metadataText}` : ''}`}
       accessibilityRole="button"
       accessibilityState={{ disabled, selected }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
+        metadataWrap && styles.rowWrap,
         pressed && styles.rowPressed,
         disabled && styles.disabled,
       ]}
       testID={testID}
     >
-      {leading}
-      <Text numberOfLines={1} style={[styles.rowLabel, destructive && styles.destructive]}>
-        {label}
-      </Text>
-      {metadata || selected ? (
-        <Text numberOfLines={1} style={styles.metadata}>
-          {selected ? 'SELECTED' : metadata}
-        </Text>
+      {metadataWrap ? <View style={styles.rowWrapHeader}>{header}</View> : header}
+      {metadataWrap && metadataText ? (
+        <Text style={styles.metadataWrap}>{metadataText}</Text>
       ) : null}
     </Pressable>
   );
@@ -209,6 +225,19 @@ const styles = StyleSheet.create((theme) => {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
     },
+    // A full sentence cannot share the label's line, so this variant stacks:
+    // the same leading+label header on top, the description wrapping below.
+    rowWrap: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      paddingVertical: 10,
+      gap: 4,
+    },
+    rowWrapHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
     rowPressed: { backgroundColor: hull.bgPressed },
     disabled: { opacity: 0.42 },
     rowLabel: {
@@ -227,6 +256,15 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textDisabled,
       fontSize: 11,
       lineHeight: 15,
+    },
+    // The wrapping variant: same muted tone, but full width and no line cap —
+    // a description earns as many lines as it needs, never an ellipsis.
+    metadataWrap: {
+      ...Typography.default(),
+      fontFamily: hull.proseRegular,
+      color: hull.textDisabled,
+      fontSize: 12,
+      lineHeight: 16,
     },
     destructive: { color: hull.dialogDanger },
     cancel: {

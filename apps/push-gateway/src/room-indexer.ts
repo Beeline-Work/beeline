@@ -534,6 +534,19 @@ WITH workspace_candidates AS (
       ORDER BY e.created_at DESC, e.id ASC) AS ordinal
   FROM chats a JOIN events e ON e.community_id = a.community_id AND e.channel_id = a.id
     AND e.deleted_at IS NULL AND e.kind = 9
+  -- Rank conversation messages, not every kind:9 machine record. Otherwise
+  -- a burst of agent-turn/activity receipts can exhaust the bounded preview
+  -- window and also move the unread cursor beyond the last real message.
+  WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
+      WHERE marker->>0 = 't' AND COALESCE(marker->>1, '') <> ''
+        AND marker->>1 NOT IN (
+          'agent-message', 'buzz-agent-exchange', 'buzz-agent-request', 'buzz-attachment'
+        ))
+    AND (
+      btrim(e.content) <> ''
+      OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
+        WHERE marker->>0 = 't' AND marker->>1 = 'buzz-attachment')
+    )
 ), preview_events AS (
   SELECT * FROM preview_ranked WHERE ordinal <= $4
 ), latest_events AS (

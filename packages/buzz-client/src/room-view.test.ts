@@ -16,6 +16,7 @@ const room: RoomView = {
   members: [],
   latestAgentTurns: [],
   corners: [],
+  repositoryResolution: 'none',
   viewer: {
     identity: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Captain' },
     role: 'owner',
@@ -110,6 +111,7 @@ describe('RoomViewClient', () => {
       }),
     ).toBe(true);
     expect(isRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })).toBe(false);
+    expect(isRoomView({ ...room, repositoryResolution: 'unknown' })).toBe(false);
     expect(
       isRoomView({
         ...room,

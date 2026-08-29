@@ -4822,12 +4822,13 @@ export class Body {
           personaTurnPrefixForHarness(profile, agentCommand, nativePersonaPrepared),
           capabilityContext.compatibilityTurnPrefix,
           // Codex/Grok/Pi ignore session/new's systemPrompt. Capability
-          // awareness, the workbench boundary, and Room edit/corner protocol
-          // must still reach every turn because turn content is the one
-          // instruction channel these adapters honor.
+          // awareness, the memory contract, the workbench boundary, and Room
+          // edit/corner protocol must still reach every turn because turn
+          // content is the one instruction channel these adapters honor.
           ...(harnessHonorsSessionSystemPrompt(agentCommand)
             ? []
             : [
+                agentMemoryInstructions(input.agentMemory),
                 workbenchInstructions(workbench, input.mode),
                 ...(input.roomEditPolicy
                   ? roomEditPolicyInstructions(input.roomEditPolicy, agentCommand)

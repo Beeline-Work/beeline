@@ -83,7 +83,14 @@ describe('corner read-token credential helper', () => {
     );
     await chmod(entrypointPath, 0o755);
 
-    const wiring = await prepareGitReadTokenHelper({ ...wiringInput(stateDir), cliEntrypoint: entrypointPath });
+    // Real execution needs the node interpreter that is actually on this
+    // host (production passes the daemon's own `process.execPath`); a fixed
+    // `/usr/bin/node` only happens to exist on some hosts.
+    const wiring = await prepareGitReadTokenHelper({
+      ...wiringInput(stateDir),
+      nodePath: process.execPath,
+      cliEntrypoint: entrypointPath,
+    });
 
     run(worktree, ['init', '-q', '-b', 'main']);
     run(worktree, ['remote', 'add', 'origin', 'https://github.com/acme/private-widget.git']);

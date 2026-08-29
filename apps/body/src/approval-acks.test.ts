@@ -23,7 +23,7 @@ import { buildApproval as gateBuildApproval, newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
 import { Body } from './body.js';
 import { APPROVAL_ACK_TAG } from './body.js';
-import { filterRelayEvents } from './relay-test-helper.js';
+import { filterRelayEvents, mediaUploadResponse } from './relay-test-helper.js';
 
 const KIND_CHANNEL_ADMINS = 39001;
 
@@ -527,7 +527,9 @@ describe('event-driven approval pickup', () => {
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const upload = mediaUploadResponse(input, init);
+        if (upload) return upload;
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),

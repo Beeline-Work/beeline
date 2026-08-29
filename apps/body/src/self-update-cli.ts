@@ -20,12 +20,15 @@ import {
   activeReleaseId,
   archiveUrlFor,
   beelineInstallLayout,
+  clearFailedUpdatePin,
+  clearPendingUpdate,
   describeIdentity,
   hostPlatformKey,
   queueRestartRequest,
   readInstalledBundleIdentity,
   readPendingUpdate,
   readUpdateState,
+  recordFailedUpdatePin,
   rollbackToPreviousRelease,
   type BeelineInstallLayout,
 } from './self-update.js';
@@ -46,6 +49,7 @@ ${pc.dim('Usage:')}
   beeline update --check             Report only — no download, no swap
   beeline update --status            Show installed identity, releases, and state
   beeline update --rollback          Restore the previous release (queued restart)
+  beeline update --clear-pin         Re-enable a release paused after rollback
   beeline update --force             Apply even when the comparison is indeterminate
   beeline update --manifest-url <u>  Override the published manifest URL
 
@@ -103,6 +107,11 @@ async function printStatus(layout: BeelineInstallLayout): Promise<void> {
       `${pc.bold('last rollback')}      ${state.lastRollback.releaseId} -> ${state.lastRollback.toReleaseId} (${state.lastRollback.reason})`,
     );
   }
+  if (state.updatePin) {
+    console.log(
+      `${pc.bold('updates paused')}      ${describeIdentity(state.updatePin.identity)} (${state.updatePin.reason}); clear with --clear-pin`,
+    );
+  }
   if (pending) {
     console.log(
       `${pc.bold('pending update')}     -> ${describeIdentity(pending.to)}, applied ${new Date(pending.appliedAt).toISOString()}, awaiting health confirmation`,
@@ -139,11 +148,38 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
   const force = args.includes('--force');
   const rollback = args.includes('--rollback');
 
+  if (args.includes('--clear-pin')) {
+    const cleared = await withInstallLock(layout, () => clearFailedUpdatePin(layout));
+    console.log(
+      cleared
+        ? '[beeline] cleared the failed-release update pin; automatic updates are enabled again.'
+        : '[beeline] no failed-release update pin was set.',
+    );
+    return;
+  }
+
   if (rollback) {
     const state = await readUpdateState(layout);
     const previous = state.lastApplied?.previousReleaseId;
     if (!previous) throw new Error('no previous release recorded to roll back to');
-    await withInstallLock(layout, () => rollbackToPreviousRelease(layout, previous));
+    const failedRelease =
+      (await activeReleaseId(layout)) ?? state.lastApplied?.releaseId ?? 'unknown';
+    const failedIdentity = (await readInstalledBundleIdentity(layout, state)) ?? {};
+    await withInstallLock(layout, async () => {
+      await rollbackToPreviousRelease(layout, previous);
+      await clearPendingUpdate(layout);
+      await recordFailedUpdatePin(
+        layout,
+        {
+          from: {},
+          to: failedIdentity,
+          releaseId: failedRelease,
+          previousReleaseId: previous,
+          appliedAt: Date.now(),
+        },
+        'operator rolled the release back',
+      );
+    });
     console.log(`[beeline] rolled back to release ${previous}.`);
     const running = await queueRestartOnRunningDaemons();
     console.log(

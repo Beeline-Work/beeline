@@ -25,6 +25,24 @@ import { harnessReadsMetaSystemPrompt, sessionToolScopeMeta } from './harness-to
 /** Bound on the stderr tail kept for an exit-failure error message. */
 const STDERR_TAIL_MAX_CHARS = 2_000;
 
+/** Stable startup failure surfaced by bounded functional-update probes. */
+export class AcpRequestTimeoutError extends Error {
+  readonly code = 'ACP_REQUEST_TIMEOUT';
+
+  constructor(
+    readonly method: string,
+    readonly timeoutMs: number,
+    stderrTail = '',
+    readonly inactivity = false,
+  ) {
+    const suffix = stderrTail.trim() ? `; harness stderr: ${stderrTail.trim()}` : '';
+    super(
+      `ACP ${method} timed out after ${timeoutMs}ms${inactivity ? ' of inactivity' : ''}${suffix}`,
+    );
+    this.name = 'AcpRequestTimeoutError';
+  }
+}
+
 function killChildProcessGroup(
   child: ChildProcessWithoutNullStreams,
   signal: NodeJS.Signals,
@@ -185,9 +203,7 @@ function withoutOneTrailingLineEnding(text: string): string {
  * frame from every Pi delta while preserving explicit blank lines.
  */
 function normalizeStreamDelta(text: string, agentLabel?: string): string {
-  return agentLabel && PI_ACP_HARNESS.test(agentLabel)
-    ? withoutOneTrailingLineEnding(text)
-    : text;
+  return agentLabel && PI_ACP_HARNESS.test(agentLabel) ? withoutOneTrailingLineEnding(text) : text;
 }
 
 /** Group streaming text into assistant-message runs separated by tool,
@@ -456,7 +472,7 @@ export class AcpClient extends EventEmitter {
     this.permissionHandler = opts.permissionHandler;
   }
 
-  async start(): Promise<void> {
+  async start(timeoutMs = 60_000): Promise<void> {
     if (this.alive) return;
     this.child = spawn(this.agentCommand, this.agentArgs, {
       // agentEnv is the child's whole environment: buildAgentEnv's allowlist is
@@ -515,10 +531,14 @@ export class AcpClient extends EventEmitter {
     });
 
     // ACP handshake: initialize, then send initialized notification.
-    const initResult = (await this.request('initialize', {
-      protocolVersion: 1,
-      clientCapabilities: {},
-    })) as Record<string, unknown>;
+    const initResult = (await this.request(
+      'initialize',
+      {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      },
+      timeoutMs,
+    )) as Record<string, unknown>;
     const initMeta = initResult._meta as Record<string, unknown> | undefined;
     const steering = initMeta?.steering as Record<string, unknown> | undefined;
     this.supportsStandardSteering = steering?.supported === true;
@@ -585,6 +605,8 @@ export class AcpClient extends EventEmitter {
     systemPrompt?: string;
     /** Ask agents with ACP modes to enforce the Body session boundary. */
     mode?: SessionMode;
+    /** Bounded startup probes use a shorter fail-fast deadline. */
+    timeoutMs?: number;
   }): Promise<{ sessionId: string; raw: unknown }> {
     const params: Record<string, unknown> = {
       cwd: opts.cwd,
@@ -614,7 +636,10 @@ export class AcpClient extends EventEmitter {
       meta.systemPrompt = { append: opts.systemPrompt };
     }
     if (Object.keys(meta).length > 0) params._meta = meta;
-    const raw = (await this.request('session/new', params)) as Record<string, unknown>;
+    const raw = (await this.request('session/new', params, opts.timeoutMs ?? 60_000)) as Record<
+      string,
+      unknown
+    >;
     const sessionId = raw.sessionId as string | undefined;
     if (!sessionId) throw new Error('session/new missing sessionId');
     await this.applySessionMode(sessionId, raw, opts.mode);
@@ -847,7 +872,7 @@ export class AcpClient extends EventEmitter {
     const { idleTimeoutMs, method, reject } = p;
     p.timer = setTimeout(() => {
       this.pending.delete(id);
-      reject(new Error(`ACP ${method} timed out after ${idleTimeoutMs}ms of inactivity`));
+      reject(new AcpRequestTimeoutError(method ?? 'request', idleTimeoutMs, this.stderrTail, true));
     }, idleTimeoutMs);
   }
 
@@ -1052,11 +1077,10 @@ export class AcpClient extends EventEmitter {
     }
     const id = this.nextId++;
     const payload = { jsonrpc: '2.0', id, method, params };
-    const suffix = onStart ? ' of inactivity' : '';
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`ACP ${method} timed out after ${timeoutMs}ms${suffix}`));
+        reject(new AcpRequestTimeoutError(method, timeoutMs, this.stderrTail, Boolean(onStart)));
       }, timeoutMs);
       this.pending.set(id, {
         resolve,

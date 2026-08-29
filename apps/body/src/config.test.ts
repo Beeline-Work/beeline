@@ -217,6 +217,7 @@ describe('sandbox mask configuration', () => {
     const config = loadBodyConfig({
       workspaceRoot: '/tmp/workspace',
       env: {
+        ...binaryEnv,
         PATH: process.env.PATH ?? '',
         BUZZY_BODY_SANDBOX_MASK: '/srv/operator-secrets',
       },

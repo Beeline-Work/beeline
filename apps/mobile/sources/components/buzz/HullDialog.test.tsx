@@ -31,7 +31,6 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    KeyboardAvoidingView: host('KeyboardAvoidingView'),
     Modal: (props: any) => {
       modalRenderSpy();
       return ReactModule.createElement('Modal', props, props.children);
@@ -44,6 +43,13 @@ vi.mock('react-native', async () => {
     ),
     View: host('View'),
   };
+});
+
+vi.mock('react-native-keyboard-controller', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) =>
+    ReactModule.createElement(name, props, props.children);
+  return { KeyboardAvoidingView: host('KeyboardAvoidingView') };
 });
 
 vi.mock('react-native-unistyles', () => ({
@@ -80,6 +86,7 @@ vi.mock('./MonoHull', async () => {
 import { HullDialog, HullDialogInput } from './HullDialog';
 import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 import { HullMenuTrigger } from './HullMenuTrigger';
+import { AttachmentPickerSheet } from './AttachmentPickerSheet';
 
 const hull = theme.hull;
 
@@ -272,6 +279,34 @@ describe('Hull dialog family', () => {
     act(() => renderer.update(<LiveRoomHost liveEventId="agent-draft-26" title="Attach files" />));
     expect(modalRenderSpy).toHaveBeenCalledTimes(2);
     expect(surfaceRenderSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the real AttachmentPickerSheet still across unrelated host renders', () => {
+    // Unlike AttachmentPickerSheet.test.ts (which mocks ./HullActionSheet away
+    // entirely to test wiring), this exercises the actual production import
+    // chain down to the shared HullModal boundary, so a future regression that
+    // breaks that wiring for this specific surface fails here.
+    modalRenderSpy.mockClear();
+    surfaceRenderSpy.mockClear();
+
+    function ChatHost({ liveEventId }: { liveEventId: string }) {
+      return (
+        <AttachmentPickerSheet
+          visible
+          onClose={() => undefined}
+          onPickDocument={() => undefined}
+          onPickPhoto={() => undefined}
+        />
+      );
+    }
+
+    const renderer = render(<ChatHost liveEventId="live-1" />);
+    for (let index = 2; index <= 25; index += 1) {
+      act(() => renderer.update(<ChatHost liveEventId={`live-${index}`} />));
+    }
+
+    expect(modalRenderSpy).toHaveBeenCalledTimes(1);
+    expect(surfaceRenderSpy).toHaveBeenCalledTimes(1);
   });
 
   it('opens menu adapters as Hull sheets, closes before dispatch, and exposes a cancel row', () => {

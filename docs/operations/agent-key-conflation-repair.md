@@ -45,8 +45,11 @@ agent marker on the same key.
    record, Workspace membership, runtime record, and daemon.
 3. Verify the new pubkey has a self-signed `#t=buzz-agent` record, no kind:0
    profile, and is not the pairing-code minter. Abort if any check fails.
-4. In Members, set the new agent's existing name/soul/avatar seed. Add that
-   agent to each recorded top-level Room. Do not bulk-copy the old pubkey's
+4. In Members, set the new agent's existing name/soul/avatar seed. Pairing
+   redemption already attached the new agent to every top-level Room the
+   pairing-code minter belongs to; confirm it landed in every Room recorded in
+   step 1 and manually attach any that didn't (the explicit per-Room attach
+   API remains available for that). Do not bulk-copy the old pubkey's
    `channel_members` rows: those include the human's own Rooms and roles.
 5. Wait for the new pubkey to publish an online presence lease in every served
    Room. Send one addressed test message and confirm the new daemon replies.
@@ -135,10 +138,10 @@ to clear presentation metadata caches; the new daemon supplies fresh presence.
 ### One instruction block for the machine owner
 
 ```sh
-curl -fsSL https://usebeeline.app/install | sh
-env -u BUZZ_AGENT_KEY -u BUZZ_PRIVATE_KEY beeline pair BUZZ-XXXX-XXXX
+curl -fsSL https://usebeeline.app/install | sh && beeline pair BUZZ-XXXX-XXXX
 ```
 
-The owner should not export, paste, or reuse a Nostr secret. Firstmate handles
-the gated old-runtime retirement and relay transaction after the new agent is
-online.
+The owner should not export, paste, or reuse a Nostr secret — `beeline pair`
+ignores any ambient `BUZZ_AGENT_KEY`/`BUZZ_PRIVATE_KEY` and always mints a
+fresh agent identity by default. Firstmate handles the gated old-runtime
+retirement and relay transaction after the new agent is online.

@@ -15,6 +15,7 @@
  * is bounded and best-effort: a failure is cached for the daemon process,
  * logged once, and exposed to the corner as one actionable notice.
  */
+import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -33,6 +34,12 @@ const provisionRuns = new Map<string, ToolchainProvisionResult>();
 
 const PROVISION_TIMEOUT_MS = 15 * 60 * 1000;
 const PROVISION_SENTINEL = '.beeline-provisioned';
+
+function dependencyFingerprint(packageRoot: string): string {
+  const lock = resolve(packageRoot, 'package-lock.json');
+  if (!existsSync(lock)) return 'npm-unlocked-v1';
+  return createHash('sha256').update(readFileSync(lock)).digest('hex');
+}
 
 function isNpmPackageRoot(packageRoot: string): boolean {
   const packageJson = resolve(packageRoot, 'package.json');
@@ -67,10 +74,15 @@ function dependencyTreeNeedsInstall(packageRoot: string): boolean {
   // npm writes this inventory only after a completed modern install. A bare
   // directory (the production failure shape) is not proof that tsc/vitest or
   // any other declared dependency is actually present.
-  return ![
-    resolve(nodeModules, '.package-lock.json'),
-    resolve(nodeModules, PROVISION_SENTINEL),
-  ].some(existsSync);
+  const sentinel = resolve(nodeModules, PROVISION_SENTINEL);
+  if (existsSync(sentinel)) {
+    try {
+      return readFileSync(sentinel, 'utf8').trim() !== dependencyFingerprint(packageRoot);
+    } catch {
+      return true;
+    }
+  }
+  return !existsSync(resolve(nodeModules, '.package-lock.json'));
 }
 
 /**
@@ -220,7 +232,7 @@ export async function ensureCornerToolchainProvisioned(
       try {
         const nodeModules = resolve(cwd, 'node_modules');
         mkdirSync(nodeModules, { recursive: true });
-        writeFileSync(resolve(nodeModules, PROVISION_SENTINEL), '');
+        writeFileSync(resolve(nodeModules, PROVISION_SENTINEL), dependencyFingerprint(cwd));
       } catch {
         // The install itself succeeded. A missing optimization sentinel may
         // cause a later daemon process to install again, but never blocks now.
@@ -232,6 +244,11 @@ export async function ensureCornerToolchainProvisioned(
   provisionRuns.set(key, ready);
   say(`toolchain provisioning done for ${key}`);
   return ready;
+}
+
+/** Forget a completed in-process run after a pooled worktree is refreshed. */
+export function invalidateCornerToolchainProvisioning(worktreeRoot: string): void {
+  provisionRuns.delete(resolve(worktreeRoot));
 }
 
 /** One prompt-safe failure line for a corner whose automatic setup failed. */

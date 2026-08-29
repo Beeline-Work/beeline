@@ -9364,14 +9364,21 @@ describe('per-agent model/effort persistence', () => {
     expect(published.filter((event) => event.kind === KIND_AGENT_MODEL_CATALOG)).toHaveLength(1);
   });
 
-  it('skips the startup sync entirely when no pair-time default is configured', async () => {
+  it('publishes a catalog per served Workspace even when no pair-time default is configured', async () => {
     const agentIdentity = newIdentity('model-config-agent-7');
     const body = new Body(config(), undefined, agentIdentity);
     const published: NostrEvent[] = [];
     stubRelay(body, published);
 
+    const anotherWorkspace = '77777777-7777-4777-8777-777777777777';
     await body.syncModelSelectionToRelay(communityId);
-    expect(published.filter((event) => event.kind === KIND_AGENT_MODEL_CATALOG)).toHaveLength(0);
+    await body.syncModelSelectionToRelay(anotherWorkspace);
+    const catalogs = published.filter((event) => event.kind === KIND_AGENT_MODEL_CATALOG);
+    expect(catalogs).toHaveLength(2);
+    expect(catalogs.map((event) => event.tags.find((tag) => tag[0] === 'd')?.[1])).toEqual([
+      `${communityId}:${body.agent.publicKey}`,
+      `${anotherWorkspace}:${body.agent.publicKey}`,
+    ]);
   });
 
   it('a human pick wins over the pair-time default in the startup sync too', async () => {

@@ -306,6 +306,32 @@ describe('RoomIndexer', () => {
     ]);
   });
 
+  it('never renders a removed ghost agent as thinking/working on any surface', async () => {
+    // A human removal (`removeAgent`) evicts channel_members rows, but it can
+    // never retract another key's already-published relay events: the
+    // fixture's AGENT keeps its stale "working" room turn, "working"
+    // corner-state lease, and "online" presence heartbeat exactly as
+    // published above. Once evicted, none of those receipts may resurrect a
+    // thinking/working render anywhere — the Room progress line, the pinned
+    // sibling corner bar, the standalone corner screen, or the Room-list dot.
+    await postgres.query(
+      `UPDATE channel_members SET removed_at = to_timestamp(20)
+       WHERE community_id = $1 AND pubkey = $2`,
+      [TENANT, bytes(AGENT)],
+    );
+
+    const room = await indexer.readRoom(ROOM, VIEWER);
+    expect(room?.latestAgentTurns).toEqual([]);
+    expect(room?.members.some((member) => member.identity.pubkey === AGENT)).toBe(false);
+    expect(room?.corners).toMatchObject([{ corner: { id: CORNER }, status: 'open' }]);
+
+    const chats = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
+
+    const corners = await indexer.readCorners(ROOM, VIEWER);
+    expect(corners?.corners).toMatchObject([{ corner: { id: CORNER }, status: 'open' }]);
+  });
+
   it('keeps a predecessor-authored repository binding unverified instead of calling it absent', async () => {
     await postgres.query(
       `DELETE FROM events

@@ -27,6 +27,13 @@ export type LedgerSpeakerEntry = {
    *  mark and name just because a tool block opened the run.
    */
   isMachine?: boolean;
+  /** This entry carries a reply-reference (quotes an earlier message). A
+   *  reply reaches back out of the run it visually sits in, so it must always
+   *  re-announce its own speaker — folding it into the run above let a quoted
+   *  message read as if whoever it quoted were the one now speaking. Any
+   *  ambiguity here resolves toward showing the byline, never suppressing it.
+   */
+  hasReplyReference?: boolean;
 };
 
 /** Ids of entries whose speaker already announced itself on the entry above. */
@@ -39,11 +46,13 @@ export function continuedSpeakerIds(entries: readonly LedgerSpeakerEntry[]): Set
     // the later prose re-announces instead of riding the earlier prose's
     // byline past the block. Machine rows following each other (or following
     // their own prose) still fold: the compact header stays once per run.
+    // A reply reference never folds, regardless of same-speaker continuation.
     const foldsIntoRun =
       entry.speaker !== null &&
       previous !== null &&
       entry.speaker === previous.speaker &&
-      !(previous.isMachine === true && !entry.isMachine);
+      !(previous.isMachine === true && !entry.isMachine) &&
+      !entry.hasReplyReference;
     if (foldsIntoRun) continued.add(entry.id);
     previous = entry;
   }

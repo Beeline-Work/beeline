@@ -22,8 +22,24 @@ import { HullLivePulse } from './MonoHull';
  * `thinking…` and the motion, and the line simply disappears when the turn is
  * over rather than demoting to a resting state — an unanswered question is not
  * a state a Room sits in.
+ *
+ * `tone="quiet"` is the one deliberate exception: it is what a locally-armed
+ * pre-receipt ack (see `selectComposerAckState`) becomes once its bound
+ * elapses with no real receipt. That is a fact worth surfacing but it is not
+ * "an agent is alive and working" — showing gold and a pulse for it would be
+ * the same false claim the corner/turn split above exists to prevent. Quiet
+ * holds still and reads as muted concern, never as a livelier working state.
  */
-export function TurnProgressLine({ label, testID }: { label: string; testID?: string }) {
+export function TurnProgressLine({
+  label,
+  testID,
+  tone = 'live',
+}: {
+  label: string;
+  testID?: string;
+  tone?: 'live' | 'quiet';
+}) {
+  const quiet = tone === 'quiet';
   return (
     <View
       accessibilityLabel={label}
@@ -31,9 +47,9 @@ export function TurnProgressLine({ label, testID }: { label: string; testID?: st
       style={styles.bar}
       testID={testID}
     >
-      <HullLivePulse style={styles.row}>
-        <View style={styles.dot} />
-        <Text numberOfLines={1} style={styles.label}>
+      <HullLivePulse active={!quiet} style={styles.row}>
+        <View style={quiet ? [styles.dot, styles.dotQuiet] : styles.dot} />
+        <Text numberOfLines={1} style={quiet ? [styles.label, styles.labelQuiet] : styles.label}>
           {label}
         </Text>
       </HullLivePulse>
@@ -66,6 +82,9 @@ const styles = StyleSheet.create((theme) => {
     flexShrink: 0,
     backgroundColor: groknight.accent,
   },
+  dotQuiet: {
+    backgroundColor: groknight.textMuted,
+  },
   label: {
     ...Typography.mono(),
     flexShrink: 1,
@@ -74,6 +93,9 @@ const styles = StyleSheet.create((theme) => {
     fontSize: 12,
     lineHeight: 18,
     letterSpacing: 0.4,
+  },
+  labelQuiet: {
+    color: groknight.textMuted,
   },
   });
 });

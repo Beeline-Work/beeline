@@ -54,6 +54,44 @@ export function selectTurnProgressAgentPubkey(input: TurnProgressInput): string 
   return input.activeTurnPubkey ?? null;
 }
 
+/** How long a locally-armed "buzzing" ack waits for the real WORKING receipt
+ * before it must stop implying the daemon is still on its way. */
+export const COMPOSER_ACK_BOUND_MS = 15_000;
+
+export type ComposerAckState =
+  | { kind: 'thinking'; agentPubkey: string }
+  | { kind: 'buzzing' }
+  | { kind: 'delivery-unclear' };
+
+export type ComposerAckInput = TurnProgressInput & {
+  /** Set the instant a message addressed to an agent is sent; cleared once
+   * the real receipt lands, a fresher send re-arms it, or nothing addressed
+   * an agent this turn. */
+  pendingAckSentAt?: number;
+  now: number;
+};
+
+/**
+ * The composer's immediate answer to "did anything happen yet". A real
+ * `#t=agent-turn` WORKING receipt is a relay round trip away — pickup,
+ * publish, refetch — which reads as dead air for however long that takes.
+ * `pendingAckSentAt` is a purely local fact (armed the instant the user sends
+ * a message this client believes addresses an agent) and is *replaced* by the
+ * real receipt the moment one exists, never raced against it: `thinking`
+ * always wins once `selectTurnProgressAgentPubkey` has an answer. Past
+ * `COMPOSER_ACK_BOUND_MS` with still no receipt, the honest answer is that
+ * delivery cannot be confirmed yet — never silently keep claiming "buzzing"
+ * forever, and never fall back to dead air either.
+ */
+export function selectComposerAckState(input: ComposerAckInput): ComposerAckState | null {
+  const activePubkey = selectTurnProgressAgentPubkey(input);
+  if (activePubkey) return { kind: 'thinking', agentPubkey: activePubkey };
+  if (input.pendingAckSentAt == null) return null;
+  const elapsed = input.now - input.pendingAckSentAt;
+  if (elapsed < 0) return null;
+  return elapsed < COMPOSER_ACK_BOUND_MS ? { kind: 'buzzing' } : { kind: 'delivery-unclear' };
+}
+
 /**
  * Which qualifying corner to pin when more than one is open at once. This is
  * a *selection* priority, deliberately not `cornerStatusPrecedence` (which

@@ -29,4 +29,24 @@ describe('retired agent notices', () => {
       stripRetiredAgentNotices({ messages: [{ id: 'quoted', text: `Before: ${STALL_NOTICE}` }] }),
     ).toEqual({ messages: [{ id: 'quoted', text: `Before: ${STALL_NOTICE}` }] });
   });
+
+  it('also strips the structural shapes — a relay event cannot be unpublished', () => {
+    const attachmentEnoent =
+      "Attachment unavailable: ENOENT: no such file or directory, realpath " +
+      "'/proc/2952774/root/home/lunchbox/.local/state/beeline/agents/agent/rooms/room/agent-private/workbench/report.html'";
+    const modelUnavailable =
+      'Model unavailable · claude-sonnet-5\n' +
+      'The requested model is no longer offered by this provider.\n' +
+      'Open this agent’s settings, choose a value from the live model catalog, then restart the agent.';
+    const surface = {
+      messages: [
+        { id: 'attachment-wall', text: attachmentEnoent },
+        { id: 'model-wall', text: modelUnavailable },
+        { id: 'answer', text: 'Done.' },
+      ],
+    };
+    expect(stripRetiredAgentNotices(surface)).toEqual({
+      messages: [{ id: 'answer', text: 'Done.' }],
+    });
+  });
 });

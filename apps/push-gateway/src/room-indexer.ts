@@ -2187,6 +2187,10 @@ export class RoomIndexer {
         const data = json(row.data);
         const room = header(data);
         const latest = previews.get(room.id);
+        const agentState: 'needs-you' | 'working' | undefined =
+          data.agentState === 'needs-you' || data.agentState === 'working'
+            ? data.agentState
+            : undefined;
         return {
           room,
           ...(latest
@@ -2203,9 +2207,7 @@ export class RoomIndexer {
           cornerCount: integer(data.cornerCount),
           unread: data.unread === true,
           ...(text(data.repositoryName) ? { repositoryName: text(data.repositoryName) } : {}),
-          ...(data.agentState === 'needs-you' || data.agentState === 'working'
-            ? { agentState: data.agentState }
-            : {}),
+          ...(agentState ? { agentState } : {}),
         };
       })
       .sort(

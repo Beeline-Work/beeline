@@ -8,9 +8,11 @@
  */
 
 export const BEELINE_AGENT_TOOL_SERVER_NAME = 'beeline-agent-tools';
-export const BEELINE_AGENT_TOOL_SCHEMA_VERSION = 2 as const;
+export const BEELINE_AGENT_TOOL_SCHEMA_VERSION = 3 as const;
 export const BEELINE_AGENT_TOOL_NAMES = [
   'read_mandate',
+  'read_corner',
+  'list_corners',
   'request_mandate',
   'open_corner',
   'close_corner',
@@ -52,7 +54,11 @@ export const BEELINE_MANDATE_DEFAULTS_VERSION = 2 as const;
 
 /** New action tokens fail closed until this exact enumeration is deliberately changed. */
 export const BEELINE_MANDATE_DEFAULTS: readonly EffectiveMandateDefault[] = [
-  { action: 'corner.open', version: BEELINE_MANDATE_DEFAULTS_VERSION, effect: 'allow' },
+  {
+    action: 'corner.open',
+    version: BEELINE_MANDATE_DEFAULTS_VERSION,
+    effect: 'approval_required',
+  },
   {
     action: 'corner.close',
     version: BEELINE_MANDATE_DEFAULTS_VERSION,
@@ -184,6 +190,25 @@ export interface OpenCornerResult {
   feature_ref: string;
 }
 
+export type CornerReadState = 'opening' | 'open' | 'working' | 'waiting' | 'idle' | 'concluded';
+
+export interface CornerReadResult {
+  request_id: string;
+  exists: boolean;
+  state: 'not_found' | CornerReadState;
+  corner?: {
+    corner_id: string;
+    name: string;
+    objective: string;
+    feature_ref?: string;
+    state: CornerReadState;
+  };
+}
+
+export interface ListCornersResult {
+  corners: readonly NonNullable<CornerReadResult['corner']>[];
+}
+
 export interface CloseCornerResult {
   corner_id: string;
   disposition: CloseCornerDisposition;
@@ -274,6 +299,18 @@ export const BEELINE_AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     name: 'read_mandate',
     description:
       'Read the current signed authority generation, effective grants, explicit defaults, and blockers for this authenticated Beeline session.',
+    inputSchema: { type: 'object', properties: {}, ...NO_EXTRA_PROPERTIES },
+  },
+  {
+    name: 'read_corner',
+    description:
+      "Read host truth for the corner associated with this turn's triggering request. Use after any ambiguous open_corner outcome before claiming whether a corner exists.",
+    inputSchema: { type: 'object', properties: {}, ...NO_EXTRA_PROPERTIES },
+  },
+  {
+    name: 'list_corners',
+    description:
+      "List this authenticated Room's live corners with their current host state, objective, and feature ref.",
     inputSchema: { type: 'object', properties: {}, ...NO_EXTRA_PROPERTIES },
   },
   {

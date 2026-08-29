@@ -18,10 +18,7 @@ import {
   memoryScopeKey,
   prepareAgentMemory,
 } from './agent-memory.js';
-import {
-  classifyRoomPermission,
-  isAgentMemoryWritePermissionRequest,
-} from './session-sandbox.js';
+import { classifyRoomPermission, isAgentMemoryWritePermissionRequest } from './session-sandbox.js';
 import { sandboxMountPlan, type SandboxSessionSpec } from './bwrap-sandbox.js';
 import { Body } from './body.js';
 import type { BodyConfig } from './config.js';
@@ -217,9 +214,9 @@ describe('the room boundary keeps the repo read-only while memory stays writable
       ),
     ).toBe(false);
     // Reads were never gated and stay untouched.
-    expect(classifyRoomPermission({ toolCall: { kind: 'read', title: 'Read file' } }).decision).toBe(
-      'allow',
-    );
+    expect(
+      classifyRoomPermission({ toolCall: { kind: 'read', title: 'Read file' } }).decision,
+    ).toBe('allow');
     // Ordinary repo writes still deny with the room-read-only code.
     expect(
       classifyRoomPermission({
@@ -413,6 +410,9 @@ lines.on('line', (line) => {
     }> => {
       const body = new Body(config, undefined, agent);
       vi.spyOn(body as never, 'agentHistory' as never).mockResolvedValue([] as never);
+      vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+        true as never,
+      );
       const memory = await prepareAgentMemory({ root: memoryRoot, communityId: 'workspace-role' });
       const permissionHandler = (permission: unknown) =>
         Reflect.get(body, 'handleRoomPermissionRequest').call(
@@ -508,6 +508,7 @@ lines.on('line', (line) => {
       expect.objectContaining({ repo: 'repo' }),
       'Create a harmless checksum script and run it for the launch checklist.',
       expect.objectContaining({ eventId: 'run-script' }),
+      expect.objectContaining({ onCreated: expect.any(Function) }),
     );
     expect(run).toHaveBeenCalledTimes(1);
 
@@ -614,7 +615,10 @@ lines.on('line', (line) => {
       bwrapPath: '/usr/bin/bwrap',
       agentMemoryRoot: join(daemonState, 'memory'),
     });
-    const memory = await prepareAgentMemory({ root: join(daemonState, 'memory'), communityId: 'ws' });
+    const memory = await prepareAgentMemory({
+      root: join(daemonState, 'memory'),
+      communityId: 'ws',
+    });
     // Place a session carrying the memory mount, as createManagedSession would.
     const sessions = Reflect.get(body, 'sessions') as Map<string, unknown>;
     sessions.set('room-id', {

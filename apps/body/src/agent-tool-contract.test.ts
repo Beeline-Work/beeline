@@ -8,7 +8,7 @@ import {
 } from './agent-tool-contract.js';
 
 describe('Beeline agent tool contract', () => {
-  it('advertises exactly the six locked verbs and both artifact input modes', () => {
+  it('advertises the locked verbs, corner truth reads, and both artifact input modes', () => {
     expect(BEELINE_AGENT_TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual(
       BEELINE_AGENT_TOOL_NAMES,
     );
@@ -17,6 +17,8 @@ describe('Beeline agent tool contract', () => {
     expect(deliver?.inputSchema.oneOf as unknown[]).toHaveLength(2);
     expect(BEELINE_AGENT_TOOL_NAMES).toEqual([
       'read_mandate',
+      'read_corner',
+      'list_corners',
       'request_mandate',
       'open_corner',
       'close_corner',
@@ -50,6 +52,9 @@ describe('Beeline agent tool contract', () => {
       'artifact.deliver',
     ]);
     expect(BEELINE_MANDATE_DEFAULTS.find((entry) => entry.action === 'corner.close')?.effect).toBe(
+      'approval_required',
+    );
+    expect(BEELINE_MANDATE_DEFAULTS.find((entry) => entry.action === 'corner.open')?.effect).toBe(
       'approval_required',
     );
     expect(

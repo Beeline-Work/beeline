@@ -694,7 +694,19 @@ export default function BuzzChat() {
       source: 'config',
     };
   }, [decodedId, isCorner, roomSurface?.repository, roomSurface?.room.workspaceId]);
-  const roomRepositoryResolved = Boolean(roomSurface);
+  const roomRepositoryState = roomSurface?.repositoryResolution;
+  // A loaded surface with no repository field is not enough to prompt. The
+  // indexer distinguishes a proven empty Room from an unverified binding,
+  // including bindings authored by a predecessor key.
+  const roomRepositoryResolved = roomRepositoryState === 'none';
+  useEffect(() => {
+    // A stale cached `none` response can briefly open the lazy prompt before a
+    // fresh server read discovers a binding it cannot verify. Do not leave the
+    // stronger, fresh fact painted as the false "not linked" banner.
+    if (roomRepositoryState !== 'none' && !roomRepoAccessIssue) {
+      setCornerOpenRepoPrompt(false);
+    }
+  }, [roomRepoAccessIssue, roomRepositoryState]);
   const mergeTarget = useMemo<MergeTarget | null>(
     () =>
       roomSurface?.review?.status === 'ready' &&
@@ -2773,7 +2785,7 @@ export default function BuzzChat() {
             }
           }
         }
-        await transport.roomRepositorySet(decodedId, {
+        const published = await transport.roomRepositorySet(decodedId, {
           key: input.key,
           name: input.name,
           remote: input.remote,
@@ -2783,6 +2795,16 @@ export default function BuzzChat() {
           ...(input.defaultBranch ? { targetBranch: input.defaultBranch } : {}),
           ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
         });
+        if (!roomClient) {
+          throw new Error('The repo link was accepted but could not be confirmed. Try again.');
+        }
+        const confirmed = await roomClient.room(decodedId);
+        if (
+          confirmed.repositoryResolution !== 'repository' ||
+          confirmed.repository?.key !== published.binding.key
+        ) {
+          throw new Error('The repo link was accepted but the Room did not confirm it. Try again.');
+        }
         roomSchedulerRef.current?.force();
         setShowRoomRepoPicker(false);
         setCornerOpenRepoPrompt(false);
@@ -2793,7 +2815,7 @@ export default function BuzzChat() {
         setRoomRepoBusy(false);
       }
     },
-    [activeCommunityId, decodedId, roomRepoBusy, transport],
+    [activeCommunityId, decodedId, roomClient, roomRepoBusy, transport],
   );
 
   // The pasted repository's owner is not among this viewer's installations:

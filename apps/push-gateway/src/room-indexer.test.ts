@@ -279,6 +279,7 @@ describe('RoomIndexer', () => {
     expect(physicalQueries).toBe(1);
     expect(view).toMatchObject({
       room: { id: ROOM, workspaceId: WORKSPACE, name: 'Fast Room' },
+      repositoryResolution: 'repository',
       viewer: { identity: { name: 'Ada' }, role: 'owner' },
       members: [
         { identity: { pubkey: VIEWER, kind: 'human', name: 'Ada' }, role: 'owner' },
@@ -303,6 +304,56 @@ describe('RoomIndexer', () => {
       ['Hello', 'Ada'],
       ['Ready', 'Milo'],
     ]);
+  });
+
+  it('keeps a predecessor-authored repository binding unverified instead of calling it absent', async () => {
+    await postgres.query(
+      `DELETE FROM events
+       WHERE community_id = $1 AND channel_id = $2 AND kind = 30078
+         AND tags @> '[["t", "buzz-room-repository"]]'::jsonb`,
+      [TENANT, ROOM],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, $5, $6, $7)`,
+      [
+        TENANT,
+        bytes('e'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['h', ROOM],
+          ['d', `buzz-room-repository:${ROOM}`],
+          ['t', 'buzz-room-repository'],
+        ]),
+        JSON.stringify({
+          key: 'github:1',
+          name: 'beeline',
+          remote: 'git://github.com/acme/beeline',
+        }),
+        ROOM,
+        `buzz-room-repository:${ROOM}`,
+      ],
+    );
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+
+    expect(view?.repository).toBeUndefined();
+    expect(view?.repositoryResolution).toBe('unverified');
+  });
+
+  it('reports none only when the Room has no repository event at all', async () => {
+    await postgres.query(
+      `DELETE FROM events
+       WHERE community_id = $1 AND channel_id = $2 AND kind = 30078
+         AND tags @> '[["t", "buzz-room-repository"]]'::jsonb`,
+      [TENANT, ROOM],
+    );
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+
+    expect(view?.repository).toBeUndefined();
+    expect(view?.repositoryResolution).toBe('none');
   });
 
   it('returns the original same-Room root as the proof for a current direct reply', async () => {

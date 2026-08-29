@@ -305,7 +305,16 @@ import {
   type SessionWorkbench,
 } from './workbench.js';
 import { isReadOnlyMcpPermissionRequest, READ_ONLY_MCP_SERVER_NAME } from './read-only-policy.js';
-import { cornerToolchainNotice, ensureCornerToolchainProvisioned } from './corner-toolchain.js';
+import {
+  cornerToolchainNotice,
+  ensureCornerToolchainProvisioned,
+  invalidateCornerToolchainProvisioning,
+} from './corner-toolchain.js';
+import {
+  CORNER_WARM_POOL_DIR,
+  replenishCornerWarmPool,
+  takeWarmCornerWorktree,
+} from './corner-warm-pool.js';
 import {
   authorizedExternalMcpServers,
   externalMcpPermissionPolicy,
@@ -2617,6 +2626,11 @@ export class Body {
    */
   private readonly releaseProposals = new Map<string, PendingReleaseProposal>();
   private generateCornerMetadata?: (prompt: string) => Promise<string>;
+  /** Coalesced background warm-pool fill per repository/target. */
+  private readonly cornerWarmPoolFills = new Map<
+    string,
+    { rerun: boolean; task: Promise<void> }
+  >();
   /** Serialized, coalesced publisher for the corner state record. */
   private readonly cornerStates: CornerStatePublisher;
 
@@ -6182,6 +6196,7 @@ export class Body {
     boundRepo?: BoundRepo,
     editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
   ): Promise<AgentSession> {
+    if (boundRepo) this.scheduleCornerWarmPoolFill(boundRepo);
     const existing = this.sessions.get(tlcChannelId);
     if (existing) {
       if (existing.mode === 'readonly') return existing;
@@ -6363,6 +6378,15 @@ export class Body {
     const boundRepo = await this.cornerBoundRepo(tlcChannelId, freshRoomRepo);
     const agentId = this.agentIdentity;
     await this.ensureAgentInChannel(tlcChannelId, agentId);
+    await postAgentMessage(
+      tlcChannelId,
+      agentId,
+      'Opening a corner - preparing the workspace...',
+      request?.eventId,
+      [],
+      [],
+      request?.replyRootId,
+    );
     const communityId = await this.channelCommunityId(tlcChannelId);
 
     // 1. The agent itself creates/signs the child channel. Prefer the model's
@@ -6446,6 +6470,15 @@ export class Body {
       );
       throw error;
     }
+
+    // Publish the child's first canonical lifecycle fact before any workspace
+    // work. The Room can now pin “preparing” while a cold fallback provisions;
+    // WORKING is published only after the edit session is actually ready.
+    await this.cornerStates.publish({
+      parentRoomId: tlcChannelId,
+      cornerId: subchannelId,
+      state: 'open',
+    });
 
     // 2. Mirror parent members: query members of TLC, add each as member of subchannel.
     const mirroredParticipantPubkeys = await this.mirrorMembers(tlcChannelId, subchannelId);
@@ -6577,13 +6610,13 @@ export class Body {
       participantPubkeys,
       ...(taskPlan ? { taskPlan } : {}),
       openedAt: Date.now(),
+      cornerState: { state: 'open' },
       ...(request ? { request } : {}),
     };
 
     this.subchannels.set(subchannelId, info);
-    // Canonical lifecycle starts at OPEN, then moves to WORKING once the
-    // session actor is registered. Both writes are replaceable and serialized.
-    await this.transitionCornerState(info, 'open');
+    // OPEN was published before workspace preparation; move to WORKING only
+    // once the session actor is registered and ready to receive the turn.
     await this.transitionCornerState(info, 'working');
 
     const repoId = this.repoId(boundRepo);
@@ -14620,6 +14653,52 @@ export class Body {
     }
   }
 
+  /** Warm slots are advertised only after provisioning actually succeeded. */
+  private async provisionWarmWorktreeToolchain(worktreePath: string): Promise<void> {
+    invalidateCornerToolchainProvisioning(worktreePath);
+    const result = await ensureCornerToolchainProvisioned(worktreePath);
+    if (result.status === 'failed') throw new Error(result.message);
+  }
+
+  private cornerWarmPoolSize(): number {
+    const configured = Number(process.env.BUZZY_BODY_CORNER_WARM_POOL_SIZE ?? '2');
+    return Number.isFinite(configured) ? Math.max(0, Math.min(8, Math.floor(configured))) : 2;
+  }
+
+  /** Fill slots off the Room target without delaying Room/session startup. */
+  private scheduleCornerWarmPoolFill(boundRepo: BoundRepo): void {
+    if (this.disposed || this.cornerWarmPoolSize() === 0) return;
+    const key = `${this.repoId(boundRepo)}:${boundRepo.targetBranch ?? 'refs/heads/main'}`;
+    const active = this.cornerWarmPoolFills.get(key);
+    if (active) {
+      active.rerun = true;
+      return;
+    }
+    const state: { rerun: boolean; task: Promise<void> } = {
+      rerun: false,
+      task: Promise.resolve(),
+    };
+    const fill = this.prepareCornerWorktreeBase(boundRepo, false)
+      .then(({ repositoryRoot, baseRef }) =>
+        replenishCornerWarmPool({
+          repositoryRoot,
+          cornersRoot: this.cornersPoolRoot(boundRepo),
+          targetRef: baseRef,
+          runGit: git,
+          provision: (path) => this.provisionWarmWorktreeToolchain(path),
+          size: this.cornerWarmPoolSize(),
+          log: (line) => console.log(`[body] ${line}`),
+        }),
+      )
+      .catch((error) => console.warn(`[body] corner warm pool fill skipped:`, error))
+      .finally(() => {
+        this.cornerWarmPoolFills.delete(key);
+        if (state.rerun) this.scheduleCornerWarmPoolFill(boundRepo);
+      });
+    state.task = fill;
+    this.cornerWarmPoolFills.set(key, state);
+  }
+
   private async excludeCodegraphFromWorktreeStatus(worktreePath: string): Promise<void> {
     try {
       const gitPath = await git(worktreePath, ['rev-parse', '--git-path', 'info/exclude']);
@@ -14891,29 +14970,22 @@ export class Body {
     worktreePath: string,
     featureBranch: string,
   ): Promise<void> {
-    // Ensure workspace root exists.
-    await mkdir(this.config.workspaceRoot, { recursive: true });
+    const { repositoryRoot, baseRef } = await this.prepareCornerWorktreeBase(boundRepo, true);
+    const warm = await takeWarmCornerWorktree({
+      repositoryRoot,
+      cornersRoot: this.cornersPoolRoot(boundRepo),
+      targetRef: baseRef,
+      destination: worktreePath,
+      featureBranch,
+      runGit: git,
+      provision: (path) => this.provisionWarmWorktreeToolchain(path),
+      size: this.cornerWarmPoolSize(),
+      log: (line) => console.log(`[body] ${line}`),
+    });
 
-    if (boundRepo.localPath) {
+    if (!warm) {
       await mkdir(resolve(worktreePath, '..'), { recursive: true });
-      if (boundRepo.remoteName) {
-        const fetch = await this.remoteGit(boundRepo, boundRepo.localPath, [
-          'fetch',
-          boundRepo.remoteName,
-        ]);
-        if (!fetch.ok) throw new Error(`git fetch failed: ${fetch.stderr}`);
-      }
-      const target = (boundRepo.targetBranch ?? 'refs/heads/main').replace(/^refs\/heads\//, '');
-      const remoteRef = boundRepo.remoteName
-        ? `refs/remotes/${boundRepo.remoteName}/${target}`
-        : '';
-      const remoteBase = remoteRef
-        ? await git(boundRepo.localPath, ['rev-parse', '--verify', remoteRef])
-        : { ok: false };
-      const localRef = `refs/heads/${target}`;
-      const localBase = await git(boundRepo.localPath, ['rev-parse', '--verify', localRef]);
-      const baseRef = remoteBase.ok ? remoteRef : localBase.ok ? localRef : 'HEAD';
-      const worktreeAdd = await git(boundRepo.localPath, [
+      const worktreeAdd = await git(repositoryRoot, [
         'worktree',
         'add',
         '-b',
@@ -14922,66 +14994,7 @@ export class Body {
         baseRef,
       ]);
       if (!worktreeAdd.ok) throw new Error(`git worktree add failed: ${worktreeAdd.stderr}`);
-      await git(worktreePath, [
-        'config',
-        'user.name',
-        this.agentIdentity.name || DEFAULT_AGENT_IDENTITY_NAME,
-      ]);
-      await git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
-      await this.excludeCodegraphFromWorktreeStatus(worktreePath);
       await this.provisionWorktreeToolchain(worktreePath);
-      return;
-    }
-
-    if (!boundRepo.ownerHex) throw new Error('relay repo binding is missing its owner');
-
-    const gitDir = resolve(this.config.workspaceRoot, `.git-${boundRepo.repo}`);
-    const repoUrl = `${this.config.relayBaseUrl}/git/${boundRepo.ownerHex}/${boundRepo.repo}`;
-
-    // Clone repo as bare if not already present.
-    if (!existsSync(gitDir)) {
-      const clone = await gitAuthed(
-        this.config.workspaceRoot,
-        this.agentIdentity,
-        boundRepo.ownerHex,
-        boundRepo.repo,
-        ['clone', '--bare', repoUrl, gitDir],
-      );
-      if (!clone.ok && clone.stderr && !clone.stderr.includes('already exists')) {
-        throw new Error(`git clone --bare failed: ${clone.stderr}`);
-      }
-    }
-
-    // Fetch latest.
-    const fetch = await gitAuthed(gitDir, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
-      'fetch',
-      'origin',
-    ]);
-    if (!fetch.ok) throw new Error(`git fetch failed: ${fetch.stderr}`);
-
-    // A bare clone stores the default branch at refs/heads/main; an existing
-    // mirror may instead have refs/remotes/origin/main after fetch.
-    const remoteMain = await git(gitDir, ['rev-parse', '--verify', 'refs/remotes/origin/main']);
-    const localMain = await git(gitDir, ['rev-parse', '--verify', 'refs/heads/main']);
-    const baseRef = remoteMain.ok
-      ? 'refs/remotes/origin/main'
-      : localMain.ok
-        ? 'refs/heads/main'
-        : '';
-    if (!baseRef) throw new Error('bound repo has no main branch');
-
-    // Create worktree with new branch.
-    const worktreeAdd = await git(gitDir, [
-      'worktree',
-      'add',
-      '-b',
-      featureBranch,
-      worktreePath,
-      baseRef,
-    ]);
-
-    if (!worktreeAdd.ok) {
-      throw new Error(`git worktree add failed: ${worktreeAdd.stderr}`);
     }
 
     // The edit agent commits locally; the body authenticates and pushes the
@@ -14993,7 +15006,65 @@ export class Body {
     ]);
     await git(worktreePath, ['config', 'user.email', 'agent@beeline.local']);
     await this.excludeCodegraphFromWorktreeStatus(worktreePath);
-    await this.provisionWorktreeToolchain(worktreePath);
+    this.scheduleCornerWarmPoolFill(boundRepo);
+  }
+
+  /** Resolve the linked-worktree registry and freshest usable Room target. */
+  private async prepareCornerWorktreeBase(
+    boundRepo: BoundRepo,
+    fetchLatest: boolean,
+  ): Promise<{ repositoryRoot: string; baseRef: string }> {
+    await mkdir(this.config.workspaceRoot, { recursive: true });
+    const target = (boundRepo.targetBranch ?? 'refs/heads/main').replace(/^refs\/heads\//, '');
+    if (boundRepo.localPath) {
+      if (fetchLatest && boundRepo.remoteName) {
+        const fetch = await this.remoteGit(boundRepo, boundRepo.localPath, [
+          'fetch',
+          boundRepo.remoteName,
+        ]);
+        if (!fetch.ok) throw new Error(`git fetch failed: ${fetch.stderr}`);
+      }
+      const remoteRef = boundRepo.remoteName
+        ? `refs/remotes/${boundRepo.remoteName}/${target}`
+        : '';
+      const remoteBase = remoteRef
+        ? await git(boundRepo.localPath, ['rev-parse', '--verify', remoteRef])
+        : { ok: false };
+      const localRef = `refs/heads/${target}`;
+      const localBase = await git(boundRepo.localPath, ['rev-parse', '--verify', localRef]);
+      const baseRef = remoteBase.ok ? remoteRef : localBase.ok ? localRef : 'HEAD';
+      return { repositoryRoot: boundRepo.localPath, baseRef };
+    }
+
+    if (!boundRepo.ownerHex) throw new Error('relay repo binding is missing its owner');
+    const gitDir = resolve(this.config.workspaceRoot, `.git-${boundRepo.repo}`);
+    const repoUrl = `${this.config.relayBaseUrl}/git/${boundRepo.ownerHex}/${boundRepo.repo}`;
+    if (!existsSync(gitDir)) {
+      if (!fetchLatest) throw new Error('relay repository is not cloned yet');
+      const clone = await gitAuthed(
+        this.config.workspaceRoot,
+        this.agentIdentity,
+        boundRepo.ownerHex,
+        boundRepo.repo,
+        ['clone', '--bare', repoUrl, gitDir],
+      );
+      if (!clone.ok && clone.stderr && !clone.stderr.includes('already exists')) {
+        throw new Error(`git clone --bare failed: ${clone.stderr}`);
+      }
+    }
+    if (fetchLatest) {
+      const fetch = await gitAuthed(gitDir, this.agentIdentity, boundRepo.ownerHex, boundRepo.repo, [
+        'fetch',
+        'origin',
+      ]);
+      if (!fetch.ok) throw new Error(`git fetch failed: ${fetch.stderr}`);
+    }
+    for (const candidate of [`refs/remotes/origin/${target}`, `refs/heads/${target}`]) {
+      if ((await git(gitDir, ['rev-parse', '--verify', candidate])).ok) {
+        return { repositoryRoot: gitDir, baseRef: candidate };
+      }
+    }
+    throw new Error(`bound repo has no ${target} branch`);
   }
 
   /** Remove a git worktree and clean up. */
@@ -15162,6 +15233,9 @@ export class Body {
       }
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
+        // Body owns this reserved subtree as pre-provisioned detached slots,
+        // not as relay corners. It is replenished/claimed by corner-warm-pool.
+        if (entry.name === CORNER_WARM_POOL_DIR) continue;
         // The dir basename is the subchannel id (see `cornerWorktreePath`).
         const subchannelId = entry.name;
         const dir = resolve(pool, subchannelId);

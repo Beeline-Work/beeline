@@ -141,6 +141,8 @@ export type RoomViewMessage = {
     readonly permissionId: string;
     readonly requestId: string;
     readonly agent: RoomViewIdentity;
+    readonly requester: RoomViewIdentity;
+    readonly decider?: RoomViewIdentity;
     readonly tool: string;
     readonly repository?: string;
     readonly purpose?: 'squire-spending';

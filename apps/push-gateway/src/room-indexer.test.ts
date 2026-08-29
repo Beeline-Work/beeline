@@ -1104,6 +1104,94 @@ describe('RoomIndexer', () => {
     });
   });
 
+  it('keeps chat preview and read state aligned with messages amid live and terminal corner activity', async () => {
+    const terminalCorner = '5c1455f1-3690-4b35-b52b-67c7fbce64c9';
+    await postgres.query(
+      `INSERT INTO channels
+        (community_id, id, name, description, visibility, created_by, created_at, updated_at)
+       VALUES ($1, $2, 'Landed corner', 'Already shipped', 'open', $3,
+         to_timestamp(13), to_timestamp(14))`,
+      [TENANT, terminalCorner, bytes(AGENT)],
+    );
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
+       VALUES ($1, $2, $3, 'owner'), ($1, $2, $4, 'member')`,
+      [TENANT, terminalCorner, bytes(VIEWER), bytes(AGENT)],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES
+        ($1, $2, $3, to_timestamp(13), 9007, $4, '', $5, NULL),
+        ($1, $6, $7, to_timestamp(14), 30078, $8, '', $5, $9)`,
+      [
+        TENANT,
+        bytes(createHash('sha256').update('terminal-corner-generation').digest('hex')),
+        bytes(VIEWER),
+        JSON.stringify([
+          ['h', terminalCorner],
+          ['community', WORKSPACE],
+          ['parent', ROOM],
+          ['name', 'Landed corner'],
+        ]),
+        terminalCorner,
+        bytes(createHash('sha256').update('terminal-corner-state').digest('hex')),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['d', `buzz-corner-state:${terminalCorner}`],
+          ['t', 'buzz-corner-state'],
+          ['state', 'concluded'],
+        ]),
+        `buzz-corner-state:${terminalCorner}`,
+      ],
+    );
+    await postgres.query(
+      `INSERT INTO beeline_room_read_marks
+        (community_id, room_id, viewer_pubkey, message_created_at, message_id)
+       VALUES ($1, $2, $3, to_timestamp(4), $4)`,
+      [TENANT, ROOM, bytes(VIEWER), bytes(directReplyId)],
+    );
+
+    // Production Rooms accumulate many typed kind:9 lifecycle records after
+    // the last conversation message. They must not consume the bounded chat
+    // preview window or move the server-owned conversation read cursor.
+    for (let ordinal = 0; ordinal < 12; ordinal += 1) {
+      const requestId = createHash('sha256')
+        .update(`chat-list-control-request-${ordinal}`)
+        .digest('hex');
+      await postgres.query(
+        `INSERT INTO events
+          (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+         VALUES ($1, $2, $3, to_timestamp($4), 9, $5, '', $6)`,
+        [
+          TENANT,
+          bytes(createHash('sha256').update(`chat-list-control-${ordinal}`).digest('hex')),
+          bytes(AGENT),
+          20 + ordinal,
+          JSON.stringify([
+            ['h', ROOM],
+            ['t', 'agent-turn'],
+            ['request', requestId],
+            ['agent', AGENT],
+            ['status', 'complete'],
+          ]),
+          ROOM,
+        ],
+      );
+    }
+
+    const chat = (await indexer.readChats(WORKSPACE, VIEWER))?.chats.find(
+      (candidate) => candidate.room.id === ROOM,
+    );
+    expect(chat).toMatchObject({
+      latestMessage: { id: directReplyId, text: 'Ready' },
+      unread: false,
+      cornerCount: 1,
+      agentState: 'working',
+    });
+  });
+
   it('returns an exact immutable direct-message binding in the Room response', async () => {
     const directRoom = directMessageChannelId(WORKSPACE, VIEWER, AGENT);
     await postgres.query(

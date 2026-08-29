@@ -28,6 +28,30 @@ export type ChatStackRoute = {
 
 export type CornerReturnTarget = 'room-list';
 
+export type CornerOpenAction =
+  { type: 'open-corner'; cornerId: string } | { type: 'explain'; message: string };
+
+/** Resolve a visible corner action to a destination or a reader-facing reason. */
+export function cornerOpenAction(
+  subchannelId: string | undefined,
+  currentChannelId: string,
+): CornerOpenAction {
+  const cornerId = subchannelId?.trim();
+  if (!cornerId) {
+    return {
+      type: 'explain',
+      message: 'This corner has no channel address yet. Refresh the Room and try again.',
+    };
+  }
+  if (cornerId === currentChannelId) {
+    return {
+      type: 'explain',
+      message: 'This corner points to the channel already on screen.',
+    };
+  }
+  return { type: 'open-corner', cornerId };
+}
+
 /** Open a top-level Room transcript. */
 export function roomHref(channelId: string): Href {
   return { pathname: '/buzz/chat/[channelId]', params: { channelId } } as unknown as Href;
@@ -116,7 +140,9 @@ export function chatBackAction(
   }
   if (parentChannelId) {
     const count = popCountToParentRoom(routes, parentChannelId);
-    return count === null ? { type: 'open-room', channelId: parentChannelId } : { type: 'pop', count };
+    return count === null
+      ? { type: 'open-room', channelId: parentChannelId }
+      : { type: 'pop', count };
   }
   return routes.length > 1 ? { type: 'back' } : { type: 'room-list' };
 }

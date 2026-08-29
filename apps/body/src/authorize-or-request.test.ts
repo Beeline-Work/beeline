@@ -12,7 +12,7 @@ const scope = {
 
 function mandate(effect: 'allow' | 'approval_required' | 'deny'): ReadMandateResult {
   return {
-    schema_version: 2,
+    schema_version: 3,
     generation: { event_id: 'a'.repeat(64), generation: 7 },
     grants: [],
     defaults: [

@@ -342,8 +342,10 @@ import {
   type BeelineAgentToolName,
   type BeelineScheduleOperation,
   type CloseCornerDisposition,
+  type CornerReadResult,
   type DeliverAudience,
   type DirectToolResult,
+  type ListCornersResult,
   cornerFrozenForPendingClose,
   type ReadMandateResult,
   type RequestMandateResult,
@@ -2461,6 +2463,26 @@ export class Body {
    * before any relay/git await so concurrent authorities join the same host
    * result instead of creating competing children. */
   private openingSubchannelsByRequestId = new Map<string, Promise<SubchannelInfo>>();
+  /** Truth available while the durable child exists but its worktree/session
+   * is still being prepared. This closes the exact timeout ambiguity that a
+   * model cannot resolve from the eventual tool reply alone. */
+  private cornerOpenAttempts = new Map<
+    string,
+    {
+      roomId: string;
+      requestId: string;
+      objective: string;
+      cornerId?: string;
+      name?: string;
+    }
+  >();
+  /** One durable approval card and one decision waiter per triggering request,
+   * shared by explicit-command, ACP-permission, and first-class tool routes. */
+  private pendingCornerApprovals = new Map<
+    string,
+    Promise<{ request_id: string; event_id: string; message: string }>
+  >();
+  private startedCornerRequestIds = new Set<string>();
   /** Same synchronous claim/release shape as `inFlightRequestIds` above —
    *  `archiveSubchannel` is now retried (both from `pollMembers`'s incomplete-
    *  archive check and its own `#t=buzz-corner-close` handler), so two
@@ -3649,11 +3671,100 @@ export class Body {
       }
       return this.currentAgentToolMandate(binding.workspaceId, binding.roomId);
     }
+    if (tool === 'read_corner') return this.invokeReadCornerTool(binding, args);
+    if (tool === 'list_corners') return this.invokeListCornersTool(binding, args);
     if (tool === 'request_mandate') return this.invokeRequestMandateTool(binding, args);
     if (tool === 'open_corner') return this.invokeOpenCornerTool(binding, args);
     if (tool === 'close_corner') return this.invokeCloseCornerTool(binding, args);
     if (tool === 'schedule') return this.invokeScheduleTool(binding, args);
     return this.invokeDeliverTool(binding, args);
+  }
+
+  private cornerReadSummary(info: SubchannelInfo): NonNullable<CornerReadResult['corner']> {
+    const state = info.cornerState?.state ?? 'open';
+    return {
+      corner_id: info.subchannelId,
+      name: info.cornerName ?? info.taskDescription ?? info.featureBranch,
+      objective: info.taskDescription ?? '',
+      feature_ref: info.featureBranch,
+      state: state === 'closed' ? 'concluded' : state,
+    };
+  }
+
+  private invokeReadCornerTool(
+    binding: { channelId: string; roomId: string; workspaceId: string },
+    args: Record<string, unknown>,
+  ): CornerReadResult | DirectToolResult<never> {
+    if (Object.keys(args).length > 0) {
+      return {
+        status: 'denied',
+        code: 'invalid_arguments',
+        message: 'read_corner accepts no arguments.',
+      };
+    }
+    const request =
+      this.pendingRoomTurns.get(binding.roomId)?.request ??
+      this.subchannels.get(binding.channelId)?.request;
+    if (!request) {
+      return {
+        status: 'failed',
+        code: 'triggering_request_unavailable',
+        retryable: false,
+        message: 'This session has no triggering Room request to inspect.',
+      };
+    }
+    const info = this.liveSubchannelForRequest(binding.roomId, request.eventId);
+    if (info) {
+      return {
+        request_id: request.eventId,
+        exists: true,
+        state: this.cornerReadSummary(info).state,
+        corner: this.cornerReadSummary(info),
+      };
+    }
+    const attempt = this.cornerOpenAttempts.get(request.eventId);
+    if (attempt?.roomId === binding.roomId && attempt.cornerId) {
+      return {
+        request_id: request.eventId,
+        exists: true,
+        state: 'opening',
+        corner: {
+          corner_id: attempt.cornerId,
+          name: attempt.name ?? attempt.objective,
+          objective: attempt.objective,
+          state: 'opening',
+        },
+      };
+    }
+    return { request_id: request.eventId, exists: false, state: attempt ? 'opening' : 'not_found' };
+  }
+
+  private invokeListCornersTool(
+    binding: { channelId: string; roomId: string; workspaceId: string },
+    args: Record<string, unknown>,
+  ): ListCornersResult | DirectToolResult<never> {
+    if (Object.keys(args).length > 0) {
+      return {
+        status: 'denied',
+        code: 'invalid_arguments',
+        message: 'list_corners accepts no arguments.',
+      };
+    }
+    const corners = [...this.subchannels.values()]
+      .filter((info) => !info.archived && info.session.parentChannelId === binding.roomId)
+      .map((info) => this.cornerReadSummary(info));
+    const known = new Set(corners.map((corner) => corner.corner_id));
+    for (const attempt of this.cornerOpenAttempts.values()) {
+      if (attempt.roomId !== binding.roomId || !attempt.cornerId || known.has(attempt.cornerId))
+        continue;
+      corners.push({
+        corner_id: attempt.cornerId,
+        name: attempt.name ?? attempt.objective,
+        objective: attempt.objective,
+        state: 'opening',
+      });
+    }
+    return { corners };
   }
 
   private objectToolArg(args: Record<string, unknown>, name: string): Record<string, unknown> {
@@ -4270,25 +4381,66 @@ export class Body {
         repositoryKey,
         targetRef: roomRepo.targetBranch ?? 'refs/heads/main',
       };
+      const pending = this.pendingRoomTurns.get(binding.roomId);
+      const sourceCorner = this.subchannels.get(binding.channelId);
+      const request = pending?.request ?? sourceCorner?.request;
+      if (!request) {
+        throw new AgentToolKnownFailure(
+          'triggering_request_unavailable',
+          'open_corner requires a triggering human Room request.',
+        );
+      }
+      const directlyAuthorized = await this.requesterCanOpenCornerDirectly(
+        binding.roomId,
+        request.authorPubkey,
+      );
+      const readMandate = async () => {
+        const mandate = await this.currentAgentToolMandate(
+          binding.workspaceId,
+          binding.roomId,
+          scope,
+        );
+        return directlyAuthorized
+          ? {
+              ...mandate,
+              grants: [
+                ...mandate.grants,
+                {
+                  action: 'corner.open' as const,
+                  scope,
+                  source: 'default' as const,
+                  event_id: mandate.generation.event_id,
+                },
+              ],
+            }
+          : mandate;
+      };
       return await this.agentToolKernel.authorizeOrRequest<{
         corner_id: string;
         feature_ref: string;
       }>({
         action: 'corner.open',
         scope,
-        dedupKey: this.agentToolDedupKey(binding.channelId, 'open_corner', objective),
-        readMandate: () => this.currentAgentToolMandate(binding.workspaceId, binding.roomId, scope),
+        dedupKey: this.agentToolDedupKey(binding.roomId, 'open_corner', request.eventId),
+        readMandate,
         execute: async () => {
-          const pending = this.pendingRoomTurns.get(binding.roomId);
-          const sourceCorner = this.subchannels.get(binding.channelId);
-          const request = pending?.request ?? sourceCorner?.request;
-          const info = request
-            ? await this.openSubchannelForRequest(binding.roomId, roomRepo, objective, request, {
-                objective,
-              })
-            : await this.openSubchannel(binding.roomId, roomRepo, objective, request, {
-                objective,
-              });
+          const info = await this.openSubchannelForRequest(
+            binding.roomId,
+            roomRepo,
+            objective,
+            request,
+            { objective },
+          );
+          this.startCornerTaskOnce(
+            info,
+            objective,
+            cornerOpenTaskPrompt(info.taskDescription, objective),
+            {
+              requestId: request.eventId,
+              originalRequestId: request.eventId,
+              cause: 'corner-opening',
+            },
+          );
           const receipt = await this.publishAgentToolReceipt({
             channelId: binding.roomId,
             tool: 'open_corner',
@@ -4305,12 +4457,15 @@ export class Body {
             result: { corner_id: info.subchannelId, feature_ref: info.featureBranch },
           };
         },
-        requestApproval: async () => {
-          throw new AgentToolKnownFailure(
-            'approval_unavailable',
-            'Corner opening is not requestable.',
-          );
-        },
+        requestApproval: () =>
+          this.requestCornerApproval({
+            roomId: binding.roomId,
+            workspaceId: binding.workspaceId,
+            roomRepo,
+            request,
+            objective,
+            tool: 'open_corner',
+          }),
       });
     } catch (error) {
       return this.agentToolFailure(error);
@@ -6422,12 +6577,48 @@ export class Body {
     if (existing) return Promise.resolve(existing);
     const inFlight = this.openingSubchannelsByRequestId.get(request.eventId);
     if (inFlight) return inFlight;
-    const open = options
-      ? this.openSubchannel(tlcChannelId, roomRepo, intent, request, options)
-      : this.openSubchannel(tlcChannelId, roomRepo, intent, request);
+    const objective =
+      options?.objective?.trim().slice(0, 320) ||
+      taskDescriptionFromCornerRequest(intent).slice(0, 320);
+    const attempt: {
+      roomId: string;
+      requestId: string;
+      objective: string;
+      cornerId?: string;
+      name?: string;
+    } = { roomId: tlcChannelId, requestId: request.eventId, objective };
+    this.cornerOpenAttempts.set(request.eventId, attempt);
+    const open = this.openSubchannel(tlcChannelId, roomRepo, intent, request, {
+      ...options,
+      onCreated: (cornerId, name, createdObjective) => {
+        attempt.cornerId = cornerId;
+        attempt.name = name;
+        attempt.objective = createdObjective;
+      },
+    }).catch(async (error) => {
+      if (attempt.cornerId && !this.subchannels.has(attempt.cornerId)) {
+        await archiveChannel(this.agentIdentity, attempt.cornerId).catch(() => undefined);
+        await postControlMessage(
+          tlcChannelId,
+          this.agentIdentity,
+          `Corner for ${attempt.objective || 'the requested task'} could not start and was closed.`,
+          [
+            ['subchannel', attempt.cornerId],
+            ['request', request.eventId],
+            ['requester', request.authorPubkey],
+            ['status', 'closed'],
+            ['reason', 'kickoff-failed'],
+          ],
+        ).catch(() => undefined);
+      }
+      throw error;
+    });
     const opening = open.finally(() => {
       if (this.openingSubchannelsByRequestId.get(request.eventId) === opening) {
         this.openingSubchannelsByRequestId.delete(request.eventId);
+      }
+      if (this.cornerOpenAttempts.get(request.eventId) === attempt) {
+        this.cornerOpenAttempts.delete(request.eventId);
       }
     });
     this.openingSubchannelsByRequestId.set(request.eventId, opening);
@@ -6451,7 +6642,11 @@ export class Body {
     roomRepo: BoundRepo,
     intent?: string,
     request?: ChannelTaskRequest,
-    options?: { objective?: string; mission?: MissionCornerAuthority },
+    options?: {
+      objective?: string;
+      mission?: MissionCornerAuthority;
+      onCreated?: (cornerId: string, name: string, objective: string) => void;
+    },
   ): Promise<SubchannelInfo> {
     // Pick up an owner-confirmed target-branch change for a newly opened corner.
     const freshRoomRepo = this.refreshRepositoryTruth
@@ -6508,10 +6703,11 @@ export class Body {
           items: generated.plan.items,
         }
       : undefined;
-    const fallbackTitle = cornerTitleFromTask(statedTask || taskDescription);
-    const fallbackSlug = slugifyCornerTask(fallbackTitle);
-    const taskSlug = generated ? slugifyCornerTask(generated.title) || fallbackSlug : fallbackSlug;
-    const cornerName = generated?.title ?? fallbackTitle;
+    // One semantic source owns the objective, visible name, and feature ref.
+    // A model-generated plan may enrich execution, but it cannot name a
+    // different task from the objective the person approved.
+    const cornerName = cornerTitleFromTask(taskDescription);
+    const taskSlug = slugifyCornerTask(cornerName);
     const openingHumanPubkey = request?.authorPubkey ?? this.bodyIdentity.publicKey;
     const subchannelId = await createAgentSubchannel(
       agentId,
@@ -6520,20 +6716,46 @@ export class Body {
       openingHumanPubkey,
       communityId ?? undefined,
       taskDescription || undefined,
-      options?.mission
-        ? [
-            ['mission', options.mission.missionId],
-            ['grant', options.mission.grantEventId],
-            ['controller-agent', options.mission.controllerAgentPubkey],
-            ['principal', options.mission.principalPubkey],
-            ['target-agent', options.mission.targetAgentPubkey],
-            ['mission-workspace', options.mission.workspaceId],
-            ['mission-room', options.mission.roomId],
-            ['mission-repo', options.mission.repository.key],
-            ['mission-ref', options.mission.repository.targetBranch],
-          ]
-        : [],
+      [
+        ...(request
+          ? [
+              ['request', request.eventId],
+              ['requester', request.authorPubkey],
+            ]
+          : []),
+        ...(options?.mission
+          ? [
+              ['mission', options.mission.missionId],
+              ['grant', options.mission.grantEventId],
+              ['controller-agent', options.mission.controllerAgentPubkey],
+              ['principal', options.mission.principalPubkey],
+              ['target-agent', options.mission.targetAgentPubkey],
+              ['mission-workspace', options.mission.workspaceId],
+              ['mission-room', options.mission.roomId],
+              ['mission-repo', options.mission.repository.key],
+              ['mission-ref', options.mission.repository.targetBranch],
+            ]
+          : []),
+      ],
     );
+    options?.onCreated?.(subchannelId, cornerName, taskDescription);
+    if (request) {
+      const requester =
+        request.authorAttribution?.handle ?? fallbackPersonName(request.authorPubkey);
+      await postControlMessage(
+        tlcChannelId,
+        agentId,
+        `Corner requested by @${requester.replace(/^@/, '')}: ${taskDescription || request.content.trim() || 'untitled task'}`,
+        [
+          ['subchannel', subchannelId],
+          ['request', request.eventId],
+          ['requester', request.authorPubkey],
+          ['status', 'open'],
+          ['display-status', 'starting'],
+          ['task', taskDescription],
+        ],
+      );
+    }
     // A publish acknowledgement is not membership truth. Do not create the
     // worktree or launch the coding session until the relay projection proves
     // the opening human is actually in the corner.
@@ -8216,6 +8438,17 @@ export class Body {
       requestAuthor,
     );
     if (explicitCornerWork && boundRepo && editPolicy === 'repository') {
+      if (!(await this.requesterCanOpenCornerDirectly(tlcChannelId, request.authorPubkey))) {
+        await this.requestCornerApproval({
+          roomId: tlcChannelId,
+          workspaceId: (await this.channelCommunityId(tlcChannelId)) ?? tlcChannelId,
+          roomRepo: boundRepo,
+          request,
+          objective: taskDescriptionFromCornerRequest(request.content) || request.content.trim(),
+          tool: 'open_corner',
+        });
+        return { openedCorner: false, producedReply: true };
+      }
       // Two open-a-corner commands for one piece of work must not become two
       // corners racing on two branches. See `corner-open-guard.ts` — this is
       // the live shape where a bare "@beebee open corner" fifty seconds after
@@ -8248,7 +8481,7 @@ export class Body {
       );
       const displayPrompt = request.attachments?.length ? userPrompt : request.content;
       const taskInstructions = cornerOpenTaskPrompt(info.taskDescription, displayPrompt);
-      this.startAgentTask(info, displayPrompt, taskInstructions, {
+      this.startCornerTaskOnce(info, displayPrompt, taskInstructions, {
         requestId: request.eventId,
         originalRequestId: request.eventId,
         cause: 'corner-opening',
@@ -8276,11 +8509,16 @@ export class Body {
         releaseCornerIntent(proposal),
         request,
       );
-      this.startAgentTask(info, releaseCornerPrompt(proposal), releaseCornerTaskPrompt(proposal), {
-        requestId: request.eventId,
-        originalRequestId: request.eventId,
-        cause: 'corner-opening',
-      });
+      this.startCornerTaskOnce(
+        info,
+        releaseCornerPrompt(proposal),
+        releaseCornerTaskPrompt(proposal),
+        {
+          requestId: request.eventId,
+          originalRequestId: request.eventId,
+          cause: 'corner-opening',
+        },
+      );
       return { openedCorner: true, producedReply: true };
     }
 
@@ -8915,7 +9153,7 @@ export class Body {
       try {
         const info = await this.openScheduledMissionCorner(scheduled, turn.boundRepo, turn.request);
         turn.transitionedToCorner = true;
-        this.startAgentTask(
+        this.startCornerTaskOnce(
           info,
           turn.request.content,
           cornerOpenTaskPrompt(info.taskDescription, turn.request.content),
@@ -8954,6 +9192,17 @@ export class Body {
     if (!repository) return 'reject';
     turn.permissionHandled = true;
     if (policy === 'repository' && turn.boundRepo) {
+      if (!(await this.requesterCanOpenCornerDirectly(tlcChannelId, turn.request.authorPubkey))) {
+        await this.requestCornerApproval({
+          roomId: tlcChannelId,
+          workspaceId: (await this.channelCommunityId(tlcChannelId)) ?? tlcChannelId,
+          roomRepo: turn.boundRepo,
+          request: turn.request,
+          objective: turn.request.content,
+          tool: this.permissionToolLabel(permission),
+        });
+        return 'reject';
+      }
       try {
         const info = await this.openSubchannelForRequest(
           tlcChannelId,
@@ -8962,7 +9211,7 @@ export class Body {
           turn.request,
         );
         turn.transitionedToCorner = true;
-        this.startAgentTask(
+        this.startCornerTaskOnce(
           info,
           turn.request.content,
           cornerOpenTaskPrompt(info.taskDescription, turn.request.content),
@@ -9018,6 +9267,176 @@ export class Body {
   }
 
   /** Human decision path retained for a named repository outside the Room binding. */
+  private async cornerOpenAudience(roomId: string, requesterPubkey: string): Promise<string[]> {
+    const members = await listMembers(this.agentClientContext(), roomId);
+    const candidates = members.filter(
+      (member) =>
+        member.pubkey === requesterPubkey || member.role === 'admin' || member.role === 'owner',
+    );
+    const checked = await Promise.all(
+      candidates.map(async (member) => ({
+        pubkey: member.pubkey,
+        human: !(await isRegisteredAgentIdentity(member.pubkey, this.agentRelay)),
+      })),
+    );
+    return [...new Set(checked.filter((item) => item.human).map((item) => item.pubkey))];
+  }
+
+  private async requesterCanOpenCornerDirectly(
+    roomId: string,
+    requesterPubkey: string,
+  ): Promise<boolean> {
+    const member = (await listMembers(this.agentClientContext(), roomId)).find(
+      (candidate) => candidate.pubkey === requesterPubkey,
+    );
+    return Boolean(
+      member &&
+      (member.role === 'owner' || member.role === 'admin') &&
+      !(await isRegisteredAgentIdentity(requesterPubkey, this.agentRelay)),
+    );
+  }
+
+  private requestCornerApproval(input: {
+    roomId: string;
+    workspaceId: string;
+    roomRepo: BoundRepo;
+    request: ChannelTaskRequest;
+    objective: string;
+    tool: string;
+  }): Promise<{ request_id: string; event_id: string; message: string }> {
+    const existing = this.pendingCornerApprovals.get(input.request.eventId);
+    if (existing) return existing;
+    const operation = (async () => {
+      const permissionId = randomUUID();
+      const repository = this.repoId(input.roomRepo);
+      const audience = await this.cornerOpenAudience(input.roomId, input.request.authorPubkey);
+      if (audience.length === 0) {
+        throw new AgentToolKnownFailure(
+          'approval_audience_unavailable',
+          'No eligible human is available to decide this corner request.',
+          true,
+        );
+      }
+      const requester =
+        input.request.authorAttribution?.handle ?? fallbackPersonName(input.request.authorPubkey);
+      const message =
+        `@${requester.replace(/^@/, '')} asked ${this.agentIdentity.name || 'the agent'} to open a corner for: ` +
+        input.objective;
+      const card = buildControlMessage(input.roomId, this.agentIdentity, message, [
+        ['t', WRITE_PERMISSION_REQUEST_TAG],
+        ['permission', permissionId],
+        ['request', input.request.eventId],
+        ['requester', input.request.authorPubkey],
+        ['agent', this.agentIdentity.publicKey],
+        ['tool', input.tool],
+        ['repo', repository],
+        ['objective', input.objective],
+        ['status', 'pending'],
+        ...audience.map((pubkey) => ['p', pubkey]),
+      ]);
+      await publishEvent(card, this.agentIdentity);
+      void this.finishCornerApproval({ ...input, permissionId, repository, audience }).catch(
+        (error) => console.error('[body] corner approval settlement failed:', error),
+      );
+      return { request_id: permissionId, event_id: card.id, message };
+    })();
+    this.pendingCornerApprovals.set(input.request.eventId, operation);
+    return operation;
+  }
+
+  private async finishCornerApproval(input: {
+    roomId: string;
+    workspaceId: string;
+    roomRepo: BoundRepo;
+    request: ChannelTaskRequest;
+    objective: string;
+    tool: string;
+    permissionId: string;
+    repository: string;
+    audience: string[];
+  }): Promise<void> {
+    let deciderPubkey: string | undefined;
+    const decision = await this.waitForWritePermissionDecision(
+      input.roomId,
+      input.permissionId,
+      input.request.eventId,
+      input.repository,
+      10 * 60_000,
+      {
+        allowedResponders: new Set(input.audience),
+        captureDecider: (pubkey) => {
+          deciderPubkey = pubkey;
+        },
+      },
+    );
+    const decider = deciderPubkey
+      ? (await this.roomAuthorAttributions(input.roomId, [deciderPubkey])).get(deciderPubkey)
+      : undefined;
+    const deciderHandle =
+      decider?.handle ?? (deciderPubkey ? fallbackPersonName(deciderPubkey) : 'a member');
+    if (decision === 'allow') {
+      try {
+        const info = await this.openSubchannelForRequest(
+          input.roomId,
+          input.roomRepo,
+          input.objective,
+          input.request,
+          { objective: input.objective },
+        );
+        await this.postWritePermissionStatus(
+          input.roomId,
+          input.permissionId,
+          input.request.eventId,
+          input.tool,
+          input.repository,
+          'allowed',
+          `Corner approved by @${deciderHandle.replace(/^@/, '')} — view →`,
+          info.subchannelId,
+          deciderPubkey,
+          input.request.authorPubkey,
+        );
+        this.startCornerTaskOnce(
+          info,
+          input.objective,
+          cornerOpenTaskPrompt(info.taskDescription, input.objective),
+          {
+            requestId: input.request.eventId,
+            originalRequestId: input.request.eventId,
+            cause: 'corner-opening',
+          },
+        );
+      } catch (error) {
+        await this.postWritePermissionStatus(
+          input.roomId,
+          input.permissionId,
+          input.request.eventId,
+          input.tool,
+          input.repository,
+          'failed',
+          `Corner approved by @${deciderHandle.replace(/^@/, '')}, but it could not start: ${this.safePermissionFailure(error)}`,
+          undefined,
+          deciderPubkey,
+          input.request.authorPubkey,
+        );
+      }
+      return;
+    }
+    await this.postWritePermissionStatus(
+      input.roomId,
+      input.permissionId,
+      input.request.eventId,
+      input.tool,
+      input.repository,
+      decision === 'deny' ? 'denied' : 'expired',
+      decision === 'deny'
+        ? `Corner denied by @${deciderHandle.replace(/^@/, '')}.`
+        : 'The corner request expired without a decision.',
+      undefined,
+      deciderPubkey,
+      input.request.authorPubkey,
+    );
+  }
+
   private async requestEditCornerApproval(input: {
     tlcChannelId: string;
     turn: PendingRoomTurn;
@@ -9029,24 +9448,53 @@ export class Body {
   }): Promise<void> {
     const { tlcChannelId, turn, repository, tool, objective, namedTarget, pendingMessage } = input;
     const permissionId = randomUUID();
-    await postControlMessage(tlcChannelId, this.agentIdentity, pendingMessage, [
-      ['t', WRITE_PERMISSION_REQUEST_TAG],
-      ['permission', permissionId],
-      ['request', turn.request.eventId],
-      ['requester', turn.request.authorPubkey],
-      ['agent', this.agentIdentity.publicKey],
-      ['p', this.agentIdentity.publicKey],
-      ['tool', tool],
-      ['repo', repository],
-      ['status', 'pending'],
-    ]);
+    const audience = await this.cornerOpenAudience(tlcChannelId, turn.request.authorPubkey);
+    if (audience.length === 0) {
+      throw new AgentToolKnownFailure(
+        'approval_audience_unavailable',
+        'No eligible human is available to decide this corner request.',
+        true,
+      );
+    }
+    const requester =
+      turn.request.authorAttribution?.handle ?? fallbackPersonName(turn.request.authorPubkey);
+    await postControlMessage(
+      tlcChannelId,
+      this.agentIdentity,
+      `@${requester.replace(/^@/, '')} asked ${this.agentIdentity.name || 'the agent'} to open a corner for: ${objective || pendingMessage}`,
+      [
+        ['t', WRITE_PERMISSION_REQUEST_TAG],
+        ['permission', permissionId],
+        ['request', turn.request.eventId],
+        ['requester', turn.request.authorPubkey],
+        ['agent', this.agentIdentity.publicKey],
+        ...audience.map((pubkey) => ['p', pubkey]),
+        ['tool', tool],
+        ['repo', repository],
+        ['objective', objective],
+        ['status', 'pending'],
+      ],
+    );
 
+    let deciderPubkey: string | undefined;
     const decision = await this.waitForWritePermissionDecision(
       tlcChannelId,
       permissionId,
       turn.request.eventId,
       repository,
+      10 * 60_000,
+      {
+        allowedResponders: new Set(audience),
+        captureDecider: (pubkey) => {
+          deciderPubkey = pubkey;
+        },
+      },
     );
+    const decider = deciderPubkey
+      ? (await this.roomAuthorAttributions(tlcChannelId, [deciderPubkey])).get(deciderPubkey)
+      : undefined;
+    const deciderHandle =
+      decider?.handle ?? (deciderPubkey ? fallbackPersonName(deciderPubkey) : 'a member');
     if (decision === 'allow') {
       try {
         const boundRepo =
@@ -9072,12 +9520,14 @@ export class Body {
           tool,
           repository,
           'allowed',
-          `Editing ${repository} is isolated in the new corner. Open it to follow the work.`,
+          `Corner approved by @${deciderHandle.replace(/^@/, '')} — view →`,
           info.subchannelId,
+          deciderPubkey,
+          turn.request.authorPubkey,
         ).catch((statusError) =>
           console.error('[body] failed to publish direct corner navigation:', statusError),
         );
-        this.startAgentTask(
+        this.startCornerTaskOnce(
           info,
           objective,
           cornerOpenTaskPrompt(info.taskDescription, objective),
@@ -9096,7 +9546,10 @@ export class Body {
           tool,
           repository,
           'failed',
-          `Could not open an edit corner on ${repository}: ${detail}`,
+          `Corner approved by @${deciderHandle.replace(/^@/, '')}, but it could not start: ${detail}`,
+          undefined,
+          deciderPubkey,
+          turn.request.authorPubkey,
         ).catch(() => undefined);
       }
       return;
@@ -9109,7 +9562,10 @@ export class Body {
         tool,
         repository,
         'denied',
-        `Editing ${repository} was denied. The Agent remains read-only.`,
+        `Corner denied by @${deciderHandle.replace(/^@/, '')}.`,
+        undefined,
+        deciderPubkey,
+        turn.request.authorPubkey,
       );
       return;
     }
@@ -9121,6 +9577,9 @@ export class Body {
       repository,
       'expired',
       `The edit request for ${repository} expired. The Agent remains read-only.`,
+      undefined,
+      undefined,
+      turn.request.authorPubkey,
     );
   }
 
@@ -9535,15 +9994,19 @@ export class Body {
     status: 'allowed' | 'denied' | 'expired' | 'failed',
     message: string,
     subchannelId?: string,
+    deciderPubkey?: string,
+    requesterPubkey?: string,
   ): Promise<void> {
     return postControlMessage(tlcChannelId, this.agentIdentity, message, [
       ['t', WRITE_PERMISSION_REQUEST_TAG],
       ['permission', permissionId],
       ['request', requestId],
+      ...(requesterPubkey ? [['requester', requesterPubkey]] : []),
       ['agent', this.agentIdentity.publicKey],
       ['tool', tool],
       ['repo', repository],
       ['status', status],
+      ...(deciderPubkey ? [['decider', deciderPubkey]] : []),
       ...(subchannelId ? [['subchannel', subchannelId]] : []),
     ]);
   }
@@ -9564,7 +10027,11 @@ export class Body {
     requestId: string,
     repository: string,
     timeoutMs = 10 * 60_000,
-    options: { ownerOnly?: boolean } = {},
+    options: {
+      ownerOnly?: boolean;
+      allowedResponders?: ReadonlySet<string>;
+      captureDecider?: (pubkey: string) => void;
+    } = {},
   ): Promise<'allow' | 'deny' | 'timeout'> {
     const startedAt = Math.floor(Date.now() / 1000) - 1;
     const deadline = Date.now() + timeoutMs;
@@ -9582,10 +10049,19 @@ export class Body {
       const member = (await listMembers(this.agentClientContext(), tlcChannelId)).find(
         (candidate) => candidate.pubkey === event.pubkey,
       );
-      if (!member || (options.ownerOnly && member.role !== 'owner')) return undefined;
+      if (
+        !member ||
+        (options.ownerOnly && member.role !== 'owner') ||
+        (options.allowedResponders && !options.allowedResponders.has(event.pubkey))
+      )
+        return undefined;
       if (await isRegisteredAgentIdentity(event.pubkey, this.agentRelay)) return undefined;
       const decision = tagValue(event, 'decision');
-      return decision === 'allow' || decision === 'deny' ? decision : undefined;
+      if (decision === 'allow' || decision === 'deny') {
+        options.captureDecider?.(event.pubkey);
+        return decision;
+      }
+      return undefined;
     };
 
     return new Promise<'allow' | 'deny' | 'timeout'>((resolvePromise, rejectPromise) => {
@@ -9609,6 +10085,7 @@ export class Body {
       };
 
       const timer = setTimeout(() => finish('timeout'), Math.max(0, deadline - Date.now()));
+      timer.unref?.();
 
       const pollOnce = async () => {
         if (settled || backstopRunning) return;
@@ -9779,6 +10256,17 @@ export class Body {
   }
 
   /** Start the requested work without blocking discovery/UI updates. */
+  private startCornerTaskOnce(
+    info: SubchannelInfo,
+    prompt: string,
+    taskInstructions: string,
+    attribution: ModelTurnAttribution,
+  ): void {
+    if (this.startedCornerRequestIds.has(attribution.requestId)) return;
+    this.startedCornerRequestIds.add(attribution.requestId);
+    this.startAgentTask(info, prompt, taskInstructions, attribution);
+  }
+
   private startAgentTask(
     info: SubchannelInfo,
     prompt: string,

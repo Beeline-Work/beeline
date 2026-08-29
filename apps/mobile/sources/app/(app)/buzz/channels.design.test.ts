@@ -90,4 +90,14 @@ describe('Room list layout contract', () => {
     expect(source).not.toContain('changes</Text>');
     expect(source).toContain("cornerCount ? ` · ${cornerCount}` : ''");
   });
+
+  it('gives every Room with live corners an inline expansion and navigation affordance', () => {
+    expect(source).toContain('item.cornerCount > 0 && (');
+    expect(source).toContain('accessibilityState={{ expanded }}');
+    expect(source).toContain('testID={`room-corners-toggle-${item.room.id}`}');
+    expect(source).toContain('testID={`room-corners-${item.room.id}`}');
+    expect(source).toContain('testID={`room-corner-${corner.corner.id}`}');
+    expect(source).toContain("'room-list',");
+    expect(source).toContain('<Text style={styles.cornerStatus}>{status}</Text>');
+  });
 });

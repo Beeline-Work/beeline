@@ -260,6 +260,9 @@ function messagePermission(value: unknown): boolean {
     item.requestId.length > 0 &&
     identity(item.agent) &&
     item.agent.kind === 'agent' &&
+    identity(item.requester) &&
+    item.requester.kind === 'human' &&
+    (item.decider === undefined || (identity(item.decider) && item.decider.kind === 'human')) &&
     typeof item.tool === 'string' &&
     item.tool.length > 0 &&
     optionalString(item.repository) &&

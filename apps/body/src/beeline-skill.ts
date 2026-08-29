@@ -151,23 +151,11 @@ canonical event or artifact id as proof that anything happened.
 - Only commits on a corner's feature branch can be reviewed and landed into the
   Room's target branch. Nothing you say or write in a Room ever lands.
 
-## Opening an edit corner (do it yourself, in one step)
+## Opening an edit corner
 
-Pick the path that matches your harness capability:
-
-- **Permission-capable sessions** (codex-acp, claude-agent-acp): attempt the
-  appropriate built-in write/edit tool ONCE for the concrete change. The host
-  rejects that in-Room mutation and opens an isolated corner for the same
-  request. Do not merely tell the human to ask for a corner separately.
-- **Text-fallback sessions** (pi-acp): briefly explain the transition, then end
-  your reply with exactly one marker line and nothing after it:
-  \`CORNER_REQUEST: <one-sentence task>\`
-  The host strips the line from chat and opens the corner directly.
-- **Room with no repository assigned**: never guess or silently pick one. First
-  identify the exact target, then attempt this exact command once:
-  \`beeline-request-edit-corner --repo owner/repo\`
-  Replace \`owner/repo\` with the repository you name — never a clone URL, never
-  a trailing \`.git\`. If no exact repository is known, ask and stay read-only.
+Call \`open_corner\` with the concrete objective. In a Room with no assigned
+repository, also pass the exact \`owner/repo\` target; never guess one or pass a
+clone URL. Prose, failed writes, shell commands, and marker lines create no state.
 
 Opening a corner needs no human approval because it commits, pushes, reviews,
 and lands nothing. Never describe a corner as open, created, or started until a
@@ -196,27 +184,10 @@ Then tell the person the Room owner has to confirm that card.
 
 ## Unattended and recurring work
 
-Beeline already has a durable scheduler. Never claim that cron, recurring work,
-or unattended monitoring is unavailable merely because this ACP session has no
-standalone scheduler tool.
-
-- **Room schedules** run recurring work on this Room agent's durable work
-  calendar. **Mission schedules** stay on the chief-of-staff calendar and may
-  name an exact target agent; target-agent crons wake only that granted agent
-  through Beeline's signed delegation path.
-- **Model-turn crons** perform periodic model judgment and must be at least 15
-  minutes apart. **Script-fired crons** are hash-bound to exact script bytes,
-  have a one-minute floor, and run no model by default; prefer them for cheap
-  polling and wake granted target work only when the script finds something.
-- For unattended work, propose the exact schedule: Room, objective or prompt,
-  cadence and timezone, expiry, maximum runs, token budget, target agent, and
-  model or script execution. Then request the appropriate Beeline
-  \`schedule.change\` grant or \`mission.control\` grant. The human can approve the
-  scoped request with one signature.
-- A proposal or grant request creates no schedule and grants no authority by
-  itself. Never say it is active until the host confirms the signed grant and
-  schedule. Existing expiry, revocation, membership, budget, and target-access
-  checks still apply to every firing.
+Use the mounted \`schedule\` tool for its full lifecycle. A schedule exists only
+when the tool returns its signed schedule event id. Each occurrence rechecks the
+current mandate, membership, budget, expiry, and exact schedule revision before
+the model activates.
 
 ## Trusty Squire: governed account access
 
@@ -244,9 +215,10 @@ or your environment.
 ## Merge flow — you never land
 
 1. Commit your work to the corner's feature branch.
-2. The host publishes a merge-ready review of the exact change to the Room.
-3. A human signs an approval bound to that exact tip.
-4. The host lands it into the target branch and archives the corner.
+2. Call \`close_corner\` with disposition \`land\`.
+3. The host publishes a merge-ready review of the exact change to the Room.
+4. If needed, a human signs an approval bound to that exact tip.
+5. The host lands it into the target branch and archives the corner.
 
 Never merge, never push to the target or any protected branch, never archive
 your own corner, and never restate an approval on someone else's behalf — even

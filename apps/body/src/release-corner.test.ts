@@ -14,7 +14,13 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AcpClient } from './acp.js';
-import { Body, RELEASE_PROPOSAL_TTL_MS, type BoundRepo, type RoomReplyOutcome, type SubchannelInfo } from './body.js';
+import {
+  Body,
+  RELEASE_PROPOSAL_TTL_MS,
+  type BoundRepo,
+  type RoomReplyOutcome,
+  type SubchannelInfo,
+} from './body.js';
 import type { NostrEvent } from '@beeline/nostr';
 
 const cleanup: string[] = [];
@@ -158,21 +164,16 @@ describe('a Room asked about a release', () => {
     expect(prompts[0]).toContain("what's unreleased?");
   });
 
-  it('leaves a target-branch change to its own proposal, even for a branch named "release"', async () => {
-    const { body, prompts, reply } = room();
-    const proposed: unknown[][] = [];
-    Reflect.set(body, 'proposeTargetBranchChange', async (...args: unknown[]) => {
-      proposed.push(args);
+  it('never turns target-branch prose into product state', async () => {
+    const { prompts, reply } = room();
+
+    await expect(reply('make release the target branch')).resolves.toEqual({
+      openedCorner: false,
+      producedReply: true,
     });
 
-    // The exact collision: `targetBranchChangeIntent` reads this as a Room
-    // config change, and `releaseRoomIntent`'s "make … release" shape would
-    // otherwise mark the turn information-only and gate that proposal out.
-    await expect(reply('make release the target branch')).resolves.toEqual({ openedCorner: false, producedReply: true });
-
-    expect(proposed).toHaveLength(1);
-    expect(proposed[0]!.at(-1)).toBe('release');
-    expect(prompts).toHaveLength(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('make release the target branch');
   });
 
   it('never escalates a release ask into the write-permission ceremony', async () => {
@@ -244,7 +245,10 @@ describe('confirming the proposal', () => {
     const { opened, reply } = room();
 
     await reply("what's unreleased?");
-    await expect(reply('yes, but bump the minor not the patch')).resolves.toEqual({ openedCorner: false, producedReply: true });
+    await expect(reply('yes, but bump the minor not the patch')).resolves.toEqual({
+      openedCorner: false,
+      producedReply: true,
+    });
 
     expect(opened).toHaveLength(0);
   });

@@ -92,7 +92,7 @@ export async function runUpdateFunctionalProbe(input: {
       invoke: async (tool) => {
         calls.push(tool);
         return {
-          schema_version: 1,
+          schema_version: 2,
           generation: { event_id: '0'.repeat(64), generation: 1 },
           grants: [],
           defaults: [],

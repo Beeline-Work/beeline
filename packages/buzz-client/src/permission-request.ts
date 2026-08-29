@@ -152,14 +152,7 @@ export type PermissionScope =
       scheduleId: string;
       revisionDigest: string;
     }
-  | MissionControlScope
-  | {
-      type: 'delegation.escalate';
-      delegationId: string;
-      extraTurns: number;
-      extraReservedTokens: number;
-      permittedAgentPubkeys: string[];
-    };
+  | MissionControlScope;
 
 export type PermissionScopeType = PermissionScope['type'];
 export type PermissionAudience = 'admin' | 'owner';
@@ -198,7 +191,6 @@ export interface PermissionRequestV1 {
   provenance: {
     immediateTurnEventId: string;
     rootEventId: string;
-    delegationId?: string;
     scheduleRunId?: string;
   };
   requestedAt: number;
@@ -357,16 +349,6 @@ export const PERMISSION_SCOPE_REGISTRY: Readonly<
     maximumGrantTtlSeconds: MAX_PERMISSION_GRANT_TTL_SECONDS,
     defaultMaxUses: 50_000,
     defaultRateWindowSeconds: 24 * 60 * 60,
-    executor: 'body',
-    tier: tierOne,
-  },
-  'delegation.escalate': {
-    type: 'delegation.escalate',
-    minimumRole: 'admin',
-    defaultGrantTtlSeconds: 30 * 60,
-    maximumGrantTtlSeconds: 24 * 60 * 60,
-    defaultMaxUses: 1,
-    defaultRateWindowSeconds: 60 * 60,
     executor: 'body',
     tier: tierOne,
   },
@@ -781,27 +763,6 @@ export function parsePermissionScope(value: unknown): PermissionScope | undefine
         land: input.land,
       };
     }
-    case 'delegation.escalate': {
-      const delegationId = protocolId(input.delegationId);
-      const extraTurns = integer(input.extraTurns, 1, 1_000);
-      const extraReservedTokens = integer(input.extraReservedTokens, 0);
-      const permittedAgentPubkeys = uniqueStrings(input.permittedAgentPubkeys, pubkey, 64);
-      if (
-        !delegationId ||
-        extraTurns === undefined ||
-        extraReservedTokens === undefined ||
-        !permittedAgentPubkeys
-      ) {
-        return undefined;
-      }
-      return {
-        type: input.type,
-        delegationId,
-        extraTurns,
-        extraReservedTokens,
-        permittedAgentPubkeys,
-      };
-    }
     default:
       return undefined;
   }
@@ -939,8 +900,6 @@ function parseRequestContent(value: unknown): PermissionRequestV1 | undefined {
     provenance && typeof provenance.rootEventId === 'string' && HEX_64.test(provenance.rootEventId)
       ? provenance.rootEventId
       : undefined;
-  const delegationId =
-    provenance?.delegationId === undefined ? undefined : protocolId(provenance.delegationId);
   const scheduleRunId =
     provenance?.scheduleRunId === undefined ? undefined : token(provenance.scheduleRunId);
   const requestedAt = integer(input?.requestedAt);
@@ -957,7 +916,6 @@ function parseRequestContent(value: unknown): PermissionRequestV1 | undefined {
     !provenance ||
     !immediateTurnEventId ||
     !rootEventId ||
-    (provenance.delegationId !== undefined && !delegationId) ||
     (provenance.scheduleRunId !== undefined && !scheduleRunId) ||
     requestedAt === undefined ||
     requestExpiresAt === undefined ||
@@ -980,7 +938,6 @@ function parseRequestContent(value: unknown): PermissionRequestV1 | undefined {
     provenance: {
       immediateTurnEventId,
       rootEventId,
-      ...(delegationId ? { delegationId } : {}),
       ...(scheduleRunId ? { scheduleRunId } : {}),
     },
     requestedAt,

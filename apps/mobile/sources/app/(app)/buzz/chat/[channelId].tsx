@@ -141,7 +141,7 @@ import {
 } from '@/components/buzz/OwnerGrantNeededCard';
 import {
   isPinnedCornerLive,
-  isPinnedCornerReadyForReview,
+  pinnedCornerVerb,
   selectPinnedCorner,
 } from '@/buzz/room-indicators';
 import { displayCornerTitle } from '@/buzz/room-list-row';
@@ -1670,11 +1670,7 @@ export default function BuzzChat() {
       pinnedCorner.cornerId,
     );
     const live = isPinnedCornerLive(pinnedCorner.status);
-    const verb = isPinnedCornerReadyForReview(pinnedCorner.status)
-      ? 'ready for review'
-      : live
-        ? 'active'
-        : 'needs attention';
+    const verb = pinnedCornerVerb(pinnedCorner.status);
     return {
       label: named(subject, verb, target),
       live,

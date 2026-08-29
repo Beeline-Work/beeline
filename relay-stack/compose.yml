@@ -105,18 +105,11 @@ services:
       PORT: '8788'
       BUZZY_PUSH_HOST: 0.0.0.0
       BUZZY_PUSH_DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
-      BUZZY_PUSH_SA_FILE: /run/secrets/buzzy-fcm-service-account.json
-      BUZZY_PUSH_REGISTRY_FILE: /var/lib/buzzy-push/registrations.json
       BUZZY_INDEXER_PUBLIC_ORIGIN: ${BUZZY_INDEXER_PUBLIC_ORIGIN:-http://127.0.0.1:${BUZZ_HTTP_PORT:-3010}}
-      XDG_STATE_HOME: ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}
-      BEELINE_EVENTS_STATE_DIR: /var/lib/beeline-events
-      BEELINE_GITHUB_APP_ID: ${BEELINE_GITHUB_APP_ID:-1}
-      BEELINE_GITHUB_APP_PRIVATE_KEY: ${BEELINE_GITHUB_APP_PRIVATE_KEY:-development-only}
-    volumes:
-      - ${BUZZY_PUSH_SA_HOST_FILE:-/home/lunchbox/buzzy-push-gateway/secrets/fcm-service-account.json}:/run/secrets/buzzy-fcm-service-account.json:ro
-      - ${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}:/var/lib/buzzy-push
-      - ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}:ro
-      - ${BEELINE_EVENTS_HOST_STATE_DIR:-/home/lunchbox/.local/state/beeline/events}:/var/lib/beeline-events
+      # This stack is strictly local: serve RoomView reads without mounting
+      # operator credentials or tailing a developer's daemon runtime state.
+      BUZZY_MATERIALIZER_DISABLE_PUSH_DELIVERY: 'true'
+      BUZZY_MATERIALIZER_DISABLE_REPOSITORY_EVENTS: 'true'
     depends_on:
       postgres:
         condition: service_healthy

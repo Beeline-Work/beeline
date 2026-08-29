@@ -1582,3 +1582,101 @@ describe('RoomRuntimeCoordinator archived Room', () => {
     expect(isArchivedChannelError(new Error('socket hang up'))).toBe(false);
   });
 });
+
+describe('RoomRuntimeCoordinator agent soul freshness', () => {
+  function runtimeNoRooms(name: string): AgentRuntimeRecord {
+    const agent = storedIdentity(`${name}-agent`);
+    const body = storedIdentity(`${name}-body`);
+    return {
+      version: 2,
+      communityId: '22222222-2222-4222-8222-222222222222',
+      pairedBy: 'a'.repeat(64),
+      agent: agent.stored,
+      body: body.stored,
+      rooms: [],
+      supervisorRoot: '/tmp/beeline-soul-freshness-test',
+      relayBaseUrl: 'http://relay.test',
+      agentBinary: '/bin/true',
+      mcpBinary: '/bin/true',
+      createdAt: new Date(0).toISOString(),
+    };
+  }
+
+  function coordinatorHarness(runtime: AgentRuntimeRecord) {
+    const supervisor = new RoomRuntimeCoordinator(
+      runtime,
+      `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
+      {} as BodyConfig,
+    ) as unknown as {
+      running: Map<string, { body: { refreshPersonaForSoulUpdate: () => Promise<void> } }>;
+      refreshPersonaIfSoulChanged(client: {
+        listAgents: (communityId: string) => Promise<unknown[]>;
+      }): Promise<void>;
+    };
+    const refreshPersonaForSoulUpdate = vi.fn().mockResolvedValue(undefined);
+    supervisor.running.set('some-room', { body: { refreshPersonaForSoulUpdate } });
+    return { supervisor, refreshPersonaForSoulUpdate };
+  }
+
+  it('never refreshes on the first read — it only seeds the baseline', async () => {
+    const runtime = runtimeNoRooms('baseline');
+    const { supervisor, refreshPersonaForSoulUpdate } = coordinatorHarness(runtime);
+    const listAgents = vi.fn().mockResolvedValue([
+      {
+        pubkey: runtime.agent.publicKey,
+        soulProfile: { updatedAt: 100, name: 'Ox', soul: 'street dialect' },
+      },
+    ]);
+
+    await supervisor.refreshPersonaIfSoulChanged({ listAgents });
+
+    expect(refreshPersonaForSoulUpdate).not.toHaveBeenCalled();
+  });
+
+  it('forces every Room session back through activation once a newer soul is observed', async () => {
+    const runtime = runtimeNoRooms('changed');
+    const { supervisor, refreshPersonaForSoulUpdate } = coordinatorHarness(runtime);
+    const soulAt = (updatedAt: number) =>
+      vi.fn().mockResolvedValue([
+        {
+          pubkey: runtime.agent.publicKey,
+          soulProfile: { updatedAt, name: 'Ox', soul: 'a persona' },
+        },
+      ]);
+
+    await supervisor.refreshPersonaIfSoulChanged({ listAgents: soulAt(100) });
+    expect(refreshPersonaForSoulUpdate).not.toHaveBeenCalled();
+
+    // A human saves an edited soul — the next reconcile pass observes a
+    // newer `updatedAt` and must force a re-activation on every Room this
+    // daemon serves, never mid-turn (Body.refreshPersonaForSoulUpdate itself
+    // only suspends idle sessions).
+    await supervisor.refreshPersonaIfSoulChanged({ listAgents: soulAt(200) });
+    expect(refreshPersonaForSoulUpdate).toHaveBeenCalledTimes(1);
+
+    // An unchanged read on the next heartbeat must not re-trigger it.
+    await supervisor.refreshPersonaIfSoulChanged({ listAgents: soulAt(200) });
+    expect(refreshPersonaForSoulUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('tolerates a failed freshness read without losing the last-known baseline', async () => {
+    const runtime = runtimeNoRooms('resilient');
+    const { supervisor, refreshPersonaForSoulUpdate } = coordinatorHarness(runtime);
+    const soulAt = (updatedAt: number) =>
+      vi.fn().mockResolvedValue([
+        {
+          pubkey: runtime.agent.publicKey,
+          soulProfile: { updatedAt, name: 'Ox', soul: 'a persona' },
+        },
+      ]);
+
+    await supervisor.refreshPersonaIfSoulChanged({ listAgents: soulAt(100) });
+    await supervisor.refreshPersonaIfSoulChanged({
+      listAgents: vi.fn().mockRejectedValue(new Error('relay unavailable')),
+    });
+    expect(refreshPersonaForSoulUpdate).not.toHaveBeenCalled();
+
+    await supervisor.refreshPersonaIfSoulChanged({ listAgents: soulAt(200) });
+    expect(refreshPersonaForSoulUpdate).toHaveBeenCalledTimes(1);
+  });
+});

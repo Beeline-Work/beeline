@@ -378,6 +378,34 @@ describe('replaceable multi-lane reads', () => {
     unsubscribe();
     client.disconnect();
   });
+
+  it('expands multi-key d surface watches into one live REQ per exact key', async () => {
+    const client = createBuzzClient({
+      baseUrl: 'https://relay.test',
+      identity: createIdentity('multi-key-surface-subscriber'),
+      skipAuth: true,
+      WebSocketImpl: ReconnectingTestWebSocket,
+    });
+    const pending = client.surfaceSubscribe(
+      [{ kinds: [30078], '#d': ['workspace:agent-one', 'workspace:agent-two'] }],
+      () => undefined,
+    );
+
+    await vi.waitFor(() => expect(ReconnectingTestWebSocket.instances).toHaveLength(1));
+    const socket = ReconnectingTestWebSocket.instances[0]!;
+    await vi.waitFor(() =>
+      expect(socket.sent.filter((frame) => frame[0] === 'REQ')).toHaveLength(2),
+    );
+    const requests = socket.sent.filter((frame) => frame[0] === 'REQ');
+    expect(requests.map((frame) => frame[2])).toEqual([
+      { kinds: [30078], '#d': ['workspace:agent-one'] },
+      { kinds: [30078], '#d': ['workspace:agent-two'] },
+    ]);
+    for (const request of requests) socket.receive(['EOSE', request[1]]);
+    const unsubscribe = await pending;
+    unsubscribe();
+    client.disconnect();
+  });
 });
 
 describe('live Room subscriptions', () => {

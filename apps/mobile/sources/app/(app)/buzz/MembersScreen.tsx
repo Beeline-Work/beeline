@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Share, Text, TouchableOpacity, View } from 'react-native';
+import { Share, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
@@ -53,7 +53,7 @@ type MembersAction =
   | 'attach-agent'
   | 'pair-agent'
   | 'person-role'
-  | 'rename-agent'
+  | 'save-agent-soul'
   | 'remove-agent'
   | 'model-config';
 
@@ -110,6 +110,9 @@ export default function BuzzMembers() {
   const requestedAction = first(params.action);
   const [surface, setSurface] = useState<WorkspaceView | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<AgentDetailView | null>(null);
+  const [editingAgentSoul, setEditingAgentSoul] = useState(false);
+  const [agentNameDraft, setAgentNameDraft] = useState('');
+  const [agentSoulDraft, setAgentSoulDraft] = useState('');
   const [roleEditorPubkey, setRoleEditorPubkey] = useState<string | null>(null);
   const [openModelAxis, setOpenModelAxis] = useState<string | null>(null);
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -217,6 +220,7 @@ export default function BuzzMembers() {
     const generation = ++agentRequestGenerationRef.current;
     setRoleEditorPubkey(null);
     setOpenModelAxis(null);
+    setEditingAgentSoul(false);
     setError(null);
     const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
       workspaceId,
@@ -372,25 +376,27 @@ export default function BuzzMembers() {
     }
   };
 
-  const renameSelectedAgent = async () => {
+  const beginAgentSoulEdit = () => {
+    if (!selectedAgent) return;
+    const fallback = defaultAgentPersona(selectedAgent.agent.identity.pubkey);
+    setAgentNameDraft(selectedAgent.soul?.name ?? selectedAgent.agent.identity.name);
+    setAgentSoulDraft(selectedAgent.soul?.instructions ?? fallback.soul);
+    setEditingAgentSoul(true);
+  };
+
+  const saveAgentSoul = async () => {
     if (!selectedAgent || !surface?.viewer.permissions.manage || !workspaceId) return;
-    const nextName = await Modal.prompt(
-      'Rename agent',
-      'This changes the human-authored soul name everywhere in this Workspace.',
-      {
-        defaultValue: selectedAgent.agent.identity.name,
-        placeholder: 'Agent name',
-        cancelText: 'Cancel',
-        confirmText: 'Rename',
-      },
-    );
-    if (nextName === null) return;
-    const name = nextName.trim().slice(0, AGENT_NAME_MAX_LENGTH);
+    const name = agentNameDraft.trim().slice(0, AGENT_NAME_MAX_LENGTH);
+    const soul = agentSoulDraft.trim();
     if (!isReasonableAgentName(name)) {
       setError('Agent name must be a short spoken name.');
       return;
     }
-    setWorking('rename-agent');
+    if (!soul) {
+      setError('Agent soul instructions cannot be empty.');
+      return;
+    }
+    setWorking('save-agent-soul');
     setError(null);
     try {
       const pubkey = selectedAgent.agent.identity.pubkey;
@@ -398,7 +404,7 @@ export default function BuzzMembers() {
       const client = await writeClient();
       await client.setAgentSoul(workspaceId, pubkey, {
         name,
-        soul: selectedAgent.soul?.instructions ?? fallback.soul,
+        soul,
         avatarSeed: selectedAgent.soul?.avatarSeed ?? pubkey,
         ...(selectedAgent.soul?.avatar ? { avatar: selectedAgent.soul.avatar } : {}),
       });
@@ -413,8 +419,9 @@ export default function BuzzMembers() {
           ),
         ),
       ]);
+      setEditingAgentSoul(false);
     } catch (reason) {
-      setError(`Could not rename agent: ${String(reason)}`);
+      setError(`Could not save agent settings: ${String(reason)}`);
     } finally {
       setWorking(null);
     }
@@ -805,27 +812,83 @@ export default function BuzzMembers() {
               <View style={styles.detailHeading}>
                 <View style={styles.rowCopy}>
                   <Text style={styles.sectionLabel}>AGENT SETTINGS</Text>
-                  <Text style={styles.name}>{selectedAgent.agent.identity.name}</Text>
+                  <View style={styles.agentTitleRow}>
+                    <Text style={styles.name}>{selectedAgent.agent.identity.name}</Text>
+                    {canManage && (
+                      <TouchableOpacity
+                        accessibilityLabel="Edit agent settings"
+                        disabled={busy}
+                        onPress={beginAgentSoulEdit}
+                        style={styles.glyphControl}
+                        testID="edit-agent-soul"
+                      >
+                        <Text style={styles.glyphControlText}>✎</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
-                <MonoButton
-                  label="CLOSE"
-                  variant="secondary"
+                <TouchableOpacity
+                  accessibilityLabel="Close agent settings"
                   onPress={() => {
                     agentRequestGenerationRef.current += 1;
                     setSelectedAgent(null);
+                    setEditingAgentSoul(false);
                   }}
-                />
+                  style={styles.glyphControl}
+                  testID="close-agent-settings"
+                >
+                  <Text style={styles.glyphControlText}>×</Text>
+                </TouchableOpacity>
               </View>
-              {canManage && (
-                <MonoButton
-                  label={working === 'rename-agent' ? 'RENAMING' : 'RENAME AGENT'}
-                  loading={working === 'rename-agent'}
-                  disabled={busy}
-                  onPress={() => void renameSelectedAgent()}
-                  variant="secondary"
-                  testID="rename-agent"
-                />
-              )}
+              <View style={styles.soulSection}>
+                <Text style={styles.sectionLabel}>SOUL</Text>
+                {editingAgentSoul ? (
+                  <>
+                    <Text style={styles.fieldLabel}>NAME</Text>
+                    <TextInput
+                      autoCapitalize="words"
+                      editable={!busy}
+                      maxLength={AGENT_NAME_MAX_LENGTH}
+                      onChangeText={setAgentNameDraft}
+                      placeholder="Agent name"
+                      style={styles.textInput}
+                      testID="agent-soul-name"
+                      value={agentNameDraft}
+                    />
+                    <Text style={styles.fieldLabel}>PERSONA / INSTRUCTIONS</Text>
+                    <TextInput
+                      editable={!busy}
+                      maxLength={1000}
+                      multiline
+                      onChangeText={setAgentSoulDraft}
+                      placeholder="How this agent should work"
+                      style={[styles.textInput, styles.soulInput]}
+                      testID="agent-soul-instructions"
+                      value={agentSoulDraft}
+                    />
+                    <View style={styles.soulActions}>
+                      <MonoButton
+                        label="CANCEL"
+                        disabled={busy}
+                        onPress={() => setEditingAgentSoul(false)}
+                        variant="secondary"
+                      />
+                      <MonoButton
+                        label={working === 'save-agent-soul' ? 'SAVING' : 'SAVE'}
+                        loading={working === 'save-agent-soul'}
+                        disabled={busy}
+                        onPress={() => void saveAgentSoul()}
+                        testID="save-agent-soul"
+                      />
+                    </View>
+                  </>
+                ) : (
+                  <Text style={styles.soulCopy} testID="agent-soul-copy">
+                    {selectedAgent.soul?.instructions ??
+                      defaultAgentPersona(selectedAgent.agent.identity.pubkey).soul}
+                  </Text>
+                )}
+              </View>
               <View style={styles.modelSection}>
                 <Text style={styles.sectionLabel}>MODEL / EFFORT</Text>
                 {selectedAgent.catalog.length === 0 && (
@@ -1017,6 +1080,34 @@ const styles = StyleSheet.create((theme) => {
     expiry: { ...Typography.mono(), color: hull.textMuted, fontSize: 9 },
     detailPanel: { padding: 14, gap: 12 },
     detailHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    agentTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    glyphControl: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    glyphControlText: { ...Typography.default(), color: hull.textMuted, fontSize: 22 },
+    soulSection: { gap: 7 },
+    soulCopy: { ...Typography.default(), color: hull.textPrimary, fontSize: 11, lineHeight: 17 },
+    fieldLabel: {
+      ...Typography.mono('semiBold'),
+      color: hull.textMuted,
+      fontSize: 8,
+      letterSpacing: 0.7,
+    },
+    textInput: {
+      ...Typography.default(),
+      color: hull.textPrimary,
+      minHeight: 40,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.border,
+      backgroundColor: hull.bgTerminal,
+    },
+    soulInput: { minHeight: 112, textAlignVertical: 'top' },
+    soulActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
     modelSection: { gap: 8 },
     axisBlock: { borderWidth: StyleSheet.hairlineWidth, borderColor: hull.border },
     axisRow: {

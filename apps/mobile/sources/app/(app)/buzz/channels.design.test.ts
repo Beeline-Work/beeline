@@ -63,9 +63,18 @@ describe('Room list layout contract', () => {
     expect(surfaceGuardSource).toContain("typeof item.unread === 'boolean'");
     expect(surfaceGuardSource).not.toContain('item.unread === undefined');
     expect(source).toContain('const unread = item.unread;');
-    expect(source).toContain("const deckState = unread ? 'needs-you' : 'idle';");
     expect(source).toContain('<HullDeckMark state={deckState} />');
     expect(source).toContain('unread ? (');
     expect(source).toContain('unread && styles.rowUnread');
+  });
+
+  it('inherits the deck circle state from the server rollup, not unread alone', () => {
+    // Regression: a prior rebuild (#566) collapsed the circle to
+    // `unread ? 'needs-you' : 'idle'`, which could never show a live agent
+    // turn or a corner needing a human. The precedence decision lives in one
+    // pure, tested function — the screen only calls it.
+    expect(source).toContain("import { roomDeckState } from '@/buzz/room-deck-state';");
+    expect(source).toContain('const deckState = roomDeckState(item);');
+    expect(source).not.toContain("unread ? 'needs-you' : 'idle'");
   });
 });

@@ -223,6 +223,14 @@ export type ChatListItem = {
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
   readonly unread: boolean;
   readonly repositoryName?: string;
+  /**
+   * Max-severity rollup of this Room's own conversational turn and every one
+   * of its corners' current lifecycle state: `needs-you` when any corner is
+   * waiting on a human, else `working` when the Room's own turn or any
+   * corner is actively working, else absent (idle). Message `unread` is a
+   * separate, independent needs-you signal — the deck combines both.
+   */
+  readonly agentState?: 'needs-you' | 'working';
 };
 
 export type ChatListWorkspace = {

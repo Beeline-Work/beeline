@@ -5,7 +5,6 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
-const ROOM = '22222222-2222-4222-8222-222222222222';
 const VIEWER = 'a'.repeat(64);
 const AGENT = 'd'.repeat(64);
 
@@ -13,8 +12,6 @@ const route = vi.hoisted(() => ({ action: 'add-agent' as string | undefined }));
 const roomView = vi.hoisted(() => ({
   workspace: vi.fn(),
   agent: vi.fn(),
-  chats: vi.fn(),
-  room: vi.fn(),
 }));
 const share = vi.hoisted(() => vi.fn(async () => undefined));
 const clipboard = vi.hoisted(() => vi.fn(async () => undefined));
@@ -25,7 +22,6 @@ const client = vi.hoisted(() => ({
     code: 'BZA_TEST_PAIRING',
     expiresAt: 2_000_000_000,
   })),
-  attachAgentToChannel: vi.fn(async () => ({ joined: true, membershipSince: 1 })),
 }));
 
 vi.mock('expo-router', () => ({
@@ -117,8 +113,6 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   class RoomViewClient {
     workspace = roomView.workspace;
     agent = roomView.agent;
-    chats = roomView.chats;
-    room = roomView.room;
   }
   class SurfaceRefreshScheduler<T> {
     constructor(
@@ -189,28 +183,6 @@ const workspace = {
   watchFilters: [],
 };
 
-const chats = {
-  workspace: workspace.workspace,
-  chats: [
-    {
-      room: {
-        id: ROOM,
-        workspaceId: WORKSPACE,
-        name: 'Launch',
-        archived: false,
-        createdAt: 1,
-        updatedAt: 1,
-      },
-      memberCount: 2,
-      cornerCount: 0,
-      unread: false,
-    },
-  ],
-  viewer: workspace.viewer.identity,
-  truncated: false,
-  watchFilters: [],
-};
-
 async function render(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
@@ -229,41 +201,18 @@ beforeEach(() => {
   vi.clearAllMocks();
   route.action = 'add-agent';
   roomView.workspace.mockResolvedValue(workspace);
-  roomView.chats.mockResolvedValue(chats);
-  roomView.room.mockResolvedValue({ directMessage: undefined });
 });
 
 describe('Members agent invitation flow', () => {
-  it('honours the compose-menu intent and attaches a registered agent to a Room', async () => {
+  it('immediately shows one install-and-pair command, with no Room picker', async () => {
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'invite-agent-flow' })).toBeDefined();
-    await press(renderer, `invite-agent-room-${ROOM}`);
-    await press(renderer, `invite-agent-${AGENT}`);
-
-    expect(client.attachAgentToChannel).toHaveBeenCalledWith(ROOM, AGENT, WORKSPACE);
-    expect(renderer.root.findByProps({ testID: 'invite-agent-success' }).props.children).toContain(
-      'Clara',
-    );
-  });
-
-  it('offers a new-agent pairing command from the same flow', async () => {
-    const renderer = await render();
-    await press(renderer, 'pair-new-agent');
-
     expect(client.createAgentPairingCode).toHaveBeenCalledWith(WORKSPACE);
-    expect(renderer.root.findByProps({ testID: 'pair-agent-command' }).props.children).toContain(
-      'BZA_TEST_PAIRING',
+    const command = renderer.root.findByProps({ testID: 'pair-agent-command' }).props.children;
+    expect(command).toBe(
+      'curl -fsSL https://usebeeline.app/install | sh && beeline pair BZA_TEST_PAIRING',
     );
-  });
-
-  it('refuses direct messages before attempting an agent attachment', async () => {
-    roomView.room.mockResolvedValueOnce({ directMessage: { peer: { pubkey: VIEWER } } });
-    const renderer = await render();
-    await press(renderer, `invite-agent-room-${ROOM}`);
-
-    expect(renderer.root.findAllByProps({ testID: `invite-agent-${AGENT}` })).toHaveLength(0);
-    expect(client.attachAgentToChannel).not.toHaveBeenCalled();
   });
 
   it('honours the person-invite deep link without a second tap', async () => {

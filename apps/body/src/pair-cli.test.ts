@@ -172,6 +172,52 @@ describe('beeline pair — repository resolution', () => {
     expect(stderr).not.toMatch(/\n\s+at /);
   });
 
+  it('--use-env-key without an ambient key is rejected before any relay work', async () => {
+    const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const agent = await fakeModelAgent();
+
+    const { status, stderr } = runPair(
+      ['not-a-real-code', '--agent', 'custom', '--agent-command', agent, '--use-env-key'],
+      { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('--use-env-key requires BUZZ_AGENT_KEY or BUZZ_PRIVATE_KEY to be set');
+    expect(stderr).not.toContain('invalid agent pairing code');
+  });
+
+  it('--use-env-key reuses the ambient key instead of minting a fresh identity', async () => {
+    const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const agent = await fakeModelAgent();
+    const humanKey = '11'.repeat(32);
+
+    const { status, stderr } = runPair(
+      ['not-a-real-code', '--agent', 'custom', '--agent-command', agent, '--use-env-key'],
+      { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome, BUZZ_PRIVATE_KEY: humanKey } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('reusing the ambient BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY');
+    expect(stderr).not.toContain('ignores BUZZ_AGENT_KEY/BUZZ_PRIVATE_KEY');
+    expect(stderr).toContain('invalid agent pairing code');
+  });
+
+  it('rejects --use-env-key combined with --agents before any relay work', async () => {
+    const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const humanKey = '11'.repeat(32);
+
+    const { status, stderr } = runPair(
+      ['BUZZ-AAAA-AAAA', 'BUZZ-BBBB-BBBB', '--agents', 'claude,codex', '--use-env-key'],
+      { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome, BUZZ_PRIVATE_KEY: humanKey } },
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('--agents cannot be combined with --use-env-key');
+  });
+
   it('--repo bypasses the cwd git-repository check and reaches pairing-code validation', async () => {
     const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');

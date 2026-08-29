@@ -565,7 +565,10 @@ WITH workspace_candidates AS (
   GROUP BY parent.community_id, parent.id
 ), corner_states AS (
   -- Latest buzz-corner-state record per corner, normalized the same way
-  -- cornerItem() normalizes it for the standalone corners list.
+  -- cornerItem() normalizes it for the standalone corners list. Gated on
+  -- current corner membership like every other agent-authored read below: a
+  -- ghost agent (evicted key, dead or rogue daemon) must never resurrect a
+  -- WORKING dot from a stale or replayed self-signed state record.
   SELECT cc.community_id, cc.parent_id,
     (CASE WHEN raw.state = 'waiting-on-human' THEN 'waiting' ELSE raw.state END) AS state
   FROM corner_children cc
@@ -575,6 +578,9 @@ WITH workspace_candidates AS (
     FROM events e WHERE e.community_id = cc.community_id AND e.pubkey = cc.created_by
       AND e.kind = 30078 AND e.deleted_at IS NULL
       AND e.d_tag = 'buzz-corner-state:' || cc.corner_id::text
+      AND EXISTS (SELECT 1 FROM channel_members member
+        WHERE member.community_id = e.community_id AND member.channel_id = cc.corner_id
+          AND member.pubkey = e.pubkey AND member.removed_at IS NULL)
     ORDER BY e.created_at DESC, e.id DESC LIMIT 1
   ) raw ON true
 ), corner_urgency AS (
@@ -925,6 +931,11 @@ LEFT JOIN LATERAL (
     AND e.d_tag = 'buzz-corner-state:' || c.id::text AND e.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) h
       WHERE h->>0 = 'h' AND h->>1 = a.id::text)
+    -- A ghost agent (evicted key, dead or rogue daemon) never resurrects the
+    -- corner's own badge from a stale or replayed self-signed state record.
+    AND EXISTS (SELECT 1 FROM channel_members member
+      WHERE member.community_id = e.community_id AND member.channel_id = c.id
+        AND member.pubkey = e.pubkey AND member.removed_at IS NULL)
   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) state ON true
 UNION ALL
@@ -1165,6 +1176,12 @@ LEFT JOIN LATERAL (
     AND e.d_tag = 'buzz-corner-state:' || f.id::text AND e.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) h
       WHERE h->>0 = 'h' AND h->>1 = COALESCE(a.parent_id, a.id)::text)
+    -- A ghost agent (evicted key, dead or rogue daemon) never resurrects a
+    -- sibling corner's pinned/live badge from a stale or replayed self-signed
+    -- state record.
+    AND EXISTS (SELECT 1 FROM channel_members member
+      WHERE member.community_id = e.community_id AND member.channel_id = f.id
+        AND member.pubkey = e.pubkey AND member.removed_at IS NULL)
   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) state ON true
 UNION ALL

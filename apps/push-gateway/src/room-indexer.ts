@@ -544,7 +544,7 @@ WITH workspace_candidates AS (
     AND cm.channel_id = a.id AND cm.removed_at IS NULL
   GROUP BY a.community_id, a.id
 ), corner_children AS (
-  SELECT child.community_id, child.id AS corner_id, child.created_by,
+  SELECT child.community_id, child.id AS corner_id, child.created_by, child.archived_at,
     (SELECT t->>1 FROM jsonb_array_elements(generation.tags) t
       WHERE t->>0 = 'parent' LIMIT 1) AS parent_id
   FROM workspace w JOIN channels child ON child.community_id = w.community_id
@@ -558,18 +558,13 @@ WITH workspace_candidates AS (
     ORDER BY e.created_at ASC, e.id ASC LIMIT 1
   ) generation ON EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t
     WHERE t->>0 = 'parent')
-), corner_counts AS (
-  SELECT parent.community_id, parent.id AS room_id, count(*)::bigint AS corner_count
-  FROM chats parent JOIN corner_children child ON child.community_id = parent.community_id
-    AND child.parent_id = parent.id::text
-  GROUP BY parent.community_id, parent.id
 ), corner_states AS (
   -- Latest buzz-corner-state record per corner, normalized the same way
   -- cornerItem() normalizes it for the standalone corners list. Gated on
   -- current corner membership like every other agent-authored read below: a
   -- ghost agent (evicted key, dead or rogue daemon) must never resurrect a
   -- WORKING dot from a stale or replayed self-signed state record.
-  SELECT cc.community_id, cc.parent_id,
+  SELECT cc.community_id, cc.corner_id, cc.parent_id, cc.archived_at,
     (CASE WHEN raw.state = 'waiting-on-human' THEN 'waiting' ELSE raw.state END) AS state
   FROM corner_children cc
   LEFT JOIN LATERAL (
@@ -583,6 +578,18 @@ WITH workspace_candidates AS (
           AND member.pubkey = e.pubkey AND member.removed_at IS NULL)
     ORDER BY e.created_at DESC, e.id DESC LIMIT 1
   ) raw ON true
+), corner_counts AS (
+  -- Same non-terminal rule the deck applies before pinning or expanding a
+  -- corner (isCornerTerminalState, room-indicators.ts): a corner that has
+  -- concluded (landed), closed, or been archived is done work, not an open
+  -- count. A room whose corners are all terminal gets no row here at all,
+  -- so COALESCE(corners.corner_count, 0) below reads 0.
+  SELECT parent.community_id, parent.id AS room_id, count(*)::bigint AS corner_count
+  FROM chats parent JOIN corner_states cs ON cs.community_id = parent.community_id
+    AND cs.parent_id = parent.id::text
+  WHERE cs.archived_at IS NULL AND cs.state IS DISTINCT FROM 'concluded'
+    AND cs.state IS DISTINCT FROM 'closed'
+  GROUP BY parent.community_id, parent.id
 ), corner_urgency AS (
   -- Max-severity rollup of every corner's current state: a corner waiting on
   -- a human outranks one merely working, matching the deck's needs-you >

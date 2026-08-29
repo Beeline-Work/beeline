@@ -83,7 +83,7 @@ try {
         }
       }
       return {
-        schema_version: 1,
+        schema_version: 2,
         generation: { event_id: 'a'.repeat(64), generation: 1 },
         grants: [],
         defaults: [

@@ -7,11 +7,6 @@ import type {
   PermissionCapacityReservation,
   PermissionCapacityResult,
 } from './permission-runtime.js';
-import type {
-  DelegationCapacityReservation,
-  DelegationCapacityResult,
-  DelegationOutboundReservation,
-} from './delegation-runtime.js';
 
 export interface EventCursor {
   createdAt: number;
@@ -31,13 +26,6 @@ interface StoredPermissionReservation extends Omit<
   PermissionCapacityReservation,
   'usage' | 'grant'
 > {}
-
-interface StoredDelegationReservation extends DelegationCapacityReservation {}
-
-interface StoredOutboundDelegation {
-  event: NostrEvent;
-  delivered: boolean;
-}
 
 interface StoredPermissionReceipt {
   event: NostrEvent;
@@ -61,9 +49,6 @@ interface DurableBodyData {
   /** Versioned P1 trust-spine reservations. Keys are immutable signed ids. */
   factory?: {
     version: 1;
-    inboundDelegationClaims: string[];
-    inboundDelegationReservations?: Record<string, StoredDelegationReservation>;
-    outboundDelegations: Record<string, NostrEvent | StoredOutboundDelegation>;
     permissionActionClaims: string[];
     permissionReservations?: Record<string, StoredPermissionReservation>;
     permissionReceiptOutbox?: Record<string, StoredPermissionReceipt>;
@@ -244,115 +229,6 @@ export class DurableBodyState {
   }
 
   /** Atomic durable inbox and shared root/day budget linearization. */
-  async reserveDelegationInbound(
-    input: DelegationCapacityReservation,
-  ): Promise<DelegationCapacityResult> {
-    await this.load();
-    const factory = this.factory();
-    if (factory.inboundDelegationClaims.includes(input.eventId)) return 'duplicate';
-    const reservations = (factory.inboundDelegationReservations ??= {});
-    const observed = new Set(input.observedTurnEventIds);
-    const unseen = Object.values(reservations).filter(
-      (reservation) => !observed.has(reservation.eventId),
-    );
-    if (
-      input.observedRootTurns +
-        unseen.filter((reservation) => reservation.delegationId === input.delegationId).length +
-        1 >
-      input.rootMaxAgentTurns
-    )
-      return 'over-turn-budget';
-    const observedDaily = new Set(input.observedDailyTurnEventIds);
-    const sameDay = unseen.filter(
-      (reservation) =>
-        reservation.agentPubkey === input.agentPubkey &&
-        reservation.day === input.day &&
-        !observedDaily.has(reservation.eventId),
-    );
-    if (input.observedDailyCalls + sameDay.length + 1 > input.dailyMaxCalls) {
-      return 'over-turn-budget';
-    }
-    if (
-      input.observedDailyReservedTokens +
-        sameDay.reduce((sum, reservation) => sum + reservation.reservedTokens, 0) +
-        input.reservedTokens >
-      input.dailyMaxReservedTokens
-    )
-      return 'over-token-budget';
-    if (input.parentWorkItemId && input.phase === 'assign') {
-      const siblings = unseen.filter(
-        (reservation) =>
-          reservation.delegationId === input.delegationId &&
-          reservation.parentWorkItemId === input.parentWorkItemId &&
-          reservation.phase === 'assign',
-      );
-      if (
-        input.observedSiblingCount + siblings.length + 1 > (input.parentMaxChildren ?? 0) ||
-        input.observedSiblingAllocatedTurns +
-          siblings.reduce((sum, reservation) => sum + reservation.allocatedTurns, 0) +
-          input.allocatedTurns >
-          (input.parentAvailableTurns ?? 0)
-      )
-        return 'over-child-budget';
-      if (
-        input.observedSiblingAllocatedTokens +
-          siblings.reduce((sum, reservation) => sum + reservation.reservedTokens, 0) +
-          input.reservedTokens >
-        (input.parentAvailableTokens ?? 0)
-      )
-        return 'over-token-budget';
-    }
-    factory.inboundDelegationClaims.push(input.eventId);
-    factory.inboundDelegationClaims = factory.inboundDelegationClaims.slice(-MAX_FACTORY_CLAIMS);
-    reservations[input.eventId] = input;
-    for (const eventId of Object.keys(reservations)) {
-      if (!factory.inboundDelegationClaims.includes(eventId)) delete reservations[eventId];
-    }
-    await this.save();
-    return 'claimed';
-  }
-
-  async claimDelegationInbound(eventId: string): Promise<'claimed' | 'duplicate'> {
-    await this.load();
-    const factory = this.factory();
-    if (factory.inboundDelegationClaims.includes(eventId)) return 'duplicate';
-    factory.inboundDelegationClaims.push(eventId);
-    factory.inboundDelegationClaims = factory.inboundDelegationClaims.slice(-MAX_FACTORY_CLAIMS);
-    await this.save();
-    return 'claimed';
-  }
-
-  /** Reserve the exact signed event before relay publication. */
-  async reserveDelegationOutbound(event: NostrEvent): Promise<DelegationOutboundReservation> {
-    await this.load();
-    const factory = this.factory();
-    const existing = factory.outboundDelegations[event.id];
-    if (existing) {
-      if ('event' in existing) {
-        return { state: existing.delivered ? 'delivered' : 'pending', event: existing.event };
-      }
-      return { state: 'pending', event: existing };
-    }
-    factory.outboundDelegations[event.id] = { event, delivered: false };
-    const ids = Object.keys(factory.outboundDelegations);
-    for (const stale of ids.slice(0, Math.max(0, ids.length - MAX_FACTORY_CLAIMS))) {
-      delete factory.outboundDelegations[stale];
-    }
-    await this.save();
-    return { state: 'reserved', event };
-  }
-
-  async markDelegationOutboundDelivered(eventId: string): Promise<void> {
-    await this.load();
-    const existing = this.factory().outboundDelegations[eventId];
-    if (!existing) return;
-    this.factory().outboundDelegations[eventId] = {
-      event: 'event' in existing ? existing.event : existing,
-      delivered: true,
-    };
-    await this.save();
-  }
-
   async claimPermissionAction(key: string): Promise<'claimed' | 'duplicate'> {
     await this.load();
     const factory = this.factory();
@@ -505,8 +381,6 @@ export class DurableBodyState {
   private factory(): NonNullable<DurableBodyData['factory']> {
     return (this.data.factory ??= {
       version: 1,
-      inboundDelegationClaims: [],
-      outboundDelegations: {},
       permissionActionClaims: [],
     });
   }

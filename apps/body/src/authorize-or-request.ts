@@ -33,9 +33,10 @@ function safeFailure(error: unknown): DirectToolResult<never> {
   };
 }
 
-function scopeContained(grant: BeelineActionScope, requested: BeelineActionScope): boolean {
+export function scopeContained(grant: BeelineActionScope, requested: BeelineActionScope): boolean {
   if (grant.type !== requested.type) return false;
-  if (grant.workspaceId !== requested.workspaceId || grant.roomId !== requested.roomId) return false;
+  if (grant.workspaceId !== requested.workspaceId || grant.roomId !== requested.roomId)
+    return false;
   if (grant.type === 'corner.open' && requested.type === 'corner.open') {
     return (
       grant.repositoryKey === requested.repositoryKey && grant.targetRef === requested.targetRef
@@ -50,12 +51,38 @@ function scopeContained(grant: BeelineActionScope, requested: BeelineActionScope
       grant.sourceSha === requested.sourceSha
     );
   }
-  return (
-    grant.type === 'artifact.deliver' &&
-    requested.type === 'artifact.deliver' &&
-    grant.cornerId === requested.cornerId &&
-    grant.audience === requested.audience
-  );
+  if (grant.type === 'artifact.deliver' && requested.type === 'artifact.deliver') {
+    return grant.cornerId === requested.cornerId && grant.audience === requested.audience;
+  }
+  if (isScheduleScope(grant) && isScheduleScope(requested)) {
+    return (
+      grant.type === requested.type &&
+      grant.scheduleId === requested.scheduleId &&
+      grant.repositoryKey === requested.repositoryKey &&
+      grant.targetRef === requested.targetRef
+    );
+  }
+  return false;
+}
+
+function isScheduleScope(
+  scope: BeelineActionScope,
+): scope is Extract<BeelineActionScope, { type: `schedule.${string}` }> {
+  return scope.type.startsWith('schedule.');
+}
+
+export function mandateCovers(
+  mandate: ReadMandateResult,
+  action: BeelineActionToken,
+  scope: BeelineActionScope,
+): 'allow' | 'approval_required' | 'deny' {
+  if (mandate.blockers.length > 0) return 'deny';
+  if (
+    mandate.grants.some((grant) => grant.action === action && scopeContained(grant.scope, scope))
+  ) {
+    return 'allow';
+  }
+  return mandate.defaults.find((entry) => entry.action === action)?.effect ?? 'deny';
 }
 
 /**
@@ -88,10 +115,8 @@ export class AuthorizeOrRequestKernel {
     try {
       const mandate = await input.readMandate();
       const defaultFact = mandate.defaults.find((entry) => entry.action === input.action);
-      const covered = mandate.grants.some(
-        (grant) => grant.action === input.action && scopeContained(grant.scope, input.scope),
-      );
-      if (covered || defaultFact?.effect === 'allow') {
+      const coverage = mandateCovers(mandate, input.action, input.scope);
+      if (coverage === 'allow') {
         // Generation freshness is part of execution, not read_mandate advice.
         const current = await input.readMandate();
         if (
@@ -108,7 +133,7 @@ export class AuthorizeOrRequestKernel {
         const executed = await input.execute(current);
         return { status: 'executed', ...executed };
       }
-      if (defaultFact?.effect === 'approval_required') {
+      if (coverage === 'approval_required') {
         const pending = await input.requestApproval(mandate);
         return { status: 'approval_pending', ...pending };
       }
@@ -124,4 +149,3 @@ export class AuthorizeOrRequestKernel {
     }
   }
 }
-

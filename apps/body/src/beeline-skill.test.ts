@@ -15,7 +15,6 @@ import {
   usingBeelineSkillMarkdown,
 } from './beeline-skill.js';
 import { prepareRoomAgentHome } from './agent-home.js';
-import { PI_CORNER_REQUEST_INSTRUCTIONS } from './corner-request.js';
 import { roomEditPolicyInstructions } from './body.js';
 import { NAMED_REPOSITORY_PERMISSION_COMMAND } from './repository-target.js';
 import { TARGET_BRANCH_PROPOSAL_COMMAND } from './target-branch.js';
@@ -81,28 +80,20 @@ describe('the using-beeline skill content', () => {
     expect(markdown.toLowerCase()).toContain('you never land');
   });
 
-  it('reproduces the canonical corner-open paths verbatim per harness capability', () => {
+  it('uses the mounted corner and schedule tools without prose compatibility rituals', () => {
     const markdown = usingBeelineSkillMarkdown('r');
-    // Text-fallback marker, exactly as corner-request.ts defines it.
-    expect(markdown).toContain('CORNER_REQUEST: <one-sentence task>');
-    // The two host-recognized native commands, verbatim.
-    expect(markdown).toContain(`${NAMED_REPOSITORY_PERMISSION_COMMAND} --repo owner/repo`);
+    expect(markdown).toContain('Call `open_corner`');
+    expect(markdown).toContain('mounted `schedule` tool');
+    expect(markdown).not.toContain('CORNER_REQUEST');
+    expect(markdown).not.toContain(`${NAMED_REPOSITORY_PERMISSION_COMMAND} --repo owner/repo`);
     expect(markdown).toContain(`${TARGET_BRANCH_PROPOSAL_COMMAND} --branch <branch>`);
-    // Permission-capable harnesses attempt the mutating tool once.
-    expect(markdown).toContain('write/edit tool ONCE');
   });
 
-  it('documents current scheduler and mission-grant mechanics', () => {
+  it('documents current scheduler execution checks', () => {
     const markdown = usingBeelineSkillMarkdown('r');
-    expect(markdown).toContain('durable scheduler');
-    expect(markdown).toContain('`schedule.change` grant');
-    expect(markdown).toContain('`mission.control` grant');
-    expect(markdown).toContain('target-agent crons');
-    expect(markdown).toContain('**Script-fired crons**');
-    expect(markdown).toContain('one-minute floor');
-    expect(markdown).toContain('15\n  minutes apart');
-    expect(markdown).toContain('approve the\n  scoped request with one signature');
-    expect(markdown).toContain('proposal or grant request creates no schedule');
+    expect(markdown).toContain('signed schedule event id');
+    expect(markdown).toContain('Each occurrence rechecks the\ncurrent mandate');
+    expect(markdown).not.toContain('`schedule.change` grant');
   });
 
   it('teaches governed Squire access without treating a missing profile as blanket inability', () => {
@@ -193,9 +184,9 @@ describe('managed-skill materialization on session activation', () => {
       expect(lstatSync(skill).isSymbolicLink()).toBe(false);
       const generated = readFileSync(skill, 'utf8');
       expect(generated).toContain(beelineSkillReleaseStamp('release-a'));
-      expect(generated).toContain('target-agent crons');
-      expect(generated).toContain('**Script-fired crons**');
-      expect(generated).toContain('`mission.control` grant');
+      expect(generated).toContain('mounted `schedule` tool');
+      expect(generated).toContain('Each occurrence rechecks the');
+      expect(generated).not.toContain('target-agent crons');
     }
 
     // Regeneration on the next activation makes upgrades automatic.
@@ -356,19 +347,16 @@ describe('session-start capability awareness', () => {
 
   it('covers pi through the existing turn prefix, not a second control channel', () => {
     // pi-acp ignores per-home config AND session/new's systemPrompt, so its
-    // capability awareness and corner-open facts ride the existing turn prefix.
+    // capability awareness and tool facts ride the existing turn prefix.
     expect(beelineCapabilityContextForHarness('pi-acp').compatibilityTurnPrefix).toBe(
       BEELINE_CAPABILITIES_PRIMER,
     );
     const piLines = roomEditPolicyInstructions('repository', 'pi-acp');
-    for (const line of PI_CORNER_REQUEST_INSTRUCTIONS) {
-      expect(piLines).toContain(line);
-    }
+    expect(piLines.join('\n')).toContain('mounted open_corner tool');
+    expect(piLines.join('\n')).not.toContain('CORNER_REQUEST');
     expect(
       piLines.some((line) => line.includes(`${TARGET_BRANCH_PROPOSAL_COMMAND} --branch`)),
     ).toBe(true);
-    // The text-fallback harness is never told to emit permission-style corner
-    // requests, and capability awareness does not alter that control protocol.
     expect(piLines.join('\n')).not.toContain(BEELINE_CAPABILITIES_PRIMER);
   });
 });

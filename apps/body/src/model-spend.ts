@@ -11,7 +11,6 @@ export type ModelTurnCause =
   | 'restart-continuation'
   | 'agent-exchange'
   | 'agent-mention'
-  | 'delegation'
   | 'schedule';
 
 export interface ModelTurnAttribution {
@@ -20,12 +19,10 @@ export interface ModelTurnAttribution {
   /** Original human request when the immediate cause is a bounded continuation. */
   originalRequestId: string;
   cause: ModelTurnCause;
-  trigger?: 'human' | 'agent' | 'delegation' | 'schedule';
+  trigger?: 'human' | 'agent' | 'schedule';
   rootEventId?: string;
   principalPubkey?: string;
   commissionedByAgentPubkey?: string;
-  delegationId?: string;
-  workItemId?: string;
   scheduleId?: string;
   scheduleRunId?: string;
   reservedTokens?: number;
@@ -127,12 +124,7 @@ export function completedModelSpend(input: {
     agentPubkey: input.agentPubkey,
     chargedAgentPubkey: input.agentPubkey,
     trigger:
-      input.attribution.trigger ??
-      (input.attribution.cause === 'delegation'
-        ? 'delegation'
-        : input.attribution.cause === 'schedule'
-          ? 'schedule'
-          : 'human'),
+      input.attribution.trigger ?? (input.attribution.cause === 'schedule' ? 'schedule' : 'human'),
     rootEventId: input.attribution.rootEventId ?? input.attribution.originalRequestId,
     channelId: input.channelId,
     startedAt: input.startedAt,
@@ -160,12 +152,7 @@ export function failedModelSpend(input: {
     agentPubkey: input.agentPubkey,
     chargedAgentPubkey: input.agentPubkey,
     trigger:
-      input.attribution.trigger ??
-      (input.attribution.cause === 'delegation'
-        ? 'delegation'
-        : input.attribution.cause === 'schedule'
-          ? 'schedule'
-          : 'human'),
+      input.attribution.trigger ?? (input.attribution.cause === 'schedule' ? 'schedule' : 'human'),
     rootEventId: input.attribution.rootEventId ?? input.attribution.originalRequestId,
     channelId: input.channelId,
     startedAt: input.startedAt,

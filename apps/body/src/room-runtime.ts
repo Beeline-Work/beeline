@@ -279,6 +279,7 @@ async function readWorkspaceMembership(
  * it does not own process supervision, READY/WATCHDOG, or update handoff.
  */
 export class RoomRuntimeCoordinator {
+  private runScheduleNow?: (scheduleId: string) => Promise<{ runId: string; eventId: string }>;
   private runtime: AgentRuntimeRecord;
   private readonly configPath: string;
   private readonly baseConfig: BodyConfig;
@@ -444,6 +445,12 @@ export class RoomRuntimeCoordinator {
       room.editPolicy,
       beforeModelActivation,
     );
+  }
+
+  setScheduleRunNow(
+    run: (scheduleId: string) => Promise<{ runId: string; eventId: string }>,
+  ): void {
+    this.runScheduleNow = run;
   }
 
   needsFastReconcile(): boolean {
@@ -1084,6 +1091,10 @@ export class RoomRuntimeCoordinator {
         onRoomPollSuccess: health.poll,
         onRoomPollFailure: health.failure,
         onRoomPresence: health.presence,
+        runScheduleNow: (scheduleId) => {
+          if (!this.runScheduleNow) throw new Error('schedule calendar is unavailable');
+          return this.runScheduleNow(scheduleId);
+        },
       },
     );
     const promise = body
@@ -1128,6 +1139,10 @@ export class RoomRuntimeCoordinator {
       onRoomPollSuccess: () => this.notePoll(channelId),
       onRoomPollFailure: (_roomId, retryInMs) => this.notePollFailure(channelId, retryInMs),
       onRoomPresence: (_roomId, status) => this.notePresence(channelId, status),
+      runScheduleNow: (scheduleId) => {
+        if (!this.runScheduleNow) throw new Error('schedule calendar is unavailable');
+        return this.runScheduleNow(scheduleId);
+      },
     });
     const promise = body
       .runConversationRoomLoop(channelId, kind, { signal: controller.signal })

@@ -1449,8 +1449,6 @@ const HIDDEN_MARKERS = new Set([
   'buzz-permission-decision',
   'buzz-permission-revocation',
   'buzz-permission-execution',
-  'buzz-delegation-turn',
-  'buzz-delegation-receipt',
 ]);
 
 /** Durable machine-authored Room lines that the client renders as status text. */
@@ -1642,10 +1640,7 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
   if ([...markers].some((candidate) => SYSTEM_MARKERS.has(candidate))) {
     return { ...base, presentation: 'system' };
   }
-  if (
-    markers.size > 0 &&
-    [...markers].some((candidate) => !CONVERSATION_MARKERS.has(candidate))
-  ) {
+  if (markers.size > 0 && [...markers].some((candidate) => !CONVERSATION_MARKERS.has(candidate))) {
     if ([...markers].some((candidate) => candidate.startsWith('buzz-'))) return undefined;
     return { ...base, presentation: 'system' };
   }

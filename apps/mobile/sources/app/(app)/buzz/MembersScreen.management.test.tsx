@@ -302,12 +302,18 @@ describe('Members workspace management', () => {
     expect(client.waitUntilMemberRole).toHaveBeenCalledWith(WORKSPACE, MEMBER, 'admin');
   });
 
-  it('uses the catalog pickers, filters mode, and never offers custom effort text', async () => {
+  it('uses a typeahead live catalog for models and never offers custom IDs when one is reported', async () => {
     const renderer = await render();
     await press(renderer, `agent-${AGENT}-identity`);
 
     expect(renderer.root.findAllByProps({ testID: 'model-axis-mode' })).toHaveLength(0);
     await press(renderer, 'model-axis-model');
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'model-search-model' }).props.onChangeText('opu');
+    });
+    expect(renderer.root.findByProps({ testID: 'model-option-model-opus' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'model-option-model-sonnet' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'model-custom-model' })).toHaveLength(0);
     await press(renderer, 'model-option-model-opus');
     expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { model: 'opus' });
 
@@ -346,6 +352,9 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: 'model-option-effort-low' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'model-option-effort-medium' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'model-custom-effort' })).toHaveLength(0);
+    await press(renderer, 'model-axis-model');
+    expect(renderer.root.findByProps({ testID: 'model-search-model' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'model-custom-model' })).toBeDefined();
   });
 
   it('edits the human-authored soul fields through setAgentSoul', async () => {

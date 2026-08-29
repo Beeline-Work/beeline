@@ -603,7 +603,7 @@ const BODY_RESTART_CONTINUATIONS = new Set<string>();
  * starting at once must not spawn the harness N times.
  */
 const MODEL_CATALOG_PROBES = new Map<string, Promise<AgentModelConfigOption[]>>();
-/** Selections this process has already synced, so N Rooms starting at once
+/** Catalog snapshots this process has already synced, so N Rooms starting at once
  * publish the same `(communityId, pubkey)` record once, not N times. */
 const MODEL_SELECTION_SYNCED = new Set<string>();
 
@@ -5161,8 +5161,7 @@ export class Body {
       }
     }
     const applied = humanSelection ?? this.config.modelSelection;
-    if (!applied?.model && !applied?.effort) return;
-    const syncedKey = `${communityId}:${this.agentIdentity.publicKey}:${applied.model ?? ''}/${applied.effort ?? ''}`;
+    const syncedKey = `${communityId}:${this.agentIdentity.publicKey}:${applied?.model ?? ''}/${applied?.effort ?? ''}`;
     if (MODEL_SELECTION_SYNCED.has(syncedKey)) return;
     let existing: Awaited<ReturnType<typeof getAgentModelCatalog>> = null;
     try {
@@ -5171,9 +5170,8 @@ export class Body {
       console.error('[body] failed to read published agent model catalog:', error);
     }
     const sameSelection =
-      existing?.selection &&
-      (existing.selection.model ?? undefined) === (applied.model ?? undefined) &&
-      (existing.selection.effort ?? undefined) === (applied.effort ?? undefined);
+      (existing?.selection?.model ?? undefined) === (applied?.model ?? undefined) &&
+      (existing?.selection?.effort ?? undefined) === (applied?.effort ?? undefined);
     if (existing && sameSelection && existing.options.length > 0) return;
     const options = existing?.options.length
       ? existing.options
@@ -12514,6 +12512,14 @@ export class Body {
     boundRepo: BoundRepo,
     opts: { pollMs?: number; signal?: AbortSignal } = {},
   ): Promise<void> {
+    // Publish a catalog per served Workspace before presence. Even an agent
+    // with no stored selection needs an empty snapshot when its harness probe
+    // is unavailable, so the app can distinguish that state from no report.
+    await this.channelCommunityId(tlcChannelId)
+      .then((communityId) =>
+        communityId ? this.syncModelSelectionToRelay(communityId) : undefined,
+      )
+      .catch((error) => console.error('[body] model catalog sync failed:', error));
     // Initial status 'online' (the default): the first heartbeat publishes as
     // soon as the loop starts, so a restart handover re-establishes presence
     // promptly instead of inheriting an aging lease. See startAgentPresence.

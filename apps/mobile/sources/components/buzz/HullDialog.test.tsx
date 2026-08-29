@@ -23,13 +23,19 @@ const theme = vi.hoisted(() => ({
   },
 }));
 
+const modalRenderSpy = vi.hoisted(() => vi.fn());
+const surfaceRenderSpy = vi.hoisted(() => vi.fn());
+
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
     KeyboardAvoidingView: host('KeyboardAvoidingView'),
-    Modal: host('Modal'),
+    Modal: (props: any) => {
+      modalRenderSpy();
+      return ReactModule.createElement('Modal', props, props.children);
+    },
     Platform: { OS: 'ios' },
     Pressable: host('Pressable'),
     Text: host('Text'),
@@ -64,7 +70,10 @@ vi.mock('@/constants/Typography', () => ({
 vi.mock('./MonoHull', async () => {
   const ReactModule = await import('react');
   return {
-    HullSurface: (props: any) => ReactModule.createElement('HullSurface', props, props.children),
+    HullSurface: (props: any) => {
+      surfaceRenderSpy();
+      return ReactModule.createElement('HullSurface', props, props.children);
+    },
   };
 });
 
@@ -126,7 +135,7 @@ describe('Hull dialog family', () => {
     expect(renderer.root.findByType('Modal' as any).props).toMatchObject({
       transparent: true,
       visible: true,
-      onRequestClose: onClose,
+      onRequestClose: expect.any(Function),
     });
     expect(
       hostByTestID(renderer, 'save', 'Pressable').props.style({ pressed: false }),
@@ -215,6 +224,54 @@ describe('Hull dialog family', () => {
     act(() => hostByTestID(renderer, 'cancel-sheet', 'Pressable').props.onPress());
     expect(onClose).toHaveBeenCalledOnce();
     expect(archive).not.toHaveBeenCalled();
+  });
+
+  it('keeps a mounted floating surface still across unrelated host renders', () => {
+    modalRenderSpy.mockClear();
+    surfaceRenderSpy.mockClear();
+    const closedFrom = vi.fn();
+    const pickedFrom = vi.fn();
+
+    function LiveRoomHost({
+      liveEventId,
+      title = 'Attach',
+    }: {
+      liveEventId: string;
+      title?: string;
+    }) {
+      return (
+        <HullActionSheetModal
+          onClose={() => closedFrom(liveEventId)}
+          testID="live-sheet"
+          title={title}
+          visible
+        >
+          <HullActionSheetRow
+            label="Photo"
+            onPress={() => pickedFrom(liveEventId)}
+            testID="live-sheet-photo"
+          />
+          <HullActionSheetRow label="Document" onPress={() => undefined} />
+          <HullActionSheetCancel onPress={() => closedFrom(liveEventId)} />
+        </HullActionSheetModal>
+      );
+    }
+
+    const renderer = render(<LiveRoomHost liveEventId="agent-draft-1" />);
+    for (let index = 2; index <= 25; index += 1) {
+      act(() => renderer.update(<LiveRoomHost liveEventId={`agent-draft-${index}`} />));
+    }
+
+    expect(modalRenderSpy).toHaveBeenCalledTimes(1);
+    expect(surfaceRenderSpy).toHaveBeenCalledTimes(1);
+    act(() => hostByTestID(renderer, 'live-sheet-photo', 'Pressable').props.onPress());
+    act(() => renderer.root.findByType('Modal' as any).props.onRequestClose());
+    expect(pickedFrom).toHaveBeenLastCalledWith('agent-draft-25');
+    expect(closedFrom).toHaveBeenLastCalledWith('agent-draft-25');
+
+    act(() => renderer.update(<LiveRoomHost liveEventId="agent-draft-26" title="Attach files" />));
+    expect(modalRenderSpy).toHaveBeenCalledTimes(2);
+    expect(surfaceRenderSpy).toHaveBeenCalledTimes(2);
   });
 
   it('opens menu adapters as Hull sheets, closes before dispatch, and exposes a cancel row', () => {

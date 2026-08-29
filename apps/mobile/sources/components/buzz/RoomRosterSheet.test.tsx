@@ -65,7 +65,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('RoomRosterSheet', () => {
-  it('does not rerender open roster content for an unrelated live event', () => {
+  it('renders a changed collapsed online verdict through the shared modal boundary', () => {
     const members = new Map([['agent', { pubkey: 'agent', role: 'member' }]]);
     const rosterSections = {
       people: [],
@@ -79,12 +79,11 @@ describe('RoomRosterSheet', () => {
         },
       ],
     };
-    const onlineByPubkey = { agent: true };
     const onClose = vi.fn();
     const onRemove = vi.fn();
     const personProfileByPubkey = new Map();
 
-    function ChatHarness({ liveEventId }: { liveEventId: string }) {
+    function ChatHarness({ liveEventId, online }: { liveEventId: string; online: boolean }) {
       void liveEventId;
       return (
         <RoomRosterSheet
@@ -95,7 +94,7 @@ describe('RoomRosterSheet', () => {
           membershipError={null}
           onClose={onClose}
           onRemove={onRemove}
-          onlineByPubkey={onlineByPubkey}
+          onlineByPubkey={{ agent: online }}
           parentChannelId={null}
           personProfileByPubkey={personProfileByPubkey}
           rosterSections={rosterSections}
@@ -109,12 +108,12 @@ describe('RoomRosterSheet', () => {
 
     let renderer!: ReactTestRenderer;
     act(() => {
-      renderer = create(<ChatHarness liveEventId="agent-draft-1" />);
+      renderer = create(<ChatHarness liveEventId="agent-draft-1" online />);
     });
     act(() => {
-      renderer.update(<ChatHarness liveEventId="agent-draft-2" />);
+      renderer.update(<ChatHarness liveEventId="agent-draft-2" online={false} />);
     });
 
-    expect(renderSpy).toHaveBeenCalledTimes(1);
+    expect(renderSpy).toHaveBeenCalledTimes(2);
   });
 });

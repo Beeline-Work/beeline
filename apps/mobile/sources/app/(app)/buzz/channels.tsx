@@ -28,6 +28,7 @@ import { compactRelativeTime } from '@/buzz/relative-time';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { roomDeckState } from '@/buzz/room-deck-state';
 import { formatRoomParticipantTotal } from '@/buzz/room-participants';
+import { formatRoomCornerCount } from '@/buzz/vocabulary';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
   MEMBERS_GLYPH,
@@ -476,6 +477,7 @@ export default function BuzzChannels() {
               item.latestMessage?.createdAt ?? item.room.updatedAt,
               ageNow,
             );
+            const cornerCount = formatRoomCornerCount(item.cornerCount);
             return (
               <TouchableOpacity
                 testID={`room-${item.room.id}`}
@@ -501,7 +503,8 @@ export default function BuzzChannels() {
                     {item.latestMessage?.text ?? 'No activity yet'}
                   </Text>
                   <Text style={styles.meta}>
-                    {formatRoomParticipantTotal(item.memberCount)} · {item.cornerCount} changes
+                    {formatRoomParticipantTotal(item.memberCount)}
+                    {cornerCount ? ` · ${cornerCount}` : ''}
                   </Text>
                 </View>
                 <View style={styles.gutter}>

@@ -121,6 +121,7 @@ export function RoomDeckComposeMenu({ onSelect }: RoomDeckComposeMenuProps) {
                   </View>
                 }
                 metadata={option.description}
+                metadataWrap
                 onPress={() => choose(option.action)}
                 testID={`room-deck-compose-${option.action}`}
               />

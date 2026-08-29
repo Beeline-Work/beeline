@@ -14,6 +14,11 @@ import { writeIsolatedHarnessFile } from './agent-home.js';
 export const PI_MCP_ADAPTER_VERSION = '2.30.0';
 export const PI_MCP_EXTENSION_NAME = 'beeline-mcp.ts';
 export const PI_MCP_SESSION_ADAPTER_NAME = 'beeline-pi-mcp-adapter.mjs';
+/** Corner provisioning includes relay projection, a worktree, toolchain setup,
+ * and ACP activation. Pi's old 30s default could abandon the reply after the
+ * immutable child create had already landed. Keep the adapter deadline above
+ * Body's bounded host operation window. */
+export const PI_MCP_REQUEST_TIMEOUT_MS = 10 * 60_000;
 
 /**
  * pi-mcp-adapter awaits fresh metadata during session_start only when its
@@ -53,7 +58,7 @@ function adapterConfig(servers: readonly McpServerWire[]): Record<string, unknow
       mcpFooterStatus: 'off',
       notifyOnStartupConnect: false,
       toolPrefix: 'server',
-      requestTimeoutMs: 30_000,
+      requestTimeoutMs: PI_MCP_REQUEST_TIMEOUT_MS,
     },
     mcpServers: Object.fromEntries(
       servers.map((server) => [

@@ -1746,14 +1746,7 @@ export default function BuzzChat() {
     }
     if (state.kind === 'buzzing') return { label: 'buzzing…', tone: 'live' };
     return { label: 'no confirmation yet…', tone: 'quiet' };
-  }, [
-    activeAgentTurn,
-    agentByPubkey,
-    agentsOffline,
-    composerAckNow,
-    isCorner,
-    pendingAckSentAt,
-  ]);
+  }, [activeAgentTurn, agentByPubkey, agentsOffline, composerAckNow, isCorner, pendingAckSentAt]);
 
   const activeActivityId = useMemo(() => {
     const latest = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
@@ -2865,13 +2858,15 @@ export default function BuzzChat() {
           ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
         });
         const confirmation = roomClient
-          ? await confirmRoomRepositoryLink(
-              () => roomClient.room(decodedId),
-              { key: published.binding.key, updatedAt: published.updatedAt },
-            )
+          ? await confirmRoomRepositoryLink(() => roomClient.room(decodedId), {
+              key: published.binding.key,
+              updatedAt: published.updatedAt,
+            })
           : 'pending';
         if (confirmation === 'contradicted') {
-          throw new Error('A newer repository link replaced this selection. Refresh and try again.');
+          throw new Error(
+            'A newer repository link replaced this selection. Refresh and try again.',
+          );
         }
         if (confirmation === 'pending') {
           setRoomRepoNotice('Repo link accepted. The Room is still syncing.');
@@ -3261,12 +3256,11 @@ export default function BuzzChat() {
         const display = resolveAgentDisplayIdentity(permission.agentPubkey, permissionAgent);
         const pending = permission.status === 'pending';
         const busy = permissionActionId === permission.permissionId;
-        // An ALLOW that opened a corner is the same live state the pinned bar
-        // above the composer now reports, so it prints nothing here — the
-        // request card that preceded it is already the durable record of the
-        // decision, and repeating it as a scroll note gave the reader two
-        // places to look for one fact.
-        if (permission.status === 'allowed' && permission.subchannelId) return null;
+        const canDecide =
+          !viewerIsAgent &&
+          (cacheViewerPubkey === permission.requesterPubkey ||
+            viewerChannelRole === 'admin' ||
+            viewerChannelRole === 'owner');
         return (
           <HullSurface
             strength="raised"
@@ -3312,7 +3306,7 @@ export default function BuzzChat() {
               </Text>
             )}
             {pending &&
-            !viewerIsAgent &&
+            canDecide &&
             permission.repository &&
             (!squireSpending || viewerChannelRole === 'owner') ? (
               <View style={styles.writePermissionActions}>
@@ -3332,6 +3326,10 @@ export default function BuzzChat() {
               </View>
             ) : pending && !viewerIsAgent && squireSpending ? (
               <Text style={styles.writePermissionStatus}>ROOM OWNER CONFIRMATION REQUIRED</Text>
+            ) : pending && !viewerIsAgent && permission.repository && !canDecide ? (
+              <Text style={styles.writePermissionStatus} testID="corner-approval-audience-wait">
+                REQUESTER OR ROOM ADMIN APPROVAL REQUIRED
+              </Text>
             ) : pending && !viewerIsAgent ? (
               <Text style={styles.writePermissionStatus}>MISSING TARGET · CANNOT APPROVE</Text>
             ) : (
@@ -3339,6 +3337,9 @@ export default function BuzzChat() {
                 status={permission.status}
                 subchannelId={permission.subchannelId}
                 awaitingPerson={viewerIsAgent && pending}
+                onOpen={
+                  permission.subchannelId ? () => openCorner(permission.subchannelId!) : undefined
+                }
               />
             )}
           </HullSurface>

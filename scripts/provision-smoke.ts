@@ -9,6 +9,7 @@ import {
   identityNpub,
   KIND_AGENT_PRESENCE,
   loadIdentityFromNsec,
+  publishAgentModelCatalog,
   TAG_AGENT_PRESENCE,
 } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
@@ -198,6 +199,49 @@ async function main() {
   });
   await ownerClient.addMember(channelId, offlineAgentIdentity.publicKey, 'member');
   await offlineAgentClient.waitUntilMember(channelId, offlineAgentIdentity.publicKey);
+  // This agent exists solely to exercise the mobile live-catalog picker. The
+  // catalog is signed by the fixture agent through the public SDK, which is
+  // the same `(agentPubkey, communityId)` record a daemon publishes. Keeping
+  // it in the stable smoke Workspace makes repeated emulator captures
+  // deterministic without starting a real daemon or creating notifications.
+  const catalogAgentIdentity = createIdentity('buzzy-smoke-model-catalog-agent');
+  const catalogAgentClient = createBuzzClient({ baseUrl: RELAY, identity: catalogAgentIdentity });
+  await catalogAgentClient.connect();
+  await ownerClient.addMember(workspaceId, catalogAgentIdentity.publicKey, 'member');
+  await catalogAgentClient.waitUntilMember(workspaceId, catalogAgentIdentity.publicKey);
+  await catalogAgentClient.createAgent(workspaceId, { displayName: 'Model Catalog Fixture' });
+  await ownerClient.setAgentSoul(workspaceId, catalogAgentIdentity.publicKey, {
+    name: 'Model Catalog Fixture',
+    soul: 'Fixture-only agent for the searchable model picker. No daemon is attached.',
+    avatarSeed: 'smoke-model-catalog-fixture',
+  });
+  await ownerClient.addMember(channelId, catalogAgentIdentity.publicKey, 'member');
+  await catalogAgentClient.waitUntilMember(channelId, catalogAgentIdentity.publicKey);
+  await publishAgentModelCatalog(
+    {
+      http: { baseUrl: RELAY, host: new URL(RELAY).host, identity: catalogAgentIdentity },
+      identity: catalogAgentIdentity,
+    },
+    workspaceId,
+    [
+      {
+        id: 'model',
+        category: 'model',
+        options: [
+          { id: 'anthropic/claude-opus-4.6', name: 'Claude Opus 4.6' },
+          { id: 'openai/gpt-5.6-codex', name: 'GPT-5.6 Codex' },
+          { id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash' },
+        ],
+      },
+      {
+        id: 'effort',
+        category: 'reasoning_effort',
+        options: [{ id: 'low' }, { id: 'medium' }, { id: 'high' }],
+      },
+    ],
+    { model: 'openai/gpt-5.6-codex', effort: 'high' },
+  );
+  console.log('Live model catalog fixture agent:', catalogAgentIdentity.publicKey);
   const presenceAt = Math.floor(Date.now() / 1_000);
   await agentClient.publish(
     signEvent(
@@ -283,6 +327,7 @@ async function main() {
   client.disconnect();
   ownerClient.disconnect();
   offlineAgentClient.disconnect();
+  catalogAgentClient.disconnect();
   agentClient.disconnect();
 }
 

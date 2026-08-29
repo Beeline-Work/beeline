@@ -116,7 +116,11 @@ export class AgentToolHostBroker {
               session.connection = socket;
               continue;
             }
-            await this.handleLine(session, socket, line);
+            // MCP request ids make calls independently addressable. Do not
+            // serialize a truth read behind a slow corner provision: the
+            // caller may be using that read to recover after open_corner's
+            // client-side deadline elapsed.
+            void this.handleLine(session, socket, line).catch(close);
           }
         })
         .catch(close);

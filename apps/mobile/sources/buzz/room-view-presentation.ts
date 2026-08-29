@@ -189,6 +189,8 @@ export type ChatDisplayMessage = {
     permissionId: string;
     requestId: string;
     agentPubkey: string;
+    requesterPubkey: string;
+    deciderPubkey?: string;
     tool: string;
     repository?: string;
     purpose?: 'squire-spending';
@@ -272,6 +274,10 @@ export function displayRoomMessage(
             permissionId: message.permission.permissionId,
             requestId: message.permission.requestId,
             agentPubkey: message.permission.agent.pubkey,
+            requesterPubkey: message.permission.requester.pubkey,
+            ...(message.permission.decider
+              ? { deciderPubkey: message.permission.decider.pubkey }
+              : {}),
             tool: message.permission.tool,
             status: message.permission.status,
             ...(message.permission.repository ? { repository: message.permission.repository } : {}),

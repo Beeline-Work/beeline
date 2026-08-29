@@ -594,16 +594,17 @@ WITH workspace_candidates AS (
     AND cs.parent_id = parent.id::text
   GROUP BY parent.community_id, parent.id
 ), repositories AS (
-  SELECT DISTINCT ON (e.community_id, e.channel_id)
-    e.community_id, e.channel_id AS room_id, e.content
-  FROM chats a JOIN events e ON e.community_id = a.community_id AND e.channel_id = a.id
+  SELECT DISTINCT ON (e.community_id, a.id)
+    e.community_id, a.id AS room_id, e.content
+  FROM chats a JOIN events e ON e.community_id = a.community_id
+    AND e.d_tag = 'buzz-room-repository:' || a.id::text
     AND e.kind = 30078 AND e.deleted_at IS NULL
   JOIN channel_members author ON author.community_id = e.community_id
-    AND author.channel_id = e.channel_id AND author.pubkey = e.pubkey
+    AND author.channel_id = a.id AND author.pubkey = e.pubkey
     AND author.removed_at IS NULL AND author.role IN ('owner', 'admin')
   WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
     WHERE t->>0 = 't' AND t->>1 = 'buzz-room-repository')
-  ORDER BY e.community_id, e.channel_id, e.created_at DESC, e.id DESC
+  ORDER BY e.community_id, a.id, e.created_at DESC, e.id DESC
 ), identity_keys AS (
   SELECT DISTINCT e.community_id, e.pubkey, w.id::text AS workspace_id
   FROM preview_events e JOIN workspace w ON true
@@ -1188,7 +1189,8 @@ UNION ALL
 SELECT 'repository-candidate', jsonb_build_object('content', e.content)
 FROM authorized a JOIN LATERAL (
   SELECT e.content FROM events e
-  WHERE e.community_id = a.community_id AND e.channel_id = COALESCE(a.parent_id, a.id)
+  WHERE e.community_id = a.community_id
+    AND e.d_tag = 'buzz-room-repository:' || COALESCE(a.parent_id, a.id)::text
     AND e.kind = 30078
     AND e.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
@@ -1196,13 +1198,17 @@ FROM authorized a JOIN LATERAL (
   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) e ON true
 UNION ALL
-SELECT 'repository', jsonb_build_object('content', e.content)
+SELECT 'repository', jsonb_build_object(
+  'content', e.content,
+  'updatedAt', extract(epoch FROM e.created_at)::bigint
+)
 FROM authorized a JOIN LATERAL (
-  SELECT e.content FROM events e
+  SELECT e.content, e.created_at FROM events e
   JOIN channel_members author ON author.community_id = e.community_id
-    AND author.channel_id = e.channel_id AND author.pubkey = e.pubkey
+    AND author.channel_id = COALESCE(a.parent_id, a.id) AND author.pubkey = e.pubkey
     AND author.removed_at IS NULL AND author.role IN ('owner', 'admin')
-  WHERE e.community_id = a.community_id AND e.channel_id = COALESCE(a.parent_id, a.id)
+  WHERE e.community_id = a.community_id
+    AND e.d_tag = 'buzz-room-repository:' || COALESCE(a.parent_id, a.id)::text
     AND e.kind = 30078
     AND e.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
@@ -1755,6 +1761,7 @@ function repositoryFromRows(rows: readonly IndexRow[]): RoomRepositoryView | und
     name: normalized.name,
     remote: normalized.remote,
     targetBranch: normalized.targetBranch ?? 'main',
+    updatedAt: integer(repositoryData.updatedAt),
     ...(normalized.githubInstallationId
       ? { githubInstallationId: normalized.githubInstallationId }
       : {}),

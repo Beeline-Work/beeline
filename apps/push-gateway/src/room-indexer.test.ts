@@ -306,6 +306,24 @@ describe('RoomIndexer', () => {
     ]);
   });
 
+  it('indexes a Room repository by its parameterized d key without channel_id', async () => {
+    // Production relay storage does not stamp channel_id for kind:30078. The
+    // d tag is the indexed coordinate for parameterized replaceable records.
+    await postgres.query(
+      `UPDATE events SET channel_id = NULL
+       WHERE community_id = $1 AND kind = 30078
+         AND d_tag = $2`,
+      [TENANT, `buzz-room-repository:${ROOM}`],
+    );
+
+    const room = await indexer.readRoom(ROOM, VIEWER);
+    expect(room?.repositoryResolution).toBe('repository');
+    expect(room?.repository?.key).toBe('github:1');
+
+    const chats = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.repositoryName).toBe('beeline');
+  });
+
   it('never renders a removed ghost agent as thinking/working on any surface', async () => {
     // A human removal (`removeAgent`) evicts channel_members rows, but it can
     // never retract another key's already-published relay events: the

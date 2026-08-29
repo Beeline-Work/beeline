@@ -112,6 +112,24 @@ describe('RoomViewClient', () => {
     ).toBe(true);
     expect(isRoomView({ ...room, latestAgentTurns: [{ status: 'working' }] })).toBe(false);
     expect(isRoomView({ ...room, repositoryResolution: 'unknown' })).toBe(false);
+    const repository = {
+      key: 'github:1',
+      name: 'acme/repo',
+      remote: 'git://github.com/acme/repo',
+      targetBranch: 'main',
+      updatedAt: 10,
+      githubEventsEnabled: true,
+    };
+    expect(
+      isRoomView({ ...room, repositoryResolution: 'repository', repository }),
+    ).toBe(true);
+    expect(
+      isRoomView({
+        ...room,
+        repositoryResolution: 'repository',
+        repository: { ...repository, updatedAt: undefined },
+      }),
+    ).toBe(false);
     expect(
       isRoomView({
         ...room,

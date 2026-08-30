@@ -92,6 +92,7 @@ import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { COMPOSER_ACK_BOUND_MS, selectComposerAckState } from '@/buzz/room-indicators';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
+import { projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
   activeMentionAtCursor,
   filterMentionCandidates,
@@ -1461,7 +1462,10 @@ export default function BuzzChat() {
       presenceReconnectGrace[cornerAgentPubkey],
     ),
   );
-  const visibleMessages = messages;
+  const visibleMessages = useMemo(
+    () => projectActiveTurnStream(messages, activeAgentTurn, isArchived),
+    [activeAgentTurn, isArchived, messages],
+  );
   // Attribution is per run, not per entry: only the first entry of a voice's
   // run carries its mark and name (see `buzz/ledger-attribution.ts`). Corners
   // attribute exactly like Rooms — several people can sit in one corner, so
@@ -1753,11 +1757,6 @@ export default function BuzzChat() {
     isCorner,
     pendingAckSentAt,
   ]);
-
-  const activeActivityId = useMemo(() => {
-    const latest = [...visibleMessages].reverse().find((message) => message.isAgentLiveTurn);
-    return !isArchived && latest ? latest.id : undefined;
-  }, [isArchived, visibleMessages]);
 
   useEffect(() => {
     setApprovalError(null);
@@ -3520,7 +3519,7 @@ export default function BuzzChat() {
         const activityHandle = !attributionContinued && speaksAsAgent ? voiceName : undefined;
         return (
           <LedgerActivity
-            active={item.id === activeActivityId}
+            active={item.isAgentLiveTurn === true}
             handle={activityHandle}
             message={item}
             stamp={ledgerStamp(item.timestamp)}
@@ -3640,7 +3639,6 @@ export default function BuzzChat() {
     },
     [
       agentByPubkey,
-      activeActivityId,
       handleWritePermission,
       handleConfirmTargetBranch,
       isCorner,

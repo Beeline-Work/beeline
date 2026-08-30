@@ -38,6 +38,15 @@ function resolvedOutcome(
   return 'success';
 }
 
+function stepResult(step: TurnActivityAction): string | undefined {
+  const output = step.output?.replace(/\s+/g, ' ').trim();
+  if (output) return output;
+  const files = step.files?.map((file) => file.path.split('/').filter(Boolean).at(-1));
+  if (!files?.length) return undefined;
+  const shown = files.slice(0, 2).join(', ');
+  return files.length > 2 ? `${shown} +${files.length - 2}` : shown;
+}
+
 function LedgerStepRow({
   active,
   isLast,
@@ -48,10 +57,12 @@ function LedgerStepRow({
   step: TurnActivityAction;
 }) {
   const outcome = resolvedOutcome(step, active, isLast);
+  const result = stepResult(step);
   const accessibilityLabel = [
     step.label,
     outcome === 'failure' ? 'failed' : outcome === 'running' ? 'running' : 'succeeded',
     step.reason,
+    result,
   ]
     .filter(Boolean)
     .join(', ');
@@ -59,31 +70,38 @@ function LedgerStepRow({
     <View
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ busy: outcome === 'running' }}
-      style={styles.stepRow}
+      style={styles.stepBlock}
       testID={`activity-step-${step.id}`}
     >
-      <Text accessibilityElementsHidden style={styles.stepGlyph}>
-        {stepGlyph(step)}
-      </Text>
-      <Text numberOfLines={1} style={styles.stepLabel}>
-        {step.label}
-      </Text>
-      {outcome === 'running' ? (
-        <View style={styles.runningMark} testID={`activity-verdict-${step.id}`}>
-          <PixelLoader compact />
-        </View>
-      ) : (
-        <Text
-          accessibilityElementsHidden
-          style={[styles.verdict, outcome === 'failure' && styles.verdictFailed]}
-          testID={`activity-verdict-${step.id}`}
-        >
-          {outcome === 'failure' ? '×' : '✓'}
+      <View style={styles.stepRow}>
+        <Text accessibilityElementsHidden style={styles.stepGlyph}>
+          {stepGlyph(step)}
         </Text>
-      )}
-      {step.reason ? (
-        <Text numberOfLines={1} style={styles.stepReason} testID={`activity-reason-${step.id}`}>
-          {step.reason}
+        <Text numberOfLines={1} style={styles.stepLabel}>
+          {step.label}
+        </Text>
+        {outcome === 'running' ? (
+          <View style={styles.runningMark} testID={`activity-verdict-${step.id}`}>
+            <PixelLoader compact />
+          </View>
+        ) : (
+          <Text
+            accessibilityElementsHidden
+            style={[styles.verdict, outcome === 'failure' && styles.verdictFailed]}
+            testID={`activity-verdict-${step.id}`}
+          >
+            {outcome === 'failure' ? '×' : '✓'}
+          </Text>
+        )}
+        {step.reason ? (
+          <Text numberOfLines={1} style={styles.stepReason} testID={`activity-reason-${step.id}`}>
+            {step.reason}
+          </Text>
+        ) : null}
+      </View>
+      {result && !step.reason ? (
+        <Text numberOfLines={2} style={styles.stepResult} testID={`activity-result-${step.id}`}>
+          {result}
         </Text>
       ) : null}
     </View>
@@ -195,15 +213,17 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 25,
       marginTop: 8,
     },
+    stepBlock: {
+      minWidth: 0,
+      paddingVertical: 5,
+    },
     stepRow: {
-      minHeight: 36,
+      minHeight: 26,
       minWidth: 0,
       paddingHorizontal: 4,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: groknight.borderQuiet,
     },
     stepGlyph: {
       ...Typography.mono(),
@@ -237,6 +257,16 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.ledgerQuiet,
       fontSize: 10,
       lineHeight: 18,
+    },
+    stepResult: {
+      ...Typography.mono(),
+      marginLeft: 26,
+      borderLeftWidth: 2,
+      borderLeftColor: groknight.borderQuiet,
+      paddingLeft: 10,
+      color: groknight.ledgerGhost,
+      fontSize: 10,
+      lineHeight: 16,
     },
   };
 });

@@ -988,7 +988,7 @@ export class RoomPollBackoff {
 export interface SubchannelInfo {
   subchannelId: string;
   worktreePath: string;
-  featureBranch: string;
+  featureBranch?: string;
   /** Identity authorized to administer/archive this subchannel (agent for new opens). */
   role: Identity;
   session: AgentSession;
@@ -3385,8 +3385,8 @@ export class Body {
           }
         : {}),
     };
-    if (input.mode === 'edit') {
-      const gitCommonDir = await resolveGitCommonDir(input.worktreePath ?? input.cwd);
+    if (input.mode === 'edit' && input.worktreePath) {
+      const gitCommonDir = await resolveGitCommonDir(input.worktreePath);
       if (!gitCommonDir) {
         if (this.squireIsolationRequired()) {
           throw new Error('Trusty Squire activation refused because sandbox mounts are incomplete');
@@ -3638,6 +3638,8 @@ export class Body {
     worktreePath?: string;
     protectedPaths?: string[];
     additionalWritablePaths?: string[];
+    /** Repo-less corners use their cwd itself as the quota-limited workbench. */
+    workbenchDir?: string;
     featureBranch?: string;
     communityId?: string;
     resumeObjective?: string;
@@ -3664,7 +3666,9 @@ export class Body {
      */
     roomEditPolicy?: RoomEditPolicy;
   }): Promise<AgentSession> {
-    const workbenchTemplate = await this.sessionWorkbench();
+    const workbenchTemplate = input.workbenchDir
+      ? { dir: input.workbenchDir, storageDir: input.workbenchDir }
+      : await this.sessionWorkbench();
     const workbench = workbenchTemplate ? { ...workbenchTemplate } : undefined;
     let client = new AcpClient({
       agentCommand: this.config.agentCommand ?? this.config.agentBinary,
@@ -5462,7 +5466,7 @@ export class Body {
       )
       .map((info) => ({
         subchannelId: info.subchannelId,
-        name: info.cornerName ?? info.featureBranch,
+        name: info.cornerName ?? info.featureBranch ?? 'Untitled corner',
         taskDescription: info.taskDescription ?? '',
         openedAt: info.openedAt!,
       }));
@@ -5476,7 +5480,7 @@ export class Body {
 
   private openSubchannelForRequest(
     tlcChannelId: string,
-    roomRepo: BoundRepo,
+    roomRepo: BoundRepo | undefined,
     intent: string,
     request: ChannelTaskRequest,
     options?: { objective?: string; mission?: MissionCornerAuthority },
@@ -5546,7 +5550,7 @@ export class Body {
 
   async openSubchannel(
     tlcChannelId: string,
-    roomRepo: BoundRepo,
+    roomRepo: BoundRepo | undefined,
     intent?: string,
     request?: ChannelTaskRequest,
     options?: {
@@ -5556,10 +5560,12 @@ export class Body {
     },
   ): Promise<SubchannelInfo> {
     // Pick up an owner-confirmed target-branch change for a newly opened corner.
-    const freshRoomRepo = this.refreshRepositoryTruth
+    const freshRoomRepo = roomRepo && this.refreshRepositoryTruth
       ? await this.refreshRepositoryTruth(roomRepo, 'corner-open')
       : roomRepo;
-    const boundRepo = await this.cornerBoundRepo(tlcChannelId, freshRoomRepo);
+    const boundRepo = freshRoomRepo
+      ? await this.cornerBoundRepo(tlcChannelId, freshRoomRepo)
+      : undefined;
     const agentId = this.agentIdentity;
     await this.ensureAgentInChannel(tlcChannelId, agentId);
     const communityId = await this.channelCommunityId(tlcChannelId);
@@ -5689,21 +5695,27 @@ export class Body {
     // clean, top-level sibling of the source checkout (never buried inside its
     // `.git`), so the agent's cd-to-project reflex lands inside the worktree
     // rather than the shared primary checkout. See `corner-isolation.ts`.
-    const worktreePath = this.cornerWorktreePath(boundRepo, subchannelId);
+    const worktreePath = boundRepo
+      ? this.cornerWorktreePath(boundRepo, subchannelId)
+      : resolve(this.config.workspaceRoot, 'repoless-corners', subchannelId);
     const featureBranch = taskSlug
       ? `feature/${taskSlug}-${subchannelId.slice(0, 8)}`
       : `feature/${subchannelId.slice(0, 8)}`;
-    await this.createWorktree(boundRepo, worktreePath, featureBranch);
+    if (boundRepo) {
+      await this.createWorktree(boundRepo, worktreePath, featureBranch);
 
-    // Fail closed: the edit session must never launch onto the shared primary
-    // checkout. Mirrors firstmate's `validate_spawn_worktree` pre-launch
-    // assertion — refuse the corner rather than tangle the protected branch.
-    await assertCornerWorktreeIsolated(worktreePath, boundRepo.localPath);
+      // Fail closed: the edit session must never launch onto the shared primary
+      // checkout. Mirrors firstmate's `validate_spawn_worktree` pre-launch
+      // assertion — refuse the corner rather than tangle the protected branch.
+      await assertCornerWorktreeIsolated(worktreePath, boundRepo.localPath);
 
-    // Best-effort, non-blocking: build the codegraph index for this fresh
-    // worktree so codegraph MCP tools have something to query as soon as
-    // they're ready. Never blocks or fails corner creation.
-    this.primeCodegraphIndex(worktreePath);
+      // Best-effort, non-blocking: build the codegraph index for this fresh
+      // worktree so codegraph MCP tools have something to query as soon as
+      // they're ready. Never blocks or fails corner creation.
+      this.primeCodegraphIndex(worktreePath);
+    } else {
+      await mkdir(worktreePath, { recursive: true, mode: 0o700 });
+    }
     const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
     const cornerMemory = await this.sessionMemory(communityId);
     const workspaceId = communityId ?? tlcChannelId;
@@ -5736,8 +5748,10 @@ export class Body {
     mcpServers.push(
       ...operatorMcpServersForCorners(this.config.accessPolicy, this.config.operatorMcpServers),
     );
-    const codegraphServer = codegraphMcpServer(this.config);
-    if (codegraphServer) mcpServers.push(codegraphServer);
+    if (boundRepo) {
+      const codegraphServer = codegraphMcpServer(this.config);
+      if (codegraphServer) mcpServers.push(codegraphServer);
+    }
 
     const session = await this.createManagedSession({
       channelId: subchannelId,
@@ -5747,21 +5761,41 @@ export class Body {
       systemPrompt: [
         'You are a coding agent in an edit session.',
         NO_PERSONAL_CONNECTORS_INSTRUCTION,
-        `You are working in a git worktree: ${worktreePath}`,
-        `Your feature branch is: ${featureBranch}`,
+        ...(boundRepo
+          ? [
+              `You are working in a git worktree: ${worktreePath}`,
+              `Your feature branch is: ${featureBranch}`,
+            ]
+          : [
+              `You are working in an isolated repo-less corner directory: ${worktreePath}`,
+              'This corner has no Git repository, feature branch, review card, or landing action.',
+              'Create requested artifacts here and use the mounted deliver tool to share them.',
+            ]),
         'You have full shell and file editing tools available.',
-        'You CAN create, edit, and delete files in this worktree.',
+        boundRepo
+          ? 'You CAN create, edit, and delete files in this worktree.'
+          : 'You CAN create, edit, and delete artifacts in this isolated directory.',
         "Before your first non-plan tool call in every turn, use your harness's plan mechanism to publish two to six concrete steps specific to the request.",
         'Update that plan as the work changes and keep exactly one item in progress until the turn is complete.',
-        'Commit your changes to the feature branch when appropriate.',
-        'Never merge, push or change the target branch, or archive this corner. Stop after committing the feature branch; only a signed human approval may authorize landing and archive cleanup.',
-        CORNER_TARGET_SYNC_INSTRUCTION,
+        ...(boundRepo
+          ? [
+              'Commit your changes to the feature branch when appropriate.',
+              'Never merge, push or change the target branch, or archive this corner. Stop after committing the feature branch; only a signed human approval may authorize landing and archive cleanup.',
+              CORNER_TARGET_SYNC_INSTRUCTION,
+            ]
+          : [
+              'Do not initialize Git or claim that this work can land. After delivering the artifacts, close the corner with disposition abandon.',
+            ]),
         'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
         'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
-        `Repo: ${this.repoId(boundRepo)}`,
-        `This corner currently targets ${shortBranchName(boundRepo.targetBranch)}. The Room owner ` +
-          'may rebind the Room target while this corner is open; the host will give the exact new target ' +
-          'to one automatic model turn, then verify the resulting clean committed branch.',
+        ...(boundRepo
+          ? [
+              `Repo: ${this.repoId(boundRepo)}`,
+              `This corner currently targets ${shortBranchName(boundRepo.targetBranch)}. The Room owner ` +
+                'may rebind the Room target while this corner is open; the host will give the exact new target ' +
+                'to one automatic model turn, then verify the resulting clean committed branch.',
+            ]
+          : []),
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
       // A corner is the agent's isolated worktree. Target landing and archive
@@ -5776,16 +5810,19 @@ export class Body {
         subchannelId,
       ),
       parentChannelId: tlcChannelId,
-      worktreePath,
+      ...(boundRepo ? { worktreePath } : {}),
       protectedPaths: cornerFilesystem.protectedPaths,
-      additionalWritablePaths: cornerFilesystem.additionalWritablePaths,
-      featureBranch,
+      additionalWritablePaths: boundRepo
+        ? cornerFilesystem.additionalWritablePaths
+        : [worktreePath, ...cornerFilesystem.additionalWritablePaths],
+      ...(boundRepo ? { featureBranch } : {}),
+      ...(!boundRepo ? { workbenchDir: worktreePath } : {}),
       resumeObjective: taskDescription || undefined,
-      resumeTargetRef: boundRepo.targetBranch ?? 'refs/heads/main',
+      ...(boundRepo ? { resumeTargetRef: boundRepo.targetBranch ?? 'refs/heads/main' } : {}),
       ...(agentPrivateState ? { agentPrivateState } : {}),
       ...(cornerMemory ? { agentMemory: cornerMemory } : {}),
       ...(communityId ? { communityId } : {}),
-      ...(boundRepo.truth?.binding.remote?.startsWith('git://github.com/') && agentPrivateState
+      ...(boundRepo?.truth?.binding.remote?.startsWith('git://github.com/') && agentPrivateState
         ? { gitReadCredential: { roomId: tlcChannelId, stateDir: agentPrivateState.root } }
         : {}),
     });
@@ -5799,12 +5836,12 @@ export class Body {
     const info: SubchannelInfo = {
       subchannelId,
       worktreePath,
-      featureBranch,
+      ...(boundRepo ? { featureBranch } : {}),
       role: agentId,
       session,
       lastPolledAt: now,
       archived: false,
-      boundRepo,
+      ...(boundRepo ? { boundRepo } : {}),
       ...(options?.mission ? { mission: options.mission } : {}),
       cornerName,
       taskDescription,
@@ -5820,8 +5857,8 @@ export class Body {
     // once the session actor is registered and ready to receive the turn.
     await this.transitionCornerState(info, 'working');
 
-    const repoId = this.repoId(boundRepo);
-    const targetBranch = boundRepo.targetBranch ?? 'refs/heads/main';
+    const repoId = boundRepo ? this.repoId(boundRepo) : undefined;
+    const targetBranch = boundRepo?.targetBranch ?? 'refs/heads/main';
     const requestTags = request
       ? [
           ['request', request.eventId],
@@ -5834,15 +5871,17 @@ export class Body {
       'corner-session-live',
       subchannelId,
       agentId,
-      `🤖 Agent edit session started — members mirrored from parent TLC.\nWorktree: ${worktreePath}\nBranch: ${featureBranch}`,
+      boundRepo
+        ? `🤖 Agent edit session started — members mirrored from parent TLC.\nWorktree: ${worktreePath}\nBranch: ${featureBranch}`
+        : `🤖 Agent repo-less corner started — members mirrored from parent TLC.\nWorkspace: ${worktreePath}\nDeliver artifacts from this corner; there is no branch to land.`,
       [
         ['session', session.logicalSessionId!],
         ['parent', tlcChannelId],
         ['mode', 'edit'],
-        ['repo', repoId],
         ['agent', agentId.publicKey],
-        ['feature', featureBranch],
-        ['branch', targetBranch],
+        ...(repoId ? [['repo', repoId]] : []),
+        ...(boundRepo ? [['feature', featureBranch]] : []),
+        ...(boundRepo ? [['branch', targetBranch]] : []),
         ['status', 'live'],
         ...(options?.mission
           ? [
@@ -8409,7 +8448,7 @@ export class Body {
   private requestCornerApproval(input: {
     roomId: string;
     workspaceId: string;
-    roomRepo: BoundRepo;
+    roomRepo?: BoundRepo;
     request: ChannelTaskRequest;
     objective: string;
     tool: string;
@@ -8434,7 +8473,7 @@ export class Body {
         };
       }
       const permissionId = randomUUID();
-      const repository = this.repoId(input.roomRepo);
+      const repository = input.roomRepo ? this.repoId(input.roomRepo) : 'repo-less';
       const audience = await this.cornerOpenAudience(input.roomId, input.request.authorPubkey);
       if (audience.length === 0) {
         throw new AgentToolKnownFailure(
@@ -8486,7 +8525,7 @@ export class Body {
    */
   private async publishedCornerApproval(input: {
     roomId: string;
-    roomRepo: BoundRepo;
+    roomRepo?: BoundRepo;
     request: ChannelTaskRequest;
   }): Promise<
     | {
@@ -8498,7 +8537,7 @@ export class Body {
       }
     | undefined
   > {
-    const repository = this.repoId(input.roomRepo);
+    const repository = input.roomRepo ? this.repoId(input.roomRepo) : 'repo-less';
     const events = await this.agentRelay.queryEvents([
       {
         kinds: [9],
@@ -8530,7 +8569,7 @@ export class Body {
   private async finishCornerApproval(input: {
     roomId: string;
     workspaceId: string;
-    roomRepo: BoundRepo;
+    roomRepo?: BoundRepo;
     request: ChannelTaskRequest;
     objective: string;
     tool: string;
@@ -9379,6 +9418,11 @@ export class Body {
       info.lastAgentMessageContent = info.mergeSummary;
     };
     if (info.archived) return false;
+    if (!info.boundRepo) {
+      await publishResult();
+      await this.transitionCornerState(info, 'idle');
+      return true;
+    }
     let ready = false;
     try {
       ready = await this.publishMergeReady(info);
@@ -9445,20 +9489,29 @@ export class Body {
         await this.startCornerPlan(info.session, info.taskDescription || prompt, taskPlan);
         const result = await this.promptAgent(
           info.session,
-          [
-            'Implement the following human request in this worktree.',
-            'Keep all edits on the current feature branch. Commit the completed work.',
-            'Do not merge, push or change the target branch, or archive this corner.',
-            CORNER_TARGET_SYNC_INSTRUCTION,
-            CORNER_MERGE_GATE_INSTRUCTION,
-            CORNER_TURN_SUMMARY_INSTRUCTION,
-            '',
-            taskInstructions,
-          ].join('\n'),
+          info.boundRepo
+            ? [
+                'Implement the following human request in this worktree.',
+                'Keep all edits on the current feature branch. Commit the completed work.',
+                'Do not merge, push or change the target branch, or archive this corner.',
+                CORNER_TARGET_SYNC_INSTRUCTION,
+                CORNER_MERGE_GATE_INSTRUCTION,
+                CORNER_TURN_SUMMARY_INSTRUCTION,
+                '',
+                taskInstructions,
+              ].join('\n')
+            : [
+                'Complete the following request in this isolated repo-less corner directory.',
+                'Create artifacts here and use the mounted deliver tool to share them.',
+                'Do not initialize Git or claim that this work can land.',
+                CORNER_TURN_SUMMARY_INSTRUCTION,
+                '',
+                taskInstructions,
+              ].join('\n'),
           {
             ...attribution,
             channelId: info.subchannelId,
-            withholdMergeClaims: true,
+            withholdMergeClaims: Boolean(info.boundRepo),
           },
         );
         // The corner may have been closed (archived) while this turn was
@@ -10136,7 +10189,7 @@ export class Body {
             ['status', 'ready'],
             ['repo', target.repo],
             ['branch', target.branch],
-            ['feature', info.featureBranch],
+            ['feature', info.featureBranch!],
             ['tip', target.tip],
             ['patch-id', target.patchId!],
             ['summary', reviewArtifact.summary],
@@ -10800,7 +10853,7 @@ export class Body {
             ['retry', 'blocked'],
             ['repo', target.repo],
             ['branch', target.branch],
-            ['feature', info.featureBranch],
+            ['feature', info.featureBranch!],
             ['tip', target.tip],
             ['approval', approvalId],
           ],
@@ -11065,10 +11118,10 @@ export class Body {
       tags: [
         ['t', LAND_SUMMARY_TAG],
         ['subchannel', info.subchannelId],
-        ['feature', info.featureBranch],
+        ['feature', info.featureBranch!],
         ['branch', branch],
         ['tip', landedTip],
-        ['objective', objective || `Finish the work in ${info.featureBranch}`],
+        ['objective', objective || `Finish the work in ${info.featureBranch!}`],
         ['delivered', changeLine],
         ['omitted', omitted],
         ...(approver
@@ -13964,7 +14017,7 @@ export class Body {
    * fallback as well as being masked entirely by bubblewrap.
    */
   private async cornerFilesystemPolicy(
-    boundRepo: BoundRepo,
+    boundRepo: BoundRepo | undefined,
     worktreePath: string,
     agentPrivateStateRoot?: string,
   ): Promise<{
@@ -13972,13 +14025,13 @@ export class Body {
     writablePaths: string[];
     additionalWritablePaths: string[];
   }> {
-    const gitCommonDir = await resolveGitCommonDir(worktreePath);
+    const gitCommonDir = boundRepo ? await resolveGitCommonDir(worktreePath) : undefined;
     const additionalWritablePaths = agentPrivateStateRoot ? [agentPrivateStateRoot] : [];
     return {
       protectedPaths: [
         this.config.workspaceRoot,
         ...this.cornersPoolRoots(boundRepo),
-        ...(boundRepo.localPath ? [boundRepo.localPath] : []),
+        ...(boundRepo?.localPath ? [boundRepo.localPath] : []),
         ...(this.config.agentHomeRoot ? [this.config.agentHomeRoot] : []),
         ...(this.config.agentPrivateRoot ? [this.config.agentPrivateRoot] : []),
         ...this.sandboxCredentialMaskPaths().map((mask) => mask.path),
@@ -13986,7 +14039,7 @@ export class Body {
       writablePaths: [
         worktreePath,
         ...(gitCommonDir ? [gitCommonDir] : []),
-        ...mergeGateStateDirs(),
+        ...(boundRepo ? mergeGateStateDirs() : []),
         ...additionalWritablePaths,
       ],
       additionalWritablePaths,
@@ -14241,7 +14294,7 @@ export class Body {
   private async removeWorktree(
     subchannelId: string,
     worktreePath: string,
-    _featureBranch: string,
+    _featureBranch: string | undefined,
     boundRepo?: BoundRepo,
   ): Promise<void> {
     const legacyGitDir = worktreePath.includes('.worktrees')

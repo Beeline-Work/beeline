@@ -101,8 +101,21 @@ describe('STATE-UPGRADE gate — server-indexed surface storage', () => {
     );
     const retired =
       'Still working on this — my coding backend is taking longer than usual to respond.';
+    const modelUnavailable =
+      'Model unavailable · claude-sonnet-5\n' +
+      'The requested model is no longer offered by this provider.\n' +
+      'Open this agent’s settings, choose a value from the live model catalog, then restart the agent.';
+    const validationUnavailable =
+      'Model validation unavailable · gpt-5\n' +
+      'The live harness catalog could not verify "gpt-5".\n' +
+      'Restore access to the selected harness and its live catalog, then restart the agent.';
     const surface = {
-      messages: [{ id: 'retired', text: retired }, { id: 'answer', text: 'Done.' }],
+      messages: [
+        { id: 'retired', text: retired },
+        { id: 'model-unavailable', text: modelUnavailable },
+        { id: 'validation-unavailable', text: validationUnavailable },
+        { id: 'answer', text: 'Done.' },
+      ],
     };
     const isSurface = (value: unknown): value is typeof surface =>
       Boolean(value) && typeof value === 'object';
@@ -113,6 +126,9 @@ describe('STATE-UPGRADE gate — server-indexed surface storage', () => {
     });
 
     const key = `surface.${encodeURIComponent(surfaceCacheKey(address))}`;
-    expect(mmkv.stores.get('buzz-surface-responses')?.get(key)).not.toContain(retired);
+    const stored = mmkv.stores.get('buzz-surface-responses')?.get(key);
+    expect(stored).not.toContain(retired);
+    expect(stored).not.toContain(modelUnavailable);
+    expect(stored).not.toContain(validationUnavailable);
   });
 });

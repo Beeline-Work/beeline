@@ -55,6 +55,7 @@ import { shellCommandFromRawInput } from './corner-isolation.js';
 export const ROOM_READ_ONLY_STEER =
   'this Room repository is read-only; open a corner yourself in one step to make repository changes. ' +
   'Only the explicitly named agent-private memory and workbench directories are writable here. ' +
+  'To persist private memory, use buzz-readonly-mcp.write_memory; shell writes to memory are always denied. ' +
   'Shell commands and git state cannot be modified from a Room. ' +
   'Do not retry with a different tool — every write, edit, move, delete and shell ' +
   'command outside those capabilities is refused here, whichever tool asks. Stop trying to make ' +
@@ -315,7 +316,7 @@ export function classifyRoomPermission(request: AcpPermissionRequest): SandboxVe
  *  - A request carrying a SHELL payload is never resolved by its text —
  *    `bash … > memory/MEMORY.md && rm -rf /repo` must not pass because one
  *    token names the memory dir. Shell writes to memory stay denied; the
- *    prompt tells the agent to use its file-editing tools.
+ *    prompt tells the agent to use buzz-readonly-mcp.write_memory.
  *  - EVERY filesystem path named anywhere in the request must resolve inside
  *    the memory dir (physically resolved, so a symlink cannot launder the
  *    target out), and at least one path must be named. A mutating request

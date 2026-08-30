@@ -7,12 +7,10 @@
 # Cloudflare tunnel — so CI cannot reach in; the job runs locally instead).
 #
 # What it deploys (previously three hand-typed steps):
-#   1. the WHOLE relay-stack/web/ tree ->
+#   1. relay-stack/web/ (except the host-local dl/ release store) ->
 #      /home/lunchbox/buzz-router-relay-prod/relay-front/web/
-#      (install.sh, join/, .well-known/, dl/ with BOTH platform bundles and
-#      manifest). Whole-tree, never a subset: the stale hand-deployed
-#      install.sh bug came from a deploy path that copied some files and not
-#      others.
+#      (install.sh, join/, and .well-known/). The workflow-published dl/ store
+#      is preserved in place and validated before any live file is touched.
 #   2. apps/auth Dockerfile -> beeline-auth:production. The container is
 #      recreated once below: by the full stack reconciliation when config
 #      changes, otherwise by an auth-only reconciliation.
@@ -60,6 +58,7 @@ set -euo pipefail
 
 PROJECT_DIR=${BEELINE_PROD_DIR:-/home/lunchbox/buzz-router-relay-prod}
 WEBROOT=$PROJECT_DIR/relay-front/web
+DL_ROOT=${BEELINE_DL_ROOT:-$WEBROOT/dl}
 BACKUP_ROOT=$PROJECT_DIR/relay-front/web-backups
 BACKUP_KEEP=10
 PUBLIC_BASE=${BEELINE_PUBLIC_BASE:-https://usebeeline.app}
@@ -77,6 +76,32 @@ die() { echo "!! $*" >&2; exit "${2:-1}"; }
 
 [ -d "$REPO_WEB" ] || die "no relay-stack/web in checkout ($CHECKOUT)"
 [ -d "$WEBROOT" ] || die "webroot missing: $WEBROOT"
+
+validate_dl_store() {
+  local listing=$1 file want got
+  [ -f "$DL_ROOT/manifest.json" ] || die "CLI release store has no manifest: $DL_ROOT/manifest.json"
+  node -e '
+    const fs=require("fs");
+    const m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+    const out=[];
+    for(const [platform,bundle] of Object.entries(m.bundles??{})){
+      if(!/^beeline-[a-z0-9-]+\.tar\.gz$/.test(bundle.file??"") || !/^[0-9a-f]{64}$/.test(bundle.sha256??""))
+        throw new Error(platform+" entry incomplete or unsafe");
+      out.push(bundle.file+"\t"+bundle.sha256);
+    }
+    if(out.length===0) throw new Error("manifest has no bundles");
+    console.log(out.join("\n"));
+  ' "$DL_ROOT/manifest.json" >"$listing" || die "CLI release store manifest is unreadable"
+  while IFS=$'\t' read -r file want; do
+    [ -f "$DL_ROOT/$file" ] || die "CLI release store manifest references missing file: $DL_ROOT/$file"
+    [ -f "$DL_ROOT/$file.sha256" ] || die "CLI release store is missing checksum sidecar: $DL_ROOT/$file.sha256"
+    got=$(sha256sum "$DL_ROOT/$file" | cut -d' ' -f1)
+    [ "$got" = "$want" ] || die "CLI release store bundle $file hashes to $got, manifest requires $want"
+    [ "$(awk '{print $1}' "$DL_ROOT/$file.sha256")" = "$want" ] \
+      || die "CLI release store checksum sidecar disagrees for $file"
+    log "release-store bundle ok: $file ($(wc -c <"$DL_ROOT/$file") bytes)"
+  done <"$listing"
+}
 
 events_service_absent() {
   local unit_file
@@ -233,8 +258,12 @@ trap cleanup_deploy EXIT
 # ---------------------------------------------------------------------------
 # 0. Capture the current web identity for the deployment log.
 # ---------------------------------------------------------------------------
-OLD_MANIFEST_SHA=$(sha256sum "$WEBROOT/dl/manifest.json" 2>/dev/null | cut -d' ' -f1 || true)
+OLD_MANIFEST_SHA=$(sha256sum "$DL_ROOT/manifest.json" 2>/dev/null | cut -d' ' -f1 || true)
 log "live dl manifest sha: ${OLD_MANIFEST_SHA:-none}"
+
+# The release workflow owns /dl. A normal deploy must fail before touching the
+# live web tree if that store is absent or internally inconsistent.
+validate_dl_store "$STAGE/dl-bundles.txt"
 
 # ---------------------------------------------------------------------------
 # 1. Stage the whole web tree + local integrity check.
@@ -243,21 +272,12 @@ log "staging web tree"
 mkdir -p "$STAGE/web"
 # --no-o/--no-g: the runner user must not try to preserve owner/group across
 # users; the live tree's setgid relay-web directories keep the shared group.
-rsync -a -O --no-p --no-o --no-g --delete "$REPO_WEB/" "$STAGE/web/"
+rsync -a -O --no-p --no-o --no-g --delete --exclude '/dl/' "$REPO_WEB/" "$STAGE/web/"
 
-if ! diff -r --brief "$REPO_WEB" "$STAGE/web" >"$STAGE/stage-diff.txt" 2>&1; then
+if ! diff -r --brief -x dl "$REPO_WEB" "$STAGE/web" >"$STAGE/stage-diff.txt" 2>&1; then
   cat "$STAGE/stage-diff.txt" >&2
   die "staged copy differs from checkout — aborting before anything was touched"
 fi
-
-# Every advertised bundle must exist AND its .sha256 sidecar must match.
-for f in "$REPO_WEB"/dl/*.tar.gz; do
-  b=$(basename "$f")
-  want=$(awk '{print $1}' "$REPO_WEB/dl/$b.sha256")
-  got=$(sha256sum "$f" | cut -d' ' -f1)
-  [ "$want" = "$got" ] || die "bundle $b fails its own .sha256 sidecar"
-  log "staged bundle ok: $b ($(wc -c <"$f") bytes)"
-done
 
 if [ "$DRILL" = "fail-public" ]; then
   echo "# drill corruption $(date +%s)" >>"$STAGE/web/install.sh"
@@ -294,15 +314,15 @@ ensure_materializer_bind_source events-state "${BEELINE_EVENTS_HOST_STATE_DIR:-/
 mkdir -p "$BACKUP_ROOT"
 BAK=$BACKUP_ROOT/bak-$TS
 log "backing up live web tree to $BAK"
-rsync -a -O --no-p --no-o --no-g "$WEBROOT/" "$BAK/"
+rsync -a -O --no-p --no-o --no-g --exclude '/dl/' "$WEBROOT/" "$BAK/"
 
 log "swapping staged tree into $WEBROOT"
-rsync -a -O --no-p --no-o --no-g --delete "$STAGE/web/" "$WEBROOT/"
+rsync -a -O --no-p --no-o --no-g --delete --exclude '/dl/' "$STAGE/web/" "$WEBROOT/"
 
 # Local post-swap check before spending time on the public round-trips.
-diff -r --brief "$STAGE/web" "$WEBROOT" >/dev/null || {
+diff -r --brief -x dl "$STAGE/web" "$WEBROOT" >/dev/null || {
   log "post-swap local mismatch — rolling back web tree"
-  rsync -a -O --no-p --no-o --no-g --delete "$BAK/" "$WEBROOT/"
+  rsync -a -O --no-p --no-o --no-g --delete --exclude '/dl/' "$BAK/" "$WEBROOT/"
   die "web swap failed locally; previous content restored"
 }
 
@@ -499,6 +519,7 @@ log "production stack rolled out"
 # exact failure class that produced the stale hand-deployed install.sh).
 pub_sha() { curl -fsSL --max-time 120 "$1" | sha256sum | cut -d' ' -f1; }
 repo_sha() { sha256sum "$REPO_WEB/$1" | cut -d' ' -f1; }
+dl_sha() { sha256sum "$DL_ROOT/$1" | cut -d' ' -f1; }
 
 verify_public() {
   local failures=0
@@ -510,8 +531,8 @@ verify_public() {
 
   # manifest byte-for-byte, plus every advertised bundle present at its real
   # public URL and matching BOTH its .sha256 sidecar and the manifest entry.
-  if [ "$(pub_sha "$PUBLIC_BASE/dl/manifest.json")" != "$(repo_sha dl/manifest.json)" ]; then
-    echo "!! public /dl/manifest.json does not serve the merged manifest" >&2; failures=$((failures+1))
+  if [ "$(pub_sha "$PUBLIC_BASE/dl/manifest.json")" != "$(dl_sha manifest.json)" ]; then
+    echo "!! public /dl/manifest.json does not serve the host-local release manifest" >&2; failures=$((failures+1))
   else log "public /dl/manifest.json verified"; fi
 
   node -e '
@@ -523,13 +544,13 @@ verify_public() {
       out.push(b.file+"\t"+b.sha256);
     }
     console.log(out.join("\n"));
-  ' "$REPO_WEB/dl/manifest.json" >"$STAGE/manifest-bundles.txt" || die "unreadable manifest"
+  ' "$DL_ROOT/manifest.json" >"$STAGE/manifest-bundles.txt" || die "unreadable manifest"
 
   while IFS=$'\t' read -r file want; do
     got=$(pub_sha "$PUBLIC_BASE/dl/$file")
-    local_want=$(repo_sha "dl/$file")
+    local_want=$(dl_sha "$file")
     if [ "$got" != "$want" ] || [ "$got" != "$local_want" ]; then
-      echo "!! public /dl/$file serves ${got:-nothing}, expected $want (checkout: $local_want)" >&2; failures=$((failures+1))
+      echo "!! public /dl/$file serves ${got:-nothing}, expected $want (release store: $local_want)" >&2; failures=$((failures+1))
     else log "public bundle verified: $file"; fi
     side=$(curl -fsSL --max-time 60 "$PUBLIC_BASE/dl/$file.sha256" | awk '{print $1}')
     [ "$side" = "$want" ] || { echo "!! public .sha256 sidecar for $file disagrees with manifest" >&2; failures=$((failures+1)); }

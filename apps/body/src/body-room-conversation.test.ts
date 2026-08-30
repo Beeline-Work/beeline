@@ -44,7 +44,6 @@ import {
   agentTurnFailureReply,
   agentExchangeTurnPrompt,
   abandonedCornerCloseRetryDelayMs,
-  ABANDONED_CORNER_CLOSE_REFUSED,
   ABANDONED_CORNER_CLOSE_RETRY_BASE_MS,
   ABANDONED_CORNER_CLOSE_RETRY_CAP_MS,
   UNTRACKED_CORNER_SCAN_INTERVAL_MS,
@@ -144,7 +143,6 @@ import {
   isReadOnlyMcpPermissionRequest,
 } from './read-only-policy.js';
 import { targetBranchProposalFromAgentText } from './target-branch.js';
-import { CONCLUDE_NUDGE_SPACING_MS, MAX_CONCLUDE_NUDGES_PER_EPISODE } from './conclude-watch.js';
 import {
   CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
   CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
@@ -1572,14 +1570,11 @@ describe('Room conversation and permission-gated work intent', () => {
     );
 
     expect(
-      published.slice(-3).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
-    ).toEqual(['working', undefined, 'complete']);
-    expect(published.at(-2)?.content).toBe(
-      "It looks like the other agent's adapter returned an empty turn.",
-    );
+      published.slice(-2).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
+    ).toEqual(['working', 'complete']);
     expect(prompt).toHaveBeenLastCalledWith(
       'readonly-session',
-      expect.stringContaining('Answer the latest human message directly and conversationally'),
+      expect.stringContaining('What do you think about that response?'),
       ROOM_AGENT_PROMPT_TIMEOUT_MS,
       expect.any(Function),
       expect.any(Function),
@@ -1610,10 +1605,9 @@ describe('Room conversation and permission-gated work intent', () => {
       },
     );
 
-    expect(published.at(-2)?.content).toBe(
-      "I couldn't produce a response to that message; please try again.",
-    );
-    expect(published.at(-2)?.content).not.toContain('repository findings');
+    expect(
+      published.some((item) => item.content.includes("couldn't produce a response")),
+    ).toBe(false);
 
     prompt.mockRejectedValueOnce(new Error('prompt cancelled'));
     await expect(
@@ -1628,11 +1622,11 @@ describe('Room conversation and permission-gated work intent', () => {
           createdAt: event.created_at + 3,
         },
       ),
-    ).resolves.toEqual({ openedCorner: false, producedReply: true });
+    ).resolves.toEqual({ openedCorner: false, producedReply: false });
     expect(
-      published.slice(-3).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
-    ).toEqual(['working', 'failed', undefined]);
-    expect(published.at(-1)?.content).toContain("won't retry it without another message");
+      published.slice(-2).map((item) => item.tags.find((tag) => tag[0] === 'status')?.[1]),
+    ).toEqual(['working', 'complete']);
+    expect(published.some((item) => item.content.includes("won't retry it without another message"))).toBe(false);
   });
 
   it('publishes and then honestly replaces a Room receipt before cold provisioning starts', async () => {
@@ -1678,7 +1672,7 @@ describe('Room conversation and permission-gated work intent', () => {
       ),
     ).rejects.toThrow('adapter could not start');
 
-    expect(order).toEqual(['receipt:working', 'spawn', 'receipt:failed']);
+    expect(order).toEqual(['receipt:working', 'spawn', 'receipt:complete']);
   });
 
   it('recycles the read-only ACP generation after a handled edit permission', async () => {
@@ -2033,7 +2027,7 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(sessionPromptSpy).toHaveBeenCalledTimes(1);
     expect(
       published.some((item) => item.content?.includes("won't retry it without another message")),
-    ).toBe(true);
+    ).toBe(false);
 
     // A later poll must not re-drive the backend a further time — the event
     // is terminally delivered, not endlessly retried.
@@ -2246,10 +2240,7 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(isRepositoryMutationRequest('Append DM-EDIT-PROOF to README.md now.')).toBe(true);
     expect(provision).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
-    expect(published).toHaveLength(1);
-    expect(published[0]!.content).toContain('DMs are strictly read-only');
-    expect(published[0]!.content).not.toMatch(/allow|approve|permission/i);
-    expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+    expect(published).toHaveLength(0);
   });
 
   it('retries only transient write-permission polling failures', () => {
@@ -3721,8 +3712,6 @@ describe('Room conversation and permission-gated work intent', () => {
     const replies = published.filter((event) =>
       event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message'),
     );
-    expect(replies).toHaveLength(1);
-    expect(replies[0]!.content).toContain('fix-the-retry-loop');
-    expect(replies[0]!.content).toMatch(/corner/i);
+    expect(replies).toHaveLength(0);
   });
 });

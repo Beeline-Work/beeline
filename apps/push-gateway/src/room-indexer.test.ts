@@ -308,7 +308,7 @@ describe('RoomIndexer', () => {
           generationId: 'generation-1',
         },
       ],
-      corners: [{ corner: { id: CORNER, updatedAt: 7 }, status: 'working' }],
+      corners: [{ corner: { id: CORNER, updatedAt: 5 } }],
     });
     expect(view?.messages.map((message) => [message.text, message.author.name])).toEqual([
       ['Hello', 'Ada'],
@@ -729,7 +729,8 @@ describe('RoomIndexer', () => {
       agentState: 'working',
     });
 
-    // A corner waiting on a human outranks a merely working room turn.
+    // Legacy corner-state records are non-rendered machine facts and do not
+    // override the signed room turn receipt.
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
@@ -750,7 +751,7 @@ describe('RoomIndexer', () => {
     );
     const needsYou = await indexer.readChats(WORKSPACE, VIEWER);
     expect(needsYou?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
-      agentState: 'needs-you',
+      agentState: 'working',
     });
 
     // Once the room turn completes and the corner concludes, the rollup
@@ -805,9 +806,8 @@ describe('RoomIndexer', () => {
       cornerCount: 1,
     });
 
-    // Landing publishes 'concluded' — terminal — before the corner channel is
-    // ever archived. The count must drop to zero immediately, matching the
-    // deck's own non-terminal rule for the pinned line and dropdown.
+    // A legacy corner-state record is not a durable lifecycle authority. The
+    // metadata child remains counted until its channel is actually archived.
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
@@ -827,7 +827,7 @@ describe('RoomIndexer', () => {
     );
     const concluded = await indexer.readChats(WORKSPACE, VIEWER);
     expect(concluded?.chats.find((chat) => chat.room.id === ROOM)).toMatchObject({
-      cornerCount: 0,
+      cornerCount: 1,
     });
 
     // A corner archived outright (post-cleanup 'closed', or a bare archive)
@@ -1605,8 +1605,7 @@ describe('RoomIndexer', () => {
     expect(chat).toMatchObject({
       latestMessage: { id: directReplyId, text: 'Ready' },
       unread: false,
-      cornerCount: 1,
-      agentState: 'working',
+      cornerCount: 2,
     });
   });
 
@@ -2032,7 +2031,7 @@ describe('RoomIndexer', () => {
   it('returns corner metadata, review descriptors, and no patch body', async () => {
     physicalQueries = 0;
     const corners = await indexer.readCorners(ROOM, VIEWER);
-    expect(corners).toMatchObject({ corners: [{ corner: { id: CORNER }, status: 'working' }] });
+    expect(corners).toMatchObject({ corners: [{ corner: { id: CORNER } }] });
     expect(physicalQueries).toBe(1);
 
     physicalQueries = 0;

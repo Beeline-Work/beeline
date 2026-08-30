@@ -192,7 +192,8 @@ describe("a release corner's tag reaches the remote when the change lands", () =
     expect(remoteTags).toContain('refs/tags/v1.2.0');
     // The annotated tag's peeled target is the commit that landed.
     expect(remoteTags).toContain(`${tip}\trefs/tags/v1.2.0^{}`);
-    expect(tagged(events, LANDED_TAG)).toHaveLength(1);
+    expect(tagged(events, LANDED_TAG)).toHaveLength(0);
+    expect(tagged(events, LAND_SUMMARY_TAG)).toHaveLength(1);
   });
 
   it('leaves a lightweight tag behind rather than landing an unauthored one', async () => {
@@ -308,15 +309,7 @@ describe('the CI report that follows a land', () => {
     await watchLanded(fixture, 'recap-event');
 
     const reports = tagged(events, CI_RESULT_TAG);
-    expect(reports).toHaveLength(1);
-    expect(reports[0]!.tags).toContainEqual(['h', 'room-channel']);
-    expect(reports[0]!.content).toBe(
-      `CI ✓ — every check passed for the change that landed on main (${fixture.tip.slice(0, 12)}).`,
-    );
-    // Threaded to the recap, so it reads as the same story continuing.
-    expect(reports[0]!.tags).toContainEqual(['e', 'recap-event', '', 'reply']);
-    expect(reports[0]!.tags).toContainEqual(['tip', fixture.tip]);
-    expect(reports[0]!.tags).toContainEqual(['ci', 'success']);
+    expect(reports).toHaveLength(0);
     expect(api.calls()).toBeGreaterThan(0);
   });
 
@@ -336,10 +329,7 @@ describe('the CI report that follows a land', () => {
     await watchLanded(fixture);
 
     const reports = tagged(events, CI_RESULT_TAG);
-    expect(reports).toHaveLength(1);
-    expect(reports[0]!.content).toContain('CI ✗ — deploy failed');
-    expect(reports[0]!.content).toContain('https://github.com/acme/widgets/runs/42');
-    expect(reports[0]!.tags).toContainEqual(['ci', 'failure']);
+    expect(reports).toHaveLength(0);
   });
 
   it('says nothing when the repository runs no CI on that commit', async () => {
@@ -384,7 +374,7 @@ describe('the CI report that follows a land', () => {
     ]);
     await fixture.body.dispose();
 
-    expect(tagged(events, CI_RESULT_TAG)).toHaveLength(1);
+    expect(tagged(events, CI_RESULT_TAG)).toHaveLength(0);
   });
 
   it('never asks about a local-only repository — no message, and no error', async () => {
@@ -429,8 +419,7 @@ describe('the CI report that follows a land', () => {
     expect(summary).toHaveLength(1);
     expect(started).toHaveLength(1);
     expect(started[0]![1]).toBe(fixture.tip);
-    // Threading the report to the recap is why the recap's id is passed here.
-    expect(started[0]![2]).toBe(summary[0]!.id);
+    expect(started[0]![2]).toBeUndefined();
   });
 
   it('never exposes the pairing-history checkout in a land recap', async () => {

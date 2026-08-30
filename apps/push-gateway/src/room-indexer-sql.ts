@@ -621,26 +621,6 @@ WITH workspace_candidates AS (
     ORDER BY e.created_at ASC, e.id ASC LIMIT 1
   ) generation ON EXISTS (SELECT 1 FROM jsonb_array_elements(generation.tags) t
     WHERE t->>0 = 'parent')
-), corner_states AS (
-  -- Latest buzz-corner-state record per corner, normalized the same way
-  -- cornerItem() normalizes it for the standalone corners list. Gated on
-  -- current corner membership like every other agent-authored read below: a
-  -- ghost agent (evicted key, dead or rogue daemon) must never resurrect a
-  -- WORKING dot from a stale or replayed self-signed state record.
-  SELECT cc.community_id, cc.corner_id, cc.parent_id, cc.archived_at,
-    (CASE WHEN raw.state = 'waiting-on-human' THEN 'waiting' ELSE raw.state END) AS state
-  FROM corner_children cc
-  LEFT JOIN LATERAL (
-    SELECT (SELECT t->>1 FROM jsonb_array_elements(e.tags) t
-      WHERE t->>0 = 'state' LIMIT 1) AS state
-    FROM events e WHERE e.community_id = cc.community_id AND e.pubkey = cc.created_by
-      AND e.kind = 30078 AND e.deleted_at IS NULL
-      AND e.d_tag = 'buzz-corner-state:' || cc.corner_id::text
-      AND EXISTS (SELECT 1 FROM channel_members member
-        WHERE member.community_id = e.community_id AND member.channel_id = cc.corner_id
-          AND member.pubkey = e.pubkey AND member.removed_at IS NULL)
-    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-  ) raw ON true
 ), corner_counts AS (
   -- Same non-terminal rule the deck applies before pinning or expanding a
   -- corner (isCornerTerminalState, room-indicators.ts): a corner that has
@@ -648,20 +628,9 @@ WITH workspace_candidates AS (
   -- count. A room whose corners are all terminal gets no row here at all,
   -- so COALESCE(corners.corner_count, 0) below reads 0.
   SELECT parent.community_id, parent.id AS room_id, count(*)::bigint AS corner_count
-  FROM chats parent JOIN corner_states cs ON cs.community_id = parent.community_id
+  FROM chats parent JOIN corner_children cs ON cs.community_id = parent.community_id
     AND cs.parent_id = parent.id::text
-  WHERE cs.archived_at IS NULL AND cs.state IS DISTINCT FROM 'concluded'
-    AND cs.state IS DISTINCT FROM 'closed'
-  GROUP BY parent.community_id, parent.id
-), corner_urgency AS (
-  -- Max-severity rollup of every corner's current state: a corner waiting on
-  -- a human outranks one merely working, matching the deck's needs-you >
-  -- working > idle precedence.
-  SELECT parent.community_id, parent.id AS room_id,
-    bool_or(cs.state = 'waiting') AS needs_you,
-    bool_or(cs.state = 'working') AS working
-  FROM chats parent JOIN corner_states cs ON cs.community_id = parent.community_id
-    AND cs.parent_id = parent.id::text
+  WHERE cs.archived_at IS NULL
   GROUP BY parent.community_id, parent.id
 ), repositories AS (
   SELECT DISTINCT ON (e.community_id, a.id)
@@ -754,14 +723,12 @@ SELECT 'chat', jsonb_build_object(
   -- corner's current state: a corner waiting on a human outranks a working
   -- turn, and either outranks quiet. NULL means idle.
   'agentState', CASE
-    WHEN COALESCE(urgency.needs_you, false) THEN 'needs-you'
-    WHEN COALESCE(urgency.working, false) OR COALESCE(turns.working, false) THEN 'working'
+    WHEN COALESCE(turns.working, false) THEN 'working'
     ELSE NULL
   END
 ) FROM chats a
 LEFT JOIN member_counts members ON members.community_id = a.community_id AND members.room_id = a.id
 LEFT JOIN corner_counts corners ON corners.community_id = a.community_id AND corners.room_id = a.id
-LEFT JOIN corner_urgency urgency ON urgency.community_id = a.community_id AND urgency.room_id = a.id
 LEFT JOIN room_turns turns ON turns.community_id = a.community_id AND turns.room_id = a.id
 LEFT JOIN repositories repo ON repo.community_id = a.community_id AND repo.room_id = a.id
 LEFT JOIN latest_events latest ON latest.community_id = a.community_id AND latest.room_id = a.id
@@ -769,7 +736,7 @@ LEFT JOIN beeline_room_read_marks mark ON mark.community_id = a.community_id
   AND mark.room_id = a.id AND mark.viewer_pubkey = decode($2, 'hex')
 UNION ALL
 SELECT 'corner-watch', jsonb_build_object('id', cs.corner_id, 'parentId', cs.parent_id)
-FROM corner_states cs
+FROM corner_children cs
 JOIN chats parent ON parent.community_id = cs.community_id AND parent.id::text = cs.parent_id
 UNION ALL
 SELECT 'preview', jsonb_build_object(
@@ -1098,10 +1065,7 @@ SELECT 'corner', jsonb_build_object(
   'name', c.name, 'about', COALESCE(c.description, c.task), 'visibility', c.visibility,
   'archived', c.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM c.created_at)::bigint,
-  'updatedAt', extract(epoch FROM GREATEST(
-    c.updated_at, COALESCE(state.created_at, c.updated_at)
-  ))::bigint,
-  'statusTags', state.tags,
+  'updatedAt', extract(epoch FROM c.updated_at)::bigint,
   'agentPubkey', encode(c.created_by, 'hex'),
   'agentName', ${resolvedIdentityNameSql('resolved')},
   'agentHandle', resolved.handle,
@@ -1109,19 +1073,6 @@ SELECT 'corner', jsonb_build_object(
   'agent', resolved.agent_content IS NOT NULL
 ) FROM corners c JOIN authorized a ON true
 JOIN identities resolved ON resolved.community_id = c.community_id AND resolved.pubkey = c.created_by
-LEFT JOIN LATERAL (
-  SELECT e.tags, e.created_at FROM events e WHERE e.community_id = c.community_id
-    AND e.pubkey = c.created_by AND e.kind = 30078
-    AND e.d_tag = 'buzz-corner-state:' || c.id::text AND e.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) h
-      WHERE h->>0 = 'h' AND h->>1 = a.id::text)
-    -- A ghost agent (evicted key, dead or rogue daemon) never resurrects the
-    -- corner's own badge from a stale or replayed self-signed state record.
-    AND EXISTS (SELECT 1 FROM channel_members member
-      WHERE member.community_id = e.community_id AND member.channel_id = c.id
-        AND member.pubkey = e.pubkey AND member.removed_at IS NULL)
-  ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-) state ON true
 UNION ALL
 SELECT 'preview', jsonb_build_object(
   'roomId', e.room_id, 'id', encode(e.id, 'hex'), 'pubkey', encode(e.pubkey, 'hex'),
@@ -1370,10 +1321,7 @@ SELECT 'sibling', jsonb_build_object(
   'visibility', f.visibility,
   'archived', f.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM f.created_at)::bigint,
-  'updatedAt', extract(epoch FROM GREATEST(
-    f.updated_at, COALESCE(state.created_at, f.updated_at)
-  ))::bigint,
-  'statusTags', state.tags,
+  'updatedAt', extract(epoch FROM f.updated_at)::bigint,
   'agentPubkey', encode(f.created_by, 'hex'),
   'agentName', ${resolvedIdentityNameSql('resolved')},
   'agentHandle', resolved.handle,
@@ -1381,20 +1329,6 @@ SELECT 'sibling', jsonb_build_object(
   'agent', resolved.agent_content IS NOT NULL
 ) FROM family f JOIN authorized a ON true
 JOIN identities resolved ON resolved.community_id = f.community_id AND resolved.pubkey = f.created_by
-LEFT JOIN LATERAL (
-  SELECT e.tags, e.created_at FROM events e WHERE e.community_id = f.community_id
-    AND e.pubkey = f.created_by AND e.kind = 30078
-    AND e.d_tag = 'buzz-corner-state:' || f.id::text AND e.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) h
-      WHERE h->>0 = 'h' AND h->>1 = COALESCE(a.parent_id, a.id)::text)
-    -- A ghost agent (evicted key, dead or rogue daemon) never resurrects a
-    -- sibling corner's pinned/live badge from a stale or replayed self-signed
-    -- state record.
-    AND EXISTS (SELECT 1 FROM channel_members member
-      WHERE member.community_id = e.community_id AND member.channel_id = f.id
-        AND member.pubkey = e.pubkey AND member.removed_at IS NULL)
-  ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-) state ON true
 UNION ALL
 SELECT 'repository-candidate', jsonb_build_object('content', e.content)
 FROM authorized a JOIN LATERAL (
@@ -1436,15 +1370,6 @@ FROM authorized a JOIN LATERAL (
     AND e.deleted_at IS NULL
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
     AND e.tags @> '[["t", "change-review-artifact"]]'::jsonb
-  ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-) e ON true
-UNION ALL
-SELECT 'not-ready', jsonb_build_object('reason', e.content)
-FROM authorized a JOIN LATERAL (
-  SELECT e.content FROM events e WHERE e.community_id = a.community_id
-    AND e.channel_id = a.id AND e.kind = 9 AND e.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
-      WHERE t->>0 = 't' AND t->>1 = 'merge-not-ready')
   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) e ON true
 UNION ALL

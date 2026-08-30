@@ -813,25 +813,13 @@ export function buildWorkSchedulePauseCard(
   at: number,
   reason = 'max-consecutive-failures',
 ): NostrEvent {
-  const detail = reason.replaceAll('-', ' ');
-  const content = {
-    version: 1,
-    scheduleId: schedule.scheduleId,
-    revision: schedule.revision,
-    status: 'paused',
-    reason,
-    at,
-    message:
-      reason === 'max-consecutive-failures'
-        ? `Scheduled work paused after ${schedule.maxConsecutiveFailures} consecutive failures. A Room admin must publish a newer active revision to resume it.`
-        : `Scheduled work paused because ${detail}. A current Room admin must restore authority and publish a newer active revision to resume it.`,
-  };
   return signEvent(
     {
       pubkey: identity.publicKey,
       created_at: at,
-      kind: 9,
+      kind: WORK_SCHEDULE_KIND,
       tags: [
+        ['d', `${workScheduleKey(schedule)}:pause`],
         ['h', schedule.roomId],
         ['t', WORK_SCHEDULE_PAUSED_TAG],
         ['agent', schedule.agentPubkey],
@@ -840,8 +828,9 @@ export function buildWorkSchedulePauseCard(
         ['revision', String(schedule.revision)],
         ['status', 'paused'],
         ['reason', reason],
+        ['at', String(at)],
       ],
-      content: JSON.stringify(content),
+      content: '',
     },
     identity.secretKey,
   );

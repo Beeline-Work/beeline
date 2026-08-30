@@ -228,12 +228,14 @@ const HIDDEN_MARKERS = new Set([
   'buzz-permission-decision',
   'buzz-permission-revocation',
   'buzz-permission-execution',
+  'beeline-agent-tool-result',
+  'buzz-work-schedule-paused',
+  'agent-activity',
 ]);
 
 /** Durable machine-authored Room lines that the client renders as status text. */
 const SYSTEM_MARKERS = new Set([
   'buzz-agent-model-unavailable',
-  'buzz-work-schedule-paused',
   'github-event-health',
   'steer-queued',
   'slash-command-notice',
@@ -256,16 +258,23 @@ const CONVERSATION_MARKERS = new Set([
 export function projectEvent(data: Json, channelId: string): RoomViewMessage | undefined {
   const eventTags = tags(data.tags);
   const markers = markerSet(eventTags);
+  const eventIdentity = identity(data);
+  const content = String(data.content ?? '');
+  // Legacy daemon machine records occasionally used kind:9 with a serialized
+  // payload. They are typed records, never chat, even before their writers are
+  // migrated to replaceable non-rendered kinds.
+  if (integer(data.kind) === 9 && eventIdentity.kind === 'agent' && safeJson(content)) {
+    return undefined;
+  }
   const permissionMarker =
     markers.has('buzz-write-permission-request') || markers.has('buzz-permission-request');
   // Permission requests are control records on the wire but durable approval
   // cards in the Room. All other hidden control shapes still fail closed.
   if (!permissionMarker && [...markers].some((candidate) => HIDDEN_MARKERS.has(candidate)))
     return undefined;
-  const eventIdentity = identity(data);
   const base = {
     id: String(data.id ?? ''),
-    text: String(data.content ?? ''),
+    text: content,
     createdAt: integer(data.createdAt),
     author: eventIdentity,
   };
@@ -432,9 +441,7 @@ export function projectEvent(data: Json, channelId: string): RoomViewMessage | u
 
   const mergeAction = markers.has('merge-ready')
     ? 'ready'
-    : markers.has('merge-not-ready')
-      ? 'not-ready'
-      : markers.has('buzz-merge-approval-ack')
+    : markers.has('buzz-merge-approval-ack')
         ? 'approval-ack'
         : tag(eventTags, 'status') === 'failed' && !tag(eventTags, 'subchannel')
           ? 'failed'
@@ -447,7 +454,7 @@ export function projectEvent(data: Json, channelId: string): RoomViewMessage | u
     const state = tag(eventTags, 'state');
     return {
       ...base,
-      presentation: mergeAction === 'ready' || mergeAction === 'not-ready' ? 'card' : 'system',
+      presentation: mergeAction === 'ready' ? 'card' : 'system',
       merge: {
         action: mergeAction,
         ...(tag(eventTags, 'repo') ? { repository: tag(eventTags, 'repo') } : {}),

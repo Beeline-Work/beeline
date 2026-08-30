@@ -216,7 +216,7 @@ const reachable = await relayReachable();
     expect(outcome.featureTip).toBe(featureTip);
     expect(outcome.targetTipAfter).toBe(featureTip);
 
-    const mainAfter = lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
+    const mainAfter = await lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
     expect(mainAfter).toBe(featureTip);
   }, 120_000);
 
@@ -240,7 +240,7 @@ const reachable = await relayReachable();
 
     expect(outcome.merged).toBe(false);
     expect(outcome.reason).toMatch(/no valid approval/i);
-    const mainAfter = lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
+    const mainAfter = await lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
     expect(mainAfter).toBe(p.baseMain);
   }, 120_000);
 
@@ -268,7 +268,7 @@ const reachable = await relayReachable();
     });
 
     expect(initial.merged).toBe(false);
-    const mainMid = lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
+    const mainMid = await lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
     expect(mainMid).toBe(p.baseMain);
 
     // Now publish the valid approval.
@@ -289,7 +289,7 @@ const reachable = await relayReachable();
     expect(afterApproval.merged).toBe(true);
     expect(afterApproval.targetTipAfter).toBe(featureTip);
 
-    const mainAfter = lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
+    const mainAfter = await lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
     expect(mainAfter).toBe(featureTip);
   }, 120_000);
 
@@ -324,7 +324,7 @@ const reachable = await relayReachable();
     expect(outcome.merged).toBe(false);
     expect(outcome.reason).toMatch(/no valid approval/i);
 
-    const mainAfter = lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
+    const mainAfter = await lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
     expect(mainAfter).toBe(p.baseMain);
   }, 120_000);
 
@@ -409,7 +409,7 @@ const reachable = await relayReachable();
     expect(replayOutcome.reason).toMatch(/no valid approval/i);
     expect(replayOutcome.featureTip).toBe(featureTip);
 
-    const mainAfterReplay = lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
+    const mainAfterReplay = await lsRemoteRef(p.seedDir, p.worker, p.owner, p.repo, 'refs/heads/main');
     expect(mainAfterReplay).toBe(p.baseMain);
   }, 120_000);
 });

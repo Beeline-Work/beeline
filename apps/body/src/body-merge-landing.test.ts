@@ -2310,7 +2310,7 @@ describe('per-agent model/effort persistence', () => {
     expect(setConfigOption).not.toHaveBeenCalled();
   });
 
-  it('keeps ACP work blocked and publishes the typed Room state after startup revalidation fails', async () => {
+  it('keeps ACP work blocked and settles an addressed request without a chat diagnostic', async () => {
     const agentIdentity = newIdentity('model-config-agent-unavailable');
     const cfg = config();
     cfg.modelSelection = { model: 'stealth/ox-alpha', effort: 'high' };
@@ -2336,13 +2336,41 @@ describe('per-agent model/effort persistence', () => {
     ).rejects.toThrow('Model unavailable · stealth/ox-alpha');
     expect(ordinaryWork).not.toHaveBeenCalled();
 
-    await Reflect.get(body, 'publishModelUnavailableState').call(body, 'room-unavailable');
-    const event = published.find((candidate) =>
-      candidate.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-agent-model-unavailable'),
+    await expect(
+      Reflect.get(body, 'preflightRoomReply').call(body, {
+        tlcChannelId: 'room-unavailable',
+        request: {
+          eventId: 'f'.repeat(64),
+          authorPubkey: owner.publicKey,
+          content: 'Can you help?',
+          createdAt: 1,
+        },
+        explicitCornerWork: false,
+        editPolicy: 'direct-message',
+        cornerWorkIntent: false,
+      }),
+    ).resolves.toEqual({
+      status: 'handled',
+      outcome: { openedCorner: false, producedReply: true },
+    });
+    expect(published).toContainEqual(
+      expect.objectContaining({
+        tags: expect.arrayContaining([
+          ['t', 'agent-turn'],
+          ['status', 'failed'],
+          ['request', 'f'.repeat(64)],
+        ]),
+      }),
     );
-    expect(event?.content).toContain('Model unavailable · stealth/ox-alpha');
-    expect(event?.content).toContain('z-ai/glm-5.3-flash');
-    expect(event?.tags).toContainEqual(['status', 'model-unavailable']);
+    expect(
+      published.some((event) =>
+        event.tags.some(
+          (tag) =>
+            tag[0] === 't' &&
+            ['agent-message', 'buzz-agent-model-unavailable'].includes(tag[1] ?? ''),
+        ),
+      ),
+    ).toBe(false);
   });
 
   it('recovers only the Room whose valid human override supersedes a stale runtime default', async () => {
@@ -2451,101 +2479,6 @@ describe('per-agent model/effort persistence', () => {
       kind: 'model-unavailable',
       unavailable: { label: 'model', value: 'stealth/ox-alpha' },
     });
-  });
-
-  it('does not repeat the same startup state after a daemon restart', async () => {
-    const agentIdentity = newIdentity('model-config-agent-standing-state');
-    const unavailable = {
-      kind: 'model-unavailable' as const,
-      selection: { model: 'stealth/ox-alpha' },
-      unavailable: { label: 'model' as const, value: 'stealth/ox-alpha' },
-      detail: 'model "stealth/ox-alpha" is unavailable.',
-      recovery:
-        'Open this agent’s settings, choose a value from the live model catalog, then restart the agent.',
-    };
-    const firstConfig = config();
-    firstConfig.modelUnavailable = unavailable;
-    const first = new Body(firstConfig, undefined, agentIdentity);
-    const published: NostrEvent[] = [];
-    stubRelay(first, published);
-    await Reflect.get(first, 'publishModelUnavailableState').call(first, 'room-standing');
-
-    const restartedConfig = config();
-    restartedConfig.modelUnavailable = unavailable;
-    const restarted = new Body(restartedConfig, undefined, agentIdentity);
-    await Reflect.get(restarted, 'publishModelUnavailableState').call(restarted, 'room-standing');
-
-    expect(
-      published.filter((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-agent-model-unavailable'),
-      ),
-    ).toHaveLength(1);
-  });
-
-  it('publishes one typed resolution after restart validation recovers, then allows a later failure', async () => {
-    const agentIdentity = newIdentity('model-config-agent-resolution-state');
-    const unavailable = {
-      kind: 'validation-unavailable' as const,
-      selection: { model: 'gpt-5', effort: 'high' },
-      unavailable: { label: 'selection' as const, value: 'gpt-5' },
-      detail: 'The live harness catalog could not verify "gpt-5".',
-      recovery:
-        'Restore access to the selected harness and its live catalog, then restart the agent.',
-    };
-    const published: NostrEvent[] = [];
-
-    const blockedConfig = config();
-    blockedConfig.modelUnavailable = unavailable;
-    const blocked = new Body(blockedConfig, undefined, agentIdentity);
-    stubRelay(blocked, published);
-    await Reflect.get(blocked, 'publishModelUnavailableState').call(blocked, 'room-resolution');
-
-    const healthyConfig = config();
-    healthyConfig.modelSelection = { ...unavailable.selection };
-    const healthy = new Body(healthyConfig, undefined, agentIdentity);
-    vi.spyOn(Reflect.get(healthy, 'agentRelay'), 'queryEvents').mockRejectedValueOnce(
-      new Error('relay temporarily unavailable'),
-    );
-    await Reflect.get(healthy, 'publishModelUnavailableState').call(healthy, 'room-resolution');
-    expect(
-      published.filter((event) =>
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'model-available'),
-      ),
-    ).toHaveLength(0);
-
-    await Reflect.get(healthy, 'publishModelUnavailableState').call(healthy, 'room-resolution');
-    const available = published.filter((event) =>
-      event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'model-available'),
-    );
-    expect(available).toHaveLength(1);
-    expect(available[0]?.content).toBe('');
-    expect(available[0]?.tags).toContainEqual(['t', 'buzz-agent-model-unavailable']);
-    expect(available[0]?.tags).toContainEqual(['model', 'gpt-5']);
-    expect(available[0]?.tags).toContainEqual(['effort', 'high']);
-
-    const restartedHealthy = new Body(healthyConfig, undefined, agentIdentity);
-    await Reflect.get(restartedHealthy, 'publishModelUnavailableState').call(
-      restartedHealthy,
-      'room-resolution',
-    );
-    expect(
-      published.filter((event) =>
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'model-available'),
-      ),
-    ).toHaveLength(1);
-
-    const blockedAgainConfig = config();
-    blockedAgainConfig.modelUnavailable = unavailable;
-    const blockedAgain = new Body(blockedAgainConfig, undefined, agentIdentity);
-    await Reflect.get(blockedAgain, 'publishModelUnavailableState').call(
-      blockedAgain,
-      'room-resolution',
-    );
-    expect(
-      published.filter((event) =>
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'validation-unavailable'),
-      ),
-    ).toHaveLength(2);
   });
 
   it('lets a human in-app selection (#223) override the pair-time default, never the reverse', async () => {

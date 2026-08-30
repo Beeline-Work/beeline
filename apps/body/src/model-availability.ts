@@ -54,36 +54,9 @@ export function modelUnavailableState(
   };
 }
 
-/** Grok Mono Hull system-line copy: terse state, mono-friendly id, direct recovery. */
-export function modelUnavailableRoomMessage(state: ModelUnavailableState): string {
+/** Bounded local diagnostic for logs and rejected ACP activation errors. */
+export function modelUnavailableDiagnostic(state: ModelUnavailableState): string {
   const title =
     state.kind === 'model-unavailable' ? 'Model unavailable' : 'Model validation unavailable';
   return `${title} · ${state.unavailable.value}\n${state.detail}\n${state.recovery}`;
-}
-
-/** Typed tags that keep the durable conversation line machine-inspectable. */
-export function modelUnavailableEventTags(state: ModelUnavailableState): string[][] {
-  return [
-    ['t', 'buzz-agent-model-unavailable'],
-    ['status', state.kind],
-    ['unavailable', state.unavailable.label],
-    ['unavailable-value', state.unavailable.value],
-    ...(state.selection.model ? [['model', state.selection.model]] : []),
-    ...(state.selection.effort ? [['effort', state.selection.effort]] : []),
-  ];
-}
-
-/** Typed resolution marker for a previously published model-unavailable Room state. */
-export function modelAvailableEventTags(selection: {
-  model?: string;
-  effort?: string;
-}): string[][] {
-  const model = selection.model ? safeIdentifier(selection.model) : undefined;
-  const effort = selection.effort ? safeIdentifier(selection.effort) : undefined;
-  return [
-    ['t', 'buzz-agent-model-unavailable'],
-    ['status', 'model-available'],
-    ...(model ? [['model', model]] : []),
-    ...(effort ? [['effort', effort]] : []),
-  ];
 }

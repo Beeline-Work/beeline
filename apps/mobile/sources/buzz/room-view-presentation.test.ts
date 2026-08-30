@@ -7,10 +7,10 @@ import {
 } from './room-view-presentation';
 
 describe('Room view presentation', () => {
-  it('keeps a model-unavailable server row visible as a system notice', () => {
+  it('keeps an indexed system row visible as a system notice', () => {
     const message: RoomViewMessage = {
-      id: 'model-unavailable',
-      text: 'Model unavailable · openrouter-ox/z-ai/glm-5.3-flash',
+      id: 'system-notice',
+      text: 'A scheduled run is paused.',
       createdAt: 12,
       author: {
         pubkey: 'b'.repeat(64),
@@ -21,8 +21,8 @@ describe('Room view presentation', () => {
     };
 
     expect(displayRoomMessage(message, 'a'.repeat(64))).toMatchObject({
-      id: 'model-unavailable',
-      text: 'Model unavailable · openrouter-ox/z-ai/glm-5.3-flash',
+      id: 'system-notice',
+      text: 'A scheduled run is paused.',
       isSystemNotice: true,
       isAgentAuthor: true,
     });

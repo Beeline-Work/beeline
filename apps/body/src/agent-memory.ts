@@ -110,8 +110,8 @@ export function agentMemoryInstructions(memory: AgentMemory | undefined): string
   return [
     `Your persistent memory file is ${memory.file} (directory ${memory.dir}, also $${AGENT_MEMORY_ENV}).`,
     AGENT_MEMORY_CURATION_CONTRACT,
-    'This memory is YOURS: author it with your file-editing tools whenever you learn something else worth keeping across conversations (decisions, preferences, lessons, project facts).',
+    'This memory is YOURS: persist it with buzz-readonly-mcp.write_memory whenever you learn something else worth keeping across conversations (decisions, preferences, lessons, project facts). Read the current file first, then pass the complete curated contents. Shell writes to memory are always denied.',
     'It persists across sessions and restarts and is shared across every Room and corner you serve in this Workspace; it is private to you.',
-    'Writing inside your memory directory is always permitted, including in read-only Rooms. It is still not a license to write anywhere else: repository paths stay read-only there, and memory must never hold secrets, credentials, or repository files.',
+    'Writing through buzz-readonly-mcp.write_memory is always permitted, including in read-only Rooms. It is still not a license to write anywhere else: repository paths stay read-only there, and memory must never hold secrets, credentials, or repository files.',
   ].join('\n');
 }

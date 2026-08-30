@@ -5,7 +5,9 @@
  * whatever the mounted MCP servers advertise via MCP `tools/list`. For the
  * read-only boundary we assert:
  *   - readonly sessions mount buzz-readonly-mcp → fixed inspection inventory
- *   - edit sessions mount buzz-dev-mcp → inventory includes shell / str_replace
+ *   - edit sessions mount buzz-dev-mcp → inventory includes shell / str_replace;
+ *     when Workspace memory exists they also mount buzz-readonly-mcp so the
+ *     same bounded write_memory capability survives the Room→corner move
  *
  * This helper speaks a minimal MCP-over-stdio client so tests assert at the
  * tool protocol layer, not by guessing from prompts.

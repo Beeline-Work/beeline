@@ -1,4 +1,4 @@
-import { fallbackPersonName } from '@beeline/buzz-client';
+import { CORNER_GIT_PROJECTION_TAG, fallbackPersonName } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 
 const tagValue = (event: NostrEvent, name: string): string | undefined =>
@@ -97,12 +97,7 @@ const FIXTURE_NAME_PATTERNS = [
 const THROWAWAY_WORKSPACE_PATTERN =
   /(?:^|[\s._-])(?:test|tests|testing|demo|fixture|fixtures|throwaway|temporary|temp|tmp|smoke|e2e|proof)(?:$|[\s._-])/i;
 
-const FIXTURE_EVENT_MARKERS = new Set([
-  'ui-test',
-  'ui-demo',
-  'uidemo',
-  'test-fixture',
-]);
+const FIXTURE_EVENT_MARKERS = new Set(['ui-test', 'ui-demo', 'uidemo', 'test-fixture']);
 
 function fixtureName(value: string | undefined): boolean {
   return Boolean(value && FIXTURE_NAME_PATTERNS.some((pattern) => pattern.test(value)));
@@ -176,8 +171,9 @@ export function mapEventToNotification(
   const markers = tagValues(event, 't');
   if (markers.includes('github-event')) return null;
   const isMergeRequest =
-    markers.includes('body-control') &&
-    markers.includes('merge-ready') &&
+    event.kind === 30078 &&
+    markers.includes(CORNER_GIT_PROJECTION_TAG) &&
+    tagValue(event, 'relation') === 'review' &&
     Boolean(tagValue(event, 'repo') && tagValue(event, 'branch') && tagValue(event, 'tip'));
   const mentioned = options.recipientMentioned === true;
   const actionableFailure = isActionableHumanFailureEvent(event);
@@ -197,7 +193,9 @@ export function mapEventToNotification(
   const senderHandle =
     normalizedDisplayText(context.senderHandle, 80)?.replace(/^@+/, '') ?? senderName;
   const showMessagePreview = options.showMessagePreview ?? true;
-  const preview = formatMessagePreview(event.content);
+  const preview = isMergeRequest
+    ? 'Review the latest committed change'
+    : formatMessagePreview(event.content);
   const bodyMessage = showMessagePreview && preview ? preview : 'New message';
   const composedTitle = locationTitle(
     normalizedDisplayText(context.parentRoomName, 80),

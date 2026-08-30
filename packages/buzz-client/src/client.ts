@@ -7,7 +7,7 @@ import type { NostrEvent } from '@beeline/nostr';
 import type { SurfaceWatchFilter } from './room-view.js';
 import { agentPresenceKey } from './agent-presence.js';
 import { cornerStateKey } from './corner-state.js';
-import { buildMergeApproval } from './approval.js';
+import { buildMergeApproval, buildMergeRejection } from './approval.js';
 import {
   abandonAgentPairing,
   attachAgentToChannel,
@@ -83,10 +83,7 @@ import {
 } from './community.js';
 import { publishEvent, type HttpBridgeOptions } from './http.js';
 import { buildReplyCommand, type ReplyCommandOptions } from './reply-command.js';
-import {
-  fetchIdentityPredecessors,
-  resolveCurrentIdentityPubkey,
-} from './identity-succession.js';
+import { fetchIdentityPredecessors, resolveCurrentIdentityPubkey } from './identity-succession.js';
 import {
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
@@ -1076,9 +1073,19 @@ export class BuzzClient {
     return buildMergeApproval(this.identity, channelId, target);
   }
 
+  buildMergeRejection(channelId: string, target: MergeTarget): NostrEvent {
+    return buildMergeRejection(this.identity, channelId, target);
+  }
+
   /** Sign + publish a merge approval for the given target. */
   async submitMergeApproval(channelId: string, target: MergeTarget): Promise<NostrEvent> {
     const event = this.buildMergeApproval(channelId, target);
+    await this.publish(event);
+    return event;
+  }
+
+  async submitMergeRejection(channelId: string, target: MergeTarget): Promise<NostrEvent> {
+    const event = this.buildMergeRejection(channelId, target);
     await this.publish(event);
     return event;
   }

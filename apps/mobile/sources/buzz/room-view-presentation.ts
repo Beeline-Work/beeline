@@ -313,18 +313,41 @@ export function mergeDisplayPages(
 }
 
 export function cornerSummaries(view: Pick<RoomView, 'corners'>): CornerSummary[] {
-  return view.corners.map(
-    (item) =>
-      ({
-        id: item.corner.id,
-        name: item.corner.name,
-        status: item.status,
-        machineState: item.status === 'closed' ? 'closed' : item.status,
-        stateAt: item.corner.updatedAt,
-        openerPubkey: item.agent?.pubkey ?? '',
-        ...(item.agent ? { agentPubkey: item.agent.pubkey } : {}),
-      }) as CornerSummary,
-  );
+  return view.corners.map((item) => {
+    const lifecycle = item.lifecycle.lifecycle;
+    const machineState =
+      lifecycle === 'REVIEW' || lifecycle === 'APPROVED'
+        ? 'waiting'
+        : lifecycle === 'REJECTED'
+          ? 'closed'
+          : lifecycle === 'ARCHIVED'
+            ? item.lifecycle.archiveFlavor === 'merged'
+              ? 'concluded'
+              : 'closed'
+            : 'idle';
+    const status =
+      lifecycle === 'REVIEW' || lifecycle === 'APPROVED'
+        ? 'open'
+        : lifecycle === 'REJECTED'
+          ? 'archived'
+          : lifecycle === 'ARCHIVED'
+            ? item.lifecycle.archiveFlavor === 'merged'
+              ? 'merged'
+              : 'archived'
+            : null;
+    return {
+      id: item.corner.id,
+      name: item.corner.name,
+      status,
+      machineState,
+      ...(lifecycle === 'REVIEW' || lifecycle === 'APPROVED'
+        ? { machineReason: 'review' as const }
+        : {}),
+      stateAt: item.corner.updatedAt,
+      openerPubkey: item.agent?.pubkey ?? '',
+      ...(item.agent ? { agentPubkey: item.agent.pubkey } : {}),
+    } as CornerSummary;
+  });
 }
 
 export function workspaceRailItem(workspace: ChatListWorkspace) {

@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { createIdentity } from './identity.js';
-import { buildMergeApproval, verifyMergeApproval } from './approval.js';
+import {
+  buildMergeApproval,
+  buildMergeRejection,
+  verifyMergeApproval,
+  verifyMergeRejection,
+} from './approval.js';
 import { KIND_STREAM_MESSAGE, TAG_MERGE_APPROVAL } from './kinds.js';
 import { tagValue } from './parse.js';
 
@@ -51,33 +56,48 @@ describe('buildMergeApproval / verifyMergeApproval', () => {
     const patchId = 'c'.repeat(40);
     const ev = buildMergeApproval(reviewer, channel, { ...target, patchId });
     expect(
-      verifyMergeApproval(ev, reviewer.publicKey, {
-        ...target,
-        tip: 'b'.repeat(40),
-        patchId,
-      }, channel),
+      verifyMergeApproval(
+        ev,
+        reviewer.publicKey,
+        {
+          ...target,
+          tip: 'b'.repeat(40),
+          patchId,
+        },
+        channel,
+      ),
     ).toBe(true);
   });
 
   it('keeps approval standing when ongoing work changes the reviewed diff', () => {
     const ev = buildMergeApproval(reviewer, channel, { ...target, patchId: 'c'.repeat(40) });
     expect(
-      verifyMergeApproval(ev, reviewer.publicKey, {
-        ...target,
-        tip: 'b'.repeat(40),
-        patchId: 'd'.repeat(40),
-      }, channel),
+      verifyMergeApproval(
+        ev,
+        reviewer.publicKey,
+        {
+          ...target,
+          tip: 'b'.repeat(40),
+          patchId: 'd'.repeat(40),
+        },
+        channel,
+      ),
     ).toBe(true);
   });
 
   it('keeps legacy approvals standing for the same corner', () => {
     const ev = buildMergeApproval(reviewer, channel, target);
     expect(
-      verifyMergeApproval(ev, reviewer.publicKey, {
-        ...target,
-        tip: 'b'.repeat(40),
-        patchId: 'c'.repeat(40),
-      }, channel),
+      verifyMergeApproval(
+        ev,
+        reviewer.publicKey,
+        {
+          ...target,
+          tip: 'b'.repeat(40),
+          patchId: 'c'.repeat(40),
+        },
+        channel,
+      ),
     ).toBe(true);
   });
 
@@ -100,5 +120,14 @@ describe('buildMergeApproval / verifyMergeApproval', () => {
       repo: `${attacker.publicKey}/demo`,
     });
     expect(verifyMergeApproval(ev, reviewer.publicKey, target, channel)).toBe(false);
+  });
+});
+
+describe('buildMergeRejection / verifyMergeRejection', () => {
+  it('uses the approval binding with a distinct mutually-exclusive verdict marker', () => {
+    const rejectedTarget = { repo: 'owner/repo', branch: 'refs/heads/main', tip: 'a'.repeat(40) };
+    const event = buildMergeRejection(reviewer, 'corner-id', rejectedTarget);
+    expect(verifyMergeRejection(event, reviewer.publicKey, rejectedTarget, 'corner-id')).toBe(true);
+    expect(verifyMergeApproval(event, reviewer.publicKey, rejectedTarget, 'corner-id')).toBe(false);
   });
 });

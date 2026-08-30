@@ -564,8 +564,8 @@ describe('agent identity boundary', () => {
     expect(body.agent.name).toBe('beeline-agent');
     expect(body.identity.name).toBe('beeline-body');
     // The marker is a placeholder, not a display identity: it resolves to a
-    // stable spoken seed name derived from each agent's OWN pubkey, so two
-    // soul-less agents never share one label.
+    // stable spoken seed name derived from each agent's own pubkey. Display
+    // names have a finite vocabulary, so uniqueness belongs to the pubkeys.
     const first = newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
     const second = newIdentity(DEFAULT_AGENT_IDENTITY_NAME);
     expect(deriveAgentDisplayName(first.name, first.publicKey)).toBe(
@@ -575,9 +575,6 @@ describe('agent identity boundary', () => {
       fallbackAgentName(second.publicKey),
     );
     expect(first.publicKey).not.toBe(second.publicKey);
-    expect(deriveAgentDisplayName(first.name, first.publicKey)).not.toBe(
-      deriveAgentDisplayName(second.name, second.publicKey),
-    );
   });
 
   describe('persona delivery to harnesses that drop the session system prompt', () => {

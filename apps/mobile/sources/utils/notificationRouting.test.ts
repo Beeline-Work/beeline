@@ -12,6 +12,10 @@ const buzzChatSource = readFileSync(
   new URL('../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
   'utf8',
 );
+const roomSurfaceSessionSource = readFileSync(
+  new URL('../app/(app)/buzz/chat/useRoomSurfaceSession.ts', import.meta.url),
+  'utf8',
+);
 const appLayoutSource = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
 
 describe('getBuzzChannelIdFromNotificationData', () => {
@@ -238,12 +242,13 @@ describe('navigateToBuzzChannelFromNotification', () => {
 
   it('uses the notification response id to invalidate the retained room backfill', () => {
     expect(buzzChatSource).toMatch(/notificationResponseId,[\s\S]*= useLocalSearchParams/);
+    expect(buzzChatSource).toContain('notificationResponseId ? { notificationResponseId }');
     // The hydration effect must re-run when a notification re-opens the
     // same channel. Assert that dependency, not the whole literal list —
     // the rest of the list is free to change with the effect's internals.
-    const hydrationEffect = buzzChatSource.slice(
-      buzzChatSource.indexOf("useEffect(() => {\n    if (!decodedId) return;"),
-      buzzChatSource.indexOf('/**\n   * Who said an inherited Room line.'),
+    const hydrationEffect = roomSurfaceSessionSource.slice(
+      roomSurfaceSessionSource.indexOf("useEffect(() => {\n    if (!channelId) return;"),
+      roomSurfaceSessionSource.indexOf('const outbox = useMemo'),
     );
     expect(
       hydrationEffect,

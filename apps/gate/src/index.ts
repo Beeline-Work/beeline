@@ -57,7 +57,6 @@ export { nip98AuthHeader, buildNip98Event, NIP98_KIND } from './nip98.js';
 export { isRegisteredAgentIdentity } from './agent-identity.js';
 
 export { buildApproval, verifyApproval, APPROVAL_MARKER, type MergeTarget } from './approval.js';
-export { serializeRepoLanding } from './land-queue.js';
 
 export {
   authorizeHumanAuthority,

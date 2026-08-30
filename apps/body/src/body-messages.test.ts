@@ -345,13 +345,17 @@ describe('first-class assistant messages', () => {
     expect(source.match(/CORNER_MERGE_GATE_INSTRUCTION/g)).toHaveLength(4);
   });
 
-  it('keeps target synchronization out of every model turn', () => {
+  it('reserves target synchronization for one merge-press follow-up turn', () => {
     const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
-    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/do not spend model time/i);
-    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/Beeline synchronizes/i);
+    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/one explicit automatic follow-up/i);
+    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/you own all branch-content work/i);
+    expect(source).toMatch(
+      /moved to \$\{targetTip\}[^`]*bring this branch up to date and make it land, whatever it takes/i,
+    );
+    expect(source).not.toMatch(/silent:\s*true[\s\S]{0,800}target-sync/i);
     // Declaration, new/restored system prompts, opening/follow-up turns, and
-    // the conclude watch's nudge. Approved pure realignment is daemon work and
-    // deliberately has no ACP prompt call site.
+    // the conclude watch's nudge. The actual sync prompt is emitted only after
+    // a signed merge press fails its first ff-only landing attempt.
     expect(source.match(/CORNER_TARGET_SYNC_INSTRUCTION/g)).toHaveLength(6);
   });
 

@@ -42,8 +42,8 @@ describe('the # channel-mark convention on the chat surface', () => {
     expect(chatSource).toContain(
       'const storedRoomName = resolvedChannelName?.trim() || ROOM_LABEL',
     );
-    // Cache and relay writes keep raw names (existing raw-name paths intact).
-    expect(chatSource).toContain('patchChannelCache(identity.publicKey, { roomName: name })');
+    // Server-indexed Room truth supplies the raw stored name.
+    expect(chatSource).toContain('roomSurface?.room.name');
     expect(chatSource).not.toContain("roomName: `#${'");
   });
 

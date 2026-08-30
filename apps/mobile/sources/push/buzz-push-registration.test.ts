@@ -179,6 +179,26 @@ describe('Buzz push preference', () => {
     expect(warnSpy.mock.calls.some((parts) => parts.join(' ').includes('phase=token-timed-out'))).toBe(true);
   });
 
+  it('classifies a generic FCM token failure before contacting the gateway', async () => {
+    notifications.getDevicePushTokenAsync.mockRejectedValue(new Error('FCM service unavailable'));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await registerBuzzPushNotifications(identity);
+
+    expect(result).toMatchObject({
+      registered: false,
+      retryable: true,
+      phase: 'token-failed',
+      message: 'FCM service unavailable',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(storage.setItem).toHaveBeenCalledWith(
+      REGISTRATION_STATE_KEY,
+      expect.stringContaining('"phase":"token-failed"'),
+    );
+  });
+
   it('surfaces a gateway rejection as a retryable failure with the HTTP status', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
     vi.stubGlobal('fetch', fetchMock);

@@ -227,7 +227,10 @@ async function attemptRegistration(
         'FCM token acquisition',
       );
     } catch (error) {
-      const failure = classifyRegistrationFailure(error);
+      const failure =
+        error instanceof RegistrationTimeoutError || errorMessage(error).includes('timed out')
+          ? { phase: 'token-timed-out' as const, retryable: true as const }
+          : { phase: 'token-failed' as const, retryable: true as const };
       console.warn(`[buzzy-push] token acquisition failed phase=${failure.phase}:`, errorMessage(error));
       return { registered: false, retryable: true, phase: failure.phase, message: errorMessage(error) };
     }

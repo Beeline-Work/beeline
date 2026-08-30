@@ -14,18 +14,46 @@ const auth = vi.hoisted(() => ({
 const avatarUpload = vi.hoisted(() => ({ pickAndUploadAvatar: vi.fn() }));
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefined) }));
 const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
+const roomViews = vi.hoisted(() => ({ workspace: vi.fn(), chats: vi.fn() }));
 const client = vi.hoisted(() => ({
-  getCommunity: vi.fn(),
-  getChannelMetadata: vi.fn(),
-  getChannelRole: vi.fn(),
-  communityMembers: vi.fn(),
-  listAgents: vi.fn(async () => []),
-  listPersonProfiles: vi.fn(async () => []),
-  listCommunityInvites: vi.fn(async () => []),
-  query: vi.fn(async () => []),
-  addMember: vi.fn(async () => undefined),
+  surfaceSubscribe: vi.fn(async () => vi.fn()),
+  renameCommunity: vi.fn(),
   setCommunityAvatar: vi.fn(),
-  waitUntilMemberRole: vi.fn(async () => undefined),
+  setCommunityVisibility: vi.fn(),
+  setChannelVisibility: vi.fn(),
+}));
+
+vi.mock('@beeline/buzz-client', () => ({
+  RoomViewClient: class {
+    workspace = roomViews.workspace;
+    chats = roomViews.chats;
+  },
+  SurfaceRefreshScheduler: class<T> {
+    constructor(
+      private readonly options: {
+        fetch: () => Promise<T>;
+        apply: (value: T) => void;
+        onError?: (error: unknown) => void;
+      },
+    ) {}
+    async startAfter(listenReady: Promise<unknown>) {
+      await listenReady;
+      await this.refresh();
+    }
+    force() {
+      void this.refresh();
+    }
+    dispose() {}
+    private async refresh() {
+      try {
+        this.options.apply(await this.options.fetch());
+      } catch (error) {
+        this.options.onError?.(error);
+      }
+    }
+  },
+  isChatListView: () => true,
+  isWorkspaceView: () => true,
 }));
 
 vi.mock('expo-router', () => ({
@@ -98,32 +126,68 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.clearAllMocks();
-  client.getCommunity.mockResolvedValue({
-    communityId: 'workspace-1',
-    name: 'Hull',
-    visibility: 'invite-only',
-    ownerPubkey: 'b'.repeat(64),
-  });
-  client.query.mockResolvedValue([]);
-  client.getChannelMetadata.mockResolvedValue(undefined);
-  client.getChannelRole.mockResolvedValue('owner');
+  roomViews.workspace.mockResolvedValue(workspaceView());
+  roomViews.chats.mockResolvedValue(chatListView());
   avatarUpload.pickAndUploadAvatar.mockResolvedValue(null);
 });
 
-function roomCreate(id: string, name: string, createdAt: number) {
+function workspaceView(
+  role: 'owner' | 'admin' | 'member' = 'owner',
+  avatar?: string,
+) {
   return {
-    id: `create-${id}`,
-    kind: 9007,
-    pubkey: 'b'.repeat(64),
-    created_at: createdAt,
-    content: '',
-    sig: 'c'.repeat(128),
-    tags: [
-      ['h', id],
-      ['community', 'workspace-1'],
-      ['name', name],
-      ['visibility', 'open'],
-    ],
+    workspace: {
+      id: 'workspace-1',
+      name: 'Hull',
+      avatar,
+      visibility: 'invite-only',
+      role,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    members: [],
+    agents: [],
+    membersTruncated: false,
+    agentsTruncated: false,
+    viewer: {
+      identity: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Captain' },
+      role,
+      permissions: { send: true, manage: role !== 'member' },
+    },
+    watchFilters: [],
+  };
+}
+
+function room(id: string, name: string, createdAt: number, archived = false) {
+  return {
+    room: {
+      id,
+      workspaceId: 'workspace-1',
+      name,
+      visibility: 'public',
+      archived,
+      createdAt,
+      updatedAt: createdAt,
+    },
+    memberCount: 1,
+    cornerCount: 0,
+    unread: false,
+  };
+}
+
+function chatListView(chats: ReturnType<typeof room>[] = []) {
+  return {
+    workspace: {
+      id: 'workspace-1',
+      name: 'Hull',
+      visibility: 'invite-only',
+      role: 'owner',
+      updatedAt: 1,
+    },
+    chats,
+    viewer: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Captain' },
+    truncated: false,
+    watchFilters: [],
   };
 }
 
@@ -139,16 +203,14 @@ async function render(): Promise<ReactTestRenderer> {
 
 describe('Workspace Settings authority', () => {
   it('shows no admin-only actions to a normal member', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'member' }]);
+    roomViews.workspace.mockResolvedValue(workspaceView('member'));
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'workspace-settings-denied' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'workspace-overview-settings' })).toHaveLength(0);
-    expect(client.listCommunityInvites).not.toHaveBeenCalled();
   });
 
   it('loads every scoped settings section for a Workspace owner', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
@@ -158,17 +220,11 @@ describe('Workspace Settings authority', () => {
   });
 
   it('lets a Workspace manager set a canonical uploaded picture', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
-    const original = {
-      communityId: 'workspace-1',
-      name: 'Hull',
-      visibility: 'invite-only',
-      ownerPubkey: 'b'.repeat(64),
-    };
     const pictureUrl = 'https://example.test/media/canonical.png';
-    client.getCommunity.mockResolvedValue(original);
     avatarUpload.pickAndUploadAvatar.mockResolvedValue(pictureUrl);
-    client.setCommunityAvatar.mockResolvedValue({ ...original, avatar: pictureUrl });
+    client.setCommunityAvatar.mockImplementation(async () => {
+      roomViews.workspace.mockResolvedValue(workspaceView('owner', pictureUrl));
+    });
     const renderer = await render();
 
     await act(async () => {
@@ -183,16 +239,12 @@ describe('Workspace Settings authority', () => {
   });
 
   it('lets a Workspace admin clear its picture back to the generated mark', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'admin' }]);
-    const original = {
-      communityId: 'workspace-1',
-      name: 'Hull',
-      visibility: 'invite-only',
-      ownerPubkey: 'b'.repeat(64),
-      avatar: 'https://example.test/media/hull.png',
-    };
-    client.getCommunity.mockResolvedValue(original);
-    client.setCommunityAvatar.mockResolvedValue({ ...original, avatar: undefined });
+    roomViews.workspace.mockResolvedValue(
+      workspaceView('admin', 'https://example.test/media/hull.png'),
+    );
+    client.setCommunityAvatar.mockImplementation(async () => {
+      roomViews.workspace.mockResolvedValue(workspaceView('admin'));
+    });
     const renderer = await render();
 
     await act(async () => {
@@ -206,14 +258,9 @@ describe('Workspace Settings authority', () => {
   });
 
   it('shows no Workspace picture actions to a normal member', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'member' }]);
-    client.getCommunity.mockResolvedValue({
-      communityId: 'workspace-1',
-      name: 'Hull',
-      visibility: 'invite-only',
-      ownerPubkey: 'b'.repeat(64),
-      avatar: 'https://example.test/media/hull.png',
-    });
+    roomViews.workspace.mockResolvedValue(
+      workspaceView('member', 'https://example.test/media/hull.png'),
+    );
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'workspace-settings-denied' })).toBeDefined();
@@ -224,7 +271,6 @@ describe('Workspace Settings authority', () => {
   });
 
   it('opens the unified Members page', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
     const renderer = await render();
 
     await act(async () => {
@@ -238,17 +284,12 @@ describe('Workspace Settings authority', () => {
   });
 
   it('does not show archived Rooms in the open-Room visibility section', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
-    client.query.mockResolvedValue([
-      roomCreate('484556f2-archived', 'beeline', 1),
-      roomCreate('9d5e2285-live', 'beeline', 2),
-    ]);
-    client.getChannelMetadata.mockImplementation(async (id: string) => ({
-      channelId: id,
-      name: 'beeline',
-      visibility: 'public',
-      archived: id.startsWith('484556f2'),
-    }));
+    roomViews.chats.mockResolvedValue(
+      chatListView([
+        room('484556f2-archived', 'beeline', 1, true),
+        room('9d5e2285-live', 'beeline', 2),
+      ]),
+    );
 
     const renderer = await render();
 
@@ -268,17 +309,12 @@ describe('Workspace Settings authority', () => {
   });
 
   it('qualifies same-name Rooms with human dates and discloses the full ID on demand', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
-    client.query.mockResolvedValue([
-      roomCreate('11111111-room', 'beeline', 1),
-      roomCreate('22222222-room', 'beeline', 2),
-    ]);
-    client.getChannelMetadata.mockImplementation(async (id: string) => ({
-      channelId: id,
-      name: 'beeline',
-      visibility: 'public',
-      archived: false,
-    }));
+    roomViews.chats.mockResolvedValue(
+      chatListView([
+        room('11111111-room', 'beeline', 1),
+        room('22222222-room', 'beeline', 2),
+      ]),
+    );
 
     const renderer = await render();
     const visibleText = renderer.root.findAllByType('Text').map((node) => node.children.join(''));
@@ -299,14 +335,7 @@ describe('Workspace Settings authority', () => {
   });
 
   it('names the outcome of the 44pt Room visibility action', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
-    client.query.mockResolvedValue([roomCreate('room-1', 'atlas', 1)]);
-    client.getChannelMetadata.mockResolvedValue({
-      channelId: 'room-1',
-      name: 'atlas',
-      visibility: 'public',
-      archived: false,
-    });
+    roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
 
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'room-visibility-room-1' }).props).toMatchObject({
@@ -316,14 +345,7 @@ describe('Workspace Settings authority', () => {
   });
 
   it('renders Room rows with the # channel mark while stored names stay unmarked', async () => {
-    client.communityMembers.mockResolvedValue([{ pubkey: 'a'.repeat(64), role: 'owner' }]);
-    client.query.mockResolvedValue([roomCreate('room-1', 'atlas', 1)]);
-    client.getChannelMetadata.mockResolvedValue({
-      channelId: 'room-1',
-      name: 'atlas',
-      visibility: 'public',
-      archived: false,
-    });
+    roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
 
     const renderer = await render();
     const openRow = renderer.root.findByProps({ accessibilityLabel: 'Open Room #atlas' });

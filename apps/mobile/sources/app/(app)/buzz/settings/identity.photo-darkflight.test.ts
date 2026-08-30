@@ -215,18 +215,17 @@ describe('photo-override darkflight on the settings surfaces', () => {
     expect(PHOTO_OVERRIDES_ENABLED).toBe(false);
   });
 
-  it('gates every human and agent picture-setting surface in source', () => {
+  it('keeps picture-setting actions unreachable on human and agent settings', () => {
     const root = new URL('../../../../../', import.meta.url).pathname;
     const surfaces = [
       'sources/app/(app)/buzz/settings/identity.tsx',
       'sources/app/(app)/buzz/MembersScreen.tsx',
     ];
-    for (const relative of surfaces) {
-      const source = readFileSync(`${root}${relative}`, 'utf8');
-      expect(source, `${relative} must gate on PHOTO_OVERRIDES_ENABLED`).toContain(
-        'PHOTO_OVERRIDES_ENABLED &&',
-      );
-    }
+    const identitySource = readFileSync(`${root}${surfaces[0]}`, 'utf8');
+    expect(identitySource).toContain('PHOTO_OVERRIDES_ENABLED &&');
+    const membersSource = readFileSync(`${root}${surfaces[1]}`, 'utf8');
+    expect(membersSource).not.toContain('pickAndUploadAvatar');
+    expect(membersSource).not.toMatch(/set(?:Agent|Person)(?:Avatar|Photo)/);
   });
 
   it('renders no picture-setting UI even when the profile carries a stored photo', async () => {

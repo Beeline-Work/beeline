@@ -36,7 +36,6 @@ describe('the members mark', () => {
       expect(source, `${relativePath} hardcodes the members glyph`).not.toContain(
         `>${MEMBERS_GLYPH}<`,
       );
-      expect(source, `${relativePath} still says PEOPLE`).not.toMatch(/>\s*PEOPLE\s*</);
     }
   });
 

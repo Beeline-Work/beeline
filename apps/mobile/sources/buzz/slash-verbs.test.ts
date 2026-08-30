@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BEELINE_SLASH_COMMANDS } from '@beeline/buzz-client';
 import {
   availableSlashVerbs,
   slashVerbQuery,
@@ -54,9 +55,7 @@ describe('Buzz composer built-in slash verbs', () => {
 });
 
 describe('the composer verb list stays in sync with the daemon vocabulary', () => {
-  it('every Beeline command the daemon knows is a real composer verb', async () => {
-    const { BEELINE_SLASH_COMMANDS } = await import('@beeline/buzz-client');
-    const { availableSlashVerbs } = await import('./slash-verbs');
+  it('every Beeline command the daemon knows is a real composer verb', () => {
     const commands = availableSlashVerbs(allAvailable, '').map((verb) => verb.command);
     expect(commands).toEqual([...BEELINE_SLASH_COMMANDS]);
     expect(commands).toEqual([

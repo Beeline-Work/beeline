@@ -49,7 +49,7 @@ describe('the target-branch proposal card', () => {
   });
 
   it('publishes through the owner-authored room-repository path, never a new wire', () => {
-    expect(transport).toContain('client.setRoomTargetBranch(channelId, targetBranch)');
+    expect(transport).toContain('.setRoomTargetBranch(channelId, targetBranch)');
     // The daemon has no method here at all — this transport belongs to the app.
     expect(handler).not.toContain('postControlMessage');
   });
@@ -79,12 +79,8 @@ describe('the PREVIEW row on the change-ready card', () => {
   });
 
   it('is cleared whenever the merge target it belongs to is withdrawn', () => {
-    const live = source.slice(
-      source.indexOf('if (projected.mergeTarget) {'),
-      source.indexOf('if (projected.archiveChannel) {'),
-    );
-    expect(live).toContain('setPreviewUrl(projected.previewUrl ?? null)');
-    expect(live).toContain('setPreviewUrl(null)');
+    expect(source).toContain('const previewUrl = latestMerge?.previewUrl ?? null');
+    expect(source).toContain("find((message) => message.merge)?.merge");
   });
 
   it('never becomes part of the signed approval binding', () => {

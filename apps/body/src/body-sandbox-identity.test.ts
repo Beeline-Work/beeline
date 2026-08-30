@@ -1429,6 +1429,19 @@ describe('agent identity boundary', () => {
           },
         }),
       ).resolves.toBe('allow');
+      await expect(
+        handle('room-1', {
+          toolCall: {
+            kind: 'execute',
+            title: 'mcp.buzz-readonly-mcp.write_memory',
+            rawInput: {
+              server: 'buzz-readonly-mcp',
+              tool: 'write_memory',
+              arguments: { content: '# Agent memory\n' },
+            },
+          },
+        }),
+      ).resolves.toBe('allow');
     });
 
     it('allows creator-scoped Squire tools as standing authority', async () => {

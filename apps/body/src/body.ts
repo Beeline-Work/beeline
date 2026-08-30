@@ -1383,7 +1383,7 @@ function withReadOnlyAgentMemory(server: McpServerWire, agentMemoryDir?: string)
   };
 }
 
-/** The only MCP mounted in a Room: a fixed, Beeline-owned inspection surface. */
+/** A fixed Beeline-owned Room surface: bounded inspection plus private-memory persistence. */
 export function readOnlyMcpServer(
   config: BodyConfig,
   cwd: string,
@@ -5066,6 +5066,11 @@ export class Body {
       const restoredMcpServers: McpServerWire[] = [
         { name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] },
       ];
+      if (restoredCornerMemory) {
+        restoredMcpServers.push(
+          readOnlyMcpServer(this.config, worktreePath, restoredCornerMemory.dir),
+        );
+      }
       const restoredCodegraphServer = codegraphMcpServer(this.config);
       if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
       restoredMcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
@@ -5759,6 +5764,9 @@ export class Body {
         this.agentToolBinding({ channelId: subchannelId, roomId: tlcChannelId, workspaceId }),
       ),
     ];
+    if (cornerMemory) {
+      mcpServers.push(readOnlyMcpServer(this.config, worktreePath, cornerMemory.dir));
+    }
     mcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
     // Operator-authored tool servers (`operator-mcp.json`), same `creator`
     // authorization shape as the capability profiles above. pi ignores this

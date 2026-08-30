@@ -198,11 +198,7 @@ describe('approval consumption acknowledges the human', () => {
       const acks = published.filter((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_ACK_TAG),
       );
-      expect(acks.length).toBe(1);
-      expect(acks[0]!.tags).toContainEqual(['decision', 'accepted']);
-      expect(acks[0]!.tags).toContainEqual(['approval', approval.id]);
-      expect(acks[0]!.tags).toContainEqual(['h', 'corner-ack']);
-      expect(acks[0]!.content).toContain('Approval received');
+      expect(acks).toHaveLength(0);
       expect(info.cornerState).toEqual({ state: 'working' });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -316,9 +312,11 @@ describe('approval consumption acknowledges the human', () => {
         published.some((event) =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_ACK_TAG),
         ),
-      ).toBe(true);
+      ).toBe(false);
       expect(
-        published.some((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landed')),
+        published.some((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
+        ),
       ).toBe(true);
       expect(
         published.some((event) =>
@@ -374,7 +372,7 @@ describe('approval consumption acknowledges the human', () => {
         published.some((event) =>
           event.tags.some((tag) => tag[0] === 'decision' && tag[1] === 'accepted'),
         ),
-      ).toBe(true);
+      ).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -432,7 +430,7 @@ describe('approval consumption acknowledges the human', () => {
       );
       expect(failures).toHaveLength(1);
       expect(failures[0]!.content).toContain('no community is configured for this host');
-      expect(failures[0]!.content).toContain('honor it automatically');
+      expect(failures[0]!.content).toContain('retrying');
       expect(landed).toBe(1);
       expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
       expect(info.lastApprovalReadFailure).toBeUndefined();
@@ -469,8 +467,7 @@ describe('approval consumption acknowledges the human', () => {
       const ack = published.find((event) =>
         event.tags.some((tag) => tag[0] === 'state' && tag[1] === 'realigned'),
       );
-      expect(ack?.content).toContain('existing approval');
-      expect(ack?.tags).toContainEqual(['approved-tip', approvedTip]);
+      expect(ack).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -584,11 +581,6 @@ describe('event-driven approval pickup', () => {
 
       await vi.waitFor(
         () => {
-          expect(
-            fixture.published.some((event) =>
-              event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_ACK_TAG),
-            ),
-          ).toBe(true);
           expect(activityStages(fixture.published)).toContain('approval-received');
         },
         { timeout: 2_000 },
@@ -602,7 +594,7 @@ describe('event-driven approval pickup', () => {
         fixture.published.some((event) =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_ACK_TAG),
         ),
-      ).toBe(true);
+      ).toBe(false);
       expect(activityStages(fixture.published)).toEqual(
         expect.arrayContaining(['approval-received', 'running-gate', 'pushing', 'landed']),
       );

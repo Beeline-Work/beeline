@@ -26769,6 +26769,6 @@
   "expected": {
     "minimumTranscriptItems": 1,
     "maximumReplayMs": 30000,
-    "serverProjectedMessages": 504
+    "serverProjectedMessages": 273
   }
 }

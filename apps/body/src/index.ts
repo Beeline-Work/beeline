@@ -171,12 +171,14 @@ export {
 } from './harness-tool-scope.js';
 export {
   projectActivity,
-  postAgentMessage,
-  postControlMessage,
   ACTIVITY_TAG,
   AGENT_MESSAGE_TAG,
   type ActivityBatch,
 } from './activity.js';
+export {
+  publishAgentMessage as postAgentMessage,
+  postControlMessage,
+} from './lifecycle-publisher.js';
 export {
   resolveReviewBaseTip,
   listChangeReviewFiles,

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import type { McpServerWire } from './acp.js';
 import { buildAgentMessage } from './activity.js';
@@ -42,7 +42,6 @@ import { AgentToolHostBroker, type AgentToolSessionBinding } from './agent-tool-
 import { AuthorizeOrRequestKernel } from './authorize-or-request.js';
 import {
   BEELINE_ACTION_TOKENS,
-  BEELINE_AGENT_TOOL_SCHEMA_VERSION,
   BEELINE_MANDATE_DEFAULTS_VERSION,
   BEELINE_SCHEDULE_OPERATIONS,
   assertBeelineAgentToolHandshake,
@@ -474,8 +473,12 @@ export class BodyAgentTools {
       {
         pubkey: this.agentIdentity.publicKey,
         created_at: Math.floor(Date.now() / 1_000),
-        kind: 9,
+        kind: WORK_SCHEDULE_KIND,
         tags: [
+          [
+            'd',
+            `beeline-agent-tool-result:${input.channelId}:${input.tool}:${input.action}:${input.resultId ?? randomUUID()}`,
+          ],
           ['h', input.channelId],
           ['t', 'beeline-agent-tool-result'],
           ['tool', input.tool],
@@ -484,13 +487,7 @@ export class BodyAgentTools {
           ...(input.resultId ? [['result', input.resultId]] : []),
           ...(input.extraTags ?? []),
         ],
-        content: JSON.stringify({
-          schema_version: BEELINE_AGENT_TOOL_SCHEMA_VERSION,
-          tool: input.tool,
-          status: input.status,
-          action: input.action,
-          ...(input.resultId ? { result_id: input.resultId } : {}),
-        }),
+        content: '',
       },
       this.agentIdentity.secretKey,
     );

@@ -44,7 +44,6 @@ import {
   agentTurnFailureReply,
   agentExchangeTurnPrompt,
   abandonedCornerCloseRetryDelayMs,
-  ABANDONED_CORNER_CLOSE_REFUSED,
   ABANDONED_CORNER_CLOSE_RETRY_BASE_MS,
   ABANDONED_CORNER_CLOSE_RETRY_CAP_MS,
   UNTRACKED_CORNER_SCAN_INTERVAL_MS,
@@ -144,7 +143,6 @@ import {
   isReadOnlyMcpPermissionRequest,
 } from './read-only-policy.js';
 import { targetBranchProposalFromAgentText } from './target-branch.js';
-import { CONCLUDE_NUDGE_SPACING_MS, MAX_CONCLUDE_NUDGES_PER_EPISODE } from './conclude-watch.js';
 import {
   CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
   CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
@@ -476,7 +474,7 @@ describe('harness-independent corner commit watch', () => {
       expect(info.observedReviewTip).toBe(gitCommand(worktreePath, ['rev-parse', 'HEAD']));
       expect(
         published.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
         ),
       ).toBe(true);
       expect(

@@ -1,7 +1,6 @@
 /**
  * Activity projection: subscribe to the edit session's ACP `session/update`
- * stream and project compact, inspectable turn details as channel events every
- * member can see (kind:9 + #t=agent-activity tag).
+ * stream and project compact, inspectable turn details as typed records.
  *
  * This is what makes "watch the agent work, together" real — the body bridges
  * the stdio-local ACP stream into the relay channel so all members receive live
@@ -16,18 +15,26 @@ import {
   AGENT_PRESENCE_HEARTBEAT_MS,
   agentDraftKey,
   agentThoughtKey,
-  agentPresenceKey,
   KIND_AGENT_DRAFT,
-  KIND_AGENT_PRESENCE,
   TAG_AGENT_DRAFT,
   TAG_AGENT_THOUGHT,
-  TAG_AGENT_PRESENCE,
   asRelayPublishError,
-  buildAttachmentTags,
   type AgentPresenceStatus,
-  type AttachmentReference,
 } from '@beeline/buzz-client';
 import { sanitizeActivityUpdate } from './attachments.js';
+import {
+  publishAgentPresence as postAgentPresence,
+  publishLifecycleMessage,
+  type AgentPresenceAccessSeed,
+} from './lifecycle-publisher.js';
+
+export {
+  buildAgentMessage,
+  publishAgentMessage as postAgentMessage,
+  publishAgentPresence as postAgentPresence,
+  retractAgentPresence,
+  type AgentPresenceAccessSeed,
+} from './lifecycle-publisher.js';
 
 export const ACTIVITY_TAG = 'agent-activity';
 export const AGENT_MESSAGE_TAG = 'agent-message';
@@ -36,11 +43,6 @@ export const CORNER_SESSION_TAG = 'corner-session';
 /** Coalescing window for live draft-text publishes — bounds relay write rate
  *  regardless of ACP chunk frequency (mirrors the activity batch's quota concern). */
 export const AGENT_DRAFT_FLUSH_MS = 250;
-
-export interface AgentPresenceAccessSeed {
-  policy: 'everyone' | 'creator' | 'allowlist';
-  allowlist?: readonly string[];
-}
 
 /** Resolve the NIP-10 root that a reply to this event must preserve. */
 export function replyRootIdForEvent(event: NostrEvent): string {
@@ -971,63 +973,6 @@ export function projectActivity(
   return controller;
 }
 
-/** Publish a completed assistant turn as durable conversation, not telemetry. */
-export function buildAgentMessage(
-  channelId: string,
-  owner: Identity,
-  message: string,
-  replyTo?: string,
-  attachments: readonly AttachmentReference[] = [],
-  extraTags: readonly string[][] = [],
-  replyRootId?: string,
-  createdAt = Math.floor(Date.now() / 1000),
-): NostrEvent {
-  return signEvent(
-    {
-      pubkey: owner.publicKey,
-      created_at: createdAt,
-      kind: 9,
-      tags: [
-        ['h', channelId],
-        ['t', AGENT_MESSAGE_TAG],
-        ...(replyTo && replyRootId && replyRootId !== replyTo
-          ? [['e', replyRootId, '', 'root']]
-          : []),
-        ...(replyTo ? [['e', replyTo, '', 'reply']] : []),
-        ...buildAttachmentTags(attachments),
-        ...extraTags,
-      ],
-      content: message,
-    },
-    owner.secretKey,
-  );
-}
-
-export async function postAgentMessage(
-  channelId: string,
-  owner: Identity,
-  message: string,
-  replyTo?: string,
-  attachments: readonly AttachmentReference[] = [],
-  extraTags: readonly string[][] = [],
-  replyRootId?: string,
-  createdAt?: number,
-): Promise<void> {
-  await publishEvent(
-    buildAgentMessage(
-      channelId,
-      owner,
-      message,
-      replyTo,
-      attachments,
-      extraTags,
-      replyRootId,
-      createdAt,
-    ),
-    owner,
-  );
-}
-
 /**
  * Publish the live, growing text of an in-flight assistant reply. Parameterized
  * -replaceable (same convention as `#t=agent-presence`) so relay storage and
@@ -1299,21 +1244,26 @@ export function postAgentTurnStatus(
   status: 'working' | 'complete' | 'failed',
   generationId?: string,
 ): Promise<void> {
+  const receiptStatus = status === 'failed' ? 'complete' : status;
   const message =
-    status === 'working'
+    receiptStatus === 'working'
       ? 'Agent is thinking…'
-      : status === 'complete'
-        ? 'Agent reply complete.'
-        : 'Agent reply stopped.';
-  return postControlMessage(channelId, owner, message, [
-    ['t', AGENT_TURN_TAG],
-    ['request', requestId],
-    ['session', sessionId],
-    ['agent', owner.publicKey],
-    ['mode', 'readonly'],
-    ['status', status],
-    ...(generationId ? [['generation', generationId]] : []),
-  ]);
+      : 'Agent reply complete.';
+  return publishLifecycleMessage({
+    kind: 'turn-receipt',
+    channelId,
+    owner,
+    content: message,
+    tags: [
+      ['t', AGENT_TURN_TAG],
+      ['request', requestId],
+      ['session', sessionId],
+      ['agent', owner.publicKey],
+      ['mode', 'readonly'],
+      ['status', receiptStatus],
+      ...(generationId ? [['generation', generationId]] : []),
+    ],
+  }).then(() => undefined);
 }
 
 export function postCornerSessionStatus(
@@ -1323,13 +1273,20 @@ export function postCornerSessionStatus(
   status: 'live' | 'suspended' | 'waiting-for-slot',
   sequence: number,
 ): Promise<void> {
-  return postControlMessage(channelId, owner, `Corner session ${status}.`, [
-    ['t', CORNER_SESSION_TAG],
-    ['session', sessionId],
-    ['agent', owner.publicKey],
-    ['status', status],
-    ['sequence', String(sequence)],
-  ]);
+  if (status !== 'live') return Promise.resolve();
+  return publishLifecycleMessage({
+    kind: 'corner-session-live',
+    channelId,
+    owner,
+    content: 'Corner session live.',
+    tags: [
+      ['t', CORNER_SESSION_TAG],
+      ['session', sessionId],
+      ['agent', owner.publicKey],
+      ['status', status],
+      ['sequence', String(sequence)],
+    ],
+  }).then(() => undefined);
 }
 
 /** Marker tag on the quiet "your steer is queued" acknowledgement below. */
@@ -1354,12 +1311,10 @@ export function postSteerQueuedNotice(
   owner: Identity,
   requestId?: string,
 ): Promise<void> {
-  return postControlMessage(
-    channelId,
-    owner,
-    'Got it — queued. I’ll pick this up as soon as the current step finishes.',
-    [['t', STEER_QUEUED_TAG], ['status', 'queued'], ...(requestId ? [['request', requestId]] : [])],
-  );
+  void channelId;
+  void owner;
+  void requestId;
+  return Promise.resolve();
 }
 
 /**
@@ -1378,73 +1333,11 @@ export function postSlashCommandNotice(
   message: string,
   command: string,
 ): Promise<void> {
-  return postControlMessage(channelId, owner, message, [
-    ['t', SLASH_COMMAND_NOTICE_TAG],
-    ['command', command],
-  ]);
-}
-
-/** Publish one signed, replaceable Room-scoped daemon presence marker. */
-export async function postAgentPresence(
-  channelId: string,
-  owner: Identity,
-  status: AgentPresenceStatus,
-  createdAt = Math.floor(Date.now() / 1_000),
-  generationId?: string,
-  accessSeed?: AgentPresenceAccessSeed,
-): Promise<void> {
-  const event: NostrEvent = signEvent(
-    {
-      pubkey: owner.publicKey,
-      created_at: createdAt,
-      kind: KIND_AGENT_PRESENCE,
-      tags: [
-        ['d', agentPresenceKey(channelId)],
-        ['h', channelId],
-        ['t', TAG_AGENT_PRESENCE],
-        ['agent', owner.publicKey],
-        ['status', status],
-        ['capability', 'factory-permissions-v1'],
-        ['capability', 'agent-mention-v1'],
-        ...(generationId ? [['generation', generationId]] : []),
-        ...(accessSeed ? [['access-policy', accessSeed.policy]] : []),
-        ...(accessSeed?.allowlist?.map((pubkey) => ['access-allow', pubkey]) ?? []),
-      ],
-      content: status,
-    },
-    owner.secretKey,
-  );
-  await publishEvent(event, owner);
-}
-
-/** Same terminal replacement as {@link retractAgentDraft}, for presence. */
-export async function retractAgentPresence(
-  cornerId: string,
-  scopeChannelId: string,
-  owner: Identity,
-  createdAt = Math.floor(Date.now() / 1_000),
-): Promise<void> {
-  await publishEvent(
-    signEvent(
-      {
-        pubkey: owner.publicKey,
-        created_at: createdAt,
-        kind: KIND_AGENT_PRESENCE,
-        tags: [
-          ['d', agentPresenceKey(cornerId)],
-          ['h', scopeChannelId],
-          ['t', TAG_AGENT_PRESENCE],
-          ['agent', owner.publicKey],
-          ['status', 'offline'],
-          ['terminal', 'closed'],
-          ['corner', cornerId],
-        ],
-        content: 'offline',
-      },
-      owner.secretKey,
-    ),
-    owner,
-  );
+  void channelId;
+  void owner;
+  void message;
+  void command;
+  return Promise.resolve();
 }
 
 /**
@@ -1626,10 +1519,9 @@ export function startAgentPresence(
 }
 
 /**
- * Publish daemon-owned work into the same durable activity stream as ACP tool
- * updates. Landing is host work, not a synthetic agent turn, but it still
- * belongs in the transcript's live machine ledger rather than in a second
- * progress-card vocabulary.
+ * Publish daemon-owned work into the typed activity stream. Runtime payloads
+ * use kind:30078 so generic kind:9 transcript readers can never render the
+ * JSON document as a centered chat bubble.
  */
 export async function postAgentActivityBatch(
   channelId: string,
@@ -1650,8 +1542,14 @@ export async function postAgentActivityBatch(
     {
       pubkey: owner.publicKey,
       created_at: Math.floor(Date.now() / 1000),
-      kind: 9,
-      tags: [['h', channelId], ['t', ACTIVITY_TAG], ['session', batch.sessionId], ...extraTags],
+      kind: 30078,
+      tags: [
+        ['d', `buzz-agent-activity:${channelId}:${batch.sessionId}`],
+        ['h', channelId],
+        ['t', ACTIVITY_TAG],
+        ['session', batch.sessionId],
+        ...extraTags,
+      ],
       content,
     },
     owner.secretKey,
@@ -1660,7 +1558,7 @@ export async function postAgentActivityBatch(
   await publishEvent(event, owner);
 }
 
-/** Emit an ordered batch of ACP session updates as one kind:9 channel event. */
+/** Emit an ordered batch of ACP session updates as one typed channel record. */
 async function emitActivityEvent(
   channelId: string,
   owner: Identity,
@@ -1672,36 +1570,4 @@ async function emitActivityEvent(
     // Log but don't crash the body — activity projection is best-effort.
     console.error('[body] activity projection error:', err);
   }
-}
-
-/**
- * Post a control message to a channel (kind:9 with specific tag).
- * Used for: "subchannel opened", "session started", "session archived", etc.
- */
-export function buildControlMessage(
-  channelId: string,
-  owner: Identity,
-  msg: string,
-  extraTags: string[][] = [],
-): NostrEvent {
-  return signEvent(
-    {
-      pubkey: owner.publicKey,
-      created_at: Math.floor(Date.now() / 1000),
-      kind: 9,
-      tags: [['h', channelId], ['t', 'body-control'], ...extraTags],
-      content: msg,
-    },
-    owner.secretKey,
-  );
-}
-
-export async function postControlMessage(
-  channelId: string,
-  owner: Identity,
-  msg: string,
-  extraTags: string[][] = [],
-): Promise<void> {
-  const event = buildControlMessage(channelId, owner, msg, extraTags);
-  await publishEvent(event, owner);
 }

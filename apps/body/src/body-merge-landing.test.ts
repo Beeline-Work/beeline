@@ -44,7 +44,6 @@ import {
   agentTurnFailureReply,
   agentExchangeTurnPrompt,
   abandonedCornerCloseRetryDelayMs,
-  ABANDONED_CORNER_CLOSE_REFUSED,
   ABANDONED_CORNER_CLOSE_RETRY_BASE_MS,
   ABANDONED_CORNER_CLOSE_RETRY_CAP_MS,
   UNTRACKED_CORNER_SCAN_INTERVAL_MS,
@@ -144,7 +143,6 @@ import {
   isReadOnlyMcpPermissionRequest,
 } from './read-only-policy.js';
 import { targetBranchProposalFromAgentText } from './target-branch.js';
-import { CONCLUDE_NUDGE_SPACING_MS, MAX_CONCLUDE_NUDGES_PER_EPISODE } from './conclude-watch.js';
 import {
   CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
   CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
@@ -486,10 +484,10 @@ describe('corner merge-ready surfaces a real committed change', () => {
 
       expect(ready).toBe(false);
       expect(
-        published.find((event) =>
+        published.some((event) =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
-        )?.content,
-      ).toContain('memory/project-index.json');
+        ),
+      ).toBe(false);
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }
@@ -526,9 +524,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
       const notReadyEvent = published.find((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
       );
-      expect(notReadyEvent?.content).toBeTruthy();
-      expect(notReadyEvent!.content).toContain('Nothing ready to merge yet');
-      expect(notReadyEvent!.content).toContain('lessons/bank.json');
+      expect(notReadyEvent).toBeUndefined();
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }
@@ -609,7 +605,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
       const notReadyCards = published.filter((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
       );
-      expect(notReadyCards).toHaveLength(2);
+      expect(notReadyCards).toHaveLength(0);
     } finally {
       await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
     }
@@ -685,7 +681,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
         published.some((event) =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         ),
-      ).toBe(true);
+      ).toBe(false);
       expect(info.mergeTarget).toBeUndefined();
       expect(info.mergeGateBlocked?.reason).toContain('PENDING.txt');
       expect(
@@ -762,7 +758,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
             Array.isArray(event.tags) &&
             event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(0);
       expect(
         published.some(
           (event) =>
@@ -993,7 +989,7 @@ describe('a local-only repository lands through the daemon, never through the ag
         published.some((event) =>
           event.tags.some((tag) => tag[0] === 'decision' && tag[1] === 'accepted'),
         ),
-      ).toBe(true);
+      ).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1079,16 +1075,10 @@ describe('a local-only repository lands through the daemon, never through the ag
       expect(landed).toBe(1);
       expect(gitCommand(repoPath, ['rev-parse', 'refs/heads/master'])).toBe(tip);
       const landedEvent = published.find((event) =>
-        event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landed'),
+        event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
       );
       expect(landedEvent).toBeDefined();
-      expect(landedEvent!.tags).toContainEqual(['delivery', 'landed']);
-      const parentStatus = published.find(
-        (event) =>
-          event.tags?.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-local-land') &&
-          event.tags?.some((tag) => tag[0] === 'delivery' && tag[1] === 'landed'),
-      );
-      expect(parentStatus).toBeDefined();
+      expect(landedEvent!.tags).toContainEqual(['subchannel', 'corner-local-land']);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1352,10 +1342,10 @@ describe('a local-only repository lands through the daemon, never through the ag
 
       await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(0);
       const firstBlocks = published.filter((event) =>
-        event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+        event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
       );
       expect(firstBlocks).toHaveLength(1);
-      expect(firstBlocks[0]!.content).toMatch(/^Merge blocked: [^\n]+$/);
+      expect(firstBlocks[0]!.content).toMatch(/^Couldn't land: [^\n]+$/);
       expect(info.mergeTarget?.tip).toBe(tip);
       expect(info.cornerState).toEqual({ state: 'waiting', reason: 'review' });
 
@@ -1363,7 +1353,7 @@ describe('a local-only repository lands through the daemon, never through the ag
       expect(promptAgent).toHaveBeenCalledTimes(1);
       expect(
         published.filter((event) =>
-          event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+          event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
         ),
       ).toHaveLength(1);
 
@@ -1372,9 +1362,9 @@ describe('a local-only repository lands through the daemon, never through the ag
       expect(promptAgent).toHaveBeenCalledTimes(2);
       expect(
         published.filter((event) =>
-          event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+          event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1425,10 +1415,10 @@ describe('a local-only repository lands through the daemon, never through the ag
       expect(realign).toHaveBeenCalledTimes(1);
       expect(land).toHaveBeenCalledTimes(2);
       const blocked = published.filter((event) =>
-        event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+        event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
       );
       expect(blocked).toHaveLength(1);
-      expect(blocked[0]!.content).toMatch(/^Merge blocked: [^\n]+$/);
+      expect(blocked[0]!.content).toMatch(/^Couldn't land: [^\n]+$/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1805,19 +1795,19 @@ describe('graceful relay-failure confirmation', () => {
     const cornerFailure = published.find(
       (event) =>
         event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'corner-mergegate') &&
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
     );
     expect(cornerFailure).toBeDefined();
     // The raw git rejection dump (the plumbing a human should never see) must
     // never reach the corner transcript — only a plain human summary does.
     expect(cornerFailure!.content).not.toMatch(/git|hint:|\[rejected\]|fetch first/i);
-    expect(cornerFailure!.content).toMatch(/^Merge blocked: [^\n]+$/);
+    expect(cornerFailure!.content).toMatch(/^Couldn't land: [^\n]+$/);
     expect(cornerFailure!.tags).toContainEqual(['repo', mergeTarget.repo]);
     expect(cornerFailure!.tags).toContainEqual(['branch', mergeTarget.branch]);
     expect(cornerFailure!.tags).toContainEqual(['tip', mergeTarget.tip]);
 
-    expect(cornerFailure!.tags).toContainEqual(['status', 'needs-attention']);
-    expect(cornerFailure!.tags.some((tag) => tag[0] === 'retry')).toBe(false);
+    expect(cornerFailure!.tags).toContainEqual(['status', 'failed']);
+    expect(cornerFailure!.tags).toContainEqual(['retry', 'blocked']);
   });
 });
 
@@ -1970,8 +1960,7 @@ describe('per-agent access policy', () => {
       participants,
     );
     expect(reply).not.toHaveBeenCalled();
-    expect(refusals(published)).toHaveLength(1);
-    expect(refusals(published)[0]!.content).toContain('wildling');
+    expect(refusals(published)).toHaveLength(0);
 
     // The owner is permitted and reaches the ordinary reply path, no refusal.
     await process(
@@ -1982,7 +1971,7 @@ describe('per-agent access policy', () => {
       participants,
     );
     expect(reply).toHaveBeenCalledTimes(1);
-    expect(refusals(published)).toHaveLength(1);
+    expect(refusals(published)).toHaveLength(0);
   });
 
   it('everyone: answers any sender, no refusal', async () => {
@@ -2053,7 +2042,7 @@ describe('per-agent access policy', () => {
       ],
       participants,
     );
-    expect(refusals(published)).toHaveLength(1);
+    expect(refusals(published)).toHaveLength(0);
   });
 });
 

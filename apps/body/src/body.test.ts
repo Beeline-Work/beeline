@@ -39,7 +39,6 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 });
 
 import {
-  AGENT_REQUEST_TAG,
   AGENT_EXCHANGE_MAX_MESSAGES,
   agentTurnFailureJournalDetail,
   agentTurnFailureReply,
@@ -68,7 +67,6 @@ import {
   taskDescriptionFromCornerRequest,
   taskSlugForCornerIntent,
   isChannelAddressedMessage,
-  isChannelTaskRequest,
   isChannelWorkIntent,
   isReadOnlyInformationRequest,
   isRepositoryMutationRequest,
@@ -3900,7 +3898,7 @@ describe('Room conversation and permission-gated work intent', () => {
     const event = requestEvent([['p', agent.publicKey]]);
     expect(isChannelAddressedMessage(event, agent.publicKey)).toBe(true);
     expect(isChannelWorkIntent(event, agent.publicKey)).toBe(false);
-    expect(isChannelTaskRequest(event, agent.publicKey)).toBe(false);
+    expect(isChannelWorkIntent(event, agent.publicKey)).toBe(false);
   });
 
   it('replies conversationally in a two-party Room without opening work', () => {
@@ -4291,7 +4289,7 @@ describe('Room conversation and permission-gated work intent', () => {
 
   it('retires the signed Start work marker as an edit authorization', () => {
     const participants = [human.publicKey, agent.publicKey];
-    const work = requestEvent([['t', AGENT_REQUEST_TAG]]);
+    const work = requestEvent([['t', 'buzz-agent-request']]);
     expect(isChannelAddressedMessage(work, agent.publicKey, participants)).toBe(true);
     expect(isChannelWorkIntent(work, agent.publicKey, participants)).toBe(false);
   });

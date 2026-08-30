@@ -4,7 +4,7 @@ Status: implemented and validated
 
 ## Request and authority model
 
-A visible Room reply authored by agent A may address current peer agents with `@handle`s. The host resolves every distinct valid peer mention against the current Room roster before publishing A's reply, signs delegation metadata into that same visible kind:9 event, and lets each peer's existing Room poller consume it as a real turn. Agent prose alone never grants authority.
+A visible Room reply authored by agent A may address one peer agent B with an `@handle`. The host resolves the first valid peer mention against the current Room roster before publishing A's reply, signs delegation metadata into that same visible kind:9 event, and lets B's existing Room poller consume it as a real turn. Agent prose alone never grants authority.
 
 Every delegation chain is rooted in one verified, human-authored Room request. Each hop carries the root event id and root human pubkey. B evaluates its own current access policy against that root human, not A:
 
@@ -22,13 +22,13 @@ The existing human command `@agent talk to @peer` remains unchanged. It keeps it
 ```text
 human H -> addressed Room request R -> agent A normal Room turn
                                       |
-                                          +-- final text mentions @B and @C
+                                      +-- final text mentions @B
                                           |
                                           +-- resolve current Room member + online lease
                                           +-- publish A's visible reply D1
                                               t=agent-message
                                               t=buzz-agent-delegation
-                                              root-request=R, root-human=H, hop=1, p=B, p=C
+                                              root-request=R, root-human=H, hop=1, p=B
                                                   |
                                                   v
                                       B validates signature, membership, root, budget,
@@ -62,10 +62,10 @@ Kind: `9`
 ["root-request", "<root-human-request-id>"]
 ["root-human", "<root-human-pubkey>"]
 ["from-agent", "<author-agent-pubkey>"]
-["to-agent", "<recipient-agent-pubkey>"]                 # one per recipient
+["to-agent", "<recipient-agent-pubkey>"]
 ["hop", "<1..configured-limit>"]
-["dedupe", "<sha256(root, from, recipient-set, normalized-mentioned-text)>"]
-["p", "<recipient-agent-pubkey>"]                        # one per recipient
+["dedupe", "<sha256(root, from, to, normalized-mentioned-text)>"]
+["p", "<recipient-agent-pubkey>"]
 content = the ordinary visible agent reply containing the resolved @handle
 ```
 
@@ -96,23 +96,23 @@ No `body-control` event carries user-facing delegation content.
 
 ## Loop, dedupe, and cost protections
 
-- Default: `BUZZY_BODY_AGENT_DELEGATION_MAX_HOPS=4` agent-initiated hop depth per root human request.
+- Default: `BUZZY_BODY_AGENT_DELEGATION_MAX_HOPS=4` agent-initiated dispatches per root human request.
 - The environment override is parsed once and hard-clamped to `1..8`; invalid values use `4`. Operators can lower cost but cannot remove the bound.
-- One agent reply dispatches to every distinct, online, non-self Room peer it mentions. Offline peers do not receive a turn; if none are online, the source posts the existing visible offline line.
+- One agent reply dispatches at most one peer. If the model mentions three agents, the first valid non-self Room member in text order is the only recipient; the other mentions remain visible context.
 - Self-mentions never dispatch.
 - The target reserves one reply per source event through the durable reply inbox before publishing, so replay/restart cannot spend twice.
-- A relay-derived dedupe key blocks the same `root + from + recipient set + normalized mentioned text` from retriggering the same agent in one thread. Different text may continue the chain until the hop limit.
-- A target may mention the agent that just mentioned it, and every return consumes another hop. Ping-pong therefore terminates at four hops by default even when each side varies its wording.
+- A relay-derived dedupe key blocks the same `root + from + to + normalized mentioned text` from retriggering the same agent in one thread. Different text may continue the chain until the hop limit.
+- A target may mention the agent that just mentioned it, but only one target can be emitted from that turn and every return consumes another hop. Ping-pong therefore terminates at four dispatches by default even when each side varies its wording.
 - At the limit, further mentions are context-only and the host publishes one visible `delegation-status=limit` line for the root. A relay lookup suppresses duplicate limit lines after daemon restart.
 - The bounds are host checks. Prompt instructions explain them but are not trusted for enforcement.
 
-Every dispatched peer spends one delegated turn at that hop; the original addressed agent turn is outside that incremental count. Human messages always form a new normal request and may start a new chain if addressed.
+Worst-case incremental model cost for one root request is four delegated turns at the default and eight at the absolute configuration maximum. The original addressed agent turn is outside that incremental count. Human messages always form a new normal request and may start a new chain if addressed.
 
 ## Validation and admission
 
 The target accepts a delegation only when all checks pass:
 
-1. The event signature is valid, kind is 9, channel is this Room, marker is `buzz-agent-delegation`, author equals `from-agent`, this agent is a recipient, and every recipient has exactly one matching `p` tag.
+1. The event signature is valid, kind is 9, channel is this Room, marker is `buzz-agent-delegation`, author equals `from-agent`, recipient equals this agent, and exactly one matching `p` tag exists.
 2. Both agents are current members of the Room and registered agent identities; self-targeting fails.
 3. `hop` is an integer within the configured hard bound.
 4. The root event exists in the same Room, is signed by `root-human`, is not agent-authored, and originally addressed the hop-1 source agent.
@@ -178,8 +178,8 @@ CODE PATHS                                              USER FLOWS
 
 ### Automated tests
 
-- `apps/body/src/agent-mention.test.ts`: envelope parse/build, root continuity, malformed/forged event rejection, configured bound clamp, self mention, multi-recipient selection, identical dedupe, and hop-limit decisions.
-- `apps/body/src/body.test.ts`: valid agent-authored Room delegation triggers a real target turn; creator and allowlist are evaluated against root human; non-member/offline refusal; every online mentioned peer triggers; repeated identical mention does not retrigger; ping-pong stops at the configured bound with one line; delegated information request works; delegated mutation cannot write in Room; delegated corner request emits existing approval with root human requester; human mid-thread creates a new root; durable replay/restart does not spend twice; timeout/failure line is visible and rooted; existing `humanAgentExchangeRequest` tests remain green.
+- `apps/body/src/agent-mention.test.ts`: envelope parse/build, root continuity, malformed/forged event rejection, configured bound clamp, self mention, first-of-three selection, identical dedupe, and hop-limit decisions.
+- `apps/body/src/body.test.ts`: valid agent-authored Room delegation triggers a real target turn; creator and allowlist are evaluated against root human; non-member/offline refusal; only one of three peers triggers; repeated identical mention does not retrigger; ping-pong stops at the configured bound with one line; delegated information request works; delegated mutation cannot write in Room; delegated corner request emits existing approval with root human requester; human mid-thread creates a new root; durable replay/restart does not spend twice; timeout/failure line is visible and rooted; existing `humanAgentExchangeRequest` tests remain green.
 - `apps/push-gateway/src/room-indexer.test.ts`: delegating reply, target reply, access refusal, offline/duplicate/limit line all project as messages in Room paint and previews with author, `mentionPubkeys`, `replyToId`, and `rootId` intact.
 - `apps/body/src/agent-delegation.live.test.ts`: local-relay proof with two paired bodies, A mentioning B, B replying, and deliberate ping-pong stopping at the host bound. Query and print event ids/timestamps/root tags for the PR evidence.
 - Existing `apps/body/src/agent-exchange.live.test.ts` remains green.
@@ -215,6 +215,7 @@ No failure path combines no test, no handling, and silent user impact.
 
 - No generalized workflow/delegation framework, scheduler, graph database, or new daemon service; the feature is one bounded Room ingress extension.
 - No agent inbox UI, task dashboard, delivery receipts UI, or special delegation card; the transcript is the product surface.
+- No parallel fan-out to multiple mentioned agents; one reply can spend at most one peer turn.
 - No unbounded agent autonomy, recursive background jobs, or agent-created root authority.
 - No changes to Room membership, pairing, access-policy configuration, or protected-ref authorization.
 - No automatic reassignment when a peer is offline and no synthetic timeout watcher for an offline daemon; durable relay delivery resumes when it returns.
@@ -266,7 +267,7 @@ Layer: **[Layer 1]** reuse existing signed Nostr events, durable inbox, access-p
 
 1. **[P1] (confidence: 9/10)** Duplicating Room turn execution for delegation would drift from permission and failure behavior. Selected: extend `replyInRoom` with explicit delegation context and small reply-tag helpers.
 2. **[P2] (confidence: 9/10)** Parsing free-form prose at the recipient is spoofable. Selected: resolve prose once at the signing source; recipients consume signed tags only.
-3. **[P2] (confidence: 8/10)** Multiple recipients create concurrency, cost, and partial-failure complexity. Superseded by owner-approved fan-out: every online mentioned peer receives a signed turn from the same visible reply.
+3. **[P2] (confidence: 8/10)** Multiple recipients create concurrency, cost, and partial-failure complexity. Selected: one recipient in text order.
 
 ### Test review
 
@@ -289,7 +290,7 @@ No N+1 database path or new high-volume projection query is introduced. The inde
 | Non-member/unknown handle                  | Source posts one visible refusal; no target event.                                                                          |
 | Offline member                             | Source posts one visible offline line; no model spend.                                                                      |
 | Two agents repeatedly mention each other   | Each return consumes a hop; default four, hard maximum eight, then one limit line. Identical repeated text dedupes earlier. |
-| One reply mentions three agents            | Every distinct online non-self Room member receives one turn from the same signed reply.                                    |
+| One reply mentions three agents            | First valid non-self Room member in text order receives one turn; others are context-only.                                  |
 | Delegated request opens a corner or writes | Existing mutation boundary; corner always requires approval with root human requester.                                      |
 | Human replies mid-thread                   | Addressed human reply becomes a new root/budget; unaddressed reply is context.                                              |
 | Daemon restarts mid-thread                 | Relay-verifiable envelope and durable inbox resume exactly once.                                                            |
@@ -298,7 +299,7 @@ No N+1 database path or new high-volume projection query is introduced. The inde
 
 ### Deliberately not built
 
-The `NOT in scope` section is accepted as written. No TODO is warranted: delegation dashboards and offline timeout watchers add cost and complexity without blocking the owner-decision-B acceptance criteria.
+The `NOT in scope` section is accepted as written. No TODO is warranted: fan-out, delegation dashboards, and offline timeout watchers add cost and complexity without blocking the owner-decision-B acceptance criteria.
 
 ### Review completion summary
 

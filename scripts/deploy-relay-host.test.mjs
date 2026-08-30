@@ -606,20 +606,29 @@ test('tracked stacks expose one materializer service instead of separate tail pr
   }
 });
 
-test('materializer preserves persisted absolute runtime roots inside the container', () => {
-  for (const relative of ['relay-stack/compose.yml', 'relay-stack/prod/compose.yml']) {
-    for (const runtimeRoot of ['/home/lunchbox/.local/state', '/srv/beeline-runtime']) {
-      const overrides =
-        runtimeRoot === '/home/lunchbox/.local/state'
-          ? {}
-          : { BEELINE_RUNTIME_STATE_DIR: runtimeRoot };
-      const materializer = composeConfig(relative, overrides).services.materializer;
-      assert.equal(materializer.environment.XDG_STATE_HOME, runtimeRoot, relative);
-      const runtimeMount = materializer.volumes.find((volume) => volume.target === runtimeRoot);
-      assert.equal(runtimeMount.source, runtimeRoot, relative);
-      assert.equal(runtimeMount.read_only, true, relative);
-    }
+test('production materializer preserves persisted absolute runtime roots inside the container', () => {
+  for (const runtimeRoot of ['/home/lunchbox/.local/state', '/srv/beeline-runtime']) {
+    const overrides =
+      runtimeRoot === '/home/lunchbox/.local/state'
+        ? {}
+        : { BEELINE_RUNTIME_STATE_DIR: runtimeRoot };
+    const materializer = composeConfig('relay-stack/prod/compose.yml', overrides).services.materializer;
+    assert.equal(materializer.environment.XDG_STATE_HOME, runtimeRoot);
+    const runtimeMount = materializer.volumes.find((volume) => volume.target === runtimeRoot);
+    assert.equal(runtimeMount.source, runtimeRoot);
+    assert.equal(runtimeMount.read_only, true);
   }
+});
+
+test('local materializer stays credential-free and does not mount an operator runtime', () => {
+  const materializer = composeConfig('relay-stack/compose.yml').services.materializer;
+  assert.equal(materializer.environment.XDG_STATE_HOME, undefined);
+  assert.equal(materializer.environment.BUZZY_MATERIALIZER_DISABLE_PUSH_DELIVERY, 'true');
+  assert.equal(materializer.environment.BUZZY_MATERIALIZER_DISABLE_REPOSITORY_EVENTS, 'true');
+  assert.equal(
+    (materializer.volumes ?? []).some((volume) => volume.target === '/home/lunchbox/.local/state'),
+    false,
+  );
 });
 
 test('a repeated deploy places tracked config and converges once', async () => {

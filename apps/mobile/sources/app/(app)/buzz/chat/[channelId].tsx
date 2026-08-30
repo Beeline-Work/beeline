@@ -177,6 +177,7 @@ import {
   WritePermissionCard,
 } from './RoomMessageVariants';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
@@ -234,6 +235,10 @@ const COMPOSER_MAX_HEIGHT = 120;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
+// A corner's opening/progress prose is its audit trail. The cold tail already
+// reads this many records; reveal that complete bounded page when its parent
+// relation resolves instead of silently starting a reader 30 rows mid-story.
+const INITIAL_CORNER_MESSAGE_WINDOW = 200;
 const OLDER_MESSAGES_PAGE_SIZE = 30;
 // This deliberately remains the sole color seam for the human merge decision.
 // If the product ever approves a non-monochrome exception, change only this value.
@@ -733,9 +738,16 @@ export default function BuzzChat() {
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
   const unprojectedMessages = useMemo(
-    () => combinedMessages.slice(-visibleMessageCount),
+    () => visibleTranscriptWindow(combinedMessages, visibleMessageCount),
     [combinedMessages, visibleMessageCount],
   );
+  // `parentChannelId` is often learned after the cold tail lands. At that
+  // point expand to the full already-fetched corner page; older pages remain
+  // bounded and load on scroll as before.
+  useEffect(() => {
+    if (!isCorner) return;
+    setVisibleMessageCount((count) => Math.max(count, INITIAL_CORNER_MESSAGE_WINDOW));
+  }, [isCorner]);
   // The most recent plan the agent has published, for the pinned checklist —
   // a plan update replaces the whole checklist, so only the latest matters.
   // Scoped to `combinedMessages` (everything currently loaded), not the
@@ -756,9 +768,10 @@ export default function BuzzChat() {
 
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessages) return;
-    if (visibleMessageCount < combinedMessages.length) {
+    const visibleRowCount = visibleTranscriptWindow(combinedMessages, Number.MAX_SAFE_INTEGER).length;
+    if (visibleMessageCount < visibleRowCount) {
       setVisibleMessageCount((count) =>
-        Math.min(combinedMessages.length, count + OLDER_MESSAGES_PAGE_SIZE),
+        Math.min(visibleRowCount, count + OLDER_MESSAGES_PAGE_SIZE),
       );
       return;
     }

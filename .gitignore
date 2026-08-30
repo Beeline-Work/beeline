@@ -44,6 +44,11 @@ coverage/
 *.apk
 *.aab
 
+# CLI bundles are built in-tree but published to the host-local /dl store.
+relay-stack/web/dl/manifest.json
+relay-stack/web/dl/*.tar.gz
+relay-stack/web/dl/*.tar.gz.sha256
+
 # Mac
 .DS_Store
 

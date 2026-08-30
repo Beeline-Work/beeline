@@ -12,6 +12,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -305,12 +306,10 @@ async function withPublicServer(fn, opts = {}) {
     };
     if (req.url === '/install' && opts.failPublic) res.end('stale install\n');
     else if (req.url === '/install') serve(path.join(REPO, 'relay-stack/web/install.sh'));
-    else if (req.url === '/dl/manifest.json')
-      serve(path.join(REPO, 'relay-stack/web/dl/manifest.json'));
+    else if (req.url === '/dl/manifest.json') serve(path.join(opts.dlRoot, 'manifest.json'));
     else if (req.url?.startsWith('/dl/') && req.url.endsWith('.sha256'))
-      serve(path.join(REPO, 'relay-stack/web/dl', req.url.slice(4)));
-    else if (req.url?.startsWith('/dl/'))
-      serve(path.join(REPO, 'relay-stack/web/dl', req.url.slice(4)));
+      serve(path.join(opts.dlRoot, req.url.slice(4)));
+    else if (req.url?.startsWith('/dl/')) serve(path.join(opts.dlRoot, req.url.slice(4)));
     else if (req.url?.startsWith('/.well-known/')) {
       res.statusCode = 200;
       res.end('{}');
@@ -355,6 +354,32 @@ function runDeploy(opts) {
   write(path.join(proj, 'compose.yml'), opts.liveCompose ?? PRE_CHANGE_COMPOSE);
   write(path.join(proj, 'relay-front/nginx.conf'), opts.liveNginx ?? PRE_CHANGE_NGINX);
   write(path.join(proj, 'relay-front/web/index.html'), 'old web tree\n');
+  const dlRoot = path.join(proj, 'relay-front/web/dl');
+  const bundleFile = 'beeline-linux-x64.tar.gz';
+  const bundle = Buffer.from('host-local release bundle\n');
+  const bundleDigest = createHash('sha256').update(bundle).digest('hex');
+  write(path.join(dlRoot, bundleFile), bundle);
+  write(path.join(dlRoot, `${bundleFile}.sha256`), `${bundleDigest}  ${bundleFile}\n`);
+  write(
+    path.join(dlRoot, 'manifest.json'),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      sourceCommit: 'a'.repeat(40),
+      version: '0.0.1',
+      bundles: {
+        'linux-x64': {
+          file: bundleFile,
+          sha256: bundleDigest,
+          bytes: bundle.length,
+          node: '>=20.11.0',
+          commit: 'a'.repeat(40),
+          version: '0.0.1',
+          verified: true,
+        },
+      },
+    })}\n`,
+  );
+  if (opts.missingReleaseBundle) fs.rmSync(path.join(dlRoot, bundleFile));
   write(
     path.join(proj, '.env'),
     'POSTGRES_PASSWORD=real-secret\nREDIS_PASSWORD=real\nBUZZ_S3_ACCESS_KEY=k\nBUZZ_S3_SECRET_KEY=s\n',
@@ -410,6 +435,7 @@ function runDeploy(opts) {
           BUZZY_PUSH_STATE_DIR: pushStateDir,
           BEELINE_RUNTIME_STATE_DIR: runtimeStateDir,
           BEELINE_EVENTS_HOST_STATE_DIR: eventsStateDir,
+          BEELINE_DL_ROOT: dlRoot,
         },
       });
       let stdout = '';
@@ -439,6 +465,7 @@ function runDeploy(opts) {
       pushStateDir,
       runtimeStateDir,
       eventsStateDir,
+      dlRoot,
       readLive: (rel) => fs.readFileSync(path.join(proj, rel), 'utf8'),
       sudoLog: () =>
         fs.existsSync(path.join(stateDir, 'sudo.log'))
@@ -451,7 +478,7 @@ function runDeploy(opts) {
       eventsRunning: () => fs.existsSync(path.join(stateDir, 'events-running')),
       materializerRunning: () => fs.existsSync(path.join(stateDir, 'materializer-running')),
     };
-  }, opts);
+  }, { ...opts, dlRoot });
 }
 
 test('first rollout installs both config files, runs one full reconcile through the existing sudo rule, and waits for health', async () => {
@@ -459,6 +486,11 @@ test('first rollout installs both config files, runs one full reconcile through 
   assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
   assert.equal(r.readLive('compose.yml'), fs.readFileSync(TRACKED_COMPOSE, 'utf8'));
   assert.equal(r.readLive('relay-front/nginx.conf'), fs.readFileSync(TRACKED_NGINX, 'utf8'));
+  assert.equal(
+    fs.readFileSync(path.join(r.dlRoot, 'beeline-linux-x64.tar.gz'), 'utf8'),
+    'host-local release bundle\n',
+    'the checkout web-tree swap must preserve the external /dl store',
+  );
 
   // Exactly one FULL-stack up through sudo. Auth is part of this reconcile,
   // never raced by a preceding auth-only container replacement.
@@ -495,6 +527,15 @@ test('first rollout installs both config files, runs one full reconcile through 
       .filter((l) => l.includes('kill -s HUP')).length,
     1,
   );
+});
+
+test('a manifest that references a missing release-store bundle fails before the web tree changes', async () => {
+  const r = await runDeploy({ missingReleaseBundle: true });
+  assert.notEqual(r.status, 0, `stdout: ${r.stdout}`);
+  assert.match(r.stderr, /CLI release store manifest references missing file/);
+  assert.equal(r.readLive('relay-front/web/index.html'), 'old web tree\n');
+  assert.equal(r.eventsRunning(), true, 'release validation must precede one-way cutover');
+  assert.equal(r.dockerLog().includes('docker build '), false, r.dockerLog());
 });
 
 test('an absent standalone events unit skips retirement and continues deployment', async () => {

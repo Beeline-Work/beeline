@@ -196,11 +196,30 @@ describe('community model', () => {
     expect(tagValue(published[0]!, 'channel_type')).toBe('stream');
     expect(tagValue(published[0]!, TAG_COMMUNITY)).toBe(communityId);
     expect(tagValue(published[0]!, 'name')).toBe('Builders');
+    expect(tagValue(published[0]!, 'visibility')).toBe('open');
     expect(published[0]?.pubkey).toBe(owner.publicKey);
 
     expect(published[1]?.kind).toBe(KIND_CREATE_GROUP);
     expect(tagValue(published[1]!, TAG_COMMUNITY)).toBe(communityId);
     expect(tagValue(published[1]!, 'channel_type')).toBe('stream');
+  });
+
+  it('creates an invite-only Workspace with private NIP-29 visibility', async () => {
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return jsonResponse({ accepted: true });
+      }),
+    );
+
+    await createCommunity(ctx(), 'Private Builders', {
+      communityId,
+      visibility: 'invite-only',
+    });
+
+    expect(tagValue(published[0]!, 'visibility')).toBe('private');
   });
 
   it('lets an owner publish and verify a Workspace picture metadata projection', async () => {
@@ -645,7 +664,9 @@ describe('community model', () => {
     );
 
     const listed = await listCommunities(ctx(admin), admin.publicKey);
-    expect(listed).toMatchObject([{ communityId, viewerRole: 'owner', ownerPubkey: owner.publicKey }]);
+    expect(listed).toMatchObject([
+      { communityId, viewerRole: 'owner', ownerPubkey: owner.publicKey },
+    ]);
   });
 
   it('keeps communities visible when membership projections also contain channel IDs', async () => {
@@ -712,7 +733,10 @@ describe('community model', () => {
       ['d', communityId],
       ['p', owner.publicKey],
     ]);
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse([projected])));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse([projected])),
+    );
 
     await expect(listCommunities(ctx(), owner.publicKey, 1)).rejects.toThrow(
       /membership result reached its limit/,
@@ -1462,9 +1486,7 @@ describe('succession-aware Workspace role resolution', () => {
     const roles = await communityMembers(ctx(successor), communityId, {
       predecessors: [predecessor.publicKey],
     });
-    expect(roles).toEqual([
-      { pubkey: successor.publicKey, role: 'owner' },
-    ]);
+    expect(roles).toEqual([{ pubkey: successor.publicKey, role: 'owner' }]);
   });
 
   it('inherits an admin-listed predecessor role as admin', async () => {

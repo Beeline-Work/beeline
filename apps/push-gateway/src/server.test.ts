@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nip98AuthHeader } from '@beeline/nostr';
 import { createIdentity, type RoomView } from '@beeline/buzz-client';
@@ -53,7 +54,10 @@ function indexer(
   return {
     publicOrigin: PUBLIC_ORIGIN,
     readWorkspaces: async () => ({
-      workspaces: [], viewer: fallbackIdentity, truncated: false, watchFilters: [],
+      workspaces: [],
+      viewer: fallbackIdentity,
+      truncated: false,
+      watchFilters: [],
     }),
     readWorkspace: async () => null,
     readChats: async () => null,
@@ -62,6 +66,7 @@ function indexer(
     readCorners: async () => null,
     readHistory: async () => null,
     readInvite: async () => null,
+    claimAgentPairing: async () => null,
     ...overrides,
   };
 }
@@ -71,9 +76,9 @@ describe('paint-view GET server', () => {
 
   afterEach(async () => {
     await Promise.all(
-      servers.splice(0).map(
-        (server) => new Promise<void>((resolve) => server.close(() => resolve())),
-      ),
+      servers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
     );
   });
 
@@ -124,7 +129,9 @@ describe('paint-view GET server', () => {
     const responses = await Promise.all(
       [ROOM, missing].map((roomId) => {
         const path = `/room/${roomId}`;
-        return fetch(`${base}${path}`, { headers: { authorization: authorization(identity, path) } });
+        return fetch(`${base}${path}`, {
+          headers: { authorization: authorization(identity, path) },
+        });
       }),
     );
 
@@ -185,7 +192,9 @@ describe('paint-view GET server', () => {
     const path = '/invite/resolve';
 
     const anonymous = await fetch(`${base}${path}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
     });
     const response = await fetch(`${base}${path}`, {
       method: 'POST',
@@ -230,6 +239,37 @@ describe('paint-view GET server', () => {
     expect(malformedJson.status).toBe(404);
     await expect(malformedJson.json()).resolves.toEqual({ error: 'not_found' });
     expect(readInvite).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds a private-Workspace agent pairing claim to the fresh agent identity', async () => {
+    const identity = createIdentity('pairing-agent');
+    const code = 'BUZZ-4S4P-ZPJP';
+    const claimAgentPairing = vi.fn(async () => ({
+      workspaceId: WORKSPACE,
+      pairedBy: 'd'.repeat(64),
+      joined: true,
+    }));
+    const base = await listen({ indexer: indexer({ claimAgentPairing }) });
+    const path = '/agent-pairing/claim';
+    const response = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: authorization(identity, path, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ code: code.toLowerCase() }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      workspaceId: WORKSPACE,
+      pairedBy: 'd'.repeat(64),
+      joined: true,
+    });
+    expect(claimAgentPairing).toHaveBeenCalledWith(
+      createHash('sha256').update(code).digest('hex'),
+      identity.publicKey,
+    );
   });
 
   it('uses the eighth slot for lazy selected-agent detail and has no corner-detail alias', async () => {

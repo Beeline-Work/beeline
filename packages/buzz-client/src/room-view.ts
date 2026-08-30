@@ -199,6 +199,8 @@ export type RoomView = {
   readonly directMessage?: RoomDirectMessageView;
   readonly parent?: RoomViewHeader;
   readonly briefing?: readonly RoomViewMessage[];
+  /** Latest corner plan, retained after its live activity rows settle. */
+  readonly cornerPlan?: RoomViewActivity['plan'];
   readonly repository?: RoomRepositoryView;
   readonly repositoryResolution: RoomRepositoryResolution;
   readonly review?: RoomReviewView;

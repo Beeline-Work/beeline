@@ -210,7 +210,7 @@ function normalizeStreamDelta(text: string, agentLabel?: string): string {
  * reasoning, or plan updates. Consecutive deltas are one message. A resuming
  * delta that binds to the prior word remains in that message too, since some
  * harnesses interleave metadata in the middle of a token. */
-function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?: string): string[] {
+export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?: string): string[] {
   const runs: string[] = [];
   let current = '';
   let lastWasText = false;

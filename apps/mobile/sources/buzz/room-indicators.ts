@@ -4,6 +4,7 @@ import {
   type CornerStatus,
   type CornerSummary,
 } from './corners';
+import type { RoomViewAgentTurn } from '@beeline/buzz-client';
 
 /**
  * The two things a Room reports above its composer are *different facts about
@@ -71,6 +72,20 @@ export type ComposerAckInput = TurnProgressInput & {
   pendingAckSentAt?: number;
   now: number;
 };
+
+/**
+ * A locally armed acknowledgement belongs to one signed user message. The
+ * server-indexed lifecycle receipt carries that message id as `requestId`, so
+ * either a working or terminal receipt proves the acknowledgement is no
+ * longer needed. Matching the id prevents an older agent turn from clearing a
+ * newer send.
+ */
+export function hasComposerAckReceipt(
+  requestId: string | undefined,
+  latestAgentTurns: readonly RoomViewAgentTurn[],
+): boolean {
+  return requestId !== undefined && latestAgentTurns.some((turn) => turn.requestId === requestId);
+}
 
 /**
  * The composer's immediate answer to "did anything happen yet". A real

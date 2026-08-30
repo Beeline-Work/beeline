@@ -336,6 +336,34 @@ describe('RoomIndexer', () => {
         CORNER,
       ],
     );
+    // A terminal corner no longer returns settled activity rows, but its most
+    // recent checklist remains a first-class part of the corner surface.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(499), 9, $4, $5, $6)`,
+      [
+        TENANT,
+        bytes('f'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-activity'],
+          ['request', requestId],
+        ]),
+        JSON.stringify({
+          sessionId: 'first-corner-turn',
+          update: {
+            sessionUpdate: 'plan',
+            plan: {
+              objective: 'Keep the objective and checklist visible after completion.',
+              items: [{ step: 'Persist the plan', status: 'completed' }],
+            },
+          },
+        }),
+        CORNER,
+      ],
+    );
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
@@ -391,6 +419,10 @@ describe('RoomIndexer', () => {
       ]),
     );
     expect(lateOpen?.messages.some((message) => message.presentation === 'activity')).toBe(false);
+    expect(lateOpen?.cornerPlan).toEqual({
+      objective: 'Keep the objective and checklist visible after completion.',
+      items: [{ step: 'Persist the plan', status: 'completed' }],
+    });
   });
 
   it('indexes a Room repository by its parameterized d key without channel_id', async () => {
@@ -825,6 +857,18 @@ describe('RoomIndexer', () => {
     expect(archiveFilter).toBeDefined();
     expect(cornerStateFilter).toBeDefined();
     expect(metadataFilter).toBeDefined();
+  });
+
+  it('watches a corner review artifact, merge-ready receipt, and approval on its live coordinate', async () => {
+    const corner = await indexer.readRoom(CORNER, VIEWER);
+    const reviewFilter = corner?.watchFilters.find(
+      (filter) => filter.kinds?.includes(30078) && filter['#h']?.includes(CORNER),
+    );
+
+    // All three durable review transitions are kind:30078 events tagged to
+    // the corner. A matching watch re-fetches the authoritative RoomView, so
+    // an already-open corner gains the approve control without remounting.
+    expect(reviewFilter).toBeDefined();
   });
 
   it('withholds reply proof from deleted or foreign ancestry', async () => {

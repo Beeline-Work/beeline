@@ -92,6 +92,8 @@ import {
   CHANGE_REVIEW_ARTIFACT_VERSION,
   CORNER_GIT_PROJECTION_TAG,
   CORNER_GIT_PROJECTION_VERSION,
+  CORNER_REJECTION_TAG,
+  verifyMergeRejection,
   KIND_AGENT_PRESENCE,
   KIND_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
@@ -10388,6 +10390,12 @@ export class Body {
           '#t': [APPROVAL_MARKER],
           limit: 100,
         },
+        {
+          kinds: [9],
+          '#h': [info.subchannelId],
+          '#t': [CORNER_REJECTION_TAG],
+          limit: 100,
+        },
       ]));
     } catch (error) {
       const reason = (error instanceof Error ? error.message : String(error))
@@ -10443,8 +10451,10 @@ export class Body {
         approvals.push(approval);
       }
     }
-    // Oldest first: the first still-authoritative approval is the standing
-    // grant for this corner's one merge.
+    // Oldest first: the first still-authoritative signed human verdict is the
+    // corner's one durable verdict. Approval and rejection are queried as
+    // separate single-key filters because production relays may only honor
+    // the first value in a multi-value tag filter.
     approvals.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
     for (const approval of approvals) {
       // A bounded landing transaction parks this exact button press. A newer
@@ -10453,7 +10463,14 @@ export class Body {
       if (approval.id === info.landingBlockedApprovalId) continue;
       if (!verifyEvent(approval)) continue;
       if (approval.pubkey === this.agentIdentity.publicKey) continue;
-      if (!verifyApproval(approval, approval.pubkey, target, info.subchannelId)) continue;
+      const marker = tagValue(approval, 't');
+      const rejection = marker === CORNER_REJECTION_TAG;
+      if (
+        rejection
+          ? !verifyMergeRejection(approval, approval.pubkey, target, info.subchannelId)
+          : !verifyApproval(approval, approval.pubkey, target, info.subchannelId)
+      )
+        continue;
       const authority = await authorizeReviewer({
         pubkey: approval.pubkey,
         relay: approvalRelay,
@@ -10467,6 +10484,10 @@ export class Body {
           approvalRelay,
         );
         if (!viaSuccession) continue;
+      }
+      if (rejection) {
+        if (!info.archived) await this.archiveSubchannel(info.subchannelId);
+        return undefined;
       }
       const approvedTip = tagValue(approval, 'tip') ?? target.tip;
       const approvedPatchId = tagValue(approval, 'patch-id');
@@ -11847,7 +11868,12 @@ export class Body {
     mergeGate?: DurableMergeGate,
   ): Promise<void> {
     if (event.pubkey === this.agentIdentity.publicKey || !verifyEvent(event)) return;
-    if (event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_MARKER)) {
+    if (
+      event.tags.some(
+        (tag) =>
+          tag[0] === 't' && (tag[1] === APPROVAL_MARKER || tag[1] === CORNER_REJECTION_TAG),
+      )
+    ) {
       this.onRoomPollSuccess?.(channelId);
       await this.runApprovalLandingPass(channelId, mergeGate, event);
       return;
@@ -12802,7 +12828,11 @@ export class Body {
       (!evt.content.trim() && attachments.length === 0) ||
       evt.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity') ||
       evt.tags.some(
-        (tag) => tag[0] === 't' && (tag[1] === 'body-control' || tag[1] === APPROVAL_MARKER),
+        (tag) =>
+          tag[0] === 't' &&
+          (tag[1] === 'body-control' ||
+            tag[1] === APPROVAL_MARKER ||
+            tag[1] === CORNER_REJECTION_TAG),
       )
     ) {
       return { status: 'skip', recordProcessed: false };

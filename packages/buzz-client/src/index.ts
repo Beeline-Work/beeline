@@ -471,7 +471,13 @@ export {
   parseAttachmentTags,
 } from './attachment.js';
 
-export { buildMergeApproval, verifyMergeApproval, APPROVAL_MARKER } from './approval.js';
+export {
+  buildMergeApproval,
+  buildMergeRejection,
+  verifyMergeApproval,
+  verifyMergeRejection,
+  APPROVAL_MARKER,
+} from './approval.js';
 
 export {
   WRITE_PERMISSION_REQUEST_TAG,

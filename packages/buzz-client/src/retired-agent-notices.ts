@@ -36,7 +36,7 @@ const RETIRED = new Set(RETIRED_AGENT_NOTICES);
 const ATTACHMENT_ENOENT_NOTICE = /^Attachment unavailable:[\s\S]*ENOENT[\s\S]*realpath '\/proc\//;
 
 /**
- * The model-unavailable startup wall (`modelUnavailableRoomMessage`,
+ * The model-unavailable startup wall (formerly published by
  * `apps/body/src/model-availability.ts`): three lines — a fixed title, a
  * detail line naming the blocked selection, and one of exactly two fixed
  * recovery sentences. The title and detail vary with the blocked model or

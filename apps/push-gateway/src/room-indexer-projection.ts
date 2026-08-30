@@ -231,11 +231,11 @@ const HIDDEN_MARKERS = new Set([
   'beeline-agent-tool-result',
   'buzz-work-schedule-paused',
   'agent-activity',
+  'buzz-agent-model-unavailable',
 ]);
 
 /** Durable machine-authored Room lines that the client renders as status text. */
 const SYSTEM_MARKERS = new Set([
-  'buzz-agent-model-unavailable',
   'github-event-health',
   'steer-queued',
   'slash-command-notice',

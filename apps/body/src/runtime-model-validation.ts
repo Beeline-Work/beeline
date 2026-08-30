@@ -12,8 +12,8 @@ type LiveValidator = (
 
 /**
  * Daemon-start gate for persisted runtime.json selections. Returning a state
- * (rather than crashing the daemon) lets Body keep the relay connection alive
- * to explain the failure while refusing every ordinary ACP activation.
+ * (rather than crashing the daemon) lets Body keep machine-readable presence
+ * and turn status alive while refusing every ordinary ACP activation.
  */
 export async function revalidateRuntimeModelSelection(
   agent: Pick<AgentCommand, 'command' | 'args'>,

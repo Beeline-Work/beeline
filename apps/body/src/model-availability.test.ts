@@ -1,16 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { newIdentity } from '@beeline/gate';
-import { buildAgentMessage } from './activity.js';
 import {
+  modelUnavailableDiagnostic,
   modelUnavailableState,
-  modelUnavailableEventTags,
-  modelUnavailableRoomMessage,
   type ModelUnavailableState,
 } from './model-availability.js';
 import { ModelSelectionUnavailableError } from './model-config.js';
 
-describe('model unavailable Room projection', () => {
-  it('publishes a durable agent message with the selected id and recovery state', () => {
+describe('model unavailable startup state', () => {
+  it('keeps a bounded local diagnostic with the selected id and recovery state', () => {
     const state: ModelUnavailableState = {
       kind: 'model-unavailable',
       selection: { model: 'stealth/ox-alpha', effort: 'high' },
@@ -19,26 +16,8 @@ describe('model unavailable Room projection', () => {
       recovery:
         'Open this agent’s settings, choose a value from the live model catalog, then restart the agent.',
     };
-    const event = buildAgentMessage(
-      'room-1',
-      newIdentity('model-unavailable-test'),
-      modelUnavailableRoomMessage(state),
-      undefined,
-      [],
-      modelUnavailableEventTags(state),
-      undefined,
-      1_700_000_000,
-    );
-
-    expect(event.content).toContain('Model unavailable · stealth/ox-alpha');
-    expect(event.content).toContain('z-ai/glm-5.3-flash');
-    expect(event.tags).toContainEqual(['t', 'agent-message']);
-    expect(event.tags).toContainEqual(['t', 'buzz-agent-model-unavailable']);
-    expect(event.tags).toContainEqual(['status', 'model-unavailable']);
-    expect(event.tags).toContainEqual(['unavailable', 'model']);
-    expect(event.tags).toContainEqual(['unavailable-value', 'stealth/ox-alpha']);
-    expect(event.tags).toContainEqual(['model', 'stealth/ox-alpha']);
-    expect(event.tags).toContainEqual(['effort', 'high']);
+    expect(modelUnavailableDiagnostic(state)).toContain('Model unavailable · stealth/ox-alpha');
+    expect(modelUnavailableDiagnostic(state)).toContain('z-ai/glm-5.3-flash');
   });
 
   it('headlines and tags the failed effort when the selected model is still valid', () => {
@@ -50,8 +29,7 @@ describe('model unavailable Room projection', () => {
         reason: 'not-advertised',
       }),
     );
-    expect(modelUnavailableRoomMessage(state)).toContain('Model unavailable · ultra');
-    expect(modelUnavailableEventTags(state)).toContainEqual(['unavailable', 'effort']);
-    expect(modelUnavailableEventTags(state)).toContainEqual(['unavailable-value', 'ultra']);
+    expect(modelUnavailableDiagnostic(state)).toContain('Model unavailable · ultra');
+    expect(state.unavailable).toEqual({ label: 'effort', value: 'ultra' });
   });
 });

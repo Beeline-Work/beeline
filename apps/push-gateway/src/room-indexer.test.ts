@@ -1071,15 +1071,24 @@ describe('RoomIndexer', () => {
     });
   });
 
-  it('projects a model-unavailable event as a visible system line', async () => {
+  it('suppresses every legacy model-availability diagnostic from indexed surfaces', async () => {
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
-       VALUES ($1, $2, $3, to_timestamp(12), 9, $4, $5, $6)`,
+       VALUES
+        ($1, $2, $3, to_timestamp(11), 9, $4, 'Ready', $8),
+        ($1, $5, $3, to_timestamp(12), 9, $6, 'Model unavailable · retired-model', $8),
+        ($1, $7, $3, to_timestamp(13), 9, $9, 'Model validation unavailable · gpt-5', $8),
+        ($1, $10, $3, to_timestamp(14), 9, $11, '', $8)`,
       [
         TENANT,
-        bytes('e'.repeat(64)),
+        bytes('a'.repeat(64)),
         bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-message'],
+        ]),
+        bytes('b'.repeat(64)),
         JSON.stringify([
           ['h', ROOM],
           ['t', 'buzz-agent-model-unavailable'],
@@ -1087,187 +1096,40 @@ describe('RoomIndexer', () => {
           ['unavailable', 'model'],
           ['unavailable-value', 'openrouter-ox/z-ai/glm-5.3-flash'],
         ]),
-        'Model unavailable · openrouter-ox/z-ai/glm-5.3-flash',
+        bytes('c'.repeat(64)),
         ROOM,
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'buzz-agent-model-unavailable'],
+          ['status', 'validation-unavailable'],
+          ['unavailable', 'selection'],
+          ['unavailable-value', 'gpt-5'],
+        ]),
+        bytes('d'.repeat(64)),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'buzz-agent-model-unavailable'],
+          ['status', 'model-available'],
+        ]),
       ],
     );
 
     const view = await indexer.readRoom(ROOM, VIEWER);
     const history = await indexer.readHistory(ROOM, VIEWER);
+    const chats = await indexer.readChats(WORKSPACE, VIEWER);
+    const retiredIds = ['b', 'c', 'd'].map((id) => id.repeat(64));
 
-    expect(view?.messages).toContainEqual(
-      expect.objectContaining({
-        text: 'Model unavailable · openrouter-ox/z-ai/glm-5.3-flash',
-        presentation: 'system',
-      }),
+    expect(view?.messages.map((message) => message.id)).toContain('a'.repeat(64));
+    expect(history?.messages.map((message) => message.id)).toContain('a'.repeat(64));
+    expect(view?.messages.map((message) => message.id)).toEqual(
+      expect.not.arrayContaining(retiredIds),
     );
-    expect(history?.messages).toContainEqual(
-      expect.objectContaining({
-        text: 'Model unavailable · openrouter-ox/z-ai/glm-5.3-flash',
-        presentation: 'system',
-      }),
+    expect(history?.messages.map((message) => message.id)).toEqual(
+      expect.not.arrayContaining(retiredIds),
     );
-  });
-
-  it('suppresses only model-unavailable lines made stale by newer health evidence', async () => {
-    const unavailableTags = [
-      ['h', ROOM],
-      ['t', 'buzz-agent-model-unavailable'],
-      ['status', 'model-unavailable'],
-      ['unavailable', 'model'],
-      ['unavailable-value', 'gpt-5'],
-      ['model', 'gpt-5'],
-      ['effort', 'high'],
-    ];
-    const insertUnavailable = async (id: string, createdAt: number) => {
-      await postgres.query(
-        `INSERT INTO events
-          (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
-         VALUES ($1, $2, $3, to_timestamp($4), 9, $5, $6, $7)`,
-        [
-          TENANT,
-          bytes(id.repeat(64)),
-          bytes(AGENT),
-          createdAt,
-          JSON.stringify(unavailableTags),
-          `Model unavailable · gpt-5 (${createdAt})`,
-          ROOM,
-        ],
-      );
-    };
-    const visibleIds = async () => ({
-      room: (await indexer.readRoom(ROOM, VIEWER))?.messages.map((message) => message.id),
-      history: (await indexer.readHistory(ROOM, VIEWER))?.messages.map((message) => message.id),
-    });
-
-    await insertUnavailable('e', 20);
-    expect(await visibleIds()).toMatchObject({
-      room: expect.arrayContaining(['e'.repeat(64)]),
-      history: expect.arrayContaining(['e'.repeat(64)]),
-    });
-
-    await postgres.query(
-      `INSERT INTO events
-        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
-       VALUES ($1, $2, $3, to_timestamp(21), 9, $4, '', $5)`,
-      [
-        TENANT,
-        bytes('f'.repeat(64)),
-        bytes(AGENT),
-        JSON.stringify([
-          ['h', ROOM],
-          ['t', 'buzz-agent-model-unavailable'],
-          ['status', 'model-available'],
-          ['model', 'gpt-5'],
-          ['effort', 'high'],
-        ]),
-        ROOM,
-      ],
-    );
-    expect(await visibleIds()).toEqual(
-      expect.objectContaining({
-        room: expect.not.arrayContaining(['e'.repeat(64), 'f'.repeat(64)]),
-        history: expect.not.arrayContaining(['e'.repeat(64), 'f'.repeat(64)]),
-      }),
-    );
-
-    await insertUnavailable('d', 22);
-    expect(await visibleIds()).toMatchObject({
-      room: expect.arrayContaining(['d'.repeat(64)]),
-      history: expect.arrayContaining(['d'.repeat(64)]),
-    });
-
-    const modelKey = `${WORKSPACE}:${AGENT}`;
-    await postgres.query(
-      `INSERT INTO events
-        (community_id, id, pubkey, created_at, kind, tags, content, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(23), 30078, $4, $5, $6)`,
-      [
-        TENANT,
-        bytes('b'.repeat(64)),
-        bytes(AGENT),
-        JSON.stringify([
-          ['d', modelKey],
-          ['t', 'buzz-agent-model-catalog'],
-        ]),
-        JSON.stringify({
-          selection: { model: 'gpt-5', effort: 'high' },
-          options: [
-            { category: 'model', options: [{ id: 'retired-model' }] },
-            { category: 'reasoning_effort', options: [{ id: 'high' }] },
-          ],
-        }),
-        modelKey,
-      ],
-    );
-    expect(await visibleIds()).toMatchObject({
-      room: expect.arrayContaining(['d'.repeat(64)]),
-      history: expect.arrayContaining(['d'.repeat(64)]),
-    });
-
-    await postgres.query(
-      `INSERT INTO events
-        (community_id, id, pubkey, created_at, kind, tags, content, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(24), 30078, $4, $5, $6)`,
-      [
-        TENANT,
-        bytes('c'.repeat(64)),
-        bytes(AGENT),
-        JSON.stringify([
-          ['d', modelKey],
-          ['t', 'buzz-agent-model-catalog'],
-        ]),
-        JSON.stringify({
-          selection: { model: 'gpt-5', effort: 'high' },
-          options: [
-            { category: 'model', options: [{ id: 'gpt-5' }] },
-            { category: 'reasoning_effort', options: [{ id: 'high' }] },
-          ],
-        }),
-        modelKey,
-      ],
-    );
-    expect(await visibleIds()).toEqual(
-      expect.objectContaining({
-        room: expect.not.arrayContaining(['d'.repeat(64)]),
-        history: expect.not.arrayContaining(['d'.repeat(64)]),
-      }),
-    );
-
-    await insertUnavailable('9', 25);
-    expect(await visibleIds()).toMatchObject({
-      room: expect.arrayContaining(['9'.repeat(64)]),
-      history: expect.arrayContaining(['9'.repeat(64)]),
-    });
-    await postgres.query(
-      `INSERT INTO events
-        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
-       VALUES ($1, $2, $3, to_timestamp(26), 9, $4, '', $5)`,
-      [
-        TENANT,
-        bytes('8'.repeat(64)),
-        bytes(AGENT),
-        JSON.stringify([
-          ['h', ROOM],
-          ['t', 'agent-turn'],
-          ['status', 'complete'],
-          ['request', '7'.repeat(64)],
-          ['agent', AGENT],
-        ]),
-        ROOM,
-      ],
-    );
-    expect(await visibleIds()).toEqual(
-      expect.objectContaining({
-        room: expect.not.arrayContaining(['9'.repeat(64)]),
-        history: expect.not.arrayContaining(['9'.repeat(64)]),
-      }),
-    );
-
-    await insertUnavailable('7', 27);
-    expect(await visibleIds()).toMatchObject({
-      room: expect.arrayContaining(['7'.repeat(64)]),
-      history: expect.arrayContaining(['7'.repeat(64)]),
+    expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.latestMessage).toMatchObject({
+      id: 'a'.repeat(64),
+      text: 'Ready',
     });
   });
 
@@ -1409,7 +1271,6 @@ describe('RoomIndexer', () => {
       expect.objectContaining({ text: '🤖 Agent session started' }),
     );
     for (const text of [
-      'Model unavailable · unavailable-model',
       'GitHub polling degraded',
       'Steer queued for the active turn.',
       'Permission execution acknowledged',
@@ -1419,6 +1280,9 @@ describe('RoomIndexer', () => {
         expect.objectContaining({ text, presentation: 'system' }),
       );
     }
+    expect(view?.messages).not.toContainEqual(
+      expect.objectContaining({ text: 'Model unavailable · unavailable-model' }),
+    );
     expect(view?.messages).toContainEqual(
       expect.objectContaining({ id: 'c'.repeat(64), presentation: 'card' }),
     );

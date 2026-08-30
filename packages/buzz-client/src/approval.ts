@@ -10,6 +10,7 @@
  */
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { KIND_STREAM_MESSAGE, TAG_MERGE_APPROVAL } from './kinds.js';
+import { CORNER_REJECTION_TAG } from './corner-product-state.js';
 import { tagValue } from './parse.js';
 import type { Identity, MergeTarget } from './types.js';
 
@@ -42,6 +43,31 @@ export function buildMergeApproval(
   );
 }
 
+/** Build the mutually-exclusive human rejection verdict for this review. */
+export function buildMergeRejection(
+  reviewer: Identity,
+  channelId: string,
+  target: MergeTarget,
+): NostrEvent {
+  return signEvent(
+    {
+      pubkey: reviewer.publicKey,
+      created_at: Math.floor(Date.now() / 1000),
+      kind: KIND_STREAM_MESSAGE,
+      tags: [
+        ['h', channelId],
+        ['t', CORNER_REJECTION_TAG],
+        ['repo', target.repo],
+        ['branch', target.branch],
+        ['tip', target.tip],
+        ...(target.patchId ? [['patch-id', target.patchId]] : []),
+      ],
+      content: `REJECT this corner's reviewed change for ${target.repo} into ${target.branch}`,
+    },
+    reviewer.secretKey,
+  );
+}
+
 /**
  * Return true iff `event` is a valid approval by `trustedReviewer` for this
  * corner's one merge into `target.branch`. The signed tip and patch id record
@@ -62,4 +88,21 @@ export function verifyMergeApproval(
   if (tagValue(event, 'repo') !== target.repo) return false;
   if (tagValue(event, 'branch') !== target.branch) return false;
   return true;
+}
+
+export function verifyMergeRejection(
+  event: NostrEvent,
+  trustedReviewer: string,
+  target: MergeTarget,
+  channelId: string,
+): boolean {
+  return (
+    event.kind === KIND_STREAM_MESSAGE &&
+    tagValue(event, 't') === CORNER_REJECTION_TAG &&
+    event.pubkey === trustedReviewer &&
+    verifyEvent(event) &&
+    tagValue(event, 'h') === channelId &&
+    tagValue(event, 'repo') === target.repo &&
+    tagValue(event, 'branch') === target.branch
+  );
 }

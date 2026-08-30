@@ -140,25 +140,6 @@ export type {
 } from './agent-presence.js';
 
 export {
-  CORNER_ASK_FRESH_WINDOW_MS,
-  CORNER_NEEDS_YOU_STATUSES,
-  CORNER_WORK_LIVENESS_WINDOW_MS,
-  CORNER_WORK_SIGNAL_TAGS,
-  cornerLifecycleFact,
-  cornerStatusPrecedence,
-  isCornerNeedsYou,
-  mapRawCornerStatusTag,
-  mergeCornerStatuses,
-  resolveCornerLifecycle,
-  resolveCornerState,
-  resolveCornerStatusAgainstArchive,
-  type CornerLifecycleFact,
-  type CornerLifecycleStatus,
-  type CornerSuperState,
-  type CornerVerdict,
-} from './corner-lifecycle.js';
-
-export {
   KIND_CORNER_STATE,
   CORNER_ACTIVITY_FRESHNESS_MS,
   agentDraftKey,
@@ -174,6 +155,22 @@ export {
   type CornerMachineState,
   type CornerStateRecord,
 } from './corner-state.js';
+
+export {
+  CORNER_GIT_PROJECTION_TAG,
+  CORNER_GIT_PROJECTION_VERSION,
+  CORNER_REJECTION_TAG,
+  deriveCornerLifecycle,
+  parseCornerGitProjection,
+  parseCornerGitProjectionCompat,
+  type CornerArchiveFlavor,
+  type CornerGitProjection,
+  type CornerGitRelation,
+  type CornerHumanVerdict,
+  type CornerLifecycle,
+  type CornerLifecycleView,
+  type CornerVerdictView,
+} from './corner-product-state.js';
 
 export {
   tagValue,
@@ -238,10 +235,7 @@ export type {
   GitHubRoomEvent,
   GitHubRoomEventsResult,
 } from './github-auth.js';
-export {
-  fetchIdentityPredecessors,
-  resolveCurrentIdentityPubkey,
-} from './identity-succession.js';
+export { fetchIdentityPredecessors, resolveCurrentIdentityPubkey } from './identity-succession.js';
 
 export { RelayWs, wsUrlFromHttp, wsQueryEvents } from './ws.js';
 export type { Filter, RelayWsOptions } from './ws.js';
@@ -458,7 +452,13 @@ export {
   parseAttachmentTags,
 } from './attachment.js';
 
-export { buildMergeApproval, verifyMergeApproval, APPROVAL_MARKER } from './approval.js';
+export {
+  buildMergeApproval,
+  buildMergeRejection,
+  verifyMergeApproval,
+  verifyMergeRejection,
+  APPROVAL_MARKER,
+} from './approval.js';
 
 export {
   WRITE_PERMISSION_REQUEST_TAG,

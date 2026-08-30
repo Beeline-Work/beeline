@@ -251,7 +251,7 @@ beforeEach(() => {
 });
 
 describe('useRoomSurfaceSession', () => {
-  it('renders the live corner bar when a long-open Room receives working corner state', async () => {
+  it('does not turn durable WORKING lifecycle into a live bar without a child turn receipt', async () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(React.createElement(LiveCornerHarness, { channelId: 'room-a' }));
@@ -276,6 +276,7 @@ describe('useRoomSurfaceSession', () => {
               createdAt: stateAt,
               updatedAt: stateAt,
             },
+            lifecycle: { lifecycle: 'WORKING' },
             status: 'working',
             agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
           },
@@ -284,7 +285,7 @@ describe('useRoomSurfaceSession', () => {
       await Promise.resolve();
     });
 
-    expect(renderer.root.findByProps({ testID: 'corner-status-working' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'corner-status-working' })).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
 

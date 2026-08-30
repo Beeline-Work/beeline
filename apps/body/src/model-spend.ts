@@ -3,10 +3,8 @@ import type { PromptResult, SessionUpdate } from './acp.js';
 /** Every model invocation must name the human-authorized event that caused it. */
 export type ModelTurnCause =
   | 'room-message'
-  | 'corner-metadata'
   | 'corner-opening'
   | 'corner-follow-up'
-  | 'corner-conclude'
   | 'target-sync'
   | 'restart-continuation'
   | 'agent-exchange'

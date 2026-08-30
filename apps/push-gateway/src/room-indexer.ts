@@ -41,6 +41,7 @@ import {
 } from './room-indexer-sql.js';
 import {
   cornerItem,
+  cornerLifecycle,
   header,
   identity,
   integer,
@@ -166,6 +167,7 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
     ...(repository ? { repository } : {}),
     repositoryResolution,
     review: reviewFromRows(rows),
+    ...(parentData ? { cornerLifecycle: cornerLifecycle(roomData) } : {}),
     corners,
     watchFilters: roomFilters(
       roomId,
@@ -478,9 +480,7 @@ export class RoomIndexer {
       watchFilters: [
         { kinds: [9000, 9001], '#p': [viewerPubkey] },
         { kinds: [...DURABLE_KINDS], '#h': roomAndCornerIds },
-        ...(cornerIds.length
-          ? [{ kinds: [39000, 39001, 39002], '#d': cornerIds }]
-          : []),
+        ...(cornerIds.length ? [{ kinds: [39000, 39001, 39002], '#d': cornerIds }] : []),
         ...profileFilter([
           identity(viewerData),
           ...chats.flatMap((chat) => (chat.latestMessage ? [chat.latestMessage.author] : [])),

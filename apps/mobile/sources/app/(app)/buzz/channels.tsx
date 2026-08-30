@@ -62,19 +62,11 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 }
 
 function openCornerItems(corners: readonly CornerListItem[]): CornerListItem[] {
-  return corners.filter(
-    (item) => !item.corner.archived && item.status !== 'concluded' && item.status !== 'closed',
-  );
+  return corners.filter((item) => item.lifecycle.lifecycle !== 'ARCHIVED');
 }
 
 function cornerStatusWord(item: CornerListItem): string {
-  if (item.status === 'working') return 'WORKING';
-  if (item.status === 'waiting') {
-    if (item.reason === 'review') return 'READY FOR REVIEW';
-    if (item.reason === 'failure') return 'FAILED';
-    return 'NEEDS ATTENTION';
-  }
-  return item.status === 'open' ? 'OPENING' : 'IDLE';
+  return item.lifecycle.lifecycle;
 }
 
 function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayItem[] {

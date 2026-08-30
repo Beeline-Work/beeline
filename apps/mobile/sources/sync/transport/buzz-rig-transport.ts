@@ -357,6 +357,18 @@ export class BuzzRigTransport {
     }
   }
 
+  async submitMergeRejection(
+    subchannelId: string,
+    target: MergeTarget,
+  ): Promise<{ success: boolean; message?: string }> {
+    try {
+      await (await this.getClient()).submitMergeRejection(subchannelId, target);
+      return { success: true, message: 'Rejection sent for review' };
+    } catch (reason) {
+      return { success: false, message: String(reason) };
+    }
+  }
+
   async isChannelArchived(channelId: string): Promise<boolean> {
     try {
       return (await this.views().room(channelId)).room.archived;

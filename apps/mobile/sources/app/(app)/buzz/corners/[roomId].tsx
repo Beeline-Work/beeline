@@ -187,15 +187,13 @@ export default function BuzzCorners() {
                 </View>
                 <CornerGlyph
                   status={
-                    item.status === 'working'
-                      ? 'live'
-                      : item.status === 'waiting'
-                        ? 'needs-attention'
-                        : item.status === 'concluded'
-                          ? 'open'
-                          : item.status === 'closed'
-                            ? 'archived'
-                            : null
+                    item.lifecycle.lifecycle === 'REVIEW' ||
+                    item.lifecycle.lifecycle === 'APPROVED'
+                      ? 'open'
+                      : item.lifecycle.lifecycle === 'REJECTED' ||
+                          item.lifecycle.lifecycle === 'ARCHIVED'
+                        ? 'archived'
+                        : null
                   }
                 />
                 <Text style={styles.chevron}>›</Text>

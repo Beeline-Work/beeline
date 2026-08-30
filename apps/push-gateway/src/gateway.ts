@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   KIND_AGENT_SOUL,
   KIND_CORNER_STATE,
+  CORNER_GIT_PROJECTION_TAG,
   TAG_AGENT_SOUL,
   TAG_CORNER_STATE,
   parseCornerStateRecord,
@@ -46,6 +47,7 @@ function registeredEventFilters(since: number): Record<string, unknown>[] {
     { kinds: [9], since, limit: 1_000 },
     { kinds: [KIND_AGENT_SOUL], '#t': [TAG_AGENT_SOUL], since, limit: 1_000 },
     { kinds: [KIND_CORNER_STATE], '#t': [TAG_CORNER_STATE], since, limit: 1_000 },
+    { kinds: [KIND_CORNER_STATE], '#t': [CORNER_GIT_PROJECTION_TAG], since, limit: 1_000 },
   ];
 }
 
@@ -151,6 +153,14 @@ export class PushGateway {
     private readonly messaging: Messaging,
     private readonly deliveryState: DeliveryState,
     private readonly metadata = new NotificationMetadataResolver(),
+    private readonly readCornerLifecycle?: (
+      cornerId: string,
+      viewerPubkey: string,
+    ) => Promise<{
+      room: { archived: boolean };
+      parent?: { id: string };
+      cornerLifecycle?: { lifecycle: string; git?: { featureTip?: string } };
+    } | null>,
   ) {}
 
   /** One concise, greppable line per candidate event — the gateway's whole audit trail. */
@@ -186,38 +196,38 @@ export class PushGateway {
     this.metadata.invalidate(event);
     if (event.kind === KIND_CORNER_STATE) {
       const record = parseCornerStateRecord(event);
-      if (!record) {
-        this.trace(event, recipientPubkey, 'skip', 'not-notifiable-kind');
+      if (record) {
+        // One-release compatibility for the retired lifecycle record. It can
+        // clear an old attention episode but can never create a review push.
+        const resolved =
+          record.state === 'idle' || record.state === 'concluded' || record.state === 'closed';
+        if (resolved) {
+          await this.deliveryState.clearAttention(record.cornerId, recipientPubkey);
+        }
+        this.trace(
+          event,
+          recipientPubkey,
+          'skip',
+          resolved
+            ? 'corner-attention-resolved'
+            : record.state === 'waiting'
+              ? 'corner-attention-standing'
+              : 'corner-lifecycle-observed',
+          { corner: record.cornerId, state: record.state },
+        );
         return;
       }
-      // Automatic retry turns briefly say `working`; that is not human
-      // acknowledgement and must not re-arm the same stuck-loop alert. Idle
-      // and terminal lifecycle facts are the durable episode boundaries.
-      const resolved =
-        record.state === 'idle' || record.state === 'concluded' || record.state === 'closed';
-      if (resolved) {
-        await this.deliveryState.clearAttention(record.cornerId, recipientPubkey);
-      }
-      this.trace(
-        event,
-        recipientPubkey,
-        'skip',
-        resolved
-          ? 'corner-attention-resolved'
-          : record.state === 'waiting'
-            ? 'corner-attention-standing'
-            : 'corner-lifecycle-observed',
-        { corner: record.cornerId, state: record.state },
-      );
-      return;
     }
     const channelId = event.tags.find((tag) => tag[0] === 'h')?.[1];
     if (!channelId) {
       this.trace(event, recipientPubkey, 'skip', 'no-channel');
       return;
     }
-    const mention = mentionsMember(event, recipientPubkey);
-    if (event.kind !== 9) {
+    const projectionEvent =
+      event.kind === KIND_CORNER_STATE &&
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG);
+    const mention = event.kind === 9 && mentionsMember(event, recipientPubkey);
+    if (event.kind !== 9 && !projectionEvent) {
       this.trace(
         event,
         recipientPubkey,
@@ -225,6 +235,22 @@ export class PushGateway {
         event.kind === 9000 ? 'fatigue-policy-member-join' : 'not-notifiable-kind',
       );
       return;
+    }
+    if (projectionEvent) {
+      const tip = tagValue(event, 'tip');
+      const surface = this.readCornerLifecycle
+        ? await this.readCornerLifecycle(channelId, recipientPubkey)
+        : null;
+      if (
+        !tip ||
+        !surface?.parent ||
+        surface.room.archived ||
+        surface.cornerLifecycle?.lifecycle !== 'REVIEW' ||
+        surface.cornerLifecycle.git?.featureTip !== tip
+      ) {
+        this.trace(event, recipientPubkey, 'skip', 'corner-not-current-review');
+        return;
+      }
     }
     if (recipientPubkey === event.pubkey) {
       this.trace(event, recipientPubkey, 'skip', 'sender-self');

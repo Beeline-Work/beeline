@@ -1348,7 +1348,7 @@ export class BodyAgentTools {
     turnId: string,
     suspendWriter = true,
   ): Promise<{ requestId: string; eventId: string; sourceSha: string; targetRef: string }> {
-    if (!(await this.publishMergeReady(info)) || !info.mergeTarget || !info.mergeReadyEventId) {
+    if (!(await this.publishMergeReady(info)) || !info.mergeTarget) {
       throw new AgentToolKnownFailure(
         'corner_not_reviewable',
         'The corner is not reviewable. Commit intended changes and resolve dirty or untracked files.',
@@ -1358,8 +1358,8 @@ export class BodyAgentTools {
       turnId,
       sourceSha: info.mergeTarget.tip,
       targetRef: info.mergeTarget.branch,
-      requestId: info.mergeReadyEventId,
-      eventId: info.mergeReadyEventId,
+      requestId: info.mergeTarget.tip,
+      eventId: info.mergeTarget.tip,
     };
     info.toolClosePending = pending;
     // End this physical writer shortly after its result crosses MCP. New turns

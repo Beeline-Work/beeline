@@ -43,7 +43,6 @@ import {
   addRoomPage,
   type RoomViewMessage,
   AGENT_PRESENCE_STALE_MS,
-  CORNER_ACTIVITY_FRESHNESS_MS,
   personHandle,
 } from '@beeline/buzz-client';
 import {
@@ -227,7 +226,6 @@ import {
 import {
   APPROVAL_ACK_TIMEOUT_MS,
   approvalTimeoutMessage,
-  nextApprovalState,
   type ApprovalUiState,
 } from '@/buzz/approval-state';
 
@@ -414,6 +412,7 @@ export default function BuzzChat() {
   // still happening after that is NOT inferable here — the daemon says so on
   // the failure event itself, and `deliveryRetry` below carries its answer.
   const [approvalActionState, setApprovalState] = useState<ApprovalUiState>('none');
+  const [rejectionState, setRejectionState] = useState<'none' | 'sending' | 'sent'>('none');
   // The daemon confirmed it CONSUMED the signed approval (`decision=accepted`
   // ack) and is landing it. This is what lets DELIVERING resolve on evidence:
   // before this existed, a missed archive event or silent daemon left the
@@ -426,7 +425,6 @@ export default function BuzzChat() {
   // Reviewable tip currently on screen. Held on a ref, not read off
   // `mergeTarget`, because a whole live batch is applied before any re-render.
   const [approvalError, setApprovalError] = useState<string | null>(null);
-  const [cornerStateNow, setCornerStateNow] = useState(Date.now());
   // "No corner on record" and "the corner list has not answered yet" are
   // different answers, and only the first one may let a freshly permitted
   // corner onto the pinned line — see `selectPinnedCorner`.
@@ -557,19 +555,23 @@ export default function BuzzChat() {
     }
   }, [roomRepoAccessIssue, roomRepositoryState]);
   const mergeTarget = useMemo<MergeTarget | null>(
-    () =>
-      roomSurface?.review?.status === 'ready' &&
-      roomSurface.review.artifact &&
-      roomSurface.repository
-        ? {
-            repo: roomSurface.repository.key,
-            branch: roomSurface.repository.targetBranch.startsWith('refs/')
-              ? roomSurface.repository.targetBranch
-              : `refs/heads/${roomSurface.repository.targetBranch}`,
-            tip: roomSurface.review.artifact.tip,
-            patchId: roomSurface.review.artifact.patchId,
-          }
-        : null,
+    () => {
+      const lifecycle = roomSurface?.cornerLifecycle;
+      const projection = lifecycle?.git;
+      if (
+        !lifecycle ||
+        (lifecycle.lifecycle !== 'REVIEW' && lifecycle.lifecycle !== 'APPROVED') ||
+        projection?.relation !== 'review' ||
+        !projection.featureTip
+      )
+        return null;
+      return {
+        repo: projection.repository,
+        branch: projection.targetBranch,
+        tip: projection.featureTip,
+        ...(projection.artifact?.patchId ? { patchId: projection.artifact.patchId } : {}),
+      };
+    },
     [roomSurface],
   );
   const latestMerge = useMemo(
@@ -718,7 +720,7 @@ export default function BuzzChat() {
     // A newly indexed working lease can be newer than the screen's prior
     // clock. Re-evaluate it at RoomView application time, as this screen did
     // before the surface lifecycle moved into useRoomSurfaceSession.
-    observeRoomSurface: () => setCornerStateNow(Date.now()),
+    observeRoomSurface: () => undefined,
   };
   // All four display partitions share the same chronological merge. A durable
   // outbox row may be older than the current server tail after an interrupted
@@ -1266,7 +1268,7 @@ export default function BuzzChat() {
     ? cornerLifecycle.find((corner) => corner.id === decodedId)
     : undefined;
   const canonicalCornerStatus = canonicalCorner
-    ? currentCornerStatus(canonicalCorner, cornerStateNow)
+    ? currentCornerStatus(canonicalCorner)
     : cornerLifecycleStatus;
   const sessionState = !isCorner
     ? 'idle'
@@ -1441,8 +1443,8 @@ export default function BuzzChat() {
   // source, and chosen by how much it is being worked on. `null` for a Room
   // with no live corner, however busy its agent is right now.
   const pinnedCorner = useMemo(() => {
-    return selectPinnedCorner({ lifecycle: cornerLifecycle, now: cornerStateNow });
-  }, [cornerLifecycle, cornerStateNow]);
+    return selectPinnedCorner({ lifecycle: cornerLifecycle });
+  }, [cornerLifecycle]);
   const pinnedCornerCard = useMemo(
     () =>
       pinnedCorner
@@ -1626,19 +1628,6 @@ export default function BuzzChat() {
     setApprovalState('none');
     setApprovalAcked(false);
   }, [mergeTarget?.tip]);
-
-  useEffect(() => {
-    if (canonicalCorner?.machineState !== 'working' || canonicalCorner.stateAt === undefined)
-      return;
-    const deadline = canonicalCorner.stateAt * 1_000 + CORNER_ACTIVITY_FRESHNESS_MS;
-    const delay = deadline - Date.now() + 1;
-    if (delay <= 0) {
-      setCornerStateNow(Date.now());
-      return;
-    }
-    const timer = setTimeout(() => setCornerStateNow(Date.now()), delay);
-    return () => clearTimeout(timer);
-  }, [canonicalCorner?.machineState, canonicalCorner?.stateAt]);
 
   useEffect(() => {
     // Presence only changes at a lease/dormancy deadline. A five-second clock here
@@ -2571,6 +2560,23 @@ export default function BuzzChat() {
     }
   }, [transport, mergeTarget, decodedId]);
 
+  const handleReject = useCallback(async () => {
+    if (!transport || !mergeTarget) return;
+    setRejectionState('sending');
+    setApprovalError(null);
+    try {
+      const result = await transport.submitMergeRejection(decodedId, mergeTarget);
+      if (!result.success)
+        throw new Error(result.message ?? 'Rejection was not accepted by the relay');
+      setRejectionState('sent');
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } catch (err) {
+      console.warn('Rejection failed:', err);
+      setRejectionState('none');
+      setApprovalError(err instanceof Error ? err.message : String(err));
+    }
+  }, [decodedId, mergeTarget, transport]);
+
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
     router.replace({
@@ -3223,18 +3229,35 @@ export default function BuzzChat() {
                       <View style={styles.approvalSent}>
                         <Text style={styles.approvalSentText}>NOT ALLOWED</Text>
                       </View>
+                    ) : rejectionState === 'sent' ? (
+                      <View style={styles.approvalSent} testID="reject-corner-sent">
+                        <Text style={styles.approvalSentText}>REJECTION SENT ✓</Text>
+                        <Text style={styles.approvalStateText}>ARCHIVING CORNER</Text>
+                      </View>
                     ) : approvalState === 'none' ? (
-                      <TouchableOpacity
-                        accessibilityRole="button"
-                        onPress={handleApprove}
-                        style={styles.approveButton}
-                        testID="approve-corner"
-                      >
-                        <Text style={styles.approveButtonText}>APPROVE THIS CORNER’S MERGE</Text>
-                        <Text style={styles.approveButtonSupport}>
-                          COVERS ITS ONGOING WORK UNTIL IT LANDS
-                        </Text>
-                      </TouchableOpacity>
+                      <View style={styles.reviewVerdictButtons}>
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          disabled={rejectionState === 'sending'}
+                          onPress={handleReject}
+                          style={styles.rejectButton}
+                          testID="reject-corner"
+                        >
+                          <Text style={styles.rejectButtonText}>
+                            {rejectionState === 'sending' ? 'REJECTING…' : 'REJECT'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          disabled={rejectionState === 'sending'}
+                          onPress={handleApprove}
+                          style={[styles.approveButton, styles.reviewVerdictPrimary]}
+                          testID="approve-corner"
+                        >
+                          <Text style={styles.approveButtonText}>APPROVE MERGE</Text>
+                          <Text style={styles.approveButtonSupport}>STANDING VERDICT</Text>
+                        </TouchableOpacity>
+                      </View>
                     ) : approvalState === 'sending' ? (
                       <View style={styles.approvalPending}>
                         <PixelLoader compact />
@@ -4690,6 +4713,29 @@ const styles = StyleSheet.create((theme) => {
       borderColor: MERGE_APPROVAL_ACCENT,
       borderRadius: groknight.radius,
       backgroundColor: MERGE_APPROVAL_ACCENT,
+    },
+    reviewVerdictButtons: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    reviewVerdictPrimary: {
+      flex: 1,
+    },
+    rejectButton: {
+      minHeight: 64,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+      borderWidth: 2,
+      borderColor: groknight.textMuted,
+      borderRadius: groknight.radius,
+      backgroundColor: groknight.bgBase,
+    },
+    rejectButtonText: {
+      ...Typography.default('semiBold'),
+      color: groknight.textPrimary,
+      fontSize: 12,
+      letterSpacing: 0.3,
     },
     approveButtonText: {
       ...Typography.mono('semiBold'),

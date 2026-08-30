@@ -37,6 +37,7 @@ import {
   retryBuzzPushRegistration,
 } from '@/push/buzz-push-registration';
 import type { Identity } from '@beeline/buzz-client';
+import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { decideForegroundNotificationDisplay } from '@/push/foreground-policy';
 import { UpdateProvider } from '@/hooks/useUpdates';
@@ -241,6 +242,12 @@ export default function RootLayout() {
       .then((identity) => {
         if (!identity) return null;
         pushIdentityRef.current = identity;
+        void reportRunningUpdateReceipt(identity).catch((error: unknown) => {
+          console.warn(
+            '[buzzy-ota] startup update receipt unavailable:',
+            error instanceof Error ? error.message : String(error),
+          );
+        });
         return registerBuzzPushNotifications(identity);
       })
       .then((result) => {
@@ -264,6 +271,12 @@ export default function RootLayout() {
       if (state !== 'active') return;
       const identity = pushIdentityRef.current;
       if (!identity) return;
+      void reportRunningUpdateReceipt(identity).catch((error: unknown) => {
+        console.warn(
+          '[buzzy-ota] foreground update receipt unavailable:',
+          error instanceof Error ? error.message : String(error),
+        );
+      });
       void retryBuzzPushRegistration(identity)
         .then((result) => {
           if (result && !result.registered) {

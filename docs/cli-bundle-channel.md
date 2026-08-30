@@ -12,8 +12,8 @@ install paths.
 
 The darwin-arm64 CI leg is **disabled** (captain decision, 2026-08): no Mac
 consumer ever downloaded the bundle and macOS runners bill 10x. The matrix
-entry stays in the workflow, gated off; re-enable it (set `enabled: true`) as
-a release-only job if a real Mac consumer appears. The build script and
+entry stays commented out in the workflow; re-enable it by uncommenting the
+native macOS matrix leg if a real Mac consumer appears. The build script and
 installer keep their darwin handling for local/cross builds, but a
 cross-built darwin bundle carries `verified: false` and the publisher refuses
 to publish an unverified platform — so only a native-macOS job can put a

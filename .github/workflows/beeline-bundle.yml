@@ -10,9 +10,9 @@
 #
 # The darwin-arm64 leg is DISABLED (captain decision, 2026-08): no real Mac
 # consumer has ever downloaded the bundle, and macOS runners bill 10x. The
-# matrix entry below is kept ready to re-enable (set `enabled: true`) if a
-# Mac consumer appears; scripts/build-beeline-bundle.mjs and install.sh still
-# support darwin for local/cross builds.
+# commented matrix entry below is ready to re-enable if a Mac consumer appears;
+# scripts/build-beeline-bundle.mjs and install.sh still support darwin for
+# local/cross builds.
 #
 # ---------------------------------------------------------------------------
 # Manifest contract (consumed by apps/body/src/self-update-manifest.ts):
@@ -38,10 +38,6 @@ on:
   push:
     branches:
       - main
-      # Temporary pre-merge verification trigger, scoped to this feature branch
-      # so the pipeline could be proved end-to-end before landing. Harmless to
-      # keep: it fires only for this exact branch name.
-      - fm/beeline-cli-publish
     # Only daemon/CLI bundle inputs: the input closure of
     # scripts/build-beeline-bundle.mjs (the workspaces it builds — body, gate,
     # buzz-client, nostr — plus the bundle/publish/verify tooling and the
@@ -113,7 +109,7 @@ jobs:
           mkdir -p out/${{ matrix.platform }}
           cp relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz out/${{ matrix.platform }}/
           cp relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz.sha256 out/${{ matrix.platform }}/
-          node -e "const fs=require('fs');const p='${{ matrix.platform }}';const m=JSON.parse(fs.readFileSync('relay-stack/web/dl/manifest.json','utf8'));if(!m.bundles[p]||m.bundles[p].verified!==true)throw new Error(p+' missing or unverified in built manifest');fs.writeFileSync('out/'+p+'/manifest.json',JSON.stringify({schemaVersion:m.schemaVersion??1,sourceCommit:m.sourceCommit,version:m.version,bundles:{[p]:m.bundles[p]}},null,2)+'\n')" 
+          node -e "const fs=require('fs');const p='${{ matrix.platform }}';const m=JSON.parse(fs.readFileSync('relay-stack/web/dl/manifest.json','utf8'));if(!m.bundles[p]||m.bundles[p].verified!==true)throw new Error(p+' missing or unverified in built manifest');fs.writeFileSync('out/'+p+'/manifest.json',JSON.stringify({schemaVersion:m.schemaVersion??1,sourceCommit:m.sourceCommit,version:m.version,bundles:{[p]:m.bundles[p]}},null,2)+'\n')"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}

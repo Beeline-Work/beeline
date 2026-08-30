@@ -15,7 +15,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "format:check": "prettier --check src package.json",
+    "lint": "npm run format:check"
   },
   "dependencies": {
     "@noble/curves": "^2.3.0",

@@ -1,5 +1,6 @@
 import {
   ROOM_VIEW_AGENT_LIMIT,
+  ROOM_VIEW_BRIEFING_LIMIT,
   ROOM_VIEW_CHAT_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
   ROOM_VIEW_MESSAGE_LIMIT,
@@ -292,6 +293,34 @@ function targetBranch(value: unknown): boolean {
   );
 }
 
+function githubUrl(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'github.com';
+  } catch {
+    return false;
+  }
+}
+
+function githubEvent(value: unknown): boolean {
+  const item = record(value);
+  if (
+    !item ||
+    (item.type !== 'pull-request' && item.type !== 'issue') ||
+    typeof item.actor !== 'string' ||
+    typeof item.title !== 'string' ||
+    !githubUrl(item.url)
+  ) {
+    return false;
+  }
+  return (
+    (item.type === 'pull-request' &&
+      (item.action === 'opened' || item.action === 'closed' || item.action === 'merged')) ||
+    (item.type === 'issue' && (item.action === 'opened' || item.action === 'closed'))
+  );
+}
+
 export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
   const item = record(value);
   const reference = item?.reference === undefined ? undefined : record(item.reference);
@@ -339,7 +368,8 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
     (item.merge === undefined || messageMerge(item.merge)) &&
     (item.landSummary === undefined || messageLandSummary(item.landSummary)) &&
     (item.permission === undefined || messagePermission(item.permission)) &&
-    (item.targetBranch === undefined || targetBranch(item.targetBranch)),
+    (item.targetBranch === undefined || targetBranch(item.targetBranch)) &&
+    (item.githubEvent === undefined || githubEvent(item.githubEvent)),
   );
 }
 
@@ -592,7 +622,9 @@ export function isRoomView(value: unknown): value is RoomView {
     (item.directMessage === undefined || directMessageForViewer(item.directMessage, item.viewer)) &&
     (item.parent === undefined || header(item.parent)) &&
     (item.briefing === undefined ||
-      (Array.isArray(item.briefing) && item.briefing.every(isRoomViewMessage))) &&
+      (Array.isArray(item.briefing) &&
+        item.briefing.length <= ROOM_VIEW_BRIEFING_LIMIT &&
+        item.briefing.every(isRoomViewMessage))) &&
     Array.isArray(item.corners) &&
     item.corners.every(corner) &&
     (item.repository === undefined || repository(item.repository)) &&

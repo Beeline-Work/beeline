@@ -5,7 +5,6 @@
  * inside a community. The self-signature is the durable identity boundary the
  * merge gate can query: role mistakes never turn that key into a human approver.
  */
-import { bytesToHex } from '@noble/hashes/utils.js';
 import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
   communityChannels,
@@ -33,6 +32,7 @@ import {
   isReasonableAgentName,
 } from './display-name.js';
 import { getDirectMessage } from './direct-message.js';
+import { newUuid } from './uuid.js';
 import type {
   Agent,
   AgentPairingCode,
@@ -59,18 +59,6 @@ let lastSoulTimestamp = 0;
 
 function now(): number {
   return Math.floor(Date.now() / 1000);
-}
-
-function newUuid(): string {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
-  }
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytesToHex(bytes);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function optionalText(value: unknown): string | undefined {

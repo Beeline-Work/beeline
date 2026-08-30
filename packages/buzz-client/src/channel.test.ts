@@ -325,6 +325,7 @@ describe('renameChannel', () => {
                     ['name', projectedName],
                     ['about', 'Keep this'],
                     ['archived', 'true'],
+                    ['community', 'workspace'],
                   ],
                   content: '',
                 },
@@ -351,6 +352,7 @@ describe('renameChannel', () => {
         ['name', 'New name'],
         ['about', 'Keep this'],
         ['archived', 'true'],
+        ['community', 'workspace'],
       ]),
     );
   });
@@ -362,6 +364,91 @@ describe('renameChannel', () => {
       'Room name cannot be empty',
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the projection timeout error after publishing metadata', async () => {
+    vi.useFakeTimers();
+    const channelId = 'rename-timeout-room';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/events')) {
+          return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+        }
+        const filter = (JSON.parse(String(init?.body)) as Record<string, unknown>[])[0]!;
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_CREATE_GROUP) {
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [
+                    ['h', channelId],
+                    ['name', 'Old name'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return new Response(JSON.stringify([projection(kind, channelId)]));
+        }
+        if (kind === KIND_CHANNEL_ADMINS) {
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_000,
+                  kind,
+                  tags: [
+                    ['d', channelId],
+                    ['p', identity.publicKey, 'owner'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        if (kind === KIND_CHANNEL_METADATA) {
+          return new Response(
+            JSON.stringify([
+              signEvent(
+                {
+                  pubkey: identity.publicKey,
+                  created_at: 1_700_000_001,
+                  kind,
+                  tags: [
+                    ['d', channelId],
+                    ['name', 'Old name'],
+                  ],
+                  content: '',
+                },
+                identity.secretKey,
+              ),
+            ]),
+          );
+        }
+        return new Response(JSON.stringify([]));
+      }),
+    );
+
+    const rename = renameChannel(ctx, channelId, 'New name');
+    const expected = expect(rename).rejects.toThrow('Room name was not projected after 15000ms');
+    try {
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expected;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects a normal member before publishing metadata', async () => {
@@ -551,6 +638,9 @@ describe('setChannelVisibility', () => {
                   tags: [
                     ['d', channelId],
                     ['name', 'Visibility room'],
+                    ['about', 'Keep this'],
+                    ['archived', 'true'],
+                    ['community', 'workspace'],
                     ...(projectedVisibility === 'private' ? [['private'], ['closed']] : []),
                   ],
                   content: '',
@@ -568,6 +658,14 @@ describe('setChannelVisibility', () => {
       visibility: 'invite-only',
     });
     expect(published[0]!.tags).toContainEqual(['visibility', 'private']);
+    expect(published[0]!.tags).toEqual(
+      expect.arrayContaining([
+        ['name', 'Visibility room'],
+        ['about', 'Keep this'],
+        ['archived', 'true'],
+        ['community', 'workspace'],
+      ]),
+    );
   });
 });
 

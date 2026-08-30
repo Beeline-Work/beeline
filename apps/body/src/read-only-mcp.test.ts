@@ -14,6 +14,7 @@ const expectedToolNames = [
   'list_files',
   'read_file',
   'read_agent_file',
+  'write_memory',
   'search_text',
   'git_log',
   'git_show',
@@ -109,10 +110,28 @@ describe('hasWriteTools', () => {
 });
 
 describe('buzz-readonly-mcp', () => {
-  it('advertises only the fixed inspection inventory', async () => {
+  it('advertises only the fixed Room inventory', async () => {
     const tools = await listMcpToolNames(server());
     expect(tools).toEqual(expectedToolNames);
     expect(hasWriteTools(tools)).toBe(false);
+  });
+
+  it('persists private memory through the dedicated tool and reads it after the server restarts', async () => {
+    const content = 'approved memory\n- Chief of staff: maintain the launch checklist.\n';
+    expect(textResult(await callMcpTool(server(), 'write_memory', { content }))).toContain(
+      'MEMORY.md updated',
+    );
+
+    // callMcpTool starts a fresh MCP process for every call, emulating the
+    // daemon/session restart that exposed the production regression.
+    expect(
+      textResult(
+        await callMcpTool(server(), 'read_agent_file', {
+          area: 'memory',
+          path: 'MEMORY.md',
+        }),
+      ),
+    ).toContain('Chief of staff: maintain the launch checklist.');
   });
 
   it('lists, reads, searches, and inspects bounded local git history', async () => {
@@ -170,6 +189,9 @@ describe('buzz-readonly-mcp', () => {
     ]) {
       await expect(callMcpTool(server(), 'read_agent_file', attempt)).rejects.toThrow();
     }
+    await expect(
+      callMcpTool(server(), 'write_memory', { content: 'x', path: 'other.md' }),
+    ).rejects.toThrow('accepts only content');
     await expect(callMcpTool(server(), 'write_agent_file', {})).rejects.toThrow();
     await expect(callMcpTool(server(), 'execute_agent_file', {})).rejects.toThrow();
   });

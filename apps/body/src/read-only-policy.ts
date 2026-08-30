@@ -7,6 +7,7 @@ export const READ_ONLY_TOOL_NAMES = [
   'list_files',
   'read_file',
   'read_agent_file',
+  'write_memory',
   'search_text',
   'git_log',
   'git_show',

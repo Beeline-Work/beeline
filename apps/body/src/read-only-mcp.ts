@@ -1,26 +1,35 @@
 #!/usr/bin/env node
 /**
- * Deliberately narrow MCP server for repository inspection in Room sessions.
+ * Deliberately narrow MCP server for repository inspection and private-memory
+ * persistence in Room sessions.
  *
  * Security properties:
- *   - imports no filesystem mutation APIs;
+ *   - exposes exactly one mutation: replacing this agent's daemon-pinned
+ *     Workspace MEMORY.md through a bounded, non-symlink file descriptor;
  *   - exposes no shell, generic process, or raw git-argument tool;
  *   - resolves every requested path through the configured repository root;
  *   - never follows a symlink outside that root and never exposes `.git`;
  *   - invokes only three fixed, local git read commands with optional locks,
  *     pagers, hooks, fsmonitor, external diff, and text conversion disabled.
  *
- * Actual writes remain the responsibility of buzz-dev-mcp in an isolated
+ * Repository writes remain the responsibility of buzz-dev-mcp in an isolated
  * edit-corner worktree after the signed human ALLOW flow.
  */
 import { execFileSync } from 'node:child_process';
 import {
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
+  fsyncSync,
+  ftruncateSync,
   lstatSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
   statSync,
+  writeFileSync,
   type Dirent,
 } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
@@ -43,6 +52,7 @@ interface ToolDefinition {
 }
 
 const MAX_READ_BYTES = 2 * 1024 * 1024;
+const MAX_MEMORY_BYTES = 2 * 1024 * 1024;
 const MAX_GIT_BYTES = 2 * 1024 * 1024;
 const MAX_SEARCH_FILE_BYTES = 1024 * 1024;
 const MAX_SEARCH_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -99,6 +109,23 @@ const TOOLS: ToolDefinition[] = [
         path: { type: 'string', description: 'Path relative to the selected approved area.' },
         start_line: { type: 'integer', minimum: 1 },
         end_line: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'write_memory',
+    description:
+      "Replace this agent's private Workspace MEMORY.md. This is the only supported memory-write path in a read-only Room; shell writes to memory are always denied.",
+    inputSchema: {
+      type: 'object',
+      required: ['content'],
+      properties: {
+        content: {
+          type: 'string',
+          description: 'The complete new UTF-8 contents of MEMORY.md.',
+          maxLength: MAX_MEMORY_BYTES,
+        },
       },
       additionalProperties: false,
     },
@@ -427,6 +454,35 @@ function readAgentFile(args: JsonObject): string {
     .join('\n')}${requestedEnd > endLine ? '\n[truncated at 1000 lines]' : ''}`;
 }
 
+function writeMemory(args: JsonObject): string {
+  if (Object.keys(args).some((key) => key !== 'content')) {
+    throw new Error('write_memory accepts only content');
+  }
+  const content = stringArg(args, 'content');
+  if (content === undefined) throw new Error('content must be a string');
+  if (content.includes('\0')) throw new Error('memory content must be UTF-8 text');
+  if (Buffer.byteLength(content, 'utf8') > MAX_MEMORY_BYTES) {
+    throw new Error(`memory content exceeds the ${MAX_MEMORY_BYTES}-byte limit`);
+  }
+  const root = approvedAgentRoots.memory;
+  if (!root) throw new Error('approved memory material is unavailable');
+  const candidate = resolve(root, 'MEMORY.md');
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(candidate, constants.O_WRONLY | constants.O_NOFOLLOW);
+    const details = fstatSync(descriptor);
+    if (!details.isFile() || details.nlink !== 1) {
+      throw new Error('memory writes require an ordinary private MEMORY.md');
+    }
+    ftruncateSync(descriptor, 0);
+    writeFileSync(descriptor, content, { encoding: 'utf8' });
+    fsyncSync(descriptor);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  return `memory/MEMORY.md updated (${Buffer.byteLength(content, 'utf8')} bytes)`;
+}
+
 function searchableFiles(start: string): string[] {
   const details = statSync(start);
   if (details.isFile()) return [start];
@@ -603,6 +659,8 @@ function callTool(name: string, args: JsonObject): string {
       return readFile(args);
     case 'read_agent_file':
       return readAgentFile(args);
+    case 'write_memory':
+      return writeMemory(args);
     case 'search_text':
       return searchText(args);
     case 'git_log':

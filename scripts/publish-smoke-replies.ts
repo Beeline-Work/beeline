@@ -8,10 +8,9 @@ import {
   AGENT_PRESENCE_HEARTBEAT_MS,
   createBuzzClient,
   KIND_AGENT_PRESENCE,
-  KIND_CORNER_STATE,
   loadIdentityFromNsec,
   TAG_AGENT_PRESENCE,
-  TAG_CORNER_STATE,
+  type SessionEvent,
 } from '@beeline/buzz-client';
 import { signEvent } from '@beeline/nostr';
 
@@ -29,11 +28,12 @@ async function waitForMessage(
   channelId: string,
   needle: string,
   timeoutMs = FOLLOW_UP_MESSAGE_TIMEOUT_MS,
-): Promise<void> {
+): Promise<SessionEvent> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const events = await client.sessionEventsBackfill(channelId, { limit: 100 });
-    if (events.some((event) => event.content?.includes(needle))) return;
+    const match = events.find((event) => event.content?.includes(needle));
+    if (match) return match;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`timed out waiting for ${needle}`);
@@ -84,22 +84,24 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
         identity.secretKey,
       ),
     );
-  const publishCornerWorkingState = () => {
-    const stateAt = Math.floor(Date.now() / 1_000);
+  const publishCornerTurnStatus = (requestId: string, status: 'working' | 'complete') => {
     return client.publish(
       signEvent(
         {
           pubkey: identity.publicKey,
-          created_at: stateAt,
-          kind: KIND_CORNER_STATE,
+          created_at: Math.floor(Date.now() / 1_000),
+          kind: 9,
           tags: [
-            ['d', `${TAG_CORNER_STATE}:${cornerId}`],
-            ['h', roomId],
-            ['t', TAG_CORNER_STATE],
-            ['state', 'working'],
-            ['at', String(stateAt)],
+            ['h', cornerId],
+            ['t', 'body-control'],
+            ['t', 'agent-turn'],
+            ['request', requestId],
+            ['session', 'smoke-corner-session'],
+            ['agent', identity.publicKey],
+            ['mode', 'readonly'],
+            ['status', status],
           ],
-          content: JSON.stringify({ state: 'working', at: stateAt }),
+          content: status === 'working' ? 'Agent is thinking…' : 'Agent reply complete.',
         },
         identity.secretKey,
       ),
@@ -131,11 +133,12 @@ async function main(agentNsec: string, roomId: string, cornerId: string) {
     await requireExactlyOneMessage(client, roomId, "@beebee what's up");
     await client.messageSubmit(roomId, "SMOKE AGENT MENTION REPLY — @beebee what's up");
     await waitForMessage(client, roomId, 'SMOKE KEYBOARD PIN TRIGGER');
-    await publishCornerWorkingState();
     await client.messageSubmit(roomId, 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard');
-    await waitForMessage(client, roomId, 'SMOKE CORNER PHASE READY');
+    const cornerPhaseRequest = await waitForMessage(client, roomId, 'SMOKE CORNER PHASE READY');
+    await publishCornerTurnStatus(cornerPhaseRequest.id, 'working');
     await waitForMessage(client, cornerId, 'SMOKE CORNER STEER');
     await client.messageSubmit(cornerId, 'SMOKE AGENT CORNER REPLY — steering delivered live');
+    await publishCornerTurnStatus(cornerPhaseRequest.id, 'complete');
   } finally {
     stopped = true;
     if (heartbeatTimer) clearTimeout(heartbeatTimer);

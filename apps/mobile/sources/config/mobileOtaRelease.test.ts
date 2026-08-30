@@ -258,6 +258,8 @@ esac
     expect(canaryScript).toContain('MAESTRO_SKIP_BUILD=1');
     expect(canaryScript).toContain('EXPECTED_ANDROID_UPDATE_ID="$android_update"');
     expect(canaryScript).toContain('OTA_CANARY_UPDATE_APPLY_TIMEOUT_SECONDS:-120');
+    expect(canaryScript).toContain('android-device-ready.sh');
+    expect(canaryScript).toContain('wait_for_android_device_ready');
     expect(canaryScript).toContain('MAESTRO_VERIFY_UPDATE_ONLY=1');
     expect(canaryScript).not.toContain('OTA_CANARY_WARMUP_SECONDS');
     expect(canaryScript.indexOf('MAESTRO_VERIFY_UPDATE_ONLY=1')).toBeLessThan(
@@ -276,6 +278,8 @@ esac
       maestroScript.indexOf('maestro test --device'),
     );
     expect(maestroScript).toContain('MAESTRO_VERIFY_UPDATE_ONLY');
+    expect(maestroScript).toContain('android-device-ready.sh');
+    expect(maestroScript).toContain('wait_for_android_device_ready');
   });
 
   it('binds deep-link canary steps to the production package on a shared AVD', () => {
@@ -355,7 +359,16 @@ esac
       const platformTools = join(directory, 'platform-tools');
       mkdirSync(platformTools, { recursive: true });
       const adb = join(platformTools, 'adb');
-      writeFileSync(adb, `#!/bin/sh\nprintf '${devicesOutput}\\n'\n`);
+      writeFileSync(
+        adb,
+        `#!/bin/sh
+case "$*" in
+  devices) printf '${devicesOutput}\\n' ;;
+  *' get-state') printf 'device\\n' ;;
+  *'shell getprop sys.boot_completed') printf '1\\n' ;;
+esac
+`,
+      );
       chmodSync(adb, 0o755);
       return directory;
     }
@@ -448,18 +461,83 @@ esac
       expect(result.stderr).toContain('boot');
     }, 60_000);
 
-    it('parks when the emulator is attached but not ready', () => {
+    it('recovers an offline emulator when adb reconnect offline returns it to device within the readiness window', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-recovers-'));
+      const platformTools = join(directory, 'platform-tools');
+      const callLog = join(directory, 'adb-calls.log');
+      mkdirSync(platformTools, { recursive: true });
+      writeFileSync(
+        join(platformTools, 'adb'),
+        `#!/bin/sh
+printf '%s\\n' "$*" >> "$STUB_CALL_LOG"
+case "$*" in
+  devices)
+    if [ -f "$STUB_RECONNECTED" ]; then
+      printf 'List of devices attached\\nemulator-5554\\tdevice\\n'
+    else
+      printf 'List of devices attached\\nemulator-5554\\toffline\\n'
+    fi
+    ;;
+  'reconnect offline') touch "$STUB_RECONNECTED" ;;
+  '-s emulator-5554 get-state')
+    if [ -f "$STUB_RECONNECTED" ]; then printf 'device\\n'; else printf 'offline\\n'; fi
+    ;;
+  '-s emulator-5554 shell getprop sys.boot_completed') printf '1\\n' ;;
+esac
+`,
+      );
+      chmodSync(join(platformTools, 'adb'), 0o755);
+      const ledger = writeBetaLedger(directory);
+
+      const result = runCanary(['--ledger', ledger], {
+        ANDROID_HOME: directory,
+        BEELINE_BETA_APK: join(directory, 'missing.apk'),
+        OTA_CANARY_DEVICE_READY_TIMEOUT_SECONDS: '2',
+        STUB_CALL_LOG: callLog,
+        STUB_RECONNECTED: join(directory, 'reconnected'),
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('adb reconnect offline');
+      expect(result.stderr).toContain('emulator-5554 is ready');
+      expect(result.stderr).toContain('BEELINE_BETA_APK');
+      expect(readFileSync(callLog, 'utf8')).toContain('reconnect offline');
+    }, 60_000);
+
+    it('parks with the existing not-ready message class when an offline emulator outlives the readiness window', () => {
       const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-adb-offline-'));
       const sdkRoot = stubAdbSdk(
         directory,
         'List of devices attached\\nemulator-5554\\toffline',
       );
 
-      const result = runCanary([], { ANDROID_HOME: sdkRoot });
+      const result = runCanary([], {
+        ANDROID_HOME: sdkRoot,
+        OTA_CANARY_DEVICE_READY_TIMEOUT_SECONDS: '1',
+      });
 
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('offline');
       expect(result.stderr).toContain('not ready');
+      expect(result.stderr).toContain('adb reconnect offline');
+    }, 60_000);
+
+    it('validates the bounded device-readiness timeout before touching adb', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-ready-timeout-'));
+      const sdkRoot = stubAdbSdk(
+        directory,
+        'List of devices attached\\nemulator-5554\\tdevice',
+      );
+
+      const result = runCanary([], {
+        ANDROID_HOME: sdkRoot,
+        OTA_CANARY_DEVICE_READY_TIMEOUT_SECONDS: '0',
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(
+        'OTA_CANARY_DEVICE_READY_TIMEOUT_SECONDS must be between 1 and 300 (got 0)',
+      );
     }, 60_000);
 
     it('writes the parked reason to OTA_CANARY_REASON_FILE on a device-gate failure', () => {
@@ -566,6 +644,12 @@ esac
         '  devices)',
         "    printf 'List of devices attached\\nemulator-5554\\tdevice\\n'",
         '    ;;',
+        '  *" get-state")',
+        "    printf 'device\\n'",
+        '    ;;',
+        '  *"shell getprop sys.boot_completed")',
+        "    printf '1\\n'",
+        '    ;;',
         '  *"install -r"*)',
         '    count="$(cat "$STUB_STATE_DIR/installs" 2>/dev/null || echo 0)"',
         '    count=$((count + 1))',
@@ -632,7 +716,9 @@ esac
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('EXPECTED_ANDROID_UPDATE_ID is required');
       expect(result.stderr).toContain('refusing to run any flow');
-      expect(readFileSync(callLog, 'utf8')).toBe('devices\n');
+      expect(readFileSync(callLog, 'utf8')).toBe(
+        'devices\ndevices\n-s emulator-5554 get-state\n-s emulator-5554 shell getprop sys.boot_completed\n',
+      );
     }, 60_000);
 
     it('refuses a custom MAESTRO_FLOW when the device reports a stale update', () => {

@@ -8,6 +8,7 @@ export interface PushGatewayConfig {
   indexerPublicOrigin: string;
   pushDeliveryEnabled: boolean;
   repositoryEventsEnabled: boolean;
+  otaReceiptAdminToken?: string;
 }
 
 function enabled(env: NodeJS.ProcessEnv, disabledVariable: string): boolean {
@@ -60,5 +61,6 @@ export function loadPushGatewayConfig(env: NodeJS.ProcessEnv = process.env): Pus
     indexerPublicOrigin,
     pushDeliveryEnabled: enabled(env, 'BUZZY_MATERIALIZER_DISABLE_PUSH_DELIVERY'),
     repositoryEventsEnabled: enabled(env, 'BUZZY_MATERIALIZER_DISABLE_REPOSITORY_EVENTS'),
+    otaReceiptAdminToken: env.BUZZY_OTA_RECEIPT_ADMIN_TOKEN?.trim() || undefined,
   };
 }

@@ -1,7 +1,7 @@
 /**
  * Local-relay acceptance proof for the owner's merge-button contract. Git and
- * relay publications are real; the one conflict resolver model boundary is
- * stubbed so this proof needs no external LLM credential.
+ * relay publications are real; the Codex model boundary is stubbed with real
+ * git edits so this proof needs no external LLM credential.
  */
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -49,7 +49,7 @@ afterAll(() => {
 });
 
 describe.runIf(live)('live merge button always lands', () => {
-  it('mounts a stale review without a model turn, queues two lands, then auto-resolves a conflict', async () => {
+  it('uses one Codex sync per stale button press, serializes two lands, and resolves a conflict', async () => {
     const run = `merge-button-${Date.now()}`;
     const root = mkdtempSync(join(tmpdir(), `${run}-`));
     cleanup.push(root);
@@ -133,22 +133,33 @@ describe.runIf(live)('live merge button always lands', () => {
       return info;
     };
 
-    let conflictPath: string | undefined;
+    const worktreeByCorner = new Map<string, string>();
+    const modelTurnsByCorner = new Map<string, number>();
     const resolver = vi
       .spyOn(body as never, 'promptAgent' as never)
-      .mockImplementation(async (_session: never, prompt: string) => {
-        expect(conflictPath).toBeDefined();
-        expect(prompt).toContain('README.md');
-        expect(prompt).toContain('Do not ask the human');
-        git(conflictPath!, ['reset', '--hard', 'main']);
-        writeFileSync(
-          join(conflictPath!, 'README.md'),
-          '# Main changed while approved\n\nCorner intent preserved by automatic resolution.\n',
+      .mockImplementation(async (session: { channelId: string }, prompt: string) => {
+        const worktreePath = worktreeByCorner.get(session.channelId);
+        expect(worktreePath).toBeDefined();
+        modelTurnsByCorner.set(
+          session.channelId,
+          (modelTurnsByCorner.get(session.channelId) ?? 0) + 1,
         );
-        git(conflictPath!, ['add', 'README.md']);
-        git(conflictPath!, ['commit', '-qm', 'resolve approved landing conflict']);
+        expect(prompt).toMatch(/main moved to [0-9a-f]{40}/);
+        expect(prompt).toContain('make it merge-ready, whatever it takes');
+        expect(prompt).toContain('Do not ask the human');
+        if (worktreePath!.endsWith('corner-conflict')) {
+          git(worktreePath!, ['reset', '--hard', 'main']);
+          writeFileSync(
+            join(worktreePath!, 'README.md'),
+            '# Main changed while approved\n\nCorner intent preserved by automatic resolution.\n',
+          );
+          git(worktreePath!, ['add', 'README.md']);
+          git(worktreePath!, ['commit', '-qm', 'resolve approved landing conflict']);
+        } else {
+          git(worktreePath!, ['rebase', 'main']);
+        }
         return {
-          agentText: 'Resolved and validated the approved landing conflict.',
+          agentText: 'Brought the branch onto the exact target and validated it.',
           updates: [],
           toolCalls: [],
           stopReason: 'end_turn',
@@ -162,14 +173,14 @@ describe.runIf(live)('live merge button always lands', () => {
       git(pathA, ['add', 'A.txt']);
       git(pathA, ['commit', '-qm', 'corner a']);
       const infoA = await makeCorner('Queue corner A', 'feature/a', pathA);
+      worktreeByCorner.set(infoA.subchannelId, pathA);
+      await expect(Reflect.get(body, 'publishMergeReady').call(body, infoA)).resolves.toBe(true);
 
-      // Move main after the agent committed. Publishing the review must do the
-      // clean rebase itself and must not invoke the model boundary.
+      // Move main after the review card exists. One press must trigger exactly
+      // one Codex-owned clean sync and then land under the same approval.
       writeFileSync(join(checkout, 'UNRELATED.txt'), 'new main work\n');
       git(checkout, ['add', 'UNRELATED.txt']);
       git(checkout, ['commit', '-qm', 'unrelated main movement']);
-      await expect(Reflect.get(body, 'publishMergeReady').call(body, infoA)).resolves.toBe(true);
-      expect(resolver).not.toHaveBeenCalled();
 
       const pathB = join(root, 'corner-b');
       git(checkout, ['worktree', 'add', '-q', '-b', 'feature/b', pathB, 'main']);
@@ -177,6 +188,7 @@ describe.runIf(live)('live merge button always lands', () => {
       git(pathB, ['add', 'B.txt']);
       git(pathB, ['commit', '-qm', 'corner b']);
       const infoB = await makeCorner('Queue corner B', 'feature/b', pathB);
+      worktreeByCorner.set(infoB.subchannelId, pathB);
       await expect(Reflect.get(body, 'publishMergeReady').call(body, infoB)).resolves.toBe(true);
 
       const approvalA = await humanClient.submitMergeApproval(
@@ -193,7 +205,8 @@ describe.runIf(live)('live merge button always lands', () => {
       });
       expect(readFileSync(join(checkout, 'A.txt'), 'utf8')).toBe('corner a\n');
       expect(readFileSync(join(checkout, 'B.txt'), 'utf8')).toBe('corner b\n');
-      expect(resolver).not.toHaveBeenCalled();
+      expect(modelTurnsByCorner.get(infoA.subchannelId)).toBe(1);
+      expect(modelTurnsByCorner.get(infoB.subchannelId)).toBe(1);
 
       const conflictCornerPath = join(root, 'corner-conflict');
       git(checkout, [
@@ -213,13 +226,13 @@ describe.runIf(live)('live merge button always lands', () => {
         'feature/conflict',
         conflictCornerPath,
       );
+      worktreeByCorner.set(conflictInfo.subchannelId, conflictCornerPath);
       await expect(Reflect.get(body, 'publishMergeReady').call(body, conflictInfo)).resolves.toBe(
         true,
       );
       writeFileSync(join(checkout, 'README.md'), '# Main changed while approved\n');
       git(checkout, ['add', 'README.md']);
       git(checkout, ['commit', '-qm', 'conflicting main movement']);
-      conflictPath = conflictCornerPath;
       const conflictApproval = await humanClient.submitMergeApproval(
         conflictInfo.subchannelId,
         conflictInfo.mergeTarget!,
@@ -228,7 +241,7 @@ describe.runIf(live)('live merge button always lands', () => {
         await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
         return Boolean(conflictInfo.landedTip);
       });
-      expect(resolver).toHaveBeenCalledTimes(1);
+      expect(modelTurnsByCorner.get(conflictInfo.subchannelId)).toBe(1);
       expect(readFileSync(join(checkout, 'README.md'), 'utf8')).toContain(
         'Corner intent preserved',
       );
@@ -262,7 +275,8 @@ describe.runIf(live)('live merge button always lands', () => {
           roomId,
           approvals: [approvalA.id, approvalB.id, conflictApproval.id],
           events: coordinates,
-          automaticConflictTurns: resolver.mock.calls.length,
+          modelTurnsByCorner: Object.fromEntries(modelTurnsByCorner),
+          totalAutomaticSyncTurns: resolver.mock.calls.length,
         })}`,
       );
     } finally {

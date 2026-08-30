@@ -237,7 +237,7 @@ describe('approval consumption acknowledges the human', () => {
       info.mergeTarget = { ...info.mergeTarget, patchId: 'd'.repeat(40) };
       body.registerSubchannel(info as never);
       Reflect.set(body, 'agentRelay', stubAgentRelay([approval], [reviewer.publicKey]));
-      Reflect.set(body, 'realignCornersForRepo', async () => 0);
+      Reflect.set(body, 'syncCornersForRepo', async () => 0);
 
       const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
 
@@ -309,7 +309,7 @@ describe('approval consumption acknowledges the human', () => {
       const approval = buildApproval(reviewer, tip);
       Reflect.set(body, 'agentRelay', stubAgentRelay([approval], [reviewer.publicKey]));
       // No other corners to realign; keep the fire-and-forget hook inert.
-      Reflect.set(body, 'realignCornersForRepo', async () => 0);
+      Reflect.set(body, 'syncCornersForRepo', async () => 0);
 
       const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
 
@@ -428,7 +428,7 @@ describe('approval consumption acknowledges the human', () => {
       await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
       await Reflect.get(body, 'findHumanMergeApproval').call(body, info);
       expect(info.cornerState).toEqual({ state: 'working' });
-      Reflect.set(body, 'realignCornersForRepo', async () => 0);
+      Reflect.set(body, 'syncCornersForRepo', async () => 0);
       const landed = await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
 
       const failures = published.filter((event) =>

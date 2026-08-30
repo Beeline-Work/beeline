@@ -136,7 +136,7 @@ describe('GitHub-origin delivery', () => {
     ).toContain('Nothing ready to merge yet');
   });
 
-  it('rebases onto the latest remote target and publishes review in the same daemon pass', async () => {
+  it('uses one Codex turn to sync the latest remote target before publishing review', async () => {
     const { root, worktree, info, body } = await repository();
     const events = captureEvents();
     const featureBefore = run(worktree, ['rev-parse', 'HEAD']);
@@ -145,8 +145,17 @@ describe('GitHub-origin delivery', () => {
     run(root, ['commit', '-m', 'advance target before review']);
     const targetTip = run(root, ['rev-parse', 'HEAD']);
     run(root, ['push', 'origin', 'main']);
+    const syncTurn = vi
+      .spyOn(body as never, 'promptAgent' as never)
+      .mockImplementation((async (_session: unknown, prompt: string) => {
+        expect(prompt).toContain(`main moved to ${targetTip}`);
+        run(worktree, ['fetch', 'origin', 'main']);
+        run(worktree, ['rebase', 'origin/main']);
+        return { agentText: 'Synced onto main and ran checks.', updates: [] };
+      }) as never);
 
     await expect(publish(body, info)).resolves.toBe(true);
+    expect(syncTurn).toHaveBeenCalledTimes(1);
     expect(info.mergeTarget).toBeDefined();
     expect(info.mergeTarget!.tip).not.toBe(featureBefore);
     expect(run(worktree, ['merge-base', '--is-ancestor', targetTip, info.mergeTarget!.tip])).toBe(
@@ -274,15 +283,15 @@ describe('a moved target is standing authorization to update the feature branch'
     return { root, remote, worktree, info, body, events, tip, moved, prompts };
   }
 
-  it('automatically rebases and lands unchanged content with the standing approval', async () => {
+  it('uses one Codex sync turn and lands with the standing approval', async () => {
     const { root, remote, worktree, info, body, events, tip, moved, prompts } =
       await approvedCornerWithMovedTarget();
 
     await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(1);
 
-    // Pure realignment and landing are one deterministic daemon pass. The
-    // suspended harness is never resumed to perform git mechanics.
-    expect(prompts).toHaveLength(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(`main moved to ${moved}`);
+    expect(prompts[0]).toContain('make it merge-ready, whatever it takes');
     const refreshedTip = run(worktree, ['rev-parse', 'HEAD']);
     expect(refreshedTip).not.toBe(tip);
     expect(run(worktree, ['merge-base', '--is-ancestor', moved, refreshedTip])).toBe('');
@@ -326,12 +335,12 @@ describe('a moved target is standing authorization to update the feature branch'
     expect(recovering!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward|\[rejected\]/i);
   });
 
-  it('performs one daemon realignment and never starts a synchronization session', async () => {
+  it('starts exactly one synchronization turn for one button press', async () => {
     const { body, events, prompts } = await approvedCornerWithMovedTarget();
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
     await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
-    expect(prompts).toHaveLength(0);
+    expect(prompts).toHaveLength(1);
     const recovering = events
       .filter((event) => Array.isArray(event.tags))
       .filter(

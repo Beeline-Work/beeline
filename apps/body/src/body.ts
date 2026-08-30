@@ -175,11 +175,6 @@ import { CornerStatePublisher } from './corner-state.js';
 import { isArchivedChannelError } from './archived-channel.js';
 import type { BodyConfig, SessionMode } from './config.js';
 import { publishCritical } from './publish-delivery.js';
-import {
-  realignAnnouncement,
-  realignWorktreeOntoTarget,
-  type CornerRealignResult,
-} from './realign.js';
 import type { RepositoryTruth, RepositoryTruthCheckpoint } from './repository-truth.js';
 import {
   AccessRefusalLimiter,
@@ -749,7 +744,7 @@ export const CORNER_MERGE_GATE_INSTRUCTION =
   'Do not tell the human to approve this work or claim that a review target exists. After your turn, Beeline checks the worktree and publishes the review target itself. If that check rejects the work, Beeline reports the gate status separately and preserves your reply; it does not start a hidden correction turn.' +
   ' An external merge/validation gate you run (e.g. no-mistakes) shares this rule: if it fails to initialize or run, quote its exact error in your reply, report the work as NOT ready, and never ask for approval — an approval the human sends while no review target is published goes nowhere.';
 export const CORNER_TARGET_SYNC_INSTRUCTION =
-  'Do not spend model time fetching, merging, or rebasing the target branch merely to prepare a review. After your turn, Beeline synchronizes a clean committed feature branch with the current target tip itself. If that deterministic sync conflicts, the review remains available and Beeline supplies the conflict context in one automatic resolution turn only after the human presses merge.';
+  'Do not preemptively fetch, merge, or rebase the target merely to prepare a review. If the target moved, Beeline starts one explicit automatic follow-up with its exact tip. In that turn you own all branch-content work needed to become merge-ready, including the sync, conflict resolution, test fixes, and commit; never ask the human to perform git mechanics.';
 
 /**
  * A corner's live draft is visible before the host can inspect git.
@@ -1369,8 +1364,10 @@ export type RoomEditPolicy = 'repository' | 'named-repository' | 'direct-message
  *  reason, humanized once at the publish site. */
 type LandOutcome = { kind: 'skip' } | { kind: 'landed' } | { kind: 'failed'; reason: string };
 
-type LandingRealignOutcome =
-  { kind: 'ready'; targetTip: string } | { kind: 'blocked'; reason: string; targetTip?: string };
+type TargetSyncOutcome =
+  | { kind: 'ready'; targetTip: string }
+  | { kind: 'moved'; reason: string; targetTip: string }
+  | { kind: 'blocked'; reason: string; targetTip?: string };
 
 /** A Room cannot safely start unless its fixed inspection MCP is available. */
 export class ReadOnlyToolsUnavailableError extends Error {
@@ -1756,8 +1753,6 @@ export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
  * only after this many logged refusals naming the precise reason.
  */
 export const MAX_LAND_SUMMARY_ATTEMPTS = 3;
-/** Distinct target generations one merge-button press may chase before parking. */
-export const MAX_LANDING_TARGET_SYNC_ROUNDS = 3;
 
 /** The message of a caught unknown, without a stack, for a one-line log. */
 function errorText(error: unknown): string {
@@ -2637,8 +2632,6 @@ export class Body {
   private workbenchLeakSignatures = new Map<string, string>();
   private workbench?: SessionWorkbench;
   private workbenchPreparation?: Promise<SessionWorkbench | undefined>;
-  /** Branch-switch conflicts queued for one daemon-driven resolution turn. */
-  private branchSwitchResolutions = new Map<string, { branch: string; reason: string }>();
   /** Typed branch-switch activity that the relay has not accepted yet. */
   private branchSwitchActivityRetries = new Map<
     string,
@@ -2738,8 +2731,8 @@ export class Body {
    * this set rather than leaving a timer holding the daemon open.
    */
   private readonly pendingCiWatches = new Set<Promise<void>>();
-  /** (repoId:tip) lands this process has already realigned corners for. */
-  private readonly realignedLandKeys = new Set<string>();
+  /** (repoId:tip) lands this process has already offered to stale corner models. */
+  private readonly syncedLandKeys = new Set<string>();
   /** Last model-availability state this process reconciled per Room. */
   private readonly modelAvailabilityRooms = new Map<string, string>();
   /** One coalesced approval pass per Room. A pushed approval arriving while a
@@ -5792,8 +5785,8 @@ export class Body {
         'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
         `Repo: ${this.repoId(boundRepo)}`,
         `This corner currently targets ${shortBranchName(boundRepo.targetBranch)}. The Room owner ` +
-          'may rebind the Room target while this corner is open; the host will automatically rebase ' +
-          'this worktree and surface any conflict through activity plus a resolution turn.',
+          'may rebind the Room target while this corner is open; the host will give the exact new target ' +
+          'to one automatic model turn, then verify the resulting clean committed branch.',
         ...(intent ? [`User intent: ${intent}`] : []),
       ].join('\n'),
       // A corner is the agent's isolated worktree. Target landing and archive
@@ -9880,26 +9873,142 @@ export class Body {
       : { reason: `Could not resolve the local target branch ${targetBranch}.` };
   }
 
-  /** Rebase onto the exact target generation verified at the landing endpoint. */
-  private async realignCornerToTarget(
+  /** Mechanically verify the model left one clean, committed branch containing the exact target. */
+  private async verifyTargetSyncResult(
+    info: SubchannelInfo,
+    targetTip: string,
+  ): Promise<{ tip?: string; reason?: string }> {
+    const status = await git(info.worktreePath, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+      '-z',
+    ]);
+    if (!status.ok) return { reason: 'git status could not verify the worktree' };
+    const dirty = projectDirtyStatus(
+      info.worktreePath,
+      status.stdout,
+      info.session.agentPrivateState,
+    );
+    if (dirty.length > 0) {
+      return { reason: `the worktree still has uncommitted paths: ${dirty.join(', ')}` };
+    }
+    const head = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(head)) return { reason: 'the branch tip could not be read' };
+    if (!(await git(info.worktreePath, ['merge-base', '--is-ancestor', targetTip, head])).ok) {
+      return {
+        reason: `the branch does not contain target ${targetTip.slice(0, 12)}`,
+      };
+    }
+    const ahead = Number(
+      (await git(info.worktreePath, ['rev-list', '--count', `${targetTip}..${head}`])).stdout.trim(),
+    );
+    if (!Number.isFinite(ahead) || ahead < 1) {
+      return { reason: 'the branch has no committed work beyond the target' };
+    }
+    return { tip: head };
+  }
+
+  /**
+   * Give one exact target generation to the corner model. The model owns every
+   * content-changing operation; the daemon only observes the resulting git
+   * state. This is a visible ordinary ACP turn, never a hidden gate-rejection
+   * continuation and never an automatic retry loop.
+   */
+  private async syncTargetWithAgent(
     info: SubchannelInfo,
     targetBranch: string,
     targetTip: string,
-  ): Promise<CornerRealignResult> {
-    const boundRepo = info.boundRepo!;
-    const remoteName = boundRepo.remoteName;
-    let remoteUrl: string | undefined;
-    if (remoteName) {
-      const pushUrl = await git(info.worktreePath, ['remote', 'get-url', '--push', remoteName]);
-      remoteUrl = pushUrl.ok && pushUrl.stdout.trim() ? pushUrl.stdout.trim() : undefined;
+    originalRequestId: string,
+  ): Promise<TargetSyncOutcome> {
+    const branch = targetBranch.replace(/^refs\/heads\//, '');
+    const requestId = `target-sync-${randomUUID()}`;
+    const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
+    const task = (async (): Promise<TargetSyncOutcome> => {
+      try {
+        await this.transitionCornerState(info, 'working');
+        await postAgentTurnStatus(
+          info.subchannelId,
+          this.agentIdentity,
+          requestId,
+          sessionId,
+          'working',
+          this.presenceGenerations.get(info.subchannelId),
+        );
+        const result = await this.promptAgent(
+          info.session,
+          [
+            `${branch} moved to ${targetTip}. Bring this branch up to date on it and make it merge-ready, whatever it takes.`,
+            'You own all branch content work for this sync: fetch the exact target, replay or merge the feature work, resolve every conflict, fix tests broken by the replay, run the relevant checks, and commit the complete result.',
+            'Do not merge or push the target branch. Do not ask the human to perform git mechanics. Finish this one turn only after the feature branch is clean, committed, and contains the target tip.',
+            CORNER_TURN_SUMMARY_INSTRUCTION,
+          ].join('\n\n'),
+          {
+            channelId: info.subchannelId,
+            requestId,
+            originalRequestId,
+            cause: 'corner-follow-up',
+            withholdMergeClaims: true,
+          },
+        );
+        const verified = await this.verifyTargetSyncResult(info, targetTip);
+        const reported = stripAttachmentDirectives(stripAgentReplyPreamble(result.agentText))
+          .trim()
+          .replace(/\s+/g, ' ')
+          .slice(0, CORNER_TURN_SUMMARY_MAX_CHARS);
+        if (!verified.tip) {
+          const reason = [
+            reported ? `Codex reported: ${reported}.` : 'Codex returned no completion summary.',
+            `Verification failed because ${verified.reason ?? 'the branch was not merge-ready'}.`,
+          ].join(' ');
+          await postAgentTurnStatus(
+            info.subchannelId,
+            this.agentIdentity,
+            requestId,
+            sessionId,
+            'failed',
+            this.presenceGenerations.get(info.subchannelId),
+          );
+          return { kind: 'blocked', reason, targetTip };
+        }
+        await postAgentTurnStatus(
+          info.subchannelId,
+          this.agentIdentity,
+          requestId,
+          sessionId,
+          'complete',
+          this.presenceGenerations.get(info.subchannelId),
+        );
+        return { kind: 'ready', targetTip };
+      } catch (error) {
+        await postAgentTurnStatus(
+          info.subchannelId,
+          this.agentIdentity,
+          requestId,
+          sessionId,
+          'failed',
+          this.presenceGenerations.get(info.subchannelId),
+        ).catch(() => undefined);
+        return {
+          kind: 'blocked',
+          reason: `Codex could not complete the target-sync turn: ${summarizeGitFailure(errorText(error))}`,
+          targetTip,
+        };
+      }
+    })();
+    let registeredTask: Promise<void> | undefined;
+    if (!this.runningAgentTasks.has(info.subchannelId)) {
+      registeredTask = task.then(() => undefined);
+      this.runningAgentTasks.set(info.subchannelId, registeredTask);
     }
-    return realignWorktreeOntoTarget(info.worktreePath, {
-      ...(remoteName ? { remoteName } : {}),
-      ...(remoteUrl ? { remoteUrl } : {}),
-      targetBranch,
-      targetTip,
-      runGit: async (cwd, args) => await this.remoteGit(boundRepo, cwd, args),
-    });
+    try {
+      return await task;
+    } finally {
+      if (registeredTask && this.runningAgentTasks.get(info.subchannelId) === registeredTask) {
+        this.runningAgentTasks.delete(info.subchannelId);
+        await this.runDeferredLandArchive(info.subchannelId);
+      }
+    }
   }
 
   /** Build the one complete payload stored by content hash. */
@@ -10016,7 +10125,10 @@ export class Body {
   }
 
   /** Push the agent's feature tip and publish the corner's current review. */
-  private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
+  private async publishMergeReady(
+    info: SubchannelInfo,
+    options: { allowTargetSync?: boolean; syncRequestId?: string } = {},
+  ): Promise<boolean> {
     const boundRepo = info.boundRepo;
     if (!boundRepo || info.archived) return false;
     let tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
@@ -10033,7 +10145,7 @@ export class Body {
     }
 
     const targetBranch = boundRepo.targetBranch ?? 'refs/heads/main';
-    const currentTarget = await this.currentReviewTargetTip(info, targetBranch);
+    let currentTarget = await this.currentReviewTargetTip(info, targetBranch);
     let targetIsAncestor = Boolean(
       currentTarget.tip &&
       (currentTarget.tip === tip ||
@@ -10041,29 +10153,32 @@ export class Body {
     );
     let targetSyncReason = currentTarget.reason;
     if (!targetSyncReason && !targetIsAncestor) {
-      const realigned = await this.realignCornerToTarget(info, targetBranch, currentTarget.tip!);
-      if (realigned.status === 'conflict') {
-        // A conflict is deferred to the approved landing transaction. The
-        // work itself is still reviewable against its merge-base, so keep the
-        // merge target mounted and spend no model turn before the owner acts.
-        console.log(
-          `[body] deferred target conflict for ${info.subchannelId} until landing: ${realigned.detail ?? 'conflict'}`,
+      if (options.allowTargetSync === false) {
+        targetSyncReason = `${targetBranch.replace(/^refs\/heads\//, '')} moved to ${currentTarget.tip!.slice(0, 12)} after the Codex sync turn.`;
+      } else {
+        const synced = await this.syncTargetWithAgent(
+          info,
+          targetBranch,
+          currentTarget.tip!,
+          options.syncRequestId ?? info.request?.eventId ?? `review:${info.subchannelId}`,
         );
+        if (synced.kind === 'blocked') {
+          targetSyncReason = synced.reason;
+        }
       }
-      if (realigned.status === 'rebased' || realigned.status === 'up-to-date') {
+      if (!targetSyncReason) {
+        const refreshedTarget = await this.currentReviewTargetTip(info, targetBranch);
+        currentTarget = refreshedTarget;
         tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
         targetIsAncestor =
+          Boolean(refreshedTarget.tip) &&
           /^[0-9a-f]{40}$/.test(tip) &&
-          (await git(info.worktreePath, ['merge-base', '--is-ancestor', currentTarget.tip!, tip]))
+          (await git(info.worktreePath, ['merge-base', '--is-ancestor', refreshedTarget.tip!, tip]))
             .ok;
-        if (!targetIsAncestor) {
-          targetSyncReason = `The target moved again while this corner was being synchronized. Beeline will retry from the newest ${targetBranch.replace(/^refs\/heads\//, '')} tip.`;
+        targetSyncReason = refreshedTarget.reason;
+        if (!targetSyncReason && !targetIsAncestor) {
+          targetSyncReason = `${targetBranch.replace(/^refs\/heads\//, '')} moved again during the Codex sync turn. A fresh sync turn is required.`;
         }
-      } else if (realigned.status !== 'conflict') {
-        targetSyncReason =
-          realignAnnouncement(realigned, info.featureBranch, targetBranch) ??
-          realigned.detail ??
-          `Could not synchronize this corner with ${targetBranch}.`;
       }
     }
     const target = {
@@ -10897,7 +11012,15 @@ export class Body {
       let remote = boundRepo?.remoteName;
       let target = info.mergeTarget;
       // Relay-origin repos land through the merge gate, never here.
-      if (info.archived || info.landedTip || !boundRepo || boundRepo.ownerHex || !target) continue;
+      if (
+        info.archived ||
+        info.landedTip ||
+        this.runningAgentTasks.has(info.subchannelId) ||
+        !boundRepo ||
+        boundRepo.ownerHex ||
+        !target
+      )
+        continue;
       if (!remote && !boundRepo.localPath) continue;
       if (info.mission) {
         // Standing mission land is deliberately remote-only: local ref writes
@@ -10913,61 +11036,45 @@ export class Body {
       info.landingBlockedApprovalId = undefined;
       const landing = await serializeRepoLanding(this.repoId(boundRepo), async () => {
         let currentTarget = target!;
-        let syncRounds = 0;
-        for (;;) {
-          let currentRepo = boundRepo!;
-          let currentRemote = remote;
-          if (this.refreshRepositoryTruth) {
-            currentRepo = await this.refreshRepositoryTruth(currentRepo, 'land');
-            info.boundRepo = currentRepo;
-            currentRemote = currentRepo.remoteName;
-          }
-          const outcome = currentRemote
+        let currentRepo = boundRepo!;
+        let currentRemote = remote;
+        const refresh = async (): Promise<void> => {
+          if (!this.refreshRepositoryTruth) return;
+          currentRepo = await this.refreshRepositoryTruth(currentRepo, 'land');
+          info.boundRepo = currentRepo;
+          currentRemote = currentRepo.remoteName;
+        };
+        const attempt = async (): Promise<LandOutcome> =>
+          currentRemote
             ? await this.landOnDirectRemote(info, currentRemote, currentTarget)
             : await this.landInLocalCheckout(currentRepo.localPath!, currentTarget, info);
-          if (outcome.kind !== 'failed' || !isMovedTargetLandFailure(outcome.reason)) {
-            return {
-              boundRepo: currentRepo,
-              remote: currentRemote,
-              target: currentTarget,
-              outcome,
+
+        await refresh();
+        let outcome = await attempt();
+        if (outcome.kind === 'failed' && isMovedTargetLandFailure(outcome.reason)) {
+          const synced = await this.syncMovedTargetForLanding(info, currentTarget);
+          if (synced.kind === 'blocked') {
+            outcome = { kind: 'failed', reason: synced.reason };
+          } else if (synced.kind === 'moved') {
+            outcome = { kind: 'failed', reason: synced.reason };
+          } else if (!info.mergeTarget) {
+            outcome = {
+              kind: 'failed',
+              reason: 'the Codex-updated change could not be republished for landing',
             };
+          } else {
+            currentTarget = info.mergeTarget;
+            await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
+            await refresh();
+            outcome = await attempt();
           }
-          if (syncRounds >= MAX_LANDING_TARGET_SYNC_ROUNDS) {
-            return {
-              boundRepo: currentRepo,
-              remote: currentRemote,
-              target: currentTarget,
-              outcome: {
-                kind: 'failed' as const,
-                reason: `the target moved during ${MAX_LANDING_TARGET_SYNC_ROUNDS} consecutive landing rounds`,
-              },
-            };
-          }
-          syncRounds += 1;
-          const realigned = await this.realignMovedTargetForLanding(info, currentTarget);
-          if (realigned.kind === 'blocked') {
-            return {
-              boundRepo: currentRepo,
-              remote: currentRemote,
-              target: currentTarget,
-              outcome: { kind: 'failed' as const, reason: realigned.reason },
-            };
-          }
-          if (!info.mergeTarget) {
-            return {
-              boundRepo: currentRepo,
-              remote: currentRemote,
-              target: currentTarget,
-              outcome: {
-                kind: 'failed' as const,
-                reason: 'the realigned change could not be republished for landing',
-              },
-            };
-          }
-          currentTarget = info.mergeTarget;
-          await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
         }
+        return {
+          boundRepo: currentRepo,
+          remote: currentRemote,
+          target: currentTarget,
+          outcome,
+        };
       });
       boundRepo = landing.boundRepo;
       remote = landing.remote;
@@ -11112,18 +11219,16 @@ export class Body {
   }
 
   /**
-   * Realign an approved corner inside the per-repository landing transaction.
-   * Clean rebases stay daemon-only. A conflict gets exactly one silent model
-   * turn for this target generation, then the host verifies the resulting git
-   * state before the same standing approval continues.
+   * Ask the corner model to own one approved target sync inside the
+   * per-repository landing transaction. The daemon performs no rebase or
+   * conflict edit; it only verifies, republishes the truthful card, and lets
+   * the ff-only land continue.
    */
-  private async realignMovedTargetForLanding(
+  private async syncMovedTargetForLanding(
     info: SubchannelInfo,
     target: NonNullable<SubchannelInfo['mergeTarget']>,
-  ): Promise<LandingRealignOutcome> {
-    const branch = target.branch.replace(/^refs\/heads\//, '');
+  ): Promise<TargetSyncOutcome> {
     const approvalId = info.humanMergeApproval?.id ?? target.tip;
-    await this.transitionCornerState(info, 'working');
     await this.postLandingStage(info, 'realigning', {
       title: 'Realigning',
       status: 'in_progress',
@@ -11131,161 +11236,50 @@ export class Body {
     const currentTarget = info.boundRepo
       ? await this.currentReviewTargetTip(info, target.branch)
       : { reason: 'repository binding is unavailable for automatic target synchronization' };
-    const result = currentTarget.tip
-      ? await this.realignCornerToTarget(info, target.branch, currentTarget.tip)
-      : await realignWorktreeOntoTarget(info.worktreePath, { targetBranch: target.branch });
-    if (result.status === 'rebased' || result.status === 'up-to-date') {
-      await this.postLandingStage(info, 'realigning', {
-        title: 'Realigning',
-        status: 'completed',
-        ...(result.detail ? { output: `Rebased at ${result.detail.slice(0, 12)}` } : {}),
-      });
-      // Force `publishMergeReady` to replace the stale review coordinates even
-      // when another daemon already performed the same pure realignment.
-      info.mergeTarget = undefined;
-      info.lastLandFailure = undefined;
-      if (await this.publishMergeReady(info)) {
-        return { kind: 'ready', targetTip: currentTarget.tip! };
-      }
+    if (!currentTarget.tip) {
+      return {
+        kind: 'blocked',
+        reason: currentTarget.reason ?? 'the current target tip could not be read',
+      };
+    }
+    const synced = await this.syncTargetWithAgent(
+      info,
+      target.branch,
+      currentTarget.tip,
+      approvalId,
+    );
+    if (synced.kind !== 'ready') return synced;
+
+    const newestTarget = await this.currentReviewTargetTip(info, target.branch);
+    if (!newestTarget.tip) {
+      return {
+        kind: 'blocked',
+        reason: newestTarget.reason ?? 'the target could not be re-read after the Codex sync turn',
+        targetTip: currentTarget.tip,
+      };
+    }
+    if (newestTarget.tip !== currentTarget.tip) {
+      return {
+        kind: 'moved',
+        reason: `${target.branch.replace(/^refs\/heads\//, '')} moved again to ${newestTarget.tip.slice(0, 12)} during the Codex sync turn`,
+        targetTip: newestTarget.tip,
+      };
     }
 
-    if (result.status === 'conflict' && currentTarget.tip) {
-      const conflictFiles = result.detail?.trim() || 'the files changed on both branches';
-      const requestId = `landing-resolve:${approvalId}:${currentTarget.tip}`;
-      const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
-      const existingTurn = this.runningAgentTasks.get(info.subchannelId);
-      if (existingTurn) await existingTurn;
-
-      const resolveTask = (async (): Promise<LandingRealignOutcome> => {
-        try {
-          await postAgentTurnStatus(
-            info.subchannelId,
-            this.agentIdentity,
-            requestId,
-            sessionId,
-            'working',
-            this.presenceGenerations.get(info.subchannelId),
-          );
-          await this.promptAgent(
-            info.session,
-            [
-              `The owner approved this corner and Beeline is landing it now. Rebase ${info.featureBranch} onto ${branch} at ${currentTarget.tip}.`,
-              `The daemon's safe rebase attempt found conflicts in: ${conflictFiles}. Resolve every conflict, preserve the corner's intended change and the newer target changes, run the relevant checks, and commit the resolution. Do not ask the human anything and do not stop with a rebase in progress.`,
-              CORNER_TURN_SUMMARY_INSTRUCTION,
-            ].join('\n\n'),
-            {
-              channelId: info.subchannelId,
-              requestId,
-              originalRequestId: approvalId,
-              cause: 'corner-follow-up',
-              silent: true,
-              withholdMergeClaims: true,
-            },
-          );
-          const status = (
-            await git(info.worktreePath, [
-              'status',
-              '--porcelain=v1',
-              '--untracked-files=all',
-              '-z',
-            ])
-          ).stdout;
-          const dirty = projectDirtyStatus(
-            info.worktreePath,
-            status,
-            info.session.agentPrivateState,
-          );
-          const head = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-          const containsTarget =
-            /^[0-9a-f]{40}$/.test(head) &&
-            (
-              await git(info.worktreePath, [
-                'merge-base',
-                '--is-ancestor',
-                currentTarget.tip!,
-                head,
-              ])
-            ).ok;
-          if (dirty.length > 0 || !containsTarget) {
-            const reason = dirty.length
-              ? `conflict resolution left uncommitted paths: ${dirty.join(', ')}`
-              : `conflict resolution did not put ${info.featureBranch} on ${branch} at ${currentTarget.tip!.slice(0, 12)}`;
-            await postAgentTurnStatus(
-              info.subchannelId,
-              this.agentIdentity,
-              requestId,
-              sessionId,
-              'failed',
-              this.presenceGenerations.get(info.subchannelId),
-            );
-            return { kind: 'blocked', reason, targetTip: currentTarget.tip };
-          }
-          info.mergeTarget = undefined;
-          info.lastLandFailure = undefined;
-          const ready = await this.publishMergeReady(info);
-          await postAgentTurnStatus(
-            info.subchannelId,
-            this.agentIdentity,
-            requestId,
-            sessionId,
-            ready ? 'complete' : 'failed',
-            this.presenceGenerations.get(info.subchannelId),
-          );
-          if (!ready) {
-            return {
-              kind: 'blocked',
-              reason: info.lastMergeNotReadyReason ?? 'resolved branch could not be revalidated',
-              targetTip: currentTarget.tip,
-            };
-          }
-          return { kind: 'ready', targetTip: currentTarget.tip! };
-        } catch (error) {
-          await postAgentTurnStatus(
-            info.subchannelId,
-            this.agentIdentity,
-            requestId,
-            sessionId,
-            'failed',
-            this.presenceGenerations.get(info.subchannelId),
-          ).catch(() => undefined);
-          return {
-            kind: 'blocked',
-            reason: summarizeGitFailure(errorText(error)),
-            targetTip: currentTarget.tip,
-          };
-        }
-      })();
-      this.runningAgentTasks.set(
-        info.subchannelId,
-        resolveTask.then(() => undefined),
-      );
-      try {
-        const resolved = await resolveTask;
-        if (resolved.kind === 'ready') {
-          await this.postLandingStage(info, 'realigning', {
-            title: 'Realigning',
-            status: 'completed',
-          });
-        }
-        return resolved;
-      } finally {
-        this.runningAgentTasks.delete(info.subchannelId);
-        await this.runDeferredLandArchive(info.subchannelId);
-      }
+    info.mergeTarget = undefined;
+    info.lastLandFailure = undefined;
+    if (!(await this.publishMergeReady(info, { allowTargetSync: false, syncRequestId: approvalId }))) {
+      return {
+        kind: 'blocked',
+        reason: info.lastMergeNotReadyReason ?? 'the Codex-updated branch could not be revalidated',
+        targetTip: currentTarget.tip,
+      };
     }
-
-    const reason =
-      result.status === 'rebased' || result.status === 'up-to-date'
-        ? (info.lastMergeNotReadyReason ?? `could not republish the realigned ${branch} change`)
-        : (realignAnnouncement(result, info.featureBranch, target.branch) ??
-          result.detail ??
-          `could not realign with ${branch}`);
-    const humanized = summarizeGitFailure(reason);
-    return {
-      kind: 'blocked',
-      reason: humanized,
-      ...(currentTarget.tip ? { targetTip: currentTarget.tip } : {}),
-    };
+    await this.postLandingStage(info, 'realigning', {
+      title: 'Realigning',
+      status: 'completed',
+    });
+    return { kind: 'ready', targetTip: currentTarget.tip };
   }
 
   /**
@@ -11538,13 +11532,13 @@ export class Body {
     // A proven land is a canonical terminal conclusion. The later archive
     // advances this to CLOSED after the session retires and cleanup completes.
     if (!info.archived) await this.transitionCornerState(info, 'concluded');
-    // Post-merge auto-realign: the instant a land is confirmed, every OTHER
-    // open corner bound to this repository is brought up to date without its
-    // human having to ask each agent. Fire-and-forget — realign work must
+    // Post-merge model sync: the instant a land is confirmed, every OTHER
+    // unreviewed committed corner can be brought up to date without its human
+    // having to ask each agent. Fire-and-forget — sync work must
     // never hold up (or be able to fail) the recap and teardown that follow.
     // Exactly-once per (repo, tip) lives inside.
     if (info.boundRepo) {
-      void this.realignRepositoryAfterLand(info.boundRepo, landedTip);
+      void this.syncRepositoryCornersAfterLand(info.boundRepo, landedTip);
     }
     if (info.landSummaryPosted) return;
     const landSummaryId = await this.postCornerLandSummary(info, landedTip).catch((error) => {
@@ -11557,111 +11551,102 @@ export class Body {
   /** Cadence for the foreign merge-land watch (one bounded read per Room). */
   private static readonly FOREIGN_LAND_SCAN_MS = 60_000;
   /** How far back the first scan after a restart looks. Bootstrap is
-   *  deliberately conservative: a realign is idempotent (an up-to-date corner
-   *  is a no-op), so re-examining one recent land costs nothing. */
+   * deliberately conservative; per-land keys prevent duplicate sync turns. */
   private static readonly FOREIGN_LAND_BOOTSTRAP_WINDOW_S = 600;
 
   /**
-   * Post-merge auto-realign: bring every OTHER open corner bound to this
-   * repository onto the newly landed target branch, without its human having
-   * to ask each agent.
-   *
-   * The canonical checkout the Room reads from is already refreshed by
-   * `refreshRepositoryTruth` at every land point, so what moves here is the
-   * corners themselves (`realign.ts`):
-   *
-   *   - clean, behind corners are rebased onto the new target automatically;
-   *   - conflicted / dirty corners ANNOUNCE that plainly instead of silently
-   *     diverging;
-   *   - corners with a live review target are left alone here — their own land
-   *     poll performs the content-identity check and drives visible realignment.
+   * Post-merge model sync: detect every OTHER open committed corner bound to
+   * this repository and give its model the exact landed target. Corners with
+   * a live review target stay in the serialized approval/landing path.
    *
    * Exactly-once per (repository, landed tip), so the recap path calling
    * this from both the land poll and the completion poll stays harmless.
    */
-  private async realignRepositoryAfterLand(boundRepo: BoundRepo, landedTip: string): Promise<void> {
+  private async syncRepositoryCornersAfterLand(
+    boundRepo: BoundRepo,
+    landedTip: string,
+  ): Promise<void> {
     const repoKey = this.repoId(boundRepo);
     const key = `${repoKey}:${landedTip}`;
-    if (this.realignedLandKeys.has(key)) return;
-    this.realignedLandKeys.add(key);
+    if (this.syncedLandKeys.has(key)) return;
+    this.syncedLandKeys.add(key);
     try {
-      await this.realignCornersForRepo(repoKey, boundRepo.targetBranch ?? 'refs/heads/main');
+      await this.syncCornersForRepo(
+        repoKey,
+        boundRepo.targetBranch ?? 'refs/heads/main',
+        landedTip,
+      );
     } catch (error) {
-      console.error(`[body] post-merge realign failed for ${repoKey}:`, error);
+      console.error(`[body] post-merge target sync failed for ${repoKey}:`, error);
     }
   }
 
-  /** Realign every open corner of one repository; announcements ride the
-   *  bounded critical-publish loop. Returns how many corners were rebased. */
-  private async realignCornersForRepo(repoKey: string, targetBranch: string): Promise<number> {
-    let rebased = 0;
+  /**
+   * Detect other clean committed corners made stale by a land and give each
+   * one exact target generation to its model. No daemon git operation changes
+   * branch content. Returns how many corners the model made reviewable.
+   */
+  private async syncCornersForRepo(
+    repoKey: string,
+    targetBranch: string,
+    landedTip: string,
+  ): Promise<number> {
+    let syncedCount = 0;
     for (const other of this.subchannels.values()) {
       if (other.archived) continue;
       if (!other.boundRepo || this.repoId(other.boundRepo) !== repoKey) continue;
-      // A live review target owns its own approval/realignment state machine.
+      // A live review target owns its own approval/target-sync state machine.
       // Let its land poll detect the moved target and preserve or spend the
       // approval based on the newly computed content identity.
       if (other.mergeTarget || other.humanMergeApproval) {
         console.log(
-          `[body] realign skipped for corner ${other.subchannelId}: a review target is outstanding`,
+          `[body] target sync skipped for corner ${other.subchannelId}: a review target is outstanding`,
         );
         continue;
       }
-      const result = await realignWorktreeOntoTarget(other.worktreePath, {
-        remoteName: other.boundRepo.remoteName ?? undefined,
+      if (this.runningAgentTasks.has(other.subchannelId)) continue;
+      if (!(await this.cornerHasUnreviewedCommits(other))) continue;
+      const currentTarget = await this.currentReviewTargetTip(other, targetBranch);
+      if (!currentTarget.tip) continue;
+      const head = (await git(other.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+      if (
+        /^[0-9a-f]{40}$/.test(head) &&
+        (await git(other.worktreePath, ['merge-base', '--is-ancestor', currentTarget.tip, head])).ok
+      ) {
+        continue;
+      }
+      const synced = await this.syncTargetWithAgent(
+        other,
         targetBranch,
-      });
-      if (result.status === 'up-to-date') continue;
-      if (result.status === 'rebased') {
-        rebased++;
-        console.log(
-          `[body] realigned corner ${other.subchannelId} onto ${targetBranch} (${result.previousTip?.slice(0, 12)} -> ${(result.detail ?? '').slice(0, 12)})`,
-        );
+        currentTarget.tip,
+        `land:${landedTip}`,
+      );
+      if (synced.kind !== 'ready') {
+        const reason = synced.reason;
+        if (other.mergeGateBlocked?.reason !== reason) {
+          other.lastMergeNotReadyReason = reason;
+          other.mergeGateBlocked = { reason, targetTip: synced.targetTip };
+          await postControlMessage(other.subchannelId, this.agentIdentity, reason, [
+            ['t', 'merge-gate-blocked'],
+            ['status', 'needs-attention'],
+            ['branch', targetBranch],
+          ]).catch((error) =>
+            console.error(`[body] target-sync blocker refused for ${other.subchannelId}:`, error),
+          );
+        }
         continue;
       }
-      const announcement = realignAnnouncement(result, other.featureBranch, targetBranch);
-      if (!announcement) continue;
-      console.log(`[body] realign announcement for ${other.subchannelId}: ${result.status}`);
-      await publishCritical(
-        () =>
-          postControlMessage(other.subchannelId, this.agentIdentity, announcement, [
-            ...RECOVERABLE_CORNER_FAILURE_TAGS,
-            ['t', 'corner-realign'],
-            ['status', 'needs-attention'],
-            ['display-status', 'needs-attention'],
-            ['retry', 'blocked' satisfies DeliveryRetryPosture],
-            ['branch', targetBranch],
-          ]),
-        {
-          label: `realign notice for corner ${other.subchannelId}`,
-          onGiveUp: (error) =>
-            console.error(`[body] realign notice refused for ${other.subchannelId}:`, error),
-        },
-      );
-      await publishCritical(
-        () =>
-          this.postParentCornerStatus(
-            other,
-            'needs-attention',
-            'Could not follow the latest merge on the target branch. Open corner for details.',
-          ),
-        {
-          label: `realign parent status for ${other.subchannelId}`,
-          onGiveUp: (error) =>
-            console.error(`[body] realign parent status refused for ${other.subchannelId}:`, error),
-        },
-      );
+      if (await this.publishMergeReady(other, { allowTargetSync: false })) syncedCount += 1;
     }
-    return rebased;
+    return syncedCount;
   }
 
   /**
    * Apply an owner-confirmed Room target-branch binding to every open corner.
-   * Unlike post-merge realignment, a binding change deliberately updates the
+   * Unlike post-merge synchronization, a binding change deliberately updates the
    * corner's destination and therefore includes corners that already had a
-   * review card. Their old branch-scoped approval is cleared before rebasing;
-   * successful work is republished for review on the new branch, while a
-   * conflict is a typed activity error plus one queued agent resolution turn.
+   * review card. Their old branch-scoped approval is cleared before one
+   * model-owned sync; successful work is republished on the new branch.
    */
   private async reconcileRoomTargetBranch(channelId: string, roomRepo: BoundRepo): Promise<number> {
     await this.flushBranchSwitchActivities();
@@ -11704,28 +11689,41 @@ export class Body {
         Boolean(info.mergeTarget || info.humanMergeApproval) ||
         this.branchSwitchReviewRepublishes.has(info.subchannelId);
       if (hadReview) this.branchSwitchReviewRepublishes.add(info.subchannelId);
-      // The binding is authoritative even when git needs help. Updating this
-      // first makes every later prompt/review target the new branch; the work
-      // itself remains intact if the automatic rebase aborts.
+      // The binding is authoritative even when the model cannot complete the
+      // content sync. Update it before the one automatic turn so every prompt
+      // and later review names the new branch.
       info.mergeTarget = undefined;
       info.humanMergeApproval = undefined;
       info.ackedApprovalId = undefined;
       info.ackedApprovalActivityId = undefined;
       info.lastLandFailure = undefined;
-
-      const result = await realignWorktreeOntoTarget(info.worktreePath, {
-        ...(info.boundRepo.remoteName ? { remoteName: info.boundRepo.remoteName } : {}),
-        targetBranch,
-      });
-      const success = result.status === 'rebased' || result.status === 'up-to-date';
-      const reason = success
-        ? `This corner now targets ${branch}${result.status === 'rebased' ? ` at ${(result.detail ?? '').slice(0, 12)}` : ''}.`
-        : (realignAnnouncement(result, info.featureBranch, targetBranch) ??
-          result.detail ??
-          `could not rebase onto ${branch}`);
       const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
       info.boundRepo = { ...info.boundRepo, targetBranch };
       info.session.resumeTargetRef = targetBranch;
+      const currentTarget = await this.currentReviewTargetTip(info, targetBranch);
+      const head = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+      const alreadyContainsTarget = Boolean(
+        currentTarget.tip &&
+        /^[0-9a-f]{40}$/.test(head) &&
+        (await git(info.worktreePath, ['merge-base', '--is-ancestor', currentTarget.tip, head])).ok,
+      );
+      const result = alreadyContainsTarget
+        ? ({ kind: 'ready', targetTip: currentTarget.tip! } satisfies TargetSyncOutcome)
+        : currentTarget.tip
+          ? await this.syncTargetWithAgent(
+              info,
+              targetBranch,
+              currentTarget.tip,
+              `target-branch:${channelId}:${branch}`,
+            )
+          : ({
+              kind: 'blocked',
+              reason: currentTarget.reason ?? `could not read ${branch}`,
+            } satisfies TargetSyncOutcome);
+      const success = result.kind === 'ready';
+      const reason = success
+        ? `This corner now targets ${branch} at ${result.targetTip.slice(0, 12)}.`
+        : result.reason;
       const activity = {
         sessionId,
         channelId: info.subchannelId,
@@ -11747,7 +11745,7 @@ export class Body {
         changed += 1;
         if (hadReview && !this.branchSwitchActivityRetries.has(info.subchannelId)) {
           try {
-            await this.publishMergeReady(info);
+            await this.publishMergeReady(info, { allowTargetSync: false });
             this.branchSwitchReviewRepublishes.delete(info.subchannelId);
           } catch (error) {
             console.error(
@@ -11759,20 +11757,14 @@ export class Body {
         continue;
       }
       this.branchSwitchReviewRepublishes.delete(info.subchannelId);
-
-      const resolutionPrompt =
-        `The Room owner changed the canonical target from ${shortBranchName(previousBranch)} to ${branch}. ` +
-        `The host's automatic rebase was aborted safely: ${summarizeGitFailure(reason)} ` +
-        `Resolve the feature branch onto ${branch} in this corner, rerun relevant checks, commit the resolution, and publish the work for review. ` +
-        'This synchronization is already authorized; do not ask for permission and do not change the Room binding.';
-      this.branchSwitchResolutions.set(info.subchannelId, {
-        branch: targetBranch,
-        reason: resolutionPrompt,
-      });
-      await this.postParentCornerStatus(
-        info,
-        'needs-attention',
-        `Target changed to ${branch}; automatic rebase needs the agent to resolve it.`,
+      info.lastMergeNotReadyReason = reason;
+      info.mergeGateBlocked = { reason, ...(result.targetTip ? { targetTip: result.targetTip } : {}) };
+      await postControlMessage(info.subchannelId, this.agentIdentity, reason, [
+        ['t', 'merge-gate-blocked'],
+        ['status', 'needs-attention'],
+        ['branch', targetBranch],
+      ]).catch((error) =>
+        console.error(`[body] target-branch sync blocker refused for ${info.subchannelId}:`, error),
       );
     }
     return changed;
@@ -11798,7 +11790,7 @@ export class Body {
             kind: activity.success ? 'execute' : 'error',
             title: `Room target branch: ${activity.previousBranch} → ${activity.branch}`,
             status: activity.success ? 'completed' : 'failed',
-            command: `git rebase ${activity.branch}`,
+            command: `target sync ${activity.branch}`,
             output: activity.reason,
           },
         ],
@@ -11811,7 +11803,7 @@ export class Body {
     );
   }
 
-  /** Retry typed activity before allowing its conflict-resolution turn to run. */
+  /** Retry typed target-sync activity publication. */
   private async flushBranchSwitchActivities(): Promise<void> {
     for (const [subchannelId, activity] of this.branchSwitchActivityRetries) {
       try {
@@ -11826,30 +11818,9 @@ export class Body {
     }
   }
 
-  /** Start exactly one agent resolution turn for each surfaced branch conflict. */
-  private async pollBranchSwitchResolutions(): Promise<void> {
-    await this.flushBranchSwitchActivities();
-    for (const [subchannelId, pending] of this.branchSwitchResolutions) {
-      const info = this.subchannels.get(subchannelId);
-      if (!info || info.archived) {
-        this.branchSwitchResolutions.delete(subchannelId);
-        continue;
-      }
-      if (this.branchSwitchActivityRetries.has(subchannelId)) continue;
-      if (this.runningAgentTasks.has(subchannelId)) continue;
-      this.branchSwitchResolutions.delete(subchannelId);
-      const requestId = `branch-switch-${randomUUID()}`;
-      this.startAgentTask(info, pending.reason, pending.reason, {
-        requestId,
-        originalRequestId: requestId,
-        cause: 'corner-follow-up',
-      });
-    }
-  }
-
   /**
    * Watch THIS Room's transcript for merge-landed cards authored by ANOTHER
-   * agent serving the same repository, and realign our own corners in
+   * agent serving the same repository, and sync our own corners in
    * response. A repository can be served by several agents at once; when one
    * lands, the others must follow without their humans asking each of them.
    *
@@ -11887,9 +11858,13 @@ export class Body {
       if (!served) continue;
       const branch = typeof tags['branch'] === 'string' ? tags['branch'] : undefined;
       console.log(
-        `[body] foreign merge-land observed in ${channelId}: repo=${repoTag} tip=${String(tags['tip']).slice(0, 12)}; realigning own corners`,
+        `[body] foreign merge-land observed in ${channelId}: repo=${repoTag} tip=${String(tags['tip']).slice(0, 12)}; syncing own corners`,
       );
-      await this.realignCornersForRepo(repoTag, branch ?? 'refs/heads/main');
+      await this.syncCornersForRepo(
+        repoTag,
+        branch ?? 'refs/heads/main',
+        String(tags['tip']),
+      );
     }
     this.foreignLandCursor.set(channelId, newestSeen);
   }
@@ -12293,7 +12268,11 @@ export class Body {
     const attempts = await mergeGate.poll(pushedApprovals, {
       shouldAttempt: (attempt) => {
         const info = this.subchannels.get(attempt.candidate.subchannelId);
-        return !info || info.landingBlockedApprovalId !== attempt.approvalId;
+        return (
+          !info ||
+          (!this.runningAgentTasks.has(info.subchannelId) &&
+            info.landingBlockedApprovalId !== attempt.approvalId)
+        );
       },
       onAttemptStart: async (attempt) => {
         const info = this.subchannels.get(attempt.candidate.subchannelId);
@@ -12304,17 +12283,16 @@ export class Body {
           });
         }
       },
-      maxMovedTargetRounds: MAX_LANDING_TARGET_SYNC_ROUNDS,
       onMovedTarget: async (attempt) => {
         const info = this.subchannels.get(attempt.candidate.subchannelId);
         const target = info?.mergeTarget;
         if (!info || info.archived || !target) {
           return { retry: false, reason: 'the corner review target is no longer available' };
         }
-        const realigned = await this.realignMovedTargetForLanding(info, target);
-        return realigned.kind === 'ready'
+        const synced = await this.syncMovedTargetForLanding(info, target);
+        return synced.kind !== 'blocked'
           ? { retry: true }
-          : { retry: false, reason: realigned.reason };
+          : { retry: false, reason: synced.reason };
       },
     });
     for (const attempt of attempts) {
@@ -13535,7 +13513,7 @@ export class Body {
     }
     // Another agent serving this repository may have landed a merge in this
     // Room; our own corners must follow without being asked (post-merge
-    // auto-realign, cross-agent half).
+    // model-owned target sync, cross-agent half).
     if (boundRepo) {
       await guarded('foreign merge-land watch', () => this.pollForeignMergeLands(channelId));
     }
@@ -13553,7 +13531,6 @@ export class Body {
       const failed = results.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
     });
-    await guarded('branch-switch resolution', () => this.pollBranchSwitchResolutions());
     // Never-idle: a corner whose latest turn ended without any of the four
     // terminal states (working / ask / review / failure) gets one bounded
     // conclude steer. Runs AFTER the member poll so a queued human message

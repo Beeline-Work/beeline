@@ -53,6 +53,16 @@ function profileFilter(identities: readonly RoomViewIdentity[]) {
     : [];
 }
 
+function agentStateFilter(identities: readonly RoomViewIdentity[]) {
+  const authors = [
+    ...new Set(identities.filter((item) => item.kind === 'agent').map((item) => item.pubkey)),
+  ];
+  // Presence records are scoped to Rooms, not to the Workspace channel. An
+  // author filter is the only bounded Workspace subscription that also sees
+  // an agent's first heartbeat, before the surface has a roomId to target.
+  return authors.length ? [{ kinds: [30078], authors }] : [];
+}
+
 /**
  * Resolve the latest valid human soul for one declared agent.
  *
@@ -2409,6 +2419,7 @@ export class RoomIndexer {
       watchFilters: [
         { kinds: [...DURABLE_KINDS], '#h': [workspaceId] },
         ...profileFilter(roster.map((member) => member.identity)),
+        ...agentStateFilter(agents.map((member) => member.identity)),
       ],
     };
   }

@@ -1567,6 +1567,11 @@ describe('RoomIndexer', () => {
       members: [{ identity: { name: 'Ada' } }],
       agents: [{ identity: { name: 'Milo' } }],
     });
+    const workspace = await indexer.readWorkspace(WORKSPACE, VIEWER);
+    expect(workspace?.watchFilters).toContainEqual({
+      kinds: [30078],
+      authors: [AGENT],
+    });
     await expect(indexer.readChats(WORKSPACE, VIEWER)).resolves.toMatchObject({
       workspace: { id: WORKSPACE, avatar: 'https://media.test/workspace-projected.png' },
       chats: [{ room: { id: ROOM }, latestMessage: { text: 'Ready', author: { name: 'Milo' } } }],

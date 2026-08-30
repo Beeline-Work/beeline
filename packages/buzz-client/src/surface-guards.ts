@@ -497,6 +497,7 @@ function corner(value: unknown): value is CornerListItem {
   return Boolean(
     item &&
     header(item.corner) &&
+    cornerLifecycle(item.lifecycle) &&
     (item.status === 'open' ||
       item.status === 'working' ||
       item.status === 'waiting' ||
@@ -510,6 +511,42 @@ function corner(value: unknown): value is CornerListItem {
     (item.agent === undefined || identity(item.agent)) &&
     (item.latestMessage === undefined || latest(item.latestMessage)),
   );
+}
+
+function cornerLifecycle(value: unknown): boolean {
+  const item = record(value);
+  if (
+    !item ||
+    (item.lifecycle !== 'WORKING' &&
+      item.lifecycle !== 'REVIEW' &&
+      item.lifecycle !== 'APPROVED' &&
+      item.lifecycle !== 'REJECTED' &&
+      item.lifecycle !== 'ARCHIVED') ||
+    (item.archiveFlavor !== undefined &&
+      item.archiveFlavor !== 'merged' &&
+      item.archiveFlavor !== 'rejected' &&
+      item.archiveFlavor !== 'closed')
+  ) {
+    return false;
+  }
+  const verdict = item.verdict === undefined ? undefined : record(item.verdict);
+  if (
+    verdict !== undefined &&
+    (!verdict ||
+      (verdict.verdict !== 'approve' && verdict.verdict !== 'reject') ||
+      typeof verdict.eventId !== 'string' ||
+      !HEX.test(verdict.eventId) ||
+      typeof verdict.signerPubkey !== 'string' ||
+      !HEX.test(verdict.signerPubkey) ||
+      typeof verdict.repository !== 'string' ||
+      !verdict.repository ||
+      typeof verdict.targetBranch !== 'string' ||
+      !verdict.targetBranch ||
+      !integer(verdict.createdAt))
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function repository(value: unknown): boolean {
@@ -625,12 +662,14 @@ export function isRoomView(value: unknown): value is RoomView {
       (Array.isArray(item.briefing) &&
         item.briefing.length <= ROOM_VIEW_BRIEFING_LIMIT &&
         item.briefing.every(isRoomViewMessage))) &&
-    (item.cornerPlan === undefined || activity({ kind: 'output', title: 'Plan', plan: item.cornerPlan })) &&
+    (item.cornerPlan === undefined ||
+      activity({ kind: 'output', title: 'Plan', plan: item.cornerPlan })) &&
     Array.isArray(item.corners) &&
     item.corners.every(corner) &&
     (item.repository === undefined || repository(item.repository)) &&
     repositoryResolution(item.repositoryResolution) &&
     (item.review === undefined || review(item.review)) &&
+    (item.cornerLifecycle === undefined || cornerLifecycle(item.cornerLifecycle)) &&
     watchFilters(item.watchFilters),
   );
 }

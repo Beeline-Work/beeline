@@ -1066,7 +1066,7 @@ describe('corner narrative persistence', () => {
     );
   }
 
-  it('coalesces three Goose-style progress messages into a retracted draft and one final chat message', async () => {
+  it('8. duplicate stream/replay produces one durable model output', async () => {
     const published = stubPublishing();
     const body = newBody(newIdentity('goose-streaming-agent'));
     const sessionPrompt = fakeMultiParagraphSessionPrompt(

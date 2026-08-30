@@ -210,15 +210,15 @@ describe('Room row presentation', () => {
     });
   });
 
-  it('expires a canonical working lease at the shared freshness horizon', () => {
+  it('does not run a screen-owned expiry clock over indexed lifecycle', () => {
     const stale = {
       ...corner('live'),
       stateAt: Math.floor((NOW - 90_001) / 1_000),
     };
     expect(roomRowPresentation({ corners: [stale] }, NO_NAMES)).toMatchObject({
-      zone: 'idle',
-      state: 'idle',
-      live: false,
+      zone: 'working',
+      state: 'working',
+      live: true,
     });
   });
 

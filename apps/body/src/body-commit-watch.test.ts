@@ -102,6 +102,7 @@ import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
   CHANGE_REVIEW_ARTIFACT_TAG,
+  CORNER_GIT_PROJECTION_TAG,
   CHANGE_REVIEW_ARTIFACT_VERSION,
   CHANGE_REVIEW_EVENT_KIND,
   parseChangeReviewArtifactDescriptor,
@@ -327,7 +328,7 @@ describe('harness-independent corner commit watch', () => {
   // loose where only Body's own bookkeeping reads them.
   type SubchannelInfoFixture = Parameters<Body['registerSubchannel']>[0];
 
-  it('publishes a review card for committed work even when no ACP turn ever resolved', async () => {
+  it('publishes one Git REVIEW projection when committed work exists without an ACP result', async () => {
     const agent = newIdentity('commit-watch-agent');
     const body = newBody(agent);
     const published = stubPublishing();
@@ -342,7 +343,7 @@ describe('harness-independent corner commit watch', () => {
 
       expect(
         published.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG),
         ),
       ).toBe(true);
       expect(info.observedReviewTip).toBe(gitCommand(worktreePath, ['rev-parse', 'HEAD']));
@@ -351,7 +352,7 @@ describe('harness-independent corner commit watch', () => {
     }
   });
 
-  it('never publishes merge-ready when the single artifact fact is refused', async () => {
+  it('never publishes REVIEW when the single artifact fact is refused', async () => {
     const agent = newIdentity('commit-watch-review-artifact-refused-agent');
     const body = newBody(agent);
     const published = stubPublishing({ refuseArtifact: () => true });
@@ -418,7 +419,7 @@ describe('harness-independent corner commit watch', () => {
         const event = published.find((candidate) =>
           candidate.tags.some((tag) => tag[0] === 't' && tag[1] === CHANGE_REVIEW_ARTIFACT_TAG),
         )!;
-        expect(event.tags).toContainEqual(['d', `corner-commit-watch:${tip}:artifact`]);
+        expect(event.tags).toContainEqual(['d', 'corner-git-projection:corner-commit-watch']);
         const descriptor = parseChangeReviewArtifactDescriptor(event.content)!;
         expect(descriptor).toMatchObject({
           version: CHANGE_REVIEW_ARTIFACT_VERSION,
@@ -504,7 +505,7 @@ describe('harness-independent corner commit watch', () => {
     }
   });
 
-  it('evaluates each tip once and never duplicates the review card', async () => {
+  it('evaluates each tip once and never duplicates the Git REVIEW projection', async () => {
     const agent = newIdentity('commit-watch-idempotent-agent');
     const body = newBody(agent);
     const published = stubPublishing();
@@ -517,7 +518,7 @@ describe('harness-independent corner commit watch', () => {
 
       expect(
         published.filter((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG),
         ),
       ).toHaveLength(1);
     } finally {

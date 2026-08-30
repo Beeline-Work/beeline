@@ -3,6 +3,7 @@ import type { AttachmentReference } from './attachment.js';
 import type { ChangeReviewArtifactDescriptor, ChangeReviewFile } from './change-review.js';
 import type { AgentModelConfigOption, AgentModelSelection, Identity } from './types.js';
 import type { KnownMessageReference } from './reply-proof.js';
+import type { CornerLifecycleView } from './corner-product-state.js';
 import {
   isAgentDetailView,
   isChatListView,
@@ -204,6 +205,8 @@ export type RoomView = {
   readonly repository?: RoomRepositoryView;
   readonly repositoryResolution: RoomRepositoryResolution;
   readonly review?: RoomReviewView;
+  /** Canonical five-state lifecycle for this Room when it is a corner. */
+  readonly cornerLifecycle?: CornerLifecycleView;
   readonly corners: readonly CornerListItem[];
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
@@ -342,6 +345,7 @@ function isAgentPairingClaimView(value: unknown): value is AgentPairingClaimView
 
 export type CornerListItem = {
   readonly corner: RoomViewHeader;
+  readonly lifecycle: CornerLifecycleView;
   readonly status: 'open' | 'working' | 'waiting' | 'idle' | 'concluded' | 'closed';
   readonly reason?: 'review' | 'question' | 'failure';
   readonly agent?: RoomViewIdentity;

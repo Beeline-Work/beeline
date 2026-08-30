@@ -190,6 +190,128 @@ describe.runIf(live)('live land -> close -> indexed parent digest', () => {
       await body.dispose();
     }
   }, 45_000);
+
+  it('open -> REVIEW -> signed reject -> ARCHIVED retains the feature branch', async () => {
+    const run = `reject-close-${Date.now()}`;
+    const human = newIdentity(`${run}-human`);
+    const agent = newIdentity(`${run}-agent`);
+    const humanClient = createBuzzClient({ baseUrl: BASE_URL, host: HOST, identity: human });
+    const root = mkdtempSync(join(tmpdir(), `${run}-`));
+    cleanup.push(root);
+
+    const checkout = join(root, 'checkout');
+    const worktree = join(root, 'corner');
+    git(root, ['init', '-q', '-b', 'main', checkout]);
+    git(checkout, ['config', 'user.name', 'Local Stack Owner']);
+    git(checkout, ['config', 'user.email', 'owner@example.invalid']);
+    writeFileSync(join(checkout, 'README.md'), '# Before rejection\n');
+    git(checkout, ['add', 'README.md']);
+    git(checkout, ['commit', '-qm', 'seed']);
+    git(checkout, ['worktree', 'add', '-q', '-b', 'feature/rejected', worktree, 'main']);
+    writeFileSync(join(worktree, 'REJECTED.txt'), 'retain this branch for follow-up\n');
+    git(worktree, ['add', 'REJECTED.txt']);
+    git(worktree, ['commit', '-qm', 'candidate for rejection']);
+    const tip = git(worktree, ['rev-parse', 'HEAD']);
+    const mainBefore = git(checkout, ['rev-parse', 'refs/heads/main']);
+
+    const workspaceId = await createCommunity(human, `${run} Workspace`);
+    const roomId = await humanClient.createChannel('Reject lifecycle proof', {
+      communityId: workspaceId,
+    });
+    await setMemberRole(human, workspaceId, agent.publicKey, 'member');
+    await setMemberRole(human, roomId, agent.publicKey, 'member');
+    const cornerId = await createAgentSubchannel(
+      agent,
+      roomId,
+      'Reject this review',
+      human.publicKey,
+      workspaceId,
+      'Prove rejection archives without deleting the feature branch',
+    );
+    await setMemberRole(agent, cornerId, human.publicKey, 'admin');
+    await humanClient.waitUntilMember(cornerId, human.publicKey);
+
+    const body = new Body(
+      {
+        agentBinary: '/bin/false',
+        mcpBinary: '/bin/false',
+        agentEnv: {},
+        workspaceRoot: root,
+        relayBaseUrl: BASE_URL,
+        relayHost: HOST,
+        relayScheme: 'http',
+        relayWsUrl: 'ws://127.0.0.1:3010',
+        autoApprovePermissions: true,
+      },
+      human,
+      agent,
+      undefined,
+      { statePath: join(root, 'state.json') },
+    );
+    const info: SubchannelInfo = {
+      subchannelId: cornerId,
+      worktreePath: worktree,
+      featureBranch: 'feature/rejected',
+      role: agent,
+      session: {
+        channelId: cornerId,
+        parentChannelId: roomId,
+        sessionId: 'live-reject-proof',
+        mode: 'edit',
+        client: new AcpClient({ agentBinary: '/bin/false', agentEnv: {} }),
+        processState: 'suspended',
+      } as never,
+      lastPolledAt: 0,
+      archived: false,
+      request: {
+        eventId: `${run}-request`,
+        authorPubkey: human.publicKey,
+        content: '@agent open a corner for a rejectable review',
+        createdAt: Math.floor(Date.now() / 1_000),
+      },
+      boundRepo: {
+        repo: 'local-reject-proof',
+        repositoryKey: 'local-reject-proof',
+        localOnly: true,
+        localPath: checkout,
+        targetBranch: 'refs/heads/main',
+      },
+    };
+    body.registerSubchannel(info);
+
+    try {
+      await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
+      expect(info.mergeTarget?.tip).toBe(tip);
+
+      const indexedClient = new RoomViewClient({ baseUrl: BASE_URL, identity: human });
+      await waitUntil(async () => {
+        const view = await indexedClient.room(cornerId);
+        return view.cornerLifecycle?.lifecycle === 'REVIEW';
+      });
+
+      const rejection = await humanClient.submitMergeRejection(cornerId, info.mergeTarget!);
+      await waitUntil(async () => {
+        await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
+        return (await humanClient.getChannelMetadata(cornerId))?.archived === true;
+      });
+
+      expect(git(checkout, ['rev-parse', 'refs/heads/main'])).toBe(mainBefore);
+      expect(git(checkout, ['rev-parse', 'refs/heads/feature/rejected'])).toBe(tip);
+      await waitUntil(async () => {
+        const view = await indexedClient.room(cornerId);
+        return (
+          view.cornerLifecycle?.lifecycle === 'ARCHIVED' &&
+          view.cornerLifecycle.archiveFlavor === 'rejected'
+        );
+      });
+      console.log(`REJECT_ARCHIVE_CORNER_ID=${cornerId}`);
+      console.log(`REJECT_ARCHIVE_EVENT_ID=${rejection.id}`);
+      console.log(`REJECT_ARCHIVE_RETAINED_TIP=${tip}`);
+    } finally {
+      humanClient.disconnect();
+      await body.dispose();
+    }
+  }, 45_000);
 });
 
 if (!live) {

@@ -174,21 +174,24 @@ describe('mapEventToNotification', () => {
     expect(result?.body).toBe('@Ada: New message');
   });
 
-  it('maps body merge metadata to an approval request', () => {
+  it('maps a current Git REVIEW projection to an approval request', () => {
     const result = mapEventToNotification(
-      event([
-        ['h', 'channel-123'],
-        ['t', 'body-control'],
-        ['t', 'merge-ready'],
-        ['repo', 'owner/repo'],
-        ['branch', 'feature/push'],
-        ['tip', 'd'.repeat(40)],
-      ]),
+      {
+        ...event([
+          ['h', 'channel-123'],
+          ['t', 'corner-git-projection'],
+          ['relation', 'review'],
+          ['repo', 'owner/repo'],
+          ['branch', 'feature/push'],
+          ['tip', 'd'.repeat(40)],
+        ]),
+        kind: 30078,
+      },
       { roomName: 'Push work', senderName: 'Ada', parentChannelId: 'room-123' },
     );
 
     expect(result?.title).toBe('Merge approval requested');
-    expect(result?.body).toBe('@Ada: Ship the preview now.');
+    expect(result?.body).toBe('@Ada: Review the latest committed change');
     expect(result?.data).toMatchObject({
       type: 'merge-approval-request',
       target: 'approval',
@@ -402,14 +405,17 @@ describe('mapEventToNotification', () => {
     it('leaves merge-approval and direct-message titles untouched', () => {
       expect(
         mapEventToNotification(
-          event([
-            ['h', 'corner-1'],
-            ['t', 'body-control'],
-            ['t', 'merge-ready'],
-            ['repo', 'owner/repo'],
-            ['branch', 'feature/x'],
-            ['tip', 'd'.repeat(40)],
-          ]),
+          {
+            ...event([
+              ['h', 'corner-1'],
+              ['t', 'corner-git-projection'],
+              ['relation', 'review'],
+              ['repo', 'owner/repo'],
+              ['branch', 'feature/x'],
+              ['tip', 'd'.repeat(40)],
+            ]),
+            kind: 30078,
+          },
           cornerContext,
         )?.title,
       ).toBe('Merge approval requested');

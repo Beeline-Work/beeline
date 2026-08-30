@@ -101,6 +101,7 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
+  CORNER_GIT_PROJECTION_TAG,
   CHANGE_REVIEW_ARTIFACT_TAG,
   CHANGE_REVIEW_ARTIFACT_VERSION,
   CHANGE_REVIEW_EVENT_KIND,
@@ -262,7 +263,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
     return published;
   }
 
-  it('publishes merge-ready for a corner turn that committed a real change to a clean tree', async () => {
+  it('publishes the Git REVIEW projection for a committed corner change', async () => {
     const agent = newIdentity('merge-ready-agent');
     const body = newBody(agent);
     const published = stubPublishing();
@@ -288,7 +289,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
 
       expect(ready).toBe(true);
       const readyEvent = published.find((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG),
       );
       expect(readyEvent).toBeDefined();
       expect(readyEvent!.tags).toContainEqual([
@@ -345,7 +346,9 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(syncTurn).not.toHaveBeenCalled();
       expect(sessionPrompt).not.toHaveBeenCalled();
       expect(
-        published.filter((event) => event.tags.some((tag) => tag[1] === 'merge-ready')),
+        published.filter((event) =>
+          event.tags.some((tag) => tag[1] === CORNER_GIT_PROJECTION_TAG),
+        ),
       ).toHaveLength(1);
       expect(
         published.some((event) => event.tags.some((tag) => tag[1] === 'merge-not-ready')),
@@ -389,7 +392,9 @@ describe('corner merge-ready surfaces a real committed change', () => {
       await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
 
       expect(
-        published.filter((event) => event.tags.some((tag) => tag[1] === 'merge-ready')),
+        published.filter((event) =>
+          event.tags.some((tag) => tag[1] === CORNER_GIT_PROJECTION_TAG),
+        ),
       ).toHaveLength(1);
       expect(
         published.some((event) => event.tags.some((tag) => tag[1] === 'merge-sync-conflict')),
@@ -398,7 +403,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(sessionPrompt).not.toHaveBeenCalled();
       expect(gitCommand(worktreePath, ['rev-parse', 'HEAD'])).toBe(featureTip);
       expect(existsSync(join(worktreePath, '.git', 'rebase-merge'))).toBe(false);
-      expect(info.cornerState).toEqual({ state: 'waiting', reason: 'review' });
+      expect(info.cornerState).toBeUndefined();
       expect(info.mergeTarget?.tip).toBe(gitCommand(worktreePath, ['rev-parse', 'HEAD']));
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
@@ -448,7 +453,9 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(ready).toBe(true);
       expect(
         published.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+          event.tags.some(
+            (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
+          ),
         ),
       ).toBe(true);
     } finally {
@@ -457,7 +464,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
-  it('does not mistake a project-owned memory path for agent-private state', async () => {
+  it('projects committed Git truth even when project-owned memory has uncommitted work', async () => {
     const agent = newIdentity('merge-not-ready-project-memory-agent');
     const body = newBody(agent);
     const published = stubPublishing();
@@ -482,18 +489,20 @@ describe('corner merge-ready surfaces a real committed change', () => {
 
       const ready = await Reflect.get(body, 'publishMergeReady').call(body, info);
 
-      expect(ready).toBe(false);
+      expect(ready).toBe(true);
       expect(
         published.some((event) =>
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+          event.tags.some(
+            (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
+          ),
         ),
-      ).toBe(false);
+      ).toBe(true);
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }
   });
 
-  it('publishes a non-empty reason when the worktree still has uncommitted work, for the mobile review panel to show', async () => {
+  it('keeps uncommitted work out of the durable lifecycle projection', async () => {
     const agent = newIdentity('merge-not-ready-agent');
     const body = newBody(agent);
     const published = stubPublishing();
@@ -520,7 +529,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
 
       const ready = await Reflect.get(body, 'publishMergeReady').call(body, info);
 
-      expect(ready).toBe(false);
+      expect(ready).toBe(true);
       const notReadyEvent = published.find((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
       );
@@ -530,7 +539,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
-  it('rejects empty work but never withdraws a mounted card for target movement or access', async () => {
+  it('5. main movement never withdraws a mounted REVIEW projection', async () => {
     const agent = newIdentity('merge-not-ready-reasons-agent');
     const published = stubPublishing();
     const paths = [
@@ -585,7 +594,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
       await Reflect.get(staleBody, 'observeCornerCommits').call(staleBody, staleInfo);
       expect(Reflect.get(staleInfo, 'mergeTarget').tip).toBe(publishedTip);
       expect(Reflect.get(staleInfo, 'lastMergeNotReadyReason')).toBeUndefined();
-      expect(Reflect.get(staleInfo, 'cornerState')).toEqual({ state: 'waiting', reason: 'review' });
+      expect(Reflect.get(staleInfo, 'cornerState')).toBeUndefined();
 
       const deniedBody = newBody(agent);
       const deniedInfo = infoFor(paths[3]!, 'corner-target-access-denied');
@@ -597,10 +606,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
       await Reflect.get(deniedBody, 'observeCornerCommits').call(deniedBody, deniedInfo);
       expect(Reflect.get(deniedInfo, 'mergeTarget')).toBeDefined();
       expect(Reflect.get(deniedInfo, 'lastMergeNotReadyReason')).toBeUndefined();
-      expect(Reflect.get(deniedInfo, 'cornerState')).toEqual({
-        state: 'waiting',
-        reason: 'review',
-      });
+      expect(Reflect.get(deniedInfo, 'cornerState')).toBeUndefined();
 
       const notReadyCards = published.filter((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
@@ -682,8 +688,8 @@ describe('corner merge-ready surfaces a real committed change', () => {
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         ),
       ).toBe(false);
-      expect(info.mergeTarget).toBeUndefined();
-      expect(info.mergeGateBlocked?.reason).toContain('PENDING.txt');
+      expect(info.mergeTarget).toBeDefined();
+      expect(info.mergeGateBlocked).toBeUndefined();
       expect(
         published
           .filter((event) => event.tags.some((tag) => tag[1] === 'agent-message'))

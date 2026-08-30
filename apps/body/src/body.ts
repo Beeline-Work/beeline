@@ -90,6 +90,10 @@ import {
   newerAgentPresence,
   CHANGE_REVIEW_ARTIFACT_TAG,
   CHANGE_REVIEW_ARTIFACT_VERSION,
+  CORNER_GIT_PROJECTION_TAG,
+  CORNER_GIT_PROJECTION_VERSION,
+  CORNER_REJECTION_TAG,
+  verifyMergeRejection,
   KIND_AGENT_PRESENCE,
   KIND_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
@@ -188,6 +192,7 @@ import {
   standingAskFromEvents,
   type ConcludeEpisode,
 } from './conclude-watch.js';
+import { workingInvariantAlarm } from './corner-liveness.js';
 import {
   NAMED_REPOSITORY_PERMISSION_COMMAND,
   namedRepositoryTargetFromPermission,
@@ -195,7 +200,6 @@ import {
   parseNamedRepositoryTarget,
   type NamedRepositoryTarget,
 } from './repository-target.js';
-import { resolvePreviewUrl } from './preview-url.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
 import {
   TARGET_BRANCH_PROPOSAL_COMMAND,
@@ -410,11 +414,7 @@ import {
   type ReleaseRoomIntent,
 } from './release-flow.js';
 import {
-  cornerMetadataPrompt,
-  cornerMetadataRepairPrompt,
-  parseCornerMetadata,
   cornerTitleFromTask,
-  type CornerMetadata,
 } from './corner-metadata.js';
 
 const CAPTURED_AGENT_OUTPUTS = Symbol('captured-agent-outputs');
@@ -1013,8 +1013,6 @@ export interface SubchannelInfo {
   taskDescription?: string;
   /** Known corner members used for the same sole-human addressing fallback as Rooms. */
   participantPubkeys?: string[];
-  /** Task-authored opening plan from the hidden, tool-free editorial turn. */
-  taskPlan?: CompactActivityPlan;
   /** When this corner was opened, in ms — used to spot a repeated open-a-corner. */
   openedAt?: number;
   /** Current work tip advertised for this corner's one merge. */
@@ -1025,10 +1023,6 @@ export interface SubchannelInfo {
   reviewArtifactPublishedTip?: string;
   /** Deterministic change summary carried by that artifact. */
   reviewArtifactSummary?: string;
-  /** Exact tip whose merge-ready control record includes that review summary. */
-  mergeReadySummaryPublishedTip?: string;
-  /** Canonical signed merge-ready event returned by close_corner pending results. */
-  mergeReadyEventId?: string;
   /**
    * A tool-driven close is frozen at this exact review coordinate until its
    * signed approval advances, it is explicitly abandoned, or host recovery
@@ -2700,7 +2694,6 @@ export class Body {
    * summary nobody can still see. See `release-flow.ts`.
    */
   private readonly releaseProposals = new Map<string, PendingReleaseProposal>();
-  private generateCornerMetadata?: (prompt: string) => Promise<string>;
   /** Coalesced background warm-pool fill per repository/target. */
   private readonly cornerWarmPoolFills = new Map<string, { rerun: boolean; task: Promise<void> }>();
   /** Serialized, coalesced publisher for the corner state record. */
@@ -2728,8 +2721,6 @@ export class Body {
       runScheduleNow?: (scheduleId: string) => Promise<{ runId: string; eventId: string }>;
       relaySocket?: SharedRelaySocket;
       publishPermissionReceipt?: (event: NostrEvent) => Promise<void>;
-      /** Test/embedding seam for the hidden metadata-only model turn. */
-      generateCornerMetadata?: (prompt: string) => Promise<string>;
     } = {},
   ) {
     this.config = config;
@@ -2775,7 +2766,6 @@ export class Body {
     this.onRoomPresence = services.onRoomPresence;
     this.runScheduleNow = services.runScheduleNow;
     this.sharedSocket = services.relaySocket;
-    this.generateCornerMetadata = services.generateCornerMetadata;
     this.durableState = new DurableBodyState(
       services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
     );
@@ -3407,125 +3397,6 @@ export class Body {
       spec.mergeGateStateDirs = gateStateDirs;
     }
     return wrapAgentCommand({ bwrapPath: this.config.bwrapPath, spec, command, args });
-  }
-
-  /**
-   * Run a short-lived ACP session with an empty MCP inventory. Its answer is
-   * never projected into the Room transcript; only validated title,
-   * objective, and task-specific plan strings survive. Any failure preserves
-   * the deterministic metadata path.
-   */
-  private async modelCornerMetadata(
-    channelId: string,
-    cwd: string,
-    request: ChannelTaskRequest,
-    conversation: readonly { role: string; text: string }[],
-  ): Promise<CornerMetadata | undefined> {
-    if (this.config.modelUnavailable) return undefined;
-    const prompt = cornerMetadataPrompt(request.content, conversation);
-    if (this.generateCornerMetadata) {
-      const first = parseCornerMetadata(await this.generateCornerMetadata(prompt));
-      if (first) return first;
-      return parseCornerMetadata(await this.generateCornerMetadata(cornerMetadataRepairPrompt()));
-    }
-
-    await mkdir(cwd, { recursive: true });
-    const env = await this.sessionAgentEnv();
-    const spawnCommand = await this.sessionSpawnCommand(
-      { mode: 'readonly', cwd, channelIdForLog: `${channelId}:corner-metadata` },
-      env,
-    );
-    const client = new AcpClient({
-      agentCommand: spawnCommand.command,
-      agentArgs: spawnCommand.args,
-      agentLabel: this.config.agentCommand ?? this.config.agentBinary,
-      agentEnv: env,
-      agentCwd: cwd,
-      autoApprovePermissions: false,
-      permissionHandler: async () => 'reject',
-    });
-    const startedAt = new Date().toISOString();
-    const systemPrompt =
-      'You are a metadata editor. You have no tools. Follow the requested JSON schema exactly.';
-    try {
-      await client.start();
-      const created = await client.sessionNew({
-        cwd,
-        mcpServers: [],
-        systemPrompt,
-        mode: 'readonly',
-      });
-      const rawOptions = parseAdvertisedConfigOptions(created.raw);
-      if (this.config.modelSelection) {
-        await applyAgentModelSelection(
-          client,
-          created.sessionId,
-          rawOptions,
-          this.config.modelSelection,
-        );
-      }
-      const result = await client.sessionPrompt(created.sessionId, prompt, 30_000);
-      await this.durableState.recordModelTurn(
-        completedModelSpend({
-          result,
-          prompt,
-          systemPromptChars: systemPrompt.length,
-          attribution: {
-            requestId: request.eventId,
-            originalRequestId: request.eventId,
-            cause: 'corner-metadata',
-          },
-          agentPubkey: this.agentIdentity.publicKey,
-          channelId,
-          startedAt,
-        }),
-      );
-      if (result.toolCalls.length > 0) return undefined;
-      const parsed = parseCornerMetadata(result.agentText);
-      if (parsed) return parsed;
-      const repairPrompt = cornerMetadataRepairPrompt();
-      const repairStartedAt = new Date().toISOString();
-      const repair = await client.sessionPrompt(created.sessionId, repairPrompt, 30_000);
-      await this.durableState.recordModelTurn(
-        completedModelSpend({
-          result: repair,
-          prompt: repairPrompt,
-          systemPromptChars: systemPrompt.length,
-          attribution: {
-            requestId: request.eventId,
-            originalRequestId: request.eventId,
-            cause: 'corner-metadata',
-          },
-          agentPubkey: this.agentIdentity.publicKey,
-          channelId,
-          startedAt: repairStartedAt,
-        }),
-      );
-      if (repair.toolCalls.length > 0) return undefined;
-      return parseCornerMetadata(repair.agentText);
-    } catch (error) {
-      await this.durableState
-        .recordModelTurn(
-          failedModelSpend({
-            prompt,
-            systemPromptChars: systemPrompt.length,
-            attribution: {
-              requestId: request.eventId,
-              originalRequestId: request.eventId,
-              cause: 'corner-metadata',
-            },
-            agentPubkey: this.agentIdentity.publicKey,
-            channelId,
-            startedAt,
-            error,
-          }),
-        )
-        .catch(() => undefined);
-      console.warn(`[body] corner metadata generation failed for ${channelId}; using fallback`);
-      return undefined;
-    } finally {
-      if (client.isAlive) await client.stop();
-    }
   }
 
   private authorizedExternalServers(channelId: string): Promise<McpServerWire[]> {
@@ -5057,7 +4928,6 @@ export class Body {
         ...(latestLandingBlock && tagValue(latestLandingBlock, 'approval')
           ? { landingBlockedApprovalId: tagValue(latestLandingBlock, 'approval') }
           : {}),
-        ...(restoredPlan ? { taskPlan: restoredPlan } : {}),
         ...(request ? { request } : {}),
         ...(tip
           ? {
@@ -5066,7 +4936,6 @@ export class Body {
                 branch: tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
                 tip,
               },
-              ...(tagValue(ready!, 'summary') ? { mergeReadySummaryPublishedTip: tip } : {}),
             }
           : {}),
         ...(concludeRecord ? { conclude: concludeRecord } : {}),
@@ -5476,35 +5345,9 @@ export class Body {
     const conversation = await this.agentHistory(tlcChannelId);
     const statedTask = intent ? taskDescriptionFromCornerRequest(intent).slice(0, 320) : '';
     const fallbackObjective = statedTask || cornerObjectiveFromConversation(conversation);
-    let generated: CornerMetadata | undefined;
-    if (request) {
-      try {
-        generated = await this.modelCornerMetadata(
-          tlcChannelId,
-          this.config.workspaceRoot,
-          request,
-          conversation.map((entry) => ({
-            role: entry.type === 'agent-message' ? 'agent' : 'user',
-            text: agentHistoryPrompt(entry),
-          })),
-        );
-      } catch {
-        console.warn(
-          `[body] corner metadata generation failed for ${tlcChannelId}; using fallback`,
-        );
-      }
-    }
     const requestedObjective = options?.objective?.trim().slice(0, 320);
-    const taskDescription = requestedObjective || generated?.objective || fallbackObjective;
-    const taskPlan: CompactActivityPlan | undefined = generated?.plan
-      ? {
-          ...(taskDescription ? { objective: taskDescription } : {}),
-          items: generated.plan.items,
-        }
-      : undefined;
+    const taskDescription = requestedObjective || fallbackObjective;
     // One semantic source owns the objective, visible name, and feature ref.
-    // A model-generated plan may enrich execution, but it cannot name a
-    // different task from the objective the person approved.
     const cornerName = cornerTitleFromTask(taskDescription);
     const taskSlug = slugifyCornerTask(cornerName);
     const openingHumanPubkey = request?.authorPubkey ?? this.bodyIdentity.publicKey;
@@ -5741,7 +5584,6 @@ export class Body {
       cornerName,
       taskDescription,
       participantPubkeys,
-      ...(taskPlan ? { taskPlan } : {}),
       openedAt: Date.now(),
       cornerState: { state: 'open' },
       ...(request ? { request } : {}),
@@ -9393,9 +9235,7 @@ export class Body {
           'working',
           this.presenceGenerations.get(info.subchannelId),
         );
-        const taskPlan = info.taskPlan;
-        info.taskPlan = undefined;
-        await this.startCornerPlan(info.session, info.taskDescription || prompt, taskPlan);
+        await this.startCornerPlan(info.session, info.taskDescription || prompt);
         const result = await this.promptAgent(
           info.session,
           info.boundRepo
@@ -9494,35 +9334,6 @@ export class Body {
       }
     })();
     this.runningAgentTasks.set(info.subchannelId, task);
-  }
-
-  /**
-   * The preview deployment URL for a corner's pushed tip, if its host made
-   * one. Reads the corner's own git remote (never a configured guess) and
-   * swallows every failure — a review card with no PREVIEW row is the correct
-   * answer for a repo whose CI publishes no preview.
-   */
-  private async resolveCornerPreviewUrl(
-    info: SubchannelInfo,
-    tip: string,
-  ): Promise<string | undefined> {
-    const boundRepo = info.boundRepo;
-    if (!boundRepo || boundRepo.ownerHex) return undefined;
-    const remoteName = boundRepo.remoteName;
-    if (!remoteName) return undefined;
-    try {
-      const remote = await git(info.worktreePath, ['remote', 'get-url', remoteName]);
-      if (!remote.ok) return undefined;
-      const token = await this.repositoryAccessToken?.(boundRepo);
-      return await resolvePreviewUrl({
-        remote: remote.stdout.trim(),
-        tip,
-        ...(token ? { token } : {}),
-      });
-    } catch (error) {
-      console.error('[body] preview URL lookup failed (ignored):', error);
-      return undefined;
-    }
   }
 
   /** Read the exact target tip only after a signed press needs a model-owned sync. */
@@ -9793,6 +9604,12 @@ export class Body {
     tip: string,
     patchId: string,
     inputFiles: ChangeReviewFile[],
+    projection: {
+      repository: string;
+      targetBranch: string;
+      targetTip?: string;
+      featureBranch: string;
+    },
   ): Promise<ChangeReviewPublication> {
     const files: ChangeReviewArtifact['files'] = [];
     for (const inputFile of inputFiles) {
@@ -9830,7 +9647,7 @@ export class Body {
       await postChangeReviewMetadata(
         info.subchannelId,
         this.agentIdentity,
-        `${info.subchannelId}:${tip}:artifact`,
+        `${CORNER_GIT_PROJECTION_TAG}:${info.subchannelId}`,
         JSON.stringify({
           version: CHANGE_REVIEW_ARTIFACT_VERSION,
           base,
@@ -9842,9 +9659,17 @@ export class Body {
           url: uploaded.url,
           sha256: uploaded.sha256,
           size: uploaded.size,
+          relation: 'review',
+          repository: projection.repository,
+          targetBranch: projection.targetBranch,
+          featureBranch: projection.featureBranch,
+          featureTip: tip,
+          ...(projection.targetTip ? { targetTip: projection.targetTip } : {}),
+          mergeBase: base,
         }),
         [
           ['t', CHANGE_REVIEW_ARTIFACT_TAG],
+          ['t', CORNER_GIT_PROJECTION_TAG],
           ['r', tip],
           ['base', base],
           ['tip', tip],
@@ -9866,14 +9691,56 @@ export class Body {
     tip: string,
     patchId: string,
     files: ChangeReviewFile[],
+    projection: {
+      repository: string;
+      targetBranch: string;
+      targetTip?: string;
+      featureBranch: string;
+    },
   ): Promise<ChangeReviewPublication> {
     if (info.reviewArtifactPublishedTip === tip && info.reviewArtifactSummary) {
       return { summary: info.reviewArtifactSummary };
     }
-    const publication = await this.buildChangeReviewArtifact(info, base, tip, patchId, files);
+    const publication = await this.buildChangeReviewArtifact(
+      info,
+      base,
+      tip,
+      patchId,
+      files,
+      projection,
+    );
     info.reviewArtifactPublishedTip = tip;
     info.reviewArtifactSummary = publication.summary;
     return publication;
+  }
+
+  /** Publish one replaceable mechanical Git observation without inventing lifecycle prose. */
+  private async publishCornerGitProjection(
+    info: SubchannelInfo,
+    projection: {
+      relation: 'absent' | 'no-deliverable-commits-yet' | 'review' | 'contained';
+      repository: string;
+      targetBranch: string;
+      featureBranch: string;
+      featureTip?: string;
+      targetTip?: string;
+      mergeBase?: string;
+    },
+  ): Promise<void> {
+    await postChangeReviewMetadata(
+      info.subchannelId,
+      this.agentIdentity,
+      `${CORNER_GIT_PROJECTION_TAG}:${info.subchannelId}`,
+      JSON.stringify({ version: CORNER_GIT_PROJECTION_VERSION, ...projection }),
+      [
+        ['t', CORNER_GIT_PROJECTION_TAG],
+        ['relation', projection.relation],
+        ...(projection.featureTip ? [['tip', projection.featureTip]] : []),
+        ...(projection.targetTip ? [['target-tip', projection.targetTip]] : []),
+        ...(projection.mergeBase ? [['base', projection.mergeBase]] : []),
+      ],
+      this.agentRelay,
+    );
   }
 
   /**
@@ -9886,8 +9753,6 @@ export class Body {
     info.mergeTarget = undefined;
     info.reviewArtifactPublishedTip = undefined;
     info.reviewArtifactSummary = undefined;
-    info.mergeReadySummaryPublishedTip = undefined;
-    info.mergeReadyEventId = undefined;
     info.toolClosePending = undefined;
     info.observedReviewTip = undefined;
     // A few narrow unit fixtures exercise review narration without modelling
@@ -9902,7 +9767,8 @@ export class Body {
   /** Push the agent's feature tip and publish the corner's current review. */
   private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
     const boundRepo = info.boundRepo;
-    if (!boundRepo || info.archived) return false;
+    const featureBranch = info.featureBranch;
+    if (!boundRepo || !featureBranch || info.archived) return false;
     const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return false;
     const targetBranch = boundRepo.targetBranch ?? 'refs/heads/main';
@@ -9912,6 +9778,16 @@ export class Body {
       tip,
       patchId: undefined as string | undefined,
     };
+    const targetTipResult = await git(info.worktreePath, ['rev-parse', target.branch]);
+    const observedTargetTip = targetTipResult.ok ? targetTipResult.stdout.trim() : undefined;
+    const projectionMeta = {
+      repository: target.repo,
+      targetBranch: target.branch,
+      ...(observedTargetTip && /^[0-9a-f]{40}$/.test(observedTargetTip)
+        ? { targetTip: observedTargetTip }
+        : {}),
+      featureBranch,
+    };
     // Review publication is intentionally independent of target freshness.
     // The card records the committed feature tip and stays mounted until a
     // newer feature commit replaces it or the corner lands/closes. Only the
@@ -9919,15 +9795,7 @@ export class Body {
     const base = await resolveReviewBaseTip(info.worktreePath, target.branch);
     const files = await listChangeReviewFiles(info.worktreePath, base, tip);
     target.patchId = await reviewPatchId(info.worktreePath, base, tip);
-    const status = (
-      await git(info.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all', '-z'])
-    ).stdout;
-    const dirtyEntries = projectDirtyStatus(
-      info.worktreePath,
-      status,
-      info.session.agentPrivateState,
-    );
-    if (dirtyEntries.length > 0 || files.length === 0 || !target.patchId) {
+    if (files.length === 0 || !target.patchId) {
       // Never advertise HEAD as reviewable when the agent's actual work is
       // uncommitted, or when it made no committed change. An older ready tip
       // must be withdrawn too, otherwise a human could approve stale work.
@@ -9936,26 +9804,30 @@ export class Body {
         Number(
           (await git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`])).stdout.trim(),
         ) || 0;
-      const withdrawnDetail = withdrawnTarget
-        ? ` The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn.`
-        : '';
+      const contained =
+        files.length === 0 &&
+        (info.reviewedChange?.tip === tip || info.landedTip === tip) &&
+        (await git(info.worktreePath, ['merge-base', '--is-ancestor', tip, target.branch])).ok;
+      await this.publishCornerGitProjection(info, {
+        relation:
+          files.length > 0 ? 'review' : contained ? 'contained' : 'no-deliverable-commits-yet',
+        repository: target.repo,
+        targetBranch: target.branch,
+        featureBranch,
+        featureTip: tip,
+        ...(observedTargetTip && /^[0-9a-f]{40}$/.test(observedTargetTip)
+          ? { targetTip: observedTargetTip }
+          : {}),
+        mergeBase: base,
+      });
       const detail =
-        dirtyEntries.length > 0
-          ? [
-              'The worktree has uncommitted or untracked paths:',
-              ...dirtyEntries.map((entry) => `- ${entry}`),
-              'Commit the intended project changes and remove or relocate anything that should not be reviewed.',
-              withdrawnDetail.trim(),
-            ]
-              .filter(Boolean)
-              .join('\n')
-          : files.length > 0 && !target.patchId
-            ? 'The reviewed-content identity could not be computed. The review card was not published, so no approval can be misapplied.'
-            : withdrawnTarget
-              ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
-              : commitCount === 0
-                ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
-                : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
+        files.length > 0 && !target.patchId
+          ? 'The reviewed-content identity could not be computed. The review card was not published, so no approval can be misapplied.'
+          : withdrawnTarget
+            ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
+            : commitCount === 0
+              ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
+              : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
       info.lastMergeNotReadyReason = detail;
       info.mergeGateBlocked = { reason: detail };
       await this.withdrawMergeReadiness(info);
@@ -9992,13 +9864,13 @@ export class Body {
           tip,
           target.patchId!,
           files,
+          projectionMeta,
         );
       } catch (error) {
         await this.withdrawMergeReadiness(info);
         throw error;
       }
-      if (info.mergeReadySummaryPublishedTip === tip && info.mergeReadyEventId) {
-        await this.transitionCornerState(info, 'waiting', 'review');
+      if (info.mergeTarget?.tip === tip) {
         return true;
       }
     }
@@ -10014,7 +9886,7 @@ export class Body {
       ? !(await git(info.worktreePath, ['merge-base', '--is-ancestor', remoteFeatureTip, tip])).ok
       : false;
     const forceArgs = rewritten
-      ? [`--force-with-lease=refs/heads/${info.featureBranch}:${remoteFeatureTip}`]
+      ? [`--force-with-lease=refs/heads/${featureBranch}:${remoteFeatureTip}`]
       : [];
     // The feature-branch publish is a brokered push: classified (this corner's
     // own branch → allowed), audited, then performed by the daemon with its
@@ -10025,9 +9897,9 @@ export class Body {
         ? await performBrokeredPush({
             remote: boundRepo.remoteName,
             refspecs: [
-              `${boundRepo.ownerHex ? info.featureBranch : tip}:refs/heads/${info.featureBranch}`,
+              `${boundRepo.ownerHex ? featureBranch : tip}:refs/heads/${featureBranch}`,
             ],
-            policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
+            policy: { featureBranch, protectedRefs: [target.branch] },
             ...(forceArgs.length ? { extraArgs: forceArgs } : {}),
             cornerId: info.subchannelId,
             sessionId: info.session.logicalSessionId ?? info.session.sessionId,
@@ -10059,105 +9931,21 @@ export class Body {
         tip,
         target.patchId!,
         files,
+        projectionMeta,
       );
     } catch (error) {
       await this.withdrawMergeReadiness(info);
       throw error;
     }
 
-    // Branch/PR preview deployments only exist because of the push above, so
-    // this is the earliest the URL can be known. Strictly best-effort: no
-    // statuses, no credentials, or a non-GitHub origin publishes no tag, and
-    // the review card then renders no PREVIEW row.
-    const previewUrl = await this.resolveCornerPreviewUrl(info, tip);
-
-    // Only believe merge-ready is durably announced once the control message
-    // that carries it is actually confirmed published — mobile's approve
-    // button reads the merge target solely from that event. Setting the flag
-    // first would let a failed publish here poison this function's own
-    // idempotency guard above (`info.mergeTarget?.tip === tip`) into
-    // silently skipping the retry a later call needs to make.
-    //
-    // This is THE lifecycle-critical publication: a single dropped attempt
-    // (the recurring deploy-bounce 502 windows outlasted publishEvent's own
-    // quick inner retries) left a finished corner with no review card at all —
-    // the panel read NOTHING READY TO MERGE YET forever. The outer loop here
-    // rides the transient outage out with bounded backoff, and if the budget
-    // is still exhausted it says so plainly and leaves `mergeTarget` unset so
-    // the next corner turn re-attempts from the top.
-    let reviewCardEvent: NostrEvent | undefined;
-    const reviewCardPublished = await publishCritical(
-      async () => {
-        reviewCardEvent = buildControlMessage(
-          'review-target',
-          info.subchannelId,
-          this.agentIdentity,
-          `Work is ready for human merge approval — ${tip.slice(0, 12)}…`,
-          [
-            ['t', MERGE_READY_TAG],
-            ['status', 'ready'],
-            ['repo', target.repo],
-            ['branch', target.branch],
-            ['feature', info.featureBranch!],
-            ['tip', target.tip],
-            ['patch-id', target.patchId!],
-            ['summary', reviewArtifact.summary],
-            ['agent', this.agentIdentity.publicKey],
-            ...(previewUrl ? [['preview', previewUrl]] : []),
-          ],
-        );
-        await publishEvent(reviewCardEvent, this.agentIdentity);
-      },
-      {
-        label: `merge-ready card for corner ${info.subchannelId}`,
-        onRetry: (attempt, delayMs, error) =>
-          console.error(
-            `[body] merge-ready publish retrying for ${info.subchannelId} (attempt ${attempt} in ${delayMs}ms):`,
-            error,
-          ),
-        onGiveUp: (error) =>
-          console.error(
-            `[body] merge-ready publish could not be confirmed for ${info.subchannelId}; will re-attempt on the next turn/poll:`,
-            error,
-          ),
-      },
-    );
-    if (!reviewCardPublished) {
-      info.lastMergeNotReadyReason =
-        'The review card could not be published — the relay was unreachable. It will be retried automatically.';
-      await publishCritical(
-        () =>
-          this.postFailureFactOnce(
-            info.subchannelId,
-            'Review target unavailable: relay unreachable; retrying.',
-            [
-              ...RECOVERABLE_CORNER_FAILURE_TAGS,
-              ['retry', 'auto' satisfies DeliveryRetryPosture],
-              ['repo', target.repo],
-              ['branch', target.branch],
-              ['tip', target.tip],
-            ],
-          ).then(() => undefined),
-        {
-          label: `merge-ready failure notice for corner ${info.subchannelId}`,
-          onGiveUp: (error) =>
-            console.error(
-              `[body] merge-ready failure notice also refused for ${info.subchannelId}:`,
-              error,
-            ),
-        },
-      ).catch(() => undefined);
-      return false;
-    }
+    // The Git projection is the review surface. No lifecycle prose or second
+    // merge-ready fact is published; the indexer derives REVIEW directly from
+    // the one replaceable projection written above.
     info.mergeTarget = target;
     info.lastReviewFailureContent = undefined;
-    info.mergeReadyEventId = reviewCardEvent!.id;
-    info.mergeReadySummaryPublishedTip = tip;
     // A fresh review is a fresh land attempt: whatever the previous tip could
     // not do is no longer the standing condition being reported.
     info.lastLandFailure = undefined;
-    // State machine: an approvable change is waiting on a person.
-    await this.transitionCornerState(info, 'waiting', 'review');
     // A target-sync or later work turn may have advanced the tip. Re-read the
     // durable corner approval immediately so the current work can land without
     // another human tap.
@@ -10322,6 +10110,12 @@ export class Body {
           '#t': [APPROVAL_MARKER],
           limit: 100,
         },
+        {
+          kinds: [9],
+          '#h': [info.subchannelId],
+          '#t': [CORNER_REJECTION_TAG],
+          limit: 100,
+        },
       ]));
     } catch (error) {
       const reason = (error instanceof Error ? error.message : String(error))
@@ -10377,17 +10171,23 @@ export class Body {
         approvals.push(approval);
       }
     }
-    // Oldest first: the first still-authoritative approval is the standing
-    // grant for this corner's one merge.
+    // Oldest first: the first still-authoritative signed human verdict is the
+    // corner's one durable verdict. Approval and rejection are queried as
+    // separate single-key filters because production relays may only honor
+    // the first value in a multi-value tag filter.
     approvals.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+    const validVerdicts: Array<{ event: NostrEvent; rejection: boolean }> = [];
     for (const approval of approvals) {
-      // A bounded landing transaction parks this exact button press. A newer
-      // signed approval is a new retry request; maintenance never re-drives
-      // the blocked approval on its own.
-      if (approval.id === info.landingBlockedApprovalId) continue;
       if (!verifyEvent(approval)) continue;
       if (approval.pubkey === this.agentIdentity.publicKey) continue;
-      if (!verifyApproval(approval, approval.pubkey, target, info.subchannelId)) continue;
+      const marker = tagValue(approval, 't');
+      const rejection = marker === CORNER_REJECTION_TAG;
+      if (
+        rejection
+          ? !verifyMergeRejection(approval, approval.pubkey, target, info.subchannelId)
+          : !verifyApproval(approval, approval.pubkey, target, info.subchannelId)
+      )
+        continue;
       const authority = await authorizeReviewer({
         pubkey: approval.pubkey,
         relay: approvalRelay,
@@ -10402,8 +10202,28 @@ export class Body {
         );
         if (!viaSuccession) continue;
       }
-      const approvedTip = tagValue(approval, 'tip') ?? target.tip;
-      const approvedPatchId = tagValue(approval, 'patch-id');
+      validVerdicts.push({ event: approval, rejection });
+    }
+    const first = validVerdicts[0];
+    if (!first) return undefined;
+    const conflict = validVerdicts.find((candidate) => candidate.rejection !== first.rejection);
+    if (conflict) {
+      console.error(
+        `[body] conflicting corner verdict ignored corner=${info.subchannelId} ` +
+          `first=${first.event.id}:${first.rejection ? 'reject' : 'approve'} ` +
+          `later=${conflict.event.id}:${conflict.rejection ? 'reject' : 'approve'}`,
+      );
+    }
+    if (first.rejection) {
+      if (!info.archived) await this.archiveSubchannel(info.subchannelId);
+      return undefined;
+    }
+    const approval = first.event;
+    // A failed press stays the first verdict, but an ordinary maintenance tick
+    // cannot silently create a second landing attempt for that same event.
+    if (approval.id === info.landingBlockedApprovalId) return undefined;
+    const approvedTip = tagValue(approval, 'tip') ?? target.tip;
+    const approvedPatchId = tagValue(approval, 'patch-id');
       const tipAdvanced = approvedTip !== target.tip;
       const realigned = Boolean(
         tipAdvanced && approvedPatchId && target.patchId && approvedPatchId === target.patchId,
@@ -10430,8 +10250,6 @@ export class Body {
         if (published) info.ackedApprovalActivityId = ackKey;
       }
       return info.humanMergeApproval;
-    }
-    return undefined;
   }
 
   /**
@@ -11781,7 +11599,12 @@ export class Body {
     mergeGate?: DurableMergeGate,
   ): Promise<void> {
     if (event.pubkey === this.agentIdentity.publicKey || !verifyEvent(event)) return;
-    if (event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_MARKER)) {
+    if (
+      event.tags.some(
+        (tag) =>
+          tag[0] === 't' && (tag[1] === APPROVAL_MARKER || tag[1] === CORNER_REJECTION_TAG),
+      )
+    ) {
       this.onRoomPollSuccess?.(channelId);
       await this.runApprovalLandingPass(channelId, mergeGate, event);
       return;
@@ -12561,14 +12384,24 @@ export class Body {
       if (standingAsk) continue;
       const requestId = info.request?.eventId ?? 'unknown';
       const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-      const alarmKey = `${info.subchannelId}:${requestId}:${tip}`;
-      if (!this.workingInvariantAlarms.has(alarmKey)) {
-        this.workingInvariantAlarms.add(alarmKey);
-        console.error(
-          `[body] WORKING invariant failed corner=${info.subchannelId} request=${requestId} ` +
-            `receipt=complete process=${info.session.processState ?? 'unknown'} ` +
-            `tip=${tip || 'unknown'} relayCursor=${(await this.durableState.cursor(info.subchannelId)).createdAt}`,
-        );
+      const cursor = await this.durableState.cursor(info.subchannelId);
+      const alarm = workingInvariantAlarm({
+        cornerId: info.subchannelId,
+        requestId,
+        lastReceipt: 'complete',
+        queuedDelivery:
+          this.steerQueuedChannels.has(info.subchannelId) ||
+          this.inFlightSubchannelPolls.has(info.subchannelId)
+            ? 'queued'
+            : 'none',
+        sessionHealth: info.session.client?.isAlive ? 'alive' : 'down',
+        processHealth: info.session.processState ?? 'unknown',
+        relayCursor: cursor.createdAt,
+        gitTip: tip || 'unknown',
+      });
+      if (!this.workingInvariantAlarms.has(alarm.key)) {
+        this.workingInvariantAlarms.add(alarm.key);
+        console.error(alarm.message);
       }
     }
   }
@@ -12736,7 +12569,11 @@ export class Body {
       (!evt.content.trim() && attachments.length === 0) ||
       evt.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity') ||
       evt.tags.some(
-        (tag) => tag[0] === 't' && (tag[1] === 'body-control' || tag[1] === APPROVAL_MARKER),
+        (tag) =>
+          tag[0] === 't' &&
+          (tag[1] === 'body-control' ||
+            tag[1] === APPROVAL_MARKER ||
+            tag[1] === CORNER_REJECTION_TAG),
       )
     ) {
       return { status: 'skip', recordProcessed: false };

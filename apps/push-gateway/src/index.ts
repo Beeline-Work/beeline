@@ -124,7 +124,13 @@ async function main(): Promise<void> {
             credential: applicationDefault(),
             projectId: 'buzzy-e11e7',
           });
-        gateway = new PushGateway(registry, getMessaging(firebaseApp), deliveryState);
+        gateway = new PushGateway(
+          registry,
+          getMessaging(firebaseApp),
+          deliveryState,
+          undefined,
+          (cornerId, pubkey) => indexer.readRoom(cornerId, pubkey),
+        );
         const poller = new RegisteredEventPoller(
           registry,
           (pubkey) => materializerStore.readerFor(pubkey),

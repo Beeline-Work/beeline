@@ -156,6 +156,7 @@ describe('RegisteredEventPoller', () => {
       { kinds: [9], since: 100, limit: 1_000 },
       { kinds: [30078], '#t': ['buzz-agent-soul'], since: 100, limit: 1_000 },
       { kinds: [30078], '#t': ['buzz-corner-state'], since: 100, limit: 1_000 },
+      { kinds: [30078], '#t': ['corner-git-projection'], since: 100, limit: 1_000 },
     ]);
     await expect(poller.pollNext()).resolves.toBe('polled');
     expect(queried).toEqual([PUBKEY_A, PUBKEY_B]);
@@ -287,7 +288,7 @@ describe('PushGateway', () => {
     expect(sendEachForMulticast).toHaveBeenCalledTimes(2);
   });
 
-  it('coalesces retried merge-ready events for one exact corner target', async () => {
+  it('pushes only the current REVIEW transition and coalesces its exact tip', async () => {
     const registry = await TokenRegistry.load();
     await registry.register(PUBKEY_A, TOKEN_A);
     const sendEachForMulticast = vi.fn(async () => ({
@@ -307,13 +308,19 @@ describe('PushGateway', () => {
         }),
         invalidate: () => undefined,
       } as never,
+      async () => ({
+        room: { archived: false },
+        parent: { id: 'room-1234' },
+        cornerLifecycle: { lifecycle: 'REVIEW', git: { featureTip: 'a'.repeat(40) } },
+      }),
     );
     const mergeReady = (id: string): NostrEvent => ({
       ...event(id, AUTHOR, 'corner-1234'),
+      kind: 30078,
       tags: [
         ['h', 'corner-1234'],
-        ['t', 'body-control'],
-        ['t', 'merge-ready'],
+        ['t', 'corner-git-projection'],
+        ['relation', 'review'],
         ['repo', 'owner/repo'],
         ['branch', 'refs/heads/main'],
         ['tip', 'a'.repeat(40)],
@@ -328,6 +335,43 @@ describe('PushGateway', () => {
       data: { channelId: 'corner-1234', cornerId: 'corner-1234', type: 'merge-approval-request' },
       android: { notification: { channelId: 'attention' } },
     });
+  });
+
+  it('never pushes a review projection for a corner absent from the indexed lifecycle', async () => {
+    const registry = await TokenRegistry.load();
+    await registry.register(PUBKEY_A, TOKEN_A);
+    const sendEachForMulticast = vi.fn();
+    const gateway = new PushGateway(
+      registry,
+      { sendEachForMulticast } as unknown as Messaging,
+      await DeliveryState.load(),
+      {
+        resolve: async () => ({
+          roomName: 'Phantom',
+          workspaceName: 'Product Engineering',
+          persistentWorkspaceRoom: true,
+        }),
+        invalidate: () => undefined,
+      } as never,
+      async () => null,
+    );
+    await gateway.handleRelayEvent(
+      {
+        ...event('f', AUTHOR, 'missing-corner'),
+        kind: 30078,
+        tags: [
+          ['h', 'missing-corner'],
+          ['t', 'corner-git-projection'],
+          ['relation', 'review'],
+          ['repo', 'owner/repo'],
+          ['branch', 'refs/heads/main'],
+          ['tip', 'a'.repeat(40)],
+        ],
+      },
+      PUBKEY_A,
+      reader,
+    );
+    expect(sendEachForMulticast).not.toHaveBeenCalled();
   });
 
   it('uses activity for DMs and keeps agent questions in-app', async () => {

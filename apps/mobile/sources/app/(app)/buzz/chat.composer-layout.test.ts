@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('./chat/[channelId].tsx', import.meta.url), 'utf8');
+const variants = readFileSync(new URL('./chat/RoomMessageVariants.tsx', import.meta.url), 'utf8');
 
 describe('Room composer status layout', () => {
   it('keeps turn progress inside the growing composer stack, above the field', () => {
@@ -13,7 +14,8 @@ describe('Room composer status layout', () => {
   });
 
   it('uses a long-press wrapper to copy a complete turn', () => {
-    expect(source).toContain('onLongPress={onLongPress}');
-    expect(source).toContain('copyEntireTurn(item.text, Clipboard.setStringAsync)');
+    expect(variants).toContain('onLongPress={onLongPress}');
+    expect(variants).toContain('onCopy(message.text)');
+    expect(source).toContain('copyEntireTurn(text, Clipboard.setStringAsync)');
   });
 });

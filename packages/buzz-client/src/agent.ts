@@ -26,6 +26,7 @@ import {
 } from './kinds.js';
 import { tagValue, tagValues } from './parse.js';
 import { query } from './query.js';
+import { RoomViewClient, RoomViewHttpError } from './room-view.js';
 import {
   deriveAgentDisplayName,
   fallbackAgentName,
@@ -384,6 +385,16 @@ async function findAgentPairingMarker(
   );
 }
 
+async function matchingAgentPairingRedemptions(
+  ctx: ChannelOpsContext,
+  tokenHash: string,
+): Promise<NostrEvent[]> {
+  const events = await query(ctx, [
+    { kinds: [KIND_STREAM_MESSAGE], '#pairing': [tokenHash], '#t': [TAG_AGENT], limit: 5 },
+  ]);
+  return events.filter((event) => tagValue(event, 'pairing') === tokenHash);
+}
+
 /** Redeem a pairing code under this agent's own key and register its identity. */
 export async function redeemAgentPairingCode(
   ctx: ChannelOpsContext,
@@ -395,18 +406,12 @@ export async function redeemAgentPairingCode(
   }
   const tokenHash = inviteTokenHash(code);
   const pairing = await findAgentPairingMarker(ctx, tokenHash);
-  if (!pairing) throw new Error('invalid agent pairing code');
-  const { communityId, expiresAt } = pairing;
-  const members = await communityMembers(ctx, communityId);
-  if (!members.some((member) => member.pubkey === pairing.event.pubkey)) {
-    throw new Error('pairing code minter is not a community member');
+  if (!pairing) {
+    throw new Error(
+      'pairing code was not found; if the code was created by an older app, regenerate it after updating',
+    );
   }
-  const alreadyPaired = await query(ctx, [
-    { kinds: [KIND_STREAM_MESSAGE], '#pairing': [tokenHash], '#t': [TAG_AGENT], limit: 5 },
-  ]);
-  const matchingRedemptions = alreadyPaired.filter(
-    (event) => tagValue(event, 'pairing') === tokenHash,
-  );
+  const { communityId, expiresAt } = pairing;
   if (ctx.identity.publicKey === pairing.event.pubkey) {
     throw new Error(
       "cannot pair the installer's human identity as its own agent; " +
@@ -414,50 +419,116 @@ export async function redeemAgentPairingCode(
     );
   }
   await assertAgentKeyHasNoHumanProfile(ctx, ctx.identity.publicKey);
-  const ours = matchingRedemptions
+  const membersBeforeJoin = await communityMembers(ctx, communityId);
+  const minterVisibleBeforeJoin = membersBeforeJoin.some(
+    (member) => member.pubkey === pairing.event.pubkey,
+  );
+  let matchingRedemptions = await matchingAgentPairingRedemptions(ctx, tokenHash);
+  let ours = matchingRedemptions
     .map(parseAgent)
     .find((agent) => agent?.pubkey === ctx.identity.publicKey);
-  if (ours) {
+  if (minterVisibleBeforeJoin && ours) {
     await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.event.pubkey);
     return { communityId, pairedBy: pairing.event.pubkey, agent: ours, joined: false };
   }
-  if (matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
+  if (minterVisibleBeforeJoin && matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
     throw new Error('agent pairing code has already been redeemed');
   }
   if (expiresAt <= now()) throw new Error('agent pairing code has expired');
-  const wasMember = members.some((member) => member.pubkey === ctx.identity.publicKey);
+  const wasMember = membersBeforeJoin.some((member) => member.pubkey === ctx.identity.publicKey);
   if (wasMember) {
     throw new Error(
       `cannot pair existing human Workspace member ${ctx.identity.publicKey} as an agent; ` +
         'run the Members-page pairing command again so Beeline mints a fresh agent keypair',
     );
   }
-  if (!wasMember) {
-    await setMemberRole(ctx, communityId, ctx.identity.publicKey, 'member', {
-      extraTags: [
-        ['pairing', tokenHash],
-        [TAG_COMMUNITY, communityId],
-      ],
-    });
-    await waitUntilMember(ctx, communityId, ctx.identity.publicKey);
-  }
-  let agent: Agent;
+  let joinedForPairing = false;
   try {
-    agent = await createAgentRecord(
+    if (!wasMember) {
+      joinedForPairing = true;
+      if (!minterVisibleBeforeJoin) {
+        // Private Workspace projections are intentionally hidden from this
+        // fresh key. The server-indexed claim boundary verifies the signed
+        // global marker against authoritative membership and reserves its hash
+        // for this exact agent before granting the bootstrap membership.
+        let claim;
+        try {
+          claim = await new RoomViewClient({
+            baseUrl: ctx.http.baseUrl,
+            identity: ctx.identity,
+          }).claimAgentPairing(code);
+        } catch (error) {
+          if (error instanceof RoomViewHttpError && error.status === 404) {
+            throw new Error('pairing code is not authorized for this private Workspace');
+          }
+          throw error;
+        }
+        if (claim.workspaceId !== communityId || claim.pairedBy !== pairing.event.pubkey) {
+          throw new Error('pairing claim did not match its signed Workspace marker');
+        }
+      }
+      // Publish the canonical relay membership command from inside. This is
+      // what creates the ordinary signed event/projections; the server claim
+      // is only the narrow one-shot bootstrap for a private Workspace.
+      await setMemberRole(ctx, communityId, ctx.identity.publicKey, 'member', {
+        extraTags: [
+          ['pairing', tokenHash],
+          [TAG_COMMUNITY, communityId],
+        ],
+      });
+    }
+    if (joinedForPairing) await waitUntilMember(ctx, communityId, ctx.identity.publicKey);
+
+    // Production hides Workspace projections from an outsider. The signed,
+    // unexpired global marker is enough for the relay to authorize this
+    // capability-scoped self-join; only after that join can this key verify
+    // that the marker's signer is still a current Workspace member. A false
+    // signer check removes the just-added membership before failing, so the
+    // client-side ordering never weakens the minting authority invariant.
+    const membersAfterJoin = await communityMembers(ctx, communityId);
+    if (!membersAfterJoin.some((member) => member.pubkey === pairing.event.pubkey)) {
+      throw new Error('pairing code minter is not a community member');
+    }
+
+    // Agent identity events are Workspace-scoped kind:9 too. Repeat the
+    // one-shot check from inside the Workspace before publishing ours.
+    matchingRedemptions = await matchingAgentPairingRedemptions(ctx, tokenHash);
+    ours = matchingRedemptions
+      .map(parseAgent)
+      .find((agent) => agent?.pubkey === ctx.identity.publicKey);
+    if (ours) {
+      await attachAgentToInviterRooms(
+        ctx,
+        communityId,
+        ctx.identity.publicKey,
+        pairing.event.pubkey,
+      );
+      return {
+        communityId,
+        pairedBy: pairing.event.pubkey,
+        agent: ours,
+        joined: joinedForPairing,
+      };
+    }
+    if (matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
+      throw new Error('agent pairing code has already been redeemed');
+    }
+
+    const agent = await createAgentRecord(
       ctx,
       communityId,
       { displayName: fallbackAgentName(ctx.identity.publicKey) },
       tokenHash,
     );
+    joinedForPairing = false;
+    await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.event.pubkey);
+    return { communityId, pairedBy: pairing.event.pubkey, agent, joined: !wasMember };
   } catch (error) {
-    // The membership above already landed. Publishing the identity record is
-    // the second half of one registration, so a failure here must not leave
-    // the key sitting in the Workspace roster as an unexplained member.
-    if (!wasMember) await abandonAgentPairing(ctx, communityId);
+    // The capability-scoped membership already landed. Any failed authority
+    // check or registration must not leave an outsider in the Workspace.
+    if (joinedForPairing) await abandonAgentPairing(ctx, communityId);
     throw error;
   }
-  await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.event.pubkey);
-  return { communityId, pairedBy: pairing.event.pubkey, agent, joined: !wasMember };
 }
 
 /** Parse a verified display-only soul overlay. Authorization is checked by readers. */

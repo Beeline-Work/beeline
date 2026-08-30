@@ -463,7 +463,10 @@ export class BuzzClient {
 
   // ── Community ops ───────────────────────────────────────────────────────
 
-  createCommunity(name: string, opts?: { communityId?: string }): Promise<string> {
+  createCommunity(
+    name: string,
+    opts?: { communityId?: string; visibility?: Community['visibility'] },
+  ): Promise<string> {
     return createCommunity(this.ctx, name, opts);
   }
 

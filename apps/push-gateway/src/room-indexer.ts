@@ -16,6 +16,7 @@ import {
   isAllowedAgentModelConfigCategory,
   parseAttachmentTags,
   parseChangeReviewArtifactDescriptor,
+  type AgentPairingClaimView,
   type AgentDetailView,
   type ChatListItem,
   type ChatListView,
@@ -941,6 +942,115 @@ SELECT 'invite' AS section, jsonb_build_object(
   'workspaceId', c.id, 'name', c.name, 'avatar', c.avatar,
   'expiresAt', c.expires_at::bigint
 ) AS data FROM candidates c WHERE (SELECT count(*) FROM candidates) = 1;
+`;
+
+const AGENT_PAIRING_CLAIM_SQL = `
+WITH current_markers AS (
+  SELECT DISTINCT ON (e.community_id, e.pubkey) e.community_id, e.pubkey,
+    e.created_at, e.tags
+  FROM events e
+  WHERE e.deleted_at IS NULL AND e.kind = 30078
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'd' AND t->>1 = $1)
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-agent-pairing')
+  ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+), candidates AS (
+  SELECT marker.community_id, workspace.id AS workspace_id,
+    marker.pubkey AS minter_pubkey
+  FROM current_markers marker
+  JOIN channels workspace ON workspace.community_id = marker.community_id
+    AND workspace.id = CASE
+      WHEN (SELECT t->>1 FROM jsonb_array_elements(marker.tags) t
+        WHERE t->>0 = 'h' LIMIT 1)
+        ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      THEN (SELECT t->>1 FROM jsonb_array_elements(marker.tags) t
+        WHERE t->>0 = 'h' LIMIT 1)::uuid
+      ELSE NULL
+    END
+    AND workspace.deleted_at IS NULL AND workspace.archived_at IS NULL
+  JOIN channel_members minter ON minter.community_id = workspace.community_id
+    AND minter.channel_id = workspace.id AND minter.pubkey = marker.pubkey
+    AND minter.removed_at IS NULL
+  JOIN LATERAL (
+    SELECT e.tags FROM events e
+    WHERE e.community_id = workspace.community_id AND e.channel_id = workspace.id
+      AND e.kind = 9007 AND e.deleted_at IS NULL
+    ORDER BY e.created_at ASC, e.id ASC LIMIT 1
+  ) genesis ON EXISTS (SELECT 1 FROM jsonb_array_elements(genesis.tags) t
+    WHERE t->>0 = 'community' AND t->>1 = workspace.id::text)
+  WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(marker.tags) t
+      WHERE t->>0 = 'revoked' AND t->>1 = 'true')
+    AND (SELECT t->>1 FROM jsonb_array_elements(marker.tags) t
+      WHERE t->>0 = 'expiration' LIMIT 1) ~ '^[0-9]+$'
+    AND (SELECT t->>1 FROM jsonb_array_elements(marker.tags) t
+      WHERE t->>0 = 'expiration' LIMIT 1)::numeric > extract(epoch FROM now())::bigint
+), candidate AS (
+  SELECT * FROM candidates WHERE (SELECT count(*) FROM candidates) = 1
+), existing_claim AS (
+  SELECT claim.* FROM beeline_agent_pairing_claims claim WHERE claim.token_hash = $1
+), disqualifying_agent AS (
+  SELECT 1 FROM events e JOIN candidate c ON c.community_id = e.community_id
+  WHERE e.deleted_at IS NULL AND e.kind = 9 AND e.pubkey = decode($2, 'hex')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-agent')
+  LIMIT 1
+), prior_redemption AS (
+  SELECT 1 FROM events e JOIN candidate c ON c.community_id = e.community_id
+  WHERE e.deleted_at IS NULL AND e.kind = 9
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'pairing' AND t->>1 = $1)
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-agent')
+  LIMIT 1
+), existing_member AS (
+  SELECT 1 FROM channel_members member JOIN candidate c
+    ON c.community_id = member.community_id AND c.workspace_id = member.channel_id
+  WHERE member.pubkey = decode($2, 'hex') AND member.removed_at IS NULL
+  LIMIT 1
+), inserted_claim AS (
+  INSERT INTO beeline_agent_pairing_claims (
+    token_hash, community_id, workspace_id, minter_pubkey, agent_pubkey
+  )
+  SELECT $1, c.community_id, c.workspace_id, c.minter_pubkey, decode($2, 'hex')
+  FROM candidate c
+  WHERE NOT EXISTS (SELECT 1 FROM existing_claim)
+    AND NOT EXISTS (SELECT 1 FROM disqualifying_agent)
+    AND NOT EXISTS (SELECT 1 FROM prior_redemption)
+    AND NOT EXISTS (SELECT 1 FROM existing_member)
+  ON CONFLICT (token_hash) DO NOTHING
+  RETURNING community_id, workspace_id, minter_pubkey, agent_pubkey
+), accepted_claim AS (
+  SELECT inserted.*, true AS joined FROM inserted_claim inserted
+  UNION ALL
+  SELECT claim.community_id, claim.workspace_id, claim.minter_pubkey,
+    claim.agent_pubkey, false AS joined
+  FROM existing_claim claim JOIN candidate c
+    ON c.community_id = claim.community_id
+    AND c.workspace_id = claim.workspace_id
+    AND c.minter_pubkey = claim.minter_pubkey
+  WHERE claim.agent_pubkey = decode($2, 'hex')
+    AND NOT EXISTS (SELECT 1 FROM disqualifying_agent)
+    AND NOT EXISTS (SELECT 1 FROM prior_redemption)
+), membership AS (
+  INSERT INTO channel_members (
+    community_id, channel_id, pubkey, role, invited_by, joined_at,
+    removed_at, removed_by, hidden_at
+  )
+  SELECT claim.community_id, claim.workspace_id, claim.agent_pubkey,
+    'member', claim.minter_pubkey, now(), NULL, NULL, NULL
+  FROM accepted_claim claim
+  ON CONFLICT (community_id, channel_id, pubkey) DO UPDATE SET
+    role = 'member', invited_by = EXCLUDED.invited_by, joined_at = now(),
+    removed_at = NULL, removed_by = NULL, hidden_at = NULL
+  RETURNING community_id, channel_id, pubkey
+)
+SELECT claim.workspace_id, encode(claim.minter_pubkey, 'hex') AS paired_by,
+  claim.joined
+FROM accepted_claim claim JOIN membership member
+  ON member.community_id = claim.community_id
+  AND member.channel_id = claim.workspace_id
+  AND member.pubkey = claim.agent_pubkey;
 `;
 
 const CORNER_LIST_SQL = `
@@ -2517,6 +2627,24 @@ export class RoomIndexer {
       name: text(data.name) ?? 'WORKSPACE',
       ...(text(data.avatar) ? { avatar: text(data.avatar) } : {}),
       expiresAt: integer(data.expiresAt),
+    };
+  }
+
+  async claimAgentPairing(
+    tokenHash: string,
+    agentPubkey: string,
+  ): Promise<AgentPairingClaimView | null> {
+    const result = await this.database.query<{
+      workspace_id: string;
+      paired_by: string;
+      joined: boolean;
+    }>(AGENT_PAIRING_CLAIM_SQL, [tokenHash, agentPubkey]);
+    const claim = result.rows[0];
+    if (!claim) return null;
+    return {
+      workspaceId: claim.workspace_id,
+      pairedBy: claim.paired_by,
+      joined: claim.joined,
     };
   }
 

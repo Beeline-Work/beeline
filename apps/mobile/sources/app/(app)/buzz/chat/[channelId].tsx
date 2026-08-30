@@ -64,7 +64,7 @@ import {
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { buildTurnActivity, latestCornerPlan } from '@/buzz/activity-timeline';
-import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
+import { cornerObjectiveLine } from '@/buzz/corner-context';
 import { groknight } from '@/buzz/groknight';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
@@ -177,6 +177,7 @@ import {
   WritePermissionCard,
 } from './RoomMessageVariants';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+import { visibleTranscriptWindow } from '@/buzz/transcript-presentation';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
@@ -199,7 +200,6 @@ import { Typography } from '@/constants/Typography';
 import { ChangeReviewPanel } from '@/components/buzz/ChangeReviewPanel';
 import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import { CornerPlanPin } from '@/components/buzz/CornerPlanPin';
-import { RoomContextPreamble } from '@/components/buzz/RoomContextPreamble';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { HullFloatingSurface, HullModal } from '@/components/buzz/HullDialog';
@@ -234,6 +234,10 @@ const COMPOSER_MAX_HEIGHT = 120;
 // Open on the tail of a long transcript instead of the full history, then
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
+// A corner's opening/progress prose is its audit trail. The cold tail already
+// reads this many records; reveal that complete bounded page when its parent
+// relation resolves instead of silently starting a reader 30 rows mid-story.
+const INITIAL_CORNER_MESSAGE_WINDOW = 200;
 const OLDER_MESSAGES_PAGE_SIZE = 30;
 // This deliberately remains the sole color seam for the human merge decision.
 // If the product ever approves a non-monochrome exception, change only this value.
@@ -515,17 +519,6 @@ export default function BuzzChat() {
   const cornerLifecycleStatus =
     cornerLifecycle.find((corner) => corner.id === decodedId)?.status ?? null;
   const cornerTask = roomSurface?.parent ? roomSurface.room.about : undefined;
-  const roomContext = useMemo<RoomContextEntry[]>(
-    () =>
-      displayRoomMessages(roomSurface?.briefing ?? [], cacheViewerPubkey).map((message) => ({
-        id: message.id,
-        text: message.text,
-        timestamp: message.timestamp,
-        ...(message.pubkey ? { pubkey: message.pubkey } : {}),
-        isAgent: Boolean(message.isAgentAuthor),
-      })),
-    [cacheViewerPubkey, roomSurface?.briefing],
-  );
   const roomRepository = useMemo<RoomRepository | null>(() => {
     if (isCorner || !roomSurface?.repository) return null;
     const repository = roomSurface.repository;
@@ -733,15 +726,25 @@ export default function BuzzChat() {
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the relay once that's exhausted.
   const unprojectedMessages = useMemo(
-    () => combinedMessages.slice(-visibleMessageCount),
+    () => visibleTranscriptWindow(combinedMessages, visibleMessageCount),
     [combinedMessages, visibleMessageCount],
   );
+  // `parentChannelId` is often learned after the cold tail lands. At that
+  // point expand to the full already-fetched corner page; older pages remain
+  // bounded and load on scroll as before.
+  useEffect(() => {
+    if (!isCorner) return;
+    setVisibleMessageCount((count) => Math.max(count, INITIAL_CORNER_MESSAGE_WINDOW));
+  }, [isCorner]);
   // The most recent plan the agent has published, for the pinned checklist —
   // a plan update replaces the whole checklist, so only the latest matters.
   // Scoped to `combinedMessages` (everything currently loaded), not the
   // windowed `messages`, so paging the visible window never drops a plan
   // that was established earlier in a long corner.
-  const cornerPlan = useMemo(() => latestCornerPlan(combinedMessages), [combinedMessages]);
+  const cornerPlan = useMemo(
+    () => roomSurface?.cornerPlan ?? latestCornerPlan(combinedMessages),
+    [combinedMessages, roomSurface?.cornerPlan],
+  );
   // The immutable task tag wins. Plan objective is a compatibility fallback
   // for older corners; the task-slugged name is the final fallback.
   const cornerObjective = useMemo(
@@ -756,9 +759,10 @@ export default function BuzzChat() {
 
   const loadOlderTranscriptMessages = useCallback(() => {
     if (loadingOlderMessages) return;
-    if (visibleMessageCount < combinedMessages.length) {
+    const visibleRowCount = visibleTranscriptWindow(combinedMessages, Number.MAX_SAFE_INTEGER).length;
+    if (visibleMessageCount < visibleRowCount) {
       setVisibleMessageCount((count) =>
-        Math.min(combinedMessages.length, count + OLDER_MESSAGES_PAGE_SIZE),
+        Math.min(visibleRowCount, count + OLDER_MESSAGES_PAGE_SIZE),
       );
       return;
     }
@@ -1648,24 +1652,6 @@ export default function BuzzChat() {
     const timer = setTimeout(() => setPresenceNow(Date.now()), delay);
     return () => clearTimeout(timer);
   }, [agentPresences, agentTurnMarkers, presenceNow]);
-
-  /**
-   * Who said an inherited Room line. Room context is quoted *from a Room*, so
-   * it keeps its attribution even though the corner around it never shows
-   * handles — a corner's zero-handle rule is about its own single agent, and
-   * these lines are neither the corner's agent nor this reader.
-   */
-  const roomContextSpeakerLabel = useCallback(
-    (pubkey: string | undefined, isAgent: boolean): string | undefined => {
-      if (!pubkey) return undefined;
-      const knownAgent = agentByPubkey.get(pubkey);
-      if (isAgent || knownAgent) {
-        return resolvePendingAgentDisplay(pubkey, knownAgent, participantsHydrated)?.name;
-      }
-      return personProfileByPubkey.get(pubkey)?.name ?? shortMemberNpub(pubkey);
-    },
-    [agentByPubkey, participantsHydrated, personProfileByPubkey],
-  );
 
   const replyTargetForMessage = useCallback(
     (message: ChatDisplayMessage): MessageReplyDisplayTarget => {
@@ -3091,7 +3077,7 @@ export default function BuzzChat() {
             often than the composer-adjacent live status below, so it earns
             the stable position where it never fights the composer for
             space. Hidden entirely when the agent has published no plan. */}
-        {isCorner && !isArchived && (
+        {isCorner && (
           <CornerPlanPin
             {...(cornerObjective ? { objective: cornerObjective } : {})}
             {...(cornerPlan ? { plan: cornerPlan } : {})}
@@ -3159,14 +3145,8 @@ export default function BuzzChat() {
             // Inverted list: the footer is the visual TOP. The Room discussion
             // a corner was opened out of belongs above the corner's own first
             // line, and this is the slot that puts it there.
-            loadingOlderMessages || (isCorner && roomContext.length) ? (
+            loadingOlderMessages ? (
               <>
-                {isCorner && roomContext.length ? (
-                  <RoomContextPreamble
-                    entries={roomContext}
-                    speakerLabel={roomContextSpeakerLabel}
-                  />
-                ) : null}
                 {loadingOlderMessages ? (
                   <View style={styles.olderMessagesLoading} testID="older-messages-loading">
                     <PixelLoader compact />

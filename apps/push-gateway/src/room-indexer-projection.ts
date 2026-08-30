@@ -587,6 +587,24 @@ export function projectedRoomMessages(
   );
 }
 
+/**
+ * The plan is a durable corner fixture even after activity rows leave the
+ * live lane. Derive it before the bounded transcript slice so a long finished
+ * corner cannot lose its checklist merely because newer prose fills the tail.
+ */
+export function latestCornerPlan(
+  rows: readonly IndexRow[],
+  channelId: string,
+): RoomViewActivity['plan'] | undefined {
+  let plan: RoomViewActivity['plan'];
+  for (const message of allProjectedMessages(rows, 'event', channelId)) {
+    for (const activity of message.activity ?? []) {
+      if (activity.plan) plan = activity.plan;
+    }
+  }
+  return plan;
+}
+
 /** Fold signed permission history into the single paint-ready card it models. */
 export function collapsePermissionCards(projected: readonly RoomViewMessage[]): RoomViewMessage[] {
   const latestPermission = new Map<string, RoomViewMessage>();

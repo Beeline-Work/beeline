@@ -90,6 +90,8 @@ import {
   newerAgentPresence,
   CHANGE_REVIEW_ARTIFACT_TAG,
   CHANGE_REVIEW_ARTIFACT_VERSION,
+  CORNER_GIT_PROJECTION_TAG,
+  CORNER_GIT_PROJECTION_VERSION,
   KIND_AGENT_PRESENCE,
   KIND_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
@@ -9793,6 +9795,12 @@ export class Body {
     tip: string,
     patchId: string,
     inputFiles: ChangeReviewFile[],
+    projection: {
+      repository: string;
+      targetBranch: string;
+      targetTip?: string;
+      featureBranch: string;
+    },
   ): Promise<ChangeReviewPublication> {
     const files: ChangeReviewArtifact['files'] = [];
     for (const inputFile of inputFiles) {
@@ -9830,7 +9838,7 @@ export class Body {
       await postChangeReviewMetadata(
         info.subchannelId,
         this.agentIdentity,
-        `${info.subchannelId}:${tip}:artifact`,
+        `${CORNER_GIT_PROJECTION_TAG}:${info.subchannelId}`,
         JSON.stringify({
           version: CHANGE_REVIEW_ARTIFACT_VERSION,
           base,
@@ -9842,9 +9850,17 @@ export class Body {
           url: uploaded.url,
           sha256: uploaded.sha256,
           size: uploaded.size,
+          relation: 'review',
+          repository: projection.repository,
+          targetBranch: projection.targetBranch,
+          featureBranch: projection.featureBranch,
+          featureTip: tip,
+          ...(projection.targetTip ? { targetTip: projection.targetTip } : {}),
+          mergeBase: base,
         }),
         [
           ['t', CHANGE_REVIEW_ARTIFACT_TAG],
+          ['t', CORNER_GIT_PROJECTION_TAG],
           ['r', tip],
           ['base', base],
           ['tip', tip],
@@ -9866,14 +9882,56 @@ export class Body {
     tip: string,
     patchId: string,
     files: ChangeReviewFile[],
+    projection: {
+      repository: string;
+      targetBranch: string;
+      targetTip?: string;
+      featureBranch: string;
+    },
   ): Promise<ChangeReviewPublication> {
     if (info.reviewArtifactPublishedTip === tip && info.reviewArtifactSummary) {
       return { summary: info.reviewArtifactSummary };
     }
-    const publication = await this.buildChangeReviewArtifact(info, base, tip, patchId, files);
+    const publication = await this.buildChangeReviewArtifact(
+      info,
+      base,
+      tip,
+      patchId,
+      files,
+      projection,
+    );
     info.reviewArtifactPublishedTip = tip;
     info.reviewArtifactSummary = publication.summary;
     return publication;
+  }
+
+  /** Publish one replaceable mechanical Git observation without inventing lifecycle prose. */
+  private async publishCornerGitProjection(
+    info: SubchannelInfo,
+    projection: {
+      relation: 'absent' | 'no-deliverable-commits-yet' | 'review' | 'contained';
+      repository: string;
+      targetBranch: string;
+      featureBranch: string;
+      featureTip?: string;
+      targetTip?: string;
+      mergeBase?: string;
+    },
+  ): Promise<void> {
+    await postChangeReviewMetadata(
+      info.subchannelId,
+      this.agentIdentity,
+      `${CORNER_GIT_PROJECTION_TAG}:${info.subchannelId}`,
+      JSON.stringify({ version: CORNER_GIT_PROJECTION_VERSION, ...projection }),
+      [
+        ['t', CORNER_GIT_PROJECTION_TAG],
+        ['relation', projection.relation],
+        ...(projection.featureTip ? [['tip', projection.featureTip]] : []),
+        ...(projection.targetTip ? [['target-tip', projection.targetTip]] : []),
+        ...(projection.mergeBase ? [['base', projection.mergeBase]] : []),
+      ],
+      this.agentRelay,
+    );
   }
 
   /**
@@ -9912,6 +9970,16 @@ export class Body {
       tip,
       patchId: undefined as string | undefined,
     };
+    const targetTipResult = await git(info.worktreePath, ['rev-parse', target.branch]);
+    const observedTargetTip = targetTipResult.ok ? targetTipResult.stdout.trim() : undefined;
+    const projectionMeta = {
+      repository: target.repo,
+      targetBranch: target.branch,
+      ...(observedTargetTip && /^[0-9a-f]{40}$/.test(observedTargetTip)
+        ? { targetTip: observedTargetTip }
+        : {}),
+      featureBranch: info.featureBranch,
+    };
     // Review publication is intentionally independent of target freshness.
     // The card records the committed feature tip and stays mounted until a
     // newer feature commit replaces it or the corner lands/closes. Only the
@@ -9919,15 +9987,7 @@ export class Body {
     const base = await resolveReviewBaseTip(info.worktreePath, target.branch);
     const files = await listChangeReviewFiles(info.worktreePath, base, tip);
     target.patchId = await reviewPatchId(info.worktreePath, base, tip);
-    const status = (
-      await git(info.worktreePath, ['status', '--porcelain=v1', '--untracked-files=all', '-z'])
-    ).stdout;
-    const dirtyEntries = projectDirtyStatus(
-      info.worktreePath,
-      status,
-      info.session.agentPrivateState,
-    );
-    if (dirtyEntries.length > 0 || files.length === 0 || !target.patchId) {
+    if (files.length === 0 || !target.patchId) {
       // Never advertise HEAD as reviewable when the agent's actual work is
       // uncommitted, or when it made no committed change. An older ready tip
       // must be withdrawn too, otherwise a human could approve stale work.
@@ -9936,26 +9996,30 @@ export class Body {
         Number(
           (await git(info.worktreePath, ['rev-list', '--count', `${base}..${tip}`])).stdout.trim(),
         ) || 0;
-      const withdrawnDetail = withdrawnTarget
-        ? ` The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn.`
-        : '';
+      const contained =
+        files.length === 0 &&
+        (info.reviewedChange?.tip === tip || info.landedTip === tip) &&
+        (await git(info.worktreePath, ['merge-base', '--is-ancestor', tip, target.branch])).ok;
+      await this.publishCornerGitProjection(info, {
+        relation:
+          files.length > 0 ? 'review' : contained ? 'contained' : 'no-deliverable-commits-yet',
+        repository: target.repo,
+        targetBranch: target.branch,
+        featureBranch: info.featureBranch,
+        featureTip: tip,
+        ...(observedTargetTip && /^[0-9a-f]{40}$/.test(observedTargetTip)
+          ? { targetTip: observedTargetTip }
+          : {}),
+        mergeBase: base,
+      });
       const detail =
-        dirtyEntries.length > 0
-          ? [
-              'The worktree has uncommitted or untracked paths:',
-              ...dirtyEntries.map((entry) => `- ${entry}`),
-              'Commit the intended project changes and remove or relocate anything that should not be reviewed.',
-              withdrawnDetail.trim(),
-            ]
-              .filter(Boolean)
-              .join('\n')
-          : files.length > 0 && !target.patchId
-            ? 'The reviewed-content identity could not be computed. The review card was not published, so no approval can be misapplied.'
-            : withdrawnTarget
-              ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
-              : commitCount === 0
-                ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
-                : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
+        files.length > 0 && !target.patchId
+          ? 'The reviewed-content identity could not be computed. The review card was not published, so no approval can be misapplied.'
+          : withdrawnTarget
+            ? `The previously published merge target ${withdrawnTarget.tip} is stale and has been withdrawn because the current tip has no remaining diff against ${target.branch}.`
+            : commitCount === 0
+              ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
+              : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
       info.lastMergeNotReadyReason = detail;
       info.mergeGateBlocked = { reason: detail };
       await this.withdrawMergeReadiness(info);
@@ -9992,6 +10056,7 @@ export class Body {
           tip,
           target.patchId!,
           files,
+          projectionMeta,
         );
       } catch (error) {
         await this.withdrawMergeReadiness(info);
@@ -10059,6 +10124,7 @@ export class Body {
         tip,
         target.patchId!,
         files,
+        projectionMeta,
       );
     } catch (error) {
       await this.withdrawMergeReadiness(info);

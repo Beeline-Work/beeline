@@ -7,7 +7,9 @@ import {
 export const RAW_EVENT_LIMIT = 180;
 export const HISTORY_EVENT_LIMIT = 180;
 export const CHAT_PREVIEW_LIMIT = 12;
-export const DURABLE_KINDS = [0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002] as const;
+export const DURABLE_KINDS = [
+  0, 9, 9000, 9001, 9002, 9007, 9008, 30078, 39000, 39001, 39002,
+] as const;
 
 export function profileFilter(identities: readonly RoomViewIdentity[]) {
   return identities.length
@@ -83,6 +85,49 @@ function resolvedIdentityNameSql(
   humanNameColumn = 'name',
 ): string {
   return `COALESCE(NULLIF(${alias}.soul_content::jsonb->>'name', ''), NULLIF(${alias}.${declarationColumn}::jsonb->>'displayName', ''), ${alias}.${humanNameColumn})`;
+}
+
+/** Current mechanical Git fact plus the first current-authority human verdict. */
+function cornerFactsLateralSql(
+  cornerAlias: string,
+  parentIdSql: string,
+  workspaceIdSql: string,
+): string {
+  return `LEFT JOIN LATERAL (
+    SELECT e.content FROM events e
+    JOIN channel_members author ON author.community_id = e.community_id
+      AND author.channel_id = ${cornerAlias}.id AND author.pubkey = e.pubkey
+      AND author.removed_at IS NULL
+    WHERE e.community_id = ${cornerAlias}.community_id AND e.kind = 30078
+      AND e.deleted_at IS NULL
+      AND e.tags @> jsonb_build_array(jsonb_build_array('h', ${cornerAlias}.id::text))
+      AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+        WHERE t->>0 = 't' AND t->>1 IN ('corner-git-projection', 'change-review-artifact'))
+    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+  ) corner_projection ON true
+  LEFT JOIN LATERAL (
+    SELECT e.id, e.pubkey, e.created_at,
+      (SELECT t->>1 FROM jsonb_array_elements(e.tags) t WHERE t->>0 = 'repo' LIMIT 1) AS repo,
+      (SELECT t->>1 FROM jsonb_array_elements(e.tags) t WHERE t->>0 = 'branch' LIMIT 1) AS branch,
+      CASE WHEN e.tags @> '[["t", "buzz-merge-rejection"]]'::jsonb
+        THEN 'reject' ELSE 'approve' END AS verdict
+    FROM events e
+    JOIN channel_members signer ON signer.community_id = e.community_id
+      AND signer.channel_id = ${parentIdSql} AND signer.pubkey = e.pubkey
+      AND signer.removed_at IS NULL AND signer.role IN ('owner', 'admin')
+    WHERE e.community_id = ${cornerAlias}.community_id AND e.kind = 9
+      AND e.channel_id = ${cornerAlias}.id AND e.deleted_at IS NULL
+      AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+        WHERE t->>0 = 't' AND t->>1 IN ('buzz-merge-approval', 'buzz-merge-rejection'))
+      AND NOT EXISTS (
+        SELECT 1 FROM events author_agent
+        WHERE author_agent.community_id = e.community_id AND author_agent.pubkey = e.pubkey
+          AND author_agent.kind = 9 AND author_agent.deleted_at IS NULL
+          AND author_agent.tags @> '[["t", "buzz-agent"]]'::jsonb
+          AND author_agent.tags @> jsonb_build_array(jsonb_build_array('h', ${workspaceIdSql}))
+      )
+    ORDER BY e.created_at ASC, e.id ASC LIMIT 1
+  ) corner_verdict ON true`;
 }
 
 export function roomFilters(
@@ -985,6 +1030,13 @@ SELECT 'corner', jsonb_build_object(
   'archived', c.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM c.created_at)::bigint,
   'updatedAt', extract(epoch FROM c.updated_at)::bigint,
+  'gitProjectionContent', corner_projection.content,
+  'verdict', corner_verdict.verdict,
+  'verdictEventId', encode(corner_verdict.id, 'hex'),
+  'verdictPubkey', encode(corner_verdict.pubkey, 'hex'),
+  'verdictRepository', corner_verdict.repo,
+  'verdictTargetBranch', corner_verdict.branch,
+  'verdictCreatedAt', extract(epoch FROM corner_verdict.created_at)::bigint,
   'agentPubkey', encode(c.created_by, 'hex'),
   'agentName', ${resolvedIdentityNameSql('resolved')},
   'agentHandle', resolved.handle,
@@ -992,6 +1044,7 @@ SELECT 'corner', jsonb_build_object(
   'agent', resolved.agent_content IS NOT NULL
 ) FROM corners c JOIN authorized a ON true
 JOIN identities resolved ON resolved.community_id = c.community_id AND resolved.pubkey = c.created_by
+${cornerFactsLateralSql('c', 'a.id', 'a.workspace_id')}
 UNION ALL
 SELECT 'preview', jsonb_build_object(
   'roomId', e.room_id, 'id', encode(e.id, 'hex'), 'pubkey', encode(e.pubkey, 'hex'),
@@ -1150,6 +1203,13 @@ SELECT 'room' AS section, jsonb_build_object(
   'archived', a.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM a.created_at)::bigint,
   'updatedAt', extract(epoch FROM a.updated_at)::bigint,
+  'gitProjectionContent', corner_projection.content,
+  'verdict', corner_verdict.verdict,
+  'verdictEventId', encode(corner_verdict.id, 'hex'),
+  'verdictPubkey', encode(corner_verdict.pubkey, 'hex'),
+  'verdictRepository', corner_verdict.repo,
+  'verdictTargetBranch', corner_verdict.branch,
+  'verdictCreatedAt', extract(epoch FROM corner_verdict.created_at)::bigint,
   'directMessage', CASE WHEN
     EXISTS (SELECT 1 FROM jsonb_array_elements(a.tags) t
       WHERE t->>0 = 't' AND t->>1 = 'buzz-dm')
@@ -1164,6 +1224,7 @@ SELECT 'room' AS section, jsonb_build_object(
   ),
   'viewerRole', a.viewer_role, 'viewerPubkey', a.viewer_pubkey
 ) AS data FROM authorized a LEFT JOIN newest_message newest ON true
+${cornerFactsLateralSql('a', 'COALESCE(a.parent_id, a.id)', 'a.workspace_id')}
 UNION ALL
 SELECT 'parent', jsonb_build_object(
   'id', a.parent_id, 'workspaceId', a.workspace_id, 'name', a.parent_name,
@@ -1241,6 +1302,13 @@ SELECT 'sibling', jsonb_build_object(
   'archived', f.archived_at IS NOT NULL,
   'createdAt', extract(epoch FROM f.created_at)::bigint,
   'updatedAt', extract(epoch FROM f.updated_at)::bigint,
+  'gitProjectionContent', corner_projection.content,
+  'verdict', corner_verdict.verdict,
+  'verdictEventId', encode(corner_verdict.id, 'hex'),
+  'verdictPubkey', encode(corner_verdict.pubkey, 'hex'),
+  'verdictRepository', corner_verdict.repo,
+  'verdictTargetBranch', corner_verdict.branch,
+  'verdictCreatedAt', extract(epoch FROM corner_verdict.created_at)::bigint,
   'agentPubkey', encode(f.created_by, 'hex'),
   'agentName', ${resolvedIdentityNameSql('resolved')},
   'agentHandle', resolved.handle,
@@ -1248,6 +1316,7 @@ SELECT 'sibling', jsonb_build_object(
   'agent', resolved.agent_content IS NOT NULL
 ) FROM family f JOIN authorized a ON true
 JOIN identities resolved ON resolved.community_id = f.community_id AND resolved.pubkey = f.created_by
+${cornerFactsLateralSql('f', 'COALESCE(a.parent_id, a.id)', 'a.workspace_id')}
 UNION ALL
 SELECT 'repository-candidate', jsonb_build_object('content', e.content)
 FROM authorized a JOIN LATERAL (

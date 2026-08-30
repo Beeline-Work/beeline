@@ -1954,6 +1954,7 @@ describe('RoomIndexer', () => {
     physicalQueries = 0;
     const corners = await indexer.readCorners(ROOM, VIEWER);
     expect(corners).toMatchObject({ corners: [{ corner: { id: CORNER } }] });
+    expect(corners?.corners[0]?.lifecycle).toMatchObject({ lifecycle: 'APPROVED' });
     expect(physicalQueries).toBe(1);
 
     physicalQueries = 0;
@@ -1969,6 +1970,7 @@ describe('RoomIndexer', () => {
         files: [{ path: 'README.md', status: 'modified' }],
         approvedBy: [{ name: 'Ada' }],
       },
+      cornerLifecycle: { lifecycle: 'APPROVED' },
     });
     expect(JSON.stringify(corner)).not.toContain('diff');
   });

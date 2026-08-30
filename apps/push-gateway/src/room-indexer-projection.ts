@@ -9,8 +9,12 @@ import {
   normalizeRoomRepositoryContent,
   parseAttachmentTags,
   parseChangeReviewArtifactDescriptor,
+  deriveCornerLifecycle,
+  parseCornerGitProjectionCompat,
   type ChatListWorkspace,
   type CornerListItem,
+  type CornerLifecycleView,
+  type CornerVerdictView,
   type RoomRepositoryView,
   type RoomReviewView,
   type RoomViewAgentTurn,
@@ -442,12 +446,12 @@ export function projectEvent(data: Json, channelId: string): RoomViewMessage | u
   const mergeAction = markers.has('merge-ready')
     ? 'ready'
     : markers.has('buzz-merge-approval-ack')
-        ? 'approval-ack'
-        : tag(eventTags, 'status') === 'failed' && !tag(eventTags, 'subchannel')
-          ? 'failed'
-          : markers.has('landed') || tag(eventTags, 'delivery') === 'landed'
-            ? 'landed'
-            : undefined;
+      ? 'approval-ack'
+      : tag(eventTags, 'status') === 'failed' && !tag(eventTags, 'subchannel')
+        ? 'failed'
+        : markers.has('landed') || tag(eventTags, 'delivery') === 'landed'
+          ? 'landed'
+          : undefined;
   if (mergeAction) {
     const retry = tag(eventTags, 'retry');
     const decision = tag(eventTags, 'decision');
@@ -710,7 +714,8 @@ export function reviewFromRows(rows: readonly IndexRow[]): RoomReviewView {
   const reviewData = rowData(rows, 'review');
   const descriptor =
     reviewData && text(reviewData.content)
-      ? parseChangeReviewArtifactDescriptor(text(reviewData.content)!)
+      ? (parseCornerGitProjectionCompat(text(reviewData.content))?.artifact ??
+        parseChangeReviewArtifactDescriptor(text(reviewData.content)!))
       : null;
   const notReady = text(rowData(rows, 'not-ready')?.reason);
   const approvedBy = rows
@@ -727,7 +732,43 @@ export function reviewFromRows(rows: readonly IndexRow[]): RoomReviewView {
       : { status: 'none', files: [], approvedBy };
 }
 
+export function cornerLifecycle(data: Json): CornerLifecycleView {
+  const git = parseCornerGitProjectionCompat(text(data.gitProjectionContent));
+  const rawVerdict = text(data.verdict);
+  const eventId = text(data.verdictEventId);
+  const signerPubkey = text(data.verdictPubkey);
+  const repository = text(data.verdictRepository);
+  const targetBranch = text(data.verdictTargetBranch);
+  const candidate: CornerVerdictView | undefined =
+    (rawVerdict === 'approve' || rawVerdict === 'reject') &&
+    eventId &&
+    /^[0-9a-f]{64}$/.test(eventId) &&
+    signerPubkey &&
+    /^[0-9a-f]{64}$/.test(signerPubkey) &&
+    repository &&
+    targetBranch &&
+    (!git ||
+      git.repository === 'legacy-unverified' ||
+      (git.repository === repository && git.targetBranch === targetBranch))
+      ? {
+          verdict: rawVerdict,
+          eventId,
+          signerPubkey,
+          repository,
+          targetBranch,
+          createdAt: integer(data.verdictCreatedAt),
+        }
+      : undefined;
+  return deriveCornerLifecycle({
+    created: true,
+    archived: data.archived === true,
+    ...(git ? { git } : {}),
+    ...(candidate ? { verdict: candidate } : {}),
+  });
+}
+
 export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem {
+  const lifecycle = cornerLifecycle(data);
   const stateTags = tags(data.statusTags);
   const rawStatus = tag(stateTags, 'state');
   const status = rawStatus === 'waiting-on-human' ? 'waiting' : rawStatus;
@@ -740,17 +781,26 @@ export function cornerItem(data: Json, latest?: RoomViewMessage): CornerListItem
   };
   return {
     corner: header(data),
+    lifecycle,
     status:
-      status === 'working' ||
-      status === 'waiting' ||
-      status === 'idle' ||
-      status === 'concluded' ||
-      status === 'closed'
-        ? status
-        : 'open',
-    ...(['review', 'question', 'failure'].includes(tag(stateTags, 'reason') ?? '')
-      ? { reason: tag(stateTags, 'reason') as 'review' | 'question' | 'failure' }
-      : {}),
+      lifecycle.lifecycle === 'ARCHIVED'
+        ? 'closed'
+        : lifecycle.lifecycle === 'REVIEW'
+          ? 'waiting'
+          : lifecycle.lifecycle === 'APPROVED' || lifecycle.lifecycle === 'REJECTED'
+            ? 'working'
+            : status === 'working' ||
+                status === 'waiting' ||
+                status === 'idle' ||
+                status === 'concluded' ||
+                status === 'closed'
+              ? status
+              : 'open',
+    ...(lifecycle.lifecycle === 'REVIEW'
+      ? { reason: 'review' as const }
+      : ['review', 'question', 'failure'].includes(tag(stateTags, 'reason') ?? '')
+        ? { reason: tag(stateTags, 'reason') as 'review' | 'question' | 'failure' }
+        : {}),
     ...(text(data.agentPubkey) ? { agent: identity(agentData) } : {}),
     ...(latest
       ? {

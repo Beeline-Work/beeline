@@ -180,6 +180,51 @@ describe('paint-view GET server', () => {
     });
   });
 
+  it('returns the same private authorization refusal for every indexer route family', async () => {
+    const identity = createIdentity('untrusted-proxy');
+    const base = await listen({ indexer: indexer() });
+    const requests = [
+      {
+        path: `/room/${ROOM}`,
+        init: { headers: { authorization: authorization(identity, `/room/${ROOM}`) } },
+      },
+      {
+        path: '/invite/resolve',
+        init: {
+          method: 'POST',
+          headers: {
+            authorization: authorization(identity, '/invite/resolve', 'POST'),
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ token: `bzi_${'a'.repeat(64)}` }),
+        },
+      },
+      {
+        path: '/agent-pairing/claim',
+        init: {
+          method: 'POST',
+          headers: {
+            authorization: authorization(identity, '/agent-pairing/claim', 'POST'),
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ code: 'BUZZ-4S4P-ZPJP' }),
+        },
+      },
+    ];
+
+    for (const { path, init } of requests) {
+      const response = await fetch(`${base}${path}`, {
+        ...init,
+        headers: { ...init.headers, 'x-forwarded-proto': 'https' },
+      });
+      expect(response.status).toBe(401);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      await expect(response.json()).resolves.toEqual({
+        error: 'valid_identity_authorization_required',
+      });
+    }
+  });
+
   it('requires signed identity but not membership for a redacted invite preview', async () => {
     const identity = createIdentity('invite-reader');
     const token = `bzi_${'a'.repeat(64)}`;

@@ -250,11 +250,11 @@ export function inviteTokenHash(token: string): string {
   return bytesToHex(sha256(utf8ToBytes(token)));
 }
 
-/** Create an open, self-linked NIP-29 group owned by the current identity. */
+/** Create a self-linked NIP-29 group owned by the current identity. */
 export async function createCommunity(
   ctx: ChannelOpsContext,
   name: string,
-  opts?: { communityId?: string },
+  opts?: { communityId?: string; visibility?: Community['visibility'] },
 ): Promise<string> {
   const trimmedName = name.trim();
   if (!trimmedName) throw new Error('community name must not be empty');
@@ -263,7 +263,7 @@ export async function createCommunity(
     ['h', communityId],
     ['name', trimmedName],
     ['channel_type', 'stream'],
-    ['visibility', 'open'],
+    ['visibility', wireVisibility(opts?.visibility ?? 'public')],
     [TAG_COMMUNITY, communityId],
   ]);
   await publishEvent(ctx.http, event);
@@ -423,8 +423,7 @@ function projectedCommunityRoleForChain(
 ): CommunityRole | undefined {
   let best: CommunityRole | undefined;
   for (const key of chainKeys) {
-    const role =
-      key === ownerPubkey ? 'owner' : projectedCommunityRole(events, communityId, key);
+    const role = key === ownerPubkey ? 'owner' : projectedCommunityRole(events, communityId, key);
     if (role && (best === undefined || ROLE_RANK[role] > ROLE_RANK[best])) best = role;
   }
   return best;
@@ -496,14 +495,16 @@ export async function listCommunities(
   // relay's proven eight-filter ceiling without serializing every round trip.
   for (let offset = 0; offset < ids.length; offset += 4) {
     communityEvents.push(
-      ...(await Promise.all(
-        ids.slice(offset, offset + 4).map((id) =>
-          query(ctx, [
-            { kinds: [KIND_CREATE_GROUP], '#h': [id], limit: 20 },
-            { kinds: [KIND_CHANNEL_METADATA], '#d': [id], limit: 5 },
-          ]),
-        ),
-      )).flat(),
+      ...(
+        await Promise.all(
+          ids.slice(offset, offset + 4).map((id) =>
+            query(ctx, [
+              { kinds: [KIND_CREATE_GROUP], '#h': [id], limit: 20 },
+              { kinds: [KIND_CHANNEL_METADATA], '#d': [id], limit: 5 },
+            ]),
+          ),
+        )
+      ).flat(),
     );
   }
   const createEvents = communityEvents.filter((event) => event.kind === KIND_CREATE_GROUP);
@@ -620,7 +621,10 @@ async function communityChannelCreates(
  * `getChannelMetadata(...)?.archived` per room, as this function's other
  * call sites already do.
  */
-export async function communityRoomIds(ctx: ChannelOpsContext, communityId: string): Promise<string[]> {
+export async function communityRoomIds(
+  ctx: ChannelOpsContext,
+  communityId: string,
+): Promise<string[]> {
   const creates = await communityChannelCreates(ctx, communityId);
   const ids = new Set<string>();
   for (const event of creates) {

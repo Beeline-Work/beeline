@@ -16,7 +16,7 @@ import {
   DEFAULT_ACCESS_POLICY,
   type AgentAccessPolicy,
 } from './access-policy.js';
-import { unwrapPrompt } from './clack-support.js';
+import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
 import { fetchAgentModelCatalog } from './model-catalog.js';
 
 export const EFFORT_AXIS_CATEGORIES = ['thought_level', 'effort', 'reasoning_effort'] as const;
@@ -53,8 +53,10 @@ async function pickSearchableChoice(
   choices: Array<{ id: string; name?: string }>,
   currentValue: string | undefined,
 ): Promise<string> {
+  const output = clackPromptOutput();
   const picked = await clack.autocomplete<string>({
     message,
+    output,
     maxItems: SEARCH_MAX_ITEMS,
     placeholder: 'Type to search…',
     ...(currentValue ? { initialValue: currentValue } : {}),
@@ -92,7 +94,8 @@ export async function pickModelAndEffort(
   if (flags.effort) selection.effort = flags.effort;
   if (selection.model && selection.effort) return selection;
 
-  const spinner = clack.spinner();
+  const output = clackPromptOutput();
+  const spinner = clack.spinner({ output });
   spinner.start(`Reading ${agent.kind}'s available models…`);
   let catalog: AgentModelConfigOption[];
   try {
@@ -121,6 +124,7 @@ export async function pickModelAndEffort(
     if (effortAxis && effortAxis.options.length > 0) {
       const picked = await clack.select<string>({
         message: `Effort/thinking level for this ${agent.kind} agent?`,
+        output,
         options: effortAxis.options.map((choice) => ({
           value: choice.id,
           label: choice.name ?? choice.id,
@@ -138,6 +142,7 @@ export async function pickModelAndEffort(
 export async function pickAccessPolicy(): Promise<AgentAccessPolicy> {
   const picked = await clack.select<AgentAccessPolicy>({
     message: 'Who may address this agent?',
+    output: clackPromptOutput(),
     options: [
       { value: 'everyone', label: 'Everyone in the Room' },
       { value: 'creator', label: 'Just me — the inviting owner', hint: 'default' },
@@ -156,6 +161,7 @@ export async function pickAccessPolicy(): Promise<AgentAccessPolicy> {
 export async function pickAutoResponse(): Promise<string | undefined> {
   const picked = await clack.text({
     message: 'Auto-response for a non-permitted questioner? (Enter keeps the default)',
+    output: clackPromptOutput(),
     placeholder: DEFAULT_ACCESS_AUTO_RESPONSE,
     defaultValue: DEFAULT_ACCESS_AUTO_RESPONSE,
   });

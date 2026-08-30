@@ -45,6 +45,7 @@ import {
   identity,
   integer,
   json,
+  latestCornerPlan,
   projectEvent,
   projectedHistoryPage,
   projectedMessages,
@@ -146,6 +147,7 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
       (left, right) =>
         right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
     );
+  const cornerPlan = parentData ? latestCornerPlan(rows, roomId) : undefined;
   return {
     room: header(roomData),
     messages: projectedRoomMessages(rows, roomId, latestAgentTurns),
@@ -160,6 +162,7 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
       String(parentData?.id ?? roomId),
       ROOM_VIEW_BRIEFING_LIMIT,
     ),
+    ...(cornerPlan ? { cornerPlan } : {}),
     ...(repository ? { repository } : {}),
     repositoryResolution,
     review: reviewFromRows(rows),

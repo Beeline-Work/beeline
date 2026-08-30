@@ -434,8 +434,8 @@ stop_tail_containers() {
 # has no healthcheck) must be running. This closes the gap where `up -d`
 # returned while auth still served 502s during run 32684876277.
 wait_for_stack_ready() {
-  local attempt service expected cid actual all_ready
-  for attempt in $(seq 1 36); do
+  local service expected cid actual all_ready
+  for _ in $(seq 1 36); do
     all_ready=1
     for service in auth materializer relay relay-front; do
       expected=healthy
@@ -573,6 +573,7 @@ verify_public || die "public verification failed; materializer ownership remains
 # ---------------------------------------------------------------------------
 # '|| true' keeps an unmatched glob (no backups yet) from tripping
 # pipefail+set -e; pruning is housekeeping, never worth failing a deploy.
+# shellcheck disable=SC2012
 ls -1dt "$BACKUP_ROOT"/bak-* 2>/dev/null | tail -n +$((BACKUP_KEEP+1)) | while read -r old; do rm -rf "$old"; done || true
 
 log "OK: public origin serves this deploy (checkout $(git -C "$CHECKOUT" rev-parse HEAD))"

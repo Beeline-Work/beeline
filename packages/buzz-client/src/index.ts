@@ -140,25 +140,6 @@ export type {
 } from './agent-presence.js';
 
 export {
-  CORNER_ASK_FRESH_WINDOW_MS,
-  CORNER_NEEDS_YOU_STATUSES,
-  CORNER_WORK_LIVENESS_WINDOW_MS,
-  CORNER_WORK_SIGNAL_TAGS,
-  cornerLifecycleFact,
-  cornerStatusPrecedence,
-  isCornerNeedsYou,
-  mapRawCornerStatusTag,
-  mergeCornerStatuses,
-  resolveCornerLifecycle,
-  resolveCornerState,
-  resolveCornerStatusAgainstArchive,
-  type CornerLifecycleFact,
-  type CornerLifecycleStatus,
-  type CornerSuperState,
-  type CornerVerdict,
-} from './corner-lifecycle.js';
-
-export {
   KIND_CORNER_STATE,
   CORNER_ACTIVITY_FRESHNESS_MS,
   agentDraftKey,

@@ -49,7 +49,7 @@ export class SquireHostBroker {
   private readonly children = new Set<ChildProcessWithoutNullStreams>();
 
   constructor(
-    private readonly configRoot: string,
+    configRoot: string,
     private readonly spawnSquire: SpawnSquire = () =>
       spawn('npx', ['-y', SQUIRE_MCP_PACKAGE, 'server'], {
         env: trustySquireHostEnv(process.env, configRoot),

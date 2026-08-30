@@ -9767,7 +9767,8 @@ export class Body {
   /** Push the agent's feature tip and publish the corner's current review. */
   private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
     const boundRepo = info.boundRepo;
-    if (!boundRepo || info.archived) return false;
+    const featureBranch = info.featureBranch;
+    if (!boundRepo || !featureBranch || info.archived) return false;
     const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return false;
     const targetBranch = boundRepo.targetBranch ?? 'refs/heads/main';
@@ -9785,7 +9786,7 @@ export class Body {
       ...(observedTargetTip && /^[0-9a-f]{40}$/.test(observedTargetTip)
         ? { targetTip: observedTargetTip }
         : {}),
-      featureBranch: info.featureBranch,
+      featureBranch,
     };
     // Review publication is intentionally independent of target freshness.
     // The card records the committed feature tip and stays mounted until a
@@ -9812,7 +9813,7 @@ export class Body {
           files.length > 0 ? 'review' : contained ? 'contained' : 'no-deliverable-commits-yet',
         repository: target.repo,
         targetBranch: target.branch,
-        featureBranch: info.featureBranch,
+        featureBranch,
         featureTip: tip,
         ...(observedTargetTip && /^[0-9a-f]{40}$/.test(observedTargetTip)
           ? { targetTip: observedTargetTip }
@@ -9885,7 +9886,7 @@ export class Body {
       ? !(await git(info.worktreePath, ['merge-base', '--is-ancestor', remoteFeatureTip, tip])).ok
       : false;
     const forceArgs = rewritten
-      ? [`--force-with-lease=refs/heads/${info.featureBranch}:${remoteFeatureTip}`]
+      ? [`--force-with-lease=refs/heads/${featureBranch}:${remoteFeatureTip}`]
       : [];
     // The feature-branch publish is a brokered push: classified (this corner's
     // own branch → allowed), audited, then performed by the daemon with its
@@ -9896,9 +9897,9 @@ export class Body {
         ? await performBrokeredPush({
             remote: boundRepo.remoteName,
             refspecs: [
-              `${boundRepo.ownerHex ? info.featureBranch : tip}:refs/heads/${info.featureBranch}`,
+              `${boundRepo.ownerHex ? featureBranch : tip}:refs/heads/${featureBranch}`,
             ],
-            policy: { featureBranch: info.featureBranch, protectedRefs: [target.branch] },
+            policy: { featureBranch, protectedRefs: [target.branch] },
             ...(forceArgs.length ? { extraArgs: forceArgs } : {}),
             cornerId: info.subchannelId,
             sessionId: info.session.logicalSessionId ?? info.session.sessionId,

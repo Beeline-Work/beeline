@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createIdentity } from './identity.js';
 import { RoomViewClient, RoomViewHttpError, type RoomView } from './room-view.js';
-import { isAgentDetailView, isRoomView } from './surface-guards.js';
+import { isAgentDetailView, isRoomView, isRoomViewMessage } from './surface-guards.js';
 
 const room: RoomView = {
   room: {
@@ -120,9 +120,7 @@ describe('RoomViewClient', () => {
       updatedAt: 10,
       githubEventsEnabled: true,
     };
-    expect(
-      isRoomView({ ...room, repositoryResolution: 'repository', repository }),
-    ).toBe(true);
+    expect(isRoomView({ ...room, repositoryResolution: 'repository', repository })).toBe(true);
     expect(
       isRoomView({
         ...room,
@@ -135,6 +133,59 @@ describe('RoomViewClient', () => {
         ...room,
         review: { status: 'ready', files: [], approvedBy: [] },
       }),
+    ).toBe(false);
+  });
+
+  it('accepts only valid GitHub activity cards', () => {
+    const message = {
+      id: 'b'.repeat(64),
+      text: 'Pull request opened',
+      createdAt: 3,
+      author: room.viewer.identity,
+      presentation: 'card' as const,
+      githubEvent: {
+        type: 'pull-request' as const,
+        action: 'opened' as const,
+        actor: 'octocat',
+        title: 'Ship it',
+        url: 'https://github.com/acme/repo/pull/1',
+      },
+    };
+
+    expect(isRoomViewMessage(message)).toBe(true);
+    expect(
+      isRoomViewMessage({
+        ...message,
+        githubEvent: { ...message.githubEvent, type: 'not-real' },
+      }),
+    ).toBe(false);
+    expect(
+      isRoomViewMessage({
+        ...message,
+        githubEvent: { ...message.githubEvent, type: 'issue', action: 'merged' },
+      }),
+    ).toBe(false);
+    expect(
+      isRoomViewMessage({
+        ...message,
+        githubEvent: { ...message.githubEvent, url: 'javascript:alert(1)' },
+      }),
+    ).toBe(false);
+  });
+
+  it('limits briefing messages to the server contract', () => {
+    const briefingMessage = {
+      id: 'b'.repeat(64),
+      text: 'Briefing',
+      createdAt: 3,
+      author: room.viewer.identity,
+      presentation: 'message' as const,
+    };
+    expect(
+      isRoomView({ ...room, briefing: Array.from({ length: 10 }, () => briefingMessage) }),
+    ).toBe(true);
+    expect(
+      isRoomView({ ...room, briefing: Array.from({ length: 11 }, () => briefingMessage) }),
     ).toBe(false);
   });
 

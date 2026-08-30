@@ -23,11 +23,7 @@ import {
   TAG_PARENT,
   TAG_ROOM_LIFECYCLE,
 } from './kinds.js';
-import {
-  publishEvent,
-  requestQueryEvents,
-  type AuthenticatedHttpBridgeOptions,
-} from './http.js';
+import { publishEvent, requestQueryEvents, type AuthenticatedHttpBridgeOptions } from './http.js';
 import { isArchivedChannelError } from './archived-channel.js';
 import {
   parseMembersEvent,
@@ -37,6 +33,7 @@ import {
   tagValues,
 } from './parse.js';
 import { query } from './query.js';
+import { newUuid } from './uuid.js';
 import type {
   ChannelFilterOpts,
   ChannelMember,
@@ -50,19 +47,6 @@ import type { RelayWs } from './ws.js';
 
 function now(): number {
   return Math.floor(Date.now() / 1000);
-}
-
-function newChannelUuid(): string {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
-  }
-  // Fallback UUID v4
-  const b = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(b);
-  b[6] = (b[6]! & 0x0f) | 0x40;
-  b[8] = (b[8]! & 0x3f) | 0x80;
-  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 function sign(identity: Identity, kind: number, tags: string[][], content = ''): NostrEvent {
@@ -163,7 +147,7 @@ export async function createChannel(
   },
 ): Promise<string> {
   await assertTopLevelCreatorIsHuman(ctx, opts);
-  const channelId = opts?.channelId ?? newChannelUuid();
+  const channelId = opts?.channelId ?? newUuid();
   const tags: string[][] = [
     ['h', channelId],
     ['name', name],
@@ -586,6 +570,39 @@ export async function deleteRoom(ctx: ChannelOpsContext, channelId: string): Pro
   await waitUntilRoomDeleted(ctx, channelId);
 }
 
+async function mutateChannelMetadata(
+  ctx: ChannelOpsContext,
+  channelId: string,
+  changedTags: readonly string[][],
+  projectedWhen: (metadata: ChannelMetadata) => boolean,
+  timeoutError: string,
+): Promise<ChannelMetadata> {
+  const current = await getChannelMetadata(ctx, channelId);
+  const changedNames = new Set(changedTags.map(([name]) => name));
+  const tags: string[][] = [['h', channelId], ...changedTags];
+  if (current?.name && !changedNames.has('name')) tags.push(['name', current.name]);
+  if (current?.about && !changedNames.has('about')) tags.push(['about', current.about]);
+  if (current?.archived && !changedNames.has('archived')) tags.push(['archived', 'true']);
+  if (current?.communityId && !changedNames.has(TAG_COMMUNITY)) {
+    tags.push([TAG_COMMUNITY, current.communityId]);
+  }
+
+  await publishEvent(ctx.http, sign(ctx.identity, KIND_EDIT_METADATA, tags));
+  let projected: ChannelMetadata | null = null;
+  const ok = await waitForRelayProjection(
+    ctx,
+    channelId,
+    [KIND_CHANNEL_METADATA],
+    async () => {
+      projected = await getChannelMetadata(ctx, channelId);
+      return projected !== null && projectedWhen(projected);
+    },
+    { timeoutMs: 15_000, intervalMs: 300 },
+  );
+  if (ok && projected) return projected;
+  throw new Error(timeoutError);
+}
+
 /** Rename a top-level Room through the current owner/admin metadata path. */
 export async function renameChannel(
   ctx: ChannelOpsContext,
@@ -598,29 +615,13 @@ export async function renameChannel(
   const role = await getChannelRole(ctx, channelId, ctx.identity.publicKey);
   if (!canManageRole(role)) throw new Error('only a Room owner or admin can rename it');
 
-  const current = await getChannelMetadata(ctx, channelId);
-  const tags: string[][] = [
-    ['h', channelId],
-    ['name', name],
-  ];
-  if (current?.about) tags.push(['about', current.about]);
-  if (current?.archived) tags.push(['archived', 'true']);
-  if (current?.communityId) tags.push([TAG_COMMUNITY, current.communityId]);
-
-  await publishEvent(ctx.http, sign(ctx.identity, KIND_EDIT_METADATA, tags));
-  let projected: ChannelMetadata | null = null;
-  const ok = await waitForRelayProjection(
+  return mutateChannelMetadata(
     ctx,
     channelId,
-    [KIND_CHANNEL_METADATA],
-    async () => {
-      projected = await getChannelMetadata(ctx, channelId);
-      return projected?.name === name;
-    },
-    { timeoutMs: 15_000, intervalMs: 300 },
+    [['name', name]],
+    (metadata) => metadata.name === name,
+    'Room name was not projected after 15000ms',
   );
-  if (ok && projected) return projected;
-  throw new Error(`Room name was not projected after 15000ms`);
 }
 
 /** Change a top-level Room between public discovery and invite-only access. */
@@ -638,30 +639,13 @@ export async function setChannelVisibility(
     throw new Error('only a Room owner or admin can change its visibility');
   }
 
-  const current = await getChannelMetadata(ctx, channelId);
-  const tags: string[][] = [
-    ['h', channelId],
-    ['visibility', visibility === 'invite-only' ? 'private' : 'open'],
-  ];
-  if (current?.name) tags.push(['name', current.name]);
-  if (current?.about) tags.push(['about', current.about]);
-  if (current?.archived) tags.push(['archived', 'true']);
-  if (current?.communityId) tags.push([TAG_COMMUNITY, current.communityId]);
-
-  await publishEvent(ctx.http, sign(ctx.identity, KIND_EDIT_METADATA, tags));
-  let projected: ChannelMetadata | null = null;
-  const ok = await waitForRelayProjection(
+  return mutateChannelMetadata(
     ctx,
     channelId,
-    [KIND_CHANNEL_METADATA],
-    async () => {
-      projected = await getChannelMetadata(ctx, channelId);
-      return projected?.visibility === visibility;
-    },
-    { timeoutMs: 15_000, intervalMs: 300 },
+    [['visibility', visibility === 'invite-only' ? 'private' : 'open']],
+    (metadata) => metadata.visibility === visibility,
+    'Room visibility was not projected after 15000ms',
   );
-  if (ok && projected) return projected;
-  throw new Error('Room visibility was not projected after 15000ms');
 }
 
 /**

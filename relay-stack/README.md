@@ -43,15 +43,23 @@ BUZZ_DEV_MCP_BIN=/path/to/darwin-arm64/buzz-dev-mcp \
 npm run bundle:beeline -- --platform darwin-arm64
 ```
 
-Each build updates `web/dl/manifest.json` and writes a checksum sidecar. CI
-(`.github/workflows/beeline-bundle.yml`) regenerates and commits this set on
-every push to `main`; deploy the complete `relay-stack/` directory so nginx can
-serve:
+Each local build writes `web/dl/manifest.json`, a tarball, and its checksum
+sidecar as ignored build outputs. CI (`.github/workflows/beeline-bundle.yml`)
+publishes the verified set directly to the production host's persistent
+`relay-front/web/dl/` store; Git carries none of those generated files.
+`scripts/deploy-relay-host.sh` deliberately excludes that store from web-tree
+rsync and fails before deployment if its manifest references a missing or
+mis-hashed file. nginx continues to serve:
 
 - `/install` as `text/x-shellscript`
 - `/dl/beeline-<os>-<arch>.tar.gz` and its `.sha256` sidecar
 - `/dl/manifest.json` — the rolling "latest from main" manifest consumed by
   the daemon self-update flow (see `docs/cli-bundle-channel.md`)
+
+The publisher stages under the store, renames files atomically with the
+manifest last, and retains five generations by default for rollback. The
+bundle workflow dispatches the production deploy only after publication, so
+the first checkout-without-tarballs deploy never empties `/dl/`.
 
 The invite landing page also expects the latest signed Android release APK at
 `web/dl/beeline-android.apk`. This stable deployment alias is not committed;

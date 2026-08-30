@@ -2,8 +2,8 @@
 #
 # Every push to main touching daemon/CLI bundle inputs builds the CLI bundle
 # natively for linux-x64 on the SELF-HOSTED production-Linux runner (same
-# labels as deploy-host.yml) and publishes the bundle set to its existing
-# home: relay-stack/web/dl/, served statically at https://usebeeline.app/dl/
+# labels as deploy-host.yml) and publishes the bundle set directly to the
+# host-local webroot, served statically at https://usebeeline.app/dl/
 # — exactly where apps/body/src/self-update-manifest.ts reads it
 # (DEFAULT_UPDATE_MANIFEST_URL). Tagged releases (`v0.2.x`) and the
 # from-source installer are untouched.
@@ -26,11 +26,10 @@
 #                           verified } where verified is true only when that
 #                   platform's install probe ran on a native runner.
 #
-# Publish safety: filenames stay stable (beeline-<platform>.tar.gz); the whole
-# set lands as ONE git commit so consumers can never see a manifest pointing at
-# a missing tarball; same-commit re-runs no-op; the publisher's own commit
-# carries a [beeline-bundle-publish] marker and does not re-trigger this
-# workflow.
+# Publish safety: filenames stay stable (beeline-<platform>.tar.gz); each file
+# is checksum-verified and atomically renamed into the host-local store, with
+# manifest.json renamed last. Same-commit re-runs are no-ops and the last five
+# generations remain in .versions/ for operator rollback.
 # ---------------------------------------------------------------------------
 name: Beeline CLI bundle
 
@@ -59,7 +58,7 @@ on:
 
 permissions:
   actions: write
-  contents: write
+  contents: read
 
 concurrency:
   group: beeline-bundle-publish
@@ -68,12 +67,6 @@ concurrency:
 jobs:
   build:
     name: Build ${{ matrix.platform }} bundle
-    # The publisher commits back with a dedicated bot identity; never
-    # re-trigger on our own publishes. (The `matrix` context is NOT available
-    # in a job-level `if` — referencing it makes the whole workflow file
-    # invalid and every push mints an instant failure run, which is exactly
-    # what happened. Disabled legs are commented out instead.)
-    if: github.event.head_commit.author.username != 'beeline-bundle-bot'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -117,79 +110,23 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish bundle set to relay-stack/web/dl
+    name: Publish bundle set to the host-local /dl store
     needs: build
-    if: github.event.head_commit.author.username != 'beeline-bundle-bot'
     # Self-hosted too, so the whole pipeline costs zero paid GitHub minutes.
     runs-on: [self-hosted, beeline-prod-host]
     steps:
-      # Rebasing the publish commit needs history beyond checkout's default
-      # single commit once main advances during the build.
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: bundle
-      # Re-runs of this job replay the original commit, whose checked-out tree
-      # predates the publisher's own commit; consult the REMOTE ref instead so
-      # a same-commit re-run is a true no-op.
-      - name: Skip if this commit is already published
-        run: |
-          git fetch origin main
-          if git show "FETCH_HEAD:relay-stack/web/dl/manifest.json" 2>/dev/null | grep -q '"sourceCommit": "'"${GITHUB_SHA}"'"'; then
-            echo "already published by a previous run for ${GITHUB_SHA}"
-            echo "SKIP_PUBLISH=true" >> "$GITHUB_ENV"
-          fi
-        env:
-          GITHUB_SHA: ${{ github.sha }}
       - name: Assemble and publish the bundle set
-        if: env.SKIP_PUBLISH != 'true'
-        run: node scripts/publish-beeline-dl.mjs --dir bundle
+        run: node scripts/publish-beeline-dl.mjs --dir bundle --output-dir "$BEELINE_DL_ROOT" --keep "$BEELINE_DL_KEEP"
         env:
           GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REF: ${{ github.ref }}
-      - name: Commit and publish the bundle set to main
-        if: env.SKIP_PUBLISH != 'true'
-        run: |
-          git config user.name "beeline-bundle-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add relay-stack/web/dl
-          if git diff --cached --quiet; then
-            echo "bundle set already current; nothing to commit"
-            exit 0
-          fi
-          git commit -m "chore(release): publish beeline CLI bundle [beeline-bundle-publish]" \
-            -m "sourceCommit: ${GITHUB_SHA}"
-          for attempt in 1 2 3; do
-            echo "publish attempt ${attempt}/3"
-            git fetch origin main
-            # The workflow retains a temporary feature-branch trigger. On the
-            # first attempt, move only the generated publish commit onto main,
-            # never the triggering branch's commits. Later attempts already
-            # have that isolated commit based on main.
-            if [ "${attempt}" -eq 1 ]; then
-              rebase_args=(--onto origin/main "${GITHUB_SHA}" HEAD)
-            else
-              rebase_args=(origin/main)
-            fi
-            if ! git rebase "${rebase_args[@]}"; then
-              git rebase --abort || true
-              echo "::error::bundle publish commit conflicts with the latest main"
-              exit 1
-            fi
-            if git push origin HEAD:main; then
-              exit 0
-            fi
-            if [ "${attempt}" -eq 3 ]; then
-              echo "::error::bundle publish push failed after 3 attempts"
-              exit 1
-            fi
-            echo "::warning::bundle publish push was rejected; refreshing main before retry"
-          done
-      # GITHUB_TOKEN pushes do not emit another workflow run. Dispatch the
-      # deploy explicitly after a successful push (or an idempotent re-run
-      # that confirms this source commit is already published).
+          BEELINE_DL_ROOT: /home/lunchbox/buzz-router-relay-prod/relay-front/web/dl
+          BEELINE_DL_KEEP: '5'
+      # The ordinary main deploy may have run before this longer native build.
+      # Dispatch again only after /dl is populated so the cutover is ordered.
       - name: Deploy the published bundle set
         run: gh workflow run deploy-host.yml --ref main
         env:

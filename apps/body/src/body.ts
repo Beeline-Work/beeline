@@ -1269,6 +1269,14 @@ export type AbandonedCorner = {
   missionCloseAdmitted?: boolean;
 };
 
+type SubchannelRestorationResult = 'restored' | 'abandoned' | 'skipped';
+
+type SubchannelRestorationParent = {
+  channelId: string;
+  communityId: string | null;
+  events: readonly NostrEvent[];
+};
+
 function missionCornerAuthorityFromEvent(
   event: NostrEvent | undefined,
   parentChannelId: string,
@@ -4890,359 +4898,372 @@ export class Body {
         const createEvent = createEvents
           .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
           .find((event) => tagValue(event, 'parent') === parentChannelId);
-        const restoredTaskDescription = createEvent ? (tagValue(createEvent, 'task') ?? '') : '';
-        const restoredPlan = latestActivityPlanFromEvents(
-          events.filter((event) =>
-            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity'),
-          ),
-        );
-        const control = [...events]
-          .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
-          .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
-        const missionSource = createEvent ?? control;
-        const restoredMission = missionCornerAuthorityFromEvent(missionSource, parentChannelId);
-        const featureBranch = control ? tagValue(control, 'feature') : undefined;
-        if (!featureBranch) {
-          // Nothing on the relay says which branch this corner owns, so it can
-          // never be restored — but it is still an open corner a human can ask
-          // to close, so it must remain reachable by the sessionless path.
-          this.markCornerAbandoned({
-            subchannelId,
-            parentChannelId,
-            reason: 'no restorable corner state was found for it',
-            ...(boundRepo ? { boundRepo } : {}),
-            ...(restoredMission ? { mission: restoredMission } : {}),
-          });
-          continue;
-        }
-        let cornerRepo = boundRepo;
-        if (!cornerRepo) {
-          const repository = control ? tagValue(control, 'repo') : undefined;
-          try {
-            cornerRepo = await this.resolveApprovedNamedRepository(
-              repository ? parseNamedRepositoryTarget(repository) : undefined,
-            );
-          } catch (error) {
-            // Say it once, not once per restart — the same rule its sibling
-            // worktree card below already follows.
-            if (!cornerAlreadyReported(events, CORNER_APPROVED_REPO_UNRESTORABLE)) {
-              await postControlMessage(
-                subchannelId,
-                this.agentIdentity,
-                `${CORNER_APPROVED_REPO_UNRESTORABLE} ${this.safePermissionFailure(error)}`,
-                // No canonical repo/branch/tip is knowable here — resolution
-                // itself is what failed — beyond the raw target string.
-                [['status', 'failed'], ...(repository ? [['repo', repository]] : [])],
-              ).catch(() => undefined);
-            }
-            this.markCornerAbandoned({
-              subchannelId,
-              parentChannelId,
-              reason: 'its approved repository could not be re-resolved after a restart',
-              ...(featureBranch ? { featureBranch } : {}),
-              ...(restoredMission ? { mission: restoredMission } : {}),
-            });
-            continue;
-          }
-        }
-        // Prefer the current PATH-safe isolated location. A corner in the old
-        // unsafe sibling pool is moved when this replacement session starts
-        // (never under a live session); if Git cannot move it, the compatibility
-        // path remains usable. The older buried `.worktrees/<id>` layout is
-        // still the final restore fallback.
-        const isolatedWorktreePath = this.cornerWorktreePath(cornerRepo, subchannelId);
-        const unsafeSiblingWorktreePath = legacySiblingCornerWorktreePath({
-          ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
-          workspaceRoot: this.config.workspaceRoot,
-          ...(cornerRepo.localPath ? { sourceCheckout: cornerRepo.localPath } : {}),
-          ...(cornerRepo.repositoryKey ? { repositoryKey: cornerRepo.repositoryKey } : {}),
+        await this.restoreOneSubchannel(
           subchannelId,
-        });
-        const legacyWorktreePath = legacyCornerWorktreePath(
-          this.config.workspaceRoot,
-          subchannelId,
+          createEvent,
+          { channelId: parentChannelId, communityId, events: parentEvents },
+          events,
+          boundRepo,
         );
-        let worktreePath = isolatedWorktreePath;
-        if (!existsSync(worktreePath) && unsafeSiblingWorktreePath) {
-          worktreePath = existsSync(unsafeSiblingWorktreePath)
-            ? await this.migrateLegacyCornerWorktree(
-                cornerRepo,
-                unsafeSiblingWorktreePath,
-                isolatedWorktreePath,
-              )
-            : isolatedWorktreePath;
-        }
-        if (!existsSync(worktreePath) && existsSync(legacyWorktreePath)) {
-          worktreePath = legacyWorktreePath;
-        }
-        if (!existsSync(worktreePath)) {
-          // A missing worktree is not the same as missing work: the corner's
-          // commits live on its feature branch, and a worktree is a checkout
-          // of a branch, so it can simply be made again. Giving up here is
-          // what stranded the captain's approved corners — the approval was
-          // still valid and the branch still on the remote, but with no
-          // worktree the land path could not see the corner at all, and every
-          // restart only re-published the same card.
-          const rebuilt = await this.rematerializeCornerWorktree(
-            cornerRepo,
-            isolatedWorktreePath,
-            featureBranch,
-          );
-          if (rebuilt) {
-            worktreePath = isolatedWorktreePath;
-            console.log(
-              `[body] rebuilt corner ${subchannelId} worktree at ${isolatedWorktreePath} ` +
-                `from ${featureBranch}`,
-            );
-          } else {
-            // Say it once, not once per restart. The corner's own newest
-            // agent-authored event already carrying this exact card means the
-            // human has been told and nothing has changed since.
-            if (!cornerAlreadyReported(events, CORNER_WORKTREE_UNRESTORABLE)) {
-              await postControlMessage(
-                subchannelId,
-                this.agentIdentity,
-                CORNER_WORKTREE_UNRESTORABLE,
-                [
-                  ['status', 'failed'],
-                  ['repo', this.repoId(cornerRepo)],
-                  ['branch', cornerRepo.targetBranch ?? 'refs/heads/main'],
-                ],
-              ).catch(() => undefined);
-            }
-            this.markCornerAbandoned({
-              subchannelId,
-              parentChannelId,
-              reason: 'its worktree was missing after a restart',
-              boundRepo: cornerRepo,
-              featureBranch,
-              worktreePath,
-              ...(restoredMission ? { mission: restoredMission } : {}),
-            });
-            continue;
-          }
-        }
-        this.primeCodegraphIndex(worktreePath);
-        const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
-        const restoredCornerMemory = await this.sessionMemory(communityId);
-        const cornerFilesystem = await this.cornerFilesystemPolicy(
-          cornerRepo,
-          worktreePath,
-          agentPrivateState?.root,
-        );
-        // A corner whose ACP session refuses to come back must not abort the
-        // restore of every corner behind it in this loop, and must stay
-        // reachable by the sessionless close path — a dead session is exactly
-        // one of the states a human presses "close corner" to get out of.
-        try {
-          const restoredMcpServers: McpServerWire[] = [
-            { name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] },
-          ];
-          const restoredCodegraphServer = codegraphMcpServer(this.config);
-          if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
-          restoredMcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
-          const session = await this.createManagedSession({
-            channelId: subchannelId,
-            mode: 'edit',
-            cwd: worktreePath,
-            mcpServers: restoredMcpServers,
-            systemPrompt: [
-              'You are a coding agent resuming one durable corner after a supervisor restart.',
-              `You are working in a git worktree: ${worktreePath}`,
-              `Your feature branch is: ${featureBranch}`,
-              'Continue from the structured resume brief and repository state. Never start a second task.',
-              'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
-              CORNER_TARGET_SYNC_INSTRUCTION,
-              'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
-              'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
-            ].join('\n'),
-            autoApprovePermissions: true,
-            permissionHandler: this.cornerPermissionHandler(
-              worktreePath,
-              cornerFilesystem.protectedPaths,
-              cornerFilesystem.writablePaths,
-              subchannelId,
-            ),
-            parentChannelId,
-            worktreePath,
-            ...(restoredMission ? { mission: restoredMission } : {}),
-            protectedPaths: cornerFilesystem.protectedPaths,
-            additionalWritablePaths: cornerFilesystem.additionalWritablePaths,
-            featureBranch,
-            resumeObjective: restoredTaskDescription || undefined,
-            resumeTargetRef: cornerRepo.targetBranch ?? 'refs/heads/main',
-            resumeOnFirstActivation: true,
-            resumePlan: restoredPlan,
-            ...(agentPrivateState ? { agentPrivateState } : {}),
-            ...(restoredCornerMemory ? { agentMemory: restoredCornerMemory } : {}),
-            ...(communityId ? { communityId } : {}),
-            ...(cornerRepo.truth?.binding.remote?.startsWith('git://github.com/') &&
-            agentPrivateState
-              ? { gitReadCredential: { roomId: parentChannelId, stateDir: agentPrivateState.root } }
-              : {}),
-          });
-          const cursor = await this.durableState.cursor(subchannelId);
-          // Quiet-episode state survives restarts so a mid-episode corner
-          // neither gets its spent nudge budget back nor a duplicate stalled
-          // card on resume.
-          const concludeRecord = await this.durableState.concludeEpisode(subchannelId);
-          const requestId = control ? tagValue(control, 'request') : undefined;
-          const requestEvent = requestId
-            ? parentEvents.find((event) => event.id === requestId)
-            : undefined;
-          const request = requestEvent
-            ? {
-                eventId: requestEvent.id,
-                authorPubkey: requestEvent.pubkey,
-                content: requestEvent.content.trim(),
-                attachments: parseAttachmentTags(requestEvent.tags),
-                createdAt: requestEvent.created_at,
-              }
-            : undefined;
-          const ready = [...events]
-            .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
-            .find((event) =>
-              event.tags.some(
-                (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === LANDED_TAG),
-              ),
-            );
-          const tip = ready ? tagValue(ready, 'tip') : undefined;
-          const participantPubkeys = await this.cornerParticipants(subchannelId, [
-            ...(request ? [request.authorPubkey] : []),
-          ]);
-          const info: SubchannelInfo = {
-            subchannelId,
-            worktreePath,
-            featureBranch,
-            role: this.agentIdentity,
-            session,
-            lastPolledAt: cursor.createdAt,
-            archived: false,
-            boundRepo: cornerRepo,
-            ...(restoredMission ? { mission: restoredMission } : {}),
-            taskDescription: restoredTaskDescription,
-            participantPubkeys,
-            ...(restoredPlan ? { taskPlan: restoredPlan } : {}),
-            ...(request ? { request } : {}),
-            ...(tip
-              ? {
-                  mergeTarget: {
-                    repo: tagValue(ready!, 'repo') ?? this.repoId(cornerRepo),
-                    branch:
-                      tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
-                    tip,
-                  },
-                  ...(tagValue(ready!, 'summary') ? { mergeReadySummaryPublishedTip: tip } : {}),
-                }
-              : {}),
-            ...(concludeRecord ? { conclude: concludeRecord } : {}),
-          };
-          session.lastPolledAt = cursor.createdAt;
-          this.registerSubchannel(info);
-          this.abandonedCorners.delete(subchannelId);
-          // Seed the state-machine baseline from the corner's own state record
-          // and re-assert any derivable current state (a restored review
-          // target stays waiting/review). Edge suppression across a
-          // restart depends on this baseline being accurate.
-          await this.seedCornerStateFromRecord(info, events);
-          if (tip && ready?.tags.some((tag) => tag[0] === 't' && tag[1] === MERGE_READY_TAG)) {
-            // Re-publish the immutable artifact pointer when restoring a card;
-            // content addressing makes this safe and closes any interrupted write.
-            try {
-              await this.publishMergeReady(info);
-            } catch (error) {
-              console.error(
-                `[body] restored corner ${subchannelId} review artifact publish failed; maintenance will retry:`,
-                error,
-              );
-            }
-          }
-          // The original human request remains the authority for unfinished
-          // commissioned work. Resume it once for this daemon process, never
-          // re-run the opening prompt from scratch and never loop from a
-          // maintenance tick. A second restore call in the same process is a
-          // no-op; another daemon restart gets one new continuation attempt.
-          const restartContinuationKey = `${this.agentIdentity.publicKey}:${subchannelId}`;
-          // A restart is not a fact about the task. Auto-resume ONLY a corner
-          // that was actively working when the daemon died; a corner parked on
-          // a needs-you verdict (moved target, failed delivery, nothing yet
-          // committed) stays parked — blockMovedTarget literally promises
-          // "nothing is continuing on its own", and re-driving it here is
-          // what republished fresh working/needs-attention cards on every
-          // restart, re-golding the deck while nobody was working.
-          const workingAtRestart = info.cornerState?.state === 'working';
-          if (request && !tip && !workingAtRestart) {
-            console.log(
-              `[body] corner ${subchannelId} not resumed after restart: standing verdict is ` +
-                `${info.cornerState?.state ?? 'unknown'}; waiting on a person instead of re-driving the original request`,
-            );
-          }
-          if (
-            request &&
-            !tip &&
-            workingAtRestart &&
-            !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)
-          ) {
-            BODY_RESTART_CONTINUATIONS.add(restartContinuationKey);
-            await postControlMessage(
-              subchannelId,
-              this.agentIdentity,
-              'Resumed automatically after a daemon restart. Existing worktree files, commits, plan, and durable context were loaded before work continued.',
-              [
-                ['status', 'working'],
-                ['restart', 'resumed'],
-                ['request', request.eventId],
-              ],
-            ).catch((error) =>
-              console.error(`[body] corner ${subchannelId} restart-resume note failed:`, error),
-            );
-            const originalPrompt = attachmentPrompt(
-              request.authorPubkey,
-              request.content,
-              request.attachments ?? [],
-            );
-            this.startAgentTask(
-              info,
-              originalPrompt,
-              [
-                'Resume this human-commissioned corner after a daemon restart.',
-                'Continue from the existing worktree, commits, plan, and structured resume brief.',
-                'Inspect what is already complete before acting; do not repeat finished work or start a second task.',
-                '',
-                originalPrompt,
-              ].join('\n'),
-              {
-                requestId: request.eventId,
-                originalRequestId: request.eventId,
-                cause: 'restart-continuation',
-              },
-            );
-            console.log(
-              `[body] corner ${subchannelId} resumed once after restart for request ${request.eventId}`,
-            );
-          }
-        } catch (restoreError) {
-          console.error(`[body] could not restore corner ${subchannelId}:`, restoreError);
-          await postControlMessage(
-            subchannelId,
-            this.agentIdentity,
-            summarizeGitFailure(
-              `Agent restart could not restore this corner's session: ${String(restoreError)}`,
-            ),
-            [['status', 'failed']],
-          ).catch(() => undefined);
-          this.markCornerAbandoned({
-            subchannelId,
-            parentChannelId,
-            reason: 'its agent session could not be restarted',
-            boundRepo: cornerRepo,
-            featureBranch,
-            worktreePath,
-          });
-        }
       }
     } finally {
       client.disconnect();
+    }
+  }
+
+  /** Restore one daemon-owned corner discovered by `restoreSubchannels`. */
+  private async restoreOneSubchannel(
+    subchannelId: string,
+    createEvent: NostrEvent | undefined,
+    parent: SubchannelRestorationParent,
+    events: readonly NostrEvent[],
+    boundRepo?: BoundRepo,
+  ): Promise<SubchannelRestorationResult> {
+    if (this.subchannels.has(subchannelId)) return 'skipped';
+    const parentChannelId = parent.channelId;
+    const communityId = parent.communityId;
+    const parentEvents = parent.events;
+    const restoredTaskDescription = createEvent ? (tagValue(createEvent, 'task') ?? '') : '';
+    const restoredPlan = latestActivityPlanFromEvents(
+      events.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity'),
+      ),
+    );
+    const control = [...events]
+      .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+      .find((event) => tagValue(event, 'feature') && tagValue(event, 'parent'));
+    const missionSource = createEvent ?? control;
+    const restoredMission = missionCornerAuthorityFromEvent(missionSource, parentChannelId);
+    const featureBranch = control ? tagValue(control, 'feature') : undefined;
+    if (!featureBranch) {
+      // Nothing on the relay says which branch this corner owns, so it can
+      // never be restored — but it is still an open corner a human can ask
+      // to close, so it must remain reachable by the sessionless path.
+      this.markCornerAbandoned({
+        subchannelId,
+        parentChannelId,
+        reason: 'no restorable corner state was found for it',
+        ...(boundRepo ? { boundRepo } : {}),
+        ...(restoredMission ? { mission: restoredMission } : {}),
+      });
+      return 'abandoned';
+    }
+    let cornerRepo = boundRepo;
+    if (!cornerRepo) {
+      const repository = control ? tagValue(control, 'repo') : undefined;
+      try {
+        cornerRepo = await this.resolveApprovedNamedRepository(
+          repository ? parseNamedRepositoryTarget(repository) : undefined,
+        );
+      } catch (error) {
+        // Say it once, not once per restart — the same rule its sibling
+        // worktree card below already follows.
+        if (!cornerAlreadyReported(events, CORNER_APPROVED_REPO_UNRESTORABLE)) {
+          await postControlMessage(
+            subchannelId,
+            this.agentIdentity,
+            `${CORNER_APPROVED_REPO_UNRESTORABLE} ${this.safePermissionFailure(error)}`,
+            // No canonical repo/branch/tip is knowable here — resolution
+            // itself is what failed — beyond the raw target string.
+            [['status', 'failed'], ...(repository ? [['repo', repository]] : [])],
+          ).catch(() => undefined);
+        }
+        this.markCornerAbandoned({
+          subchannelId,
+          parentChannelId,
+          reason: 'its approved repository could not be re-resolved after a restart',
+          ...(featureBranch ? { featureBranch } : {}),
+          ...(restoredMission ? { mission: restoredMission } : {}),
+        });
+        return 'abandoned';
+      }
+    }
+    // Prefer the current PATH-safe isolated location. A corner in the old
+    // unsafe sibling pool is moved when this replacement session starts
+    // (never under a live session); if Git cannot move it, the compatibility
+    // path remains usable. The older buried `.worktrees/<id>` layout is
+    // still the final restore fallback.
+    const isolatedWorktreePath = this.cornerWorktreePath(cornerRepo, subchannelId);
+    const unsafeSiblingWorktreePath = legacySiblingCornerWorktreePath({
+      ...(this.config.cornersRoot ? { cornersRoot: this.config.cornersRoot } : {}),
+      workspaceRoot: this.config.workspaceRoot,
+      ...(cornerRepo.localPath ? { sourceCheckout: cornerRepo.localPath } : {}),
+      ...(cornerRepo.repositoryKey ? { repositoryKey: cornerRepo.repositoryKey } : {}),
+      subchannelId,
+    });
+    const legacyWorktreePath = legacyCornerWorktreePath(this.config.workspaceRoot, subchannelId);
+    let worktreePath = isolatedWorktreePath;
+    if (!existsSync(worktreePath) && unsafeSiblingWorktreePath) {
+      worktreePath = existsSync(unsafeSiblingWorktreePath)
+        ? await this.migrateLegacyCornerWorktree(
+            cornerRepo,
+            unsafeSiblingWorktreePath,
+            isolatedWorktreePath,
+          )
+        : isolatedWorktreePath;
+    }
+    if (!existsSync(worktreePath) && existsSync(legacyWorktreePath)) {
+      worktreePath = legacyWorktreePath;
+    }
+    if (!existsSync(worktreePath)) {
+      // A missing worktree is not the same as missing work: the corner's
+      // commits live on its feature branch, and a worktree is a checkout
+      // of a branch, so it can simply be made again. Giving up here is
+      // what stranded the captain's approved corners — the approval was
+      // still valid and the branch still on the remote, but with no
+      // worktree the land path could not see the corner at all, and every
+      // restart only re-published the same card.
+      const rebuilt = await this.rematerializeCornerWorktree(
+        cornerRepo,
+        isolatedWorktreePath,
+        featureBranch,
+      );
+      if (rebuilt) {
+        worktreePath = isolatedWorktreePath;
+        console.log(
+          `[body] rebuilt corner ${subchannelId} worktree at ${isolatedWorktreePath} ` +
+            `from ${featureBranch}`,
+        );
+      } else {
+        // Say it once, not once per restart. The corner's own newest
+        // agent-authored event already carrying this exact card means the
+        // human has been told and nothing has changed since.
+        if (!cornerAlreadyReported(events, CORNER_WORKTREE_UNRESTORABLE)) {
+          await postControlMessage(subchannelId, this.agentIdentity, CORNER_WORKTREE_UNRESTORABLE, [
+            ['status', 'failed'],
+            ['repo', this.repoId(cornerRepo)],
+            ['branch', cornerRepo.targetBranch ?? 'refs/heads/main'],
+          ]).catch(() => undefined);
+        }
+        this.markCornerAbandoned({
+          subchannelId,
+          parentChannelId,
+          reason: 'its worktree was missing after a restart',
+          boundRepo: cornerRepo,
+          featureBranch,
+          worktreePath,
+          ...(restoredMission ? { mission: restoredMission } : {}),
+        });
+        return 'abandoned';
+      }
+    }
+    this.primeCodegraphIndex(worktreePath);
+    const agentPrivateState = await this.cornerAgentPrivateState(worktreePath, subchannelId);
+    const restoredCornerMemory = await this.sessionMemory(communityId);
+    const cornerFilesystem = await this.cornerFilesystemPolicy(
+      cornerRepo,
+      worktreePath,
+      agentPrivateState?.root,
+    );
+    // A corner whose ACP session refuses to come back must not abort the
+    // restore of every corner behind it in this loop, and must stay
+    // reachable by the sessionless close path — a dead session is exactly
+    // one of the states a human presses "close corner" to get out of.
+    try {
+      const restoredMcpServers: McpServerWire[] = [
+        { name: 'buzz-dev-mcp', command: this.config.mcpBinary, args: [], env: [] },
+      ];
+      const restoredCodegraphServer = codegraphMcpServer(this.config);
+      if (restoredCodegraphServer) restoredMcpServers.push(restoredCodegraphServer);
+      restoredMcpServers.push(...(await this.authorizedExternalServers(subchannelId)));
+      const session = await this.createManagedSession({
+        channelId: subchannelId,
+        mode: 'edit',
+        cwd: worktreePath,
+        mcpServers: restoredMcpServers,
+        systemPrompt: [
+          'You are a coding agent resuming one durable corner after a supervisor restart.',
+          `You are working in a git worktree: ${worktreePath}`,
+          `Your feature branch is: ${featureBranch}`,
+          'Continue from the structured resume brief and repository state. Never start a second task.',
+          'Never merge, push or change the target branch, or archive this corner; only a signed human approval may authorize those effects.',
+          CORNER_TARGET_SYNC_INSTRUCTION,
+          'A tool or skill can be unavailable or fail to initialize (for example codegraph before its index is ready). Treat that as a normal recoverable error for that one call and continue the task with what you have; never abort the task because a single tool or skill is missing.',
+          'You may call any skill available to you, but only when the current task explicitly calls for it or names it directly. Never auto-trigger a skill (e.g. a design/UX review skill) on routine or trivial work.',
+        ].join('\n'),
+        autoApprovePermissions: true,
+        permissionHandler: this.cornerPermissionHandler(
+          worktreePath,
+          cornerFilesystem.protectedPaths,
+          cornerFilesystem.writablePaths,
+          subchannelId,
+        ),
+        parentChannelId,
+        worktreePath,
+        ...(restoredMission ? { mission: restoredMission } : {}),
+        protectedPaths: cornerFilesystem.protectedPaths,
+        additionalWritablePaths: cornerFilesystem.additionalWritablePaths,
+        featureBranch,
+        resumeObjective: restoredTaskDescription || undefined,
+        resumeTargetRef: cornerRepo.targetBranch ?? 'refs/heads/main',
+        resumeOnFirstActivation: true,
+        resumePlan: restoredPlan,
+        ...(agentPrivateState ? { agentPrivateState } : {}),
+        ...(restoredCornerMemory ? { agentMemory: restoredCornerMemory } : {}),
+        ...(communityId ? { communityId } : {}),
+        ...(cornerRepo.truth?.binding.remote?.startsWith('git://github.com/') && agentPrivateState
+          ? { gitReadCredential: { roomId: parentChannelId, stateDir: agentPrivateState.root } }
+          : {}),
+      });
+      const cursor = await this.durableState.cursor(subchannelId);
+      // Quiet-episode state survives restarts so a mid-episode corner
+      // neither gets its spent nudge budget back nor a duplicate stalled
+      // card on resume.
+      const concludeRecord = await this.durableState.concludeEpisode(subchannelId);
+      const requestId = control ? tagValue(control, 'request') : undefined;
+      const requestEvent = requestId
+        ? parentEvents.find((event) => event.id === requestId)
+        : undefined;
+      const request = requestEvent
+        ? {
+            eventId: requestEvent.id,
+            authorPubkey: requestEvent.pubkey,
+            content: requestEvent.content.trim(),
+            attachments: parseAttachmentTags(requestEvent.tags),
+            createdAt: requestEvent.created_at,
+          }
+        : undefined;
+      const ready = [...events]
+        .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
+        .find((event) =>
+          event.tags.some(
+            (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === LANDED_TAG),
+          ),
+        );
+      const tip = ready ? tagValue(ready, 'tip') : undefined;
+      const participantPubkeys = await this.cornerParticipants(subchannelId, [
+        ...(request ? [request.authorPubkey] : []),
+      ]);
+      const info: SubchannelInfo = {
+        subchannelId,
+        worktreePath,
+        featureBranch,
+        role: this.agentIdentity,
+        session,
+        lastPolledAt: cursor.createdAt,
+        archived: false,
+        boundRepo: cornerRepo,
+        ...(restoredMission ? { mission: restoredMission } : {}),
+        taskDescription: restoredTaskDescription,
+        participantPubkeys,
+        ...(restoredPlan ? { taskPlan: restoredPlan } : {}),
+        ...(request ? { request } : {}),
+        ...(tip
+          ? {
+              mergeTarget: {
+                repo: tagValue(ready!, 'repo') ?? this.repoId(cornerRepo),
+                branch: tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
+                tip,
+              },
+              ...(tagValue(ready!, 'summary') ? { mergeReadySummaryPublishedTip: tip } : {}),
+            }
+          : {}),
+        ...(concludeRecord ? { conclude: concludeRecord } : {}),
+      };
+      session.lastPolledAt = cursor.createdAt;
+      this.registerSubchannel(info);
+      this.abandonedCorners.delete(subchannelId);
+      // Seed the state-machine baseline from the corner's own state record
+      // and re-assert any derivable current state (a restored review
+      // target stays waiting/review). Edge suppression across a
+      // restart depends on this baseline being accurate.
+      await this.seedCornerStateFromRecord(info, events);
+      if (tip && ready?.tags.some((tag) => tag[0] === 't' && tag[1] === MERGE_READY_TAG)) {
+        // Re-publish the immutable artifact pointer when restoring a card;
+        // content addressing makes this safe and closes any interrupted write.
+        try {
+          await this.publishMergeReady(info);
+        } catch (error) {
+          console.error(
+            `[body] restored corner ${subchannelId} review artifact publish failed; maintenance will retry:`,
+            error,
+          );
+        }
+      }
+      // The original human request remains the authority for unfinished
+      // commissioned work. Resume it once for this daemon process, never
+      // re-run the opening prompt from scratch and never loop from a
+      // maintenance tick. A second restore call in the same process is a
+      // no-op; another daemon restart gets one new continuation attempt.
+      const restartContinuationKey = `${this.agentIdentity.publicKey}:${subchannelId}`;
+      // A restart is not a fact about the task. Auto-resume ONLY a corner
+      // that was actively working when the daemon died; a corner parked on
+      // a needs-you verdict (moved target, failed delivery, nothing yet
+      // committed) stays parked — blockMovedTarget literally promises
+      // "nothing is continuing on its own", and re-driving it here is
+      // what republished fresh working/needs-attention cards on every
+      // restart, re-golding the deck while nobody was working.
+      const workingAtRestart = info.cornerState?.state === 'working';
+      if (request && !tip && !workingAtRestart) {
+        console.log(
+          `[body] corner ${subchannelId} not resumed after restart: standing verdict is ` +
+            `${info.cornerState?.state ?? 'unknown'}; waiting on a person instead of re-driving the original request`,
+        );
+      }
+      if (
+        request &&
+        !tip &&
+        workingAtRestart &&
+        !BODY_RESTART_CONTINUATIONS.has(restartContinuationKey)
+      ) {
+        BODY_RESTART_CONTINUATIONS.add(restartContinuationKey);
+        await postControlMessage(
+          subchannelId,
+          this.agentIdentity,
+          'Resumed automatically after a daemon restart. Existing worktree files, commits, plan, and durable context were loaded before work continued.',
+          [
+            ['status', 'working'],
+            ['restart', 'resumed'],
+            ['request', request.eventId],
+          ],
+        ).catch((error) =>
+          console.error(`[body] corner ${subchannelId} restart-resume note failed:`, error),
+        );
+        const originalPrompt = attachmentPrompt(
+          request.authorPubkey,
+          request.content,
+          request.attachments ?? [],
+        );
+        this.startAgentTask(
+          info,
+          originalPrompt,
+          [
+            'Resume this human-commissioned corner after a daemon restart.',
+            'Continue from the existing worktree, commits, plan, and structured resume brief.',
+            'Inspect what is already complete before acting; do not repeat finished work or start a second task.',
+            '',
+            originalPrompt,
+          ].join('\n'),
+          {
+            requestId: request.eventId,
+            originalRequestId: request.eventId,
+            cause: 'restart-continuation',
+          },
+        );
+        console.log(
+          `[body] corner ${subchannelId} resumed once after restart for request ${request.eventId}`,
+        );
+      }
+      return 'restored';
+    } catch (restoreError) {
+      console.error(`[body] could not restore corner ${subchannelId}:`, restoreError);
+      await postControlMessage(
+        subchannelId,
+        this.agentIdentity,
+        summarizeGitFailure(
+          `Agent restart could not restore this corner's session: ${String(restoreError)}`,
+        ),
+        [['status', 'failed']],
+      ).catch(() => undefined);
+      this.markCornerAbandoned({
+        subchannelId,
+        parentChannelId,
+        reason: 'its agent session could not be restarted',
+        boundRepo: cornerRepo,
+        featureBranch,
+        worktreePath,
+      });
+      return 'abandoned';
     }
   }
 

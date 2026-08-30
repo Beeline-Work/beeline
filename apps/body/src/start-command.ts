@@ -1,8 +1,59 @@
+import { dirname, resolve } from 'node:path';
+import * as clack from '@clack/prompts';
+import pc from 'picocolors';
+import { assertAgentNotPushAllowed, createRelayClient } from '@beeline/gate';
+import { formatAgentCommand } from './agent-command.js';
 import {
+  findAgentRuntimeConfigPaths,
+  findRuntimeConfigPaths,
   launchRuntimeDaemon,
+  readRuntimeRecord,
+  runtimeAgentCommand,
   runtimeDaemonPid,
+  runtimeIdentity,
+  selectRuntimeConfigPaths,
   stopRuntimeDaemon,
+  type AgentRuntimeRecord,
 } from './runtime.js';
+import { beelineInstallLayout } from './self-update.js';
+import { installAgentService } from './systemd.js';
+
+export function stableBeelineEntrypoint(): string {
+  const layout = beelineInstallLayout(process.env);
+  return layout ? resolve(layout.binDir, 'beeline') : resolve(process.argv[1]!);
+}
+
+export async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
+  const agent = runtimeIdentity(runtime.agent);
+  const relay = createRelayClient(agent, {
+    baseUrl: runtime.relayBaseUrl,
+    host: new URL(runtime.relayBaseUrl).host,
+  });
+  await Promise.all(
+    runtime.rooms.map(async (room) => {
+      if (!room.repo.relayRepo) return;
+      try {
+        await assertAgentNotPushAllowed({
+          ownerHex: room.repo.relayRepo.ownerHex,
+          repo: room.repo.relayRepo.repo,
+          agentPubkey: runtime.agent.publicKey,
+          protectedRef: `refs/heads/${room.repo.targetBranch}`,
+          relay,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        if (detail.startsWith('provisioning check failed:')) throw error;
+        if (!/relay|queryEvents|HTTP|fetch|network|timed? out|ECONN|socket/i.test(detail)) {
+          throw error;
+        }
+        console.warn(
+          `[thin-core] startup push-policy read degraded for Room ${room.channelId}; ` +
+            `continuing behind the fail-closed push broker: ${detail}`,
+        );
+      }
+    }),
+  );
+}
 
 /**
  * How long a restart waits for the running daemon to finish its graceful
@@ -66,9 +117,7 @@ export async function startStoredRuntime(
       onWait: (pid) => {
         if (Date.now() - lastWaitReportAt < RESTART_WAIT_REPORT_INTERVAL_MS) return;
         lastWaitReportAt = Date.now();
-        report(
-          `[buzz] waiting for agent ${pid} to finish its in-flight work before stopping it…`,
-        );
+        report(`[buzz] waiting for agent ${pid} to finish its in-flight work before stopping it…`);
       },
     });
     if (stoppedPid) report(`[buzz] stopped previous daemon (pid ${stoppedPid})`);
@@ -76,4 +125,75 @@ export async function startStoredRuntime(
   const pid = await deps.launch(configPath);
   report(`[buzz] agent daemon ${existingPid ? 'restarted' : 'started'} (pid ${pid})`);
   return pid;
+}
+
+async function startRuntime(
+  configPath: string,
+  spinnerHandle?: ReturnType<typeof clack.spinner>,
+): Promise<void> {
+  const report = (text: string) =>
+    spinnerHandle ? spinnerHandle.message(text) : console.log(text);
+  const runtime = await readRuntimeRecord(configPath);
+  const selectedAgent = runtimeAgentCommand(runtime);
+  await assertRuntimeSafe(runtime);
+  report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
+  if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
+    const existingPid = await runtimeDaemonPid(configPath);
+    if (existingPid) {
+      report(`[buzz] agent daemon is running (pid ${existingPid}); draining it before supervision`);
+      await stopRuntimeDaemon(configPath, { timeoutMs: 30 * 60_000 });
+    }
+    const pid = await installAgentService(runtime.agent.publicKey, {
+      entrypoint: stableBeelineEntrypoint(),
+    });
+    report(`[buzz] agent daemon supervised by systemd (pid ${pid})`);
+    return;
+  }
+  await startStoredRuntime(configPath, { report });
+}
+
+/** Select and start the runtimes addressed by one `beeline start` invocation. */
+export async function runStartCommand(args: string[], interactiveUi: boolean): Promise<void> {
+  const allFlag = args.includes('--all');
+  const agentFlag = args.indexOf('--agent');
+  const flagPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
+  if (agentFlag >= 0 && !flagPubkey) throw new Error('--agent requires an agent pubkey');
+  const positionalPubkey = args
+    .slice(1)
+    .find((token) => !token.startsWith('--') && token !== flagPubkey);
+  const requestedPubkey = flagPubkey ?? positionalPubkey;
+  const { paths: unique } = await selectRuntimeConfigPaths({
+    cwd: process.cwd(),
+    all: allFlag,
+    requestedPubkey,
+    findHostRuntimes: (cwd) => findAgentRuntimeConfigPaths(process.env, cwd),
+    findRepositoryRuntimes: findRuntimeConfigPaths,
+    noRuntimeMessage: (hostScope) =>
+      requestedPubkey
+        ? `no paired agent runtime found for ${requestedPubkey}`
+        : hostScope
+          ? 'no paired agent runtime found on this host'
+          : 'no paired agent runtime found in this repository',
+    multipleRuntimeMessage:
+      'multiple paired agents match that pubkey; pass the full agent pubkey shown by `beeline pair`',
+  });
+  if (interactiveUi) clack.intro(pc.bold('beeline start'));
+  for (const path of unique) {
+    if (!interactiveUi) {
+      await startRuntime(path);
+      continue;
+    }
+    const spinnerHandle = clack.spinner();
+    spinnerHandle.start(`Starting ${dirname(path)}…`);
+    try {
+      await startRuntime(path, spinnerHandle);
+      spinnerHandle.stop(pc.green('Started.'));
+    } catch (error) {
+      spinnerHandle.stop(pc.red('Failed.'));
+      throw error;
+    }
+  }
+  if (interactiveUi) {
+    clack.outro(pc.green(unique.length > 1 ? 'All agents started.' : 'Done.'));
+  }
 }

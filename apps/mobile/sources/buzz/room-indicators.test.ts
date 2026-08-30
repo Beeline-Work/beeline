@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { CORNER_ACTIVITY_FRESHNESS_MS, type CornerMachineState } from '@beeline/buzz-client';
+import {
+  CORNER_ACTIVITY_FRESHNESS_MS,
+  type CornerMachineState,
+  type RoomViewAgentTurn,
+} from '@beeline/buzz-client';
 import type { CornerStatus, CornerSummary } from './corners';
 import {
   COMPOSER_ACK_BOUND_MS,
+  hasComposerAckReceipt,
   isPinnedCornerLive,
   isPinnedCornerReadyForReview,
   pinnedCornerVerb,
@@ -226,6 +231,32 @@ describe('composer ack presentation', () => {
         now: NOW + COMPOSER_ACK_BOUND_MS + 5_000,
       }),
     ).toEqual({ kind: 'thinking', agentPubkey: 'agent-1' });
+  });
+
+  it('recognizes a terminal receipt for the sent message after the agent has replied', () => {
+    const turns: readonly RoomViewAgentTurn[] = [
+      {
+        requestId: 'sent-message',
+        agentPubkey: 'agent-1',
+        status: 'complete',
+        createdAt: NOW / 1_000,
+      },
+    ];
+
+    expect(hasComposerAckReceipt('sent-message', turns)).toBe(true);
+  });
+
+  it('does not let an older receipt clear a newer pending acknowledgement', () => {
+    const turns: readonly RoomViewAgentTurn[] = [
+      {
+        requestId: 'older-message',
+        agentPubkey: 'agent-1',
+        status: 'complete',
+        createdAt: NOW / 1_000,
+      },
+    ];
+
+    expect(hasComposerAckReceipt('newer-message', turns)).toBe(false);
   });
 
   it('a Room-offline guard still suppresses the real receipt but never a local buzz', () => {

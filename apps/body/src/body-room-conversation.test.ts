@@ -3620,10 +3620,17 @@ describe('Room conversation and permission-gated work intent', () => {
     vi.spyOn(body as never, 'waitForWritePermissionDecision' as never).mockReturnValue(
       new Promise(() => undefined) as never,
     );
+    vi.spyOn(body as never, 'roomAuthorAttributions' as never).mockResolvedValue(
+      new Map([
+        [body.agent.publicKey, { kind: 'Agent' as const, name: 'Lina', handle: 'lina' }],
+      ]) as never,
+    );
     const published: NostrEvent[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const query = relayQueryResponse(published, _input, init);
+        if (query) return query;
         published.push(JSON.parse(String(init?.body)) as NostrEvent);
         return new Response(JSON.stringify({ accepted: true }), { status: 200 });
       }),
@@ -3651,12 +3658,99 @@ describe('Room conversation and permission-gated work intent', () => {
       event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-write-permission-request'),
     );
     expect(cards).toHaveLength(1);
+    expect(cards[0]!.content).toContain('asked Lina to open a corner');
     expect(cards[0]!.content).toContain('Repair approval cards');
     expect(cards[0]!.tags.filter((tag) => tag[0] === 'p').map((tag) => tag[1])).toEqual([
       human.publicKey,
       admin.publicKey,
       owner.publicKey,
     ]);
+  });
+
+  it('reuses a pending corner approval card after a Room runtime restart', async () => {
+    const approvalAgent = newIdentity('beeline-agent');
+    const body = new Body(
+      {
+        agentBinary: '/nonexistent',
+        mcpBinary: '/nonexistent',
+        agentEnv: {},
+        workspaceRoot: '/tmp/buzzy-corner-approval-restart',
+        relayBaseUrl: 'http://relay.test',
+        relayHost: 'relay.test',
+        relayScheme: 'http',
+        relayWsUrl: 'ws://relay.test',
+        autoApprovePermissions: true,
+      },
+      undefined,
+      approvalAgent,
+    );
+    const permissionId = 'approval-after-restart';
+    const requestId = 'a'.repeat(64);
+    const card = signEvent(
+      {
+        pubkey: approvalAgent.publicKey,
+        created_at: 1,
+        kind: 9,
+        tags: [
+          ['h', 'parent-channel'],
+          ['t', 'buzz-write-permission-request'],
+          ['permission', permissionId],
+          ['request', requestId],
+          ['requester', human.publicKey],
+          ['agent', approvalAgent.publicKey],
+          ['tool', 'open_corner'],
+          ['repo', 'remote/repo'],
+          ['objective', 'Repair approval cards'],
+          ['status', 'pending'],
+          ['p', human.publicKey],
+        ],
+        content: '@remy asked Lina to open a corner for: Repair approval cards',
+      },
+      approvalAgent.secretKey,
+    );
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const query = relayQueryResponse([card], _input, init);
+        if (query) return query;
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    const wait = vi
+      .spyOn(body as never, 'waitForWritePermissionDecision' as never)
+      .mockReturnValue(new Promise(() => undefined) as never);
+
+    await expect(
+      Reflect.get(body, 'requestCornerApproval').call(body, {
+        roomId: 'parent-channel',
+        workspaceId: 'workspace',
+        roomRepo: { repo: 'repo' },
+        request: {
+          eventId: requestId,
+          authorPubkey: human.publicKey,
+          content: 'Repair approval cards',
+          createdAt: 1,
+        },
+        objective: 'Repair approval cards',
+        tool: 'open_corner',
+      }),
+    ).resolves.toEqual({
+      request_id: permissionId,
+      event_id: card.id,
+      message: card.content,
+    });
+
+    expect(published).toHaveLength(0);
+    expect(wait).toHaveBeenCalledWith(
+      'parent-channel',
+      permissionId,
+      requestId,
+      'remote/repo',
+      10 * 60_000,
+      expect.objectContaining({ allowedResponders: expect.any(Set) }),
+    );
   });
 
   it('self-closes a child whose setup fails after its durable create', async () => {

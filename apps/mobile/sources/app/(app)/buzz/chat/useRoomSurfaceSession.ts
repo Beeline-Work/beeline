@@ -33,6 +33,8 @@ export interface RoomSurfaceSessionBindings {
   resetTranscript(): void;
   restoreOutboxMessages(messages: readonly ChatDisplayMessage[]): void;
   dismissOptimisticMessage(eventId: string): void;
+  /** Refresh render-time lease evaluation whenever a RoomView is applied. */
+  observeRoomSurface(): void;
 }
 
 export interface RoomSurfaceOutboxHandle {
@@ -231,6 +233,7 @@ export function useRoomSurfaceSession({
       const stableView = reconcileRoomView(reconciledViewRef.current, view);
       reconciledViewRef.current = stableView;
       hasPainted = true;
+      bindingsRef.current.observeRoomSurface();
       setRoomSurface(stableView);
       setHydrationFailed(false);
       setHydrationError(null);

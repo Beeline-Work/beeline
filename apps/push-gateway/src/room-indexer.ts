@@ -1464,12 +1464,12 @@ SELECT 'review', jsonb_build_object('content', e.content)
 FROM authorized a JOIN LATERAL (
   SELECT e.content FROM events e
   JOIN channel_members author ON author.community_id = e.community_id
-    AND author.channel_id = e.channel_id AND author.pubkey = e.pubkey
+    AND author.channel_id = a.id AND author.pubkey = e.pubkey
     AND author.removed_at IS NULL
-  WHERE e.community_id = a.community_id AND e.channel_id = a.id AND e.kind = 30078
+  WHERE e.community_id = a.community_id AND e.kind = 30078
     AND e.deleted_at IS NULL
-    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
-      WHERE t->>0 = 't' AND t->>1 = 'change-review-artifact')
+    AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.id::text))
+    AND e.tags @> '[["t", "change-review-artifact"]]'::jsonb
   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) e ON true
 UNION ALL
@@ -1726,7 +1726,12 @@ const CONVERSATION_MARKERS = new Set([
 function projectEvent(data: Json, channelId: string): RoomViewMessage | undefined {
   const eventTags = tags(data.tags);
   const markers = markerSet(eventTags);
-  if ([...markers].some((candidate) => HIDDEN_MARKERS.has(candidate))) return undefined;
+  const permissionMarker =
+    markers.has('buzz-write-permission-request') || markers.has('buzz-permission-request');
+  // Permission requests are control records on the wire but durable approval
+  // cards in the Room. All other hidden control shapes still fail closed.
+  if (!permissionMarker && [...markers].some((candidate) => HIDDEN_MARKERS.has(candidate)))
+    return undefined;
   const eventIdentity = identity(data);
   const base = {
     id: String(data.id ?? ''),
@@ -1835,8 +1840,6 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     };
   }
 
-  const permissionMarker =
-    markers.has('buzz-write-permission-request') || markers.has('buzz-permission-request');
   if (permissionMarker) {
     const status = tag(eventTags, 'status');
     const agentPubkey = tag(eventTags, 'agent') ?? eventIdentity.pubkey;

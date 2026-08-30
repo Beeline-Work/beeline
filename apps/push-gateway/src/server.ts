@@ -125,6 +125,35 @@ function matchesPublicOrigin(request: IncomingMessage, publicOrigin: string): bo
   );
 }
 
+/**
+ * Authenticate one indexer surface request against its exact public method and
+ * path. The caller retains its route-specific missing-resource semantics.
+ */
+function authenticateIndexerRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  indexer: NonNullable<RegistrationServerHooks['indexer']>,
+  method: string,
+  path: string,
+): string | null {
+  if (!matchesPublicOrigin(request, indexer.publicOrigin)) {
+    json(response, 401, { error: 'valid_identity_authorization_required' }, PRIVATE_HEADERS);
+    return null;
+  }
+  const auth = verifyNip98Header(
+    request.headers.authorization,
+    `${indexer.publicOrigin}${path}`,
+    method,
+    new Date(indexer.now?.() ?? Date.now()),
+    60,
+  );
+  if (!auth.ok) {
+    json(response, 401, { error: 'valid_identity_authorization_required' }, PRIVATE_HEADERS);
+    return null;
+  }
+  return auth.pubkey;
+}
+
 type IndexRoute =
   | { readonly kind: 'workspaces' }
   | { readonly kind: 'workspace'; readonly workspaceId: string }
@@ -239,37 +268,20 @@ export function createRegistrationServer(
         const startedAt = performance.now();
         let status = 500;
         try {
-          if (!matchesPublicOrigin(request, hooks.indexer.publicOrigin)) {
-            status = 401;
-            json(
-              response,
-              status,
-              { error: 'valid_identity_authorization_required' },
-              PRIVATE_HEADERS,
-            );
-            return;
-          }
-          const expectedUrl = `${hooks.indexer.publicOrigin}/invite/resolve`;
-          const auth = verifyNip98Header(
-            request.headers.authorization,
-            expectedUrl,
+          const pubkey = authenticateIndexerRequest(
+            request,
+            response,
+            hooks.indexer,
             'POST',
-            new Date(hooks.indexer.now?.() ?? Date.now()),
-            60,
+            '/invite/resolve',
           );
-          if (!auth.ok) {
+          if (!pubkey) {
             status = 401;
-            json(
-              response,
-              status,
-              { error: 'valid_identity_authorization_required' },
-              PRIVATE_HEADERS,
-            );
             return;
           }
           const now = hooks.indexer.now?.() ?? Date.now();
           const address = request.socket.remoteAddress ?? 'unknown';
-          const rateKey = `${auth.pubkey}:${address}`;
+          const rateKey = `${pubkey}:${address}`;
           const current = inviteRate.get(rateKey);
           const bucket =
             !current || current.resetAt <= now ? { count: 0, resetAt: now + 60_000 } : current;
@@ -298,7 +310,7 @@ export function createRegistrationServer(
             return;
           }
           const tokenHash = createHash('sha256').update(token).digest('hex');
-          const view = await hooks.indexer.readInvite(tokenHash, auth.pubkey);
+          const view = await hooks.indexer.readInvite(tokenHash, pubkey);
           status = view ? 200 : 404;
           json(response, status, view ?? { error: 'not_found' }, PRIVATE_HEADERS);
           return;
@@ -321,32 +333,15 @@ export function createRegistrationServer(
         const startedAt = performance.now();
         let status = 500;
         try {
-          if (!matchesPublicOrigin(request, hooks.indexer.publicOrigin)) {
-            status = 401;
-            json(
-              response,
-              status,
-              { error: 'valid_identity_authorization_required' },
-              PRIVATE_HEADERS,
-            );
-            return;
-          }
-          const expectedUrl = `${hooks.indexer.publicOrigin}/agent-pairing/claim`;
-          const auth = verifyNip98Header(
-            request.headers.authorization,
-            expectedUrl,
+          const pubkey = authenticateIndexerRequest(
+            request,
+            response,
+            hooks.indexer,
             'POST',
-            new Date(hooks.indexer.now?.() ?? Date.now()),
-            60,
+            '/agent-pairing/claim',
           );
-          if (!auth.ok) {
+          if (!pubkey) {
             status = 401;
-            json(
-              response,
-              status,
-              { error: 'valid_identity_authorization_required' },
-              PRIVATE_HEADERS,
-            );
             return;
           }
           let body: unknown;
@@ -368,7 +363,7 @@ export function createRegistrationServer(
             return;
           }
           const tokenHash = createHash('sha256').update(code).digest('hex');
-          const claim = await hooks.indexer.claimAgentPairing(tokenHash, auth.pubkey);
+          const claim = await hooks.indexer.claimAgentPairing(tokenHash, pubkey);
           status = claim ? 200 : 404;
           json(response, status, claim ?? { error: 'not_found' }, PRIVATE_HEADERS);
           return;
@@ -403,35 +398,18 @@ export function createRegistrationServer(
           const startedAt = performance.now();
           let status = 500;
           try {
-            if (!matchesPublicOrigin(request, hooks.indexer.publicOrigin)) {
-              status = 401;
-              json(
-                response,
-                status,
-                { error: 'valid_identity_authorization_required' },
-                PRIVATE_HEADERS,
-              );
-              return;
-            }
-            const expectedUrl = `${hooks.indexer.publicOrigin}${request.url}`;
-            const auth = verifyNip98Header(
-              request.headers.authorization,
-              expectedUrl,
+            const pubkey = authenticateIndexerRequest(
+              request,
+              response,
+              hooks.indexer,
               'GET',
-              new Date(hooks.indexer.now?.() ?? Date.now()),
-              60,
+              request.url,
             );
-            if (!auth.ok) {
+            if (!pubkey) {
               status = 401;
-              json(
-                response,
-                status,
-                { error: 'valid_identity_authorization_required' },
-                PRIVATE_HEADERS,
-              );
               return;
             }
-            const view = await indexView(hooks.indexer, route, auth.pubkey);
+            const view = await indexView(hooks.indexer, route, pubkey);
             if (!view) {
               status = 404;
               json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);

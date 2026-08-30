@@ -87,14 +87,18 @@ the per-recipient delivery authority for every genuine eligible Room.
 
 ## Direct surface indexer
 
-The indexer exposes eight bounded reads: `/workspaces`, `/workspace/:id`,
+The indexer exposes seven bounded reads — `/workspaces`, `/workspace/:id`,
 `/workspace/:id/chats`, `/workspace/:id/agents/:pubkey`, `/room/:id`,
-`/room/:id/corners`, `/room/:id/messages`, and `POST /invite/resolve`.
-Every route requires an exact fresh NIP-98 reader identity. All except invite
-resolution also join current membership in the same SQL statement; a missing
-object and a non-member return the same `404`. Invite resolution intentionally
-skips membership, hashes the opaque token from its body, verifies the current
-minter and Workspace, and returns only name, avatar, and expiry.
+`/room/:id/corners`, and `/room/:id/messages` — plus `POST /invite/resolve`
+and `POST /agent-pairing/claim`. Every route requires an exact fresh NIP-98
+reader identity. The reads join current membership in the same SQL statement; a
+missing object and a non-member return the same `404`. Invite resolution
+intentionally skips membership, hashes the opaque token from its body, verifies
+the current minter and Workspace, and returns only name, avatar, and expiry.
+
+`POST /agent-pairing/claim` is the other NIP-98-authenticated boundary. It
+accepts a single-use pairing code and atomically reserves its globally readable
+marker for the signing agent identity before canonical membership is published.
 
 `/room/:id` addresses both top-level Rooms and corners. Its one bounded query is
 paint-complete for a cold chat open: metadata, viewer permissions, resolved

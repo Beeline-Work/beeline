@@ -24,7 +24,6 @@ import {
   attemptMerge,
 } from '@beeline/gate';
 import {
-  createIdentity,
   createAgent,
   createChannel as buzzCreateChannel,
   createCommunity,
@@ -43,11 +42,11 @@ const RUN_MARKER = `uidemo-${randomUUID().slice(0, 8)}`;
 function log(...args: unknown[]) {
   console.log(`[ui-demo]`, ...args);
 }
-function commit(dir: string, file: string, content: string, msg: string) {
+async function commit(dir: string, file: string, content: string, msg: string) {
   writeFileSync(join(dir, file), content);
-  const add = git(dir, ['add', '-A']);
+  const add = await git(dir, ['add', '-A']);
   if (!add.ok) throw new Error(`git add failed: ${add.stderr}`);
-  const c = git(dir, ['commit', '-m', msg]);
+  const c = await git(dir, ['commit', '-m', msg]);
   if (!c.ok) throw new Error(`git commit failed: ${c.stderr}`);
 }
 
@@ -103,10 +102,10 @@ async function main() {
   }
 
   // ── Identities ────────────────────────────────────────────────────
-  const owner = createIdentity('ui-demo-owner'); // push identity
+  const owner = newIdentity('ui-demo-owner'); // push identity
   const reviewer = process.env.BUZZY_UI_REVIEWER_NSEC
-    ? loadIdentityFromNsec(process.env.BUZZY_UI_REVIEWER_NSEC, 'ui-demo-reviewer')
-    : createIdentity('ui-demo-reviewer'); // review identity for UI
+    ? { ...loadIdentityFromNsec(process.env.BUZZY_UI_REVIEWER_NSEC), name: 'ui-demo-reviewer' }
+    : newIdentity('ui-demo-reviewer'); // review identity for UI
   const agent = newIdentity('ui-demo-agent');
   const channelContext = {
     http: { baseUrl: BASE_URL, host: HOST, identity: owner },
@@ -325,22 +324,30 @@ async function main() {
   // ── 3. Seed repo + push feature branch ────────────────────────────
   const repoUrl = gitRepoUrl(owner.publicKey, repo);
   const seedDir = mkdtempSync(join(tmpdir(), 'buzzy-ui-seed-'));
-  git(seedDir, ['init', '-q', '-b', 'main']);
-  commit(seedDir, 'README.md', `# ${repo}\n\nReview status: draft\n`, 'init');
-  const seedPush = gitAuthed(seedDir, owner, owner.publicKey, repo, ['push', repoUrl, 'main']);
+  await git(seedDir, ['init', '-q', '-b', 'main']);
+  await commit(seedDir, 'README.md', `# ${repo}\n\nReview status: draft\n`, 'init');
+  const seedPush = await gitAuthed(seedDir, owner, owner.publicKey, repo, [
+    'push',
+    repoUrl,
+    'main',
+  ]);
   if (!seedPush.ok) throw new Error('seed push failed: ' + seedPush.stderr);
   await new Promise((r) => setTimeout(r, 1000));
 
   const featureBranch = `feature/${RUN_MARKER}`;
   const agentDir = mkdtempSync(join(tmpdir(), 'buzzy-ui-agent-'));
-  const agentClone = gitAuthed(agentDir, agent, owner.publicKey, repo, ['clone', repoUrl, 'work']);
+  const agentClone = await gitAuthed(agentDir, agent, owner.publicKey, repo, [
+    'clone',
+    repoUrl,
+    'work',
+  ]);
   if (!agentClone.ok) throw new Error('clone failed');
   const work = join(agentDir, 'work');
-  git(work, ['checkout', '-q', '-b', featureBranch]);
+  await git(work, ['checkout', '-q', '-b', featureBranch]);
   writeFileSync(join(work, 'README.md'), `# ${repo}\n\nReview status: ready\n`);
-  commit(work, 'FEATURE.md', `# Feature ${RUN_MARKER}\n`, `feat: ${RUN_MARKER}`);
-  const featureTip = git(work, ['rev-parse', 'HEAD']).stdout.trim();
-  const pushFeature = gitAuthed(work, agent, owner.publicKey, repo, [
+  await commit(work, 'FEATURE.md', `# Feature ${RUN_MARKER}\n`, `feat: ${RUN_MARKER}`);
+  const featureTip = (await git(work, ['rev-parse', 'HEAD'])).stdout.trim();
+  const pushFeature = await gitAuthed(work, agent, owner.publicKey, repo, [
     'push',
     'origin',
     featureBranch,

@@ -38,7 +38,8 @@ async function main() {
   );
   console.log('DB channel_members:\n' + rows);
   const check = (pk: string, role: string) => {
-    if (!rows.includes(`${pk}=${role}`)) throw new Error(`role assert failed: ${pk} expected ${role}`);
+    if (!rows.includes(`${pk}=${role}`))
+      throw new Error(`role assert failed: ${pk} expected ${role}`);
   };
   check(worker.publicKey, 'owner');
   check(reviewer.publicKey, 'admin');
@@ -46,23 +47,34 @@ async function main() {
   console.log('OK: roles landed (worker=owner, reviewer=admin, agent=member)');
 
   // Post an approval as reviewer, read it back, verify binding.
-  const target = { repo: `${worker.publicKey}/demo`, branch: 'refs/heads/main', tip: 'a'.repeat(40) };
+  const target = {
+    repo: `${worker.publicKey}/demo`,
+    branch: 'refs/heads/main',
+    tip: 'a'.repeat(40),
+  };
   const approval = buildApproval(reviewer, channelId, target);
   const pub = await publishEvent(approval, reviewer);
   console.log('approval published, accepted =', pub.accepted);
 
   const back = await queryEvents(
-    [{ kinds: [KIND_STREAM_MESSAGE], authors: [reviewer.publicKey], '#h': [channelId], '#t': [APPROVAL_MARKER] }],
+    [
+      {
+        kinds: [KIND_STREAM_MESSAGE],
+        authors: [reviewer.publicKey],
+        '#h': [channelId],
+        '#t': [APPROVAL_MARKER],
+      },
+    ],
     worker,
   );
   console.log('approvals read back:', back.length);
-  const ok = back.some((ev) => verifyApproval(ev, reviewer.publicKey, target));
+  const ok = back.some((ev) => verifyApproval(ev, reviewer.publicKey, target, channelId));
   if (!ok) throw new Error('approval round-trip / verifyApproval failed');
   console.log('OK: approval round-trips through the relay and verifies');
 
   // Negative: a forged approval (wrong signer) must NOT verify.
   const forged = buildApproval(agent, channelId, target); // signed by agent, not reviewer
-  if (verifyApproval(forged, reviewer.publicKey, target)) {
+  if (verifyApproval(forged, reviewer.publicKey, target, channelId)) {
     throw new Error('SECURITY: forged approval (wrong signer) verified!');
   }
   console.log('OK: forged approval (wrong signer) rejected');

@@ -51,10 +51,13 @@ jobs:
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 30
     env:
-      DELIVERY_INDEX: ${{ runner.temp }}/mobile-ota-delivery-index.json
-      RUN_LEDGER: ${{ runner.temp }}/mobile-ota-ledger.json
       CURRENT_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && inputs.retry_attempt || 1 }}
     steps:
+      - name: Initialize runner-local paths
+        run: |
+          echo "DELIVERY_INDEX=$RUNNER_TEMP/mobile-ota-delivery-index.json" >> "$GITHUB_ENV"
+          echo "RUN_LEDGER=$RUNNER_TEMP/mobile-ota-ledger.json" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -366,9 +369,10 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.operation == 'reconcile')
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      DELIVERY_INDEX: ${{ runner.temp }}/mobile-ota-delivery-index.json
     steps:
+      - name: Initialize runner-local paths
+        run: echo "DELIVERY_INDEX=$RUNNER_TEMP/mobile-ota-delivery-index.json" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
       - name: Locate latest delivery index
         id: latest

@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import {
   AcpClient,
+  agentMessageRuns,
   isMutatingPermissionRequest,
   isPureRetryNarration,
   openAcpConversation,
@@ -4826,6 +4827,32 @@ export class Body {
     const extraTags = options.prepareTags
       ? await options.prepareTags(reply)
       : (options.extraTags ?? []);
+
+    // A corner is a durable work transcript, not a last-message preview. ACP
+    // splits prose around tool and planning updates, so materialize every
+    // earlier prose run before the final answer. Drafts remain ephemeral; only
+    // genuine prior message runs belong in the reopened corner story.
+    const cornerProgress = session.parentChannelId
+      ? agentMessageRuns(result.updates)
+          .slice(0, -1)
+          .map((run) => stripAttachmentDirectives(stripAgentReplyPreamble(run)).trim())
+          .filter((run) => run.length > 0 && !isPureRetryNarration(run))
+      : [];
+    // Ordering is timestamp-first at the relay. Keep runs from one completed
+    // turn ordered even when they publish in the same wall-clock second.
+    const progressStartedAt = Math.floor(Date.now() / 1_000) - cornerProgress.length;
+    for (const [index, progress] of cornerProgress.entries()) {
+      await postAgentMessage(
+        channelId,
+        this.agentIdentity,
+        progress,
+        options.replyTo,
+        [],
+        [],
+        options.replyRootId,
+        progressStartedAt + index,
+      );
+    }
     let event: NostrEvent;
     if (options.replyTo) {
       event = await this.durableState.reserveReply(

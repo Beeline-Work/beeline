@@ -3,7 +3,14 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { HullLivePulse } from '@/components/buzz/MonoHull';
-import type { AgentActivityItem } from '@/sync/transport/rig-transport';
+
+type CornerPlan = {
+  readonly objective?: string;
+  readonly items: readonly {
+    readonly step: string;
+    readonly status: 'pending' | 'in_progress' | 'completed';
+  }[];
+};
 
 /** Three rows, then it scrolls inside its own frame. The panel is a fixture,
  *  not a competitor for the transcript — a ten-step plan must cost the reader
@@ -44,7 +51,7 @@ export const CornerPlanPin = React.memo(function CornerPlanPin({
 }: {
   /** The complete, single-line text naming what this corner is for. */
   objective?: string;
-  plan?: AgentActivityItem['plan'];
+  plan?: CornerPlan;
   testID?: string;
 }) {
   const [objectiveExpanded, setObjectiveExpanded] = React.useState(false);

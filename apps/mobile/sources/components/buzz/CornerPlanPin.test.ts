@@ -113,6 +113,43 @@ describe('CornerPlanPin', () => {
     expect(toggle.props.accessibilityState).toEqual({ expanded: false });
   });
 
+  it('keeps the finished-corner checklist and full objective available after its final message', () => {
+    const objective = `Finish the corner without losing ${'any objective detail '.repeat(16)}`;
+    const plan = {
+      items: [
+        { step: 'Preserve every agent message', status: 'completed' as const },
+        { step: 'Publish the review', status: 'completed' as const },
+      ],
+    };
+    const renderer = render(
+      React.createElement(CornerPlanPin, { objective, plan, testID: 'finished-corner' }),
+    );
+
+    // Completion is a parent-screen lifecycle transition; the pin receives
+    // the same durable plan after it and must not collapse to its headline.
+    act(() => {
+      renderer.update(React.createElement(CornerPlanPin, { objective, plan, testID: 'finished-corner' }));
+    });
+    expect(
+      renderer.root
+        .findAllByType('Text')
+        .filter((node) => typeof node.props.children === 'string' && node.props.children.startsWith('Preserve'))
+        .map((node) => node.props.children),
+    ).toEqual(['Preserve every agent message']);
+    expect(
+      renderer.root
+        .findAllByType('Text')
+        .filter((node) => node.props.children === 'Publish the review')
+        .map((node) => node.props.children),
+    ).toEqual(['Publish the review']);
+
+    act(() => renderer.root.findByProps({ testID: 'finished-corner-objective-toggle' }).props.onPress());
+    expect(renderer.root.findByProps({ testID: 'finished-corner-objective' }).props.children).toBe(
+      objective,
+    );
+    expect(renderer.root.findByProps({ testID: 'finished-corner-objective' }).props.numberOfLines).toBeUndefined();
+  });
+
   it("keeps the corner's opening objective pinned when later plans carry another objective", () => {
     const renderer = render(
       React.createElement(CornerPlanPin, {

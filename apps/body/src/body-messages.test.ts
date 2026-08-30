@@ -1108,6 +1108,44 @@ describe('corner narrative persistence', () => {
     expect(drafts.slice(0, -1).every((event) => event.kind !== 9)).toBe(true);
   });
 
+  it('persists every distinct agent-message run in a corner transcript', async () => {
+    const published = stubPublishing();
+    const body = newBody(newIdentity('corner-story-agent'));
+    const opening = 'Opening a corner — preparing the workspace.';
+    const progress = 'Implementation path is now switched.';
+    const final = 'The cache and shared tombstone tests pass.';
+
+    await Reflect.get(body, 'publishAgentResult').call(
+      body,
+      'corner-story',
+      { channelId: 'corner-story', parentChannelId: 'room-story', cwd: '/workspace' },
+      {
+        stopReason: 'end_turn',
+        updates: [
+          {
+            sessionId: 'corner-story-session',
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: opening } },
+          },
+          { sessionId: 'corner-story-session', update: { sessionUpdate: 'tool_call', kind: 'read' } },
+          {
+            sessionId: 'corner-story-session',
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: progress } },
+          },
+          { sessionId: 'corner-story-session', update: { sessionUpdate: 'tool_call', kind: 'edit' } },
+          {
+            sessionId: 'corner-story-session',
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: final } },
+          },
+        ],
+        agentText: final,
+        toolCalls: [],
+      },
+      'Done.',
+    );
+
+    expect(agentMessages(published).map((event) => event.content)).toEqual([opening, progress, final]);
+  });
+
   it('publishes a Grok message chunk as a live draft before the ACP turn completes', async () => {
     const published = stubPublishing();
     const body = new Body(

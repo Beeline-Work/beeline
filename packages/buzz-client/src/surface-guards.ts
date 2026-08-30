@@ -625,6 +625,7 @@ export function isRoomView(value: unknown): value is RoomView {
       (Array.isArray(item.briefing) &&
         item.briefing.length <= ROOM_VIEW_BRIEFING_LIMIT &&
         item.briefing.every(isRoomViewMessage))) &&
+    (item.cornerPlan === undefined || activity({ kind: 'output', title: 'Plan', plan: item.cornerPlan })) &&
     Array.isArray(item.corners) &&
     item.corners.every(corner) &&
     (item.repository === undefined || repository(item.repository)) &&

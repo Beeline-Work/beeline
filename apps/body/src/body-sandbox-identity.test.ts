@@ -981,6 +981,7 @@ describe('agent identity boundary', () => {
           worktreePath?: string;
           protectedPaths?: string[];
           additionalWritablePaths?: string[];
+          workbench?: { dir: string; storageDir: string };
         },
         env: Record<string, string>,
       ): Promise<{ command: string; args: string[] }>;
@@ -1037,6 +1038,29 @@ describe('agent identity boundary', () => {
       // bind every attempt died "state repository directory is mounted
       // read-only" while the gate's health checks — socket reads — passed.
       expect(binds).toContain(join(homedir(), '.no-mistakes'));
+    });
+
+    it('keeps a repo-less corner sandboxed in a Git-blocked quota workbench', async () => {
+      const body = new Body({ ...config, bwrapPath: '/usr/bin/bwrap' }, newIdentity('operator'));
+      const spawn = await (body as unknown as SpawnProbe).sessionSpawnCommand(
+        {
+          mode: 'edit',
+          cwd: notARepo,
+          protectedPaths: [sandboxRoot],
+          additionalWritablePaths: [notARepo],
+          workbench: { dir: notARepo, storageDir: notARepo },
+        },
+        {},
+      );
+      expect(spawn.command).toBe('/usr/bin/bwrap');
+      expect(spawn.args.slice(0, 4)).toEqual(['--unshare-pid', '--unshare-user', '--uid', '0']);
+      expect(spawn.args).toContain('--size');
+      expect(spawn.args).toContain(join(notARepo, '.git'));
+      const binds = spawn.args
+        .map((argument, index) => (argument === '--bind-try' ? spawn.args[index + 1] : undefined))
+        .filter(Boolean);
+      expect(binds).toContain(notARepo);
+      expect(binds).not.toContain(join(homedir(), '.no-mistakes'));
     });
 
     it('masks operator credential stores out of a session instead of leaving them read-only', async () => {

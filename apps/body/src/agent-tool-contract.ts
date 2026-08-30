@@ -84,8 +84,8 @@ export type BeelineActionScope =
       type: 'corner.open';
       workspaceId: string;
       roomId: string;
-      repositoryKey: string;
-      targetRef: string;
+      repositoryKey?: string;
+      targetRef?: string;
     }
   | {
       type: 'corner.close';
@@ -187,7 +187,7 @@ export interface ScheduleConfigurationInput {
 
 export interface OpenCornerResult {
   corner_id: string;
-  feature_ref: string;
+  feature_ref?: string;
 }
 
 export type CornerReadState = 'opening' | 'open' | 'working' | 'waiting' | 'idle' | 'concluded';

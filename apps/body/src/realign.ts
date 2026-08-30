@@ -20,7 +20,7 @@
  * publish) stays in `body.ts`.
  */
 
-import { git } from '@beeline/gate';
+import { git, type GitResult } from '@beeline/gate';
 
 export type CornerRealignStatus = 'up-to-date' | 'rebased' | 'conflict' | 'dirty' | 'error';
 
@@ -44,34 +44,50 @@ const shortSha = (sha: string | undefined): string =>
  */
 export async function realignWorktreeOntoTarget(
   worktreePath: string,
-  opts: { remoteName?: string; targetBranch: string },
+  opts: {
+    remoteName?: string;
+    /** Explicit landing endpoint when its fetch URL differs from the push URL. */
+    remoteUrl?: string;
+    /** Exact target generation already verified at the landing endpoint. */
+    targetTip?: string;
+    /** Credential-aware runner for remote operations. */
+    runGit?: (cwd: string, args: string[]) => Promise<GitResult>;
+    targetBranch: string;
+  },
 ): Promise<CornerRealignResult> {
   const branch = opts.targetBranch.replace(/^refs\/heads\//, '');
-  const upstream = opts.remoteName ? `${opts.remoteName}/${branch}` : branch;
+  const runGit = opts.runGit ?? git;
+  const remoteSource = opts.remoteUrl ?? opts.remoteName;
+  const upstream = opts.targetTip ?? (opts.remoteName ? `${opts.remoteName}/${branch}` : branch);
 
-  if (opts.remoteName) {
-    const fetched = await git(worktreePath, ['fetch', '--prune', opts.remoteName]);
+  if (remoteSource) {
+    const fetched = await runGit(worktreePath, [
+      'fetch',
+      '--prune',
+      remoteSource,
+      opts.targetBranch,
+    ]);
     if (!fetched.ok) {
       return {
         status: 'error',
-        detail: `could not fetch ${opts.remoteName}: ${fetched.stderr.trim()}`,
+        detail: `could not fetch ${opts.remoteName ?? 'the landing remote'}: ${fetched.stderr.trim()}`,
       };
     }
   }
-  if (!(await git(worktreePath, ['rev-parse', '--verify', '--quiet', upstream])).ok) {
+  if (!(await runGit(worktreePath, ['rev-parse', '--verify', '--quiet', upstream])).ok) {
     return { status: 'error', detail: `${upstream} does not resolve in this worktree` };
   }
 
-  const head = (await git(worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+  const head = (await runGit(worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
   if (!/^[0-9a-f]{40}$/.test(head)) {
     return { status: 'error', detail: 'worktree HEAD could not be read' };
   }
-  if ((await git(worktreePath, ['merge-base', '--is-ancestor', upstream, head])).ok) {
+  if ((await runGit(worktreePath, ['merge-base', '--is-ancestor', upstream, head])).ok) {
     return { status: 'up-to-date', previousTip: head };
   }
 
   // Never mix uncommitted work into an automatic rebase.
-  const status = await git(worktreePath, ['status', '--porcelain=v1']);
+  const status = await runGit(worktreePath, ['status', '--porcelain=v1']);
   if (!status.ok || status.stdout.trim().length > 0) {
     return {
       status: 'dirty',
@@ -82,13 +98,13 @@ export async function realignWorktreeOntoTarget(
     };
   }
 
-  const rebase = await git(worktreePath, ['rebase', upstream]);
+  const rebase = await runGit(worktreePath, ['rebase', upstream]);
   if (rebase.ok) {
-    const newTip = (await git(worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+    const newTip = (await runGit(worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     return { status: 'rebased', previousTip: head, detail: newTip };
   }
   // A conflicted rebase must leave the corner exactly where it was.
-  await git(worktreePath, ['rebase', '--abort']);
+  await runGit(worktreePath, ['rebase', '--abort']);
   return {
     status: 'conflict',
     previousTip: head,
@@ -102,9 +118,7 @@ export async function realignWorktreeOntoTarget(
 export function summarizeRebaseFailure(output: string): string {
   const paths = new Set<string>();
   for (const line of output.split('\n')) {
-    const conflict =
-      /^CONFLICT \([^)]*\):\s*Merge conflict in (.+)$/.exec(line.trim()) ??
-      /^Auto-merging\s+(.+)$/.exec(line.trim());
+    const conflict = /^CONFLICT \([^)]*\):\s*Merge conflict in (.+)$/.exec(line.trim());
     if (conflict?.[1]) paths.add(conflict[1].trim());
     const bothModified = /^both modified:\s+(.+)$/.exec(line.trim());
     if (bothModified?.[1]) paths.add(bothModified[1].trim());

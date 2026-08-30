@@ -109,6 +109,8 @@ interface HeapEntry {
   action: 'run' | 'skip';
 }
 
+const RUN_NOW_VISIBILITY_RETRY_MS = 250;
+
 class ScheduleHeap {
   private values: HeapEntry[] = [];
   get size(): number {
@@ -180,6 +182,7 @@ export interface WorkCalendarDependencies {
   now?: () => number;
   resyncSeconds?: number;
   retrySeconds?: number;
+  runNowVisibilityRetryMs?: number;
 }
 
 function dayUtc(at: number): string {
@@ -217,6 +220,15 @@ export class WorkCalendar {
         await this.dependencies.store.load();
         for (const state of await this.dependencies.store.states()) {
           this.states.set(state.scheduleId, state);
+          const schedule = state.scheduleEvent && parseWorkSchedule(state.scheduleEvent);
+          if (
+            schedule &&
+            schedule.value.workspaceId === this.dependencies.workspaceId &&
+            schedule.value.agentPubkey === this.dependencies.identity.publicKey &&
+            schedule.value.revision === state.revision
+          ) {
+            this.schedules.set(workScheduleKey(schedule.value), schedule);
+          }
         }
         await this.flushPendingReceipts();
         if (this.disposed) return;
@@ -242,9 +254,16 @@ export class WorkCalendar {
     let result: { runId: string; eventId: string } | undefined;
     await this.enqueueWake(async () => {
       await this.refresh();
-      const found = [...this.schedules.entries()].find(
-        ([, parsed]) => parsed.value.scheduleId === scheduleId,
-      );
+      let found = this.scheduleById(scheduleId);
+      // A schedule published by the preceding agent turn may not be visible
+      // to the relay's broad projection yet. Retry the canonical read once;
+      // a previously authenticated durable record remains available meanwhile.
+      if (!found) {
+        const delay = this.dependencies.runNowVisibilityRetryMs ?? RUN_NOW_VISIBILITY_RETRY_MS;
+        if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        await this.refresh();
+        found = this.scheduleById(scheduleId);
+      }
       if (!found || found[1].value.status !== 'active') {
         throw new Error('schedule-unavailable');
       }
@@ -299,7 +318,6 @@ export class WorkCalendar {
       list.push(parsed);
       candidates.set(key, list);
     }
-    this.schedules.clear();
     for (const [key, list] of candidates) {
       const plausible = list.filter(
         (candidate) =>
@@ -345,7 +363,19 @@ export class WorkCalendar {
           current.value.status === 'active' &&
           current.value.agentToolMandate !== undefined &&
           current.event.pubkey === current.value.agentPubkey;
-        if (!humanResume && !missionControllerResume && !agentToolResume) continue;
+        const recoveredAgentToolMandate =
+          existing.pauseReason === 'agent-tool-mandate-invalid' &&
+          current.value.revision === existing.revision &&
+          current.value.status === 'active' &&
+          current.value.agentToolMandate !== undefined &&
+          current.event.pubkey === current.value.agentPubkey;
+        if (
+          !humanResume &&
+          !missionControllerResume &&
+          !agentToolResume &&
+          !recoveredAgentToolMandate
+        )
+          continue;
       }
       const authority = await this.dependencies.authorize(current);
       if (!authority.authorized) {
@@ -354,6 +384,7 @@ export class WorkCalendar {
         continue;
       }
       if (current.value.status === 'paused' || current.value.status === 'cancelled') {
+        this.schedules.set(key, current);
         await this.pause(
           current,
           current.value.status === 'cancelled' ? 'schedule-cancelled' : 'schedule-paused',
@@ -367,25 +398,37 @@ export class WorkCalendar {
         else throw new Error(`transient artifact validation failure: ${artifacts.reason}`);
         continue;
       }
-      if (existing && current.value.revision > existing.revision) {
+      const recoveredAgentToolMandate =
+        existing?.status === 'paused' &&
+        existing.pauseReason === 'agent-tool-mandate-invalid' &&
+        current.value.revision === existing.revision &&
+        current.value.status === 'active' &&
+        current.value.agentToolMandate !== undefined &&
+        current.event.pubkey === current.value.agentPubkey;
+      if (existing && (current.value.revision > existing.revision || recoveredAgentToolMandate)) {
         const resumed: WorkScheduleRuntimeState = {
           ...existing,
           revision: current.value.revision,
+          scheduleEvent: current.event,
           consecutiveFailures: 0,
           status: 'active',
         };
         delete resumed.pauseReason;
         await this.persist(resumed);
+        if (recoveredAgentToolMandate) await this.publishProjection(current.value, resumed);
       } else if (!existing) {
         await this.persist({
           scheduleId: current.value.scheduleId,
           principalPubkey: pinnedPrincipal,
           revision: current.value.revision,
+          scheduleEvent: current.event,
           runCount: 0,
           dailyReservedTokens: 0,
           consecutiveFailures: 0,
           status: 'active',
         });
+      } else if (existing.scheduleEvent?.id !== current.event.id) {
+        await this.persist({ ...existing, scheduleEvent: current.event });
       }
       this.schedules.set(key, current);
     }
@@ -393,6 +436,12 @@ export class WorkCalendar {
     this.nextResyncAt =
       this.secondsNow() + (this.dependencies.resyncSeconds ?? DEFAULT_CALENDAR_RESYNC_SECONDS);
     this.armTimer();
+  }
+
+  private scheduleById(scheduleId: string): [string, ParsedWorkSchedule] | undefined {
+    return [...this.schedules.entries()].find(
+      ([, parsed]) => parsed.value.scheduleId === scheduleId,
+    );
   }
 
   private async refreshSafely(): Promise<void> {
@@ -802,6 +851,7 @@ export class WorkCalendar {
     const paused: WorkScheduleRuntimeState = {
       ...current,
       revision: schedule.revision,
+      scheduleEvent: parsed.event,
       status: 'paused',
       pauseReason: reason,
     };

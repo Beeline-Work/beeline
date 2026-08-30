@@ -108,6 +108,8 @@ async function calendarFixture(
     scheduleEvents?: NostrEvent[];
     now?: number;
     store?: WorkCalendarStore;
+    readSchedules?: () => Promise<readonly NostrEvent[]>;
+    runNowVisibilityRetryMs?: number;
     authority?: ScheduleAuthorityResult | (() => Promise<ScheduleAuthorityResult>);
     validateArtifacts?: WorkCalendarDependencies['validateArtifacts'];
     missionAction?: WorkCalendarDependencies['missionAction'];
@@ -133,7 +135,7 @@ async function calendarFixture(
     identity: agent,
     workspaceId: schedule.workspaceId,
     store,
-    readSchedules: async () => scheduleEvents,
+    readSchedules: options.readSchedules ?? (async () => scheduleEvents),
     authorize: async () =>
       typeof options.authority === 'function'
         ? options.authority()
@@ -145,6 +147,7 @@ async function calendarFixture(
     now: () => now,
     resyncSeconds: 3_600,
     retrySeconds: 5,
+    runNowVisibilityRetryMs: options.runNowVisibilityRetryMs,
   });
   return {
     agent,
@@ -301,6 +304,178 @@ describe('work schedule occurrence math', () => {
 });
 
 describe('WorkCalendar best-effort durable execution', () => {
+  it('retries an immediate run once when the relay has not projected a new schedule yet', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal);
+    const event = buildWorkSchedule(principal, schedule, { createdAt: schedule.startsAt - 10 });
+    let reads = 0;
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      scheduleEvents: [],
+      readSchedules: async () => (++reads < 3 ? [] : [event]),
+      runNowVisibilityRetryMs: 0,
+    });
+
+    await fixture.calendar.start();
+    await expect(fixture.calendar.runNow(schedule.scheduleId)).resolves.toMatchObject({
+      runId: deterministicScheduleRunId(schedule.scheduleId, schedule.revision, schedule.startsAt),
+    });
+    expect(reads).toBe(3);
+    expect(fixture.dispatch).toHaveBeenCalledOnce();
+    await fixture.calendar.dispose();
+  });
+
+  it('rejects a genuinely missing schedule after the bounded visibility retry', async () => {
+    vi.useFakeTimers();
+    const fixture = await calendarFixture({ scheduleEvents: [], runNowVisibilityRetryMs: 0 });
+    await fixture.calendar.start();
+
+    await expect(fixture.calendar.runNow('missing-schedule')).rejects.toThrow(
+      'schedule-unavailable',
+    );
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+    await fixture.calendar.dispose();
+  });
+
+  it('keeps an unreadable agent-tool mandate active until a later authority read succeeds', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, {
+      agentToolMandate: { eventId: 'a'.repeat(64), defaultsVersion: 2 },
+    });
+    let authority: ScheduleAuthorityResult = {
+      authorized: false,
+      terminal: false,
+      reason: 'agent-tool-mandate-unavailable',
+    };
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      scheduleEvents: [buildWorkSchedule(agent, schedule, { createdAt: schedule.startsAt - 10 })],
+      authority: async () => authority,
+    });
+    await fixture.calendar.start();
+
+    expect(await fixture.store.states()).toEqual([]);
+    expect(
+      fixture.published.filter((event) =>
+        event.tags.some((tag) => tag[1] === WORK_SCHEDULE_PAUSED_TAG),
+      ),
+    ).toEqual([]);
+
+    authority = { authorized: true };
+    await fixture.calendar.refreshNow();
+    expect((await fixture.store.states())[0]).toMatchObject({ status: 'active' });
+    await fixture.calendar.dispose();
+  });
+
+  it('durably pauses a schedule only after agent-tool mandate revocation is proven', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, {
+      agentToolMandate: { eventId: 'a'.repeat(64), defaultsVersion: 2 },
+    });
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      scheduleEvents: [buildWorkSchedule(agent, schedule, { createdAt: schedule.startsAt - 10 })],
+      authority: {
+        authorized: false,
+        terminal: true,
+        reason: 'agent-tool-mandate-invalid',
+      },
+    });
+    await fixture.calendar.start();
+
+    expect((await fixture.store.states())[0]).toMatchObject({
+      status: 'paused',
+      pauseReason: 'agent-tool-mandate-invalid',
+    });
+    await fixture.calendar.dispose();
+  });
+
+  it('automatically resumes a mandate-paused schedule once its current mandate validates', async () => {
+    vi.useFakeTimers();
+    const agent = createIdentity();
+    const principal = createIdentity();
+    const schedule = scheduleFixture(agent, principal, {
+      agentToolMandate: { eventId: 'a'.repeat(64), defaultsVersion: 2 },
+    });
+    const store = new MemoryStore();
+    store.values.set(schedule.scheduleId, {
+      scheduleId: schedule.scheduleId,
+      principalPubkey: principal.publicKey,
+      revision: schedule.revision,
+      runCount: 0,
+      dailyReservedTokens: 0,
+      consecutiveFailures: 0,
+      status: 'paused',
+      pauseReason: 'agent-tool-mandate-invalid',
+    });
+    const fixture = await calendarFixture({
+      agent,
+      principal,
+      schedule,
+      store,
+      scheduleEvents: [buildWorkSchedule(agent, schedule, { createdAt: schedule.startsAt - 10 })],
+    });
+    await fixture.calendar.start();
+
+    expect((await store.states())[0]).toMatchObject({ status: 'active' });
+    expect(
+      fixture.published.filter((event) =>
+        event.tags.some((tag) => tag[1] === WORK_SCHEDULE_RUNTIME_TAG),
+      ),
+    ).toHaveLength(1);
+    expect(
+      fixture.published.filter((event) =>
+        event.tags.some((tag) => tag[1] === WORK_SCHEDULE_PAUSED_TAG),
+      ),
+    ).toEqual([]);
+    await fixture.calendar.dispose();
+  });
+
+  it('runs a locally validated schedule after restart while the relay is temporarily stale', async () => {
+    vi.useFakeTimers();
+    const durable = await durableState();
+    const first = await calendarFixture({ store: durable.store });
+    await first.calendar.start();
+    await first.calendar.dispose();
+
+    const dispatch = vi.fn(async (_request, beforeModelActivation) => beforeModelActivation());
+    const restarted = new WorkCalendar({
+      identity: first.agent,
+      workspaceId: first.schedule.workspaceId,
+      store: new DurableWorkCalendarState(durable.path),
+      readSchedules: async () => [],
+      authorize: async () => ({ authorized: true }),
+      publish: async () => undefined,
+      dispatch,
+      now: () => first.schedule.startsAt,
+      resyncSeconds: 3_600,
+      runNowVisibilityRetryMs: 0,
+    });
+    await restarted.start();
+
+    await expect(restarted.runNow(first.schedule.scheduleId)).resolves.toMatchObject({
+      runId: deterministicScheduleRunId(
+        first.schedule.scheduleId,
+        first.schedule.revision,
+        first.schedule.startsAt,
+      ),
+    });
+    expect(dispatch).toHaveBeenCalledOnce();
+    await restarted.dispose();
+  });
+
   it('run_now re-authorizes the underlying operation immediately before activation', async () => {
     vi.useFakeTimers();
     const authorize = vi.fn(async () => ({ authorized: true as const }));
@@ -480,7 +655,7 @@ describe('WorkCalendar best-effort durable execution', () => {
     await first.calendar.dispose();
 
     const persisted = JSON.parse(await readFile(durable.path, 'utf8')) as Record<string, unknown>;
-    expect(persisted).toMatchObject({ version: 3 });
+    expect(persisted).toMatchObject({ version: 4 });
     expect(persisted).toHaveProperty(
       `schedules.${first.schedule.scheduleId}.lastExecutionAt`,
       first.schedule.startsAt,

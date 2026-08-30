@@ -96,28 +96,9 @@ jobs:
           set -euo pipefail
           previous="$RUNNER_TEMP/previous-index/mobile-ota-delivery-index.json"
           if [ -f "$previous" ]; then cp "$previous" "$DELIVERY_INDEX"; fi
-          node - "$RUNNER_TEMP/mobile-ota-commits.json" "$PUSH_BEFORE" "$GITHUB_SHA" "$DELIVERY_INDEX" <<'NODE'
-            const { execFileSync, spawnSync } = require('node:child_process');
-            const fs = require('node:fs');
-            const [output, before, head, indexPath] = process.argv.slice(2);
-            let shas = [head];
-            const index = fs.existsSync(indexPath) ? JSON.parse(fs.readFileSync(indexPath, 'utf8')) : null;
-            const lastTracked = index?.merges?.at(-1)?.sha;
-            let rangeStart = before && !/^0+$/.test(before) ? before : null;
-            if (lastTracked) {
-              const ancestor = spawnSync('git', ['merge-base', '--is-ancestor', lastTracked, head]);
-              if (ancestor.status === 0) rangeStart = lastTracked;
-            }
-            if (rangeStart) {
-              shas = execFileSync('git', ['rev-list', '--reverse', `${rangeStart}..${head}`], { encoding: 'utf8' })
-                .trim().split(/\s+/).filter(Boolean);
-            }
-            if (shas.length === 0) shas = [head];
-            fs.writeFileSync(output, JSON.stringify(shas.map((sha) => ({ sha, ref: 'main' }))));
-          NODE
           node scripts/ota-release.mjs init-delivery \
             --sha "$GITHUB_SHA" --ref main --run-id "$GITHUB_RUN_ID" \
-            --attempt "$CURRENT_ATTEMPT" --commits "$RUNNER_TEMP/mobile-ota-commits.json" \
+            --attempt "$CURRENT_ATTEMPT" --before "$PUSH_BEFORE" \
             --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
 
       - uses: actions/setup-node@v4
@@ -239,16 +220,11 @@ jobs:
             echo "Owner receipt endpoint is temporarily unavailable; scheduled reconciliation will retry." >&2
             exit 0
           fi
-          readarray -t delivery < <(node - "$RUN_LEDGER" <<'NODE'
-            const ledger = require(process.argv[2]);
-            console.log(ledger.production.groupId);
-            console.log(ledger.production.updates.map((update) => update.id).join(','));
-          NODE
-          )
+          readarray -t delivery < <(node scripts/ota-release.mjs delivery-target --index "$DELIVERY_INDEX")
           node scripts/ota-release.mjs confirm \
             --index "$DELIVERY_INDEX" --ledger "$RUN_LEDGER" \
             --receipt "$RUNNER_TEMP/owner-update-receipt.json" \
-            --group "${delivery[0]}" --update-ids "${delivery[1]}"
+            --group "${delivery[0]#group_id=}" --update-ids "${delivery[1]#update_ids=}"
 
       - name: Record setup or app-side governor failure
         if: failure()
@@ -399,9 +375,10 @@ jobs:
           set -euo pipefail
           cp "$RUNNER_TEMP/latest-index/mobile-ota-delivery-index.json" "$DELIVERY_INDEX"
           if [ -z "$OWNER_PUBKEY" ] || [ -z "$RECEIPT_TOKEN" ]; then exit 0; fi
-          group="$(node -p "require('$DELIVERY_INDEX').merges.filter(m=>m.state==='published').at(-1)?.published.groupId ?? ''")"
+          readarray -t delivery < <(node scripts/ota-release.mjs delivery-target --index "$DELIVERY_INDEX")
+          group="${delivery[0]#group_id=}"
           [ -n "$group" ] || exit 0
-          updates="$(node -p "require('$DELIVERY_INDEX').merges.filter(m=>m.state==='published').at(-1)?.published.updateIds.join(',') ?? ''")"
+          updates="${delivery[1]#update_ids=}"
           if ! curl --fail --silent --show-error --max-time 15 \
             -H "Authorization: Bearer $RECEIPT_TOKEN" \
             "$RECEIPT_ORIGIN/update-receipts/$OWNER_PUBKEY" \

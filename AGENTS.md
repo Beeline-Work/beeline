@@ -119,7 +119,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 ## Mobile OTA release
 
-- **A merge is never an OTA release:** `mobile-ota.yml` publishes a beta candidate, runs `ota-canary.sh` on the operator-run `emulator-5554` (runner has no SDK/KVM; 600s deadline), then `ota-release.mjs` promotes; ledger records `previousProductionGroupId`; bypass only via recorded `workflow_dispatch`. Environment failures exit 2 → `blocked` (`park()`). A `beta-apk` binary is the ONLY canary vehicle (`EXPO_UPDATES_CHANNEL` baked at build). Native changes need a rebuild + runtimeVersion bump. Smoke reply waits start at phase markers (`publish-smoke-replies.ts`). Coverage: `mobileOtaRelease.test.ts`.
+- **A merge is never an OTA release:** `mobile-ota.yml` orchestrates, `ota-release.mjs` owns beta/canary/exact-group EAS operations, and `ota-delivery-index.mjs` owns the cumulative pending → built → published → physical-device-confirmed state machine. Canary runs on the operator-run `emulator-5554` (runner has no SDK/KVM; 600s deadline); ledger records `previousProductionGroupId`; bypass only via recorded `workflow_dispatch`. Environment failures exit 2 → `blocked` (`park()`). A `beta-apk` binary is the ONLY canary vehicle (`EXPO_UPDATES_CHANNEL` baked at build). Native changes need a rebuild + runtimeVersion bump. Smoke reply waits start at phase markers (`publish-smoke-replies.ts`). Coverage: `mobileOtaRelease.test.ts`.
 
 ## GitHub identity and repository authority
 

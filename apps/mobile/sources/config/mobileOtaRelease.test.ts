@@ -6,6 +6,10 @@ import { describe, expect, it } from 'vitest';
 
 const mobileRoot = resolve(__dirname, '../..');
 const releaseScript = join(mobileRoot, 'scripts/ota-release.mjs');
+const deliveryIndexScript = readFileSync(
+  join(mobileRoot, 'scripts/ota-delivery-index.mjs'),
+  'utf8',
+);
 const canaryScript = readFileSync(join(mobileRoot, 'scripts/ota-canary.sh'), 'utf8');
 const maestroScript = readFileSync(join(mobileRoot, 'scripts/maestro-e2e.sh'), 'utf8');
 const workflow = readFileSync(
@@ -223,9 +227,90 @@ esac
     expect(workflow).toContain('if (attempt >= 3)');
     expect(workflow).toContain('createWorkflowDispatch');
     expect(workflow).toContain('maxFailures < 3');
-    expect(workflow).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
-    expect(workflow).toContain('`${rangeStart}..${head}`');
+    expect(deliveryIndexScript).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
+    expect(deliveryIndexScript).toContain('`${rangeStart}..${head}`');
   }, 60_000);
+
+  it('discovers every untracked commit behind the delivery-index boundary', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-commit-range-'));
+    const ledgerPath = join(directory, 'ledger.json');
+    const indexPath = join(directory, 'index.json');
+    const before = spawnSync('git', ['rev-parse', 'HEAD~2'], {
+      cwd: mobileRoot,
+      encoding: 'utf8',
+    }).stdout.trim();
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: mobileRoot,
+      encoding: 'utf8',
+    }).stdout.trim();
+    const expected = spawnSync('git', ['rev-list', '--reverse', `${before}..${head}`], {
+      cwd: mobileRoot,
+      encoding: 'utf8',
+    }).stdout.trim().split(/\s+/);
+
+    expect(runRelease([
+      'init-delivery', '--sha', head, '--ref', 'main', '--run-id', 'range-run',
+      '--before', before, '--ledger', ledgerPath, '--index', indexPath,
+    ]).status).toBe(0);
+
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { sha: string }) => merge.sha))
+      .toEqual(expected);
+    expect(workflow).toContain('--before "$PUSH_BEFORE"');
+    expect(workflow).not.toContain("require('node:child_process')");
+  });
+
+  it('selects only the newest published delivery for receipt reconciliation', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-delivery-target-'));
+    const indexPath = join(directory, 'index.json');
+    const index = {
+      schemaVersion: 1,
+      merges: [
+        { sha: '1'.repeat(40), state: 'confirmed', published: { groupId: 'old', updateIds: ['old-id'] } },
+        { sha: '2'.repeat(40), state: 'published', published: { groupId: 'current', updateIds: ['android', 'ios'] } },
+        { sha: '3'.repeat(40), state: 'built' },
+      ],
+    };
+    writeFileSync(indexPath, JSON.stringify(index));
+
+    const result = runRelease(['delivery-target', '--index', indexPath]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('group_id=current\nupdate_ids=android,ios\n');
+    expect(workflow.match(/ota-release\.mjs delivery-target/g)).toHaveLength(2);
+
+    index.merges[1].state = 'confirmed';
+    writeFileSync(indexPath, JSON.stringify(index));
+    expect(runRelease(['delivery-target', '--index', indexPath]).stdout).toBe(
+      'group_id=\nupdate_ids=\n',
+    );
+  });
+
+  it('does not confirm delivery from a non-physical or unrelated receipt', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-receipt-proof-'));
+    const indexPath = join(directory, 'index.json');
+    const receiptPath = join(directory, 'receipt.json');
+    writeFileSync(indexPath, JSON.stringify({
+      schemaVersion: 1,
+      merges: [{
+        sha: '4'.repeat(40),
+        state: 'published',
+        published: { groupId: 'production-group', updateIds: ['production-update'] },
+      }],
+    }));
+    writeFileSync(receiptPath, JSON.stringify({ devices: [
+      { environment: 'emulator', group: 'production-group', updateId: 'production-update' },
+      { environment: 'physical', group: 'different-group', updateId: 'different-update' },
+    ] }));
+
+    const result = runRelease([
+      'confirm', '--index', indexPath, '--receipt', receiptPath,
+      '--group', 'production-group', '--update-ids', 'production-update',
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ confirmed: false, groupId: 'production-group' });
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges[0].state).toBe('published');
+  });
 
   it('reconciles owner receipts without hardcoding an identity or bypassing the canary', () => {
     expect(workflow).toContain('MOBILE_OTA_OWNER_PUBKEY');

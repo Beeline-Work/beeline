@@ -530,7 +530,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
-  it('rejects empty work but never withdraws a mounted card for target movement or access', async () => {
+  it('5. main movement never withdraws a mounted REVIEW projection', async () => {
     const agent = newIdentity('merge-not-ready-reasons-agent');
     const published = stubPublishing();
     const paths = [

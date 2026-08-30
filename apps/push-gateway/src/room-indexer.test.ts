@@ -917,7 +917,7 @@ describe('RoomIndexer', () => {
     expect(metadataFilter).toBeDefined();
   });
 
-  it('watches a corner review artifact, merge-ready receipt, and approval on its live coordinate', async () => {
+  it('1. invisible review artifact projects by h/type even when storage channel_id is null', async () => {
     const corner = await indexer.readRoom(CORNER, VIEWER);
     const reviewFilter = corner?.watchFilters.find(
       (filter) => filter.kinds?.includes(30078) && filter['#h']?.includes(CORNER),

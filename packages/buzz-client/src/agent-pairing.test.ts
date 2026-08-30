@@ -17,6 +17,7 @@ import {
   KIND_COMMUNITY_INVITE,
   KIND_CREATE_GROUP,
   KIND_PUT_USER,
+  KIND_REMOVE_USER,
   KIND_STREAM_MESSAGE,
   TAG_AGENT,
   TAG_AGENT_PAIRING,
@@ -242,27 +243,21 @@ describe('agent pairing and soul overlays', () => {
     expect(published.filter((event) => tagValues(event, 't').includes(TAG_AGENT))).toHaveLength(1);
   });
 
-  it('redeems the production Workspace-scoped kind:9 pairing marker through the token-tag scan', async () => {
-    const productionCode = 'BUZZ-4S4P-ZPJP';
-    const productionTokenHash = 'b8ae2c5a4c8441ecab9953bfdc173448e34341f8ca6bf92339d2701c83ce6fbf';
-    const productionCommunityId = 'a6814772';
-    const marker = signed(owner, KIND_STREAM_MESSAGE, [
-      ['h', productionCommunityId],
-      ['t', TAG_AGENT_PAIRING],
-      ['d', productionTokenHash],
-      [TAG_COMMUNITY, productionCommunityId],
-      ['expiration', String(Math.floor(Date.now() / 1000) + 600)],
-    ]);
-    const malformedCurrentMarker = signed(owner, KIND_COMMUNITY_INVITE, [
-      ['t', TAG_AGENT_PAIRING],
-      ['d', productionTokenHash],
-    ]);
-    const published: NostrEvent[] = [marker];
+  it('redeems a fresh code when a private Workspace hides every projection until self-join', async () => {
+    const published: NostrEvent[] = [];
+    let redeeming = false;
     let agentIsMember = false;
-    expect(inviteTokenHash(productionCode)).toBe(productionTokenHash);
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/agent-pairing/claim')) {
+          agentIsMember = true;
+          return jsonResponse({
+            workspaceId: communityId,
+            pairedBy: owner.publicKey,
+            joined: true,
+          });
+        }
         if (String(input).endsWith('/events')) {
           const event = JSON.parse(String(init?.body)) as NostrEvent;
           published.push(event);
@@ -273,40 +268,51 @@ describe('agent pairing and soul overlays', () => {
         }
         const filter = filterFrom(init);
         const kind = (filter.kinds as number[])[0];
-        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate(productionCommunityId)]);
+        const privateReadAllowed = !redeeming || agentIsMember;
+        if (kind === KIND_CREATE_GROUP) {
+          return jsonResponse(privateReadAllowed ? [communityCreate()] : []);
+        }
         if (kind === KIND_CHANNEL_MEMBERS) {
-          return jsonResponse([
-            signed(owner, KIND_CHANNEL_MEMBERS, [
-              ['d', productionCommunityId],
-              ['p', owner.publicKey],
-              ...(agentIsMember ? [['p', agentIdentity.publicKey]] : []),
-            ]),
-          ]);
+          return jsonResponse(
+            privateReadAllowed
+              ? [
+                  signed(owner, KIND_CHANNEL_MEMBERS, [
+                    ['d', communityId],
+                    ['p', owner.publicKey],
+                    ...(agentIsMember ? [['p', agentIdentity.publicKey]] : []),
+                  ]),
+                ]
+              : [],
+          );
         }
         if (kind === KIND_CHANNEL_ADMINS) {
-          return jsonResponse([
-            signed(owner, KIND_CHANNEL_ADMINS, [
-              ['d', productionCommunityId],
-              ['p', owner.publicKey, 'owner'],
-            ]),
-          ]);
+          return jsonResponse(
+            privateReadAllowed
+              ? [
+                  signed(owner, KIND_CHANNEL_ADMINS, [
+                    ['d', communityId],
+                    ['p', owner.publicKey, 'owner'],
+                  ]),
+                ]
+              : [],
+          );
         }
         if (kind === KIND_COMMUNITY_INVITE) {
-          // A non-matching global result must not suppress the legacy scan.
-          // The production marker remains the Workspace-scoped kind:9 event.
-          expect(filter['#d']).toEqual([productionTokenHash]);
-          return jsonResponse([malformedCurrentMarker]);
+          const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
+          const dValues = (filter['#d'] as string[] | undefined) ?? [];
+          return jsonResponse(
+            published.filter(
+              (event) =>
+                event.kind === KIND_COMMUNITY_INVITE &&
+                requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
+                dValues.every((value) => tagValue(event, 'd') === value),
+            ),
+          );
         }
         if (kind === KIND_STREAM_MESSAGE) {
+          if (!privateReadAllowed) return jsonResponse([]);
           const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
           const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
-          if (requiredTags.includes(TAG_AGENT_PAIRING)) {
-            // This is the findCommunityInvite-style marker scan: no #h or #d
-            // filter is possible because the redeeming key knows only token.
-            expect(filter['#h']).toBeUndefined();
-            expect(filter['#d']).toBeUndefined();
-            return jsonResponse([marker]);
-          }
           return jsonResponse(
             published.filter(
               (event) =>
@@ -320,10 +326,112 @@ describe('agent pairing and soul overlays', () => {
       }),
     );
 
+    const pairing = await createAgentPairingCode(ctx(owner), communityId, 600);
+    redeeming = true;
+    await expect(redeemAgentPairingCode(ctx(agentIdentity), pairing.code)).resolves.toMatchObject({
+      communityId,
+      pairedBy: owner.publicKey,
+      joined: true,
+    });
+    expect(agentIsMember).toBe(true);
+    expect(
+      published.some(
+        (event) => event.kind === KIND_PUT_USER && tagValue(event, 'pairing') === pairing.tokenHash,
+      ),
+    ).toBe(true);
+    expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(true);
+  });
+
+  it('reports a membership-gated legacy marker as requiring a newly generated code', async () => {
+    const productionCode = 'BUZZ-4S4P-ZPJP';
+    const productionTokenHash = 'b8ae2c5a4c8441ecab9953bfdc173448e34341f8ca6bf92339d2701c83ce6fbf';
+    expect(inviteTokenHash(productionCode)).toBe(productionTokenHash);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_COMMUNITY_INVITE) {
+          expect(filter['#d']).toEqual([productionTokenHash]);
+          return jsonResponse([]);
+        }
+        if (kind === KIND_STREAM_MESSAGE) {
+          // The marker exists in relay storage, but a fresh outsider cannot
+          // read this Workspace-scoped kind:9 without already knowing #h.
+          expect(filter['#h']).toBeUndefined();
+          expect(filter['#d']).toBeUndefined();
+          return jsonResponse([]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+
     await expect(
       redeemAgentPairingCode(ctx(agentIdentity), productionCode.toLowerCase()),
-    ).resolves.toMatchObject({ communityId: productionCommunityId, joined: true });
-    expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(true);
+    ).rejects.toThrow(/older app.*regenerate it after updating/);
+  });
+
+  it('rejects a private claim when the authoritative server cannot verify its minter', async () => {
+    const code = 'BUZZ-4S4P-ZPJP';
+    const tokenHash = inviteTokenHash(code);
+    const marker = signed(outsider, KIND_COMMUNITY_INVITE, [
+      ['h', communityId],
+      ['t', TAG_AGENT_PAIRING],
+      ['d', tokenHash],
+      [TAG_COMMUNITY, communityId],
+      ['expiration', String(Math.floor(Date.now() / 1000) + 600)],
+    ]);
+    const published: NostrEvent[] = [];
+    let agentIsMember = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/agent-pairing/claim')) {
+          return new Response(JSON.stringify({ error: 'not_found' }), {
+            status: 404,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        if (String(input).endsWith('/events')) {
+          const event = JSON.parse(String(init?.body)) as NostrEvent;
+          published.push(event);
+          if (tagValue(event, 'p') === agentIdentity.publicKey) {
+            if (event.kind === KIND_PUT_USER) agentIsMember = true;
+            if (event.kind === KIND_REMOVE_USER) agentIsMember = false;
+          }
+          return jsonResponse({ accepted: true });
+        }
+        const filter = filterFrom(init);
+        const kind = (filter.kinds as number[])[0];
+        if (kind === KIND_COMMUNITY_INVITE) return jsonResponse([marker]);
+        if (kind === KIND_CREATE_GROUP) {
+          return jsonResponse(agentIsMember ? [communityCreate()] : []);
+        }
+        if (kind === KIND_CHANNEL_MEMBERS) {
+          return jsonResponse(
+            agentIsMember
+              ? [
+                  signed(owner, KIND_CHANNEL_MEMBERS, [
+                    ['d', communityId],
+                    ['p', owner.publicKey],
+                    ['p', agentIdentity.publicKey],
+                  ]),
+                ]
+              : [],
+          );
+        }
+        if (kind === KIND_CHANNEL_ADMINS) return jsonResponse([]);
+        if (kind === KIND_STREAM_MESSAGE) return jsonResponse([]);
+        return jsonResponse([]);
+      }),
+    );
+
+    await expect(redeemAgentPairingCode(ctx(agentIdentity), code)).rejects.toThrow(
+      'pairing code is not authorized for this private Workspace',
+    );
+    expect(agentIsMember).toBe(false);
+    expect(published).toEqual([]);
+    expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(false);
   });
 
   it('redemption attaches the agent to every top-level Room the inviter belongs to, excluding DMs, corners, and archived Rooms', async () => {

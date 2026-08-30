@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const bodyDirectory = fileURLToPath(new URL('..', import.meta.url));
@@ -107,6 +107,57 @@ function runPair(
     },
   );
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+async function runPairInZeroSizedTty(
+  args: string[],
+  opts: { cwd: string; env?: NodeJS.ProcessEnv },
+): Promise<{ status: number | null; output: string }> {
+  const command = [process.execPath, '--import', tsxLoaderPath, cliPath, 'pair', ...args]
+    .map(shellQuote)
+    .join(' ');
+  const child = spawn('script', ['-qefc', command, '/dev/null'], {
+    cwd: opts.cwd,
+    env: { ...process.env, ...opts.env },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let output = '';
+  const answerPrompts = [
+    'Model for this custom agent?',
+    'Effort/thinking level for this custom agent?',
+    'Who may address this agent?',
+    'Auto-response for a non-permitted questioner?',
+  ];
+  let answerIndex = 0;
+  const answerVisiblePrompt = () => {
+    const prompt = answerPrompts[answerIndex];
+    if (!prompt || !output.includes(prompt) || !child.stdin.writable) return;
+    answerIndex += 1;
+    setTimeout(() => {
+      if (child.stdin.writable) child.stdin.write('\r');
+    }, 25);
+  };
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
+    output += chunk;
+    answerVisiblePrompt();
+  });
+  child.stderr.on('data', (chunk: string) => {
+    output += chunk;
+    answerVisiblePrompt();
+  });
+  const killTimer = setTimeout(() => child.kill('SIGTERM'), 10_000);
+  const status = await new Promise<number | null>((resolveExit, rejectExit) => {
+    child.once('error', rejectExit);
+    child.once('close', resolveExit);
+  });
+  clearTimeout(killTimer);
+  return { status, output };
 }
 
 describe('beeline pair — pairing code admission', () => {
@@ -327,14 +378,31 @@ describe('beeline pair — one live spinner at a time', () => {
     // The caller must not wrap pairOneAgent (which prompts) in a spinner.
     expect(runPairCommand).not.toContain('clack.spinner()');
     // pairOneAgent owns exactly one, started after the last question.
-    expect(pairOneAgent.match(/clack\.spinner\(\)/g)).toHaveLength(1);
-    expect(pairOneAgent.indexOf('clack.spinner()')).toBeGreaterThan(
+    expect(pairOneAgent.match(/clack\.spinner\(/g)).toHaveLength(1);
+    expect(pairOneAgent.indexOf('clack.spinner(')).toBeGreaterThan(
       pairOneAgent.indexOf('pickModelAndEffort('),
     );
-    expect(pairOneAgent.indexOf('clack.spinner()')).toBeGreaterThan(
+    expect(pairOneAgent.indexOf('clack.spinner(')).toBeGreaterThan(
       pairOneAgent.indexOf('resolveAccessSettings('),
     );
   });
+
+  it('renders model and effort pickers readably on a zero-sized TTY', async () => {
+    const nonRepo = await tmpDir('beeline-pair-cli-nonrepo-');
+    const stateHome = await tmpDir('beeline-pair-cli-state-');
+    const agent = await fakeModelAgent();
+
+    const { status, output } = await runPairInZeroSizedTty(
+      [TEST_INVALID_CODE, '--agent', 'custom', '--agent-command', agent],
+      { cwd: nonRepo, env: { XDG_STATE_HOME: stateHome } },
+    );
+
+    expect(output).toContain('Catalog loaded.');
+    expect(output).toContain('Model for this custom agent?');
+    expect(output).toContain('Effort/thinking level for this custom agent?');
+    expect(output).toContain('invalid agent pairing code');
+    expect(status).toBe(1);
+  }, 15_000);
 });
 
 describe('beeline pair — --model/--effort validation', () => {

@@ -6,7 +6,11 @@ import {
   KIND_AGENT_PRESENCE,
   TAG_AGENT_PRESENCE,
 } from '@beeline/buzz-client';
-import { migrateRoomReadMarks, type DatabaseQueryable } from './database.js';
+import {
+  migrateAgentPairingClaims,
+  migrateRoomReadMarks,
+  type DatabaseQueryable,
+} from './database.js';
 import { RoomIndexer } from './room-indexer.js';
 
 const TENANT = 'e8299f28-f095-472f-941a-80d1195b9a24';
@@ -60,7 +64,12 @@ describe('RoomIndexer', () => {
         channel_id uuid NOT NULL,
         pubkey bytea NOT NULL,
         role text NOT NULL,
-        removed_at timestamptz
+        joined_at timestamptz NOT NULL DEFAULT now(),
+        invited_by bytea,
+        removed_at timestamptz,
+        removed_by bytea,
+        hidden_at timestamptz,
+        PRIMARY KEY (community_id, channel_id, pubkey)
       );
       CREATE TABLE users (
         community_id uuid NOT NULL,
@@ -84,6 +93,7 @@ describe('RoomIndexer', () => {
       );
     `);
     await migrateRoomReadMarks(database);
+    await migrateAgentPairingClaims(database);
     await postgres.query(
       `INSERT INTO channels
         (community_id, id, name, description, visibility, created_by, created_at, updated_at)
@@ -1928,5 +1938,68 @@ describe('RoomIndexer', () => {
       indexer.readInvite(createHash('sha256').update(token).digest('hex')),
     ).resolves.toBeNull();
     expect(physicalQueries).toBe(1);
+  });
+
+  it('atomically reserves a member-authored pairing marker for one outsider identity', async () => {
+    const code = 'BUZZ-4S4P-ZPJP';
+    const tokenHash = createHash('sha256').update(code).digest('hex');
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, now(), 30078, $4, '', NULL, $5)`,
+      [
+        TENANT,
+        bytes('f'.repeat(64)),
+        bytes(VIEWER),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['t', 'buzz-agent-pairing'],
+          ['d', tokenHash],
+          ['expiration', '2000000000'],
+        ]),
+        tokenHash,
+      ],
+    );
+
+    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toEqual({
+      workspaceId: WORKSPACE,
+      pairedBy: VIEWER,
+      joined: true,
+    });
+    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toEqual({
+      workspaceId: WORKSPACE,
+      pairedBy: VIEWER,
+      joined: false,
+    });
+    await expect(indexer.claimAgentPairing(tokenHash, 'e'.repeat(64))).resolves.toBeNull();
+    const membership = await postgres.query<{ invited_by: Uint8Array }>(
+      `SELECT invited_by FROM channel_members
+       WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3 AND removed_at IS NULL`,
+      [TENANT, WORKSPACE, bytes(OUTSIDER)],
+    );
+    expect(Buffer.from(membership.rows[0]!.invited_by).toString('hex')).toBe(VIEWER);
+
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, now(), 9, $4, '', $5)`,
+      [
+        TENANT,
+        bytes('1'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['t', 'buzz-agent'],
+          ['pairing', tokenHash],
+        ]),
+        WORKSPACE,
+      ],
+    );
+    await postgres.query(
+      `UPDATE channel_members SET removed_at = now()
+       WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3`,
+      [TENANT, WORKSPACE, bytes(OUTSIDER)],
+    );
+    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toBeNull();
   });
 });

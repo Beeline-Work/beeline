@@ -27,7 +27,11 @@ import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { cornerHref } from '@/buzz/corner-navigation';
-import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
+import {
+  displayCornerTitle,
+  displayRoomIndexTitle,
+  expandedCornerRefreshAction,
+} from '@/buzz/room-list-row';
 import { roomDeckState } from '@/buzz/room-deck-state';
 import { formatRoomParticipantTotal } from '@/buzz/room-participants';
 import { formatRoomCornerCount } from '@/buzz/vocabulary';
@@ -330,12 +334,25 @@ export default function BuzzChannels() {
   const toggleRoomCorners = useCallback(
     (roomId: string) => {
       setExpandedRoomId((current) => (current === roomId ? null : roomId));
-      if (!cornersByRoom[roomId] && cornerLoadingRoomId !== roomId) {
-        void loadRoomCorners(roomId);
-      }
     },
-    [cornerLoadingRoomId, cornersByRoom, loadRoomCorners],
+    [],
   );
+
+  useEffect(() => {
+    const action = expandedCornerRefreshAction(expandedRoomId, chatList?.chats ?? []);
+    if (action.kind === 'reload') {
+      void loadRoomCorners(action.roomId);
+      return;
+    }
+    if (action.kind === 'drop') {
+      setExpandedRoomId(null);
+      setCornersByRoom((current) => {
+        const next = { ...current };
+        delete next[action.roomId];
+        return next;
+      });
+    }
+  }, [chatList, expandedRoomId, loadRoomCorners]);
 
   const selectWorkspace = useCallback(
     (workspaceId: string | null) => {

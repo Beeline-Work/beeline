@@ -12276,7 +12276,41 @@ export class Body {
     await task;
   }
 
-  /** Add live approval-only REQs for every open corner in this Room. */
+  private async processPushedCornerEvent(
+    channelId: string,
+    info: SubchannelInfo,
+    event: NostrEvent,
+    mergeGate?: DurableMergeGate,
+  ): Promise<void> {
+    if (event.pubkey === this.agentIdentity.publicKey || !verifyEvent(event)) return;
+    if (event.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_MARKER)) {
+      this.onRoomPollSuccess?.(channelId);
+      await this.runApprovalLandingPass(channelId, mergeGate, event);
+      return;
+    }
+
+    const processed = info.processedMemberEventIds ?? new Set<string>();
+    info.processedMemberEventIds = processed;
+    if (this.classifyCornerEvent(info, event, processed).status !== 'close') return;
+    this.onRoomPollSuccess?.(channelId);
+    await this.durableState.enqueue(info.subchannelId, [event]);
+    if (info.archived) {
+      await this.settleCornerEvent(info, event, { count: false, recordProcessed: true });
+      return;
+    }
+    try {
+      await this.archiveSubchannel(info.subchannelId);
+      await this.settleCornerEvent(info, event, { count: false, recordProcessed: true });
+    } catch (error) {
+      await this.durableState.failed(info.subchannelId, event.id, error);
+      console.error(
+        `[body] Room ${channelId} pushed corner close ${event.id} failed; poll fallback remains active:`,
+        error,
+      );
+    }
+  }
+
+  /** Add live lifecycle REQs for every open corner in this Room. */
   private async syncCornerApprovalSubscriptions(
     channelId: string,
     client: ReturnType<typeof createBuzzClient>,
@@ -12301,20 +12335,12 @@ export class Body {
       const unsubscribe = await client.sessionEventsSubscribe(
         info.subchannelId,
         (sessionEvent) => {
-          const approval = sessionEvent;
-          if (
-            approval.pubkey === this.agentIdentity.publicKey ||
-            !verifyEvent(approval) ||
-            !approval.tags.some((tag) => tag[0] === 't' && tag[1] === APPROVAL_MARKER)
-          ) {
-            return;
-          }
-          this.onRoomPollSuccess?.(channelId);
-          void this.runApprovalLandingPass(channelId, mergeGate, approval).catch((error) =>
-            console.error(
-              `[body] Room ${channelId} pushed approval ${approval.id} failed; poll fallback remains active:`,
-              error,
-            ),
+          void this.processPushedCornerEvent(channelId, info, sessionEvent, mergeGate).catch(
+            (error) =>
+              console.error(
+                `[body] Room ${channelId} pushed corner event ${sessionEvent.id} failed; poll fallback remains active:`,
+                error,
+              ),
           );
         },
         { kinds: [9], since: Math.floor(Date.now() / 1_000) },

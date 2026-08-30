@@ -458,6 +458,14 @@ export class RoomIndexer {
           right.room.updatedAt - left.room.updatedAt || left.room.id.localeCompare(right.room.id),
       );
     const chats = allChats.slice(0, ROOM_VIEW_CHAT_LIMIT);
+    const visibleRoomIds = new Set(chats.map((chat) => chat.room.id));
+    const cornerIds = rows
+      .filter((row) => row.section === 'corner-watch')
+      .map((row) => json(row.data))
+      .filter((data) => visibleRoomIds.has(String(data.parentId ?? '')))
+      .map((data) => String(data.id ?? ''))
+      .filter(Boolean);
+    const roomAndCornerIds = [workspaceId, ...chats.map((chat) => chat.room.id), ...cornerIds];
     const viewerData = rowData(rows, 'viewer') ?? { pubkey: viewerPubkey };
     return {
       workspace: workspaceItem(workspaceData),
@@ -466,7 +474,10 @@ export class RoomIndexer {
       truncated: allChats.length > ROOM_VIEW_CHAT_LIMIT,
       watchFilters: [
         { kinds: [9000, 9001], '#p': [viewerPubkey] },
-        { kinds: [...DURABLE_KINDS], '#h': [workspaceId, ...chats.map((chat) => chat.room.id)] },
+        { kinds: [...DURABLE_KINDS], '#h': roomAndCornerIds },
+        ...(cornerIds.length
+          ? [{ kinds: [39000, 39001, 39002], '#d': cornerIds }]
+          : []),
         ...profileFilter([
           identity(viewerData),
           ...chats.flatMap((chat) => (chat.latestMessage ? [chat.latestMessage.author] : [])),

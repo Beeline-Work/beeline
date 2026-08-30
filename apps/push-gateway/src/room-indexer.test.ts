@@ -810,6 +810,23 @@ describe('RoomIndexer', () => {
     });
   });
 
+  it('watches corner lifecycle coordinates that can change the Room list', async () => {
+    const chats = await indexer.readChats(WORKSPACE, VIEWER);
+    const archiveFilter = chats?.watchFilters.find(
+      (filter) => filter.kinds?.includes(9002) && filter['#h']?.includes(CORNER),
+    );
+    const cornerStateFilter = chats?.watchFilters.find(
+      (filter) => filter.kinds?.includes(30078) && filter['#h']?.includes(ROOM),
+    );
+    const metadataFilter = chats?.watchFilters.find(
+      (filter) => filter.kinds?.includes(39000) && filter['#d']?.includes(CORNER),
+    );
+
+    expect(archiveFilter).toBeDefined();
+    expect(cornerStateFilter).toBeDefined();
+    expect(metadataFilter).toBeDefined();
+  });
+
   it('withholds reply proof from deleted or foreign ancestry', async () => {
     const foreignParentId = 'c'.repeat(64);
     const foreignReplyId = 'd'.repeat(64);

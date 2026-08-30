@@ -413,11 +413,7 @@ import {
   type ReleaseRoomIntent,
 } from './release-flow.js';
 import {
-  cornerMetadataPrompt,
-  cornerMetadataRepairPrompt,
-  parseCornerMetadata,
   cornerTitleFromTask,
-  type CornerMetadata,
 } from './corner-metadata.js';
 
 const CAPTURED_AGENT_OUTPUTS = Symbol('captured-agent-outputs');
@@ -1016,8 +1012,6 @@ export interface SubchannelInfo {
   taskDescription?: string;
   /** Known corner members used for the same sole-human addressing fallback as Rooms. */
   participantPubkeys?: string[];
-  /** Task-authored opening plan from the hidden, tool-free editorial turn. */
-  taskPlan?: CompactActivityPlan;
   /** When this corner was opened, in ms — used to spot a repeated open-a-corner. */
   openedAt?: number;
   /** Current work tip advertised for this corner's one merge. */
@@ -1028,10 +1022,6 @@ export interface SubchannelInfo {
   reviewArtifactPublishedTip?: string;
   /** Deterministic change summary carried by that artifact. */
   reviewArtifactSummary?: string;
-  /** Exact tip whose merge-ready control record includes that review summary. */
-  mergeReadySummaryPublishedTip?: string;
-  /** Canonical signed merge-ready event returned by close_corner pending results. */
-  mergeReadyEventId?: string;
   /**
    * A tool-driven close is frozen at this exact review coordinate until its
    * signed approval advances, it is explicitly abandoned, or host recovery
@@ -2703,7 +2693,6 @@ export class Body {
    * summary nobody can still see. See `release-flow.ts`.
    */
   private readonly releaseProposals = new Map<string, PendingReleaseProposal>();
-  private generateCornerMetadata?: (prompt: string) => Promise<string>;
   /** Coalesced background warm-pool fill per repository/target. */
   private readonly cornerWarmPoolFills = new Map<string, { rerun: boolean; task: Promise<void> }>();
   /** Serialized, coalesced publisher for the corner state record. */
@@ -2731,8 +2720,6 @@ export class Body {
       runScheduleNow?: (scheduleId: string) => Promise<{ runId: string; eventId: string }>;
       relaySocket?: SharedRelaySocket;
       publishPermissionReceipt?: (event: NostrEvent) => Promise<void>;
-      /** Test/embedding seam for the hidden metadata-only model turn. */
-      generateCornerMetadata?: (prompt: string) => Promise<string>;
     } = {},
   ) {
     this.config = config;
@@ -2778,7 +2765,6 @@ export class Body {
     this.onRoomPresence = services.onRoomPresence;
     this.runScheduleNow = services.runScheduleNow;
     this.sharedSocket = services.relaySocket;
-    this.generateCornerMetadata = services.generateCornerMetadata;
     this.durableState = new DurableBodyState(
       services.statePath ?? resolve(config.workspaceRoot, '.beeline-body-state.json'),
     );
@@ -3410,125 +3396,6 @@ export class Body {
       spec.mergeGateStateDirs = gateStateDirs;
     }
     return wrapAgentCommand({ bwrapPath: this.config.bwrapPath, spec, command, args });
-  }
-
-  /**
-   * Run a short-lived ACP session with an empty MCP inventory. Its answer is
-   * never projected into the Room transcript; only validated title,
-   * objective, and task-specific plan strings survive. Any failure preserves
-   * the deterministic metadata path.
-   */
-  private async modelCornerMetadata(
-    channelId: string,
-    cwd: string,
-    request: ChannelTaskRequest,
-    conversation: readonly { role: string; text: string }[],
-  ): Promise<CornerMetadata | undefined> {
-    if (this.config.modelUnavailable) return undefined;
-    const prompt = cornerMetadataPrompt(request.content, conversation);
-    if (this.generateCornerMetadata) {
-      const first = parseCornerMetadata(await this.generateCornerMetadata(prompt));
-      if (first) return first;
-      return parseCornerMetadata(await this.generateCornerMetadata(cornerMetadataRepairPrompt()));
-    }
-
-    await mkdir(cwd, { recursive: true });
-    const env = await this.sessionAgentEnv();
-    const spawnCommand = await this.sessionSpawnCommand(
-      { mode: 'readonly', cwd, channelIdForLog: `${channelId}:corner-metadata` },
-      env,
-    );
-    const client = new AcpClient({
-      agentCommand: spawnCommand.command,
-      agentArgs: spawnCommand.args,
-      agentLabel: this.config.agentCommand ?? this.config.agentBinary,
-      agentEnv: env,
-      agentCwd: cwd,
-      autoApprovePermissions: false,
-      permissionHandler: async () => 'reject',
-    });
-    const startedAt = new Date().toISOString();
-    const systemPrompt =
-      'You are a metadata editor. You have no tools. Follow the requested JSON schema exactly.';
-    try {
-      await client.start();
-      const created = await client.sessionNew({
-        cwd,
-        mcpServers: [],
-        systemPrompt,
-        mode: 'readonly',
-      });
-      const rawOptions = parseAdvertisedConfigOptions(created.raw);
-      if (this.config.modelSelection) {
-        await applyAgentModelSelection(
-          client,
-          created.sessionId,
-          rawOptions,
-          this.config.modelSelection,
-        );
-      }
-      const result = await client.sessionPrompt(created.sessionId, prompt, 30_000);
-      await this.durableState.recordModelTurn(
-        completedModelSpend({
-          result,
-          prompt,
-          systemPromptChars: systemPrompt.length,
-          attribution: {
-            requestId: request.eventId,
-            originalRequestId: request.eventId,
-            cause: 'corner-metadata',
-          },
-          agentPubkey: this.agentIdentity.publicKey,
-          channelId,
-          startedAt,
-        }),
-      );
-      if (result.toolCalls.length > 0) return undefined;
-      const parsed = parseCornerMetadata(result.agentText);
-      if (parsed) return parsed;
-      const repairPrompt = cornerMetadataRepairPrompt();
-      const repairStartedAt = new Date().toISOString();
-      const repair = await client.sessionPrompt(created.sessionId, repairPrompt, 30_000);
-      await this.durableState.recordModelTurn(
-        completedModelSpend({
-          result: repair,
-          prompt: repairPrompt,
-          systemPromptChars: systemPrompt.length,
-          attribution: {
-            requestId: request.eventId,
-            originalRequestId: request.eventId,
-            cause: 'corner-metadata',
-          },
-          agentPubkey: this.agentIdentity.publicKey,
-          channelId,
-          startedAt: repairStartedAt,
-        }),
-      );
-      if (repair.toolCalls.length > 0) return undefined;
-      return parseCornerMetadata(repair.agentText);
-    } catch (error) {
-      await this.durableState
-        .recordModelTurn(
-          failedModelSpend({
-            prompt,
-            systemPromptChars: systemPrompt.length,
-            attribution: {
-              requestId: request.eventId,
-              originalRequestId: request.eventId,
-              cause: 'corner-metadata',
-            },
-            agentPubkey: this.agentIdentity.publicKey,
-            channelId,
-            startedAt,
-            error,
-          }),
-        )
-        .catch(() => undefined);
-      console.warn(`[body] corner metadata generation failed for ${channelId}; using fallback`);
-      return undefined;
-    } finally {
-      if (client.isAlive) await client.stop();
-    }
   }
 
   private authorizedExternalServers(channelId: string): Promise<McpServerWire[]> {
@@ -5060,7 +4927,6 @@ export class Body {
         ...(latestLandingBlock && tagValue(latestLandingBlock, 'approval')
           ? { landingBlockedApprovalId: tagValue(latestLandingBlock, 'approval') }
           : {}),
-        ...(restoredPlan ? { taskPlan: restoredPlan } : {}),
         ...(request ? { request } : {}),
         ...(tip
           ? {
@@ -5069,7 +4935,6 @@ export class Body {
                 branch: tagValue(ready!, 'branch') ?? cornerRepo.targetBranch ?? 'refs/heads/main',
                 tip,
               },
-              ...(tagValue(ready!, 'summary') ? { mergeReadySummaryPublishedTip: tip } : {}),
             }
           : {}),
         ...(concludeRecord ? { conclude: concludeRecord } : {}),
@@ -5479,35 +5344,9 @@ export class Body {
     const conversation = await this.agentHistory(tlcChannelId);
     const statedTask = intent ? taskDescriptionFromCornerRequest(intent).slice(0, 320) : '';
     const fallbackObjective = statedTask || cornerObjectiveFromConversation(conversation);
-    let generated: CornerMetadata | undefined;
-    if (request) {
-      try {
-        generated = await this.modelCornerMetadata(
-          tlcChannelId,
-          this.config.workspaceRoot,
-          request,
-          conversation.map((entry) => ({
-            role: entry.type === 'agent-message' ? 'agent' : 'user',
-            text: agentHistoryPrompt(entry),
-          })),
-        );
-      } catch {
-        console.warn(
-          `[body] corner metadata generation failed for ${tlcChannelId}; using fallback`,
-        );
-      }
-    }
     const requestedObjective = options?.objective?.trim().slice(0, 320);
-    const taskDescription = requestedObjective || generated?.objective || fallbackObjective;
-    const taskPlan: CompactActivityPlan | undefined = generated?.plan
-      ? {
-          ...(taskDescription ? { objective: taskDescription } : {}),
-          items: generated.plan.items,
-        }
-      : undefined;
+    const taskDescription = requestedObjective || fallbackObjective;
     // One semantic source owns the objective, visible name, and feature ref.
-    // A model-generated plan may enrich execution, but it cannot name a
-    // different task from the objective the person approved.
     const cornerName = cornerTitleFromTask(taskDescription);
     const taskSlug = slugifyCornerTask(cornerName);
     const openingHumanPubkey = request?.authorPubkey ?? this.bodyIdentity.publicKey;
@@ -5744,7 +5583,6 @@ export class Body {
       cornerName,
       taskDescription,
       participantPubkeys,
-      ...(taskPlan ? { taskPlan } : {}),
       openedAt: Date.now(),
       cornerState: { state: 'open' },
       ...(request ? { request } : {}),
@@ -9396,9 +9234,7 @@ export class Body {
           'working',
           this.presenceGenerations.get(info.subchannelId),
         );
-        const taskPlan = info.taskPlan;
-        info.taskPlan = undefined;
-        await this.startCornerPlan(info.session, info.taskDescription || prompt, taskPlan);
+        await this.startCornerPlan(info.session, info.taskDescription || prompt);
         const result = await this.promptAgent(
           info.session,
           info.boundRepo
@@ -9916,8 +9752,6 @@ export class Body {
     info.mergeTarget = undefined;
     info.reviewArtifactPublishedTip = undefined;
     info.reviewArtifactSummary = undefined;
-    info.mergeReadySummaryPublishedTip = undefined;
-    info.mergeReadyEventId = undefined;
     info.toolClosePending = undefined;
     info.observedReviewTip = undefined;
     // A few narrow unit fixtures exercise review narration without modelling
@@ -10034,8 +9868,7 @@ export class Body {
         await this.withdrawMergeReadiness(info);
         throw error;
       }
-      if (info.mergeReadySummaryPublishedTip === tip && info.mergeReadyEventId) {
-        await this.transitionCornerState(info, 'waiting', 'review');
+      if (info.mergeTarget?.tip === tip) {
         return true;
       }
     }
@@ -10108,8 +9941,6 @@ export class Body {
     // the one replaceable projection written above.
     info.mergeTarget = target;
     info.lastReviewFailureContent = undefined;
-    info.mergeReadyEventId = undefined;
-    info.mergeReadySummaryPublishedTip = undefined;
     // A fresh review is a fresh land attempt: whatever the previous tip could
     // not do is no longer the standing condition being reported.
     info.lastLandFailure = undefined;
@@ -10343,11 +10174,8 @@ export class Body {
     // separate single-key filters because production relays may only honor
     // the first value in a multi-value tag filter.
     approvals.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+    const validVerdicts: Array<{ event: NostrEvent; rejection: boolean }> = [];
     for (const approval of approvals) {
-      // A bounded landing transaction parks this exact button press. A newer
-      // signed approval is a new retry request; maintenance never re-drives
-      // the blocked approval on its own.
-      if (approval.id === info.landingBlockedApprovalId) continue;
       if (!verifyEvent(approval)) continue;
       if (approval.pubkey === this.agentIdentity.publicKey) continue;
       const marker = tagValue(approval, 't');
@@ -10372,12 +10200,28 @@ export class Body {
         );
         if (!viaSuccession) continue;
       }
-      if (rejection) {
-        if (!info.archived) await this.archiveSubchannel(info.subchannelId);
-        return undefined;
-      }
-      const approvedTip = tagValue(approval, 'tip') ?? target.tip;
-      const approvedPatchId = tagValue(approval, 'patch-id');
+      validVerdicts.push({ event: approval, rejection });
+    }
+    const first = validVerdicts[0];
+    if (!first) return undefined;
+    const conflict = validVerdicts.find((candidate) => candidate.rejection !== first.rejection);
+    if (conflict) {
+      console.error(
+        `[body] conflicting corner verdict ignored corner=${info.subchannelId} ` +
+          `first=${first.event.id}:${first.rejection ? 'reject' : 'approve'} ` +
+          `later=${conflict.event.id}:${conflict.rejection ? 'reject' : 'approve'}`,
+      );
+    }
+    if (first.rejection) {
+      if (!info.archived) await this.archiveSubchannel(info.subchannelId);
+      return undefined;
+    }
+    const approval = first.event;
+    // A failed press stays the first verdict, but an ordinary maintenance tick
+    // cannot silently create a second landing attempt for that same event.
+    if (approval.id === info.landingBlockedApprovalId) return undefined;
+    const approvedTip = tagValue(approval, 'tip') ?? target.tip;
+    const approvedPatchId = tagValue(approval, 'patch-id');
       const tipAdvanced = approvedTip !== target.tip;
       const realigned = Boolean(
         tipAdvanced && approvedPatchId && target.patchId && approvedPatchId === target.patchId,
@@ -10404,8 +10248,6 @@ export class Body {
         if (published) info.ackedApprovalActivityId = ackKey;
       }
       return info.humanMergeApproval;
-    }
-    return undefined;
   }
 
   /**

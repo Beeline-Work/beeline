@@ -867,6 +867,34 @@ export async function findAgentRuntimeConfigPaths(
   return [...configs];
 }
 
+/** Resolve the runtime set shared by machine- and repository-scoped commands. */
+export async function selectRuntimeConfigPaths(options: {
+  cwd: string;
+  all: boolean;
+  requestedPubkey?: string;
+  findHostRuntimes: (cwd: string) => Promise<string[]>;
+  findRepositoryRuntimes: (cwd: string) => Promise<string[]>;
+  noRuntimeMessage: (hostScope: boolean) => string;
+  multipleRuntimeMessage: string;
+}): Promise<{ paths: string[]; hostScope: boolean }> {
+  const hostScope =
+    options.all ||
+    Boolean(options.requestedPubkey) ||
+    !tryInspectLocalRepository(options.cwd);
+  const configs = hostScope
+    ? await options.findHostRuntimes(options.cwd)
+    : await options.findRepositoryRuntimes(options.cwd);
+  const matching = options.requestedPubkey
+    ? configs.filter((path) => dirname(path).endsWith(options.requestedPubkey!))
+    : configs;
+  const paths = [...new Set(matching)];
+  if (paths.length === 0) throw new Error(options.noRuntimeMessage(hostScope));
+  if (options.requestedPubkey && paths.length > 1) {
+    throw new Error(options.multipleRuntimeMessage);
+  }
+  return { paths, hostScope };
+}
+
 export async function runtimeDaemonPid(configPath: string): Promise<number | null> {
   try {
     const pid = Number((await readFile(resolve(dirname(configPath), 'daemon.pid'), 'utf8')).trim());

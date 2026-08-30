@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 
 export const AGENT_MENTION_TAG = 'beeline-agent-mention';
@@ -5,6 +6,9 @@ export const AGENT_MENTION_DISPATCH_TAG = 'beeline-agent-mention-dispatch';
 export const AGENT_MENTION_REPLY_TAG = 'beeline-agent-mention-reply';
 export const AGENT_MENTION_PAUSED_TAG = 'beeline-agent-chain-paused';
 export const AGENT_TO_AGENT_TURN_FUSE = 6;
+export const AGENT_DELEGATION_TAG = 'buzz-agent-delegation';
+export const AGENT_DELEGATION_DEFAULT_MAX_HOPS = 4;
+export const AGENT_DELEGATION_HARD_MAX_HOPS = 8;
 
 const PUBKEY = /^[0-9a-f]{64}$/;
 const EVENT_ID = /^[0-9a-f]{64}$/;
@@ -20,8 +24,153 @@ export interface AgentMentionMetadata {
   writerAgentId: string;
 }
 
+export interface AgentDelegationEnvelope {
+  rootRequestId: string;
+  rootHumanPubkey: string;
+  fromAgentId: string;
+  toAgentId: string;
+  sourceEventId: string;
+  hop: number;
+  dedupe: string;
+}
+
+export type RoomAgentMentionResolution =
+  | { status: 'none' }
+  | { status: 'self'; handle: string }
+  | { status: 'human'; handle: string }
+  | { status: 'unknown'; handle: string }
+  | { status: 'target'; handle: string; pubkey: string };
+
 function tagValue(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
+}
+
+export function agentDelegationMaxHops(
+  raw: string | undefined = process.env.BUZZY_BODY_AGENT_DELEGATION_MAX_HOPS,
+): number {
+  const configured = Number(raw);
+  if (!Number.isInteger(configured)) return AGENT_DELEGATION_DEFAULT_MAX_HOPS;
+  return Math.max(1, Math.min(AGENT_DELEGATION_HARD_MAX_HOPS, configured));
+}
+
+function mentionHandles(text: string): string[] {
+  return [
+    ...text
+      .normalize('NFKC')
+      .matchAll(/(?:^|\s)@([\p{L}\p{N}_-](?:[\p{L}\p{N}_.-]*[\p{L}\p{N}_-])?)/gu),
+  ].map((match) => match[1]!.toLowerCase());
+}
+
+/** Resolve at most one peer. Multiple mentions are visible context, never fan-out. */
+export function roomAgentMention(
+  text: string,
+  roster: readonly { handle: string; pubkey: string; kind?: 'agent' | 'human' }[],
+  selfPubkey: string,
+): RoomAgentMentionResolution {
+  const byHandle = new Map(
+    roster.map((entry) => [entry.handle.replace(/^@/, '').normalize('NFKC').toLowerCase(), entry]),
+  );
+  const handles = mentionHandles(text);
+  if (!handles.length) return { status: 'none' };
+  let firstNonTarget: RoomAgentMentionResolution | undefined;
+  for (const handle of handles) {
+    const found = byHandle.get(handle);
+    if (!found) {
+      firstNonTarget ??= { status: 'unknown', handle };
+      continue;
+    }
+    if (found.pubkey === selfPubkey) {
+      firstNonTarget ??= { status: 'self', handle };
+      continue;
+    }
+    if (found.kind === 'human') {
+      firstNonTarget ??= { status: 'human', handle };
+      continue;
+    }
+    return { status: 'target', handle, pubkey: found.pubkey };
+  }
+  return firstNonTarget ?? { status: 'none' };
+}
+
+export function agentDelegationDedupe(input: {
+  rootRequestId: string;
+  fromAgentId: string;
+  toAgentId: string;
+  text: string;
+}): string {
+  const normalizedText = input.text.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  return createHash('sha256')
+    .update(
+      [input.rootRequestId, input.fromAgentId, input.toAgentId, normalizedText].join('\u0000'),
+    )
+    .digest('hex');
+}
+
+export function agentDelegationTags(envelope: AgentDelegationEnvelope): string[][] {
+  return [
+    ['t', AGENT_DELEGATION_TAG],
+    ['root-request', envelope.rootRequestId],
+    ['root-human', envelope.rootHumanPubkey],
+    ['from-agent', envelope.fromAgentId],
+    ['to-agent', envelope.toAgentId],
+    ['source-event', envelope.sourceEventId],
+    ['hop', String(envelope.hop)],
+    ['dedupe', envelope.dedupe],
+    ['p', envelope.toAgentId],
+  ];
+}
+
+export function parseAgentDelegation(
+  event: NostrEvent,
+  maxHops = agentDelegationMaxHops(),
+): AgentDelegationEnvelope | undefined {
+  if (
+    !verifyEvent(event) ||
+    event.kind !== 9 ||
+    !event.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_DELEGATION_TAG)
+  ) {
+    return undefined;
+  }
+  const rootRequestId = tagValue(event, 'root-request');
+  const rootHumanPubkey = tagValue(event, 'root-human');
+  const fromAgentId = tagValue(event, 'from-agent');
+  const toAgentId = tagValue(event, 'to-agent');
+  const sourceEventId = tagValue(event, 'source-event');
+  const dedupe = tagValue(event, 'dedupe');
+  const hop = Number(tagValue(event, 'hop'));
+  if (
+    !EVENT_ID.test(rootRequestId ?? '') ||
+    !PUBKEY.test(rootHumanPubkey ?? '') ||
+    !PUBKEY.test(fromAgentId ?? '') ||
+    !PUBKEY.test(toAgentId ?? '') ||
+    !EVENT_ID.test(sourceEventId ?? '') ||
+    !EVENT_ID.test(dedupe ?? '') ||
+    event.pubkey !== fromAgentId ||
+    fromAgentId === toAgentId ||
+    event.tags.filter((tag) => tag[0] === 'p' && tag[1] === toAgentId).length !== 1 ||
+    !Number.isSafeInteger(hop) ||
+    hop < 1 ||
+    hop > maxHops
+  ) {
+    return undefined;
+  }
+  const envelope = {
+    rootRequestId: rootRequestId!,
+    rootHumanPubkey: rootHumanPubkey!,
+    fromAgentId: fromAgentId!,
+    toAgentId: toAgentId!,
+    sourceEventId: sourceEventId!,
+    hop,
+    dedupe: dedupe!,
+  };
+  return agentDelegationDedupe({
+    rootRequestId: envelope.rootRequestId,
+    fromAgentId: envelope.fromAgentId,
+    toAgentId: envelope.toAgentId,
+    text: event.content,
+  }) === envelope.dedupe
+    ? envelope
+    : undefined;
 }
 
 export function mentionedAgent(

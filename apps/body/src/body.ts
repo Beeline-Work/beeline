@@ -41,7 +41,6 @@ import {
   postAgentTurnStatus,
   postSteerQueuedNotice,
   postSlashCommandNotice,
-  SLASH_COMMAND_NOTICE_TAG,
   postCornerSessionStatus,
   postControlMessage,
   replyRootIdForEvent,
@@ -95,7 +94,6 @@ import {
   CHANGE_REVIEW_ARTIFACT_VERSION,
   KIND_AGENT_PRESENCE,
   KIND_AGENT_DRAFT,
-  TAG_AGENT_DRAFT,
   TAG_AGENT_PRESENCE,
   WRITE_PERMISSION_REQUEST_TAG,
   WRITE_PERMISSION_RESPONSE_TAG,
@@ -104,7 +102,6 @@ import {
   TAG_PERMISSION_DECISION,
   TAG_PERMISSION_REVOCATION,
   TAG_PERMISSION_EXECUTION,
-  TAG_MERGE_APPROVAL,
   agentHandle,
   fallbackAgentName,
   fallbackPersonName,
@@ -132,13 +129,6 @@ import {
   resolveAgentAccessAuthority,
   publishAgentModelCatalog,
   RoomViewClient,
-  KIND_CREATE_GROUP,
-  KIND_DELETE_GROUP,
-  KIND_PUT_USER,
-  KIND_REMOVE_USER,
-  KIND_EDIT_METADATA,
-  KIND_CHANNEL_MEMBERS,
-  KIND_CHANNEL_ADMINS,
   type AgentPresence,
   type AgentSoulProfile,
   type ChannelOpsContext,
@@ -169,7 +159,6 @@ import {
   permissionActionId,
   parsePermissionRequest,
   parsePermissionDecision,
-  verifyPermissionAction,
   verifyMissionPermissionActionAuthority,
   type PermissionConcreteAction,
   type PermissionFreshReader,
@@ -203,7 +192,6 @@ import {
   resolveMissionAction,
   resolveMissionGrant,
   verifyMissionAction,
-  verifyMissionActionAuthority,
   type MissionCornerAuthority,
 } from './mission-authority.js';
 import {
@@ -236,7 +224,6 @@ import {
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import {
   WORK_SCHEDULE_KIND,
-  WORK_SCHEDULE_TAG,
   ScheduleActivationRefusedError,
   buildWorkSchedule,
   parseWorkSchedule,
@@ -330,7 +317,7 @@ import {
 import { operatorMcpServersForCorners } from './operator-mcp.js';
 import { SquireHostBroker } from './squire-host-broker.js';
 import { AgentToolHostBroker, type AgentToolSessionBinding } from './agent-tool-host-broker.js';
-import { AuthorizeOrRequestKernel, mandateCovers } from './authorize-or-request.js';
+import { AuthorizeOrRequestKernel } from './authorize-or-request.js';
 import {
   BEELINE_ACTION_TOKENS,
   BEELINE_AGENT_TOOL_SCHEMA_VERSION,
@@ -445,7 +432,6 @@ import {
 import { NO_PERSONAL_CONNECTORS_INSTRUCTION, toolScopeWarning } from './harness-tool-scope.js';
 import {
   describeCiOutcome,
-  parseGitHubRemoteUrl,
   resolveGitHubRepo,
   watchCommitCi,
   type CiWatchOptions,
@@ -1608,8 +1594,6 @@ type PreparedRoomDelegation =
       notice: string;
     };
 
-/** @deprecated Explicit Start-work events are ordinary Room messages now. */
-export const AGENT_REQUEST_TAG = 'buzz-agent-request';
 /**
  * Said once per corner whose worktree could not be restored OR rebuilt.
  *
@@ -2428,9 +2412,6 @@ export function isChannelWorkIntent(
   );
   return directCornerCommand.test(content) || startWorkInCornerCommand.test(content);
 }
-
-/** @deprecated Use isChannelWorkIntent; retained for wire/test compatibility. */
-export const isChannelTaskRequest = isChannelWorkIntent;
 
 /** Create the relay-side child channel under the agent's own signing key. */
 /**
@@ -8974,10 +8955,6 @@ export class Body {
       return { openedCorner: false, producedReply: true };
     }
 
-    const namedRepositoryTarget =
-      editPolicy === 'named-repository'
-        ? namedRepositoryTargetFromRoomRequest(request.content)
-        : undefined;
     // Receipt belongs to the daemon, not the harness. Publish it before lazy
     // provisioning can start the ACP process (or spend time rebuilding its
     // context) so a cold session never looks like a dead daemon. The logical

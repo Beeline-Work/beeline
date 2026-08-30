@@ -1,26 +1,7 @@
 /**
- * Approve-panel state machine — a sent approval must never hang silently.
- *
- * The 2026-08-23 live defect: the owner tapped APPROVE, the relay accepted
- * the signed event, and the panel showed '✓ APPROVAL SENT · DELIVERING…'
- * spinning forever. The app's only exits from `delivering` were two specific
- * live events (the corner's archive notice, a delivery-failure card) — no
- * acknowledgement tied to the approval itself, and no timeout, so any missed
- * event or silent daemon left the spinner up indefinitely.
- *
- * This module owns every transition after `sending`/`sent`:
- *
- *   - an approval ack (`decision=accepted`) confirms the daemon has the
- *     approval and is landing it — the human's part is done;
- *   - an ack with `decision=rejected` fails the panel with the daemon's
- *     reason (a stale tip must be answered, never swallowed);
- *   - the landed card (`delivery=landed`) resolves success even if the
- *     archive notice was missed;
- *   - a timeout (no ack within the window) resolves to an honest waiting state
- *     explaining that the signed approval stays on the relay.
- *
- * Pure so `chat/[channelId].tsx` wires it and tests pin it without rendering
- * the screen.
+ * Ephemeral approval-submit UI only. Durable lifecycle is server-owned and
+ * arrives through RoomView.cornerLifecycle; this file never interprets relay
+ * messages, archive cards, or merge receipts as product state.
  */
 
 export type ApprovalUiState =
@@ -45,45 +26,4 @@ export function approvalTimeoutMessage(): string {
     'The agent has not picked up your approval yet (offline?). Your signed approval is safe ' +
     'and will be honored automatically when the daemon recovers.'
   );
-}
-
-/** Minimal shape of `ChatEventProjection` this reducer reads. Kept structural
- *  so both the screen's live batch loop and tests can feed it directly. */
-export interface ApprovalStateEvent {
-  approvalAck?: {
-    decision: 'accepted' | 'rejected';
-    state?: 'landing' | 'realigning' | 'realigned' | 'content-changed' | 'tip-moved';
-    tip?: string;
-  };
-  deliveryLanded?: boolean;
-  deliveryFailed?: boolean;
-  archiveChannel?: boolean;
-  mergeTarget?: { tip: string } | null;
-}
-
-/**
- * One transition step. `merged` is terminal-sticky (as in the screen today);
- * a merge target on a NEWER tip reopens the panel for the fresh review — the
- * caller resets to `none` when the tip changed before invoking this.
- */
-export function nextApprovalState(
-  current: ApprovalUiState,
-  event: ApprovalStateEvent,
-): ApprovalUiState {
-  if (current === 'merged') return current;
-  // An explicit rejection of the signed approval always wins: the daemon saw
-  // it and refused it (stale tip). The reason text rides the system notice.
-  if (event.approvalAck?.decision === 'rejected') return 'failed';
-  if (event.deliveryLanded) return 'merged';
-  if (event.archiveChannel) return 'merged';
-  if (event.deliveryFailed) return 'failed';
-  // An acceptance ack means the daemon took custody of the approval. The
-  // panel advances to the precise daemon-authored phase. Land events above
-  // still resolve either phase when they arrive later.
-  if (event.approvalAck?.decision === 'accepted') {
-    return event.approvalAck.state === 'realigning' || event.approvalAck.state === 'realigned'
-      ? 'realigning'
-      : 'landing';
-  }
-  return current;
 }

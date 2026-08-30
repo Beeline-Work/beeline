@@ -43,7 +43,6 @@ import {
   addRoomPage,
   type RoomViewMessage,
   AGENT_PRESENCE_STALE_MS,
-  CORNER_ACTIVITY_FRESHNESS_MS,
   personHandle,
 } from '@beeline/buzz-client';
 import {
@@ -227,7 +226,6 @@ import {
 import {
   APPROVAL_ACK_TIMEOUT_MS,
   approvalTimeoutMessage,
-  nextApprovalState,
   type ApprovalUiState,
 } from '@/buzz/approval-state';
 
@@ -427,7 +425,6 @@ export default function BuzzChat() {
   // Reviewable tip currently on screen. Held on a ref, not read off
   // `mergeTarget`, because a whole live batch is applied before any re-render.
   const [approvalError, setApprovalError] = useState<string | null>(null);
-  const [cornerStateNow, setCornerStateNow] = useState(Date.now());
   // "No corner on record" and "the corner list has not answered yet" are
   // different answers, and only the first one may let a freshly permitted
   // corner onto the pinned line — see `selectPinnedCorner`.
@@ -723,7 +720,7 @@ export default function BuzzChat() {
     // A newly indexed working lease can be newer than the screen's prior
     // clock. Re-evaluate it at RoomView application time, as this screen did
     // before the surface lifecycle moved into useRoomSurfaceSession.
-    observeRoomSurface: () => setCornerStateNow(Date.now()),
+    observeRoomSurface: () => undefined,
   };
   // All four display partitions share the same chronological merge. A durable
   // outbox row may be older than the current server tail after an interrupted
@@ -1271,7 +1268,7 @@ export default function BuzzChat() {
     ? cornerLifecycle.find((corner) => corner.id === decodedId)
     : undefined;
   const canonicalCornerStatus = canonicalCorner
-    ? currentCornerStatus(canonicalCorner, cornerStateNow)
+    ? currentCornerStatus(canonicalCorner)
     : cornerLifecycleStatus;
   const sessionState = !isCorner
     ? 'idle'
@@ -1446,8 +1443,8 @@ export default function BuzzChat() {
   // source, and chosen by how much it is being worked on. `null` for a Room
   // with no live corner, however busy its agent is right now.
   const pinnedCorner = useMemo(() => {
-    return selectPinnedCorner({ lifecycle: cornerLifecycle, now: cornerStateNow });
-  }, [cornerLifecycle, cornerStateNow]);
+    return selectPinnedCorner({ lifecycle: cornerLifecycle });
+  }, [cornerLifecycle]);
   const pinnedCornerCard = useMemo(
     () =>
       pinnedCorner
@@ -1631,19 +1628,6 @@ export default function BuzzChat() {
     setApprovalState('none');
     setApprovalAcked(false);
   }, [mergeTarget?.tip]);
-
-  useEffect(() => {
-    if (canonicalCorner?.machineState !== 'working' || canonicalCorner.stateAt === undefined)
-      return;
-    const deadline = canonicalCorner.stateAt * 1_000 + CORNER_ACTIVITY_FRESHNESS_MS;
-    const delay = deadline - Date.now() + 1;
-    if (delay <= 0) {
-      setCornerStateNow(Date.now());
-      return;
-    }
-    const timer = setTimeout(() => setCornerStateNow(Date.now()), delay);
-    return () => clearTimeout(timer);
-  }, [canonicalCorner?.machineState, canonicalCorner?.stateAt]);
 
   useEffect(() => {
     // Presence only changes at a lease/dormancy deadline. A five-second clock here

@@ -1,46 +1,31 @@
 /**
  * Corner lifecycle + presentation for every Buzz surface.
  *
- * Current lifecycle comes only from the daemon-owned kind:30078 corner-state
- * record, hard-bounded by relay existence. Parent body-control cards, drafts,
- * ACP turn events, presence, and cached legacy status words are presentation
- * history, never authority. This module is mobile's single import surface for
- * canonical-state presentation helpers (glyphs, labels, ordering).
+ * Product lifecycle comes only from the server-indexed five-state DTO. Turn
+ * receipts and presence may light transient UI, but never solve lifecycle.
  *
  * Canonical states: `live` (working), `open` (ready-for-review),
  * `needs-attention` (needs-decision), `failed`, `merged`, `archived`; `null`
  * or absence means idle / nothing reportable.
  */
-export {
-  CORNER_ASK_FRESH_WINDOW_MS,
-  CORNER_NEEDS_YOU_STATUSES,
-  CORNER_WORK_LIVENESS_WINDOW_MS,
-  CORNER_WORK_SIGNAL_TAGS,
-  cornerLifecycleFact,
-  cornerStatusPrecedence,
-  isCornerNeedsYou,
-  mapRawCornerStatusTag,
-  mergeCornerStatuses,
-  resolveCornerLifecycle,
-  resolveCornerState,
-  resolveCornerStatusAgainstArchive,
-  type CornerLifecycleFact,
-  type CornerLifecycleStatus,
-  type CornerMachineState,
-  type CornerSuperState,
-} from '@beeline/buzz-client';
+export type CornerStatus =
+  | 'live'
+  | 'open'
+  | 'needs-attention'
+  | 'failed'
+  | 'merged'
+  | 'archived';
+export type CornerMachineState = 'open' | 'working' | 'waiting' | 'idle' | 'concluded' | 'closed';
+export type CornerSuperState = 'working' | 'needs-human' | 'finished';
 
-import {
-  cornerStatusPrecedence,
-  isCornerTerminalState,
-  resolveCornerStatusAgainstArchive,
-  type CornerLifecycleStatus,
-  CORNER_ACTIVITY_FRESHNESS_MS,
-  type CornerMachineState,
-  type CornerSuperState,
-} from '@beeline/buzz-client';
-
-export type CornerStatus = CornerLifecycleStatus;
+const CORNER_STATUS_PRECEDENCE: Readonly<Record<CornerStatus, number>> = {
+  archived: 0,
+  merged: 1,
+  failed: 2,
+  'needs-attention': 3,
+  open: 4,
+  live: 5,
+};
 
 export type CornerSummary = {
   id: string;
@@ -64,36 +49,12 @@ export type CornerSummary = {
   lastActivityAt?: number;
 };
 
-/** Re-evaluate a cached summary at render time so an old WORKING lease dies. */
+/** Compatibility presentation of the already-derived server lifecycle. */
 export function currentCornerStatus(
   corner: Pick<CornerSummary, 'status' | 'machineState' | 'machineReason' | 'stateAt'>,
-  now = Date.now(),
+  _now = Date.now(),
 ): CornerStatus | null {
-  // A status word without a canonical machine record is legacy projection,
-  // not lifecycle authority. It may name the row but cannot light a surface.
-  if (!corner.machineState) return null;
-  switch (corner.machineState) {
-    case 'open':
-    case 'idle':
-      return null;
-    case 'working':
-      if (
-        corner.stateAt === undefined ||
-        now - corner.stateAt * 1_000 < -CORNER_ACTIVITY_FRESHNESS_MS ||
-        now - corner.stateAt * 1_000 > CORNER_ACTIVITY_FRESHNESS_MS
-      ) {
-        return null;
-      }
-      return 'live';
-    case 'waiting':
-      if (corner.machineReason === 'review') return 'open';
-      if (corner.machineReason === 'failure') return 'failed';
-      return 'needs-attention';
-    case 'concluded':
-      return 'merged';
-    case 'closed':
-      return 'archived';
-  }
+  return corner.status;
 }
 
 /**
@@ -111,7 +72,7 @@ export function cornerSuperState(
 
 /** Relative precedence that ranks canonical idle as least reportable. */
 export function cornerStatusPrecedenceOrNull(status: CornerStatus | null): number {
-  return status === null ? Number.MAX_SAFE_INTEGER : cornerStatusPrecedence(status);
+  return status === null ? Number.MAX_SAFE_INTEGER : CORNER_STATUS_PRECEDENCE[status];
 }
 
 /** Corners still being actively worked on — the set that deserves a live
@@ -119,6 +80,10 @@ export function cornerStatusPrecedenceOrNull(status: CornerStatus | null): numbe
  * Canonical idle is not active work. */
 export function isCornerActive(status: CornerStatus | null): boolean {
   return status === 'live' || status === 'needs-attention';
+}
+
+export function isCornerNeedsYou(status: CornerStatus | null): boolean {
+  return status === 'open' || status === 'needs-attention' || status === 'failed';
 }
 
 /**
@@ -138,7 +103,7 @@ export function resolveCornerLifecycleStatus(
   known: CornerStatus | null,
   confirmedArchived: boolean,
 ): CornerStatus | null {
-  return resolveCornerStatusAgainstArchive(known, confirmedArchived);
+  return confirmedArchived ? 'archived' : known;
 }
 
 export function cornerName(name: string | undefined, id: string): string {
@@ -296,7 +261,12 @@ export function roomListCorners(corners: readonly CornerSummary[]): CornerSummar
   // alike, idle-without-finishing included (its nudge/close affordance lives
   // inside). Only finished corners are excluded.
   return corners.filter((corner) => {
-    if (!corner.machineState || isCornerTerminalState(corner.machineState)) return false;
+    if (
+      !corner.machineState ||
+      corner.machineState === 'concluded' ||
+      corner.machineState === 'closed'
+    )
+      return false;
     const status = currentCornerStatus(corner);
     return status === null || ROOM_LIST_WORDED_STATUSES.has(status);
   });

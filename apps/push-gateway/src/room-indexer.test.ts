@@ -849,6 +849,168 @@ describe('RoomIndexer', () => {
     );
   });
 
+  it('suppresses only model-unavailable lines made stale by newer health evidence', async () => {
+    const unavailableTags = [
+      ['h', ROOM],
+      ['t', 'buzz-agent-model-unavailable'],
+      ['status', 'model-unavailable'],
+      ['unavailable', 'model'],
+      ['unavailable-value', 'gpt-5'],
+      ['model', 'gpt-5'],
+      ['effort', 'high'],
+    ];
+    const insertUnavailable = async (id: string, createdAt: number) => {
+      await postgres.query(
+        `INSERT INTO events
+          (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+         VALUES ($1, $2, $3, to_timestamp($4), 9, $5, $6, $7)`,
+        [
+          TENANT,
+          bytes(id.repeat(64)),
+          bytes(AGENT),
+          createdAt,
+          JSON.stringify(unavailableTags),
+          `Model unavailable · gpt-5 (${createdAt})`,
+          ROOM,
+        ],
+      );
+    };
+    const visibleIds = async () => ({
+      room: (await indexer.readRoom(ROOM, VIEWER))?.messages.map((message) => message.id),
+      history: (await indexer.readHistory(ROOM, VIEWER))?.messages.map((message) => message.id),
+    });
+
+    await insertUnavailable('e', 20);
+    expect(await visibleIds()).toMatchObject({
+      room: expect.arrayContaining(['e'.repeat(64)]),
+      history: expect.arrayContaining(['e'.repeat(64)]),
+    });
+
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(21), 9, $4, '', $5)`,
+      [
+        TENANT,
+        bytes('f'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'buzz-agent-model-unavailable'],
+          ['status', 'model-available'],
+          ['model', 'gpt-5'],
+          ['effort', 'high'],
+        ]),
+        ROOM,
+      ],
+    );
+    expect(await visibleIds()).toEqual(
+      expect.objectContaining({
+        room: expect.not.arrayContaining(['e'.repeat(64), 'f'.repeat(64)]),
+        history: expect.not.arrayContaining(['e'.repeat(64), 'f'.repeat(64)]),
+      }),
+    );
+
+    await insertUnavailable('d', 22);
+    expect(await visibleIds()).toMatchObject({
+      room: expect.arrayContaining(['d'.repeat(64)]),
+      history: expect.arrayContaining(['d'.repeat(64)]),
+    });
+
+    const modelKey = `${WORKSPACE}:${AGENT}`;
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(23), 30078, $4, $5, $6)`,
+      [
+        TENANT,
+        bytes('b'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-catalog'],
+        ]),
+        JSON.stringify({
+          selection: { model: 'gpt-5', effort: 'high' },
+          options: [
+            { category: 'model', options: [{ id: 'retired-model' }] },
+            { category: 'reasoning_effort', options: [{ id: 'high' }] },
+          ],
+        }),
+        modelKey,
+      ],
+    );
+    expect(await visibleIds()).toMatchObject({
+      room: expect.arrayContaining(['d'.repeat(64)]),
+      history: expect.arrayContaining(['d'.repeat(64)]),
+    });
+
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(24), 30078, $4, $5, $6)`,
+      [
+        TENANT,
+        bytes('c'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['d', modelKey],
+          ['t', 'buzz-agent-model-catalog'],
+        ]),
+        JSON.stringify({
+          selection: { model: 'gpt-5', effort: 'high' },
+          options: [
+            { category: 'model', options: [{ id: 'gpt-5' }] },
+            { category: 'reasoning_effort', options: [{ id: 'high' }] },
+          ],
+        }),
+        modelKey,
+      ],
+    );
+    expect(await visibleIds()).toEqual(
+      expect.objectContaining({
+        room: expect.not.arrayContaining(['d'.repeat(64)]),
+        history: expect.not.arrayContaining(['d'.repeat(64)]),
+      }),
+    );
+
+    await insertUnavailable('9', 25);
+    expect(await visibleIds()).toMatchObject({
+      room: expect.arrayContaining(['9'.repeat(64)]),
+      history: expect.arrayContaining(['9'.repeat(64)]),
+    });
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(26), 9, $4, '', $5)`,
+      [
+        TENANT,
+        bytes('8'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-turn'],
+          ['status', 'complete'],
+          ['request', '7'.repeat(64)],
+          ['agent', AGENT],
+        ]),
+        ROOM,
+      ],
+    );
+    expect(await visibleIds()).toEqual(
+      expect.objectContaining({
+        room: expect.not.arrayContaining(['9'.repeat(64)]),
+        history: expect.not.arrayContaining(['9'.repeat(64)]),
+      }),
+    );
+
+    await insertUnavailable('7', 27);
+    expect(await visibleIds()).toMatchObject({
+      room: expect.arrayContaining(['7'.repeat(64)]),
+      history: expect.arrayContaining(['7'.repeat(64)]),
+    });
+  });
+
   it('classifies a mixed durable inbox so only human and agent conversation can enter model history', async () => {
     const inbox = [
       {

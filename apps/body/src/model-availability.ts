@@ -72,3 +72,18 @@ export function modelUnavailableEventTags(state: ModelUnavailableState): string[
     ...(state.selection.effort ? [['effort', state.selection.effort]] : []),
   ];
 }
+
+/** Typed resolution marker for a previously published model-unavailable Room state. */
+export function modelAvailableEventTags(selection: {
+  model?: string;
+  effort?: string;
+}): string[][] {
+  const model = selection.model ? safeIdentifier(selection.model) : undefined;
+  const effort = selection.effort ? safeIdentifier(selection.effort) : undefined;
+  return [
+    ['t', 'buzz-agent-model-unavailable'],
+    ['status', 'model-available'],
+    ...(model ? [['model', model]] : []),
+    ...(effort ? [['effort', effort]] : []),
+  ];
+}

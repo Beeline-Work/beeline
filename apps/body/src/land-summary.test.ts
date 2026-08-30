@@ -307,9 +307,9 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
       const blocked = published.find(
         (event) =>
           Array.isArray(event.tags) &&
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
       );
-      expect(blocked?.content).toMatch(/^Merge blocked: [^\n]+$/);
+      expect(blocked?.content).toMatch(/^Couldn't land: [^\n]+$/);
       expect(Reflect.get(body, 'promptAgent')).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -512,7 +512,7 @@ describe('every land path recaps the corner exactly once', () => {
             Array.isArray(event.tags) &&
             event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         ),
-      ).toBe(true);
+      ).toBe(false);
 
       // The land path already recorded and concluded this exact tip. Re-
       // reading its approval would attempt the illegal state reversal

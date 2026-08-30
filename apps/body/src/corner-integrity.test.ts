@@ -513,10 +513,10 @@ describe('a land that cannot be attempted is never silent', () => {
     await call(fixture.body, 'pollDirectRemoteApprovals');
 
     const failures = events.filter((event) =>
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
     );
     expect(failures.length).toBeGreaterThan(0);
-    expect(failures[0]!.content).toContain('Merge blocked:');
+    expect(failures[0]!.content).toContain("Couldn't land:");
   });
 
   it('states an unchanged refusal once, not once per maintenance tick', async () => {
@@ -534,8 +534,8 @@ describe('a land that cannot be attempted is never silent', () => {
 
     const failures = events.filter(
       (event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked') &&
-        event.content.startsWith('Merge blocked:'),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure') &&
+        event.content.startsWith("Couldn't land:"),
     );
     expect(failures).toHaveLength(1);
   });

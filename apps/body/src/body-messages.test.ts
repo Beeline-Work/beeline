@@ -44,7 +44,6 @@ import {
   agentTurnFailureReply,
   agentExchangeTurnPrompt,
   abandonedCornerCloseRetryDelayMs,
-  ABANDONED_CORNER_CLOSE_REFUSED,
   ABANDONED_CORNER_CLOSE_RETRY_BASE_MS,
   ABANDONED_CORNER_CLOSE_RETRY_CAP_MS,
   UNTRACKED_CORNER_SCAN_INTERVAL_MS,
@@ -144,7 +143,6 @@ import {
   isReadOnlyMcpPermissionRequest,
 } from './read-only-policy.js';
 import { targetBranchProposalFromAgentText } from './target-branch.js';
-import { CONCLUDE_NUDGE_SPACING_MS, MAX_CONCLUDE_NUDGES_PER_EPISODE } from './conclude-watch.js';
 import {
   CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
   CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
@@ -326,7 +324,7 @@ describe('first-class assistant messages', () => {
     const gateCallSites = source.match(/this\.finishCornerTurnAgainstMergeGate\(/g) ?? [];
     expect(source).not.toContain('summaryOnly');
     expect(source).not.toContain('createNarrativeCommitter');
-    expect(gateCallSites).toHaveLength(3);
+    expect(gateCallSites).toHaveLength(2);
   });
 
   it('the corner merge-gate instruction carries the external-gate failure-honesty rule at every turn call site', () => {
@@ -342,7 +340,7 @@ describe('first-class assistant messages', () => {
       /fails to initialize or run[^']*quote its exact error[^']*never ask for approval/,
     );
     // Declaration plus exactly the three corner turn prompts.
-    expect(source.match(/CORNER_MERGE_GATE_INSTRUCTION/g)).toHaveLength(4);
+    expect(source.match(/CORNER_MERGE_GATE_INSTRUCTION/g)).toHaveLength(3);
   });
 
   it('reserves target synchronization for one merge-press follow-up turn', () => {
@@ -356,7 +354,7 @@ describe('first-class assistant messages', () => {
     // Declaration, new/restored system prompts, opening/follow-up turns, and
     // the conclude watch's nudge. The actual sync prompt is emitted only after
     // a signed merge press fails its first ff-only landing attempt.
-    expect(source.match(/CORNER_TARGET_SYNC_INSTRUCTION/g)).toHaveLength(6);
+    expect(source.match(/CORNER_TARGET_SYNC_INSTRUCTION/g)).toHaveLength(5);
   });
 
   it('strips only a leading Codex skill-budget warning', () => {

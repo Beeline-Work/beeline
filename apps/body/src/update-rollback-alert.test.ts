@@ -1,13 +1,10 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { newIdentity } from '@beeline/gate';
-import { verifyEvent } from '@beeline/nostr';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   publishPendingUpdateRollbackAlert,
   queueUpdateRollbackAlert,
-  UPDATE_ROLLBACK_ALERT_TEXT,
   updateRollbackAlertPath,
 } from './update-rollback-alert.js';
 
@@ -17,53 +14,21 @@ afterEach(async () => {
 });
 
 describe('update rollback alert outbox', () => {
-  it('retries one exact signed plain-language event after ambiguous publish failure', async () => {
+  it('drains rollback state locally without publishing a chat event', async () => {
     const runtimeDir = await mkdtemp(resolve(tmpdir(), 'beeline-update-alert-'));
     roots.push(runtimeDir);
-    const identity = newIdentity('rollback-alert');
     await queueUpdateRollbackAlert(runtimeDir, 'broken-release', 1_700_000_000_000);
-    const events: Array<{ id: string; content: string; kind: number; tags: string[][] }> = [];
-    const publishEvent = vi.fn(
-      async (event: { id: string; content: string; kind: number; tags: string[][] }) => {
-        events.push({ id: event.id, content: event.content, kind: event.kind, tags: event.tags });
-        if (events.length === 1) throw new Error('ambiguous relay response');
-      },
-    );
-
-    await expect(
-      publishPendingUpdateRollbackAlert({
-        runtimeDir,
-        channelId: 'room-1',
-        identity,
-        publishEvent,
-      }),
-    ).rejects.toThrow('ambiguous relay response');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(JSON.parse(await readFile(updateRollbackAlertPath(runtimeDir), 'utf8'))).toMatchObject({
       releaseId: 'broken-release',
-      event: {
-        id: events[0]!.id,
-        content: UPDATE_ROLLBACK_ALERT_TEXT,
-        kind: 9,
-        tags: [
-          ['h', 'room-1'],
-          ['t', 'agent-message'],
-        ],
-      },
     });
-    expect(
-      verifyEvent(JSON.parse(await readFile(updateRollbackAlertPath(runtimeDir), 'utf8')).event),
-    ).toBe(true);
 
     await expect(
-      publishPendingUpdateRollbackAlert({
-        runtimeDir,
-        channelId: 'room-1',
-        identity,
-        publishEvent,
-      }),
+      publishPendingUpdateRollbackAlert({ runtimeDir }),
     ).resolves.toBe(true);
-    expect(events).toHaveLength(2);
-    expect(events[1]).toEqual(events[0]);
+    expect(error).toHaveBeenCalledWith(
+      '[thin-core] update rollback retained as operator state: broken-release',
+    );
     await expect(readFile(updateRollbackAlertPath(runtimeDir), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     });

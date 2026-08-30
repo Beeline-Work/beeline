@@ -44,7 +44,6 @@ import {
   agentTurnFailureReply,
   agentExchangeTurnPrompt,
   abandonedCornerCloseRetryDelayMs,
-  ABANDONED_CORNER_CLOSE_REFUSED,
   ABANDONED_CORNER_CLOSE_RETRY_BASE_MS,
   ABANDONED_CORNER_CLOSE_RETRY_CAP_MS,
   UNTRACKED_CORNER_SCAN_INTERVAL_MS,
@@ -144,7 +143,6 @@ import {
   isReadOnlyMcpPermissionRequest,
 } from './read-only-policy.js';
 import { targetBranchProposalFromAgentText } from './target-branch.js';
-import { CONCLUDE_NUDGE_SPACING_MS, MAX_CONCLUDE_NUDGES_PER_EPISODE } from './conclude-watch.js';
 import {
   CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
   CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
@@ -237,9 +235,7 @@ describe('room owns the repo (Stage 1)', () => {
 
     expect(open).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
-    expect(published).toHaveLength(1);
-    expect(published[0]!.content).toContain("doesn't have a repository linked");
-    expect(published[0]!.tags).toContainEqual(['t', 'agent-message']);
+    expect(published).toHaveLength(0);
   });
 
   it('reaps a stray corner worktree while preserving a live one', async () => {
@@ -602,74 +598,11 @@ describe('closing a corner with no live session', () => {
     }
   });
 
-  /** A needs-attention parent card is only ever a state TRANSITION, compared
-   * against the daemon's in-memory state record baseline. */
-  it('suppresses a restated needs-attention card but publishes a real transition', async () => {
-    const agent = newIdentity('attention-transition-agent');
-    const workspaceRoot = '/workspace';
-    const body = newBody(agent, workspaceRoot);
-    const now = Math.floor(Date.now() / 1000);
-    const standingCard = signEvent(
-      {
-        pubkey: agent.publicKey,
-        created_at: now - 60,
-        kind: 9,
-        tags: [
-          ['h', 'corner-restated'],
-          ['t', 'body-control'],
-          ['display-status', 'needs-attention'],
-        ],
-        content: 'Nothing committed is ready for review.',
-      },
-      agent.secretKey,
-    );
-    let standing: NostrEvent[] = [standingCard];
-    Reflect.set(body, 'agentRelay', {
-      queryEvents: vi.fn(async () => standing),
-    });
-    const published = stubRelayHttp([]);
-
-    const info = {
-      subchannelId: 'corner-restated',
-      featureBranch: 'feature/restated',
-      session: { sessionId: 's1', parentChannelId: 'room-restated' },
-      cornerState: { state: 'waiting', reason: 'failure' },
-    } as never;
-    await Reflect.get(body, 'postParentCornerStatus').call(
-      body,
-      info,
-      'needs-attention',
-      'Nothing committed is ready for review.',
-    );
-    expect(published).toHaveLength(0);
-
-    // A real transition — the corner was live before — publishes.
-    standing = [];
-    (info as unknown as { cornerState: { state: string } }).cornerState = { state: 'working' };
-    await Reflect.get(body, 'postParentCornerStatus').call(
-      body,
-      info,
-      'needs-attention',
-      'Work stopped. Open corner for details.',
-    );
-    expect(published).toHaveLength(1);
-    expect(published[0]!.tags).toContainEqual(['display-status', 'needs-attention']);
-    expect(published[0]!.tags).toContainEqual(['subchannel', 'corner-restated']);
-
-    // Relay history is no longer consulted: a non-waiting in-memory state
-    // publishes even when the read client is unavailable.
-    Reflect.set(body, 'agentRelay', {
-      queryEvents: vi.fn(async () => {
-        throw new Error('relay down');
-      }),
-    });
-    await Reflect.get(body, 'postParentCornerStatus').call(
-      body,
-      info,
-      'needs-attention',
-      'Delivery failed.',
-    );
-    expect(published).toHaveLength(2);
+  it('keeps retired parent attention narration out of the daemon writer', () => {
+    const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
+    expect(source).not.toContain('postParentCornerStatus');
+    expect(source).not.toContain('Work stopped. Open corner for details.');
+    expect(source).not.toContain('Delivery failed. Open corner for details.');
   });
 
   it('records a corner whose worktree is gone as abandoned, instead of leaving it in no map at all', async () => {
@@ -761,7 +694,9 @@ describe('closing a corner with no live session', () => {
       // First restart: the corner is told, once.
       await restore.call(body, 'room-norepo', undefined);
       const cards = () =>
-        published.filter((event) => event.content.startsWith(CORNER_APPROVED_REPO_UNRESTORABLE));
+        published.filter((event) =>
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure'),
+        );
       expect(cards()).toHaveLength(1);
       expect(body.getAbandonedCorners().get('corner-norepo')?.reason).toContain(
         'approved repository',
@@ -1392,12 +1327,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
       // One quiet acknowledgement for the burst, not one per message and not a
       // fabricated agent reply.
       const acks = queuedAcks(published);
-      expect(acks).toHaveLength(1);
-      expect(acks[0]!.tags).toContainEqual(['h', 'corner-queue']);
-      expect(acks[0]!.tags).toContainEqual(['t', 'body-control']);
-      expect(acks[0]!.tags).toContainEqual(['status', 'queued']);
-      expect(acks[0]!.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-message')).toBe(false);
-      expect(acks[0]!.content).toContain('queued');
+      expect(acks).toHaveLength(0);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -1588,11 +1518,11 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
 
       expect(await body.pollMembers('corner-failed-start')).toBe(1);
       expect(sessionPrompt).not.toHaveBeenCalled();
-      expect(order).toEqual(['receipt:working', 'spawn', 'receipt:failed']);
+      expect(order).toEqual(['receipt:working', 'spawn', 'receipt:complete']);
       const statuses = published
         .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-turn'))
         .map((event) => event.tags.find((tag) => tag[0] === 'status')?.[1]);
-      expect(statuses).toEqual(['working', 'failed']);
+      expect(statuses).toEqual(['working', 'complete']);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -1691,9 +1621,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     );
     Reflect.get(body, 'noteRoomInboundMessage').call(body, 'ack-room', steer, participants);
     Reflect.get(body, 'noteRoomInboundMessage').call(body, 'ack-room', steer, participants);
-    await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(1));
-
-    expect(queuedAcks(published)[0]!.tags).toContainEqual(['h', 'ack-room']);
+    await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(0));
   });
 
   it('preserves human prose with reserved tags while ignoring the agent’s own message', async () => {
@@ -1727,7 +1655,7 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
     Reflect.get(body, 'noteRoomInboundMessage').call(body, 'noack-room', control, participants);
     Reflect.get(body, 'noteRoomInboundMessage').call(body, 'noack-room', ownMessage, participants);
 
-    await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(1));
+    await vi.waitFor(() => expect(queuedAcks(published)).toHaveLength(0));
   });
 });
 
@@ -1905,14 +1833,11 @@ describe('a corner belongs to the agent that opened it', () => {
       await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-refused');
       const afterFirst = published.length;
 
-      // The human pressed a button and nothing happened: the corner says so,
-      // in plain language with none of the relay's own transport plumbing.
+      // A relay refusal is operator diagnostics, never agent conversation.
       const refusal = published.find((event) =>
         event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
       );
-      expect(refusal).toBeDefined();
-      expect(refusal!.content).toBe(ABANDONED_CORNER_CLOSE_REFUSED);
-      expect(refusal!.content).not.toMatch(/HTTP|9002|not authorized/);
+      expect(refusal).toBeUndefined();
 
       // Parked: the next maintenance tick republishes nothing and logs nothing.
       const errorsAfterFirst = errors.mock.calls.length;

@@ -44,7 +44,6 @@ import {
   agentTurnFailureReply,
   agentExchangeTurnPrompt,
   abandonedCornerCloseRetryDelayMs,
-  ABANDONED_CORNER_CLOSE_REFUSED,
   ABANDONED_CORNER_CLOSE_RETRY_BASE_MS,
   ABANDONED_CORNER_CLOSE_RETRY_CAP_MS,
   UNTRACKED_CORNER_SCAN_INTERVAL_MS,
@@ -144,7 +143,6 @@ import {
   isReadOnlyMcpPermissionRequest,
 } from './read-only-policy.js';
 import { targetBranchProposalFromAgentText } from './target-branch.js';
-import { CONCLUDE_NUDGE_SPACING_MS, MAX_CONCLUDE_NUDGES_PER_EPISODE } from './conclude-watch.js';
 import {
   CLAUDE_ACP_MCP_GIT_LOG_PERMISSION,
   CLAUDE_ACP_MCP_GIT_SHOW_PERMISSION,
@@ -2320,13 +2318,9 @@ describe('agent identity boundary', () => {
     expect(create).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
     expect(body.listSessions()).toEqual([]);
-    expect(published).toHaveLength(3);
+    expect(published).toHaveLength(2);
     expect(published[0]!.tags).toContainEqual(['status', 'working']);
-    expect(published[1]!.tags).toContainEqual(['status', 'failed']);
-    expect(published[2]).toMatchObject({
-      content: expect.stringContaining('Read-only tools unavailable'),
-    });
-    expect(published[2]!.tags).toContainEqual(['t', 'agent-message']);
+    expect(published[1]!.tags).toContainEqual(['status', 'complete']);
   });
 
   it('does no relay or session work when buzz-readonly-mcp is unresolved', async () => {
@@ -2380,10 +2374,9 @@ describe('agent identity boundary', () => {
 
     expect(prompt).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
-    expect(published).toHaveLength(3);
+    expect(published).toHaveLength(2);
     expect(published[0]!.tags).toContainEqual(['status', 'working']);
-    expect(published[1]!.tags).toContainEqual(['status', 'failed']);
-    expect(published[2]!.content).toContain('Read-only tools unavailable');
+    expect(published[1]!.tags).toContainEqual(['status', 'complete']);
   });
 
   it('NIP-98-authenticates repository safety reads as the agent', async () => {
@@ -3742,7 +3735,7 @@ describe('a restart-caused session pause is never published as agent trouble', (
       event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'corner-session'),
     );
 
-  it("a session's FIRST suspended state is silent bookkeeping; the first real transition publishes", async () => {
+  it("publishes only a session's live transition", async () => {
     const agent = newIdentity('initial-state-agent');
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-initial-suspend-'));
     try {
@@ -3785,9 +3778,9 @@ describe('a restart-caused session pause is never published as agent trouble', (
         ),
       ).toBe(true);
 
-      // And a mid-run suspension still publishes — idle eviction is honest.
+      // A mid-run suspension is process bookkeeping, not conversation.
       await onStateChange.call(body, session, 'corner-fresh', 'suspended');
-      expect(cornerSessionEvents(published)).toHaveLength(2);
+      expect(cornerSessionEvents(published)).toHaveLength(1);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

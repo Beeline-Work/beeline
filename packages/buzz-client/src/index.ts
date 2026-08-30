@@ -176,6 +176,22 @@ export {
 } from './corner-state.js';
 
 export {
+  CORNER_GIT_PROJECTION_TAG,
+  CORNER_GIT_PROJECTION_VERSION,
+  CORNER_REJECTION_TAG,
+  deriveCornerLifecycle,
+  parseCornerGitProjection,
+  parseCornerGitProjectionCompat,
+  type CornerArchiveFlavor,
+  type CornerGitProjection,
+  type CornerGitRelation,
+  type CornerHumanVerdict,
+  type CornerLifecycle,
+  type CornerLifecycleView,
+  type CornerVerdictView,
+} from './corner-product-state.js';
+
+export {
   tagValue,
   tagValues,
   channelIdOf,
@@ -238,10 +254,7 @@ export type {
   GitHubRoomEvent,
   GitHubRoomEventsResult,
 } from './github-auth.js';
-export {
-  fetchIdentityPredecessors,
-  resolveCurrentIdentityPubkey,
-} from './identity-succession.js';
+export { fetchIdentityPredecessors, resolveCurrentIdentityPubkey } from './identity-succession.js';
 
 export { RelayWs, wsUrlFromHttp, wsQueryEvents } from './ws.js';
 export type { Filter, RelayWsOptions } from './ws.js';

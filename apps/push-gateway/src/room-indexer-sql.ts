@@ -768,6 +768,10 @@ LEFT JOIN latest_events latest ON latest.community_id = a.community_id AND lates
 LEFT JOIN beeline_room_read_marks mark ON mark.community_id = a.community_id
   AND mark.room_id = a.id AND mark.viewer_pubkey = decode($2, 'hex')
 UNION ALL
+SELECT 'corner-watch', jsonb_build_object('id', cs.corner_id, 'parentId', cs.parent_id)
+FROM corner_states cs
+JOIN chats parent ON parent.community_id = cs.community_id AND parent.id::text = cs.parent_id
+UNION ALL
 SELECT 'preview', jsonb_build_object(
   'roomId', e.room_id, 'id', encode(e.id, 'hex'), 'pubkey', encode(e.pubkey, 'hex'),
   'createdAt', extract(epoch FROM e.created_at)::bigint,

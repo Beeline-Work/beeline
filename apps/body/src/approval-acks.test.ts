@@ -22,7 +22,7 @@ import { signEvent } from '@beeline/nostr';
 import { buildApproval as gateBuildApproval, newIdentity } from '@beeline/gate';
 import type { NostrEvent } from '@beeline/nostr';
 import { Body } from './body.js';
-import { APPROVAL_ACK_TAG } from './body.js';
+import { APPROVAL_ACK_TAG, CORNER_CLOSE_TAG } from './body.js';
 import { filterRelayEvents, mediaUploadResponse } from './relay-test-helper.js';
 
 const KIND_CHANNEL_ADMINS = 39001;
@@ -543,7 +543,7 @@ describe('event-driven approval pickup', () => {
     Reflect.set(body, 'agentRelay', stubAgentRelay(approvals, [reviewer.publicKey]));
     await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
     const approval = buildApproval(reviewer, fixture.tip, info.mergeTarget?.patchId);
-    return { ...fixture, body, info, approval, approvals, published };
+    return { ...fixture, body, info, approval, approvals, published, reviewer };
   }
 
   function activityStages(events: NostrEvent[]): string[] {
@@ -611,6 +611,56 @@ describe('event-driven approval pickup', () => {
         expect.arrayContaining(['approval-received', 'running-gate', 'pushing', 'landed']),
       );
       expect(mergeGate.poll).toHaveBeenCalledWith([fixture.approval], expect.any(Object));
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('archives once for two pushed close events without waiting for the maintenance poll', async () => {
+    const fixture = await readyCorner();
+    const handlers = new Map<string, (event: NostrEvent) => void>();
+    const subscriptions = new Map<string, () => void>();
+    const client = {
+      sessionEventsSubscribe: vi.fn(
+        async (channelId: string, handler: (event: NostrEvent) => void) => {
+          handlers.set(channelId, handler);
+          return () => handlers.delete(channelId);
+        },
+      ),
+    };
+    const archive = vi.fn(async () => {
+      fixture.info.archived = true;
+    });
+    fixture.body.archiveSubchannel = archive;
+    const maintenancePoll = vi.spyOn(fixture.body, 'pollMembers');
+    const close = (createdAt: number) =>
+      signEvent(
+        {
+          pubkey: fixture.reviewer.publicKey,
+          created_at: createdAt,
+          kind: 9,
+          tags: [
+            ['h', 'corner-ack'],
+            ['t', CORNER_CLOSE_TAG],
+          ],
+          content: 'Close this corner.',
+        },
+        fixture.reviewer.secretKey,
+      );
+
+    try {
+      await Reflect.get(fixture.body, 'syncCornerApprovalSubscriptions').call(
+        fixture.body,
+        'room-ack',
+        client,
+        undefined,
+        subscriptions,
+      );
+      handlers.get('corner-ack')!(close(100));
+      handlers.get('corner-ack')!(close(101));
+
+      await vi.waitFor(() => expect(archive).toHaveBeenCalledTimes(1));
+      expect(maintenancePoll).not.toHaveBeenCalled();
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }

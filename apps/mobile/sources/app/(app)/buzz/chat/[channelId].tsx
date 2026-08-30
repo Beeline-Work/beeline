@@ -70,7 +70,11 @@ import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
-import { COMPOSER_ACK_BOUND_MS, selectComposerAckState } from '@/buzz/room-indicators';
+import {
+  COMPOSER_ACK_BOUND_MS,
+  hasComposerAckReceipt,
+  selectComposerAckState,
+} from '@/buzz/room-indicators';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
@@ -479,7 +483,7 @@ export default function BuzzChat() {
   // sent, so the composer never shows dead air waiting on the real WORKING
   // receipt (relay round trip + pickup + publish + refetch). See
   // `selectComposerAckState`.
-  const [pendingAckSentAt, setPendingAckSentAt] = useState<number | null>(null);
+  const [pendingAck, setPendingAck] = useState<{ sentAt: number; requestId?: string } | null>(null);
   const [composerAckNow, setComposerAckNow] = useState(() => Date.now());
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
@@ -1558,25 +1562,27 @@ export default function BuzzChat() {
     sessionState,
   ]);
 
-  // Once the real receipt lands there is nothing left for the local ack to
-  // guess at; clearing it here is what keeps a stale `pendingAckSentAt` from
-  // reading as "delivery unclear" after the turn it was standing in for has
-  // already finished.
+  // Once the matching server-indexed receipt lands there is nothing left for
+  // the local ack to guess at. A terminal receipt is still confirmation: the
+  // old active-only check missed the case where WORKING had already become
+  // COMPLETE before this screen observed it.
   useEffect(() => {
-    if (activeAgentTurn) setPendingAckSentAt(null);
-  }, [activeAgentTurn]);
+    if (pendingAck && hasComposerAckReceipt(pendingAck.requestId, agentTurnMarkers)) {
+      setPendingAck(null);
+    }
+  }, [agentTurnMarkers, pendingAck]);
 
   // A single deadline-scheduled timer (never a ticking interval — see the
   // presence clock above) so the composer flips from "buzzing…" to the
   // honest "no confirmation yet" the instant the bound elapses, not on
   // whatever unrelated re-render happens to follow.
   useEffect(() => {
-    if (pendingAckSentAt == null) return;
-    const deadline = pendingAckSentAt + COMPOSER_ACK_BOUND_MS;
+    if (!pendingAck) return;
+    const deadline = pendingAck.sentAt + COMPOSER_ACK_BOUND_MS;
     const delay = Math.max(1, deadline - Date.now() + 1);
     const timer = setTimeout(() => setComposerAckNow(Date.now()), delay);
     return () => clearTimeout(timer);
-  }, [pendingAckSentAt]);
+  }, [pendingAck]);
 
   /**
    * The ordinary turn indicator, and the only thing a plain question in a Room
@@ -1589,7 +1595,7 @@ export default function BuzzChat() {
    * canonical Corner lease still owns the pinned Corner bar, but cannot hide a
    * channel-local reply that is visibly streaming now.
    *
-   * Before that receipt exists, `pendingAckSentAt` (armed the instant a
+   * Before that receipt exists, `pendingAck` (armed the instant a
    * message addressed to an agent is sent — see `handleSend`) fills the dead
    * air with an immediate local "buzzing…"; past `COMPOSER_ACK_BOUND_MS` with
    * still no receipt it becomes an honest "no confirmation yet" rather than
@@ -1600,7 +1606,7 @@ export default function BuzzChat() {
       isCorner,
       agentsOffline,
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
-      ...(pendingAckSentAt != null ? { pendingAckSentAt } : {}),
+      ...(pendingAck ? { pendingAckSentAt: pendingAck.sentAt } : {}),
       now: composerAckNow,
     });
     if (!state) return null;
@@ -1613,7 +1619,7 @@ export default function BuzzChat() {
     }
     if (state.kind === 'buzzing') return { label: 'buzzing…', tone: 'live' };
     return { label: 'no confirmation yet…', tone: 'quiet' };
-  }, [activeAgentTurn, agentByPubkey, agentsOffline, composerAckNow, isCorner, pendingAckSentAt]);
+  }, [activeAgentTurn, agentByPubkey, agentsOffline, composerAckNow, isCorner, pendingAck]);
 
   useEffect(() => {
     setApprovalError(null);
@@ -1747,7 +1753,7 @@ export default function BuzzChat() {
               mentionedAgentPubkey(text, mentionableAgents)),
       ) ||
       (roomAgents.length === 1 && roomParticipants.length <= 2);
-    setPendingAckSentAt(addressesAgent ? Date.now() : null);
+    setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
 
     sendInFlightRef.current = true;
     setSending(true);
@@ -1797,6 +1803,11 @@ export default function BuzzChat() {
                 }
               : undefined,
           );
+      if (addressesAgent) {
+        setPendingAck((current) =>
+          current ? { ...current, requestId: preparedEvent!.id } : current,
+        );
+      }
       const optimistic = {
         id: preparedEvent.id,
         text,
@@ -1838,7 +1849,7 @@ export default function BuzzChat() {
       console.warn('Send failed:', err);
       // A publish failure already gets its own explicit modal below; the
       // local ack has nothing left to guess at and must not keep buzzing.
-      setPendingAckSentAt(null);
+      setPendingAck(null);
       if (preparedEvent) await markOutboxFailed(preparedEvent.id);
       const failure = publishFailurePresentation(err);
       Modal.alert(

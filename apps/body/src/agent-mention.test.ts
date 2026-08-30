@@ -18,6 +18,7 @@ import {
   parseAgentDelegation,
   parseAgentMention,
   roomAgentMention,
+  roomAgentMentions,
 } from './agent-mention.js';
 
 describe('signed agent mentions', () => {
@@ -154,7 +155,7 @@ describe('Room agent delegation', () => {
     }
   });
 
-  it('resolves one non-self agent in text order without treating people as targets', () => {
+  it('resolves every distinct non-self agent in text order without treating people as targets', () => {
     const self = generateKeypair();
     const bee = generateKeypair();
     const ox = generateKeypair();
@@ -179,6 +180,10 @@ describe('Room agent delegation', () => {
       handle: 'bee',
       pubkey: bee.publicKey,
     });
+    expect(roomAgentMentions('Ask @bee, @ox, @bee, and @self.', roster, self.publicKey)).toEqual([
+      { handle: 'bee', pubkey: bee.publicKey },
+      { handle: 'ox', pubkey: ox.publicKey },
+    ]);
     expect(roomAgentMention('Ask @missing.', roster, self.publicKey)).toEqual({ status: 'none' });
     expect(roomAgentMention('@mention me', roster, self.publicKey)).toEqual({ status: 'none' });
   });
@@ -191,10 +196,11 @@ describe('Room agent delegation', () => {
     expect(agentDelegationMaxHops('999')).toBe(AGENT_DELEGATION_HARD_MAX_HOPS);
   });
 
-  it('round-trips a signed root-human envelope and rejects tampering or an excessive hop', () => {
+  it('round-trips a signed multi-recipient root-human envelope and rejects tampering or an excessive hop', () => {
     const human = generateKeypair();
     const from = generateKeypair();
     const to = generateKeypair();
+    const other = generateKeypair();
     const rootRequestId = 'a'.repeat(64);
     const sourceEventId = rootRequestId;
     const content = '@bee produce the ten quotes and post them here.';
@@ -202,13 +208,13 @@ describe('Room agent delegation', () => {
       rootRequestId,
       rootHumanPubkey: human.publicKey,
       fromAgentId: from.publicKey,
-      toAgentId: to.publicKey,
+      toAgentIds: [to.publicKey, other.publicKey],
       sourceEventId,
       hop: 1,
       dedupe: agentDelegationDedupe({
         rootRequestId,
         fromAgentId: from.publicKey,
-        toAgentId: to.publicKey,
+        toAgentIds: [to.publicKey, other.publicKey],
         text: content,
       }),
     };
@@ -224,6 +230,8 @@ describe('Room agent delegation', () => {
     );
 
     expect(event.tags).toContainEqual(['t', AGENT_DELEGATION_TAG]);
+    expect(event.tags).toContainEqual(['p', to.publicKey]);
+    expect(event.tags).toContainEqual(['p', other.publicKey]);
     expect(parseAgentDelegation(event)).toEqual(envelope);
     expect(parseAgentDelegation({ ...event, content: `${content} changed` })).toBeUndefined();
     expect(parseAgentDelegation(event, 0)).toBeUndefined();

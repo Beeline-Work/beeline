@@ -660,7 +660,7 @@ describe('Room conversation and permission-gated work intent', () => {
     expect(prompt).toContain('@xian what did Joy recommend?');
     expect(prompt).toContain('It does not authorize mutation');
     expect(prompt).toContain(
-      'your own final Room reply may @mention one peer agent for one host-bounded delegation turn',
+      'your own final Room reply may @mention current peer agents for host-bounded delegation turns',
     );
     expect(prompt).toContain('at most 4 agent hops');
     expect(prompt).toContain('Never claim the peer replied or completed work');
@@ -829,13 +829,13 @@ describe('Room conversation and permission-gated work intent', () => {
         rootRequestId: root.id,
         rootHumanPubkey: human.publicKey,
         fromAgentId: source.publicKey,
-        toAgentId: agent.publicKey,
+        toAgentIds: [agent.publicKey],
         sourceEventId: root.id,
         hop: 1,
         dedupe: agentDelegationDedupe({
           rootRequestId: root.id,
           fromAgentId: source.publicKey,
-          toAgentId: agent.publicKey,
+          toAgentIds: [agent.publicKey],
           text: content,
         }),
       };
@@ -942,6 +942,7 @@ describe('Room conversation and permission-gated work intent', () => {
   it('validates the same-Room human root before admitting a signed first hop', async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-room-delegation-root-'));
     const source = newIdentity('root-source');
+    const peer = newIdentity('root-peer');
     const body = new Body({
       agentBinary: '/nonexistent',
       mcpBinary: '/nonexistent',
@@ -960,13 +961,13 @@ describe('Room conversation and permission-gated work intent', () => {
         rootRequestId: root.id,
         rootHumanPubkey: human.publicKey,
         fromAgentId: source.publicKey,
-        toAgentId: body.agent.publicKey,
+        toAgentIds: [body.agent.publicKey, peer.publicKey],
         sourceEventId: root.id,
         hop: 1,
         dedupe: agentDelegationDedupe({
           rootRequestId: root.id,
           fromAgentId: source.publicKey,
-          toAgentId: body.agent.publicKey,
+          toAgentIds: [body.agent.publicKey, peer.publicKey],
           text: content,
         }),
       };
@@ -997,7 +998,7 @@ describe('Room conversation and permission-gated work intent', () => {
           participants: string[],
         ) => Promise<AgentDelegationEnvelope | undefined>
       ).bind(body);
-      const participants = [human.publicKey, source.publicKey, body.agent.publicKey];
+      const participants = [human.publicKey, source.publicKey, body.agent.publicKey, peer.publicKey];
 
       await expect(validate('parent-channel', event, participants)).resolves.toEqual(envelope);
       const forgedEnvelope = { ...envelope, rootHumanPubkey: newIdentity('forger').publicKey };
@@ -1024,9 +1025,10 @@ describe('Room conversation and permission-gated work intent', () => {
     }
   });
 
-  it('dispatches delimited Room handles and refuses only real workspace agents outside the Room', async () => {
+  it('fans out to every delimited Room agent and refuses only real workspace agents outside the Room', async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-room-delegation-mentions-'));
     const codex = newIdentity('mention-codex');
+    const bee = newIdentity('mention-bee');
     const outside = newIdentity('mention-outside');
     const body = new Body({
       agentBinary: '/nonexistent',
@@ -1048,9 +1050,13 @@ describe('Room conversation and permission-gated work intent', () => {
             channelId === 'workspace'
               ? [
                   { handle: 'codex', pubkey: codex.publicKey, kind: 'agent' as const },
+                  { handle: 'bee', pubkey: bee.publicKey, kind: 'agent' as const },
                   { handle: 'outside', pubkey: outside.publicKey, kind: 'agent' as const },
                 ]
-              : [{ handle: 'codex', pubkey: codex.publicKey, kind: 'agent' as const }],
+              : [
+                  { handle: 'codex', pubkey: codex.publicKey, kind: 'agent' as const },
+                  { handle: 'bee', pubkey: bee.publicKey, kind: 'agent' as const },
+                ],
           attributions: new Map(),
         })),
       );
@@ -1082,11 +1088,11 @@ describe('Room conversation and permission-gated work intent', () => {
         prepare(
           'room',
           request,
-          '...trying it again, fresh and clean: --- **@codex** Oi, dummy~! ... Per the host rules for this thread, my reply is allowed to @mention one peer agent ...',
+          '...trying it again, fresh and clean: --- **@codex** and @bee, please help ...',
         ),
       ).resolves.toMatchObject({
         status: 'dispatch',
-        envelope: { toAgentId: codex.publicKey },
+        envelope: { toAgentIds: [codex.publicKey, bee.publicKey] },
       });
       await expect(prepare('room', request, '@mention me')).resolves.toMatchObject({
         status: 'none',
@@ -1153,7 +1159,7 @@ describe('Room conversation and permission-gated work intent', () => {
           rootRequestId: '2'.repeat(64),
           rootHumanPubkey: human.publicKey,
           fromAgentId: peer.publicKey,
-          toAgentId: body.agent.publicKey,
+          toAgentIds: [body.agent.publicKey],
           sourceEventId: '2'.repeat(64),
           hop: 1,
           dedupe: '3'.repeat(64),
@@ -1259,7 +1265,7 @@ describe('Room conversation and permission-gated work intent', () => {
         rootRequestId: '3'.repeat(64),
         rootHumanPubkey: human.publicKey,
         fromAgentId: source.publicKey,
-        toAgentId: target.publicKey,
+        toAgentIds: [target.publicKey],
         sourceEventId: '4'.repeat(64),
         hop: 1,
         dedupe: '5'.repeat(64),
@@ -1324,7 +1330,7 @@ describe('Room conversation and permission-gated work intent', () => {
         rootRequestId: 'a'.repeat(64),
         rootHumanPubkey: human.publicKey,
         fromAgentId: source.publicKey,
-        toAgentId: body.agent.publicKey,
+        toAgentIds: [body.agent.publicKey],
         sourceEventId: 'a'.repeat(64),
         hop: 1,
         dedupe: 'b'.repeat(64),
@@ -1424,7 +1430,7 @@ describe('Room conversation and permission-gated work intent', () => {
           rootRequestId: 'd'.repeat(64),
           rootHumanPubkey: human.publicKey,
           fromAgentId: 'e'.repeat(64),
-          toAgentId: body.agent.publicKey,
+          toAgentIds: [body.agent.publicKey],
           sourceEventId: 'd'.repeat(64),
           hop: 1,
           dedupe: 'f'.repeat(64),

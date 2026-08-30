@@ -30,7 +30,7 @@ export interface AgentDelegationEnvelope {
   rootRequestId: string;
   rootHumanPubkey: string;
   fromAgentId: string;
-  toAgentId: string;
+  toAgentIds: readonly string[];
   sourceEventId: string;
   hop: number;
   dedupe: string;
@@ -45,6 +45,10 @@ export type RoomAgentMentionResolution =
 
 function tagValue(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
+}
+
+function tagValues(event: NostrEvent, name: string): string[] {
+  return event.tags.filter((tag) => tag[0] === name).map((tag) => tag[1] ?? '');
 }
 
 export function agentDelegationMaxHops(
@@ -65,7 +69,7 @@ export function hasAgentMention(text: string): boolean {
   return mentionHandles(text).length > 0;
 }
 
-/** Resolve at most one peer. Multiple mentions are visible context, never fan-out. */
+/** Resolve the first peer for single-recipient status reporting. */
 export function roomAgentMention(
   text: string,
   roster: readonly { handle: string; pubkey: string; kind?: 'agent' | 'human' }[],
@@ -93,16 +97,37 @@ export function roomAgentMention(
   return firstNonTarget ?? { status: 'none' };
 }
 
+/** Resolve every distinct peer agent in visible mention order. */
+export function roomAgentMentions(
+  text: string,
+  roster: readonly { handle: string; pubkey: string; kind?: 'agent' | 'human' }[],
+  selfPubkey: string,
+): Array<{ handle: string; pubkey: string }> {
+  const byHandle = new Map(
+    roster.map((entry) => [entry.handle.replace(/^@/, '').normalize('NFKC').toLowerCase(), entry]),
+  );
+  const pubkeys = new Set<string>();
+  return mentionHandles(text).flatMap((handle) => {
+    const found = byHandle.get(handle);
+    if (!found || found.pubkey === selfPubkey || found.kind === 'human' || pubkeys.has(found.pubkey)) {
+      return [];
+    }
+    pubkeys.add(found.pubkey);
+    return [{ handle, pubkey: found.pubkey }];
+  });
+}
+
 export function agentDelegationDedupe(input: {
   rootRequestId: string;
   fromAgentId: string;
-  toAgentId: string;
+  toAgentIds: readonly string[];
   text: string;
 }): string {
   const normalizedText = input.text.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  const recipients = [...new Set(input.toAgentIds)].sort();
   return createHash('sha256')
     .update(
-      [input.rootRequestId, input.fromAgentId, input.toAgentId, normalizedText].join('\u0000'),
+      [input.rootRequestId, input.fromAgentId, ...recipients, normalizedText].join('\u0000'),
     )
     .digest('hex');
 }
@@ -113,11 +138,11 @@ export function agentDelegationTags(envelope: AgentDelegationEnvelope): string[]
     ['root-request', envelope.rootRequestId],
     ['root-human', envelope.rootHumanPubkey],
     ['from-agent', envelope.fromAgentId],
-    ['to-agent', envelope.toAgentId],
+    ...envelope.toAgentIds.map((pubkey) => ['to-agent', pubkey]),
     ['source-event', envelope.sourceEventId],
     ['hop', String(envelope.hop)],
     ['dedupe', envelope.dedupe],
-    ['p', envelope.toAgentId],
+    ...envelope.toAgentIds.map((pubkey) => ['p', pubkey]),
   ];
 }
 
@@ -135,7 +160,7 @@ export function parseAgentDelegation(
   const rootRequestId = tagValue(event, 'root-request');
   const rootHumanPubkey = tagValue(event, 'root-human');
   const fromAgentId = tagValue(event, 'from-agent');
-  const toAgentId = tagValue(event, 'to-agent');
+  const toAgentIds = tagValues(event, 'to-agent');
   const sourceEventId = tagValue(event, 'source-event');
   const dedupe = tagValue(event, 'dedupe');
   const hop = Number(tagValue(event, 'hop'));
@@ -143,12 +168,16 @@ export function parseAgentDelegation(
     !EVENT_ID.test(rootRequestId ?? '') ||
     !PUBKEY.test(rootHumanPubkey ?? '') ||
     !PUBKEY.test(fromAgentId ?? '') ||
-    !PUBKEY.test(toAgentId ?? '') ||
+    toAgentIds.length === 0 ||
+    toAgentIds.some((pubkey) => !PUBKEY.test(pubkey)) ||
+    new Set(toAgentIds).size !== toAgentIds.length ||
     !EVENT_ID.test(sourceEventId ?? '') ||
     !EVENT_ID.test(dedupe ?? '') ||
     event.pubkey !== fromAgentId ||
-    fromAgentId === toAgentId ||
-    event.tags.filter((tag) => tag[0] === 'p' && tag[1] === toAgentId).length !== 1 ||
+    toAgentIds.includes(fromAgentId ?? '') ||
+    toAgentIds.some(
+      (pubkey) => event.tags.filter((tag) => tag[0] === 'p' && tag[1] === pubkey).length !== 1,
+    ) ||
     !Number.isSafeInteger(hop) ||
     hop < 1 ||
     hop > maxHops
@@ -159,7 +188,7 @@ export function parseAgentDelegation(
     rootRequestId: rootRequestId!,
     rootHumanPubkey: rootHumanPubkey!,
     fromAgentId: fromAgentId!,
-    toAgentId: toAgentId!,
+    toAgentIds,
     sourceEventId: sourceEventId!,
     hop,
     dedupe: dedupe!,
@@ -167,7 +196,7 @@ export function parseAgentDelegation(
   return agentDelegationDedupe({
     rootRequestId: envelope.rootRequestId,
     fromAgentId: envelope.fromAgentId,
-    toAgentId: envelope.toAgentId,
+    toAgentIds: envelope.toAgentIds,
     text: event.content,
   }) === envelope.dedupe
     ? envelope

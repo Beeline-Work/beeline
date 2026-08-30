@@ -537,6 +537,64 @@ describe('RoomIndexer', () => {
     }
   });
 
+  it('projects delegation replies and limit/refusal lines as visible rooted conversation', async () => {
+    const delegatedId = '4'.repeat(64);
+    const limitId = '5'.repeat(64);
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES
+        ($1, $2, $3, to_timestamp(80), 9, $4, '@peer produce the quotes.', $5),
+        ($1, $6, $3, to_timestamp(81), 9, $7, 'Delegation limit reached after 4 agent-initiated hops.', $5)`,
+      [
+        TENANT,
+        bytes(delegatedId),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-message'],
+          ['t', 'buzz-agent-delegation'],
+          ['e', rootMessageId, '', 'reply'],
+          ['root-request', rootMessageId],
+          ['root-human', VIEWER],
+          ['from-agent', AGENT],
+          ['to-agent', OUTSIDER],
+          ['hop', '1'],
+          ['p', OUTSIDER],
+        ]),
+        ROOM,
+        bytes(limitId),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'agent-message'],
+          ['t', 'buzz-agent-delegation'],
+          ['e', rootMessageId, '', 'root'],
+          ['e', delegatedId, '', 'reply'],
+          ['root-request', rootMessageId],
+          ['root-human', VIEWER],
+          ['delegation-status', 'limit'],
+        ]),
+      ],
+    );
+
+    const room = await indexer.readRoom(ROOM, VIEWER);
+    expect(room?.messages.find((message) => message.id === delegatedId)).toMatchObject({
+      presentation: 'message',
+      author: { pubkey: AGENT, kind: 'agent' },
+      mentionPubkeys: [OUTSIDER],
+      reply: { channelId: ROOM, eventId: rootMessageId, rootId: rootMessageId },
+    });
+    expect(room?.messages.find((message) => message.id === limitId)).toMatchObject({
+      presentation: 'message',
+      reply: { channelId: ROOM, eventId: delegatedId, rootId: rootMessageId },
+    });
+
+    const chats = await indexer.readChats(WORKSPACE, VIEWER);
+    expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.latestMessage?.text).toContain(
+      'Delegation limit reached',
+    );
+  });
+
   it('tombstones retired agent notices before transcript and preview projection', async () => {
     const stallText =
       'Still working on this — my coding backend is taking longer than usual to respond.';

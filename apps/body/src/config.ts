@@ -103,6 +103,8 @@ export interface BodyConfig {
   runtimeConfigPath?: string;
   /** Relay HTTP base (defaults to @beeline/gate config). */
   relayBaseUrl: string;
+  /** Host-enforced Room delegation hop limit (always clamped to 1..8 by Body). */
+  agentDelegationMaxHops?: number;
   relayHost: string;
   relayScheme: string;
   /** WebSocket relay URL for documentation / optional buzz-acp. */
@@ -569,6 +571,9 @@ export function loadBodyConfig(opts: {
     relayHost: host,
     relayScheme: scheme,
     relayWsUrl: ws,
+    ...(env.BUZZY_BODY_AGENT_DELEGATION_MAX_HOPS
+      ? { agentDelegationMaxHops: Number(env.BUZZY_BODY_AGENT_DELEGATION_MAX_HOPS) }
+      : {}),
     autoApprovePermissions: env.BUZZY_BODY_AUTO_APPROVE !== '0',
     ...(parseSandboxMaskEnv(env) ? { sandboxMaskPaths: parseSandboxMaskEnv(env)! } : {}),
   };

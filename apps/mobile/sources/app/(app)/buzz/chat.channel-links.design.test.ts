@@ -47,8 +47,9 @@ function blockFrom(text: string, marker: string, label: string): string {
 describe('channel reference links — workspace-scoped exact resolution', () => {
   const indexBlock = blockFrom(chatSource, 'const channelReferenceIndex', 'channelReferenceIndex');
 
-  it('builds its index from the Room-list cache and this transcript’s own corners', () => {
-    expect(chatSource).toContain('selectChannelList(state, cacheViewerPubkey');
+  it('builds its index from the verified Room family and this transcript’s own corners', () => {
+    expect(indexBlock).toContain('roomSurface?.parent');
+    expect(indexBlock).toContain('resolvedChannelName');
     expect(chatSource).toContain('buildChannelReferenceIndex');
     // The current transcript's own corner list is the canonical corner-name
     // source for this Room.

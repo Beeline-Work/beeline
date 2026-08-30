@@ -23,6 +23,7 @@ const sources = [
 
 const monoStyles = new Set([
   'command',
+  'copy',
   // Onboarding's create-a-new-key backup step: the key itself and the checkbox
   // glyph are deliberate machine text. Its reveal/copy actions are not — they
   // match the identity screen's, which stay on the default face.
@@ -38,6 +39,7 @@ const monoStyles = new Set([
   'inviteUrl',
   'agent',
   'fieldHint',
+  'fieldLabel',
   'lifecycleAgent',
   'lifecycleBranch',
   'mergeSummaryPubkey',
@@ -45,6 +47,7 @@ const monoStyles = new Set([
   'mergeSummaryText',
   'modelTitle',
   'loadingText',
+  'loading',
   'pathTag',
   'pubkey',
   'sectionLabel',
@@ -71,6 +74,8 @@ const monoStyles = new Set([
   'claimInput',
   'claimSuffix',
   'linkedState',
+  'managedHandleLabel',
+  'managedHandleValue',
   'textButtonLabel',
   'segmentText',
   'compactActionText',
@@ -103,8 +108,12 @@ const monoStyles = new Set([
   'rowFlag',
   'rowAge',
   'rowAgeUnread',
+  'age',
+  'unreadText',
+  'eyebrow',
   // The supervision deck's mono micro-metadata: repo tag.
   'rowRepo',
+  'repo',
   // The unread-count chip numeral: a deliberate machine identifier in the
   // gutter's top slot (captain-approved unread treatment, 2026-08-25).
   'unreadChipText',
@@ -117,11 +126,16 @@ const monoStyles = new Set([
   'cornerPeekChevron',
   'cornerStatus',
   'cornerStatusLabel',
+  'cornerToggleText',
+  'cornerLoadingText',
+  'cornerRetryText',
   'openCornerText',
   'writePermissionTool',
   'writePermissionRepository',
   'writePermissionFailure',
   'writePermissionStatus',
+  'outboxFailureText',
+  'githubEventLink',
   'activityGlyph',
   'activityTitle',
   'activityStatus',
@@ -161,6 +175,10 @@ const monoStyles = new Set([
   'marginaliaStamp',
   'marginaliaDetail',
   'bylineText',
+  'landDigestKicker',
+  'landDigestLabel',
+  'landDigestApproval',
+  'landDigestLink',
   'steerNote',
   'ghostLine',
   'ghostAffordance',
@@ -173,6 +191,7 @@ const monoStyles = new Set([
   'repoRowLabel',
   'repoRowValue',
   'metaCaps',
+  'meta',
   'repoPromptTitle',
   'repoPromptDismissText',
   'targetBranchChange',

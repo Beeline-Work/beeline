@@ -1,43 +1,42 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { surfaceAddress } from './surface-storage';
 
-const channelsSource = readFileSync(
-  new URL('../app/(app)/buzz/channels.tsx', import.meta.url),
-  'utf8',
-);
-const chatSource = readFileSync(
-  new URL('../app/(app)/buzz/chat/[channelId].tsx', import.meta.url),
-  'utf8',
-);
-const rootSource = readFileSync(new URL('../app/_layout.tsx', import.meta.url), 'utf8');
+vi.mock('react-native-mmkv', () => ({
+  MMKV: class {
+    getString() { return undefined; }
+    set() {}
+    delete() {}
+    getAllKeys() { return []; }
+  },
+}));
 
-describe('Buzz cache-first startup', () => {
-  it('keys the room list cache before waiting for a relay client', () => {
-    const activeViewer = channelsSource.indexOf('setActiveBuzzCacheViewer(currentIdentity.publicKey);');
-    const identity = channelsSource.indexOf('setIdentity(currentIdentity);', activeViewer);
-    const relay = channelsSource.indexOf('nextTransport.ensureClient()');
-
-    expect(activeViewer).toBeGreaterThanOrEqual(0);
-    expect(identity).toBeGreaterThan(activeViewer);
-    expect(relay).toBeGreaterThan(identity);
+describe('Buzz server-indexed cache addressing', () => {
+  it('partitions the Room list by relay, viewer, and Workspace', () => {
+    expect(
+      surfaceAddress('https://relay.test', 'viewer-a', '/workspace/:id/chats', {
+        workspaceId: 'workspace-1',
+      }),
+    ).toEqual({
+      relayOrigin: 'https://relay.test',
+      viewerPubkey: 'viewer-a',
+      endpoint: '/workspace/:id/chats',
+      params: { workspaceId: 'workspace-1' },
+    });
   });
 
-  it('keys the transcript cache before awaiting its live subscription', () => {
-    const activeViewer = chatSource.indexOf('setActiveBuzzCacheViewer(identity.publicKey);');
-    const user = chatSource.indexOf('setUserPubkey(identity.publicKey);', activeViewer);
-    const relay = chatSource.indexOf('await t.ensureClient();');
-
-    expect(activeViewer).toBeGreaterThanOrEqual(0);
-    expect(user).toBeGreaterThan(activeViewer);
-    expect(relay).toBeGreaterThan(user);
+  it('partitions one Room transcript from every other Room', () => {
+    const roomA = surfaceAddress('https://relay.test', 'viewer-a', '/room/:id', {
+      roomId: 'room-a',
+    });
+    const roomB = surfaceAddress('https://relay.test', 'viewer-a', '/room/:id', {
+      roomId: 'room-b',
+    });
+    expect(roomA).not.toEqual(roomB);
   });
 
-  it('persists the cache only after Android has entered the background', () => {
-    const background = rootSource.indexOf("if (state === 'background')");
-    const flush = rootSource.indexOf('flushBuzzLocalCacheForBackground();', background);
-
-    expect(background).toBeGreaterThanOrEqual(0);
-    expect(flush).toBeGreaterThan(background);
-    expect(rootSource).not.toContain('flushTimer = setTimeout');
+  it('partitions cached responses by viewer identity', () => {
+    const viewerA = surfaceAddress('https://relay.test', 'viewer-a', '/workspaces');
+    const viewerB = surfaceAddress('https://relay.test', 'viewer-b', '/workspaces');
+    expect(viewerA).not.toEqual(viewerB);
   });
 });

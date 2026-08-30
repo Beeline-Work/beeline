@@ -885,7 +885,7 @@ const styles = StyleSheet.create((theme) => {
     error: { ...Typography.default(), color: hull.danger, fontSize: 11, textAlign: 'center' },
     content: { padding: 14, gap: 16, paddingBottom: 40 },
     memberActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-    actionLabel: { ...Typography.mono('semiBold'), fontSize: 10, letterSpacing: 0.7 },
+    actionLabel: { ...Typography.default('semiBold'), fontSize: 10, letterSpacing: 0.7 },
     section: {},
     sectionHeading: {
       minHeight: 30,

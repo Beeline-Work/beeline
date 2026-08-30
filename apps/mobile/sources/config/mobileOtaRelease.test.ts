@@ -1217,7 +1217,7 @@ esac
     expect(smoke).toMatch(/visible: SMOKE AGENT ROOM REPLY\.\*[\s\S]*?timeout: 30000/);
   });
 
-  it('provisions a human-accessible corner and refreshes its canonical working lease', () => {
+  it('provisions a human-accessible corner and publishes its durable turn lifecycle', () => {
     const provisionScript = readFileSync(
       resolve(mobileRoot, '../../scripts/provision-smoke.ts'),
       'utf8',
@@ -1240,13 +1240,22 @@ esac
     expect(createCorner).toBeGreaterThan(-1);
     expect(addHuman).toBeGreaterThan(createCorner);
     expect(proveHuman).toBeGreaterThan(addHuman);
-    expect(replyFixture).toContain('KIND_CORNER_STATE');
-    expect(replyFixture).toContain('TAG_CORNER_STATE');
+    expect(replyFixture).not.toContain('KIND_CORNER_STATE');
+    expect(replyFixture).not.toContain('TAG_CORNER_STATE');
+    expect(replyFixture).toMatch(/kind: 9,[\s\S]*?\['h', cornerId\]/);
+    expect(replyFixture).toContain("['t', 'body-control']");
+    expect(replyFixture).toContain("['t', 'agent-turn']");
+    expect(replyFixture).toContain("['request', requestId]");
+    expect(replyFixture).toContain("['session', 'smoke-corner-session']");
+    expect(replyFixture).toContain("['agent', identity.publicKey]");
+    expect(replyFixture).toContain("['mode', 'readonly']");
+    expect(replyFixture).toContain("['status', status]");
+    expect(replyFixture).toContain("'Agent is thinking…' : 'Agent reply complete.'");
     expect(replyFixture).toMatch(
-      /SMOKE KEYBOARD PIN TRIGGER[\s\S]*?publishCornerWorkingState\(\)[\s\S]*?SMOKE CORNER STEER/,
+      /SMOKE CORNER PHASE READY[\s\S]*?publishCornerTurnStatus\(cornerPhaseRequest\.id, 'working'\)[\s\S]*?SMOKE CORNER STEER[\s\S]*?publishCornerTurnStatus\(cornerPhaseRequest\.id, 'complete'\)/,
     );
     const cornerPhaseCheckpoint = replyFixture.indexOf(
-      "await waitForMessage(client, roomId, 'SMOKE CORNER PHASE READY')",
+      'const cornerPhaseRequest = await waitForMessage(',
     );
     const cornerSteerWait = replyFixture.indexOf(
       "await waitForMessage(client, cornerId, 'SMOKE CORNER STEER')",

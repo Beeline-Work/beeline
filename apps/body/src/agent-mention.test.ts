@@ -1,14 +1,22 @@
 import { generateKeypair, signEvent } from '@beeline/nostr';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AGENT_DELEGATION_DEFAULT_MAX_HOPS,
+  AGENT_DELEGATION_HARD_MAX_HOPS,
+  AGENT_DELEGATION_TAG,
   AGENT_MENTION_TAG,
   AGENT_MENTION_REPLY_TAG,
   AGENT_TO_AGENT_TURN_FUSE,
   AgentMentionTurnQueue,
+  agentDelegationDedupe,
+  agentDelegationMaxHops,
+  agentDelegationTags,
   agentMentionTags,
   mentionedAgent,
   nextAgentMentionChain,
+  parseAgentDelegation,
   parseAgentMention,
+  roomAgentMention,
 } from './agent-mention.js';
 
 describe('signed agent mentions', () => {
@@ -113,5 +121,84 @@ describe('signed agent mentions', () => {
     finishFirst();
     await Promise.all([first, second]);
     expect(order).toEqual(['first-start', 'first-end', 'second']);
+  });
+});
+
+describe('Room agent delegation', () => {
+  it('resolves one non-self agent in text order without treating people as targets', () => {
+    const self = generateKeypair();
+    const bee = generateKeypair();
+    const ox = generateKeypair();
+    const human = generateKeypair();
+    const roster = [
+      { handle: 'self', pubkey: self.publicKey, kind: 'agent' as const },
+      { handle: 'milo', pubkey: human.publicKey, kind: 'human' as const },
+      { handle: 'bee', pubkey: bee.publicKey, kind: 'agent' as const },
+      { handle: 'ox', pubkey: ox.publicKey, kind: 'agent' as const },
+    ];
+
+    expect(roomAgentMention('Thanks @milo.', roster, self.publicKey)).toEqual({
+      status: 'human',
+      handle: 'milo',
+    });
+    expect(roomAgentMention('@self think aloud', roster, self.publicKey)).toEqual({
+      status: 'self',
+      handle: 'self',
+    });
+    expect(roomAgentMention('Ask @bee, @ox, and @self.', roster, self.publicKey)).toEqual({
+      status: 'target',
+      handle: 'bee',
+      pubkey: bee.publicKey,
+    });
+    expect(roomAgentMention('Ask @missing.', roster, self.publicKey)).toEqual({
+      status: 'unknown',
+      handle: 'missing',
+    });
+  });
+
+  it('clamps the environment override to a small non-disableable bound', () => {
+    expect(agentDelegationMaxHops(undefined)).toBe(AGENT_DELEGATION_DEFAULT_MAX_HOPS);
+    expect(agentDelegationMaxHops('not-a-number')).toBe(AGENT_DELEGATION_DEFAULT_MAX_HOPS);
+    expect(agentDelegationMaxHops('0')).toBe(1);
+    expect(agentDelegationMaxHops('3')).toBe(3);
+    expect(agentDelegationMaxHops('999')).toBe(AGENT_DELEGATION_HARD_MAX_HOPS);
+  });
+
+  it('round-trips a signed root-human envelope and rejects tampering or an excessive hop', () => {
+    const human = generateKeypair();
+    const from = generateKeypair();
+    const to = generateKeypair();
+    const rootRequestId = 'a'.repeat(64);
+    const sourceEventId = rootRequestId;
+    const content = '@bee produce the ten quotes and post them here.';
+    const envelope = {
+      rootRequestId,
+      rootHumanPubkey: human.publicKey,
+      fromAgentId: from.publicKey,
+      toAgentId: to.publicKey,
+      sourceEventId,
+      hop: 1,
+      dedupe: agentDelegationDedupe({
+        rootRequestId,
+        fromAgentId: from.publicKey,
+        toAgentId: to.publicKey,
+        text: content,
+      }),
+    };
+    const event = signEvent(
+      {
+        pubkey: from.publicKey,
+        created_at: 1,
+        kind: 9,
+        tags: [['h', 'room'], ['t', 'agent-message'], ...agentDelegationTags(envelope)],
+        content,
+      },
+      from.secretKey,
+    );
+
+    expect(event.tags).toContainEqual(['t', AGENT_DELEGATION_TAG]);
+    expect(parseAgentDelegation(event)).toEqual(envelope);
+    expect(parseAgentDelegation({ ...event, content: `${content} changed` })).toBeUndefined();
+    expect(parseAgentDelegation(event, 0)).toBeUndefined();
   });
 });

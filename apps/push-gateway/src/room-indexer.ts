@@ -628,7 +628,7 @@ WITH workspace_candidates AS (
   WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
       WHERE marker->>0 = 't' AND COALESCE(marker->>1, '') <> ''
         AND marker->>1 NOT IN (
-          'agent-message', 'buzz-agent-exchange', 'buzz-agent-request', 'buzz-attachment'
+          'agent-message', 'buzz-agent-exchange', 'buzz-agent-delegation', 'buzz-agent-request', 'buzz-attachment'
         ))
     AND (
       btrim(e.content) <> ''
@@ -1223,7 +1223,7 @@ WITH candidates AS (
       AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
         WHERE marker->>0 = 't' AND COALESCE(marker->>1, '') <> ''
           AND marker->>1 NOT IN (
-            'agent-message', 'buzz-agent-exchange', 'buzz-agent-request', 'buzz-attachment'
+            'agent-message', 'buzz-agent-exchange', 'buzz-agent-delegation', 'buzz-agent-request', 'buzz-attachment'
           ))
       AND (
         btrim(e.content) <> ''
@@ -1719,6 +1719,7 @@ const SYSTEM_MARKERS = new Set([
 const CONVERSATION_MARKERS = new Set([
   'agent-message',
   'buzz-agent-exchange',
+  'buzz-agent-delegation',
   'buzz-agent-request',
   'buzz-attachment',
 ]);

@@ -318,20 +318,43 @@ async function attachAgentToInviterRooms(
   }
 }
 
-/** Redeem a pairing code under this agent's own key and register its identity. */
-export async function redeemAgentPairingCode(
-  ctx: ChannelOpsContext,
-  rawCode: string,
-): Promise<RedeemAgentPairingResult> {
-  const code = rawCode.trim().toUpperCase();
-  if (!/^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code)) {
-    throw new Error('invalid agent pairing code');
+interface AgentPairingMarker {
+  event: NostrEvent;
+  communityId: string;
+  expiresAt: number;
+}
+
+function parseAgentPairingMarker(event: NostrEvent, tokenHash: string): AgentPairingMarker | null {
+  if (
+    !verifyEvent(event) ||
+    (event.kind !== KIND_COMMUNITY_INVITE && event.kind !== KIND_STREAM_MESSAGE)
+  ) {
+    return null;
   }
-  const tokenHash = inviteTokenHash(code);
-  // Invite discovery is deliberately HTTP-only: the bridge grants a fresh,
-  // authenticated non-member access to globally resolvable invite records.
-  // Retain the old kind:9 marker scan until already-issued legacy codes age
-  // out; their Workspace id cannot be derived from the plaintext code.
+  const communityId = tagValue(event, 'h');
+  const expiresAt = Number(tagValue(event, 'expiration'));
+  if (
+    !communityId ||
+    tagValue(event, TAG_COMMUNITY) !== communityId ||
+    tagValue(event, 'd') !== tokenHash ||
+    !tagValues(event, 't').includes(TAG_AGENT_PAIRING) ||
+    !Number.isSafeInteger(expiresAt) ||
+    expiresAt <= event.created_at
+  ) {
+    return null;
+  }
+  return { event, communityId, expiresAt };
+}
+
+/**
+ * Resolve current global markers first, then scan legacy Workspace-scoped
+ * kind:9 markers by their indexed pairing tag. This mirrors findCommunityInvite:
+ * token-only redemption cannot know the legacy marker's #h coordinate.
+ */
+async function findAgentPairingMarker(
+  ctx: ChannelOpsContext,
+  tokenHash: string,
+): Promise<AgentPairingMarker | null> {
   const current = await queryEvents(
     ctx.http,
     [
@@ -344,37 +367,38 @@ export async function redeemAgentPairingCode(
     ],
     ctx.identity.publicKey,
   );
-  const events =
-    current.length > 0
-      ? current
-      : await queryEvents(
-          ctx.http,
-          [{ kinds: [KIND_STREAM_MESSAGE], '#t': [TAG_AGENT_PAIRING], limit: 500 }],
-          ctx.identity.publicKey,
-        );
-  const pairing = events.find((event) => {
-    if (
-      !verifyEvent(event) ||
-      (event.kind !== KIND_COMMUNITY_INVITE && event.kind !== KIND_STREAM_MESSAGE)
-    ) {
-      return false;
-    }
-    const communityId = tagValue(event, 'h');
-    const expiresAt = Number(tagValue(event, 'expiration'));
-    return Boolean(
-      communityId &&
-      tagValue(event, TAG_COMMUNITY) === communityId &&
-      tagValue(event, 'd') === tokenHash &&
-      tagValues(event, 't').includes(TAG_AGENT_PAIRING) &&
-      Number.isSafeInteger(expiresAt) &&
-      expiresAt > event.created_at,
-    );
-  });
+  const currentMarker = current
+    .map((event) => parseAgentPairingMarker(event, tokenHash))
+    .find((marker): marker is AgentPairingMarker => marker !== null);
+  if (currentMarker) return currentMarker;
+
+  const legacy = await queryEvents(
+    ctx.http,
+    [{ kinds: [KIND_STREAM_MESSAGE], '#t': [TAG_AGENT_PAIRING], limit: 500 }],
+    ctx.identity.publicKey,
+  );
+  return (
+    legacy
+      .map((event) => parseAgentPairingMarker(event, tokenHash))
+      .find((marker): marker is AgentPairingMarker => marker !== null) ?? null
+  );
+}
+
+/** Redeem a pairing code under this agent's own key and register its identity. */
+export async function redeemAgentPairingCode(
+  ctx: ChannelOpsContext,
+  rawCode: string,
+): Promise<RedeemAgentPairingResult> {
+  const code = rawCode.trim().toUpperCase();
+  if (!/^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code)) {
+    throw new Error('invalid agent pairing code');
+  }
+  const tokenHash = inviteTokenHash(code);
+  const pairing = await findAgentPairingMarker(ctx, tokenHash);
   if (!pairing) throw new Error('invalid agent pairing code');
-  const communityId = tagValue(pairing, 'h')!;
-  const expiresAt = Number(tagValue(pairing, 'expiration'));
+  const { communityId, expiresAt } = pairing;
   const members = await communityMembers(ctx, communityId);
-  if (!members.some((member) => member.pubkey === pairing.pubkey)) {
+  if (!members.some((member) => member.pubkey === pairing.event.pubkey)) {
     throw new Error('pairing code minter is not a community member');
   }
   const alreadyPaired = await query(ctx, [
@@ -383,7 +407,7 @@ export async function redeemAgentPairingCode(
   const matchingRedemptions = alreadyPaired.filter(
     (event) => tagValue(event, 'pairing') === tokenHash,
   );
-  if (ctx.identity.publicKey === pairing.pubkey) {
+  if (ctx.identity.publicKey === pairing.event.pubkey) {
     throw new Error(
       "cannot pair the installer's human identity as its own agent; " +
         'run the Members-page pairing command without BUZZ_AGENT_KEY or BUZZ_PRIVATE_KEY so Beeline mints a fresh agent keypair',
@@ -394,8 +418,8 @@ export async function redeemAgentPairingCode(
     .map(parseAgent)
     .find((agent) => agent?.pubkey === ctx.identity.publicKey);
   if (ours) {
-    await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.pubkey);
-    return { communityId, pairedBy: pairing.pubkey, agent: ours, joined: false };
+    await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.event.pubkey);
+    return { communityId, pairedBy: pairing.event.pubkey, agent: ours, joined: false };
   }
   if (matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
     throw new Error('agent pairing code has already been redeemed');
@@ -432,8 +456,8 @@ export async function redeemAgentPairingCode(
     if (!wasMember) await abandonAgentPairing(ctx, communityId);
     throw error;
   }
-  await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.pubkey);
-  return { communityId, pairedBy: pairing.pubkey, agent, joined: !wasMember };
+  await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.event.pubkey);
+  return { communityId, pairedBy: pairing.event.pubkey, agent, joined: !wasMember };
 }
 
 /** Parse a verified display-only soul overlay. Authorization is checked by readers. */

@@ -13,6 +13,14 @@ on:
       - 'apps/body/src/durable-state.ts'
       - 'apps/body/src/durable-state.test.ts'
       - 'apps/body/src/fixtures/durable-state/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.base.json'
+      - 'turbo.json'
+      - 'apps/mobile/package.json'
+      - 'apps/mobile/package-lock.json'
+      - 'apps/mobile/tsconfig.json'
+      - 'apps/mobile/app.config.js'
       - '.github/workflows/client-truth-gates.yml'
 
 permissions:

@@ -24,14 +24,6 @@ on:
   push:
     branches:
       - main
-      # Temporary pre-merge verification trigger, scoped to this feature
-      # branch so the pipeline can be proved end-to-end before landing
-      # (same precedent as beeline-bundle.yml). Harmless to keep: it fires
-      # only for this exact branch name.
-      - fm/beeline-host-deploy-on-merge
-      # Push-polish changes include the production single-gateway cutover and
-      # deploy health gate; prove this exact branch on the host before merge.
-      - fm/beeline-push-polish
   workflow_dispatch:
     inputs:
       drill:

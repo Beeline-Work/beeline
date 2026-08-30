@@ -50,11 +50,13 @@ async function requireExactlyOneMessage(
   const events = await client.sessionEventsBackfill(channelId, { limit: 100 });
   const matches = events.filter((event) => event.content === content);
   if (matches.length !== 1) {
-    throw new Error(`expected exactly one ${JSON.stringify(content)} event, found ${matches.length}`);
+    throw new Error(
+      `expected exactly one ${JSON.stringify(content)} event, found ${matches.length}`,
+    );
   }
 }
 
-async function main() {
+async function main(agentNsec: string, roomId: string, cornerId: string) {
   const identity = loadIdentityFromNsec(agentNsec, 'buzzy-smoke-agent');
   const client = createBuzzClient({
     baseUrl: RELAY,
@@ -141,7 +143,7 @@ async function main() {
   }
 }
 
-main().catch((error) => {
+main(agentNsec, roomId, cornerId).catch((error) => {
   console.error('Smoke reply fixture failed:', error);
   process.exit(1);
 });

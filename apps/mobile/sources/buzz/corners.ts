@@ -54,6 +54,7 @@ export function currentCornerStatus(
   corner: Pick<CornerSummary, 'status' | 'machineState' | 'machineReason' | 'stateAt'>,
   _now = Date.now(),
 ): CornerStatus | null {
+  if (!corner.machineState) return null;
   return corner.status;
 }
 

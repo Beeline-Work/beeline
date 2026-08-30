@@ -369,8 +369,8 @@ describe('RoomIndexer', () => {
         CORNER,
       ],
     );
-    // A terminal corner no longer returns settled activity rows, but its most
-    // recent checklist remains a first-class part of the corner surface.
+    // A terminal corner no longer returns settled activity rows. Plans are
+    // activity receipts rather than a second durable lifecycle store.
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
@@ -452,10 +452,7 @@ describe('RoomIndexer', () => {
       ]),
     );
     expect(lateOpen?.messages.some((message) => message.presentation === 'activity')).toBe(false);
-    expect(lateOpen?.cornerPlan).toEqual({
-      objective: 'Keep the objective and checklist visible after completion.',
-      items: [{ step: 'Persist the plan', status: 'completed' }],
-    });
+    expect(lateOpen?.cornerPlan).toBeUndefined();
   });
 
   it('indexes a Room repository by its parameterized d key without channel_id', async () => {
@@ -1649,7 +1646,7 @@ describe('RoomIndexer', () => {
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(13), 30078, $4, $5, NULL, $6)`,
+       VALUES ($1, $2, $3, to_timestamp(13), 30078, $4::jsonb, $5, NULL, $6)`,
       [
         TENANT,
         bytes('8'.repeat(64)),
@@ -1988,17 +1985,22 @@ describe('RoomIndexer', () => {
       sha256: '8'.repeat(64),
       size: 200,
     };
-    await event(
-      CORNER,
-      AGENT,
-      13,
-      30078,
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(13), 30078, $4::jsonb, $5, NULL, $6)`,
       [
-        ['h', CORNER],
-        ['d', `${CORNER}:${descriptor.tip}:artifact`],
-        ['t', 'change-review-artifact'],
+        TENANT,
+        bytes('9'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['d', `${CORNER}:${descriptor.tip}:artifact`],
+          ['t', 'change-review-artifact'],
+        ]),
+        JSON.stringify(descriptor),
+        `${CORNER}:${descriptor.tip}:artifact`,
       ],
-      JSON.stringify(descriptor),
     );
     // Review artifacts are durable Room facts, not transcript rows. A very
     // long agent-turn tail therefore cannot push the newest generation out of
@@ -2011,7 +2013,7 @@ describe('RoomIndexer', () => {
            jsonb_build_array('h', $3::text),
            jsonb_build_array('t', 'agent-turn'),
            jsonb_build_array('request', lpad(to_hex(sequence), 64, '0')),
-           jsonb_build_array('agent', $4),
+           jsonb_build_array('agent', $4::text),
            jsonb_build_array('status', 'complete')
          ), '', $3::uuid
        FROM generate_series(20_000, 23_999) sequence`,

@@ -1065,6 +1065,9 @@ export interface SubchannelInfo {
   landingBlockedApprovalId?: string;
   /** Process-local consecutive agent-message guard, seeded on restore. */
   lastAgentMessageContent?: string;
+  /** Last review-delivery failure line, seeded on restore so a retry/race
+   *  cannot append the same body-control card twice. */
+  lastReviewFailureContent?: string;
   /** Signed human approval for this corner's one merge into its target branch. */
   humanMergeApproval?: {
     id: string;
@@ -1101,10 +1104,6 @@ export interface SubchannelInfo {
     fileCount: number;
     files: string[];
   };
-  /** Feature tip this corner last successfully pushed, so a realigned (rebased)
-   *  history can be advertised with a compare-and-set force rather than being
-   *  rejected as a non-fast-forward of the corner's own branch. */
-  pushedFeatureTip?: string;
   /**
    * The last land refusal already told to the human, so an unchanged refusal
    * is not restated on every maintenance tick.
@@ -5139,6 +5138,19 @@ export class Body {
       const lastAgentMessageContent = newestEvents.find(
         (event) => tagValue(event, 't') === 'agent-message',
       )?.content;
+      const latestReviewDelivery = newestEvents.find(
+        (event) =>
+          event.tags.some(
+            (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === 'body-control'),
+          ) &&
+          (event.tags.some((tag) => tag[0] === 't' && tag[1] === MERGE_READY_TAG) ||
+            event.content.startsWith("Couldn't prepare this change for review:")),
+      );
+      const lastReviewFailureContent = latestReviewDelivery?.content.startsWith(
+        "Couldn't prepare this change for review:",
+      )
+        ? latestReviewDelivery.content
+        : undefined;
       const latestLandingBlock = newestEvents.find(
         (event) => tagValue(event, 't') === 'landing-blocked',
       );
@@ -5158,6 +5170,7 @@ export class Body {
         taskDescription: restoredTaskDescription,
         participantPubkeys,
         ...(lastAgentMessageContent ? { lastAgentMessageContent } : {}),
+        ...(lastReviewFailureContent ? { lastReviewFailureContent } : {}),
         ...(latestLandingBlock && tagValue(latestLandingBlock, 'approval')
           ? { landingBlockedApprovalId: tagValue(latestLandingBlock, 'approval') }
           : {}),
@@ -9862,6 +9875,48 @@ export class Body {
       : { reason: `Could not resolve the local target branch ${targetBranch}.` };
   }
 
+  /**
+   * Read the feature ref from the remote's push endpoint. This is the only
+   * safe compare-and-set baseline after a daemon restart: process memory may
+   * not remember the tip published by the previous daemon generation.
+   */
+  private async currentRemoteFeatureTip(
+    info: SubchannelInfo,
+    boundRepo: BoundRepo,
+  ): Promise<string | undefined> {
+    const remote = boundRepo.remoteName;
+    if (!remote) return undefined;
+    const pushUrl = await git(info.worktreePath, ['remote', 'get-url', '--push', remote]);
+    const targetRemote = pushUrl.ok && pushUrl.stdout.trim() ? pushUrl.stdout.trim() : remote;
+    const featureRef = `refs/heads/${info.featureBranch}`;
+    const result = await this.remoteGit(boundRepo, info.worktreePath, [
+      'ls-remote',
+      targetRemote,
+      featureRef,
+    ]);
+    if (!result.ok) return undefined;
+    const tip = result.stdout.trim().split(/\s+/)[0];
+    return /^[0-9a-f]{40}$/.test(tip ?? '') ? tip : undefined;
+  }
+
+  /** Publish one review-delivery failure line, even when two host paths race. */
+  private async postReviewFailureOnce(
+    info: SubchannelInfo,
+    content: string,
+    tags: string[][],
+  ): Promise<boolean> {
+    if (info.lastReviewFailureContent === content) return false;
+    const previous = info.lastReviewFailureContent;
+    info.lastReviewFailureContent = content;
+    try {
+      await postControlMessage(info.subchannelId, this.agentIdentity, content, tags);
+      return true;
+    } catch (error) {
+      if (info.lastReviewFailureContent === content) info.lastReviewFailureContent = previous;
+      throw error;
+    }
+  }
+
   /** Mechanically verify the model left one clean, committed branch containing the exact target. */
   private async verifyTargetSyncResult(
     info: SubchannelInfo,
@@ -10234,19 +10289,18 @@ export class Body {
       }
     }
 
-    // A human-commissioned rebase can rewrite this corner's feature history,
-    // so the next publish is not a fast-forward of the ref this corner last
-    // pushed and a plain push would be rejected. Force is scoped
-    // as tightly as it can be: only when the new tip genuinely does not
-    // descend from what THIS corner last pushed, and as a compare-and-set on
-    // that exact sha, so anything else touching the feature ref aborts the
-    // push instead of being clobbered.
-    const rewritten =
-      Boolean(info.pushedFeatureTip) &&
-      !(await git(info.worktreePath, ['merge-base', '--is-ancestor', info.pushedFeatureTip!, tip]))
-        .ok;
+    // A model-owned rebase can rewrite this corner's feature history. Derive
+    // the lease from the remote ref itself, never from restart-lost process
+    // memory: if the observed remote tip is not an ancestor of the new tip,
+    // replace exactly that observed sha and abort if anything moves meanwhile.
+    const remoteFeatureTip = boundRepo.remoteName
+      ? await this.currentRemoteFeatureTip(info, boundRepo)
+      : undefined;
+    const rewritten = remoteFeatureTip
+      ? !(await git(info.worktreePath, ['merge-base', '--is-ancestor', remoteFeatureTip, tip])).ok
+      : false;
     const forceArgs = rewritten
-      ? [`--force-with-lease=refs/heads/${info.featureBranch}:${info.pushedFeatureTip}`]
+      ? [`--force-with-lease=refs/heads/${info.featureBranch}:${remoteFeatureTip}`]
       : [];
     // The feature-branch publish is a brokered push: classified (this corner's
     // own branch → allowed), audited, then performed by the daemon with its
@@ -10270,9 +10324,8 @@ export class Body {
       // State machine: delivery failed. Gated on whether a published,
       // actionable review target actually stands — otherwise idle, never gold.
       this.noteCornerFailure(info);
-      await postControlMessage(
-        info.subchannelId,
-        this.agentIdentity,
+      await this.postReviewFailureOnce(
+        info,
         `Couldn't prepare this change for review: ${summarizeGitFailure(push.stderr)}`,
         [
           ...RECOVERABLE_CORNER_FAILURE_TAGS,
@@ -10289,8 +10342,6 @@ export class Body {
       );
       return false;
     }
-    if (!existingReviewTarget) info.pushedFeatureTip = tip;
-
     // The content-addressed artifact and its one relay pointer must both land
     // before the merge-ready card exists.
     try {
@@ -10391,6 +10442,7 @@ export class Body {
       return false;
     }
     info.mergeTarget = target;
+    info.lastReviewFailureContent = undefined;
     info.mergeReadyEventId = reviewCardEvent!.id;
     info.mergeReadySummaryPublishedTip = tip;
     // A fresh review is a fresh land attempt: whatever the previous tip could

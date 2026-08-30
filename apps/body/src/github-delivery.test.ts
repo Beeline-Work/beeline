@@ -166,6 +166,77 @@ describe('GitHub-origin delivery', () => {
     ).toBe(false);
   });
 
+  it('republishes a rewritten feature ref after restart from remote git truth', async () => {
+    const { root, remote, worktree, info, body } = await repository();
+    const events = captureEvents();
+
+    await expect(publish(body, info)).resolves.toBe(true);
+    const originalFeatureTip = run(worktree, ['rev-parse', 'HEAD']);
+    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(
+      originalFeatureTip,
+    );
+
+    await writeFile(resolve(root, 'TARGET.md'), 'main advanced while the daemon was down\n');
+    run(root, ['add', 'TARGET.md']);
+    run(root, ['commit', '-m', 'advance main during restart']);
+    run(root, ['push', 'origin', 'main']);
+    run(worktree, ['fetch', 'origin', 'main']);
+    run(worktree, ['rebase', 'origin/main']);
+    const rewrittenTip = run(worktree, ['rev-parse', 'HEAD']);
+    expect(rewrittenTip).not.toBe(originalFeatureTip);
+
+    const restartedBody = new Body({
+      agentBinary: '/bin/false',
+      mcpBinary: '/bin/false',
+      agentEnv: {},
+      workspaceRoot: resolve(root, '..'),
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    const restartedInfo: SubchannelInfo = {
+      subchannelId: info.subchannelId,
+      worktreePath: info.worktreePath,
+      featureBranch: info.featureBranch,
+      role: restartedBody.agent,
+      session: info.session,
+      lastPolledAt: 0,
+      archived: false,
+      boundRepo: info.boundRepo,
+    };
+    restartedBody.registerSubchannel(restartedInfo);
+    const modelTurn = vi.spyOn(restartedBody as never, 'promptAgent' as never);
+
+    await expect(publish(restartedBody, restartedInfo)).resolves.toBe(true);
+
+    expect(modelTurn).not.toHaveBeenCalled();
+    expect(restartedInfo.mergeTarget?.tip).toBe(rewrittenTip);
+    expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(rewrittenTip);
+    expect(
+      events.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('publishes one review-delivery failure card for repeated identical failures', async () => {
+    const { info, body } = await repository();
+    const events = captureEvents();
+    info.boundRepo = { ...info.boundRepo!, remoteName: 'missing-remote' };
+
+    await expect(publish(body, info)).resolves.toBe(false);
+    await expect(publish(body, info)).resolves.toBe(false);
+
+    const failures = events.filter(
+      (event) =>
+        event.content.startsWith("Couldn't prepare this change for review:") &&
+        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+    );
+    expect(failures).toHaveLength(1);
+  });
+
   it('publishes review-ready work without autonomously landing or archiving it', async () => {
     const { remote, worktree, info, body } = await repository();
     const events = captureEvents();

@@ -276,7 +276,7 @@ const knownAgentPubkeysFor = (agentByPubkey: Map<string, unknown>): Set<string> 
   return keys;
 };
 
-/** The live thought/tool/message lanes for one signed WORKING turn. A Room
+/** The live tool/message lanes for one signed WORKING turn. A Room
  * passes `handle` because several agents can be working there; a Corner names
  * its one agent in the top bar instead. The selector removes this row at turn
  * end, so none of its machine telemetry can become replayable history. */
@@ -307,7 +307,6 @@ function LedgerActivity({
         active={active}
         handle={handle}
         items={activity}
-        thought={message.agentThought}
         messageDraft={message.agentMessageDraft}
         stamp={stamp}
         testID="corner-activity-timeline"
@@ -833,20 +832,21 @@ export default function BuzzChat() {
   const liveMessages = useMemo<ChatDisplayMessage[]>(() => {
     if (!roomSurface) return [];
     return visibleLiveOverlays(liveOverlays, roomSurface.messages).flatMap((overlay) => {
-      if (overlay.kind === 'presence') return [];
+      // Draft prose is the only live transcript overlay. Presence drives its
+      // own indicator, and private thought text never enters message rows.
+      if (overlay.kind !== 'draft') return [];
       return [
         {
-          id: overlay.kind === 'draft' ? overlay.stableId : overlay.key,
-          text: overlay.kind === 'draft' ? (overlay.text ?? '') : '',
+          id: overlay.stableId,
+          text: overlay.text ?? '',
           isUser: false,
           timestamp: overlay.createdAt,
           pubkey: overlay.agentPubkey,
           isAgentAuthor: true,
           isAgentActivity: true,
           isAgentLiveTurn: true,
-          ...(overlay.kind === 'draft'
-            ? { isAgentDraft: true, agentMessageDraft: overlay.text ?? '' }
-            : { agentThought: overlay.text ?? '' }),
+          isAgentDraft: true,
+          agentMessageDraft: overlay.text ?? '',
         },
       ];
     });

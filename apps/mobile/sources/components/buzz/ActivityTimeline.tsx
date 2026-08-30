@@ -13,7 +13,6 @@ type ActivityTimelineProps = {
   handle?: string;
   stamp?: string;
   testID?: string;
-  thought?: string;
   messageDraft?: string;
 };
 
@@ -38,13 +37,15 @@ function resolvedOutcome(
   return 'success';
 }
 
-function stepResult(step: TurnActivityAction): string | undefined {
-  const output = step.output?.replace(/\s+/g, ' ').trim();
-  if (output) return output;
-  const files = step.files?.map((file) => file.path.split('/').filter(Boolean).at(-1));
-  if (!files?.length) return undefined;
-  const shown = files.slice(0, 2).join(', ');
-  return files.length > 2 ? `${shown} +${files.length - 2}` : shown;
+function presentedStepLabel(step: TurnActivityAction): string {
+  const kind = step.toolKind?.toLowerCase();
+  const commandLike = step.weight === 'command' || kind === 'execute' || kind === 'ran';
+  if (!commandLike) return step.label;
+  return ['type checks', 'tests', 'lint', 'build', 'review changes', 'commit changes'].includes(
+    step.label,
+  )
+    ? step.label
+    : 'ran project task';
 }
 
 function LedgerStepRow({
@@ -57,12 +58,11 @@ function LedgerStepRow({
   step: TurnActivityAction;
 }) {
   const outcome = resolvedOutcome(step, active, isLast);
-  const result = stepResult(step);
+  const label = presentedStepLabel(step);
   const accessibilityLabel = [
-    step.label,
+    label,
     outcome === 'failure' ? 'failed' : outcome === 'running' ? 'running' : 'succeeded',
     step.reason,
-    result,
   ]
     .filter(Boolean)
     .join(', ');
@@ -70,38 +70,31 @@ function LedgerStepRow({
     <View
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ busy: outcome === 'running' }}
-      style={styles.stepBlock}
+      style={styles.stepRow}
       testID={`activity-step-${step.id}`}
     >
-      <View style={styles.stepRow}>
-        <Text accessibilityElementsHidden style={styles.stepGlyph}>
-          {stepGlyph(step)}
+      <Text accessibilityElementsHidden style={styles.stepGlyph}>
+        {stepGlyph(step)}
+      </Text>
+      <Text numberOfLines={1} style={styles.stepLabel}>
+        {label}
+      </Text>
+      {outcome === 'running' ? (
+        <View style={styles.runningMark} testID={`activity-verdict-${step.id}`}>
+          <PixelLoader compact />
+        </View>
+      ) : (
+        <Text
+          accessibilityElementsHidden
+          style={[styles.verdict, outcome === 'failure' && styles.verdictFailed]}
+          testID={`activity-verdict-${step.id}`}
+        >
+          {outcome === 'failure' ? '×' : '✓'}
         </Text>
-        <Text numberOfLines={1} style={styles.stepLabel}>
-          {step.label}
-        </Text>
-        {outcome === 'running' ? (
-          <View style={styles.runningMark} testID={`activity-verdict-${step.id}`}>
-            <PixelLoader compact />
-          </View>
-        ) : (
-          <Text
-            accessibilityElementsHidden
-            style={[styles.verdict, outcome === 'failure' && styles.verdictFailed]}
-            testID={`activity-verdict-${step.id}`}
-          >
-            {outcome === 'failure' ? '×' : '✓'}
-          </Text>
-        )}
-        {step.reason ? (
-          <Text numberOfLines={1} style={styles.stepReason} testID={`activity-reason-${step.id}`}>
-            {step.reason}
-          </Text>
-        ) : null}
-      </View>
-      {result && !step.reason ? (
-        <Text numberOfLines={2} style={styles.stepResult} testID={`activity-result-${step.id}`}>
-          {result}
+      )}
+      {step.reason ? (
+        <Text numberOfLines={1} style={styles.stepReason} testID={`activity-reason-${step.id}`}>
+          {step.reason}
         </Text>
       ) : null}
     </View>
@@ -109,9 +102,10 @@ function LedgerStepRow({
 }
 
 /**
- * The live three-lane turn. Thought replaces in place, tool calls are one
- * non-interactive mono row each, and the answer accumulates beneath them.
- * The selector removes this whole component the instant the signed turn ends.
+ * The live conversational turn. Tool activity stays in terse, non-interactive
+ * mechanism rows while the answer accumulates beneath it. Tool results and
+ * private reasoning never enter this component. The selector removes this
+ * whole component the instant the signed turn ends.
  */
 export const ActivityTimeline = React.memo(function ActivityTimeline({
   active = false,
@@ -119,12 +113,11 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
   items,
   stamp,
   testID,
-  thought,
   messageDraft,
 }: ActivityTimelineProps) {
   const turn = useMemo(() => buildTurnActivity(items), [items]);
   const steps = turn.steps.filter((step) => step.kind === 'tool');
-  if (!active || (!thought && !messageDraft && !steps.length)) return null;
+  if (!active || (!messageDraft && !steps.length)) return null;
 
   return (
     <View style={styles.timeline} testID={testID}>
@@ -133,19 +126,6 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
           <Text style={styles.liveBylineName}>{handle.toUpperCase()}</Text>
           <Text style={styles.liveBylineRole}> · agent</Text>
           {stamp ? <Text style={styles.liveStamp}>{stamp}</Text> : null}
-        </View>
-      ) : null}
-      {thought ? (
-        <View style={styles.thoughtLane} testID="activity-thought-lane">
-          <View style={styles.thoughtLabel}>
-            <PixelLoader compact />
-            <Text style={styles.thoughtEyebrow}>THINKING</Text>
-          </View>
-          <MonoMarkdown
-            markdown={thought}
-            textStyle={styles.thoughtText}
-            testID="activity-thought-draft"
-          />
         </View>
       ) : null}
       {steps.map((step, index) => (
@@ -180,32 +160,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.ledgerGhost,
       fontSize: 10,
     },
-    thoughtLane: {
-      borderLeftWidth: 2,
-      borderLeftColor: groknight.borderQuiet,
-      paddingLeft: 13,
-      paddingVertical: 2,
-      marginBottom: 6,
-      gap: 4,
-    },
-    thoughtLabel: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    thoughtEyebrow: {
-      ...Typography.mono(),
-      color: groknight.ledgerGhost,
-      fontSize: 9,
-      letterSpacing: 1.2,
-    },
-    thoughtText: {
-      // Thinking copy is prose, not a second voice: it shares the ledger's
-      // theme prose face (Space Grotesk in Obsidian), sits one existing step
-      // below the single message size (14, the register RoomContextPreamble's
-      // ghost lines use), recedes on ledgerQuiet, and stays upright — the
-      // shipped family has no italic cut.
-      fontFamily: groknight.proseRegular,
-      color: groknight.ledgerQuiet,
-      fontSize: 14,
-      lineHeight: 22,
-    },
     messageDraft: {
       ...Typography.ledger(),
       color: groknight.ledgerBright,
@@ -213,17 +167,15 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 25,
       marginTop: 8,
     },
-    stepBlock: {
-      minWidth: 0,
-      paddingVertical: 5,
-    },
     stepRow: {
-      minHeight: 26,
+      minHeight: 36,
       minWidth: 0,
       paddingHorizontal: 4,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: groknight.borderQuiet,
     },
     stepGlyph: {
       ...Typography.mono(),
@@ -257,16 +209,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.ledgerQuiet,
       fontSize: 10,
       lineHeight: 18,
-    },
-    stepResult: {
-      ...Typography.mono(),
-      marginLeft: 26,
-      borderLeftWidth: 2,
-      borderLeftColor: groknight.borderQuiet,
-      paddingLeft: 10,
-      color: groknight.ledgerGhost,
-      fontSize: 10,
-      lineHeight: 16,
     },
   };
 });

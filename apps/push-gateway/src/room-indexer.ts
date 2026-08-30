@@ -232,6 +232,92 @@ function messageRootIdSql(eventAlias: string): string {
   END`;
 }
 
+/**
+ * A durable model-unavailable line remains visible until the same agent emits
+ * newer evidence that it is healthy. Resolution is deliberately evaluated
+ * against the full event table, not the bounded transcript page, so old
+ * history pages cannot resurrect a condition already cleared elsewhere.
+ */
+function unresolvedModelAvailabilitySql(eventAlias: string, roomAlias: string): string {
+  const newerThanNotice = (candidate: string) => `(
+    ${candidate}.created_at > ${eventAlias}.created_at OR
+    (${candidate}.created_at = ${eventAlias}.created_at AND ${candidate}.id > ${eventAlias}.id)
+  )`;
+  const catalogJson = `(catalog.content::jsonb)`;
+  const catalogOptions = `CASE
+    WHEN jsonb_typeof(${catalogJson}->'options') = 'array' THEN ${catalogJson}->'options'
+    ELSE '[]'::jsonb
+  END`;
+  const axisChoices = `CASE
+    WHEN jsonb_typeof(axis->'options') = 'array' THEN axis->'options'
+    ELSE '[]'::jsonb
+  END`;
+  return `NOT (
+    ${eventAlias}.tags @> '[["t", "buzz-agent-model-unavailable"]]'::jsonb
+    AND (
+      ${eventAlias}.tags @> '[["status", "model-available"]]'::jsonb
+      OR (
+        EXISTS (SELECT 1 FROM jsonb_array_elements(${eventAlias}.tags) status_tag
+          WHERE status_tag->>0 = 'status'
+            AND status_tag->>1 IN ('model-unavailable', 'validation-unavailable'))
+        AND (
+          EXISTS (
+            SELECT 1 FROM events cleared
+            WHERE cleared.community_id = ${eventAlias}.community_id
+              AND cleared.channel_id = ${roomAlias}.id
+              AND cleared.pubkey = ${eventAlias}.pubkey
+              AND cleared.kind = 9 AND cleared.deleted_at IS NULL
+              AND cleared.tags @> '[["t", "buzz-agent-model-unavailable"]]'::jsonb
+              AND cleared.tags @> '[["status", "model-available"]]'::jsonb
+              AND ${newerThanNotice('cleared')}
+          )
+          OR EXISTS (
+            SELECT 1 FROM events catalog
+            WHERE catalog.community_id = ${eventAlias}.community_id
+              AND catalog.pubkey = ${eventAlias}.pubkey
+              AND catalog.kind = 30078 AND catalog.deleted_at IS NULL
+              AND catalog.d_tag = ${roomAlias}.workspace_id || ':' || encode(${eventAlias}.pubkey, 'hex')
+              AND catalog.tags @> '[["t", "buzz-agent-model-catalog"]]'::jsonb
+              AND ${newerThanNotice('catalog')}
+              AND CASE WHEN pg_input_is_valid(catalog.content, 'jsonb') THEN
+                (${catalogJson}->'selection'->>'model' IS NOT NULL
+                  OR ${catalogJson}->'selection'->>'effort' IS NOT NULL)
+                AND (
+                  ${catalogJson}->'selection'->>'model' IS NULL
+                  OR EXISTS (
+                    SELECT 1 FROM jsonb_array_elements(${catalogOptions}) axis
+                    WHERE axis->>'category' = 'model'
+                      AND EXISTS (SELECT 1 FROM jsonb_array_elements(${axisChoices}) choice
+                        WHERE choice->>'id' = ${catalogJson}->'selection'->>'model')
+                  )
+                )
+                AND (
+                  ${catalogJson}->'selection'->>'effort' IS NULL
+                  OR EXISTS (
+                    SELECT 1 FROM jsonb_array_elements(${catalogOptions}) axis
+                    WHERE axis->>'category' IN ('thought_level', 'effort', 'reasoning_effort')
+                      AND EXISTS (SELECT 1 FROM jsonb_array_elements(${axisChoices}) choice
+                        WHERE choice->>'id' = ${catalogJson}->'selection'->>'effort')
+                  )
+                )
+              ELSE false END
+          )
+          OR EXISTS (
+            SELECT 1 FROM events turn
+            WHERE turn.community_id = ${eventAlias}.community_id
+              AND turn.channel_id = ${roomAlias}.id
+              AND turn.pubkey = ${eventAlias}.pubkey
+              AND turn.kind = 9 AND turn.deleted_at IS NULL
+              AND turn.tags @> '[["t", "agent-turn"]]'::jsonb
+              AND turn.tags @> '[["status", "complete"]]'::jsonb
+              AND ${newerThanNotice('turn')}
+          )
+        )
+      )
+    )
+  )`;
+}
+
 const ROOM_SQL = `
 WITH candidates AS (
   SELECT c.community_id, c.id, c.name, c.description, c.visibility, c.created_at, c.updated_at,
@@ -260,6 +346,7 @@ WITH candidates AS (
     SELECT e.* FROM events e
     WHERE e.community_id = a.community_id AND e.channel_id = a.id
       AND e.deleted_at IS NULL AND e.kind = 9
+      AND ${unresolvedModelAvailabilitySql('e', 'a')}
       AND ($3::bigint IS NULL OR extract(epoch FROM e.created_at)::bigint < $3
         OR (extract(epoch FROM e.created_at)::bigint = $3 AND encode(e.id, 'hex') > $4))
     ORDER BY e.created_at DESC, e.id ASC LIMIT $5
@@ -1011,6 +1098,7 @@ WITH candidates AS (
   SELECT e.* FROM authorized a JOIN LATERAL (
     SELECT e.* FROM events e WHERE e.community_id = a.community_id AND e.channel_id = a.id
       AND e.deleted_at IS NULL AND e.kind = 9
+      AND ${unresolvedModelAvailabilitySql('e', 'a')}
     ORDER BY e.created_at DESC, e.id ASC LIMIT $3
   ) e ON true
 ), newest_message AS (

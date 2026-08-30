@@ -67,6 +67,9 @@ vi.mock('@beeline/buzz-client', () => ({
   normalizePersonHandle: (value: string) => value.trim().toLowerCase() || null,
   normalizePersonName: (value: string) => value.trim() || null,
   personHandle: (name: string) => name.toLowerCase(),
+  RoomViewClient: class {
+    workspaces = vi.fn(async () => ({ workspaces: [] }));
+  },
   startGitHubBind: vi.fn(),
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({

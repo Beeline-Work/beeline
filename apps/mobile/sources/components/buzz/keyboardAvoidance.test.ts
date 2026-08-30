@@ -38,19 +38,17 @@ describe('Buzz keyboard avoidance', () => {
     // The corner indicator is pinned between the transcript and the composer:
     // it must never scroll with the transcript, and it must never be pushed
     // off-screen by a composer growing to its multiline maximum.
-    const listEnd = chatSource.indexOf(
-      "        />\n\n        {/* The Room's only active-corner affordance",
-    );
+    const listEnd = chatSource.indexOf('<FlatList');
     const inputBar = chatSource.indexOf('<View style={[styles.inputBar');
     expect(listEnd).toBeGreaterThanOrEqual(0);
     expect(inputBar).toBeGreaterThan(listEnd);
-    expect(chatSource.indexOf('testID="corner-live-bar"')).toBeGreaterThan(listEnd);
-    expect(chatSource.indexOf('testID="corner-live-bar"')).toBeLessThan(inputBar);
+    expect(chatSource.indexOf('<CornerLiveBar')).toBeGreaterThan(listEnd);
+    expect(chatSource.indexOf('<CornerLiveBar')).toBeLessThan(inputBar);
   });
 
   it('does not rerender the transcript on a fixed presence clock', () => {
     expect(chatSource).not.toContain('setInterval(() => setPresenceNow(Date.now()), 5_000)');
-    expect(chatSource).toContain('Presence only changes at a lease/grace deadline');
+    expect(chatSource).toContain('Presence only changes at a lease/dormancy deadline');
   });
 
   it('keeps focused Agent fields visible in keyboard-aware scroll content', () => {

@@ -3,10 +3,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Source assertions for the optional repo step in Room creation — same
- * technique as `channels.design.test.ts`: no render harness for this screen,
- * so the structural guarantee (repo is opt-in, never blocks a chat-only Room)
- * is checked as text.
+ * The Room deck creates chat-only Rooms. Repository binding stays on the
+ * Room settings surface and cannot become a creation prerequisite.
  */
 const source = readFileSync(path.join(__dirname, 'channels.tsx'), 'utf8');
 
@@ -24,35 +22,28 @@ function blockFrom(text: string, marker: string, label: string): string {
   throw new Error(`unclosed ${label}`);
 }
 
-describe('Room creation — optional repo step', () => {
-  it('creates the Room unconditionally, and only links a repo when one was picked', () => {
+describe('Room creation — chat-first boundary', () => {
+  it('creates the Room without a repository prerequisite', () => {
     const handler = blockFrom(
       source,
-      'const handleCreateChannel = useCallback(async () => {',
-      'handleCreateChannel',
+      'const createRoom = useCallback(async () => {',
+      'createRoom',
     );
     const createIndex = handler.indexOf('client.createChannel(');
-    const guardIndex = handler.indexOf('if (pendingRepo?.remote) {');
-    const setRepoIndex = handler.indexOf('client.setRoomRepository(');
     expect(createIndex, 'createChannel must run for every Room').toBeGreaterThanOrEqual(0);
-    expect(guardIndex, 'repo binding must be gated on a picked repo').toBeGreaterThan(createIndex);
-    expect(setRepoIndex).toBeGreaterThan(guardIndex);
-    // createChannel itself must not carry a repository option — the picker
-    // always writes through the mutable setRoomRepository path, never the
-    // immutable genesis binding, so the same write path is used whether the
-    // repo is picked at creation time or later from Room settings.
     const createCallArgs = handler.slice(createIndex, handler.indexOf(');', createIndex));
     expect(createCallArgs).not.toContain('repository');
+    expect(handler).not.toContain('setRoomRepository');
   });
 
-  it('renders the repo row inside the create panel, defaulting to none', () => {
+  it('keeps repository controls out of the create dialog', () => {
     const marker = source.indexOf('testID="new-room-dialog"');
     const start = source.lastIndexOf('<HullDialog', marker);
     const end = source.indexOf('</HullDialog>', marker);
     expect(start, 'missing create Room Hull dialog').toBeGreaterThanOrEqual(0);
     expect(end, 'unclosed create Room Hull dialog').toBeGreaterThan(start);
     const panel = source.slice(start, end);
-    expect(panel).toContain('testID="create-room-repo-row"');
-    expect(panel).toContain("pendingRepo ? `▢ ${pendingRepo.name}` : 'none");
+    expect(panel).not.toContain('create-room-repo-row');
+    expect(panel).not.toContain('pendingRepo');
   });
 });

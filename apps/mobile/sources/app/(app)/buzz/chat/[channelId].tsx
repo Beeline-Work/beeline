@@ -1,8 +1,4 @@
-/**
- * Buzz Chat — single channel/session chat screen (P2: subchannels + merge + provenance).
- *
- * Grok Mono Hull design: neutral metal surfaces with redundant state encoding.
- */
+/** Room and corner conversation surface. */
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   AppState,
@@ -251,8 +247,6 @@ import {
 
 type RoomMemberOption = RoomRosterParticipant;
 
-/** Known body pubkeys for provenance display (hardcoded for dev). */
-const BODY_PUBKEYS = new Set<string>();
 const COMPOSER_MIN_HEIGHT = 40;
 const COMPOSER_MAX_HEIGHT = 120;
 // Open on the tail of a long transcript instead of the full history, then
@@ -268,13 +262,10 @@ const MERGE_APPROVAL_ACCENT = groknight.accent;
  * The voice a transcript entry belongs to, or `null` for anything that is not
  * one, is decided by THE shared projection helper (`buzz/ledger-attribution.ts`
  * — Rooms and corners alike). This screen only supplies its roster union:
- * registered agents plus the daemon's own body keys.
+ * registered agents from the server-indexed roster.
  */
-const knownAgentPubkeysFor = (agentByPubkey: Map<string, unknown>): Set<string> => {
-  const keys = new Set<string>(BODY_PUBKEYS);
-  for (const pubkey of agentByPubkey.keys()) keys.add(pubkey);
-  return keys;
-};
+const knownAgentPubkeysFor = (agentByPubkey: Map<string, unknown>): Set<string> =>
+  new Set(agentByPubkey.keys());
 
 /** The live tool/message lanes for one signed WORKING turn. A Room
  * passes `handle` because several agents can be working there; a Corner names
@@ -2129,7 +2120,7 @@ export default function BuzzChat() {
     (pubkey: string | undefined, isAgent: boolean): string | undefined => {
       if (!pubkey) return undefined;
       const knownAgent = agentByPubkey.get(pubkey);
-      if (isAgent || knownAgent || BODY_PUBKEYS.has(pubkey)) {
+      if (isAgent || knownAgent) {
         return resolvePendingAgentDisplay(pubkey, knownAgent, participantsHydrated)?.name;
       }
       return personProfileByPubkey.get(pubkey)?.name ?? shortMemberNpub(pubkey);
@@ -2142,10 +2133,7 @@ export default function BuzzChat() {
       const knownAgent = message.pubkey ? agentByPubkey.get(message.pubkey) : undefined;
       const isAgent = Boolean(
         message.pubkey &&
-        (message.isAgentAuthor ||
-          message.isAgentActivity ||
-          BODY_PUBKEYS.has(message.pubkey) ||
-          knownAgent),
+        (message.isAgentAuthor || message.isAgentActivity || knownAgent),
       );
       const agentDisplay = isAgent
         ? resolveAgentDisplayIdentity(message.pubkey ?? 'unknown-agent', knownAgent)
@@ -3462,10 +3450,9 @@ export default function BuzzChat() {
       }
 
       // ── Ordinary message ─────────────────────────────────────────
-      const isBody = item.pubkey && BODY_PUBKEYS.has(item.pubkey);
       const isOwn = item.isUser;
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
-      const isAgent = item.isAgentAuthor || item.isAgentActivity || isBody || Boolean(knownAgent);
+      const isAgent = item.isAgentAuthor || item.isAgentActivity || Boolean(knownAgent);
       const display = isAgent
         ? resolvePendingAgentDisplay(
             item.pubkey ?? 'unknown-agent',

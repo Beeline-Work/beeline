@@ -241,13 +241,14 @@ describe('navigateToBuzzChannelFromNotification', () => {
     // The hydration effect must re-run when a notification re-opens the
     // same channel. Assert that dependency, not the whole literal list —
     // the rest of the list is free to change with the effect's internals.
-    const hydrationDeps = buzzChatSource.match(
-      /\}, \[decodedId, notificationResponseId[^\]]*\]\);/,
+    const hydrationEffect = buzzChatSource.slice(
+      buzzChatSource.indexOf("useEffect(() => {\n    if (!decodedId) return;"),
+      buzzChatSource.indexOf('/**\n   * Who said an inherited Room line.'),
     );
     expect(
-      hydrationDeps,
+      hydrationEffect,
       'room hydration effect must depend on notificationResponseId',
-    ).not.toBeNull();
+    ).toContain('notificationResponseId,');
   });
 
   it('wires the same precise handler to warm taps and cold-start responses', () => {
@@ -260,8 +261,8 @@ describe('navigateToBuzzChannelFromNotification', () => {
   it('anchors messages and approvals, then replaces a missing corner with its parent Room', () => {
     expect(buzzChatSource).toMatch(/scrollToIndex\(\{\s*index: visibleIndex/);
     expect(buzzChatSource).toContain('scrollToOffset({ offset: 0');
-    expect(buzzChatSource).toContain('notificationParentResolution?.channelId === decodedId');
-    expect(buzzChatSource).toContain('notificationParentResolution.parentId === null');
+    expect(buzzChatSource).toContain('canonicalCornerStatus === \'archived\'');
+    expect(buzzChatSource).toContain('roomSurface.parent === undefined');
     expect(buzzChatSource).toContain('params: { channelId: fallbackId, notificationResponseId }');
   });
 });

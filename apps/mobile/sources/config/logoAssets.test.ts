@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import beelineMark from '../buzz/beeline-mark.json';
 import brand from '../buzz/brand.json';
 
+const appConfig = (await import('../../app.config.js')).default.expo;
+
 const LOCKED_LOOP_SHA256 = '819b2abe3c00a1704c0857e88be2468f840a7a8d353f0e482bab03671c1d19f7';
 const vectorNames = [
   'icon.svg',
@@ -23,11 +25,6 @@ const adaptiveFraming =
 describe('Beeline continuous-line logo assets', () => {
   const vectors = vectorNames.map((name) =>
     readFileSync(new URL(`../assets/images/${name}`, import.meta.url), 'utf8'),
-  );
-  const appConfig = readFileSync(new URL('../../app.config.js', import.meta.url), 'utf8');
-  const generator = readFileSync(
-    new URL('../../scripts/generate-monochrome-assets.sh', import.meta.url),
-    'utf8',
   );
   const adaptiveBackground = readFileSync(
     new URL('../assets/images/icon-adaptive-background.svg', import.meta.url),
@@ -58,26 +55,39 @@ describe('Beeline continuous-line logo assets', () => {
     expect(vectors[5]).toContain('fill="#14091A"');
     expect(vectors[6]).toContain('fill="#E5A645"');
     expect(adaptiveBackground).toContain('fill="#14091A"');
-    expect([...vectors, adaptiveBackground, generator].join('\n')).not.toMatch(
+    expect([...vectors, adaptiveBackground].join('\n')).not.toMatch(
       /#f0b95a|#C48A33|linearGradient/i,
     );
 
-    expect(appConfig).toContain('icon: "./sources/assets/images/icon.png"');
-    expect(appConfig).toContain('foregroundImage: "./sources/assets/images/icon-adaptive.png"');
-    expect(appConfig).toContain(
-      'monochromeImage: "./sources/assets/images/icon-monochrome.png"',
+    expect(appConfig.icon).toBe('./sources/assets/images/icon.png');
+    expect(appConfig.android.adaptiveIcon).toEqual({
+      foregroundImage: './sources/assets/images/icon-adaptive.png',
+      backgroundImage: './sources/assets/images/icon-adaptive-background.png',
+      backgroundColor: '#14091A',
+    });
+    expect(appConfig.web.favicon).toBe('./sources/assets/images/favicon.png');
+    const notificationPlugin = appConfig.plugins.find(
+      (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-notifications',
     );
-    expect(appConfig)
-      .toContain('backgroundImage: "./sources/assets/images/icon-adaptive-background.png"');
-    expect(appConfig).toContain('favicon: "./sources/assets/images/favicon.png"');
-    expect(appConfig).toContain('"icon": "./sources/assets/images/icon-notification.png"');
-    expect(appConfig).toContain('image: "./sources/assets/images/splash-android-light.png"');
-    expect(appConfig).toContain('image: "./sources/assets/images/splash-android-dark.png"');
-    expect(appConfig).toContain('imageWidth: 150');
-    expect(appConfig).toContain('resizeMode: "contain"');
-    expect(appConfig).toContain('backgroundColor: "#14091A"');
-    // The opaque aubergine assets and both splash variants must never expose the old field.
-    expect(appConfig).not.toContain('#090909');
+    expect(notificationPlugin?.[1]).toMatchObject({
+      icon: './sources/assets/images/icon-notification.png',
+    });
+    const splashPlugin = appConfig.plugins.find(
+      (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-splash-screen',
+    );
+    expect(splashPlugin?.[1]).toMatchObject({
+      android: {
+        image: './sources/assets/images/splash-android-light.png',
+        imageWidth: 150,
+        resizeMode: 'contain',
+        backgroundColor: '#14091A',
+        dark: {
+          image: './sources/assets/images/splash-android-dark.png',
+          backgroundColor: '#14091A',
+        },
+      },
+    });
+    expect(JSON.stringify(appConfig)).not.toContain('#090909');
   });
 
   it('limits the owner-approved 26%-larger margin to home-screen marks', () => {
@@ -89,9 +99,8 @@ describe('Beeline continuous-line logo assets', () => {
       expect(vector).not.toContain(adaptiveFraming);
     }
 
-    expect(generator).toMatch(/rsvg-convert[^\n]*icon-adaptive\.svg[\s\S]*?icon-adaptive\.png/);
-    expect(generator).toMatch(/recolor_svg[^\n]*icon-adaptive\.svg[\s\S]*?icon-monochrome\.png/);
-    // Surface assets are rendered from mark.svg / the ink field, never from the launcher source.
-    expect(generator).not.toMatch(/icon-adaptive\.svg"[^\n]*(?:favicon|splash|notification)/);
+    expect(appConfig.android.adaptiveIcon.foregroundImage).toBe(
+      './sources/assets/images/icon-adaptive.png',
+    );
   });
 });

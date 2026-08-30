@@ -71,7 +71,7 @@ describe('live streaming turn', () => {
     expect(render(<ActivityTimeline active={false} items={TOOLS} />).toJSON()).toBeNull();
   });
 
-  it('renders rolling thought, one non-interactive row per tool, and accumulating message', () => {
+  it('renders one non-interactive row per tool and the accumulating conversational draft', () => {
     const renderer = render(
       <ActivityTimeline
         active
@@ -79,10 +79,8 @@ describe('live streaming turn', () => {
         items={TOOLS}
         messageDraft="The answer is arriving."
         stamp="now"
-        thought="Checking the gate result…"
       />,
     );
-    expect(renderer.root.findByProps({ testID: 'activity-thought-lane' })).toBeTruthy();
     expect(renderer.root.findByProps({ testID: 'activity-message-draft' }).props.markdown).toBe(
       'The answer is arriving.',
     );
@@ -98,12 +96,17 @@ describe('live streaming turn', () => {
     expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
   });
 
-  it('routes complete streamed Markdown through the same transcript renderer in both lanes', () => {
+  it('routes streamed prose through the Room-style Markdown renderer', () => {
     const renderer = render(
       <ActivityTimeline
         active
-        items={[]}
-        thought="**Analyzing trading economics and risks**"
+        items={[
+          {
+            kind: 'thinking',
+            title: 'Thinking',
+            text: '**PRIVATE REASONING MUST NOT RENDER**',
+          },
+        ]}
         messageDraft="**The reply is ready**"
       />,
     );
@@ -115,51 +118,63 @@ describe('live streaming turn', () => {
           markdown: node.props.markdown,
           testID: node.props.testID,
         })),
-    ).toEqual([
-      {
-        markdown: '**Analyzing trading economics and risks**',
-        testID: 'activity-thought-draft',
-      },
-      { markdown: '**The reply is ready**', testID: 'activity-message-draft' },
-    ]);
+    ).toEqual([{ markdown: '**The reply is ready**', testID: 'activity-message-draft' }]);
   });
 
-  it('inscribes compact tool results directly beneath their live calls without a card', () => {
+  it('never renders tool results, diffs, or thought text in the transcript', () => {
     const renderer = render(
       <ActivityTimeline
         active
         items={[
           {
+            kind: 'thinking',
+            title: 'Thinking',
+            text: 'PRIVATE THOUGHT SENTINEL',
+          },
+          {
+            kind: 'tool',
+            id: 'edit',
+            title: 'Edit files',
+            toolKind: 'edit',
+            status: 'completed',
+            output: 'RAW TOOL RESULT SENTINEL',
+            files: [{ path: 'apps/mobile/Ledger.tsx', diff: 'INLINE DIFF SENTINEL' }],
+          },
+          {
+            kind: 'tool',
+            id: 'execute',
+            title: 'Tool',
+            toolKind: 'execute',
+            command: 'RAW COMMAND SENTINEL --print-everything',
+            status: 'completed',
+          },
+          {
             kind: 'summary',
             title: 'read receipts',
-            observed: [
-              { verb: 'read', target: 'Ledger.tsx', result: 'Found the active ledger row.' },
-            ],
+            observed: [{ verb: 'read', target: 'Ledger.tsx', result: 'OBSERVED RESULT SENTINEL' }],
           },
         ]}
+        messageDraft="Conversational answer"
       />,
     );
 
-    const result = renderer.root.findByProps({ testID: 'activity-result-observed-0' });
-    expect(result.props.children).toBe('Found the active ledger row.');
-    expect(result.props.style).toMatchObject({
-      borderLeftWidth: 2,
-      borderLeftColor: groknight.borderQuiet,
-    });
+    const rendered = JSON.stringify(renderer.toJSON());
+    expect(rendered).toContain('Conversational answer');
+    expect(rendered).not.toContain('PRIVATE THOUGHT SENTINEL');
+    expect(rendered).not.toContain('RAW TOOL RESULT SENTINEL');
+    expect(rendered).not.toContain('RAW COMMAND SENTINEL');
+    expect(rendered).not.toContain('INLINE DIFF SENTINEL');
+    expect(rendered).not.toContain('OBSERVED RESULT SENTINEL');
+    expect(
+      renderer.root.findAll((node: { props: { testID?: string } }) =>
+        node.props.testID?.startsWith('activity-result-'),
+      ),
+    ).toHaveLength(0);
     expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
   });
 
-  it('recedes thinking copy: prose family, one step down, dimmed, upright', () => {
-    const renderer = render(<ActivityTimeline active items={TOOLS} thought="Still checking" />);
-    const thought = renderer.root.findByProps({ testID: 'activity-thought-draft' });
-    expect(thought.props.textStyle).toMatchObject({
-      fontFamily: groknight.proseRegular,
-      color: groknight.ledgerQuiet,
-      fontSize: 14,
-      lineHeight: 22,
-    });
-    // Upright: no simulated italics — the shipped family has no italic cut.
-    expect(thought.props.textStyle).not.toHaveProperty('fontStyle');
+  it('keeps the terse failure verdict in the one-line mechanism row', () => {
+    const renderer = render(<ActivityTimeline active items={TOOLS} />);
     const verdict = renderer.root.findByProps({ testID: 'activity-verdict-failure' });
     expect(verdict.props.children).toBe('×');
     expect(verdict.props.style).toContainEqual(

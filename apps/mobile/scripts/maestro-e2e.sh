@@ -6,8 +6,10 @@ set -euo pipefail
 
 readonly DEVICE="${MAESTRO_DEVICE:-emulator-5554}"
 readonly APP_ID="app.usebeeline.mobile"
-readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-readonly REPO_DIR="$(cd "$MOBILE_DIR/../.." && pwd -P)"
+MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly MOBILE_DIR
+REPO_DIR="$(cd "$MOBILE_DIR/../.." && pwd -P)"
+readonly REPO_DIR
 readonly APK="$MOBILE_DIR/android/app/build/outputs/apk/release/app-release.apk"
 readonly FLOW="${MAESTRO_FLOW:-$MOBILE_DIR/e2e/smoke.yaml}"
 readonly EXPECTED_UPDATE_ID="${EXPECTED_ANDROID_UPDATE_ID:-}"
@@ -35,7 +37,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if ! adb devices | awk 'NR > 1 { print $1 }' | grep -Fxq "$DEVICE"; then
+# shellcheck disable=SC1091 # The dynamic sibling path is covered by shellcheck's full-script run.
+source "$MOBILE_DIR/scripts/android-device-ready.sh"
+if ! wait_for_android_device_ready; then
   echo "Maestro requires the existing Android emulator $DEVICE." >&2
   exit 1
 fi
@@ -189,15 +193,24 @@ read_seed_value() {
   printf '%s' "$value"
 }
 
-readonly SMOKE_NSEC="$(read_seed_value MAESTRO_SMOKE_NSEC)"
-readonly SMOKE_HANDLE="$(read_seed_value MAESTRO_SMOKE_HANDLE)"
-readonly SMOKE_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_WORKSPACE_ID)"
-readonly SMOKE_SWITCH_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_SWITCH_WORKSPACE_ID)"
-readonly SMOKE_SWITCH_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_SWITCH_ROOM_ID)"
-readonly SMOKE_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_ROOM_ID)"
-readonly SMOKE_AGENT_NSEC="$(read_seed_value MAESTRO_SMOKE_AGENT_NSEC)"
-readonly SMOKE_CORNER_ID="$(read_seed_value MAESTRO_SMOKE_CORNER_ID)"
-readonly SMOKE_LATEST_MESSAGE_ID="$(read_seed_value MAESTRO_SMOKE_LATEST_MESSAGE_ID)"
+SMOKE_NSEC="$(read_seed_value MAESTRO_SMOKE_NSEC)"
+readonly SMOKE_NSEC
+SMOKE_HANDLE="$(read_seed_value MAESTRO_SMOKE_HANDLE)"
+readonly SMOKE_HANDLE
+SMOKE_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_WORKSPACE_ID)"
+readonly SMOKE_WORKSPACE_ID
+SMOKE_SWITCH_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_SWITCH_WORKSPACE_ID)"
+readonly SMOKE_SWITCH_WORKSPACE_ID
+SMOKE_SWITCH_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_SWITCH_ROOM_ID)"
+readonly SMOKE_SWITCH_ROOM_ID
+SMOKE_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_ROOM_ID)"
+readonly SMOKE_ROOM_ID
+SMOKE_AGENT_NSEC="$(read_seed_value MAESTRO_SMOKE_AGENT_NSEC)"
+readonly SMOKE_AGENT_NSEC
+SMOKE_CORNER_ID="$(read_seed_value MAESTRO_SMOKE_CORNER_ID)"
+readonly SMOKE_CORNER_ID
+SMOKE_LATEST_MESSAGE_ID="$(read_seed_value MAESTRO_SMOKE_LATEST_MESSAGE_ID)"
+readonly SMOKE_LATEST_MESSAGE_ID
 
 # A separate registered agent waits for the device's actual Room and corner
 # messages, then responds. This verifies live relay delivery without requiring

@@ -9,6 +9,9 @@ vi.mock('expo-secure-store', () => ({
   getItemAsync: secureStore.get,
   deleteItemAsync: secureStore.remove,
 }));
+vi.mock('@/buzz/runtime-config', () => ({
+  getBuzzRuntimeConfig: () => ({ relayUrl: 'https://relay.test' }),
+}));
 
 const {
   canConfirmNewKeyBackup,

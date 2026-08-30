@@ -178,11 +178,9 @@ For a source-only flow iteration after a successful build, reuse the current APK
 MAESTRO_SKIP_BUILD=1 npm run e2e
 ```
 
-The stable smoke flow deliberately does not cover the transitional Corner UI. The
-planned contract is recorded in [`e2e/corner-session.todo.yaml`](./e2e/corner-session.todo.yaml):
-use [`../../scripts/ui-demo-provision.ts`](../../scripts/ui-demo-provision.ts) to seed
-the real corner/review fixture, then assert the redesigned feed, presence states, and
-live-agent steer delivery once those selectors are settled.
+The stable smoke flow covers the current Corner session: it opens a working Corner,
+checks the header and roster-backed agent state, sends a steer, observes the relay-backed
+agent reply, and verifies back navigation to the parent Room.
 
 ## Expo web (headless-verifiable surface)
 

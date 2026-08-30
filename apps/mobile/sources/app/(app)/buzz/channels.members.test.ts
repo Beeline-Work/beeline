@@ -8,7 +8,8 @@ const legacyAgentsSource = readFileSync(path.join(__dirname, 'agents.tsx'), 'utf
 describe('Workspace Members entry point', () => {
   it('offers one header entry that opens the unified Members page', () => {
     expect(source.match(/testID="workspace-members"/g)).toHaveLength(1);
-    expect(source).toContain('`/buzz/members?communityId=${encodeURIComponent(activeCommunityId)}`');
+    expect(source).toContain("pathname: '/buzz/members'");
+    expect(source).toContain('params: { communityId: activeCommunityId }');
     expect(source).not.toContain('accessibilityLabel={`${WORKSPACE_LABEL} Agents`}');
     expect(source).not.toContain('/buzz/agents?communityId=');
   });

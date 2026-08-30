@@ -259,6 +259,42 @@ esac
     expect(workflow).not.toContain("require('node:child_process')");
   });
 
+  it('accepts dispatch delivery initialization without a push before sha', () => {
+    const before = spawnSync('git', ['rev-parse', 'HEAD~2'], {
+      cwd: mobileRoot,
+      encoding: 'utf8',
+    }).stdout.trim();
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: mobileRoot,
+      encoding: 'utf8',
+    }).stdout.trim();
+    const expected = spawnSync('git', ['rev-list', '--reverse', `${before}..${head}`], {
+      cwd: mobileRoot,
+      encoding: 'utf8',
+    }).stdout.trim().split(/\s+/);
+
+    for (const [name, beforeArgs] of [
+      ['push', ['--before', before]],
+      ['dispatch-empty', ['--before', '']],
+      ['dispatch-omitted', []],
+    ]) {
+      const directory = mkdtempSync(join(tmpdir(), `beeline-ota-${name}-before-`));
+      const ledgerPath = join(directory, 'ledger.json');
+      const indexPath = join(directory, 'index.json');
+      writeFileSync(indexPath, JSON.stringify({ schemaVersion: 1, merges: [{ sha: before }] }));
+
+      const result = runRelease([
+        'init-delivery', '--sha', head, '--ref', 'main', '--run-id', `${name}-run`,
+        ...beforeArgs, '--ledger', ledgerPath, '--index', indexPath,
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.slice(1).map(
+        (merge: { sha: string }) => merge.sha,
+      )).toEqual(expected);
+    }
+  });
+
   it('selects only the newest published delivery for receipt reconciliation', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-delivery-target-'));
     const indexPath = join(directory, 'index.json');

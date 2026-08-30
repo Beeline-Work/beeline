@@ -34,7 +34,9 @@ function parseArgs(argv) {
     if (!token.startsWith('--')) fail(`Unexpected argument: ${token}`);
     const key = token.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
     const value = rest[index + 1];
-    if (!value || value.startsWith('--')) fail(`Missing value for ${token}`);
+    if (value === undefined || value.startsWith('--') || (!value && token !== '--before')) {
+      fail(`Missing value for ${token}`);
+    }
     options[key] = value;
     index += 1;
   }

@@ -21,6 +21,7 @@
     "stack:up": "docker compose -f relay-stack/compose.yml up -d --build",
     "stack:down": "docker compose -f relay-stack/compose.yml down -v",
     "verify:local-room-indexer": "npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client && node --import tsx scripts/verify-local-room-indexer.ts",
+    "prove:private-pairing": "npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client && node --import tsx scripts/prove-private-pairing.ts",
     "smoke": "node --import tsx scripts/smoke.ts",
     "test:deploy": "node --test scripts/deploy-relay-host.test.mjs",
     "prove": "node --import tsx scripts/money-shot.ts",

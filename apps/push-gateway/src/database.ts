@@ -73,6 +73,22 @@ export async function migrateRoomReadMarks(database: DatabaseQueryable): Promise
   await database.query(ROOM_READ_MARK_FUNCTION_SQL);
 }
 
+const AGENT_PAIRING_CLAIM_SQL = `
+CREATE TABLE IF NOT EXISTS beeline_agent_pairing_claims (
+  token_hash text PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  community_id uuid NOT NULL,
+  workspace_id uuid NOT NULL,
+  minter_pubkey bytea NOT NULL,
+  agent_pubkey bytea NOT NULL,
+  claimed_at timestamptz NOT NULL DEFAULT now()
+);
+`;
+
+/** Durable single-use reservation for private-Workspace agent pairing codes. */
+export async function migrateAgentPairingClaims(database: DatabaseQueryable): Promise<void> {
+  await database.query(AGENT_PAIRING_CLAIM_SQL);
+}
+
 const DELETE_SNAPSHOT_CONTRACT_SQL = [
   'DROP TRIGGER IF EXISTS beeline_snapshot_events_dirty ON events',
   'DROP TRIGGER IF EXISTS beeline_snapshot_channels_dirty ON channels',
@@ -324,6 +340,10 @@ export class PostgresMaterializerStore implements DatabaseTransactional {
 
   async migrateRoomReadMarks(): Promise<void> {
     await migrateRoomReadMarks(this.pool);
+  }
+
+  async migrateAgentPairingClaims(): Promise<void> {
+    await migrateAgentPairingClaims(this.pool);
   }
 
   async deleteSnapshotContract(): Promise<void> {

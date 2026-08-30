@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const bodyDirectory = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = resolve(bodyDirectory, 'src/cli.ts');
+const pairCommandPath = resolve(bodyDirectory, 'src/pair-command.ts');
 // An absolute path so tsx's ESM loader hook resolves regardless of the
 // spawned process's cwd (which these tests deliberately point elsewhere).
 const tsxLoaderPath = resolve(bodyDirectory, '../../node_modules/tsx/dist/loader.mjs');
@@ -178,7 +179,7 @@ describe('beeline pair — pairing code admission', () => {
     );
     expect(stdout).toBe('');
 
-    const source = await readFile(cliPath, 'utf8');
+    const source = await readFile(pairCommandPath, 'utf8');
     const runPairCommand = source.slice(
       source.indexOf('async function runPairCommand('),
       source.indexOf('/** Launch one stored runtime daemon'),
@@ -210,7 +211,7 @@ describe('beeline pair — pairing code admission', () => {
 
 describe('beeline pair — repository resolution', () => {
   it('never derives a repository binding from cwd when --repo is absent', async () => {
-    const source = await readFile(resolve(bodyDirectory, 'src/cli.ts'), 'utf8');
+    const source = await readFile(pairCommandPath, 'utf8');
     const resolver = source.slice(
       source.indexOf('function resolvePairRepository('),
       source.indexOf('/**\n * Check `--model`', source.indexOf('function resolvePairRepository(')),
@@ -363,7 +364,7 @@ describe('beeline pair — one live spinner at a time', () => {
   // pins the source structure that guarantees it (same technique as the
   // mobile design tests).
   it('never starts a spinner around the interactive questions', async () => {
-    const source = await readFile(resolve(bodyDirectory, 'src/cli.ts'), 'utf8');
+    const source = await readFile(pairCommandPath, 'utf8');
     const pairOneAgent = source.slice(
       source.indexOf('async function pairOneAgent('),
       source.indexOf('function printPairResult('),

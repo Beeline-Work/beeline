@@ -175,7 +175,11 @@ import { CornerStatePublisher } from './corner-state.js';
 import { isArchivedChannelError } from './archived-channel.js';
 import type { BodyConfig, SessionMode } from './config.js';
 import { publishCritical } from './publish-delivery.js';
-import { realignAnnouncement, realignWorktreeOntoTarget } from './realign.js';
+import {
+  realignAnnouncement,
+  realignWorktreeOntoTarget,
+  type CornerRealignResult,
+} from './realign.js';
 import type { RepositoryTruth, RepositoryTruthCheckpoint } from './repository-truth.js';
 import {
   AccessRefusalLimiter,
@@ -742,13 +746,10 @@ export const CORNER_ARCHIVE_FALLBACK_SUMMARY = 'Corner closed without a complete
 export const CORNER_TURN_SUMMARY_INSTRUCTION =
   'Finish with only a concise user-facing summary: one sentence or up to three short bullets saying what changed, which checks passed, and what you deliberately left out (say "Nothing" when there was no deliberate omission). Do not narrate your process, restate the request, or include multi-paragraph detail.';
 export const CORNER_MERGE_GATE_INSTRUCTION =
-  'Do not tell the human to approve this work or claim that a review target exists. After your turn, Beeline checks the worktree and publishes the review target itself. If that check rejects the work, you will receive its exact reason as a follow-up instruction.' +
+  'Do not tell the human to approve this work or claim that a review target exists. After your turn, Beeline checks the worktree and publishes the review target itself. If that check rejects the work, Beeline reports the gate status separately and preserves your reply; it does not start a hidden correction turn.' +
   ' An external merge/validation gate you run (e.g. no-mistakes) shares this rule: if it fails to initialize or run, quote its exact error in your reply, report the work as NOT ready, and never ask for approval — an approval the human sends while no review target is published goes nowhere.';
 export const CORNER_TARGET_SYNC_INSTRUCTION =
-  'Before Beeline can publish a merge target, bring the feature branch up to date with the latest tip of its fixed target branch. Permission to fetch and merge or rebase the target into the feature branch is always implied for every corner and every agent: do it without asking the human again, resolve conflicts in the feature worktree, rerun relevant checks, and commit the result. Never modify the target branch itself.';
-
-/** Initial rejection plus two bounded agent correction turns. */
-export const MERGE_READY_GATE_MAX_REJECTIONS = 3;
+  'Do not spend model time fetching, merging, or rebasing the target branch merely to prepare a review. After your turn, Beeline synchronizes a clean committed feature branch with the current target tip itself. If that deterministic sync conflicts, the review remains available and Beeline supplies the conflict context in one automatic resolution turn only after the human presses merge.';
 
 /**
  * A corner's live draft is visible before the host can inspect git.
@@ -1064,6 +1065,12 @@ export interface SubchannelInfo {
   /** Exact reason from the latest rejected merge-readiness check. Cleared only
    *  after a real review target is published. */
   lastMergeNotReadyReason?: string;
+  /** A merge-gate verdict parks conclude-watch until a human starts a new turn. */
+  mergeGateBlocked?: { reason: string; targetTip?: string };
+  /** Approval whose bounded landing attempt parked; only a newer press retries it. */
+  landingBlockedApprovalId?: string;
+  /** Process-local consecutive agent-message guard, seeded on restore. */
+  lastAgentMessageContent?: string;
   /** Signed human approval for this corner's one merge into its target branch. */
   humanMergeApproval?: {
     id: string;
@@ -1361,6 +1368,9 @@ export type RoomEditPolicy = 'repository' | 'named-repository' | 'direct-message
  *  `skip` is "not this tick" (a later poll retries); `failed` carries the raw
  *  reason, humanized once at the publish site. */
 type LandOutcome = { kind: 'skip' } | { kind: 'landed' } | { kind: 'failed'; reason: string };
+
+type LandingRealignOutcome =
+  { kind: 'ready'; targetTip: string } | { kind: 'blocked'; reason: string; targetTip?: string };
 
 /** A Room cannot safely start unless its fixed inspection MCP is available. */
 export class ReadOnlyToolsUnavailableError extends Error {
@@ -1746,6 +1756,8 @@ export type DeliveryRetryPosture = 'auto' | 'realigning' | 'blocked';
  * only after this many logged refusals naming the precise reason.
  */
 export const MAX_LAND_SUMMARY_ATTEMPTS = 3;
+/** Distinct target generations one merge-button press may chase before parking. */
+export const MAX_LANDING_TARGET_SYNC_ROUNDS = 3;
 
 /** The message of a caught unknown, without a stack, for a one-line log. */
 function errorText(error: unknown): string {
@@ -4799,6 +4811,8 @@ export class Body {
       extraTags?: readonly string[][];
       prepareTags?: (reply: string) => Promise<readonly string[][]>;
       concise?: boolean;
+      /** Suppress a byte-identical consecutive corner reply. */
+      dedupeAgainst?: string;
       captureEvent?: (event: NostrEvent) => void;
     } = {},
   ): Promise<string> {
@@ -4820,6 +4834,10 @@ export class Body {
     // completed turn as a failure to report.
     if (options.concise) reply = conciseCornerTurnSummary(reply) || fallback;
     if (!reply) throw new Error('agent returned an empty reply');
+    if (uploaded.attachments.length === 0 && reply === options.dedupeAgainst) {
+      console.log(`[body] suppressed duplicate consecutive agent reply in ${channelId}`);
+      return reply;
+    }
     const extraTags = options.prepareTags
       ? await options.prepareTags(reply)
       : (options.extraTags ?? []);
@@ -5123,14 +5141,21 @@ export class Body {
             createdAt: requestEvent.created_at,
           }
         : undefined;
-      const ready = [...events]
-        .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
-        .find((event) =>
-          event.tags.some(
-            (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === LANDED_TAG),
-          ),
-        );
+      const newestEvents = [...events].sort(
+        (a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id),
+      );
+      const ready = newestEvents.find((event) =>
+        event.tags.some(
+          (tag) => tag[0] === 't' && (tag[1] === MERGE_READY_TAG || tag[1] === LANDED_TAG),
+        ),
+      );
       const tip = ready ? tagValue(ready, 'tip') : undefined;
+      const lastAgentMessageContent = newestEvents.find(
+        (event) => tagValue(event, 't') === 'agent-message',
+      )?.content;
+      const latestLandingBlock = newestEvents.find(
+        (event) => tagValue(event, 't') === 'landing-blocked',
+      );
       const participantPubkeys = await this.cornerParticipants(subchannelId, [
         ...(request ? [request.authorPubkey] : []),
       ]);
@@ -5146,6 +5171,10 @@ export class Body {
         ...(restoredMission ? { mission: restoredMission } : {}),
         taskDescription: restoredTaskDescription,
         participantPubkeys,
+        ...(lastAgentMessageContent ? { lastAgentMessageContent } : {}),
+        ...(latestLandingBlock && tagValue(latestLandingBlock, 'approval')
+          ? { landingBlockedApprovalId: tagValue(latestLandingBlock, 'approval') }
+          : {}),
         ...(restoredPlan ? { taskPlan: restoredPlan } : {}),
         ...(request ? { request } : {}),
         ...(tip
@@ -9484,30 +9513,16 @@ export class Body {
     });
   }
 
-  private mergeGateFeedbackPrompt(reason: string, rejection: number, terminal: boolean): string {
-    return [
-      `The merge gate rejected this corner (${rejection}/${MERGE_READY_GATE_MAX_REJECTIONS}) and did not publish a merge target.`,
-      '',
-      `Gate reason:\n${reason}`,
-      '',
-      terminal
-        ? 'Stop trying to make this corner merge-ready. Report the blocker honestly and do not claim the work is ready or ask the human to approve it.'
-        : 'Treat this as actionable feedback. Inspect the worktree, resolve the stated condition, and commit the intended project change. Remove or relocate unintended files instead of committing them. Then finish with a concise summary; Beeline will run the gate again.',
-      'There is nothing for the human to approve unless Beeline publishes a merge target after that check.',
-    ].join('\n');
-  }
-
   /**
-   * Keep a corner turn private until the host has published the review target
-   * it refers to. A rejected verdict is fed back through the same pinned ACP
-   * session as ordinary corner work, then checked again. The final rejection
-   * still reaches the agent, but Body publishes a deterministic blocker so an
-   * ignored instruction can never turn into a false approval request.
+   * Run the deterministic merge gate once, then publish the model's original
+   * answer regardless of the verdict. Gate failures are daemon-authored status
+   * records; they never become hidden correction prompts or replacement agent
+   * speech.
    */
   private async finishCornerTurnAgainstMergeGate(
     info: SubchannelInfo,
     initialResult: PromptResult & { withheldMergeClaim?: boolean },
-    attribution: ModelTurnAttribution,
+    _attribution: ModelTurnAttribution,
     fallback: string,
     options: {
       replyTo?: string;
@@ -9516,72 +9531,40 @@ export class Body {
       captureEvent?: (event: NostrEvent) => void;
     } = {},
   ): Promise<boolean> {
-    let result = initialResult;
     const publishResult = async (): Promise<void> => {
-      const extraTags = await options.extraTagsForText?.(result.agentText);
+      const extraTags = await options.extraTagsForText?.(initialResult.agentText);
       info.mergeSummary = await this.publishAgentResult(
         info.subchannelId,
         info.session,
-        result,
+        initialResult,
         fallback,
         {
           ...options,
           extraTags,
           concise: true,
+          dedupeAgainst: info.lastAgentMessageContent,
         },
       );
+      info.lastAgentMessageContent = info.mergeSummary;
     };
-    for (let rejection = 1; rejection <= MERGE_READY_GATE_MAX_REJECTIONS; rejection++) {
-      if (info.archived) return false;
-      if (await this.publishMergeReady(info)) {
-        await publishResult();
-        return true;
-      }
-
-      // `publishMergeReady` also returns false when there is no repository,
-      // the corner closed concurrently, or HEAD cannot be read. Those paths
-      // did not publish a merge-not-ready verdict, so there is no gate truth
-      // to feed back and no basis for spending three extra model turns.
-      if (!info.lastMergeNotReadyReason) {
-        await publishResult();
-        return false;
-      }
-      const reason = info.lastMergeNotReadyReason;
-      const terminal = rejection === MERGE_READY_GATE_MAX_REJECTIONS;
-      const feedback = this.mergeGateFeedbackPrompt(reason, rejection, terminal);
-      const feedbackResult = await this.promptAgent(info.session, feedback, {
-        ...attribution,
-        channelId: info.subchannelId,
-        silent: true,
-      });
-      if (info.archived) return false;
-
-      if (terminal) {
-        const blocker =
-          `I stopped after ${MERGE_READY_GATE_MAX_REJECTIONS} merge-gate rejections. ` +
-          `${reason} No merge target was published, so there is nothing to approve. ` +
-          'This corner needs human attention before it can continue.';
-        info.mergeSummary = await this.publishAgentResult(
-          info.subchannelId,
-          info.session,
-          {
-            agentText: blocker,
-            updates: [],
-            toolCalls: [],
-            stopReason: 'merge-gate-blocked',
-          },
-          blocker,
-          {
-            ...options,
-            extraTags: await options.extraTagsForText?.(blocker),
-          },
-        );
-        return false;
-      }
-
-      result = feedbackResult;
+    if (info.archived) return false;
+    let ready = false;
+    try {
+      ready = await this.publishMergeReady(info);
+    } catch (error) {
+      const reason = `The merge gate could not complete: ${summarizeGitFailure(String(error))}`;
+      info.lastMergeNotReadyReason = reason;
+      info.mergeGateBlocked = { reason };
+      await postControlMessage(info.subchannelId, this.agentIdentity, reason, [
+        ['t', 'merge-gate-blocked'],
+        ['status', 'needs-attention'],
+      ]).catch(() => undefined);
     }
-    return false;
+    if (!ready && info.lastMergeNotReadyReason) {
+      info.mergeGateBlocked ??= { reason: info.lastMergeNotReadyReason };
+    }
+    if (!info.archived) await publishResult();
+    return ready;
   }
 
   /** Start the requested work without blocking discovery/UI updates. */
@@ -9897,6 +9880,28 @@ export class Body {
       : { reason: `Could not resolve the local target branch ${targetBranch}.` };
   }
 
+  /** Rebase onto the exact target generation verified at the landing endpoint. */
+  private async realignCornerToTarget(
+    info: SubchannelInfo,
+    targetBranch: string,
+    targetTip: string,
+  ): Promise<CornerRealignResult> {
+    const boundRepo = info.boundRepo!;
+    const remoteName = boundRepo.remoteName;
+    let remoteUrl: string | undefined;
+    if (remoteName) {
+      const pushUrl = await git(info.worktreePath, ['remote', 'get-url', '--push', remoteName]);
+      remoteUrl = pushUrl.ok && pushUrl.stdout.trim() ? pushUrl.stdout.trim() : undefined;
+    }
+    return realignWorktreeOntoTarget(info.worktreePath, {
+      ...(remoteName ? { remoteName } : {}),
+      ...(remoteUrl ? { remoteUrl } : {}),
+      targetBranch,
+      targetTip,
+      runGit: async (cwd, args) => await this.remoteGit(boundRepo, cwd, args),
+    });
+  }
+
   /** Build the one complete payload stored by content hash. */
   private async buildChangeReviewArtifact(
     info: SubchannelInfo,
@@ -10014,7 +10019,7 @@ export class Body {
   private async publishMergeReady(info: SubchannelInfo): Promise<boolean> {
     const boundRepo = info.boundRepo;
     if (!boundRepo || info.archived) return false;
-    const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+    let tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(tip)) return false;
     // A restored WAITING/review word without its daemon-owned merge target is
     // already unproved. Drop it before any forge or relay I/O so a slow or
@@ -10027,23 +10032,46 @@ export class Body {
       await this.withdrawMergeReadiness(info);
     }
 
-    const target = {
-      repo: this.repoId(boundRepo),
-      branch: boundRepo.targetBranch ?? 'refs/heads/main',
-      tip,
-      patchId: undefined as string | undefined,
-    };
-    const currentTarget = await this.currentReviewTargetTip(info, target.branch);
-    const targetIsAncestor = Boolean(
+    const targetBranch = boundRepo.targetBranch ?? 'refs/heads/main';
+    const currentTarget = await this.currentReviewTargetTip(info, targetBranch);
+    let targetIsAncestor = Boolean(
       currentTarget.tip &&
       (currentTarget.tip === tip ||
         (await git(info.worktreePath, ['merge-base', '--is-ancestor', currentTarget.tip, tip])).ok),
     );
-    const targetSyncReason = currentTarget.reason
-      ? currentTarget.reason
-      : !targetIsAncestor
-        ? `The feature branch is not up to date with the latest ${target.branch.replace(/^refs\/heads\//, '')} tip (${currentTarget.tip!.slice(0, 12)}). Fetch the current target from its landing remote, merge or rebase it into this feature branch, resolve any conflicts, rerun relevant checks, and commit the result. This synchronization is already authorized; do not ask the human for permission.`
-        : undefined;
+    let targetSyncReason = currentTarget.reason;
+    if (!targetSyncReason && !targetIsAncestor) {
+      const realigned = await this.realignCornerToTarget(info, targetBranch, currentTarget.tip!);
+      if (realigned.status === 'conflict') {
+        // A conflict is deferred to the approved landing transaction. The
+        // work itself is still reviewable against its merge-base, so keep the
+        // merge target mounted and spend no model turn before the owner acts.
+        console.log(
+          `[body] deferred target conflict for ${info.subchannelId} until landing: ${realigned.detail ?? 'conflict'}`,
+        );
+      }
+      if (realigned.status === 'rebased' || realigned.status === 'up-to-date') {
+        tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+        targetIsAncestor =
+          /^[0-9a-f]{40}$/.test(tip) &&
+          (await git(info.worktreePath, ['merge-base', '--is-ancestor', currentTarget.tip!, tip]))
+            .ok;
+        if (!targetIsAncestor) {
+          targetSyncReason = `The target moved again while this corner was being synchronized. Beeline will retry from the newest ${targetBranch.replace(/^refs\/heads\//, '')} tip.`;
+        }
+      } else if (realigned.status !== 'conflict') {
+        targetSyncReason =
+          realignAnnouncement(realigned, info.featureBranch, targetBranch) ??
+          realigned.detail ??
+          `Could not synchronize this corner with ${targetBranch}.`;
+      }
+    }
+    const target = {
+      repo: this.repoId(boundRepo),
+      branch: targetBranch,
+      tip,
+      patchId: undefined as string | undefined,
+    };
     const base = targetIsAncestor
       ? currentTarget.tip!
       : await resolveReviewBaseTip(info.worktreePath, target.branch);
@@ -10088,6 +10116,10 @@ export class Body {
                 ? `No committed change is available for this turn. The current tip matches the review base on ${target.branch}.`
                 : `The branch has ${commitCount} committed ${commitCount === 1 ? 'change' : 'changes'}, but their combined diff against ${target.branch} is empty.`;
       info.lastMergeNotReadyReason = detail;
+      info.mergeGateBlocked = {
+        reason: detail,
+        ...(currentTarget.tip ? { targetTip: currentTarget.tip } : {}),
+      };
       await this.withdrawMergeReadiness(info);
       await postControlMessage(
         info.subchannelId,
@@ -10109,6 +10141,7 @@ export class Body {
       return false;
     }
     info.lastMergeNotReadyReason = undefined;
+    info.mergeGateBlocked = undefined;
     // Snapshot what this review actually contains while the base is still
     // derivable — once the target ref advances to this tip, `base` and `tip`
     // collapse and the landed-work recap could no longer name a single file.
@@ -10538,6 +10571,10 @@ export class Body {
     // grant for this corner's one merge.
     approvals.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
     for (const approval of approvals) {
+      // A bounded landing transaction parks this exact button press. A newer
+      // signed approval is a new retry request; maintenance never re-drives
+      // the blocked approval on its own.
+      if (approval.id === info.landingBlockedApprovalId) continue;
       if (!verifyEvent(approval)) continue;
       if (approval.pubkey === this.agentIdentity.publicKey) continue;
       if (!verifyApproval(approval, approval.pubkey, target, info.subchannelId)) continue;
@@ -10860,19 +10897,24 @@ export class Body {
       let remote = boundRepo?.remoteName;
       let target = info.mergeTarget;
       // Relay-origin repos land through the merge gate, never here.
-      if (info.archived || !boundRepo || boundRepo.ownerHex || !target) continue;
+      if (info.archived || info.landedTip || !boundRepo || boundRepo.ownerHex || !target) continue;
       if (!remote && !boundRepo.localPath) continue;
       if (info.mission) {
         // Standing mission land is deliberately remote-only: local ref writes
         // do not pass through the credential/ref-policy broker.
         if (!remote) continue;
-      } else if (!(await this.findHumanMergeApproval(info, pushedApprovals))) {
-        continue;
+      } else {
+        const approval = await this.findHumanMergeApproval(info, pushedApprovals);
+        if (!approval || approval.id === info.landingBlockedApprovalId) continue;
       }
 
       await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
-      const attemptLanding = async (currentTarget: NonNullable<SubchannelInfo['mergeTarget']>) =>
-        await serializeRepoLanding(this.repoId(boundRepo!), async () => {
+      const approvalId = info.mission?.grantEventId ?? info.humanMergeApproval!.id;
+      info.landingBlockedApprovalId = undefined;
+      const landing = await serializeRepoLanding(this.repoId(boundRepo), async () => {
+        let currentTarget = target!;
+        let syncRounds = 0;
+        for (;;) {
           let currentRepo = boundRepo!;
           let currentRemote = remote;
           if (this.refreshRepositoryTruth) {
@@ -10883,46 +10925,62 @@ export class Body {
           const outcome = currentRemote
             ? await this.landOnDirectRemote(info, currentRemote, currentTarget)
             : await this.landInLocalCheckout(currentRepo.localPath!, currentTarget, info);
-          return { boundRepo: currentRepo, remote: currentRemote, outcome };
-        });
-      let landing = await attemptLanding(target);
+          if (outcome.kind !== 'failed' || !isMovedTargetLandFailure(outcome.reason)) {
+            return {
+              boundRepo: currentRepo,
+              remote: currentRemote,
+              target: currentTarget,
+              outcome,
+            };
+          }
+          if (syncRounds >= MAX_LANDING_TARGET_SYNC_ROUNDS) {
+            return {
+              boundRepo: currentRepo,
+              remote: currentRemote,
+              target: currentTarget,
+              outcome: {
+                kind: 'failed' as const,
+                reason: `the target moved during ${MAX_LANDING_TARGET_SYNC_ROUNDS} consecutive landing rounds`,
+              },
+            };
+          }
+          syncRounds += 1;
+          const realigned = await this.realignMovedTargetForLanding(info, currentTarget);
+          if (realigned.kind === 'blocked') {
+            return {
+              boundRepo: currentRepo,
+              remote: currentRemote,
+              target: currentTarget,
+              outcome: { kind: 'failed' as const, reason: realigned.reason },
+            };
+          }
+          if (!info.mergeTarget) {
+            return {
+              boundRepo: currentRepo,
+              remote: currentRemote,
+              target: currentTarget,
+              outcome: {
+                kind: 'failed' as const,
+                reason: 'the realigned change could not be republished for landing',
+              },
+            };
+          }
+          currentTarget = info.mergeTarget;
+          await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
+        }
+      });
       boundRepo = landing.boundRepo;
       remote = landing.remote;
+      target = landing.target;
       let { outcome } = landing;
       if (outcome.kind === 'skip') continue;
       if (outcome.kind === 'failed') {
-        // A clean target move is deterministic daemon work. Rebase, publish
-        // the rewritten feature tip, and retry this same approved land now;
-        // a suspended harness never enters this path.
-        if (isMovedTargetLandFailure(outcome.reason)) {
-          if (!(await this.realignMovedTargetForLanding(info, target))) continue;
-          target = info.mergeTarget;
-          if (
-            !target ||
-            (!info.mission && !(await this.findHumanMergeApproval(info, pushedApprovals)))
-          ) {
-            continue;
-          }
-          await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
-          landing = await attemptLanding(target);
-          boundRepo = landing.boundRepo;
-          remote = landing.remote;
-          outcome = landing.outcome;
-          if (outcome.kind === 'skip') continue;
-        }
-      }
-      if (outcome.kind === 'failed') {
-        // Say it once. The loop keeps retrying either way; restating an
-        // unchanged refusal every tick is what turned these corners into
-        // hundreds of identical cards.
         const humanized = summarizeGitFailure(outcome.reason);
-        if (info.lastLandFailure?.tip === target.tip && info.lastLandFailure.reason === humanized) {
+        if (info.landingBlockedApprovalId === approvalId) {
           continue;
         }
         info.lastLandFailure = { tip: target.tip, reason: humanized };
-        // State machine: delivery of an APPROVED, PUBLISHED change failed — an
-        // actionable artifact stands, so this waits on a person.
-        this.noteCornerFailure(info);
+        info.landingBlockedApprovalId = approvalId;
         const failureStage = this.landingStageIsInProgress(info, 'pushing') ? 'pushing' : 'failed';
         await this.postLandingStage(info, failureStage, {
           title: failureStage === 'pushing' ? 'Pushing' : 'Landing failed',
@@ -10932,24 +10990,18 @@ export class Body {
         await postControlMessage(
           info.subchannelId,
           this.agentIdentity,
-          `Couldn't land the approved change on ${target.branch.replace(/^refs\/heads\//, '')}: ${humanized}`,
+          `Merge blocked: ${humanized}`,
           [
-            ...RECOVERABLE_CORNER_FAILURE_TAGS,
-            // This loop genuinely re-attempts the same approval on the next
-            // maintenance tick, so an automatic-retry claim here is true.
-            ['retry', 'auto' satisfies DeliveryRetryPosture],
+            ['t', 'landing-blocked'],
+            ['status', 'needs-attention'],
             ['repo', target.repo],
             ['branch', target.branch],
             ['feature', info.featureBranch],
             ['tip', target.tip],
+            ['approval', approvalId],
           ],
         );
-        await this.postParentCornerStatus(
-          info,
-          'needs-attention',
-          'Human-approved delivery failed. Open corner for details.',
-          [['tip', target.tip]],
-        );
+        await this.transitionCornerState(info, 'waiting', 'review');
         continue;
       }
 
@@ -10983,6 +11035,7 @@ export class Body {
         }
       }
       info.landedTip = target.tip;
+      info.landingBlockedApprovalId = undefined;
       if (this.landingStageIsInProgress(info, 'pushing')) {
         await this.postLandingStage(info, 'pushing', { title: 'Pushing', status: 'completed' });
       }
@@ -11059,16 +11112,15 @@ export class Body {
   }
 
   /**
-   * Realign an approved clean corner without waking its harness. A pure rebase
-   * is deterministic git work: the daemon rebases, republishes the rewritten
-   * feature tip, and lets the same landing pass continue under the standing
-   * approval. Dirty/conflicting work is left untouched and surfaced as the
-   * concrete failure instead of waiting behind a suspended ACP session.
+   * Realign an approved corner inside the per-repository landing transaction.
+   * Clean rebases stay daemon-only. A conflict gets exactly one silent model
+   * turn for this target generation, then the host verifies the resulting git
+   * state before the same standing approval continues.
    */
   private async realignMovedTargetForLanding(
     info: SubchannelInfo,
     target: NonNullable<SubchannelInfo['mergeTarget']>,
-  ): Promise<boolean> {
+  ): Promise<LandingRealignOutcome> {
     const branch = target.branch.replace(/^refs\/heads\//, '');
     const approvalId = info.humanMergeApproval?.id ?? target.tip;
     await this.transitionCornerState(info, 'working');
@@ -11076,10 +11128,12 @@ export class Body {
       title: 'Realigning',
       status: 'in_progress',
     });
-    const result = await realignWorktreeOntoTarget(info.worktreePath, {
-      ...(info.boundRepo?.remoteName ? { remoteName: info.boundRepo.remoteName } : {}),
-      targetBranch: target.branch,
-    });
+    const currentTarget = info.boundRepo
+      ? await this.currentReviewTargetTip(info, target.branch)
+      : { reason: 'repository binding is unavailable for automatic target synchronization' };
+    const result = currentTarget.tip
+      ? await this.realignCornerToTarget(info, target.branch, currentTarget.tip)
+      : await realignWorktreeOntoTarget(info.worktreePath, { targetBranch: target.branch });
     if (result.status === 'rebased' || result.status === 'up-to-date') {
       await this.postLandingStage(info, 'realigning', {
         title: 'Realigning',
@@ -11090,7 +11144,134 @@ export class Body {
       // when another daemon already performed the same pure realignment.
       info.mergeTarget = undefined;
       info.lastLandFailure = undefined;
-      if (await this.publishMergeReady(info)) return true;
+      if (await this.publishMergeReady(info)) {
+        return { kind: 'ready', targetTip: currentTarget.tip! };
+      }
+    }
+
+    if (result.status === 'conflict' && currentTarget.tip) {
+      const conflictFiles = result.detail?.trim() || 'the files changed on both branches';
+      const requestId = `landing-resolve:${approvalId}:${currentTarget.tip}`;
+      const sessionId = info.session.logicalSessionId ?? info.session.sessionId;
+      const existingTurn = this.runningAgentTasks.get(info.subchannelId);
+      if (existingTurn) await existingTurn;
+
+      const resolveTask = (async (): Promise<LandingRealignOutcome> => {
+        try {
+          await postAgentTurnStatus(
+            info.subchannelId,
+            this.agentIdentity,
+            requestId,
+            sessionId,
+            'working',
+            this.presenceGenerations.get(info.subchannelId),
+          );
+          await this.promptAgent(
+            info.session,
+            [
+              `The owner approved this corner and Beeline is landing it now. Rebase ${info.featureBranch} onto ${branch} at ${currentTarget.tip}.`,
+              `The daemon's safe rebase attempt found conflicts in: ${conflictFiles}. Resolve every conflict, preserve the corner's intended change and the newer target changes, run the relevant checks, and commit the resolution. Do not ask the human anything and do not stop with a rebase in progress.`,
+              CORNER_TURN_SUMMARY_INSTRUCTION,
+            ].join('\n\n'),
+            {
+              channelId: info.subchannelId,
+              requestId,
+              originalRequestId: approvalId,
+              cause: 'corner-follow-up',
+              silent: true,
+              withholdMergeClaims: true,
+            },
+          );
+          const status = (
+            await git(info.worktreePath, [
+              'status',
+              '--porcelain=v1',
+              '--untracked-files=all',
+              '-z',
+            ])
+          ).stdout;
+          const dirty = projectDirtyStatus(
+            info.worktreePath,
+            status,
+            info.session.agentPrivateState,
+          );
+          const head = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
+          const containsTarget =
+            /^[0-9a-f]{40}$/.test(head) &&
+            (
+              await git(info.worktreePath, [
+                'merge-base',
+                '--is-ancestor',
+                currentTarget.tip!,
+                head,
+              ])
+            ).ok;
+          if (dirty.length > 0 || !containsTarget) {
+            const reason = dirty.length
+              ? `conflict resolution left uncommitted paths: ${dirty.join(', ')}`
+              : `conflict resolution did not put ${info.featureBranch} on ${branch} at ${currentTarget.tip!.slice(0, 12)}`;
+            await postAgentTurnStatus(
+              info.subchannelId,
+              this.agentIdentity,
+              requestId,
+              sessionId,
+              'failed',
+              this.presenceGenerations.get(info.subchannelId),
+            );
+            return { kind: 'blocked', reason, targetTip: currentTarget.tip };
+          }
+          info.mergeTarget = undefined;
+          info.lastLandFailure = undefined;
+          const ready = await this.publishMergeReady(info);
+          await postAgentTurnStatus(
+            info.subchannelId,
+            this.agentIdentity,
+            requestId,
+            sessionId,
+            ready ? 'complete' : 'failed',
+            this.presenceGenerations.get(info.subchannelId),
+          );
+          if (!ready) {
+            return {
+              kind: 'blocked',
+              reason: info.lastMergeNotReadyReason ?? 'resolved branch could not be revalidated',
+              targetTip: currentTarget.tip,
+            };
+          }
+          return { kind: 'ready', targetTip: currentTarget.tip! };
+        } catch (error) {
+          await postAgentTurnStatus(
+            info.subchannelId,
+            this.agentIdentity,
+            requestId,
+            sessionId,
+            'failed',
+            this.presenceGenerations.get(info.subchannelId),
+          ).catch(() => undefined);
+          return {
+            kind: 'blocked',
+            reason: summarizeGitFailure(errorText(error)),
+            targetTip: currentTarget.tip,
+          };
+        }
+      })();
+      this.runningAgentTasks.set(
+        info.subchannelId,
+        resolveTask.then(() => undefined),
+      );
+      try {
+        const resolved = await resolveTask;
+        if (resolved.kind === 'ready') {
+          await this.postLandingStage(info, 'realigning', {
+            title: 'Realigning',
+            status: 'completed',
+          });
+        }
+        return resolved;
+      } finally {
+        this.runningAgentTasks.delete(info.subchannelId);
+        await this.runDeferredLandArchive(info.subchannelId);
+      }
     }
 
     const reason =
@@ -11100,34 +11281,11 @@ export class Body {
           result.detail ??
           `could not realign with ${branch}`);
     const humanized = summarizeGitFailure(reason);
-    info.lastLandFailure = { tip: target.tip, reason: humanized };
-    this.noteCornerFailure(info);
-    await this.postLandingStage(info, 'realigning', {
-      title: 'Realigning',
-      status: 'failed',
-      output: humanized,
-    });
-    await postControlMessage(
-      info.subchannelId,
-      this.agentIdentity,
-      `Couldn't realign the approved change with ${branch}: ${humanized}`,
-      [
-        ...RECOVERABLE_CORNER_FAILURE_TAGS,
-        ['retry', 'blocked' satisfies DeliveryRetryPosture],
-        ['repo', target.repo],
-        ['branch', target.branch],
-        ['feature', info.featureBranch],
-        ['tip', target.tip],
-        ['approval', approvalId],
-      ],
-    );
-    await this.postParentCornerStatus(
-      info,
-      'needs-attention',
-      'Approved delivery needs attention. Open corner for details.',
-      [['tip', target.tip]],
-    );
-    return false;
+    return {
+      kind: 'blocked',
+      reason: humanized,
+      ...(currentTarget.tip ? { targetTip: currentTarget.tip } : {}),
+    };
   }
 
   /**
@@ -12123,16 +12281,20 @@ export class Body {
   /** Run relay-origin gate attempts and project their daemon-owned stages. */
   private async pollMergeGateApprovals(
     mergeGate: DurableMergeGate,
-    allowImmediateRealign = true,
     pushedApprovals: readonly NostrEvent[] = [],
   ): Promise<void> {
     for (const info of this.subchannels.values()) {
-      if (info.archived || !info.boundRepo?.ownerHex || !info.mergeTarget) continue;
+      if (info.archived || info.landedTip || !info.boundRepo?.ownerHex || !info.mergeTarget)
+        continue;
       if (!(await this.findHumanMergeApproval(info, pushedApprovals))) continue;
       await this.postLandingStage(info, 'running-gate', { title: 'Running gate' });
     }
 
     const attempts = await mergeGate.poll(pushedApprovals, {
+      shouldAttempt: (attempt) => {
+        const info = this.subchannels.get(attempt.candidate.subchannelId);
+        return !info || info.landingBlockedApprovalId !== attempt.approvalId;
+      },
       onAttemptStart: async (attempt) => {
         const info = this.subchannels.get(attempt.candidate.subchannelId);
         if (info && !info.archived) {
@@ -12142,8 +12304,19 @@ export class Body {
           });
         }
       },
+      maxMovedTargetRounds: MAX_LANDING_TARGET_SYNC_ROUNDS,
+      onMovedTarget: async (attempt) => {
+        const info = this.subchannels.get(attempt.candidate.subchannelId);
+        const target = info?.mergeTarget;
+        if (!info || info.archived || !target) {
+          return { retry: false, reason: 'the corner review target is no longer available' };
+        }
+        const realigned = await this.realignMovedTargetForLanding(info, target);
+        return realigned.kind === 'ready'
+          ? { retry: true }
+          : { retry: false, reason: realigned.reason };
+      },
     });
-    let realigned = false;
     for (const attempt of attempts) {
       console.log(
         `[gate] ${attempt.outcome.merged ? 'LANDED' : attempt.outcome.reason} ` +
@@ -12152,6 +12325,7 @@ export class Body {
       const info = this.subchannels.get(attempt.candidate.subchannelId);
       if (attempt.outcome.merged) {
         if (info && !info.archived && info.mergeTarget) {
+          info.landingBlockedApprovalId = undefined;
           info.landedTip = info.mergeTarget.tip;
           if (this.landingStageIsInProgress(info, 'pushing')) {
             await this.postLandingStage(info, 'pushing', {
@@ -12182,17 +12356,7 @@ export class Body {
       }
       if (!info || info.archived) continue;
       const target = info.mergeTarget;
-      if (
-        allowImmediateRealign &&
-        target &&
-        isMovedTargetLandFailure(attempt.outcome.reason) &&
-        (await this.realignMovedTargetForLanding(info, target))
-      ) {
-        realigned = true;
-        continue;
-      }
-
-      this.noteCornerFailure(info);
+      if (info.landingBlockedApprovalId === attempt.approvalId) continue;
       const humanized = summarizeGitFailure(attempt.outcome.reason);
       const failureStage = this.landingStageIsInProgress(info, 'pushing') ? 'pushing' : 'failed';
       await this.postLandingStage(info, failureStage, {
@@ -12200,14 +12364,19 @@ export class Body {
         status: 'failed',
         output: humanized,
       });
-      const failureTags: string[][] = [...RECOVERABLE_CORNER_FAILURE_TAGS];
+      const failureTags: string[][] = [
+        ['t', 'landing-blocked'],
+        ['status', 'needs-attention'],
+        ['approval', attempt.approvalId],
+      ];
       if (target) {
         failureTags.push(['repo', target.repo], ['branch', target.branch], ['tip', target.tip]);
       }
+      info.landingBlockedApprovalId = attempt.approvalId;
       await postControlMessage(
         attempt.candidate.subchannelId,
         this.agentIdentity,
-        `Merge approval could not be landed yet: ${humanized}`,
+        `Merge blocked: ${humanized}`,
         failureTags,
       ).catch((error) =>
         console.error(
@@ -12215,22 +12384,8 @@ export class Body {
           error,
         ),
       );
-      await this.postParentCornerStatus(
-        info,
-        'needs-attention',
-        'Delivery failed. Open corner for details.',
-        target ? [['tip', target.tip]] : [],
-      ).catch((error) =>
-        console.error(
-          `[body] failed to publish parent status for merge-gate failure ${attempt.candidate.subchannelId}:`,
-          error,
-        ),
-      );
+      if (target) await this.transitionCornerState(info, 'waiting', 'review');
     }
-
-    // A pure rebase publishes a new candidate synchronously. Give the gate one
-    // immediate second look under the same standing approval, never a timer.
-    if (realigned) await this.pollMergeGateApprovals(mergeGate, false, pushedApprovals);
   }
 
   /**
@@ -12262,7 +12417,7 @@ export class Body {
         state.pushedApprovals.clear();
         await this.pollDirectRemoteApprovals(pushedApprovals);
         if (mergeGate) {
-          await this.pollMergeGateApprovals(mergeGate, true, pushedApprovals);
+          await this.pollMergeGateApprovals(mergeGate, pushedApprovals);
           await this.pollMergeCompletions();
         }
       } while ((state.rerun || state.pushedApprovals.size > 0) && !this.disposed);
@@ -13058,6 +13213,10 @@ export class Body {
     // No ACP turn or draft may start until the canonical WORKING heartbeat is
     // durable. If the relay refuses it, the caller fails before prompting.
     if (!info.archived) await this.transitionCornerState(info, 'working');
+    // A human-authored turn is the only thing that releases a merge-gate
+    // blocker. The conflict coordinate itself stays available as prompt
+    // context until a successful gate proves it resolved.
+    info.mergeGateBlocked = undefined;
     if (!info.conclude || info.conclude.quietSince !== undefined || info.conclude.nudges > 0) {
       info.conclude = freshConcludeEpisode();
       this.persistConcludeEpisode(info);
@@ -13073,6 +13232,11 @@ export class Body {
     if (info.archived) return;
     const turnSeq = info.turnSeq;
     if (ready) {
+      info.conclude = freshConcludeEpisode();
+      this.persistConcludeEpisode(info);
+      return;
+    }
+    if (info.mergeGateBlocked) {
       info.conclude = freshConcludeEpisode();
       this.persistConcludeEpisode(info);
       return;
@@ -13108,6 +13272,14 @@ export class Body {
     // Terminal or effectively-terminal corners are never nudged: archived,
     // landed, or holding their archive for a retiring session (#375/#384).
     if (info.archived || info.landedTip || info.archiveWhenSessionRetires) return;
+    if (
+      info.mergeGateBlocked ||
+      (info.cornerState?.state === 'waiting' && info.cornerState.reason === 'question')
+    ) {
+      info.conclude = freshConcludeEpisode();
+      this.persistConcludeEpisode(info);
+      return;
+    }
     // State 1 — still working: an in-flight or queued turn owns the outcome,
     // and its own tail will re-mark or resolve the episode when it ends.
     if (this.runningAgentTasks.has(info.subchannelId)) return;
@@ -13563,7 +13735,12 @@ export class Body {
         promptAttempted = true;
         return this.promptAgent(
           session,
-          `${prompt}\n\n${CORNER_TARGET_SYNC_INSTRUCTION}\n${CORNER_MERGE_GATE_INSTRUCTION}\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
+          [
+            prompt,
+            CORNER_TARGET_SYNC_INSTRUCTION,
+            CORNER_MERGE_GATE_INSTRUCTION,
+            CORNER_TURN_SUMMARY_INSTRUCTION,
+          ].join('\n\n'),
           {
             channelId: subchannelId,
             requestId: evt.id,

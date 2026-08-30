@@ -136,21 +136,32 @@ describe('GitHub-origin delivery', () => {
     ).toContain('Nothing ready to merge yet');
   });
 
-  it('refuses review until the feature branch contains the latest target tip', async () => {
-    const { root, info, body } = await repository();
+  it('rebases onto the latest remote target and publishes review in the same daemon pass', async () => {
+    const { root, worktree, info, body } = await repository();
     const events = captureEvents();
+    const featureBefore = run(worktree, ['rev-parse', 'HEAD']);
     await writeFile(resolve(root, 'TARGET.md'), 'new target work\n');
     run(root, ['add', 'TARGET.md']);
     run(root, ['commit', '-m', 'advance target before review']);
+    const targetTip = run(root, ['rev-parse', 'HEAD']);
     run(root, ['push', 'origin', 'main']);
 
-    await expect(publish(body, info)).resolves.toBe(false);
-    expect(info.mergeTarget).toBeUndefined();
-    const notReady = events.find((event) =>
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+    await expect(publish(body, info)).resolves.toBe(true);
+    expect(info.mergeTarget).toBeDefined();
+    expect(info.mergeTarget!.tip).not.toBe(featureBefore);
+    expect(run(worktree, ['merge-base', '--is-ancestor', targetTip, info.mergeTarget!.tip])).toBe(
+      '',
     );
-    expect(notReady?.content).toMatch(/not up to date with the latest main tip/i);
-    expect(notReady?.content).toMatch(/already authorized; do not ask the human/i);
+    expect(
+      events.filter((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+      ),
+    ).toHaveLength(1);
+    expect(
+      events.some((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
+      ),
+    ).toBe(false);
   });
 
   it('publishes review-ready work without autonomously landing or archiving it', async () => {
@@ -331,7 +342,7 @@ describe('a moved target is standing authorization to update the feature branch'
     expect(recovering).toHaveLength(2); // in-progress, then completed
   });
 
-  it('keeps the automatic-retry claim for a failure the land poll really does re-attempt', async () => {
+  it('parks a failed approval without claiming an automatic retry', async () => {
     const { info, body } = await repository();
     const events = captureEvents();
     const tip = run(info.worktreePath, ['rev-parse', 'HEAD']);
@@ -341,8 +352,7 @@ describe('a moved target is standing authorization to update the feature branch'
       info.humanMergeApproval as never,
     );
     // A land failure that is NOT a moved target: the remote's own branch rules
-    // decline the push. The land poll re-attempts this on every tick, so the
-    // automatic-retry claim is honest here and must survive.
+    // decline the push. This exact approval must park until a new press.
     const hook = resolve(info.boundRepo!.localPath!, '..', 'remote.git', 'hooks', 'pre-receive');
     await writeFile(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
 
@@ -350,11 +360,11 @@ describe('a moved target is standing authorization to update the feature branch'
 
     const failure = events.find(
       (event) =>
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed') &&
-        event.content.startsWith("Couldn't land the approved change"),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked') &&
+        event.content.startsWith('Merge blocked:'),
     );
     expect(failure).toBeDefined();
-    expect(failure!.tags).toContainEqual(['retry', 'auto']);
+    expect(failure!.tags.some((tag) => tag[0] === 'retry')).toBe(false);
   });
 });
 

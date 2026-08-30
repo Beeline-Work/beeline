@@ -274,6 +274,23 @@ export interface RoomMergeAttemptStart {
   reviewer: string;
 }
 
+export interface RoomMergePollHooks {
+  onAttemptStart?: (attempt: RoomMergeAttemptStart) => Promise<void> | void;
+  /** False parks this exact approval until the caller observes a newer press. */
+  shouldAttempt?: (attempt: RoomMergeAttemptStart) => Promise<boolean> | boolean;
+  /** Runs under the repository landing lock after a moved-target refusal. */
+  onMovedTarget?: (
+    attempt: RoomMergeAttempt,
+  ) => Promise<{ retry: boolean; reason?: string }> | { retry: boolean; reason?: string };
+  maxMovedTargetRounds?: number;
+}
+
+function isMovedTargetOutcome(outcome: MergeOutcome): boolean {
+  return /non-fast-forward|\[rejected\]|fetch first|not (?:a |possible to )?fast[- ]forward|cannot lock ref|update_ref failed|has moved on since|ff merge failed/i.test(
+    outcome.reason,
+  );
+}
+
 function tagValue(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
 }
@@ -330,7 +347,7 @@ export class DurableMergeGate {
 
   async poll(
     pushedApprovals: readonly NostrEvent[] = [],
-    hooks: { onAttemptStart?: (attempt: RoomMergeAttemptStart) => Promise<void> | void } = {},
+    hooks: RoomMergePollHooks = {},
   ): Promise<RoomMergeAttempt[]> {
     const roomEvents = await this.relay.queryEvents([
       {
@@ -387,25 +404,48 @@ export class DurableMergeGate {
         ) {
           continue;
         }
-        await hooks.onAttemptStart?.({
+        const attemptStart = {
           candidate,
           approvalId: approval.id,
           reviewer: approval.pubkey,
+        };
+        if ((await hooks.shouldAttempt?.(attemptStart)) === false) continue;
+        await hooks.onAttemptStart?.(attemptStart);
+        const outcome = await serializeRepoLanding(targetRepo, async () => {
+          let movedTargetRounds = 0;
+          for (;;) {
+            const current = await attemptMerge({
+              worker: this.config.worker,
+              ownerHex: this.config.ownerHex,
+              trustedReviewer: approval.pubkey,
+              trustedReviewerCustody: 'device',
+              repo: this.config.repo,
+              channelId: candidate.subchannelId,
+              targetBranch: shortTargetBranch(this.config.targetBranch),
+              featureBranch: candidate.featureBranch,
+              relay: this.relay,
+              approvalEvents: [approval],
+            });
+            const maxRounds = Math.max(0, hooks.maxMovedTargetRounds ?? 0);
+            if (
+              current.merged ||
+              current.terminal ||
+              !isMovedTargetOutcome(current) ||
+              !hooks.onMovedTarget ||
+              movedTargetRounds >= maxRounds
+            ) {
+              return current;
+            }
+            movedTargetRounds += 1;
+            const resolution = await hooks.onMovedTarget({
+              ...attemptStart,
+              outcome: current,
+            });
+            if (!resolution.retry) {
+              return resolution.reason ? { ...current, reason: resolution.reason } : current;
+            }
+          }
         });
-        const outcome = await serializeRepoLanding(targetRepo, () =>
-          attemptMerge({
-            worker: this.config.worker,
-            ownerHex: this.config.ownerHex,
-            trustedReviewer: approval.pubkey,
-            trustedReviewerCustody: 'device',
-            repo: this.config.repo,
-            channelId: candidate.subchannelId,
-            targetBranch: shortTargetBranch(this.config.targetBranch),
-            featureBranch: candidate.featureBranch,
-            relay: this.relay,
-            approvalEvents: [approval],
-          }),
-        );
         attempts.push({
           candidate,
           approvalId: approval.id,

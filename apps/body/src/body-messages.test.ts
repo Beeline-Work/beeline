@@ -345,12 +345,10 @@ describe('first-class assistant messages', () => {
     expect(source.match(/CORNER_MERGE_GATE_INSTRUCTION/g)).toHaveLength(4);
   });
 
-  it('makes target synchronization standing permission for every corner turn and restored session', () => {
+  it('keeps target synchronization out of every model turn', () => {
     const source = readFileSync(new URL('./body.ts', import.meta.url), 'utf8');
-    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(
-      /always implied for every corner and every agent/i,
-    );
-    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/without asking the human again/i);
+    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/do not spend model time/i);
+    expect(CORNER_TARGET_SYNC_INSTRUCTION).toMatch(/Beeline synchronizes/i);
     // Declaration, new/restored system prompts, opening/follow-up turns, and
     // the conclude watch's nudge. Approved pure realignment is daemon work and
     // deliberately has no ACP prompt call site.
@@ -1204,7 +1202,7 @@ describe('corner narrative persistence', () => {
     expect(conciseCornerTurnSummary('```\nconsole.log("fixed");\n```')).toBe('');
   });
 
-  it('preserves an untagged solo-human corner turn started fresh (no active run)', async () => {
+  it('delivers every untagged solo-human turn but suppresses identical consecutive replies', async () => {
     const published = stubPublishing();
     const agent = newIdentity('steer-narration-agent');
     const human = newIdentity('steer-human');
@@ -1263,11 +1261,9 @@ describe('corner narrative persistence', () => {
         'Publish the mockup through a Cloudflare tunnel.',
       ]);
       const messages = agentMessages(published);
-      expect(messages).toHaveLength(3);
-      for (const message of messages) {
-        expect(message.content).toContain('Applied the requested follow-up tweak.');
-        expect(message.content).toContain('Ran the suite again; still green.');
-      }
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.content).toContain('Applied the requested follow-up tweak.');
+      expect(messages[0]!.content).toContain('Ran the suite again; still green.');
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

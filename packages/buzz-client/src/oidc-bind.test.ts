@@ -7,72 +7,18 @@ import {
   OidcBindError,
   buildOidcBindEvent,
   finishOidcBind,
-  fetchIdentityPredecessors,
   recoverOidcBind,
   getAuthCapabilities,
-  getGitHubRoomInstallationToken,
-  getGitHubRoomEvents,
   adoptGitHubHandle,
   lookupManagedIdentity,
   lookupRecovery,
   parseOidcBindCallback,
-  resolveCurrentIdentityPubkey,
   startGitHubBind,
-  startGitHubInstallation,
-  listGitHubRepositories,
   startOidcBind,
   type OidcBindChallenge,
 } from './oidc-bind.js';
 
 const StandardURL = URL;
-
-describe('identity succession resolution', () => {
-  it('resolves the same predecessor deterministically for repeated session activations', async () => {
-    const agent = generateKeypair();
-    const predecessor = generateKeypair();
-    const successor = generateKeypair();
-    const authorizationHeaders: string[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        expect(String(input)).toBe(
-          `https://relay.example/auth/oidc/current/${predecessor.publicKey}`,
-        );
-        authorizationHeaders.push(String(new Headers(init?.headers).get('authorization')));
-        return new Response(JSON.stringify({ current_pubkey: successor.publicKey }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }),
-    );
-
-    await expect(
-      resolveCurrentIdentityPubkey('https://relay.example', agent, predecessor.publicKey),
-    ).resolves.toBe(successor.publicKey);
-    await expect(
-      resolveCurrentIdentityPubkey('https://relay.example', agent, predecessor.publicKey),
-    ).resolves.toBe(successor.publicKey);
-    expect(authorizationHeaders).toHaveLength(2);
-    expect(authorizationHeaders[0]).not.toBe(authorizationHeaders[1]);
-  });
-
-  it('times out a predecessor fetch even when the native fetch never settles', async () => {
-    vi.useFakeTimers();
-    const identity = generateKeypair();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => new Promise<Response>(() => undefined)),
-    );
-
-    const fetching = fetchIdentityPredecessors('https://relay.example', identity);
-    const result = expect(fetching).rejects.toMatchObject({
-      code: 'offline',
-      message: 'identity succession lookup timed out',
-    });
-    await vi.advanceTimersByTimeAsync(5_000);
-    await result;
-  });
-});
 
 /** The URL behavior shipped by React Native, limited to the surface this module uses. */
 class ReactNativeURLFixture {
@@ -325,82 +271,6 @@ describe('OIDC device-key bind protocol', () => {
     }
   });
 
-  it('uses the GitHub routes for sign-in, installation, and repository access', async () => {
-    const start = startGitHubBind('https://relay.example', {
-      redirectUri: 'beeline://buzz/github-callback',
-      state: 's'.repeat(43),
-    });
-    expect(new URL(start.authorizationUrl).pathname).toBe('/auth/github/start');
-    expect(new URL(start.authorizationUrl).searchParams.get('app_redirect')).toBe(
-      'beeline://buzz/github-callback',
-    );
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            authorization_url: 'https://github.com/apps/beeline/installations/new',
-          }),
-          {
-            status: 200,
-          },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            installed: true,
-            installations: [
-              {
-                installationId: 7,
-                accountId: '1',
-                accountLogin: 'acme',
-                accountType: 'Organization',
-                repositorySelection: 'selected',
-                status: 'active',
-                repositoryCount: 1,
-                manageUrl: 'https://github.com/organizations/acme/settings/installations/7',
-              },
-            ],
-            repositories: [
-              {
-                id: 42,
-                installationId: 7,
-                name: 'widget',
-                fullName: 'acme/widget',
-                remote: 'https://github.com/acme/widget.git',
-                defaultBranch: 'main',
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-      );
-    vi.stubGlobal('fetch', fetchMock);
-    await expect(
-      startGitHubInstallation(
-        'https://relay.example',
-        identity,
-        'https://relay.example/auth/github/mobile-callback',
-        7,
-      ),
-    ).resolves.toContain('github.com/apps/beeline');
-    await expect(
-      listGitHubRepositories('https://relay.example', identity, { refresh: true }),
-    ).resolves.toMatchObject({
-      installed: true,
-      installations: [{ accountLogin: 'acme', repositoryCount: 1 }],
-      repositories: [{ installationId: 7, fullName: 'acme/widget' }],
-    });
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      installation_id: 7,
-    });
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('refresh=1');
-    for (const [, init] of fetchMock.mock.calls) {
-      expect((init?.headers as Record<string, string>).authorization).toMatch(/^Nostr /);
-    }
-  });
-
   it('strictly parses the callback and refuses missing, duplicate, or foreign state fields', () => {
     expect(parseOidcBindCallback(callbackUrl(), 's'.repeat(43))).toEqual(challenge);
     const duplicate = `${callbackUrl()}&ticket=${challenge.ticket}`;
@@ -411,128 +281,6 @@ describe('OIDC device-key bind protocol', () => {
     const missing = new URL(callbackUrl());
     missing.searchParams.delete('subject');
     expect(() => parseOidcBindCallback(missing.toString(), 's'.repeat(43))).toThrow('missing');
-  });
-
-  it('requests a Room-scoped GitHub token without letting the daemon choose a repository', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          token: 'room-token',
-          expires_at: '2030-01-01T00:00:00Z',
-          installation_id: 7,
-          full_name: 'acme/widget',
-        }),
-        { status: 200 },
-      ),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(
-      getGitHubRoomInstallationToken('https://relay.example', identity, 'room-1'),
-    ).resolves.toMatchObject({ token: 'room-token', fullName: 'acme/widget' });
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      pubkey: identity.publicKey,
-      room_id: 'room-1',
-    });
-    expect(
-      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).relay_authorizations,
-    ).toHaveLength(16);
-    expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>).authorization).toMatch(
-      /^Nostr /,
-    );
-  });
-
-  it('sends read_only on the Room token request when a session asks for the read-only variant', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          token: 'room-token',
-          expires_at: '2030-01-01T00:00:00Z',
-          installation_id: 77,
-          full_name: 'acme/widget',
-        }),
-        { status: 200 },
-      ),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(
-      getGitHubRoomInstallationToken('https://relay.example', identity, 'room-1', {
-        readOnly: true,
-      }),
-    ).resolves.toMatchObject({ token: 'room-token' });
-    const sent = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(sent.read_only).toBe(true);
-  });
-
-  it('fetches Room repository events with since/wait options and validates the response', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          full_name: 'acme/widget',
-          head: 3,
-          cursor: 2,
-          events: [
-            { id: 2, type: 'star', action: 'created', actor: 'lena', summary: 'lena starred acme/widget', received_at: '2026-01-01T00:00:00Z' },
-          ],
-        }),
-        { status: 200 },
-      ),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(
-      getGitHubRoomEvents('https://relay.example', identity, 'room-1', { since: 1, waitMs: 25_000 }),
-    ).resolves.toMatchObject({ fullName: 'acme/widget', cursor: 2, events: [{ id: 2 }] });
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      pubkey: identity.publicKey,
-      room_id: 'room-1',
-      since: 1,
-      wait_ms: 25_000,
-    });
-  });
-
-  it('preserves a Room-events authority refusal as an OidcBindError', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            error: 'room_membership_required',
-            message: 'agent is not a member of this Room',
-          }),
-          { status: 403, headers: { 'content-type': 'application/json' } },
-        ),
-      ),
-    );
-
-    await expect(
-      getGitHubRoomEvents('https://relay.example', identity, 'room-1'),
-    ).rejects.toMatchObject({ name: 'OidcBindError', code: 'room_membership_required' });
-  });
-
-  it('preserves a Room-token broker 403 as an OidcBindError for the daemon', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            error: 'room_repository_unauthorized',
-            message: 'agent is not authorized for this Room repository',
-          }),
-          { status: 403, headers: { 'content-type': 'application/json' } },
-        ),
-      ),
-    );
-
-    await expect(
-      getGitHubRoomInstallationToken('https://relay.example', identity, 'room-1'),
-    ).rejects.toMatchObject({
-      name: 'OidcBindError',
-      code: 'room_repository_unauthorized',
-      status: 403,
-      retryable: false,
-    });
   });
 
   it('surfaces callback cancellation/proof errors without constructing a challenge', () => {

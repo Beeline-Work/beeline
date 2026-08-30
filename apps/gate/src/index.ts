@@ -81,4 +81,5 @@ export {
   type RoomMergeCandidate,
   type RoomMergeAttempt,
   type RoomMergeAttemptStart,
+  type RoomMergePollHooks,
 } from './worker.js';

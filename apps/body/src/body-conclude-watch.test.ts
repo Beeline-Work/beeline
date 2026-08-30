@@ -499,6 +499,29 @@ describe('never-idle conclude watch', () => {
     }
   });
 
+  it('a published merge-gate blocker is terminal until a human starts a turn', async () => {
+    const agent = newIdentity('conclude-merge-gate-blocked-agent');
+    const { body, workspaceRoot } = newBody(agent);
+    try {
+      stubRelay([]);
+      const info = registerCorner(body, agent, {
+        ...quietJustNow(),
+        mergeGateBlocked: { reason: 'main conflicts with README.md' },
+        cornerState: { state: 'waiting', reason: 'question' },
+      });
+      const { promptAgent } = spyConcludeTurn(body);
+
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+      await Reflect.get(body, 'pollConcludeWatch').call(body);
+
+      expect(promptAgent).not.toHaveBeenCalled();
+      expect(info.conclude?.quietSince).toBeUndefined();
+      expect(info.conclude?.nudges).toBe(0);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('merged and archived corners are never nudged', async () => {
     const agent = newIdentity('conclude-terminal-agent');
     const { body, workspaceRoot } = newBody(agent);

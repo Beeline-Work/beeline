@@ -265,7 +265,7 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
     }
   });
 
-  it('posts no recap for a moved-target realignment that conflicts', async () => {
+  it('posts no recap when automatic conflict resolution cannot complete', async () => {
     const agent = newIdentity('land-summary-failed');
     const { root, repoPath, cornerPath, tip } = localCorner();
     const published: NostrEvent[] = [];
@@ -301,16 +301,16 @@ describe('a corner that lands says what it delivered, in the parent Room', () =>
             event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
         ),
       ).toHaveLength(0);
-      // A conflicting realignment reports the concrete daemon-owned stage and
-      // never wakes the harness to attempt an indeterminate repair.
-      const recovering = published.find(
+      // The approved conflict gets one automatic resolver turn. If that turn
+      // cannot establish a clean rebased tip, landing parks with one plain
+      // line and never fabricates a recap.
+      const blocked = published.find(
         (event) =>
           Array.isArray(event.tags) &&
-          event.tags.some((tag) => tag[0] === 'delivery-stage' && tag[1] === 'realigning') &&
-          event.content.includes('"status":"failed"'),
+          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
       );
-      expect(recovering).toBeDefined();
-      expect(Reflect.get(body, 'promptAgent')).not.toHaveBeenCalled();
+      expect(blocked?.content).toMatch(/^Merge blocked: [^\n]+$/);
+      expect(Reflect.get(body, 'promptAgent')).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

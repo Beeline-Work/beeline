@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -26,6 +26,33 @@ describe('update rollback alert outbox', () => {
     await expect(
       publishPendingUpdateRollbackAlert({ runtimeDir }),
     ).resolves.toBe(true);
+    expect(error).toHaveBeenCalledWith(
+      '[thin-core] update rollback retained as operator state: broken-release',
+    );
+    await expect(readFile(updateRollbackAlertPath(runtimeDir), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
+  it('discards a legacy queued event instead of replaying its invalid shape', async () => {
+    const runtimeDir = await mkdtemp(resolve(tmpdir(), 'beeline-update-alert-'));
+    roots.push(runtimeDir);
+    await writeFile(
+      updateRollbackAlertPath(runtimeDir),
+      `${JSON.stringify({
+        version: 1,
+        releaseId: 'broken-release',
+        createdAt: 1_700_000_000_000,
+        // Pre-retirement releases persisted the signed relay payload itself.
+        event: { id: 'legacy-invalid-event', kind: 9, tags: [] },
+      })}\n`,
+    );
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      publishPendingUpdateRollbackAlert({ runtimeDir }),
+    ).resolves.toBe(true);
+
     expect(error).toHaveBeenCalledWith(
       '[thin-core] update rollback retained as operator state: broken-release',
     );

@@ -1,28 +1,21 @@
-# Mobile OTA release governor.
+# Closed-loop Mobile OTA governor.
 #
-# A merge creates an immutable beta candidate. Production only receives the
-# exact candidate bytes after the Android canary passes. Native/runtime-version
-# compatibility remains unchanged: native changes still require a binary build
-# and a runtimeVersion bump before any OTA can target those binaries.
+# Every main commit enters a cumulative delivery index. Production still only
+# receives the exact beta candidate after the Android canary passes. A physical
+# owner-device receipt is the only transition from published to confirmed.
 name: Mobile OTA release governor
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/mobile-ota.yml'
-      - 'apps/mobile/**'
-      - 'packages/buzz-client/**'
-      - 'packages/nostr/**'
+    branches: [main]
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       operation:
-        description: Release the checked-out commit or roll production back
+        description: Release main, reconcile device receipts, or roll production back
         type: choice
-        options:
-          - release
-          - rollback
+        options: [release, reconcile, rollback]
         default: release
         required: true
       skip_canary:
@@ -30,14 +23,20 @@ on:
         type: boolean
         default: false
         required: true
+      retry_attempt:
+        description: Governor-managed attempt number (1-3)
+        type: number
+        default: 1
+        required: true
       rollback_group:
         description: Optional known-good source group; defaults to the latest release ledger predecessor
         type: string
         required: false
 
 permissions:
-  actions: read
+  actions: write
   contents: read
+  issues: write
 
 concurrency:
   group: mobile-ota-release-governor
@@ -45,36 +44,102 @@ concurrency:
 
 jobs:
   release:
-    name: Beta, canary, and exact-group promotion
+    name: Beta, canary, exact-group promotion, and receipt
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.operation == 'release')
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 30
+    env:
+      DELIVERY_INDEX: ${{ runner.temp }}/mobile-ota-delivery-index.json
+      RUN_LEDGER: ${{ runner.temp }}/mobile-ota-ledger.json
+      CURRENT_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && inputs.retry_attempt || 1 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Locate the latest cumulative delivery index
+        id: previous_index
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'mobile-ota-delivery-index',
+              per_page: 100,
+            });
+            const latest = artifacts.data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (latest?.workflow_run?.id) core.setOutput('run_id', String(latest.workflow_run.id));
+
+      - name: Download previous delivery index
+        if: steps.previous_index.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-ota-delivery-index
+          path: ${{ runner.temp }}/previous-index
+          run-id: ${{ steps.previous_index.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Initialize pending merge ledger before setup
+        id: initialize
+        working-directory: apps/mobile
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          previous="$RUNNER_TEMP/previous-index/mobile-ota-delivery-index.json"
+          if [ -f "$previous" ]; then cp "$previous" "$DELIVERY_INDEX"; fi
+          node - "$RUNNER_TEMP/mobile-ota-commits.json" "$PUSH_BEFORE" "$GITHUB_SHA" "$DELIVERY_INDEX" <<'NODE'
+            const { execFileSync, spawnSync } = require('node:child_process');
+            const fs = require('node:fs');
+            const [output, before, head, indexPath] = process.argv.slice(2);
+            let shas = [head];
+            const index = fs.existsSync(indexPath) ? JSON.parse(fs.readFileSync(indexPath, 'utf8')) : null;
+            const lastTracked = index?.merges?.at(-1)?.sha;
+            let rangeStart = before && !/^0+$/.test(before) ? before : null;
+            if (lastTracked) {
+              const ancestor = spawnSync('git', ['merge-base', '--is-ancestor', lastTracked, head]);
+              if (ancestor.status === 0) rangeStart = lastTracked;
+            }
+            if (rangeStart) {
+              shas = execFileSync('git', ['rev-list', '--reverse', `${rangeStart}..${head}`], { encoding: 'utf8' })
+                .trim().split(/\s+/).filter(Boolean);
+            }
+            if (shas.length === 0) shas = [head];
+            fs.writeFileSync(output, JSON.stringify(shas.map((sha) => ({ sha, ref: 'main' }))));
+          NODE
+          node scripts/ota-release.mjs init-delivery \
+            --sha "$GITHUB_SHA" --ref main --run-id "$GITHUB_RUN_ID" \
+            --attempt "$CURRENT_ATTEMPT" --commits "$RUNNER_TEMP/mobile-ota-commits.json" \
+            --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
+
       - uses: actions/setup-node@v4
         with:
-          # 22 is the floor with a global WebSocket: the canary's Maestro stage
-          # provisions relay fixtures through scripts/provision-smoke.ts, whose
-          # BuzzClient.connect() needs globalThis.WebSocket.
           node-version: '22'
+
       - name: Install mobile dependencies and build @beeline SDKs
+        id: install
         working-directory: apps/mobile
         run: |
           npm ci
           npm run eas-build-post-install
+
       - name: Validate candidate
+        id: validate
         working-directory: apps/mobile
         run: |
           npm run typecheck
           npx vitest run \
             sources/config/appBranding.test.ts \
-            sources/config/mobileOtaRelease.test.ts
+            sources/config/mobileOtaRelease.test.ts \
+            sources/push/update-receipt.test.ts
           node scripts/ota-release.mjs publish --dry-run \
-            --sha "$GITHUB_SHA" \
-            --ref "$GITHUB_REF_NAME" \
-            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
+            --sha "$GITHUB_SHA" --ref main --ledger "$RUN_LEDGER"
+
       - name: Publish immutable beta candidate
         id: candidate
         working-directory: apps/mobile
@@ -82,95 +147,149 @@ jobs:
           EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "$EXPO_TOKEN_SECRET" ]; then
-            export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
-          fi
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
           if [ -z "${EXPO_TOKEN:-}" ]; then
             echo "EXPO_TOKEN is unavailable to the release governor." >&2
-            exit 1
+            exit 2
           fi
-          TMPDIR="$(mktemp -d)"
-          export TMPDIR
+          OTA_TMPDIR="$(mktemp -d)"
+          export TMPDIR="$OTA_TMPDIR"
           node scripts/ota-release.mjs publish \
-            --sha "$GITHUB_SHA" \
-            --ref "$GITHUB_REF_NAME" \
-            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
-          node - "$RUNNER_TEMP/mobile-ota-ledger.json" >> "$GITHUB_OUTPUT" <<'NODE'
+            --sha "$GITHUB_SHA" --ref main --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
+          node - "$RUN_LEDGER" >> "$GITHUB_OUTPUT" <<'NODE'
             const ledger = require(process.argv[2]);
             console.log(`group_id=${ledger.candidateGroupId}`);
             console.log(`android_update_id=${ledger.androidUpdateId}`);
           NODE
+
       - name: Run Android beta canary
+        id: canary
         if: >-
-          github.event_name != 'workflow_dispatch' ||
-          inputs.skip_canary != true
+          github.event_name != 'workflow_dispatch' || inputs.skip_canary != true
         working-directory: apps/mobile
         env:
           EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
-          # The self-hosted runner account does not carry the emulator owner's
-          # PATH; the canary resolves adb from here against the sanctioned
-          # existing emulator-5554 on this host.
           ANDROID_HOME: /home/lunchbox/android-sdk
-          # Self-describing park contract: ota-canary.sh writes one actionable
-          # line here for every preflight/environment failure; it is recorded
-          # verbatim as the ledger's parked reason below.
           OTA_CANARY_REASON_FILE: ${{ runner.temp }}/ota-canary-reason.txt
         run: |
           set -euo pipefail
-          if [ -n "$EXPO_TOKEN_SECRET" ]; then
-            export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
-          fi
-          rm -f "$RUNNER_TEMP/ota-canary-reason.txt"
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
+          rm -f "$OTA_CANARY_REASON_FILE"
           set +e
-          scripts/ota-canary.sh --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
+          scripts/ota-canary.sh --ledger "$RUN_LEDGER"
           canary_status=$?
           set -e
           if [ "$canary_status" -ne 0 ]; then
             canary_reason=""
-            if [ -s "$RUNNER_TEMP/ota-canary-reason.txt" ]; then
-              canary_reason="$(head -n 1 "$RUNNER_TEMP/ota-canary-reason.txt" | cut -c1-400)"
+            if [ -s "$OTA_CANARY_REASON_FILE" ]; then
+              canary_reason="$(head -n 1 "$OTA_CANARY_REASON_FILE" | cut -c1-400)"
             fi
             case "$canary_status" in
               2) canary_class="environment/setup failure" ;;
               124) canary_class="ten-minute canary deadline fired" ;;
               *) canary_class="canary flow failure" ;;
             esac
-            if [ -n "$canary_reason" ]; then
-              parked_reason="ota-canary.sh exited ${canary_status} (${canary_class}): ${canary_reason}"
-            else
-              parked_reason="ota-canary.sh exited ${canary_status} (${canary_class}); promotion parked until the canary passes (see step log)"
-            fi
+            parked_reason="ota-canary.sh exited ${canary_status} (${canary_class})${canary_reason:+: $canary_reason}"
             node scripts/ota-release.mjs mark-canary \
-              --ledger "$RUNNER_TEMP/mobile-ota-ledger.json" \
-              --status blocked \
-              --reason "$parked_reason"
+              --ledger "$RUN_LEDGER" --status blocked --reason "$parked_reason"
+            node scripts/ota-release.mjs record-failure \
+              --sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CURRENT_ATTEMPT" \
+              --exit-code "$canary_status" --reason "$parked_reason" \
+              --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
             exit "$canary_status"
           fi
-          node scripts/ota-release.mjs mark-canary \
-            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json" \
-            --status passed
+          node scripts/ota-release.mjs mark-canary --ledger "$RUN_LEDGER" --status passed
+
       - name: Record captain-ordered canary skip
-        if: >-
-          github.event_name == 'workflow_dispatch' &&
-          inputs.skip_canary == true
+        if: github.event_name == 'workflow_dispatch' && inputs.skip_canary == true
         working-directory: apps/mobile
-        run: |
-          node scripts/ota-release.mjs mark-canary \
-            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json" \
-            --status skipped
+        run: node scripts/ota-release.mjs mark-canary --ledger "$RUN_LEDGER" --status skipped
+
       - name: Promote the canary-proven bytes to production
+        id: promotion
         working-directory: apps/mobile
         env:
           EXPO_TOKEN_SECRET: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "$EXPO_TOKEN_SECRET" ]; then
-            export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
+          node scripts/ota-release.mjs promote --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
+
+      - name: Check owner device receipt
+        id: receipt
+        if: steps.promotion.outcome == 'success'
+        working-directory: apps/mobile
+        env:
+          OWNER_PUBKEY: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
+          RECEIPT_TOKEN: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
+          RECEIPT_ORIGIN: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OWNER_PUBKEY" ] || [ -z "$RECEIPT_TOKEN" ]; then
+            echo "Owner receipt query is not configured; delivery remains published." >&2
+            exit 0
           fi
-          node scripts/ota-release.mjs promote \
-            --ledger "$RUNNER_TEMP/mobile-ota-ledger.json"
-      - name: Store release ledger
-        if: always() && steps.candidate.outcome == 'success'
+          if ! curl --fail --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $RECEIPT_TOKEN" \
+            "$RECEIPT_ORIGIN/update-receipts/$OWNER_PUBKEY" \
+            -o "$RUNNER_TEMP/owner-update-receipt.json"; then
+            echo "Owner receipt endpoint is temporarily unavailable; scheduled reconciliation will retry." >&2
+            exit 0
+          fi
+          readarray -t delivery < <(node - "$RUN_LEDGER" <<'NODE'
+            const ledger = require(process.argv[2]);
+            console.log(ledger.production.groupId);
+            console.log(ledger.production.updates.map((update) => update.id).join(','));
+          NODE
+          )
+          node scripts/ota-release.mjs confirm \
+            --index "$DELIVERY_INDEX" --ledger "$RUN_LEDGER" \
+            --receipt "$RUNNER_TEMP/owner-update-receipt.json" \
+            --group "${delivery[0]}" --update-ids "${delivery[1]}"
+
+      - name: Record setup or app-side governor failure
+        if: failure()
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          if node -e "process.exit(require('$RUN_LEDGER').failure ? 0 : 1)"; then
+            exit 0
+          fi
+          failure_class="app-side"
+          failure_reason="release governor failed"
+          exit_code=1
+          if [ "${{ steps.install.outcome }}" = "failure" ]; then
+            failure_class="environment-setup"; failure_reason="dependency installation or SDK build failed"; exit_code=2
+          elif [ "${{ steps.validate.outcome }}" = "failure" ]; then
+            failure_reason="mobile validation or configuration test failed"
+          elif [ "${{ steps.candidate.outcome }}" = "failure" ]; then
+            failure_class="environment-setup"; failure_reason="beta candidate publication failed"; exit_code=2
+          elif [ "${{ steps.promotion.outcome }}" = "failure" ]; then
+            failure_reason="production exact-group promotion failed"
+          fi
+          node scripts/ota-release.mjs record-failure \
+            --sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$CURRENT_ATTEMPT" \
+            --class "$failure_class" --exit-code "$exit_code" --reason "$failure_reason" \
+            --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX"
+
+      - name: Render queryable undelivered-merge report
+        if: always() && steps.initialize.outcome == 'success'
+        working-directory: apps/mobile
+        run: node scripts/ota-release.mjs list-undelivered --index "$DELIVERY_INDEX" --output "$RUNNER_TEMP/mobile-ota-undelivered.json"
+
+      - name: Store cumulative delivery index
+        if: always() && steps.initialize.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ota-delivery-index
+          path: |
+            ${{ runner.temp }}/mobile-ota-delivery-index.json
+            ${{ runner.temp }}/mobile-ota-undelivered.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Store run release ledger
+        if: always() && steps.initialize.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: mobile-ota-ledger-${{ github.run_id }}
@@ -178,42 +297,161 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Escalate or close Undelivered merges issue
+        if: always() && steps.initialize.outcome == 'success'
+        uses: actions/github-script@v7
+        env:
+          DELIVERY_INDEX: ${{ runner.temp }}/mobile-ota-delivery-index.json
+        with:
+          script: |
+            const fs = require('node:fs');
+            const index = JSON.parse(fs.readFileSync(process.env.DELIVERY_INDEX, 'utf8'));
+            const undelivered = index.merges.filter((merge) => merge.state !== 'confirmed');
+            const maxFailures = Math.max(0, ...undelivered.map((merge) => merge.failures?.length ?? 0));
+            const all = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'all', per_page: 100,
+            });
+            const matches = all.filter((issue) => !issue.pull_request && issue.title === 'Undelivered merges');
+            const canonical = matches[0];
+            for (const duplicate of matches.slice(1)) {
+              if (duplicate.state === 'open') await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: duplicate.number, state: 'closed', state_reason: 'not_planned' });
+            }
+            if (undelivered.length === 0) {
+              if (canonical?.state === 'open') await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: canonical.number, state: 'closed', state_reason: 'completed' });
+              return;
+            }
+            if (!canonical && maxFailures < 3) return;
+            const rows = undelivered.map((merge) => {
+              const failure = merge.failures?.at(-1);
+              const reason = failure ? `${failure.class}: ${failure.reason}` : merge.state === 'published' ? 'awaiting owner-device receipt' : 'awaiting governor';
+              return `| \`${merge.sha.slice(0, 12)}\` | ${merge.state} | ${merge.failures?.length ?? 0} | ${reason.replaceAll('|', '\\|')} |`;
+            });
+            const body = ['The closed-loop OTA governor has commits that are not confirmed on the configured owner device.', '', '| Commit | State | Failures | Latest reason |', '|---|---:|---:|---|', ...rows, '', `Updated by run ${context.runId}. Download the \`mobile-ota-delivery-index\` artifact for machine-readable state.`].join('\n');
+            if (canonical) await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: canonical.number, state: 'open', body });
+            else await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title: 'Undelivered merges', body });
+
+  retry:
+    name: Retry failed governor with backoff
+    needs: release
+    if: always() && (needs.release.result == 'failure' || needs.release.result == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Redispatch release up to three total attempts
+        uses: actions/github-script@v7
+        env:
+          CURRENT_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && inputs.retry_attempt || 1 }}
+        with:
+          script: |
+            const attempt = Number(process.env.CURRENT_ATTEMPT);
+            if (attempt >= 3) {
+              core.notice('Three governor failures reached; Undelivered merges escalation owns recovery.');
+              return;
+            }
+            const backoffMs = attempt * 60_000;
+            core.notice(`Waiting ${backoffMs / 1000}s before governor attempt ${attempt + 1}.`);
+            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'mobile-ota.yml',
+              ref: 'main',
+              inputs: { operation: 'release', skip_canary: 'false', retry_attempt: String(attempt + 1) },
+            });
+
+  reconcile:
+    name: Reconcile published groups with owner device
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.operation == 'reconcile')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DELIVERY_INDEX: ${{ runner.temp }}/mobile-ota-delivery-index.json
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate latest delivery index
+        id: latest
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({ owner: context.repo.owner, repo: context.repo.repo, name: 'mobile-ota-delivery-index', per_page: 100 });
+            const latest = artifacts.data.artifacts.filter((artifact) => !artifact.expired).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (!latest?.workflow_run?.id) return core.setFailed('No delivery index artifact exists.');
+            core.setOutput('run_id', String(latest.workflow_run.id));
+      - uses: actions/download-artifact@v4
+        with:
+          name: mobile-ota-delivery-index
+          path: ${{ runner.temp }}/latest-index
+          run-id: ${{ steps.latest.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Query owner device and confirm matching production group
+        working-directory: apps/mobile
+        env:
+          OWNER_PUBKEY: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
+          RECEIPT_TOKEN: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
+          RECEIPT_ORIGIN: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/latest-index/mobile-ota-delivery-index.json" "$DELIVERY_INDEX"
+          if [ -z "$OWNER_PUBKEY" ] || [ -z "$RECEIPT_TOKEN" ]; then exit 0; fi
+          group="$(node -p "require('$DELIVERY_INDEX').merges.filter(m=>m.state==='published').at(-1)?.published.groupId ?? ''")"
+          [ -n "$group" ] || exit 0
+          updates="$(node -p "require('$DELIVERY_INDEX').merges.filter(m=>m.state==='published').at(-1)?.published.updateIds.join(',') ?? ''")"
+          if ! curl --fail --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $RECEIPT_TOKEN" \
+            "$RECEIPT_ORIGIN/update-receipts/$OWNER_PUBKEY" \
+            -o "$RUNNER_TEMP/owner-update-receipt.json"; then
+            echo "Owner receipt endpoint unavailable; the next reconciliation will retry." >&2
+            exit 0
+          fi
+          node scripts/ota-release.mjs confirm --index "$DELIVERY_INDEX" \
+            --receipt "$RUNNER_TEMP/owner-update-receipt.json" --group "$group" --update-ids "$updates"
+          node scripts/ota-release.mjs list-undelivered --index "$DELIVERY_INDEX" --output "$RUNNER_TEMP/mobile-ota-undelivered.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ota-delivery-index
+          path: |
+            ${{ runner.temp }}/mobile-ota-delivery-index.json
+            ${{ runner.temp }}/mobile-ota-undelivered.json
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Close caught-up escalation
+        uses: actions/github-script@v7
+        env:
+          DELIVERY_INDEX: ${{ runner.temp }}/mobile-ota-delivery-index.json
+        with:
+          script: |
+            const fs = require('node:fs');
+            if (!fs.existsSync(process.env.DELIVERY_INDEX)) return;
+            const index = JSON.parse(fs.readFileSync(process.env.DELIVERY_INDEX, 'utf8'));
+            if (index.merges.some((merge) => merge.state !== 'confirmed')) return;
+            const issues = await github.paginate(github.rest.issues.listForRepo, { owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100 });
+            for (const issue of issues.filter((entry) => !entry.pull_request && entry.title === 'Undelivered merges')) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number, state: 'closed', state_reason: 'completed' });
+            }
+
   rollback:
     name: Republish last-known-good production group
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.operation == 'rollback'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'rollback'
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20.19'
+          node-version: '22'
       - name: Find latest successful release ledger
         if: inputs.rollback_group == ''
         id: ledger_run
         uses: actions/github-script@v7
         with:
           script: |
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'mobile-ota.yml',
-              status: 'success',
-              per_page: 100,
-            });
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, { owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'mobile-ota.yml', status: 'success', per_page: 100 });
             for (const run of runs) {
-              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: run.id,
-              });
-              if (artifacts.data.artifacts.some((artifact) =>
-                artifact.name.startsWith('mobile-ota-ledger-') && !artifact.expired
-              )) {
-                core.setOutput('run_id', String(run.id));
-                return;
+              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({ owner: context.repo.owner, repo: context.repo.repo, run_id: run.id });
+              if (artifacts.data.artifacts.some((artifact) => artifact.name.startsWith('mobile-ota-ledger-') && !artifact.expired)) {
+                core.setOutput('run_id', String(run.id)); return;
               }
             }
             core.setFailed('No non-expired successful mobile OTA release ledger was found.');
@@ -235,16 +473,12 @@ jobs:
           group="$EXPLICIT_GROUP"
           if [ -z "$group" ]; then
             group="$(node -e '
-              const fs = require("node:fs");
-              const path = require("node:path");
+              const fs = require("node:fs"); const path = require("node:path");
               const root = process.argv[1];
-              const file = fs.readdirSync(root, { recursive: true })
-                .find((entry) => entry.endsWith("mobile-ota-ledger.json"));
+              const file = fs.readdirSync(root, { recursive: true }).find((entry) => entry.endsWith("mobile-ota-ledger.json"));
               if (!file) throw new Error("downloaded artifact has no mobile-ota-ledger.json");
               const ledger = JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
-              if (!ledger.previousProductionGroupId) {
-                throw new Error("release ledger has no previousProductionGroupId");
-              }
+              if (!ledger.previousProductionGroupId) throw new Error("release ledger has no previousProductionGroupId");
               process.stdout.write(ledger.previousProductionGroupId);
             ' "$RUNNER_TEMP/last-good")"
           fi
@@ -256,18 +490,10 @@ jobs:
           ROLLBACK_GROUP: ${{ steps.rollback_source.outputs.group_id }}
         run: |
           set -euo pipefail
-          if [ -n "$EXPO_TOKEN_SECRET" ]; then
-            export EXPO_TOKEN="$EXPO_TOKEN_SECRET"
-          fi
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "EXPO_TOKEN is unavailable to the release governor." >&2
-            exit 1
-          fi
-          node scripts/ota-release.mjs rollback \
-            --group "$ROLLBACK_GROUP" \
-            --ledger "$RUNNER_TEMP/mobile-ota-rollback.json"
-      - name: Store rollback ledger
-        uses: actions/upload-artifact@v4
+          if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
+          if [ -z "${EXPO_TOKEN:-}" ]; then exit 2; fi
+          node scripts/ota-release.mjs rollback --group "$ROLLBACK_GROUP" --ledger "$RUNNER_TEMP/mobile-ota-rollback.json"
+      - uses: actions/upload-artifact@v4
         with:
           name: mobile-ota-rollback-${{ github.run_id }}
           path: ${{ runner.temp }}/mobile-ota-rollback.json

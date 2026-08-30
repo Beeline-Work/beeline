@@ -271,4 +271,48 @@ describe('paint-view GET server', () => {
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({ error: 'not_found' });
   });
+
+  it('stores a signed device update receipt and exposes it only to receipt authorization', async () => {
+    const identity = createIdentity('owner-device');
+    const base = await listen({ otaReceiptAdminToken: 'operator-receipt-secret' });
+    const path = '/update-receipts';
+    const body = {
+      pubkey: identity.publicKey,
+      deviceId: '11111111-2222-3333-4444-555555555555',
+      updateId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      channel: 'production',
+      group: '99999999-8888-7777-6666-555555555555',
+      runtimeVersion: '21',
+      environment: 'physical',
+    };
+
+    const unauthorizedPost = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const posted = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: authorization(identity, path, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const queryPath = `/update-receipts/${identity.publicKey}`;
+    const anonymous = await fetch(`${base}${queryPath}`);
+    const operator = await fetch(`${base}${queryPath}`, {
+      headers: { authorization: 'Bearer operator-receipt-secret' },
+    });
+
+    expect(unauthorizedPost.status).toBe(401);
+    expect(posted.status).toBe(201);
+    expect(anonymous.status).toBe(401);
+    expect(operator.status).toBe(200);
+    expect(operator.headers.get('cache-control')).toBe('private, no-store');
+    await expect(operator.json()).resolves.toEqual({
+      pubkey: identity.publicKey,
+      devices: [expect.objectContaining(body)],
+    });
+  });
 });

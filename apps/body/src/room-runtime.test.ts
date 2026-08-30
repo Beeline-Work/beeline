@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
-import { OidcBindError } from '@beeline/buzz-client';
+import { OidcBindError, type BuzzClient } from '@beeline/buzz-client';
 import type { BodyConfig } from './config.js';
 import {
   inspectLocalRepository,
@@ -17,9 +17,25 @@ const mocks = vi.hoisted(() => ({
   createBuzzClient: vi.fn(),
 }));
 
+function fakeBuzzClient(overrides: Partial<BuzzClient> = {}): BuzzClient {
+  return {
+    isMember: vi.fn().mockResolvedValue(true),
+    listMyChannels: vi.fn().mockResolvedValue([]),
+    listAgents: vi.fn().mockResolvedValue([]),
+    getChannelMetadata: vi.fn().mockResolvedValue(null),
+    connect: vi.fn().mockResolvedValue(undefined),
+    socket: {
+      connected: true,
+      subscribe: vi.fn(() => vi.fn()),
+    },
+    disconnect: vi.fn(),
+    ...overrides,
+  } as BuzzClient;
+}
+
 vi.mock('@beeline/buzz-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@beeline/buzz-client')>()),
-  createBuzzClient: mocks.createBuzzClient,
+  createBuzzClient: (...args: unknown[]) => fakeBuzzClient(mocks.createBuzzClient(...args)),
 }));
 
 import {
@@ -656,6 +672,7 @@ describe('RoomRuntimeCoordinator transient relay resilience', () => {
       { workCalendar: fakeWorkCalendar() },
     );
     const controller = new AbortController();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     // A crash-looping supervisor would throw out of run() (or exit the
     // process) on the very first transient failure; assert instead that it
@@ -670,6 +687,7 @@ describe('RoomRuntimeCoordinator transient relay resilience', () => {
     // Recovers past both transient failures and keeps polling (a crash-loop
     // would have thrown out of run() on the first rejection instead).
     expect(isMember.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(errors.mock.calls.flat().join(' ')).toContain('membership could not be confirmed');
     // One per reconcile() client, plus the daemon's shared relay socket closed
     // once at teardown (same mock object backs both in this fixture).
     expect(disconnect).toHaveBeenCalledTimes(isMember.mock.calls.length + 1);
@@ -787,7 +805,13 @@ describe('ThinDaemonCore control-plane wake signal', () => {
     // No `connect`/`socket` on this mock — mirrors a client that cannot open
     // a control-plane WS at all; reconcile() must still be driven, just by
     // the heartbeat instead of a push.
-    mocks.createBuzzClient.mockReturnValue({ isMember, listMyChannels, disconnect });
+    mocks.createBuzzClient.mockReturnValue({
+      isMember,
+      listMyChannels,
+      disconnect,
+      connect: undefined as never,
+      socket: undefined as never,
+    });
     const supervisor = new ThinDaemonCore(
       runtime,
       `/tmp/beeline/agents/${runtime.agent.publicKey}/runtime.json`,
@@ -795,6 +819,7 @@ describe('ThinDaemonCore control-plane wake signal', () => {
       { reconcileHeartbeatMs: 20, workCalendar: fakeWorkCalendar() },
     );
     const controller = new AbortController();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const runPromise = supervisor.run({ pollMs: 5, signal: controller.signal });
     while (isMember.mock.calls.length < 2) {
@@ -805,6 +830,7 @@ describe('ThinDaemonCore control-plane wake signal', () => {
     // failed control-socket attempt must not double-disconnect the same
     // mock object once per reconcile call.
     expect(disconnect).toHaveBeenCalledTimes(isMember.mock.calls.length);
+    expect(errors.mock.calls.flat().join(' ')).toContain('control-plane WS unavailable');
 
     controller.abort();
     await expect(runPromise).resolves.toBe('aborted');
@@ -945,16 +971,6 @@ describe('RoomRuntimeCoordinator room owns the repo (Stage 1)', () => {
       {} as BodyConfig,
     );
   }
-
-  it('places the canonical checkout per-host per-repo (not per-agent), identical across agents', () => {
-    const root = '/tmp/beeline-canon-host';
-    const a = supervisorFor(root) as never as { canonicalCheckoutPath(key: string): string };
-    const b = supervisorFor(root) as never as { canonicalCheckoutPath(key: string): string };
-    const expected = resolve(root, 'beeline', 'repositories', 'repo-key-xyz');
-    expect(a.canonicalCheckoutPath('repo-key-xyz')).toBe(expected);
-    // A different agent on the same host resolves the SAME shared checkout.
-    expect(b.canonicalCheckoutPath('repo-key-xyz')).toBe(expected);
-  });
 
   it('serves a remote Room from beeline own clone of origin, never the operator checkout', () => {
     const tmp = mkdtempSync(resolve(tmpdir(), 'buzzy-canon-'));
@@ -1671,10 +1687,15 @@ describe('RoomRuntimeCoordinator agent soul freshness', () => {
       ]);
 
     await supervisor.refreshPersonaIfSoulChanged({ listAgents: soulAt(100) });
+    const freshnessError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await supervisor.refreshPersonaIfSoulChanged({
       listAgents: vi.fn().mockRejectedValue(new Error('relay unavailable')),
     });
     expect(refreshPersonaForSoulUpdate).not.toHaveBeenCalled();
+    expect(freshnessError).toHaveBeenCalledWith(
+      expect.stringContaining('agent soul freshness check failed'),
+      expect.objectContaining({ message: 'relay unavailable' }),
+    );
 
     await supervisor.refreshPersonaIfSoulChanged({ listAgents: soulAt(200) });
     expect(refreshPersonaForSoulUpdate).toHaveBeenCalledTimes(1);

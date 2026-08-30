@@ -62,7 +62,7 @@
  * the fix for that; keep all five consumers agreeing or amend them together.
  */
 import { createHash } from 'node:crypto';
-import { constants as fsConstants, type Dirent } from 'node:fs';
+import { constants as fsConstants } from 'node:fs';
 import {
   access,
   chmod,
@@ -321,17 +321,6 @@ async function fetchText(url: string, fetchImpl: typeof fetch): Promise<string> 
   const response = await fetchImpl(url, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`fetching ${url} failed: HTTP ${response.status}`);
   return response.text();
-}
-
-async function sha256File(path: string): Promise<string> {
-  const { createReadStream } = await import('node:fs');
-  return new Promise((resolveHash, rejectHash) => {
-    const hash = createHash('sha256');
-    const stream = createReadStream(path);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('error', rejectHash);
-    stream.on('end', () => resolveHash(hash.digest('hex')));
-  });
 }
 
 function run(
@@ -1370,13 +1359,12 @@ export class SelfUpdateManager {
       return;
     }
 
-    await this.apply(verdict.published, manifestUrl, { force: opts.force === true });
+    await this.apply(verdict.published, manifestUrl);
   }
 
   private async apply(
     published: PublishedBundle,
     manifestUrl: string,
-    opts: { force: boolean },
   ): Promise<void> {
     const now = this.options.now();
     const state = await readUpdateState(this.options.layout);

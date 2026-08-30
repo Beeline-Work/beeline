@@ -1,4 +1,3 @@
-import { dirname } from 'node:path';
 import {
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
@@ -6,8 +5,8 @@ import {
   normalizeRelayBaseUrl,
   readRuntimeRecord,
   resolveRuntimeConfigPath,
+  selectRuntimeConfigPaths,
   stopRuntimeDaemon,
-  tryInspectLocalRepository,
   updateRuntimeRelay,
 } from './runtime.js';
 
@@ -63,26 +62,20 @@ export async function runRelayCommand(
   if (unknown) throw new Error(`unknown relay option: ${unknown}`);
 
   const cwd = deps.cwd();
-  const hostScope = allFlag || Boolean(requestedPubkey) || !tryInspectLocalRepository(cwd);
-  const configs = hostScope
-    ? await deps.findHostRuntimes(cwd)
-    : await deps.findRepositoryRuntimes(cwd);
-  const matching = requestedPubkey
-    ? configs.filter((path) => dirname(path).endsWith(requestedPubkey))
-    : configs;
-  const unique = [...new Set(matching)];
-  if (unique.length === 0) {
-    throw new Error(
+  const { paths: unique } = await selectRuntimeConfigPaths({
+    cwd,
+    all: allFlag,
+    requestedPubkey,
+    findHostRuntimes: deps.findHostRuntimes,
+    findRepositoryRuntimes: deps.findRepositoryRuntimes,
+    noRuntimeMessage: (hostScope) =>
       requestedPubkey
         ? `no paired agent runtime found for ${requestedPubkey}`
         : hostScope
           ? 'no paired agent runtime found on this host'
           : 'no paired agent runtime found in this repository',
-    );
-  }
-  if (requestedPubkey && unique.length > 1) {
-    throw new Error('multiple paired agents match that pubkey; pass the full agent pubkey');
-  }
+    multipleRuntimeMessage: 'multiple paired agents match that pubkey; pass the full agent pubkey',
+  });
 
   deps.log(`[buzz] found ${unique.length} paired agent runtime(s); updating ${unique.length}.`);
   let updated = 0;

@@ -1303,11 +1303,6 @@ export class RoomRuntimeCoordinator {
     return resolve(this.runtime.supervisorRoot, 'beeline', 'repositories');
   }
 
-  /** Kept as a test/introspection seam; path authority lives in the resolver. */
-  private canonicalCheckoutPath(repositoryKey: string): string {
-    return this.repositoryTruth.checkoutPath(repositoryKey);
-  }
-
   /**
    * The repository this daemon actually serves a Room from: beeline's dedicated
    * canonical checkout for a remote repo, or (only for a non-convergent

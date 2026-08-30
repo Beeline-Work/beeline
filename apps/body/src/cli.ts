@@ -46,9 +46,7 @@ import { ThinDaemonCore } from './thin-core.js';
 import {
   assertAgentNotPushAllowed,
   createRelayClient,
-  createChannel,
   newIdentity,
-  setMemberRole,
   type Identity,
 } from '@beeline/gate';
 import { createBuzzClient } from '@beeline/buzz-client';
@@ -68,6 +66,7 @@ import {
   runtimeAgentCommand,
   runtimeDaemonPid,
   runtimeIdentity,
+  selectRuntimeConfigPaths,
   stopRuntimeDaemon,
   tryInspectLocalRepository,
   type AgentRuntimeRecord,
@@ -1321,29 +1320,21 @@ async function main(): Promise<void> {
     // `beeline start` outside any git repository scans the machine-local
     // agent state home instead of failing. Inside a repository the scope
     // stays that repository's paired agents, unchanged.
-    const hostScope = allFlag || Boolean(flagPubkey) || !tryInspectLocalRepository(process.cwd());
-    const configs = hostScope
-      ? await findAgentRuntimeConfigPaths(process.env, process.cwd())
-      : await findRuntimeConfigPaths(process.cwd());
-    const matching = requestedPubkey
-      ? configs.filter((path) => dirname(path).endsWith(requestedPubkey))
-      : configs;
-    // Pointers resolve to the same real record; start each runtime once.
-    const unique = [...new Set(matching)];
-    if (unique.length === 0) {
-      throw new Error(
+    const { paths: unique } = await selectRuntimeConfigPaths({
+      cwd: process.cwd(),
+      all: allFlag,
+      requestedPubkey,
+      findHostRuntimes: (cwd) => findAgentRuntimeConfigPaths(process.env, cwd),
+      findRepositoryRuntimes: findRuntimeConfigPaths,
+      noRuntimeMessage: (hostScope) =>
         requestedPubkey
           ? `no paired agent runtime found for ${requestedPubkey}`
           : hostScope
             ? 'no paired agent runtime found on this host'
             : 'no paired agent runtime found in this repository',
-      );
-    }
-    if (requestedPubkey && unique.length > 1) {
-      throw new Error(
+      multipleRuntimeMessage:
         'multiple paired agents match that pubkey; pass the full agent pubkey shown by `beeline pair`',
-      );
-    }
+    });
     if (interactiveUi) clack.intro(pc.bold('beeline start'));
     for (const path of unique) {
       if (!interactiveUi) {

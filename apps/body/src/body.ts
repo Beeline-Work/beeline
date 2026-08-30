@@ -192,6 +192,7 @@ import {
   standingAskFromEvents,
   type ConcludeEpisode,
 } from './conclude-watch.js';
+import { workingInvariantAlarm } from './corner-liveness.js';
 import {
   NAMED_REPOSITORY_PERMISSION_COMMAND,
   namedRepositoryTargetFromPermission,
@@ -12382,14 +12383,24 @@ export class Body {
       if (standingAsk) continue;
       const requestId = info.request?.eventId ?? 'unknown';
       const tip = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-      const alarmKey = `${info.subchannelId}:${requestId}:${tip}`;
-      if (!this.workingInvariantAlarms.has(alarmKey)) {
-        this.workingInvariantAlarms.add(alarmKey);
-        console.error(
-          `[body] WORKING invariant failed corner=${info.subchannelId} request=${requestId} ` +
-            `receipt=complete process=${info.session.processState ?? 'unknown'} ` +
-            `tip=${tip || 'unknown'} relayCursor=${(await this.durableState.cursor(info.subchannelId)).createdAt}`,
-        );
+      const cursor = await this.durableState.cursor(info.subchannelId);
+      const alarm = workingInvariantAlarm({
+        cornerId: info.subchannelId,
+        requestId,
+        lastReceipt: 'complete',
+        queuedDelivery:
+          this.steerQueuedChannels.has(info.subchannelId) ||
+          this.inFlightSubchannelPolls.has(info.subchannelId)
+            ? 'queued'
+            : 'none',
+        sessionHealth: info.session.client?.isAlive ? 'alive' : 'down',
+        processHealth: info.session.processState ?? 'unknown',
+        relayCursor: cursor.createdAt,
+        gitTip: tip || 'unknown',
+      });
+      if (!this.workingInvariantAlarms.has(alarm.key)) {
+        this.workingInvariantAlarms.add(alarm.key);
+        console.error(alarm.message);
       }
     }
   }

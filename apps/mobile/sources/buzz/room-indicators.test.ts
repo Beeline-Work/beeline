@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   CORNER_ACTIVITY_FRESHNESS_MS,
-  type CornerMachineState,
   type RoomViewAgentTurn,
 } from '@beeline/buzz-client';
-import type { CornerStatus, CornerSummary } from './corners';
+import type { CornerMachineState, CornerStatus, CornerSummary } from './corners';
 import {
   COMPOSER_ACK_BOUND_MS,
   hasComposerAckReceipt,
@@ -71,18 +70,18 @@ describe('selectPinnedCorner', () => {
     ).toBeNull();
   });
 
-  it('pins only a fresh canonical working lease as live', () => {
+  it('4. dead live bar uses the indexed receipt state without a screen-owned freshness clock', () => {
     expect(
       selectPinnedCorner({ lifecycle: [corner('fresh', 'working', 'live')], now: NOW }),
     ).toEqual({ cornerId: 'fresh', status: 'live' });
     expect(
       selectPinnedCorner({
         lifecycle: [
-          corner('stale', 'working', 'live', (NOW - CORNER_ACTIVITY_FRESHNESS_MS - 1) / 1_000),
+          corner('older-receipt', 'working', 'live', 1),
         ],
         now: NOW,
       }),
-    ).toBeNull();
+    ).toEqual({ cornerId: 'older-receipt', status: 'live' });
   });
 
   it.each([

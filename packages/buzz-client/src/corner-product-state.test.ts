@@ -56,7 +56,7 @@ describe('corner five-state projector', () => {
     expect(deriveCornerLifecycle(input).lifecycle).toBe(lifecycle);
   });
 
-  it('derives only flavors of ARCHIVED, never new durable states', () => {
+  it('3. list close invalidation makes archived terminal with only derived flavors', () => {
     expect(
       deriveCornerLifecycle({ created: true, archived: true, git: git('contained') }),
     ).toMatchObject({
@@ -81,5 +81,30 @@ describe('corner five-state projector', () => {
     expect(
       parseCornerGitProjection(JSON.stringify({ ...git('review'), artifact: undefined })),
     ).toMatchObject({ relation: 'review', featureTip: 'a'.repeat(40) });
+  });
+
+  it('2. hidden transcript cards cannot hide an approval from the lifecycle DTO', () => {
+    const projected = deriveCornerLifecycle({
+      created: true,
+      archived: false,
+      git: git('review'),
+      verdict: verdict('approve'),
+    });
+    expect(projected.lifecycle).toBe('APPROVED');
+    expect(Object.keys(projected)).not.toContain('presentation');
+  });
+
+  it('rejection archives without changing the recoverable feature branch', () => {
+    const projected = deriveCornerLifecycle({
+      created: true,
+      archived: true,
+      git: git('review'),
+      verdict: verdict('reject'),
+    });
+    expect(projected).toMatchObject({
+      lifecycle: 'ARCHIVED',
+      archiveFlavor: 'rejected',
+      git: { featureBranch: 'fm/change' },
+    });
   });
 });

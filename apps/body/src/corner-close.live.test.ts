@@ -47,7 +47,7 @@ async function waitUntil(check: () => Promise<boolean>, timeoutMs = 20_000): Pro
 const live = await reachable();
 
 describe.runIf(live)('live corner close (archive) contract', () => {
-  it('archives the subchannel and notifies the parent, distinct from a plain turn-cancel', async () => {
+  it('10. close travels the existing socket path and archives exactly once without a poll tick', async () => {
     const human = newIdentity('corner-close-human');
     const agent = newIdentity('corner-close-agent');
     const parentChannelId = await createChannel(human, `corner-close-${Date.now()}`);

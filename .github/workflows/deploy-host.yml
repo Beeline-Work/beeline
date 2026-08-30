@@ -5,14 +5,13 @@
 # is not reachable from the internet (Cloudflare tunnel only, no inbound
 # ports), so a GitHub-hosted runner could never reach it and no server
 # credential is stored in GitHub. The job runs scripts/deploy-relay-host.sh,
-# which swaps in the WHOLE relay-stack/web/ tree and rebuilds/recreates the
-# auth container, then verifies the PUBLIC URL before declaring success.
+# which swaps the tracked web assets while preserving the workflow-owned /dl
+# release store, rebuilds/recreates auth, and verifies the PUBLIC URL.
 #
-# This workflow intentionally does NOT skip the beeline-bundle-bot commits
-# made by beeline-bundle.yml: those commits are how freshly built bundles
-# reach main, so they must deploy too. A normal merge therefore triggers two
-# serialized runs (the merge itself, then the bundle publish) and the second
-# one carries the fresh bundles; every run is idempotent.
+# A bundle-input merge can trigger this deploy before its native bundle build
+# finishes. That first run leaves /dl in place. beeline-bundle.yml publishes
+# the new release to the host-local store and then dispatches this workflow
+# again, ordering the bundle publication before the final deploy verification.
 #
 # TRUST NOTE: a self-hosted runner means anyone who can merge to this repo
 # can execute code on the production host. Today that is the captain alone —
@@ -47,7 +46,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy whole web tree + auth image, verify public URL
+      - name: Deploy tracked web assets + auth image, verify public URL
         run: ./scripts/deploy-relay-host.sh
         env:
           BEELINE_DEPLOY_DRILL: ${{ inputs.drill || '' }}

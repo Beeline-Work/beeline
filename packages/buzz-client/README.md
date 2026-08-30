@@ -3,9 +3,8 @@
 Channel-scoped **client transport** for real Buzz. The mobile app’s `RigTransport`
 adapter sits on this package. UI-agnostic — no React, no mock relay.
 
-Authority: repo-root `spec.md` (Happy RigTransport ~10 methods + gotchas) and the
-architecture scout report (`buzzy-arch-scout/report.md` §4 channels, §8 HTTP, §(c)
-method→call table).
+Authority: the repository's [surface boundary](../../AGENTS.md) and the exported
+types in [`src/room-view.ts`](./src/room-view.ts).
 
 ## What it covers
 
@@ -69,25 +68,16 @@ cd packages/buzz-client && npm run test:live
 If the relay is unreachable, live tests soft-skip and exit 0. When the relay **is**
 reachable they always run for real.
 
-## What the RigTransport adapter still needs
+## Current boundaries
 
-This package is the **relay transport** half. The Happy `RigTransport` (~10 MVP
-methods in `spec.md`) also needs a **body** (operator machine) that:
-
-| RigTransport                                                        | Still on the body / later                                                                                  |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `sessionCreate` / `sessionRead` / `sessionsRead` / `sessionArchive` | ACP stdio (`buzz-acp` ↔ `buzz-agent`); map channel↔session body-side                                       |
-| `messageSubmit` → agent turn                                        | kind:9 + `#p` agent (this package) → buzz-acp `session/prompt`                                             |
-| `sessionEventsSubscribe` live tool UI                               | Body must **project** ACP `session/update` as `#t=agent-activity` channel events (stdio is not multi-user) |
-| `runAbort`                                                          | Owner `!cancel` mention or body control → ACP `session/cancel`                                             |
-| Permission respond                                                  | Body-mediated; stock buzz-acp auto-approves today                                                          |
-| `worktreeCreate` / `worktreeArchive`                                | Body: git worktree + child channel + edit MCP                                                              |
-| `changedFileRead` / `workspaceFilesRead` / revert                   | No relay file REST — body `git show`/`diff` or client smart-HTTP fetch                                     |
-| Merge Approve                                                       | **This package** signs P0 kind:9 grant; worker in `apps/gate` lands the merge                              |
-| Terminals                                                           | Stub / hide UI (no Buzz PTY)                                                                               |
-
-See scout report §(c) for the full method→call sequence and §(a) for the
-mobile ↔ relay ↔ body diagram.
+- **Relay transport:** this package signs relay writes and offers HTTP/WS query helpers.
+- **Durable reads:** [`RoomViewClient`](./src/room-view.ts) verifies server-indexed Room,
+  history, Workspace, and agent-detail responses before a client can cache or render them.
+- **Live updates:** relay signals invalidate those surfaces; only verified draft, thought, and
+  presence events may appear as live overlays.
+- **Execution:** [`apps/body`](../../apps/body) owns ACP sessions, permission requests,
+  worktrees, and agent execution. This package does not own a Room snapshot or auto-approve
+  those actions.
 
 ## Live proofs
 

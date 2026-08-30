@@ -83,7 +83,10 @@ import {
 } from './community.js';
 import { publishEvent, type HttpBridgeOptions } from './http.js';
 import { buildReplyCommand, type ReplyCommandOptions } from './reply-command.js';
-import { fetchIdentityPredecessors, resolveCurrentIdentityPubkey } from './oidc-bind.js';
+import {
+  fetchIdentityPredecessors,
+  resolveCurrentIdentityPubkey,
+} from './identity-succession.js';
 import {
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,

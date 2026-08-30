@@ -129,7 +129,7 @@ describe('RoomIndexer', () => {
           kind,
           JSON.stringify(tags),
           content,
-          channelId,
+          kind === 30078 ? null : channelId,
           tags.find((tag) => tag[0] === 'd')?.[1] ?? null,
         ],
       );
@@ -430,14 +430,14 @@ describe('RoomIndexer', () => {
   it('keeps a predecessor-authored repository binding unverified instead of calling it absent', async () => {
     await postgres.query(
       `DELETE FROM events
-       WHERE community_id = $1 AND channel_id = $2 AND kind = 30078
+       WHERE community_id = $1 AND d_tag = $2 AND kind = 30078
          AND tags @> '[["t", "buzz-room-repository"]]'::jsonb`,
-      [TENANT, ROOM],
+      [TENANT, `buzz-room-repository:${ROOM}`],
     );
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, $5, $6, $7)`,
+       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, $5, NULL, $6)`,
       [
         TENANT,
         bytes('e'.repeat(64)),
@@ -452,7 +452,6 @@ describe('RoomIndexer', () => {
           name: 'beeline',
           remote: 'git://github.com/acme/beeline',
         }),
-        ROOM,
         `buzz-room-repository:${ROOM}`,
       ],
     );
@@ -466,9 +465,9 @@ describe('RoomIndexer', () => {
   it('reports none only when the Room has no repository event at all', async () => {
     await postgres.query(
       `DELETE FROM events
-       WHERE community_id = $1 AND channel_id = $2 AND kind = 30078
+       WHERE community_id = $1 AND d_tag = $2 AND kind = 30078
          AND tags @> '[["t", "buzz-room-repository"]]'::jsonb`,
-      [TENANT, ROOM],
+      [TENANT, `buzz-room-repository:${ROOM}`],
     );
 
     const view = await indexer.readRoom(ROOM, VIEWER);
@@ -634,7 +633,7 @@ describe('RoomIndexer', () => {
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(30), 30078, $4, '', $5, $6)`,
+       VALUES ($1, $2, $3, to_timestamp(30), 30078, $4, '', NULL, $5)`,
       [
         TENANT,
         bytes('9'.repeat(64)),
@@ -646,7 +645,6 @@ describe('RoomIndexer', () => {
           ['state', 'waiting-on-human'],
           ['reason', 'question'],
         ]),
-        CORNER,
         `buzz-corner-state:${CORNER}`,
       ],
     );
@@ -681,7 +679,7 @@ describe('RoomIndexer', () => {
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(32), 30078, $4, '', $5, $6)`,
+       VALUES ($1, $2, $3, to_timestamp(32), 30078, $4, '', NULL, $5)`,
       [
         TENANT,
         bytes('7'.repeat(64)),
@@ -692,7 +690,6 @@ describe('RoomIndexer', () => {
           ['t', 'buzz-corner-state'],
           ['state', 'concluded'],
         ]),
-        CORNER,
         `buzz-corner-state:${CORNER}`,
       ],
     );
@@ -714,7 +711,7 @@ describe('RoomIndexer', () => {
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, '', $5, $6)`,
+       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, '', NULL, $5)`,
       [
         TENANT,
         bytes('6'.repeat(64)),
@@ -725,7 +722,6 @@ describe('RoomIndexer', () => {
           ['t', 'buzz-corner-state'],
           ['state', 'concluded'],
         ]),
-        CORNER,
         `buzz-corner-state:${CORNER}`,
       ],
     );
@@ -1362,7 +1358,7 @@ describe('RoomIndexer', () => {
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
        VALUES
         ($1, $2, $3, to_timestamp(13), 9007, $4, '', $5, NULL),
-        ($1, $6, $7, to_timestamp(14), 30078, $8, '', $5, $9)`,
+        ($1, $6, $7, to_timestamp(14), 30078, $8, '', NULL, $9)`,
       [
         TENANT,
         bytes(createHash('sha256').update('terminal-corner-generation').digest('hex')),
@@ -1530,7 +1526,7 @@ describe('RoomIndexer', () => {
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(12), 30078, $4, $5, $6, $7)`,
+       VALUES ($1, $2, $3, to_timestamp(12), 30078, $4, $5, NULL, $6)`,
       [
         TENANT,
         bytes('9'.repeat(64)),
@@ -1543,14 +1539,13 @@ describe('RoomIndexer', () => {
           ['community', WORKSPACE],
         ]),
         JSON.stringify({ name: 'Codex', soul: 'Builds carefully.', avatarSeed: 'codex' }),
-        WORKSPACE,
         `${WORKSPACE}:${AGENT}`,
       ],
     );
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-       VALUES ($1, $2, $3, to_timestamp(13), 30078, $4, $5, $6, $7)`,
+       VALUES ($1, $2, $3, to_timestamp(13), 30078, $4, $5, NULL, $6)`,
       [
         TENANT,
         bytes('8'.repeat(64)),
@@ -1563,7 +1558,6 @@ describe('RoomIndexer', () => {
           ['community', WORKSPACE],
         ]),
         JSON.stringify({ name: 'Forged', soul: 'Overrides the captain.', avatarSeed: 'forged' }),
-        WORKSPACE,
         `${WORKSPACE}:${AGENT}`,
       ],
     );
@@ -1652,14 +1646,13 @@ describe('RoomIndexer', () => {
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
        VALUES
-        ($1, $2, $3, to_timestamp(20), 30078, $5, $6, $4, $8),
-        ($1, $7, $2, to_timestamp(21), 30078, $9, $10, $4, $8),
-        ($1, $11, $2, to_timestamp(22), 30078, $12, $13, $4, $8)`,
+        ($1, $2, $3, to_timestamp(20), 30078, $4, $5, NULL, $7),
+        ($1, $6, $2, to_timestamp(21), 30078, $8, $9, NULL, $7),
+        ($1, $10, $2, to_timestamp(22), 30078, $11, $12, NULL, $7)`,
       [
         TENANT,
         bytes(VIEWER),
         bytes(AGENT),
-        WORKSPACE,
         JSON.stringify([
           ['h', WORKSPACE],
           ['p', AGENT],
@@ -1868,11 +1861,52 @@ describe('RoomIndexer', () => {
       repository: { name: 'beeline', targetBranch: 'main' },
       review: {
         status: 'ready',
+        artifact: { tip: '2'.repeat(40) },
         files: [{ path: 'README.md', status: 'modified' }],
         approvedBy: [{ name: 'Ada' }],
       },
     });
     expect(JSON.stringify(corner)).not.toContain('diff');
+  });
+
+  it('ignores a newer review artifact forged by a non-member author', async () => {
+    const forged = {
+      version: 2,
+      base: '5'.repeat(40),
+      tip: '6'.repeat(40),
+      patchId: '7'.repeat(40),
+      summary: 'Forged review',
+      fileCount: 1,
+      files: [{ path: 'FORGED.md', status: 'added', linesAdded: 99 }],
+      url: 'https://media.test/forged-review.json',
+      sha256: '8'.repeat(64),
+      size: 200,
+    };
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(20), 30078, $4, $5, NULL, $6)`,
+      [
+        TENANT,
+        bytes('f'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['h', CORNER],
+          ['d', `${CORNER}:${forged.tip}:artifact`],
+          ['t', 'change-review-artifact'],
+        ]),
+        JSON.stringify(forged),
+        `${CORNER}:${forged.tip}:artifact`,
+      ],
+    );
+
+    const corner = await indexer.readRoom(CORNER, VIEWER);
+
+    expect(corner?.review).toMatchObject({
+      status: 'ready',
+      artifact: { tip: '2'.repeat(40) },
+      files: [{ path: 'README.md', status: 'modified' }],
+    });
   });
 
   it('resolves only the current opaque invite capability in one query', async () => {
@@ -1896,7 +1930,7 @@ describe('RoomIndexer', () => {
       await postgres.query(
         `INSERT INTO events
           (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
-         VALUES ($1, $2, $3, to_timestamp($4), 30078, $5, '', $6, $7::text)`,
+         VALUES ($1, $2, $3, to_timestamp($4), 30078, $5, '', NULL, $6::text)`,
         [
           TENANT,
           bytes((id++).toString(16).padStart(64, '0')),
@@ -1909,7 +1943,6 @@ describe('RoomIndexer', () => {
             ['expiration', candidate.expiration],
             ...(candidate.revoked ? [['revoked', 'true']] : []),
           ]),
-          WORKSPACE,
           hash,
         ],
       );

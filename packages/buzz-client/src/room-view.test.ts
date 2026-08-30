@@ -189,6 +189,20 @@ describe('RoomViewClient', () => {
     ).toBe(false);
   });
 
+  it('accepts a retained finished-corner checklist but rejects malformed plan rows', () => {
+    const cornerPlan = {
+      objective: 'Keep the full objective available after completion.',
+      items: [{ step: 'Publish the final response', status: 'completed' as const }],
+    };
+    expect(isRoomView({ ...room, cornerPlan })).toBe(true);
+    expect(
+      isRoomView({
+        ...room,
+        cornerPlan: { ...cornerPlan, items: [{ step: 'Bad state', status: 'not-real' }] },
+      }),
+    ).toBe(false);
+  });
+
   it('validates indexed agent souls before a rename form can preserve them', () => {
     const detail = {
       workspaceId: room.room.workspaceId,

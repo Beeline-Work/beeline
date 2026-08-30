@@ -1,4 +1,4 @@
-import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
+import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 
 /**
  * Whether a projected transcript record owns a visible FlatList row.

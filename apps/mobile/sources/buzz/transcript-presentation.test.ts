@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatDisplayMessage } from '@/sync/transport/buzz-event-projection';
+import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { visibleTranscriptWindow } from './transcript-presentation';
 
 const prose = (id: string): ChatDisplayMessage => ({

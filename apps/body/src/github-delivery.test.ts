@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { AcpClient } from './acp.js';
 import { Body, LANDED_TAG, type SubchannelInfo } from './body.js';
 import { mediaUploadResponse, relayQueryResponse } from './relay-test-helper.js';
+import { CORNER_GIT_PROJECTION_TAG } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 
 const cleanup: string[] = [];
@@ -114,21 +115,23 @@ afterEach(async () => {
 });
 
 describe('GitHub-origin delivery', () => {
-  it('refuses merge-ready when the agent worktree still has uncommitted changes', async () => {
+  it('projects committed Git truth independently of uncommitted worktree changes', async () => {
     const { worktree, info, body } = await repository();
     const events = captureEvents();
     await writeFile(resolve(worktree, 'UNCOMMITTED.txt'), 'must be committed first\n');
 
-    await expect(publish(body, info)).resolves.toBe(false);
-    expect(info.mergeTarget).toBeUndefined();
+    await expect(publish(body, info)).resolves.toBe(true);
+    expect(info.mergeTarget).toBeDefined();
     // The attention-transition gate also POSTs /query reads through this
     // capture; only signed kind:9 events are publishes.
     const publishes = events.filter((event) => Array.isArray(event.tags));
     expect(
       publishes.some((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        event.tags.some(
+          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
+        ),
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       publishes.some((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
@@ -156,7 +159,9 @@ describe('GitHub-origin delivery', () => {
     ).toThrow();
     expect(
       events.filter((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        event.tags.some(
+          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
+        ),
       ),
     ).toHaveLength(1);
     expect(
@@ -216,7 +221,9 @@ describe('GitHub-origin delivery', () => {
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(rewrittenTip);
     expect(
       events.filter((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+        event.tags.some(
+          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
+        ),
       ),
     ).toHaveLength(2);
   });
@@ -253,7 +260,11 @@ describe('GitHub-origin delivery', () => {
       patchId: expect.stringMatching(/^[0-9a-f]{40}$/),
     });
     expect(
-      events.some((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready')),
+      events.some((event) =>
+        event.tags.some(
+          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
+        ),
+      ),
     ).toBe(true);
     expect(
       events.find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === LANDED_TAG)),
@@ -375,7 +386,11 @@ describe('a moved target is standing authorization to update the feature branch'
     // POSTs /query reads through this capture.
     const ready = events
       .filter((event) => Array.isArray(event.tags))
-      .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'));
+      .filter((event) =>
+        event.tags.some(
+          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
+        ),
+      );
     expect(ready).toHaveLength(2);
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/feature/corner'])).toContain(
       refreshedTip,
@@ -446,10 +461,13 @@ describe('a moved target is standing authorization to update the feature branch'
 });
 
 describe('preview deployment URL on the review card', () => {
-  function mergeReadyTags(events: NostrEvent[]): string[][] {
+  function reviewProjectionTags(events: NostrEvent[]): string[][] {
     return (
-      events.find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'))
-        ?.tags ?? []
+      events.find((event) =>
+        event.tags.some(
+          (tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG,
+        ),
+      )?.tags ?? []
     );
   }
 
@@ -458,18 +476,16 @@ describe('preview deployment URL on the review card', () => {
     const events = captureEvents();
     // A live fetch here would be a bug: the local origin never reaches a host.
     await expect(publish(body, info)).resolves.toBe(true);
-    expect(mergeReadyTags(events).map((tag) => tag[0])).not.toContain('preview');
+    expect(reviewProjectionTags(events).map((tag) => tag[0])).not.toContain('preview');
   });
 
-  it('carries the preview URL of the pushed tip when the host published one', async () => {
+  it('does not make preview lookups part of the durable Git projection', async () => {
     const { worktree, info, body } = await repository();
     // The fetch URL names GitHub (what the checks lookup reads) while the push
     // still goes to the local bare remote.
     const pushUrl = run(worktree, ['remote', 'get-url', 'origin']);
     run(worktree, ['remote', 'set-url', 'origin', 'https://github.com/lunchboxfortwo/scratch.git']);
     run(worktree, ['remote', 'set-url', '--push', 'origin', pushUrl]);
-    const tip = run(worktree, ['rev-parse', 'HEAD']);
-
     const events: NostrEvent[] = [];
     const seen: string[] = [];
     vi.stubGlobal(
@@ -503,16 +519,11 @@ describe('preview deployment URL on the review card', () => {
     );
 
     await expect(publish(body, info)).resolves.toBe(true);
-    expect(seen[0]).toBe(
-      `https://api.github.com/repos/lunchboxfortwo/scratch/commits/${tip}/status`,
-    );
-    expect(mergeReadyTags(events)).toContainEqual([
-      'preview',
-      'https://scratch-git-feature-corner.vercel.app',
-    ]);
+    expect(seen).toHaveLength(0);
+    expect(reviewProjectionTags(events).map((tag) => tag[0])).not.toContain('preview');
   });
 
-  it('still publishes merge-ready when the preview lookup fails outright', async () => {
+  it('still publishes the Git projection when a legacy preview lookup would fail', async () => {
     const { worktree, info, body } = await repository();
     const pushUrl = run(worktree, ['remote', 'get-url', 'origin']);
     run(worktree, ['remote', 'set-url', 'origin', 'https://github.com/lunchboxfortwo/scratch.git']);
@@ -533,6 +544,6 @@ describe('preview deployment URL on the review card', () => {
     );
 
     await expect(publish(body, info)).resolves.toBe(true);
-    expect(mergeReadyTags(events).map((tag) => tag[0])).not.toContain('preview');
+    expect(reviewProjectionTags(events).map((tag) => tag[0])).not.toContain('preview');
   });
 });

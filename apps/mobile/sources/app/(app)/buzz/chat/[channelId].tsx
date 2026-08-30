@@ -4732,7 +4732,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.bgBase,
     },
     rejectButtonText: {
-      ...Typography.mono('semiBold'),
+      ...Typography.default('semiBold'),
       color: groknight.textPrimary,
       fontSize: 12,
       letterSpacing: 0.3,

@@ -644,9 +644,10 @@ describe('emission-point wiring (source assertions)', () => {
 
   it('every failure site routes through the gated noteCornerFailure funnel', () => {
     const gateSites = source.match(/this\.noteCornerFailure\(info\)/g) ?? [];
-    expect(gateSites.length).toBeGreaterThanOrEqual(4);
+    expect(gateSites.length).toBeGreaterThanOrEqual(2);
     // The only direct failure transition is inside the gate itself; emission
-    // sites call `noteCornerFailure` rather than bypassing it.
+    // sites call `noteCornerFailure` rather than bypassing it. A blocked land
+    // deliberately returns to waiting/review so its merge button stays armed.
     expect(source.match(/setCornerState\(info, 'waiting', 'failure'\)/g)).toHaveLength(1);
   });
 

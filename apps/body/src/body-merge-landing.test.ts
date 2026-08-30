@@ -54,6 +54,7 @@ import {
   conciseCornerTurnSummary,
   conciseLandSummary,
   isMovedTargetLandFailure,
+  MAX_LANDING_TARGET_SYNC_ROUNDS,
   cornerArchiveSummary,
   CORNER_CLOSE_TAG,
   CORNER_TARGET_SYNC_INSTRUCTION,
@@ -306,6 +307,106 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
+  it('rebases a stale clean feature branch and publishes its review without a model turn', async () => {
+    const agent = newIdentity('merge-ready-auto-sync-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const featureBefore = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+      gitCommand(worktreePath, ['checkout', 'main']);
+      writeFileSync(join(worktreePath, 'MAIN.txt'), 'unrelated target work\n');
+      gitCommand(worktreePath, ['add', 'MAIN.txt']);
+      gitCommand(worktreePath, ['commit', '-m', 'move main independently']);
+      const mainTip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+      gitCommand(worktreePath, ['checkout', 'feature/ready']);
+      const sessionPrompt = vi.fn();
+      const info = {
+        subchannelId: 'corner-auto-sync',
+        worktreePath,
+        featureBranch: 'feature/ready',
+        role: agent,
+        session: {
+          channelId: 'corner-auto-sync',
+          sessionId: 'session',
+          parentChannelId: 'room-auto-sync',
+          client: { sessionPrompt },
+        } as never,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      };
+      body.registerSubchannel(info);
+
+      await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
+
+      const featureAfter = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+      expect(featureAfter).not.toBe(featureBefore);
+      expect(
+        spawnSync('git', ['merge-base', '--is-ancestor', mainTip, featureAfter], {
+          cwd: worktreePath,
+        }).status,
+      ).toBe(0);
+      expect(sessionPrompt).not.toHaveBeenCalled();
+      expect(
+        published.filter((event) => event.tags.some((tag) => tag[1] === 'merge-ready')),
+      ).toHaveLength(1);
+      expect(
+        published.some((event) => event.tags.some((tag) => tag[1] === 'merge-not-ready')),
+      ).toBe(false);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the merge target mounted when target sync conflicts, without a model turn', async () => {
+    const agent = newIdentity('merge-ready-conflict-agent');
+    const body = newBody(agent);
+    const published = stubPublishing();
+    const worktreePath = committedFeatureWorktree();
+    try {
+      const featureTip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+      gitCommand(worktreePath, ['checkout', 'main']);
+      writeFileSync(join(worktreePath, 'README.md'), '# Main changed too\n');
+      gitCommand(worktreePath, ['add', 'README.md']);
+      gitCommand(worktreePath, ['commit', '-m', 'conflicting main change']);
+      gitCommand(worktreePath, ['checkout', 'feature/ready']);
+      const sessionPrompt = vi.fn();
+      const info = {
+        subchannelId: 'corner-sync-conflict',
+        worktreePath,
+        featureBranch: 'feature/ready',
+        role: agent,
+        session: {
+          channelId: 'corner-sync-conflict',
+          sessionId: 'session',
+          parentChannelId: 'room-sync-conflict',
+          client: { sessionPrompt },
+        } as never,
+        lastPolledAt: 0,
+        archived: false,
+        boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
+      };
+      body.registerSubchannel(info);
+
+      await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
+
+      expect(
+        published.filter((event) => event.tags.some((tag) => tag[1] === 'merge-ready')),
+      ).toHaveLength(1);
+      expect(
+        published.some((event) => event.tags.some((tag) => tag[1] === 'merge-sync-conflict')),
+      ).toBe(false);
+      expect(sessionPrompt).not.toHaveBeenCalled();
+      expect(gitCommand(worktreePath, ['rev-parse', 'HEAD'])).toBe(featureTip);
+      expect(existsSync(join(worktreePath, '.git', 'rebase-merge'))).toBe(false);
+      expect(info.cornerState).toEqual({ state: 'waiting', reason: 'review' });
+      expect(info.mergeTarget?.tip).toBe(featureTip);
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it('publishes merge-ready when the only worktree dirt is the Body-owned private-state link', async () => {
     const agent = newIdentity('merge-ready-private-state-agent');
     const body = newBody(agent);
@@ -514,7 +615,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
-  it('feeds the concrete rejection back to the agent and publishes its approval claim only after a real merge target', async () => {
+  it('publishes the original reply once and never spends a model turn on a rejected merge gate', async () => {
     const agent = newIdentity('merge-feedback-agent');
     const body = newBody(agent);
     const published: NostrEvent[] = [];
@@ -543,11 +644,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
           onChunk?: (delta: string, fullText: string) => void,
         ) => {
           prompts.push(prompt);
-          if (prompts.length === 2) {
-            gitCommand(worktreePath, ['add', 'PENDING.txt']);
-            gitCommand(worktreePath, ['commit', '-m', 'commit pending work']);
-          }
-          const agentText = 'The work is ready. Approve the change-review panel.';
+          const agentText = 'Here is the answer to the human question.';
           onChunk?.(agentText, agentText);
           return { stopReason: 'end_turn', updates: [], agentText, toolCalls: [] };
         },
@@ -583,29 +680,28 @@ describe('corner merge-ready surfaces a real committed change', () => {
       await vi.waitFor(() => expect(prompts.length).toBeGreaterThan(0));
       await body.waitForAgentTasks();
 
-      expect(prompts).toHaveLength(2);
-      expect(prompts[1]).toContain('PENDING.txt');
-      expect(prompts[1]).toContain('did not publish a merge target');
+      expect(prompts).toHaveLength(1);
       expect(
         published.some((event) =>
           event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         ),
       ).toBe(true);
-      const readyIndex = published.findIndex((event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
+      expect(info.mergeTarget).toBeUndefined();
+      expect(info.mergeGateBlocked?.reason).toContain('PENDING.txt');
+      expect(
+        published
+          .filter((event) => event.tags.some((tag) => tag[1] === 'agent-message'))
+          .map((event) => event.content),
+      ).toEqual(['Here is the answer to the human question.']);
+      expect(published.some((event) => event.content.includes('merge-gate rejections'))).toBe(
+        false,
       );
-      const approvalClaimIndex = published.findIndex((event) =>
-        event.content.includes('Approve the change-review panel'),
-      );
-      expect(info.mergeTarget).toBeDefined();
-      expect(readyIndex).toBeGreaterThanOrEqual(0);
-      expect(approvalClaimIndex).toBeGreaterThan(readyIndex);
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }
   });
 
-  it('stops after three rejected gate checks and reports the last concrete blocker without publishing a false completion', async () => {
+  it('suppresses byte-identical consecutive agent replies while leaving gate status separate', async () => {
     const agent = newIdentity('merge-feedback-bounded-agent');
     const body = newBody(agent);
     const published: NostrEvent[] = [];
@@ -634,42 +730,39 @@ describe('corner merge-ready surfaces a real committed change', () => {
         boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
       };
       body.registerSubchannel(info);
-      const prompts: string[] = [];
-      vi.spyOn(body as never, 'promptAgent' as never).mockImplementation((async (
-        _session: unknown,
-        prompt: string,
-      ) => {
-        prompts.push(prompt);
-        return {
-          agentText: 'Everything is done. Approve the change-review panel.',
-          updates: [],
-        };
-      }) as never);
-
-      Reflect.get(body, 'startAgentTask').call(
+      const result = {
+        agentText: 'The human answer survives the gate.',
+        updates: [],
+        toolCalls: [],
+        stopReason: 'end_turn',
+      };
+      const attribution = {
+        requestId: 'request-stuck',
+        originalRequestId: 'request-stuck',
+        cause: 'corner-follow-up',
+      };
+      await Reflect.get(body, 'finishCornerTurnAgainstMergeGate').call(
         body,
         info,
-        'Finish work that cannot be committed.',
-        'Finish work that cannot be committed.',
-        {
-          requestId: 'request-stuck',
-          originalRequestId: 'request-stuck',
-          cause: 'corner-opening',
-        },
+        result,
+        attribution,
+        'fallback',
       );
-      await vi.waitFor(() => expect(prompts.length).toBeGreaterThan(0));
-      await body.waitForAgentTasks();
+      await Reflect.get(body, 'finishCornerTurnAgainstMergeGate').call(
+        body,
+        info,
+        result,
+        attribution,
+        'fallback',
+      );
 
-      expect(prompts).toHaveLength(4);
-      expect(prompts.slice(1).every((prompt) => prompt.includes('STUCK.txt'))).toBe(true);
-      expect(prompts.at(-1)).toContain('Stop trying to make this corner merge-ready');
       expect(
         published.filter(
           (event) =>
             Array.isArray(event.tags) &&
             event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
         ),
-      ).toHaveLength(3);
+      ).toHaveLength(2);
       expect(
         published.some(
           (event) =>
@@ -679,19 +772,10 @@ describe('corner merge-ready surfaces a real committed change', () => {
       ).toBe(false);
       expect(info.mergeTarget).toBeUndefined();
       expect(
-        published.some(
-          (event) =>
-            typeof event.content === 'string' &&
-            event.content.includes('Approve the change-review panel'),
-        ),
-      ).toBe(false);
-      const blocker = published.find(
-        (event) =>
-          typeof event.content === 'string' &&
-          event.content.includes('I stopped after 3 merge-gate rejections'),
-      );
-      expect(blocker?.content).toContain('STUCK.txt');
-      expect(blocker?.content).toContain('nothing to approve');
+        published
+          .filter((event) => event.tags.some((tag) => tag[1] === 'agent-message'))
+          .map((event) => event.content),
+      ).toEqual(['The human answer survives the gate.']);
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }
@@ -1052,6 +1136,280 @@ describe('a local-only repository lands through the daemon, never through the ag
       expect(realigning!.content).toMatch(/Realigning/);
       expect(realigning!.content).not.toMatch(/\bgit\b|hint:|non-fast-forward/i);
       expect(info.humanMergeApproval?.id).toBe('approval-1');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('serializes two approved corners for one repository and lands both back-to-back', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'buzzy-local-land-queue-'));
+    const repoPath = join(root, 'repo');
+    const cornerA = join(root, 'corner-a');
+    const cornerB = join(root, 'corner-b');
+    mkdirSync(repoPath, { recursive: true });
+    gitCommand(repoPath, ['init', '-b', 'master']);
+    gitCommand(repoPath, ['config', 'user.name', 'Landing Queue Test']);
+    gitCommand(repoPath, ['config', 'user.email', 'queue@test.invalid']);
+    writeFileSync(join(repoPath, 'README.md'), '# Queue\n');
+    gitCommand(repoPath, ['add', '.']);
+    gitCommand(repoPath, ['commit', '-m', 'base']);
+    gitCommand(repoPath, ['worktree', 'add', '-b', 'feature/a', cornerA, 'master']);
+    gitCommand(repoPath, ['worktree', 'add', '-b', 'feature/b', cornerB, 'master']);
+    writeFileSync(join(cornerA, 'A.txt'), 'first corner\n');
+    gitCommand(cornerA, ['add', 'A.txt']);
+    gitCommand(cornerA, ['commit', '-m', 'corner a']);
+    writeFileSync(join(cornerB, 'B.txt'), 'second corner\n');
+    gitCommand(cornerB, ['add', 'B.txt']);
+    gitCommand(cornerB, ['commit', '-m', 'corner b']);
+    const tipA = gitCommand(cornerA, ['rev-parse', 'HEAD']);
+    const tipB = gitCommand(cornerB, ['rev-parse', 'HEAD']);
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const queryResponse = relayQueryResponse(published, input, init);
+        if (queryResponse) return queryResponse;
+        const upload = mediaUploadResponse(input, init);
+        if (upload) return upload;
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const agentA = newIdentity('local-land-queue-a');
+      const agentB = newIdentity('local-land-queue-b');
+      const reviewer = newIdentity('local-land-queue-reviewer');
+      const bodyA = newBody(agentA, join(root, 'state-a.json'));
+      const bodyB = newBody(agentB, join(root, 'state-b.json'));
+      const infoA = {
+        ...localCornerInfo(agentA, repoPath, cornerA, tipA),
+        subchannelId: 'corner-queue-a',
+        featureBranch: 'feature/a',
+        session: {
+          channelId: 'corner-queue-a',
+          parentChannelId: 'room-queue',
+          sessionId: 'session-a',
+        },
+      };
+      const infoB = {
+        ...localCornerInfo(agentB, repoPath, cornerB, tipB),
+        subchannelId: 'corner-queue-b',
+        featureBranch: 'feature/b',
+        session: {
+          channelId: 'corner-queue-b',
+          parentChannelId: 'room-queue',
+          sessionId: 'session-b',
+        },
+      };
+      bodyA.registerSubchannel(infoA as never);
+      bodyB.registerSubchannel(infoB as never);
+      Reflect.set(bodyA, 'findHumanMergeApproval', async (info: typeof infoA) => {
+        info.humanMergeApproval = { id: 'approval-a', reviewer: reviewer.publicKey, tip: tipA };
+        return info.humanMergeApproval;
+      });
+      Reflect.set(bodyB, 'findHumanMergeApproval', async (info: typeof infoB) => {
+        info.humanMergeApproval = { id: 'approval-b', reviewer: reviewer.publicKey, tip: tipB };
+        return info.humanMergeApproval;
+      });
+      const promptA = vi.spyOn(bodyA as never, 'promptAgent' as never);
+      const promptB = vi.spyOn(bodyB as never, 'promptAgent' as never);
+
+      const results = await Promise.all([
+        Reflect.get(bodyA, 'pollDirectRemoteApprovals').call(bodyA),
+        Reflect.get(bodyB, 'pollDirectRemoteApprovals').call(bodyB),
+      ]);
+
+      expect(results.reduce((sum, count) => sum + count, 0)).toBe(2);
+      expect(readFileSync(join(repoPath, 'A.txt'), 'utf8')).toBe('first corner\n');
+      expect(readFileSync(join(repoPath, 'B.txt'), 'utf8')).toBe('second corner\n');
+      expect(promptA).not.toHaveBeenCalled();
+      expect(promptB).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses one automatic agent turn to resolve a landing conflict, then lands', async () => {
+    const agent = newIdentity('local-land-conflict-agent');
+    const reviewer = newIdentity('local-land-conflict-reviewer');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const queryResponse = relayQueryResponse(published, input, init);
+        if (queryResponse) return queryResponse;
+        const upload = mediaUploadResponse(input, init);
+        if (upload) return upload;
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      writeFileSync(join(repoPath, 'README.md'), '# Main changed during review\n');
+      gitCommand(repoPath, ['add', 'README.md']);
+      gitCommand(repoPath, ['commit', '-m', 'conflict after approval']);
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = localCornerInfo(agent, repoPath, cornerPath, tip);
+      body.registerSubchannel(info as never);
+      Reflect.set(body, 'findHumanMergeApproval', async (target: typeof info) => {
+        target.humanMergeApproval = { id: 'approval-conflict', reviewer: reviewer.publicKey, tip };
+        return target.humanMergeApproval;
+      });
+      const promptAgent = vi
+        .spyOn(body as never, 'promptAgent' as never)
+        .mockImplementation(async (_session: never, prompt: string) => {
+          expect(prompt).toContain('README.md');
+          expect(prompt).toContain('Do not ask the human');
+          gitCommand(cornerPath, ['reset', '--hard', 'master']);
+          writeFileSync(
+            join(cornerPath, 'README.md'),
+            '# Main changed during review\n\n# Before\n\nan old silent pond\n',
+          );
+          gitCommand(cornerPath, ['add', 'README.md']);
+          gitCommand(cornerPath, ['commit', '-m', 'resolve landing conflict']);
+          return {
+            agentText: 'Resolved the conflict and validated the result.',
+            updates: [],
+            toolCalls: [],
+            stopReason: 'end_turn',
+          } as never;
+        });
+
+      await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(1);
+      await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(0);
+
+      expect(promptAgent).toHaveBeenCalledTimes(1);
+      expect(
+        published.some((event) => event.tags?.some((tag) => tag[1] === 'merge-sync-conflict')),
+      ).toBe(false);
+      expect(
+        published.some((event) => event.tags?.some((tag) => tag[1] === 'landing-blocked')),
+      ).toBe(false);
+      const landedTip = gitCommand(repoPath, ['rev-parse', 'refs/heads/master']);
+      expect(landedTip).toBe(gitCommand(cornerPath, ['rev-parse', 'HEAD']));
+      expect(readFileSync(join(repoPath, 'README.md'), 'utf8')).toContain('an old silent pond');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('parks one failed button press without looping and retries only on a new approval', async () => {
+    const agent = newIdentity('local-land-bounded-agent');
+    const reviewer = newIdentity('local-land-bounded-reviewer');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const queryResponse = relayQueryResponse(published, input, init);
+        if (queryResponse) return queryResponse;
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      writeFileSync(join(repoPath, 'README.md'), '# Main changed during review\n');
+      gitCommand(repoPath, ['add', 'README.md']);
+      gitCommand(repoPath, ['commit', '-m', 'conflict after approval']);
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = localCornerInfo(agent, repoPath, cornerPath, tip);
+      body.registerSubchannel(info as never);
+      let approvalId = 'approval-first';
+      Reflect.set(body, 'findHumanMergeApproval', async (target: typeof info) => {
+        target.humanMergeApproval = { id: approvalId, reviewer: reviewer.publicKey, tip };
+        return target.humanMergeApproval;
+      });
+      const promptAgent = vi.spyOn(body as never, 'promptAgent' as never).mockResolvedValue({
+        agentText: 'Unable to complete the resolution.',
+        updates: [],
+        toolCalls: [],
+        stopReason: 'end_turn',
+      } as never);
+
+      await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(0);
+      const firstBlocks = published.filter((event) =>
+        event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+      );
+      expect(firstBlocks).toHaveLength(1);
+      expect(firstBlocks[0]!.content).toMatch(/^Merge blocked: [^\n]+$/);
+      expect(info.mergeTarget?.tip).toBe(tip);
+      expect(info.cornerState).toEqual({ state: 'waiting', reason: 'review' });
+
+      await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(0);
+      expect(promptAgent).toHaveBeenCalledTimes(1);
+      expect(
+        published.filter((event) =>
+          event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+        ),
+      ).toHaveLength(1);
+
+      approvalId = 'approval-retry';
+      await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(0);
+      expect(promptAgent).toHaveBeenCalledTimes(2);
+      expect(
+        published.filter((event) =>
+          event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+        ),
+      ).toHaveLength(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds one button press to three target generations when main keeps moving', async () => {
+    const agent = newIdentity('local-land-moving-target-agent');
+    const reviewer = newIdentity('local-land-moving-target-reviewer');
+    const { root, repoPath, cornerPath, tip } = localOnlyRepoWithCorner();
+    const published: NostrEvent[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const queryResponse = relayQueryResponse(published, input, init);
+        if (queryResponse) return queryResponse;
+        published.push(JSON.parse(String(init?.body)) as NostrEvent);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+    try {
+      const body = newBody(agent, join(root, 'state.json'));
+      const info = localCornerInfo(agent, repoPath, cornerPath, tip);
+      body.registerSubchannel(info as never);
+      Reflect.set(body, 'findHumanMergeApproval', async (target: typeof info) => {
+        target.humanMergeApproval = {
+          id: 'approval-moving-target',
+          reviewer: reviewer.publicKey,
+          tip,
+        };
+        return target.humanMergeApproval;
+      });
+      const land = vi.spyOn(body as never, 'landInLocalCheckout' as never).mockResolvedValue({
+        kind: 'failed',
+        reason: 'main has moved on since this change was approved',
+      } as never);
+      let generation = 0;
+      const realign = vi
+        .spyOn(body as never, 'realignMovedTargetForLanding' as never)
+        .mockImplementation(async () => {
+          generation += 1;
+          info.mergeTarget = {
+            ...info.mergeTarget!,
+            tip: String(generation).repeat(40),
+          };
+          return { kind: 'ready', targetTip: String(generation).repeat(40) } as never;
+        });
+
+      await expect(Reflect.get(body, 'pollDirectRemoteApprovals').call(body)).resolves.toBe(0);
+
+      expect(realign).toHaveBeenCalledTimes(MAX_LANDING_TARGET_SYNC_ROUNDS);
+      expect(land).toHaveBeenCalledTimes(MAX_LANDING_TARGET_SYNC_ROUNDS + 1);
+      const blocked = published.filter((event) =>
+        event.tags?.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
+      );
+      expect(blocked).toHaveLength(1);
+      expect(blocked[0]!.content).toContain(
+        `${MAX_LANDING_TARGET_SYNC_ROUNDS} consecutive landing rounds`,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1428,32 +1786,19 @@ describe('graceful relay-failure confirmation', () => {
     const cornerFailure = published.find(
       (event) =>
         event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'corner-mergegate') &&
-        event.tags.some((tag) => tag[0] === 'status' && tag[1] === 'failed'),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked'),
     );
     expect(cornerFailure).toBeDefined();
     // The raw git rejection dump (the plumbing a human should never see) must
     // never reach the corner transcript — only a plain human summary does.
     expect(cornerFailure!.content).not.toMatch(/git|hint:|\[rejected\]|fetch first/i);
-    expect(cornerFailure!.content).toContain("Couldn't realign the approved change");
-    expect(cornerFailure!.content).toContain('does not resolve in this worktree');
+    expect(cornerFailure!.content).toMatch(/^Merge blocked: [^\n]+$/);
     expect(cornerFailure!.tags).toContainEqual(['repo', mergeTarget.repo]);
     expect(cornerFailure!.tags).toContainEqual(['branch', mergeTarget.branch]);
     expect(cornerFailure!.tags).toContainEqual(['tip', mergeTarget.tip]);
 
-    const parentStatus = published.find(
-      (event) =>
-        event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'room') &&
-        event.tags.some((tag) => tag[0] === 'subchannel' && tag[1] === 'corner-mergegate'),
-    );
-    expect(parentStatus).toBeDefined();
-    // `needs-attention`, not `failed`: the corner is still open and a person
-    // can act on it, and `failed` is a TERMINAL lifecycle word that drops the
-    // corner out of the Room's pinned strip — exactly when it most needs to be
-    // findable. The corner-scoped message keeps `status: failed` (that is what
-    // drives the delivery-failure footer); see `RECOVERABLE_CORNER_FAILURE_TAGS`.
-    expect(parentStatus!.tags).toContainEqual(['display-status', 'needs-attention']);
-    expect(cornerFailure!.tags).toContainEqual(['status', 'failed']);
-    expect(cornerFailure!.tags).toContainEqual(['display-status', 'needs-attention']);
+    expect(cornerFailure!.tags).toContainEqual(['status', 'needs-attention']);
+    expect(cornerFailure!.tags.some((tag) => tag[0] === 'retry')).toBe(false);
   });
 });
 

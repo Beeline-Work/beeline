@@ -136,7 +136,7 @@ describe('GitHub-origin delivery', () => {
     ).toContain('Nothing ready to merge yet');
   });
 
-  it('uses one Codex turn to sync the latest remote target before publishing review', async () => {
+  it('keeps a stale review mounted without a Codex turn before merge is pressed', async () => {
     const { root, worktree, info, body } = await repository();
     const events = captureEvents();
     const featureBefore = run(worktree, ['rev-parse', 'HEAD']);
@@ -145,22 +145,15 @@ describe('GitHub-origin delivery', () => {
     run(root, ['commit', '-m', 'advance target before review']);
     const targetTip = run(root, ['rev-parse', 'HEAD']);
     run(root, ['push', 'origin', 'main']);
-    const syncTurn = vi
-      .spyOn(body as never, 'promptAgent' as never)
-      .mockImplementation((async (_session: unknown, prompt: string) => {
-        expect(prompt).toContain(`main moved to ${targetTip}`);
-        run(worktree, ['fetch', 'origin', 'main']);
-        run(worktree, ['rebase', 'origin/main']);
-        return { agentText: 'Synced onto main and ran checks.', updates: [] };
-      }) as never);
+    const syncTurn = vi.spyOn(body as never, 'promptAgent' as never);
 
     await expect(publish(body, info)).resolves.toBe(true);
-    expect(syncTurn).toHaveBeenCalledTimes(1);
+    expect(syncTurn).not.toHaveBeenCalled();
     expect(info.mergeTarget).toBeDefined();
-    expect(info.mergeTarget!.tip).not.toBe(featureBefore);
-    expect(run(worktree, ['merge-base', '--is-ancestor', targetTip, info.mergeTarget!.tip])).toBe(
-      '',
-    );
+    expect(info.mergeTarget!.tip).toBe(featureBefore);
+    expect(() =>
+      run(worktree, ['merge-base', '--is-ancestor', targetTip, info.mergeTarget!.tip]),
+    ).toThrow();
     expect(
       events.filter((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-ready'),
@@ -291,7 +284,9 @@ describe('a moved target is standing authorization to update the feature branch'
 
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toContain(`main moved to ${moved}`);
-    expect(prompts[0]).toContain('make it merge-ready, whatever it takes');
+    expect(prompts[0]).toMatch(
+      /bring this branch up to date and make it land, whatever it takes/i,
+    );
     const refreshedTip = run(worktree, ['rev-parse', 'HEAD']);
     expect(refreshedTip).not.toBe(tip);
     expect(run(worktree, ['merge-base', '--is-ancestor', moved, refreshedTip])).toBe('');

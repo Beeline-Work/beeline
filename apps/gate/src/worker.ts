@@ -23,7 +23,6 @@ import { APPROVAL_MARKER, verifyApproval, type MergeTarget } from './approval.js
 import { KIND_STREAM_MESSAGE } from './buzz.js';
 import { isRegisteredAgentIdentity } from './agent-identity.js';
 import { resolveChannelRole } from './provisioning.js';
-import { serializeRepoLanding } from './land-queue.js';
 import {
   authorizeHumanAuthority,
   type HumanAuthorityDependencies,
@@ -278,7 +277,7 @@ export interface RoomMergePollHooks {
   onAttemptStart?: (attempt: RoomMergeAttemptStart) => Promise<void> | void;
   /** False parks this exact approval until the caller observes a newer press. */
   shouldAttempt?: (attempt: RoomMergeAttemptStart) => Promise<boolean> | boolean;
-  /** Runs under the repository landing lock after a moved-target refusal. */
+  /** Runs once after a moved-target refusal from this signed press. */
   onMovedTarget?: (
     attempt: RoomMergeAttempt,
   ) => Promise<{ retry: boolean; reason?: string }> | { retry: boolean; reason?: string };
@@ -410,7 +409,7 @@ export class DurableMergeGate {
         };
         if ((await hooks.shouldAttempt?.(attemptStart)) === false) continue;
         await hooks.onAttemptStart?.(attemptStart);
-        const outcome = await serializeRepoLanding(targetRepo, async () => {
+        const outcome = await (async () => {
           const attempt = () =>
             attemptMerge({
               worker: this.config.worker,
@@ -443,7 +442,7 @@ export class DurableMergeGate {
           // One button press gets one model-owned sync turn and one ff-only
           // retry. Any second move parks this approval for a fresh press.
           return await attempt();
-        });
+        })();
         attempts.push({
           candidate,
           approvalId: approval.id,

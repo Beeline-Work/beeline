@@ -316,6 +316,39 @@ describe('RoomIndexer', () => {
     ]);
   });
 
+  it('pages every same-second message through a cursor beyond four thousand events', async () => {
+    const firstSequence = 10_000;
+    const count = 4_096;
+    const ids = Array.from({ length: count }, (_, index) =>
+      (firstSequence + index).toString(16).padStart(64, '0'),
+    );
+    // The cursor needs both coordinates: production can legitimately publish
+    // thousands of Room events in one relay-second. If its id tie-breaker ever
+    // reverses or becomes inclusive, a page boundary silently drops or repeats
+    // part of this burst.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       SELECT $1, decode(lpad(to_hex(sequence), 64, '0'), 'hex'), $2, to_timestamp(100), 9,
+         jsonb_build_array(jsonb_build_array('h', $3::text)),
+         'same-second message ' || sequence, $3::uuid
+       FROM generate_series($4::int, $5::int) sequence`,
+      [TENANT, bytes(VIEWER), ROOM, firstSequence, firstSequence + count - 1],
+    );
+
+    const seen: string[] = [];
+    let before: { createdAt: number; id: string } | undefined;
+    for (;;) {
+      const page = await indexer.readHistory(ROOM, VIEWER, before);
+      expect(page).not.toBeNull();
+      seen.push(...(page?.messages.map((message) => message.id) ?? []));
+      if (!page?.nextBefore) break;
+      before = page.nextBefore;
+    }
+
+    expect(seen.filter((id) => ids.includes(id))).toEqual(ids);
+  }, 30_000);
+
   it('late-opens a corner with its first durable reply after activity exhausts the raw window', async () => {
     const requestId = '1'.repeat(64);
     const firstReplyId = 'e'.repeat(64);
@@ -500,6 +533,31 @@ describe('RoomIndexer', () => {
 
     const view = await indexer.readRoom(ROOM, VIEWER);
 
+    expect(view?.repository).toBeUndefined();
+    expect(view?.repositoryResolution).toBe('unverified');
+  });
+
+  it('does not retain predecessor repository authority after identity recovery', async () => {
+    const successor = 'd'.repeat(64);
+    // Recovery moves the person to a fresh key. The old binding remains in the
+    // relay forever, but the direct view must evaluate it against current
+    // membership on every read instead of retaining an auth-era alias.
+    await postgres.query(
+      `UPDATE channel_members SET removed_at = to_timestamp(20)
+       WHERE community_id = $1 AND pubkey = $2`,
+      [TENANT, bytes(VIEWER)],
+    );
+    for (const channelId of [WORKSPACE, ROOM]) {
+      await postgres.query(
+        `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
+         VALUES ($1, $2, $3, 'owner')`,
+        [TENANT, channelId, bytes(successor)],
+      );
+    }
+
+    const view = await indexer.readRoom(ROOM, successor);
+
+    expect(view?.viewer).toMatchObject({ identity: { pubkey: successor }, role: 'owner' });
     expect(view?.repository).toBeUndefined();
     expect(view?.repositoryResolution).toBe('unverified');
   });
@@ -2049,6 +2107,58 @@ describe('RoomIndexer', () => {
       },
     });
     expect(JSON.stringify(corner)).not.toContain('diff');
+  });
+
+  it('retains the latest review generation beyond a bounded control-event tail', async () => {
+    const descriptor = {
+      version: 2,
+      base: '5'.repeat(40),
+      tip: '6'.repeat(40),
+      patchId: '7'.repeat(40),
+      summary: 'The newer generation survives controls.',
+      fileCount: 1,
+      files: [{ path: 'apps/push-gateway/src/room-indexer.ts', status: 'modified', linesAdded: 2 }],
+      url: 'https://media.test/newer-review.json',
+      sha256: '8'.repeat(64),
+      size: 200,
+    };
+    await event(
+      CORNER,
+      AGENT,
+      13,
+      30078,
+      [
+        ['h', CORNER],
+        ['d', `${CORNER}:${descriptor.tip}:artifact`],
+        ['t', 'change-review-artifact'],
+      ],
+      JSON.stringify(descriptor),
+    );
+    // Review artifacts are durable Room facts, not transcript rows. A very
+    // long agent-turn tail therefore cannot push the newest generation out of
+    // the bounded raw event window before a cold corner open.
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       SELECT $1, decode(lpad(to_hex(sequence), 64, '0'), 'hex'), $2, to_timestamp(20), 9,
+         jsonb_build_array(
+           jsonb_build_array('h', $3::text),
+           jsonb_build_array('t', 'agent-turn'),
+           jsonb_build_array('request', lpad(to_hex(sequence), 64, '0')),
+           jsonb_build_array('agent', $4),
+           jsonb_build_array('status', 'complete')
+         ), '', $3::uuid
+       FROM generate_series(20_000, 23_999) sequence`,
+      [TENANT, bytes(AGENT), CORNER, AGENT],
+    );
+
+    const corner = await indexer.readRoom(CORNER, VIEWER);
+
+    expect(corner?.review).toMatchObject({
+      status: 'ready',
+      artifact: { tip: descriptor.tip, summary: descriptor.summary },
+      files: descriptor.files,
+    });
   });
 
   it('ignores a newer review artifact forged by a non-member author', async () => {

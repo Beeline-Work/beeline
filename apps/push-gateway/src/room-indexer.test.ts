@@ -1257,6 +1257,60 @@ describe('RoomIndexer', () => {
     );
   });
 
+  it('projects a body-control corner permission request as an approval card', async () => {
+    const permissionId = '941bce77-1111-4222-8333-444444444444';
+    const requestId = '0510a90f'.repeat(8);
+    const eventId = '4'.repeat(64);
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(20), 9, $4, $5, $6)`,
+      [
+        TENANT,
+        bytes(eventId),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', ROOM],
+          ['t', 'body-control'],
+          ['t', 'buzz-write-permission-request'],
+          ['permission', permissionId],
+          ['request', requestId],
+          ['requester', VIEWER],
+          ['agent', AGENT],
+          ['tool', 'open_corner'],
+          ['repo', 'acme/beeline'],
+          ['objective', 'Add the requested test coverage'],
+          ['status', 'pending'],
+          ['p', VIEWER],
+        ]),
+        '@ada asked Lina to open a corner for: Add the requested test coverage',
+        ROOM,
+      ],
+    );
+
+    const view = await indexer.readRoom(ROOM, VIEWER);
+
+    expect(view?.messages).toContainEqual(
+      expect.objectContaining({
+        id: eventId,
+        presentation: 'card',
+        permission: {
+          permissionId,
+          requestId,
+          agent: expect.objectContaining({ pubkey: AGENT, kind: 'agent', name: 'Milo' }),
+          requester: {
+            pubkey: VIEWER,
+            kind: 'human',
+            name: `Person ${VIEWER.slice(0, 8)}`,
+          },
+          tool: 'open_corner',
+          repository: 'acme/beeline',
+          status: 'pending',
+        },
+      }),
+    );
+  });
+
   it('projects only complete typed GitHub cards without a service-publisher roster entry', async () => {
     const service = 'd'.repeat(64);
     await postgres.query(

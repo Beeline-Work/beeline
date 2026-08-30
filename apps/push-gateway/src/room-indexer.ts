@@ -1616,7 +1616,12 @@ const CONVERSATION_MARKERS = new Set([
 function projectEvent(data: Json, channelId: string): RoomViewMessage | undefined {
   const eventTags = tags(data.tags);
   const markers = markerSet(eventTags);
-  if ([...markers].some((candidate) => HIDDEN_MARKERS.has(candidate))) return undefined;
+  const permissionMarker =
+    markers.has('buzz-write-permission-request') || markers.has('buzz-permission-request');
+  // Permission requests are control records on the wire but durable approval
+  // cards in the Room. All other hidden control shapes still fail closed.
+  if (!permissionMarker && [...markers].some((candidate) => HIDDEN_MARKERS.has(candidate)))
+    return undefined;
   const eventIdentity = identity(data);
   const base = {
     id: String(data.id ?? ''),
@@ -1725,8 +1730,6 @@ function projectEvent(data: Json, channelId: string): RoomViewMessage | undefine
     };
   }
 
-  const permissionMarker =
-    markers.has('buzz-write-permission-request') || markers.has('buzz-permission-request');
   if (permissionMarker) {
     const status = tag(eventTags, 'status');
     const agentPubkey = tag(eventTags, 'agent') ?? eventIdentity.pubkey;

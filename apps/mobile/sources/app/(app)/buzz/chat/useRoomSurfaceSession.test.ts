@@ -18,6 +18,34 @@ const controls = vi.hoisted(() => ({
 
 vi.mock('react-native', () => ({
   AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
+  Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
+  Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+    React.createElement('Pressable', props, props.children),
+  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+  Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+    React.createElement('Text', props, props.children),
+  View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+    React.createElement('View', props, props.children),
+}));
+
+vi.mock('expo-haptics', () => ({
+  impactAsync: () => undefined,
+  notificationAsync: () => undefined,
+  ImpactFeedbackStyle: { Light: 'light' },
+  NotificationFeedbackType: { Success: 'success' },
+}));
+
+vi.mock('react-native-reanimated', () => ({
+  default: { View: (props: Record<string, unknown>) => React.createElement('AnimatedView', props) },
+  Easing: { linear: 'linear', out: (fn: unknown) => fn, poly: (n: number) => n },
+  ReduceMotion: { System: 'system' },
+  useAnimatedStyle: (factory: () => unknown) => factory(),
+  useReducedMotion: () => false,
+  useSharedValue: (value: number) => ({ value }),
+  withRepeat: (value: unknown) => value,
+  withTiming: (value: number) => value,
+  withSequence: (value: unknown) => value,
+  FadeInDown: { duration: () => ({}) },
 }));
 
 vi.mock('expo-router', () => ({ router: { replace: vi.fn() } }));
@@ -110,6 +138,9 @@ vi.mock('@beeline/buzz-client', async () => {
 });
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
+import { cornerSummaries } from '@/buzz/room-view-presentation';
+import { selectPinnedCorner, isPinnedCornerLive } from '@/buzz/room-indicators';
+import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import {
   useRoomSurfaceSession,
   type RoomSurfaceSessionBindings,
@@ -155,6 +186,7 @@ function Harness({
     resetTranscript: vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
+    observeRoomSurface: vi.fn(),
   });
   const result = useRoomSurfaceSession({
     channelId,
@@ -166,6 +198,28 @@ function Harness({
     roomId: result.roomSurface?.room.id,
     error: result.hydrationError,
   });
+}
+
+function LiveCornerHarness({ channelId }: { channelId: string }) {
+  // Match the OTA smoke: this Room has already been open longer than the
+  // canonical working-lease horizon before its new corner starts working.
+  const [cornerNow, setCornerNow] = React.useState(() => Date.now() - 180_000);
+  const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
+    resetTranscript: vi.fn(),
+    restoreOutboxMessages: vi.fn(),
+    dismissOptimisticMessage: vi.fn(),
+    observeRoomSurface: () => setCornerNow(Date.now()),
+  });
+  const { roomSurface } = useRoomSurfaceSession({ channelId, bindingsRef });
+  const pinned = roomSurface
+    ? selectPinnedCorner({ lifecycle: cornerSummaries(roomSurface), now: cornerNow })
+    : null;
+  return pinned
+    ? React.createElement(CornerLiveBar, {
+        label: `agent active: ${pinned.cornerId}`,
+        live: isPinnedCornerLive(pinned.status),
+      })
+    : null;
 }
 
 async function flushEffects() {
@@ -197,6 +251,43 @@ beforeEach(() => {
 });
 
 describe('useRoomSurfaceSession', () => {
+  it('renders the live corner bar when a long-open Room receives working corner state', async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(LiveCornerHarness, { channelId: 'room-a' }));
+    });
+    await flushEffects();
+
+    const applied = roomView('room-a');
+    const stateAt = Math.floor(Date.now() / 1_000);
+    await act(async () => {
+      controls.schedulers[0]!.apply({
+        ...applied,
+        latestAgentTurns: [
+          { requestId: 'request-a', agentPubkey: 'agent-a', status: 'working', createdAt: stateAt },
+        ],
+        corners: [
+          {
+            corner: {
+              ...applied.room,
+              id: 'corner-a',
+              parentId: 'room-a',
+              name: 'smoke-corner',
+              createdAt: stateAt,
+              updatedAt: stateAt,
+            },
+            status: 'working',
+            agent: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' },
+          },
+        ],
+      });
+      await Promise.resolve();
+    });
+
+    expect(renderer.root.findByProps({ testID: 'corner-status-working' })).toBeDefined();
+    await act(async () => renderer.unmount());
+  });
+
   it('paints cache first, then replaces the watch when verified filters change', async () => {
     controls.cached = roomView('room-a', [{ '#h': ['room-a'] }]);
     let current!: UseRoomSurfaceSessionResult;

@@ -343,6 +343,7 @@ export default function BuzzChat() {
     resetTranscript: () => undefined,
     restoreOutboxMessages: () => undefined,
     dismissOptimisticMessage: () => undefined,
+    observeRoomSurface: () => undefined,
   });
   const roomMessageProjectorRef = useRef<ReturnType<typeof createRoomMessageProjector> | null>(
     null,
@@ -717,6 +718,10 @@ export default function BuzzChat() {
     },
     restoreOutboxMessages: addMessages,
     dismissOptimisticMessage: removeOptimistic,
+    // A newly indexed working lease can be newer than the screen's prior
+    // clock. Re-evaluate it at RoomView application time, as this screen did
+    // before the surface lifecycle moved into useRoomSurfaceSession.
+    observeRoomSurface: () => setCornerStateNow(Date.now()),
   };
   // All four display partitions share the same chronological merge. A durable
   // outbox row may be older than the current server tail after an interrupted

@@ -527,7 +527,7 @@ describe('harness-independent corner commit watch', () => {
     }
   });
 
-  it('revalidates an advertised tip through the same merge-ready gate', async () => {
+  it('never revalidates or withdraws an already-advertised tip when main moves', async () => {
     const agent = newIdentity('commit-watch-revalidation-agent');
     const body = newBody(agent);
     const worktreePath = committedFeatureWorktree();
@@ -549,8 +549,8 @@ describe('harness-independent corner commit watch', () => {
 
       await Reflect.get(body, 'pollCornerCommitWatch').call(body);
 
-      expect(publishMergeReady).toHaveBeenCalledOnce();
-      expect(publishMergeReady).toHaveBeenCalledWith(info);
+      expect(publishMergeReady).not.toHaveBeenCalled();
+      expect(info.mergeTarget?.tip).toBe(tip);
     } finally {
       await rm(worktreePath, { recursive: true, force: true });
     }

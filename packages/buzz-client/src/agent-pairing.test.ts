@@ -7,6 +7,7 @@ import {
   redeemAgentPairingCode,
   setAgentSoul,
 } from './agent.js';
+import { inviteTokenHash } from './community.js';
 import { createAgentIdentity, createIdentity } from './identity.js';
 import {
   KIND_AGENT_SOUL,
@@ -50,11 +51,11 @@ function signed(identity: typeof owner, kind: number, tags: string[][]): NostrEv
   );
 }
 
-function communityCreate(): NostrEvent {
+function communityCreate(id = communityId): NostrEvent {
   return signed(owner, KIND_CREATE_GROUP, [
-    ['h', communityId],
+    ['h', id],
     ['name', 'Builders'],
-    [TAG_COMMUNITY, communityId],
+    [TAG_COMMUNITY, id],
   ]);
 }
 
@@ -241,9 +242,24 @@ describe('agent pairing and soul overlays', () => {
     expect(published.filter((event) => tagValues(event, 't').includes(TAG_AGENT))).toHaveLength(1);
   });
 
-  it('redeems a freshly minted code when the relay hides Workspace-scoped kind:9 from a non-member key', async () => {
-    const published: NostrEvent[] = [];
+  it('redeems the production Workspace-scoped kind:9 pairing marker through the token-tag scan', async () => {
+    const productionCode = 'BUZZ-4S4P-ZPJP';
+    const productionTokenHash = 'b8ae2c5a4c8441ecab9953bfdc173448e34341f8ca6bf92339d2701c83ce6fbf';
+    const productionCommunityId = 'a6814772';
+    const marker = signed(owner, KIND_STREAM_MESSAGE, [
+      ['h', productionCommunityId],
+      ['t', TAG_AGENT_PAIRING],
+      ['d', productionTokenHash],
+      [TAG_COMMUNITY, productionCommunityId],
+      ['expiration', String(Math.floor(Date.now() / 1000) + 600)],
+    ]);
+    const malformedCurrentMarker = signed(owner, KIND_COMMUNITY_INVITE, [
+      ['t', TAG_AGENT_PAIRING],
+      ['d', productionTokenHash],
+    ]);
+    const published: NostrEvent[] = [marker];
     let agentIsMember = false;
+    expect(inviteTokenHash(productionCode)).toBe(productionTokenHash);
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -257,11 +273,11 @@ describe('agent pairing and soul overlays', () => {
         }
         const filter = filterFrom(init);
         const kind = (filter.kinds as number[])[0];
-        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate()]);
+        if (kind === KIND_CREATE_GROUP) return jsonResponse([communityCreate(productionCommunityId)]);
         if (kind === KIND_CHANNEL_MEMBERS) {
           return jsonResponse([
             signed(owner, KIND_CHANNEL_MEMBERS, [
-              ['d', communityId],
+              ['d', productionCommunityId],
               ['p', owner.publicKey],
               ...(agentIsMember ? [['p', agentIdentity.publicKey]] : []),
             ]),
@@ -270,18 +286,27 @@ describe('agent pairing and soul overlays', () => {
         if (kind === KIND_CHANNEL_ADMINS) {
           return jsonResponse([
             signed(owner, KIND_CHANNEL_ADMINS, [
-              ['d', communityId],
+              ['d', productionCommunityId],
               ['p', owner.publicKey, 'owner'],
             ]),
           ]);
         }
+        if (kind === KIND_COMMUNITY_INVITE) {
+          // A non-matching global result must not suppress the legacy scan.
+          // The production marker remains the Workspace-scoped kind:9 event.
+          expect(filter['#d']).toEqual([productionTokenHash]);
+          return jsonResponse([malformedCurrentMarker]);
+        }
         if (kind === KIND_STREAM_MESSAGE) {
-          // Production requires an h filter for kind:9 reads, and redemption
-          // cannot derive that Workspace id from the plaintext pairing code.
-          const hValues = (filter['#h'] as string[] | undefined) ?? [];
-          if (!hValues.includes(communityId)) return jsonResponse([]);
           const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
           const pairingHashes = (filter['#pairing'] as string[] | undefined) ?? [];
+          if (requiredTags.includes(TAG_AGENT_PAIRING)) {
+            // This is the findCommunityInvite-style marker scan: no #h or #d
+            // filter is possible because the redeeming key knows only token.
+            expect(filter['#h']).toBeUndefined();
+            expect(filter['#d']).toBeUndefined();
+            return jsonResponse([marker]);
+          }
           return jsonResponse(
             published.filter(
               (event) =>
@@ -291,26 +316,13 @@ describe('agent pairing and soul overlays', () => {
             ),
           );
         }
-        if (kind === KIND_COMMUNITY_INVITE) {
-          const requiredTags = (filter['#t'] as string[] | undefined) ?? [];
-          const dValues = (filter['#d'] as string[] | undefined) ?? [];
-          return jsonResponse(
-            published.filter(
-              (event) =>
-                event.kind === KIND_COMMUNITY_INVITE &&
-                requiredTags.every((tag) => tagValues(event, 't').includes(tag)) &&
-                dValues.every((value) => tagValue(event, 'd') === value),
-            ),
-          );
-        }
         return jsonResponse([]);
       }),
     );
 
-    const pairing = await createAgentPairingCode(ctx(owner), communityId, 600);
     await expect(
-      redeemAgentPairingCode(ctx(agentIdentity), pairing.code.toLowerCase()),
-    ).resolves.toMatchObject({ communityId, joined: true });
+      redeemAgentPairingCode(ctx(agentIdentity), productionCode.toLowerCase()),
+    ).resolves.toMatchObject({ communityId: productionCommunityId, joined: true });
     expect(published.some((event) => tagValues(event, 't').includes(TAG_AGENT))).toBe(true);
   });
 

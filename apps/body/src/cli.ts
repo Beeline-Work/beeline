@@ -269,6 +269,28 @@ Examples:
 `);
 }
 
+const PAIRING_CODE_SHAPE = /^BUZZ-[A-Z0-9]{4}-[A-Z0-9]{4}$/i;
+const INSTALL_AND_PAIR_COMMAND =
+  'curl -fsSL https://usebeeline.app/install | sh && beeline pair BUZZ-XXXX-XXXX';
+
+/**
+ * Reject incomplete pairing invocations before even the terminal framing is
+ * shown. Selecting an agent can load its live catalog and prompt for access,
+ * so a missing or malformed code must never reach that work.
+ */
+function pairingCodeUsage(): never {
+  console.error(`
+${pc.bold('A pairing code matching BUZZ-XXXX-XXXX is required.')}
+
+${pc.dim('Usage:')}
+  beeline pair <BUZZ-XXXX-XXXX> [options]
+
+${pc.dim('Install and pair:')}
+  ${INSTALL_AND_PAIR_COMMAND}
+`);
+  process.exit(1);
+}
+
 function stableBeelineEntrypoint(): string {
   const layout = beelineInstallLayout(process.env);
   return layout ? resolve(layout.binDir, 'beeline') : resolve(process.argv[1]!);
@@ -973,10 +995,15 @@ async function runPairCommand(
   // attempted then. `--model`/`--effort` (or accepting no selection at all,
   // same as before this feature existed) remain the non-interactive path.
   const interactiveUi = Boolean(stdin.isTTY && stdout.isTTY);
-  if (interactiveUi) clack.intro(pc.bold('beeline pair'));
   try {
     const pairOptions = parsePairOptions(args);
-    if (pairOptions.codes.length === 0) usage();
+    if (
+      pairOptions.codes.length === 0 ||
+      pairOptions.codes.some((code) => !PAIRING_CODE_SHAPE.test(code.trim()))
+    ) {
+      pairingCodeUsage();
+    }
+    if (interactiveUi) clack.intro(pc.bold('beeline pair'));
     if (pairOptions.useEnvKey && !agentPrivateKey) {
       throw new Error('--use-env-key requires BUZZ_AGENT_KEY or BUZZ_PRIVATE_KEY to be set');
     }

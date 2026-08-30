@@ -180,6 +180,15 @@ describe('agent pairing and soul overlays', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/agent-pairing/claim')) {
+          agentIsMember = true;
+          return jsonResponse({
+            workspaceId: communityId,
+            pairedBy: owner.publicKey,
+            joined: true,
+            attachedRoomIds: [],
+          });
+        }
         if (String(input).endsWith('/events')) {
           const event = JSON.parse(String(init?.body)) as NostrEvent;
           published.push(event);
@@ -256,6 +265,7 @@ describe('agent pairing and soul overlays', () => {
             workspaceId: communityId,
             pairedBy: owner.publicKey,
             joined: true,
+            attachedRoomIds: [],
           });
         }
         if (String(input).endsWith('/events')) {
@@ -427,7 +437,7 @@ describe('agent pairing and soul overlays', () => {
     );
 
     await expect(redeemAgentPairingCode(ctx(agentIdentity), code)).rejects.toThrow(
-      'pairing code is not authorized for this private Workspace',
+      'pairing code is not authorized for this Workspace',
     );
     expect(agentIsMember).toBe(false);
     expect(published).toEqual([]);
@@ -480,6 +490,15 @@ describe('agent pairing and soul overlays', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('/agent-pairing/claim')) {
+          roomMembers[roomAId]!.add(agentIdentity.publicKey);
+          return jsonResponse({
+            workspaceId: communityId,
+            pairedBy: owner.publicKey,
+            joined: true,
+            attachedRoomIds: [roomAId],
+          });
+        }
         if (String(input).endsWith('/events')) {
           const event = JSON.parse(String(init?.body)) as NostrEvent;
           published.push(event);
@@ -557,8 +576,8 @@ describe('agent pairing and soul overlays', () => {
     const attachPublishes = published.filter(
       (event) => event.kind === KIND_PUT_USER && tagValue(event, 'p') === agentIdentity.publicKey,
     );
-    expect(attachPublishes).toHaveLength(2); // the Workspace itself + room A
-    expect(attachPublishes.some((event) => tagValue(event, 'h') === roomAId)).toBe(true);
+    expect(attachPublishes).toHaveLength(1); // only the canonical Workspace membership command
+    expect(attachPublishes.some((event) => tagValue(event, 'h') === roomAId)).toBe(false);
   });
 
   it('joins a member-authored replaceable soul overlay without changing identity authority', async () => {

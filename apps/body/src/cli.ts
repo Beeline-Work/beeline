@@ -961,9 +961,16 @@ function printPairResult(result: PairRuntimeResult): void {
     );
     console.log(`[buzz] repo: ${pairedRoom.repo.root}`);
   } else {
+    console.log('[buzz] repo: none — each Room supplies its own');
+  }
+  if (result.pairing.attachedRoomIds.length > 0) {
     console.log(
-      '[buzz] repo: none — add this agent to a Room from the app; each Room supplies its own',
+      `[buzz] rooms: attached to ${result.pairing.attachedRoomIds.length} current inviter Room${
+        result.pairing.attachedRoomIds.length === 1 ? '' : 's'
+      }`,
     );
+  } else {
+    console.log('[buzz] rooms: no current inviter Rooms; add this agent from a Room roster');
   }
   console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
   console.log(`[buzz] access policy: ${result.runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY}`);

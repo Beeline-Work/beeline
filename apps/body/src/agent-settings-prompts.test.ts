@@ -442,7 +442,7 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     expect(result).toEqual({});
   });
 
-  it('returns no selection when the catalog has no axes', async () => {
+  it('keeps Grok model/effort optional when native ACP advertises no axes', async () => {
     const fetchAgentModelCatalog = vi.fn(async () => ({ raw: [], catalog: [] }));
     const select = vi.fn();
     const text = vi.fn().mockResolvedValue('');
@@ -457,7 +457,10 @@ describe('pickModelAndEffort — per-harness catalog pickers', () => {
     }));
 
     const { pickModelAndEffort } = await import('./agent-settings-prompts.js');
-    const result = await pickModelAndEffort(agent, {});
+    const result = await pickModelAndEffort(
+      { kind: 'grok', command: 'grok', args: ['agent', 'stdio'] },
+      {},
+    );
 
     expect(result).toEqual({});
     expect(text).not.toHaveBeenCalled();

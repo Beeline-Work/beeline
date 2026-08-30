@@ -10,7 +10,6 @@ import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import {
   communityChannels,
   communityMembers,
-  communityRoomIds,
   getCommunity,
   inviteTokenHash,
 } from './community.js';
@@ -43,7 +42,6 @@ import type {
 } from './types.js';
 import {
   getChannelCommunityId,
-  getChannelMetadata,
   isMember,
   removeMember,
   setMemberRole,
@@ -284,41 +282,6 @@ export async function createAgentPairingCode(
   return { code, tokenHash, communityId, expiresAt, mintedBy: event.pubkey, event };
 }
 
-/**
- * Attach a redeemed agent to every top-level Room the pairing code's minter
- * currently belongs to — the app no longer asks which Room, so redemption
- * mirrors human Workspace-join propagation directly: DMs, corners, and
- * archived Rooms excluded (`communityRoomIds`, same rule
- * `migrateSuccessorMemberships` uses). Best-effort per Room so one relay
- * hiccup or unprojectable self-join never blocks the rest, and re-running it
- * on a retried redemption is a no-op for rooms already attached.
- */
-async function attachAgentToInviterRooms(
-  ctx: ChannelOpsContext,
-  communityId: string,
-  agentPubkey: string,
-  inviterPubkey: string,
-): Promise<void> {
-  for (const channelId of await communityRoomIds(ctx, communityId)) {
-    if ((await getChannelMetadata(ctx, channelId))?.archived) continue;
-    if (!(await isMember(ctx, channelId, inviterPubkey))) continue;
-    if (await isMember(ctx, channelId, agentPubkey)) continue;
-    try {
-      await setMemberRole(ctx, channelId, agentPubkey, 'member', {
-        extraTags: [
-          [TAG_COMMUNITY, communityId],
-          ['agent-invite', agentPubkey],
-        ],
-      });
-      await waitUntilMember(ctx, channelId, agentPubkey);
-    } catch (error) {
-      console.warn(
-        `[buzz-client] could not attach agent ${agentPubkey.slice(0, 12)}… to room ${channelId}: ${String(error)}`,
-      );
-    }
-  }
-}
-
 interface AgentPairingMarker {
   event: NostrEvent;
   communityId: string;
@@ -428,8 +391,13 @@ export async function redeemAgentPairingCode(
     .map(parseAgent)
     .find((agent) => agent?.pubkey === ctx.identity.publicKey);
   if (minterVisibleBeforeJoin && ours) {
-    await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.event.pubkey);
-    return { communityId, pairedBy: pairing.event.pubkey, agent: ours, joined: false };
+    return {
+      communityId,
+      pairedBy: pairing.event.pubkey,
+      agent: ours,
+      joined: false,
+      attachedRoomIds: [],
+    };
   }
   if (minterVisibleBeforeJoin && matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
     throw new Error('agent pairing code has already been redeemed');
@@ -443,30 +411,30 @@ export async function redeemAgentPairingCode(
     );
   }
   let joinedForPairing = false;
+  let attachedRoomIds: string[] = [];
   try {
     if (!wasMember) {
       joinedForPairing = true;
-      if (!minterVisibleBeforeJoin) {
-        // Private Workspace projections are intentionally hidden from this
-        // fresh key. The server-indexed claim boundary verifies the signed
-        // global marker against authoritative membership and reserves its hash
-        // for this exact agent before granting the bootstrap membership.
-        let claim;
-        try {
-          claim = await new RoomViewClient({
-            baseUrl: ctx.http.baseUrl,
-            identity: ctx.identity,
-          }).claimAgentPairing(code);
-        } catch (error) {
-          if (error instanceof RoomViewHttpError && error.status === 404) {
-            throw new Error('pairing code is not authorized for this private Workspace');
-          }
-          throw error;
+      // The server-indexed claim is the single authority boundary that can
+      // atomically reserve this code and inherit the minter's current Rooms.
+      // A new agent cannot author effective Room membership commands itself:
+      // production projects those only from a current Room admin.
+      let claim;
+      try {
+        claim = await new RoomViewClient({
+          baseUrl: ctx.http.baseUrl,
+          identity: ctx.identity,
+        }).claimAgentPairing(code);
+      } catch (error) {
+        if (error instanceof RoomViewHttpError && error.status === 404) {
+          throw new Error('pairing code is not authorized for this Workspace');
         }
-        if (claim.workspaceId !== communityId || claim.pairedBy !== pairing.event.pubkey) {
-          throw new Error('pairing claim did not match its signed Workspace marker');
-        }
+        throw error;
       }
+      if (claim.workspaceId !== communityId || claim.pairedBy !== pairing.event.pubkey) {
+        throw new Error('pairing claim did not match its signed Workspace marker');
+      }
+      attachedRoomIds = [...claim.attachedRoomIds];
       // Publish the canonical relay membership command from inside. This is
       // what creates the ordinary signed event/projections; the server claim
       // is only the narrow one-shot bootstrap for a private Workspace.
@@ -497,17 +465,12 @@ export async function redeemAgentPairingCode(
       .map(parseAgent)
       .find((agent) => agent?.pubkey === ctx.identity.publicKey);
     if (ours) {
-      await attachAgentToInviterRooms(
-        ctx,
-        communityId,
-        ctx.identity.publicKey,
-        pairing.event.pubkey,
-      );
       return {
         communityId,
         pairedBy: pairing.event.pubkey,
         agent: ours,
         joined: joinedForPairing,
+        attachedRoomIds,
       };
     }
     if (matchingRedemptions.some((event) => isAgentIdentityEvent(event))) {
@@ -521,8 +484,13 @@ export async function redeemAgentPairingCode(
       tokenHash,
     );
     joinedForPairing = false;
-    await attachAgentToInviterRooms(ctx, communityId, ctx.identity.publicKey, pairing.event.pubkey);
-    return { communityId, pairedBy: pairing.event.pubkey, agent, joined: !wasMember };
+    return {
+      communityId,
+      pairedBy: pairing.event.pubkey,
+      agent,
+      joined: !wasMember,
+      attachedRoomIds,
+    };
   } catch (error) {
     // The capability-scoped membership already landed. Any failed authority
     // check or registration must not leave an outsider in the Workspace.

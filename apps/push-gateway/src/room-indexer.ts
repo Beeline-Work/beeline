@@ -53,6 +53,16 @@ function profileFilter(identities: readonly RoomViewIdentity[]) {
     : [];
 }
 
+function agentStateFilter(identities: readonly RoomViewIdentity[]) {
+  const authors = [
+    ...new Set(identities.filter((item) => item.kind === 'agent').map((item) => item.pubkey)),
+  ];
+  // Presence records are scoped to Rooms, not to the Workspace channel. An
+  // author filter is the only bounded Workspace subscription that also sees
+  // an agent's first heartbeat, before the surface has a roomId to target.
+  return authors.length ? [{ kinds: [30078], authors }] : [];
+}
+
 /**
  * Resolve the latest valid human soul for one declared agent.
  *
@@ -1044,9 +1054,46 @@ WITH current_markers AS (
     role = 'member', invited_by = EXCLUDED.invited_by, joined_at = now(),
     removed_at = NULL, removed_by = NULL, hidden_at = NULL
   RETURNING community_id, channel_id, pubkey
+), inviter_rooms AS (
+  SELECT room.community_id, room.id AS channel_id,
+    claim.agent_pubkey, claim.minter_pubkey
+  FROM accepted_claim claim
+  JOIN channels room ON room.community_id = claim.community_id
+    AND room.id <> claim.workspace_id
+    AND room.deleted_at IS NULL AND room.archived_at IS NULL
+  JOIN channel_members inviter ON inviter.community_id = room.community_id
+    AND inviter.channel_id = room.id AND inviter.pubkey = claim.minter_pubkey
+    AND inviter.removed_at IS NULL
+  JOIN LATERAL (
+    SELECT e.tags FROM events e
+    WHERE e.community_id = room.community_id AND e.channel_id = room.id
+      AND e.kind = 9007 AND e.deleted_at IS NULL
+    ORDER BY e.created_at ASC, e.id ASC LIMIT 1
+  ) genesis ON EXISTS (SELECT 1 FROM jsonb_array_elements(genesis.tags) t
+      WHERE t->>0 = 'community' AND t->>1 = claim.workspace_id::text)
+    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(genesis.tags) t
+      WHERE t->>0 = 'parent')
+    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(genesis.tags) t
+      WHERE t->>0 = 't' AND t->>1 = 'buzz-dm')
+), room_memberships AS (
+  INSERT INTO channel_members (
+    community_id, channel_id, pubkey, role, invited_by, joined_at,
+    removed_at, removed_by, hidden_at
+  )
+  SELECT room.community_id, room.channel_id, room.agent_pubkey,
+    'member', room.minter_pubkey, now(), NULL, NULL, NULL
+  FROM inviter_rooms room
+  ON CONFLICT (community_id, channel_id, pubkey) DO UPDATE SET
+    role = 'member', invited_by = EXCLUDED.invited_by, joined_at = now(),
+    removed_at = NULL, removed_by = NULL, hidden_at = NULL
+  RETURNING channel_id
 )
 SELECT claim.workspace_id, encode(claim.minter_pubkey, 'hex') AS paired_by,
-  claim.joined
+  claim.joined,
+  COALESCE(
+    (SELECT array_agg(room.channel_id ORDER BY room.channel_id) FROM room_memberships room),
+    ARRAY[]::uuid[]
+  ) AS attached_room_ids
 FROM accepted_claim claim JOIN membership member
   ON member.community_id = claim.community_id
   AND member.channel_id = claim.workspace_id
@@ -2409,6 +2456,7 @@ export class RoomIndexer {
       watchFilters: [
         { kinds: [...DURABLE_KINDS], '#h': [workspaceId] },
         ...profileFilter(roster.map((member) => member.identity)),
+        ...agentStateFilter(agents.map((member) => member.identity)),
       ],
     };
   }
@@ -2641,6 +2689,7 @@ export class RoomIndexer {
       workspace_id: string;
       paired_by: string;
       joined: boolean;
+      attached_room_ids: string[];
     }>(AGENT_PAIRING_CLAIM_SQL, [tokenHash, agentPubkey]);
     const claim = result.rows[0];
     if (!claim) return null;
@@ -2648,6 +2697,7 @@ export class RoomIndexer {
       workspaceId: claim.workspace_id,
       pairedBy: claim.paired_by,
       joined: claim.joined,
+      attachedRoomIds: claim.attached_room_ids,
     };
   }
 

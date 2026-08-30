@@ -164,6 +164,8 @@ export default function BuzzMembers() {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<WorkspaceView> | undefined;
+    let subscribedFilters = '';
+    let subscriptionChange = Promise.resolve();
     void (async () => {
       const nextIdentity = await loadBuzzIdentity();
       if (!nextIdentity) {
@@ -180,22 +182,43 @@ export default function BuzzMembers() {
       setRelayUrl(nextRelayUrl);
       if (cached) setSurface(cached);
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
+      const relay = await new BuzzRigTransport(nextIdentity, nextRelayUrl).ensureClient();
+      const listen = (filters: WorkspaceView['watchFilters']): Promise<void> => {
+        const key = JSON.stringify(filters);
+        subscriptionChange = subscriptionChange
+          .catch(() => undefined)
+          .then(async () => {
+            if (cancelled || key === subscribedFilters) return;
+            const nextUnsubscribe = await relay.surfaceSubscribe(filters, () =>
+              scheduler?.signal(),
+            );
+            if (cancelled) {
+              nextUnsubscribe();
+              return;
+            }
+            const previousUnsubscribe = unsubscribe;
+            unsubscribe = nextUnsubscribe;
+            subscribedFilters = key;
+            previousUnsubscribe?.();
+          });
+        return subscriptionChange;
+      };
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => http.workspace(workspaceId),
         apply: (value) => {
           setSurface(value);
           setError(null);
           void mobileSurfaceCache.write(address, value, isWorkspaceView);
+          // The bootstrap filter cannot know a newly paired agent's pubkey.
+          // Move to the server-authored filters after every changed roster so
+          // the agent's first Room-scoped heartbeat refreshes this surface.
+          void listen(value.watchFilters).catch((reason) => setError(String(reason)));
         },
         onError: (reason) => setError(String(reason)),
       });
       schedulerRef.current = scheduler;
-      const relay = await new BuzzRigTransport(nextIdentity, nextRelayUrl).ensureClient();
-      unsubscribe = await relay.surfaceSubscribe(
-        cached?.watchFilters ?? [{ kinds: [0, 9, 9000, 9001], '#h': [workspaceId] }],
-        () => scheduler?.signal(),
-      );
-      if (cancelled) return unsubscribe();
+      await listen(cached?.watchFilters ?? [{ kinds: [0, 9, 9000, 9001], '#h': [workspaceId] }]);
+      if (cancelled) return;
       await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {
       if (!cancelled) setError(String(reason));
@@ -485,7 +508,7 @@ export default function BuzzMembers() {
       viewerPubkey={surface.viewer.identity.pubkey}
       viewerAvatarUrl={surface.viewer.identity.avatar}
     >
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top }]} testID="workspace-members-surface">
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.back}>
             <Text style={styles.backText}>‹</Text>

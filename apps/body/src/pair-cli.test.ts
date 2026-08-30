@@ -405,6 +405,20 @@ describe('beeline pair — one live spinner at a time', () => {
   }, 15_000);
 });
 
+describe('beeline pair — success output', () => {
+  it('reports inherited Room attachment separately from the optional repository binding', async () => {
+    const source = await readFile(resolve(bodyDirectory, 'src/cli.ts'), 'utf8');
+    const printPairResult = source.slice(
+      source.indexOf('function printPairResult('),
+      source.indexOf('/**\n * Parse, validate, and execute `beeline pair`'),
+    );
+
+    expect(printPairResult).toContain('rooms: attached to');
+    expect(printPairResult).toContain('rooms: no current inviter Rooms');
+    expect(printPairResult).not.toContain('repo: none — add this agent to a Room');
+  });
+});
+
 describe('beeline pair — --model/--effort validation', () => {
   it('rejects an unadvertised model before consuming the pairing code', async () => {
     const gitRepo = await tmpDir('beeline-pair-cli-gitrepo-');

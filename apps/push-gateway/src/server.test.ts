@@ -248,6 +248,7 @@ describe('paint-view GET server', () => {
       workspaceId: WORKSPACE,
       pairedBy: 'd'.repeat(64),
       joined: true,
+      attachedRoomIds: ['7d111868-52eb-43ab-98ae-8a6c49b92da8'],
     }));
     const base = await listen({ indexer: indexer({ claimAgentPairing }) });
     const path = '/agent-pairing/claim';
@@ -265,6 +266,7 @@ describe('paint-view GET server', () => {
       workspaceId: WORKSPACE,
       pairedBy: 'd'.repeat(64),
       joined: true,
+      attachedRoomIds: ['7d111868-52eb-43ab-98ae-8a6c49b92da8'],
     });
     expect(claimAgentPairing).toHaveBeenCalledWith(
       createHash('sha256').update(code).digest('hex'),

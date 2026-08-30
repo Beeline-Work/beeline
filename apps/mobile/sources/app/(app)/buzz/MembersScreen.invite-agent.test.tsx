@@ -180,7 +180,7 @@ const workspace = {
     role: 'owner',
     permissions: { send: true, manage: true },
   },
-  watchFilters: [],
+  watchFilters: [{ kinds: [30078], authors: [AGENT] }],
 };
 
 async function render(): Promise<ReactTestRenderer> {
@@ -204,6 +204,23 @@ beforeEach(() => {
 });
 
 describe('Members agent invitation flow', () => {
+  it('subscribes to the indexed agent filter after cold bootstrap so the first heartbeat clears offline', async () => {
+    const renderer = await render();
+
+    expect(renderer.root.findByProps({ testID: 'workspace-members-surface' })).toBeDefined();
+
+    expect(client.surfaceSubscribe).toHaveBeenNthCalledWith(
+      1,
+      [{ kinds: [0, 9, 9000, 9001], '#h': [WORKSPACE] }],
+      expect.any(Function),
+    );
+    expect(client.surfaceSubscribe).toHaveBeenNthCalledWith(
+      2,
+      workspace.watchFilters,
+      expect.any(Function),
+    );
+  });
+
   it('immediately shows one install-and-pair command, with no Room picker', async () => {
     const renderer = await render();
 

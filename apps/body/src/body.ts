@@ -199,7 +199,6 @@ import {
   parseNamedRepositoryTarget,
   type NamedRepositoryTarget,
 } from './repository-target.js';
-import { resolvePreviewUrl } from './preview-url.js';
 import { beelineCapabilityContextForHarness } from './beeline-skill.js';
 import {
   TARGET_BRANCH_PROPOSAL_COMMAND,
@@ -9500,35 +9499,6 @@ export class Body {
     this.runningAgentTasks.set(info.subchannelId, task);
   }
 
-  /**
-   * The preview deployment URL for a corner's pushed tip, if its host made
-   * one. Reads the corner's own git remote (never a configured guess) and
-   * swallows every failure — a review card with no PREVIEW row is the correct
-   * answer for a repo whose CI publishes no preview.
-   */
-  private async resolveCornerPreviewUrl(
-    info: SubchannelInfo,
-    tip: string,
-  ): Promise<string | undefined> {
-    const boundRepo = info.boundRepo;
-    if (!boundRepo || boundRepo.ownerHex) return undefined;
-    const remoteName = boundRepo.remoteName;
-    if (!remoteName) return undefined;
-    try {
-      const remote = await git(info.worktreePath, ['remote', 'get-url', remoteName]);
-      if (!remote.ok) return undefined;
-      const token = await this.repositoryAccessToken?.(boundRepo);
-      return await resolvePreviewUrl({
-        remote: remote.stdout.trim(),
-        tip,
-        ...(token ? { token } : {}),
-      });
-    } catch (error) {
-      console.error('[body] preview URL lookup failed (ignored):', error);
-      return undefined;
-    }
-  }
-
   /** Read the exact target tip only after a signed press needs a model-owned sync. */
   private async currentReviewTargetTip(
     info: SubchannelInfo,
@@ -10133,99 +10103,16 @@ export class Body {
       throw error;
     }
 
-    // Branch/PR preview deployments only exist because of the push above, so
-    // this is the earliest the URL can be known. Strictly best-effort: no
-    // statuses, no credentials, or a non-GitHub origin publishes no tag, and
-    // the review card then renders no PREVIEW row.
-    const previewUrl = await this.resolveCornerPreviewUrl(info, tip);
-
-    // Only believe merge-ready is durably announced once the control message
-    // that carries it is actually confirmed published — mobile's approve
-    // button reads the merge target solely from that event. Setting the flag
-    // first would let a failed publish here poison this function's own
-    // idempotency guard above (`info.mergeTarget?.tip === tip`) into
-    // silently skipping the retry a later call needs to make.
-    //
-    // This is THE lifecycle-critical publication: a single dropped attempt
-    // (the recurring deploy-bounce 502 windows outlasted publishEvent's own
-    // quick inner retries) left a finished corner with no review card at all —
-    // the panel read NOTHING READY TO MERGE YET forever. The outer loop here
-    // rides the transient outage out with bounded backoff, and if the budget
-    // is still exhausted it says so plainly and leaves `mergeTarget` unset so
-    // the next corner turn re-attempts from the top.
-    let reviewCardEvent: NostrEvent | undefined;
-    const reviewCardPublished = await publishCritical(
-      async () => {
-        reviewCardEvent = buildControlMessage(
-          'review-target',
-          info.subchannelId,
-          this.agentIdentity,
-          `Work is ready for human merge approval — ${tip.slice(0, 12)}…`,
-          [
-            ['t', MERGE_READY_TAG],
-            ['status', 'ready'],
-            ['repo', target.repo],
-            ['branch', target.branch],
-            ['feature', info.featureBranch!],
-            ['tip', target.tip],
-            ['patch-id', target.patchId!],
-            ['summary', reviewArtifact.summary],
-            ['agent', this.agentIdentity.publicKey],
-            ...(previewUrl ? [['preview', previewUrl]] : []),
-          ],
-        );
-        await publishEvent(reviewCardEvent, this.agentIdentity);
-      },
-      {
-        label: `merge-ready card for corner ${info.subchannelId}`,
-        onRetry: (attempt, delayMs, error) =>
-          console.error(
-            `[body] merge-ready publish retrying for ${info.subchannelId} (attempt ${attempt} in ${delayMs}ms):`,
-            error,
-          ),
-        onGiveUp: (error) =>
-          console.error(
-            `[body] merge-ready publish could not be confirmed for ${info.subchannelId}; will re-attempt on the next turn/poll:`,
-            error,
-          ),
-      },
-    );
-    if (!reviewCardPublished) {
-      info.lastMergeNotReadyReason =
-        'The review card could not be published — the relay was unreachable. It will be retried automatically.';
-      await publishCritical(
-        () =>
-          this.postFailureFactOnce(
-            info.subchannelId,
-            'Review target unavailable: relay unreachable; retrying.',
-            [
-              ...RECOVERABLE_CORNER_FAILURE_TAGS,
-              ['retry', 'auto' satisfies DeliveryRetryPosture],
-              ['repo', target.repo],
-              ['branch', target.branch],
-              ['tip', target.tip],
-            ],
-          ).then(() => undefined),
-        {
-          label: `merge-ready failure notice for corner ${info.subchannelId}`,
-          onGiveUp: (error) =>
-            console.error(
-              `[body] merge-ready failure notice also refused for ${info.subchannelId}:`,
-              error,
-            ),
-        },
-      ).catch(() => undefined);
-      return false;
-    }
+    // The Git projection is the review surface. No lifecycle prose or second
+    // merge-ready fact is published; the indexer derives REVIEW directly from
+    // the one replaceable projection written above.
     info.mergeTarget = target;
     info.lastReviewFailureContent = undefined;
-    info.mergeReadyEventId = reviewCardEvent!.id;
-    info.mergeReadySummaryPublishedTip = tip;
+    info.mergeReadyEventId = undefined;
+    info.mergeReadySummaryPublishedTip = undefined;
     // A fresh review is a fresh land attempt: whatever the previous tip could
     // not do is no longer the standing condition being reported.
     info.lastLandFailure = undefined;
-    // State machine: an approvable change is waiting on a person.
-    await this.transitionCornerState(info, 'waiting', 'review');
     // A target-sync or later work turn may have advanced the tip. Re-read the
     // durable corner approval immediately so the current work can land without
     // another human tap.

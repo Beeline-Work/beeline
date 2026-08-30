@@ -2,8 +2,10 @@
 # Build the signed Android APK with caches that survive throwaway worktrees.
 set -euo pipefail
 
-readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-readonly REPO_DIR="$(cd "$MOBILE_DIR/../.." && pwd -P)"
+MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly MOBILE_DIR
+REPO_DIR="$(cd "$MOBILE_DIR/../.." && pwd -P)"
+readonly REPO_DIR
 readonly ANDROID_HOME="${ANDROID_HOME:-/home/lunchbox/android-sdk}"
 readonly CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}"
 

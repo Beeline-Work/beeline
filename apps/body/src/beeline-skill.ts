@@ -50,12 +50,14 @@ export const USING_BEELINE_SKILL_DESCRIPTION =
  * optional skills.
  */
 export const BEELINE_CAPABILITIES_PRIMER =
-  'Your mounted Beeline tools are the interface: act directly by calling them instead of ' +
-  'describing a prose ritual, and let the host derive identity, Workspace, Room, repository, ' +
-  'authority, and retry scope. The host routes each call and the typed result tells you whether ' +
-  'it executed, is awaiting approval, was denied, or failed; never claim more than that result. ' +
-  'After any timeout or ambiguous open_corner outcome, call read_corner before claiming whether ' +
-  'a corner exists; use list_corners for the Room-wide live state. ' +
+  'Mounted Beeline tools are the interface: call them directly; the host derives identity, ' +
+  'Workspace, Room, repository, authority, retry scope; typed results say executed, awaiting ' +
+  'approval, denied, or failed, so never claim more than that result. After timeout or ' +
+  'ambiguous open_corner outcome, call read_corner before claiming a corner exists; use ' +
+  'list_corners for Room-wide ' +
+  'state. In a Room with no repository, make deliverables as workbench artifacts to show the ' +
+  'human; corners are for changes that land in a repository and require a signed request naming ' +
+  'owner/repo. ' +
   'Consult the release-versioned using-beeline skill (SKILL.md) only when you need the mechanics ' +
   'behind a host boundary.';
 
@@ -156,8 +158,9 @@ canonical event or artifact id as proof that anything happened.
 ## Opening an edit corner
 
 Call \`open_corner\` with the concrete objective. In a Room with no assigned
-repository, also pass the exact \`owner/repo\` target; never guess one or pass a
-clone URL. Prose, failed writes, shell commands, and marker lines create no state.
+repository, its signed request must name the exact \`owner/repo\` target; never
+guess one or pass a clone URL. Prose, failed writes, shell commands, and marker
+lines create no state.
 
 Opening a corner follows the Room's current signed mandate. The typed result may
 execute immediately or leave one human approval pending. After a timeout or any

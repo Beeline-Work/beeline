@@ -5207,10 +5207,22 @@ export class Body {
         try {
           await this.publishMergeReady(info);
         } catch (error) {
-          console.error(
-            `[body] restored corner ${subchannelId} review artifact publish failed; maintenance will retry:`,
-            error,
-          );
+          if (asRelayPublishError(error).kind === 'ROOM_ARCHIVED') {
+            // An archived Room will refuse this deterministic artifact
+            // coordinate forever. Mark this restored tip settled so the
+            // maintenance commit watch cannot re-drive it.
+            info.observedReviewTip = tip;
+            info.commitWatchFailure = undefined;
+            console.error(
+              `[body] restored corner ${subchannelId} review artifact publish refused because its Room is archived; retry stopped:`,
+              error,
+            );
+          } else {
+            console.error(
+              `[body] restored corner ${subchannelId} review artifact publish failed; maintenance will retry:`,
+              error,
+            );
+          }
         }
       }
       // The original human request remains the authority for unfinished

@@ -245,8 +245,8 @@ mkdir -p "$STAGE/web"
 # users; the live tree's setgid relay-web directories keep the shared group.
 rsync -a -O --no-p --no-o --no-g --delete "$REPO_WEB/" "$STAGE/web/"
 
-if ! diff -r --brief "$REPO_WEB" "$STAGE/web" >$STAGE/stage-diff.txt 2>&1; then
-  cat $STAGE/stage-diff.txt >&2
+if ! diff -r --brief "$REPO_WEB" "$STAGE/web" >"$STAGE/stage-diff.txt" 2>&1; then
+  cat "$STAGE/stage-diff.txt" >&2
   die "staged copy differs from checkout — aborting before anything was touched"
 fi
 
@@ -270,15 +270,15 @@ fi
 # ---------------------------------------------------------------------------
 log "building beeline-auth:production"
 docker build -f "$CHECKOUT/apps/auth/Dockerfile" -t beeline-auth:production "$CHECKOUT" \
-  >$STAGE/auth-build.log 2>&1 || { tail -40 $STAGE/auth-build.log >&2; die "auth image build failed"; }
-tail -3 $STAGE/auth-build.log
+  >"$STAGE/auth-build.log" 2>&1 || { tail -40 "$STAGE/auth-build.log" >&2; die "auth image build failed"; }
+tail -3 "$STAGE/auth-build.log"
 
 # The one materializer image hosts push, repository events, and snapshots.
 # Build it BEFORE anything live is touched, so a build failure costs nothing.
 log "building beeline-materializer:production"
 docker build -f "$CHECKOUT/apps/push-gateway/Dockerfile" -t beeline-materializer:production "$CHECKOUT" \
-  >$STAGE/materializer-build.log 2>&1 || { tail -40 $STAGE/materializer-build.log >&2; die "materializer image build failed"; }
-tail -3 $STAGE/materializer-build.log
+  >"$STAGE/materializer-build.log" 2>&1 || { tail -40 "$STAGE/materializer-build.log" >&2; die "materializer image build failed"; }
+tail -3 "$STAGE/materializer-build.log"
 
 ensure_materializer_bind_source push-state "${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}"
 ensure_materializer_bind_source runtime-state "${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}"
@@ -468,6 +468,7 @@ wait_for_stack_ready() {
 
 reconcile_full_stack() {
   local compose_log=$STAGE/stack-up.log
+  # shellcheck disable=SC2024 # Capture the sudo command's output in this unprivileged parent shell.
   if ! sudo -n /usr/bin/docker compose -p buzz-router-prod \
       --env-file "$PROJECT_DIR/.env" -f "$LIVE_COMPOSE" up -d --remove-orphans \
       >"$compose_log" 2>&1; then
@@ -522,7 +523,7 @@ verify_public() {
       out.push(b.file+"\t"+b.sha256);
     }
     console.log(out.join("\n"));
-  ' "$REPO_WEB/dl/manifest.json" > $STAGE/manifest-bundles.txt || die "unreadable manifest"
+  ' "$REPO_WEB/dl/manifest.json" >"$STAGE/manifest-bundles.txt" || die "unreadable manifest"
 
   while IFS=$'\t' read -r file want; do
     got=$(pub_sha "$PUBLIC_BASE/dl/$file")
@@ -532,7 +533,7 @@ verify_public() {
     else log "public bundle verified: $file"; fi
     side=$(curl -fsSL --max-time 60 "$PUBLIC_BASE/dl/$file.sha256" | awk '{print $1}')
     [ "$side" = "$want" ] || { echo "!! public .sha256 sidecar for $file disagrees with manifest" >&2; failures=$((failures+1)); }
-  done < $STAGE/manifest-bundles.txt
+  done <"$STAGE/manifest-bundles.txt"
 
   # Well-known association documents must still resolve.
   for wk in apple-app-site-association assetlinks.json; do

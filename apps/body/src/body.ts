@@ -58,6 +58,7 @@ import {
 } from './activity.js';
 import { createAgentCommandPublisher } from './agent-commands-publish.js';
 import {
+  modelAvailableEventTags,
   modelUnavailableEventTags,
   modelUnavailableState,
   modelUnavailableRoomMessage,
@@ -2667,8 +2668,8 @@ export class Body {
   private readonly pendingCiWatches = new Set<Promise<void>>();
   /** (repoId:tip) lands this process has already realigned corners for. */
   private readonly realignedLandKeys = new Set<string>();
-  /** Rooms that have received this process's startup model-unavailable line. */
-  private readonly modelUnavailableRooms = new Set<string>();
+  /** Last model-availability state this process reconciled per Room. */
+  private readonly modelAvailabilityRooms = new Map<string, string>();
   /** One coalesced approval pass per Room. A pushed approval arriving while a
    * pass is already reading relay state requests one immediate second pass,
    * closing the read-before-event race without allowing overlapping lands. */
@@ -5266,43 +5267,97 @@ export class Body {
 
   private async publishModelUnavailableState(channelId: string, replyTo?: string): Promise<void> {
     const unavailable = this.config.modelUnavailable;
-    if (!unavailable || (!replyTo && this.modelUnavailableRooms.has(channelId))) return;
-    if (!replyTo) {
-      try {
-        const standing = await this.agentRelay.queryEvents([
-          {
-            kinds: [9],
-            authors: [this.agentIdentity.publicKey],
-            '#h': [channelId],
-            '#t': ['buzz-agent-model-unavailable'],
-            limit: 10,
-          },
-        ]);
-        if (
-          standing.some(
-            (event) =>
-              event.tags.some((tag) => tag[0] === 'status' && tag[1] === unavailable.kind) &&
-              event.tags.some(
-                (tag) => tag[0] === 'unavailable-value' && tag[1] === unavailable.unavailable.value,
-              ),
-          )
-        ) {
-          this.modelUnavailableRooms.add(channelId);
-          return;
-        }
-      } catch (error) {
-        console.warn('[body] could not reconcile the standing model-unavailable state:', error);
+    if (replyTo) {
+      if (!unavailable) return;
+      await postAgentMessage(
+        channelId,
+        this.agentIdentity,
+        modelUnavailableRoomMessage(unavailable),
+        replyTo,
+        [],
+        modelUnavailableEventTags(unavailable),
+      );
+      return;
+    }
+
+    const selection = unavailable?.selection ?? this.config.modelSelection;
+    if (!unavailable && !selection?.model && !selection?.effort) return;
+    const stateKey = unavailable
+      ? `unavailable:${unavailable.kind}:${unavailable.unavailable.value}:${unavailable.selection.model ?? ''}/${unavailable.selection.effort ?? ''}`
+      : `available:${selection?.model ?? ''}/${selection?.effort ?? ''}`;
+    if (this.modelAvailabilityRooms.get(channelId) === stateKey) return;
+
+    let standing: NostrEvent[] = [];
+    try {
+      standing = await this.agentRelay.queryEvents([
+        {
+          kinds: [9],
+          authors: [this.agentIdentity.publicKey],
+          '#h': [channelId],
+          '#t': ['buzz-agent-model-unavailable'],
+          limit: 20,
+        },
+      ]);
+    } catch (error) {
+      console.warn('[body] could not reconcile the standing model-availability state:', error);
+      // A healthy daemon only publishes a resolution when relay truth proves
+      // there is a failure to resolve. Leave the Room unreconciled so the
+      // next reconnect retries this read instead of suppressing it forever.
+      if (!unavailable) return;
+    }
+    const newest = [...standing]
+      .sort((left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id))
+      .find((event) =>
+        event.tags.some(
+          (tag) =>
+            tag[0] === 'status' &&
+            ['model-unavailable', 'validation-unavailable', 'model-available'].includes(tag[1] ?? ''),
+        ),
+      );
+    const newestStatus = newest?.tags.find((tag) => tag[0] === 'status')?.[1];
+    const newestUnavailableValue = newest?.tags.find((tag) => tag[0] === 'unavailable-value')?.[1];
+    const newestModel = newest?.tags.find((tag) => tag[0] === 'model')?.[1];
+    const newestEffort = newest?.tags.find((tag) => tag[0] === 'effort')?.[1];
+
+    if (unavailable) {
+      if (
+        newestStatus === unavailable.kind &&
+        newestUnavailableValue === unavailable.unavailable.value &&
+        newestModel === unavailable.selection.model &&
+        newestEffort === unavailable.selection.effort
+      ) {
+        this.modelAvailabilityRooms.set(channelId, stateKey);
+        return;
       }
+      await postAgentMessage(
+        channelId,
+        this.agentIdentity,
+        modelUnavailableRoomMessage(unavailable),
+        undefined,
+        [],
+        modelUnavailableEventTags(unavailable),
+        undefined,
+        Math.max(Math.floor(Date.now() / 1_000), (newest?.created_at ?? 0) + 1),
+      );
+      this.modelAvailabilityRooms.set(channelId, stateKey);
+      return;
+    }
+
+    if (newestStatus !== 'model-unavailable' && newestStatus !== 'validation-unavailable') {
+      this.modelAvailabilityRooms.set(channelId, stateKey);
+      return;
     }
     await postAgentMessage(
       channelId,
       this.agentIdentity,
-      modelUnavailableRoomMessage(unavailable),
-      replyTo,
+      '',
+      undefined,
       [],
-      modelUnavailableEventTags(unavailable),
+      modelAvailableEventTags(selection!),
+      undefined,
+      Math.max(Math.floor(Date.now() / 1_000), newest!.created_at + 1),
     );
-    if (!replyTo) this.modelUnavailableRooms.add(channelId);
+    this.modelAvailabilityRooms.set(channelId, stateKey);
   }
 
   /**

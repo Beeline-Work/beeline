@@ -42,18 +42,9 @@ import {
   type GitHubInstallationAccess,
   type AgentCommandList,
   type KnownMessageReference,
-  RoomViewClient,
-  RoomViewHttpError,
-  SurfaceRefreshScheduler,
-  LiveOverlayDecoder,
-  applyLiveOverlay,
   visibleLiveOverlays,
   addRoomPage,
-  isRoomView,
-  type LiveOverlay,
-  type RoomView,
   type RoomViewMessage,
-  KIND_AGENT_DRAFT,
   AGENT_PRESENCE_STALE_MS,
   CORNER_ACTIVITY_FRESHNESS_MS,
   personHandle,
@@ -62,7 +53,6 @@ import {
   createRoomMessageProjector,
   displayRoomMessages,
   mergeDisplayPages,
-  reconcileRoomView,
   type ChatDisplayMessage,
   type DeliveryRetryPosture,
   cornerSummaries,
@@ -75,7 +65,6 @@ import {
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
-import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { buildTurnActivity, latestCornerPlan } from '@/buzz/activity-timeline';
 import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
@@ -184,19 +173,20 @@ import {
 import { mentionKeyboardAction } from '@/buzz/composer-keyboard';
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import {
+  useRoomSurfaceSession,
+  type RoomSurfaceSessionBindings,
+} from './useRoomSurfaceSession';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
   isAgentOfflineAfterPresenceResolved,
   isAgentTurnActive,
-  mergeAgentPresence,
-  mergeAgentPresenceBatch,
   nextAgentPresenceTransitionAt,
   nextAgentTurnExpiryAt,
   onlineVerdicts,
   activeMentionCandidates,
   AGENT_PRESENCE_BACKGROUND_GRACE_MS,
-  type RoomAgentPresence,
 } from '@/buzz/agent-presence';
 import {
   sameMessageRefMap,
@@ -253,7 +243,6 @@ const COMPOSER_MAX_HEIGHT = 120;
 // page older messages in as the reader scrolls up.
 const INITIAL_MESSAGE_WINDOW = 30;
 const OLDER_MESSAGES_PAGE_SIZE = 30;
-const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 // This deliberately remains the sole color seam for the human merge decision.
 // If the product ever approves a non-monochrome exception, change only this value.
 const MERGE_APPROVAL_ACCENT = groknight.accent;
@@ -492,16 +481,17 @@ export default function BuzzChat() {
   const selectedMentionsRef = useRef(new Map<string, string>());
   // When each agent was last told about, so a standing offline condition is
   const sendInFlightRef = useRef(false);
-  const outboxRef = useRef<ReturnType<typeof createRoomOutbox> | null>(null);
-  const roomSchedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
-  const reconciledRoomViewRef = useRef<RoomView | null>(null);
+  const roomSurfaceBindingsRef = useRef<RoomSurfaceSessionBindings>({
+    resetTranscript: () => undefined,
+    restoreOutboxMessages: () => undefined,
+    dismissOptimisticMessage: () => undefined,
+  });
   const roomMessageProjectorRef = useRef<ReturnType<typeof createRoomMessageProjector> | null>(
     null,
   );
   const roomMessageProjector =
     roomMessageProjectorRef.current ??
     (roomMessageProjectorRef.current = createRoomMessageProjector());
-  const outboxConfirmationTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   // Publish the open conversation to the foreground notification policy. The
   // root notification handler runs outside the React tree, so it reads this
@@ -511,13 +501,29 @@ export default function BuzzChat() {
     return () => releaseOpenBuzzChannelId(decodedId || null);
   }, [decodedId]);
 
-  const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const [roomClient, setRoomClient] = useState<RoomViewClient | null>(null);
-  const [roomSurface, setRoomSurface] = useState<RoomView | null>(null);
-  const [liveOverlays, setLiveOverlays] = useState<readonly LiveOverlay[]>([]);
-  const [transcriptHydrationAttempt, setTranscriptHydrationAttempt] = useState(0);
-  const [transcriptHydrationFailed, setTranscriptHydrationFailed] = useState(false);
-  const [transcriptHydrationError, setTranscriptHydrationError] = useState<string | null>(null);
+  const {
+    transport,
+    adoptTransport: setSessionTransport,
+    roomClient,
+    roomSurface,
+    liveOverlays,
+    userPubkey,
+    heartbeatPresences,
+    presenceResolved,
+    presenceReconnectGrace,
+    presenceNow,
+    setPresenceNow,
+    hydrationFailed: transcriptHydrationFailed,
+    hydrationError: transcriptHydrationError,
+    retryHydration,
+    refreshSignal,
+    outbox,
+    reviewTipRef: mergeTargetTipRef,
+  } = useRoomSurfaceSession({
+    channelId: decodedId,
+    ...(notificationResponseId ? { notificationResponseId } : {}),
+    bindingsRef: roomSurfaceBindingsRef,
+  });
   const [inputText, setInputText] = useState('');
   const [replyTarget, setReplyTarget] = useState<MessageReplyTarget | null>(null);
   const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT);
@@ -531,10 +537,9 @@ export default function BuzzChat() {
     Record<string, AgentCommandList | null>
   >({});
   const [sending, setSending] = useState(false);
-  const [failedOutboxIds, setFailedOutboxIds] = useState<ReadonlySet<string>>(new Set());
+  const failedOutboxIds = outbox.failedIds;
   const [pendingAttachment, setPendingAttachment] = useState<PickedChatAttachment | null>(null);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
-  const [userPubkey, setUserPubkey] = useState<string>('');
   // Local relay acceptance and daemon landing are separate visible states;
   // neither is terminal until a durable landed event names the resulting tip.
   // 'failed' means a durable publish on the landing path (push, land, or
@@ -553,7 +558,6 @@ export default function BuzzChat() {
   // exactly the case that reads as a dead end to the person holding the phone.
   // Reviewable tip currently on screen. Held on a ref, not read off
   // `mergeTarget`, because a whole live batch is applied before any re-render.
-  const mergeTargetTipRef = useRef<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [cornerStateNow, setCornerStateNow] = useState(Date.now());
   // "No corner on record" and "the corner list has not answered yet" are
@@ -608,23 +612,12 @@ export default function BuzzChat() {
     proposalId: string;
     text: string;
   } | null>(null);
-  const [heartbeatPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
-  const [presenceResolved, setPresenceResolved] = useState(false);
-  const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
-  const [presenceNow, setPresenceNow] = useState(Date.now());
   // Armed the instant a message this client believes addresses an agent is
   // sent, so the composer never shows dead air waiting on the real WORKING
   // receipt (relay round trip + pickup + publish + refetch). See
   // `selectComposerAckState`.
   const [pendingAckSentAt, setPendingAckSentAt] = useState<number | null>(null);
   const [composerAckNow, setComposerAckNow] = useState(() => Date.now());
-  const agentPresencesRef = useRef(heartbeatPresences);
-  const presenceReconnectGraceRef = useRef(presenceReconnectGrace);
-  // The ref is the *heartbeat* map, because it is what live presence events
-  // merge into and what the reconnect grace is keyed off. The derived map
-  // below is a read-only view for everything that decides "is it online".
-  agentPresencesRef.current = heartbeatPresences;
-  presenceReconnectGraceRef.current = presenceReconnectGrace;
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface?.room.archived ?? false;
   const parentChannelId = roomSurface?.parent?.id ?? routeParentChannelId;
@@ -856,6 +849,17 @@ export default function BuzzChat() {
     remove: removeOptimistic,
     clear: clearOptimistic,
   } = useRoomSendFrame(durableMessages, committedMessageIds, isCorner);
+  roomSurfaceBindingsRef.current = {
+    resetTranscript: () => {
+      roomMessageProjector.reset();
+      hasMoreHistoryRef.current = true;
+      setOlderPages([]);
+      clearOptimistic();
+      setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
+    },
+    restoreOutboxMessages: addMessages,
+    dismissOptimisticMessage: removeOptimistic,
+  };
   // All four display partitions share the same chronological merge. A durable
   // outbox row may be older than the current server tail after an interrupted
   // publish, so it must never claim the inverted list's newest slot.
@@ -1782,334 +1786,6 @@ export default function BuzzChat() {
     return () => clearTimeout(timer);
   }, [agentPresences, agentTurnMarkers, presenceNow]);
 
-  const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
-    if (!presence) return;
-    setAgentPresences((current) => {
-      const next = mergeAgentPresence(current, presence);
-      agentPresencesRef.current = next;
-      return next;
-    });
-    setPresenceReconnectGrace((current) => {
-      if (current[presence.agentPubkey] === undefined) return current;
-      const next = { ...current };
-      delete next[presence.agentPubkey];
-      presenceReconnectGraceRef.current = next;
-      return next;
-    });
-    setPresenceNow(Date.now());
-  }, []);
-
-  useEffect(() => {
-    setHighlightedMentionIndex(0);
-  }, [mentionMenuKey]);
-
-  useEffect(() => {
-    if (!decodedId) return;
-
-    let cancelled = false;
-    let unsubscribe: (() => void) | undefined;
-    let appStateSubscription: ReturnType<typeof AppState.addEventListener> | undefined;
-    let scheduler: SurfaceRefreshScheduler<RoomView> | undefined;
-    let decoder: LiveOverlayDecoder | undefined;
-    let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
-    let watchGeneration = 0;
-    let watchKey = '';
-    let hasPainted = false;
-
-    agentPresencesRef.current = {};
-    presenceReconnectGraceRef.current = {};
-    setAgentPresences({});
-    setPresenceReconnectGrace({});
-    setPresenceResolved(false);
-    setLiveOverlays([]);
-    reconciledRoomViewRef.current = null;
-    roomMessageProjector.reset();
-    hasMoreHistoryRef.current = true;
-    setOlderPages([]);
-    clearOptimistic();
-    setFailedOutboxIds(new Set());
-    setVisibleMessageCount(INITIAL_MESSAGE_WINDOW);
-    setTranscriptHydrationFailed(false);
-    setTranscriptHydrationError(null);
-
-    const applyDecodedOverlay = (overlay: LiveOverlay) => {
-      setLiveOverlays((current) => applyLiveOverlay(current, overlay));
-      if (overlay.kind === 'presence') {
-        applyAgentPresence({
-          agentPubkey: overlay.agentPubkey,
-          status: overlay.status,
-          observedAt: overlay.createdAt * 1_000,
-        });
-      }
-    };
-
-    const applyView = (
-      view: RoomView,
-      identityPubkey: string,
-      relayUrl: string,
-      fresh: boolean,
-    ) => {
-      if (cancelled) return;
-      const stableView = reconcileRoomView(reconciledRoomViewRef.current, view);
-      reconciledRoomViewRef.current = stableView;
-      hasPainted = true;
-      setRoomSurface(stableView);
-      setTranscriptHydrationFailed(false);
-      setTranscriptHydrationError(null);
-      void Promise.all([
-        saveActiveCommunityId(identityPubkey, stableView.room.workspaceId),
-        saveLastViewedChannel(identityPubkey, stableView.room.workspaceId, decodedId),
-      ]).catch(() => undefined);
-
-      const presences = Object.fromEntries(
-        stableView.members.flatMap((member) =>
-          member.presence
-            ? [
-                [
-                  member.identity.pubkey,
-                  {
-                    agentPubkey: member.identity.pubkey,
-                    status: member.presence.status,
-                    observedAt: member.presence.observedAt * 1_000,
-                  },
-                ],
-              ]
-            : [],
-        ),
-      );
-      // The HTTP response and the live overlay are two observations of the
-      // same replaceable record. A refetch must not erase a newer heartbeat
-      // that arrived while the request was in flight.
-      const mergedPresences = mergeAgentPresenceBatch(
-        agentPresencesRef.current,
-        Object.values(presences),
-      );
-      agentPresencesRef.current = mergedPresences;
-      setAgentPresences(mergedPresences);
-      setPresenceResolved(true);
-      setPresenceNow(Date.now());
-
-      setCornerStateNow(Date.now());
-      mergeTargetTipRef.current =
-        stableView.review?.status === 'ready' ? (stableView.review.artifact?.tip ?? null) : null;
-
-      decoder = new LiveOverlayDecoder(
-        decodedId,
-        new Set(
-          stableView.members
-            .filter((member) => member.identity.kind === 'agent')
-            .map((member) => member.identity.pubkey),
-        ),
-        new Set([
-          decodedId,
-          ...(stableView.parent ? [stableView.parent.id] : []),
-          ...stableView.corners.map((corner) => corner.corner.id),
-        ]),
-      );
-      const replayedOverlays = pendingOverlayEvents;
-      pendingOverlayEvents = [];
-      for (const event of replayedOverlays) {
-        const overlay = decoder.decode(event);
-        if (overlay) applyDecodedOverlay(overlay);
-      }
-      const authoritativeIds = new Set(stableView.messages.map((message) => message.id));
-      void outboxRef.current?.reconcile(authoritativeIds);
-      setFailedOutboxIds((current) => {
-        const next = new Set([...current].filter((id) => !authoritativeIds.has(id)));
-        return next.size === current.size ? current : next;
-      });
-      for (const id of authoritativeIds) {
-        const timer = outboxConfirmationTimersRef.current.get(id);
-        if (timer) clearTimeout(timer);
-        outboxConfirmationTimersRef.current.delete(id);
-      }
-
-      if (fresh) {
-        void mobileSurfaceCache.write(
-          surfaceAddress(relayUrl, identityPubkey, `/room/${decodedId}`),
-          stableView,
-          isRoomView,
-        );
-      }
-
-      const nextWatchKey = JSON.stringify(stableView.watchFilters);
-      if (fresh && nextWatchKey !== watchKey) {
-        void installWatch(stableView.watchFilters);
-      }
-    };
-
-    const installWatch = async (filters: RoomView['watchFilters']): Promise<void> => {
-      const generation = ++watchGeneration;
-      watchKey = JSON.stringify(filters);
-      const currentTransport = transportForEffect;
-      if (!currentTransport) return;
-      const client = await currentTransport.ensureClient();
-      let replaying = true;
-      const stop = await client.surfaceSubscribe(filters, (event) => {
-        if (cancelled || generation !== watchGeneration) return;
-        if (!decoder && event.kind === KIND_AGENT_DRAFT) {
-          // The initial replay can contain the currently replaceable draft
-          // before the Room response supplies its authorized agent roster.
-          // Keep only this bounded live-lane input, then verify/decode it once
-          // the response arrives; durable events still only mark dirty.
-          pendingOverlayEvents = [...pendingOverlayEvents.slice(-63), event];
-          return;
-        }
-        const overlay = decoder?.decode(event);
-        if (overlay) {
-          applyDecodedOverlay(overlay);
-          return;
-        }
-        // Stored rows delivered before EOSE are covered by the closing GET.
-        // Treating that initial replay as fresh invalidation creates a second
-        // physical cold-open request for no new state.
-        if (replaying) return;
-        // Durable relay records carry no client truth. A match does exactly
-        // one thing: mark this surface dirty for a whole-response refresh.
-        scheduler?.signal();
-      });
-      replaying = false;
-      if (cancelled || generation !== watchGeneration) {
-        stop();
-        return;
-      }
-      unsubscribe?.();
-      unsubscribe = stop;
-    };
-
-    let transportForEffect: BuzzRigTransport | undefined;
-    void (async () => {
-      try {
-        const identity = await loadBuzzIdentity();
-        if (!identity) {
-          router.replace('/buzz/onboarding');
-          return;
-        }
-        if (cancelled) return;
-        setUserPubkey(identity.publicKey);
-
-        const relayUrl = await getEffectiveRelayUrl();
-        if (cancelled) return;
-        const nextTransport = new BuzzRigTransport(identity, relayUrl);
-        const nextRoomClient = new RoomViewClient({
-          baseUrl: relayUrl,
-          identity,
-          onPhysicalRequest: ({ method, path }) => {
-            console.warn(`[room-surface] physical-request ${method} ${path}`);
-          },
-        });
-        transportForEffect = nextTransport;
-        setTransport(nextTransport);
-        setRoomClient(nextRoomClient);
-
-        const outbox = createRoomOutbox(identity, decodedId);
-        outboxRef.current = outbox;
-        await outbox.restore();
-        if (cancelled) return;
-        const restored = outbox
-          .list()
-          .map((record) => displayRoomMessages([record.row], identity.publicKey)[0]!);
-        if (restored.length) addMessages(restored);
-        setFailedOutboxIds(
-          new Set(
-            outbox
-              .list()
-              .filter((record) => record.status === 'failed')
-              .map((record) => record.event.id),
-          ),
-        );
-        for (const record of outbox.list().filter((record) => record.status === 'pending')) {
-          await outbox.attempted(record.event.id);
-          void nextTransport.publishPreparedMessage(record.event).then(
-            () => {
-              roomSchedulerRef.current?.signal();
-              const timer = setTimeout(() => {
-                const active = outboxRef.current?.get(record.event.id);
-                if (!active || active.status !== 'pending') return;
-                void outboxRef.current?.fail(record.event.id);
-                setFailedOutboxIds((current) => new Set(current).add(record.event.id));
-              }, OUTBOX_CONFIRMATION_TIMEOUT_MS);
-              outboxConfirmationTimersRef.current.set(record.event.id, timer);
-            },
-            () => {
-              void outbox.fail(record.event.id);
-              setFailedOutboxIds((current) => new Set(current).add(record.event.id));
-            },
-          );
-        }
-
-        const address = surfaceAddress(relayUrl, identity.publicKey, `/room/${decodedId}`);
-        const cached = await mobileSurfaceCache.read(address, isRoomView);
-        if (cached && !cancelled) applyView(cached, identity.publicKey, relayUrl, false);
-
-        scheduler = new SurfaceRefreshScheduler({
-          fetch: () => nextRoomClient.room(decodedId),
-          apply: (view) => applyView(view, identity.publicKey, relayUrl, true),
-          onError: (error) => {
-            if (cancelled) return;
-            const terminal =
-              error instanceof RoomViewHttpError &&
-              (error.status === 401 ||
-                error.status === 403 ||
-                error.status === 404 ||
-                error.status === 502);
-            if (terminal) {
-              setRoomSurface(null);
-              setLiveOverlays([]);
-              unsubscribe?.();
-              unsubscribe = undefined;
-              void mobileSurfaceCache.remove(address);
-            }
-            if (terminal || !hasPainted) {
-              setTranscriptHydrationFailed(true);
-              setTranscriptHydrationError(
-                error instanceof RoomViewHttpError && error.code === 'invalid_surface_response'
-                  ? 'The server returned an invalid Room response.'
-                  : `Could not load this conversation. ${String(error)}`,
-              );
-            } else {
-              setTranscriptHydrationError(
-                `Offline — showing the last saved response. ${String(error)}`,
-              );
-            }
-          },
-        });
-        roomSchedulerRef.current = scheduler;
-
-        const initialFilters = cached?.watchFilters ?? [{ '#h': [decodedId] }];
-        await scheduler.startAfter(installWatch(initialFilters));
-
-        appStateSubscription = AppState.addEventListener('change', (state) => {
-          if (state === 'active') scheduler?.force();
-        });
-      } catch (error) {
-        if (cancelled) return;
-        setTranscriptHydrationFailed(true);
-        setTranscriptHydrationError(`Could not open this ${ROOM_LABEL}. ${String(error)}`);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      watchGeneration += 1;
-      scheduler?.dispose();
-      appStateSubscription?.remove();
-      unsubscribe?.();
-      for (const timer of outboxConfirmationTimersRef.current.values()) clearTimeout(timer);
-      outboxConfirmationTimersRef.current.clear();
-      outboxRef.current = null;
-      roomSchedulerRef.current = null;
-      reconciledRoomViewRef.current = null;
-    };
-  }, [
-    addMessages,
-    applyAgentPresence,
-    clearOptimistic,
-    decodedId,
-    notificationResponseId,
-    roomMessageProjector,
-    transcriptHydrationAttempt,
-  ]);
   /**
    * Who said an inherited Room line. Room context is quoted *from a Room*, so
    * it keeps its attribution even though the corner around it never shows
@@ -2171,65 +1847,10 @@ export default function BuzzChat() {
     [decodedId, replyTargetForMessage],
   );
 
-  const markOutboxFailed = useCallback(async (eventId: string) => {
-    await outboxRef.current?.fail(eventId);
-    setFailedOutboxIds((current) => new Set(current).add(eventId));
-  }, []);
-
-  const scheduleOutboxConfirmation = useCallback(
-    (eventId: string) => {
-      const previous = outboxConfirmationTimersRef.current.get(eventId);
-      if (previous) clearTimeout(previous);
-      const timer = setTimeout(() => {
-        const record = outboxRef.current?.get(eventId);
-        if (!record || record.status !== 'pending') return;
-        void markOutboxFailed(eventId);
-      }, OUTBOX_CONFIRMATION_TIMEOUT_MS);
-      outboxConfirmationTimersRef.current.set(eventId, timer);
-    },
-    [markOutboxFailed],
-  );
-
-  const retryOutboxMessage = useCallback(
-    (eventId: string, retryTransport: BuzzRigTransport | null = transport) => {
-      const outbox = outboxRef.current;
-      const record = outbox?.get(eventId);
-      if (!outbox || !record || !retryTransport) return;
-      void (async () => {
-        await outbox.retry(eventId);
-        setFailedOutboxIds((current) => {
-          const next = new Set(current);
-          next.delete(eventId);
-          return next;
-        });
-        try {
-          await retryTransport.publishPreparedMessage(record.event);
-          roomSchedulerRef.current?.signal();
-          scheduleOutboxConfirmation(eventId);
-        } catch {
-          await markOutboxFailed(eventId);
-        }
-      })();
-    },
-    [markOutboxFailed, scheduleOutboxConfirmation, transport],
-  );
-
-  const dismissOutboxMessage = useCallback(
-    (eventId: string) => {
-      const timer = outboxConfirmationTimersRef.current.get(eventId);
-      if (timer) clearTimeout(timer);
-      outboxConfirmationTimersRef.current.delete(eventId);
-      void outboxRef.current?.remove(eventId);
-      setFailedOutboxIds((current) => {
-        const next = new Set(current);
-        next.delete(eventId);
-        return next;
-      });
-      removeOptimistic(eventId);
-    },
-    [removeOptimistic],
-  );
-
+  const markOutboxFailed = outbox.markFailed;
+  const scheduleOutboxConfirmation = outbox.scheduleConfirmation;
+  const retryOutboxMessage = outbox.retry;
+  const dismissOutboxMessage = outbox.dismiss;
   const handleSend = useCallback(async () => {
     const rawText = inputTextRef.current.trim();
     // State updates are committed asynchronously. A ref closes the short
@@ -2294,7 +1915,7 @@ export default function BuzzChat() {
         if (!identity) throw new Error('Beeline identity is unavailable');
         sendTransport = new BuzzRigTransport(identity, await getEffectiveRelayUrl());
       }
-      if (!transport) setTransport(sendTransport);
+      if (!transport) setSessionTransport(sendTransport);
       preparedTransport = sendTransport;
       const attachments = pendingAttachment
         ? [await uploadChatAttachment(await sendTransport.ensureClient(), pendingAttachment)]
@@ -2338,9 +1959,9 @@ export default function BuzzChat() {
         ...(replyTarget ? { replyToId: replyTarget.reference.eventId } : {}),
         ...(attachments.length ? { attachments } : {}),
       } satisfies ChatDisplayMessage;
-      const outbox = outboxRef.current;
-      if (!outbox) throw new Error('Message outbox is unavailable');
-      await outbox.enqueue(preparedEvent, {
+      const activeOutbox = outbox.current();
+      if (!activeOutbox) throw new Error('Message outbox is unavailable');
+      await activeOutbox.enqueue(preparedEvent, {
         id: preparedEvent.id,
         text,
         createdAt: preparedEvent.created_at,
@@ -2360,9 +1981,9 @@ export default function BuzzChat() {
       setInputSelection({ start: 0, end: 0 });
       setPendingAttachment(null);
       setReplyTarget(null);
-      await outbox.attempted(preparedEvent.id);
+      await activeOutbox.attempted(preparedEvent.id);
       await sendTransport.publishPreparedMessage(preparedEvent);
-      roomSchedulerRef.current?.signal();
+      refreshSignal.signal();
       scheduleOutboxConfirmation(preparedEvent.id);
     } catch (err) {
       console.warn('Send failed:', err);
@@ -2565,7 +2186,7 @@ export default function BuzzChat() {
       setTargetBranchNotice(null);
       try {
         await transport.roomTargetBranchSet(decodedId, proposal.to);
-        roomSchedulerRef.current?.force();
+        refreshSignal.force();
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         setTargetBranchNotice({
@@ -2701,7 +2322,7 @@ export default function BuzzChat() {
     try {
       const client = await transport.ensureClient();
       await client.renameChannel(decodedId, name);
-      roomSchedulerRef.current?.force();
+      refreshSignal.force();
       setRenameEditing(false);
       setRoomActionsVisible(false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -2859,7 +2480,7 @@ export default function BuzzChat() {
         if (confirmation === 'pending') {
           setRoomRepoNotice('Repo link accepted. The Room is still syncing.');
         }
-        roomSchedulerRef.current?.force();
+        refreshSignal.force();
         setShowRoomRepoPicker(false);
         setCornerOpenRepoPrompt(false);
         setOwnerGrant(null);
@@ -2946,7 +2567,7 @@ export default function BuzzChat() {
     setRoomRepoError(null);
     try {
       await transport.roomGitHubEventsSet(decodedId, nextEnabled);
-      roomSchedulerRef.current?.force();
+      refreshSignal.force();
     } catch {
       setRoomRepoError('Could not change repository activity settings.');
     } finally {
@@ -3695,7 +3316,7 @@ export default function BuzzChat() {
             </Text>
             <MonoButton
               label="RETRY"
-              onPress={() => setTranscriptHydrationAttempt((attempt) => attempt + 1)}
+              onPress={retryHydration}
               style={styles.hydrationErrorRetry}
               variant="secondary"
             />

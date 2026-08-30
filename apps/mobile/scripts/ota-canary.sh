@@ -17,7 +17,8 @@
 # is still classified by exit code at the workflow layer.
 set -euo pipefail
 
-readonly MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+MOBILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly MOBILE_DIR
 readonly DEVICE="${MAESTRO_DEVICE:-emulator-5554}"
 readonly APP_ID="app.usebeeline.mobile"
 readonly MAX_SECONDS="${OTA_CANARY_MAX_SECONDS:-600}"
@@ -89,14 +90,16 @@ fi
 if [[ "$ADB_BIN" == */* ]]; then
   # Child scripts (maestro-e2e.sh, android-teardown.sh) still call bare `adb`;
   # make our resolution visible to them instead of editing each one.
-  export PATH="$(dirname "$ADB_BIN"):$PATH"
+  adb_bin_directory="$(dirname "$ADB_BIN")"
+  export PATH="$adb_bin_directory:$PATH"
 fi
 
 if ! MAESTRO_BIN_RESOLVED="$(resolve_maestro)"; then
   park "Maestro is not executable on the release-host runner (searched MAESTRO_BIN, PATH, and \${MAESTRO_HOME:-\$HOME/.maestro}/bin/maestro). Install Maestro for the runner account or set MAESTRO_BIN to its executable, then re-run the governor"
 fi
 if [[ "$MAESTRO_BIN_RESOLVED" == */* ]]; then
-  export PATH="$(dirname "$MAESTRO_BIN_RESOLVED"):$PATH"
+  maestro_bin_directory="$(dirname "$MAESTRO_BIN_RESOLVED")"
+  export PATH="$maestro_bin_directory:$PATH"
 fi
 
 if [[ "${OTA_CANARY_DEADLINE_ACTIVE:-0}" != "1" ]]; then
@@ -116,25 +119,33 @@ if ! [[ "$UPDATE_PROBE_TIMEOUT" =~ ^[0-9]+$ ]] ||
   park "OTA_CANARY_UPDATE_PROBE_TIMEOUT_SECONDS must be between 1 and 60 (got ${UPDATE_PROBE_TIMEOUT})"
 fi
 
-device_state="$("$ADB_BIN" devices 2>&1 | awk -v d="$DEVICE" '$1 == d { print $2; exit }')" || {
-  echo "Canary adb could not enumerate devices. Output:" >&2
-  echo "$device_state" >&2
-  echo "Fix: check the shared adb server on the release host (adb kill-server && adb start-server as the emulator owner), then re-run." >&2
-  park "adb devices could not enumerate devices on the release host; the shared adb server on port 5037 is unreachable or unhealthy"
-}
-case "$device_state" in
-  device) ;;
-  '')
+# shellcheck disable=SC1091 # The dynamic sibling path is covered by shellcheck's full-script run.
+source "$MOBILE_DIR/scripts/android-device-ready.sh"
+set +e
+wait_for_android_device_ready
+device_ready_status=$?
+set -e
+if (( device_ready_status != 0 )); then
+  case "$device_ready_status" in
+  2)
+    park "$ANDROID_DEVICE_READY_VALIDATION_ERROR"
+    ;;
+  4)
+    echo "Canary adb could not enumerate devices. Fix: check the shared adb server on the release host without restarting it from the canary, then re-run." >&2
+    park "adb devices could not enumerate devices on the release host; the shared adb server on port 5037 is unreachable or unhealthy"
+    ;;
+  3)
     echo "Canary requires the existing Android emulator $DEVICE, and none is attached to adb right now." >&2
     echo "Fix: boot the sanctioned existing AVD ($DEVICE) on the release host under the emulator-owner account; the canary attaches to it over the shared adb server. It must be live before the release governor runs." >&2
     park "the sanctioned Android emulator $DEVICE is not attached to the shared adb server on the release host; boot it under the emulator-owner account before the governor runs"
     ;;
   *)
-    echo "Canary emulator $DEVICE is attached but not ready (state: $device_state)." >&2
+    echo "Canary emulator $DEVICE is attached but not ready (state: $ANDROID_DEVICE_READY_LAST_STATE)." >&2
     echo "Fix: wait for boot or re-authorize the device on the release host, then re-run." >&2
-    park "canary emulator $DEVICE is attached but not ready (state: $device_state); wait for boot or re-authorize the device on the release host"
+    park "canary emulator $DEVICE is attached but not ready (state: $ANDROID_DEVICE_READY_LAST_STATE); wait for boot or re-authorize the device on the release host"
     ;;
-esac
+  esac
+fi
 
 ledger=""
 while (($#)); do

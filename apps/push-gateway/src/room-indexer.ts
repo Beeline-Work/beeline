@@ -1094,13 +1094,39 @@ WITH candidates AS (
     AND (link.parent_id IS NULL OR (p.id IS NOT NULL AND pm.pubkey IS NOT NULL))
 ), authorized AS (
   SELECT * FROM candidates WHERE (SELECT count(*) FROM candidates) = 1
-), page AS (
+), raw_page AS (
   SELECT e.* FROM authorized a JOIN LATERAL (
     SELECT e.* FROM events e WHERE e.community_id = a.community_id AND e.channel_id = a.id
       AND e.deleted_at IS NULL AND e.kind = 9
       AND ${unresolvedModelAvailabilitySql('e', 'a')}
     ORDER BY e.created_at DESC, e.id ASC LIMIT $3
   ) e ON true
+), conversation_page AS (
+  -- Conversation has its own bounded lane. A long first turn can publish
+  -- enough activity receipts to exhaust raw_page before someone opens the
+  -- corner; those machine records must never erase the durable reply from the
+  -- cold Room response.
+  SELECT e.* FROM authorized a JOIN LATERAL (
+    SELECT e.* FROM events e WHERE e.community_id = a.community_id AND e.channel_id = a.id
+      AND e.deleted_at IS NULL AND e.kind = 9
+      AND ${unresolvedModelAvailabilitySql('e', 'a')}
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
+        WHERE marker->>0 = 't' AND COALESCE(marker->>1, '') <> ''
+          AND marker->>1 NOT IN (
+            'agent-message', 'buzz-agent-exchange', 'buzz-agent-request', 'buzz-attachment'
+          ))
+      AND (
+        btrim(e.content) <> ''
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) marker
+          WHERE marker->>0 = 't' AND marker->>1 = 'buzz-attachment')
+      )
+    ORDER BY e.created_at DESC, e.id ASC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
+  ) e ON true
+), page AS (
+  SELECT raw.* FROM raw_page raw
+  UNION ALL
+  SELECT conversation.* FROM conversation_page conversation
+  WHERE NOT EXISTS (SELECT 1 FROM raw_page raw WHERE raw.id = conversation.id)
 ), newest_message AS (
   SELECT e.community_id, e.channel_id, e.created_at, e.id FROM page e
   ORDER BY e.created_at DESC, e.id ASC LIMIT 1
@@ -1869,6 +1895,10 @@ function projectedMessages(
   channelId: string,
   limit: number,
 ) {
+  return allProjectedMessages(rows, section, channelId).slice(-limit);
+}
+
+function allProjectedMessages(rows: readonly IndexRow[], section: string, channelId: string) {
   const projected = rows
     .filter((row) => row.section === section)
     .flatMap((row) => {
@@ -1876,7 +1906,42 @@ function projectedMessages(
       return message ? [message] : [];
     })
     .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
-  return collapsePermissionCards(projected).slice(-limit);
+  return collapsePermissionCards(projected);
+}
+
+/**
+ * Preserve the durable transcript independently from ephemeral live activity.
+ * Settled telemetry is not a transcript row and therefore cannot spend one of
+ * the Room's bounded message slots. Activity for a currently working turn is
+ * still returned for the live client projection, in its own bounded lane.
+ */
+function projectedRoomMessages(
+  rows: readonly IndexRow[],
+  channelId: string,
+  latestAgentTurns: readonly RoomViewAgentTurn[],
+): RoomViewMessage[] {
+  const projected = allProjectedMessages(rows, 'event', channelId);
+  const workingByAgent = new Map(
+    latestAgentTurns
+      .filter((turn) => turn.status === 'working')
+      .map((turn) => [turn.agentPubkey, turn.createdAt]),
+  );
+  const transcript = projected
+    .filter((message) => message.presentation !== 'activity' || message.durableFact)
+    .slice(-ROOM_VIEW_MESSAGE_LIMIT);
+  const liveActivity = projected
+    .filter(
+      (message) =>
+        message.presentation === 'activity' &&
+        !message.durableFact &&
+        message.createdAt >=
+          (workingByAgent.get(message.author.pubkey) ?? Number.POSITIVE_INFINITY),
+    )
+    .slice(-ROOM_VIEW_MESSAGE_LIMIT);
+  const byId = new Map([...transcript, ...liveActivity].map((message) => [message.id, message]));
+  return [...byId.values()].sort(
+    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+  );
 }
 
 /** Fold signed permission history into the single paint-ready card it models. */
@@ -2116,7 +2181,7 @@ function paintRoom(rows: readonly IndexRow[], roomId: string): RoomView | null {
     );
   return {
     room: header(roomData),
-    messages: projectedMessages(rows, 'event', roomId, ROOM_VIEW_MESSAGE_LIMIT),
+    messages: projectedRoomMessages(rows, roomId, latestAgentTurns),
     members,
     latestAgentTurns,
     viewer: viewer(roomData, members),

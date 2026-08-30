@@ -22,7 +22,7 @@ const WORKING: RoomViewAgentTurn = {
 };
 
 describe('active turn stream projection', () => {
-  it('joins indexed activity with the current thought and matching request draft in order', () => {
+  it('joins indexed activity with the matching request draft and consumes private thought', () => {
     const rows = [
       message('old-activity', 90, {
         isAgentActivity: true,
@@ -36,7 +36,7 @@ describe('active turn stream projection', () => {
       message('thought:agent:session', 102, {
         isAgentActivity: true,
         isAgentLiveTurn: true,
-        agentThought: 'Checking the renderer…',
+        agentThought: 'PRIVATE THOUGHT MUST NOT RENDER',
       }),
       message('active-tool-2', 103, {
         isAgentActivity: true,
@@ -66,11 +66,21 @@ describe('active turn stream projection', () => {
       pubkey: AGENT,
       isAgentActivity: true,
       isAgentLiveTurn: true,
-      agentThought: 'Checking the renderer…',
       agentMessageDraft: 'The answer is streaming.',
       activity: [{ title: 'edited Ledger.tsx' }, { title: 'read receipts' }],
     });
+    expect(projected[1]).not.toHaveProperty('agentThought');
     expect(projected[1]).not.toHaveProperty('durableFact');
+  });
+
+  it('removes a thought-only live row instead of projecting it into the transcript', () => {
+    const thought = message('thought:agent:session', 102, {
+      isAgentActivity: true,
+      isAgentLiveTurn: true,
+      agentThought: 'PRIVATE THOUGHT MUST NOT RENDER',
+    });
+
+    expect(projectActiveTurnStream([thought], WORKING, false)).toEqual([]);
   });
 
   it('does not consume another agent or a draft for another request', () => {

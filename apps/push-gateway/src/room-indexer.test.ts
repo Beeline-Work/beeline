@@ -306,6 +306,83 @@ describe('RoomIndexer', () => {
     ]);
   });
 
+  it('late-opens a corner with its first durable reply after activity exhausts the raw window', async () => {
+    const requestId = '1'.repeat(64);
+    const firstReplyId = 'e'.repeat(64);
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(20), 9, $4, $5, $6)`,
+      [
+        TENANT,
+        bytes(firstReplyId),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-message'],
+          ['request', requestId],
+        ]),
+        'The first durable corner reply survives a late open.',
+        CORNER,
+      ],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       SELECT $1, decode(lpad(to_hex(1000 + n), 64, '0'), 'hex'), $2,
+         to_timestamp(20 + n), 9, $3,
+         jsonb_build_object(
+           'sessionId', 'first-corner-turn',
+           'update', jsonb_build_object(
+             'sessionUpdate', 'tool_call', 'title', 'Read file', 'status', 'completed'
+           )
+         )::text,
+         $4
+       FROM generate_series(1, 190) n`,
+      [
+        TENANT,
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-activity'],
+          ['request', requestId],
+        ]),
+        CORNER,
+      ],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES ($1, $2, $3, to_timestamp(500), 9, $4, '', $5)`,
+      [
+        TENANT,
+        bytes('d'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-turn'],
+          ['request', requestId],
+          ['agent', AGENT],
+          ['status', 'complete'],
+        ]),
+        CORNER,
+      ],
+    );
+
+    const lateOpen = await indexer.readRoom(CORNER, VIEWER);
+
+    expect(lateOpen?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: firstReplyId,
+          text: 'The first durable corner reply survives a late open.',
+          presentation: 'message',
+        }),
+      ]),
+    );
+    expect(lateOpen?.messages.some((message) => message.presentation === 'activity')).toBe(false);
+  });
+
   it('indexes a Room repository by its parameterized d key without channel_id', async () => {
     // Production relay storage does not stamp channel_id for kind:30078. The
     // d tag is the indexed coordinate for parameterized replaceable records.

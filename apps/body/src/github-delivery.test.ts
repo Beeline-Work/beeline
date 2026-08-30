@@ -130,10 +130,10 @@ describe('GitHub-origin delivery', () => {
       ),
     ).toBe(false);
     expect(
-      publishes.find((event) =>
+      publishes.some((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
-      )?.content,
-    ).toContain('Nothing ready to merge yet');
+      ),
+    ).toBe(false);
   });
 
   it('keeps a stale review mounted without a Codex turn before merge is pressed', async () => {
@@ -294,8 +294,10 @@ describe('GitHub-origin delivery', () => {
 
     expect(run(worktree, ['ls-remote', remote, 'refs/heads/main'])).toContain(tip);
     expect(
-      events.find((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === LANDED_TAG)),
-    )?.toMatchObject({ content: `Human-approved work landed on refs/heads/main at ${tip}.` });
+      events.find((event) =>
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'land-summary'),
+      ),
+    ).toBeDefined();
   });
 });
 
@@ -435,11 +437,11 @@ describe('a moved target is standing authorization to update the feature branch'
 
     const failure = events.find(
       (event) =>
-        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'landing-blocked') &&
-        event.content.startsWith('Merge blocked:'),
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === 'buzz-rearmed-failure') &&
+        event.content.startsWith("Couldn't land:"),
     );
     expect(failure).toBeDefined();
-    expect(failure!.tags.some((tag) => tag[0] === 'retry')).toBe(false);
+    expect(failure!.tags).toContainEqual(['retry', 'blocked']);
   });
 });
 

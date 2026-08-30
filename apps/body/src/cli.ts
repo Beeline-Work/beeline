@@ -30,7 +30,6 @@ import { readOperatorMcpServers } from './operator-mcp.js';
 import { Body } from './body.js';
 import { runCornerGitCredentialCommand } from './corner-git-credential.js';
 import { ThinDaemonCore } from './thin-core.js';
-import { createRelayClient } from '@beeline/gate';
 import {
   findAgentRuntimeConfigPaths,
   identityFromKey,
@@ -39,7 +38,6 @@ import {
   removeAgentRuntime,
   resolveRuntimeConfigPath,
   runtimeAgentCommand,
-  runtimeIdentity,
   stopRuntimeDaemon,
   type AgentRuntimeRecord,
 } from './runtime.js';
@@ -309,20 +307,12 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   const runtimeDir = dirname(configPath);
   const layout = beelineInstallLayout(process.env);
   const notifier = new SystemdNotifier();
-  const daemonIdentity = runtimeIdentity(runtime.agent);
-  const rollbackAlertRelay = createRelayClient(daemonIdentity, {
-    baseUrl: runtime.relayBaseUrl,
-    host: runtime.relayHost ?? new URL(runtime.relayBaseUrl).host,
-  });
   let rollbackAlertDrain: Promise<void> | undefined;
   const drainRollbackAlert = (channelId: string | undefined): Promise<void> => {
     if (!channelId) return Promise.resolve();
     if (rollbackAlertDrain) return rollbackAlertDrain;
     rollbackAlertDrain = publishPendingUpdateRollbackAlert({
       runtimeDir,
-      channelId,
-      identity: daemonIdentity,
-      publishEvent: (event) => rollbackAlertRelay.publishEvent(event),
     })
       .then(() => undefined)
       .catch((alertError) =>

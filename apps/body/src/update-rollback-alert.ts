@@ -1,17 +1,10 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import type { Identity } from '@beeline/gate';
-import type { NostrEvent } from '@beeline/nostr';
-import { buildAgentMessage } from './activity.js';
-
-export const UPDATE_ROLLBACK_ALERT_TEXT =
-  'Beeline found that an update could not start a working agent session, restored the previous version automatically, and paused that broken release.';
 
 interface PendingUpdateRollbackAlert {
   version: 1;
   releaseId: string;
   createdAt: number;
-  event?: NostrEvent;
 }
 
 export function updateRollbackAlertPath(runtimeDir: string): string {
@@ -50,38 +43,13 @@ async function readUpdateRollbackAlert(
   }
 }
 
-/**
- * Publish one durable, content-safe rollback notice. If HTTP completion is
- * ambiguous, the signed event stays in the outbox and the successor retries
- * the exact same id, so relay deduplication prevents duplicate messages.
- */
+/** Drain the operator-local rollback record without adding daemon prose to chat. */
 export async function publishPendingUpdateRollbackAlert(input: {
   runtimeDir: string;
-  channelId: string;
-  identity: Identity;
-  publishEvent: (event: NostrEvent) => Promise<unknown>;
 }): Promise<boolean> {
-  let pending = await readUpdateRollbackAlert(input.runtimeDir);
+  const pending = await readUpdateRollbackAlert(input.runtimeDir);
   if (!pending) return false;
-  if (!pending.event) {
-    pending = {
-      ...pending,
-      event: buildAgentMessage(
-        input.channelId,
-        input.identity,
-        UPDATE_ROLLBACK_ALERT_TEXT,
-        undefined,
-        [],
-        [],
-        undefined,
-        Math.floor(pending.createdAt / 1_000),
-      ),
-    };
-    await writeAlert(input.runtimeDir, pending);
-  }
-  const event = pending.event;
-  if (!event) throw new Error('update rollback alert event was not materialized');
-  await input.publishEvent(event);
+  console.error(`[thin-core] update rollback retained as operator state: ${pending.releaseId}`);
   await rm(updateRollbackAlertPath(input.runtimeDir), { force: true });
   return true;
 }

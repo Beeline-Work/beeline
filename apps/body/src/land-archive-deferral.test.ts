@@ -225,7 +225,8 @@ describe('a landed corner whose agent session is still live', () => {
     const closeStartedAt = Date.now();
     await expect(fixture.body.pollMergeCompletions()).resolves.toBe(1);
 
-    expect(tagged(published, 'merge-summary')).toHaveLength(1);
+    expect(tagged(published, 'merge-summary')).toHaveLength(0);
+    expect(tagged(published, 'land-summary')).toHaveLength(1);
     expect(fixture.info.landedTip).toBe(fixture.tip);
     expect(suspend).toHaveBeenCalledOnce();
     expect(fixture.info.archiveWhenSessionRetires).toBe(true);
@@ -285,7 +286,8 @@ describe('a landed corner whose agent session is still live', () => {
     await expect(fixture.body.pollMergeCompletions()).resolves.toBe(1);
     await expect(fixture.body.pollMergeCompletions()).resolves.toBe(1);
 
-    expect(tagged(published, 'merge-summary')).toHaveLength(1);
+    expect(tagged(published, 'merge-summary')).toHaveLength(0);
+    expect(tagged(published, 'land-summary')).toHaveLength(1);
     expect(archiveEvents(published)).toHaveLength(0);
   });
 
@@ -326,8 +328,8 @@ describe('a landed corner whose agent session is still live', () => {
   });
 });
 
-describe('a session-state publish refused by an archived channel', () => {
-  it('is an expected terminal no-op — one plain log line, never a thrown error', async () => {
+describe('retired session state', () => {
+  it('is silent after archive', async () => {
     const fixture = corner();
     stubRelayHttp([createCornerCreateEvent(fixture.body.agent, 'corner-channel', 'room-channel')], {
       status: 400,
@@ -349,8 +351,8 @@ describe('a session-state publish refused by an archived channel', () => {
         'failed to publish corner session state suspended:',
         expect.anything(),
       );
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('channel archived; skipped suspended session-state publish'),
+      expect(logSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('session-state publish'),
       );
     } finally {
       logSpy.mockRestore();
@@ -358,7 +360,7 @@ describe('a session-state publish refused by an archived channel', () => {
     }
   });
 
-  it('still reports non-archive refusals as errors', async () => {
+  it('does not attempt a transcript write even when the relay is unavailable', async () => {
     const fixture = corner();
     stubRelayHttp([createCornerCreateEvent(fixture.body.agent, 'corner-channel', 'room-channel')], {
       status: 500,
@@ -370,7 +372,7 @@ describe('a session-state publish refused by an archived channel', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       await retireSession(fixture);
-      expect(errorSpy).toHaveBeenCalledWith(
+      expect(errorSpy).not.toHaveBeenCalledWith(
         '[body] failed to publish corner session state suspended:',
         expect.anything(),
       );

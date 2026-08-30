@@ -108,7 +108,11 @@ describe('Room workbench capability', () => {
       event.tags.some((tag) => tag[0] === 't' && tag[1] === 'scratch-leak'),
     );
     expect(warnings).toHaveLength(1);
-    expect(warnings[0]!.kind).toBe(9);
+    expect(warnings[0]!.kind).toBe(30078);
+    expect(warnings[0]!.tags).toContainEqual([
+      'd',
+      expect.stringMatching(/^buzz-agent-activity:/),
+    ]);
     expect(warnings[0]!.tags).toContainEqual(['t', 'agent-activity']);
     const envelope = JSON.parse(warnings[0]!.content) as {
       update: { sessionUpdate: string; updates: Array<Record<string, unknown>> };

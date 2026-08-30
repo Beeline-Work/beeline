@@ -1,6 +1,6 @@
 # Agent-to-agent delegation in Rooms
 
-Status: reviewed, ready to implement
+Status: implemented and validated
 
 ## Request and authority model
 
@@ -187,16 +187,16 @@ CODE PATHS                                              USER FLOWS
 
 ### Production failure audit
 
-| Path | Realistic failure | Test | Handling | User-visible |
-|---|---|---:|---|---:|
-| Source roster/presence | relay read fails or lease expires | yes | fail closed; visible unavailable line when truth is known, publication failure logged/retried by normal request lifecycle | yes when decidable |
-| Envelope/root validation | forged or missing root | yes | ignore without model spend | no, deliberately avoids spam oracle |
-| Policy lookup | current config read unavailable | yes | fail closed and visible policy refusal for an otherwise valid envelope | yes |
-| Target activation | harness missing or read-only session unavailable | yes | existing failed receipt and one rooted failure reply | yes |
-| Model turn | idle/hard timeout | yes | existing bounded timeout path; no automatic agent retry | yes |
-| Reply publish | transient relay outage | yes | durable reserved reply replays after restart | eventually |
-| Budget/dedupe lookup | daemon restart loses memory | yes | query relay-authored thread facts before admission | yes; no repeated spend |
-| Projection | new typed marker omitted from allowlist | yes | indexer regression test fails | otherwise silent, so P1 test gate |
+| Path                     | Realistic failure                                | Test | Handling                                                                                                                  |                        User-visible |
+| ------------------------ | ------------------------------------------------ | ---: | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------: |
+| Source roster/presence   | relay read fails or lease expires                |  yes | fail closed; visible unavailable line when truth is known, publication failure logged/retried by normal request lifecycle |                  yes when decidable |
+| Envelope/root validation | forged or missing root                           |  yes | ignore without model spend                                                                                                | no, deliberately avoids spam oracle |
+| Policy lookup            | current config read unavailable                  |  yes | fail closed and visible policy refusal for an otherwise valid envelope                                                    |                                 yes |
+| Target activation        | harness missing or read-only session unavailable |  yes | existing failed receipt and one rooted failure reply                                                                      |                                 yes |
+| Model turn               | idle/hard timeout                                |  yes | existing bounded timeout path; no automatic agent retry                                                                   |                                 yes |
+| Reply publish            | transient relay outage                           |  yes | durable reserved reply replays after restart                                                                              |                          eventually |
+| Budget/dedupe lookup     | daemon restart loses memory                      |  yes | query relay-authored thread facts before admission                                                                        |              yes; no repeated spend |
+| Projection               | new typed marker omitted from allowlist          |  yes | indexer regression test fails                                                                                             |   otherwise silent, so P1 test gate |
 
 No failure path combines no test, no handling, and silent user impact.
 
@@ -227,19 +227,19 @@ There is no safe worktree parallelization opportunity. The envelope, dispatcher,
 
 ## Implementation tasks
 
-- [ ] **T1 (P1, human: ~4h / Codex: ~45m)** - Body - Add the signed Room delegation envelope, root validation, bounds, dedupe, and one-target mention preparation.
+- [x] **T1 (P1, human: ~4h / Codex: ~45m)** - Body - Add the signed Room delegation envelope, root validation, bounds, dedupe, and one-target mention preparation.
   - Surfaced by: Architecture review - authority and cost must remain host-grounded across restarts.
   - Files: `apps/body/src/agent-mention.ts`, `apps/body/src/agent-mention.test.ts`, `apps/body/src/body.ts`
   - Verify: focused agent-mention and Body delegation unit tests.
-- [ ] **T2 (P1, human: ~4h / Codex: ~45m)** - Body - Route valid delegated turns through current access policy and Room/corner permission handling using the root human.
+- [x] **T2 (P1, human: ~4h / Codex: ~45m)** - Body - Route valid delegated turns through current access policy and Room/corner permission handling using the root human.
   - Surfaced by: Security review - the delegating agent is context, never authority.
   - Files: `apps/body/src/body.ts`, `apps/body/src/body.test.ts`
   - Verify: creator/allowlist, mutation, corner approval, failure, replay, and exchange regression cases.
-- [ ] **T3 (P1, human: ~1h / Codex: ~15m)** - Push gateway - Admit `buzz-agent-delegation` as visible conversation in paint and preview queries.
+- [x] **T3 (P1, human: ~1h / Codex: ~15m)** - Push gateway - Admit `buzz-agent-delegation` as visible conversation in paint and preview queries.
   - Surfaced by: Projection failure audit - omission would silently hide valid replies.
   - Files: `apps/push-gateway/src/room-indexer.ts`, `apps/push-gateway/src/room-indexer.test.ts`
   - Verify: push-gateway projection suite.
-- [ ] **T4 (P1, human: ~3h / Codex: ~30m)** - Live proof - Prove two paired agents delegate and the host stops ping-pong on the local relay.
+- [x] **T4 (P1, human: ~3h / Codex: ~30m)** - Live proof - Prove two paired agents delegate and the host stops ping-pong on the local relay.
   - Surfaced by: Test review - mocks can hide relay filtering, signature, and daemon replay failures.
   - Files: `apps/body/src/agent-delegation.live.test.ts`
   - Verify: local live suite plus captured ids, timestamps, root and hop tags.
@@ -284,18 +284,18 @@ No N+1 database path or new high-volume projection query is introduced. The inde
 
 ### Edge-case decisions
 
-| Edge case | Handling |
-|---|---|
-| Self-mention | Visible prose remains context; no dispatch and no extra noise. |
-| Non-member/unknown handle | Source posts one visible refusal; no target event. |
-| Offline member | Source posts one visible offline line; no model spend. |
-| Two agents repeatedly mention each other | Each return consumes a hop; default four, hard maximum eight, then one limit line. Identical repeated text dedupes earlier. |
-| One reply mentions three agents | First valid non-self Room member in text order receives one turn; others are context-only. |
-| Delegated request opens a corner or writes | Existing mutation boundary; corner always requires approval with root human requester. |
-| Human replies mid-thread | Addressed human reply becomes a new root/budget; unaddressed reply is context. |
-| Daemon restarts mid-thread | Relay-verifiable envelope and durable inbox resume exactly once. |
-| Recipient policy is `creator` | Root human must be current owner or target visibly refuses. |
-| Recipient policy is `allowlist` | Root human must be present in current allowlist or target visibly refuses. |
+| Edge case                                  | Handling                                                                                                                    |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| Self-mention                               | Visible prose remains context; no dispatch and no extra noise.                                                              |
+| Non-member/unknown handle                  | Source posts one visible refusal; no target event.                                                                          |
+| Offline member                             | Source posts one visible offline line; no model spend.                                                                      |
+| Two agents repeatedly mention each other   | Each return consumes a hop; default four, hard maximum eight, then one limit line. Identical repeated text dedupes earlier. |
+| One reply mentions three agents            | First valid non-self Room member in text order receives one turn; others are context-only.                                  |
+| Delegated request opens a corner or writes | Existing mutation boundary; corner always requires approval with root human requester.                                      |
+| Human replies mid-thread                   | Addressed human reply becomes a new root/budget; unaddressed reply is context.                                              |
+| Daemon restarts mid-thread                 | Relay-verifiable envelope and durable inbox resume exactly once.                                                            |
+| Recipient policy is `creator`              | Root human must be current owner or target visibly refuses.                                                                 |
+| Recipient policy is `allowlist`            | Root human must be present in current allowlist or target visibly refuses.                                                  |
 
 ### Deliberately not built
 
@@ -318,13 +318,13 @@ The `NOT in scope` section is accepted as written. No TODO is warranted: fan-out
 
 ## CGSTACK REVIEW REPORT
 
-| Review | Trigger | Why | Runs | Status | Findings |
-|---|---|---|---:|---|---|
-| CEO Review | `$plan-ceo-review` | Scope and strategy | 0 | not run | Owner decision B and acceptance criteria are fixed. |
-| Codex Review | `Codex review` | Independent second opinion | 0 | skipped | Non-interactive direct implementation brief; no outside-agent review requested. |
-| Eng Review | `$plan-eng-review` | Architecture and tests (required) | 1 | clear | 9 issues resolved, 0 critical gaps. |
-| Design Review | `$plan-design-review` | UI/UX gaps | 0 | not needed | Existing transcript, attribution, and mention-picker UI are reused. |
-| DX Review | `$plan-devex-review` | Developer experience gaps | 0 | not needed | No developer-facing workflow or API change. |
+| Review        | Trigger               | Why                               | Runs | Status     | Findings                                                                        |
+| ------------- | --------------------- | --------------------------------- | ---: | ---------- | ------------------------------------------------------------------------------- |
+| CEO Review    | `$plan-ceo-review`    | Scope and strategy                |    0 | not run    | Owner decision B and acceptance criteria are fixed.                             |
+| Codex Review  | `Codex review`        | Independent second opinion        |    0 | skipped    | Non-interactive direct implementation brief; no outside-agent review requested. |
+| Eng Review    | `$plan-eng-review`    | Architecture and tests (required) |    1 | clear      | 9 issues resolved, 0 critical gaps.                                             |
+| Design Review | `$plan-design-review` | UI/UX gaps                        |    0 | not needed | Existing transcript, attribution, and mention-picker UI are reused.             |
+| DX Review     | `$plan-devex-review`  | Developer experience gaps         |    0 | not needed | No developer-facing workflow or API change.                                     |
 
 - **UNRESOLVED:** 0
 - **VERDICT:** ENG CLEARED - ready to implement.

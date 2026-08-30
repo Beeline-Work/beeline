@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
  * the PREVIEW row exists only when a preview URL actually arrived.
  */
 const source = readFileSync(path.join(__dirname, 'chat', '[channelId].tsx'), 'utf8');
+const variants = readFileSync(path.join(__dirname, 'chat', 'RoomMessageVariants.tsx'), 'utf8');
 const transport = readFileSync(
   path.join(__dirname, '..', '..', '..', 'sync', 'transport', 'buzz-rig-transport.ts'),
   'utf8',
@@ -55,17 +56,17 @@ describe('the target-branch proposal card', () => {
   });
 
   it('renders a Confirm control only for the owner, and an applied state otherwise', () => {
-    const card = source.slice(
-      source.indexOf('if (item.targetBranchProposal) {'),
-      source.indexOf('if (item.corner) {'),
+    const card = variants.slice(
+      variants.indexOf('export const TargetBranchProposalCard'),
+      variants.indexOf('export interface GitHubEventCardProps'),
     );
     expect(card).toContain('testID="target-branch-confirm"');
     expect(card).toContain('testID="target-branch-denied"');
     expect(card).toContain('testID="target-branch-applied"');
     // The applied state is read from published Room state, not from a local
     // "I tapped it" flag, so it survives a reload and can never lie.
-    expect(card).toContain('roomRepository?.targetBranch === proposal.to');
-    expect(card).toContain("viewerChannelRole === 'owner'");
+    expect(card).toContain('currentTargetBranch === proposal.to');
+    expect(card).toContain("viewerRole === 'owner'");
     expect(card).toContain('automatically rebase onto');
     expect(card).toContain('activity ledger');
   });

@@ -4,7 +4,6 @@ import {
   AppState,
   View,
   Text,
-  Image,
   FlatList,
   Linking,
   Pressable,
@@ -21,7 +20,6 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
 import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller';
-import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useNavigation, router, type Href } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
@@ -37,7 +35,6 @@ import { BuzzRigTransport } from '@/sync/transport';
 import {
   type ChannelRole,
   type MergeTarget,
-  type AttachmentReference,
   type RoomRepository,
   type GitHubInstallationAccess,
   type AgentCommandList,
@@ -70,8 +67,6 @@ import { buildTurnActivity, latestCornerPlan } from '@/buzz/activity-timeline';
 import { cornerObjectiveLine, type RoomContextEntry } from '@/buzz/corner-context';
 import { groknight } from '@/buzz/groknight';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
-import { splitLedgerText } from '@/buzz/ledger-text';
-import { shouldShowReplyReference } from '@/buzz/reply-reference';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
@@ -137,12 +132,10 @@ import {
   saveLastViewedChannel,
 } from '@/buzz/community-storage';
 import {
-  attachmentOpenUrl,
   formatAttachmentSize,
   uploadChatAttachment,
   type PickedChatAttachment,
 } from '@/buzz/chat-attachment';
-import { describeWriteRequest } from '@/buzz/write-request-copy';
 import {
   availableSlashVerbs,
   slashVerbQuery,
@@ -177,6 +170,12 @@ import {
   useRoomSurfaceSession,
   type RoomSurfaceSessionBindings,
 } from './useRoomSurfaceSession';
+import {
+  GitHubEventCard,
+  OrdinaryLedgerMessage,
+  TargetBranchProposalCard,
+  WritePermissionCard,
+} from './RoomMessageVariants';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import {
   isAgentPresenceOnlineWithReconnectGrace,
@@ -202,20 +201,14 @@ import { CornerLiveBar } from '@/components/buzz/CornerLiveBar';
 import { CornerPlanPin } from '@/components/buzz/CornerPlanPin';
 import { RoomContextPreamble } from '@/components/buzz/RoomContextPreamble';
 import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
-import { WritePermissionOutcome } from '@/components/buzz/WritePermissionOutcome';
-import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { HullFloatingSurface, HullModal } from '@/components/buzz/HullDialog';
 import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import { HeaderIdentitySlot, HeaderMetaCaps, HeaderMetaRow } from '@/components/buzz/HeaderLadder';
 import {
   LEDGER_MARGINALIA_WIDTH,
-  LedgerEntry,
-  LedgerGhostLine,
   LedgerLandDigest,
   LedgerRoomUpdate,
-  LedgerSteer,
-  type LedgerByline,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
@@ -225,7 +218,6 @@ import {
   CornerGlyph,
   HullSurface,
   MonoButton,
-  NewMessageMaterialize,
   PixelLoader,
 } from '@/components/buzz/MonoHull';
 import {
@@ -255,45 +247,6 @@ const MERGE_APPROVAL_ACCENT = groknight.accent;
  */
 const knownAgentPubkeysFor = (agentByPubkey: Map<string, unknown>): Set<string> =>
   new Set(agentByPubkey.keys());
-
-/** The live tool/message lanes for one signed WORKING turn. A Room
- * passes `handle` because several agents can be working there; a Corner names
- * its one agent in the top bar instead. The selector removes this row at turn
- * end, so none of its machine telemetry can become replayable history. */
-function LedgerActivity({
-  message,
-  active,
-  handle,
-  stamp,
-}: {
-  message: ChatDisplayMessage;
-  active: boolean;
-  handle?: string;
-  stamp: string;
-}) {
-  // A fresh fallback array literal on every render would defeat
-  // ActivityTimeline's memoization below (its `items` prop would never be
-  // reference-stable), so this stays memoized on the same inputs.
-  const activity = useMemo(
-    () =>
-      message.activity?.length
-        ? message.activity
-        : [{ kind: 'output' as const, title: 'Output', text: message.text }],
-    [message.activity, message.text],
-  );
-  return (
-    <View style={styles.activityGroup} testID="corner-activity">
-      <ActivityTimeline
-        active={active}
-        handle={handle}
-        items={activity}
-        messageDraft={message.agentMessageDraft}
-        stamp={stamp}
-        testID="corner-activity-timeline"
-      />
-    </View>
-  );
-}
 
 function durableFactLine(message: ChatDisplayMessage): string {
   const turn = buildTurnActivity(message.activity ?? []);
@@ -337,101 +290,6 @@ const AgentPresenceLight = React.memo(function AgentPresenceLight({
     />
   );
 });
-function AttachmentCard({ attachment }: { attachment: AttachmentReference }) {
-  const image = attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
-  const open = () => {
-    void Linking.openURL(attachmentOpenUrl(attachment)).catch(() => {
-      Modal.alert('Could not open attachment', 'The file link could not be opened on this device.');
-    });
-  };
-  return (
-    <Pressable
-      accessibilityLabel={`Open attachment ${attachment.name}`}
-      accessibilityRole="link"
-      onPress={open}
-      style={styles.attachmentCard}
-      testID={`chat-attachment-${attachment.name}`}
-    >
-      {image ? (
-        <Image
-          accessibilityIgnoresInvertColors
-          resizeMode="cover"
-          source={{ uri: attachment.thumbnailUrl }}
-          style={styles.attachmentThumbnail}
-        />
-      ) : (
-        <View style={styles.attachmentFileGlyph}>
-          <Text style={styles.attachmentFileGlyphText}>▧</Text>
-        </View>
-      )}
-      <View style={styles.attachmentCopy}>
-        <Text numberOfLines={1} style={styles.attachmentName}>
-          {attachment.name}
-        </Text>
-        <Text numberOfLines={1} style={styles.attachmentMeta}>
-          {attachment.mimeType.toUpperCase()} · {formatAttachmentSize(attachment.size)}
-        </Text>
-      </View>
-      <Text style={styles.attachmentOpenGlyph}>↗</Text>
-    </Pressable>
-  );
-}
-
-function SwipeToReply({
-  children,
-  messageId,
-  onLongPress,
-  onReply,
-}: {
-  children: React.ReactNode;
-  messageId: string;
-  onLongPress: () => void;
-  onReply: () => void;
-}) {
-  const swipeableRef = useRef<Swipeable | null>(null);
-
-  const message = (
-    <Pressable
-      accessibilityHint="Long press to copy the entire message"
-      accessibilityLabel="Message"
-      delayLongPress={450}
-      onLongPress={onLongPress}
-      testID={`copy-message-${messageId}`}
-    >
-      {children}
-    </Pressable>
-  );
-
-  if (Platform.OS === 'web') return message;
-
-  return (
-    <Swipeable
-      ref={swipeableRef}
-      dragOffsetFromRightEdge={18}
-      friction={1.35}
-      onSwipeableOpen={(direction) => {
-        if (direction !== 'right') return;
-        swipeableRef.current?.close();
-        onReply();
-      }}
-      overshootRight={false}
-      renderRightActions={() => (
-        <View
-          accessibilityLabel="Reply to message"
-          style={styles.replySwipeAction}
-          testID={`reply-swipe-action-${messageId}`}
-        >
-          <Text style={styles.replySwipeGlyph}>↩</Text>
-          <Text style={styles.replySwipeLabel}>REPLY</Text>
-        </View>
-      )}
-      testID={`swipe-reply-${messageId}`}
-    >
-      {message}
-    </Swipeable>
-  );
-}
-
 export default function BuzzChat() {
   const { theme } = useUnistyles();
   // `parent`/`title` are hints, not authority: every surface that opens a
@@ -2834,6 +2692,13 @@ export default function BuzzChat() {
     slashVerbs,
   ]);
 
+  const handleOpenGitHubEvent = useCallback((url: string) => {
+    void Linking.openURL(url).catch(() => undefined);
+  }, []);
+  const handleCopyLedgerMessage = useCallback((text: string) => {
+    void copyEntireTurn(text, Clipboard.setStringAsync);
+  }, []);
+
   const renderMessage = useCallback(
     (
       item: ChatDisplayMessage,
@@ -2859,182 +2724,43 @@ export default function BuzzChat() {
       }
 
       if (item.writePermission) {
-        const permission = item.writePermission;
-        const squireSpending = permission.purpose === 'squire-spending';
-        const permissionAgent = agentByPubkey.get(permission.agentPubkey);
-        const display = resolveAgentDisplayIdentity(permission.agentPubkey, permissionAgent);
-        const pending = permission.status === 'pending';
-        const busy = permissionActionId === permission.permissionId;
-        const canDecide =
-          !viewerIsAgent &&
-          (cacheViewerPubkey === permission.requesterPubkey ||
-            viewerChannelRole === 'admin' ||
-            viewerChannelRole === 'owner');
         return (
-          <HullSurface
-            strength="raised"
-            style={styles.writePermissionCard}
-            testID={`write-permission-${permission.status}`}
-          >
-            <View style={styles.writePermissionHeading}>
-              <IdentityMark
-                kind="agent"
-                seed={display.avatarSeed ?? permission.agentPubkey}
-                avatarUrl={display.avatarUrl}
-                name={display.name}
-                size={30}
-              />
-              <View style={styles.writePermissionCopy}>
-                <Text style={styles.writePermissionTitle}>
-                  {squireSpending
-                    ? `${display.name} requests owner confirmation`
-                    : permission.repository
-                      ? `${display.name} requests a new edit corner`
-                      : `${display.name} needs to change repository files`}
-                </Text>
-                <Text style={styles.writePermissionIntent} numberOfLines={2}>
-                  {describeWriteRequest(permission.tool)}
-                </Text>
-              </View>
-            </View>
-            {permission.repository && !squireSpending && (
-              <Text style={styles.writePermissionRepository} testID="write-permission-repository">
-                EDIT CORNER ON {permission.repository}
-              </Text>
-            )}
-            <Text style={styles.writePermissionBoundary}>
-              {squireSpending
-                ? 'Trusty Squire stays in its vault-backed process. Only the Room owner can confirm this spending or checkout-capable action.'
-                : permission.repository
-                  ? `The write is refused here. Allowing grants isolated edit access to exactly ${permission.repository}; merge authority stays human-only.`
-                  : 'This write request is missing its repository target and cannot be allowed.'}
-            </Text>
-            {permission.status === 'failed' && (
-              <Text style={styles.writePermissionFailure}>
-                The requested edit could not start. This Room remains read-only.
-              </Text>
-            )}
-            {pending &&
-            canDecide &&
-            permission.repository &&
-            (!squireSpending || viewerChannelRole === 'owner') ? (
-              <View style={styles.writePermissionActions}>
-                <MonoButton
-                  label="Deny"
-                  variant="secondary"
-                  disabled={busy}
-                  onPress={() => void handleWritePermission(item, 'deny')}
-                  style={styles.writePermissionButton}
-                />
-                <MonoButton
-                  label={squireSpending ? 'Confirm Squire action' : 'Open edit corner'}
-                  loading={busy}
-                  onPress={() => void handleWritePermission(item, 'allow')}
-                  style={styles.writePermissionButton}
-                />
-              </View>
-            ) : pending && !viewerIsAgent && squireSpending ? (
-              <Text style={styles.writePermissionStatus}>ROOM OWNER CONFIRMATION REQUIRED</Text>
-            ) : pending && !viewerIsAgent && permission.repository && !canDecide ? (
-              <Text style={styles.writePermissionStatus} testID="corner-approval-audience-wait">
-                REQUESTER OR ROOM ADMIN APPROVAL REQUIRED
-              </Text>
-            ) : pending && !viewerIsAgent ? (
-              <Text style={styles.writePermissionStatus}>MISSING TARGET · CANNOT APPROVE</Text>
-            ) : (
-              <WritePermissionOutcome
-                status={permission.status}
-                subchannelId={permission.subchannelId}
-                awaitingPerson={viewerIsAgent && pending}
-                onOpen={
-                  permission.subchannelId ? () => openCorner(permission.subchannelId!) : undefined
-                }
-              />
-            )}
-          </HullSurface>
+          <WritePermissionCard
+            message={item}
+            agent={agentByPubkey.get(item.writePermission.agentPubkey)}
+            viewerIsAgent={viewerIsAgent}
+            viewerPubkey={cacheViewerPubkey}
+            viewerRole={viewerChannelRole}
+            actionId={permissionActionId}
+            onDecision={handleWritePermission}
+            onOpenCorner={openCorner}
+          />
         );
       }
 
       if (item.targetBranchProposal) {
-        const proposal = item.targetBranchProposal;
-        const applied = roomRepository?.targetBranch === proposal.to;
-        const busy = targetBranchActionId === proposal.proposalId;
         const notice =
-          targetBranchNotice?.proposalId === proposal.proposalId ? targetBranchNotice.text : null;
-        const canConfirm = !viewerIsAgent && viewerChannelRole === 'owner';
+          targetBranchNotice?.proposalId === item.targetBranchProposal.proposalId
+            ? targetBranchNotice.text
+            : null;
         return (
-          <HullSurface
-            strength="raised"
-            style={styles.targetBranchCard}
-            testID="target-branch-proposal"
-          >
-            <Text style={styles.targetBranchTitle}>Change this {ROOM_LABEL}’s target branch</Text>
-            <Text style={styles.targetBranchChange} testID="target-branch-change">
-              {proposal.from} → {proposal.to}
-            </Text>
-            <Text style={styles.targetBranchBoundary}>
-              {`Confirming republishes this ${ROOM_LABEL}'s repository binding under your key. ` +
-                `${CORNER_LABEL}s already open automatically rebase onto ${proposal.to}; any conflict appears in their activity ledger for the agent to resolve.`}
-            </Text>
-            {applied ? (
-              <Text style={styles.targetBranchStatus} testID="target-branch-applied">
-                ✓ TARGET BRANCH IS NOW {proposal.to.toUpperCase()}
-              </Text>
-            ) : canConfirm ? (
-              <View style={styles.targetBranchActions}>
-                <MonoButton
-                  label={`Confirm ${proposal.to}`}
-                  loading={busy}
-                  disabled={busy}
-                  onPress={() => void handleConfirmTargetBranch(item)}
-                  style={styles.targetBranchButton}
-                  testID="target-branch-confirm"
-                />
-              </View>
-            ) : (
-              <Text style={styles.targetBranchStatus} testID="target-branch-denied">
-                {`ONLY THE ${ROOM_LABEL.toUpperCase()} OWNER CAN CONFIRM THIS`}
-              </Text>
-            )}
-            {notice ? (
-              <Text style={styles.targetBranchStatus} testID="target-branch-notice">
-                {notice}
-              </Text>
-            ) : null}
-          </HullSurface>
+          <TargetBranchProposalCard
+            message={item}
+            currentTargetBranch={roomRepository?.targetBranch}
+            viewerIsAgent={viewerIsAgent}
+            viewerRole={viewerChannelRole}
+            actionId={targetBranchActionId}
+            notice={notice}
+            onConfirm={handleConfirmTargetBranch}
+          />
         );
       }
-
       if (item.corner) {
         return null;
       }
 
       if (item.githubEvent) {
-        const event = item.githubEvent;
-        const title =
-          event.type === 'pull-request'
-            ? event.action === 'opened'
-              ? `${event.actor} created a new PR: ${event.title}`
-              : event.action === 'merged'
-                ? `${event.actor} merged a PR: ${event.title}`
-                : `${event.actor} closed a PR: ${event.title}`
-            : event.action === 'opened'
-              ? `${event.actor} created a new issue: ${event.title}`
-              : `${event.actor} closed an issue: ${event.title}`;
-        return (
-          <Pressable
-            accessibilityRole="link"
-            accessibilityLabel={title}
-            onPress={() => void Linking.openURL(event.url).catch(() => undefined)}
-            style={styles.githubEventPressable}
-            testID={`github-event-card-${event.type}-${event.action}`}
-          >
-            <HullSurface strength="raised" style={styles.githubEventCard}>
-              <Text style={styles.githubEventTitle}>{title}</Text>
-              <Text style={styles.githubEventLink}>VIEW ON GITHUB ↗</Text>
-            </HullSurface>
-          </Pressable>
-        );
+        return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
       if (item.landSummary) {
@@ -3070,198 +2796,38 @@ export default function BuzzChat() {
         );
       }
 
-      // ── Ordinary message ─────────────────────────────────────────
-      const isOwn = item.isUser;
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
-      const isAgent = item.isAgentAuthor || item.isAgentActivity || Boolean(knownAgent);
-      const display = isAgent
-        ? resolvePendingAgentDisplay(
-            item.pubkey ?? 'unknown-agent',
-            knownAgent,
-            participantsHydrated,
-          )
-        : null;
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
-
-      const attachmentElements = item.attachments?.map((attachment) => (
-        <AttachmentCard attachment={attachment} key={`${item.id}-${attachment.url}`} />
-      ));
-
-      // ── The ledger (§ DESIGN.md "The ledger") ────────────────────
-      // One primitive, both surfaces. Corners attribute exactly like Rooms —
-      // several people can sit in one corner, so every voice announces itself
-      // with its identity mark and name (or 'You'), once per run.
-      //
-      //   · Your own turn's byline dot and name are brass, and nothing else
-      //     marks it: the message text is plain body — regular weight,
-      //     primary tone, one size — never bolded, never enlarged.
-      // An agent viewing its own messages is both `isUser` and an agent; the
-      // agent test wins, matching `ledgerSpeakerKey`'s own ordering.
-      const isSelfSteer = isOwn && !isAgent;
-      const speaksAsAgent = isAgent;
-      const voiceName = speaksAsAgent
-        ? display
-          ? display.name
-          : (personName ?? shortMemberNpub(item.pubkey ?? ''))
-        : (personName ?? (item.pubkey ? shortMemberNpub(item.pubkey) : 'SOMEONE'));
-      // Attribution on a continuation of the voice directly above is omitted;
-      // otherwise every voice announces itself with its mark and name.
-      //
-      // The byline's leading indicator is the speaker's EXISTING identity mark
-      // (buzz/identity-mark.ts), at transcript scale, so several people and
-      // agents in one Room read apart at a glance — no new vocabulary. An
-      // agent carries the gold ring only while its presence lease says it is
-      // working; an optimistic own message keys its seed on the viewer so the
-      // mark survives reconciliation unchanged.
-      const markSeed =
-        item.pubkey ?? (isSelfSteer ? cacheViewerPubkey || 'self' : 'unknown-person');
-      const speakerAlive =
-        speaksAsAgent && Boolean(item.pubkey) && Boolean(speakerOnline[item.pubkey ?? '']);
-      const byline: LedgerByline | undefined = attributionContinued
-        ? undefined
-        : {
-            name: isSelfSteer ? 'You' : voiceName,
-            role: speaksAsAgent ? 'agent' : undefined,
-            stamp: ledgerStamp(item.timestamp),
-            isViewer: isSelfSteer,
-            mark: {
-              seed: markSeed,
-              kind: speaksAsAgent ? 'agent' : 'human',
-              ...(speaksAsAgent ? { alive: speakerAlive } : {}),
-            },
-          };
-      // Machine noise collapses the same way on both surfaces: one ghost line,
-      // expandable, never a wall of output down the slab.
-      if (item.isAgentActivity) {
-        // The tool run keeps its attribution on BOTH surfaces: a readout that
-        // opens a new voice's run still names them.
-        const activityHandle = !attributionContinued && speaksAsAgent ? voiceName : undefined;
-        return (
-          <LedgerActivity
-            active={item.isAgentLiveTurn === true}
-            handle={activityHandle}
-            message={item}
-            stamp={ledgerStamp(item.timestamp)}
-          />
-        );
-      }
-
-      // Adjacent request → agent reply pairs stay quiet. A queued agent reply can
-      // land after newer visible turns, so it keeps the quote that identifies its
-      // actual NIP-10 target. Human replies retain their existing quote behavior.
-      const showReplyReference = shouldShowReplyReference({
-        replyToId: item.replyToId,
-        speaksAsAgent,
-        immediatelyPrecedingMessage,
-      });
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
-      const replyReference = showReplyReference ? (
-        <View style={styles.replyReference} testID={`reply-reference-${item.id}`}>
-          <Text numberOfLines={2} style={styles.replyReferenceText}>
-            ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
-            {referencedTarget?.preview ?? 'Message not loaded'}
-          </Text>
-        </View>
-      ) : null;
-
-      // A pasted `git push` dump, stack trace, or npm error wall gets the same
-      // treatment as tool telemetry: lifted out of the prose into one ghost
-      // line. Deliberately gated on `!isSelfSteer` rather than on `isAgent` —
-      // `isAgent` depends on the roster and goes false exactly when a Corner
-      // needs this most, which is how a full push-rejection dump reached the
-      // slab. Your own message is never touched: pasting a log is on purpose.
-      const ledgerText = isSelfSteer ? undefined : splitLedgerText(item.text);
-      const machineNoise = ledgerText?.machine ? (
-        <LedgerGhostLine
-          body={ledgerText.machine}
-          label={`${ledgerText.machineLines} lines of tool output`}
-          testID={`chat-machine-noise-${item.id}`}
-        />
-      ) : null;
-      const deliveryFailure =
-        item.isUser && failedOutboxIds.has(item.id) ? (
-          <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${item.id}`}>
-            <Text style={styles.outboxFailureText}>DELIVERY FAILED</Text>
-            <View style={styles.outboxFailureActions}>
-              <MonoButton
-                label="RETRY"
-                onPress={() => retryOutboxMessage(item.id)}
-                variant="secondary"
-              />
-              <MonoButton
-                label="DISMISS"
-                onPress={() => dismissOutboxMessage(item.id)}
-                variant="secondary"
-              />
-            </View>
-          </View>
-        ) : null;
-      const taggedMentionPubkeys = new Set(item.mentionPubkeys ?? []);
-      const mentionHandles = roomParticipants
-        .filter((participant) => taggedMentionPubkeys.has(participant.pubkey))
-        .map((participant) => participant.handle);
-
       return (
-        <SwipeToReply
-          messageId={item.id}
-          onLongPress={() => {
-            // `item.text` is the durable turn body. The visible ledger can
-            // fold its machine footnote or animate its prose, but a long press
-            // always copies the complete committed turn, unchanged.
-            void copyEntireTurn(item.text, Clipboard.setStringAsync);
-          }}
-          onReply={item.isAgentDraft ? () => undefined : () => beginReply(item)}
-        >
-          <NewMessageMaterialize enabled={Boolean(item.isNew)} messageId={item.id}>
-            <View>
-              {isSelfSteer ? (
-                <LedgerSteer
-                  itemId={item.id}
-                  continued={attributionContinued}
-                  byline={byline}
-                  bodyText={item.text}
-                  mentionHandles={mentionHandles}
-                  channelIndex={channelReferenceIndex}
-                  onChannelReference={handleOpenChannelReference}
-                  bodyTestID={`chat-message-text-${item.id}`}
-                  replyReference={replyReference}
-                  attachments={attachmentElements}
-                />
-              ) : (
-                <LedgerEntry
-                  itemId={item.id}
-                  byline={byline}
-                  continued={attributionContinued}
-                  luminous={speaksAsAgent}
-                  // `item.isNew` is re-stamped by warm revalidation / WS replay
-                  // on every room open; the consume-once gate (one type-out per
-                  // message id per app session, shared with the entrance fade's
-                  // registry) lives inside `LedgerEntry`.
-                  typewriter={speaksAsAgent && Boolean(item.isNew)}
-                  bodyText={ledgerText ? ledgerText.prose : item.text}
-                  mentionHandles={mentionHandles}
-                  channelIndex={channelReferenceIndex}
-                  onChannelReference={handleOpenChannelReference}
-                  bodyTestID={`chat-message-text-${item.id}`}
-                  replyReference={replyReference}
-                  machineNoise={machineNoise}
-                  attachments={attachmentElements}
-                />
-              )}
-              {deliveryFailure}
-            </View>
-          </NewMessageMaterialize>
-        </SwipeToReply>
+        <OrdinaryLedgerMessage
+          message={item}
+          {...(knownAgent ? { agent: knownAgent } : {})}
+          participantsHydrated={participantsHydrated}
+          {...(personName ? { personName } : {})}
+          viewerPubkey={cacheViewerPubkey}
+          speakerOnline={Boolean(item.pubkey && speakerOnline[item.pubkey])}
+          continued={attributionContinued}
+          {...(immediatelyPrecedingMessage ? { immediatelyPrecedingMessage } : {})}
+          {...(referencedTarget ? { referencedTarget } : {})}
+          participantHandles={roomParticipants}
+          channelIndex={channelReferenceIndex}
+          deliveryFailed={failedOutboxIds.has(item.id)}
+          onChannelReference={handleOpenChannelReference}
+          onReply={beginReply}
+          onCopy={handleCopyLedgerMessage}
+          onRetry={retryOutboxMessage}
+          onDismiss={dismissOutboxMessage}
+        />
       );
     },
     [
       agentByPubkey,
       handleWritePermission,
       handleConfirmTargetBranch,
-      isCorner,
-      parentChannelId,
+      openCorner,
       participantsHydrated,
       permissionActionId,
       personProfileByPubkey,
@@ -3280,6 +2846,8 @@ export default function BuzzChat() {
       retryOutboxMessage,
       channelReferenceIndex,
       handleOpenChannelReference,
+      handleOpenGitHubEvent,
+      handleCopyLedgerMessage,
     ],
   );
   const renderItem = useRoomMessageRenderItem({

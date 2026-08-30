@@ -7290,6 +7290,29 @@ export class Body {
     return isAgentPresenceOnline(cache.byPubkey.get(agentPubkey));
   }
 
+  private async isRoomAgentOnlineFresh(channelId: string, agentPubkey: string): Promise<boolean> {
+    const events = await this.agentRelay.queryEvents([
+      {
+        kinds: [KIND_AGENT_PRESENCE],
+        authors: [agentPubkey],
+        '#d': [agentPresenceKey(channelId)],
+        limit: 10,
+      },
+    ]);
+    let presence: AgentPresence | undefined;
+    for (const event of events) {
+      if (tagValue(event, 'agent') !== agentPubkey) continue;
+      const status = tagValue(event, 'status');
+      if (status !== 'online' && status !== 'offline') continue;
+      presence = newerAgentPresence(presence, {
+        agentPubkey,
+        status,
+        observedAt: event.created_at * 1_000,
+      });
+    }
+    return isAgentPresenceOnline(presence);
+  }
+
   private async validateAgentDelegationEnvelope(
     channelId: string,
     event: NostrEvent,
@@ -7948,7 +7971,8 @@ export class Body {
           result,
           "I don't have a grounded reply to add, so I'm stopping here.",
           {
-            replyTo: envelope.authorizationEventId,
+            replyTo: request.eventId,
+            replyRootId: envelope.authorizationEventId,
             extraTags: agentExchangeTags(authorization, nextTurn, recipient),
           },
         );
@@ -8376,7 +8400,7 @@ export class Body {
           if (exchangeRequest?.kind === 'authorized') {
             const peer = authorAttributions.get(exchangeRequest.authorization.peerPubkey);
             if (
-              !(await this.isRoomAgentOnline(
+              !(await this.isRoomAgentOnlineFresh(
                 tlcChannelId,
                 exchangeRequest.authorization.peerPubkey,
               ))

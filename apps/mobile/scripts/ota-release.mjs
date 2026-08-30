@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 const EAS_CLI_VERSION = '22.2.0';
 
@@ -134,6 +134,132 @@ function readLedger(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+function emptyDeliveryIndex() {
+  return { schemaVersion: 1, updatedAt: isoNow(), merges: [] };
+}
+
+function readDeliveryIndex(path) {
+  if (!path) fail('--index is required');
+  if (!existsSync(path)) return emptyDeliveryIndex();
+  const index = JSON.parse(readFileSync(path, 'utf8'));
+  if (index.schemaVersion !== 1 || !Array.isArray(index.merges)) {
+    fail('Unsupported mobile OTA delivery index.');
+  }
+  return index;
+}
+
+function writeDeliveryIndex(path, index) {
+  index.updatedAt = isoNow();
+  writeLedger(path, index);
+}
+
+function currentMerge(index, sha) {
+  const merge = index.merges.find((entry) => entry.sha === sha);
+  if (!merge) fail(`Delivery index does not contain ${sha}.`);
+  return merge;
+}
+
+function runAttempt(merge, runId, attempt) {
+  merge.attempts ??= [];
+  let run = merge.attempts.find((entry) => entry.runId === runId);
+  if (!run) {
+    run = { runId, attempt, status: 'running', startedAt: isoNow() };
+    merge.attempts.push(run);
+  }
+  return run;
+}
+
+function readCommitList(options) {
+  if (!options.commits) return [{ sha: options.sha, ref: options.ref }];
+  const commits = JSON.parse(readFileSync(options.commits, 'utf8'));
+  if (!Array.isArray(commits)) fail('--commits must name a JSON array');
+  return commits;
+}
+
+function initDelivery(options) {
+  if (!options.sha || !options.ref || !options.runId) {
+    fail('init-delivery requires --sha, --ref, and --run-id');
+  }
+  const attempt = Number(options.attempt ?? '1');
+  if (!Number.isInteger(attempt) || attempt < 1) fail('--attempt must be a positive integer');
+  const index = readDeliveryIndex(options.index);
+  for (const commit of readCommitList(options)) {
+    if (!commit || typeof commit.sha !== 'string' || !/^[0-9a-f]{7,64}$/.test(commit.sha)) {
+      fail('commit list contains an invalid sha');
+    }
+    if (index.merges.some((entry) => entry.sha === commit.sha)) continue;
+    index.merges.push({
+      sha: commit.sha,
+      ref: typeof commit.ref === 'string' ? commit.ref : options.ref,
+      state: 'pending',
+      firstSeenAt: isoNow(),
+      attempts: [],
+      failures: [],
+    });
+  }
+  const merge = currentMerge(index, options.sha);
+  runAttempt(merge, options.runId, attempt);
+  writeDeliveryIndex(options.index, index);
+  writeLedger(options.ledger, {
+    schemaVersion: 2,
+    status: 'pending',
+    sourceSha: options.sha,
+    sourceRef: options.ref,
+    createdAt: isoNow(),
+    delivery: { state: 'pending', runId: options.runId, attempt },
+    canary: { status: 'pending' },
+    production: null,
+  });
+}
+
+export function classifyFailure(exitCode, reason) {
+  const code = Number(exitCode);
+  const detail = String(reason ?? '').toLowerCase();
+  if (code === 2) return 'environment-setup';
+  if (code === 124) return 'deadline';
+  if (
+    (detail.includes('smoke') || detail.includes('room send')) &&
+    (detail.includes('timeout') || detail.includes('timed out'))
+  ) {
+    return 'smoke-timeout';
+  }
+  return 'app-side';
+}
+
+function recordFailure(options) {
+  if (!options.sha || !options.runId) fail('record-failure requires --sha and --run-id');
+  const index = readDeliveryIndex(options.index);
+  const merge = currentMerge(index, options.sha);
+  const attempt = Number(options.attempt ?? '1');
+  const reason = String(options.reason ?? 'governor step failed').slice(0, 800);
+  const failureClass = options.class ?? classifyFailure(options.exitCode, reason);
+  const failure = {
+    runId: options.runId,
+    attempt,
+    class: failureClass,
+    exitCode: Number(options.exitCode ?? '1'),
+    reason,
+    recordedAt: isoNow(),
+  };
+  merge.failures ??= [];
+  const prior = merge.failures.find((entry) => entry.runId === options.runId);
+  if (prior) Object.assign(prior, failure);
+  else merge.failures.push(failure);
+  Object.assign(runAttempt(merge, options.runId, attempt), {
+    status: 'failed',
+    failureClass,
+    reason,
+    finishedAt: isoNow(),
+  });
+  writeDeliveryIndex(options.index, index);
+  if (options.ledger && existsSync(options.ledger)) {
+    const ledger = readLedger(options.ledger);
+    ledger.failure = failure;
+    ledger.delivery = { ...ledger.delivery, state: merge.state };
+    writeLedger(options.ledger, ledger);
+  }
+}
+
 function isoNow() {
   return new Date().toISOString();
 }
@@ -180,8 +306,10 @@ function publish(options) {
   const published = requirePublishedGroup(candidate, 'Beta publish');
   const android = published.updates.find((update) => update.platform === 'android');
   if (!android) fail('Beta publish did not return an Android update.');
-  writeLedger(options.ledger, {
-    schemaVersion: 1,
+  const existing = existsSync(options.ledger) ? readLedger(options.ledger) : {};
+  const ledger = {
+    ...existing,
+    schemaVersion: 2,
     status: 'beta',
     sourceSha: options.sha,
     sourceRef: options.ref,
@@ -192,10 +320,19 @@ function publish(options) {
       ...new Set(published.updates.map((update) => update.runtimeVersion).filter(Boolean)),
     ],
     previousProductionGroupId: firstGroupId(previous),
-    createdAt: isoNow(),
+    createdAt: existing.createdAt ?? isoNow(),
+    delivery: { ...existing.delivery, state: 'built', builtAt: isoNow() },
     canary: { status: 'pending' },
     production: null,
-  });
+  };
+  writeLedger(options.ledger, ledger);
+  if (options.index) {
+    const index = readDeliveryIndex(options.index);
+    const merge = currentMerge(index, options.sha);
+    if (merge.state !== 'confirmed' && merge.state !== 'published') merge.state = 'built';
+    merge.builtAt = isoNow();
+    writeDeliveryIndex(options.index, index);
+  }
 }
 
 function markCanary(options) {
@@ -254,7 +391,90 @@ function promote(options) {
     updates: promoted.updates,
     promotedAt: isoNow(),
   };
+  ledger.delivery = {
+    ...ledger.delivery,
+    state: 'published',
+    groupId: promoted.groupId,
+    publishedAt: ledger.production.promotedAt,
+  };
   writeLedger(options.ledger, ledger);
+  if (options.index) {
+    const index = readDeliveryIndex(options.index);
+    for (const merge of index.merges) {
+      if (merge.state === 'confirmed') continue;
+      merge.state = 'published';
+      merge.published = {
+        groupId: promoted.groupId,
+        updateIds: promoted.updates.map((update) => update.id),
+        headSha: ledger.sourceSha,
+        publishedAt: ledger.production.promotedAt,
+      };
+    }
+    const merge = currentMerge(index, ledger.sourceSha);
+    const attempt = runAttempt(
+      merge,
+      String(ledger.delivery?.runId ?? options.runId ?? 'unknown'),
+      Number(ledger.delivery?.attempt ?? options.attempt ?? 1),
+    );
+    Object.assign(attempt, { status: 'published', finishedAt: isoNow() });
+    writeDeliveryIndex(options.index, index);
+  }
+}
+
+function confirmDelivery(options) {
+  if (!options.receipt || !options.group) fail('confirm requires --receipt and --group');
+  const payload = JSON.parse(readFileSync(options.receipt, 'utf8'));
+  const updateIds = new Set(String(options.updateIds ?? '').split(',').filter(Boolean));
+  const devices = Array.isArray(payload.devices) ? payload.devices : [];
+  const receipt = devices.find(
+    (device) =>
+      device?.environment === 'physical' &&
+      (device.group === options.group || (device.updateId && updateIds.has(device.updateId))),
+  );
+  if (!receipt) {
+    console.log(JSON.stringify({ confirmed: false, groupId: options.group }));
+    return;
+  }
+  const index = readDeliveryIndex(options.index);
+  let count = 0;
+  for (const merge of index.merges) {
+    if (merge.state !== 'published' || merge.published?.groupId !== options.group) continue;
+    merge.state = 'confirmed';
+    merge.confirmed = {
+      groupId: options.group,
+      updateId: receipt.updateId ?? null,
+      channel: receipt.channel ?? null,
+      deviceId: receipt.deviceId,
+      reportedAt: receipt.reportedAt,
+      confirmedAt: isoNow(),
+    };
+    count += 1;
+  }
+  writeDeliveryIndex(options.index, index);
+  if (options.ledger && existsSync(options.ledger)) {
+    const ledger = readLedger(options.ledger);
+    ledger.delivery = {
+      ...ledger.delivery,
+      state: 'confirmed',
+      deviceId: receipt.deviceId,
+      updateId: receipt.updateId ?? null,
+      confirmedAt: isoNow(),
+    };
+    writeLedger(options.ledger, ledger);
+  }
+  console.log(JSON.stringify({ confirmed: true, groupId: options.group, merges: count }));
+}
+
+function listUndelivered(options) {
+  const index = readDeliveryIndex(options.index);
+  const output = {
+    schemaVersion: index.schemaVersion,
+    updatedAt: index.updatedAt,
+    undelivered: index.merges.filter((merge) => merge.state !== 'confirmed'),
+  };
+  const serialized = `${JSON.stringify(output, null, 2)}\n`;
+  if (options.output) writeFileSync(options.output, serialized);
+  else process.stdout.write(serialized);
 }
 
 function rollback(options) {
@@ -290,6 +510,9 @@ function rollback(options) {
 
 const options = parseArgs(process.argv.slice(2));
 switch (options.command) {
+  case 'init-delivery':
+    initDelivery(options);
+    break;
   case 'publish':
     publish(options);
     break;
@@ -302,6 +525,18 @@ switch (options.command) {
   case 'rollback':
     rollback(options);
     break;
+  case 'record-failure':
+    recordFailure(options);
+    break;
+  case 'confirm':
+    confirmDelivery(options);
+    break;
+  case 'list-undelivered':
+    listUndelivered(options);
+    break;
+  case 'classify-failure':
+    console.log(classifyFailure(options.exitCode, options.reason));
+    break;
   default:
-    fail('Usage: ota-release.mjs <publish|mark-canary|promote|rollback> [options]');
+    fail('Usage: ota-release.mjs <init-delivery|publish|mark-canary|promote|rollback|record-failure|confirm|list-undelivered|classify-failure> [options]');
 }

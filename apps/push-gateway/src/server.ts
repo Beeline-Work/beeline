@@ -69,6 +69,8 @@ export interface RegistrationServerHooks {
   sendTest?: (pubkey: string) => Promise<TestSendReport>;
   /** Push health is independent of paint-view reads. */
   pushHealth?: () => { readonly ok: boolean; readonly reason?: string };
+  /** Workflow/operator credential for querying a different identity's device receipt. */
+  otaReceiptAdminToken?: string;
   indexer?: {
     readonly publicOrigin: string;
     readonly now?: () => number;
@@ -384,6 +386,74 @@ export function createRegistrationServer(
           `[push] device registered pubkey=${pubkey.slice(0, 12)}… devices=${registry.tokenCount}`,
         );
         json(response, 201, { registered: true });
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/update-receipts') {
+        const body = await readJson(request);
+        if (!body || typeof body !== 'object') throw new Error('expected JSON object');
+        const { pubkey, deviceId, updateId, channel, group, runtimeVersion, environment } =
+          body as Record<string, unknown>;
+        if (typeof pubkey !== 'string' || !TokenRegistry.validPubkey(pubkey)) {
+          throw new Error('invalid pubkey');
+        }
+        if (authenticatedPubkey(request) !== pubkey) {
+          json(response, 401, { error: 'valid identity authorization required' }, PRIVATE_HEADERS);
+          return;
+        }
+        const nullableString = (value: unknown): string | null | undefined =>
+          value === null ? null : typeof value === 'string' ? value : undefined;
+        const parsedDeviceId = typeof deviceId === 'string' ? deviceId : '';
+        const parsedUpdateId = nullableString(updateId);
+        const parsedChannel = nullableString(channel);
+        const parsedGroup = nullableString(group);
+        const parsedRuntimeVersion = nullableString(runtimeVersion);
+        const parsedEnvironment =
+          environment === 'physical'
+            ? ('physical' as const)
+            : environment === 'emulator'
+              ? ('emulator' as const)
+              : undefined;
+        if (
+          parsedUpdateId === undefined ||
+          parsedChannel === undefined ||
+          parsedGroup === undefined ||
+          parsedRuntimeVersion === undefined ||
+          parsedEnvironment === undefined
+        ) {
+          throw new Error('invalid update receipt');
+        }
+        const stored = await registry.recordUpdateReceipt({
+          pubkey,
+          deviceId: parsedDeviceId,
+          updateId: parsedUpdateId,
+          channel: parsedChannel,
+          group: parsedGroup,
+          runtimeVersion: parsedRuntimeVersion,
+          environment: parsedEnvironment,
+        });
+        json(response, 201, { recorded: true, receipt: stored }, PRIVATE_HEADERS);
+        return;
+      }
+
+      const receiptQuery = request.url?.match(/^\/update-receipts\/([0-9a-f]{64})$/);
+      if (request.method === 'GET' && receiptQuery) {
+        const pubkey = receiptQuery[1]!;
+        const bearer = request.headers.authorization?.startsWith('Bearer ')
+          ? request.headers.authorization.slice('Bearer '.length)
+          : null;
+        const operatorAuthorized =
+          Boolean(hooks.otaReceiptAdminToken) && bearer === hooks.otaReceiptAdminToken;
+        if (!operatorAuthorized && authenticatedPubkey(request) !== pubkey) {
+          json(response, 401, { error: 'valid receipt authorization required' }, PRIVATE_HEADERS);
+          return;
+        }
+        json(
+          response,
+          200,
+          { pubkey, devices: registry.receiptsForPubkey(pubkey) },
+          PRIVATE_HEADERS,
+        );
         return;
       }
 

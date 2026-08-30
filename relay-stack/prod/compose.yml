@@ -104,6 +104,7 @@ services:
       BUZZY_PUSH_SA_FILE: /run/secrets/buzzy-fcm-service-account.json
       BUZZY_PUSH_REGISTRY_FILE: /var/lib/buzzy-push/registrations.json
       BUZZY_INDEXER_PUBLIC_ORIGIN: https://usebeeline.app
+      BUZZY_OTA_RECEIPT_ADMIN_TOKEN: ${BUZZY_OTA_RECEIPT_ADMIN_TOKEN:-}
       XDG_STATE_HOME: ${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}
       BEELINE_EVENTS_STATE_DIR: /var/lib/beeline-events
     volumes:

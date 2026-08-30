@@ -131,6 +131,113 @@ esac
     });
   }, 60_000);
 
+  it('tracks every merge through pending, built, published, and physical-device confirmation', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-delivery-index-'));
+    const ledgerPath = join(directory, 'ledger.json');
+    const indexPath = join(directory, 'index.json');
+    const commitsPath = join(directory, 'commits.json');
+    const receiptPath = join(directory, 'receipt.json');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    const firstSha = '1'.repeat(40);
+    const headSha = '2'.repeat(40);
+    writeFileSync(commitsPath, JSON.stringify([{ sha: firstSha }, { sha: headSha }]));
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+case "$1" in
+  channel:view|channel:edit) printf '{}\\n' ;;
+  update:list) printf '[{"id":"old-android","platform":"android","group":"known-good"}]\\n' ;;
+  update) printf '[{"id":"beta-android","platform":"android","group":"candidate-group"},{"id":"beta-ios","platform":"ios","group":"candidate-group"}]\\n' ;;
+  update:republish) printf '[{"id":"prod-android","platform":"android","group":"production-group"},{"id":"prod-ios","platform":"ios","group":"production-group"}]\\n' ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+    const env = { EAS_CLI_PATH: fakeEas };
+
+    expect(runRelease([
+      'init-delivery', '--sha', headSha, '--ref', 'main', '--run-id', 'run-1',
+      '--attempt', '1', '--commits', commitsPath, '--ledger', ledgerPath, '--index', indexPath,
+    ], env).status).toBe(0);
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { state: string }) => merge.state))
+      .toEqual(['pending', 'pending']);
+
+    expect(runRelease([
+      'publish', '--sha', headSha, '--ref', 'main', '--ledger', ledgerPath, '--index', indexPath,
+    ], env).status).toBe(0);
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.at(-1).state).toBe('built');
+    expect(runRelease(['mark-canary', '--ledger', ledgerPath, '--status', 'passed'], env).status).toBe(0);
+    expect(runRelease(['promote', '--ledger', ledgerPath, '--index', indexPath], env).status).toBe(0);
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { state: string }) => merge.state))
+      .toEqual(['published', 'published']);
+
+    writeFileSync(receiptPath, JSON.stringify({ devices: [{
+      deviceId: 'owner-device',
+      updateId: 'prod-android',
+      channel: 'production',
+      group: null,
+      environment: 'physical',
+      reportedAt: '2026-08-29T20:05:00.000Z',
+    }] }));
+    expect(runRelease([
+      'confirm', '--ledger', ledgerPath, '--index', indexPath, '--receipt', receiptPath,
+      '--group', 'production-group', '--update-ids', 'prod-android,prod-ios',
+    ], env).status).toBe(0);
+    expect(JSON.parse(readFileSync(indexPath, 'utf8')).merges.map((merge: { state: string }) => merge.state))
+      .toEqual(['confirmed', 'confirmed']);
+    expect(JSON.parse(readFileSync(ledgerPath, 'utf8')).delivery.state).toBe('confirmed');
+  }, 60_000);
+
+  it('classifies three failed attempts and keeps them queryable for one escalation', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-failures-'));
+    const ledgerPath = join(directory, 'ledger.json');
+    const indexPath = join(directory, 'index.json');
+    const undeliveredPath = join(directory, 'undelivered.json');
+    const sha = '3'.repeat(40);
+    const failures = [
+      ['2', 'runner setup failed', 'environment-setup'],
+      ['124', 'canary deadline', 'deadline'],
+      ['1', 'SMOKE ROOM SEND timed out', 'smoke-timeout'],
+    ];
+    failures.forEach(([exitCode, reason], offset) => {
+      const attempt = String(offset + 1);
+      expect(runRelease([
+        'init-delivery', '--sha', sha, '--ref', 'main', '--run-id', `run-${attempt}`,
+        '--attempt', attempt, '--ledger', ledgerPath, '--index', indexPath,
+      ]).status).toBe(0);
+      expect(runRelease([
+        'record-failure', '--sha', sha, '--run-id', `run-${attempt}`, '--attempt', attempt,
+        '--exit-code', exitCode, '--reason', reason, '--ledger', ledgerPath, '--index', indexPath,
+      ]).status).toBe(0);
+    });
+    expect(runRelease([
+      'list-undelivered', '--index', indexPath, '--output', undeliveredPath,
+    ]).status).toBe(0);
+    const [merge] = JSON.parse(readFileSync(undeliveredPath, 'utf8')).undelivered;
+    expect(merge.state).toBe('pending');
+    expect(merge.failures.map((failure: { class: string }) => failure.class)).toEqual(
+      failures.map((failure) => failure[2]),
+    );
+    expect(workflow).toContain("title: 'Undelivered merges'");
+    expect(workflow).toContain('if (attempt >= 3)');
+    expect(workflow).toContain('createWorkflowDispatch');
+    expect(workflow).toContain('maxFailures < 3');
+    expect(workflow).toContain("['merge-base', '--is-ancestor', lastTracked, head]");
+    expect(workflow).toContain('`${rangeStart}..${head}`');
+  }, 60_000);
+
+  it('reconciles owner receipts without hardcoding an identity or bypassing the canary', () => {
+    expect(workflow).toContain('MOBILE_OTA_OWNER_PUBKEY');
+    expect(workflow).toContain('MOBILE_OTA_RECEIPT_TOKEN');
+    expect(workflow).toContain("cron: '*/15 * * * *'");
+    expect(workflow).toContain('node scripts/ota-release.mjs confirm');
+    expect(workflow.indexOf('Run Android beta canary')).toBeLessThan(
+      workflow.indexOf('Promote the canary-proven bytes to production'),
+    );
+    expect(workflow).not.toMatch(/branches: \[main\][\s\S]{0,120}paths:/);
+  });
+
   it('keeps canary before promotion and exposes an off-by-default emergency bypass', () => {
     expect(workflow).toContain('default: false');
     expect(workflow).toContain('scripts/ota-canary.sh');
@@ -799,21 +906,21 @@ esac
     expect(workflow.indexOf('--status blocked')).toBeLessThan(
       workflow.indexOf('node scripts/ota-release.mjs promote'),
     );
-    expect(workflow).toMatch(/Store release ledger[\s\S]*?if: always\(\) && steps\.candidate\.outcome == 'success'/);
+    expect(workflow).toMatch(/Store run release ledger[\s\S]*?if: always\(\) && steps\.initialize\.outcome == 'success'/);
   });
 
   it('the workflow records a self-describing parked reason even when the canary dies before its own handlers', () => {
     // The canary is told where to publish its one-line parked reason...
     expect(workflow).toContain('OTA_CANARY_REASON_FILE:');
     // ...stale reasons are cleared before the run...
-    expect(workflow).toMatch(/rm -f "\$RUNNER_TEMP\/ota-canary-reason\.txt"/);
+    expect(workflow).toContain('rm -f "$OTA_CANARY_REASON_FILE"');
     // ...and a failure folds that line into the ledger reason, falling back to
     // an exit-code classification when the shell died before writing anything.
     const canaryStep = workflow.slice(
       workflow.indexOf('Run Android beta canary'),
       workflow.indexOf('Record captain-ordered canary skip'),
     );
-    expect(canaryStep).toMatch(/head -n 1 "\$RUNNER_TEMP\/ota-canary-reason\.txt"/);
+    expect(canaryStep).toContain('head -n 1 "$OTA_CANARY_REASON_FILE"');
     expect(canaryStep).toContain('environment/setup failure');
     expect(canaryStep).toContain('ten-minute canary deadline fired');
     expect(canaryStep).toContain('canary flow failure');

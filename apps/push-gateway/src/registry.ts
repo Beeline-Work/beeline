@@ -4,13 +4,26 @@ import { dirname } from 'node:path';
 const PUBKEY_RE = /^[0-9a-f]{64}$/;
 const TOKEN_RE = /^[A-Za-z0-9:_-]{20,4096}$/;
 
+export interface DeviceUpdateReceipt {
+  pubkey: string;
+  deviceId: string;
+  updateId: string | null;
+  channel: string | null;
+  group: string | null;
+  runtimeVersion: string | null;
+  environment: 'physical' | 'emulator';
+  reportedAt: string;
+}
+
 interface RegistryFile {
-  version: 1;
+  version: 1 | 2;
   registrations: Array<{ pubkey: string; tokens: string[] }>;
+  updateReceipts?: DeviceUpdateReceipt[];
 }
 
 export class TokenRegistry {
   private readonly byPubkey = new Map<string, Set<string>>();
+  private readonly updateReceipts = new Map<string, DeviceUpdateReceipt>();
 
   private constructor(private readonly filePath?: string) {}
 
@@ -20,13 +33,19 @@ export class TokenRegistry {
 
     try {
       const parsed = JSON.parse(await readFile(filePath, 'utf8')) as RegistryFile;
-      if (parsed.version !== 1 || !Array.isArray(parsed.registrations)) {
+      if (![1, 2].includes(parsed.version) || !Array.isArray(parsed.registrations)) {
         throw new Error('unsupported registry format');
       }
       for (const entry of parsed.registrations) {
         if (!TokenRegistry.validPubkey(entry.pubkey) || !Array.isArray(entry.tokens)) continue;
         for (const token of entry.tokens) {
           if (TokenRegistry.validToken(token)) registry.registerInMemory(entry.pubkey, token);
+        }
+      }
+      if (parsed.version === 2 && Array.isArray(parsed.updateReceipts)) {
+        for (const receipt of parsed.updateReceipts) {
+          if (!TokenRegistry.validReceipt(receipt)) continue;
+          registry.updateReceipts.set(`${receipt.pubkey}:${receipt.deviceId}`, receipt);
         }
       }
     } catch (error) {
@@ -41,6 +60,19 @@ export class TokenRegistry {
 
   static validToken(token: string): boolean {
     return TOKEN_RE.test(token);
+  }
+
+  static validReceipt(receipt: DeviceUpdateReceipt): boolean {
+    return (
+      TokenRegistry.validPubkey(receipt.pubkey) &&
+      /^[0-9a-f-]{16,128}$/i.test(receipt.deviceId) &&
+      (receipt.updateId === null || /^[0-9a-f-]{8,128}$/i.test(receipt.updateId)) &&
+      (receipt.channel === null || (receipt.channel.length > 0 && receipt.channel.length <= 128)) &&
+      (receipt.group === null || /^[0-9a-z-]{8,128}$/i.test(receipt.group)) &&
+      (receipt.runtimeVersion === null || receipt.runtimeVersion.length <= 128) &&
+      ['physical', 'emulator'].includes(receipt.environment) &&
+      !Number.isNaN(Date.parse(receipt.reportedAt))
+    );
   }
 
   get pubkeyCount(): number {
@@ -63,6 +95,23 @@ export class TokenRegistry {
       for (const token of this.byPubkey.get(pubkey) ?? []) tokens.add(token);
     }
     return [...tokens];
+  }
+
+  receiptsForPubkey(pubkey: string): DeviceUpdateReceipt[] {
+    return [...this.updateReceipts.values()]
+      .filter((receipt) => receipt.pubkey === pubkey)
+      .sort((left, right) => right.reportedAt.localeCompare(left.reportedAt));
+  }
+
+  async recordUpdateReceipt(
+    receipt: Omit<DeviceUpdateReceipt, 'reportedAt'>,
+    now = new Date(),
+  ): Promise<DeviceUpdateReceipt> {
+    const stored = { ...receipt, reportedAt: now.toISOString() };
+    if (!TokenRegistry.validReceipt(stored)) throw new Error('invalid update receipt');
+    this.updateReceipts.set(`${stored.pubkey}:${stored.deviceId}`, stored);
+    await this.persist();
+    return stored;
   }
 
   async register(pubkey: string, token: string): Promise<void> {
@@ -109,11 +158,12 @@ export class TokenRegistry {
     const directory = dirname(this.filePath);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const value: RegistryFile = {
-      version: 1,
+      version: 2,
       registrations: [...this.byPubkey].map(([pubkey, tokens]) => ({
         pubkey,
         tokens: [...tokens],
       })),
+      updateReceipts: [...this.updateReceipts.values()],
     };
     const temporaryPath = `${this.filePath}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify(value)}\n`, { mode: 0o600 });

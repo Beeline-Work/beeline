@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { NostrEvent } from '@beeline/nostr';
 import { MAX_MISSION_RESERVED_TOKENS, parseScheduledTurnReceipt } from '@beeline/buzz-client';
+import { parseWorkSchedule } from './work-schedule.js';
 
 const HEX_64 = /^[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
@@ -20,6 +21,8 @@ export interface WorkScheduleRuntimeState {
   consecutiveFailures: number;
   status: 'active' | 'paused';
   pauseReason?: string;
+  /** Last authenticated desired record; retains config across an incomplete relay read/restart. */
+  scheduleEvent?: NostrEvent;
 }
 
 export interface WorkCalendarStore {
@@ -33,7 +36,7 @@ export interface WorkCalendarStore {
 }
 
 interface DurableCalendarData {
-  version: 3;
+  version: 4;
   schedules: Record<string, WorkScheduleRuntimeState>;
   pendingReceipts: Record<string, NostrEvent>;
 }
@@ -44,7 +47,7 @@ export function cloneState(state: WorkScheduleRuntimeState): WorkScheduleRuntime
 
 /** Atomic local state for best-effort execution progress and failure pausing. */
 export class DurableWorkCalendarState implements WorkCalendarStore {
-  private data: DurableCalendarData = { version: 3, schedules: {}, pendingReceipts: {} };
+  private data: DurableCalendarData = { version: 4, schedules: {}, pendingReceipts: {} };
   private loaded = false;
   private saveTail: Promise<void> = Promise.resolve();
 
@@ -63,7 +66,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
       // best-effort contract intentionally reconstructs from schedule config.
       if (parsed.version === 1) {
         const migrated: DurableCalendarData = {
-          version: 3,
+          version: 4,
           schedules: {},
           pendingReceipts: {},
         };
@@ -73,7 +76,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
         return;
       }
       const rawSchedules = object(parsed.schedules);
-      if ((parsed.version !== 2 && parsed.version !== 3) || !rawSchedules) {
+      if ((parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4) || !rawSchedules) {
         throw new Error(`unsupported durable work calendar state at ${this.path}`);
       }
       const schedules: Record<string, WorkScheduleRuntimeState> = {};
@@ -85,7 +88,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
         schedules[key] = state;
       }
       const pendingReceipts: Record<string, NostrEvent> = {};
-      if (parsed.version === 3) {
+      if (parsed.version === 3 || parsed.version === 4) {
         const rawReceipts = object(parsed.pendingReceipts);
         if (!rawReceipts) throw new Error(`invalid durable work calendar state at ${this.path}`);
         for (const [eventId, candidate] of Object.entries(rawReceipts)) {
@@ -96,7 +99,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
           pendingReceipts[eventId] = event;
         }
       }
-      this.data = { version: 3, schedules, pendingReceipts };
+      this.data = { version: 4, schedules, pendingReceipts };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -114,7 +117,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
     if (!parsed) throw new Error('invalid work calendar runtime state');
     await this.enqueueSave(async () => {
       const next: DurableCalendarData = {
-        version: 3,
+        version: 4,
         schedules: {
           ...this.data.schedules,
           [parsed.scheduleId]: cloneState(parsed),
@@ -134,7 +137,7 @@ export class DurableWorkCalendarState implements WorkCalendarStore {
       throw new Error('invalid scheduled receipt outbox event');
     await this.enqueueSave(async () => {
       const next: DurableCalendarData = {
-        version: 3,
+        version: 4,
         schedules: {
           ...this.data.schedules,
           [parsed.scheduleId]: cloneState(parsed),
@@ -237,6 +240,11 @@ function parseRuntimeState(value: unknown): WorkScheduleRuntimeState | undefined
       : undefined;
   const pauseReason =
     input?.pauseReason === undefined ? undefined : nonEmpty(input.pauseReason, 600);
+  const parsedScheduleEvent =
+    input?.scheduleEvent === undefined
+      ? undefined
+      : parseWorkSchedule(input.scheduleEvent as NostrEvent);
+  const scheduleEvent = parsedScheduleEvent?.event;
   if (
     !scheduleId ||
     !SAFE_ID.test(scheduleId) ||
@@ -248,7 +256,12 @@ function parseRuntimeState(value: unknown): WorkScheduleRuntimeState | undefined
     consecutiveFailures === undefined ||
     (input.budgetDay !== undefined && budgetDay === undefined) ||
     !['active', 'paused'].includes(String(input.status)) ||
-    (input.pauseReason !== undefined && !pauseReason)
+    (input.pauseReason !== undefined && !pauseReason) ||
+    (input.scheduleEvent !== undefined &&
+      (!scheduleEvent ||
+        parsedScheduleEvent!.value.scheduleId !== scheduleId ||
+        parsedScheduleEvent!.value.revision !== revision ||
+        parsedScheduleEvent!.value.principalPubkey !== principalPubkey))
   ) {
     return undefined;
   }
@@ -263,5 +276,6 @@ function parseRuntimeState(value: unknown): WorkScheduleRuntimeState | undefined
     consecutiveFailures,
     status: input.status as WorkScheduleRuntimeState['status'],
     ...(pauseReason ? { pauseReason } : {}),
+    ...(scheduleEvent ? { scheduleEvent } : {}),
   };
 }

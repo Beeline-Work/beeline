@@ -203,9 +203,46 @@ describe('daemon work schedule authority', () => {
         readCurrentEvents: async () => [parsed.event],
         readFacts: async () => facts,
         verifyScheduleGrant: async () => false,
-        verifyAgentToolMandate: async () => true,
+        verifyAgentToolMandate: async () => 'valid',
       }),
     ).resolves.toEqual({ authorized: true });
+  });
+
+  it('keeps an unreadable agent-tool mandate retryable but pauses a proven-invalid mandate', async () => {
+    const agent = createIdentity();
+    const schedule = scheduleFixture(agent, agent);
+    schedule.agentToolMandate = { eventId: 'b'.repeat(64), defaultsVersion: 2 };
+    const parsed = parsedSchedule(agent, schedule);
+    const facts: DaemonWorkScheduleAuthorityFacts = {
+      workspaceMemberPubkeys: [agent.publicKey],
+      roomMemberPubkeys: [agent.publicKey],
+      roomArchived: false,
+      authorIsAgent: true,
+      principalIsAgent: true,
+      principalCanDrive: false,
+      principalRole: 'member',
+      authorRole: 'member',
+    };
+    const dependencies: DaemonWorkScheduleAuthorityDependencies = {
+      workspaceId: schedule.workspaceId,
+      agentPubkey: agent.publicKey,
+      readCurrentEvents: async () => [parsed.event],
+      readFacts: async () => facts,
+      verifyScheduleGrant: async () => false,
+      verifyAgentToolMandate: async () => 'unavailable',
+    };
+
+    await expect(authorizeDaemonWorkSchedule(parsed, dependencies)).resolves.toEqual({
+      authorized: false,
+      terminal: false,
+      reason: 'agent-tool-mandate-unavailable',
+    });
+    dependencies.verifyAgentToolMandate = async () => 'invalid';
+    await expect(authorizeDaemonWorkSchedule(parsed, dependencies)).resolves.toEqual({
+      authorized: false,
+      terminal: true,
+      reason: 'agent-tool-mandate-invalid',
+    });
   });
 
   it.each([

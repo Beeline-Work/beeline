@@ -178,13 +178,15 @@ export interface DaemonWorkScheduleAuthorityFacts {
   targetAccessPermitted?: boolean;
 }
 
+export type AgentToolMandateAuthority = 'valid' | 'invalid' | 'unavailable';
+
 export interface DaemonWorkScheduleAuthorityDependencies {
   workspaceId: string;
   agentPubkey: string;
   readCurrentEvents(schedule: ParsedWorkSchedule): Promise<readonly NostrEvent[]>;
   readFacts(schedule: ParsedWorkSchedule): Promise<DaemonWorkScheduleAuthorityFacts>;
   verifyScheduleGrant(schedule: ParsedWorkSchedule): Promise<boolean>;
-  verifyAgentToolMandate?(schedule: ParsedWorkSchedule): Promise<boolean>;
+  verifyAgentToolMandate?(schedule: ParsedWorkSchedule): Promise<AgentToolMandateAuthority>;
   verifyMissionGrant(schedule: ParsedWorkSchedule): Promise<boolean>;
 }
 
@@ -239,11 +241,16 @@ export async function authorizeDaemonWorkSchedule(
     ) {
       return { authorized: false, terminal: true, reason: 'principal-removed' };
     }
-    const agentToolAuthorized = schedule.agentToolMandate
-      ? parsed.event.pubkey === schedule.agentPubkey &&
-        facts.authorIsAgent &&
-        Boolean(await dependencies.verifyAgentToolMandate?.(parsed))
-      : false;
+    const mandateAuthority = schedule.agentToolMandate
+      ? await dependencies.verifyAgentToolMandate?.(parsed)
+      : undefined;
+    const agentToolAuthorized =
+      mandateAuthority === 'valid' &&
+      parsed.event.pubkey === schedule.agentPubkey &&
+      facts.authorIsAgent;
+    if (schedule.agentToolMandate && mandateAuthority === 'unavailable') {
+      return { authorized: false, terminal: false, reason: 'agent-tool-mandate-unavailable' };
+    }
     if (schedule.agentToolMandate && !agentToolAuthorized) {
       return { authorized: false, terminal: true, reason: 'agent-tool-mandate-invalid' };
     }
@@ -430,15 +437,19 @@ export function createDaemonWorkCalendar(input: {
     return result.authorized || result.reason === 'action-already-succeeded';
   };
 
-  const verifyAgentToolMandate = async (parsed: ParsedWorkSchedule): Promise<boolean> => {
+  const verifyAgentToolMandate = async (
+    parsed: ParsedWorkSchedule,
+  ): Promise<AgentToolMandateAuthority> => {
     const mandate = parsed.value.agentToolMandate;
-    if (!mandate) return false;
-    const referenced = (await rawEvents([{ ids: [mandate.eventId], limit: 2 }])).find(
-      (event) => event.id === mandate.eventId,
-    );
+    if (!mandate) return 'invalid';
+    const findReferenced = (events: readonly NostrEvent[]) =>
+      events.find((event) => event.id === mandate.eventId);
+    let referenced = findReferenced(await rawEvents([{ ids: [mandate.eventId], limit: 2 }]));
+    if (!referenced)
+      referenced = findReferenced(await rawEvents([{ ids: [mandate.eventId], limit: 2 }]));
+    if (!referenced) return 'unavailable';
     if (
       mandate.defaultsVersion !== BEELINE_MANDATE_DEFAULTS_VERSION ||
-      !referenced ||
       !verifyEvent(referenced) ||
       referenced.pubkey !== identity.publicKey ||
       uniqueArtifactTag(referenced, 'h') !== parsed.value.roomId ||
@@ -449,39 +460,48 @@ export function createDaemonWorkCalendar(input: {
         String(mandate.defaultsVersion) ||
       mandateGeneration(referenced) === undefined
     ) {
-      return false;
+      return 'invalid';
     }
-    const current = (
-      await rawEvents([
-        {
-          kinds: [KIND_STREAM_MESSAGE],
-          authors: [identity.publicKey],
-          '#h': [parsed.value.roomId],
-          '#t': ['beeline-agent-mandate'],
-          limit: 20,
-        },
-      ])
-    )
-      .filter(
-        (event) =>
-          verifyEvent(event) &&
-          event.pubkey === identity.publicKey &&
-          uniqueArtifactTag(event, 'h') === parsed.value.roomId &&
-          event.tags.some((tag) => tag[0] === 't' && tag[1] === 'beeline-agent-mandate') &&
-          uniqueArtifactTag(event, 'agent-tool-schema-version') ===
-            String(BEELINE_AGENT_TOOL_SCHEMA_VERSION),
-      )
-      .sort(
-        (left, right) =>
-          (mandateGeneration(right) ?? -1) - (mandateGeneration(left) ?? -1) ||
-          right.created_at - left.created_at ||
-          right.id.localeCompare(left.id),
-      )[0];
-    return (
-      Boolean(current) &&
-      current!.id === referenced.id &&
-      uniqueArtifactTag(current!, 'mandate-defaults-version') === String(mandate.defaultsVersion)
-    );
+    const currentEvents = [
+      {
+        kinds: [KIND_STREAM_MESSAGE],
+        authors: [identity.publicKey],
+        '#h': [parsed.value.roomId],
+        '#t': ['beeline-agent-mandate'],
+        limit: 20,
+      },
+    ];
+    const findCurrent = (events: readonly NostrEvent[]) =>
+      events
+        .filter(
+          (event) =>
+            verifyEvent(event) &&
+            event.pubkey === identity.publicKey &&
+            uniqueArtifactTag(event, 'h') === parsed.value.roomId &&
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === 'beeline-agent-mandate') &&
+            uniqueArtifactTag(event, 'agent-tool-schema-version') ===
+              String(BEELINE_AGENT_TOOL_SCHEMA_VERSION),
+        )
+        .sort(
+          (left, right) =>
+            (mandateGeneration(right) ?? -1) - (mandateGeneration(left) ?? -1) ||
+            right.created_at - left.created_at ||
+            right.id.localeCompare(left.id),
+        )[0];
+    let current = findCurrent(await rawEvents(currentEvents));
+    if (!current) current = findCurrent(await rawEvents(currentEvents));
+    if (!current) return 'unavailable';
+    if (
+      current.id === referenced.id &&
+      uniqueArtifactTag(current, 'mandate-defaults-version') === String(mandate.defaultsVersion)
+    ) {
+      return 'valid';
+    }
+    // A newer generation is affirmative evidence of replacement. A lower
+    // generation, however, is compatible with an incomplete relay response.
+    return (mandateGeneration(current) ?? -1) >= (mandateGeneration(referenced) ?? -1)
+      ? 'invalid'
+      : 'unavailable';
   };
 
   const missionReference = (parsed: ParsedWorkSchedule): MissionGrantReference | undefined => {
@@ -719,7 +739,7 @@ export function createDaemonWorkCalendar(input: {
           if (!(await verifyMissionGrant(candidate))) return false;
         } else if (candidate.event.pubkey === candidate.value.agentPubkey) {
           if (candidate.value.agentToolMandate) {
-            if (!(await verifyAgentToolMandate(candidate))) return false;
+            if ((await verifyAgentToolMandate(candidate)) !== 'valid') return false;
           } else if (
             !candidate.value.permissionGrantEventId ||
             !(await verifyScheduleGrant(candidate))

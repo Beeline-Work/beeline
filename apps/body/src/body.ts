@@ -8405,6 +8405,22 @@ export class Body {
     const existing = this.pendingCornerApprovals.get(input.request.eventId);
     if (existing) return existing;
     const operation = (async () => {
+      const published = await this.publishedCornerApproval(input);
+      if (published) {
+        void this.finishCornerApproval({
+          ...input,
+          permissionId: published.permissionId,
+          repository: published.repository,
+          audience: published.audience,
+        }).catch((error) =>
+          console.error('[body] resumed corner approval settlement failed:', error),
+        );
+        return {
+          request_id: published.permissionId,
+          event_id: published.eventId,
+          message: published.message,
+        };
+      }
       const permissionId = randomUUID();
       const repository = this.repoId(input.roomRepo);
       const audience = await this.cornerOpenAudience(input.roomId, input.request.authorPubkey);
@@ -8422,9 +8438,12 @@ export class Body {
         : input.request.authorAttribution;
       const requester =
         requesterAttribution?.handle ?? fallbackPersonName(input.request.authorPubkey);
+      const agent =
+        (await this.roomAuthorAttributions(input.roomId, [this.agentIdentity.publicKey])).get(
+          this.agentIdentity.publicKey,
+        )?.name ?? fallbackAgentName(this.agentIdentity.publicKey);
       const message =
-        `@${requester.replace(/^@/, '')} asked ${this.agentIdentity.name || 'the agent'} to open a corner for: ` +
-        input.objective;
+        `@${requester.replace(/^@/, '')} asked ${agent} to open a corner for: ` + input.objective;
       const card = buildControlMessage('permission-request', input.roomId, this.agentIdentity, message, [
         ['t', WRITE_PERMISSION_REQUEST_TAG],
         ['permission', permissionId],
@@ -8446,6 +8465,54 @@ export class Body {
     })();
     this.pendingCornerApprovals.set(input.request.eventId, operation);
     return operation;
+  }
+
+  /**
+   * The in-memory promise above handles overlapping handlers in one Body.
+   * A restarted Room runtime has no such memory, so its first retry must join
+   * the signed pending card already authored for this exact member request.
+   */
+  private async publishedCornerApproval(input: {
+    roomId: string;
+    roomRepo: BoundRepo;
+    request: ChannelTaskRequest;
+  }): Promise<
+    | {
+        permissionId: string;
+        eventId: string;
+        message: string;
+        repository: string;
+        audience: string[];
+      }
+    | undefined
+  > {
+    const repository = this.repoId(input.roomRepo);
+    const events = await this.agentRelay.queryEvents([
+      {
+        kinds: [9],
+        '#h': [input.roomId],
+        '#t': [WRITE_PERMISSION_REQUEST_TAG],
+        '#request': [input.request.eventId],
+        authors: [this.agentIdentity.publicKey],
+        limit: 20,
+      },
+    ]);
+    const event = events
+      .filter(
+        (candidate) =>
+          tagValue(candidate, 't') === WRITE_PERMISSION_REQUEST_TAG &&
+          tagValue(candidate, 'request') === input.request.eventId &&
+          tagValue(candidate, 'agent') === this.agentIdentity.publicKey &&
+          tagValue(candidate, 'repo') === repository &&
+          tagValue(candidate, 'status') === 'pending',
+      )
+      .sort((left, right) => right.created_at - left.created_at)[0];
+    const permissionId = event ? tagValue(event, 'permission') : undefined;
+    const audience = event
+      ? [...new Set(event.tags.filter((tag) => tag[0] === 'p' && tag[1]).map((tag) => tag[1]!))]
+      : [];
+    if (!event || !permissionId || audience.length === 0) return undefined;
+    return { permissionId, eventId: event.id, message: event.content, repository, audience };
   }
 
   private async finishCornerApproval(input: {

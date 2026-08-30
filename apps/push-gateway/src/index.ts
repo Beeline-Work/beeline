@@ -75,6 +75,7 @@ async function main(): Promise<void> {
         return gateway.sendTestNotification(pubkey);
       },
       pushHealth: () => pushHealth,
+      otaReceiptAdminToken: config.otaReceiptAdminToken,
       indexer: {
         publicOrigin: config.indexerPublicOrigin,
         readWorkspaces: (pubkey) => indexer.readWorkspaces(pubkey),

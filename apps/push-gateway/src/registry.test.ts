@@ -38,7 +38,36 @@ describe('TokenRegistry', () => {
 
     const reloaded = await TokenRegistry.load(file);
     expect(reloaded.tokensForPubkeys([PUBKEY_A])).toEqual([TOKEN_A]);
-    expect(JSON.parse(await readFile(file, 'utf8')).version).toBe(1);
+    expect(JSON.parse(await readFile(file, 'utf8')).version).toBe(2);
+  });
+
+  it('persists only the latest running-update receipt for each identity device', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'buzzy-push-receipts-'));
+    const file = join(directory, 'registrations.json');
+    const registry = await TokenRegistry.load(file);
+    const receipt = {
+      pubkey: PUBKEY_A,
+      deviceId: '11111111-2222-3333-4444-555555555555',
+      updateId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      channel: 'production',
+      group: '99999999-8888-7777-6666-555555555555',
+      runtimeVersion: '21',
+      environment: 'physical' as const,
+    };
+
+    await registry.recordUpdateReceipt(receipt, new Date('2026-08-29T20:00:00.000Z'));
+    await registry.recordUpdateReceipt(
+      { ...receipt, updateId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff' },
+      new Date('2026-08-29T20:05:00.000Z'),
+    );
+
+    const reloaded = await TokenRegistry.load(file);
+    expect(reloaded.receiptsForPubkey(PUBKEY_A)).toEqual([
+      expect.objectContaining({
+        updateId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+        reportedAt: '2026-08-29T20:05:00.000Z',
+      }),
+    ]);
   });
 
   it('rejects malformed pubkeys and tokens', async () => {

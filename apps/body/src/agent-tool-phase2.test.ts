@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import { newIdentity } from '@beeline/gate';
+import { KIND_CHANNEL_MEMBERS } from '@beeline/buzz-client';
+import { signEvent, type NostrEvent } from '@beeline/nostr';
+import { AcpClient } from './acp.js';
 import { Body } from './body.js';
+import { mediaUploadResponse, relayQueryResponse } from './relay-test-helper.js';
 import {
   BEELINE_MANDATE_DEFAULTS,
   BEELINE_MANDATE_DEFAULTS_VERSION,
@@ -37,6 +44,156 @@ afterEach(() => {
 });
 
 describe('Phase 2 agent tools', () => {
+  it('opens, works, delivers, and closes a repo-less corner without Git semantics', async () => {
+    const agent = newIdentity('repoless-corner-agent');
+    const body = new Body(config(), undefined, agent);
+    const workspace = await mkdtemp(resolve(tmpdir(), 'beeline-repoless-corner-'));
+    const request = {
+      eventId: 'c'.repeat(64),
+      authorPubkey: newIdentity('repoless-corner-human').publicKey,
+      content: 'Prepare the launch brief artifact.',
+      createdAt: 1,
+    };
+    Reflect.get(body, 'pendingRoomTurns').set('room', {
+      request,
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: false,
+    });
+    Reflect.get(body, 'activePermissionTurns').set('room', { requestId: request.eventId });
+    vi.spyOn(body as never, 'requesterCanOpenCornerDirectly' as never).mockResolvedValue(
+      true as never,
+    );
+    vi.spyOn(body as never, 'currentAgentToolMandate' as never).mockImplementation(
+      async (_workspaceId: string, _roomId: string, requestedScope?: unknown) => {
+        const current = mandate();
+        return requestedScope && (requestedScope as { type?: string }).type === 'corner.close'
+          ? {
+              ...current,
+              grants: [
+                {
+                  action: 'corner.close',
+                  scope: requestedScope,
+                  source: 'signed-grant',
+                  event_id: 'b'.repeat(64),
+                },
+              ],
+            }
+          : current;
+      },
+    );
+    const editClient = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
+    const artifactPath = resolve(workspace, 'launch-brief.md');
+    const open = vi.spyOn(body, 'openSubchannel').mockImplementation(async (...args) => {
+      expect(args[1]).toBeUndefined();
+      await writeFile(artifactPath, '# Launch brief\n');
+      const info = {
+        subchannelId: 'repoless-corner',
+        worktreePath: workspace,
+        role: body.agent,
+        session: {
+          channelId: 'repoless-corner',
+          parentChannelId: 'room',
+          sessionId: 'session',
+          client: editClient,
+          mode: 'edit',
+          cwd: workspace,
+        },
+        lastPolledAt: 1,
+        archived: false,
+        request,
+      };
+      body.registerSession(info.session as never);
+      body.registerSubchannel(info as never);
+      return info as never;
+    });
+    vi.spyOn(body as never, 'startAgentTask' as never).mockImplementation(() => undefined as never);
+    const archive = vi
+      .spyOn(body, 'archiveSubchannel')
+      .mockImplementation(async () => undefined as never);
+    const membership = signEvent(
+      {
+        pubkey: agent.publicKey,
+        created_at: 1,
+        kind: KIND_CHANNEL_MEMBERS,
+        tags: [
+          ['d', 'repoless-corner'],
+          ['p', agent.publicKey, '', 'member'],
+        ],
+        content: '',
+      },
+      agent.secretKey,
+    );
+    const published: NostrEvent[] = [membership];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const query = relayQueryResponse(published, input, init);
+        if (query) return query;
+        const upload = mediaUploadResponse(input, init);
+        if (upload) return upload;
+        if (init?.body && typeof init.body === 'string') {
+          published.push(JSON.parse(init.body) as NostrEvent);
+        }
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      }),
+    );
+
+    const result = await Reflect.get(body, 'invokeAgentTool').call(
+        body,
+        { channelId: 'room', roomId: 'room', workspaceId: 'workspace' },
+        'open_corner',
+        { objective: request.content },
+      );
+    expect(result).toEqual({
+      status: 'executed',
+      event_id: expect.any(String),
+      result: { corner_id: 'repoless-corner' },
+    });
+    expect(open).toHaveBeenCalledOnce();
+
+    Reflect.get(body, 'activePermissionTurns').set('repoless-corner', {
+      requestId: 'd'.repeat(64),
+    });
+    const delivered = await Reflect.get(body, 'invokeAgentTool').call(
+        body,
+        { channelId: 'repoless-corner', roomId: 'room', workspaceId: 'workspace' },
+        'deliver',
+        { path: 'launch-brief.md', audience: 'current_corner' },
+      );
+    expect(delivered).toEqual({
+      status: 'executed',
+      event_id: expect.any(String),
+      result: expect.objectContaining({ name: 'launch-brief.md' }),
+    });
+
+    await expect(
+      Reflect.get(body, 'invokeAgentTool').call(
+        body,
+        { channelId: 'repoless-corner', roomId: 'room', workspaceId: 'workspace' },
+        'close_corner',
+        { corner_id: 'repoless-corner', disposition: 'land' },
+      ),
+    ).resolves.toMatchObject({
+      status: 'denied',
+      code: 'landing_unavailable',
+      message: expect.stringContaining('no repository or feature branch'),
+    });
+    await expect(
+      Reflect.get(body, 'invokeAgentTool').call(
+        body,
+        { channelId: 'repoless-corner', roomId: 'room', workspaceId: 'workspace' },
+        'close_corner',
+        { corner_id: 'repoless-corner', disposition: 'abandon' },
+      ),
+    ).resolves.toMatchObject({
+      status: 'executed',
+      result: { corner_id: 'repoless-corner', disposition: 'abandon', state: 'closed' },
+    });
+    expect(archive).toHaveBeenCalledWith('repoless-corner');
+    await rm(workspace, { recursive: true, force: true });
+  });
+
   it('defaults request_mandate beneficiary to the authenticated caller and reserves granted', async () => {
     const agent = newIdentity('phase2-mandate-agent');
     const body = new Body(config(), undefined, agent);

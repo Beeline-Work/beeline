@@ -6,6 +6,8 @@ on:
       - '.github/workflows/*.yml'
       - '.github/workflows/*.yaml'
       - '.github/actionlint.yaml'
+      - 'package.json'
+      - '**/*.sh'
   workflow_dispatch: {}
 
 permissions:
@@ -25,3 +27,7 @@ jobs:
           -w /repo
           rhysd/actionlint:1.7.7
           -config-file .github/actionlint.yaml
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Lint tracked shell scripts
+        run: npm run lint:shell

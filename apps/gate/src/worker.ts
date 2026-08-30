@@ -11,7 +11,7 @@
  * `attemptMerge` is fail-closed: any missing/mismatched/forged approval, or any
  * git error, refuses the merge and leaves `main` untouched.
  */
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
@@ -105,16 +105,30 @@ export async function authorizeReviewer(
   );
 }
 
-/** Clone the repo fresh as the worker and return the checkout path. */
-async function cloneFresh(req: MergeRequest): Promise<string> {
+/** Clone the repo fresh as the worker into an already-owned temporary root. */
+async function cloneFresh(root: string, req: MergeRequest): Promise<string> {
   const owner = req.ownerHex ?? req.worker.publicKey;
-  const dir = mkdtempSync(join(tmpdir(), 'buzzy-worker-'));
   const url = gitRepoUrl(owner, req.repo);
-  const res = await gitAuthed(dir, req.worker, owner, req.repo, ['clone', url, 'work']);
+  const res = await gitAuthed(root, req.worker, owner, req.repo, ['clone', url, 'work']);
   if (!res.ok) {
     throw new Error(`worker clone failed: ${res.stderr}`);
   }
-  return join(dir, 'work');
+  return join(root, 'work');
+}
+
+/** Give one merge attempt a fresh clone and remove it after every outcome. */
+export async function withFreshClone<T>(
+  req: MergeRequest,
+  operation: (work: string) => Promise<T>,
+  clone: (root: string, req: MergeRequest) => Promise<string> = cloneFresh,
+): Promise<T> {
+  const root = mkdtempSync(join(tmpdir(), 'buzzy-worker-'));
+  try {
+    const work = await clone(root, req);
+    return await operation(work);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /** Fetch the approvals the reviewer posted for this repo/channel. */
@@ -140,87 +154,94 @@ async function fetchApprovals(req: MergeRequest): Promise<NostrEvent[]> {
 export async function attemptMerge(req: MergeRequest): Promise<MergeOutcome> {
   const owner = req.ownerHex ?? req.worker.publicKey;
   const targetRef = `refs/heads/${req.targetBranch}`;
-  const work = await cloneFresh(req);
+  return withFreshClone(req, async (work) => {
+    const featureTip = (
+      await git(work, ['rev-parse', `origin/${req.featureBranch}`])
+    ).stdout.trim();
+    const targetTipBefore = (
+      await git(work, ['rev-parse', `origin/${req.targetBranch}`])
+    ).stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(featureTip)) {
+      return {
+        merged: false,
+        reason: `feature branch ${req.featureBranch} not found`,
+        targetTipBefore,
+      };
+    }
 
-  const featureTip = (await git(work, ['rev-parse', `origin/${req.featureBranch}`])).stdout.trim();
-  const targetTipBefore = (
-    await git(work, ['rev-parse', `origin/${req.targetBranch}`])
-  ).stdout.trim();
-  if (!/^[0-9a-f]{40}$/.test(featureTip)) {
-    return {
-      merged: false,
-      reason: `feature branch ${req.featureBranch} not found`,
-      targetTipBefore,
+    const target: MergeTarget = {
+      repo: `${owner}/${req.repo}`,
+      branch: targetRef,
+      tip: featureTip,
     };
-  }
+    const relay = req.relay ?? createRelayClient(req.worker);
 
-  const target: MergeTarget = { repo: `${owner}/${req.repo}`, branch: targetRef, tip: featureTip };
-  const relay = req.relay ?? createRelayClient(req.worker);
+    const reviewerAuthority = await authorizeReviewer({
+      pubkey: req.trustedReviewer,
+      relay,
+      channelId: req.channelId,
+      custody: req.trustedReviewerCustody,
+    });
+    if (!reviewerAuthority.authorized) {
+      return {
+        merged: false,
+        reason: reviewerAuthority.reason,
+        terminal: reviewerAuthority.terminal,
+        featureTip,
+        targetTipBefore,
+        targetTipAfter: targetTipBefore,
+      };
+    }
 
-  const reviewerAuthority = await authorizeReviewer({
-    pubkey: req.trustedReviewer,
-    relay,
-    channelId: req.channelId,
-    custody: req.trustedReviewerCustody,
+    const approvals = await fetchApprovals(req);
+    const valid = approvals.find((ev) =>
+      verifyApproval(ev, req.trustedReviewer, target, req.channelId),
+    );
+    if (!valid) {
+      return {
+        merged: false,
+        reason: `no valid approval binding ${target.repo} ${targetRef} -> ${featureTip}`,
+        featureTip,
+        targetTipBefore,
+        targetTipAfter: targetTipBefore,
+      };
+    }
+
+    // Approval is valid for this corner's merge — land its current feature tip.
+    await git(work, ['checkout', req.targetBranch]);
+    const merge = await git(work, ['merge', '--ff-only', `origin/${req.featureBranch}`]);
+    if (!merge.ok) {
+      return {
+        merged: false,
+        reason: `ff merge failed: ${merge.stderr}`,
+        featureTip,
+        targetTipBefore,
+      };
+    }
+    const push = await gitAuthed(work, req.worker, owner, req.repo, [
+      'push',
+      'origin',
+      req.targetBranch,
+    ]);
+    if (!push.ok || /\brejected\b|denied|forbidden/i.test(push.stderr)) {
+      return {
+        merged: false,
+        reason: `worker push refused by relay: ${push.stderr}`,
+        featureTip,
+        targetTipBefore,
+      };
+    }
+
+    const targetTipAfter = await lsRemoteRef(work, req.worker, owner, req.repo, targetRef);
+    return {
+      merged: targetTipAfter === featureTip,
+      reason:
+        targetTipAfter === featureTip ? 'merged' : `post-push tip mismatch: ${targetTipAfter}`,
+      featureTip,
+      targetTipBefore,
+      targetTipAfter,
+    };
   });
-  if (!reviewerAuthority.authorized) {
-    return {
-      merged: false,
-      reason: reviewerAuthority.reason,
-      terminal: reviewerAuthority.terminal,
-      featureTip,
-      targetTipBefore,
-      targetTipAfter: targetTipBefore,
-    };
-  }
-
-  const approvals = await fetchApprovals(req);
-  const valid = approvals.find((ev) =>
-    verifyApproval(ev, req.trustedReviewer, target, req.channelId),
-  );
-  if (!valid) {
-    return {
-      merged: false,
-      reason: `no valid approval binding ${target.repo} ${targetRef} -> ${featureTip}`,
-      featureTip,
-      targetTipBefore,
-      targetTipAfter: targetTipBefore,
-    };
-  }
-
-  // Approval is valid for this corner's merge — land its current feature tip.
-  await git(work, ['checkout', req.targetBranch]);
-  const merge = await git(work, ['merge', '--ff-only', `origin/${req.featureBranch}`]);
-  if (!merge.ok) {
-    return {
-      merged: false,
-      reason: `ff merge failed: ${merge.stderr}`,
-      featureTip,
-      targetTipBefore,
-    };
-  }
-  const push = await gitAuthed(work, req.worker, owner, req.repo, [
-    'push',
-    'origin',
-    req.targetBranch,
-  ]);
-  if (!push.ok || /\brejected\b|denied|forbidden/i.test(push.stderr)) {
-    return {
-      merged: false,
-      reason: `worker push refused by relay: ${push.stderr}`,
-      featureTip,
-      targetTipBefore,
-    };
-  }
-
-  const targetTipAfter = await lsRemoteRef(work, req.worker, owner, req.repo, targetRef);
-  return {
-    merged: targetTipAfter === featureTip,
-    reason: targetTipAfter === featureTip ? 'merged' : `post-push tip mismatch: ${targetTipAfter}`,
-    featureTip,
-    targetTipBefore,
-    targetTipAfter,
-  };
 }
 
 /** One durable gate serves every agent-opened change in a repository Room. */

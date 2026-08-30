@@ -1,7 +1,65 @@
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { signEvent } from '@beeline/nostr';
 import { newIdentity } from './identity.js';
-import { authorizeReviewer, roomMergeCandidates } from './worker.js';
+import {
+  authorizeReviewer,
+  roomMergeCandidates,
+  withFreshClone,
+  type MergeRequest,
+} from './worker.js';
+
+describe('merge attempt clone lifetime', () => {
+  const request = {
+    worker: newIdentity('worker'),
+    trustedReviewer: 'a'.repeat(64),
+    trustedReviewerCustody: 'device',
+    repo: 'project',
+    channelId: '11111111-1111-4111-8111-111111111111',
+    targetBranch: 'main',
+    featureBranch: 'feature/change',
+  } satisfies MergeRequest;
+
+  it.each([
+    { merged: false, reason: 'refused' },
+    { merged: true, reason: 'merged' },
+  ])('removes the fresh clone after a $reason outcome', async (outcome) => {
+    let root = '';
+    const result = await withFreshClone(
+      request,
+      async (work) => {
+        writeFileSync(join(work, 'marker'), 'used');
+        return outcome;
+      },
+      async (temporaryRoot) => {
+        root = temporaryRoot;
+        const work = join(root, 'work');
+        mkdirSync(work);
+        return work;
+      },
+    );
+
+    expect(result).toEqual(outcome);
+    expect(root).not.toBe('');
+    expect(existsSync(root)).toBe(false);
+  });
+
+  it('removes the temporary root when cloning fails', async () => {
+    let root = '';
+    await expect(
+      withFreshClone(
+        request,
+        async () => ({ merged: false, reason: 'unreachable' }),
+        async (temporaryRoot) => {
+          root = temporaryRoot;
+          throw new Error('clone failed');
+        },
+      ),
+    ).rejects.toThrow('clone failed');
+    expect(existsSync(root)).toBe(false);
+  });
+});
 
 describe('durable Room merge discovery', () => {
   it('accepts only signed agent-authored openings for the configured repo and target', () => {

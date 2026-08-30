@@ -7,6 +7,10 @@ on:
       - 'packages/nostr/**'
       - 'packages/buzz-client/**'
       - 'apps/gate/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.base.json'
+      - 'turbo.json'
       - '.github/workflows/body-tests.yml'
   workflow_dispatch: {}
 

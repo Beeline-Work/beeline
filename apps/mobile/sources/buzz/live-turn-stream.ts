@@ -6,9 +6,10 @@ function belongsToActiveTurn(message: ChatDisplayMessage, turn: RoomViewAgentTur
 
   // Drafts carry the request identity directly in their stable presentation
   // id. Thoughts are session-scoped on the wire, so the signed turn's author
-  // and start time are their narrowest client-side join. Indexed activity is
-  // subject to the same author/time boundary and never enters the live overlay
-  // decoder.
+  // and start time are their narrowest client-side join; they are consumed by
+  // this projection only so they can never become transcript rows. Indexed
+  // activity is subject to the same author/time boundary and never enters the
+  // live overlay decoder.
   if (message.id === `live-turn:${turn.requestId}`) return true;
   if (message.isAgentLiveTurn && message.agentThought) return true;
   return Boolean(message.isAgentActivity && !message.isAgentLiveTurn);
@@ -35,11 +36,12 @@ export function projectActiveTurnStream(
   const draft = [...sources]
     .reverse()
     .find((message) => message.id === `live-turn:${turn.requestId}`)?.agentMessageDraft;
-  const thought = [...sources].reverse().find((message) => message.agentThought)?.agentThought;
   const activity = sources.flatMap((message) => message.activity ?? []);
-  if (!draft && !thought && !activity.length) return messages;
-
   const sourceIds = new Set(sources.map((message) => message.id));
+  if (!draft && !activity.length) {
+    return messages.filter((message) => !sourceIds.has(message.id));
+  }
+
   const timestamp = Math.max(turn.createdAt, ...sources.map((message) => message.timestamp));
   const liveTurn: ChatDisplayMessage = {
     id: `active-turn-stream:${turn.requestId}`,
@@ -51,7 +53,6 @@ export function projectActiveTurnStream(
     isAgentActivity: true,
     isAgentLiveTurn: true,
     ...(activity.length ? { activity } : {}),
-    ...(thought ? { agentThought: thought } : {}),
     ...(draft ? { agentMessageDraft: draft } : {}),
   };
 

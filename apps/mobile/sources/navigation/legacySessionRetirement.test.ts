@@ -25,11 +25,12 @@ describe('legacy session retirement', () => {
     expect(rootLayout).not.toContain('navigateToSession');
   });
 
-  it('uses the cached Beeline Room list in the persistent sidebar', () => {
+  it('uses the server-indexed Beeline Room list in the persistent sidebar', () => {
     const sidebar = source('components/SidebarView.tsx');
-    expect(sidebar).toContain('selectChannelList');
-    expect(sidebar).toContain('roomListFeed');
-    expect(sidebar).toContain('router.push(`/buzz/chat/${encodeURIComponent(item.id)}`');
+    expect(sidebar).toContain('RoomViewClient');
+    expect(sidebar).toContain('http.chats(workspaceId)');
+    expect(sidebar).toContain('surface.chats.map');
+    expect(sidebar).toContain('router.push(`/buzz/chat/${encodeURIComponent(item.room.id)}`');
     expect(sidebar).not.toMatch(/MainView|SessionsList|ActiveSessionsGroupCompact/);
     expect(sidebar).not.toContain("router.push('/settings')");
     expect(sidebar).not.toContain("router.navigate('/new')");

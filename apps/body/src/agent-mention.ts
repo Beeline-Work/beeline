@@ -12,6 +12,8 @@ export const AGENT_DELEGATION_HARD_MAX_HOPS = 8;
 
 const PUBKEY = /^[0-9a-f]{64}$/;
 const EVENT_ID = /^[0-9a-f]{64}$/;
+const AGENT_MENTION_HANDLE =
+  /(?:^|[\s\p{P}\p{S}])@([\p{L}\p{N}_-](?:[\p{L}\p{N}_.-]*[\p{L}\p{N}_-])?)/gu;
 
 export interface AgentMentionMetadata {
   workspaceId: string;
@@ -55,10 +57,12 @@ export function agentDelegationMaxHops(
 
 function mentionHandles(text: string): string[] {
   return [
-    ...text
-      .normalize('NFKC')
-      .matchAll(/(?:^|\s)@([\p{L}\p{N}_-](?:[\p{L}\p{N}_.-]*[\p{L}\p{N}_-])?)/gu),
+    ...text.normalize('NFKC').matchAll(AGENT_MENTION_HANDLE),
   ].map((match) => match[1]!.toLowerCase());
+}
+
+export function hasAgentMention(text: string): boolean {
+  return mentionHandles(text).length > 0;
 }
 
 /** Resolve at most one peer. Multiple mentions are visible context, never fan-out. */
@@ -75,10 +79,7 @@ export function roomAgentMention(
   let firstNonTarget: RoomAgentMentionResolution | undefined;
   for (const handle of handles) {
     const found = byHandle.get(handle);
-    if (!found) {
-      firstNonTarget ??= { status: 'unknown', handle };
-      continue;
-    }
+    if (!found) continue;
     if (found.pubkey === selfPubkey) {
       firstNonTarget ??= { status: 'self', handle };
       continue;
@@ -181,8 +182,8 @@ export function mentionedAgent(
   const byHandle = new Map(
     roster.map((entry) => [entry.handle.replace(/^@/, '').normalize('NFKC').toLowerCase(), entry]),
   );
-  for (const match of text.normalize('NFKC').matchAll(/(?:^|\s)@([\p{L}\p{N}_-]+)/gu)) {
-    const found = byHandle.get(match[1]!.toLowerCase());
+  for (const handle of mentionHandles(text)) {
+    const found = byHandle.get(handle);
     if (found && found.pubkey !== selfPubkey) return found;
   }
   return undefined;

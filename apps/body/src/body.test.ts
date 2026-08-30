@@ -4683,6 +4683,75 @@ describe('Room conversation and permission-gated work intent', () => {
     }
   });
 
+  it('dispatches delimited Room handles and refuses only real workspace agents outside the Room', async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-room-delegation-mentions-'));
+    const codex = newIdentity('mention-codex');
+    const outside = newIdentity('mention-outside');
+    const body = new Body({
+      agentBinary: '/nonexistent',
+      mcpBinary: '/nonexistent',
+      agentEnv: {},
+      workspaceRoot,
+      relayBaseUrl: 'http://relay.test',
+      relayHost: 'relay.test',
+      relayScheme: 'http',
+      relayWsUrl: 'ws://relay.test',
+      autoApprovePermissions: true,
+    });
+    try {
+      Reflect.set(
+        body,
+        'agentMentionRoster',
+        vi.fn(async (channelId: string) => ({
+          roster:
+            channelId === 'workspace'
+              ? [
+                  { handle: 'codex', pubkey: codex.publicKey, kind: 'agent' as const },
+                  { handle: 'outside', pubkey: outside.publicKey, kind: 'agent' as const },
+                ]
+              : [{ handle: 'codex', pubkey: codex.publicKey, kind: 'agent' as const }],
+          attributions: new Map(),
+        })),
+      );
+      Reflect.set(body, 'channelCommunityId', vi.fn(async () => 'workspace'));
+      Reflect.set(body, 'isRoomAgentOnline', vi.fn(async () => true));
+      const prepare = (
+        Reflect.get(body, 'prepareRoomDelegation') as (
+          channelId: string,
+          request: ChannelTaskRequest,
+          text: string,
+        ) => Promise<{ status: string; noticeStatus?: string; envelope?: AgentDelegationEnvelope }>
+      ).bind(body);
+      const request: ChannelTaskRequest = {
+        eventId: '1'.repeat(64),
+        authorPubkey: human.publicKey,
+        content: 'ask codex',
+        createdAt: 1,
+      };
+
+      await expect(
+        prepare(
+          'room',
+          request,
+          '...trying it again, fresh and clean: --- **@codex** Oi, dummy~! ... Per the host rules for this thread, my reply is allowed to @mention one peer agent ...',
+        ),
+      ).resolves.toMatchObject({
+        status: 'dispatch',
+        envelope: { toAgentId: codex.publicKey },
+      });
+      await expect(prepare('room', request, '@mention me')).resolves.toMatchObject({
+        status: 'none',
+      });
+      await expect(prepare('room', request, '@outside please help')).resolves.toMatchObject({
+        status: 'notice',
+        noticeStatus: 'unknown',
+      });
+    } finally {
+      await body.dispose();
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('turns offline and exhausted peer mentions into host notices without dispatch', async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), 'buzzy-room-delegation-notices-'));
     const peer = newIdentity('notice-peer');

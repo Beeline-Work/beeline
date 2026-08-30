@@ -352,6 +352,7 @@ import {
   agentDelegationMaxHops,
   agentDelegationTags,
   agentMentionTags,
+  hasAgentMention,
   mentionedAgent,
   nextAgentMentionChain,
   parseAgentDelegation,
@@ -7464,18 +7465,23 @@ export class Body {
     text: string,
   ): Promise<PreparedRoomDelegation> {
     const baseTags = this.delegatedReplyTags(request);
-    if (!/@[a-z0-9][a-z0-9._-]*/i.test(text)) return { status: 'none', replyTags: baseTags };
+    if (!hasAgentMention(text)) return { status: 'none', replyTags: baseTags };
     const { roster } = await this.agentMentionRoster(channelId);
     const mention = roomAgentMention(text, roster, this.agentIdentity.publicKey);
-    if (mention.status === 'none' || mention.status === 'self' || mention.status === 'human') {
-      return { status: 'none', replyTags: baseTags };
-    }
-    if (mention.status === 'unknown') {
+    if (mention.status !== 'target') {
+      // Room targets below preserve the existing offline distinction. A workspace
+      // target found only here is a real agent outside this Room; unknown prose is
+      // deliberately context-only.
+      const workspaceId = await this.channelCommunityId(channelId);
+      if (!workspaceId || workspaceId === channelId) return { status: 'none', replyTags: baseTags };
+      const { roster: workspaceRoster } = await this.agentMentionRoster(workspaceId);
+      const workspaceMention = roomAgentMention(text, workspaceRoster, this.agentIdentity.publicKey);
+      if (workspaceMention.status !== 'target') return { status: 'none', replyTags: baseTags };
       return {
         status: 'notice',
         replyTags: baseTags,
         noticeStatus: 'unknown',
-        notice: `I couldn't delegate to @${mention.handle} because that handle is not a current Room agent.`,
+        notice: `I couldn't delegate to @${workspaceMention.handle} because that handle is not a current Room agent.`,
       };
     }
     const nextHop = (request.delegation?.hop ?? 0) + 1;
@@ -7590,7 +7596,7 @@ export class Body {
     // Most model replies contain no mention at all. Keep that proof local so
     // ordinary corner publication never gains an unrelated relay read (or a
     // new failure mode) just to establish that fact.
-    if (!/@[a-z0-9][a-z0-9._-]*/i.test(input.text)) return undefined;
+    if (!hasAgentMention(input.text)) return undefined;
     const workspaceId =
       input.workspaceId ?? (await this.channelCommunityId(input.roomId)) ?? input.roomId;
     const { roster } = await this.agentMentionRoster(input.roomId);

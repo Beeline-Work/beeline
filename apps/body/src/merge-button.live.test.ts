@@ -49,7 +49,7 @@ afterAll(() => {
 });
 
 describe.runIf(live)('live merge button always lands', () => {
-  it('uses one Codex sync per stale button press, serializes two lands, and resolves a conflict', async () => {
+  it('uses one Codex sync per stale press, lands two sequential presses, and resolves a conflict', async () => {
     const run = `merge-button-${Date.now()}`;
     const root = mkdtempSync(join(tmpdir(), `${run}-`));
     cleanup.push(root);
@@ -145,7 +145,9 @@ describe.runIf(live)('live merge button always lands', () => {
           (modelTurnsByCorner.get(session.channelId) ?? 0) + 1,
         );
         expect(prompt).toMatch(/main moved to [0-9a-f]{40}/);
-        expect(prompt).toContain('make it merge-ready, whatever it takes');
+        expect(prompt).toMatch(
+          /bring this branch up to date and make it land, whatever it takes/i,
+        );
         expect(prompt).toContain('Do not ask the human');
         if (worktreePath!.endsWith('corner-conflict')) {
           git(worktreePath!, ['reset', '--hard', 'main']);
@@ -195,13 +197,17 @@ describe.runIf(live)('live merge button always lands', () => {
         infoA.subchannelId,
         infoA.mergeTarget!,
       );
+      await waitUntil(async () => {
+        await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
+        return Boolean(infoA.landedTip);
+      });
       const approvalB = await humanClient.submitMergeApproval(
         infoB.subchannelId,
         infoB.mergeTarget!,
       );
       await waitUntil(async () => {
         await Reflect.get(body, 'pollDirectRemoteApprovals').call(body);
-        return Boolean(infoA.landedTip && infoB.landedTip);
+        return Boolean(infoB.landedTip);
       });
       expect(readFileSync(join(checkout, 'A.txt'), 'utf8')).toBe('corner a\n');
       expect(readFileSync(join(checkout, 'B.txt'), 'utf8')).toBe('corner b\n');

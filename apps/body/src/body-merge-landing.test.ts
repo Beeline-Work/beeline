@@ -306,7 +306,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
-  it('gives a stale clean branch to one Codex turn, verifies it, and publishes review', async () => {
+  it('publishes a stale clean branch without a model turn and leaves its card mounted', async () => {
     const agent = newIdentity('merge-ready-auto-sync-agent');
     const body = newBody(agent);
     const published = stubPublishing();
@@ -317,7 +317,6 @@ describe('corner merge-ready surfaces a real committed change', () => {
       writeFileSync(join(worktreePath, 'MAIN.txt'), 'unrelated target work\n');
       gitCommand(worktreePath, ['add', 'MAIN.txt']);
       gitCommand(worktreePath, ['commit', '-m', 'move main independently']);
-      const mainTip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
       gitCommand(worktreePath, ['checkout', 'feature/ready']);
       const sessionPrompt = vi.fn();
       const info = {
@@ -336,30 +335,16 @@ describe('corner merge-ready surfaces a real committed change', () => {
         boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
       };
       body.registerSubchannel(info);
-      const syncTurn = vi
-        .spyOn(body as never, 'promptAgent' as never)
-        .mockImplementation(async (_session: never, prompt: string) => {
-          expect(prompt).toContain(`main moved to ${mainTip}`);
-          expect(prompt).toContain('make it merge-ready, whatever it takes');
-          gitCommand(worktreePath, ['rebase', 'main']);
-          return {
-            agentText: 'Rebased onto main and verified the change.',
-            updates: [],
-            toolCalls: [],
-            stopReason: 'end_turn',
-          } as never;
-        });
+      const syncTurn = vi.spyOn(body as never, 'promptAgent' as never);
 
       await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
+      await expect(Reflect.get(body, 'observeCornerCommits').call(body, info)).resolves.toBe(
+        undefined,
+      );
 
       const featureAfter = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
-      expect(featureAfter).not.toBe(featureBefore);
-      expect(
-        spawnSync('git', ['merge-base', '--is-ancestor', mainTip, featureAfter], {
-          cwd: worktreePath,
-        }).status,
-      ).toBe(0);
-      expect(syncTurn).toHaveBeenCalledTimes(1);
+      expect(featureAfter).toBe(featureBefore);
+      expect(syncTurn).not.toHaveBeenCalled();
       expect(sessionPrompt).not.toHaveBeenCalled();
       expect(
         published.filter((event) => event.tags.some((tag) => tag[1] === 'merge-ready')),
@@ -372,7 +357,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
-  it('gives a conflicting stale branch to one Codex turn before publishing review', async () => {
+  it('publishes a conflicting stale branch without resolving it before merge', async () => {
     const agent = newIdentity('merge-ready-conflict-agent');
     const body = newBody(agent);
     const published = stubPublishing();
@@ -400,25 +385,8 @@ describe('corner merge-ready surfaces a real committed change', () => {
         boundRepo: { repo: 'repo', targetBranch: 'refs/heads/main' },
       };
       body.registerSubchannel(info);
-      const mainTip = gitCommand(worktreePath, ['rev-parse', 'main']);
-      const syncTurn = vi
-        .spyOn(body as never, 'promptAgent' as never)
-        .mockImplementation(async (_session: never, prompt: string) => {
-          expect(prompt).toContain(`main moved to ${mainTip}`);
-          gitCommand(worktreePath, ['reset', '--hard', 'main']);
-          writeFileSync(
-            join(worktreePath, 'README.md'),
-            '# Main changed too\n\n# Before\n\nan old silent pond\n',
-          );
-          gitCommand(worktreePath, ['add', 'README.md']);
-          gitCommand(worktreePath, ['commit', '-m', 'resolve target sync']);
-          return {
-            agentText: 'Resolved the replay conflict and ran checks.',
-            updates: [],
-            toolCalls: [],
-            stopReason: 'end_turn',
-          } as never;
-        });
+      const featureTip = gitCommand(worktreePath, ['rev-parse', 'HEAD']);
+      const syncTurn = vi.spyOn(body as never, 'promptAgent' as never);
 
       await expect(Reflect.get(body, 'publishMergeReady').call(body, info)).resolves.toBe(true);
 
@@ -428,9 +396,9 @@ describe('corner merge-ready surfaces a real committed change', () => {
       expect(
         published.some((event) => event.tags.some((tag) => tag[1] === 'merge-sync-conflict')),
       ).toBe(false);
-      expect(syncTurn).toHaveBeenCalledTimes(1);
+      expect(syncTurn).not.toHaveBeenCalled();
       expect(sessionPrompt).not.toHaveBeenCalled();
-      expect(gitCommand(worktreePath, ['rev-parse', 'HEAD'])).not.toBe(mainTip);
+      expect(gitCommand(worktreePath, ['rev-parse', 'HEAD'])).toBe(featureTip);
       expect(existsSync(join(worktreePath, '.git', 'rebase-merge'))).toBe(false);
       expect(info.cornerState).toEqual({ state: 'waiting', reason: 'review' });
       expect(info.mergeTarget?.tip).toBe(gitCommand(worktreePath, ['rev-parse', 'HEAD']));
@@ -566,7 +534,7 @@ describe('corner merge-ready surfaces a real committed change', () => {
     }
   });
 
-  it('withdraws READY for no change, empty diff, stale target, and denied target access', async () => {
+  it('rejects empty work but never withdraws a mounted card for target movement or access', async () => {
     const agent = newIdentity('merge-not-ready-reasons-agent');
     const published = stubPublishing();
     const paths = [
@@ -618,13 +586,10 @@ describe('corner merge-ready surfaces a real committed change', () => {
       await Reflect.get(staleBody, 'publishMergeReady').call(staleBody, staleInfo);
       const publishedTip = Reflect.get(staleInfo, 'mergeTarget').tip as string;
       gitCommand(paths[2]!, ['branch', '-f', 'main', 'HEAD']);
-      await Reflect.get(staleBody, 'publishMergeReady').call(staleBody, staleInfo);
-      expect(Reflect.get(staleInfo, 'mergeTarget')).toBeUndefined();
-      expect(Reflect.get(staleInfo, 'lastMergeNotReadyReason')).toContain(publishedTip);
-      expect(Reflect.get(staleInfo, 'lastMergeNotReadyReason')).toContain(
-        'stale and has been withdrawn',
-      );
-      expect(Reflect.get(staleInfo, 'cornerState')).toEqual({ state: 'idle' });
+      await Reflect.get(staleBody, 'observeCornerCommits').call(staleBody, staleInfo);
+      expect(Reflect.get(staleInfo, 'mergeTarget').tip).toBe(publishedTip);
+      expect(Reflect.get(staleInfo, 'lastMergeNotReadyReason')).toBeUndefined();
+      expect(Reflect.get(staleInfo, 'cornerState')).toEqual({ state: 'waiting', reason: 'review' });
 
       const deniedBody = newBody(agent);
       const deniedInfo = infoFor(paths[3]!, 'corner-target-access-denied');
@@ -633,15 +598,18 @@ describe('corner merge-ready surfaces a real committed change', () => {
       vi.spyOn(deniedBody as never, 'currentReviewTargetTip' as never).mockResolvedValue({
         reason: 'permission denied while reading the landing remote',
       } as never);
-      await Reflect.get(deniedBody, 'publishMergeReady').call(deniedBody, deniedInfo);
-      expect(Reflect.get(deniedInfo, 'mergeTarget')).toBeUndefined();
-      expect(Reflect.get(deniedInfo, 'lastMergeNotReadyReason')).toContain('permission denied');
-      expect(Reflect.get(deniedInfo, 'cornerState')).toEqual({ state: 'idle' });
+      await Reflect.get(deniedBody, 'observeCornerCommits').call(deniedBody, deniedInfo);
+      expect(Reflect.get(deniedInfo, 'mergeTarget')).toBeDefined();
+      expect(Reflect.get(deniedInfo, 'lastMergeNotReadyReason')).toBeUndefined();
+      expect(Reflect.get(deniedInfo, 'cornerState')).toEqual({
+        state: 'waiting',
+        reason: 'review',
+      });
 
       const notReadyCards = published.filter((event) =>
         event.tags.some((tag) => tag[0] === 't' && tag[1] === 'merge-not-ready'),
       );
-      expect(notReadyCards).toHaveLength(4);
+      expect(notReadyCards).toHaveLength(2);
     } finally {
       await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
     }
@@ -1186,16 +1154,16 @@ describe('a local-only repository lands through the daemon, never through the ag
     }
   });
 
-  it('serializes two approved corners for one repository and lands both back-to-back', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'buzzy-local-land-queue-'));
+  it('lands two corners pressed in sequence, lazily syncing the second', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'buzzy-local-sequential-land-'));
     const repoPath = join(root, 'repo');
     const cornerA = join(root, 'corner-a');
     const cornerB = join(root, 'corner-b');
     mkdirSync(repoPath, { recursive: true });
     gitCommand(repoPath, ['init', '-b', 'master']);
-    gitCommand(repoPath, ['config', 'user.name', 'Landing Queue Test']);
-    gitCommand(repoPath, ['config', 'user.email', 'queue@test.invalid']);
-    writeFileSync(join(repoPath, 'README.md'), '# Queue\n');
+    gitCommand(repoPath, ['config', 'user.name', 'Sequential Landing Test']);
+    gitCommand(repoPath, ['config', 'user.email', 'sequential@test.invalid']);
+    writeFileSync(join(repoPath, 'README.md'), '# Sequential landings\n');
     gitCommand(repoPath, ['add', '.']);
     gitCommand(repoPath, ['commit', '-m', 'base']);
     gitCommand(repoPath, ['worktree', 'add', '-b', 'feature/a', cornerA, 'master']);
@@ -1221,28 +1189,28 @@ describe('a local-only repository lands through the daemon, never through the ag
       }),
     );
     try {
-      const agentA = newIdentity('local-land-queue-a');
-      const agentB = newIdentity('local-land-queue-b');
-      const reviewer = newIdentity('local-land-queue-reviewer');
+      const agentA = newIdentity('local-land-sequential-a');
+      const agentB = newIdentity('local-land-sequential-b');
+      const reviewer = newIdentity('local-land-sequential-reviewer');
       const bodyA = newBody(agentA, join(root, 'state-a.json'));
       const bodyB = newBody(agentB, join(root, 'state-b.json'));
       const infoA = {
         ...localCornerInfo(agentA, repoPath, cornerA, tipA),
-        subchannelId: 'corner-queue-a',
+        subchannelId: 'corner-sequential-a',
         featureBranch: 'feature/a',
         session: {
-          channelId: 'corner-queue-a',
-          parentChannelId: 'room-queue',
+          channelId: 'corner-sequential-a',
+          parentChannelId: 'room-sequential',
           sessionId: 'session-a',
         },
       };
       const infoB = {
         ...localCornerInfo(agentB, repoPath, cornerB, tipB),
-        subchannelId: 'corner-queue-b',
+        subchannelId: 'corner-sequential-b',
         featureBranch: 'feature/b',
         session: {
-          channelId: 'corner-queue-b',
-          parentChannelId: 'room-queue',
+          channelId: 'corner-sequential-b',
+          parentChannelId: 'room-sequential',
           sessionId: 'session-b',
         },
       };
@@ -1271,12 +1239,10 @@ describe('a local-only repository lands through the daemon, never through the ag
           } as never;
         });
 
-      const results = await Promise.all([
-        Reflect.get(bodyA, 'pollDirectRemoteApprovals').call(bodyA),
-        Reflect.get(bodyB, 'pollDirectRemoteApprovals').call(bodyB),
-      ]);
+      const landedA = await Reflect.get(bodyA, 'pollDirectRemoteApprovals').call(bodyA);
+      const landedB = await Reflect.get(bodyB, 'pollDirectRemoteApprovals').call(bodyB);
 
-      expect(results.reduce((sum, count) => sum + count, 0)).toBe(2);
+      expect(landedA + landedB).toBe(2);
       expect(readFileSync(join(repoPath, 'A.txt'), 'utf8')).toBe('first corner\n');
       expect(readFileSync(join(repoPath, 'B.txt'), 'utf8')).toBe('second corner\n');
       expect(promptA).not.toHaveBeenCalled();
@@ -1316,7 +1282,7 @@ describe('a local-only repository lands through the daemon, never through the ag
       const promptAgent = vi
         .spyOn(body as never, 'promptAgent' as never)
         .mockImplementation(async (_session: never, prompt: string) => {
-          expect(prompt).toContain('make it merge-ready, whatever it takes');
+          expect(prompt).toMatch(/bring this branch up to date and make it land, whatever it takes/i);
           expect(prompt).toContain('Do not ask the human');
           gitCommand(cornerPath, ['reset', '--hard', 'master']);
           writeFileSync(

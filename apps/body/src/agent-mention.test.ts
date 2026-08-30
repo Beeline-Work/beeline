@@ -12,6 +12,7 @@ import {
   agentDelegationMaxHops,
   agentDelegationTags,
   agentMentionTags,
+  hasAgentMention,
   mentionedAgent,
   nextAgentMentionChain,
   parseAgentDelegation,
@@ -125,6 +126,34 @@ describe('signed agent mentions', () => {
 });
 
 describe('Room agent delegation', () => {
+  it('finds markdown- and punctuation-delimited handles in text order', () => {
+    const self = generateKeypair();
+    const codex = generateKeypair();
+    const roster = [{ handle: 'codex', pubkey: codex.publicKey, kind: 'agent' as const }];
+    const oxReply =
+      '...trying it again, fresh and clean: --- **@codex** Oi, dummy~! ... Per the host rules for this thread, my reply is allowed to @mention one peer agent ...';
+
+    expect(roomAgentMention(oxReply, roster, self.publicKey)).toEqual({
+      status: 'target',
+      handle: 'codex',
+      pubkey: codex.publicKey,
+    });
+    for (const text of ['(@codex)', '`@codex`', '@codex,', '**@codex**']) {
+      expect(hasAgentMention(text)).toBe(true);
+      expect(roomAgentMention(text, roster, self.publicKey)).toEqual({
+        status: 'target',
+        handle: 'codex',
+        pubkey: codex.publicKey,
+      });
+      expect(
+        mentionedAgent(text, [{ handle: 'codex', pubkey: codex.publicKey }], self.publicKey),
+      ).toEqual({
+        handle: 'codex',
+        pubkey: codex.publicKey,
+      });
+    }
+  });
+
   it('resolves one non-self agent in text order without treating people as targets', () => {
     const self = generateKeypair();
     const bee = generateKeypair();
@@ -150,10 +179,8 @@ describe('Room agent delegation', () => {
       handle: 'bee',
       pubkey: bee.publicKey,
     });
-    expect(roomAgentMention('Ask @missing.', roster, self.publicKey)).toEqual({
-      status: 'unknown',
-      handle: 'missing',
-    });
+    expect(roomAgentMention('Ask @missing.', roster, self.publicKey)).toEqual({ status: 'none' });
+    expect(roomAgentMention('@mention me', roster, self.publicKey)).toEqual({ status: 'none' });
   });
 
   it('clamps the environment override to a small non-disableable bound', () => {

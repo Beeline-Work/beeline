@@ -1550,6 +1550,58 @@ interface PendingRoomTurn {
   scheduled?: ScheduledTurnRequest;
 }
 
+interface RoomReplyStageInput {
+  tlcChannelId: string;
+  boundRepo?: BoundRepo;
+  request: ChannelTaskRequest;
+  explicitCornerWork: boolean;
+  editPolicy: RoomEditPolicy;
+  agentExchange?: AgentExchangeAuthorization;
+  cornerWorkIntent: boolean;
+  scheduled?: ScheduledTurnRequest;
+  beforeModelActivation?: () => Promise<void>;
+}
+
+interface ReadyRoomReply {
+  delegatedReplyTags: string[][];
+  releaseIntent: ReturnType<typeof releaseRoomIntent> | false | undefined;
+  informationOnly: boolean;
+  userPrompt: string;
+}
+
+type RoomReplyPreflightOutcome =
+  { status: 'handled'; outcome: RoomReplyOutcome } | ({ status: 'ready' } & ReadyRoomReply);
+
+type RoomSessionAcquisitionOutcome =
+  | { status: 'handled'; outcome: RoomReplyOutcome }
+  | { status: 'ready'; receiptSessionId: string; session: AgentSession };
+
+interface PreparedRoomPrompt {
+  prompt: string;
+  turn: PendingRoomTurn;
+}
+
+interface RoomReplyExecutionInput {
+  input: RoomReplyStageInput;
+  ready: ReadyRoomReply;
+  acquired: Extract<RoomSessionAcquisitionOutcome, { status: 'ready' }>;
+  prepared: PreparedRoomPrompt;
+}
+
+type CornerEventClassification =
+  | { status: 'skip'; recordProcessed: boolean }
+  | { status: 'cancel' }
+  | { status: 'close' }
+  | { status: 'retry' }
+  | { status: 'deliver'; userPrompt: string };
+
+type CornerTurnDeliveryOutcome = { status: 'delivered' } | { status: 'retry'; retryAt: number };
+
+interface CornerEventSettlement {
+  count: boolean;
+  recordProcessed: boolean;
+}
+
 interface ActivePermissionTurn {
   requestId: string;
   originalRequestId?: string;
@@ -8770,22 +8822,21 @@ export class Body {
     }
   }
 
-  /** Run one addressed turn through the provisioned read-only Room session. */
-  private async replyInRoom(
-    tlcChannelId: string,
-    boundRepo: BoundRepo | undefined,
-    request: ChannelTaskRequest,
-    explicitCornerWork = false,
-    editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
-    agentExchange?: AgentExchangeAuthorization,
-    cornerWorkIntent = explicitCornerWork,
-    scheduled?: ScheduledTurnRequest,
-    beforeModelActivation?: () => Promise<void>,
-  ): Promise<RoomReplyOutcome> {
+  private async preflightRoomReply(input: RoomReplyStageInput): Promise<RoomReplyPreflightOutcome> {
+    const {
+      tlcChannelId,
+      boundRepo,
+      request,
+      explicitCornerWork,
+      editPolicy,
+      agentExchange,
+      cornerWorkIntent,
+      scheduled,
+    } = input;
     const delegatedReplyTags = this.delegatedReplyTags(request);
     if (this.config.modelUnavailable) {
       await this.publishModelUnavailableState(tlcChannelId, request.eventId);
-      return { openedCorner: false, producedReply: true };
+      return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
     }
     // Mark a slash-command-shaped message BEFORE anything else consumes it.
     // Beeline's composer commands and a harness's own `/verb` vocabulary share
@@ -8793,14 +8844,8 @@ export class Body {
     // executed with the harness's meaning. The text still reaches the agent —
     // this notice only makes whose command it is impossible to miss.
     if (!scheduled) await this.markSlashCommandVocabulary(tlcChannelId, request.content);
-    // A release ask is answered by summarizing and offering, never by editing:
-    // it is read-only for the same reason an information request is, and the
-    // corner it may lead to is opened by a person's confirmation, not here.
-    // A Room-config change is never one of them, and it is checked here rather
-    // than trusted to the block below: a repository whose branch is literally
-    // named `release` makes "make release the target branch" read as a release
-    // ask, and `informationOnly` (which a release ask sets) is exactly what
-    // gates the target-branch proposal out.
+    // Keep the original short-circuit value shape: `false` is distinct from
+    // absence below and is part of the existing information-only decision.
     const releaseIntent =
       boundRepo &&
       editPolicy === 'repository' &&
@@ -8828,6 +8873,8 @@ export class Body {
       request.attachments ?? [],
       requestAuthor,
     );
+    // Direct corner work has two terminal preflight outcomes: a signed human
+    // approval request, or one idempotently opened corner for this request.
     if (explicitCornerWork && boundRepo && editPolicy === 'repository') {
       if (
         request.delegation ||
@@ -8841,13 +8888,8 @@ export class Body {
           objective: taskDescriptionFromCornerRequest(request.content) || request.content.trim(),
           tool: 'open_corner',
         });
-        return { openedCorner: false, producedReply: true };
+        return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
       }
-      // Two open-a-corner commands for one piece of work must not become two
-      // corners racing on two branches. See `corner-open-guard.ts` — this is
-      // the live shape where a bare "@beebee open corner" fifty seconds after
-      // a described one opened an objective-less twin of the corner already
-      // running.
       const alreadyOpenedForRequest = this.liveSubchannelForRequest(tlcChannelId, request.eventId);
       const duplicate = alreadyOpenedForRequest
         ? undefined
@@ -8865,7 +8907,7 @@ export class Body {
           `[body] refused a duplicate corner open in ${tlcChannelId}: ` +
             `${duplicate.subchannelId} is already open for this`,
         );
-        return { openedCorner: false, producedReply: true };
+        return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
       }
       const info = await this.openSubchannelForRequest(
         tlcChannelId,
@@ -8880,14 +8922,11 @@ export class Body {
         originalRequestId: request.eventId,
         cause: 'corner-opening',
       });
-      return { openedCorner: true, producedReply: true };
+      return { status: 'handled', outcome: { openedCorner: true, producedReply: true } };
     }
 
-    // "yes" to a release this agent offered to cut. The proposal, not this
-    // message, is what authorizes the corner: the person already read the
-    // summary of exactly what would go into it, so their agreement is a
-    // corner-open command with the task already agreed. A bare confirmation
-    // with no live proposal is nothing — it falls through to an ordinary turn.
+    // A bare confirmation only opens work when it matches a live host-owned
+    // release proposal; otherwise it remains ordinary conversation.
     const proposal = this.liveReleaseProposal(tlcChannelId);
     if (
       proposal &&
@@ -8913,13 +8952,9 @@ export class Body {
           cause: 'corner-opening',
         },
       );
-      return { openedCorner: true, producedReply: true };
+      return { status: 'handled', outcome: { openedCorner: true, producedReply: true } };
     }
 
-    // The repository belongs to the Room. An explicit open-a-corner command in
-    // a Room with no repository linked is refused with an actionable message,
-    // never a crash — unless the operator named an exact owner/repo, which the
-    // named-repository flow below still handles.
     if (cornerWorkIntent && !boundRepo && editPolicy !== 'direct-message') {
       const named =
         editPolicy === 'named-repository'
@@ -8938,7 +8973,7 @@ export class Body {
           delegatedReplyTags,
           request.replyRootId,
         );
-        return { openedCorner: false, producedReply: true };
+        return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
       }
     }
 
@@ -8958,13 +8993,27 @@ export class Body {
         delegatedReplyTags,
         request.replyRootId,
       );
-      return { openedCorner: false, producedReply: true };
+      return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
     }
 
+    return {
+      status: 'ready',
+      delegatedReplyTags,
+      releaseIntent,
+      informationOnly,
+      userPrompt,
+    };
+  }
+
+  private async acquireRoomReplySession(
+    tlcChannelId: string,
+    turn: PendingRoomTurn,
+    delegatedReplyTags: string[][],
+  ): Promise<RoomSessionAcquisitionOutcome> {
+    const { request, boundRepo, editPolicy } = turn;
     // Receipt belongs to the daemon, not the harness. Publish it before lazy
-    // provisioning can start the ACP process (or spend time rebuilding its
-    // context) so a cold session never looks like a dead daemon. The logical
-    // id is stable before a physical session exists and across reactivation.
+    // provisioning can start the ACP process so a cold session never looks
+    // like a dead daemon.
     const receiptSessionId =
       this.sessions.get(tlcChannelId)?.logicalSessionId ??
       `${this.agentIdentity.publicKey}:${tlcChannelId}`;
@@ -8976,9 +9025,8 @@ export class Body {
       'working',
       this.presenceGenerations.get(tlcChannelId),
     );
-    let session: AgentSession;
     try {
-      session =
+      const session =
         this.sessions.get(tlcChannelId) ??
         (await this.provision(tlcChannelId, boundRepo, editPolicy));
       if (session.mode !== 'readonly') {
@@ -8986,6 +9034,7 @@ export class Body {
           'read-only tools unavailable: refusing to use an edit session for a Room conversation',
         );
       }
+      return { status: 'ready', receiptSessionId, session };
     } catch (error) {
       await postAgentTurnStatus(
         tlcChannelId,
@@ -9001,36 +9050,40 @@ export class Body {
         ),
       );
       if (!(error instanceof ReadOnlyToolsUnavailableError)) throw error;
-      const reply =
-        'Read-only tools unavailable. I cannot safely inspect this repository until the Beeline read-only helper is restored.';
       await postAgentMessage(
         tlcChannelId,
         this.agentIdentity,
-        reply,
+        'Read-only tools unavailable. I cannot safely inspect this repository until the Beeline read-only helper is restored.',
         request.eventId,
         [],
         delegatedReplyTags,
         request.replyRootId,
       );
-      return { openedCorner: false, producedReply: true };
+      return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
     }
+  }
+
+  private async prepareRoomReplyPrompt(
+    input: RoomReplyStageInput,
+    ready: ReadyRoomReply,
+    turn: PendingRoomTurn,
+  ): Promise<PreparedRoomPrompt> {
+    const { tlcChannelId, request, boundRepo, agentExchange, scheduled } = input;
     const sharedPrompt = request.delegation
       ? agentDelegationTurnPrompt(
           await this.agentHistory(tlcChannelId),
-          userPrompt,
+          ready.userPrompt,
           request.eventId,
           this.maxAgentDelegationHops,
         )
       : roomTurnPrompt(
           await this.agentHistory(tlcChannelId),
-          userPrompt,
+          ready.userPrompt,
           request.eventId,
           this.maxAgentDelegationHops,
         );
-    // A release turn answers from host-read git facts, and registers the offer
-    // it is about to make so a plain "yes" afterwards still means "cut it".
-    const releaseContext = releaseIntent
-      ? await this.prepareReleaseProposal(tlcChannelId, boundRepo, releaseIntent)
+    const releaseContext = ready.releaseIntent
+      ? await this.prepareReleaseProposal(tlcChannelId, boundRepo!, ready.releaseIntent)
       : undefined;
     const prompt = releaseContext
       ? [releaseContext, '', sharedPrompt].join('\n')
@@ -9062,7 +9115,7 @@ export class Body {
                 '',
                 sharedPrompt,
               ].join('\n')
-            : informationOnly
+            : ready.informationOnly
               ? [
                   'Host boundary: this is an information-only request.',
                   'Inspect with the read-only repository tools and answer conversationally in this Room.',
@@ -9071,18 +9124,15 @@ export class Body {
                   sharedPrompt,
                 ].join('\n')
               : sharedPrompt;
-    const turn: PendingRoomTurn = {
-      request,
-      boundRepo,
-      editPolicy,
-      permissionHandled: false,
-      transitionedToCorner: false,
-      readOnlyInformationRequest: informationOnly,
-      ...(scheduled ? { scheduled } : {}),
-      ...(editPolicy === 'named-repository'
-        ? { namedRepositoryTarget: namedRepositoryTargetFromRoomRequest(request.content) }
-        : {}),
-    };
+    return { prompt, turn };
+  }
+
+  private async runRoomReplyTurn(execution: RoomReplyExecutionInput): Promise<RoomReplyOutcome> {
+    const { input, ready, acquired, prepared } = execution;
+    const { tlcChannelId, request, agentExchange, scheduled, beforeModelActivation } = input;
+    const { delegatedReplyTags } = ready;
+    const { session } = acquired;
+    const { prompt, turn } = prepared;
     let promptAttempted = false;
     try {
       promptAttempted = true;
@@ -9417,6 +9467,50 @@ export class Body {
           );
       }
     }
+  }
+
+  /** Run one addressed turn through the provisioned read-only Room session. */
+  private async replyInRoom(
+    tlcChannelId: string,
+    boundRepo: BoundRepo | undefined,
+    request: ChannelTaskRequest,
+    explicitCornerWork = false,
+    editPolicy: RoomEditPolicy = boundRepo ? 'repository' : 'direct-message',
+    agentExchange?: AgentExchangeAuthorization,
+    cornerWorkIntent = explicitCornerWork,
+    scheduled?: ScheduledTurnRequest,
+    beforeModelActivation?: () => Promise<void>,
+  ): Promise<RoomReplyOutcome> {
+    const input: RoomReplyStageInput = {
+      tlcChannelId,
+      boundRepo,
+      request,
+      explicitCornerWork,
+      editPolicy,
+      agentExchange,
+      cornerWorkIntent,
+      scheduled,
+      beforeModelActivation,
+    };
+    const preflight = await this.preflightRoomReply(input);
+    if (preflight.status === 'handled') return preflight.outcome;
+    const { delegatedReplyTags, informationOnly } = preflight;
+    const turn: PendingRoomTurn = {
+      request,
+      boundRepo,
+      editPolicy,
+      permissionHandled: false,
+      transitionedToCorner: false,
+      readOnlyInformationRequest: informationOnly,
+      ...(scheduled ? { scheduled } : {}),
+      ...(editPolicy === 'named-repository'
+        ? { namedRepositoryTarget: namedRepositoryTargetFromRoomRequest(request.content) }
+        : {}),
+    };
+    const acquired = await this.acquireRoomReplySession(tlcChannelId, turn, delegatedReplyTags);
+    if (acquired.status === 'handled') return acquired.outcome;
+    const prepared = await this.prepareRoomReplyPrompt(input, preflight, turn);
+    return this.runRoomReplyTurn({ input, ready: preflight, acquired, prepared });
   }
 
   /** A release proposal this Room can still confirm, expiring stale ones. */
@@ -14582,38 +14676,233 @@ export class Body {
     }
   }
 
-  private async pollMembersOnce(subchannelId: string): Promise<number> {
-    const info = this.subchannels.get(subchannelId);
-    if (!info) {
-      throw new Error(`Subchannel ${subchannelId} not found`);
+  private classifyCornerEvent(
+    info: SubchannelInfo,
+    evt: NostrEvent,
+    processed: Set<string>,
+  ): CornerEventClassification {
+    if (processed.has(evt.id) || evt.pubkey === this.agentIdentity.publicKey) {
+      return { status: 'skip', recordProcessed: false };
+    }
+    const attachments = parseAttachmentTags(evt.tags);
+    if (
+      (!evt.content.trim() && attachments.length === 0) ||
+      evt.tags.some((tag) => tag[0] === 't' && tag[1] === 'agent-activity') ||
+      evt.tags.some(
+        (tag) => tag[0] === 't' && (tag[1] === 'body-control' || tag[1] === APPROVAL_MARKER),
+      )
+    ) {
+      return { status: 'skip', recordProcessed: false };
+    }
+    // Cancellation stops only the active turn. Closing is a separate durable
+    // archive transition and must remain retryable until that transition lands.
+    if (evt.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_CANCEL_TAG)) {
+      return { status: 'cancel' };
+    }
+    if (
+      evt.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_CLOSE_TAG) ||
+      isCornerCloseRequest(evt.content)
+    ) {
+      return { status: 'close' };
+    }
+    if (
+      cornerFrozenForPendingClose({
+        pending: info.toolClosePending,
+        approved: Boolean(info.humanMergeApproval),
+      })
+    ) {
+      return { status: 'retry' };
+    }
+    // Agent-authored mention replies are transcript records, never a second
+    // dispatch signal into the corner session.
+    if (evt.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_MENTION_REPLY_TAG)) {
+      return { status: 'skip', recordProcessed: true };
     }
 
-    // Archived subchannels are read-only — no more member message processing.
-    // A close that was requested but never durably completed (a relay
-    // publish inside archiveSubchannel failed partway) is retried here,
-    // driven by this same per-tick visit, instead of leaving the corner
-    // permanently stuck once `info.archived` is true.
+    const participantPubkeys = new Set(info.participantPubkeys ?? [this.agentIdentity.publicKey]);
+    participantPubkeys.add(this.agentIdentity.publicKey);
+    participantPubkeys.add(evt.pubkey);
+    info.participantPubkeys = [...participantPubkeys];
+    if (!isChannelAddressedMessage(evt, this.agentIdentity.publicKey, info.participantPubkeys)) {
+      return { status: 'skip', recordProcessed: true };
+    }
+    return {
+      status: 'deliver',
+      userPrompt: attachmentPrompt(evt.pubkey, evt.content, attachments),
+    };
+  }
+
+  private async settleCornerEvent(
+    info: SubchannelInfo,
+    evt: NostrEvent,
+    settlement: CornerEventSettlement,
+  ): Promise<number> {
+    if (settlement.recordProcessed) info.processedMemberEventIds?.add(evt.id);
+    await this.durableState.delivered(info.subchannelId, evt.id);
+    return settlement.count ? 1 : 0;
+  }
+
+  private async deliverCornerTurn(
+    info: SubchannelInfo,
+    evt: NostrEvent,
+    userPrompt: string,
+  ): Promise<CornerTurnDeliveryOutcome> {
+    const { subchannelId, session } = info;
+    await this.noteCornerTurnStart(info);
+    await postAgentTurnStatus(
+      subchannelId,
+      this.agentIdentity,
+      evt.id,
+      session.logicalSessionId ?? session.sessionId,
+      'working',
+      this.presenceGenerations.get(subchannelId),
+    );
+    await this.markSlashCommandVocabulary(subchannelId, evt.content);
+    const prompt = cornerTurnPrompt(await this.agentHistory(subchannelId), userPrompt, evt.id);
+    let promptAttempted = false;
+    try {
+      let agentResult: PromptResult | undefined;
+      const promptNewTurn = async (): Promise<PromptResult> => {
+        await this.startCornerPlan(session, info.taskDescription || evt.content);
+        promptAttempted = true;
+        return this.promptAgent(
+          session,
+          `${prompt}\n\n${CORNER_TARGET_SYNC_INSTRUCTION}\n${CORNER_MERGE_GATE_INSTRUCTION}\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
+          {
+            channelId: subchannelId,
+            requestId: evt.id,
+            originalRequestId: evt.id,
+            cause: 'corner-follow-up',
+            withholdMergeClaims: true,
+          },
+        );
+      };
+      const runningTask = this.runningAgentTasks.get(subchannelId);
+      // Steering is opportunistic. Shipped adapters currently queue the
+      // durable message behind the active turn, preserving FIFO and once-only
+      // delivery when no live steering channel exists.
+      if (runningTask || session.client.activeRunId(session.sessionId)) {
+        let steered = false;
+        try {
+          await session.client.sessionSteer(session.sessionId, prompt, 60_000);
+          steered = true;
+        } catch (error) {
+          console.log(
+            `[body] live steering unavailable for ${subchannelId}; ` +
+              `queueing the message as the next turn: ${String(error)}`,
+          );
+        }
+        if (!steered) {
+          await this.acknowledgeQueuedSteer(subchannelId, evt.id);
+          if (runningTask) await runningTask;
+          agentResult = await promptNewTurn();
+        }
+      } else {
+        this.steerQueuedChannels.delete(subchannelId);
+        agentResult = await promptNewTurn();
+      }
+      if (this.forcedUpdateRestart && promptAttempted) {
+        // The successor owns this still-pending durable event.
+        return { status: 'retry', retryAt: evt.created_at };
+      }
+      if (agentResult && !info.archived) {
+        let preparedMention:
+          | { status: 'dispatch' | 'pause'; metadata: AgentMentionMetadata; tags: string[][] }
+          | undefined;
+        let publishedMentionEvent: NostrEvent | undefined;
+        const parentRoomId = info.session.parentChannelId;
+        const ready = await this.finishCornerTurnAgainstMergeGate(
+          info,
+          agentResult,
+          {
+            requestId: evt.id,
+            originalRequestId: evt.id,
+            cause: 'corner-follow-up',
+          },
+          'Completed the requested follow-up.',
+          {
+            replyTo: evt.id,
+            replyRootId: replyRootIdForEvent(evt),
+            ...(parentRoomId
+              ? {
+                  extraTagsForText: async (text: string) => {
+                    preparedMention = await this.prepareCornerAgentMention({
+                      roomId: parentRoomId,
+                      cornerId: info.subchannelId,
+                      writerAgentId: info.role.publicKey,
+                      sourceTurnId: evt.id,
+                      text,
+                    });
+                    return preparedMention?.tags;
+                  },
+                  captureEvent: (event: NostrEvent) => {
+                    publishedMentionEvent = event;
+                  },
+                }
+              : {}),
+          },
+        );
+        await this.completeCornerPlan(session);
+        await postAgentTurnStatus(
+          subchannelId,
+          this.agentIdentity,
+          evt.id,
+          session.logicalSessionId ?? session.sessionId,
+          ready ? 'complete' : 'failed',
+          this.presenceGenerations.get(subchannelId),
+        );
+        this.noteCornerTurnEnd(info, ready);
+        if (preparedMention && publishedMentionEvent) {
+          await this.finishCornerAgentMention(preparedMention, publishedMentionEvent);
+        }
+      }
+      return { status: 'delivered' };
+    } catch (err) {
+      if (info.archived) return { status: 'delivered' };
+      if (this.forcedUpdateRestart && promptAttempted) {
+        // Do not publish or settle a result after announcing forced restart.
+        return { status: 'retry', retryAt: evt.created_at };
+      }
+      await postAgentTurnStatus(
+        subchannelId,
+        this.agentIdentity,
+        evt.id,
+        session.logicalSessionId ?? session.sessionId,
+        'failed',
+        this.presenceGenerations.get(subchannelId),
+      ).catch(() => undefined);
+      await this.durableState.failed(subchannelId, evt.id, err);
+      console.error(`[body] pollMembers: forwarding failed for event ${evt.id}:`, err);
+      if (!promptAttempted) return { status: 'retry', retryAt: evt.created_at };
+      await postAgentMessage(
+        subchannelId,
+        this.agentIdentity,
+        "That turn stopped before I could deliver a reply. I won't retry it without another message from you.",
+        evt.id,
+      ).catch((publishError) =>
+        console.error('[body] failed to publish corner turn failure notice:', publishError),
+      );
+      return { status: 'delivered' };
+    }
+  }
+
+  private async pollMembersOnce(subchannelId: string): Promise<number> {
+    const info = this.subchannels.get(subchannelId);
+    if (!info) throw new Error('Subchannel ' + subchannelId + ' not found');
+
+    // Terminal corner lifecycle checks happen before any relay read.
     if (info.archived) {
-      // `archiveCompleted` means the relay projection is terminal; it does not
-      // mean the local worktree was successfully reaped. Keep driving the
-      // idempotent close until `archiveSubchannel` removes this entry from the
-      // map, otherwise one filesystem failure leaves a closed corner's whole
-      // worktree behind forever.
       const cleanup = info.missingFromRelay
         ? this.reapMissingCorner(info)
         : this.archiveSubchannel(subchannelId);
       await cleanup.catch((error) =>
         console.error(
-          `[body] retrying incomplete archive cleanup of ${subchannelId}; will retry:`,
+          '[body] retrying incomplete archive cleanup of ' + subchannelId + '; will retry:',
           error,
         ),
       );
       return 0;
     }
-
-    // A confirmed land freezes new turns immediately. This visit either drains
-    // an idle warm process and closes now or observes the active run and lets
-    // the turn-finally hook close it the moment that run settles.
     if (info.archiveWhenSessionRetires) {
       await this.runDeferredLandArchive(subchannelId);
       return 0;
@@ -14622,339 +14911,67 @@ export class Body {
     const session = info.session;
     const durableCursor = await this.durableState.cursor(subchannelId);
     const since = Math.max(info.lastPolledAt, durableCursor.createdAt);
-
     try {
       const events = await queryEventBacklog(
-        {
-          kinds: [9],
-          '#h': [subchannelId],
-          since,
-        },
+        { kinds: [9], '#h': [subchannelId], since },
         { query: this.agentRelay.queryEvents },
       );
-
-      let count = 0;
-      let maxCreated = since;
-      let retryFrom: number | undefined;
-
       await this.durableState.enqueue(subchannelId, events);
       const processed = info.processedMemberEventIds ?? new Set<string>();
       info.processedMemberEventIds = processed;
       const orderedEvents = await this.durableState.pending(subchannelId);
+      let count = 0;
+      let maxCreated = since;
+      let retryFrom: number | undefined;
 
       for (const evt of orderedEvents) {
         maxCreated = Math.max(maxCreated, evt.created_at);
-        if (processed.has(evt.id)) {
-          await this.durableState.delivered(subchannelId, evt.id);
+        const classification = this.classifyCornerEvent(info, evt, processed);
+        if (classification.status === 'skip') {
+          count += await this.settleCornerEvent(info, evt, {
+            count: false,
+            recordProcessed: classification.recordProcessed,
+          });
           continue;
         }
-        // Skip events published by the agent itself (no self-steering).
-        if (evt.pubkey === this.agentIdentity.publicKey) {
-          await this.durableState.delivered(subchannelId, evt.id);
-          continue;
-        }
-        const attachments = parseAttachmentTags(evt.tags);
-        // Skip events that carry neither prose nor a valid link attachment.
-        if (
-          (!evt.content.trim() && attachments.length === 0) ||
-          evt.tags.some((t) => t[0] === 't' && t[1] === 'agent-activity')
-        ) {
-          await this.durableState.delivered(subchannelId, evt.id);
-          continue;
-        }
-        // Skip control messages, and the human's signed merge approval with
-        // them. The approval is a daemon-facing grant that the land path acts
-        // on (`pollDirectRemoteApprovals` / the merge gate) — never
-        // conversation. Forwarding it dropped a literal
-        // "APPROVE merge of <repo> <branch> -> <sha>" into the agent's ACP
-        // session, where the only honest answer it can give is that landing
-        // is the host's job.
-        if (
-          evt.tags.some(
-            (t) => t[0] === 't' && (t[1] === 'body-control' || t[1] === APPROVAL_MARKER),
-          )
-        ) {
-          await this.durableState.delivered(subchannelId, evt.id);
-          continue;
-        }
-
-        if (evt.tags.some((t) => t[0] === 't' && t[1] === AGENT_CANCEL_TAG)) {
+        if (classification.status === 'cancel') {
           session.client.sessionCancel(session.sessionId);
-          processed.add(evt.id);
-          await this.durableState.delivered(subchannelId, evt.id);
-          count++;
+          count += await this.settleCornerEvent(info, evt, { count: true, recordProcessed: true });
           continue;
         }
-
-        // Close-corner archives the subchannel outright (it also cancels any
-        // active turn as part of that teardown) — distinct from a plain
-        // cancel, which only stops the current turn and leaves the corner open.
-        // The TAGGED control is not the only way a person asks: "Close this
-        // corner" typed as an ordinary chat message (owner-reported
-        // 2026-08-23) used to be forwarded into the ACP session as
-        // conversation, where the agent — which cannot close its own corner —
-        // could only talk about it, and the corner stayed open and enterable
-        // forever. The strict recognizer routes that explicit imperative to
-        // this same teardown; anything it does not match keeps flowing to the
-        // agent exactly as before.
-        // Mirror the ordinary message path below: mark delivered only once
-        // the triggered work actually succeeds, and `failed` on the catch
-        // path. Marking `delivered` before the archive attempt (the old
-        // behavior) makes a partial archive failure permanently
-        // un-retryable — even across a restart, since `delivered` persists.
-        const cornerCloseRequested =
-          evt.tags.some((t) => t[0] === 't' && t[1] === CORNER_CLOSE_TAG) ||
-          isCornerCloseRequest(evt.content);
-        if (cornerCloseRequested) {
+        if (classification.status === 'close') {
           try {
             await this.archiveSubchannel(subchannelId);
           } catch (closeError) {
             await this.durableState.failed(subchannelId, evt.id, closeError);
             console.error(
-              `[body] pollMembers: corner close failed for event ${evt.id}:`,
+              '[body] pollMembers: corner close failed for event ' + evt.id + ':',
               closeError,
             );
             retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
             continue;
           }
-          processed.add(evt.id);
-          await this.durableState.delivered(subchannelId, evt.id);
-          count++;
+          count += await this.settleCornerEvent(info, evt, { count: true, recordProcessed: true });
           return count;
         }
-
-        // close_corner(land) freezes the exact reviewed SHA. Keep later
-        // conversation durable and unread until the signed approval path
-        // advances it; never wake a writer against a frozen worktree.
-        if (
-          cornerFrozenForPendingClose({
-            pending: info.toolClosePending,
-            approved: Boolean(info.humanMergeApproval),
-          })
-        ) {
+        if (classification.status === 'retry') {
           retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
           continue;
         }
 
-        // Agent-authored corner messages are transcript records, not the
-        // dispatch mechanism. A target daemon starts only from the separately
-        // signed parent-Room delivery bell validated above.
-        if (evt.tags.some((tag) => tag[0] === 't' && tag[1] === AGENT_MENTION_REPLY_TAG)) {
-          processed.add(evt.id);
-          await this.durableState.delivered(subchannelId, evt.id);
+        const delivery = await this.deliverCornerTurn(info, evt, classification.userPrompt);
+        if (delivery.status === 'retry') {
+          retryFrom = Math.min(retryFrom ?? delivery.retryAt, delivery.retryAt);
           continue;
         }
-
-        // Corners follow the same conversational addressing rule as Rooms.
-        // A sole human can talk naturally; once multiple participants are
-        // present, unmentioned chatter remains durable context without
-        // steering the agent into somebody else's conversation.
-        const participantPubkeys = new Set(
-          info.participantPubkeys ?? [this.agentIdentity.publicKey],
-        );
-        participantPubkeys.add(this.agentIdentity.publicKey);
-        participantPubkeys.add(evt.pubkey);
-        info.participantPubkeys = [...participantPubkeys];
-        const userPrompt = attachmentPrompt(evt.pubkey, evt.content, attachments);
-        if (
-          !isChannelAddressedMessage(evt, this.agentIdentity.publicKey, info.participantPubkeys)
-        ) {
-          processed.add(evt.id);
-          await this.durableState.delivered(subchannelId, evt.id);
-          continue;
-        }
-
-        // The daemon owns receipt visibility. Refresh the canonical WORKING
-        // lease and publish the thinking indicator before slash-command
-        // marking, conversation reads/context assembly, or lazy ACP
-        // activation can delay visible acknowledgement of this steer.
-        await this.noteCornerTurnStart(info);
-        await postAgentTurnStatus(
-          subchannelId,
-          this.agentIdentity,
-          evt.id,
-          session.logicalSessionId ?? session.sessionId,
-          'working',
-          this.presenceGenerations.get(subchannelId),
-        );
-
-        // Forward the member's message into the active run when possible. If
-        // the original task ended between polling and delivery, wait for its
-        // cleanup and preserve this message as the next ordered prompt.
-        // A slash-command-shaped member message is marked visibly here too:
-        // corners share the composer, so the harness/Beeline vocabulary
-        // collision exists in both surfaces.
-        await this.markSlashCommandVocabulary(subchannelId, evt.content);
-        const prompt = cornerTurnPrompt(await this.agentHistory(subchannelId), userPrompt, evt.id);
-        let promptAttempted = false;
-        try {
-          let agentResult: PromptResult | undefined;
-          const promptNewTurn = async (): Promise<PromptResult> => {
-            // A follow-up starts a checklist, not a new corner. Keep the
-            // immutable create-event objective out of ordinary chat.
-            await this.startCornerPlan(session, info.taskDescription || evt.content);
-            promptAttempted = true;
-            return this.promptAgent(
-              session,
-              `${prompt}\n\n${CORNER_TARGET_SYNC_INSTRUCTION}\n${CORNER_MERGE_GATE_INSTRUCTION}\n${CORNER_TURN_SUMMARY_INSTRUCTION}`,
-              {
-                channelId: subchannelId,
-                requestId: evt.id,
-                originalRequestId: evt.id,
-                cause: 'corner-follow-up',
-                withholdMergeClaims: true,
-              },
-            );
-          };
-          // A message that arrives mid-turn is never discarded. Live steering
-          // is tried first (the harness injects it into the run in progress);
-          // when the harness has no steering channel at all — none of the
-          // shipped ACP adapters advertise one — the message is QUEUED as the
-          // next prompt instead. `runOnSession`'s per-session FIFO is that
-          // queue: a prompt issued now runs the moment the active turn
-          // releases the session, and because this loop walks the durable
-          // pending list in order under `inFlightSubchannelPolls`, several
-          // queued steers deliver in order and exactly once.
-          //
-          // The old shape rethrew the steer failure whenever no
-          // `runningAgentTasks` entry existed — true for every corner
-          // FOLLOW-UP turn — which left the human's message silently failed
-          // and blindly re-attempted on a later tick, with no acknowledgement
-          // at any point.
-          const runningTask = this.runningAgentTasks.get(subchannelId);
-          if (runningTask || session.client.activeRunId(session.sessionId)) {
-            let steered = false;
-            try {
-              await session.client.sessionSteer(session.sessionId, prompt, 60_000);
-              steered = true;
-            } catch (error) {
-              console.log(
-                `[body] live steering unavailable for ${subchannelId}; ` +
-                  `queueing the message as the next turn: ${String(error)}`,
-              );
-            }
-            if (!steered) {
-              await this.acknowledgeQueuedSteer(subchannelId, evt.id);
-              if (runningTask) await runningTask;
-              agentResult = await promptNewTurn();
-            }
-          } else {
-            this.steerQueuedChannels.delete(subchannelId);
-            agentResult = await promptNewTurn();
-          }
-          if (this.forcedUpdateRestart && promptAttempted) {
-            retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
-            continue;
-          }
-          // A concurrent close (a later `#t=buzz-corner-close` event, possibly
-          // seen by an overlapping poll tick while this turn was still
-          // running) archives the corner out of band. Never publish a turn
-          // that resolved after that — closing must be terminal.
-          if (agentResult && !info.archived) {
-            let preparedMention:
-              | { status: 'dispatch' | 'pause'; metadata: AgentMentionMetadata; tags: string[][] }
-              | undefined;
-            let publishedMentionEvent: NostrEvent | undefined;
-            const parentRoomId = info.session.parentChannelId;
-            const ready = await this.finishCornerTurnAgainstMergeGate(
-              info,
-              agentResult,
-              {
-                requestId: evt.id,
-                originalRequestId: evt.id,
-                cause: 'corner-follow-up',
-              },
-              'Completed the requested follow-up.',
-              {
-                replyTo: evt.id,
-                replyRootId: replyRootIdForEvent(evt),
-                ...(parentRoomId
-                  ? {
-                      extraTagsForText: async (text: string) => {
-                        preparedMention = await this.prepareCornerAgentMention({
-                          roomId: parentRoomId,
-                          cornerId: info.subchannelId,
-                          writerAgentId: info.role.publicKey,
-                          sourceTurnId: evt.id,
-                          text,
-                        });
-                        return preparedMention?.tags;
-                      },
-                      captureEvent: (event: NostrEvent) => {
-                        publishedMentionEvent = event;
-                      },
-                    }
-                  : {}),
-              },
-            );
-            await this.completeCornerPlan(session);
-            await postAgentTurnStatus(
-              subchannelId,
-              this.agentIdentity,
-              evt.id,
-              session.logicalSessionId ?? session.sessionId,
-              ready ? 'complete' : 'failed',
-              this.presenceGenerations.get(subchannelId),
-            );
-            // Same contract as the opening turn: no review target and no
-            // failure card means the conclude watch evaluates this turn end.
-            this.noteCornerTurnEnd(info, ready);
-            if (preparedMention && publishedMentionEvent) {
-              await this.finishCornerAgentMention(preparedMention, publishedMentionEvent);
-            }
-          }
-          processed.add(evt.id);
-          await this.durableState.delivered(subchannelId, evt.id);
-          count++;
-        } catch (err) {
-          // The close path kills the ACP session to abort the turn, which
-          // routinely surfaces here as a rejected prompt — that is close
-          // working as intended, not a delivery failure to retry.
-          if (info.archived) {
-            processed.add(evt.id);
-            await this.durableState.delivered(subchannelId, evt.id);
-            count++;
-            continue;
-          }
-          if (this.forcedUpdateRestart && promptAttempted) {
-            retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
-            continue;
-          }
-          await postAgentTurnStatus(
-            subchannelId,
-            this.agentIdentity,
-            evt.id,
-            session.logicalSessionId ?? session.sessionId,
-            'failed',
-            this.presenceGenerations.get(subchannelId),
-          ).catch(() => undefined);
-          await this.durableState.failed(subchannelId, evt.id, err);
-          console.error(`[body] pollMembers: forwarding failed for event ${evt.id}:`, err);
-          if (promptAttempted) {
-            await postAgentMessage(
-              subchannelId,
-              this.agentIdentity,
-              "That turn stopped before I could deliver a reply. I won't retry it without another message from you.",
-              evt.id,
-            ).catch((publishError) =>
-              console.error('[body] failed to publish corner turn failure notice:', publishError),
-            );
-            processed.add(evt.id);
-            await this.durableState.delivered(subchannelId, evt.id);
-            count++;
-            continue;
-          }
-          retryFrom = Math.min(retryFrom ?? evt.created_at, evt.created_at);
-        }
+        count += await this.settleCornerEvent(info, evt, { count: true, recordProcessed: true });
       }
 
-      // Advance the poll cursor.
       const nextCursor = retryFrom ?? maxCreated;
       if (nextCursor > info.lastPolledAt) {
         info.lastPolledAt = nextCursor;
         info.session.lastPolledAt = nextCursor;
       }
-
       return count;
     } catch (err) {
       console.error('[body] pollMembers: query failed:', err);

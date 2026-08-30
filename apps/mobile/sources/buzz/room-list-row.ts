@@ -16,6 +16,22 @@ import {
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import { isRetiredAgentNotice } from '@beeline/buzz-client';
 
+export type ExpandedCornerRefreshAction =
+  | { kind: 'none' }
+  | { kind: 'reload'; roomId: string }
+  | { kind: 'drop'; roomId: string };
+
+export function expandedCornerRefreshAction(
+  expandedRoomId: string | null,
+  chats: readonly { readonly room: { readonly id: string }; readonly cornerCount: number }[],
+): ExpandedCornerRefreshAction {
+  if (!expandedRoomId) return { kind: 'none' };
+  const room = chats.find((chat) => chat.room.id === expandedRoomId);
+  return room?.cornerCount
+    ? { kind: 'reload', roomId: expandedRoomId }
+    : { kind: 'drop', roomId: expandedRoomId };
+}
+
 /** The one state vocabulary used by both row projection and circle rendering. */
 export type RoomListZone = 'needs-you' | 'working' | 'idle';
 

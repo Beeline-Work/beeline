@@ -4,11 +4,28 @@ import type { CornerSummary, CornerStatus } from './corners';
 import {
   displayCornerTitle,
   displayRoomIndexTitle,
+  expandedCornerRefreshAction,
   isRoomAlive,
   NO_ACTIVITY_PREVIEW,
   roomListFeed,
   roomRowPresentation,
 } from './room-list-row';
+
+describe('expanded corner watch refresh', () => {
+  it('reloads an open dropdown, then drops it when the watched list reports archival', () => {
+    const open = [{ room: { id: 'room' }, cornerCount: 1 }];
+    const archived = [{ room: { id: 'room' }, cornerCount: 0 }];
+
+    expect(expandedCornerRefreshAction('room', open)).toEqual({
+      kind: 'reload',
+      roomId: 'room',
+    });
+    expect(expandedCornerRefreshAction('room', archived)).toEqual({
+      kind: 'drop',
+      roomId: 'room',
+    });
+  });
+});
 
 function corner(status: CornerStatus | null, name = `corner-${status ?? 'idle'}`): CornerSummary {
   const machine =

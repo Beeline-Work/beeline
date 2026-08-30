@@ -124,6 +124,31 @@ describe('live streaming turn', () => {
     ]);
   });
 
+  it('inscribes compact tool results directly beneath their live calls without a card', () => {
+    const renderer = render(
+      <ActivityTimeline
+        active
+        items={[
+          {
+            kind: 'summary',
+            title: 'read receipts',
+            observed: [
+              { verb: 'read', target: 'Ledger.tsx', result: 'Found the active ledger row.' },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const result = renderer.root.findByProps({ testID: 'activity-result-observed-0' });
+    expect(result.props.children).toBe('Found the active ledger row.');
+    expect(result.props.style).toMatchObject({
+      borderLeftWidth: 2,
+      borderLeftColor: groknight.borderQuiet,
+    });
+    expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
+  });
+
   it('recedes thinking copy: prose family, one step down, dimmed, upright', () => {
     const renderer = render(<ActivityTimeline active items={TOOLS} thought="Still checking" />);
     const thought = renderer.root.findByProps({ testID: 'activity-thought-draft' });

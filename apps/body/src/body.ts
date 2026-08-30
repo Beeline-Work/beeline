@@ -60,12 +60,7 @@ import {
   postControlMessage,
 } from './lifecycle-publisher.js';
 import { createAgentCommandPublisher } from './agent-commands-publish.js';
-import {
-  modelAvailableEventTags,
-  modelUnavailableEventTags,
-  modelUnavailableState,
-  modelUnavailableRoomMessage,
-} from './model-availability.js';
+import { modelUnavailableDiagnostic, modelUnavailableState } from './model-availability.js';
 import {
   createChannel,
   setMemberRole,
@@ -2689,8 +2684,6 @@ export class Body {
    * this set rather than leaving a timer holding the daemon open.
    */
   private readonly pendingCiWatches = new Set<Promise<void>>();
-  /** Last model-availability state this process reconciled per Room. */
-  private readonly modelAvailabilityRooms = new Map<string, string>();
   /** One coalesced approval pass per Room. A pushed approval arriving while a
    * pass is already reading relay state requests one immediate second pass,
    * closing the read-before-event race without allowing overlapping lands. */
@@ -4039,103 +4032,6 @@ export class Body {
     await applyAgentModelSelection(client, sessionId, catalogOptions, applied);
   }
 
-  private async publishModelUnavailableState(channelId: string, replyTo?: string): Promise<void> {
-    const unavailable = this.config.modelUnavailable;
-    if (replyTo) {
-      if (!unavailable) return;
-      await postAgentMessage(
-        channelId,
-        this.agentIdentity,
-        modelUnavailableRoomMessage(unavailable),
-        replyTo,
-        [],
-        modelUnavailableEventTags(unavailable),
-      );
-      return;
-    }
-
-    const selection = unavailable?.selection ?? this.config.modelSelection;
-    if (!unavailable && !selection?.model && !selection?.effort) return;
-    const stateKey = unavailable
-      ? `unavailable:${unavailable.kind}:${unavailable.unavailable.value}:${unavailable.selection.model ?? ''}/${unavailable.selection.effort ?? ''}`
-      : `available:${selection?.model ?? ''}/${selection?.effort ?? ''}`;
-    if (this.modelAvailabilityRooms.get(channelId) === stateKey) return;
-
-    let standing: NostrEvent[] = [];
-    try {
-      standing = await this.agentRelay.queryEvents([
-        {
-          kinds: [9],
-          authors: [this.agentIdentity.publicKey],
-          '#h': [channelId],
-          '#t': ['buzz-agent-model-unavailable'],
-          limit: 20,
-        },
-      ]);
-    } catch (error) {
-      console.warn('[body] could not reconcile the standing model-availability state:', error);
-      // A healthy daemon only publishes a resolution when relay truth proves
-      // there is a failure to resolve. Leave the Room unreconciled so the
-      // next reconnect retries this read instead of suppressing it forever.
-      if (!unavailable) return;
-    }
-    const newest = [...standing]
-      .sort((left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id))
-      .find((event) =>
-        event.tags.some(
-          (tag) =>
-            tag[0] === 'status' &&
-            ['model-unavailable', 'validation-unavailable', 'model-available'].includes(
-              tag[1] ?? '',
-            ),
-        ),
-      );
-    const newestStatus = newest?.tags.find((tag) => tag[0] === 'status')?.[1];
-    const newestUnavailableValue = newest?.tags.find((tag) => tag[0] === 'unavailable-value')?.[1];
-    const newestModel = newest?.tags.find((tag) => tag[0] === 'model')?.[1];
-    const newestEffort = newest?.tags.find((tag) => tag[0] === 'effort')?.[1];
-
-    if (unavailable) {
-      if (
-        newestStatus === unavailable.kind &&
-        newestUnavailableValue === unavailable.unavailable.value &&
-        newestModel === unavailable.selection.model &&
-        newestEffort === unavailable.selection.effort
-      ) {
-        this.modelAvailabilityRooms.set(channelId, stateKey);
-        return;
-      }
-      await postAgentMessage(
-        channelId,
-        this.agentIdentity,
-        modelUnavailableRoomMessage(unavailable),
-        undefined,
-        [],
-        modelUnavailableEventTags(unavailable),
-        undefined,
-        Math.max(Math.floor(Date.now() / 1_000), (newest?.created_at ?? 0) + 1),
-      );
-      this.modelAvailabilityRooms.set(channelId, stateKey);
-      return;
-    }
-
-    if (newestStatus !== 'model-unavailable' && newestStatus !== 'validation-unavailable') {
-      this.modelAvailabilityRooms.set(channelId, stateKey);
-      return;
-    }
-    await postAgentMessage(
-      channelId,
-      this.agentIdentity,
-      '',
-      undefined,
-      [],
-      modelAvailableEventTags(selection!),
-      undefined,
-      Math.max(Math.floor(Date.now() / 1_000), newest!.created_at + 1),
-    );
-    this.modelAvailabilityRooms.set(channelId, stateKey);
-  }
-
   /**
    * Capture this agent's harness-advertised slash commands/skills and republish
    * them as the durable `(communityId, agentPubkey)` record the mobile composer
@@ -4275,7 +4171,7 @@ export class Body {
     priority = session.mode === 'readonly' ? ('interactive' as const) : ('background' as const),
   ): Promise<T> {
     if (this.config.modelUnavailable) {
-      return Promise.reject(new Error(modelUnavailableRoomMessage(this.config.modelUnavailable)));
+      return Promise.reject(new Error(modelUnavailableDiagnostic(this.config.modelUnavailable)));
     }
     if (!session.lifecycle) return task();
     return this.scheduler.run(session.channelId, session.lifecycle, task, {
@@ -7595,7 +7491,28 @@ export class Body {
     } = input;
     const delegatedReplyTags = this.delegatedReplyTags(request);
     if (this.config.modelUnavailable) {
-      await this.publishModelUnavailableState(tlcChannelId, request.eventId);
+      const receiptSessionId =
+        this.sessions.get(tlcChannelId)?.logicalSessionId ??
+        `${this.agentIdentity.publicKey}:${tlcChannelId}`;
+      // Keep the refusal machine-readable without publishing diagnostic prose.
+      // The ordinary turn helper deliberately normalizes failures to complete.
+      await postControlMessage(
+        'turn-receipt',
+        tlcChannelId,
+        this.agentIdentity,
+        '',
+        [
+          ['t', 'agent-turn'],
+          ['request', request.eventId],
+          ['session', receiptSessionId],
+          ['agent', this.agentIdentity.publicKey],
+          ['mode', 'readonly'],
+          ['status', 'failed'],
+          ...(this.presenceGenerations.get(tlcChannelId)
+            ? [['generation', this.presenceGenerations.get(tlcChannelId)!]]
+            : []),
+        ],
+      );
       return { status: 'handled', outcome: { openedCorner: false, producedReply: true } };
     }
     // Mark a slash-command-shaped message BEFORE anything else consumes it.
@@ -12038,7 +11955,6 @@ export class Body {
           console.log(`[body] Room ${channelId} WS reconnected`);
         }
         await presence.setStatus(this.config.modelUnavailable ? 'offline' : 'online');
-        await this.publishModelUnavailableState(channelId);
 
         // This is a belt-and-suspenders read, not the request loop. Starting
         // it after the REQ is active keeps event delivery independent of HTTP.

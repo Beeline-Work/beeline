@@ -205,12 +205,6 @@ export {
   OidcBindError,
   startOidcBind,
   startGitHubBind,
-  startGitHubInstallation,
-  listGitHubRepositories,
-  createGitHubRepository,
-  getGitHubRepositoryAccess,
-  getGitHubRoomInstallationToken,
-  getGitHubRoomEvents,
   getAuthCapabilities,
   parseOidcBindCallback,
   buildOidcBindEvent,
@@ -219,8 +213,6 @@ export {
   lookupRecovery,
   lookupManagedIdentity,
   adoptGitHubHandle,
-  fetchIdentityPredecessors,
-  resolveCurrentIdentityPubkey,
 } from './oidc-bind.js';
 export type {
   OidcBindChallenge,
@@ -228,14 +220,28 @@ export type {
   OidcBindResult,
   OidcRecoveryResult,
   OidcIdentityLink,
+  AuthCapabilities,
+} from './oidc-bind.js';
+export {
+  startGitHubInstallation,
+  listGitHubRepositories,
+  createGitHubRepository,
+  getGitHubRepositoryAccess,
+  getGitHubRoomInstallationToken,
+  getGitHubRoomEvents,
+} from './github-auth.js';
+export type {
   GitHubRepositoryAccess,
   GitHubInstallationAccess,
   GitHubRepositoryAccessResult,
   GitHubRoomInstallationToken,
   GitHubRoomEvent,
   GitHubRoomEventsResult,
-  AuthCapabilities,
-} from './oidc-bind.js';
+} from './github-auth.js';
+export {
+  fetchIdentityPredecessors,
+  resolveCurrentIdentityPubkey,
+} from './identity-succession.js';
 
 export { RelayWs, wsUrlFromHttp, wsQueryEvents } from './ws.js';
 export type { Filter, RelayWsOptions } from './ws.js';

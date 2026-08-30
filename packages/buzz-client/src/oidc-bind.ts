@@ -1,6 +1,9 @@
-import { nip98AuthHeader, signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
+import { authEndpoint, OidcBindError, requestAuthJson } from './auth-json.js';
 import type { Identity } from './types.js';
 import { parseManagedIdentity, type ManagedIdentity } from './nip05.js';
+
+export { OidcBindError } from './auth-json.js';
 
 export const OIDC_BIND_PROTOCOL = 1 as const;
 export const OIDC_BIND_KIND = 24_250 as const;
@@ -36,76 +39,6 @@ export interface OidcBindStart {
   state: string;
 }
 
-export interface GitHubRepositoryAccess {
-  id: number;
-  installationId: number;
-  name: string;
-  fullName: string;
-  remote: string;
-  defaultBranch: string;
-}
-
-export interface GitHubInstallationAccess {
-  installationId: number;
-  accountId: string;
-  accountLogin: string;
-  accountType: 'User' | 'Organization';
-  accountAvatarUrl?: string;
-  repositorySelection: 'all' | 'selected';
-  status: 'active' | 'revoked' | 'suspended';
-  repositoryCount: number;
-  manageUrl: string;
-}
-
-export interface GitHubRepositoryAccessResult {
-  accessible: boolean;
-  installationId?: number;
-  reason?: 'revoked' | 'not_granted';
-  /**
-   * The repository is NOT covered by the App and never was (distinct from a
-   * move): only its owner can install the App, so the caller surfaces
-   * `installUrl` as a shareable call to action instead of an error wall.
-   */
-  grantNeeded?: boolean;
-  /** The App's state-less public install URL, present when `grantNeeded`. */
-  installUrl?: string;
-}
-
-export interface GitHubRoomInstallationToken {
-  token: string;
-  expiresAt: string;
-  installationId: number;
-  fullName: string;
-  /**
-   * The Room binding author's CURRENT device key after key succession
-   * (absent when the auth service has no succession ledger entry). A daemon
-   * may treat a corner-scoped merge approval signed by this key as owner-signed.
-   */
-  authorizedBy?: string;
-}
-
-/** One stored GitHub repository-activity event, released to an authorized daemon. */
-export interface GitHubRoomEvent {
-  id: number;
-  type: string;
-  action: string;
-  actor: string;
-  summary: string;
-  received_at: string;
-  number?: number;
-  title?: string;
-  url?: string;
-}
-
-export interface GitHubRoomEventsResult {
-  fullName: string;
-  /** The newest stored id for the repository (0 when none). */
-  head: number;
-  /** Pass this back as `since` to continue from where this read ended. */
-  cursor: number;
-  events: GitHubRoomEvent[];
-}
-
 export interface AuthCapabilities {
   github: boolean;
   oidc: boolean;
@@ -132,34 +65,6 @@ export interface OidcIdentityLink {
   subject: string;
   pubkey: string;
   created_at: string;
-}
-
-export class OidcBindError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status?: number,
-    /** Machine-readable extras from typed service errors (e.g. install URLs). */
-    readonly details?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = 'OidcBindError';
-  }
-
-  get retryable(): boolean {
-    return this.code === 'offline' || (this.status !== undefined && this.status >= 500);
-  }
-}
-
-function endpoint(baseUrl: string, path: string): URL {
-  const base = new URL(baseUrl);
-  if (base.protocol !== 'https:' && base.protocol !== 'http:') {
-    throw new OidcBindError('invalid_configuration', 'auth base URL must use HTTP or HTTPS');
-  }
-  if (base.username || base.password || base.search || base.hash) {
-    throw new OidcBindError('invalid_configuration', 'auth base URL must be an origin');
-  }
-  return new URL(path, `${base.origin}/`);
 }
 
 function exactParam(params: URLSearchParams, name: string): string {
@@ -258,7 +163,7 @@ function startProviderBind(
   if (!TOKEN_RE.test(input.state)) {
     throw new OidcBindError('invalid_state', 'OIDC app state must be 32 random bytes');
   }
-  const base = endpoint(baseUrl, '/');
+  const base = authEndpoint(baseUrl, '/');
   const redirect = new URL(input.redirectUri);
   const associatedRedirect = `${base.origin}/auth/${provider}/mobile-callback`;
   const isAssociatedLink =
@@ -283,7 +188,7 @@ function startProviderBind(
       'OIDC completion must use an allowed associated link or app deep link',
     );
   }
-  const url = endpoint(baseUrl, `/auth/${provider}/start`);
+  const url = authEndpoint(baseUrl, `/auth/${provider}/start`);
   url.searchParams.set('app_redirect', input.redirectUri);
   url.searchParams.set('app_state', input.state);
   return { authorizationUrl: url.toString(), redirectUri: input.redirectUri, state: input.state };
@@ -428,40 +333,6 @@ function assertBindEvent(challenge: OidcBindChallenge, event: NostrEvent): void 
   }
 }
 
-async function responseBody(response: Response): Promise<Record<string, unknown>> {
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    body = null;
-  }
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid response',
-      response.status,
-    );
-  }
-  return body as Record<string, unknown>;
-}
-
-function serviceError(body: Record<string, unknown>, status: number): OidcBindError {
-  const code = typeof body.error === 'string' ? body.error : 'auth_service_error';
-  const message =
-    typeof body.message === 'string' ? body.message : `auth service returned HTTP ${status}`;
-  // Typed error bodies may carry actionable extras (e.g. owner_grant_needed's
-  // shareable install URL); pass through the known fields only.
-  const details: Record<string, unknown> = {};
-  if (typeof body.install_url === 'string') details.installUrl = body.install_url;
-  if (typeof body.repository === 'string') details.repository = body.repository;
-  return new OidcBindError(
-    code,
-    message,
-    status,
-    Object.keys(details).length > 0 ? details : undefined,
-  );
-}
-
 /** Submit the signed challenge. The Nostr secret never enters the request body. */
 export async function finishOidcBind(
   baseUrl: string,
@@ -470,21 +341,10 @@ export async function finishOidcBind(
 ): Promise<OidcBindResult> {
   assertChallenge(challenge);
   assertBindEvent(challenge, event);
-  let response: Response;
-  try {
-    response = await fetch(endpoint(baseUrl, '/auth/oidc/bind'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ticket: challenge.ticket, event }),
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
+  const { body, status } = await requestAuthJson(baseUrl, '/auth/oidc/bind', {
+    method: 'POST',
+    body: { ticket: challenge.ticket, event },
+  });
   if (
     body.linked !== true ||
     typeof body.idempotent !== 'boolean' ||
@@ -496,7 +356,7 @@ export async function finishOidcBind(
     throw new OidcBindError(
       'invalid_response',
       'auth service returned an invalid bind result',
-      response.status,
+      status,
     );
   }
   return {
@@ -519,25 +379,14 @@ export async function recoverOidcBind(
 ): Promise<OidcRecoveryResult> {
   assertChallenge(challenge);
   assertBindEvent(challenge, event);
-  let response: Response;
-  try {
-    response = await fetch(endpoint(baseUrl, '/auth/oidc/recover'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        ticket: challenge.ticket,
-        event,
-        confirm_replace: true,
-      }),
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
+  const { body, status } = await requestAuthJson(baseUrl, '/auth/oidc/recover', {
+    method: 'POST',
+    body: {
+      ticket: challenge.ticket,
+      event,
+      confirm_replace: true,
+    },
+  });
   if (
     body.linked !== true ||
     typeof body.replaced !== 'boolean' ||
@@ -549,7 +398,7 @@ export async function recoverOidcBind(
     throw new OidcBindError(
       'invalid_response',
       'auth service returned an invalid recovery result',
-      response.status,
+      status,
     );
   }
   return {
@@ -567,29 +416,18 @@ export async function lookupManagedIdentity(
 ): Promise<ManagedIdentity | null> {
   if (!HEX_KEY_RE.test(identity.publicKey))
     throw new OidcBindError('invalid_identity', 'invalid public key');
-  const url = endpoint(baseUrl, `/auth/identity/${identity.publicKey}`).toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
-      },
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
+  const { body, status } = await requestAuthJson(
+    baseUrl,
+    `/auth/identity/${identity.publicKey}`,
+    { identity },
+  );
   if (body.identity === null) return null;
   const managed = parseManagedIdentity(body.identity);
   if (!managed) {
     throw new OidcBindError(
       'invalid_response',
       'auth service returned an invalid managed identity',
-      response.status,
+      status,
     );
   }
   return managed;
@@ -602,34 +440,17 @@ export async function adoptGitHubHandle(
 ): Promise<ManagedIdentity> {
   if (!HEX_KEY_RE.test(identity.publicKey))
     throw new OidcBindError('invalid_identity', 'invalid public key');
-  const url = endpoint(
+  const { body, status } = await requestAuthJson(
     baseUrl,
     `/auth/identity/${identity.publicKey}/github-handle`,
-  ).toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ confirm_rename: true }),
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
+    { method: 'POST', identity, body: { confirm_rename: true } },
+  );
   const managed = parseManagedIdentity(body.identity);
   if (body.renamed !== true || !managed) {
     throw new OidcBindError(
       'invalid_response',
       'auth service returned an invalid handle rename',
-      response.status,
+      status,
     );
   }
   return managed;
@@ -642,27 +463,16 @@ export async function lookupRecovery(
 ): Promise<OidcIdentityLink[]> {
   if (!HEX_KEY_RE.test(identity.publicKey))
     throw new OidcBindError('invalid_identity', 'invalid public key');
-  const url = endpoint(baseUrl, `/auth/oidc/links/${identity.publicKey}`).toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
-      },
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
+  const { body, status } = await requestAuthJson(
+    baseUrl,
+    `/auth/oidc/links/${identity.publicKey}`,
+    { identity },
+  );
   if (!Array.isArray(body.links)) {
     throw new OidcBindError(
       'invalid_response',
       'auth service returned invalid recovery links',
-      response.status,
+      status,
     );
   }
   return body.links.map((entry) => {
@@ -670,7 +480,7 @@ export async function lookupRecovery(
       throw new OidcBindError(
         'invalid_response',
         'auth service returned invalid recovery link',
-        response.status,
+        status,
       );
     }
     const link = entry as Record<string, unknown>;
@@ -687,513 +497,23 @@ export async function lookupRecovery(
       throw new OidcBindError(
         'invalid_response',
         'auth service returned invalid recovery link',
-        response.status,
+        status,
       );
     }
     return link as unknown as OidcIdentityLink;
   });
 }
 
-/** Begin the one-per-account Beeline GitHub App installation flow. */
-export async function startGitHubInstallation(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-  redirectUri: string,
-  installationId?: number,
-): Promise<string> {
-  const url = endpoint(baseUrl, '/auth/github/install/start').toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        pubkey: identity.publicKey,
-        redirect_uri: redirectUri,
-        ...(installationId === undefined ? {} : { installation_id: installationId }),
-      }),
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
-  if (typeof body.authorization_url !== 'string') {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid GitHub App URL',
-      response.status,
-    );
-  }
-  return body.authorization_url;
-}
-
-/** Repositories granted by the account's Beeline GitHub App installation. */
-export async function listGitHubRepositories(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-  options: { refresh?: boolean } = {},
-): Promise<{
-  installed: boolean;
-  installations: GitHubInstallationAccess[];
-  repositories: GitHubRepositoryAccess[];
-}> {
-  const endpointUrl = endpoint(baseUrl, `/auth/github/repos/${identity.publicKey}`);
-  if (options.refresh) endpointUrl.searchParams.set('refresh', '1');
-  const url = endpointUrl.toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
-      },
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
-  if (
-    typeof body.installed !== 'boolean' ||
-    !Array.isArray(body.installations) ||
-    !Array.isArray(body.repositories)
-  ) {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid GitHub repository list',
-      response.status,
-    );
-  }
-  const repositories = body.repositories.map((entry) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new OidcBindError(
-        'invalid_response',
-        'auth service returned an invalid GitHub repository',
-        response.status,
-      );
-    }
-    const repo = entry as Record<string, unknown>;
-    if (
-      typeof repo.id !== 'number' ||
-      typeof repo.installationId !== 'number' ||
-      !Number.isSafeInteger(repo.installationId) ||
-      typeof repo.name !== 'string' ||
-      typeof repo.fullName !== 'string' ||
-      typeof repo.remote !== 'string' ||
-      typeof repo.defaultBranch !== 'string'
-    ) {
-      throw new OidcBindError(
-        'invalid_response',
-        'auth service returned an invalid GitHub repository',
-        response.status,
-      );
-    }
-    return repo as unknown as GitHubRepositoryAccess;
-  });
-  const installations = body.installations.map((entry) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new OidcBindError(
-        'invalid_response',
-        'auth service returned an invalid GitHub installation',
-        response.status,
-      );
-    }
-    const installation = entry as Record<string, unknown>;
-    if (
-      typeof installation.installationId !== 'number' ||
-      !Number.isSafeInteger(installation.installationId) ||
-      typeof installation.accountId !== 'string' ||
-      typeof installation.accountLogin !== 'string' ||
-      (installation.accountType !== 'User' && installation.accountType !== 'Organization') ||
-      (installation.repositorySelection !== 'all' &&
-        installation.repositorySelection !== 'selected') ||
-      (installation.status !== 'active' &&
-        installation.status !== 'revoked' &&
-        installation.status !== 'suspended') ||
-      typeof installation.repositoryCount !== 'number' ||
-      typeof installation.manageUrl !== 'string'
-    ) {
-      throw new OidcBindError(
-        'invalid_response',
-        'auth service returned an invalid GitHub installation',
-        response.status,
-      );
-    }
-    return installation as unknown as GitHubInstallationAccess;
-  });
-  return { installed: body.installed, installations, repositories };
-}
-
-export async function createGitHubRepository(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-  input: { installationId: number; name: string; description?: string; private?: boolean },
-): Promise<GitHubRepositoryAccess> {
-  const url = endpoint(baseUrl, `/auth/github/repos/${identity.publicKey}`).toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        installation_id: input.installationId,
-        name: input.name,
-        ...(input.description ? { description: input.description } : {}),
-        ...(input.private !== undefined ? { private: input.private } : {}),
-      }),
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
-  const repository = body.repository;
-  if (!repository || typeof repository !== 'object' || Array.isArray(repository)) {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid GitHub repository',
-      response.status,
-    );
-  }
-  return repository as unknown as GitHubRepositoryAccess;
-}
-
-export async function getGitHubRepositoryAccess(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-  fullName: string,
-): Promise<GitHubRepositoryAccessResult> {
-  const endpointUrl = endpoint(baseUrl, `/auth/github/repo-access/${identity.publicKey}`);
-  endpointUrl.searchParams.set('full_name', fullName);
-  const url = endpointUrl.toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
-      },
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
-  if (typeof body.accessible !== 'boolean') {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid repository access result',
-      response.status,
-    );
-  }
-  const installUrl = typeof body.install_url === 'string' ? body.install_url : undefined;
-  return {
-    ...(body as unknown as GitHubRepositoryAccessResult),
-    ...(body.grant_needed === true ? { grantNeeded: true } : {}),
-    ...(installUrl ? { installUrl } : {}),
-  } as GitHubRepositoryAccessResult;
-}
-
-/**
- * Obtain an exact-repository installation token for a daemon that is a
- * current member of the Room. The auth sidecar re-resolves Room state; callers
- * cannot choose the repository or installation represented by the token.
- */
-/** Options for {@link getGitHubRoomInstallationToken}. */
-export interface GitHubRoomInstallationTokenOptions {
-  /**
-   * Ask the auth service to mint a READ-ONLY installation token: GitHub
-   * receives `permissions: { contents: "read", metadata: "read" }` alongside
-   * the pinned repository id, so the token is structurally incapable of
-   * pushing or writing anything on any ref. This is the only variant a
-   * session (Room or corner) may hold — push-capable credentials never leave
-   * the daemon's own brokered paths (#376).
-   */
-  readOnly?: boolean;
-}
-
-export async function getGitHubRoomInstallationToken(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-  roomId: string,
-  options: GitHubRoomInstallationTokenOptions = {},
-): Promise<GitHubRoomInstallationToken> {
-  const url = endpoint(baseUrl, '/auth/github/room-token').toString();
-  const relayQueryUrl = endpoint(baseUrl, '/query').toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        pubkey: identity.publicKey,
-        room_id: roomId,
-        relay_authorizations: Array.from({ length: 16 }, () =>
-          nip98AuthHeader(identity.secretKey, identity.publicKey, relayQueryUrl, 'POST'),
-        ),
-        ...(options.readOnly ? { read_only: true } : {}),
-      }),
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
-  if (
-    typeof body.token !== 'string' ||
-    !body.token ||
-    typeof body.expires_at !== 'string' ||
-    !Number.isFinite(Date.parse(body.expires_at)) ||
-    typeof body.installation_id !== 'number' ||
-    !Number.isSafeInteger(body.installation_id) ||
-    typeof body.full_name !== 'string' ||
-    !/^[^/\s]+\/[^/\s]+$/.test(body.full_name) ||
-    (body.authorized_by !== undefined &&
-      (typeof body.authorized_by !== 'string' || !HEX_KEY_RE.test(body.authorized_by)))
-  ) {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid Room repository token',
-      response.status,
-    );
-  }
-  return {
-    token: body.token,
-    expiresAt: body.expires_at,
-    installationId: body.installation_id,
-    fullName: body.full_name,
-    ...(typeof body.authorized_by === 'string' ? { authorizedBy: body.authorized_by } : {}),
-  };
-}
-
-/** Validated result of {@link fetchIdentityPredecessors}. */
-export interface IdentitySuccessionChain {
-  /** The keys that previously held this identity, oldest first. */
-  predecessors: string[];
-}
-
-const IDENTITY_PREDECESSORS_TIMEOUT_MS = 5_000;
-
-function withIdentityPredecessorTimeout<T>(
-  operation: Promise<T>,
-  controller: AbortController,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      controller.abort();
-      reject(new OidcBindError('offline', 'identity succession lookup timed out'));
-    }, IDENTITY_PREDECESSORS_TIMEOUT_MS);
-    operation.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
-/**
- * Fetch this key's succession chain from the auth service: the device keys
- * that previously held the same Beeline identity (oldest first). Served only
- * to the key itself; a successor uses it to rediscover its predecessor's
- * Workspaces and migrate its own memberships after a replace.
- */
-export async function fetchIdentityPredecessors(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-): Promise<string[]> {
-  if (!HEX_KEY_RE.test(identity.publicKey))
-    throw new OidcBindError('invalid_identity', 'invalid public key');
-  const url = endpoint(baseUrl, `/auth/oidc/predecessors/${identity.publicKey}`).toString();
-  let response: Response;
-  let body: Record<string, unknown>;
-  const controller = new AbortController();
-  try {
-    ({ response, body } = await withIdentityPredecessorTimeout(
-      fetch(url, {
-        headers: {
-          authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
-        },
-        signal: controller.signal,
-      }).then(async (nextResponse) => ({
-        response: nextResponse,
-        body: await responseBody(nextResponse),
-      })),
-      controller,
-    ));
-  } catch (error) {
-    if (error instanceof OidcBindError) throw error;
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  if (!response.ok) throw serviceError(body, response.status);
-  if (
-    !Array.isArray(body.predecessors) ||
-    body.predecessors.some((value) => typeof value !== 'string' || !HEX_KEY_RE.test(value))
-  ) {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid succession chain',
-      response.status,
-    );
-  }
-  return body.predecessors as string[];
-}
-
-/**
- * Resolve any historical device key to the current key of the same identity.
- *
- * Unlike {@link fetchIdentityPredecessors}, this is intentionally usable by a
- * different authenticated Workspace actor (including its paired agent): soul
- * readers need to verify that a predecessor author now names a current human
- * member, while the predecessor's private key is no longer available.
- */
-export async function resolveCurrentIdentityPubkey(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-  pubkey: string,
-): Promise<string> {
-  if (!HEX_KEY_RE.test(pubkey)) throw new OidcBindError('invalid_identity', 'invalid public key');
-  const url = endpoint(baseUrl, `/auth/oidc/current/${pubkey}`).toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'GET'),
-      },
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
-  if (typeof body.current_pubkey !== 'string' || !HEX_KEY_RE.test(body.current_pubkey)) {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid current identity key',
-      response.status,
-    );
-  }
-  return body.current_pubkey;
-}
-
-/**
- * Fetch stored GitHub repository activity for one Room, over the same
- * authority as {@link getGitHubRoomInstallationToken}: the auth sidecar
- * re-resolves Room state and releases only events for the repository that
- * Room is bound to. Omitting `since` bootstraps ("start from now"); passing a
- * previous result's `cursor` releases everything stored since, so a daemon
- * that was offline catches up instead of being silently skipped. `waitMs`
- * long-polls when there is nothing new yet.
- */
-export async function getGitHubRoomEvents(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-  roomId: string,
-  options: { since?: number; waitMs?: number } = {},
-): Promise<GitHubRoomEventsResult> {
-  const url = endpoint(baseUrl, '/auth/github/room-events').toString();
-  const relayQueryUrl = endpoint(baseUrl, '/query').toString();
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, url, 'POST'),
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        pubkey: identity.publicKey,
-        room_id: roomId,
-        relay_authorizations: Array.from({ length: 16 }, () =>
-          nip98AuthHeader(identity.secretKey, identity.publicKey, relayQueryUrl, 'POST'),
-        ),
-        ...(options.since !== undefined ? { since: options.since } : {}),
-        ...(options.waitMs !== undefined ? { wait_ms: Math.round(options.waitMs) } : {}),
-      }),
-    });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
-  if (
-    typeof body.full_name !== 'string' ||
-    !/^[^/\s]+\/[^/\s]+$/.test(body.full_name) ||
-    typeof body.head !== 'number' ||
-    !Number.isSafeInteger(body.head) ||
-    typeof body.cursor !== 'number' ||
-    !Number.isSafeInteger(body.cursor) ||
-    !Array.isArray(body.events)
-  ) {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid Room event feed',
-      response.status,
-    );
-  }
-  return {
-    fullName: body.full_name,
-    head: body.head,
-    cursor: body.cursor,
-    events: body.events,
-  } as unknown as GitHubRoomEventsResult;
-}
-
 /** Discover which sign-in surface the deployed auth sidecar has enabled. */
 export async function getAuthCapabilities(baseUrl: string): Promise<AuthCapabilities> {
-  const url = endpoint(baseUrl, '/auth/capabilities').toString();
-  let response: Response;
-  try {
-    response = await fetch(url, { headers: { accept: 'application/json' } });
-  } catch (error) {
-    throw new OidcBindError(
-      'offline',
-      error instanceof Error ? error.message : 'auth service unavailable',
-    );
-  }
-  const body = await responseBody(response);
-  if (!response.ok) throw serviceError(body, response.status);
+  const { body, status } = await requestAuthJson(baseUrl, '/auth/capabilities', {
+    headers: { accept: 'application/json' },
+  });
   if (typeof body.github !== 'boolean' || typeof body.oidc !== 'boolean') {
     throw new OidcBindError(
       'invalid_response',
       'auth service returned invalid capabilities',
-      response.status,
+      status,
     );
   }
   return { github: body.github, oidc: body.oidc };

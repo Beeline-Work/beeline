@@ -324,13 +324,21 @@ describe('session-start capability awareness', () => {
   });
 
   it('makes tools the direct interface without a when-to-use catalog', () => {
-    expect(BEELINE_CAPABILITIES_PRIMER).toContain('mounted Beeline tools are the interface');
-    expect(BEELINE_CAPABILITIES_PRIMER).toContain('act directly by calling them');
-    expect(BEELINE_CAPABILITIES_PRIMER).toContain('host derive identity');
-    expect(BEELINE_CAPABILITIES_PRIMER).toContain('typed result tells you whether');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('Mounted Beeline tools are the interface');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('call them directly');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('host derives identity');
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain('typed results say executed');
     expect(BEELINE_CAPABILITIES_PRIMER).not.toContain('CORNER_REQUEST');
     expect(BEELINE_CAPABILITIES_PRIMER).not.toContain('schedule.change');
     expect(BEELINE_CAPABILITIES_PRIMER).not.toContain('squire-credential-use');
+  });
+
+  it('sends repo-less deliverables to the workbench and reserves corners for named landable work', () => {
+    expect(BEELINE_CAPABILITIES_PRIMER).toContain(
+      'In a Room with no repository, make deliverables as workbench artifacts to show the human; ' +
+        'corners are for changes that land in a repository and require a signed request naming ' +
+        'owner/repo.',
+    );
   });
 
   it('grounds action claims in canonical host results', () => {

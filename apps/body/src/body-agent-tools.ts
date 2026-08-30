@@ -114,7 +114,7 @@ export interface BodyAgentToolsHost {
   requesterCanOpenCornerDirectly(roomId: string, requesterPubkey: string): Promise<boolean>;
   openSubchannelForRequest(
     roomId: string,
-    repo: BoundRepo,
+    repo: BoundRepo | undefined,
     intent: string,
     request: ChannelTaskRequest,
     options?: { objective?: string },
@@ -129,7 +129,7 @@ export interface BodyAgentToolsHost {
   requestCornerApproval(input: {
     roomId: string;
     workspaceId: string;
-    roomRepo: BoundRepo;
+    roomRepo?: BoundRepo;
     request: ChannelTaskRequest;
     objective: string;
     tool: string;
@@ -264,7 +264,7 @@ export class BodyAgentTools {
 
   private openSubchannelForRequest(
     roomId: string,
-    repo: BoundRepo,
+    repo: BoundRepo | undefined,
     intent: string,
     request: ChannelTaskRequest,
     options?: { objective?: string },
@@ -534,9 +534,9 @@ export class BodyAgentTools {
     const state = info.cornerState?.state ?? 'open';
     return {
       corner_id: info.subchannelId,
-      name: info.cornerName ?? info.taskDescription ?? info.featureBranch,
+      name: info.cornerName ?? info.taskDescription ?? info.featureBranch ?? 'Untitled corner',
       objective: info.taskDescription ?? '',
-      feature_ref: info.featureBranch,
+      ...(info.featureBranch ? { feature_ref: info.featureBranch } : {}),
       state: state === 'closed' ? 'concluded' : state,
     };
   }
@@ -1200,20 +1200,22 @@ export class BodyAgentTools {
   private async invokeOpenCornerTool(
     binding: { channelId: string; roomId: string; workspaceId: string },
     args: Record<string, unknown>,
-  ): Promise<DirectToolResult<{ corner_id: string; feature_ref: string }>> {
+  ): Promise<DirectToolResult<{ corner_id: string; feature_ref?: string }>> {
     try {
       const objective = this.stringToolArg(args, 'objective', { required: true, max: 2_000 })!;
       const requestedRepository = this.stringToolArg(args, 'repository', { max: 512 });
       const roomRepo = this.agentToolRoomRepositories.get(binding.roomId);
-      if (!roomRepo) {
+      if (!roomRepo && requestedRepository) {
         throw new AgentToolKnownFailure(
-          'repository_unavailable',
-          'This Room has no host-bound repository for a corner.',
+          'repository_scope_mismatch',
+          'This repo-less Room cannot open a repository-backed corner.',
         );
       }
-      const repositoryKey =
-        roomRepo.truth?.binding.key ?? roomRepo.repositoryKey ?? this.repoId(roomRepo);
+      const repositoryKey = roomRepo
+        ? (roomRepo.truth?.binding.key ?? roomRepo.repositoryKey ?? this.repoId(roomRepo))
+        : undefined;
       if (
+        roomRepo &&
         requestedRepository &&
         requestedRepository !== repositoryKey &&
         requestedRepository !== this.repoId(roomRepo)
@@ -1227,8 +1229,8 @@ export class BodyAgentTools {
         type: 'corner.open',
         workspaceId: binding.workspaceId,
         roomId: binding.roomId,
-        repositoryKey,
-        targetRef: roomRepo.targetBranch ?? 'refs/heads/main',
+        ...(repositoryKey ? { repositoryKey } : {}),
+        ...(roomRepo ? { targetRef: roomRepo.targetBranch ?? 'refs/heads/main' } : {}),
       };
       const pending = this.pendingRoomTurns.get(binding.roomId);
       const sourceCorner = this.subchannels.get(binding.channelId);
@@ -1265,7 +1267,7 @@ export class BodyAgentTools {
       };
       return await this.agentToolKernel.authorizeOrRequest<{
         corner_id: string;
-        feature_ref: string;
+        feature_ref?: string;
       }>({
         action: 'corner.open',
         scope,
@@ -1297,12 +1299,15 @@ export class BodyAgentTools {
             resultId: info.subchannelId,
             extraTags: [
               ['corner', info.subchannelId],
-              ['feature', info.featureBranch],
+              ...(info.featureBranch ? [['feature', info.featureBranch]] : []),
             ],
           });
           return {
             event_id: receipt.id,
-            result: { corner_id: info.subchannelId, feature_ref: info.featureBranch },
+            result: {
+              corner_id: info.subchannelId,
+              ...(info.featureBranch ? { feature_ref: info.featureBranch } : {}),
+            },
           };
         },
         requestApproval: () =>
@@ -1409,8 +1414,18 @@ export class BodyAgentTools {
       if (!info || info.archived || info.session.parentChannelId !== binding.roomId) {
         throw new AgentToolKnownFailure('corner_unavailable', 'The bound corner is unavailable.');
       }
-      const head = (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim();
-      if (!/^[0-9a-f]{40}$/.test(head)) {
+      if (disposition === 'land' && !info.boundRepo) {
+        return {
+          status: 'denied',
+          code: 'landing_unavailable',
+          message:
+            'This corner has no repository or feature branch to land. Deliver its artifacts, then close it with disposition abandon.',
+        };
+      }
+      const head = info.boundRepo
+        ? (await git(info.worktreePath, ['rev-parse', 'HEAD'])).stdout.trim()
+        : undefined;
+      if (info.boundRepo && !/^[0-9a-f]{40}$/.test(head ?? '')) {
         throw new AgentToolKnownFailure('corner_tip_unavailable', 'The corner tip is unavailable.');
       }
       const scope: BeelineActionScope = {
@@ -1426,7 +1441,7 @@ export class BodyAgentTools {
                 info.boundRepo.repositoryKey ??
                 this.repoId(info.boundRepo),
               targetRef: info.boundRepo.targetBranch ?? 'refs/heads/main',
-              sourceSha: head,
+              sourceSha: head!,
             }
           : {}),
       };

@@ -14,6 +14,7 @@ import type {
 } from '@beeline/buzz-client';
 import { TokenRegistry } from './registry.js';
 import type { TestSendReport } from './gateway.js';
+import type { DaemonReleaseFleetEntry } from '@beeline/body/release-status';
 
 const MAX_BODY_BYTES = 32 * 1024;
 const NON_PRODUCTION_ENVIRONMENTS = new Set(['test', 'emulator', 'simulator']);
@@ -70,6 +71,18 @@ export interface RegistrationServerHooks {
   sendTest?: (pubkey: string) => Promise<TestSendReport>;
   /** Push health is independent of paint-view reads. */
   pushHealth?: () => { readonly ok: boolean; readonly reason?: string };
+  /** One aligned release identity plus the daemon fleet's READY records. */
+  releaseStatus?: () =>
+    | Promise<{
+        readonly version?: string;
+        readonly sourceSha?: string;
+        readonly daemons: readonly DaemonReleaseFleetEntry[];
+      }>
+    | {
+        readonly version?: string;
+        readonly sourceSha?: string;
+        readonly daemons: readonly DaemonReleaseFleetEntry[];
+      };
   /** Workflow/operator credential for querying a different identity's device receipt. */
   otaReceiptAdminToken?: string;
   indexer?: {
@@ -255,11 +268,21 @@ export function createRegistrationServer(
     try {
       if (request.method === 'GET' && request.url === '/health') {
         const pushHealth = hooks.pushHealth?.() ?? { ok: true };
+        const release = await hooks.releaseStatus?.();
         json(response, pushHealth.ok ? 200 : 503, {
           ok: pushHealth.ok,
           ...(pushHealth.reason ? { reason: pushHealth.reason } : {}),
           registeredPubkeys: registry.pubkeyCount,
           registeredDevices: registry.tokenCount,
+          ...(release
+            ? {
+                release: {
+                  version: release.version ?? null,
+                  sourceSha: release.sourceSha ?? null,
+                },
+                daemons: release.daemons,
+              }
+            : {}),
         });
         return;
       }
@@ -470,8 +493,17 @@ export function createRegistrationServer(
       if (request.method === 'POST' && request.url === '/update-receipts') {
         const body = await readJson(request);
         if (!body || typeof body !== 'object') throw new Error('expected JSON object');
-        const { pubkey, deviceId, updateId, channel, group, runtimeVersion, environment } =
-          body as Record<string, unknown>;
+        const {
+          pubkey,
+          deviceId,
+          updateId,
+          channel,
+          group,
+          runtimeVersion,
+          releaseVersion,
+          sourceSha,
+          environment,
+        } = body as Record<string, unknown>;
         if (typeof pubkey !== 'string' || !TokenRegistry.validPubkey(pubkey)) {
           throw new Error('invalid pubkey');
         }
@@ -486,6 +518,8 @@ export function createRegistrationServer(
         const parsedChannel = nullableString(channel);
         const parsedGroup = nullableString(group);
         const parsedRuntimeVersion = nullableString(runtimeVersion);
+        const parsedReleaseVersion = nullableString(releaseVersion);
+        const parsedSourceSha = nullableString(sourceSha);
         const parsedEnvironment =
           environment === 'physical'
             ? ('physical' as const)
@@ -497,6 +531,8 @@ export function createRegistrationServer(
           parsedChannel === undefined ||
           parsedGroup === undefined ||
           parsedRuntimeVersion === undefined ||
+          parsedReleaseVersion === undefined ||
+          parsedSourceSha === undefined ||
           parsedEnvironment === undefined
         ) {
           throw new Error('invalid update receipt');
@@ -508,6 +544,8 @@ export function createRegistrationServer(
           channel: parsedChannel,
           group: parsedGroup,
           runtimeVersion: parsedRuntimeVersion,
+          releaseVersion: parsedReleaseVersion,
+          sourceSha: parsedSourceSha,
           environment: parsedEnvironment,
         });
         json(response, 201, { recorded: true, receipt: stored }, PRIVATE_HEADERS);

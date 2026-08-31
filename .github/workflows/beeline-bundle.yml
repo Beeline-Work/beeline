@@ -1,133 +1,96 @@
-# Beeline CLI bundle publishing ("latest from main" channel).
-#
-# Every push to main touching daemon/CLI bundle inputs builds the CLI bundle
-# natively for linux-x64 on the SELF-HOSTED production-Linux runner (same
-# labels as deploy-host.yml) and publishes the bundle set directly to the
-# host-local webroot, served statically at https://usebeeline.app/dl/
-# — exactly where apps/body/src/self-update-manifest.ts reads it
-# (DEFAULT_UPDATE_MANIFEST_URL). Tagged releases (`v0.2.x`) and the
-# from-source installer are untouched.
-#
-# The darwin-arm64 leg is DISABLED (captain decision, 2026-08): no real Mac
-# consumer has ever downloaded the bundle, and macOS runners bill 10x. The
-# commented matrix entry below is ready to re-enable if a Mac consumer appears;
-# scripts/build-beeline-bundle.mjs and install.sh still support darwin for
-# local/cross builds.
-#
-# ---------------------------------------------------------------------------
-# Manifest contract (consumed by apps/body/src/self-update-manifest.ts):
-#
-#   schemaVersion : 1
-#   sourceCommit  : full SHA of the main commit built into these bundles
-#                   (primary update-comparison identity)
-#   version       : comparable version (`0.0.<run_number>`; GitHub's monotonic
-#                   per-workflow counter — a larger number is always newer)
-#   bundles[<platform>] : { file, sha256, bytes, node, commit, version,
-#                           verified } where verified is true only when that
-#                   platform's install probe ran on a native runner.
-#
-# Publish safety: filenames stay stable (beeline-<platform>.tar.gz); each file
-# is checksum-verified and atomically renamed into the host-local store, with
-# manifest.json renamed last. Same-commit re-runs are no-ops and the last five
-# generations remain in .versions/ for operator rollback.
-# ---------------------------------------------------------------------------
-name: Beeline CLI bundle
+name: Beeline daemon release leg
 
 on:
-  push:
-    branches:
-      - main
-    # Only daemon/CLI bundle inputs: the input closure of
-    # scripts/build-beeline-bundle.mjs (the workspaces it builds — body, gate,
-    # buzz-client, nostr — plus the bundle/publish/verify tooling and the
-    # installer the probe drives) and this workflow itself. Mobile-app-only,
-    # auth, or docs-only merges must not spend runner time.
-    paths:
-      - '.github/workflows/beeline-bundle.yml'
-      - 'apps/body/**'
-      - 'apps/gate/**'
-      - 'packages/buzz-client/**'
-      - 'packages/nostr/**'
-      - 'scripts/build-beeline-bundle.mjs'
-      - 'scripts/publish-beeline-dl.mjs'
-      - 'scripts/verify-beeline-install.mjs'
-      - 'relay-stack/web/install.sh'
-      - 'package.json'
-      - 'package-lock.json'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      phase:
+        description: Build the exact daemon artifact or publish it and await updater READY proof
+        type: string
+        required: true
+      release_sha:
+        type: string
+        required: true
+      release_version:
+        type: string
+        required: true
 
 permissions:
-  actions: write
   contents: read
-
-concurrency:
-  group: beeline-bundle-publish
-  cancel-in-progress: false
 
 jobs:
   build:
-    name: Build ${{ matrix.platform }} bundle
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux-x64
-            # Same labels deploy-host.yml targets: the production Linux host.
-            runner: [self-hosted, beeline-prod-host]
-          # darwin leg disabled: no Mac consumers yet. Re-enable by
-          # uncommenting — never with a `matrix.*` job-level `if` guard.
-          # - platform: darwin-arm64
-          #   runner: macos-latest
+    if: inputs.phase == 'build'
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20.19'
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install dependencies
-        run: npm ci
-      - name: Build and verify ${{ matrix.platform }} bundle
-        run: npm run bundle:beeline -- --platform ${{ matrix.platform }}
+      - run: npm ci
+      - name: Build and verify the exact daemon bundle
+        run: npm run bundle:beeline -- --platform linux-x64
         env:
-          BEELINE_BUNDLE_COMMIT: ${{ github.sha }}
-          BEELINE_BUNDLE_VERSION: 0.0.${{ github.run_number }}
-          BEELINE_BUNDLE_CREATED_AT: ${{ github.event.head_commit.timestamp }}
-      # The build merges its bundle into the committed dl/manifest.json, which
-      # may already carry another platform's entry; extract exactly this
-      # platform so each artifact is a clean single-platform partial.
-      - name: Collect build outputs
+          BEELINE_BUNDLE_COMMIT: ${{ inputs.release_sha }}
+          BEELINE_BUNDLE_VERSION: ${{ inputs.release_version }}
+      - name: Collect daemon artifact
         run: |
-          mkdir -p out/${{ matrix.platform }}
-          cp relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz out/${{ matrix.platform }}/
-          cp relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz.sha256 out/${{ matrix.platform }}/
-          node -e "const fs=require('fs');const p='${{ matrix.platform }}';const m=JSON.parse(fs.readFileSync('relay-stack/web/dl/manifest.json','utf8'));if(!m.bundles[p]||m.bundles[p].verified!==true)throw new Error(p+' missing or unverified in built manifest');fs.writeFileSync('out/'+p+'/manifest.json',JSON.stringify({schemaVersion:m.schemaVersion??1,sourceCommit:m.sourceCommit,version:m.version,bundles:{[p]:m.bundles[p]}},null,2)+'\n')"
+          mkdir -p out/linux-x64
+          cp relay-stack/web/dl/beeline-linux-x64.tar.gz out/linux-x64/
+          cp relay-stack/web/dl/beeline-linux-x64.tar.gz.sha256 out/linux-x64/
+          cp relay-stack/web/dl/manifest.json out/linux-x64/
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}
-          path: out/${{ matrix.platform }}/
+          name: daemon-artifact-${{ inputs.release_sha }}
+          path: out/linux-x64/
           if-no-files-found: error
+          retention-days: 7
 
-  publish:
-    name: Publish bundle set to the host-local /dl store
-    needs: build
-    # Self-hosted too, so the whole pipeline costs zero paid GitHub minutes.
+  promote:
+    if: inputs.phase == 'promote'
     runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
       - uses: actions/download-artifact@v4
         with:
-          path: bundle
-      - name: Assemble and publish the bundle set
-        run: node scripts/publish-beeline-dl.mjs --dir bundle --output-dir "$BEELINE_DL_ROOT" --keep "$BEELINE_DL_KEEP"
+          name: daemon-artifact-${{ inputs.release_sha }}
+          path: bundle/linux-x64
+      - name: Publish daemon artifact through the boring updater
+        run: node scripts/publish-beeline-dl.mjs --dir bundle --output-dir "$BEELINE_DL_ROOT" --keep 5
         env:
-          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_SHA: ${{ inputs.release_sha }}
           BEELINE_DL_ROOT: /home/lunchbox/buzz-router-relay-prod/relay-front/web/dl
-          BEELINE_DL_KEEP: '5'
-      # The ordinary main deploy may have run before this longer native build.
-      # Dispatch again only after /dl is populated so the cutover is ordered.
-      - name: Deploy the published bundle set
-        run: gh workflow run deploy-host.yml --ref main
+      - name: Confirm every daemon restarted READY on the exact release
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 120); do
+            if curl -fsS --max-time 15 https://usebeeline.app/push/health -o "$RUNNER_TEMP/release-health.json" \
+              && node - "$RUNNER_TEMP/release-health.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
+          const fs = require('node:fs');
+          const [path, version, sha] = process.argv.slice(2);
+          const health = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const daemons = Array.isArray(health.daemons) ? health.daemons : [];
+          const aligned = daemons.length > 0 && daemons.every((daemon) =>
+            daemon.state === 'ready' && daemon.releaseVersion === version && daemon.sourceSha === sha
+          );
+          process.exit(aligned ? 0 : 1);
+          NODE
+            then
+              cat "$RUNNER_TEMP/release-health.json"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "daemon fleet did not confirm $RELEASE_VERSION ($RELEASE_SHA) within 10 minutes" >&2
+          cat "$RUNNER_TEMP/release-health.json" >&2 || true
+          exit 1

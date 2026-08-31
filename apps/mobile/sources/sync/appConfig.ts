@@ -6,6 +6,8 @@ export interface AppConfig {
     consoleLoggingDefault?: boolean;
     buildCommitSha?: string;
     buildCommitTimestamp?: string;
+    releaseVersion?: string;
+    releaseSha?: string;
     buzzyRelayUrl?: string;
     buzzyPushGatewayUrl?: string;
 }
@@ -78,6 +80,12 @@ export function loadAppConfig(): AppConfig {
     if (process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL && config.buzzyPushGatewayUrl !== process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL) {
         console.log('[loadAppConfig] Override buzzyPushGatewayUrl from EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL');
         config.buzzyPushGatewayUrl = process.env.EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL;
+    }
+    if (process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION) {
+        config.releaseVersion = process.env.EXPO_PUBLIC_BEELINE_RELEASE_VERSION;
+    }
+    if (process.env.EXPO_PUBLIC_BEELINE_RELEASE_SHA) {
+        config.releaseSha = process.env.EXPO_PUBLIC_BEELINE_RELEASE_SHA;
     }
     return config as AppConfig;
 }

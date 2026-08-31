@@ -1,0 +1,425 @@
+name: Unified production release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact main sha for a governor retry
+        type: string
+        required: false
+      release_version:
+        description: Existing vX.Y.Z assigned to that sha
+        type: string
+        required: false
+      retry_attempt:
+        description: Governor-managed attempt number (1-3)
+        type: number
+        default: 1
+        required: true
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+# One cancellation boundary owns every component. A newer main sha supersedes
+# the whole release, never one app/server/daemon leg in isolation.
+concurrency:
+  group: unified-production-release
+  cancel-in-progress: true
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.identity.outputs.release_sha }}
+      release_version: ${{ steps.identity.outputs.release_version }}
+      trigger_epoch: ${{ steps.trigger_clock.outputs.trigger_epoch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Preserve the fix-to-phone clock from workflow creation
+        id: trigger_clock
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId,
+            });
+            core.setOutput('trigger_epoch', String(Math.floor(Date.parse(run.data.created_at) / 1000)));
+      - name: Locate latest unified release index
+        id: previous
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              name: 'unified-release-index', per_page: 100,
+            });
+            const latest = artifacts.data.artifacts
+              .filter((artifact) => !artifact.expired)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (latest?.workflow_run?.id) core.setOutput('run_id', String(latest.workflow_run.id));
+      - name: Download latest unified release index
+        if: steps.previous.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: unified-release-index
+          path: ${{ runner.temp }}/previous-release
+          run-id: ${{ steps.previous.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Assign one human version to one main sha
+        id: identity
+        env:
+          REQUESTED_SHA: ${{ inputs.release_sha || '' }}
+          REQUESTED_VERSION: ${{ inputs.release_version || '' }}
+        run: |
+          set -euo pipefail
+          release_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$release_sha" || {
+            echo "release $release_sha was superseded by current main" >&2
+            exit 1
+          }
+          previous="$RUNNER_TEMP/previous-release/unified-release.json"
+          if [ -n "$REQUESTED_VERSION" ]; then
+            release_version="$REQUESTED_VERSION"
+          elif [ -f "$previous" ]; then
+            release_version="$(node scripts/unified-release.mjs next-version --previous "$previous")"
+          else
+            release_version=v0.0.1
+          fi
+          args=(init --sha "$release_sha" --version "$release_version" --state "$RUNNER_TEMP/unified-release.json")
+          if [ -f "$previous" ]; then args+=(--previous "$previous"); fi
+          node scripts/unified-release.mjs "${args[@]}"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+      - name: Publish active release index
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-release-index
+          path: ${{ runner.temp }}/unified-release.json
+          overwrite: true
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unified-release-init-${{ steps.identity.outputs.release_sha }}
+          path: ${{ runner.temp }}/unified-release.json
+          retention-days: 7
+
+  # These three jobs start together. The one self-hosted runner may serialize
+  # its two host-native builds, but neither waits behind the mobile export.
+  app_artifact:
+    needs: initialize
+    uses: ./.github/workflows/mobile-ota.yml
+    with:
+      phase: build
+      release_sha: ${{ needs.initialize.outputs.release_sha }}
+      release_version: ${{ needs.initialize.outputs.release_version }}
+      retry_attempt: ${{ inputs.retry_attempt || 1 }}
+    secrets: inherit
+
+  daemon_artifact:
+    needs: initialize
+    uses: ./.github/workflows/beeline-bundle.yml
+    with:
+      phase: build
+      release_sha: ${{ needs.initialize.outputs.release_sha }}
+      release_version: ${{ needs.initialize.outputs.release_version }}
+
+  server_artifact:
+    needs: initialize
+    uses: ./.github/workflows/deploy-host.yml
+    with:
+      phase: build
+      release_sha: ${{ needs.initialize.outputs.release_sha }}
+      release_version: ${{ needs.initialize.outputs.release_version }}
+
+  artifact_gate:
+    needs: [initialize, app_artifact, daemon_artifact, server_artifact]
+    runs-on: ubuntu-latest
+    outputs:
+      promotion_epoch: ${{ steps.clock.outputs.promotion_epoch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: unified-release-init-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/gate
+      - uses: actions/download-artifact@v4
+        with:
+          name: server-artifact-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/gate/server
+      - uses: actions/download-artifact@v4
+        with:
+          name: daemon-artifact-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/gate/daemon
+      - uses: actions/download-artifact@v4
+        with:
+          name: mobile-ota-candidate-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/gate/app
+      - name: Open the one delivery gate only after every artifact exists
+        id: clock
+        env:
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          STATE: ${{ runner.temp }}/gate/unified-release.json
+        run: |
+          set -euo pipefail
+          node - "$RUNNER_TEMP/gate" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const [root, version, sourceSha] = process.argv.slice(2);
+          const artifacts = {
+            server: JSON.parse(fs.readFileSync(path.join(root, 'server/identity.json'))),
+            daemon: JSON.parse(fs.readFileSync(path.join(root, 'daemon/manifest.json'))),
+            app: JSON.parse(fs.readFileSync(path.join(root, 'app/mobile-ota-ledger.json'))),
+          };
+          const identities = {
+            server: artifacts.server,
+            daemon: { version: artifacts.daemon.version, sourceSha: artifacts.daemon.sourceCommit },
+            app: { version: artifacts.app.releaseVersion, sourceSha: artifacts.app.sourceSha },
+          };
+          for (const [component, identity] of Object.entries(identities)) {
+            if (identity.version !== version || identity.sourceSha !== sourceSha) {
+              throw new Error(`${component} artifact is ${identity.version}@${identity.sourceSha}; expected ${version}@${sourceSha}`);
+            }
+          }
+          NODE
+          for component in server daemon app; do
+            node scripts/unified-release.mjs mark-built --state "$STATE" --component "$component" \
+              --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
+          done
+          node scripts/unified-release.mjs assert-built --state "$STATE"
+          echo "promotion_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unified-release-built-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/gate/unified-release.json
+          retention-days: 7
+
+  promote_server:
+    needs: [initialize, artifact_gate]
+    uses: ./.github/workflows/deploy-host.yml
+    with:
+      phase: promote
+      release_sha: ${{ needs.initialize.outputs.release_sha }}
+      release_version: ${{ needs.initialize.outputs.release_version }}
+
+  confirm_server:
+    needs: [initialize, promote_server]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: unified-release-built-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/release
+      - run: node scripts/unified-release.mjs confirm --state "$RUNNER_TEMP/release/unified-release.json" --component server --version "${{ needs.initialize.outputs.release_version }}" --sha "${{ needs.initialize.outputs.release_sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unified-release-server-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/release/unified-release.json
+          retention-days: 7
+
+  promote_daemon:
+    needs: [initialize, confirm_server]
+    uses: ./.github/workflows/beeline-bundle.yml
+    with:
+      phase: promote
+      release_sha: ${{ needs.initialize.outputs.release_sha }}
+      release_version: ${{ needs.initialize.outputs.release_version }}
+
+  confirm_daemon:
+    needs: [initialize, promote_daemon]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: unified-release-server-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/release
+      - run: node scripts/unified-release.mjs confirm --state "$RUNNER_TEMP/release/unified-release.json" --component daemon --version "${{ needs.initialize.outputs.release_version }}" --sha "${{ needs.initialize.outputs.release_sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unified-release-daemon-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/release/unified-release.json
+          retention-days: 7
+
+  promote_app:
+    needs: [initialize, confirm_daemon]
+    uses: ./.github/workflows/mobile-ota.yml
+    with:
+      phase: promote
+      release_sha: ${{ needs.initialize.outputs.release_sha }}
+      release_version: ${{ needs.initialize.outputs.release_version }}
+      retry_attempt: ${{ inputs.retry_attempt || 1 }}
+    secrets: inherit
+
+  confirm_app:
+    needs: [initialize, artifact_gate, promote_app]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: unified-release-daemon-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/release
+      - name: Confirm app promotion and both owner clocks
+        run: |
+          node scripts/unified-release.mjs confirm --state "$RUNNER_TEMP/release/unified-release.json" \
+            --component app --version "${{ needs.initialize.outputs.release_version }}" \
+            --sha "${{ needs.initialize.outputs.release_sha }}"
+          now="$(date +%s)"
+          promotion_elapsed="$(( now - ${{ needs.artifact_gate.outputs.promotion_epoch }} ))"
+          fix_to_phone_elapsed="$(( now - ${{ needs.initialize.outputs.trigger_epoch }} ))"
+          test "$promotion_elapsed" -lt 600 || {
+            echo "aligned promotion took ${promotion_elapsed}s" >&2
+            exit 1
+          }
+          test "$fix_to_phone_elapsed" -lt 1200 || {
+            echo "fix-to-phone took ${fix_to_phone_elapsed}s" >&2
+            exit 1
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unified-release-app-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/release/unified-release.json
+          retention-days: 7
+
+  post_promote_rehearsal:
+    needs: [initialize, promote_app, confirm_app]
+    uses: ./.github/workflows/mobile-ota-post-promote.yml
+    with:
+      source_run_id: ${{ github.run_id }}
+      source_sha: ${{ needs.initialize.outputs.release_sha }}
+      production_group_id: ${{ needs.promote_app.outputs.production_group_id }}
+    secrets: inherit
+
+  delivery_report:
+    needs: [initialize, confirm_app, post_promote_rehearsal]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: unified-release-app-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/release
+      - uses: actions/download-artifact@v4
+        with:
+          name: mobile-ota-promoted-${{ needs.initialize.outputs.release_sha }}
+          path: ${{ runner.temp }}/mobile
+      - name: Refuse a mixed-version delivery report
+        env:
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 https://usebeeline.app/push/health -o "$RUNNER_TEMP/health.json"
+          node - "$RUNNER_TEMP/health.json" "$RUNNER_TEMP/mobile/mobile-ota-ledger.json" "$RUNNER_TEMP/observed.json" <<'NODE'
+          const fs = require('node:fs');
+          const [healthPath, mobilePath, outputPath] = process.argv.slice(2);
+          const health = JSON.parse(fs.readFileSync(healthPath, 'utf8'));
+          const mobile = JSON.parse(fs.readFileSync(mobilePath, 'utf8'));
+          const daemons = health.daemons ?? [];
+          if (daemons.length === 0) throw new Error('No daemon release status records were reported.');
+          const daemon = daemons[0];
+          if (!daemons.every((entry) =>
+            entry.state === 'ready' &&
+            entry.releaseVersion === daemon.releaseVersion &&
+            entry.sourceSha === daemon.sourceSha
+          )) throw new Error('Mixed or unready daemon release status; delivery is refused.');
+          fs.writeFileSync(outputPath, JSON.stringify({
+            server: { version: health.release?.version, sourceSha: health.release?.sourceSha },
+            daemon: { version: daemon.releaseVersion, sourceSha: daemon.sourceSha },
+            app: { version: mobile.releaseVersion, sourceSha: mobile.sourceSha },
+          }));
+          NODE
+          state="$RUNNER_TEMP/release/unified-release.json"
+          node scripts/unified-release.mjs rehearsal --state "$state" --version "$RELEASE_VERSION" --sha "$RELEASE_SHA"
+          node scripts/unified-release.mjs report --state "$state" --observed "$RUNNER_TEMP/observed.json" | tee "$RUNNER_TEMP/delivery-report.txt"
+      - name: Publish the one version delivery record
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-release-index
+          path: ${{ runner.temp }}/release/unified-release.json
+          overwrite: true
+          retention-days: 90
+      - run: |
+          {
+            echo "## Unified delivery"
+            echo
+            cat "$RUNNER_TEMP/delivery-report.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  not_delivered:
+    if: always() && needs.delivery_report.result != 'success'
+    needs: [initialize, delivery_report]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the aligned release as not delivered
+        env:
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          {
+            echo "## NOT DELIVERED: $RELEASE_VERSION"
+            echo
+            echo "The aligned release for \`${RELEASE_SHA}\` did not reach matching server, daemon, app, and device-rehearsal confirmation."
+            echo "Any mixed-version state is explicitly not a delivery."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  retry:
+    if: failure() && (inputs.retry_attempt || 1) < 3
+    needs:
+      - initialize
+      - app_artifact
+      - daemon_artifact
+      - server_artifact
+      - artifact_gate
+      - promote_server
+      - promote_daemon
+      - promote_app
+      - post_promote_rehearsal
+      - delivery_report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Retry the whole release only if it is still current main
+        uses: actions/github-script@v7
+        env:
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          ATTEMPT: ${{ inputs.retry_attempt || 1 }}
+        with:
+          script: |
+            const main = await github.rest.repos.getCommit({
+              owner: context.repo.owner, repo: context.repo.repo, ref: 'main',
+            });
+            if (main.data.sha !== process.env.RELEASE_SHA) {
+              core.notice('A newer main sha superseded this whole release; no stale retry dispatched.');
+              return;
+            }
+            const attempt = Number(process.env.ATTEMPT);
+            await new Promise((resolve) => setTimeout(resolve, attempt * 30_000));
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'unified-release.yml', ref: 'main',
+              inputs: {
+                release_sha: process.env.RELEASE_SHA,
+                release_version: process.env.RELEASE_VERSION,
+                retry_attempt: String(attempt + 1),
+              },
+            });

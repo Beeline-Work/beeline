@@ -63,6 +63,9 @@ BACKUP_ROOT=$PROJECT_DIR/relay-front/web-backups
 BACKUP_KEEP=10
 PUBLIC_BASE=${BEELINE_PUBLIC_BASE:-https://usebeeline.app}
 DRILL=${BEELINE_DEPLOY_DRILL:-}
+RELEASE_VERSION=${BEELINE_RELEASE_VERSION:-}
+RELEASE_SHA=${BEELINE_RELEASE_SHA:-}
+PREBUILT_IMAGES=${BEELINE_PREBUILT_IMAGES:-0}
 STACK_STAGE_DIR=${BEELINE_STACK_STAGE_DIR:-/home/beeline-runner/beeline-deploy-stage}
 MATERIALIZER_UID=1000
 MATERIALIZER_GID=1000
@@ -73,6 +76,13 @@ REPO_STACK=$CHECKOUT/relay-stack/prod
 
 log() { echo ">> $*"; }
 die() { echo "!! $*" >&2; exit "${2:-1}"; }
+
+if [ "$PREBUILT_IMAGES" = 1 ]; then
+  [[ $RELEASE_VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || die "prebuilt deployment requires BEELINE_RELEASE_VERSION=vX.Y.Z"
+  [[ $RELEASE_SHA =~ ^[0-9a-f]{40}$ ]] \
+    || die "prebuilt deployment requires the full BEELINE_RELEASE_SHA"
+fi
 
 [ -d "$REPO_WEB" ] || die "no relay-stack/web in checkout ($CHECKOUT)"
 [ -d "$WEBROOT" ] || die "webroot missing: $WEBROOT"
@@ -288,17 +298,28 @@ fi
 # 2. Build the new auth image BEFORE touching anything live, so a build
 #    failure costs nothing.
 # ---------------------------------------------------------------------------
-log "building beeline-auth:production"
-docker build -f "$CHECKOUT/apps/auth/Dockerfile" -t beeline-auth:production "$CHECKOUT" \
-  >"$STAGE/auth-build.log" 2>&1 || { tail -40 "$STAGE/auth-build.log" >&2; die "auth image build failed"; }
-tail -3 "$STAGE/auth-build.log"
+if [ "$PREBUILT_IMAGES" = 1 ]; then
+  log "promoting prebuilt server images for $RELEASE_VERSION ($RELEASE_SHA)"
+  for image in beeline-auth beeline-materializer; do
+    docker image inspect "$image:release-$RELEASE_SHA" >/dev/null 2>&1 \
+      || die "prebuilt server image is missing: $image:release-$RELEASE_SHA"
+    docker tag "$image:release-$RELEASE_SHA" "$image:production"
+  done
+else
+  log "building beeline-auth:production"
+  docker build -f "$CHECKOUT/apps/auth/Dockerfile" -t beeline-auth:production "$CHECKOUT" \
+    >"$STAGE/auth-build.log" 2>&1 || { tail -40 "$STAGE/auth-build.log" >&2; die "auth image build failed"; }
+  tail -3 "$STAGE/auth-build.log"
+fi
 
 # The one materializer image hosts push, repository events, and snapshots.
 # Build it BEFORE anything live is touched, so a build failure costs nothing.
-log "building beeline-materializer:production"
-docker build -f "$CHECKOUT/apps/push-gateway/Dockerfile" -t beeline-materializer:production "$CHECKOUT" \
-  >"$STAGE/materializer-build.log" 2>&1 || { tail -40 "$STAGE/materializer-build.log" >&2; die "materializer image build failed"; }
-tail -3 "$STAGE/materializer-build.log"
+if [ "$PREBUILT_IMAGES" != 1 ]; then
+  log "building beeline-materializer:production"
+  docker build -f "$CHECKOUT/apps/push-gateway/Dockerfile" -t beeline-materializer:production "$CHECKOUT" \
+    >"$STAGE/materializer-build.log" 2>&1 || { tail -40 "$STAGE/materializer-build.log" >&2; die "materializer image build failed"; }
+  tail -3 "$STAGE/materializer-build.log"
+fi
 
 ensure_materializer_bind_source push-state "${BUZZY_PUSH_STATE_DIR:-/home/lunchbox/buzzy-push-gateway/state}"
 ensure_materializer_bind_source runtime-state "${BEELINE_RUNTIME_STATE_DIR:-/home/lunchbox/.local/state}"
@@ -571,6 +592,20 @@ verify_public() {
   done
   [ "$code_push" = "200" ] || { echo "!! /push/health did not return 200 (last: ${code_push:-error})" >&2; failures=$((failures+1)); }
   log "public /push/health verified"
+  if [ "$PREBUILT_IMAGES" = 1 ]; then
+    if ! curl -fsS --max-time 30 "$PUBLIC_BASE/push/health" \
+      | node -e '
+          let raw="";process.stdin.on("data",c=>raw+=c).on("end",()=>{
+            const health=JSON.parse(raw);
+            if(health.release?.version!==process.argv[1]||health.release?.sourceSha!==process.argv[2]) process.exit(1);
+          });
+        ' "$RELEASE_VERSION" "$RELEASE_SHA"; then
+      echo "!! /push/health does not report $RELEASE_VERSION ($RELEASE_SHA)" >&2
+      failures=$((failures+1))
+    else
+      log "public server release verified: $RELEASE_VERSION ($RELEASE_SHA)"
+    fi
+  fi
   code_indexer=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$PUBLIC_BASE/workspaces" || true)
   [ "$code_indexer" = "401" ] || { echo "!! /workspaces did not enforce authenticated index reads (last: ${code_indexer:-error})" >&2; failures=$((failures+1)); }
   log "public authenticated indexer verified"

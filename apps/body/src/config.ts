@@ -7,7 +7,7 @@
  * `OPENAI_COMPAT_*` names.
  */
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { HOST, SCHEME, BASE_URL } from '@beeline/gate';
 import { DEFAULT_RELAY_HOST, DEFAULT_RELAY_SCHEME } from '@beeline/buzz-client';
 import {
@@ -171,6 +171,37 @@ function firstExisting(paths: string[]): string | undefined {
 }
 
 /**
+ * Resolve a command shipped beside the running bundled CLI.
+ *
+ * Self-update starts a staged bundle by invoking its release-shaped
+ * `lib/beeline/beeline-cli.mjs` directly, before any stable forwarder can
+ * export helper paths. `process.argv[1]` retains that unresolved entrypoint
+ * even though esbuild replaces `import.meta.url`, so walking back to the
+ * bundle root is the only lookup that is independent of the old install.
+ */
+function commandInRunningBundle(command: string): string | undefined {
+  const entrypoint = process.argv[1];
+  if (!entrypoint || basename(entrypoint) !== 'beeline-cli.mjs') return undefined;
+
+  const entrypointDir = dirname(resolve(entrypoint));
+  const candidates = [
+    // Published/staged shape: <bundle>/lib/beeline/beeline-cli.mjs.
+    resolve(entrypointDir, '..', '..', 'bin', command),
+    // Tolerate the legacy flat anchor shape while it is still migratable.
+    resolve(entrypointDir, 'bin', command),
+  ];
+  for (const candidate of candidates) {
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Continue through bundle shapes before consulting mutable host state.
+    }
+  }
+  return undefined;
+}
+
+/**
  * Resolve binary paths. Prefers env overrides, then worktree scratch build,
  * then PATH-style defaults.
  */
@@ -205,6 +236,9 @@ export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env):
   command: string;
   args: string[];
 } {
+  const bundledBinary = commandInRunningBundle('beeline-readonly-mcp');
+  if (bundledBinary) return { command: bundledBinary, args: [] };
+
   const configuredBinary = env.BEELINE_READONLY_MCP_BIN;
   if (configuredBinary) {
     try {
@@ -236,6 +270,9 @@ export function resolveReadonlyMcpCommand(env: NodeJS.ProcessEnv = process.env):
   ]);
   const tsx = executableOnPath('tsx', env);
   if (source && tsx) return { command: tsx, args: [source] };
+
+  const legacyBinary = executableOnPath('buzz-readonly-mcp', env);
+  if (legacyBinary) return { command: legacyBinary, args: [] };
 
   throw new Error(
     'read-only tools unavailable: beeline-readonly-mcp was not found. Reinstall Beeline or set BEELINE_READONLY_MCP_BIN / BEELINE_READONLY_MCP_SCRIPT',

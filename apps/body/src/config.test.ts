@@ -1,3 +1,6 @@
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -160,6 +163,34 @@ describe('buildAgentEnv passthrough boundary', () => {
 });
 
 describe('resolveReadonlyMcpCommand', () => {
+  it('loads config from a staged bundle without the renamed helper on PATH', () => {
+    const bundleRoot = mkdtempSync(join(tmpdir(), 'beeline-staged-config-'));
+    const cli = join(bundleRoot, 'lib', 'beeline', 'beeline-cli.mjs');
+    const readonlyMcp = join(bundleRoot, 'bin', 'beeline-readonly-mcp');
+    const originalEntrypoint = process.argv[1];
+
+    mkdirSync(join(bundleRoot, 'lib', 'beeline'), { recursive: true });
+    mkdirSync(join(bundleRoot, 'bin'), { recursive: true });
+    writeFileSync(cli, '');
+    writeFileSync(readonlyMcp, '#!/bin/sh\nexit 0\n');
+    chmodSync(readonlyMcp, 0o755);
+
+    try {
+      process.argv[1] = cli;
+      const config = loadBodyConfig({
+        workspaceRoot: '.',
+        env: { PATH: '', BUZZ_DEV_MCP_BIN: process.execPath },
+        agent: { kind: 'reference', command: process.execPath, args: [] },
+      });
+
+      expect(config.readonlyMcpCommand).toBe(readonlyMcp);
+      expect(config.readonlyMcpArgs).toEqual([]);
+    } finally {
+      process.argv[1] = originalEntrypoint;
+      rmSync(bundleRoot, { recursive: true, force: true });
+    }
+  });
+
   it('fails clearly when an explicit helper path is not executable', () => {
     expect(() =>
       resolveReadonlyMcpCommand({

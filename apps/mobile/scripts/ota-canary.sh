@@ -4,9 +4,10 @@
 # timeout is part of the contract: a wedged emulator can never delay the
 # verification verdict and any guarded rollback for more than ten minutes.
 #
-# Exit codes: 0 canary passed; 1 smoke/flow failure; 2 environment or setup
-# failure (the caller records one actionable reason); 124 the ten-minute
-# deadline fired.
+# Exit codes: 0 canary passed; 1 completed Maestro product assertion failure;
+# 2 environment or setup failure (the caller records one actionable reason);
+# 124 the ten-minute deadline fired. Only exit 1 writes the explicit product
+# failure marker consumed by the guarded rollback workflow.
 #
 # Parked-reason contract (round-2 hardening of #490): every preflight or
 # runner-environment failure must be SELF-DESCRIBING. park() prints one
@@ -360,6 +361,17 @@ if (( smoke_status != 0 )); then
   bootstrap_line="$(grep -m1 -E 'Cannot find module|MODULE_NOT_FOUND' "$smoke_log" 2>/dev/null || true)"
   if [[ -n "$bootstrap_line" ]]; then
     park "the canary smoke could not start: its provisioning bootstrap failed before Maestro ran (${bootstrap_line})"
+  fi
+  # The workflow may roll back only after a completed *product assertion*
+  # fails. Maestro uses status 1 for runner/tooling deaths too, so recognize
+  # the assertion verdict explicitly and park any unclassified failure for
+  # human attention instead of treating it as rollback evidence.
+  assertion_line="$(grep -im1 -E 'assertion (failed|is false)|element not found|condition not met|assert(visible|notvisible).*failed' "$smoke_log" 2>/dev/null || true)"
+  if [[ "$smoke_status" -ne 1 || -z "$assertion_line" ]]; then
+    park "the Maestro rehearsal ended without a completed product-assertion verdict (exit ${smoke_status}); inspect the rehearsal evidence and repair the runner or tooling before retrying"
+  fi
+  if [[ -n "${OTA_CANARY_OUTCOME_FILE:-}" ]]; then
+    printf '%s\n' 'product-assertion-failure' > "$OTA_CANARY_OUTCOME_FILE" 2>/dev/null || true
   fi
   exit "$smoke_status"
 fi

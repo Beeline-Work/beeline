@@ -188,3 +188,10 @@ export function pinnedCornerVerb(status: PinnedCorner['status']): string {
   if (isPinnedCornerReadyForReview(status)) return 'ready for review';
   return isPinnedCornerLive(status) ? 'active' : 'needs attention';
 }
+
+/** Human-facing branch label for a full Git target ref. */
+export function humanBranchName(ref: string | undefined): string | undefined {
+  const value = ref?.trim();
+  if (!value) return undefined;
+  return value.replace(/^refs\/heads\//, '');
+}

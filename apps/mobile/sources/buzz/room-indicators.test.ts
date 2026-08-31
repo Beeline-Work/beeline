@@ -9,6 +9,7 @@ import {
   hasComposerAckReceipt,
   isPinnedCornerLive,
   isPinnedCornerReadyForReview,
+  humanBranchName,
   pinnedCornerVerb,
   selectComposerAckState,
   selectPinnedCorner,
@@ -144,6 +145,12 @@ describe('pinned-corner presentation', () => {
   it('names the opening lifecycle before it becomes active', () => {
     expect(pinnedCornerVerb('preparing')).toBe('preparing');
     expect(pinnedCornerVerb('live')).toBe('active');
+  });
+
+  it('shows a human branch name instead of a raw Git ref', () => {
+    expect(humanBranchName('refs/heads/main')).toBe('main');
+    expect(humanBranchName('refs/heads/release/2026-08')).toBe('release/2026-08');
+    expect(humanBranchName('feature/already-short')).toBe('feature/already-short');
   });
 });
 

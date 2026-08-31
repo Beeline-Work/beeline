@@ -11,12 +11,7 @@ import {
   DEFAULT_AGENT_IDENTITY_NAME,
   DEFAULT_BODY_IDENTITY_NAME,
 } from '@beeline/buzz-client';
-import {
-  assertAgentNotPushAllowed,
-  createRelayClient,
-  newIdentity,
-  type Identity,
-} from '@beeline/gate';
+import { newIdentity, type Identity } from '@beeline/gate';
 import {
   DEFAULT_ACCESS_POLICY,
   isAgentAccessPolicy,
@@ -299,7 +294,6 @@ async function pairOneAgent(input: {
   interactiveUi?: boolean;
 }): Promise<PairRuntimeResult> {
   const { code, selectedAgent, agentIdentity, bodyIdentity } = input;
-  const mergeWorkerIdentity = newIdentity('beeline-merge-worker');
   const relayBaseUrl = (process.env.BUZZY_RELAY_URL ?? BASE_URL)
     .replace(/^ws/, 'http')
     .replace(/\/$/, '');
@@ -375,7 +369,6 @@ async function pairOneAgent(input: {
         ...(input.llmEnvFile ? { llmEnvFile: input.llmEnvFile } : {}),
         agentIdentity,
         bodyIdentity,
-        mergeWorkerIdentity,
         agentBinary: localConfig.agentBinary,
         agentKind: selectedAgent.kind,
         agentCommand: selectedAgent.command,
@@ -392,13 +385,8 @@ async function pairOneAgent(input: {
       },
       {
         redeem: (pairingCode) => client.redeemAgentPairingCode(pairingCode),
-        resolveRoom: (pairing, repository, mergeWorkerPubkey) =>
-          client.resolveRepositoryRoom(
-            pairing.communityId,
-            repository,
-            pairing.pairedBy,
-            mergeWorkerPubkey,
-          ),
+        resolveRoom: (pairing, repository) =>
+          client.resolveRepositoryRoom(pairing.communityId, repository, pairing.pairedBy),
         // Undo this agent's own Workspace registration when a later pair step
         // fails, so a failed run leaves no permanently-offline ghost behind.
         abandonPairing: async (pairing) => {
@@ -407,19 +395,6 @@ async function pairOneAgent(input: {
             `[beeline] could not unregister agent ${agentIdentity.publicKey} after the failed ` +
               'pairing; remove it from the Workspace in the app to clear the offline entry.',
           );
-        },
-        validate: async (_pairing, _room, repo) => {
-          if (!repo.relayRepo) return;
-          await assertAgentNotPushAllowed({
-            ownerHex: repo.relayRepo.ownerHex,
-            repo: repo.relayRepo.repo,
-            agentPubkey: agentIdentity.publicKey,
-            protectedRef: `refs/heads/${repo.targetBranch}`,
-            relay: createRelayClient(agentIdentity, {
-              baseUrl: relayBaseUrl,
-              host: new URL(relayBaseUrl).host,
-            }),
-          });
         },
         launch: async (configPath) => {
           const stored = await readRuntimeRecord(configPath);

@@ -137,13 +137,13 @@ env:
     # Maestro's text matcher is whole-string regex matching; accept the
     # delivery annotation while still requiring the live reply prefix.
     visible: SMOKE AGENT ROOM REPLY.*
-    timeout: 30000
+    timeout: 10000
 
 # The send and live reply above already prove the Room transcript. Stay in the
 # Room instead of exiting, reopening, and asserting the same rows a second time.
 - tapOn:
     id: chat-input
-- inputText: "@"
+- inputText: '@'
 - extendedWaitUntil:
     visible:
       id: mention-suggestions
@@ -154,7 +154,7 @@ env:
     id: mention-suggestion-.*
 - assertNotVisible:
     id: mention-suggestions
-- inputText: " mention picker stayed responsive"
+- inputText: ' mention picker stayed responsive'
 - tapOn:
     id: chat-send
 - assertVisible: .*mention picker stayed responsive
@@ -162,16 +162,16 @@ env:
 # a foreground JS/MMKV stall rather than merely proving the eventual relay ACK.
 - tapOn:
     id: chat-input
-- inputText: " still accepting input"
+- inputText: ' still accepting input'
 - extendedWaitUntil:
-    visible: ".*still accepting input"
+    visible: '.*still accepting input'
     timeout: 1000
 
 # Selecting Beebee then appending text used to race Android's controlled
 # selection and publish only the prefix. The remote agent waits for the exact
 # full payload, proving the relay stored every trailing character.
 - eraseText
-- inputText: "@"
+- inputText: '@'
 - extendedWaitUntil:
     visible:
       id: mention-suggestions
@@ -189,11 +189,11 @@ env:
 # visible tail rather than landing behind Android's keyboard.
 - tapOn:
     id: chat-input
-- inputText: "SMOKE KEYBOARD PIN TRIGGER"
+- inputText: 'SMOKE KEYBOARD PIN TRIGGER'
 - tapOn:
     id: chat-send
 - extendedWaitUntil:
-    visible: "SMOKE AGENT KEYBOARD REPLY — newest above keyboard"
+    visible: 'SMOKE AGENT KEYBOARD REPLY — newest above keyboard'
     timeout: 30000
 
 # Presence is only a compact per-agent light now: no room-wide offline copy.
@@ -204,10 +204,10 @@ env:
     visible:
       id: room-roster-sheet
     timeout: 3000
-- assertVisible: "Beebee, agent, online.*"
-- assertVisible: "Milo, agent, offline.*"
-- assertNotVisible: "AGENT OFFLINE"
-- tapOn: "×"
+- assertVisible: 'Beebee, agent, online.*'
+- assertVisible: 'Milo, agent, offline.*'
+- assertNotVisible: 'AGENT OFFLINE'
+- tapOn: '×'
 
 # Give the remote fixture a relay-backed boundary immediately before the
 # corner phase. Roster interaction and corner navigation are deliberately
@@ -226,13 +226,19 @@ env:
       id: corner-status-working
     direction: UP
     timeout: 10000
+- takeScreenshot: corner-ripout-working
 - tapOn:
     id: corner-status-working
 - extendedWaitUntil:
     visible:
       id: corner-session-header
     timeout: 10000
+- takeScreenshot: corner-ripout-opened
 - assertVisible: I am ready for a steering message.
+- extendedWaitUntil:
+    visible: 'Completion needed: open a pull request for fm/smoke-lifecycle.'
+    timeout: 10000
+- takeScreenshot: corner-ripout-idle-nudge
 - tapOn:
     id: chat-input
 - inputText: SMOKE CORNER STEER
@@ -241,17 +247,63 @@ env:
 - assertVisible: SMOKE CORNER STEER
 - extendedWaitUntil:
     visible: SMOKE AGENT CORNER REPLY.*
-    timeout: 30000
+    timeout: 10000
 
-# Back first dismisses the focused composer, then returns from the pushed corner
-# route to its parent Room immediately, without blocking native or JS navigation.
+# The daemon's zero-model-call lifecycle watches the pushed branch and posts a
+# typed PR fact. The fixture uses the same state/event contract and waits on
+# the card itself, so this verifies the GitHub link reaches RoomView and the
+# device in the normal live path.
+- extendedWaitUntil:
+    visible:
+      id: github-event-card-pull-request-opened
+    timeout: 10000
+- assertVisible: 'GitHub created a new PR: Smoke lifecycle PR'
+- takeScreenshot: corner-ripout-pr-fact
+- extendedWaitUntil:
+    visible: '.*checks failing.*'
+    timeout: 10000
+- takeScreenshot: corner-ripout-checks-red
+- tapOn:
+    id: chat-input
+- inputText: SMOKE CHECKS GREEN
+- tapOn:
+    id: chat-send
+- assertNotVisible: '.*checks failing.*'
+
+# The fixture only completes this phase after the device's explicit merge
+# command reaches the relay. It then observes branch death, posts the parent
+# landed summary, and archives the child — the same mechanical sequence the
+# daemon performs after `gh pr merge` deletes the branch.
+- tapOn:
+    id: chat-input
+- inputText: SMOKE GH MERGE
+- takeScreenshot: corner-ripout-gh-merge-command
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: Corner archived (read-only)
+    timeout: 10000
+- takeScreenshot: corner-ripout-gh-merge
+
+# The merge command leaves the corner composer focused. Dismiss it first, then
+# leave the pushed corner route for its parent Room; `chat-messages` exists on
+# both routes, so the second back press is the navigation proof rather than a
+# timing allowance.
+- pressKey: back
 - pressKey: back
 - extendedWaitUntil:
     visible:
       id: chat-messages
     timeout: 1000
-- pressKey: back
 - extendedWaitUntil:
-    visible:
-      id: chat-messages
-    timeout: 1000
+    visible: Landed.*Smoke lifecycle PR.*
+    timeout: 10000
+- takeScreenshot: corner-ripout-landed-summary
+- assertNotVisible:
+    id: corner-status-working
+- takeScreenshot: corner-ripout-corner-removed
+- extendedWaitUntil:
+    visible: Corner worktree cleaned after branch deletion.
+    timeout: 10000
+- takeScreenshot: corner-ripout-archived
+- takeScreenshot: corner-ripout-worktree-cleaned

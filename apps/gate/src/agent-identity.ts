@@ -5,7 +5,7 @@ import type { RelayReader } from './relay.js';
 /**
  * True when `pubkey` has self-signed a valid first-class agent record.
  * This classification is independent of channel roles and cannot be overridden
- * by granting the agent admin/owner or configuring it as trustedReviewer.
+ * by granting the agent an admin or owner role.
  */
 export async function isRegisteredAgentIdentity(pubkey: string, relay: RelayReader): Promise<boolean> {
   const events = await relay.queryEvents(

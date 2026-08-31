@@ -97,6 +97,57 @@ describe('room event projection', () => {
     });
   });
 
+  it('keeps a branch-ended daemon fact visible as the parent Room summary', () => {
+    expect(
+      projectEvent(
+        {
+          id: 'corner-landed',
+          kind: 9,
+          agent: true,
+          pubkey: 'a'.repeat(64),
+          createdAt: 11,
+          tags: [
+            ['h', 'room'],
+            ['t', 'daemon-fact'],
+            ['t', 'corner-branch-ended'],
+            ['subchannel', 'corner'],
+            ['outcome', 'landed'],
+          ],
+          content: 'Landed “Smoke lifecycle PR” into main.',
+        },
+        'room',
+      ),
+    ).toMatchObject({
+      text: 'Landed “Smoke lifecycle PR” into main.',
+      presentation: 'system',
+    });
+  });
+
+  it('keeps a completed corner worktree fact visible in the parent Room', () => {
+    expect(
+      projectEvent(
+        {
+          id: 'corner-worktree-cleaned',
+          kind: 9,
+          agent: true,
+          pubkey: 'a'.repeat(64),
+          createdAt: 12,
+          tags: [
+            ['h', 'room'],
+            ['t', 'daemon-fact'],
+            ['t', 'corner-worktree-cleaned'],
+            ['subchannel', 'corner'],
+          ],
+          content: 'Corner worktree cleaned after branch deletion.',
+        },
+        'room',
+      ),
+    ).toMatchObject({
+      text: 'Corner worktree cleaned after branch deletion.',
+      presentation: 'system',
+    });
+  });
+
   it('keeps the completed plan durable while projecting current tool activity only live', () => {
     const row = {
       section: 'event',
@@ -172,7 +223,7 @@ describe('corner item projection', () => {
     expect(cornerItem({ ...data, latestTurnStatus: 'failed' }).status).not.toBe('working');
   });
 
-  it('lets a fresh steering receipt temporarily outrank a mounted review', () => {
+  it('keeps an open PR non-actionable while a fresh steering receipt lights working', () => {
     const data = {
       id: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
       workspaceId: 'ec08be9d-9d9d-413e-b546-959d4abe39df',
@@ -182,28 +233,33 @@ describe('corner item projection', () => {
       archived: false,
       createdAt: 1,
       updatedAt: 1,
-      gitProjectionContent: JSON.stringify({
+      remoteStateContent: JSON.stringify({
         version: 1,
-        relation: 'review',
-        repository: 'acme/beeline',
-        targetBranch: 'main',
-        featureBranch: 'feature/review-steering',
-        featureTip: '1'.repeat(40),
+        cornerId: '80a5a6f1-fb5a-493b-93eb-f3db33f696e6',
+        branch: 'feature/review-steering',
+        state: 'in-review',
+        checks: 'pending',
+        observedAt: 40,
+        pr: {
+          number: 42,
+          url: 'https://github.com/acme/beeline/pull/42',
+          title: 'Ship it',
+          targetBranch: 'main',
+          headSha: '1'.repeat(40),
+        },
       }),
     };
 
     expect(
       cornerItem({ ...data, latestTurnStatus: 'working', latestTurnCreatedAt: 41 }),
     ).toMatchObject({
-      lifecycle: { lifecycle: 'REVIEW' },
+      lifecycle: { lifecycle: 'in-review' },
       status: 'working',
       statusAt: 41,
-      reason: 'review',
     });
     expect(cornerItem({ ...data, latestTurnStatus: 'complete' })).toMatchObject({
-      lifecycle: { lifecycle: 'REVIEW' },
-      status: 'waiting',
-      reason: 'review',
+      lifecycle: { lifecycle: 'in-review' },
+      status: 'idle',
     });
   });
 });

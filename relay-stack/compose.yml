@@ -16,7 +16,7 @@ services:
     env_file:
       - ${BUZZY_AUTH_ENV_FILE:-/home/lunchbox/buzzy-auth/oidc.env}
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${BUZZY_AUTH_NODE_ENV:-production}
       PORT: '8789'
       BUZZY_AUTH_HOST: 0.0.0.0
       DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
@@ -24,7 +24,7 @@ services:
       # existing links remain visible after the hostname migration. The Room
       # allowlist uses server-stamped channels.community_id values instead.
       BUZZY_AUTH_TENANTS_JSON: >-
-        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"https://usebeeline.app"},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"https://relay.buzzrouter.com"}]
+        [{"host":"usebeeline.app","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"https://usebeeline.app"},{"host":"relay.buzzrouter.com","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"https://relay.buzzrouter.com"},{"host":"10.0.2.2:3010","community":"relay.buzzrouter.com","roomCommunityIds":["3a47eeff-fdff-4a1e-9eb9-b48cb4ed90ed","e8299f28-f095-472f-941a-80d1195b9a24"],"origin":"http://10.0.2.2:3010"}]
       BUZZY_AUTH_OIDC_ISSUER: https://accounts.google.com
       BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: https://accounts.google.com/o/oauth2/v2/auth
       BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: https://oauth2.googleapis.com/token
@@ -101,7 +101,7 @@ services:
       dockerfile: apps/push-gateway/Dockerfile
     image: ${BUZZY_MATERIALIZER_IMAGE:-beeline-materializer:local}
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${BUZZY_MATERIALIZER_NODE_ENV:-production}
       PORT: '8788'
       BUZZY_PUSH_HOST: 0.0.0.0
       BUZZY_PUSH_DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}

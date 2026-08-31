@@ -117,13 +117,12 @@ describe('the mission-brief skill content', () => {
     expect(text).toContain('First corner: bootstrap');
     expect(text).toContain('beeline mission-scaffold .');
     expect(text).toContain('never overwrites existing ones');
-    // The human provisions/binds once; the CoS never provisions, binds,
-    // authorizes, or lands the mission repo itself.
+    // The human provisions/binds once; the CoS never does either itself.
     expect(text).toContain('The HUMAN provisions and binds the mission repo once');
     expect(text).toContain(
-      'You never provision, bind,\nauthorize, or land the mission repo yourself',
+      'You never provision or bind\nthe mission repo yourself',
     );
-    expect(text).toContain('normal\n   signed review and landing flow');
+    expect(text).toContain('push it, and open a pull request');
   });
 });
 

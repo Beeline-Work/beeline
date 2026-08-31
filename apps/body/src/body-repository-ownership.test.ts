@@ -88,7 +88,6 @@ import {
   WRITE_PERMISSION_BACKSTOP_POLL_MS,
 } from './body.js';
 import {
-  buildMergeApproval,
   buildPermissionDecision,
   buildPermissionRequest,
   defaultPermissionGrantEnvelope,
@@ -101,10 +100,6 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
-  CHANGE_REVIEW_ARTIFACT_TAG,
-  CHANGE_REVIEW_ARTIFACT_VERSION,
-  CHANGE_REVIEW_EVENT_KIND,
-  parseChangeReviewArtifactDescriptor,
   setAgentModelConfig,
   AGENT_PRESENCE_HEARTBEAT_MS,
   AGENT_PRESENCE_STALE_MS,
@@ -377,106 +372,7 @@ describe('closing a corner with no live session', () => {
     return published;
   }
 
-  it('settles an archived restored review artifact instead of retrying it from maintenance', async () => {
-    const agent = newIdentity('restored-archived-artifact-agent');
-    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-restored-archived-artifact-'));
-    const source = join(workspaceRoot, 'source');
-    const cornerPath = join(workspaceRoot, '.worktrees', 'corner-archived-artifact');
-    const gitRun = (cwd: string, args: string[]) => {
-      const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
-      if (result.status !== 0) throw new Error(String(result.stderr));
-      return result.stdout.trim();
-    };
-    try {
-      mkdirSync(source, { recursive: true });
-      gitRun(source, ['init', '-q', '-b', 'main']);
-      gitRun(source, ['config', 'user.name', 'Restart Test']);
-      gitRun(source, ['config', 'user.email', 'restart@test.invalid']);
-      writeFileSync(join(source, 'README.md'), 'before\n');
-      gitRun(source, ['add', 'README.md']);
-      gitRun(source, ['commit', '-q', '-m', 'seed']);
-      gitRun(source, ['worktree', 'add', '-q', '-b', 'feature/archived-artifact', cornerPath, 'main']);
-      writeFileSync(join(cornerPath, 'README.md'), 'after\n');
-      gitRun(cornerPath, ['add', 'README.md']);
-      gitRun(cornerPath, ['commit', '-q', '-m', 'feature change']);
-      const tip = gitRun(cornerPath, ['rev-parse', 'HEAD']);
-
-      const create = cornerCreateEvent(agent, 'corner-archived-artifact', 'room-archived-artifact');
-      const ready = signEvent(
-        {
-          pubkey: agent.publicKey,
-          created_at: 2,
-          kind: 9,
-          tags: [
-            ['h', 'corner-archived-artifact'],
-            ['t', 'merge-ready'],
-            ['parent', 'room-archived-artifact'],
-            ['feature', 'feature/archived-artifact'],
-            ['repo', 'proj'],
-            ['branch', 'refs/heads/main'],
-            ['tip', tip],
-          ],
-          content: 'Work is ready for human merge approval.',
-        },
-        agent.secretKey,
-      );
-      stubRelayHttp([create]);
-      mocks.createBuzzClient.mockReturnValue({
-        listSubchannels: async () => ['corner-archived-artifact'],
-        // The relay's archive projection can lag its publish refusal.
-        getChannelMetadata: async () => ({ archived: false }),
-        disconnect: () => undefined,
-      } as never);
-
-      const body = newBody(agent, workspaceRoot);
-      vi.spyOn(body as never, 'channelCommunityId' as never).mockResolvedValue(undefined as never);
-      Reflect.set(body, 'agentRelay', {
-        queryEvents: vi.fn(async (filters: Array<Record<string, unknown>>) => {
-          const filter = filters[0] ?? {};
-          if ((filter.kinds as number[] | undefined)?.includes(9007)) return [create];
-          if ((filter['#h'] as string[] | undefined)?.includes('room-archived-artifact')) return [];
-          return [ready];
-        }),
-      });
-      vi.spyOn(body as never, 'createManagedSession' as never).mockResolvedValue({
-        channelId: 'corner-archived-artifact',
-        sessionId: 'restored-session',
-        client: { activeRunId: () => undefined },
-        mode: 'edit',
-        parentChannelId: 'room-archived-artifact',
-        worktreePath: cornerPath,
-        featureBranch: 'feature/archived-artifact',
-      } as never);
-      const publishMergeReady = vi
-        .spyOn(body as never, 'publishMergeReady' as never)
-        .mockRejectedValue(
-          new Error(
-            'publishEvent kind=30078 failed: HTTP 400 {"error":"This Room is archived and no longer accepts messages"}',
-          ),
-        );
-      const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-      await Reflect.get(body, 'restoreSubchannels').call(body, 'room-archived-artifact', {
-        repo: 'proj',
-        targetBranch: 'refs/heads/main',
-      });
-      const info = body.getSubchannels().get('corner-archived-artifact')!;
-      expect(info.observedReviewTip).toBe(tip);
-      expect(info.commitWatchFailure).toBeUndefined();
-
-      await Reflect.get(body, 'pollCornerCommitWatch').call(body);
-      expect(publishMergeReady).toHaveBeenCalledTimes(1);
-      expect(
-        errors.mock.calls.filter(([message]) =>
-          String(message).includes('review artifact publish refused because its Room is archived'),
-        ),
-      ).toHaveLength(1);
-    } finally {
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-
-  it('resumes one commissioned corner once per daemon process and attributes it to the original request', async () => {
+  it('resumes one actively working corner once per daemon process and attributes it to the original request', async () => {
     const agent = newIdentity('restart-continuation-agent');
     const captain = newIdentity('restart-continuation-captain');
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-restart-continuation-'));
@@ -521,6 +417,22 @@ describe('closing a corner with no live session', () => {
         },
         agent.secretKey,
       );
+      const working = signEvent(
+        {
+          pubkey: agent.publicKey,
+          created_at: 3,
+          kind: 9,
+          tags: [
+            ['h', 'corner-resume'],
+            ['t', 'agent-turn'],
+            ['request', request.id],
+            ['agent', agent.publicKey],
+            ['status', 'working'],
+          ],
+          content: '',
+        },
+        agent.secretKey,
+      );
       const create = cornerCreateEvent(agent, 'corner-resume', 'room-resume');
       stubRelayHttp([create]);
       mocks.createBuzzClient.mockReturnValue({
@@ -539,7 +451,7 @@ describe('closing a corner with no live session', () => {
             const filter = filters[0] ?? {};
             if ((filter.kinds as number[] | undefined)?.includes(9007)) return [create];
             if ((filter['#h'] as string[] | undefined)?.includes('room-resume')) return [request];
-            return [control];
+            return [control, working];
           }),
         });
         vi.spyOn(body as never, 'createManagedSession' as never).mockResolvedValue({
@@ -895,42 +807,6 @@ describe('closing a corner with no live session', () => {
     }
   });
 
-  it('reaps the corner worktree when one is still on disk, and says what a close did and did not discard', async () => {
-    const agent = newIdentity('reap-close-agent');
-    const human = newIdentity('reap-close-human');
-    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-reap-close-'));
-    try {
-      const body = newBody(agent, workspaceRoot);
-      stubEmptyAgentHistory(body);
-      const worktreePath = join(workspaceRoot, 'corner-reap-worktree');
-      mkdirSync(worktreePath, { recursive: true });
-      spawnSync('git', ['init', '-q', worktreePath]);
-      writeFileSync(join(worktreePath, 'scratch.txt'), 'uncommitted edit\n');
-
-      Reflect.get(body, 'abandonedCorners').set('corner-reap', {
-        subchannelId: 'corner-reap',
-        parentChannelId: 'room-reap',
-        reason: 'its agent session could not be restarted',
-        featureBranch: 'feature/reap-work',
-        worktreePath,
-      });
-      const close = closeEvent(human, 'corner-reap');
-      Reflect.set(body, 'agentRelay', { queryEvents: vi.fn(async () => [close]) });
-      const published = stubRelayHttp([cornerCreateEvent(agent, 'corner-reap', 'room-reap')]);
-
-      await Reflect.get(body, 'pollAbandonedCornerCloses').call(body, 'room-reap');
-
-      expect(existsSync(worktreePath)).toBe(false);
-      const parentCard = published.find((event) =>
-        event.tags.some((tag) => tag[0] === 'h' && tag[1] === 'room-reap'),
-      );
-      // A close is never a silent discard.
-      expect(parentCard!.content).toContain('Uncommitted edits');
-      expect(parentCard!.content).toContain('could not be restarted');
-    } finally {
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
 
   it('leaves a quiet abandoned corner open: only an actual close request closes it', async () => {
     const agent = newIdentity('quiet-corner-agent');
@@ -1646,7 +1522,6 @@ describe('a message that arrives mid-turn is queued, acknowledged, and delivered
         },
         newIdentity('queued-stall-operator'),
         newIdentity('queued-stall-agent'),
-        undefined,
         { scheduler },
       );
 

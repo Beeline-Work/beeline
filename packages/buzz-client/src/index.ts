@@ -44,10 +44,20 @@ export type {
   Unsubscribe,
   ChannelFilterOpts,
   MessageSubmitOpts,
-  MergeTarget,
   BuzzClientConfig,
 } from './types.js';
 
+export {
+  CORNER_REMOTE_STATE_KIND,
+  CORNER_REMOTE_STATE_TAG,
+  cornerRemoteStateKey,
+  parseCornerRemoteState,
+  parseCornerRemoteStateContent,
+  type CornerCheckState,
+  type CornerPullRequestFact,
+  type CornerRemoteState,
+  type CornerRemoteStateName,
+} from './corner-remote-state.js';
 export {
   DEFAULT_RELAY_HOST,
   DEFAULT_RELAY_SCHEME,
@@ -103,7 +113,6 @@ export {
   TAG_AGENT_MODEL_CATALOG,
   TAG_AGENT_MODEL_CONFIG,
   TAG_PERSON_PROFILE,
-  TAG_MERGE_APPROVAL,
   TAG_PERMISSION_REQUEST,
   TAG_PERMISSION_DECISION,
   TAG_PERMISSION_REVOCATION,
@@ -114,7 +123,6 @@ export {
   TAG_COMMUNITY_INVITE,
   TAG_DIRECT_MESSAGE,
   TAG_ROOM_LIFECYCLE,
-  TAG_CORNER_STATE,
 } from './kinds.js';
 
 export * from './permission-request.js';
@@ -139,37 +147,12 @@ export type {
   RoomMembershipStanding,
 } from './agent-presence.js';
 
-export {
-  KIND_CORNER_STATE,
-  CORNER_ACTIVITY_FRESHNESS_MS,
-  agentDraftKey,
-  agentThoughtKey,
-  assertCornerStateTransition,
-  canTransitionCornerState,
-  cornerStateKey,
-  isCornerStateRecordCurrent,
-  isCornerStateRecordFresh,
-  isCornerTerminalState,
-  parseCornerStateRecord,
-  type CornerMachineReason,
-  type CornerMachineState,
-  type CornerStateRecord,
-} from './corner-state.js';
+export { agentDraftKey, agentThoughtKey } from './agent-live.js';
 
 export {
-  CORNER_GIT_PROJECTION_TAG,
-  CORNER_GIT_PROJECTION_VERSION,
-  CORNER_REJECTION_TAG,
   deriveCornerLifecycle,
-  parseCornerGitProjection,
-  parseCornerGitProjectionCompat,
-  type CornerArchiveFlavor,
-  type CornerGitProjection,
-  type CornerGitRelation,
-  type CornerHumanVerdict,
   type CornerLifecycle,
   type CornerLifecycleView,
-  type CornerVerdictView,
 } from './corner-product-state.js';
 
 export {
@@ -453,31 +436,10 @@ export {
 } from './attachment.js';
 
 export {
-  buildMergeApproval,
-  buildMergeRejection,
-  verifyMergeApproval,
-  verifyMergeRejection,
-  APPROVAL_MARKER,
-} from './approval.js';
-
-export {
   WRITE_PERMISSION_REQUEST_TAG,
   WRITE_PERMISSION_RESPONSE_TAG,
   type WritePermissionDecision,
 } from './write-permission.js';
-
-export {
-  CHANGE_REVIEW_EVENT_KIND,
-  CHANGE_REVIEW_ARTIFACT_TAG,
-  CHANGE_REVIEW_ARTIFACT_VERSION,
-  parseChangeReviewArtifactDescriptor,
-  parseChangeReviewArtifact,
-  type ChangeReviewArtifact,
-  type ChangeReviewArtifactDescriptor,
-  type ChangeReviewArtifactFile,
-  type ChangeReviewFile,
-  type ChangeReviewStatus,
-} from './change-review.js';
 
 export {
   ROOM_VIEW_MESSAGE_LIMIT,
@@ -502,7 +464,6 @@ export type {
   InviteView,
   RoomHistoryView,
   RoomRepositoryView,
-  RoomReviewView,
   RoomViewer,
   RoomView,
   RoomViewAgentTurn,

@@ -16,6 +16,19 @@ readonly EXPECTED_UPDATE_ID="${EXPECTED_ANDROID_UPDATE_ID:-}"
 readonly EXPECTED_UPDATE_CHANNEL="${EXPECTED_UPDATE_CHANNEL:-beta}"
 readonly UPDATE_IDENTITY_TIMEOUT="${MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS:-10}"
 
+# A local relay commonly has two addresses: a loopback endpoint for the host
+# fixtures and Android's 10.0.2.2 endpoint for the installed app.  Build the
+# app against the latter when the caller supplies it, while the fixture keeps
+# using RELAY_URL.  This must be exported before e2e:build: Expo evaluates the
+# config again from Gradle, not just during prebuild.
+if [[ -n "${RELAY_PUBLIC_ORIGIN:-}" ]]; then
+  export EXPO_PUBLIC_BUZZY_RELAY_URL="${EXPO_PUBLIC_BUZZY_RELAY_URL:-$RELAY_PUBLIC_ORIGIN}"
+  export EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL="${EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL:-${RELAY_PUBLIC_ORIGIN%/}/push}"
+elif [[ -n "${RELAY_URL:-}" ]]; then
+  export EXPO_PUBLIC_BUZZY_RELAY_URL="${EXPO_PUBLIC_BUZZY_RELAY_URL:-$RELAY_URL}"
+  export EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL="${EXPO_PUBLIC_BUZZY_PUSH_GATEWAY_URL:-${RELAY_URL%/}/push}"
+fi
+
 reply_fixture_pid=""
 disabled_deep_link_packages=()
 cleanup() {

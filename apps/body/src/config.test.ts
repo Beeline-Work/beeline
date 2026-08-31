@@ -130,11 +130,7 @@ describe('buildAgentEnv passthrough boundary', () => {
     expect(agentEnv.MISSING_VAR).toBeUndefined();
   });
 
-  // Structural half of "an agent can never land on main without the owner's
-  // signed approval": sessions never hold a push-capable token. The denylist
-  // runs LAST, so neither a passthrough prefix (GH_, GITHUB_) nor an explicit
-  // operator extension can re-introduce one.
-  it('never hands a push-capable repository credential to an ACP child', () => {
+  it('does not copy ambient GitHub tokens unless explicitly configured', () => {
     const agentEnv = buildAgentEnv({
       ...daemonEnv,
       GH_TOKEN: 'gh-cli-token',
@@ -145,20 +141,21 @@ describe('buildAgentEnv passthrough boundary', () => {
     expect(agentEnv.GITHUB_TOKEN).toBeUndefined();
     expect(agentEnv.GH_TOKEN).toBeUndefined();
     expect(agentEnv.GH_ENTERPRISE_TOKEN).toBeUndefined();
-    // An ssh-agent socket is a keyring reachable through the mount namespace;
-    // handing one over is handing over push capability.
-    expect(agentEnv.SSH_AUTH_SOCK).toBeUndefined();
+    expect(agentEnv.SSH_AUTH_SOCK).toBe('/run/ssh-agent.sock');
   });
 
-  it('the credential denylist wins even when the operator explicitly extends the passthrough', () => {
+  it('allows an explicit operator passthrough now that the credential denylist is gone', () => {
     const agentEnv = buildAgentEnv({
       ...daemonEnv,
       BUZZY_BODY_AGENT_ENV_PASSTHROUGH: 'GITHUB_TOKEN,GH_TOKEN,SSH_AUTH_SOCK',
+      GITHUB_TOKEN: 'github-token',
+      GH_TOKEN: 'gh-token',
+      SSH_AUTH_SOCK: '/tmp/ssh.sock',
     });
 
-    expect(agentEnv.GITHUB_TOKEN).toBeUndefined();
-    expect(agentEnv.GH_TOKEN).toBeUndefined();
-    expect(agentEnv.SSH_AUTH_SOCK).toBeUndefined();
+    expect(agentEnv.GITHUB_TOKEN).toBe('github-token');
+    expect(agentEnv.GH_TOKEN).toBe('gh-token');
+    expect(agentEnv.SSH_AUTH_SOCK).toBe('/tmp/ssh.sock');
   });
 });
 

@@ -347,7 +347,6 @@ describe('discoverRepositoryIngestionTargets', () => {
     temporary.push(root);
     const agent = newIdentity('agent');
     const body = newIdentity('body');
-    const mergeWorker = newIdentity('merge-worker');
     const runtime = (roomId: string) => ({
       version: 2,
       communityId: 'workspace-1',
@@ -377,11 +376,6 @@ describe('discoverRepositoryIngestionTargets', () => {
               localOnly: false,
               githubInstallationId: 42,
             },
-          },
-          mergeWorker: {
-            name: 'merge-worker',
-            secretKeyHex: Buffer.from(mergeWorker.secretKey).toString('hex'),
-            publicKey: mergeWorker.publicKey,
           },
           membershipSince: 1,
           discoveredAt: new Date(0).toISOString(),
@@ -414,10 +408,7 @@ describe('discoverRepositoryIngestionTargets', () => {
     expect(targets).toHaveLength(1);
     expect(targets[0]?.rooms.sort()).toEqual(['room-a', 'room-b']);
     expect(targets[0]?.roomProvisioners.size).toBe(2);
-    expect(
-      [...(targets[0]?.roomProvisioners.values() ?? [])].every(
-        (identity) => identity.publicKey === mergeWorker.publicKey,
-      ),
-    ).toBe(true);
+    const provisioners = [...(targets[0]?.roomProvisioners.values() ?? [])];
+    expect(new Set(provisioners.map((identity) => identity.publicKey)).size).toBe(2);
   });
 });

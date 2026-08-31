@@ -43,6 +43,23 @@ describe('RoomViewClient', () => {
     expect(init.headers.authorization).toMatch(/^Nostr /);
   });
 
+  it('signs the public origin when a local proxy canonicalizes the connection', async () => {
+    const physicalFetch = vi.fn(async () => Response.json(room));
+    const identity = createIdentity('room-view-explicit-host');
+    await new RoomViewClient({
+      baseUrl: 'http://127.0.0.1:3010',
+      publicOrigin: 'http://10.0.2.2:3010',
+      identity,
+      fetch: physicalFetch,
+    }).room(room.room.id);
+
+    const [, init] = physicalFetch.mock.calls[0]!;
+    const proof = JSON.parse(
+      Buffer.from(init.headers.authorization.slice('Nostr '.length), 'base64').toString('utf8'),
+    ) as { tags: string[][] };
+    expect(proof.tags).toContainEqual(['u', `http://10.0.2.2:3010/room/${room.room.id}`]);
+  });
+
   it('rejects an invalid successful response at the HTTP boundary', async () => {
     const identity = createIdentity('room-view-invalid');
     const request = new RoomViewClient({
@@ -131,7 +148,7 @@ describe('RoomViewClient', () => {
     expect(
       isRoomView({
         ...room,
-        review: { status: 'ready', files: [], approvedBy: [] },
+        cornerLifecycle: { lifecycle: 'APPROVED', checks: 'unknown' },
       }),
     ).toBe(false);
   });

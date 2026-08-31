@@ -50,7 +50,7 @@ describe('scheduled Room turn boundary', () => {
     });
     const agent = newIdentity('scheduled-preemption-agent');
     const principal = newIdentity('scheduled-preemption-principal');
-    const body = new Body(config(root), undefined, agent, undefined, { scheduler });
+    const body = new Body(config(root), undefined, agent, { scheduler });
     vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
     let releaseBlocker!: () => void;
     let markBlockerStarted!: () => void;
@@ -202,7 +202,7 @@ describe('scheduled Room turn boundary', () => {
       dispose: vi.fn(async () => undefined),
     } as unknown as SessionScheduler;
     const agent = newIdentity('scheduled-draft-agent');
-    const body = new Body(config(root), undefined, agent, undefined, { scheduler });
+    const body = new Body(config(root), undefined, agent, { scheduler });
     vi.spyOn(Reflect.get(body, 'durableState'), 'recordModelTurn').mockResolvedValue(undefined);
     const sessionPrompt = vi.fn(
       async (

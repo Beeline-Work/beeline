@@ -1,12 +1,9 @@
 /**
  * Delivery discipline for lifecycle-critical relay publications.
  *
- * A merge-ready card, an approval acknowledgement, or a land status card is
- * not chatter: when its single publish attempt dies inside a transient relay
- * outage (the recurring 502 windows while the deploy bounced relay-front),
- * the human-facing state machine on the other side never resolves — the
- * owner watched 'APPROVAL SENT · DELIVERING…' spin forever because the
- * merge-ready publication had been dropped and nothing ever retried it.
+ * A PR fact, branch-death summary, or archive status is not chatter: when its
+ * single publish attempt dies inside a transient relay outage, the
+ * human-facing state machine on the other side never resolves.
  *
  * `publishEvent` already retries transport failures and 5xx internally, but
  * only a handful of quick attempts over ~2s — far shorter than one deploy

@@ -43,13 +43,7 @@ export function scopeContained(grant: BeelineActionScope, requested: BeelineActi
     );
   }
   if (grant.type === 'corner.close' && requested.type === 'corner.close') {
-    return (
-      grant.cornerId === requested.cornerId &&
-      grant.disposition === requested.disposition &&
-      grant.repositoryKey === requested.repositoryKey &&
-      grant.targetRef === requested.targetRef &&
-      grant.sourceSha === requested.sourceSha
-    );
+    return grant.cornerId === requested.cornerId;
   }
   if (grant.type === 'artifact.deliver' && requested.type === 'artifact.deliver') {
     return grant.cornerId === requested.cornerId && grant.audience === requested.audience;

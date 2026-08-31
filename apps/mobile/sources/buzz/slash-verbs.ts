@@ -1,5 +1,5 @@
 export type BuiltInSlashVerbId =
-  'open-corner' | 'close-corner' | 'approve' | 'change-target-branch' | 'add-agent' | 'invite';
+  'open-corner' | 'close-corner' | 'change-target-branch' | 'add-agent' | 'invite';
 
 export type BuiltInSlashVerb = {
   id: BuiltInSlashVerbId;
@@ -11,7 +11,6 @@ export type BuiltInSlashVerb = {
 export type SlashVerbAvailability = {
   canOpenCorner: boolean;
   canCloseCorner: boolean;
-  canApprove: boolean;
   canChangeTargetBranch: boolean;
   canAddAgent: boolean;
   canInvitePerson: boolean;
@@ -26,13 +25,6 @@ const BUILT_IN_SLASH_VERBS: readonly (BuiltInSlashVerb & {
     label: 'Open edit corner',
     description: 'Allow the pending repository edit request',
     available: 'canOpenCorner',
-  },
-  {
-    id: 'approve',
-    command: 'approve',
-    label: 'Approve & merge',
-    description: 'Approve the reviewed change for landing',
-    available: 'canApprove',
   },
   {
     id: 'change-target-branch',

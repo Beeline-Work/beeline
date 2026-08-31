@@ -261,35 +261,6 @@ describe('one repository-truth resolver', () => {
     expect(truth.remoteUrl).toBeUndefined();
   });
 
-  it('fast-forwards an opted-in local-only pairing checkout from canonical truth', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'beeline-local-sync-'));
-    cleanup.push(root);
-    const operator = resolve(root, 'operator');
-    git(root, ['init', '-q', operator]);
-    git(operator, ['config', 'user.name', 'Local']);
-    git(operator, ['config', 'user.email', 'local@example.invalid']);
-    writeFileSync(resolve(operator, 'README.md'), 'seed\n');
-    git(operator, ['add', 'README.md']);
-    git(operator, ['commit', '-qm', 'seed']);
-    git(operator, ['branch', '-M', 'main']);
-    const resolver = new RepositoryTruthResolver({
-      repositoriesRoot: resolve(root, 'canonical'),
-      syncOperatorCheckout: true,
-    });
-    const truth = await resolver.resolve(inspectLocalRepository(operator), 'room-join');
-    git(truth.checkoutPath, ['config', 'user.name', 'Canonical']);
-    git(truth.checkoutPath, ['config', 'user.email', 'canonical@example.invalid']);
-    writeFileSync(resolve(truth.checkoutPath, 'LANDED.txt'), 'landed\n');
-    git(truth.checkoutPath, ['add', 'LANDED.txt']);
-    git(truth.checkoutPath, ['commit', '-qm', 'land local truth']);
-    const tip = git(truth.checkoutPath, ['rev-parse', 'HEAD']);
-
-    await expect(resolver.syncPairingCheckout(truth, tip)).resolves.toMatchObject({
-      status: 'fast-forwarded',
-    });
-    expect(git(operator, ['rev-parse', 'HEAD'])).toBe(tip);
-  });
-
   it('refreshes a renamed GitHub repository display name and URL', async () => {
     const f = fixture();
     const resolver = new RepositoryTruthResolver({
@@ -314,40 +285,4 @@ describe('one repository-truth resolver', () => {
     expect(truth.binding.remote).toBe('git://github.com/acme/renamed-repository');
   });
 
-  it('fast-forwards an opted-in clean operator checkout and refuses dirty or divergent work', async () => {
-    const f = fixture();
-    const writer = resolve(f.root, 'writer');
-    git(f.root, ['clone', '-q', f.origin, writer]);
-    git(writer, ['config', 'user.name', 'Writer']);
-    git(writer, ['config', 'user.email', 'writer@example.invalid']);
-    writeFileSync(resolve(writer, 'LANDED.txt'), 'landed\n');
-    git(writer, ['add', 'LANDED.txt']);
-    git(writer, ['commit', '-qm', 'land']);
-    git(writer, ['push', '-q', 'origin', 'main']);
-    const tip = git(writer, ['rev-parse', 'HEAD']);
-
-    const resolver = new RepositoryTruthResolver({
-      repositoriesRoot: resolve(f.root, 'canonical'),
-      syncOperatorCheckout: true,
-    });
-    const truth = await resolver.resolve(f.binding, 'land');
-    await expect(resolver.syncPairingCheckout(truth, tip)).resolves.toMatchObject({
-      status: 'fast-forwarded',
-    });
-    expect(git(f.operator, ['rev-parse', 'HEAD'])).toBe(tip);
-
-    writeFileSync(resolve(f.operator, 'DIRTY.txt'), 'captain work\n');
-    await expect(resolver.syncPairingCheckout(truth, tip)).resolves.toMatchObject({
-      status: 'refused',
-      reason: 'dirty',
-    });
-    git(f.operator, ['clean', '-fd']);
-    writeFileSync(resolve(f.operator, 'LOCAL.txt'), 'captain commit\n');
-    git(f.operator, ['add', 'LOCAL.txt']);
-    git(f.operator, ['commit', '-qm', 'captain local commit']);
-    await expect(resolver.syncPairingCheckout(truth, tip)).resolves.toMatchObject({
-      status: 'refused',
-      reason: 'local-commits',
-    });
-  });
 });

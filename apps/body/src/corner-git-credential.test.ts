@@ -61,8 +61,8 @@ async function writeRuntime(configPath: string, record: AgentRuntimeRecord): Pro
 }
 
 describe('corner-git-credential command', () => {
-  it('mints ONLY the read-only token variant and prints git credentials', async () => {
-    const calls: Array<{ baseUrl: string; roomId: string; options: { readOnly?: boolean } }> = [];
+  it('mints the Room-bound installation token and prints git credentials', async () => {
+    const calls: Array<{ baseUrl: string; roomId: string }> = [];
     const exitCode = await runCornerGitCredentialCommand(
       ['--config', '/tmp/runtime.json', '--room', 'room-1', 'get'],
       {
@@ -70,10 +70,10 @@ describe('corner-git-credential command', () => {
           relayBaseUrl: 'https://relay.test',
           identity: { secretKey: '22'.repeat(32) as `33`, publicKey: 'b'.repeat(64) },
         }),
-        fetchToken: async (baseUrl, _identity, roomId, options) => {
-          calls.push({ baseUrl, roomId, options });
+        fetchToken: async (baseUrl, _identity, roomId) => {
+          calls.push({ baseUrl, roomId });
           return {
-            token: 'ro-secret-token',
+            token: 'write-secret-token',
             expiresAt: '2030-01-01T00:00:00Z',
             installationId: 42,
             fullName: 'acme/widget',
@@ -82,12 +82,10 @@ describe('corner-git-credential command', () => {
       },
     );
 
-    // Regression pin: this credential path NEVER asks for a writable token.
     expect(calls).toEqual([
       {
         baseUrl: 'https://relay.test',
         roomId: 'room-1',
-        options: { readOnly: true },
       },
     ]);
     expect(exitCode).toBe(0);
@@ -100,7 +98,7 @@ describe('corner-git-credential command', () => {
     expect(fetchToken).not.toHaveBeenCalled();
   });
 
-  it('answers with a real auth-service request carrying read_only and no repository name', async () => {
+  it('asks for the Room-bound repository grant without accepting a repository name', async () => {
     const stateRoot = await tempDir('beeline-cred-state');
     const configPath = resolve(stateRoot, 'agents', 'b'.repeat(64), 'runtime.json');
     await writeRuntime(configPath, runtimeRecord(['22222222-2222-4222-8222-222222222222']));
@@ -115,7 +113,7 @@ describe('corner-git-credential command', () => {
         requests.push({ url: String(url), body });
         return new Response(
           JSON.stringify({
-            token: 'ro-token-from-auth',
+            token: 'write-token-from-auth',
             expires_at: '2030-01-01T00:00:00Z',
             installation_id: 77,
             full_name: 'octocat/widget',
@@ -146,12 +144,12 @@ describe('corner-git-credential command', () => {
     }
 
     expect(writes.join('')).toContain('username=x-access-token');
-    expect(writes.join('')).toContain('password=ro-token-from-auth');
+    expect(writes.join('')).toContain('password=write-token-from-auth');
     expect(requests).toHaveLength(1); // only the room-token POST (the 16 relay proofs are signed locally)
     const mintRequest = requests.find(({ url }) => url.endsWith('/auth/github/room-token'))!;
     expect(mintRequest).toBeDefined();
-    // The session never names a repository; read_only is the whole ask.
-    expect(mintRequest.body.read_only).toBe(true);
+    // The session never names a repository or chooses a permission downgrade.
+    expect(mintRequest.body).not.toHaveProperty('read_only');
     expect(mintRequest.body.room_id).toBe('22222222-2222-4222-8222-222222222222');
     expect(mintRequest.body).not.toHaveProperty('repository');
     expect(mintRequest.body).not.toHaveProperty('repo');
@@ -188,7 +186,7 @@ describe('corner-git-credential command', () => {
             identity: { secretKey: 'k' as never, publicKey: 'p' },
           }),
           fetchToken: async () => {
-            throw new Error('auth refused: HTTP 403 secret ro-pending-token leaked?');
+            throw new Error('auth refused: HTTP 403');
           },
         },
       );
@@ -197,6 +195,6 @@ describe('corner-git-credential command', () => {
       console.error = originalError;
     }
     const joined = errors.join('\n');
-    expect(joined).toContain('read-only repository token unavailable');
+    expect(joined).toContain('repository token unavailable');
   });
 });

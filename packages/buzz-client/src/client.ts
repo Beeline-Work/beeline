@@ -6,8 +6,6 @@
 import type { NostrEvent } from '@beeline/nostr';
 import type { SurfaceWatchFilter } from './room-view.js';
 import { agentPresenceKey } from './agent-presence.js';
-import { cornerStateKey } from './corner-state.js';
-import { buildMergeApproval, buildMergeRejection } from './approval.js';
 import {
   abandonAgentPairing,
   attachAgentToChannel,
@@ -87,7 +85,6 @@ import { fetchIdentityPredecessors, resolveCurrentIdentityPubkey } from './ident
 import {
   KIND_AGENT_DRAFT,
   KIND_AGENT_PRESENCE,
-  KIND_CORNER_STATE,
   KIND_STREAM_MESSAGE,
   TAG_AGENT_DRAFT,
   TAG_AGENT_THOUGHT,
@@ -129,7 +126,6 @@ import type {
   CommunityMember,
   CreateInviteOptions,
   Identity,
-  MergeTarget,
   MessageSubmitOpts,
   MediaBlob,
   PersonProfile,
@@ -165,14 +161,6 @@ function isLocalOpenRelay(baseUrl: string): boolean {
 const SUCCESSION_LOAD_TIMEOUT_MS = 5_000;
 const READ_DIRECTORY_CACHE_TTL_MS = 30_000;
 
-function cornerStateFilters(cornerIds: readonly string[], limit?: number) {
-  return [...new Set(cornerIds)].map((id) => ({
-    kinds: [KIND_CORNER_STATE],
-    '#d': [cornerStateKey(id)],
-    ...(limit === undefined ? {} : { limit }),
-  }));
-}
-
 export class BuzzClient {
   readonly identity: Identity;
   readonly baseUrl: string;
@@ -197,10 +185,11 @@ export class BuzzClient {
     this.config = config;
     this.identity = config.identity;
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    this.host = config.host ?? hostFromBaseUrl(this.baseUrl);
+    this.host = config.host ?? hostFromBaseUrl(config.publicOrigin ?? this.baseUrl);
     this.http = {
       baseUrl: this.baseUrl,
       host: this.host,
+      ...(config.publicOrigin !== undefined ? { publicOrigin: config.publicOrigin } : {}),
       identity: this.identity,
       ...(config.batchQueries !== undefined ? { batchQueries: config.batchQueries } : {}),
     };
@@ -220,6 +209,9 @@ export class BuzzClient {
     }
     this.ws = new RelayWs({
       wsUrl: this.config.wsUrl ?? wsUrlFromHttp(this.baseUrl),
+      ...(this.config.publicOrigin
+        ? { authRelayUrl: wsUrlFromHttp(this.config.publicOrigin) }
+        : {}),
       identity: this.identity,
       ...(this.config.WebSocketImpl ? { WebSocketImpl: this.config.WebSocketImpl } : {}),
       // The repository's local relay is deliberately open and never emits a
@@ -721,9 +713,8 @@ export class BuzzClient {
     communityId: string,
     repository: RepositoryBinding,
     pairedBy: string,
-    mergeWorkerPubkey?: string,
   ): Promise<RepositoryRoomResult> {
-    return resolveRepositoryRoom(this.ctx, communityId, repository, pairedBy, mergeWorkerPubkey);
+    return resolveRepositoryRoom(this.ctx, communityId, repository, pairedBy);
   }
 
   resolveRepositoryRoomForHuman(
@@ -956,22 +947,6 @@ export class BuzzClient {
     );
   }
 
-  /** Read canonical lifecycle records for the exact corners named by `d`. */
-  cornerStateBackfill(cornerIds: string[]): Promise<NostrEvent[]> {
-    if (cornerIds.length === 0) return Promise.resolve([]);
-    return query(this.ctx, cornerStateFilters(cornerIds, 5));
-  }
-
-  /** Subscribe to canonical lifecycle records, never parent history cards. */
-  async cornerStateSubscribe(
-    cornerIds: string[],
-    handler: (event: NostrEvent) => void,
-  ): Promise<Unsubscribe> {
-    if (cornerIds.length === 0) return () => undefined;
-    if (!this.ws?.connected) await this.connect();
-    return this.ws!.subscribe(cornerStateFilters(cornerIds), handler);
-  }
-
   /**
    * Subscribe to opaque filters returned by a paint-ready HTTP surface.
    * Callers may use matching events only as invalidation signals or as input
@@ -1061,33 +1036,6 @@ export class BuzzClient {
   /** Low-level query, WS-primary with HTTP fallback. */
   query(filters: Record<string, unknown>[]): Promise<NostrEvent[]> {
     return query(this.ctx, filters);
-  }
-
-  // ── Merge approval ──────────────────────────────────────────────────────
-
-  /**
-   * Build a signed merge-approval event (P0 gate shape). Does not publish —
-   * call `publish(buildMergeApproval(...))` or `submitMergeApproval`.
-   */
-  buildMergeApproval(channelId: string, target: MergeTarget): NostrEvent {
-    return buildMergeApproval(this.identity, channelId, target);
-  }
-
-  buildMergeRejection(channelId: string, target: MergeTarget): NostrEvent {
-    return buildMergeRejection(this.identity, channelId, target);
-  }
-
-  /** Sign + publish a merge approval for the given target. */
-  async submitMergeApproval(channelId: string, target: MergeTarget): Promise<NostrEvent> {
-    const event = this.buildMergeApproval(channelId, target);
-    await this.publish(event);
-    return event;
-  }
-
-  async submitMergeRejection(channelId: string, target: MergeTarget): Promise<NostrEvent> {
-    const event = this.buildMergeRejection(channelId, target);
-    await this.publish(event);
-    return event;
   }
 }
 

@@ -1,16 +1,5 @@
 import { importPKCS8, SignJWT } from 'jose';
 
-/**
- * The exact GitHub permission set a READ-ONLY Room repository token may
- * carry. Pinned here so the mint can never drift into asking for write:
- * `contents: read` allows clone/fetch only — pushing with this token is
- * refused by GitHub regardless of what the holder tries.
- */
-export const READ_ONLY_ROOM_TOKEN_PERMISSIONS = Object.freeze({
-  contents: 'read',
-  metadata: 'read',
-});
-
 const GITHUB_ISSUER = 'https://github.com';
 const DEFAULT_API = 'https://api.github.com';
 

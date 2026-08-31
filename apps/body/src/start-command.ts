@@ -1,7 +1,6 @@
 import { dirname, resolve } from 'node:path';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
-import { assertAgentNotPushAllowed, createRelayClient } from '@beeline/gate';
 import { formatAgentCommand } from './agent-command.js';
 import {
   findAgentRuntimeConfigPaths,
@@ -10,10 +9,8 @@ import {
   readRuntimeRecord,
   runtimeAgentCommand,
   runtimeDaemonPid,
-  runtimeIdentity,
   selectRuntimeConfigPaths,
   stopRuntimeDaemon,
-  type AgentRuntimeRecord,
 } from './runtime.js';
 import { beelineInstallLayout } from './self-update.js';
 import { installAgentService } from './systemd.js';
@@ -21,38 +18,6 @@ import { installAgentService } from './systemd.js';
 export function stableBeelineEntrypoint(): string {
   const layout = beelineInstallLayout(process.env);
   return layout ? resolve(layout.binDir, 'beeline') : resolve(process.argv[1]!);
-}
-
-export async function assertRuntimeSafe(runtime: AgentRuntimeRecord): Promise<void> {
-  const agent = runtimeIdentity(runtime.agent);
-  const relay = createRelayClient(agent, {
-    baseUrl: runtime.relayBaseUrl,
-    host: new URL(runtime.relayBaseUrl).host,
-  });
-  await Promise.all(
-    runtime.rooms.map(async (room) => {
-      if (!room.repo.relayRepo) return;
-      try {
-        await assertAgentNotPushAllowed({
-          ownerHex: room.repo.relayRepo.ownerHex,
-          repo: room.repo.relayRepo.repo,
-          agentPubkey: runtime.agent.publicKey,
-          protectedRef: `refs/heads/${room.repo.targetBranch}`,
-          relay,
-        });
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        if (detail.startsWith('provisioning check failed:')) throw error;
-        if (!/relay|queryEvents|HTTP|fetch|network|timed? out|ECONN|socket/i.test(detail)) {
-          throw error;
-        }
-        console.warn(
-          `[thin-core] startup push-policy read degraded for Room ${room.channelId}; ` +
-            `continuing behind the fail-closed push broker: ${detail}`,
-        );
-      }
-    }),
-  );
 }
 
 /**
@@ -135,7 +100,6 @@ async function startRuntime(
     spinnerHandle ? spinnerHandle.message(text) : console.log(text);
   const runtime = await readRuntimeRecord(configPath);
   const selectedAgent = runtimeAgentCommand(runtime);
-  await assertRuntimeSafe(runtime);
   report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
   if (process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0') {
     const existingPid = await runtimeDaemonPid(configPath);

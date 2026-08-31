@@ -44,12 +44,6 @@ export interface GitHubRoomInstallationToken {
   expiresAt: string;
   installationId: number;
   fullName: string;
-  /**
-   * The Room binding author's CURRENT device key after key succession
-   * (absent when the auth service has no succession ledger entry). A daemon
-   * may treat a corner-scoped merge approval signed by this key as owner-signed.
-   */
-  authorizedBy?: string;
 }
 
 /** One stored GitHub repository-activity event, released to an authorized daemon. */
@@ -242,24 +236,10 @@ export async function getGitHubRepositoryAccess(
  * current member of the Room. The auth sidecar re-resolves Room state; callers
  * cannot choose the repository or installation represented by the token.
  */
-/** Options for {@link getGitHubRoomInstallationToken}. */
-export interface GitHubRoomInstallationTokenOptions {
-  /**
-   * Ask the auth service to mint a READ-ONLY installation token: GitHub
-   * receives `permissions: { contents: "read", metadata: "read" }` alongside
-   * the pinned repository id, so the token is structurally incapable of
-   * pushing or writing anything on any ref. This is the only variant a
-   * session (Room or corner) may hold — push-capable credentials never leave
-   * the daemon's own brokered paths (#376).
-   */
-  readOnly?: boolean;
-}
-
 export async function getGitHubRoomInstallationToken(
   baseUrl: string,
   identity: Pick<Identity, 'secretKey' | 'publicKey'>,
   roomId: string,
-  options: GitHubRoomInstallationTokenOptions = {},
 ): Promise<GitHubRoomInstallationToken> {
   const relayQueryUrl = authEndpoint(baseUrl, '/query').toString();
   const { body, status } = await requestAuthJson(baseUrl, '/auth/github/room-token', {
@@ -271,7 +251,6 @@ export async function getGitHubRoomInstallationToken(
       relay_authorizations: Array.from({ length: 16 }, () =>
         nip98AuthHeader(identity.secretKey, identity.publicKey, relayQueryUrl, 'POST'),
       ),
-      ...(options.readOnly ? { read_only: true } : {}),
     },
   });
   if (
@@ -282,9 +261,7 @@ export async function getGitHubRoomInstallationToken(
     typeof body.installation_id !== 'number' ||
     !Number.isSafeInteger(body.installation_id) ||
     typeof body.full_name !== 'string' ||
-    !/^[^/\s]+\/[^/\s]+$/.test(body.full_name) ||
-    (body.authorized_by !== undefined &&
-      (typeof body.authorized_by !== 'string' || !HEX_KEY_RE.test(body.authorized_by)))
+    !/^[^/\s]+\/[^/\s]+$/.test(body.full_name)
   ) {
     throw new OidcBindError(
       'invalid_response',
@@ -297,7 +274,6 @@ export async function getGitHubRoomInstallationToken(
     expiresAt: body.expires_at,
     installationId: body.installation_id,
     fullName: body.full_name,
-    ...(typeof body.authorized_by === 'string' ? { authorizedBy: body.authorized_by } : {}),
   };
 }
 

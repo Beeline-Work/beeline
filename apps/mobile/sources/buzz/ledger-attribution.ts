@@ -71,7 +71,6 @@ export type LedgerAttributionMessage = {
   /** A corner lifecycle card — mechanism, never a voice. */
   corner?: unknown;
   roomUpdate?: unknown;
-  isMergeSummary?: boolean;
   isArchivedNotice?: boolean;
   isSystemNotice?: boolean;
   githubEvent?: unknown;
@@ -99,7 +98,6 @@ export function ledgerSpeakerKey(
   if (
     message.corner ||
     message.roomUpdate ||
-    message.isMergeSummary ||
     message.isArchivedNotice ||
     message.isSystemNotice ||
     message.githubEvent

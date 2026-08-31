@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   KIND_AGENT_SOUL,
-  KIND_CORNER_STATE,
-  CORNER_GIT_PROJECTION_TAG,
   TAG_AGENT_SOUL,
-  TAG_CORNER_STATE,
-  parseCornerStateRecord,
 } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 import type { BatchResponse, Messaging } from 'firebase-admin/messaging';
@@ -46,8 +42,6 @@ function registeredEventFilters(since: number): Record<string, unknown>[] {
   return [
     { kinds: [9], since, limit: 1_000 },
     { kinds: [KIND_AGENT_SOUL], '#t': [TAG_AGENT_SOUL], since, limit: 1_000 },
-    { kinds: [KIND_CORNER_STATE], '#t': [TAG_CORNER_STATE], since, limit: 1_000 },
-    { kinds: [KIND_CORNER_STATE], '#t': [CORNER_GIT_PROJECTION_TAG], since, limit: 1_000 },
   ];
 }
 
@@ -64,20 +58,9 @@ function deviceId(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 16);
 }
 
-/** One pending approval is identified by the immutable corner and exact merge target, not a retry event. */
 function deliveryKey(event: NostrEvent, type: string): string {
-  if (type !== 'merge-approval-request') return event.id;
-  return createHash('sha256')
-    .update(
-      [
-        'merge-approval-request',
-        event.tags.find((tag) => tag[0] === 'h')?.[1] ?? '',
-        event.tags.find((tag) => tag[0] === 'repo')?.[1] ?? '',
-        event.tags.find((tag) => tag[0] === 'branch')?.[1] ?? '',
-        event.tags.find((tag) => tag[0] === 'tip')?.[1] ?? '',
-      ].join('\u0000'),
-    )
-    .digest('hex');
+  void type;
+  return event.id;
 }
 
 function tagValue(event: NostrEvent, name: string): string | undefined {
@@ -153,15 +136,17 @@ export class PushGateway {
     private readonly messaging: Messaging,
     private readonly deliveryState: DeliveryState,
     private readonly metadata = new NotificationMetadataResolver(),
-    private readonly readCornerLifecycle?: (
+    _readCornerLifecycle?: (
       cornerId: string,
       viewerPubkey: string,
     ) => Promise<{
       room: { archived: boolean };
       parent?: { id: string };
-      cornerLifecycle?: { lifecycle: string; git?: { featureTip?: string } };
+      cornerLifecycle?: { lifecycle: string };
     } | null>,
-  ) {}
+  ) {
+    void _readCornerLifecycle;
+  }
 
   /** One concise, greppable line per candidate event — the gateway's whole audit trail. */
   private trace(
@@ -194,40 +179,13 @@ export class PushGateway {
     reader: RelayEventReader,
   ): Promise<void> {
     this.metadata.invalidate(event);
-    if (event.kind === KIND_CORNER_STATE) {
-      const record = parseCornerStateRecord(event);
-      if (record) {
-        // One-release compatibility for the retired lifecycle record. It can
-        // clear an old attention episode but can never create a review push.
-        const resolved =
-          record.state === 'idle' || record.state === 'concluded' || record.state === 'closed';
-        if (resolved) {
-          await this.deliveryState.clearAttention(record.cornerId, recipientPubkey);
-        }
-        this.trace(
-          event,
-          recipientPubkey,
-          'skip',
-          resolved
-            ? 'corner-attention-resolved'
-            : record.state === 'waiting'
-              ? 'corner-attention-standing'
-              : 'corner-lifecycle-observed',
-          { corner: record.cornerId, state: record.state },
-        );
-        return;
-      }
-    }
     const channelId = event.tags.find((tag) => tag[0] === 'h')?.[1];
     if (!channelId) {
       this.trace(event, recipientPubkey, 'skip', 'no-channel');
       return;
     }
-    const projectionEvent =
-      event.kind === KIND_CORNER_STATE &&
-      event.tags.some((tag) => tag[0] === 't' && tag[1] === CORNER_GIT_PROJECTION_TAG);
     const mention = event.kind === 9 && mentionsMember(event, recipientPubkey);
-    if (event.kind !== 9 && !projectionEvent) {
+    if (event.kind !== 9) {
       this.trace(
         event,
         recipientPubkey,
@@ -235,22 +193,6 @@ export class PushGateway {
         event.kind === 9000 ? 'fatigue-policy-member-join' : 'not-notifiable-kind',
       );
       return;
-    }
-    if (projectionEvent) {
-      const tip = tagValue(event, 'tip');
-      const surface = this.readCornerLifecycle
-        ? await this.readCornerLifecycle(channelId, recipientPubkey)
-        : null;
-      if (
-        !tip ||
-        !surface?.parent ||
-        surface.room.archived ||
-        surface.cornerLifecycle?.lifecycle !== 'REVIEW' ||
-        surface.cornerLifecycle.git?.featureTip !== tip
-      ) {
-        this.trace(event, recipientPubkey, 'skip', 'corner-not-current-review');
-        return;
-      }
     }
     if (recipientPubkey === event.pubkey) {
       this.trace(event, recipientPubkey, 'skip', 'sender-self');

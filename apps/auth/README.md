@@ -4,7 +4,7 @@ This is Beeline's narrow OAuth/OIDC-to-Nostr-public-key binding service. GitHub
 is the shipped sign-in; the Google OIDC routes remain available but are hidden
 from the app. It owns the Authorization Code + PKCE ceremony and a durable one-use binding
 transaction. It does not issue relay credentials, grant roles or membership,
-participate in merge decisions, or accept a Nostr secret key.
+or accept a Nostr secret key.
 
 ## Protocol
 
@@ -34,7 +34,7 @@ participate in merge decisions, or accept a Nostr secret key.
    explicit recovery action, which a normal sign-in could not previously do.
    That tradeoff is necessary for self-service loss recovery. It does not reveal
    or transfer the old Nostr secret, Rooms, DMs, profile, memberships, roles, or
-   GitHub App repository approvals; those remain attached to the old key.
+   GitHub App repository grants; those remain attached to the old key.
 5. `GET /auth/oidc/links/:pubkey` requires a fresh, exact-URL/method NIP-98
    header signed by that public key. Auth-event IDs are durably replay guarded.
    The response is tenant-scoped and never contains email.
@@ -60,8 +60,7 @@ Custom NIP-05 identifiers remain ordinary optional profile data. They are not
 part of this hosted-name ceremony and are never an authentication prerequisite.
 
 There is deliberately no endpoint that accepts a bearer ID token and no OIDC
-token that can authorize `/events`, `/query`, WebSockets, Room state, or the
-merge gate.
+token that can authorize `/events`, `/query`, WebSockets, or Room state.
 
 ## Deployment shape
 
@@ -84,8 +83,9 @@ write, issues read, metadata read, administration write, checks read, statuses r
 write; events `star`, `issues`, `pull_request`) — and the startup drift check enforces them. The auth
 sidecar mints exact-repository, one-hour installation tokens for Room-member
 daemons after re-checking current relay membership and the Room's admin-authored
-repository binding. Daemons never receive the App private key and do not
-consult `gh`, credential helpers, or ambient Git configuration.
+repository binding. Daemons never receive the App private key. Body installs a
+corner-local Git credential helper and `gh` wrapper that refresh this scoped
+token for every invocation; ambient host credentials remain masked.
 
 GitHub ships dark until **all six** `BEELINE_GITHUB_*` values below are present.
 `GET /auth/capabilities` then reports `github: true`; without them it reports
@@ -156,8 +156,8 @@ The webhook URL is `https://<tenant>/auth/github/webhook` with the `installation
 and `installation_repositories` events enabled. The older
 `/auth/github/installed` and `/auth/github/install/callback` routes remain only
 as compatibility aliases. Body daemons obtain short-lived tokens from this
-service for clone, fetch, push, land, rename, preview, and CI reads; the App
-private key stays here.
+service for clone, fetch, push, pull-request operations, repository settings,
+rename, preview, and CI reads; the App private key stays here.
 
 Production uses `https://usebeeline.app/auth/github/callback`; the tenant list
 also keeps `https://relay.buzzrouter.com/auth/github/callback` valid so stored

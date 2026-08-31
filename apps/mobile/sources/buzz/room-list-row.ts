@@ -36,8 +36,7 @@ export function expandedCornerRefreshAction(
 export type RoomListZone = 'needs-you' | 'working' | 'idle';
 
 // Gold is the exact needs-you state, only when a person can act now.
-// Affordance words per canonical projection stay contextual (approve / reply /
-// retry).
+// Affordance words per canonical projection stay contextual (reply / retry).
 function needsYouAction(status: CornerStatus | null): string {
   const key = status === null ? 'needs-attention' : status;
   return NEEDS_YOU_ACTION[key] ?? 'REPLY';
@@ -52,10 +51,9 @@ const FINISHED_STATUSES: ReadonlySet<CornerStatus> = new Set(['merged']);
 
 /**
  * Whether this corner puts its Room in the pinned needs-you cluster. It is for
- * corners a person can act on RIGHT NOW — a review-ready
- * change (`open`), a decision/reply ask (`needs-attention`, or a fresh agent
+ * corners a person can act on RIGHT NOW — a decision/reply ask (`needs-attention`, or a fresh agent
  * question carried as `awaitingReply`), or a failure-stalled card (`failed`).
- * A merely idle corner — nothing fresh to answer, nothing new to approve — is
+ * A merely idle corner — nothing fresh to answer — is
  * idle state, not attention; its nudge/close affordance still
  * lives inside the corner itself.
  *
@@ -73,12 +71,10 @@ function needsYouCorner(corner: CornerSummary): boolean {
 
 /**
  * The one loud word a needs-you Room is allowed to say — the AFFORDANCE the
- * person gets on opening the corner (approve card when a live merge target
- * exists, reply focus otherwise, retry, nudge/close). The STATE word on every
+ * person gets on opening the corner (reply focus, retry, or nudge/close). The STATE word on every
  * surface is just needs-human; this names what to do about it.
  */
 const NEEDS_YOU_ACTION: Record<string, string> = {
-  open: 'APPROVE',
   'needs-attention': 'REPLY',
   failed: 'RETRY',
   stalled: 'NUDGE',

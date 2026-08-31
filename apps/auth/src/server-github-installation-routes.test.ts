@@ -290,7 +290,6 @@ describe('GitHub installation, repositories, and token routes', () => {
     expect(response.json()).toMatchObject({
       installation_id: 77,
       full_name: 'octocat/widget',
-      authorized_by: successorKey,
     });
 
     // An unrelated key resolving the same binding author is still refused:
@@ -329,7 +328,7 @@ describe('GitHub installation, repositories, and token routes', () => {
     expect(refused.statusCode).toBe(403);
   });
 
-  it('mints a read-only token when the Room token request asks for read_only', async () => {
+  it('never downgrades a Room installation token when a legacy request carries read_only', async () => {
     const owner = generateKeypair();
     const agent = generateKeypair();
     await store.saveGitHubInstallation(
@@ -395,21 +394,16 @@ describe('GitHub installation, repositories, and token routes', () => {
         },
       });
 
-    // The read-only session variant: the mint must pin GitHub permissions to
-    // exactly contents:read + metadata:read alongside the pinned repository —
-    // structurally incapable of pushing or writing anything on any ref.
+    // Legacy callers may still send read_only during a rolling deployment,
+    // but the installation grant is no longer downgraded. Repository scope
+    // stays pinned to the Room-bound repository.
     const readOnly = await mint({ read_only: true });
     expect(readOnly.statusCode).toBe(200);
     expect(state.roomTokenMint).toEqual({
       installationId: 77,
       repositoryIds: [42],
-      permissions: { contents: 'read', metadata: 'read' },
     });
 
-    // A non-boolean read_only is a bad request, never silently truthy.
-    const invalid = await mint({ read_only: 'yes' });
-    expect(invalid.statusCode).toBe(400);
-    expect(invalid.json()).toMatchObject({ error: 'invalid_request' });
   });
 
   it('completes an organization installation even when the user-token listing cannot verify it', async () => {

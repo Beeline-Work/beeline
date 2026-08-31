@@ -24,7 +24,6 @@
 
 export const BEELINE_SLASH_COMMANDS = [
   'open-corner',
-  'approve',
   'change-target-branch',
   'add-agent',
   'invite',

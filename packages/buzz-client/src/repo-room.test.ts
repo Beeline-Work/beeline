@@ -22,7 +22,6 @@ const binding: RepositoryBinding = {
 const communityId = '11111111-1111-4111-8111-111111111111';
 const agent = createIdentity('agent');
 const human = createIdentity('human');
-const mergeWorker = createIdentity('merge-worker');
 const http = { baseUrl: 'http://relay.test', host: 'relay.test' };
 
 function ctx(): ChannelOpsContext {
@@ -92,12 +91,12 @@ describe('repository Room identity', () => {
     );
 
     await expect(
-      resolveRepositoryRoom(ctx(), communityId, binding, human.publicKey, mergeWorker.publicKey),
+      resolveRepositoryRoom(ctx(), communityId, binding, human.publicKey),
     ).rejects.toThrow(/Room creation is a human action/);
     expect(published).toEqual([]);
   });
 
-  it('uses current role projections when member and admin mutations share a timestamp on the join path', async () => {
+  it('elevates the paired human without rewriting an existing agent membership', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
     const channelId = repositoryRoomId(communityId, binding);
     const roomCreate = signed(human, KIND_CREATE_GROUP, [
@@ -107,9 +106,8 @@ describe('repository Room identity', () => {
     ]);
     const published: NostrEvent[] = [];
     // A human-created Room where an earlier provisioning left the agent as
-    // owner and the human as a plain member. The agent joins, elevates the
-    // human, provisions the merge worker, and is demoted to plain member —
-    // every mutation sharing one mocked timestamp.
+    // owner and the human as a plain member. The agent elevates the human;
+    // there is no second machine identity or role transition.
     const roles = new Map<string, 'owner' | 'admin' | 'member'>([
       [human.publicKey, 'member'],
       [agent.publicKey, 'owner'],
@@ -162,12 +160,11 @@ describe('repository Room identity', () => {
     );
 
     await expect(
-      resolveRepositoryRoom(ctx(), communityId, binding, human.publicKey, mergeWorker.publicKey),
+      resolveRepositoryRoom(ctx(), communityId, binding, human.publicKey),
     ).resolves.toEqual({
       channelId,
       created: false,
       joined: true,
-      mergeWorkerProvisioned: false,
     });
 
     // No Room was created — the agent only joined the human's Room.
@@ -181,12 +178,8 @@ describe('repository Room identity', () => {
     expect(
       mutations.find((event) => tagValue(event, 'p') === human.publicKey)?.tags,
     ).toContainEqual(['role', 'admin']);
-    expect(
-      mutations.find((event) => tagValue(event, 'p') === mergeWorker.publicKey)?.tags,
-    ).toContainEqual(['role', 'admin']);
-    expect(
-      mutations.find((event) => tagValue(event, 'p') === agent.publicKey)?.tags,
-    ).toContainEqual(['role', 'member']);
+    expect(mutations.some((event) => tagValue(event, 'p') === agent.publicKey)).toBe(false);
+    expect(roles.get(agent.publicKey)).toBe('owner');
     expect(new Set(mutations.map((event) => event.created_at))).toEqual(
       new Set([1_700_000_000]),
     );
@@ -237,17 +230,11 @@ describe('repository Room identity', () => {
       channelId,
       created: false,
       joined: true,
-      mergeWorkerProvisioned: false,
     });
     expect(published).toEqual([]);
   });
 
-  it('resumes interrupted gate provisioning on an already-existing Room instead of treating it as done', async () => {
-    // Simulates a crash between the two provisioning steps of an earlier
-    // resolveRepositoryRoom call: the Room exists and the human is already
-    // admin, but the agent is still the owner (never demoted) and the merge
-    // worker was never elevated. The old short-circuit ("Room exists" ⇒
-    // "fully provisioned") would silently skip both remaining steps forever.
+  it('leaves existing human and agent roles unchanged when both already belong', async () => {
     const channelId = repositoryRoomId(communityId, binding);
     const roomCreate = signed(human, KIND_CREATE_GROUP, [
       ['h', channelId],
@@ -299,28 +286,18 @@ describe('repository Room identity', () => {
     );
 
     await expect(
-      resolveRepositoryRoom(ctx(), communityId, binding, human.publicKey, mergeWorker.publicKey),
+      resolveRepositoryRoom(ctx(), communityId, binding, human.publicKey),
     ).resolves.toEqual({
       channelId,
       created: false,
       joined: true,
-      // Existing Rooms already have their dedicated gate identity — this
-      // pairing must not persist/run a second one, even though it repaired
-      // the interrupted provisioning steps above.
-      mergeWorkerProvisioned: false,
     });
 
     const mutations = published.filter(
       (event) => event.kind === KIND_PUT_USER && tagValue(event, 'h') === channelId,
     );
-    expect(
-      mutations.find((event) => tagValue(event, 'p') === mergeWorker.publicKey)?.tags,
-    ).toContainEqual(['role', 'admin']);
-    expect(
-      mutations.find((event) => tagValue(event, 'p') === agent.publicKey)?.tags,
-    ).toContainEqual(['role', 'member']);
-    expect(roles.get(mergeWorker.publicKey)).toBe('admin');
-    expect(roles.get(agent.publicKey)).toBe('member');
+    expect(mutations).toEqual([]);
+    expect(roles.get(agent.publicKey)).toBe('owner');
   });
 
   it('fails fast when an existing admin is missing and the caller cannot grant it', async () => {

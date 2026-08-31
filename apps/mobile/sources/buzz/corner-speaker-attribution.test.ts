@@ -105,12 +105,11 @@ describe('corner transcript speaker attribution (same treatment as rooms)', () =
       cornerMessage({ id: 'agent-1', pubkey: AGENT, isAgentAuthor: true }),
       cornerMessage({ id: 'card', pubkey: AGENT, corner: { status: 'open' } }),
       cornerMessage({ id: 'notice', isSystemNotice: true }),
-      cornerMessage({ id: 'merge', isMergeSummary: true }),
       cornerMessage({ id: 'permission', writePermission: { status: 'allowed' } }),
       cornerMessage({ id: 'proposal', targetBranchProposal: {} }),
       cornerMessage({ id: 'agent-2', pubkey: AGENT, isAgentAuthor: true }),
     ]);
-    for (const id of ['card', 'notice', 'merge', 'permission', 'proposal']) {
+    for (const id of ['card', 'notice', 'permission', 'proposal']) {
       expect(keys.get(id)).toBeNull();
     }
     expect(continued.has('agent-2')).toBe(false);

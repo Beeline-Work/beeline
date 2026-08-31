@@ -117,8 +117,6 @@ export interface RoomRuntimeRecord {
    * `<dirname(configPath)>/rooms/<channelId>`, which is where those Rooms are.
    */
   root?: string;
-  /** Dedicated Room-admin identity used only by this Room's approval gate. */
-  mergeWorker?: StoredIdentity;
   membershipSince: number;
   discoveredAt: string;
 }
@@ -140,7 +138,6 @@ interface LegacyAgentRuntimeRecord {
   pairedBy: string;
   agent: StoredIdentity;
   body: StoredIdentity;
-  mergeWorker?: StoredIdentity;
   repo: LocalRepositoryBinding;
   relayBaseUrl: string;
   relayHost?: string;
@@ -638,7 +635,6 @@ export async function readRuntimeRecord(path: string): Promise<AgentRuntimeRecor
         {
           channelId: parsed.channelId,
           repo: parsed.repo,
-          ...(parsed.mergeWorker ? { mergeWorker: parsed.mergeWorker } : {}),
           membershipSince: Math.floor(new Date(parsed.createdAt).getTime() / 1000) || 0,
           discoveredAt: parsed.createdAt,
         },
@@ -1059,7 +1055,6 @@ export async function pairRepositoryAgent(
     mcpBinary: string;
     agentIdentity: Identity;
     bodyIdentity: Identity;
-    mergeWorkerIdentity: Identity;
     /** Override the machine-local agent state root (tests, unusual layouts). */
     supervisorRoot?: string;
     env?: NodeJS.ProcessEnv;
@@ -1069,13 +1064,7 @@ export async function pairRepositoryAgent(
     resolveRoom(
       pairing: RedeemAgentPairingResult,
       repository: RepositoryBinding,
-      mergeWorkerPubkey?: string,
     ): Promise<RepositoryRoomResult>;
-    validate?(
-      pairing: RedeemAgentPairingResult,
-      room: RepositoryRoomResult,
-      repo: LocalRepositoryBinding,
-    ): Promise<void>;
     launch?(configPath: string): Promise<number>;
     /**
      * Best-effort undo of `redeem`'s Workspace registration, called only when
@@ -1123,7 +1112,7 @@ export async function pairRepositoryAgent(
   // ── Everything from here to `writeRuntimeRecord` is the half-created window.
   // `redeem` self-adds the agent as a Workspace member and publishes its
   // identity record; both are irreversible relay writes, and `resolveRoom`,
-  // `validate` and the runtime write can all still fail after them. A failure
+  // and the runtime write can still fail after it. A failure
   // there used to leave the agent registered with no daemon behind it — a
   // permanently-offline ghost in the Workspace that the operator cannot even
   // re-pair, because the one-shot code is already spent. Undo the registration
@@ -1133,14 +1122,7 @@ export async function pairRepositoryAgent(
   let room: RepositoryRoomResult | undefined;
   let runtime: AgentRuntimeRecord;
   try {
-    room = repo
-      ? await deps.resolveRoom(
-          pairing,
-          repo.repository,
-          repo.relayRepo ? input.mergeWorkerIdentity.publicKey : undefined,
-        )
-      : undefined;
-    if (repo && room) await deps.validate?.(pairing, room, repo);
+    room = repo ? await deps.resolveRoom(pairing, repo.repository) : undefined;
     runtime = {
       version: 2,
       communityId: pairing.communityId,
@@ -1157,11 +1139,6 @@ export async function pairRepositoryAgent(
                 channelId: room.channelId,
                 repo,
                 root: resolve(runtimeRoot, 'rooms', room.channelId),
-                ...(repo.relayRepo && room.mergeWorkerProvisioned
-                  ? {
-                      mergeWorker: storeIdentity(input.mergeWorkerIdentity, 'beeline-merge-worker'),
-                    }
-                  : {}),
                 membershipSince: Math.floor(Date.now() / 1000),
                 discoveredAt: new Date().toISOString(),
               },

@@ -88,7 +88,6 @@ function missionScope(
         ...(revisionDigest ? { revisionDigest } : {}),
       },
     ],
-    land: true,
   };
 }
 

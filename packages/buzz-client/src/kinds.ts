@@ -56,9 +56,6 @@ export const KIND_AGENT_COMMANDS = 30078;
 /** NIP-33 parameterized replaceable application data (admin-authored Room→repository binding). */
 export const KIND_ROOM_REPOSITORY = 30078;
 
-/** NIP-33 parameterized replaceable application data (daemon-authoritative corner state record). */
-export const KIND_CORNER_STATE = 30078;
-
 /** NIP-42 AUTH challenge response. */
 export const KIND_AUTH = 22242;
 
@@ -98,9 +95,6 @@ export const TAG_ROOM_REPOSITORY = 'buzz-room-repository';
 /** Marker for self-authored, display-only human profile metadata. */
 export const TAG_PERSON_PROFILE = 'buzz-person-profile';
 
-/** Marker tag value for merge approval (P0 gate shape — mirrors @beeline/gate). */
-export const TAG_MERGE_APPROVAL = 'buzz-merge-approval';
-
 /** P1 factory permission ledger command and receipt families. */
 export const TAG_PERMISSION_REQUEST = 'buzz-permission-request';
 export const TAG_PERMISSION_DECISION = 'buzz-permission-decision';
@@ -123,6 +117,3 @@ export const TAG_DIRECT_MESSAGE = 'buzz-dm';
 
 /** Marker for an explicit human-admin Room lifecycle mutation. */
 export const TAG_ROOM_LIFECYCLE = 'buzz-room-lifecycle';
-
-/** Marker tag value for the daemon-authoritative corner state record. */
-export const TAG_CORNER_STATE = 'buzz-corner-state';

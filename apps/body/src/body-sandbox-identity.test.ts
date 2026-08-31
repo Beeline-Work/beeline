@@ -88,7 +88,6 @@ import {
   WRITE_PERMISSION_BACKSTOP_POLL_MS,
 } from './body.js';
 import {
-  buildMergeApproval,
   buildPermissionDecision,
   buildPermissionRequest,
   defaultPermissionGrantEnvelope,
@@ -101,10 +100,6 @@ import { AcpClient, isMutatingPermissionRequest } from './acp.js';
 import { newIdentity } from '@beeline/gate';
 import {
   WRITE_PERMISSION_RESPONSE_TAG,
-  CHANGE_REVIEW_ARTIFACT_TAG,
-  CHANGE_REVIEW_ARTIFACT_VERSION,
-  CHANGE_REVIEW_EVENT_KIND,
-  parseChangeReviewArtifactDescriptor,
   setAgentModelConfig,
   AGENT_PRESENCE_HEARTBEAT_MS,
   AGENT_PRESENCE_STALE_MS,
@@ -589,7 +584,6 @@ describe('agent identity boundary', () => {
           },
           newIdentity('persona-operator'),
           newIdentity('persona-agent'),
-          undefined,
           { scheduler },
         );
         const durable = (
@@ -643,7 +637,6 @@ describe('agent identity boundary', () => {
           { ...config, workspaceRoot: '/tmp/beeline-persona-turn-bare' },
           newIdentity('bare-operator'),
           newIdentity('bare-agent'),
-          undefined,
           { scheduler },
         );
         const durable = (
@@ -697,7 +690,6 @@ describe('agent identity boundary', () => {
           },
           newIdentity('soul-refresh-operator'),
           newIdentity('soul-refresh-agent'),
-          undefined,
           { scheduler },
         );
         const durable = (
@@ -786,7 +778,6 @@ describe('agent identity boundary', () => {
             },
             newIdentity('directive-operator'),
             newIdentity('directive-agent'),
-            undefined,
             { scheduler },
           );
           const durable = (
@@ -893,7 +884,6 @@ describe('agent identity boundary', () => {
           },
           newIdentity('pi-operator'),
           newIdentity('pi-agent'),
-          undefined,
           { scheduler },
         );
         const durable = (
@@ -999,8 +989,6 @@ describe('agent identity boundary', () => {
         .filter(Boolean);
       expect(binds).toEqual(['/srv/rooms/r1/agent-home/claude']);
       expect(binds).not.toContain('/srv/checkout');
-      // The merge gate is not part of a Room's surface.
-      expect(binds).not.toContain(join(homedir(), '.no-mistakes'));
       expect(spawn.args.slice(-1)).toEqual(['/nonexistent']);
     });
 
@@ -1029,12 +1017,6 @@ describe('agent identity boundary', () => {
       expect(binds).toContain(repoRoot);
       expect(binds).toContain(join(repoRoot, '.git'));
       expect(binds).toContain('/srv/rooms/r1/agent-home/tmp');
-      // Live reproduction (corner "Enrich-the-pond-in-the-staging…", Codex,
-      // 2026-08-23): the no-mistakes merge gate initializes its state under
-      // ~/.no-mistakes from inside the sandboxed corner session. Without this
-      // bind every attempt died "state repository directory is mounted
-      // read-only" while the gate's health checks — socket reads — passed.
-      expect(binds).toContain(join(homedir(), '.no-mistakes'));
     });
 
     it('keeps a repo-less corner sandboxed in a Git-blocked quota workbench', async () => {
@@ -1057,7 +1039,6 @@ describe('agent identity boundary', () => {
         .map((argument, index) => (argument === '--bind-try' ? spawn.args[index + 1] : undefined))
         .filter(Boolean);
       expect(binds).toContain(notARepo);
-      expect(binds).not.toContain(join(homedir(), '.no-mistakes'));
     });
 
     it('masks operator credential stores out of a session instead of leaving them read-only', async () => {
@@ -1740,7 +1721,7 @@ describe('agent identity boundary', () => {
       });
       const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       try {
-        const first = new Body(config, undefined, agent, undefined, {
+        const first = new Body(config, undefined, agent, {
           statePath,
           publishPermissionReceipt: failedPublish,
         });
@@ -1749,7 +1730,7 @@ describe('agent identity boundary', () => {
         expect(failedPublish).toHaveBeenCalled();
 
         const delivered: NostrEvent[] = [];
-        const restarted = new Body(config, undefined, agent, undefined, {
+        const restarted = new Body(config, undefined, agent, {
           statePath,
           publishPermissionReceipt: async (event) => {
             delivered.push(event);
@@ -2139,7 +2120,6 @@ describe('agent identity boundary', () => {
       },
       newIdentity('operator'),
       newIdentity('agent'),
-      undefined,
       { scheduler },
     );
     vi.spyOn(body as never, 'ensureAgentInChannel' as never).mockResolvedValue(undefined as never);
@@ -2181,7 +2161,7 @@ describe('agent identity boundary', () => {
   it('budgets a corner against its parent Room, not as its own Room', async () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 4, idleMs: 60_000 });
     const run = vi.spyOn(scheduler, 'run');
-    const body = new Body(config, newIdentity('operator'), newIdentity('agent'), undefined, {
+    const body = new Body(config, newIdentity('operator'), newIdentity('agent'), {
       scheduler,
     });
     const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
@@ -2855,7 +2835,6 @@ describe('Room poll resilience', () => {
       } as BodyConfig,
       newIdentity('ws-liveness-operator'),
       newIdentity('ws-liveness-agent'),
-      undefined,
       { onRoomPollSuccess: () => liveness.push(Date.now()) },
     );
     Reflect.set(body, 'roomParticipants', async () => []);
@@ -3301,7 +3280,6 @@ describe('Room poll resilience', () => {
         },
         newIdentity('hung-operator'),
         newIdentity('hung-agent'),
-        undefined,
         { scheduler },
       );
       const sessionCancel = vi.fn();
@@ -3369,7 +3347,6 @@ describe('Room poll resilience', () => {
       },
       newIdentity('activation-spend-operator'),
       newIdentity('activation-spend-agent'),
-      undefined,
       { scheduler },
     );
     const sessionPrompt = vi.fn();
@@ -3417,7 +3394,6 @@ describe('Room poll resilience', () => {
         },
         newIdentity('stall-operator'),
         newIdentity('stall-agent'),
-        undefined,
         { scheduler },
       );
       const published: NostrEvent[] = [];
@@ -3569,136 +3545,6 @@ describe('corner archive boundary', () => {
   });
 });
 
-describe('an idle or suspended corner session is never archived', () => {
-  /**
-   * Owner-reported suspicion (2026-08-23): corners were believed to be
-   * auto-archived on session suspension/idleness. Relay forensics showed every
-   * real archive was the designed post-land path, but the invariant deserves a
-   * pin: suspension retires the ACP process and publishes a `corner-session`
-   * control event — nothing else. No maintenance pass may turn a suspended,
-   * idle, or merely quiet corner into an archived one.
-   */
-  function newBody(agent: ReturnType<typeof newIdentity>, workspaceRoot: string) {
-    return new Body(
-      {
-        agentBinary: '/nonexistent',
-        mcpBinary: '/nonexistent',
-        agentEnv: {},
-        workspaceRoot,
-        relayBaseUrl: 'https://relay.example',
-        relayHost: 'relay.example',
-        relayScheme: 'https',
-        relayWsUrl: 'wss://relay.example',
-        autoApprovePermissions: true,
-      },
-      undefined,
-      agent,
-    );
-  }
-
-  function stubRelayRecordingPublishes(): NostrEvent[] {
-    const published: NostrEvent[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        if (String(input).endsWith('/query')) {
-          return new Response(JSON.stringify([]), { status: 200 });
-        }
-        published.push(JSON.parse(String(init?.body)) as NostrEvent);
-        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
-      }),
-    );
-    return published;
-  }
-
-  it('a suspension cycle leaves the corner open and archives nothing', async () => {
-    const agent = newIdentity('suspension-agent');
-    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-suspend-noarchive-'));
-    try {
-      const body = newBody(agent, workspaceRoot);
-      const published = stubRelayRecordingPublishes();
-      const client = new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} });
-      const lifecycle = {
-        suspend: async () => undefined,
-        onStateChange: async (_state: 'live' | 'suspended' | 'waiting-for-slot') => undefined,
-      };
-      body.registerSubchannel({
-        subchannelId: 'corner-idle',
-        worktreePath: '/tmp/does-not-matter',
-        featureBranch: 'feature/idle',
-        role: newIdentity('suspension-role'),
-        session: {
-          channelId: 'corner-idle',
-          sessionId: 'idle-session',
-          client,
-          mode: 'edit' as const,
-          lifecycle,
-        },
-        lastPolledAt: 0,
-        archived: false,
-      } as never);
-
-      // Exactly what SessionScheduler.retire does when the idle sweep reclaims
-      // a quiet session: suspend the process, then publish the state change.
-      await lifecycle.suspend();
-      await lifecycle.onStateChange?.('suspended');
-
-      // The maintenance passes a suspended corner goes through must not close
-      // it: no land exists, no approval exists, no close request exists.
-      await body.pollMergeCompletions();
-      await Reflect.get(body, 'pollMembersOnce').call(body, 'corner-idle');
-
-      expect(published.filter((event) => event.kind === 9002)).toEqual([]);
-      expect(
-        published.some((event) =>
-          event.tags?.some((tag) => tag[0] === 'status' && tag[1] === 'archived'),
-        ),
-      ).toBe(false);
-      const info = (Reflect.get(body, 'subchannels') as Map<string, { archived?: boolean }>).get(
-        'corner-idle',
-      );
-      expect(info?.archived).toBe(false);
-    } finally {
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-
-  it('a corner whose work never landed is not archived by the merge-completion poll', async () => {
-    const agent = newIdentity('unlanded-agent');
-    const workspaceRoot = await mkdtemp(join(tmpdir(), 'buzzy-unlanded-noarchive-'));
-    try {
-      const body = newBody(agent, workspaceRoot);
-      const published = stubRelayRecordingPublishes();
-      body.registerSubchannel({
-        subchannelId: 'corner-unlanded',
-        worktreePath: '/tmp/does-not-matter',
-        featureBranch: 'feature/unlanded',
-        role: newIdentity('unlanded-role'),
-        session: {
-          channelId: 'corner-unlanded',
-          sessionId: 'unlanded-session',
-          client: new AcpClient({ agentBinary: '/nonexistent', agentEnv: {} }),
-          mode: 'edit' as const,
-        },
-        lastPolledAt: 0,
-        archived: false,
-      } as never);
-
-      await body.pollMergeCompletions();
-
-      // Without a confirmed landed tip behind a human approval there is no
-      // archive — even though the poll ran to completion.
-      expect(published.filter((event) => event.kind === 9002)).toEqual([]);
-      const info = (Reflect.get(body, 'subchannels') as Map<string, { archived?: boolean }>).get(
-        'corner-unlanded',
-      );
-      expect(info?.archived).toBe(false);
-    } finally {
-      await rm(workspaceRoot, { recursive: true, force: true });
-    }
-  });
-});
-
 describe('a restart-caused session pause is never published as agent trouble', () => {
   /**
    * Owner-reported 2026-08-23: across every daemon restart (two self-update
@@ -3731,7 +3577,6 @@ describe('a restart-caused session pause is never published as agent trouble', (
       },
       undefined,
       agent,
-      undefined,
       { scheduler } as never,
     );
   }

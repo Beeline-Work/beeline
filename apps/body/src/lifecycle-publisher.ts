@@ -27,11 +27,12 @@ export type LifecyclePublicationKind =
   | 'mention-budget-limit'
   | 'mention-delivery'
   | 'corner-created'
-  | 'review-target'
   | 'archived'
   | 'turn-receipt'
   | 'corner-session-live'
-  | 'landed-digest'
+  | 'pull-request-fact'
+  | 'completion-nudge'
+  | 'branch-ended'
   | 'rearmed-failure';
 
 export interface AgentPresenceAccessSeed {
@@ -66,9 +67,12 @@ export function buildLifecycleMessage(input: LifecycleMessageInput): NostrEvent 
       }
     }
   }
-  const modelOutput =
-    input.kind === 'model-output' || input.kind === 'landed-digest';
-  const marker = modelOutput ? 'agent-message' : 'body-control';
+  const modelOutput = input.kind === 'model-output';
+  const daemonFact =
+    input.kind === 'pull-request-fact' ||
+    input.kind === 'completion-nudge' ||
+    input.kind === 'branch-ended';
+  const marker = modelOutput ? 'agent-message' : daemonFact ? 'daemon-fact' : 'body-control';
   return signEvent(
     {
       pubkey: input.owner.publicKey,
@@ -109,13 +113,8 @@ function inferredControlKind(tags: readonly string[][]): ControlPublicationKind 
   if (markers.has('buzz-target-branch-proposal')) return 'target-branch-proposal';
   if (markers.has('buzz-agent-mention-paused')) return 'mention-budget-limit';
   if (markers.has('buzz-agent-mention-dispatch')) return 'mention-delivery';
-  if (markers.has('merge-ready')) return 'review-target';
-  if (markers.has('landed') || tags.some((tag) => tag[0] === 'delivery' && tag[1] === 'landed')) {
-    return 'landed-digest';
-  }
   if (markers.has('agent-turn')) return 'turn-receipt';
   if (markers.has('corner-session')) return 'corner-session-live';
-  if (markers.has('buzz-merge-approval-ack')) return 'permission-status';
   if (status === 'archived' || status === 'closed') return 'archived';
   if (status === 'failed') return 'rearmed-failure';
   if (tags.some((tag) => tag[0] === 'subchannel')) return 'corner-created';

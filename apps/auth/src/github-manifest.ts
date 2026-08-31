@@ -19,20 +19,17 @@ import { createHash, timingSafeEqual } from 'node:crypto';
  *    settings URL. Run at auth-service startup and on demand; this would have
  *    caught the empty-events gap immediately.
  *
- * The required permissions below mirror what current code paths actually use
- * — nothing invented:
- * - contents write        git clone/fetch/push with installation tokens
- *                         (`gitWithInstallationToken`, apps/body/github-app.ts)
- * - pull_requests write   agents create and merge corner pull requests with gh
- * - issues read           issues webhook payloads (github-repo-events.ts)
- * - metadata read         required for every GitHub App
- * - administration write  organization repository creation via installation
- *                         token (server.ts createRepository path)
- * - checks read           corner lifecycle polling reads check-runs
- * - statuses read         corner lifecycle polling reads commit statuses
- * - workflows write       corners push commits that may add/modify
- *                         .github/workflows files; API pushes of workflow
- *                         files require this permission
+ * The required permissions below are the owner-approved GitHub capability
+ * contract for repository corners. A token is still restricted to the exact
+ * Room repository, but receives this complete App grant without a per-token
+ * downgrade:
+ * - contents, pull_requests, issues, actions, workflows, discussions write
+ * - checks and statuses read
+ * - metadata read (required for every GitHub App)
+ *
+ * Administration, secrets, environments, and organization permissions are
+ * deliberately absent. Keep this list pinned by the manifest tests: changing
+ * it changes the approval request for every installed account.
  */
 
 /** Repository-activity event types the product consumes (mirrors GITHUB_REPO_EVENT_TYPES). */
@@ -41,12 +38,13 @@ export const REQUIRED_GITHUB_APP_EVENTS = ['star', 'issues', 'pull_request'] as 
 export const REQUIRED_GITHUB_APP_PERMISSIONS: Readonly<Record<string, string>> = Object.freeze({
   contents: 'write',
   pull_requests: 'write',
-  issues: 'read',
+  issues: 'write',
+  actions: 'write',
+  workflows: 'write',
+  discussions: 'write',
   metadata: 'read',
-  administration: 'write',
   checks: 'read',
   statuses: 'read',
-  workflows: 'write',
 });
 
 export interface GitHubAppManifestInput {
@@ -150,7 +148,15 @@ export async function convertAppManifestCode(
   ) {
     throw new Error('GitHub manifest conversion response is missing required credentials');
   }
-  return { appId: id, slug, pem, clientId, clientSecret, webhookSecret, ...(htmlUrl ? { htmlUrl } : {}) };
+  return {
+    appId: id,
+    slug,
+    pem,
+    clientId,
+    clientSecret,
+    webhookSecret,
+    ...(htmlUrl ? { htmlUrl } : {}),
+  };
 }
 
 /**

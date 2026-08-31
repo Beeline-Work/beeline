@@ -91,6 +91,15 @@ describe('the using-beeline skill content', () => {
     expect(markdown).toContain(`${TARGET_BRANCH_PROPOSAL_COMMAND} --branch <branch>`);
   });
 
+  it('teaches the full GitHub App capability and the repository-grant 404 meaning', () => {
+    const markdown = usingBeelineSkillMarkdown('r');
+    expect(markdown).toContain('read and write issues');
+    expect(markdown).toContain('failing logs');
+    expect(markdown).toContain('re-run or cancel checks');
+    expect(markdown).toContain('edit workflow files');
+    expect(markdown).toContain('App is not installed for that repository');
+  });
+
   it('teaches governed Squire access without treating a missing profile as blanket inability', () => {
     const markdown = usingBeelineSkillMarkdown('r');
     expect(markdown).toContain('Trusty Squire: governed account access');

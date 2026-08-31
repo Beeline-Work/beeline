@@ -126,6 +126,35 @@ describe('mobile OTA release governor', () => {
     expect(result.stderr).toContain('Refusing production promotion');
   }, 60_000);
 
+  it('prints EAS JSON failure details captured on stdout', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-eas-stdout-failure-'));
+    const ledger = join(directory, 'ledger.json');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      ledger,
+      JSON.stringify({
+        status: 'beta',
+        sourceSha: '1234567890abcdef',
+        candidateGroupId: 'candidate-group',
+        canary: { status: 'passed' },
+      }),
+    );
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+printf '{"errors":[{"message":"EAS production error detail"}]}\\n'
+exit 1
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease(['promote', '--ledger', ledger], { EAS_CLI_PATH: fakeEas });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('EAS production error detail');
+    expect(result.stderr).toContain('captured EAS stdout printed above');
+  });
+
   it('records the predecessor, canary proof, and republished production group', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-ledger-'));
     const ledgerPath = join(directory, 'ledger.json');

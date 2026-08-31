@@ -64,11 +64,14 @@ function runEas(args, { allowFailure = false, dryRun = false } = {}) {
     env: process.env,
     stdio: ['ignore', 'pipe', 'inherit'],
   });
+  const output = result.stdout.trim();
   if (result.status !== 0) {
     if (allowFailure) return null;
-    fail(`EAS command failed (${result.status ?? 'signal'}): ${parts.map(shellQuote).join(' ')}`);
+    if (output) console.error(output);
+    fail(
+      `EAS command failed (${result.status ?? 'signal'}; captured EAS stdout printed above): ${parts.map(shellQuote).join(' ')}`,
+    );
   }
-  const output = result.stdout.trim();
   if (!output) return null;
   try {
     return JSON.parse(output);

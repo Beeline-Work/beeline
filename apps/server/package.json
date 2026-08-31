@@ -1,0 +1,33 @@
+{
+  "name": "@beeline/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "dev": "node --import tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "import": "node --import tsx src/import-cli.ts",
+    "measure": "node --import tsx src/measure-cli.ts"
+  },
+  "dependencies": {
+    "@beeline/api-contract": "*",
+    "@beeline/auth": "*",
+    "@beeline/push-gateway": "*",
+    "firebase-admin": "^13.4.0",
+    "pg": "^8.23.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "@types/node": "^22.9.0",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

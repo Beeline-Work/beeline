@@ -5,6 +5,18 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./github": {
+      "types": "./dist/github.d.ts",
+      "import": "./dist/github.js",
+      "default": "./dist/github.js"
+    }
+  },
   "scripts": {
     "dev": "node --import tsx src/index.ts",
     "dev:emulator": "node --import tsx scripts/oidc-emulator.ts",

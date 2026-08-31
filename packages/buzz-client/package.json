@@ -21,10 +21,11 @@
     "format:check": "prettier --check src scripts package.json README.md",
     "lint": "npm run format:check",
     "capture:relay-corpus": "node --import tsx scripts/capture-relay-history.ts",
-    "pretest:live": "npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client",
+    "pretest:live": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client",
     "test:live": "vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
+    "@beeline/api-contract": "*",
     "@beeline/nostr": "*",
     "@noble/hashes": "^2.3.0"
   },

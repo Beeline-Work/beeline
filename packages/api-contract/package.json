@@ -1,0 +1,28 @@
+{
+  "name": "@beeline/api-contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./phone": {
+      "types": "./dist/phone.d.ts",
+      "import": "./dist/phone.js",
+      "default": "./dist/phone.js"
+    },
+    "./daemon": {
+      "types": "./dist/daemon.d.ts",
+      "import": "./dist/daemon.js",
+      "default": "./dist/daemon.js"
+    }
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

@@ -38,11 +38,12 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "pretest:live": "npm run build -w @beeline/nostr && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/body",
+    "pretest:live": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/body",
     "test:live": "vitest run --config vitest.live.config.ts",
     "repro:target-branch": "node --import tsx scripts/repro-target-branch-proposal.ts"
   },
   "dependencies": {
+    "@beeline/api-contract": "*",
     "@beeline/buzz-client": "*",
     "@beeline/gate": "*",
     "@beeline/nostr": "*",

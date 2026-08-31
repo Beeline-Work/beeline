@@ -10,8 +10,10 @@ describe('EAS build hooks', () => {
     const hook = packageJson.scripts?.['eas-build-post-install'] ?? '';
 
     const nostrBuild = hook.indexOf('tsconfig.eas-nostr.json');
+    const contractBuild = hook.indexOf('tsconfig.eas-api-contract.json');
     const clientBuild = hook.indexOf('tsconfig.eas-buzz-client.json');
     expect(nostrBuild).toBeGreaterThanOrEqual(0);
-    expect(clientBuild).toBeGreaterThan(nostrBuild);
+    expect(contractBuild).toBeGreaterThan(nostrBuild);
+    expect(clientBuild).toBeGreaterThan(contractBuild);
   });
 });

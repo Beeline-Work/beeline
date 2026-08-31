@@ -7,6 +7,7 @@ COPY apps/push-gateway/package.json apps/push-gateway/tsconfig.json ./apps/push-
 COPY apps/body/package.json apps/body/tsconfig.json ./apps/body/
 COPY apps/gate/package.json apps/gate/tsconfig.json ./apps/gate/
 COPY packages/nostr/package.json packages/nostr/tsconfig.json ./packages/nostr/
+COPY packages/api-contract/package.json packages/api-contract/tsconfig.json ./packages/api-contract/
 COPY packages/buzz-client/package.json packages/buzz-client/tsconfig.json ./packages/buzz-client/
 RUN npm ci --ignore-scripts
 
@@ -14,8 +15,10 @@ COPY apps/push-gateway/src ./apps/push-gateway/src
 COPY apps/body/src ./apps/body/src
 COPY apps/gate/src ./apps/gate/src
 COPY packages/nostr/src ./packages/nostr/src
+COPY packages/api-contract/src ./packages/api-contract/src
 COPY packages/buzz-client/src ./packages/buzz-client/src
 RUN npm run build -w @beeline/nostr \
+  && npm run build -w @beeline/api-contract \
   && npm run build -w @beeline/buzz-client \
   && npm run build -w @beeline/gate \
   && npm run build -w @beeline/body \
@@ -37,6 +40,7 @@ COPY apps/push-gateway/package.json ./apps/push-gateway/package.json
 COPY apps/body/package.json ./apps/body/package.json
 COPY apps/gate/package.json ./apps/gate/package.json
 COPY packages/nostr/package.json ./packages/nostr/package.json
+COPY packages/api-contract/package.json ./packages/api-contract/package.json
 COPY packages/buzz-client/package.json ./packages/buzz-client/package.json
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
@@ -44,6 +48,7 @@ COPY --from=build /app/apps/push-gateway/dist ./apps/push-gateway/dist
 COPY --from=build /app/apps/body/dist ./apps/body/dist
 COPY --from=build /app/apps/gate/dist ./apps/gate/dist
 COPY --from=build /app/packages/nostr/dist ./packages/nostr/dist
+COPY --from=build /app/packages/api-contract/dist ./packages/api-contract/dist
 COPY --from=build /app/packages/buzz-client/dist ./packages/buzz-client/dist
 
 USER node

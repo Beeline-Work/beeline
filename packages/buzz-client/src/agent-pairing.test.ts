@@ -328,10 +328,16 @@ describe('agent pairing and soul overlays', () => {
 
     const pairing = await createAgentPairingCode(ctx(owner), communityId, 600);
     redeeming = true;
-    await expect(redeemAgentPairingCode(ctx(agentIdentity), pairing.code)).resolves.toMatchObject({
+    await expect(
+      redeemAgentPairingCode(ctx(agentIdentity), pairing.code, {
+        displayName: 'Pi agent',
+        personality: 'Warm and incisive.',
+      }),
+    ).resolves.toMatchObject({
       communityId,
       pairedBy: owner.publicKey,
       joined: true,
+      agent: { displayName: 'Pi agent', personality: 'Warm and incisive.' },
     });
     expect(agentIsMember).toBe(true);
     expect(
@@ -349,6 +355,12 @@ describe('agent pairing and soul overlays', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        if (String(_input).endsWith('/agent-pairing/claim')) {
+          return new Response(JSON.stringify({ error: 'pairing_not_found' }), {
+            status: 404,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
         const filter = filterFrom(init);
         const kind = (filter.kinds as number[])[0];
         if (kind === KIND_COMMUNITY_INVITE) {

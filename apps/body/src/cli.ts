@@ -44,6 +44,7 @@ import {
 import { runRelayCommand } from './relay-command.js';
 import { runStartCommand } from './start-command.js';
 import { runPairCommand } from './pair-command.js';
+import { runConnectCommand, runConnectFinishCommand } from './connect-command.js';
 import { runMissionScaffoldCommand } from './mission-scaffold-command.js';
 import { runUpdateCommand } from './self-update-cli.js';
 import { migrateLegacyRepositoryPaths } from './repository-truth.js';
@@ -100,6 +101,7 @@ ${pc.dim('Usage:')}
   beeline archive <subchannel-uuid>         Archive subchannel
   beeline pair <BUZZ-XXXX-XXXX> [options]   Pair an agent (optionally to this repo)
                                             and start its durable daemon
+  beeline connect                           Install and connect an agent through the browser
   beeline start [agent-pubkey]              Start — or RESTART when already running,
                                             stopping cleanly after in-flight work —
                                             this repo's (or, outside a repo, this
@@ -545,6 +547,16 @@ async function main(): Promise<void> {
       throw new Error('managed-update-worker is an internal command');
     }
     console.log(JSON.stringify(await runManagedUpdateWorker()));
+    return;
+  }
+
+  if (command === 'connect') {
+    await runConnectCommand();
+    return;
+  }
+
+  if (command === 'connect-finish') {
+    await runConnectFinishCommand(args[1]);
     return;
   }
 

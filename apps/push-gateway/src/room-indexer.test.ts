@@ -1741,6 +1741,95 @@ describe('RoomIndexer', () => {
     expect(corners?.watchFilters[0]?.['#h']).toContain(WORKSPACE);
   });
 
+  it('projects only the newest valid corner agent-turn receipt as working', async () => {
+    const memberWithoutDeclaration = 'd'.repeat(64);
+    await postgres.query(
+      `DELETE FROM events
+       WHERE community_id = $1 AND EXISTS (
+         SELECT 1 FROM jsonb_array_elements(tags) tag
+         WHERE tag->>0 = 't'
+           AND tag->>1 IN ('buzz-corner-state', 'change-review-artifact', 'buzz-merge-approval')
+       )`,
+      [TENANT],
+    );
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
+       VALUES ($1, $2, $3, 'member')`,
+      [TENANT, CORNER, bytes(memberWithoutDeclaration)],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+       VALUES
+        ($1, $2, $3, to_timestamp(40), 9, $4, '{}', $5),
+        ($1, $6, $7, to_timestamp(50), 9, $8, '', $9),
+        ($1, $10, $11, to_timestamp(51), 9, $12, '', $9)`,
+      [
+        TENANT,
+        bytes('1'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['t', 'buzz-agent'],
+          ['agent', OUTSIDER],
+        ]),
+        WORKSPACE,
+        bytes('2'.repeat(64)),
+        bytes(OUTSIDER),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-turn'],
+          ['agent', OUTSIDER],
+          ['request', '2'.repeat(64)],
+          ['status', 'working'],
+        ]),
+        CORNER,
+        bytes('3'.repeat(64)),
+        bytes(memberWithoutDeclaration),
+        JSON.stringify([
+          ['h', CORNER],
+          ['t', 'agent-turn'],
+          ['agent', memberWithoutDeclaration],
+          ['request', '3'.repeat(64)],
+          ['status', 'working'],
+        ]),
+      ],
+    );
+
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('open');
+
+    const publishAgentTurn = async (id: string, createdAt: number, status: string) => {
+      await postgres.query(
+        `INSERT INTO events
+          (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
+         VALUES ($1, $2, $3, to_timestamp($4), 9, $5, '', $6)`,
+        [
+          TENANT,
+          bytes(id.repeat(64)),
+          bytes(AGENT),
+          createdAt,
+          JSON.stringify([
+            ['h', CORNER],
+            ['t', 'agent-turn'],
+            ['agent', AGENT],
+            ['request', id.repeat(64)],
+            ['status', status],
+          ]),
+          CORNER,
+        ],
+      );
+    };
+
+    await publishAgentTurn('4', 49, 'working');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('working');
+
+    await publishAgentTurn('5', 52, 'complete');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('open');
+
+    await publishAgentTurn('6', 53, 'failed');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.status).toBe('open');
+  });
+
   it('projects the agent soul and allow-listed model catalog through the indexed agent read', async () => {
     const modelKey = `${WORKSPACE}:${AGENT}`;
     await postgres.query(

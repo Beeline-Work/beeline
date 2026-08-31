@@ -1004,6 +1004,27 @@ WITH candidates AS (
   WHERE e.tags @> '[["t", "buzz-agent"]]'::jsonb
     AND e.tags @> jsonb_build_array(jsonb_build_array('h', a.workspace_id))
   ORDER BY e.community_id, e.pubkey, e.created_at DESC, e.id DESC
+), corner_turn_latest AS MATERIALIZED (
+  SELECT DISTINCT ON (e.channel_id)
+    e.community_id, e.channel_id AS corner_id,
+    (SELECT t->>1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed') LIMIT 1) AS status
+  FROM corners c
+  JOIN events e ON e.community_id = c.community_id AND e.channel_id = c.id
+    AND e.kind = 9 AND e.deleted_at IS NULL
+  JOIN channel_members member ON member.community_id = e.community_id
+    AND member.channel_id = e.channel_id AND member.pubkey = e.pubkey
+    AND member.removed_at IS NULL
+  JOIN agent_declarations agent ON agent.community_id = e.community_id
+    AND agent.pubkey = e.pubkey
+  WHERE e.tags @> '[["t", "agent-turn"]]'::jsonb
+    AND e.tags @> jsonb_build_array(jsonb_build_array('h', c.id::text))
+    AND e.tags @> jsonb_build_array(jsonb_build_array('agent', encode(e.pubkey, 'hex')))
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'request' AND t->>1 ~ '^[0-9a-f]{64}$')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.tags) t
+      WHERE t->>0 = 'status' AND t->>1 IN ('working', 'complete', 'failed'))
+  ORDER BY e.channel_id, e.created_at DESC, e.id DESC
 ), ${agentSoulsCteSql('authorized', 'a', 'a.workspace_id')}, identities AS (
   SELECT k.community_id, k.pubkey,
     NULLIF(u.display_name, '') AS name, u.nip05_handle AS handle, u.avatar_url AS avatar,
@@ -1037,6 +1058,7 @@ SELECT 'corner', jsonb_build_object(
   'verdictRepository', corner_verdict.repo,
   'verdictTargetBranch', corner_verdict.branch,
   'verdictCreatedAt', extract(epoch FROM corner_verdict.created_at)::bigint,
+  'latestTurnStatus', corner_turn.status,
   'agentPubkey', encode(c.created_by, 'hex'),
   'agentName', ${resolvedIdentityNameSql('resolved')},
   'agentHandle', resolved.handle,
@@ -1044,6 +1066,8 @@ SELECT 'corner', jsonb_build_object(
   'agent', resolved.agent_content IS NOT NULL
 ) FROM corners c JOIN authorized a ON true
 JOIN identities resolved ON resolved.community_id = c.community_id AND resolved.pubkey = c.created_by
+LEFT JOIN corner_turn_latest corner_turn ON corner_turn.community_id = c.community_id
+  AND corner_turn.corner_id = c.id
 ${cornerFactsLateralSql('c', 'a.id', 'a.workspace_id')}
 UNION ALL
 SELECT 'preview', jsonb_build_object(

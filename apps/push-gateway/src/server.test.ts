@@ -320,7 +320,7 @@ describe('paint-view GET server', () => {
     expect(readInvite).toHaveBeenCalledTimes(1);
   });
 
-  it('binds a private-Workspace agent pairing claim to the fresh agent identity', async () => {
+  it('keeps a legacy pairing claim Workspace-only when it does not advertise Room rollback', async () => {
     const identity = createIdentity('pairing-agent');
     const code = 'BUZZ-4S4P-ZPJP';
     const claimAgentPairing = vi.fn(async () => ({
@@ -350,6 +350,35 @@ describe('paint-view GET server', () => {
     expect(claimAgentPairing).toHaveBeenCalledWith(
       createHash('sha256').update(code).digest('hex'),
       identity.publicKey,
+      { inheritInviterRooms: false },
+    );
+  });
+
+  it('permits inherited Rooms only when a pairing client advertises Room rollback', async () => {
+    const identity = createIdentity('rollback-aware-pairing-agent');
+    const code = 'BUZZ-4S4P-ZPJP';
+    const claimAgentPairing = vi.fn(async () => ({
+      workspaceId: WORKSPACE,
+      pairedBy: 'd'.repeat(64),
+      joined: true,
+      attachedRoomIds: [ROOM],
+    }));
+    const base = await listen({ indexer: indexer({ claimAgentPairing }) });
+    const path = '/agent-pairing/claim';
+    const response = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: authorization(identity, path, 'POST'),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ code, capabilities: ['pairing-room-rollback'] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(claimAgentPairing).toHaveBeenCalledWith(
+      createHash('sha256').update(code).digest('hex'),
+      identity.publicKey,
+      { inheritInviterRooms: true },
     );
   });
 

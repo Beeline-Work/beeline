@@ -96,8 +96,8 @@ async function main(): Promise<void> {
         readInvite: (tokenHash, readerPubkey) => indexer.readInvite(tokenHash, readerPubkey),
         abandonAgentPairing: (tokenHash, agentPubkey) =>
           indexer.abandonAgentPairing(tokenHash, agentPubkey),
-        claimAgentPairing: (tokenHash, agentPubkey) =>
-          indexer.claimAgentPairing(tokenHash, agentPubkey),
+        claimAgentPairing: (tokenHash, agentPubkey, options) =>
+          indexer.claimAgentPairing(tokenHash, agentPubkey, options.inheritInviterRooms),
       },
     });
     await new Promise<void>((resolve, reject) => {

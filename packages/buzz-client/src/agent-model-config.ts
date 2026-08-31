@@ -239,8 +239,9 @@ export async function setAgentModelConfig(
     throw new Error('agent identity not found in community');
   }
   const model = input.model?.trim();
-  const effort = input.effort?.trim();
-  if (!model && !effort) {
+  const clearEffort = input.effort === null;
+  const effort = typeof input.effort === 'string' ? input.effort.trim() : undefined;
+  if (!model && !effort && !clearEffort) {
     throw new Error('agent model config requires a model or effort selection');
   }
   // Each picker row updates one axis. Preserve the other axis from the latest
@@ -248,7 +249,7 @@ export async function setAgentModelConfig(
   // model (and vice versa).
   const current = await getAgentModelConfig(ctx, communityId, agentPubkey);
   const nextModel = model ?? current?.model;
-  const nextEffort = effort ?? current?.effort;
+  const nextEffort = clearEffort ? undefined : effort ?? current?.effort;
   const event = signEvent(
     {
       pubkey: ctx.identity.publicKey,

@@ -5,6 +5,7 @@ import { registerServerGithubInstallationRoutes } from './server-github-installa
 import { registerServerGithubManifestRoutes } from './server-github-manifest-routes.js';
 import { registerServerNip05Routes } from './server-nip05-routes.js';
 import { registerServerOidcIdentityRoutes } from './server-oidc-identity-routes.js';
+import { registerServerAgentConnectRoutes } from './server-agent-connect-routes.js';
 
 export {
   GITHUB_REPO_EVENT_TYPES,
@@ -16,6 +17,7 @@ export {
 
 export function buildAuthServer(options: AuthServerOptions): FastifyInstance {
   const context = createAuthRouteContext(options);
+  registerServerAgentConnectRoutes(context);
   registerServerOidcIdentityRoutes(context);
   registerServerGithubInstallationRoutes(context);
   registerServerGithubEventsRoutes(context);

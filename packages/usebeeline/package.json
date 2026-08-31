@@ -1,0 +1,36 @@
+{
+  "name": "usebeeline",
+  "version": "0.0.0",
+  "description": "Connect an AI coding agent to Beeline with one command.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Beeline-Work/beeline.git",
+    "directory": "packages/usebeeline"
+  },
+  "type": "module",
+  "bin": {
+    "usebeeline": "./dist/usebeeline.mjs",
+    "beeline": "./dist/usebeeline.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build-usebeeline-package.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@beeline/body": "*",
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "license": "UNLICENSED"
+}

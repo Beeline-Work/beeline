@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -264,6 +264,36 @@ esac
       sourceGroupId: 'known-good',
       productionGroupId: 'rollback-group',
     });
+  });
+
+  it('fails closed before republishing when the guarded current-group query is unavailable', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-rollback-query-failure-'));
+    const ledgerPath = join(directory, 'rollback.json');
+    const callsPath = join(directory, 'calls.log');
+    const fakeEas = join(directory, 'fake-eas.sh');
+    writeFileSync(
+      fakeEas,
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "${callsPath}"
+case "$1" in
+  update:list) echo 'project config unavailable' >&2; exit 1 ;;
+  update:republish) echo 'rollback must never reach this command' >&2; exit 9 ;;
+  *) exit 9 ;;
+esac
+`,
+    );
+    chmodSync(fakeEas, 0o755);
+
+    const result = runRelease([
+      'rollback', '--group', 'known-good', '--expected-current-group', 'failed-production',
+      '--ledger', ledgerPath,
+    ], { EAS_CLI_PATH: fakeEas });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('EAS command failed');
+    expect(readFileSync(callsPath, 'utf8')).toContain('update:list');
+    expect(readFileSync(callsPath, 'utf8')).not.toContain('update:republish');
+    expect(existsSync(ledgerPath)).toBe(false);
   });
 
   it('tracks every merge through pending, built, published, and physical-device confirmation', () => {
@@ -578,8 +608,15 @@ esac
     expect(workflow).toContain("if: always() && needs.release.outputs.delivered == 'true'");
     expect(postPromoteWorkflow).toContain('workflow_call:');
     expect(postPromoteWorkflow).toContain('--expected-current-group "$FAILED_GROUP"');
-    expect(postPromoteWorkflow).toContain("needs.canary.result == 'failure'");
+    expect(postPromoteWorkflow).toContain("needs.canary.result == 'failure' && needs.canary.outputs.failure_class == 'product-failure'");
+    expect(postPromoteWorkflow).toContain('Escalate rehearsal infrastructure failure without rollback');
+    expect(postPromoteWorkflow).toContain('Install mobile dependencies for EAS project context');
     expect(rollbackWorkflow).toContain("artifact.name.startsWith('mobile-ota-ledger-')");
+    expect(rollbackWorkflow).toContain('dry_run:');
+    expect(rollbackWorkflow).toContain('update:list --branch production --limit 1 --json --non-interactive');
+    expect(rollbackWorkflow).toContain('args+=(--dry-run)');
+    expect(rollbackWorkflow).toContain('Record rollback dry-run proof');
+    expect(rollbackWorkflow).toContain('Install mobile dependencies for EAS project context');
   });
 
   it('bounds the canary and tests either the beta or promoted production runtime without rebuilding native code', () => {
@@ -1439,6 +1476,9 @@ esac
     expect(canaryScript.indexOf('if [[ -n "$bootstrap_line" ]]; then')).toBeLessThan(
       canaryScript.indexOf('exit "$smoke_status"'),
     );
+    expect(canaryScript).toContain('OTA_CANARY_OUTCOME_FILE');
+    expect(canaryScript).toContain('completed product-assertion verdict');
+    expect(canaryScript).toContain('product-assertion-failure');
   });
 
   it('bridges the root smoke scripts to the mobile workspace modules they import', () => {
@@ -1542,6 +1582,12 @@ esac
     expect(cornerSteerWait).toBeGreaterThan(cornerPhaseCheckpoint);
     expect(smoke).toMatch(
       /SMOKE CORNER PHASE READY[\s\S]*?id: corner-status-working/,
+    );
+    expect(smoke).toMatch(
+      /id: corner-status-working[\s\S]*?waitToSettleTimeoutMs: 1000[\s\S]*?id: corner-session-header/,
+    );
+    expect(smoke).toMatch(
+      /id: chat-input[\s\S]*?waitToSettleTimeoutMs: 1000[\s\S]*?inputText: SMOKE CORNER STEER/,
     );
   });
 

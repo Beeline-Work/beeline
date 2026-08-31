@@ -229,6 +229,10 @@ env:
 - takeScreenshot: corner-ripout-working
 - tapOn:
     id: corner-status-working
+    # RoomView keeps receiving lifecycle facts while this card is visible.
+    # Do not let Maestro's generic UI-settle wait consume the canary's fixed
+    # deadline; the following route assertion remains the product proof.
+    waitToSettleTimeoutMs: 1000
 - extendedWaitUntil:
     visible:
       id: corner-session-header
@@ -241,6 +245,9 @@ env:
 - takeScreenshot: corner-ripout-idle-nudge
 - tapOn:
     id: chat-input
+    # This composer is already rendered and can be focused while lifecycle
+    # facts continue arriving. The subsequent send/assertion own correctness.
+    waitToSettleTimeoutMs: 1000
 - inputText: SMOKE CORNER STEER
 - tapOn:
     id: chat-send

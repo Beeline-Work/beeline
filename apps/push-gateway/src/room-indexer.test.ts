@@ -286,6 +286,46 @@ describe('RoomIndexer', () => {
     ]);
   });
 
+  it('lists corners newest-first regardless of insertion order', async () => {
+    // Owner order (2026-08-31): the corner dropdown must show the newest
+    // corner on top. `corners` has no natural order from the underlying
+    // table scan, so the indexer must sort explicitly rather than rely on
+    // Postgres to preserve creation order.
+    const CORNER_2 = '80a5a6f1-fb5a-493b-93eb-f3db33f696e7';
+    await postgres.query(
+      `INSERT INTO channels
+        (community_id, id, name, description, visibility, created_by, created_at, updated_at)
+       VALUES ($1, $2, 'Second corner', 'Build it too', 'open', $3, to_timestamp(20), to_timestamp(20))`,
+      [TENANT, CORNER_2, bytes(AGENT)],
+    );
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
+       VALUES ($1, $2, $3, 'owner'), ($1, $2, $4, 'member')`,
+      [TENANT, CORNER_2, bytes(VIEWER), bytes(AGENT)],
+    );
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, to_timestamp(20), 9007, $4::jsonb, '', $5, NULL)`,
+      [
+        TENANT,
+        bytes('f'.repeat(64)),
+        bytes(AGENT),
+        JSON.stringify([
+          ['h', CORNER_2],
+          ['community', WORKSPACE],
+          ['parent', ROOM],
+          ['name', 'Second corner'],
+        ]),
+        CORNER_2,
+      ],
+    );
+
+    const corners = await indexer.readCorners(ROOM, VIEWER);
+
+    expect(corners?.corners.map((item) => item.corner.id)).toEqual([CORNER_2, CORNER]);
+  });
+
   it('pages every same-second message through a cursor beyond four thousand events', async () => {
     const firstSequence = 10_000;
     const count = 4_096;

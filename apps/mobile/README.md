@@ -19,48 +19,12 @@ production OTA channels.
 
 Every `main` commit enters the cumulative delivery ledger. An owner or firstmate
 can also dispatch [`mobile-ota.yml`](../../.github/workflows/mobile-ota.yml) to
-deliver the current `main` immediately. The GitHub-hosted fast path installs and
-builds the SDKs, validates the app in parallel with the immutable `beta` export,
-republishes that exact group to `production`, and fails unless the ledger proves
-that production contains the current head. Its run summary reports queue,
-setup, validation/export, promotion, and trigger-to-promotion seconds; a
-commanded run is red when promotion takes ten minutes or longer.
-
-The full Android emulator rehearsal is deliberately after promotion in
-[`mobile-ota-post-promote.yml`](../../.github/workflows/mobile-ota-post-promote.yml),
-so the single self-hosted runner cannot delay the owner's phone. It installs a
-`production-apk`, waits until the app reports the exact promoted Android update
-and production channel, and runs the full Room open/send/reply Maestro smoke.
-Failure automatically republishes the recorded predecessor only if the failed
-group is still production. If a newer delivery has moved production, rollback
-is skipped so an old canary can never overwrite newer bytes. Every affected
-merge and the failure reason are written to the `Undelivered merges` issue.
-
-The first production binary for a runtime (and every later
-native/runtimeVersion change) must be built once before the post-promotion
-rehearsal can run:
-
-```sh
-cd apps/mobile
-npx --yes eas-cli@22.2.0 build --profile production-apk --platform android --non-interactive
-```
-
-The OTA update channel is baked into the APK (`EXPO_UPDATES_CHANNEL`). The
-post-promotion rehearsal therefore uses a production-channel binary and the
-production update ids written by the exact-group republish, rather than
-re-testing the beta ids.
-
-The canary is locally runnable and self-limits to ten minutes. It reuses the
-named AVD and either downloads the latest successful channel-matched APK or
-installs an operator-supplied APK:
-
-```sh
-cd apps/mobile
-EXPO_TOKEN=... scripts/ota-canary.sh --ledger /path/to/mobile-ota-ledger.json
-# exact promoted bytes:
-EXPO_TOKEN=... scripts/ota-canary.sh --ledger /path/to/mobile-ota-ledger.json --promoted
-# or: BEELINE_PRODUCTION_APK=/path/to/production.apk scripts/ota-canary.sh --ledger ... --promoted
-```
+deliver the current `main` immediately. The self-hosted release leg installs and
+builds the SDKs, validates the app beside the immutable `beta` export, and
+republishes that exact group to `production`. The release is delivered when the
+server and daemon health record and the OTA promotion ledger agree on the same
+version and source SHA; an owner receipt is incorporated when it is available.
+No emulator or device rehearsal runs in GitHub Actions.
 
 Every successful release stores `candidateGroupId`, the republished production
 group, and `previousProductionGroupId` in the `mobile-ota-ledger-<run-id>`

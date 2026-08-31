@@ -18,7 +18,7 @@ concurrency:
 jobs:
   reconcile:
     name: Confirm owner receipt only; no publish or promotion
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-production-squire]
     timeout-minutes: 5
     steps:
       - name: State non-release scope in summary

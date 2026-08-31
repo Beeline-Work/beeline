@@ -44,7 +44,7 @@
  *                                      already shipped on hosts that resolved
  *                                      symlinks).
  *   4. self-update.ts activateRelease / rollbackToPreviousRelease /
- *      launchReplacement / relaunchFromRelease / settlePendingUpdateOnStart /
+ *      settleUpdateAttemptOnStart /
  *      stageRelease — swap the symlink atomically; resolve entrypoints
  *      tolerantly (both shapes).
  *   5. cli.ts (--version, and every command via repairInstallForwarders) and
@@ -77,10 +77,8 @@ import {
 } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
-import { launchRuntimeDaemon } from './runtime.js';
 import {
   compareBundleIdentity,
-  compareVersions,
   parseUpdateManifest,
   resolveManifestUrl,
   type InstalledBundleIdentity,
@@ -201,20 +199,6 @@ async function readBundleJson(bundleDir: string): Promise<InstalledBundleIdentit
 export interface UpdateStateFile {
   lastCheckAt?: number;
   lastCheckResult?: string;
-  lastApplied?: {
-    releaseId: string;
-    previousReleaseId?: string;
-    identity: InstalledBundleIdentity;
-    at: number;
-  };
-  lastRollback?: { releaseId: string; toReleaseId: string; reason: string; at: number };
-  /** Exact failed release suppressed until an operator clears it or a newer publish appears. */
-  updatePin?: {
-    releaseId: string;
-    identity: InstalledBundleIdentity;
-    reason: string;
-    at: number;
-  };
 }
 
 /**
@@ -249,11 +233,10 @@ export async function writeUpdateState(
  */
 export async function readInstalledBundleIdentity(
   layout: BeelineInstallLayout,
-  state: UpdateStateFile = {},
+  _state: UpdateStateFile = {},
 ): Promise<InstalledBundleIdentity | undefined> {
   const fromDisk = await readBundleJson(layout.libDir);
   if (fromDisk && (fromDisk.commit || fromDisk.version)) return fromDisk;
-  if (state.lastApplied?.identity) return state.lastApplied.identity;
   return fromDisk;
 }
 
@@ -720,66 +703,86 @@ export async function rollbackToPreviousRelease(
 }
 
 // ---------------------------------------------------------------------------
-// Pending-update journal (restart + rollback coordination)
+// One update-attempt record (restart + prove + revert coordination)
 // ---------------------------------------------------------------------------
 
-export interface PendingUpdateRecord {
+/**
+ * The only crash-surviving update transition. The active anchor is current
+ * release; this record names the previous release and one candidate attempt.
+ * Keeping the record after confirmation/revert makes the outcome visible to
+ * an operator without a second pin, handoff file, or request outbox.
+ */
+export interface UpdateAttemptRecord {
+  version: 1;
   from: InstalledBundleIdentity;
   to: InstalledBundleIdentity;
   releaseId: string;
   previousReleaseId: string | undefined;
   appliedAt: number;
+  confirmBy: number;
+  status: 'pending' | 'confirmed' | 'reverted';
+  failure?: string;
   /** Running agent identities that must each complete a functional probe. */
   requiredProbeIds?: string[];
   /** Successfully probed identities; updated atomically under the install lock. */
   confirmedProbeIds?: string[];
 }
 
-export function pendingUpdatePath(layout: BeelineInstallLayout): string {
-  return join(layout.releasesRoot, '.state', 'pending-update.json');
+export function updateAttemptPath(layout: BeelineInstallLayout): string {
+  return join(layout.releasesRoot, '.state', 'update-attempt.json');
 }
 
-export async function readPendingUpdate(
+export async function readUpdateAttempt(
   layout: BeelineInstallLayout,
-): Promise<PendingUpdateRecord | undefined> {
+): Promise<UpdateAttemptRecord | undefined> {
   try {
-    const raw = JSON.parse(
-      await readFile(pendingUpdatePath(layout), 'utf8'),
-    ) as PendingUpdateRecord;
-    if (typeof raw.appliedAt !== 'number' || typeof raw.releaseId !== 'string') return undefined;
+    const raw = JSON.parse(await readFile(updateAttemptPath(layout), 'utf8')) as UpdateAttemptRecord;
+    if (
+      raw.version !== 1 ||
+      typeof raw.appliedAt !== 'number' ||
+      typeof raw.confirmBy !== 'number' ||
+      typeof raw.releaseId !== 'string' ||
+      !['pending', 'confirmed', 'reverted'].includes(raw.status)
+    ) {
+      return undefined;
+    }
     return raw;
   } catch {
     return undefined;
   }
 }
 
-async function writePendingUpdate(
+export async function writeUpdateAttempt(
   layout: BeelineInstallLayout,
-  record: PendingUpdateRecord,
+  record: UpdateAttemptRecord,
 ): Promise<void> {
   await mkdir(join(layout.releasesRoot, '.state'), { recursive: true });
-  await writeFile(pendingUpdatePath(layout), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  const path = updateAttemptPath(layout);
+  const staged = `${path}.${process.pid}.tmp`;
+  await writeFile(staged, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  await rename(staged, path);
 }
 
-/** Replace a pending journal while its caller holds the install lock. */
-export async function replacePendingUpdate(
+/** Replace the single attempt while the caller holds the install lock. */
+export async function replaceUpdateAttempt(
   layout: BeelineInstallLayout,
-  record: PendingUpdateRecord,
+  record: UpdateAttemptRecord,
 ): Promise<void> {
-  await writePendingUpdate(layout, record);
+  await writeUpdateAttempt(layout, record);
 }
 
-export async function clearPendingUpdate(layout: BeelineInstallLayout): Promise<void> {
-  await rm(pendingUpdatePath(layout), { force: true });
-}
-
-/** Test/CLI helper: write a pending-update journal directly. */
-export async function writePendingUpdateFixture(
+/** Test helper: install one update attempt directly. */
+export async function writeUpdateAttemptFixture(
   layout: BeelineInstallLayout,
-  record: PendingUpdateRecord,
+  record: Omit<UpdateAttemptRecord, 'version' | 'confirmBy' | 'status'> &
+    Partial<Pick<UpdateAttemptRecord, 'version' | 'confirmBy' | 'status'>>,
 ): Promise<void> {
-  await mkdir(join(layout.releasesRoot, '.state'), { recursive: true });
-  await writeFile(pendingUpdatePath(layout), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  await writeUpdateAttempt(layout, {
+    ...record,
+    version: record.version ?? 1,
+    confirmBy: record.confirmBy ?? record.appliedAt + DEFAULT_UPDATE_CONFIRM_WINDOW_MS,
+    status: record.status ?? 'pending',
+  });
 }
 
 /**
@@ -790,173 +793,39 @@ export async function writePendingUpdateFixture(
  */
 export const DEFAULT_UPDATE_CONFIRM_WINDOW_MS = 5 * 60_000;
 
-export type PendingUpdateSettle =
+export type UpdateAttemptSettle =
   | { kind: 'none' }
-  | { kind: 'pending'; confirmAt: number; record: PendingUpdateRecord }
-  | { kind: 'rolled-back'; record: PendingUpdateRecord };
+  | { kind: 'pending'; confirmAt: number; record: UpdateAttemptRecord }
+  | { kind: 'rolled-back'; record: UpdateAttemptRecord };
 
 /**
  * Called at daemon start. An unconfirmed update older than the confirm
  * window can only mean the new bundle never became healthy (crash before JS
  * ran, or repeated fatal failure) — roll back before serving anything.
  */
-export async function settlePendingUpdateOnStart(
+export async function settleUpdateAttemptOnStart(
   layout: BeelineInstallLayout,
   opts: { now?: () => number; confirmWindowMs?: number } = {},
-): Promise<PendingUpdateSettle> {
-  const record = await readPendingUpdate(layout);
-  if (!record) return { kind: 'none' };
+): Promise<UpdateAttemptSettle> {
+  const record = await readUpdateAttempt(layout);
+  if (!record || record.status !== 'pending') return { kind: 'none' };
   const now = opts.now ?? Date.now;
-  const windowMs = opts.confirmWindowMs ?? DEFAULT_UPDATE_CONFIRM_WINDOW_MS;
-  if (now() - record.appliedAt <= windowMs) {
-    return { kind: 'pending', confirmAt: record.appliedAt + windowMs, record };
+  const confirmAt = opts.confirmWindowMs
+    ? record.appliedAt + opts.confirmWindowMs
+    : record.confirmBy;
+  if (now() <= confirmAt) {
+    return { kind: 'pending', confirmAt, record };
   }
   if (record.previousReleaseId) {
     await rollbackToPreviousRelease(layout, record.previousReleaseId);
   }
-  await clearPendingUpdate(layout);
-  const state = await readUpdateState(layout);
-  await writeUpdateState(layout, {
-    ...state,
-    lastRollback: {
-      releaseId: record.releaseId,
-      toReleaseId: record.previousReleaseId ?? 'unknown',
-      reason: 'update never confirmed healthy',
-      at: now(),
-    },
-    updatePin: {
-      releaseId: record.releaseId,
-      identity: record.to,
-      reason: 'update never confirmed healthy',
-      at: now(),
-    },
+  await writeUpdateAttempt(layout, {
+    ...record,
+    confirmBy: confirmAt,
+    status: 'reverted',
+    failure: 'update did not serve a verified turn before its confirmation deadline',
   });
   return { kind: 'rolled-back', record };
-}
-
-/** Mark a pending update healthy: clear the journal, keep the state record. */
-export async function confirmPendingUpdate(layout: BeelineInstallLayout): Promise<boolean> {
-  const record = await readPendingUpdate(layout);
-  if (!record) return false;
-  await clearPendingUpdate(layout);
-  return true;
-}
-
-/** Record the failed release once so automatic checks cannot immediately reinstall it. */
-export async function recordFailedUpdatePin(
-  layout: BeelineInstallLayout,
-  record: PendingUpdateRecord,
-  reason: string,
-  now = Date.now(),
-): Promise<void> {
-  const state = await readUpdateState(layout);
-  await writeUpdateState(layout, {
-    ...state,
-    lastRollback: {
-      releaseId: record.releaseId,
-      toReleaseId: record.previousReleaseId ?? 'unknown',
-      reason,
-      at: now,
-    },
-    updatePin: {
-      releaseId: record.releaseId,
-      identity: record.to,
-      reason,
-      at: now,
-    },
-  });
-}
-
-export async function clearFailedUpdatePin(layout: BeelineInstallLayout): Promise<boolean> {
-  const state = await readUpdateState(layout);
-  if (!state.updatePin) return false;
-  const { updatePin: _removed, ...next } = state;
-  await writeUpdateState(layout, next);
-  return true;
-}
-
-function publishedSupersedesPin(
-  pin: NonNullable<UpdateStateFile['updatePin']>,
-  published: PublishedBundle,
-): boolean {
-  if (pin.identity.commit && published.commit) return pin.identity.commit !== published.commit;
-  if (pin.identity.version && published.version) {
-    return compareVersions(pin.identity.version, published.version) < 0;
-  }
-  return false;
-}
-
-/**
- * Crash-safe response to a new release that cannot boot: restore the
- * previous release on disk and relaunch the daemon FROM THAT RELEASE's own
- * entrypoint (never the anchor — the anchor names the broken bundle until
- * the rollback below flips it back). Reads the pending-update journal for
- * both halves; a journal with no previous release can only be recorded,
- * loudly. Returns the replacement pid, or undefined when nothing could be
- * relaunched.
- */
-export async function relaunchPreviousReleaseAfterFailedUpdate(
-  layout: BeelineInstallLayout,
-  configPath: string,
-  opts: { logger?: (line: string) => void } = {},
-): Promise<number | undefined> {
-  const log = opts.logger ?? ((line: string) => console.error(line));
-  const journal = await readPendingUpdate(layout);
-  await clearPendingUpdate(layout);
-  if (!journal?.previousReleaseId) {
-    log(
-      `[body] self-update: release ${journal ? describeIdentity(journal.to) : 'unknown'} failed to boot, but no previous release is recorded to fall back to; leaving the current bundle in place`,
-    );
-    return undefined;
-  }
-  await rollbackToPreviousRelease(layout, journal.previousReleaseId);
-  const state = await readUpdateState(layout);
-  await writeUpdateState(layout, {
-    ...state,
-    lastRollback: {
-      releaseId: journal.releaseId,
-      toReleaseId: journal.previousReleaseId,
-      reason: 'new release failed to boot inside its confirm window',
-      at: Date.now(),
-    },
-    updatePin: {
-      releaseId: journal.releaseId,
-      identity: journal.to,
-      reason: 'new release failed to boot inside its confirm window',
-      at: Date.now(),
-    },
-  }).catch(() => undefined);
-  const previousDir = join(layout.releasesRoot, journal.previousReleaseId);
-  const entrypoint =
-    (await resolveBundleEntrypoint(previousDir)) ?? join(previousDir, BUNDLE_ENTRYPOINT);
-  const foreground = process.env.BEELINE_DAEMON_BACKGROUND !== '1';
-  const pid = await launchRuntimeDaemon(configPath, { entrypoint, foreground });
-  log(
-    `[body] self-update FALLBACK: release ${describeIdentity(journal.to)} (${journal.releaseId}) failed to boot; ` +
-      `relaunched the previous release ${journal.previousReleaseId} (${describeIdentity(journal.from)}) as pid ${pid}`,
-  );
-  return pid;
-}
-
-// ---------------------------------------------------------------------------
-// CLI → daemon restart requests
-// ---------------------------------------------------------------------------
-
-function updateRequestPath(runtimeDir: string): string {
-  return join(runtimeDir, 'update-request.json');
-}
-
-/**
- * Ask any running daemon(s) to swap onto the now-installed bundle and
- * restart, honouring their own busy gate. `beeline update` writes these; the
- * manager consumes them within one tick.
- */
-export async function queueRestartRequest(configPath: string): Promise<void> {
-  await writeFile(
-    updateRequestPath(dirname(configPath)),
-    `${JSON.stringify({ requestedAt: Date.now() })}\n`,
-    'utf8',
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -965,12 +834,6 @@ export async function queueRestartRequest(configPath: string): Promise<void> {
 
 export interface SelfUpdateManagerOptions {
   layout: BeelineInstallLayout;
-  /**
-   * This daemon's durable state dir (dirname of runtime.json) — where
-   * `beeline update` leaves an update request the manager consumes within
-   * one tick. Install-scoped state lives in the layout, not here.
-   */
-  watchRuntimeDirs?: string[];
   env?: NodeJS.ProcessEnv;
   now?: () => number;
   /** How often the loop wakes at all. Default 60s. */
@@ -985,25 +848,6 @@ export interface SelfUpdateManagerOptions {
   confirmWindowMs?: number;
   /** Busy gate: true when no agent work is running anywhere in this daemon. */
   isIdle?: () => boolean;
-  /** Called when the manager has swapped and wants the process restarted. */
-  requestRestart?: () => void;
-  /**
-   * Write the rollback journal + ask for a restart after activating. True
-   * for the DAEMON path (it hands its own process over). The `beeline
-   * update` CLI sets this false: it swaps the install but starts nothing,
-   * so no journal may exist claiming a restart happened — otherwise the
-   * next start would roll back a bundle that was never given a chance.
-   */
-  restartHandover?: boolean;
-  /**
-   * Release id of an update that is pending health confirmation at process
-   * start (from the settle-on-start read). Arming this makes a fatal
-   * supervisor failure INSIDE the confirm window roll back to
-   * `previousReleaseId` and relaunch it, instead of crash-looping forever on
-   * a release that cannot boot. The confirm timer clears it alongside the
-   * journal once the window passes healthy.
-   */
-  pendingUnconfirmedReleaseId?: string;
   /** Running daemon identities captured when the release is applied. */
   requiredProbeIds?: string[];
   fetchImpl?: typeof fetch;
@@ -1024,10 +868,8 @@ export class SelfUpdateManager {
       SelfUpdateManagerOptions,
       'layout' | 'tickMs' | 'checkIntervalMs' | 'initialDelayMs' | 'idleTimeoutMs' | 'idlePollMs'
     >
-  > & { watchRuntimeDirs: string[]; env: NodeJS.ProcessEnv; now: () => number };
+  > & { env: NodeJS.ProcessEnv; now: () => number };
   private readonly isIdle: () => boolean;
-  private readonly requestRestartCb: (() => void) | undefined;
-  private readonly restartHandover: boolean;
   private readonly requiredProbeIds: string[];
   private readonly fetchImpl: typeof fetch;
   private readonly log: (line: string) => void;
@@ -1037,16 +879,7 @@ export class SelfUpdateManager {
   private disposed = false;
   private applying = false;
   private deferredBusyNotice = false;
-  private driftDeferredNotice = false;
   private lastVerdictLog = '';
-  /** Captured once: the release id this PROCESS loaded its code from. */
-  private loadedReleaseIdPromise: Promise<string | undefined> | undefined;
-  /** Identity of that same release, read while the anchor still named it. */
-  private loadedIdentity: InstalledBundleIdentity | undefined;
-  /** Set once a newer bundle is LIVE and the process should hand over. */
-  restartPending = false;
-  private unconfirmedReleaseId: string | undefined;
-  private attachedSupervisor: { isWorkspaceIdle(): boolean } | undefined;
 
   constructor(options: SelfUpdateManagerOptions) {
     const env = options.env ?? process.env;
@@ -1058,7 +891,6 @@ export class SelfUpdateManager {
     };
     this.options = {
       layout: options.layout,
-      watchRuntimeDirs: options.watchRuntimeDirs ?? [],
       tickMs: options.tickMs ?? numberEnv('BEELINE_UPDATE_TICK_MS', 60_000),
       checkIntervalMs:
         options.checkIntervalMs ?? numberEnv('BEELINE_UPDATE_INTERVAL_MS', 6 * 60 * 60_000),
@@ -1070,25 +902,14 @@ export class SelfUpdateManager {
       env,
       now: options.now ?? Date.now,
     };
-    this.unconfirmedReleaseId = options.pendingUnconfirmedReleaseId;
     this.isIdle = options.isIdle ?? (() => true);
-    this.requestRestartCb = options.requestRestart;
-    this.restartHandover = options.restartHandover !== false;
     this.requiredProbeIds = [...new Set(options.requiredProbeIds ?? [])].sort();
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.log = options.logger ?? ((line: string) => console.log(line));
   }
 
-  /** Wire the current daemon core instance (recreated each run loop). */
-  attachSupervisor(supervisor: { isWorkspaceIdle(): boolean } | undefined): void {
-    this.attachedSupervisor = supervisor;
-  }
-
   start(): void {
     if (this.timer || this.disposed) return;
-    // Capture the anchor BEFORE anything can flip it: this is the reference
-    // point every later drift check compares against.
-    void this.captureLoadedRelease();
     this.nextCheckAllowedAt = this.options.now() + this.options.initialDelayMs;
     this.timer = setInterval(() => {
       void this.tick();
@@ -1102,132 +923,8 @@ export class SelfUpdateManager {
     this.timer = undefined;
   }
 
-  /** True while an applied-but-unconfirmed update could still need rollback. */
-  hasUnconfirmedUpdate(): boolean {
-    return this.unconfirmedReleaseId !== undefined;
-  }
-
-  /**
-   * What this process loaded its code from, captured on first use. Reading
-   * through `layout.libDir` ONCE is the whole trick: every later
-   * `activeReleaseId` read sees the anchor's CURRENT target, so any
-   * difference means somebody else swapped the install under us (a `beeline
-   * update` whose forced re-check finds itself already current, install.sh,
-   * another daemon sharing this install, a manual rollback) and this process
-   * is executing stale code.
-   */
-  private captureLoadedRelease(): Promise<string | undefined> {
-    this.loadedReleaseIdPromise ??= (async () => {
-      const id = await activeReleaseId(this.options.layout).catch(() => undefined);
-      if (id) {
-        this.loadedIdentity = await readInstalledBundleIdentity(this.options.layout).catch(
-          () => undefined,
-        );
-      }
-      return id;
-    })();
-    return this.loadedReleaseIdPromise;
-  }
-
-  markUpdateConfirmed(): void {
-    this.unconfirmedReleaseId = undefined;
-  }
-
-  /**
-   * Spawn the replacement daemon from the ACTIVE (post-swap) bundle. Must be
-   * called only after the caller fully drained its supervisor — this is the
-   * handover point.
-   */
-  async launchReplacement(configPath: string): Promise<number> {
-    const entrypoint =
-      (await resolveBundleEntrypoint(this.options.layout.libDir)) ??
-      join(this.options.layout.libDir, BUNDLE_ENTRYPOINT);
-    const foreground = this.options.env.BEELINE_DAEMON_BACKGROUND !== '1';
-    return launchRuntimeDaemon(configPath, { entrypoint, foreground });
-  }
-
-  /** Relaunch from a SPECIFIC release (rollback path). */
-  async relaunchFromRelease(configPath: string, releaseId: string): Promise<number> {
-    const releaseDir = join(this.options.layout.releasesRoot, releaseId);
-    const entrypoint =
-      (await resolveBundleEntrypoint(releaseDir)) ?? join(releaseDir, BUNDLE_ENTRYPOINT);
-    const foreground = this.options.env.BEELINE_DAEMON_BACKGROUND !== '1';
-    return launchRuntimeDaemon(configPath, { entrypoint, foreground });
-  }
-
   private busy(): boolean {
-    if (this.attachedSupervisor) return !this.attachedSupervisor.isWorkspaceIdle();
     return !this.isIdle();
-  }
-
-  /**
-   * Anchor-drift detection: the cheap periodic half of "make running daemons
-   * pick up new releases". One lstat+readlink per tick, independent of the
-   * manifest cadence AND of BEELINE_UPDATE_DISABLE (that switch governs
-   * fetching; executing stale code is never a desired state, and a manual
-   * `beeline update --rollback` must bring daemons back just like an update
-   * brings them forward). On drift past the busy gate it writes the rollback
-   * journal, arms the unconfirmed state, and hands the process over to the
-   * ACTIVE anchor via the same restart path the daemon's own apply uses —
-   * so `launchReplacement` resolves the entrypoint through the CURRENT
-   * symlink and a new release that cannot boot rolls back inside the
-   * existing confirm-window machinery.
-   *
-   * Returns true when a restart was requested (the tick must not continue).
-   */
-  private async checkAnchorDrift(opts: { forced?: boolean } = {}): Promise<boolean> {
-    if (!this.restartHandover) return false;
-    const layout = this.options.layout;
-    const loaded = await this.captureLoadedRelease();
-    if (!loaded) return false; // dev checkout / unreadable install: nothing to compare
-    const current = await activeReleaseId(layout).catch(() => undefined);
-    if (!current || current === loaded) {
-      this.driftDeferredNotice = false;
-      return false;
-    }
-
-    // Same busy gate as apply(): never interrupt a turn, corner, or intake.
-    if (this.busy()) {
-      if (!this.driftDeferredNotice) {
-        this.log(
-          '[body] self-update: the install anchor changed while agent work is running; the restart waits until the daemon is idle',
-        );
-        this.driftDeferredNotice = true;
-      }
-      const idle = await this.waitForIdle();
-      if (!idle) {
-        this.log(
-          '[body] self-update: still busy after the idle wait; deferring the drift restart to the next tick',
-        );
-        return false;
-      }
-    }
-    this.driftDeferredNotice = false;
-
-    const now = this.options.now();
-    const toIdentity = await readInstalledBundleIdentity(layout).catch(() => undefined);
-    await writePendingUpdate(layout, {
-      from: this.loadedIdentity ?? {},
-      to: toIdentity ?? {},
-      releaseId: current,
-      // A legacy real-dir origin has no releases/<id> copy to roll back to.
-      previousReleaseId: loaded === 'legacy' ? undefined : loaded,
-      appliedAt: now,
-      ...(this.requiredProbeIds.length > 0
-        ? { requiredProbeIds: this.requiredProbeIds, confirmedProbeIds: [] }
-        : {}),
-    });
-    this.unconfirmedReleaseId = current;
-    this.restartPending = true;
-    const why = opts.forced
-      ? 'an operator update request asked this daemon to pick up the installed bundle'
-      : 'the install anchor moved under this daemon';
-    this.log(
-      `[body] self-update RESTART: release ${loaded} (${describeIdentity(this.loadedIdentity)}) -> ` +
-        `${current} (${describeIdentity(toIdentity)}); ${why}; handing over once drained`,
-    );
-    this.requestRestartCb?.();
-    return true;
   }
 
   /** Public single tick — test/CLI synchronization point. */
@@ -1236,50 +933,13 @@ export class SelfUpdateManager {
   }
 
   private async tick(): Promise<void> {
-    if (this.disposed || this.restartPending || this.applying) return;
+    if (this.disposed || this.applying) return;
     const now = this.options.now();
-    let forced = false;
-    try {
-      let requested = false;
-      for (const dir of this.options.watchRuntimeDirs) {
-        const rawRequest = await readFile(updateRequestPath(dir), 'utf8').catch(() => undefined);
-        if (rawRequest !== undefined) {
-          await rm(updateRequestPath(dir), { force: true });
-          requested = true;
-        }
-      }
-      if (requested) {
-        forced = true;
-        this.log('[body] self-update: operator requested an update via `beeline update`');
-      }
-    } catch {
-      return;
-    }
-
-    // Anchor-drift check first and EVERY tick: one lstat+readlink, immune to
-    // the disable switch and the manifest cadence (see checkAnchorDrift).
-    // Held under the same `applying` guard as checkAndApply so two interval
-    // ticks can never run concurrent drift flows (each contains a possibly
-    // long waitForIdle wait).
-    this.applying = true;
-    try {
-      if (await this.checkAnchorDrift({ forced })) return;
-    } catch (error) {
-      this.log(
-        `[body] self-update anchor-drift check failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    } finally {
-      this.applying = false;
-    }
-
     const disabled = this.options.env.BEELINE_UPDATE_DISABLE === '1';
-    if (!forced) {
-      if (disabled) return;
-      if (now < this.nextCheckAllowedAt) return;
-    }
+    if (disabled || now < this.nextCheckAllowedAt) return;
     this.applying = true;
     try {
-      await this.checkAndApply({ force: forced });
+      await this.checkAndApply();
     } catch (error) {
       this.log(
         `[body] self-update check failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -1304,12 +964,15 @@ export class SelfUpdateManager {
     const platform = hostPlatformKey();
     const raw = await fetchText(manifestUrl, this.fetchImpl);
     const { bundle } = parseUpdateManifest(raw, platform);
-    let state = await readUpdateState(this.options.layout);
-    if (state.updatePin) {
-      if (!publishedSupersedesPin(state.updatePin, bundle)) {
+    const state = await readUpdateState(this.options.layout);
+    const previousAttempt = await readUpdateAttempt(this.options.layout);
+    if (previousAttempt?.status === 'reverted' && !opts.force) {
+      const sameCommit = Boolean(previousAttempt.to.commit && previousAttempt.to.commit === bundle.commit);
+      const sameVersion = Boolean(previousAttempt.to.version && previousAttempt.to.version === bundle.version);
+      if (sameCommit || sameVersion) {
         const line =
-          `release ${describeIdentity(state.updatePin.identity)} is paused after automatic rollback; ` +
-          'waiting for a newer publish or `beeline update --clear-pin`';
+          `release ${describeIdentity(previousAttempt.to)} reverted after a failed served-turn proof; ` +
+          'waiting for a newer publish or `beeline update --force`';
         if (line !== this.lastVerdictLog) {
           this.log(`[body] self-update: ${line}`);
           this.lastVerdictLog = line;
@@ -1317,14 +980,10 @@ export class SelfUpdateManager {
         await writeUpdateState(this.options.layout, {
           ...state,
           lastCheckAt: now,
-          lastCheckResult: 'skipped: rolled-back release is pinned',
+          lastCheckResult: 'skipped: latest attempt reverted',
         });
         return;
       }
-      const { updatePin: _superseded, ...unpinned } = state;
-      state = unpinned;
-      await writeUpdateState(this.options.layout, state);
-      this.log('[body] self-update: a newer release superseded the rollback pin');
     }
     // An explicit --force overrides an indeterminate comparison when the
     // published side at least names itself; otherwise compare normally.
@@ -1400,38 +1059,28 @@ export class SelfUpdateManager {
     this.deferredBusyNotice = false;
 
     const { previousReleaseId } = await activateRelease(this.options.layout, releaseId);
-    await writeUpdateState(this.options.layout, {
-      ...state,
-      lastCheckAt: now,
-      lastCheckResult: 'applied',
-      lastApplied: {
-        releaseId,
-        ...(previousReleaseId ? { previousReleaseId } : {}),
-        identity: targetIdentity,
-        at: now,
-      },
-    });
-    const message = `Beeline bundle ${describeIdentity(installed)} -> ${describeIdentity(targetIdentity)} applied${this.restartHandover ? '; the daemon is restarting now' : ''} (previous release kept for rollback).`;
-    if (!this.restartHandover) {
-      // CLI-driven apply: swap recorded, nothing to hand over, nothing that
-      // could ever need an automatic rollback.
-      this.log(`[body] self-update: ${message}`);
-      return;
-    }
-    await writePendingUpdate(this.options.layout, {
+    await writeUpdateAttempt(this.options.layout, {
+      version: 1,
       from: installed ?? {},
       to: targetIdentity,
       releaseId,
       previousReleaseId,
       appliedAt: now,
+      confirmBy: now + DEFAULT_UPDATE_CONFIRM_WINDOW_MS,
+      status: 'pending',
       ...(this.requiredProbeIds.length > 0
         ? { requiredProbeIds: this.requiredProbeIds, confirmedProbeIds: [] }
         : {}),
     });
-    this.unconfirmedReleaseId = releaseId;
-    this.restartPending = true;
-    this.log(`[body] self-update: ${message}`);
-    this.requestRestartCb?.();
+    await writeUpdateState(this.options.layout, {
+      ...state,
+      lastCheckAt: now,
+      lastCheckResult: 'applied',
+    });
+    this.log(
+      `[body] self-update: Beeline bundle ${describeIdentity(installed)} -> ` +
+        `${describeIdentity(targetIdentity)} applied; the daemon coordinator will restart from the stable anchor (previous release kept for rollback).`,
+    );
   }
 
   /** Poll the busy gate until idle or the idle wait budget is spent. */

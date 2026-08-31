@@ -40,7 +40,6 @@ import {
   type LocalRepositoryBinding,
   type PairRuntimeResult,
 } from './runtime.js';
-import { stableBeelineEntrypoint } from './start-command.js';
 import { installAgentService } from './systemd.js';
 import { connectTrustySquireForPair } from './trusty-squire-onboarding.js';
 import { trustySquireConfigRoot } from './trusty-squire-storage.js';
@@ -399,9 +398,7 @@ async function pairOneAgent(input: {
         launch: async (configPath) => {
           const stored = await readRuntimeRecord(configPath);
           return process.platform === 'linux' && process.env.BEELINE_SYSTEMD_USER !== '0'
-            ? installAgentService(stored.agent.publicKey, {
-                entrypoint: stableBeelineEntrypoint(),
-              })
+            ? installAgentService(stored.agent.publicKey)
             : launchRuntimeDaemon(configPath);
         },
       },

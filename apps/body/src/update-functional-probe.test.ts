@@ -11,7 +11,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixtureConfig(mode: 'clean' | 'hang' | 'pi-cold-start' = 'clean'): Promise<{
+async function fixtureConfig(mode: 'clean' | 'hang' | 'silent' | 'pi-cold-start' = 'clean'): Promise<{
   config: BodyConfig;
   runtimeDir: string;
   proxyEntrypoint: string;
@@ -81,6 +81,9 @@ lines.on('line', (line) => {
       if (response.id === 1) child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'close_corner', arguments: { corner_id: 'update-probe' } } }) + '\\n');
       if (response.id === 2) {
         child.kill();
+        if (mode !== 'silent') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'probe-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'READY' } }
+        } }) + '\\n');
         reply(message.id, { stopReason: 'end_turn' });
       }
     }
@@ -212,6 +215,19 @@ describe('functional update probe', () => {
       }),
     );
     expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it('rejects a completed protocol exchange that did not serve an agent answer', async () => {
+    const fixture = await fixtureConfig('silent');
+    await expect(
+      runUpdateFunctionalProbe({
+        ...fixture,
+        releaseId: 'silent-turn',
+        sandboxRequired: false,
+        sessionTimeoutMs: 3_000,
+        turnTimeoutMs: 3_000,
+      }),
+    ).rejects.toMatchObject({ reason: 'turn-failed' });
   });
 
   it('gives a production-shaped Pi cold session its own startup budget', async () => {

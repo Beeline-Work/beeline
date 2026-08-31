@@ -587,10 +587,10 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
       expectFreshShell(prefix, '3.0.0');
 
       // --- 6. rollback keeps a runnable CLI ----------------------------------
-      const state = JSON.parse(
-        await readFile(join(anchorLayout.releasesRoot, '.state', 'update-state.json'), 'utf8'),
+      const attempt = JSON.parse(
+        await readFile(join(anchorLayout.releasesRoot, '.state', 'update-attempt.json'), 'utf8'),
       );
-      await rollbackToPreviousRelease(anchorLayout, state.lastApplied.previousReleaseId);
+      await rollbackToPreviousRelease(anchorLayout, attempt.previousReleaseId);
       expectFreshShell(prefix, '2.0.0');
       expectInstalledHelperForwarders(prefix, '2.0.0');
     } finally {

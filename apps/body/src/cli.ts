@@ -56,21 +56,27 @@ import {
   describeIdentity,
   readInstalledBundleIdentity,
   repairInstallForwarders,
-  settlePendingUpdateOnStart,
+  settleUpdateAttemptOnStart,
 } from './self-update.js';
-import { DELIBERATE_REMOVAL_EXIT_STATUS, SystemdNotifier, disableAgentService } from './systemd.js';
+import { clearDaemonStartFailures, recordDaemonStartFailure } from './daemon-failure.js';
+import {
+  DAEMON_DISTRESS_EXIT_STATUS,
+  DELIBERATE_REMOVAL_EXIT_STATUS,
+  SystemdNotifier,
+  UNKNOWN_AGENT_EXIT_STATUS,
+  disableAgentService,
+} from './systemd.js';
 import {
   coordinateManagedUpdateHandoff,
   gateManagedSuccessor,
   ManagedUpdateHandoff,
-  readUpdateHandoff,
   rollbackFailedSuccessor,
   runningRuntimeProbeIds,
   runManagedUpdateWorker,
 } from './managed-update.js';
 import { runUpdateFunctionalProbe } from './update-functional-probe.js';
 import {
-  publishPendingUpdateRollbackAlert,
+  reportUpdateRollback,
   queueUpdateRollbackAlert,
 } from './update-rollback-alert.js';
 import {
@@ -223,11 +229,24 @@ Examples:
 `);
 }
 
+let daemonFailureRuntimeDir: string | undefined;
+
+class DaemonExitError extends Error {
+  constructor(
+    message: string,
+    readonly exitStatus: number,
+  ) {
+    super(message);
+    this.name = 'DaemonExitError';
+  }
+}
+
 async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   // `--config` may point at the repo-anchored compatibility pointer; every
   // per-daemon path below (workspace, daemon.pid, Room roots) must hang off the
   // real runtime directory, not the pointer's.
   const configPath = await resolveRuntimeConfigPath(pathOrPointer);
+  daemonFailureRuntimeDir = dirname(configPath);
   // One-time, idempotent migration: a runtime record that predates per-agent
   // access policies gets an explicit `accessPolicy: 'everyone'` stamped on it,
   // so flipping DEFAULT_ACCESS_POLICY to owner-only never re-gates an
@@ -308,7 +327,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   const drainRollbackAlert = (channelId: string | undefined): Promise<void> => {
     if (!channelId) return Promise.resolve();
     if (rollbackAlertDrain) return rollbackAlertDrain;
-    rollbackAlertDrain = publishPendingUpdateRollbackAlert({
+    rollbackAlertDrain = reportUpdateRollback({
       runtimeDir,
     })
       .then(() => undefined)
@@ -325,29 +344,19 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
   let pendingSuccessor = false;
   let successorRolledBack = false;
   if (layout) {
-    const settle = await settlePendingUpdateOnStart(layout);
-    const handoff = await readUpdateHandoff(runtimeDir);
+    const settle = await settleUpdateAttemptOnStart(layout);
     if (settle.kind === 'rolled-back') {
-      await unlink(resolve(runtimeDir, 'update-handoff.json')).catch(() => undefined);
       await queueUpdateRollbackAlert(runtimeDir, settle.record.releaseId);
       await drainRollbackAlert(runtime.rooms[0]?.channelId);
       console.error(
         `[body] self-update ROLLED BACK: bundle ${describeIdentity(settle.record.to)} never confirmed healthy; ` +
           `restored ${settle.record.previousReleaseId ?? 'previous release'}`,
       );
-      throw new Error('stale unconfirmed release rolled back; supervisor must restart');
+      throw new DaemonExitError('stale unconfirmed release rolled back; supervisor must restart', 75);
     } else if (settle.kind === 'pending') {
       pendingSuccessor = true;
     }
     loadedRelease = await activeReleaseId(layout);
-    if (handoff && settle.kind === 'none' && handoff.desiredRelease !== loadedRelease) {
-      // Another daemon already confirmed a later globally-active release.
-      // This instance's older per-runtime request is superseded, not a reason
-      // to crash-loop on an anchor the shared coordinator has accepted.
-      await unlink(resolve(runtimeDir, 'update-handoff.json')).catch(() => undefined);
-    } else if (handoff) {
-      pendingSuccessor = true;
-    }
     update = await ManagedUpdateHandoff.create(layout, runtimeDir, Date.now, {
       requiredProbeIds: [...(await runningRuntimeProbeIds(process.env)), runtime.agent.publicKey],
     });
@@ -392,6 +401,7 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
               `${functionalProof?.harness ?? 'unknown'} session/new + turn + read_mandate`,
           );
         }
+        await clearDaemonStartFailures(runtimeDir);
         await notifier.ready(`ready; loaded_release=${loadedRelease ?? 'development'}`);
         ready = true;
       },
@@ -403,22 +413,21 @@ async function runStoredDaemon(pathOrPointer: string): Promise<void> {
         await coordinateManagedUpdateHandoff(
           update,
           () => core.quiesceForUpdateIfIdle(),
-          async ({ handoff, forced }) => {
-            if (forced) await core.prepareForForcedUpdateRestart();
-            core.setDrainDeadlineAt(handoff.drainDeadlineAt);
+          async ({ desiredRelease, drainDeadlineAt }) => {
+            if (Date.now() >= drainDeadlineAt) await core.prepareForForcedUpdateRestart();
+            core.setDrainDeadlineAt(drainDeadlineAt);
             stoppingStatus =
               `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
-              `desired_release=${handoff.desiredRelease}; ` +
-              `${forced ? 'drain deadline reached, forcing restart' : 'active work drained'}; ` +
-              `intake quiesced; exit_deadline=${new Date(handoff.drainDeadlineAt).toISOString()}`;
+              `desired_release=${desiredRelease}; active work drained; ` +
+              `intake quiesced; exit_deadline=${new Date(drainDeadlineAt).toISOString()}`;
             await notifier.stopping(stoppingStatus);
             controller.abort();
           },
-          async (handoff) => {
+          async ({ desiredRelease, drainDeadlineAt }) => {
             await notifier.progress(
               `loaded_release=${loadedRelease ?? 'unknown'}; update ready; ` +
-                `active agent work is still running; handoff deferred; ` +
-                `exit_deadline=${new Date(handoff.drainDeadlineAt).toISOString()}`,
+              `active agent work is still running; handoff deferred; ` +
+                `desired_release=${desiredRelease}; exit_deadline=${new Date(drainDeadlineAt).toISOString()}`,
             );
           },
         );
@@ -581,6 +590,12 @@ async function main(): Promise<void> {
     if (!configPath && agentPubkey) {
       const configs = await findAgentRuntimeConfigPaths(process.env, process.cwd());
       configPath = configs.find((candidate) => dirname(candidate).endsWith(agentPubkey));
+    }
+    if (!configPath && agentPubkey) {
+      throw new DaemonExitError(
+        `unknown agent ${agentPubkey}: no durable runtime exists; refusing systemd restart loop`,
+        UNKNOWN_AGENT_EXIT_STATUS,
+      );
     }
     if (!configPath) throw new Error('daemon requires --config <runtime.json> or --agent <pubkey>');
     await runStoredDaemon(resolve(configPath));
@@ -778,5 +793,20 @@ main().catch(async (err) => {
   } else {
     console.error(pc.red('[body] fatal:'), err);
   }
-  process.exit(1);
+  let exitStatus = err instanceof DaemonExitError ? err.exitStatus : 1;
+  if (process.argv[2] === 'daemon' && daemonFailureRuntimeDir && exitStatus === 1) {
+    try {
+      const failure = await recordDaemonStartFailure(daemonFailureRuntimeDir, err);
+      if (failure.distressed) {
+        exitStatus = DAEMON_DISTRESS_EXIT_STATUS;
+        console.error(
+          `[thin-core] daemon start failed ${failure.count} times; service restart stopped. ` +
+            `operator record: ${failure.path}`,
+        );
+      }
+    } catch (recordError) {
+      console.error('[thin-core] could not persist daemon distress record:', recordError);
+    }
+  }
+  process.exit(exitStatus);
 });

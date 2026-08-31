@@ -49,18 +49,19 @@ handoff; `beeline daemon` now instantiates `ThinDaemonCore` directly.
   it, leaving one minute inside systemd's ten-minute stop ceiling for cleanup.
   Durable inbox/corner state makes the next process resume unfinished work with
   an explicit restart note.
-- Exit status 78 means deliberate agent removal and is excluded from restart.
-- Desired-release drift writes a resumable handoff and exact desired release,
-  then waits on `Body.isBusy()` before atomically quiescing Room intake and
-  exiting. The wait shares SIGTERM's absolute nine-minute drain deadline. If
-  work is still active at that deadline, Body publishes that Beeline is
-  restarting for an update, leaves interrupted Room requests undelivered for
-  the successor, quiesces intake, and forces the bounded restart. That notice
-  is best-effort with a five-second ceiling, so a wedged relay cannot consume
-  the remaining systemd cleanup reserve. The service manager starts the
-  successor. READY is accepted only when `loaded_release` equals that desired
-  release. Failure before READY rolls back once under the cross-process install
-  lock.
+- Exit status 78 means deliberate agent removal; 79 means the unit names no
+  remaining runtime; and 77 means three consecutive starts failed. All three
+  are excluded from restart. The latter leaves `daemon-distress.json` beside
+  the runtime with the errors an operator needs, instead of silently looping.
+- An update has one durable record, `update-attempt.json`: the active anchor
+  names the current release and the record names its one previous release,
+  candidate, deadline, and outcome. A running daemon observes anchor drift,
+  drains, and exits; the service manager starts the stable launcher. The
+  successor confirms only after its real ACP session has completed a prompt
+  with an agent answer and the native capability mount. A failed or overdue
+  attempt atomically restores the prior anchor, records `reverted`, and leaves
+  a durable `update-rollback-alert.json` for the operator. No request files,
+  per-runtime handoffs, or silent failed-release pins participate.
 - Per-Room archive evidence from any path is terminal-inert. Owner-grant
   failures escalate to long jittered backoff after repeated confirmation;
   transport errors use short bounded jittered backoff. Only state transitions
@@ -74,13 +75,11 @@ protocol or health server.
 
 The installed template uses `Type=notify`, `Restart=always`, a 5–60 second
 restart backoff, start limiting, `WatchdogSec=180s`, `TimeoutStopSec=10min`,
-`KillMode=control-group`, and `RestartPreventExitStatus=78`. `NotifyAccess=all`
-allows the bounded `systemd-notify` helper child to deliver the main process's
-notifications. Installation requires Node.js 20.11 or newer and records the
-installing CLI's absolute Node directory first in the unit's `PATH`, so a system
-Node version does not replace the operator-selected fnm/nvm runtime. A manual
-systemd PATH drop-in is no longer needed; the next `beeline start` or
-`beeline pair` regenerates the template with the pinned runtime.
+`KillMode=control-group`, and `RestartPreventExitStatus=77 78 79`.
+`NotifyAccess=all` allows the bounded `systemd-notify` helper child to deliver
+the main process's notifications. The template is immutable: it always starts
+`%h/.local/bin/beeline`, has no caller-derived `PATH`, and source checkouts
+refuse to rewrite it. A manual systemd PATH drop-in is not supported.
 
 ## Repository event consumer
 

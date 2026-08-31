@@ -2,7 +2,8 @@ import { nip98AuthHeader } from '@beeline/nostr';
 import {
   ROOM_VIEW_REQUEST_TIMEOUT_MS,
   isAgentDetailView,
-  isAgentPairingClaimView,
+  isAgentPairingAbandonView,
+  isAgentPairingClaimWireView,
   isChatListView,
   isCornerListView,
   isInviteView,
@@ -11,6 +12,7 @@ import {
   isWorkspaceListView,
   isWorkspaceView,
   type AgentDetailView,
+  type AgentPairingAbandonView,
   type AgentPairingClaimView,
   type ChatListView,
   type CornerListView,
@@ -23,6 +25,8 @@ import {
 import type { Identity } from './types.js';
 
 export * from '@beeline/api-contract/phone';
+
+const AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY = 'pairing-room-rollback';
 
 export type RoomViewClientOptions = {
   readonly baseUrl: string;
@@ -59,24 +63,30 @@ export class RoomViewClient {
   workspaces(): Promise<WorkspaceListView> {
     return this.get('/workspaces', isWorkspaceListView);
   }
+
   workspace(workspaceId: string): Promise<WorkspaceView> {
     return this.get(`/workspace/${encodeURIComponent(workspaceId)}`, isWorkspaceView);
   }
+
   agent(workspaceId: string, agentPubkey: string): Promise<AgentDetailView> {
     return this.get(
       `/workspace/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentPubkey)}`,
       isAgentDetailView,
     );
   }
+
   chats(workspaceId: string): Promise<ChatListView> {
     return this.get(`/workspace/${encodeURIComponent(workspaceId)}/chats`, isChatListView);
   }
+
   room(roomId: string): Promise<RoomView> {
     return this.get(`/room/${encodeURIComponent(roomId)}`, isRoomView);
   }
+
   corners(roomId: string): Promise<CornerListView> {
     return this.get(`/room/${encodeURIComponent(roomId)}/corners`, isCornerListView);
   }
+
   history(
     roomId: string,
     before?: { readonly createdAt: number; readonly id: string },
@@ -84,11 +94,20 @@ export class RoomViewClient {
     const query = before ? `?before=${encodeURIComponent(`${before.createdAt},${before.id}`)}` : '';
     return this.get(`/room/${encodeURIComponent(roomId)}/messages${query}`, isRoomHistoryView);
   }
+
   invite(token: string): Promise<InviteView> {
     return this.request('/invite/resolve', 'POST', isInviteView, { token });
   }
+
   claimAgentPairing(code: string): Promise<AgentPairingClaimView> {
-    return this.request('/agent-pairing/claim', 'POST', isAgentPairingClaimView, { code });
+    return this.request('/agent-pairing/claim', 'POST', isAgentPairingClaimWireView, {
+      code,
+      capabilities: [AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY],
+    }).then((claim) => ({ ...claim, attachedRoomIds: claim.attachedRoomIds ?? [] }));
+  }
+
+  abandonAgentPairing(code: string): Promise<AgentPairingAbandonView> {
+    return this.request('/agent-pairing/abandon', 'POST', isAgentPairingAbandonView, { code });
   }
 
   private get<T>(path: string, guard: (value: unknown) => value is T): Promise<T> {

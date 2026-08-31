@@ -6,6 +6,9 @@ import {
   ROOM_VIEW_MESSAGE_LIMIT,
   ROOM_VIEW_WORKSPACE_LIMIT,
   type AgentDetailView,
+  type AgentPairingAbandonView,
+  type AgentPairingClaimView,
+  type AgentPairingClaimWireView,
   type ChatListItem,
   type ChatListView,
   type ChatListWorkspace,
@@ -370,7 +373,7 @@ function watchFilters(value: unknown): boolean {
       if (!filter) return false;
       return Object.entries(filter).every(([key, entry]) => {
         if (key === 'kinds') return Array.isArray(entry) && entry.every(integer);
-        if (key === 'authors' || key === '#h' || key === '#d' || key === '#p') {
+        if (key === 'authors' || key === '#h' || key === '#d' || key === '#p' || key === '#t') {
           return Array.isArray(entry) && entry.every((item) => typeof item === 'string');
         }
         return false;
@@ -727,5 +730,38 @@ export function isInviteView(value: unknown): value is InviteView {
     return false;
   return Object.keys(item).every(
     (key) => key === 'name' || key === 'avatar' || key === 'expiresAt',
+  );
+}
+
+export function isAgentPairingClaimWireView(value: unknown): value is AgentPairingClaimWireView {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<AgentPairingClaimWireView>;
+  return (
+    typeof candidate.workspaceId === 'string' &&
+    UUID.test(candidate.workspaceId) &&
+    typeof candidate.pairedBy === 'string' &&
+    HEX.test(candidate.pairedBy) &&
+    typeof candidate.joined === 'boolean' &&
+    (candidate.attachedRoomIds === undefined ||
+      (Array.isArray(candidate.attachedRoomIds) &&
+        candidate.attachedRoomIds.every(
+          (roomId) => typeof roomId === 'string' && UUID.test(roomId),
+        )))
+  );
+}
+
+export function isAgentPairingClaimView(value: unknown): value is AgentPairingClaimView {
+  return (
+    isAgentPairingClaimWireView(value) &&
+    Array.isArray(value.attachedRoomIds) &&
+    value.attachedRoomIds.every((roomId) => UUID.test(roomId))
+  );
+}
+
+export function isAgentPairingAbandonView(value: unknown): value is AgentPairingAbandonView {
+  return (
+    Boolean(value) &&
+    typeof value === 'object' &&
+    typeof (value as Partial<AgentPairingAbandonView>).abandoned === 'boolean'
   );
 }

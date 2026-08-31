@@ -61,7 +61,7 @@ export function initializeRelease({ version, sourceSha, previous }) {
     artifacts: Object.fromEntries(
       RELEASE_COMPONENTS.map((component) => [component, { state: 'pending' }]),
     ),
-    rehearsal: { state: 'pending' },
+    delivery: { state: 'pending' },
   };
 }
 
@@ -144,16 +144,16 @@ export function confirmPromotion(state, component, identity = state) {
   return state;
 }
 
-export function confirmRehearsal(state, identity = state) {
+export function confirmDelivery(state, identity = state) {
   currentRelease(state);
   if (componentEntry(state, 'app').state !== 'confirmed') {
-    fail('device rehearsal cannot confirm before app promotion');
+    fail('delivery cannot confirm before app promotion');
   }
   validateReleaseIdentity(identity.version, identity.sourceSha);
   if (identity.version !== state.version || identity.sourceSha !== state.sourceSha) {
-    fail('mixed-version device rehearsal refused');
+    fail('mixed-version delivery confirmation refused');
   }
-  state.rehearsal = {
+  state.delivery = {
     state: 'passed',
     version: identity.version,
     sourceSha: identity.sourceSha,
@@ -191,8 +191,8 @@ export function deliveryReport(state, observed = undefined) {
   const componentsConfirmed = RELEASE_COMPONENTS.every(
     (component) => componentEntry(state, component).state === 'confirmed',
   );
-  if (!componentsConfirmed || state.rehearsal?.state !== 'passed' || state.state !== 'delivered') {
-    fail(`NOT DELIVERED: ${state.version}@${state.sourceSha} is not aligned and rehearsed`);
+  if (!componentsConfirmed || state.delivery?.state !== 'passed' || state.state !== 'delivered') {
+    fail(`NOT DELIVERED: ${state.version}@${state.sourceSha} is not aligned and ledger-confirmed`);
   }
   return `DELIVERED ${state.version} (${state.sourceSha})`;
 }
@@ -238,8 +238,8 @@ function main(argv) {
     case 'confirm':
       confirmPromotion(state, args.component, identityFromOptions(args));
       break;
-    case 'rehearsal':
-      confirmRehearsal(state, identityFromOptions(args));
+    case 'confirm-delivery':
+      confirmDelivery(state, identityFromOptions(args));
       break;
     case 'supersede':
       supersedeRelease(state, identityFromOptions(args));
@@ -249,7 +249,7 @@ function main(argv) {
       return;
     default:
       fail(
-        'Usage: unified-release.mjs <next-version|init|mark-built|assert-built|confirm|rehearsal|supersede|report>',
+        'Usage: unified-release.mjs <next-version|init|mark-built|assert-built|confirm|confirm-delivery|supersede|report>',
       );
   }
   writeJson(args.state, state);

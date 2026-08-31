@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { NIP98_KIND, verifyEvent, verifyNip98Header, type NostrEvent } from '@beeline/nostr';
 import type {
+  AgentPairingAbandonView,
   AgentDetailView,
   AgentPairingClaimView,
   ChatListView,
@@ -107,7 +108,9 @@ export interface RegistrationServerHooks {
     readonly claimAgentPairing: (
       tokenHash: string,
       agentPubkey: string,
+      options: { readonly inheritInviterRooms: boolean },
     ) => Promise<AgentPairingClaimView | null>;
+    readonly abandonAgentPairing: (tokenHash: string, agentPubkey: string) => Promise<boolean>;
     readonly log?: (line: string) => void;
   };
 }
@@ -115,6 +118,7 @@ export interface RegistrationServerHooks {
 const CHANNEL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INVITE_TOKEN = /^bzi_[0-9a-f]{64}$/;
 const AGENT_PAIRING_CODE = /^BUZZ-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
+const AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY = 'pairing-room-rollback';
 const PUBKEY = /^[0-9a-f]{64}$/;
 const PRIVATE_HEADERS = {
   'cache-control': 'private, no-store',
@@ -379,6 +383,10 @@ export function createRegistrationServer(
             body && typeof body === 'object' && 'code' in body
               ? (body as { code?: unknown }).code
               : undefined;
+          const rawCapabilities =
+            body && typeof body === 'object' && 'capabilities' in body
+              ? (body as { capabilities?: unknown }).capabilities
+              : undefined;
           const code = typeof rawCode === 'string' ? rawCode.trim().toUpperCase() : '';
           if (!AGENT_PAIRING_CODE.test(code)) {
             status = 404;
@@ -386,7 +394,12 @@ export function createRegistrationServer(
             return;
           }
           const tokenHash = createHash('sha256').update(code).digest('hex');
-          const claim = await hooks.indexer.claimAgentPairing(tokenHash, pubkey);
+          const inheritInviterRooms =
+            Array.isArray(rawCapabilities) &&
+            rawCapabilities.includes(AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY);
+          const claim = await hooks.indexer.claimAgentPairing(tokenHash, pubkey, {
+            inheritInviterRooms,
+          });
           status = claim ? 200 : 404;
           json(response, status, claim ?? { error: 'not_found' }, PRIVATE_HEADERS);
           return;
@@ -404,6 +417,65 @@ export function createRegistrationServer(
           logIndexer(
             hooks.indexer,
             `[indexer] request surface=agent-pairing-claim status=${status} duration_ms=${Math.round(performance.now() - startedAt)}`,
+          );
+        }
+      }
+
+      if (request.method === 'POST' && request.url === '/agent-pairing/abandon' && hooks.indexer) {
+        const startedAt = performance.now();
+        let status = 500;
+        try {
+          const pubkey = authenticateIndexerRequest(
+            request,
+            response,
+            hooks.indexer,
+            'POST',
+            '/agent-pairing/abandon',
+          );
+          if (!pubkey) {
+            status = 401;
+            return;
+          }
+          let body: unknown;
+          try {
+            body = await readJson(request);
+          } catch {
+            status = 404;
+            json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
+            return;
+          }
+          const rawCode =
+            body && typeof body === 'object' && 'code' in body
+              ? (body as { code?: unknown }).code
+              : undefined;
+          const code = typeof rawCode === 'string' ? rawCode.trim().toUpperCase() : '';
+          if (!AGENT_PAIRING_CODE.test(code)) {
+            status = 404;
+            json(response, status, { error: 'not_found' }, PRIVATE_HEADERS);
+            return;
+          }
+          const abandoned = await hooks.indexer.abandonAgentPairing(
+            createHash('sha256').update(code).digest('hex'),
+            pubkey,
+          );
+          status = abandoned ? 200 : 404;
+          const result: AgentPairingAbandonView = { abandoned };
+          json(response, status, abandoned ? result : { error: 'not_found' }, PRIVATE_HEADERS);
+          return;
+        } catch (error) {
+          status = 503;
+          const detail = error instanceof Error ? error.message : String(error);
+          logIndexer(
+            hooks.indexer,
+            `[indexer] agent pairing abandon failed error=${JSON.stringify(detail)}`,
+          );
+          if (response.headersSent) response.destroy();
+          else json(response, status, { error: 'temporarily_unavailable' }, PRIVATE_HEADERS);
+          return;
+        } finally {
+          logIndexer(
+            hooks.indexer,
+            `[indexer] request surface=agent-pairing-abandon status=${status} duration_ms=${Math.round(performance.now() - startedAt)}`,
           );
         }
       }

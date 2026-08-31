@@ -62,6 +62,7 @@ export type SurfaceWatchFilter = {
   readonly '#h'?: readonly string[];
   readonly '#d'?: readonly string[];
   readonly '#p'?: readonly string[];
+  readonly '#t'?: readonly string[];
 };
 
 export type RoomViewIdentity = {
@@ -344,27 +345,24 @@ export type InviteView = {
   readonly expiresAt: number;
 };
 
-/** Result of the server-authorized private-Workspace pairing bootstrap. */
+/** Result of the server-authorized Workspace pairing bootstrap. */
 export type AgentPairingClaimView = {
   readonly workspaceId: string;
   readonly pairedBy: string;
   /** False only when the same agent repeats its already-reserved claim. */
   readonly joined: boolean;
+  /** Top-level Rooms the agent inherited from the pairing-code minter. */
+  readonly attachedRoomIds: readonly string[];
 };
 
-export function isAgentPairingClaimView(value: unknown): value is AgentPairingClaimView {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<AgentPairingClaimView>;
-  return (
-    typeof candidate.workspaceId === 'string' &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      candidate.workspaceId,
-    ) &&
-    typeof candidate.pairedBy === 'string' &&
-    /^[0-9a-f]{64}$/.test(candidate.pairedBy) &&
-    typeof candidate.joined === 'boolean'
-  );
-}
+export type AgentPairingClaimWireView = Omit<AgentPairingClaimView, 'attachedRoomIds'> & {
+  readonly attachedRoomIds?: readonly string[];
+};
+
+export type AgentPairingAbandonView = {
+  /** True only when this code is claimed by the authenticated agent. */
+  readonly abandoned: boolean;
+};
 
 export type CornerListItem = {
   readonly corner: RoomViewHeader;

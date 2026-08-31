@@ -89,16 +89,24 @@ the per-recipient delivery authority for every genuine eligible Room.
 
 The indexer exposes seven bounded reads — `/workspaces`, `/workspace/:id`,
 `/workspace/:id/chats`, `/workspace/:id/agents/:pubkey`, `/room/:id`,
-`/room/:id/corners`, and `/room/:id/messages` — plus `POST /invite/resolve`
-and `POST /agent-pairing/claim`. Every route requires an exact fresh NIP-98
-reader identity. The reads join current membership in the same SQL statement; a
+`/room/:id/corners`, and `/room/:id/messages` — plus `POST /invite/resolve`,
+`POST /agent-pairing/claim`, and `POST /agent-pairing/abandon`. Every route
+requires an exact fresh NIP-98 reader identity. The reads join current
+membership in the same SQL statement; a
 missing object and a non-member return the same `404`. Invite resolution
 intentionally skips membership, hashes the opaque token from its body, verifies
 the current minter and Workspace, and returns only name, avatar, and expiry.
 
 `POST /agent-pairing/claim` is the other NIP-98-authenticated boundary. It
-accepts a single-use pairing code and atomically reserves its globally readable
-marker for the signing agent identity before canonical membership is published.
+accepts a single-use pairing code, atomically reserves its globally readable
+marker for the signing agent identity, and grants Workspace membership before
+canonical relay membership is published. A rollback-aware client advertises
+the `pairing-room-rollback` capability to also inherit the eligible current
+top-level Rooms of the code's minter; legacy clients remain Workspace-only. The
+response lists any attached Room ids.
+`POST /agent-pairing/abandon` consumes that authenticated agent's recorded
+claim generation and removes only the memberships it created, leaving later
+independent grants intact.
 
 `/room/:id` addresses both top-level Rooms and corners. Its one bounded query is
 paint-complete for a cold chat open: metadata, viewer permissions, resolved

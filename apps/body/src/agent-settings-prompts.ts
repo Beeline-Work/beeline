@@ -18,6 +18,7 @@ import {
 } from './access-policy.js';
 import { clackPromptOutput, unwrapPrompt } from './clack-support.js';
 import { fetchAgentModelCatalog } from './model-catalog.js';
+import { isGrokAgentCommand } from './model-config.js';
 
 export const EFFORT_AXIS_CATEGORIES = ['thought_level', 'effort', 'reasoning_effort'] as const;
 
@@ -99,7 +100,13 @@ export async function pickModelAndEffort(
   spinner.start(`Reading ${agent.kind}'s available models…`);
   let catalog: AgentModelConfigOption[];
   try {
-    catalog = (await fetchAgentModelCatalog(agent, agentEnv)).catalog;
+    catalog = (
+      await fetchAgentModelCatalog(
+        agent,
+        agentEnv,
+        isGrokAgentCommand(agent) && selection.model ? { model: selection.model } : undefined,
+      )
+    ).catalog;
     spinner.stop('Catalog loaded.');
   } catch (error) {
     spinner.stop('Could not read the live model catalog.');
@@ -114,6 +121,17 @@ export async function pickModelAndEffort(
         modelAxis.options,
         modelAxis.currentValue,
       );
+      if (isGrokAgentCommand(agent) && !selection.effort) {
+        spinner.start(`Reading ${selection.model}'s effort levels…`);
+        try {
+          catalog = (await fetchAgentModelCatalog(agent, agentEnv, { model: selection.model }))
+            .catalog;
+          spinner.stop('Effort levels loaded.');
+        } catch (error) {
+          spinner.stop('Could not read the selected model effort levels.');
+          throw error;
+        }
+      }
     }
   }
 

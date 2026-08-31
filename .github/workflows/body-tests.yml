@@ -14,14 +14,14 @@ jobs:
   # map in this PR's description for how each category maps to a job.
   changes:
     name: Detect changes
-    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'beeline-production-squire' }}
     timeout-minutes: 5
     outputs:
       body: ${{ steps.filter.outputs.body }}
     steps:
       - uses: dorny/paths-filter@v3
         id: filter
-        if: github.event_name == 'pull_request'
         with:
           filters: |
             body:

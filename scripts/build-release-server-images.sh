@@ -25,8 +25,8 @@ build_image() {
     -f "$dockerfile" \
     -t "$name:release-$RELEASE_SHA" \
     .
-  test "$(docker image inspect --format '{{ index .Config.Labels \"app.usebeeline.release.version\" }}' "$name:release-$RELEASE_SHA")" = "$RELEASE_VERSION"
-  test "$(docker image inspect --format '{{ index .Config.Labels \"app.usebeeline.release.sha\" }}' "$name:release-$RELEASE_SHA")" = "$RELEASE_SHA"
+  test "$(docker image inspect --format '{{ index .Config.Labels "app.usebeeline.release.version" }}' "$name:release-$RELEASE_SHA")" = "$RELEASE_VERSION"
+  test "$(docker image inspect --format '{{ index .Config.Labels "app.usebeeline.release.sha" }}' "$name:release-$RELEASE_SHA")" = "$RELEASE_SHA"
 }
 
 build_image beeline-auth apps/auth/Dockerfile

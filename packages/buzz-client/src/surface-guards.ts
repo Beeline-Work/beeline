@@ -1,6 +1,8 @@
 export {
   isAgentDetailView,
+  isAgentPairingAbandonView,
   isAgentPairingClaimView,
+  isAgentPairingClaimWireView,
   isChatListView,
   isCornerListView,
   isInviteView,

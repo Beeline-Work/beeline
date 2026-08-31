@@ -1672,6 +1672,12 @@ describe('RoomIndexer', () => {
       members: [{ identity: { name: 'Ada' } }],
       agents: [{ identity: { name: 'Milo' } }],
     });
+    const workspace = await indexer.readWorkspace(WORKSPACE, VIEWER);
+    expect(workspace?.watchFilters).toContainEqual({
+      kinds: [30078],
+      authors: [AGENT],
+      '#t': ['agent-presence'],
+    });
     await expect(indexer.readChats(WORKSPACE, VIEWER)).resolves.toMatchObject({
       workspace: { id: WORKSPACE, avatar: 'https://media.test/workspace-projected.png' },
       chats: [{ room: { id: ROOM }, latestMessage: { text: 'Ready', author: { name: 'Milo' } } }],
@@ -2207,28 +2213,94 @@ describe('RoomIndexer', () => {
       ],
     );
 
-    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toEqual({
+    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER, true)).resolves.toEqual({
       workspaceId: WORKSPACE,
       pairedBy: VIEWER,
       joined: true,
+      attachedRoomIds: [ROOM],
     });
-    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toEqual({
+    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER, true)).resolves.toEqual({
       workspaceId: WORKSPACE,
       pairedBy: VIEWER,
       joined: false,
+      attachedRoomIds: [ROOM],
     });
-    await expect(indexer.claimAgentPairing(tokenHash, 'e'.repeat(64))).resolves.toBeNull();
+    await expect(indexer.claimAgentPairing(tokenHash, 'e'.repeat(64), true)).resolves.toBeNull();
     const membership = await postgres.query<{ invited_by: Uint8Array }>(
       `SELECT invited_by FROM channel_members
        WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3 AND removed_at IS NULL`,
       [TENANT, WORKSPACE, bytes(OUTSIDER)],
     );
     expect(Buffer.from(membership.rows[0]!.invited_by).toString('hex')).toBe(VIEWER);
+    const inheritedRooms = await postgres.query<{ channel_id: string }>(
+      `SELECT channel_id FROM channel_members
+       WHERE community_id = $1 AND pubkey = $2 AND removed_at IS NULL
+         AND channel_id <> $3
+       ORDER BY channel_id`,
+      [TENANT, bytes(OUTSIDER), WORKSPACE],
+    );
+    expect(inheritedRooms.rows.map((row) => row.channel_id)).toEqual([ROOM]);
 
+    // A later, independent Room grant must survive abandoning the original
+    // pairing code. The claim ledger must contain only the initial Workspace
+    // and inherited Room memberships.
+    await postgres.query(
+      `INSERT INTO channels
+        (community_id, id, name, description, visibility, created_by, created_at, updated_at)
+       VALUES ($1, $2, 'Later Room', 'Granted after pairing', 'open', $3, now(), now())`,
+      [TENANT, MISSING, bytes(VIEWER)],
+    );
+    await postgres.query(
+      `INSERT INTO channel_members (community_id, channel_id, pubkey, role)
+       VALUES ($1, $2, $3, 'member')`,
+      [TENANT, MISSING, bytes(OUTSIDER)],
+    );
+
+    await expect(indexer.abandonAgentPairing(tokenHash, 'e'.repeat(64))).resolves.toBe(false);
+    await expect(indexer.abandonAgentPairing(tokenHash, OUTSIDER)).resolves.toBe(true);
+    const activeAfterRollback = await postgres.query<{ channel_id: string }>(
+      `SELECT channel_id FROM channel_members
+      WHERE community_id = $1 AND pubkey = $2 AND removed_at IS NULL`,
+      [TENANT, bytes(OUTSIDER)],
+    );
+    expect(activeAfterRollback.rows).toEqual([{ channel_id: MISSING }]);
+    const claimCreatedMemberships = await postgres.query<{ channel_id: string }>(
+      `SELECT channel_id FROM channel_members
+       WHERE community_id = $1 AND pubkey = $2 AND channel_id IN ($3, $4)
+         AND removed_at IS NOT NULL
+       ORDER BY channel_id`,
+      [TENANT, bytes(OUTSIDER), WORKSPACE, ROOM],
+    );
+    expect(claimCreatedMemberships.rows.map((row) => row.channel_id)).toEqual([ROOM, WORKSPACE]);
+    // The first rollback consumes its generations. An independent re-grant to
+    // one of the original Rooms must survive a repeated abandon with the raw
+    // pairing code.
+    await postgres.query(
+      `UPDATE channel_members SET joined_at = now(), removed_at = NULL, removed_by = NULL
+       WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3`,
+      [TENANT, ROOM, bytes(OUTSIDER)],
+    );
+    await expect(indexer.abandonAgentPairing(tokenHash, OUTSIDER)).resolves.toBe(true);
+    const activeAfterRepeatedRollback = await postgres.query<{ channel_id: string }>(
+      `SELECT channel_id FROM channel_members
+       WHERE community_id = $1 AND pubkey = $2 AND removed_at IS NULL
+       ORDER BY channel_id`,
+      [TENANT, bytes(OUTSIDER)],
+    );
+    expect(activeAfterRepeatedRollback.rows.map((row) => row.channel_id)).toEqual([MISSING, ROOM]);
+
+    // A retry activates a new pair of membership generations, which a later
+    // abandon must consume and revoke.
+    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER, true)).resolves.toEqual({
+      workspaceId: WORKSPACE,
+      pairedBy: VIEWER,
+      joined: false,
+      attachedRoomIds: [ROOM],
+    });
     await postgres.query(
       `INSERT INTO events
         (community_id, id, pubkey, created_at, kind, tags, content, channel_id)
-       VALUES ($1, $2, $3, now(), 9, $4, '', $5)`,
+       VALUES ($1, $2, $3, now(), 9, $4, $5, $6)`,
       [
         TENANT,
         bytes('1'.repeat(64)),
@@ -2238,15 +2310,61 @@ describe('RoomIndexer', () => {
           ['t', 'buzz-agent'],
           ['pairing', tokenHash],
         ]),
+        JSON.stringify({ displayName: 'Grok' }),
         WORKSPACE,
       ],
     );
-    await postgres.query(
-      `UPDATE channel_members SET removed_at = now()
-       WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3`,
-      [TENANT, WORKSPACE, bytes(OUTSIDER)],
+    await expect(indexer.readWorkspace(WORKSPACE, VIEWER)).resolves.toMatchObject({
+      agents: expect.arrayContaining([
+        expect.objectContaining({
+          identity: expect.objectContaining({ pubkey: OUTSIDER, kind: 'agent' }),
+        }),
+      ]),
+    });
+    await expect(indexer.abandonAgentPairing(tokenHash, OUTSIDER)).resolves.toBe(true);
+    const activeAfterRetryRollback = await postgres.query<{ channel_id: string }>(
+      `SELECT channel_id FROM channel_members
+       WHERE community_id = $1 AND pubkey = $2 AND removed_at IS NULL`,
+      [TENANT, bytes(OUTSIDER)],
     );
-    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toBeNull();
+    expect(activeAfterRetryRollback.rows).toEqual([{ channel_id: MISSING }]);
+    await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER, true)).resolves.toBeNull();
+  });
+
+  it('leaves legacy pairing claims Workspace-only when they cannot roll back inherited Rooms', async () => {
+    const code = 'BUZZ-8F5Q-RTUV';
+    const tokenHash = createHash('sha256').update(code).digest('hex');
+    await postgres.query(
+      `INSERT INTO events
+        (community_id, id, pubkey, created_at, kind, tags, content, channel_id, d_tag)
+       VALUES ($1, $2, $3, now(), 30078, $4, '', NULL, $5)`,
+      [
+        TENANT,
+        bytes('9'.repeat(64)),
+        bytes(VIEWER),
+        JSON.stringify([
+          ['h', WORKSPACE],
+          ['t', 'buzz-agent-pairing'],
+          ['d', tokenHash],
+          ['expiration', '2000000000'],
+        ]),
+        tokenHash,
+      ],
+    );
+
+    await expect(indexer.claimAgentPairing(tokenHash, 'c'.repeat(64))).resolves.toEqual({
+      workspaceId: WORKSPACE,
+      pairedBy: VIEWER,
+      joined: true,
+      attachedRoomIds: [],
+    });
+    const memberships = await postgres.query<{ channel_id: string }>(
+      `SELECT channel_id FROM channel_members
+       WHERE community_id = $1 AND pubkey = $2 AND removed_at IS NULL
+       ORDER BY channel_id`,
+      [TENANT, bytes('c'.repeat(64))],
+    );
+    expect(memberships.rows).toEqual([{ channel_id: WORKSPACE }]);
   });
 
   it('accepts a short-lived auth grant only for its exact agent identity', async () => {
@@ -2264,11 +2382,13 @@ describe('RoomIndexer', () => {
       workspaceId: WORKSPACE,
       pairedBy: VIEWER,
       joined: true,
+      attachedRoomIds: [],
     });
     await expect(indexer.claimAgentPairing(tokenHash, OUTSIDER)).resolves.toEqual({
       workspaceId: WORKSPACE,
       pairedBy: VIEWER,
       joined: false,
+      attachedRoomIds: [],
     });
   });
 });

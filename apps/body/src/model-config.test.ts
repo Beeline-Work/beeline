@@ -9,6 +9,9 @@ import {
   filterModelOptionsByCredentials,
   parseAdvertisedConfigOptions,
   ModelSelectionUnavailableError,
+  GROK_SESSION_MODEL_AXIS_ID,
+  GROK_LAUNCH_EFFORT_AXIS_ID,
+  agentArgsWithModelSelection,
 } from './model-config.js';
 import type { AgentModelConfigOption } from '@beeline/buzz-client';
 import { CODEX_ACP_SESSION_NEW_CONFIG_OPTIONS } from './fixtures/codex-acp-config-options.js';
@@ -41,6 +44,41 @@ function claudeLikeRaw(): unknown {
         options: [{ id: 'default' }, { id: 'acceptEdits' }, { id: 'bypassPermissions' }],
       },
     ],
+  };
+}
+
+function grokLikeRaw(modelId = 'grok-4.6'): unknown {
+  return {
+    sessionId: 'grok-session',
+    models: {
+      currentModelId: modelId,
+      availableModels: [
+        {
+          modelId: 'grok-4.6',
+          name: 'Grok 4.6',
+          _meta: {
+            reasoningEffort: 'high',
+            reasoningEfforts: [
+              { id: 'xhigh', value: 'xhigh', label: 'Extra High Effort' },
+              { id: 'high', value: 'high', label: 'High Effort', default: true },
+              { id: 'medium', value: 'medium', label: 'Medium Effort' },
+            ],
+          },
+        },
+        {
+          modelId: 'grok-4.5',
+          name: 'Grok 4.5',
+          _meta: {
+            reasoningEffort: 'medium',
+            reasoningEfforts: [
+              { id: 'high', value: 'high', label: 'High Effort' },
+              { id: 'medium', value: 'medium', label: 'Medium Effort', default: true },
+              { id: 'low', value: 'low', label: 'Low Effort' },
+            ],
+          },
+        },
+      ],
+    },
   };
 }
 
@@ -90,6 +128,74 @@ describe('parseAdvertisedConfigOptions', () => {
     expect(() =>
       assertModelSelectionAdvertised(parsed, { model: 'gpt-5.6-sol', effort: 'high' }),
     ).not.toThrow();
+  });
+
+  it('derives Grok model and effort axes from standard session model metadata', () => {
+    const parsed = parseAdvertisedConfigOptions(grokLikeRaw(), undefined, true);
+    expect(parsed).toEqual([
+      {
+        id: GROK_SESSION_MODEL_AXIS_ID,
+        category: 'model',
+        currentValue: 'grok-4.6',
+        options: [
+          { id: 'grok-4.6', name: 'Grok 4.6' },
+          { id: 'grok-4.5', name: 'Grok 4.5' },
+        ],
+      },
+      {
+        id: GROK_LAUNCH_EFFORT_AXIS_ID,
+        category: 'reasoning_effort',
+        currentValue: 'high',
+        options: [
+          { id: 'xhigh', name: 'Extra High Effort' },
+          { id: 'high', name: 'High Effort' },
+          { id: 'medium', name: 'Medium Effort' },
+        ],
+      },
+    ]);
+    expect(parsed.some((axis) => axis.category === 'mode')).toBe(false);
+  });
+
+  it('uses the current Grok model own advertised effort values', () => {
+    const parsed = parseAdvertisedConfigOptions(grokLikeRaw('grok-4.5'), undefined, true);
+    expect(parsed.find((axis) => axis.category === 'reasoning_effort')).toMatchObject({
+      currentValue: 'medium',
+      options: [{ id: 'high' }, { id: 'medium' }, { id: 'low' }],
+    });
+  });
+});
+
+describe('agentArgsWithModelSelection — Grok launch configuration', () => {
+  it('injects selected model and effort before Grok stdio', () => {
+    expect(
+      agentArgsWithModelSelection(
+        { kind: 'grok', command: '/opt/grok/bin/grok', args: ['agent', 'stdio'] },
+        { model: 'grok-4.5', effort: 'medium' },
+      ),
+    ).toEqual(['agent', '--model', 'grok-4.5', '--reasoning-effort', 'medium', 'stdio']);
+  });
+
+  it('replaces prior Grok launch values without duplicating flags', () => {
+    expect(
+      agentArgsWithModelSelection(
+        {
+          kind: 'grok',
+          command: 'grok',
+          args: ['agent', '--model=grok-4.6', '--reasoning-effort', 'high', 'stdio'],
+        },
+        { model: 'grok-4.5', effort: 'low' },
+      ),
+    ).toEqual(['agent', '--model', 'grok-4.5', '--reasoning-effort', 'low', 'stdio']);
+  });
+
+  it('does not rewrite non-Grok harness arguments', () => {
+    const args = ['--model', 'provider/model'];
+    expect(
+      agentArgsWithModelSelection(
+        { kind: 'custom', command: '/opt/wrapper', args },
+        { model: 'grok-4.5' },
+      ),
+    ).toEqual(args);
   });
 });
 
@@ -245,6 +351,30 @@ describe('applyAgentModelSelection — the set path', () => {
     const setConfigOption = vi.fn().mockResolvedValue({});
     await applyAgentModelSelection({ setConfigOption }, 'sess-1', raw, {});
     expect(setConfigOption).not.toHaveBeenCalled();
+  });
+
+  it('uses Grok session/set_model and treats launch-time effort as already applied', async () => {
+    const setConfigOption = vi.fn().mockResolvedValue({});
+    const setModel = vi.fn().mockResolvedValue({});
+    await applyAgentModelSelection(
+      { setConfigOption, setModel },
+      'grok-session',
+      parseAdvertisedConfigOptions(grokLikeRaw(), undefined, true),
+      { model: 'grok-4.6', effort: 'high' },
+    );
+    expect(setModel).toHaveBeenCalledWith('grok-session', 'grok-4.6');
+    expect(setConfigOption).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Grok launch effort that the running process did not apply', async () => {
+    await expect(
+      applyAgentModelSelection(
+        { setConfigOption: vi.fn(), setModel: vi.fn() },
+        'grok-session',
+        parseAdvertisedConfigOptions(grokLikeRaw(), undefined, true),
+        { effort: 'medium' },
+      ),
+    ).rejects.toMatchObject({ label: 'effort', reason: 'provider-refused' });
   });
 });
 

@@ -387,12 +387,13 @@ async function pairOneAgent(input: {
         resolveRoom: (pairing, repository) =>
           client.resolveRepositoryRoom(pairing.communityId, repository, pairing.pairedBy),
         // Undo this agent's own Workspace registration when a later pair step
-        // fails, so a failed run leaves no permanently-offline ghost behind.
+        // fails, so a failed run leaves no permanently-offline ghost or
+        // inherited Room memberships behind.
         abandonPairing: async (pairing) => {
-          if (await client.abandonAgentPairing(pairing.communityId)) return;
+          if (await client.abandonAgentPairing(pairing.communityId, code)) return;
           console.error(
-            `[beeline] could not unregister agent ${agentIdentity.publicKey} after the failed ` +
-              'pairing; remove it from the Workspace in the app to clear the offline entry.',
+            `[beeline] could not roll back agent ${agentIdentity.publicKey} after the failed ` +
+              'pairing; remove it from the Workspace and affected Rooms in the app.',
           );
         },
         launch: async (configPath) => {
@@ -421,9 +422,16 @@ function printPairResult(result: PairRuntimeResult): void {
     );
     console.log(`[buzz] repo: ${pairedRoom.repo.root}`);
   } else {
+    console.log('[buzz] repo: none — each Room supplies its own');
+  }
+  if (result.pairing.attachedRoomIds.length > 0) {
     console.log(
-      '[buzz] repo: none — add this agent to a Room from the app; each Room supplies its own',
+      `[buzz] rooms: attached to ${result.pairing.attachedRoomIds.length} current inviter Room${
+        result.pairing.attachedRoomIds.length === 1 ? '' : 's'
+      }`,
     );
+  } else {
+    console.log('[buzz] rooms: no current inviter Rooms; add this agent from a Room roster');
   }
   console.log(`[buzz] agent pubkey: ${result.pairing.agent.pubkey}`);
   console.log(`[buzz] access policy: ${result.runtime.accessPolicy ?? DEFAULT_ACCESS_POLICY}`);

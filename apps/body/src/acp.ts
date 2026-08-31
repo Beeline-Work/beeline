@@ -844,15 +844,25 @@ export class AcpClient extends EventEmitter {
   /**
    * The portable model/effort setter, confirmed round-tripping on pi/codex/
    * claude (report `data/buzzy-multiagent-runtimes/report.md` §3.2). The
-   * param is `configId`, not `optionId` — `session/set_model` is NOT
-   * portable and must not be used. Returns the runtime's updated
-   * `configOptions`. Callers must validate `configId`/`value` against the
+   * param is `configId`, not `optionId`. Harnesses that advertise this shape
+   * must use it; `session/set_model` is reserved for the distinct standard
+   * `session/new.models` shape. Returns the runtime's updated `configOptions`.
+   * Callers must validate `configId`/`value` against the
    * allow-listed catalog before calling this — see
    * `apps/body/src/model-config.ts`'s `assertModelConfigOptionAllowed`; this
    * method performs no policy checks of its own.
    */
   async setConfigOption(sessionId: string, configId: string, value: string): Promise<unknown> {
     return this.request('session/set_config_option', { sessionId, configId, value });
+  }
+
+  /**
+   * Standard ACP model setter used only when `session/new.models` supplied the
+   * corresponding safe model axis. Most Beeline harnesses use configOptions;
+   * Grok currently exposes models through this standard method instead.
+   */
+  async setModel(sessionId: string, modelId: string): Promise<unknown> {
+    return this.request('session/set_model', { sessionId, modelId });
   }
 
   private clearTimer(p: Pending): void {

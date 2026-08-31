@@ -32,11 +32,6 @@ import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { filterAgentModelOptions } from '@/buzz/agent-model-picker';
 import { Modal } from '@/modal/ModalManager';
 
-const MODEL_FALLBACK_AXES: AgentModelConfigOption[] = [
-  { id: 'model', category: 'model', options: [] },
-  { id: 'effort', category: 'effort', options: [] },
-];
-const EFFORT_FALLBACK_LEVELS = ['low', 'medium', 'high'];
 const INDEX_CONFIRM_ATTEMPTS = 60;
 const INDEX_CONFIRM_DELAY_MS = 250;
 const INSTALL_AND_PAIR_PREFIX = 'curl -fsSL https://usebeeline.app/install | sh && beeline pair';
@@ -164,6 +159,8 @@ export default function BuzzMembers() {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<WorkspaceView> | undefined;
+    let subscribedFilters = '';
+    let subscriptionChange = Promise.resolve();
     void (async () => {
       const nextIdentity = await loadBuzzIdentity();
       if (!nextIdentity) {
@@ -180,22 +177,47 @@ export default function BuzzMembers() {
       setRelayUrl(nextRelayUrl);
       if (cached) setSurface(cached);
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
+      const relay = await new BuzzRigTransport(nextIdentity, nextRelayUrl).ensureClient();
+      const bootstrapFilters: WorkspaceView['watchFilters'] = [
+        { kinds: [0, 9, 9000, 9001], '#h': [workspaceId] },
+      ];
+      const listen = (filters: WorkspaceView['watchFilters']): Promise<void> => {
+        const effectiveFilters = filters.length > 0 ? filters : bootstrapFilters;
+        const key = JSON.stringify(effectiveFilters);
+        subscriptionChange = subscriptionChange
+          .catch(() => undefined)
+          .then(async () => {
+            if (cancelled || key === subscribedFilters) return;
+            const nextUnsubscribe = await relay.surfaceSubscribe(effectiveFilters, () =>
+              scheduler?.signal(),
+            );
+            if (cancelled) {
+              nextUnsubscribe();
+              return;
+            }
+            const previousUnsubscribe = unsubscribe;
+            unsubscribe = nextUnsubscribe;
+            subscribedFilters = key;
+            previousUnsubscribe?.();
+          });
+        return subscriptionChange;
+      };
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => http.workspace(workspaceId),
         apply: (value) => {
           setSurface(value);
           setError(null);
           void mobileSurfaceCache.write(address, value, isWorkspaceView);
+          // The bootstrap subscription cannot name an agent paired after the
+          // screen opened. The indexed Workspace response is authoritative for
+          // the Room-scoped presence filters that can refresh its roster.
+          void listen(value.watchFilters).catch((reason) => setError(String(reason)));
         },
         onError: (reason) => setError(String(reason)),
       });
       schedulerRef.current = scheduler;
-      const relay = await new BuzzRigTransport(nextIdentity, nextRelayUrl).ensureClient();
-      unsubscribe = await relay.surfaceSubscribe(
-        cached?.watchFilters ?? [{ kinds: [0, 9, 9000, 9001], '#h': [workspaceId] }],
-        () => scheduler?.signal(),
-      );
-      if (cancelled) return unsubscribe();
+      await listen(cached?.watchFilters ?? bootstrapFilters);
+      if (cancelled) return;
       await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {
       if (!cancelled) setError(String(reason));
@@ -396,16 +418,6 @@ export default function BuzzMembers() {
     }
   };
 
-  const setCustomModel = async (axis: AgentModelConfigOption) => {
-    const model = await Modal.prompt('Set model', 'Enter the model ID accepted by this agent.', {
-      placeholder: 'provider/model-id',
-      cancelText: 'Cancel',
-      confirmText: 'Set model',
-    });
-    if (!model?.trim()) return;
-    await setModelOption(axis, model.trim());
-  };
-
   const removeSelectedAgent = async () => {
     if (!selectedAgent || !surface?.viewer.permissions.manage || !workspaceId) return;
     const pubkey = selectedAgent.agent.identity.pubkey;
@@ -437,16 +449,13 @@ export default function BuzzMembers() {
   };
 
   const modelAxes = useMemo(() => {
-    const advertised =
-      selectedAgent?.catalog.filter((axis) => isAllowedAgentModelConfigCategory(axis.category)) ??
-      [];
-    return advertised.length > 0 ? advertised : MODEL_FALLBACK_AXES;
+    return (
+      selectedAgent?.catalog.filter(
+        (axis) => isAllowedAgentModelConfigCategory(axis.category) && axis.options.length > 0,
+      ) ?? []
+    );
   }, [selectedAgent]);
-  const hasAdvertisedModelCatalog = Boolean(
-    selectedAgent?.catalog.some(
-      (axis) => axis.category === 'model' && axis.options.length > 0,
-    ),
-  );
+  const hasAdvertisedModelCatalog = modelAxes.length > 0;
 
   if (!surface && !error) {
     return (
@@ -485,7 +494,10 @@ export default function BuzzMembers() {
       viewerPubkey={surface.viewer.identity.pubkey}
       viewerAvatarUrl={surface.viewer.identity.avatar}
     >
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View
+        style={[styles.container, { paddingTop: insets.top }]}
+        testID="workspace-members-surface"
+      >
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.back}>
             <Text style={styles.backText}>‹</Text>
@@ -759,24 +771,25 @@ export default function BuzzMembers() {
               </View>
               <View style={styles.modelSection}>
                 <Text style={styles.sectionLabel}>MODEL / EFFORT</Text>
+                <Text style={styles.detail} testID="model-config-activation-note">
+                  Changes apply when the next session starts. Some effort settings take effect only
+                  after restarting the paired agent.
+                </Text>
                 {!hasAdvertisedModelCatalog && (
                   <Text style={styles.detail} testID="model-catalog-missing">
-                    This agent has not reported a model catalog yet. Model remains configurable;
-                    effort uses safe fixed levels until the live catalog arrives.
+                    This agent has not reported selectable model or effort choices yet. Choose them
+                    during beeline pair, then restart the agent; this page updates when its live
+                    catalog arrives.
                   </Text>
                 )}
                 {modelAxes.map((axis) => {
                   const isEffort = axis.category !== 'model';
-                  const choices: Array<{ id: string; name?: string }> =
-                    axis.options.length > 0
-                      ? axis.options
-                      : isEffort
-                        ? EFFORT_FALLBACK_LEVELS.map((id) => ({ id }))
-                        : [];
+                  const choices = axis.options;
                   const current = axisValue(selectedAgent, axis);
                   const open = openModelAxis === axis.id;
-                  const visibleChoices =
-                    isEffort ? choices : filterAgentModelOptions(choices, modelSearchQuery);
+                  const visibleChoices = isEffort
+                    ? choices
+                    : filterAgentModelOptions(choices, modelSearchQuery);
                   return (
                     <View key={axis.id} style={styles.axisBlock}>
                       <TouchableOpacity
@@ -819,16 +832,6 @@ export default function BuzzMembers() {
                             {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
                           </TouchableOpacity>
                         ))}
-                      {open && !isEffort && !hasAdvertisedModelCatalog && (
-                        <TouchableOpacity
-                          disabled={busy}
-                          onPress={() => void setCustomModel(axis)}
-                          style={styles.choice}
-                          testID={`model-custom-${axis.id}`}
-                        >
-                          <Text style={styles.choiceText}>SET MODEL ID…</Text>
-                        </TouchableOpacity>
-                      )}
                     </View>
                   );
                 })}

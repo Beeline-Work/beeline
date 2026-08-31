@@ -1,7 +1,7 @@
 /**
  * Per-agent model/effort picker: capture the raw catalog an ACP `session/new`
- * advertises, filter it down to what's safe and reachable, and gate the
- * `session/set_config_option` set path.
+ * advertises, filter it down to what's safe and reachable, and gate both the
+ * `session/set_config_option` and standard `session/set_model` set paths.
  *
  * SECURITY INVARIANT (report `data/buzzy-multiagent-runtimes/report.md` §3.3):
  * `configOptions` also carries a `mode` category — Beeline's entire
@@ -20,7 +20,62 @@ import {
   type AgentModelConfigOption,
 } from '@beeline/buzz-client';
 import { lstatSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
+
+/** Synthetic safe axes derived from Grok's standard ACP session model metadata. */
+export const GROK_SESSION_MODEL_AXIS_ID = 'beeline:grok-session-model';
+export const GROK_LAUNCH_EFFORT_AXIS_ID = 'beeline:grok-launch-reasoning-effort';
+
+type AgentLaunchCommand = {
+  kind?: string;
+  command: string;
+  args: readonly string[];
+};
+
+export function isGrokAgentCommand(agent: AgentLaunchCommand): boolean {
+  if (agent.kind === 'grok') return true;
+  if (agent.kind && agent.kind !== 'custom') return false;
+  return /^grok(?:\.[a-z0-9]+)?$/i.test(basename(agent.command));
+}
+
+/**
+ * Grok exposes model switching through ACP, but reasoning effort is a process
+ * launch option. Build the exact selected argv before catalog probes and real
+ * sessions so the advertised current values describe what will actually run.
+ */
+export function agentArgsWithModelSelection(
+  agent: AgentLaunchCommand,
+  selection: { model?: string; effort?: string } | null | undefined,
+): string[] {
+  const original = [...agent.args];
+  if (
+    !selection ||
+    !isGrokAgentCommand(agent) ||
+    !original.includes('agent') ||
+    !original.includes('stdio')
+  ) {
+    return original;
+  }
+  const stripped: string[] = [];
+  for (let index = 0; index < original.length; index += 1) {
+    const arg = original[index]!;
+    if (arg === '-m' || arg === '--model' || arg === '--reasoning-effort') {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--model=') || arg.startsWith('--reasoning-effort=') || /^-m=/.test(arg)) {
+      continue;
+    }
+    stripped.push(arg);
+  }
+  const stdioIndex = stripped.lastIndexOf('stdio');
+  const configured = [
+    ...(selection.model ? ['--model', selection.model] : []),
+    ...(selection.effort ? ['--reasoning-effort', selection.effort] : []),
+  ];
+  stripped.splice(stdioIndex, 0, ...configured);
+  return stripped;
+}
 
 /**
  * The identifier a `configOptions` choice actually carries.
@@ -35,12 +90,15 @@ export function advertisedChoiceId(choice: Record<string, unknown>): string | un
   return undefined;
 }
 
-/** Parse every configOptions axis a raw `session/new` result advertised, unfiltered. */
-export function parseAdvertisedConfigOptions(raw: unknown): AgentModelConfigOption[] {
+/** Parse safe picker axes from raw `configOptions` and standard session model state. */
+export function parseAdvertisedConfigOptions(
+  raw: unknown,
+  preferredModelId?: string,
+  includeLaunchEffort = false,
+): AgentModelConfigOption[] {
   const configOptions = (raw as { configOptions?: unknown } | undefined)?.configOptions;
-  if (!Array.isArray(configOptions)) return [];
   const result: AgentModelConfigOption[] = [];
-  for (const entry of configOptions) {
+  for (const entry of Array.isArray(configOptions) ? configOptions : []) {
     if (!entry || typeof entry !== 'object') continue;
     const record = entry as Record<string, unknown>;
     const id = record.id;
@@ -63,6 +121,80 @@ export function parseAdvertisedConfigOptions(raw: unknown): AgentModelConfigOpti
       category,
       ...(typeof record.currentValue === 'string' ? { currentValue: record.currentValue } : {}),
       options: choices,
+    });
+  }
+
+  const models = (raw as { models?: unknown } | undefined)?.models;
+  if (!models || typeof models !== 'object') return result;
+  const modelState = models as Record<string, unknown>;
+  const availableModels = Array.isArray(modelState.availableModels)
+    ? modelState.availableModels
+    : [];
+  const modelChoices: AgentModelConfigOption['options'] = [];
+  for (const entry of availableModels) {
+    if (!entry || typeof entry !== 'object') continue;
+    const model = entry as Record<string, unknown>;
+    if (typeof model.modelId !== 'string' || !model.modelId) continue;
+    modelChoices.push({
+      id: model.modelId,
+      ...(typeof model.name === 'string' ? { name: model.name } : {}),
+    });
+  }
+  const currentModelId =
+    typeof modelState.currentModelId === 'string' ? modelState.currentModelId : undefined;
+  if (modelChoices.length > 0 && !result.some((axis) => axis.category === 'model')) {
+    result.push({
+      id: GROK_SESSION_MODEL_AXIS_ID,
+      category: 'model',
+      ...(currentModelId ? { currentValue: currentModelId } : {}),
+      options: modelChoices,
+    });
+  }
+
+  const effortModelId = preferredModelId ?? currentModelId;
+  const currentModel = availableModels.find(
+    (entry) =>
+      entry &&
+      typeof entry === 'object' &&
+      (entry as Record<string, unknown>).modelId === effortModelId,
+  ) as Record<string, unknown> | undefined;
+  const meta = currentModel?._meta;
+  const modelMeta =
+    meta && typeof meta === 'object' ? (meta as Record<string, unknown>) : undefined;
+  const efforts = Array.isArray(modelMeta?.reasoningEfforts) ? modelMeta.reasoningEfforts : [];
+  const effortChoices: AgentModelConfigOption['options'] = [];
+  for (const entry of efforts) {
+    if (!entry || typeof entry !== 'object') continue;
+    const effort = entry as Record<string, unknown>;
+    const id = advertisedChoiceId(effort);
+    if (!id) continue;
+    effortChoices.push({
+      id,
+      ...(typeof effort.label === 'string'
+        ? { name: effort.label }
+        : typeof effort.name === 'string'
+          ? { name: effort.name }
+          : {}),
+    });
+  }
+  const hasEffortAxis = result.some((axis) =>
+    ['thought_level', 'effort', 'reasoning_effort'].includes(axis.category),
+  );
+  if (includeLaunchEffort && effortChoices.length > 0 && !hasEffortAxis) {
+    const currentEffort =
+      typeof modelMeta?.reasoningEffort === 'string'
+        ? modelMeta.reasoningEffort
+        : (
+            efforts.find(
+              (entry) =>
+                entry && typeof entry === 'object' && (entry as Record<string, unknown>).default,
+            ) as Record<string, unknown> | undefined
+          )?.value;
+    result.push({
+      id: GROK_LAUNCH_EFFORT_AXIS_ID,
+      category: 'reasoning_effort',
+      ...(typeof currentEffort === 'string' ? { currentValue: currentEffort } : {}),
+      options: effortChoices,
     });
   }
   return result;
@@ -326,6 +458,7 @@ export function assertModelConfigAxisAllowed(
 /** Minimal shape `applyAgentModelSelection` needs from an ACP client. */
 export interface ModelConfigSettable {
   setConfigOption(sessionId: string, configId: string, value: string): Promise<unknown>;
+  setModel?(sessionId: string, modelId: string): Promise<unknown>;
 }
 
 /**
@@ -353,7 +486,18 @@ export async function applyAgentModelSelection(
     if (!axis) continue;
     assertModelConfigAxisAllowed(axis.id, advertisedOptions);
     try {
-      await client.setConfigOption(sessionId, axis.id, target.value);
+      if (axis.id === GROK_SESSION_MODEL_AXIS_ID) {
+        if (!client.setModel) throw new Error('ACP client does not support session/set_model');
+        await client.setModel(sessionId, target.value);
+      } else if (axis.id === GROK_LAUNCH_EFFORT_AXIS_ID) {
+        if (axis.currentValue !== target.value) {
+          throw new Error(
+            `Grok started with reasoning effort "${axis.currentValue ?? 'unknown'}", not "${target.value}"`,
+          );
+        }
+      } else {
+        await client.setConfigOption(sessionId, axis.id, target.value);
+      }
     } catch (error) {
       throw new ModelSelectionUnavailableError({
         label: target.label as ModelSelectionLabel,

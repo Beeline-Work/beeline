@@ -1,35 +1,24 @@
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
 export const DELIBERATE_REMOVAL_EXIT_STATUS = 78;
+/** A persistent daemon-start failure has been recorded; wait for an operator. */
+export const DAEMON_DISTRESS_EXIT_STATUS = 77;
+/** systemd addressed an agent whose durable runtime was already removed. */
+export const UNKNOWN_AGENT_EXIT_STATUS = 79;
 export const SYSTEMD_UNIT_NAME = 'beeline-agent@.service';
 export const SYSTEMD_COMMAND_TIMEOUT_MS = 15_000;
-export const MINIMUM_SYSTEMD_NODE_VERSION = '20.11.0';
 /** Unit stop ceiling plus a small window for the successor to enter active. */
 export const SYSTEMD_RESTART_WAIT_MS = 10 * 60_000 + 30_000;
 
-function systemdQuote(value: string): string {
-  return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
-}
-
 /** The portable supervision contract, rendered as a systemd user template. */
-export function agentServiceUnit(
-  entrypoint = resolve(homedir(), '.local', 'bin', 'beeline'),
-  nodePath = process.execPath,
-  inheritedPath = process.env.PATH ?? '',
-): string {
-  if (!isAbsolute(nodePath)) throw new Error('systemd Node path must be absolute');
-  const nodeDir = dirname(nodePath);
-  const path = [
-    nodeDir,
-    ...inheritedPath.split(delimiter).filter((part) => part && part !== nodeDir),
-  ].join(delimiter);
+export function agentServiceUnit(): string {
   return `[Unit]
 Description=Beeline agent %i
 After=network-online.target
@@ -41,13 +30,12 @@ StartLimitBurst=10
 Type=notify
 NotifyAccess=all
 Environment=BEELINE_MANAGED_BY_SYSTEMD=1
-Environment=${systemdQuote(`PATH=${path}`)}
-ExecStart=${systemdQuote(entrypoint)} daemon --agent %i
+ExecStart=%h/.local/bin/beeline daemon --agent %i
 Restart=always
 RestartSec=5s
 RestartSteps=5
 RestartMaxDelaySec=60s
-RestartPreventExitStatus=${DELIBERATE_REMOVAL_EXIT_STATUS}
+RestartPreventExitStatus=${DAEMON_DISTRESS_EXIT_STATUS} ${DELIBERATE_REMOVAL_EXIT_STATUS} ${UNKNOWN_AGENT_EXIT_STATUS}
 WatchdogSec=180s
 TimeoutStartSec=90s
 TimeoutStopSec=10min
@@ -61,21 +49,30 @@ WantedBy=default.target
 `;
 }
 
-function assertSupportedNodeVersion(version: string): void {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
-  const [major, minor, patch] = match?.slice(1, 4).map(Number) ?? [];
-  const supported =
-    major !== undefined &&
-    minor !== undefined &&
-    patch !== undefined &&
-    (major > 20 || (major === 20 && minor >= 11));
-  if (!supported) {
-    throw new Error(
-      `Cannot install the Beeline systemd service with Node.js ${version}; ` +
-        `Node.js ${MINIMUM_SYSTEMD_NODE_VERSION} or newer is required. ` +
-        'Run beeline again using a supported Node installation (for example, activate your fnm/nvm version first).',
-    );
-  }
+/**
+ * The user unit belongs to the installed launcher, never to a source checkout.
+ * `BEELINE_LIB_DIR` is injected only by that launcher. Refusing here protects
+ * the shared user-manager definition even when a test/lab calls `beeline start`.
+ */
+export function isCanonicalInstalledLauncher(
+  env: NodeJS.ProcessEnv = process.env,
+  invocationPath = process.argv[1],
+): boolean {
+  const home = env.HOME?.trim() || homedir();
+  const expectedLibDir = resolve(home, '.local', 'lib', 'beeline');
+  const expectedPrefix = `${expectedLibDir}/`;
+  return (
+    resolve(env.BEELINE_LIB_DIR?.trim() || '/') === expectedLibDir &&
+    Boolean(invocationPath) &&
+    resolve(invocationPath!).startsWith(expectedPrefix)
+  );
+}
+
+function assertCanonicalInstalledLauncher(env: NodeJS.ProcessEnv, invocationPath?: string): void {
+  if (isCanonicalInstalledLauncher(env, invocationPath)) return;
+  throw new Error(
+    'refusing to modify the shared Beeline systemd unit outside the canonical ~/.local/bin/beeline launcher',
+  );
 }
 
 export function systemdUserUnitPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -98,24 +95,19 @@ const runSystemctl: SystemdRunner = async (args) => {
 export async function installAgentService(
   publicKey: string,
   options: {
-    entrypoint?: string;
     env?: NodeJS.ProcessEnv;
     run?: SystemdRunner;
     start?: boolean;
     waitTimeoutMs?: number;
-    nodePath?: string;
-    nodeVersion?: string;
+    /** Test seam; production checks the running bundled CLI path. */
+    invocationPath?: string;
   } = {},
 ): Promise<number> {
   if (!/^[0-9a-f]{64}$/i.test(publicKey)) throw new Error('agent public key must be 64 hex');
-  const nodePath = options.nodePath ?? process.execPath;
-  assertSupportedNodeVersion(options.nodeVersion ?? process.versions.node);
-  const path = systemdUserUnitPath(options.env);
-  const content = agentServiceUnit(
-    options.entrypoint,
-    nodePath,
-    options.env?.PATH ?? process.env.PATH,
-  );
+  const env = options.env ?? process.env;
+  assertCanonicalInstalledLauncher(env, options.invocationPath);
+  const path = systemdUserUnitPath(env);
+  const content = agentServiceUnit();
   const existing = await readFile(path, 'utf8').catch(() => '');
   if (existing !== content) {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });

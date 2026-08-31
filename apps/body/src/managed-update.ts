@@ -1,19 +1,17 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import {
   activeReleaseId,
-  clearPendingUpdate,
   readInstalledBundleIdentity,
-  readPendingUpdate,
   readUpdateState,
-  recordFailedUpdatePin,
-  replacePendingUpdate,
   rollbackToPreviousRelease,
   SelfUpdateManager,
-  writePendingUpdateFixture,
+  readUpdateAttempt,
+  replaceUpdateAttempt,
+  writeUpdateAttempt,
   type BeelineInstallLayout,
-  type PendingUpdateRecord,
+  type UpdateAttemptRecord,
 } from './self-update.js';
 import { findAgentRuntimeConfigPaths, readRuntimeRecord, runtimeDaemonPid } from './runtime.js';
 import type { UpdateFunctionalProbeResult } from './update-functional-probe.js';
@@ -28,24 +26,13 @@ const UPDATE_WORKER_DEADLINE_MS = UPDATE_DRAIN_DEADLINE_MS;
 const LOCK_STALE_MS = UPDATE_WORKER_DEADLINE_MS + 5 * 60_000;
 const DEFAULT_UPDATE_INITIAL_DELAY_MS = 0;
 
-export interface UpdateHandoffRecord {
-  version: 1;
+export interface ManagedUpdateRestartRequest {
   loadedRelease: string;
   desiredRelease: string;
-  requestedAt: number;
   drainDeadlineAt: number;
 }
 
 export type ManagedUpdateHandoffProgress = 'none' | 'waiting-for-idle' | 'restarting';
-
-export interface ManagedUpdateRestartRequest {
-  handoff: UpdateHandoffRecord;
-  forced: boolean;
-}
-
-export function updateHandoffPath(runtimeDir: string): string {
-  return resolve(runtimeDir, 'update-handoff.json');
-}
 
 export async function withInstallLock<T>(
   layout: BeelineInstallLayout,
@@ -86,7 +73,6 @@ export async function withInstallLock<T>(
 /** Pull-based update handoff: called only from completed thin-core ticks. */
 export class ManagedUpdateHandoff {
   readonly #layout: BeelineInstallLayout;
-  readonly #runtimeDir: string;
   readonly #loadedRelease: string | undefined;
   readonly #now: () => number;
   readonly #env: NodeJS.ProcessEnv;
@@ -97,6 +83,7 @@ export class ManagedUpdateHandoff {
   #updateCycleDeadlineAt: number | undefined;
   #worker: Promise<void> | undefined;
   #requested = false;
+  #restartRequest: ManagedUpdateRestartRequest | undefined;
 
   private constructor(options: {
     layout: BeelineInstallLayout;
@@ -109,7 +96,6 @@ export class ManagedUpdateHandoff {
     requiredProbeIds?: string[];
   }) {
     this.#layout = options.layout;
-    this.#runtimeDir = options.runtimeDir;
     this.#loadedRelease = options.loadedRelease;
     this.#now = options.now ?? Date.now;
     this.#env = options.env ?? process.env;
@@ -142,7 +128,9 @@ export class ManagedUpdateHandoff {
   }
 
   /**
-   * Return true once desired-release drift has been durably journaled.
+   * Return true once desired-release drift is represented by the single
+   * install-scoped update attempt. Restart intent itself is process-local:
+   * systemd restarts from the stable anchor after any crash.
    *
    * The core calls this only after a completed progress tick. Manifest I/O,
    * archive verification, extraction, and smoke tests run in a disposable
@@ -206,58 +194,52 @@ export class ManagedUpdateHandoff {
       requestedAt + this.#drainDeadlineMs,
       this.#updateCycleDeadlineAt ?? Number.POSITIVE_INFINITY,
     );
-    const handoff: UpdateHandoffRecord = {
-      version: 1,
-      loadedRelease: this.#loadedRelease!,
-      desiredRelease,
-      requestedAt,
-      drainDeadlineAt,
-    };
     await withInstallLock(this.#layout, async () => {
-      const pending = await readPendingUpdate(this.#layout);
-      if (!pending || pending.releaseId !== desiredRelease) {
+      const attempt = await readUpdateAttempt(this.#layout);
+      if (!attempt || attempt.releaseId !== desiredRelease || attempt.status !== 'pending') {
         const from =
           (await readInstalledBundleIdentity({
             ...this.#layout,
             libDir: resolve(this.#layout.releasesRoot, this.#loadedRelease!),
           }).catch(() => undefined)) ?? {};
         const to = (await readInstalledBundleIdentity(this.#layout).catch(() => undefined)) ?? {};
-        const record: PendingUpdateRecord = {
+        const record: UpdateAttemptRecord = {
+          version: 1,
           from,
           to,
           releaseId: desiredRelease,
           previousReleaseId: this.#loadedRelease,
           appliedAt: requestedAt,
+          confirmBy: requestedAt + UPDATE_CONVERGENCE_SLO_MS,
+          status: 'pending',
           ...(this.#requiredProbeIds.length > 0
             ? { requiredProbeIds: this.#requiredProbeIds, confirmedProbeIds: [] }
             : {}),
         };
-        await writePendingUpdateFixture(this.#layout, record);
+        await writeUpdateAttempt(this.#layout, record);
       } else if (this.#requiredProbeIds.length > 0) {
         // The disposable worker normally captures the whole live fleet, but
         // each old daemon also contributes its startup snapshot before it
         // exits. This closes discovery/env races without ever removing a
         // sibling proof requirement already written by another daemon.
         const requiredProbeIds = [
-          ...new Set([...(pending.requiredProbeIds ?? []), ...this.#requiredProbeIds]),
+          ...new Set([...(attempt.requiredProbeIds ?? []), ...this.#requiredProbeIds]),
         ].sort();
-        await writePendingUpdateFixture(this.#layout, {
-          ...pending,
+        await replaceUpdateAttempt(this.#layout, {
+          ...attempt,
           requiredProbeIds,
-          confirmedProbeIds: pending.confirmedProbeIds ?? [],
+          confirmedProbeIds: attempt.confirmedProbeIds ?? [],
         });
       }
-      await writeFile(
-        updateHandoffPath(this.#runtimeDir),
-        `${JSON.stringify(handoff, null, 2)}\n`,
-        {
-          mode: 0o600,
-        },
-      );
     });
+    this.#restartRequest = {
+      loadedRelease: this.#loadedRelease!,
+      desiredRelease,
+      drainDeadlineAt,
+    };
     this.#requested = true;
     console.log(
-      `[thin-core] update handoff armed: loaded release ${this.#loadedRelease} -> ` +
+      `[thin-core] update restart armed: loaded release ${this.#loadedRelease} -> ` +
         `${desiredRelease}; absolute drain deadline ${new Date(drainDeadlineAt).toISOString()}`,
     );
     return true;
@@ -273,18 +255,18 @@ export class ManagedUpdateHandoff {
    */
   async restartRequest(quiesceIfIdle: () => boolean): Promise<
     | { kind: 'none' }
-    | { kind: 'waiting'; handoff: UpdateHandoffRecord }
+    | { kind: 'waiting'; request: ManagedUpdateRestartRequest }
     | {
         kind: 'restart';
         request: ManagedUpdateRestartRequest;
       }
   > {
     if (!(await this.check())) return { kind: 'none' };
-    const handoff = await readUpdateHandoff(this.#runtimeDir);
-    if (!handoff) throw new Error('update drift was detected without a durable handoff');
-    if (quiesceIfIdle()) return { kind: 'restart', request: { handoff, forced: false } };
-    if (this.#now() < handoff.drainDeadlineAt) return { kind: 'waiting', handoff };
-    return { kind: 'restart', request: { handoff, forced: true } };
+    const request = this.#restartRequest;
+    if (!request) throw new Error('update drift was detected without an in-memory restart request');
+    if (quiesceIfIdle()) return { kind: 'restart', request };
+    if (this.#now() < request.drainDeadlineAt) return { kind: 'waiting', request };
+    return { kind: 'restart', request };
   }
 }
 
@@ -293,12 +275,12 @@ export async function coordinateManagedUpdateHandoff(
   update: ManagedUpdateHandoff,
   quiesceIfIdle: () => boolean,
   restart: (request: ManagedUpdateRestartRequest) => Promise<void>,
-  waiting: (handoff: UpdateHandoffRecord) => Promise<void> = async () => undefined,
+  waiting: (request: ManagedUpdateRestartRequest) => Promise<void> = async () => undefined,
 ): Promise<ManagedUpdateHandoffProgress> {
   const next = await update.restartRequest(quiesceIfIdle);
   if (next.kind === 'none') return 'none';
   if (next.kind === 'waiting') {
-    await waiting(next.handoff);
+    await waiting(next.request);
     return 'waiting-for-idle';
   }
   await restart(next.request);
@@ -322,9 +304,6 @@ export async function runManagedUpdateWorker(): Promise<{ activeRelease?: string
     layout,
     env: process.env,
     isIdle: () => true,
-    // Arms the global exact-release rollback journal, but no callback is
-    // supplied and the worker exits: systemd still owns every daemon restart.
-    restartHandover: true,
     requiredProbeIds: await runningRuntimeProbeIds(process.env),
     logger: (line) => console.error(line),
   });
@@ -407,7 +386,7 @@ async function runManagedUpdateWorkerProcess(): Promise<void> {
   });
 }
 
-/** READY is valid update proof only when the process loaded the exact desired release. */
+/** A served ACP turn is valid only for the exact pending update attempt. */
 export async function proveLoadedReleaseReady(
   layout: BeelineInstallLayout,
   runtimeDir: string,
@@ -418,24 +397,23 @@ export async function proveLoadedReleaseReady(
     now?: () => number;
   } = {},
 ): Promise<boolean> {
-  const pending = await readPendingUpdate(layout);
-  const handoff = await readUpdateHandoff(runtimeDir);
-  const desiredRelease = handoff?.desiredRelease ?? pending?.releaseId;
+  const attempt = await readUpdateAttempt(layout);
+  const desiredRelease = attempt?.status === 'pending' ? attempt.releaseId : undefined;
   if (!desiredRelease || !loadedRelease || desiredRelease !== loadedRelease) return false;
   if ((await activeReleaseId(layout).catch(() => undefined)) !== loadedRelease) return false;
   if (!options.functionalProof) return false;
   const probeId = options.probeId ?? runtimeDir;
   const accepted = await withInstallLock(layout, async () => {
     if ((await activeReleaseId(layout).catch(() => undefined)) !== loadedRelease) return false;
-    const current = await readPendingUpdate(layout);
-    if (!current || current.releaseId !== loadedRelease) return true;
+    const current = await readUpdateAttempt(layout);
+    if (!current || current.releaseId !== loadedRelease || current.status !== 'pending') return false;
     const confirmed = [...new Set([...(current.confirmedProbeIds ?? []), probeId])].sort();
     const required = current.requiredProbeIds ?? [probeId];
-    if (required.every((id) => confirmed.includes(id))) {
-      await clearPendingUpdate(layout);
-    } else {
-      await replacePendingUpdate(layout, { ...current, confirmedProbeIds: confirmed });
-    }
+    await replaceUpdateAttempt(layout, {
+      ...current,
+      confirmedProbeIds: confirmed,
+      ...(required.every((id) => confirmed.includes(id)) ? { status: 'confirmed' as const } : {}),
+    });
     return true;
   });
   if (!accepted) return false;
@@ -452,7 +430,6 @@ export async function proveLoadedReleaseReady(
     )}\n`,
     { mode: 0o600 },
   );
-  await rm(updateHandoffPath(runtimeDir), { force: true });
   return true;
 }
 
@@ -460,7 +437,7 @@ export type ManagedSuccessorGateResult =
   | { kind: 'passed'; proof: UpdateFunctionalProbeResult }
   | { kind: 'failed'; error: unknown; rolledBack: boolean };
 
-/** One fail-closed transaction from a pending successor to functional READY. */
+/** One fail-closed transaction from an update attempt to a served ACP turn. */
 export async function gateManagedSuccessor(input: {
   layout: BeelineInstallLayout;
   runtimeDir: string;
@@ -469,9 +446,8 @@ export async function gateManagedSuccessor(input: {
   probe: () => Promise<UpdateFunctionalProbeResult>;
 }): Promise<ManagedSuccessorGateResult> {
   try {
-    const pending = await readPendingUpdate(input.layout);
-    const handoff = await readUpdateHandoff(input.runtimeDir);
-    const desiredRelease = handoff?.desiredRelease ?? pending?.releaseId;
+    const attempt = await readUpdateAttempt(input.layout);
+    const desiredRelease = attempt?.status === 'pending' ? attempt.releaseId : undefined;
     if (!desiredRelease || !input.loadedRelease || desiredRelease !== input.loadedRelease) {
       throw new Error(
         `successor loaded release ${input.loadedRelease ?? 'unknown'}, not the pending desired release`,
@@ -502,27 +478,23 @@ export async function rollbackFailedSuccessor(
   runtimeDir?: string,
 ): Promise<boolean> {
   return withInstallLock(layout, async () => {
-    const pending = await readPendingUpdate(layout);
-    if (!pending) return false;
-    if (!pending.previousReleaseId) {
-      await clearPendingUpdate(layout);
+    const attempt = await readUpdateAttempt(layout);
+    if (!attempt || attempt.status !== 'pending') return false;
+    if (!attempt.previousReleaseId) {
+      await replaceUpdateAttempt(layout, {
+        ...attempt,
+        status: 'reverted',
+        failure: 'functional served-turn proof failed, but no previous release exists',
+      });
       return false;
     }
-    await rollbackToPreviousRelease(layout, pending.previousReleaseId);
-    await recordFailedUpdatePin(layout, pending, 'functional update probe failed before READY');
-    if (runtimeDir) await queueUpdateRollbackAlert(runtimeDir, pending.releaseId);
-    await clearPendingUpdate(layout);
-    if (runtimeDir) await rm(updateHandoffPath(runtimeDir), { force: true });
+    await rollbackToPreviousRelease(layout, attempt.previousReleaseId);
+    await replaceUpdateAttempt(layout, {
+      ...attempt,
+      status: 'reverted',
+      failure: 'functional served-turn proof failed before confirmation',
+    });
+    if (runtimeDir) await queueUpdateRollbackAlert(runtimeDir, attempt.releaseId);
     return true;
   });
-}
-
-export async function readUpdateHandoff(
-  runtimeDir: string,
-): Promise<UpdateHandoffRecord | undefined> {
-  try {
-    return JSON.parse(await readFile(updateHandoffPath(runtimeDir), 'utf8')) as UpdateHandoffRecord;
-  } catch {
-    return undefined;
-  }
 }

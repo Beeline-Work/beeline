@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  publishPendingUpdateRollbackAlert,
+  reportUpdateRollback,
   queueUpdateRollbackAlert,
   updateRollbackAlertPath,
 } from './update-rollback-alert.js';
@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 describe('update rollback alert outbox', () => {
-  it('drains rollback state locally without publishing a chat event', async () => {
+  it('retains rollback state locally without publishing a chat event', async () => {
     const runtimeDir = await mkdtemp(resolve(tmpdir(), 'beeline-update-alert-'));
     roots.push(runtimeDir);
     await queueUpdateRollbackAlert(runtimeDir, 'broken-release', 1_700_000_000_000);
@@ -24,14 +24,12 @@ describe('update rollback alert outbox', () => {
     });
 
     await expect(
-      publishPendingUpdateRollbackAlert({ runtimeDir }),
+      reportUpdateRollback({ runtimeDir }),
     ).resolves.toBe(true);
     expect(error).toHaveBeenCalledWith(
-      '[thin-core] update rollback retained as operator state: broken-release',
+      `[thin-core] UPDATE ROLLBACK: broken-release; durable operator record: ${updateRollbackAlertPath(runtimeDir)}`,
     );
-    await expect(readFile(updateRollbackAlertPath(runtimeDir), 'utf8')).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
+    await expect(readFile(updateRollbackAlertPath(runtimeDir), 'utf8')).resolves.toContain('broken-release');
   });
 
   it('discards a legacy queued event instead of replaying its invalid shape', async () => {
@@ -50,14 +48,12 @@ describe('update rollback alert outbox', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await expect(
-      publishPendingUpdateRollbackAlert({ runtimeDir }),
+      reportUpdateRollback({ runtimeDir }),
     ).resolves.toBe(true);
 
     expect(error).toHaveBeenCalledWith(
-      '[thin-core] update rollback retained as operator state: broken-release',
+      `[thin-core] UPDATE ROLLBACK: broken-release; durable operator record: ${updateRollbackAlertPath(runtimeDir)}`,
     );
-    await expect(readFile(updateRollbackAlertPath(runtimeDir), 'utf8')).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
+    await expect(readFile(updateRollbackAlertPath(runtimeDir), 'utf8')).resolves.toContain('legacy-invalid-event');
   });
 });

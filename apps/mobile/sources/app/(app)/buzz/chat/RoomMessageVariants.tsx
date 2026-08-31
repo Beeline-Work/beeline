@@ -202,6 +202,50 @@ export interface GitHubEventCardProps {
   onOpenUrl(url: string): void;
 }
 
+type RepositoryFactCardProps = {
+  title: string;
+  body?: string;
+  actionLabel: string;
+  onPress(): void;
+  testID: string;
+  subgoals?: readonly { step: string; status: 'pending' | 'in_progress' | 'completed' }[];
+};
+
+/** Shared visual shell for verified GitHub events and daemon lifecycle facts. */
+const RepositoryFactCard = React.memo(function RepositoryFactCard({
+  title,
+  body,
+  actionLabel,
+  onPress,
+  testID,
+  subgoals,
+}: RepositoryFactCardProps) {
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={title}
+      onPress={onPress}
+      style={styles.githubPressable}
+      testID={testID}
+    >
+      <HullSurface strength="raised" style={styles.githubCard}>
+        <Text style={styles.githubTitle}>{title}</Text>
+        {subgoals?.length ? (
+          <View style={styles.githubSubgoals}>
+            {subgoals.map((subgoal, index) => (
+              <Text key={`${subgoal.step}:${index}`} style={styles.githubBody}>
+                {`${subgoal.status === 'completed' ? '✓' : '○'} ${subgoal.step}`}
+              </Text>
+            ))}
+          </View>
+        ) : null}
+        {body ? <Text style={styles.githubBody}>{body}</Text> : null}
+        <Text style={styles.githubLink}>{actionLabel}</Text>
+      </HullSurface>
+    </Pressable>
+  );
+});
+
 export const GitHubEventCard = React.memo(function GitHubEventCard({
   message,
   onOpenUrl,
@@ -218,18 +262,42 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
         ? `${event.actor} created a new issue: ${event.title}`
         : `${event.actor} closed an issue: ${event.title}`;
   return (
-    <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={title}
+    <RepositoryFactCard
+      title={title}
+      actionLabel="VIEW ON GITHUB ↗"
       onPress={() => onOpenUrl(event.url)}
-      style={styles.githubPressable}
       testID={`github-event-card-${event.type}-${event.action}`}
-    >
-      <HullSurface strength="raised" style={styles.githubCard}>
-        <Text style={styles.githubTitle}>{title}</Text>
-        <Text style={styles.githubLink}>VIEW ON GITHUB ↗</Text>
-      </HullSurface>
-    </Pressable>
+    />
+  );
+});
+
+export interface DaemonFactCardProps {
+  message: ChatDisplayMessage;
+  onOpenCorner(cornerId: string): void;
+}
+
+export const DaemonFactCard = React.memo(function DaemonFactCard({
+  message,
+  onOpenCorner,
+}: DaemonFactCardProps) {
+  const fact = message.daemonFact!;
+  const body =
+    fact.type === 'corner-complete'
+      ? fact.outcome === 'landed'
+        ? `LANDED${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''} ${fact.pullRequest.url}` : ''}`
+        : 'ABANDONED · Remote branch deleted'
+      : fact.type === 'checks-failing'
+        ? `CHECKS FAILING${fact.pullRequest ? ` · PR #${fact.pullRequest.number ?? ''}` : ''}`
+        : 'WORKTREE CLEANED';
+  return (
+    <RepositoryFactCard
+      title={fact.objective}
+      body={body}
+      subgoals={fact.subgoals}
+      actionLabel={fact.type === 'corner-complete' ? 'OPEN ARCHIVED CORNER →' : 'OPEN CORNER →'}
+      onPress={() => onOpenCorner(fact.cornerId)}
+      testID={`daemon-fact-card-${fact.type}`}
+    />
   );
 });
 
@@ -417,6 +485,8 @@ const styles = StyleSheet.create(() => ({
   githubPressable: { marginBottom: 8 },
   githubCard: { minWidth: 0, paddingHorizontal: 14, paddingVertical: 13, borderWidth: 1, borderColor: groknight.borderStrong, gap: 6 },
   githubTitle: { ...Typography.default('semiBold'), color: groknight.textPrimary, fontSize: 13, lineHeight: 19 },
+  githubBody: { ...Typography.default('regular'), color: groknight.textSecondary, fontSize: 12, lineHeight: 17 },
+  githubSubgoals: { gap: 2 },
   githubLink: { ...Typography.mono('semiBold'), color: groknight.textSecondary, fontSize: 10, lineHeight: 14, letterSpacing: 0.45 },
   activityGroup: { width: '100%', minWidth: 0, marginBottom: 20 },
   replyReference: { minWidth: 0, marginBottom: 5 },

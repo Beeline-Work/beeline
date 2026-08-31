@@ -4583,6 +4583,7 @@ export class Body {
     return this.abandonedCorners;
   }
 
+
   /**
    * Provision a read-only agent session for a TLC channel.
    *
@@ -8941,7 +8942,6 @@ export class Body {
     }
   }
 
-
   /**
    * One corner-session process-state transition, as reported by the Workspace
    * scheduler's lifecycle (`live` / `suspended` / `waiting-for-slot`).
@@ -9726,6 +9726,7 @@ export class Body {
       },
     ]);
     if (!existing.some((event) => tagValue(event, 'subchannel') === info.subchannelId)) {
+      const plan = info.session.activityProjection?.currentPlan() ?? info.session.resumePlan;
       const primary =
         state.outcome === 'landed'
           ? `Landed${state.pr ? ` “${state.pr.title}” into ${state.pr.targetBranch}: ${state.pr.url}` : ` ${state.branch}`}.`
@@ -9733,26 +9734,23 @@ export class Body {
       const content = dirty
         ? `${primary} The dirty worktree was preserved at ${info.worktreePath}.`
         : primary;
-      const event = buildControlMessage(
-        'branch-ended',
-        parentId,
-        this.agentIdentity,
-        content,
-        [
-          ['t', 'corner-branch-ended'],
-          ['subchannel', info.subchannelId],
-          ['outcome', state.outcome],
-          ['branch', state.branch],
-          ...(state.pr
-            ? [
-                ['pr-number', String(state.pr.number)],
-                ['url', state.pr.url],
-                ['target-branch', state.pr.targetBranch],
-              ]
-            : []),
-          ...(dirty ? [['worktree-preserved', info.worktreePath]] : []),
-        ],
-      );
+      const event = buildControlMessage('branch-ended', parentId, this.agentIdentity, content, [
+        ['t', 'corner-branch-ended'],
+        ['subchannel', info.subchannelId],
+        ['outcome', state.outcome],
+        ['branch', state.branch],
+        ...(info.taskDescription ? [['objective', info.taskDescription]] : []),
+        ...(plan?.items.map((item) => ['subgoal', item.step, item.status]) ?? []),
+        ...(state.pr
+          ? [
+              ['pr-number', String(state.pr.number)],
+              ['pr-title', state.pr.title],
+              ['url', state.pr.url],
+              ['target-branch', state.pr.targetBranch],
+            ]
+          : []),
+        ...(dirty ? [['worktree-preserved', info.worktreePath]] : []),
+      ]);
       const published = await publishCritical(
         async () => {
           await this.agentRelay.publishEvent(event);
@@ -9763,6 +9761,59 @@ export class Body {
     }
     info.archiveParentNotified = true;
     await this.archiveSubchannel(info.subchannelId);
+  }
+
+  /** One structured red-check fact per PR head; it is a Room card, not daemon prose. */
+  private async publishChecksFailingFactOnce(
+    info: SubchannelInfo,
+    state: CornerRemoteState,
+  ): Promise<void> {
+    const parentId = info.session.parentChannelId;
+    const pr = state.pr;
+    if (!parentId || state.state !== 'in-review' || state.checks !== 'failing' || !pr) return;
+    const existing = await this.agentRelay.queryEvents([
+      {
+        kinds: [9],
+        authors: [this.agentIdentity.publicKey],
+        '#h': [parentId],
+        '#t': ['corner-checks-failing'],
+        limit: 500,
+      },
+    ]);
+    if (
+      existing.some(
+        (event) =>
+          tagValue(event, 'subchannel') === info.subchannelId &&
+          tagValue(event, 'pr-head') === pr.headSha,
+      )
+    )
+      return;
+    const plan = info.session.activityProjection?.currentPlan() ?? info.session.resumePlan;
+    const event = buildControlMessage(
+      'checks-failing-fact',
+      parentId,
+      this.agentIdentity,
+      `Checks are failing for pull request #${pr.number}.`,
+      [
+        ['t', 'corner-checks-failing'],
+        ['subchannel', info.subchannelId],
+        ['branch', state.branch],
+        ['objective', info.taskDescription || pr.title],
+        ['pr-number', String(pr.number)],
+        ['pr-title', pr.title],
+        ['pr-head', pr.headSha],
+        ['url', pr.url],
+        ['target-branch', pr.targetBranch],
+        ...(plan?.items.map((item) => ['subgoal', item.step, item.status]) ?? []),
+      ],
+    );
+    const published = await publishCritical(
+      async () => {
+        await this.agentRelay.publishEvent(event);
+      },
+      { label: `checks failing fact ${info.subchannelId}#${pr.number}` },
+    );
+    if (!published) throw new Error('checks failing fact publication was not accepted');
   }
 
   private async observeOneCornerRemote(info: SubchannelInfo): Promise<void> {
@@ -9823,6 +9874,7 @@ export class Body {
       await this.publishCornerRemoteState(info, effective);
       if (observed.state === 'in-review' && observed.pr) {
         await this.publishPullRequestFactOnce(info, observed);
+        await this.publishChecksFailingFactOnce(info, observed);
       }
       if (observed.state === 'gone' && !branchAbsentBeforeFirstPush) {
         await this.finishCornerFromBranchDeath(info, observed);

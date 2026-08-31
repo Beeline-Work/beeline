@@ -171,6 +171,7 @@ import {
 } from './useRoomSurfaceSession';
 import {
   GitHubEventCard,
+  DaemonFactCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
   WritePermissionCard,
@@ -2599,6 +2600,10 @@ export default function BuzzChat() {
 
       if (item.githubEvent) {
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
+      }
+
+      if (item.daemonFact) {
+        return <DaemonFactCard message={item} onOpenCorner={openCorner} />;
       }
 
       // ── Archived notice ──────────────────────────────────────────

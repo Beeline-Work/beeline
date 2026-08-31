@@ -23,5 +23,5 @@ jobs:
       phase: build
       release_sha: ${{ github.sha }}
       release_version: v0.0.0
-      retry_attempt: 1
+      retry_attempt: ${{ inputs.retry_attempt }}
     secrets: inherit
